@@ -1,23 +1,22 @@
-FROM rust:1-bookworm as builder
+FROM rust:1.77.2-alpine as builder
 
-WORKDIR /usr/src/app
-COPY . .
-# Will build and cache the binary and dependent crates in release mode
-RUN --mount=type=cache,target=/usr/local/cargo,from=rust:latest,source=/usr/local/cargo \
-    --mount=type=cache,target=target \
-    cargo build --release && mv ./target/release/zaciraci ./zaciraci
+RUN apk --no-cache add musl-dev
 
-# Runtime image
-FROM debian:bookworm-slim
-
-# Run as "app" user
-RUN useradd -ms /bin/bash app
-
-USER app
 WORKDIR /app
 
-# Get compiled binaries from builder's cargo install directory
-COPY --from=builder /usr/src/app/zaciraci /app/zaciraci
+COPY Cargo.toml .
+COPY Cargo.lock .
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release
 
-# Run the app
-CMD ./zaciraci
+COPY src src
+RUN touch src/main.rs
+RUN cargo build --release
+
+FROM gcr.io/distroless/static-debian12:nonroot
+USER nonroot
+
+COPY --from=builder /app/target/release/zaciraci /main
+WORKDIR /
+
+ENTRYPOINT [ "/main" ]
