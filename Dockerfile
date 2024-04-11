@@ -12,11 +12,12 @@ RUN cargo build --release
 COPY src src
 RUN touch src/main.rs
 RUN cargo build --release
+RUN strip target/release/zaciraci -o main
 
 FROM gcr.io/distroless/static-debian12:nonroot
 USER nonroot
 
-COPY --from=builder /app/target/release/zaciraci /main
+COPY --from=builder /app/main /main
 WORKDIR /
 
 ENTRYPOINT [ "/main" ]
