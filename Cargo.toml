@@ -7,3 +7,4 @@ edition = "2021"
 tokio = { version = "1.37.0", features = ["full"] }
 axum = "0.7.5"
 speedb = { version = "0.0.5", features = ["multi-threaded-cf"]}
+once_cell = "1.19.0"
