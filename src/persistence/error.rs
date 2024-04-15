@@ -5,8 +5,8 @@ pub struct Error {
     message: String,
 }
 
-impl From<speedb::Error> for Error {
-    fn from(e: speedb::Error) -> Error {
+impl From<tokio_postgres::Error> for Error {
+    fn from(e: tokio_postgres::Error) -> Error {
         Error {
             message: e.to_string(),
         }
