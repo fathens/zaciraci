@@ -1,6 +1,6 @@
-FROM rust:1.77.2-bookworm as builder
+FROM rust:1.77.2-alpine as builder
 
-RUN apt update && apt install -y clang
+RUN apk --no-cache add musl-dev
 
 WORKDIR /app
 
@@ -14,12 +14,10 @@ RUN touch src/main.rs
 RUN cargo build --release
 RUN strip target/release/zaciraci -o main
 
-FROM debian:bookworm-slim
-WORKDIR /app
+FROM gcr.io/distroless/static-debian12:nonroot
+USER nonroot
 
-RUN useradd -ms /bin/bash app
-RUN chown -R app /app
-USER app
+WORKDIR /app
 
 COPY --from=builder /app/main /app/main
 
