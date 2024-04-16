@@ -1,5 +1,6 @@
 #![deny(warnings)]
 
+mod config;
 mod cron;
 mod error;
 mod logging;

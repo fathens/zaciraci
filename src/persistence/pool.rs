@@ -1,17 +1,15 @@
-use crate::Error;
+use crate::{config, Error};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use once_cell::sync::Lazy;
 use std::str::FromStr;
 use tokio_postgres::NoTls;
 
 static POOL: Lazy<Pool> = Lazy::new(|| {
-    let max_size: usize = std::env::var("PG_POOL_SIZE")
+    let max_size: usize = config::get("PG_POOL_SIZE")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(16);
-    let dsn = std::env::var("PG_DSN")
-        .or(Err(Error::missing_env_var("PG_DSN")))
-        .unwrap();
+    let dsn = config::get("PG_DSN").unwrap();
     let pg_config = tokio_postgres::Config::from_str(&dsn)
         .map_err(Error::from)
         .unwrap();

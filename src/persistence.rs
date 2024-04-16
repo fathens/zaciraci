@@ -8,8 +8,7 @@ pub struct Persistence {
 
 impl Persistence {
     pub async fn new() -> Result<Self> {
-        let persistence = Persistence { pool: pool::get() };
-        Ok(persistence)
+        Ok(Persistence { pool: pool::get() })
     }
 
     async fn client(&self) -> Result<deadpool_postgres::Client> {
