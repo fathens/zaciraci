@@ -1,12 +1,14 @@
 #![deny(warnings)]
 
 mod cron;
-use tokio::spawn;
+mod error;
+mod logging;
 mod persistence;
 mod web;
+pub use error::Error;
 
 #[tokio::main]
 async fn main() {
-    spawn(cron::run());
+    tokio::spawn(cron::run());
     web::run().await;
 }

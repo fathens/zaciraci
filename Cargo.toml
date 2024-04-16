@@ -11,3 +11,6 @@ cron = "0.12.1"
 chrono = "0.4.37"
 tokio-postgres = "0.7.10"
 postgres-types = { version = "0.2.6", features = ["derive"] }
+slog = "2.7.0"
+slog-async = "2.8.0"
+slog-term = "2.9.1"

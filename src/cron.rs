@@ -1,5 +1,7 @@
+use crate::logging;
 use chrono::prelude::Utc;
 use cron::Schedule;
+use slog::*;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::spawn;
@@ -12,7 +14,7 @@ pub async fn run() {
         loop {
             let now = Utc::now();
             if now >= next_tick {
-                println!("CRON: {now:?}");
+                info!(logging::DEFAULT, "CRON"; "time" => %now);
                 next_tick = schedule.upcoming(Utc).next().unwrap();
             }
 
