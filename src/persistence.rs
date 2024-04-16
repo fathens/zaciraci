@@ -1,33 +1,25 @@
-use crate::{logging, Error};
-use slog::*;
-use tokio_postgres::NoTls;
+mod pool;
 
-type Result<T> = std::result::Result<T, Error>;
+use crate::{Error, Result};
 
 pub struct Persistence {
-    db: tokio_postgres::Client,
+    pool: deadpool_postgres::Pool,
 }
 
 impl Persistence {
     pub async fn new() -> Result<Self> {
-        let dsn = std::env::var("PG_DSN").or(Err(Error::missing_env_var("PG_DSN")))?;
-        let (client, connection) = tokio_postgres::connect(&dsn, NoTls)
-            .await
-            .map_err(Error::from)?;
-        let persistence = Persistence { db: client };
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                warn!(logging::DEFAULT, "connection error: {}", e);
-            }
-        });
-
+        let persistence = Persistence { pool: pool::get() };
         Ok(persistence)
+    }
+
+    async fn client(&self) -> Result<deadpool_postgres::Client> {
+        self.pool.get().await.map_err(Error::from)
     }
 
     pub async fn get_counter(&self) -> Result<u32> {
         let row = self
-            .db
+            .client()
+            .await?
             .query_one("SELECT value FROM counter", &[])
             .await
             .map_err(Error::from)?;
@@ -39,7 +31,8 @@ impl Persistence {
         let prev = self.get_counter().await?;
         let next = prev + 1;
         let value = next as i32;
-        self.db
+        self.client()
+            .await?
             .execute("UPDATE counter SET value = $1", &[&value])
             .await
             .map_err(Error::from)?;
