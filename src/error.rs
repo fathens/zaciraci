@@ -1,3 +1,4 @@
+use std::env::VarError;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug, PartialEq)]
@@ -5,10 +6,16 @@ pub struct Error {
     message: String,
 }
 
-impl Error {
-    pub fn missing_env_var(var: &str) -> Self {
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl From<VarError> for Error {
+    fn from(e: VarError) -> Error {
         Error {
-            message: format!("Missing environment variable: {var}"),
+            message: e.to_string(),
         }
     }
 }

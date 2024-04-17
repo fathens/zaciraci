@@ -1,6 +1,6 @@
 mod pool;
 
-use crate::{Error, Result};
+use crate::Result;
 
 pub struct Persistence {
     pool: deadpool_postgres::Pool,
@@ -12,7 +12,7 @@ impl Persistence {
     }
 
     async fn client(&self) -> Result<deadpool_postgres::Client> {
-        self.pool.get().await.map_err(Error::from)
+        Ok(self.pool.get().await?)
     }
 
     pub async fn get_counter(&self) -> Result<u32> {
