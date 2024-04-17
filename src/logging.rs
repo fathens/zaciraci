@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use slog::*;
+pub use slog::*;
 use slog_async;
 use slog_term;
 

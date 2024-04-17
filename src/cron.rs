@@ -1,6 +1,5 @@
-use crate::logging;
+use crate::logging::*;
 use chrono::Utc as TZ;
-use slog::*;
 
 const CRON: &str = "0 0 * * * *";
 
@@ -15,5 +14,5 @@ pub async fn run() {
 }
 
 async fn job() {
-    info!(logging::DEFAULT, "CRON");
+    info!(DEFAULT, "CRON");
 }
