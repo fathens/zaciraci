@@ -1,7 +1,5 @@
 use once_cell::sync::Lazy;
 pub use slog::*;
-use slog_async;
-use slog_term;
 
 pub static DEFAULT: Lazy<Logger> = Lazy::new(|| {
     let drain = slog_term::FullFormat::new(slog_term::TermDecorator::new().build())
