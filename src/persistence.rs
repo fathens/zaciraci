@@ -20,8 +20,7 @@ impl Persistence {
             .client()
             .await?
             .query_one("SELECT value FROM counter", &[])
-            .await
-            .map_err(Error::from)?;
+            .await?;
         let value: i32 = row.get("value");
         Ok(value.unsigned_abs())
     }
@@ -33,8 +32,7 @@ impl Persistence {
         self.client()
             .await?
             .execute("UPDATE counter SET value = $1", &[&value])
-            .await
-            .map_err(Error::from)?;
+            .await?;
         Ok(next)
     }
 }

@@ -1,7 +1,6 @@
-use crate::{config, Error};
+use crate::config;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use once_cell::sync::Lazy;
-use std::str::FromStr;
 use tokio_postgres::NoTls;
 
 static POOL: Lazy<Pool> = Lazy::new(|| {
@@ -10,9 +9,7 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
         .and_then(|s| s.parse().ok())
         .unwrap_or(16);
     let dsn = config::get("PG_DSN").unwrap();
-    let pg_config = tokio_postgres::Config::from_str(&dsn)
-        .map_err(Error::from)
-        .unwrap();
+    let pg_config = dsn.parse().unwrap();
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     };
