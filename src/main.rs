@@ -5,6 +5,7 @@ mod cron;
 mod errors;
 mod logging;
 mod persistence;
+mod ref_finance;
 mod web;
 
 pub use errors::Error;
