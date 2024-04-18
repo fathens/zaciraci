@@ -2,12 +2,12 @@
 
 mod config;
 mod cron;
-mod error;
+mod errors;
 mod logging;
 mod persistence;
 mod web;
 
-pub use error::Error;
+pub use errors::Error;
 type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
