@@ -1,4 +1,4 @@
-mod pool;
+mod connection_pool;
 
 use crate::Result;
 
@@ -8,7 +8,9 @@ pub struct Persistence {
 
 impl Persistence {
     pub async fn new() -> Result<Self> {
-        Ok(Persistence { pool: pool::get() })
+        Ok(Persistence {
+            pool: connection_pool::get(),
+        })
     }
 
     async fn client(&self) -> Result<deadpool_postgres::Client> {
