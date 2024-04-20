@@ -38,27 +38,40 @@ pub struct PoolInfo {
 pub async fn get_all() -> Result<Vec<PoolInfo>> {
     let methods_name = "get_pools".to_string();
 
-    let request = methods::query::RpcQueryRequest {
-        block_reference: BlockReference::Finality(Finality::Final),
-        request: QueryRequest::CallFunction {
-            account_id: CONTRACT_ADDRESS.clone(),
-            method_name: methods_name.to_string(),
-            args: FunctionArgs::from(
-                json!({
-                    "from_index": 0,
-                    "limit": 10,
-                })
-                .to_string()
-                .into_bytes(),
-            ),
-        },
-    };
+    let limit = 100;
+    let mut index = 0;
+    let mut pools = vec![];
 
-    let response = CLIENT.call(request).await?;
+    loop {
+        let request = methods::query::RpcQueryRequest {
+            block_reference: BlockReference::Finality(Finality::Final),
+            request: QueryRequest::CallFunction {
+                account_id: CONTRACT_ADDRESS.clone(),
+                method_name: methods_name.clone(),
+                args: FunctionArgs::from(
+                    json!({
+                        "from_index": index,
+                        "limit": limit,
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+            },
+        };
 
-    if let QueryResponseKind::CallResult(result) = response.kind {
-        println!("{:#?}", from_slice::<PoolInfo>(&result.result)?);
+        let response = CLIENT.call(request).await?;
+
+        if let QueryResponseKind::CallResult(result) = response.kind {
+            let pool_info: Vec<PoolInfo> = from_slice(&result.result)?;
+            pools.extend(pool_info);
+        }
+
+        if pools.len() < limit {
+            break;
+        }
+
+        index += limit;
     }
 
-    todo!("Implement me")
+    Ok(pools)
 }

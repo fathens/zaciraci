@@ -15,9 +15,11 @@ pub async fn run() {
     let app = Router::new()
         .route("/healthcheck", get(|| async { "OK" }))
         .route("/counter", get(get_counter))
-        .with_state(Arc::clone(&state))
+        .with_state(state.clone())
         .route("/counter/increase", get(inc_counter))
-        .with_state(Arc::clone(&state));
+        .with_state(state.clone())
+        .route("/pools/update", get(update_pools))
+        .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -25,10 +27,15 @@ pub async fn run() {
 
 async fn get_counter(State(state): State<Arc<AppState>>) -> String {
     let cur = state.pstnce.get_counter().await.unwrap();
-    format!("Counter: {}", cur)
+    format!("Counter: {cur}")
 }
 
 async fn inc_counter(State(state): State<Arc<AppState>>) -> String {
     let cur = state.pstnce.increment().await.unwrap();
-    format!("Counter: {}", cur)
+    format!("Counter: {cur}",)
+}
+
+async fn update_pools(State(_): State<Arc<AppState>>) -> String {
+    let pools = crate::ref_finance::pool::get_all().await.unwrap();
+    format!("Pools: {}", pools.len())
 }
