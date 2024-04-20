@@ -1,3 +1,4 @@
+use crate::logging::*;
 use crate::ref_finance::{Result, CLIENT, CONTRACT_ADDRESS};
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
@@ -43,6 +44,7 @@ pub async fn get_all() -> Result<Vec<PoolInfo>> {
     let mut pools = vec![];
 
     loop {
+        info!(DEFAULT,"Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
         let request = methods::query::RpcQueryRequest {
             block_reference: BlockReference::Finality(Finality::Final),
             request: QueryRequest::CallFunction {
@@ -62,12 +64,13 @@ pub async fn get_all() -> Result<Vec<PoolInfo>> {
         let response = CLIENT.call(request).await?;
 
         if let QueryResponseKind::CallResult(result) = response.kind {
-            let pool_info: Vec<PoolInfo> = from_slice(&result.result)?;
-            pools.extend(pool_info);
-        }
-
-        if pools.len() < limit {
-            break;
+            let list: Vec<PoolInfo> = from_slice(&result.result)?;
+            let count = list.len();
+            debug!(DEFAULT, "Got pools"; "count" => count);
+            pools.extend(list);
+            if count < limit {
+                break;
+            }
         }
 
         index += limit;
