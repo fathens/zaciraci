@@ -1,5 +1,5 @@
-use crate::ref_finance::{Result, CONTRACT_ADDRESS};
-use near_jsonrpc_client::{methods, JsonRpcClient};
+use crate::ref_finance::{Result, CLIENT, CONTRACT_ADDRESS};
+use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::types::{BlockReference, Finality, FunctionArgs};
 use near_primitives::views::QueryRequest;
@@ -36,8 +36,6 @@ pub struct PoolInfo {
 }
 
 pub async fn get_all() -> Result<Vec<PoolInfo>> {
-    let client = JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL);
-
     let methods_name = "get_pools".to_string();
 
     let request = methods::query::RpcQueryRequest {
@@ -56,7 +54,7 @@ pub async fn get_all() -> Result<Vec<PoolInfo>> {
         },
     };
 
-    let response = client.call(request).await?;
+    let response = CLIENT.call(request).await?;
 
     if let QueryResponseKind::CallResult(result) = response.kind {
         println!("{:#?}", from_slice::<PoolInfo>(&result.result)?);
