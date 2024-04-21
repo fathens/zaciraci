@@ -9,23 +9,6 @@ use near_sdk::AccountId;
 use serde::Deserialize;
 use serde_json::{from_slice, json};
 
-/**
-  sample json:
-  {
-    "amounts": [
-      "48737022992767037175615",
-      "5494257256410498315169867023"
-    ],
-    "amp": 0,
-    "pool_kind": "SIMPLE_POOL",
-    "shares_total_supply": "1183889335924371026832035708",
-    "token_account_ids": [
-      "token.skyward.near",
-      "wrap.near"
-    ],
-    "total_fee": 30
-  }
-*/
 #[derive(Debug, Deserialize)]
 pub struct PoolInfo {
     pub pool_kind: String,
@@ -77,4 +60,94 @@ pub async fn get_all() -> Result<Vec<PoolInfo>> {
     }
 
     Ok(pools)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_pool_info_deserialization() {
+        let json = r#"{
+            "amounts": [
+                "48737022992767037175615",
+                "5494257256410498315169867023"
+            ],
+            "amp": 0,
+            "pool_kind": "SIMPLE_POOL",
+            "shares_total_supply": "1183889335924371026832035708",
+            "token_account_ids": [
+                "token.skyward.near",
+                "wrap.near"
+            ],
+            "total_fee": 30
+        }"#;
+
+        let pool_info: PoolInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(pool_info.pool_kind, "SIMPLE_POOL");
+        assert_eq!(
+            pool_info.token_account_ids,
+            vec!["token.skyward.near".to_string(), "wrap.near".to_string()]
+        );
+        assert_eq!(
+            pool_info.amounts,
+            vec![
+                U128(48737022992767037175615),
+                U128(5494257256410498315169867023)
+            ]
+        );
+        assert_eq!(pool_info.total_fee, 30);
+        assert_eq!(
+            pool_info.shares_total_supply,
+            U128(1183889335924371026832035708)
+        );
+        assert_eq!(pool_info.amp, 0);
+    }
+
+    #[test]
+    fn test_pool_info_from_slice2() {
+        let json = r#"[
+          {
+            "amounts": [
+              "1298766831791624395",
+              "662168456946503877590641866"
+            ],
+            "amp": 0,
+            "pool_kind": "SIMPLE_POOL",
+            "shares_total_supply": "33778523823194707550511225",
+            "token_account_ids": [
+              "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.factory.bridge.near",
+              "wrap.near"
+            ],
+            "total_fee": 30
+          },
+          {
+            "amounts": [
+              "72878408222217023703924",
+              "10387355075955565205240325202"
+            ],
+            "amp": 0,
+            "pool_kind": "SIMPLE_POOL",
+            "shares_total_supply": "335641087635970260772416710",
+            "token_account_ids": [
+              "6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near",
+              "wrap.near"
+            ],
+            "total_fee": 30
+          }
+        ]"#;
+
+        let pools: Vec<PoolInfo> = from_slice(json.as_bytes()).unwrap();
+        assert_eq!(pools.len(), 2);
+        assert_eq!(pools[0].pool_kind, "SIMPLE_POOL");
+        assert_eq!(
+            pools[0].shares_total_supply,
+            U128(33778523823194707550511225)
+        );
+        assert_eq!(pools[1].pool_kind, "SIMPLE_POOL");
+        assert_eq!(
+            pools[1].shares_total_supply,
+            U128(335641087635970260772416710)
+        );
+    }
 }
