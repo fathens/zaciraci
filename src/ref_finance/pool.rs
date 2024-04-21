@@ -1,5 +1,7 @@
 use crate::logging::*;
-use crate::ref_finance::{Result, CLIENT, CONTRACT_ADDRESS};
+use crate::persistence::tables;
+use crate::ref_finance::{CLIENT, CONTRACT_ADDRESS};
+use crate::Result;
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::types::{BlockReference, Finality, FunctionArgs};
@@ -19,7 +21,77 @@ pub struct PoolInfo {
     pub amp: u64,
 }
 
-pub async fn get_all() -> Result<Vec<PoolInfo>> {
+impl From<tables::pool_info::PoolInfo> for PoolInfo {
+    fn from(row: tables::pool_info::PoolInfo) -> Self {
+        let token_ids: Option<Vec<_>> = [row.token_a.parse().ok(), row.token_b.parse().ok()]
+            .iter()
+            .cloned()
+            .collect();
+        PoolInfo {
+            pool_kind: row.kind.clone(),
+            token_account_ids: token_ids.unwrap_or_default(),
+            amounts: vec![row.amount_a, row.amount_b],
+            total_fee: row.total_fee,
+            shares_total_supply: row.shares_total_supply,
+            amp: row.amp,
+        }
+    }
+}
+
+impl From<PoolInfo> for tables::pool_info::PoolInfo {
+    fn from(pool: PoolInfo) -> tables::pool_info::PoolInfo {
+        let token_a = pool
+            .token_account_ids
+            .first()
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let token_b = pool
+            .token_account_ids
+            .get(1)
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let amount_a = pool.amounts.first().copied().unwrap_or_default();
+        let amount_b = pool.amounts.get(1).copied().unwrap_or_default();
+        tables::pool_info::PoolInfo {
+            index: 0,
+            kind: pool.pool_kind,
+            token_a,
+            token_b,
+            amount_a,
+            amount_b,
+            total_fee: pool.total_fee,
+            shares_total_supply: pool.shares_total_supply,
+            amp: pool.amp,
+            updated_at: chrono::Utc::now(),
+        }
+    }
+}
+
+pub struct PoolInfoList(pub Vec<PoolInfo>);
+
+impl From<tables::pool_info::PoolInfoList> for PoolInfoList {
+    fn from(list: tables::pool_info::PoolInfoList) -> Self {
+        PoolInfoList(list.0.into_iter().map(PoolInfo::from).collect())
+    }
+}
+
+impl From<PoolInfoList> for tables::pool_info::PoolInfoList {
+    fn from(list: PoolInfoList) -> tables::pool_info::PoolInfoList {
+        tables::pool_info::PoolInfoList(
+            list.0
+                .into_iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let mut row: tables::pool_info::PoolInfo = v.into();
+                    row.index = i as i32;
+                    row
+                })
+                .collect(),
+        )
+    }
+}
+
+pub async fn get_all_from_node() -> Result<PoolInfoList> {
     let methods_name = "get_pools".to_string();
 
     let limit = 100;
@@ -59,7 +131,13 @@ pub async fn get_all() -> Result<Vec<PoolInfo>> {
         index += limit;
     }
 
-    Ok(pools)
+    Ok(PoolInfoList(pools))
+}
+
+pub async fn update_all(pools: PoolInfoList) -> Result<()> {
+    tables::pool_info::delete_all().await?;
+    tables::pool_info::insert_all(pools.into()).await?;
+    Ok(())
 }
 
 #[cfg(test)]

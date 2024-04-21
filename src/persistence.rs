@@ -1,4 +1,5 @@
 mod connection_pool;
+pub mod tables;
 
 use crate::Result;
 

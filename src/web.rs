@@ -36,6 +36,6 @@ async fn inc_counter(State(state): State<Arc<AppState>>) -> String {
 }
 
 async fn update_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = crate::ref_finance::pool::get_all().await.unwrap();
-    format!("Pools: {}", pools.len())
+    let pools = crate::ref_finance::pool::get_all_from_node().await.unwrap();
+    format!("Pools: {}", pools.0.len())
 }

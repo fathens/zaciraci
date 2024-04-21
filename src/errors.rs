@@ -1,3 +1,5 @@
+use near_jsonrpc_client::errors::JsonRpcError;
+use near_jsonrpc_primitives::errors::RpcError;
 use std::env::VarError;
 use std::fmt::{Debug, Display};
 
@@ -30,6 +32,30 @@ impl From<tokio_postgres::Error> for Error {
 
 impl<E: Display> From<deadpool::managed::PoolError<E>> for Error {
     fn from(e: deadpool::managed::PoolError<E>) -> Error {
+        Error {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<RpcError> for Error {
+    fn from(e: RpcError) -> Error {
+        Error {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl<E: Display> From<JsonRpcError<E>> for Error {
+    fn from(e: JsonRpcError<E>) -> Error {
+        Error {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(e: serde_json::Error) -> Error {
         Error {
             message: e.to_string(),
         }
