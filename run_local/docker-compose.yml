@@ -15,4 +15,4 @@ services:
     ports:
       - 8080:8080
     environment:
-      - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
