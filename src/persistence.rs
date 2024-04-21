@@ -21,20 +21,32 @@ impl Persistence {
         let row = self
             .client()
             .await?
-            .query_one("SELECT value FROM counter", &[])
+            .query_opt("SELECT value FROM counter", &[])
             .await?;
-        let value: i32 = row.get("value");
+        let value: i32 = row.map(|row| row.get("value")).unwrap_or(0);
         Ok(value.unsigned_abs())
     }
 
     pub async fn increment(&self) -> Result<u32> {
-        let prev = self.get_counter().await?;
-        let next = prev + 1;
-        let value = next as i32;
-        self.client()
+        let row = self
+            .client()
             .await?
-            .execute("UPDATE counter SET value = $1", &[&value])
+            .query_opt("SELECT value FROM counter", &[])
             .await?;
+        let prev: Option<i32> = row.map(|row| row.get("value"));
+        let next = prev.unwrap_or(0).unsigned_abs() + 1;
+        let value = next as i32;
+        if prev.is_some() {
+            self.client()
+                .await?
+                .execute("UPDATE counter SET value = $1", &[&value])
+                .await?;
+        } else {
+            self.client()
+                .await?
+                .execute("INSERT INTO counter (value) VALUES ($1)", &[&value])
+                .await?;
+        }
         Ok(next)
     }
 }
