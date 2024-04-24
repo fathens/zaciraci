@@ -13,9 +13,12 @@ tokio-postgres = "0.7.10"
 postgres-types = { version = "0.2.6", features = ["derive", "with-chrono-0_4"] }
 deadpool = "0.11.2"
 deadpool-postgres = "0.13.0"
-slog = "2.7.0"
+slog = { version = "2.7.0", features = ["max_level_trace", "release_max_level_info"]  }
 slog-async = "2.8.0"
 slog-term = "2.9.1"
+slog-json = "2.6.1"
+slog-envlogger = "2.2.0"
+slog-scope = "4.4.0"
 near-sdk = "5.1.0"
 near-jsonrpc-client = "0.8.0"
 near-jsonrpc-primitives = "=0.20.1"

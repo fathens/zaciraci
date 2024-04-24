@@ -99,7 +99,7 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
     let mut pools = vec![];
 
     loop {
-        info!(DEFAULT,"Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
+        debug!("Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
         let request = methods::query::RpcQueryRequest {
             block_reference: BlockReference::Finality(Finality::Final),
             request: QueryRequest::CallFunction {
@@ -121,7 +121,7 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
         if let QueryResponseKind::CallResult(result) = response.kind {
             let list: Vec<PoolInfo> = from_slice(&result.result)?;
             let count = list.len();
-            debug!(DEFAULT, "Got pools"; "count" => count);
+            debug!("Got pools"; "count" => count);
             pools.extend(list);
             if count < limit {
                 break;

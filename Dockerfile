@@ -1,4 +1,5 @@
 FROM rust:1.77.2-bookworm as builder
+ARG CARGO_BUILD_ARGS
 
 RUN apt update && apt install -y clang
 
@@ -7,12 +8,12 @@ WORKDIR /app
 COPY Cargo.toml .
 COPY Cargo.lock .
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release
+RUN cargo build ${CARGO_BUILD_ARGS}
 
 COPY src src
 RUN touch src/main.rs
-RUN cargo build --release
-RUN strip target/release/zaciraci -o main
+RUN cargo build ${CARGO_BUILD_ARGS}
+RUN strip target/*/zaciraci -o main
 
 FROM debian:bookworm-slim
 WORKDIR /app

@@ -11,8 +11,14 @@ services:
       - ./init_pg:/docker-entrypoint-initdb.d
 
   zaciraci:
-    image: zaciraci:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - CARGO_BUILD_ARGS=${CARGO_BUILD_ARGS:-}
     ports:
       - 8080:8080
     environment:
       - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
+      - RUST_LOG=${RUST_LOG:-trace}
+      - LOG_FORMAT=${LOG_FORMAT:-plain}
