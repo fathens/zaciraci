@@ -1,4 +1,5 @@
 use crate::config;
+use crate::Result;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use once_cell::sync::Lazy;
 use tokio_postgres::NoTls;
@@ -19,4 +20,8 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
 
 pub fn get() -> Pool {
     POOL.clone()
+}
+
+pub async fn get_client() -> Result<deadpool_postgres::Client> {
+    Ok(get().get().await?)
 }

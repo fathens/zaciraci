@@ -1,4 +1,5 @@
 use crate::persistence::Persistence;
+use crate::ref_finance::pool;
 use axum::extract::State;
 use axum::routing::get;
 use axum::Router;
@@ -36,6 +37,8 @@ async fn inc_counter(State(state): State<Arc<AppState>>) -> String {
 }
 
 async fn update_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = crate::ref_finance::pool::get_all_from_node().await.unwrap();
-    format!("Pools: {}", pools.0.len())
+    let pools = pool::get_all_from_node().await.unwrap();
+    let count = pools.0.len();
+    pool::update_all(pools).await.unwrap();
+    format!("Pools: {}", count)
 }

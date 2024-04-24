@@ -1,32 +1,40 @@
+use crate::persistence::connection_pool;
 use crate::Result;
-use chrono::{DateTime, Utc};
-use near_sdk::json_types::U128;
+use postgres_types::ToSql;
 
-#[derive(Debug, Clone)]
-pub struct PoolInfo {
-    pub index: i32,
-    pub kind: String,
-    pub token_a: String,
-    pub token_b: String,
-    pub amount_a: U128,
-    pub amount_b: U128,
-    pub total_fee: u32,
-    pub shares_total_supply: U128,
-    pub amp: u64,
-    pub updated_at: DateTime<Utc>,
-}
+type Column = (dyn ToSql + Sync);
 
-#[derive(Debug, Clone)]
-pub struct PoolInfoList(pub Vec<PoolInfo>);
+pub async fn update_all(list: Vec<(u16, serde_json::Value)>) -> Result<()> {
+    let mut client = connection_pool::get_client().await?;
+    let transaction = client.transaction().await?;
 
-pub async fn get_all() -> Result<PoolInfoList> {
-    todo!("get_all")
-}
+    let deleted = transaction.execute("DELETE FROM pool_info", &[]).await?;
+    debug!("Deleted from pool_info"; "count" => deleted);
 
-pub async fn delete_all() -> Result<()> {
-    todo!("delete_all")
-}
+    const BATCH_SIZE: usize = 1;
+    for chunk in list.chunks(BATCH_SIZE) {
+        let count = chunk.len();
+        let query = format!(
+            "INSERT INTO pool_info (pool_id, body) VALUES {}",
+            (0..count).map(|_| "(?, ?)").collect::<Vec<_>>().join(", ")
+        );
+        let all_columns: Vec<(i32, String)> = chunk
+            .iter()
+            .map(|(index, jv)| (*index as i32, jv.to_string()))
+            .collect();
+        trace!( "Inserting into pool_info";
+            "count" => count,
+            "query" => &query,
+            "values" => format!("{:?}", all_columns)
+        );
+        let mut values: Vec<&Column> = vec![];
+        for (index, body) in all_columns.iter() {
+            values.push(index);
+            values.push(body);
+        }
+        let inserted = transaction.execute(&query, &values).await?;
+        debug!("Inserted into pool_info"; "count" => inserted);
+    }
 
-pub async fn insert_all(_: PoolInfoList) -> Result<()> {
-    todo!("insert")
+    Ok(())
 }
