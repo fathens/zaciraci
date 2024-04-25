@@ -7,6 +7,7 @@ type Column = (dyn ToSql + Sync);
 
 pub async fn update_all(list: Vec<(u16, serde_json::Value)>) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "update_all"));
+    info!(log, "start");
 
     let mut client = connection_pool::get_client().await?;
     let transaction = client.transaction().await?;
@@ -39,5 +40,6 @@ pub async fn update_all(list: Vec<(u16, serde_json::Value)>) -> Result<()> {
         debug!(log, "Inserted into pool_info"; "count" => inserted);
     }
 
-    Ok(())
+    info!(log, "finish"; "count" => list.len());
+    Ok(transaction.commit().await?)
 }

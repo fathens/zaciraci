@@ -25,6 +25,7 @@ pub struct PoolInfoList(pub Vec<PoolInfo>);
 
 pub async fn get_all_from_node() -> Result<PoolInfoList> {
     let log = DEFAULT.new(o!("function" => "get_all_from_node"));
+    info!(log, "start");
 
     let methods_name = "get_pools".to_string();
 
@@ -33,7 +34,7 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
     let mut pools = vec![];
 
     loop {
-        debug!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
+        trace!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
         let request = methods::query::RpcQueryRequest {
             block_reference: BlockReference::Finality(Finality::Final),
             request: QueryRequest::CallFunction {
@@ -55,7 +56,7 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
         if let QueryResponseKind::CallResult(result) = response.kind {
             let list: Vec<PoolInfo> = from_slice(&result.result)?;
             let count = list.len();
-            debug!(log, "Got pools"; "count" => count);
+            trace!(log, "Got pools"; "count" => count);
             pools.extend(list);
             if count < limit {
                 break;
@@ -65,6 +66,7 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
         index += limit;
     }
 
+    info!(log, "finish"; "count" => pools.len());
     Ok(PoolInfoList(pools))
 }
 
