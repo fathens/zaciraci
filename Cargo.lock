@@ -3979,7 +3979,6 @@ dependencies = [
  "slog-async",
  "slog-envlogger",
  "slog-json",
- "slog-scope",
  "slog-term",
  "tokio",
  "tokio-postgres",

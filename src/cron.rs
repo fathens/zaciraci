@@ -1,3 +1,4 @@
+use crate::logging::*;
 use chrono::Utc as TZ;
 
 const CRON: &str = "0 0 * * * *";
@@ -13,5 +14,7 @@ pub async fn run() {
 }
 
 async fn job() {
-    info!("CRON");
+    let log = DEFAULT.new(o!("function" => "job"));
+
+    info!(log, "CRON");
 }

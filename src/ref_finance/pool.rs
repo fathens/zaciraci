@@ -1,3 +1,4 @@
+use crate::logging::*;
 use crate::persistence::tables;
 use crate::ref_finance::{CLIENT, CONTRACT_ADDRESS};
 use crate::Result;
@@ -23,6 +24,8 @@ pub struct PoolInfo {
 pub struct PoolInfoList(pub Vec<PoolInfo>);
 
 pub async fn get_all_from_node() -> Result<PoolInfoList> {
+    let log = DEFAULT.new(o!("function" => "get_all_from_node"));
+
     let methods_name = "get_pools".to_string();
 
     let limit = 100;
@@ -30,7 +33,7 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
     let mut pools = vec![];
 
     loop {
-        debug!("Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
+        debug!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
         let request = methods::query::RpcQueryRequest {
             block_reference: BlockReference::Finality(Finality::Final),
             request: QueryRequest::CallFunction {
@@ -52,7 +55,7 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
         if let QueryResponseKind::CallResult(result) = response.kind {
             let list: Vec<PoolInfo> = from_slice(&result.result)?;
             let count = list.len();
-            debug!("Got pools"; "count" => count);
+            debug!(log, "Got pools"; "count" => count);
             pools.extend(list);
             if count < limit {
                 break;

@@ -1,3 +1,4 @@
+use crate::logging::*;
 use crate::persistence::connection_pool;
 use crate::Result;
 use postgres_types::ToSql;
@@ -5,11 +6,13 @@ use postgres_types::ToSql;
 type Column = (dyn ToSql + Sync);
 
 pub async fn update_all(list: Vec<(u16, serde_json::Value)>) -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "update_all"));
+
     let mut client = connection_pool::get_client().await?;
     let transaction = client.transaction().await?;
 
     let deleted = transaction.execute("DELETE FROM pool_info", &[]).await?;
-    debug!("Deleted from pool_info"; "count" => deleted);
+    debug!(log, "Deleted from pool_info"; "count" => deleted);
 
     const BATCH_SIZE: usize = 1;
     for chunk in list.chunks(BATCH_SIZE) {
@@ -22,7 +25,7 @@ pub async fn update_all(list: Vec<(u16, serde_json::Value)>) -> Result<()> {
             .iter()
             .map(|(index, jv)| (*index as i32, jv.to_string()))
             .collect();
-        trace!( "Inserting into pool_info";
+        trace!(log, "Inserting into pool_info";
             "count" => count,
             "query" => &query,
             "values" => format!("{:?}", all_columns)
@@ -33,7 +36,7 @@ pub async fn update_all(list: Vec<(u16, serde_json::Value)>) -> Result<()> {
             values.push(body);
         }
         let inserted = transaction.execute(&query, &values).await?;
-        debug!("Inserted into pool_info"; "count" => inserted);
+        debug!(log, "Inserted into pool_info"; "count" => inserted);
     }
 
     Ok(())

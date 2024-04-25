@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use slog::*;
+pub use slog::*;
 
 fn wrap<D: Drain<Err = Never, Ok = ()> + Send + 'static>(drain: D) -> Fuse<slog_async::Async> {
     slog_async::Async::default(slog_envlogger::new(drain)).fuse()
