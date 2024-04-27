@@ -22,16 +22,24 @@ impl From<VarError> for Error {
     }
 }
 
-impl From<tokio_postgres::Error> for Error {
-    fn from(e: tokio_postgres::Error) -> Error {
+impl From<deadpool::managed::PoolError<deadpool_diesel::Error>> for Error {
+    fn from(e: deadpool::managed::PoolError<deadpool_diesel::Error>) -> Error {
         Error {
             message: e.to_string(),
         }
     }
 }
 
-impl<E: Display> From<deadpool::managed::PoolError<E>> for Error {
-    fn from(e: deadpool::managed::PoolError<E>) -> Error {
+impl From<diesel::result::Error> for Error {
+    fn from(e: diesel::result::Error) -> Error {
+        Error {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<deadpool_diesel::InteractError> for Error {
+    fn from(e: deadpool_diesel::InteractError) -> Error {
         Error {
             message: e.to_string(),
         }

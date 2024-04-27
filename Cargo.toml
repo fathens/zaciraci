@@ -9,10 +9,9 @@ axum = "0.7.5"
 once_cell = "1.19.0"
 cron = "0.12.1"
 chrono = "0.4.37"
-tokio-postgres = "0.7.10"
-postgres-types = { version = "0.2.6", features = ["derive", "with-chrono-0_4"] }
-deadpool = "0.11.2"
-deadpool-postgres = "0.13.0"
+diesel = { version = "2.1.6", features = ["postgres"] }
+deadpool = { version = "0.11.2", features = ["rt_tokio_1"] }
+deadpool-diesel = { version = "0.6.0", features = ["postgres"] }
 slog = { version = "2.7.0", features = ["max_level_trace", "release_max_level_info"]  }
 slog-async = "2.8.0"
 slog-term = "2.9.1"
