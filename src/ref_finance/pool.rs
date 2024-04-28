@@ -1,7 +1,8 @@
 use crate::logging::*;
-use crate::persistence::tables;
+use crate::persistence;
 use crate::ref_finance::{CLIENT, CONTRACT_ADDRESS};
 use crate::Result;
+use bigdecimal::BigDecimal;
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::types::{BlockReference, Finality, FunctionArgs};
@@ -21,7 +22,40 @@ pub struct PoolInfo {
     pub amp: u64,
 }
 
-pub struct PoolInfoList(pub Vec<PoolInfo>);
+pub struct PoolInfoList(Vec<PoolInfo>);
+
+impl PoolInfoList {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn to_columns(&self) -> Vec<persistence::PoolInfo> {
+        fn from_u128(value: U128) -> BigDecimal {
+            let v: u128 = value.into();
+            BigDecimal::from(v)
+        }
+        self.0
+            .iter()
+            .enumerate()
+            .map(|(i, pool)| persistence::PoolInfo {
+                id: i as i32,
+                pool_kind: pool.pool_kind.clone(),
+                token_account_id_a: pool.token_account_ids[0].clone().into(),
+                token_account_id_b: pool.token_account_ids[1].clone().into(),
+                amount_a: from_u128(pool.amounts[0]),
+                amount_b: from_u128(pool.amounts[1]),
+                total_fee: pool.total_fee as i64,
+                shares_total_supply: from_u128(pool.shares_total_supply),
+                amp: BigDecimal::from(pool.amp),
+                updated_at: chrono::Utc::now().naive_utc(),
+            })
+            .collect()
+    }
+
+    pub async fn update_all(&self) -> Result<()> {
+        persistence::update_all(self.to_columns()).await
+    }
+}
 
 pub async fn get_all_from_node() -> Result<PoolInfoList> {
     let log = DEFAULT.new(o!("function" => "get_all_from_node"));
@@ -68,17 +102,6 @@ pub async fn get_all_from_node() -> Result<PoolInfoList> {
 
     info!(log, "finish"; "count" => pools.len());
     Ok(PoolInfoList(pools))
-}
-
-pub async fn update_all(pools: PoolInfoList) -> Result<()> {
-    let columns = pools
-        .0
-        .into_iter()
-        .enumerate()
-        .map(|(index, pool)| (index as u16, serde_json::to_value(pool).unwrap()))
-        .collect();
-    tables::pool_info::update_all(columns).await?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -2,6 +2,8 @@ mod connection_pool;
 mod schema;
 pub mod tables;
 
+pub use tables::pool_info::*;
+
 use crate::logging::*;
 use crate::Result;
 use diesel::prelude::*;

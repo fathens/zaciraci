@@ -38,7 +38,7 @@ async fn inc_counter(State(state): State<Arc<AppState>>) -> String {
 
 async fn update_pools(State(_): State<Arc<AppState>>) -> String {
     let pools = pool::get_all_from_node().await.unwrap();
-    let count = pools.0.len();
-    pool::update_all(pools).await.unwrap();
+    let count = pools.len();
+    pools.update_all().await.unwrap();
     format!("Pools: {}", count)
 }
