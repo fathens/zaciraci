@@ -8,7 +8,8 @@ diesel::table! {
 }
 
 diesel::table! {
-    pool_info (pool_kind, token_account_id_a, token_account_id_b) {
+    pool_info (id) {
+        id -> Int4,
         pool_kind -> Varchar,
         #[max_length = 64]
         token_account_id_a -> Varchar,

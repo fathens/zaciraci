@@ -15,11 +15,7 @@ pub struct Counter {
 async fn get_counter_opt() -> crate::Result<Option<i32>> {
     let row = connection_pool::get()
         .await?
-        .interact(|conn| {
-            counter
-                .select(tables::counter::Counter::as_select())
-                .first(conn)
-        })
+        .interact(|conn| counter.select(Counter::as_select()).first(conn))
         .await?;
     Ok(row.ok().map(|row| row.value))
 }

@@ -9,6 +9,7 @@ use diesel::prelude::*;
 #[diesel(table_name = crate::persistence::schema::pool_info)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct PoolInfo {
+    pub id: i32,
     pub pool_kind: String,
     pub token_account_id_a: String,
     pub token_account_id_b: String,
@@ -20,6 +21,16 @@ pub struct PoolInfo {
     pub updated_at: chrono::NaiveDateTime,
 }
 
+impl PoolInfo {
+    pub fn key(&self) -> (String, String, String) {
+        (
+            self.pool_kind.clone(),
+            self.token_account_id_a.clone(),
+            self.token_account_id_b.clone(),
+        )
+    }
+}
+
 pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "update_all"));
     let result = connection_pool::get()
@@ -29,7 +40,7 @@ pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
                 records.iter().try_for_each(|record| {
                     let n = diesel::insert_into(pool_info)
                         .values(record)
-                        .on_conflict((pool_kind, token_account_id_a, token_account_id_b))
+                        .on_conflict(id)
                         .do_update()
                         .set((
                             pool_kind.eq(&record.pool_kind),

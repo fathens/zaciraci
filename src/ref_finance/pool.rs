@@ -1,5 +1,5 @@
 use crate::logging::*;
-use crate::persistence;
+use crate::persistence::tables;
 use crate::ref_finance::{CLIENT, CONTRACT_ADDRESS};
 use crate::Result;
 use bigdecimal::BigDecimal;
@@ -29,14 +29,16 @@ impl PoolInfoList {
         self.0.len()
     }
 
-    fn to_columns(&self) -> Vec<persistence::pool_info::PoolInfo> {
+    fn to_records(&self) -> Vec<tables::pool_info::PoolInfo> {
         fn from_u128(value: U128) -> BigDecimal {
             let v: u128 = value.into();
             BigDecimal::from(v)
         }
         self.0
             .iter()
-            .map(|pool| persistence::pool_info::PoolInfo {
+            .enumerate()
+            .map(|(id, pool)| tables::pool_info::PoolInfo {
+                id: id as i32,
                 pool_kind: pool.pool_kind.clone(),
                 token_account_id_a: pool.token_account_ids[0].clone().into(),
                 token_account_id_b: pool.token_account_ids[1].clone().into(),
@@ -51,7 +53,7 @@ impl PoolInfoList {
     }
 
     pub async fn update_all(&self) -> Result<()> {
-        persistence::pool_info::update_all(self.to_columns()).await
+        tables::pool_info::update_all(self.to_records()).await
     }
 }
 

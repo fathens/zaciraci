@@ -1,4 +1,4 @@
-use crate::persistence;
+use crate::persistence::tables;
 use crate::ref_finance::pool;
 use axum::extract::State;
 use axum::routing::get;
@@ -23,12 +23,12 @@ pub async fn run() {
 }
 
 async fn get_counter(State(_): State<Arc<AppState>>) -> String {
-    let cur = persistence::counter::get().await.unwrap();
+    let cur = tables::counter::get().await.unwrap();
     format!("Counter: {cur}")
 }
 
 async fn inc_counter(State(_): State<Arc<AppState>>) -> String {
-    let cur = persistence::counter::increment().await.unwrap();
+    let cur = tables::counter::increment().await.unwrap();
     format!("Counter: {cur}",)
 }
 
