@@ -1,3 +1,4 @@
+pub mod errors;
 pub mod pool;
 
 use near_jsonrpc_client::JsonRpcClient;

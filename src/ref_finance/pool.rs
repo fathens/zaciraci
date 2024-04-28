@@ -1,6 +1,9 @@
 use crate::logging::*;
 use crate::persistence::tables;
-use crate::ref_finance::{CLIENT, CONTRACT_ADDRESS};
+use crate::ref_finance::{
+    errors::Error::{AmountsNotTwo, TokenIdsNotTwo},
+    CLIENT, CONTRACT_ADDRESS,
+};
 use crate::Result;
 use bigdecimal::BigDecimal;
 use near_jsonrpc_client::methods;
@@ -22,10 +25,30 @@ pub struct PoolInfo {
     pub amp: u64,
 }
 
+impl PoolInfo {
+    fn get_first_two<T: Clone>(v: &[T]) -> Option<(T, T)> {
+        let a = v.first();
+        let b = v.get(1);
+        match (a, b) {
+            (Some(a), Some(b)) => Some((a.clone(), b.clone())),
+            _ => None,
+        }
+    }
+
+    fn token_account_ids(&self) -> Result<(AccountId, AccountId)> {
+        Self::get_first_two(&self.token_account_ids)
+            .ok_or_else(|| TokenIdsNotTwo(self.token_account_ids.len()).into())
+    }
+
+    fn amounts(&self) -> Result<(U128, U128)> {
+        Self::get_first_two(&self.amounts).ok_or_else(|| AmountsNotTwo(self.amounts.len()).into())
+    }
+}
+
 pub struct PoolInfoList(Vec<PoolInfo>);
 
 impl PoolInfoList {
-    fn to_records(&self) -> Vec<tables::pool_info::PoolInfo> {
+    fn to_records(&self) -> Result<Vec<tables::pool_info::PoolInfo>> {
         fn from_u128(value: U128) -> BigDecimal {
             let v: u128 = value.into();
             BigDecimal::from(v)
@@ -33,23 +56,28 @@ impl PoolInfoList {
         self.0
             .iter()
             .enumerate()
-            .map(|(id, pool)| tables::pool_info::PoolInfo {
-                id: id as i32,
-                pool_kind: pool.pool_kind.clone(),
-                token_account_id_a: pool.token_account_ids[0].clone().into(),
-                token_account_id_b: pool.token_account_ids[1].clone().into(),
-                amount_a: from_u128(pool.amounts[0]),
-                amount_b: from_u128(pool.amounts[1]),
-                total_fee: pool.total_fee as i64,
-                shares_total_supply: from_u128(pool.shares_total_supply),
-                amp: BigDecimal::from(pool.amp),
-                updated_at: chrono::Utc::now().naive_utc(),
+            .try_fold(vec![], |mut records, (id, pool)| {
+                let (token_a, token_b) = pool.token_account_ids()?;
+                let (amount_a, amount_b) = pool.amounts()?;
+                let record = tables::pool_info::PoolInfo {
+                    id: id as i32,
+                    pool_kind: pool.pool_kind.clone(),
+                    token_account_id_a: token_a.into(),
+                    token_account_id_b: token_b.into(),
+                    amount_a: from_u128(amount_a),
+                    amount_b: from_u128(amount_b),
+                    total_fee: pool.total_fee as i64,
+                    shares_total_supply: from_u128(pool.shares_total_supply),
+                    amp: BigDecimal::from(pool.amp),
+                    updated_at: chrono::Utc::now().naive_utc(),
+                };
+                records.push(record);
+                Ok(records)
             })
-            .collect()
     }
 
     pub async fn update_all(&self) -> Result<usize> {
-        tables::pool_info::update_all(self.to_records()).await
+        tables::pool_info::update_all(self.to_records()?).await
     }
 }
 

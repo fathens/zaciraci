@@ -14,6 +14,14 @@ impl Display for Error {
     }
 }
 
+impl From<crate::ref_finance::errors::Error> for Error {
+    fn from(e: crate::ref_finance::errors::Error) -> Error {
+        Error {
+            message: e.to_string(),
+        }
+    }
+}
+
 impl From<VarError> for Error {
     fn from(e: VarError) -> Error {
         Error {
