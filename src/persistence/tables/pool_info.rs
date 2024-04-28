@@ -32,13 +32,17 @@ impl PoolInfo {
 }
 
 pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "update_all"));
+    let log = DEFAULT.new(o!(
+        "function" => "update_all",
+        "count" => records.len(),
+    ));
+    trace!(log, "start");
     let result = connection_pool::get()
         .await?
         .interact(move |conn| {
             conn.transaction(|conn| {
                 records.iter().try_for_each(|record| {
-                    let n = diesel::insert_into(pool_info)
+                    diesel::insert_into(pool_info)
                         .values(record)
                         .on_conflict(id)
                         .do_update()
@@ -53,12 +57,12 @@ pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
                             amp.eq(&record.amp),
                             updated_at.eq(&record.updated_at),
                         ))
-                        .execute(conn)?;
-                    trace!(log, "updated"; "n" => n);
-                    diesel::result::QueryResult::Ok(())
+                        .execute(conn)
+                        .map(|_| ())
                 })
             })
         })
         .await?;
+    trace!(log, "finish");
     Ok(result?)
 }
