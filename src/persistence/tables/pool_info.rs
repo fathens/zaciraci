@@ -31,7 +31,7 @@ impl PoolInfo {
     }
 }
 
-pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
+pub async fn update_all(records: Vec<PoolInfo>) -> Result<usize> {
     let log = DEFAULT.new(o!(
         "function" => "update_all",
         "count" => records.len(),
@@ -41,7 +41,7 @@ pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
         .await?
         .interact(move |conn| {
             conn.transaction(|conn| {
-                records.iter().try_for_each(|record| {
+                records.iter().try_fold(0, |n, record| {
                     diesel::insert_into(pool_info)
                         .values(record)
                         .on_conflict(id)
@@ -58,7 +58,7 @@ pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
                             updated_at.eq(&record.updated_at),
                         ))
                         .execute(conn)
-                        .map(|_| ())
+                        .map(|m| n + m)
                 })
             })
         })

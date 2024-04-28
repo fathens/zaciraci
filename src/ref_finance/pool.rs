@@ -25,10 +25,6 @@ pub struct PoolInfo {
 pub struct PoolInfoList(Vec<PoolInfo>);
 
 impl PoolInfoList {
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
     fn to_records(&self) -> Vec<tables::pool_info::PoolInfo> {
         fn from_u128(value: U128) -> BigDecimal {
             let v: u128 = value.into();
@@ -52,7 +48,7 @@ impl PoolInfoList {
             .collect()
     }
 
-    pub async fn update_all(&self) -> Result<()> {
+    pub async fn update_all(&self) -> Result<usize> {
         tables::pool_info::update_all(self.to_records()).await
     }
 }
