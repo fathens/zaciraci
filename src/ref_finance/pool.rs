@@ -36,9 +36,7 @@ impl PoolInfoList {
         }
         self.0
             .iter()
-            .enumerate()
-            .map(|(i, pool)| persistence::PoolInfo {
-                id: i as i32,
+            .map(|pool| persistence::PoolInfo {
                 pool_kind: pool.pool_kind.clone(),
                 token_account_id_a: pool.token_account_ids[0].clone().into(),
                 token_account_id_b: pool.token_account_ids[1].clone().into(),

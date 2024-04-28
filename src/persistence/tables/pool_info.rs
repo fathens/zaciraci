@@ -9,7 +9,6 @@ use diesel::prelude::*;
 #[diesel(table_name = crate::persistence::schema::pool_info)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct PoolInfo {
-    pub id: i32,
     pub pool_kind: String,
     pub token_account_id_a: String,
     pub token_account_id_b: String,
@@ -21,29 +20,34 @@ pub struct PoolInfo {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-pub async fn update_all(columns: Vec<PoolInfo>) -> Result<()> {
+pub async fn update_all(records: Vec<PoolInfo>) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "update_all"));
-    connection_pool::get()
+    let result = connection_pool::get()
         .await?
         .interact(move |conn| {
-            columns.iter().try_for_each(|column| {
-                let n = diesel::update(pool_info.find(id))
-                    .set((
-                        pool_kind.eq(&column.pool_kind),
-                        token_account_id_a.eq(&column.token_account_id_a),
-                        token_account_id_b.eq(&column.token_account_id_b),
-                        amount_a.eq(&column.amount_a),
-                        amount_b.eq(&column.amount_b),
-                        total_fee.eq(&column.total_fee),
-                        shares_total_supply.eq(&column.shares_total_supply),
-                        amp.eq(&column.amp),
-                        updated_at.eq(&column.updated_at),
-                    ))
-                    .returning(PoolInfo::as_returning())
-                    .get_result(conn)?;
-                trace!(log, "updated"; "n" => n.id);
-                Ok(())
+            conn.transaction(|conn| {
+                records.iter().try_for_each(|record| {
+                    let n = diesel::insert_into(pool_info)
+                        .values(record)
+                        .on_conflict((pool_kind, token_account_id_a, token_account_id_b))
+                        .do_update()
+                        .set((
+                            pool_kind.eq(&record.pool_kind),
+                            token_account_id_a.eq(&record.token_account_id_a),
+                            token_account_id_b.eq(&record.token_account_id_b),
+                            amount_a.eq(&record.amount_a),
+                            amount_b.eq(&record.amount_b),
+                            total_fee.eq(&record.total_fee),
+                            shares_total_supply.eq(&record.shares_total_supply),
+                            amp.eq(&record.amp),
+                            updated_at.eq(&record.updated_at),
+                        ))
+                        .execute(conn)?;
+                    trace!(log, "updated"; "n" => n);
+                    diesel::result::QueryResult::Ok(())
+                })
             })
         })
-        .await?
+        .await?;
+    Ok(result?)
 }
