@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+cd "$(dirname $0)"
+
 set -e
 
 export CARGO_BUILD_ARGS="$@"
