@@ -18,7 +18,7 @@ RUN strip target/*/zaciraci -o main
 FROM debian:bookworm-slim
 WORKDIR /app
 
-RUN apt update && apt install -y openssl ca-certificates
+RUN apt update && apt install -y openssl ca-certificates libpq5
 
 RUN useradd -ms /bin/bash app
 RUN chown -R app /app
