@@ -29,14 +29,14 @@ impl PoolInfoList {
         self.0.len()
     }
 
-    fn to_columns(&self) -> Vec<persistence::PoolInfo> {
+    fn to_columns(&self) -> Vec<persistence::pool_info::PoolInfo> {
         fn from_u128(value: U128) -> BigDecimal {
             let v: u128 = value.into();
             BigDecimal::from(v)
         }
         self.0
             .iter()
-            .map(|pool| persistence::PoolInfo {
+            .map(|pool| persistence::pool_info::PoolInfo {
                 pool_kind: pool.pool_kind.clone(),
                 token_account_id_a: pool.token_account_ids[0].clone().into(),
                 token_account_id_b: pool.token_account_ids[1].clone().into(),
@@ -51,7 +51,7 @@ impl PoolInfoList {
     }
 
     pub async fn update_all(&self) -> Result<()> {
-        persistence::update_all(self.to_columns()).await
+        persistence::pool_info::update_all(self.to_columns()).await
     }
 }
 

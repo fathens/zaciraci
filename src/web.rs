@@ -1,18 +1,14 @@
-use crate::persistence::Persistence;
+use crate::persistence;
 use crate::ref_finance::pool;
 use axum::extract::State;
 use axum::routing::get;
 use axum::Router;
 use std::sync::Arc;
 
-struct AppState {
-    pstnce: Persistence,
-}
+struct AppState {}
 
 pub async fn run() {
-    let state = Arc::new(AppState {
-        pstnce: Persistence::new().await.unwrap(),
-    });
+    let state = Arc::new(AppState {});
     let app = Router::new()
         .route("/healthcheck", get(|| async { "OK" }))
         .route("/counter", get(get_counter))
@@ -26,13 +22,13 @@ pub async fn run() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_counter(State(state): State<Arc<AppState>>) -> String {
-    let cur = state.pstnce.get_counter().await.unwrap();
+async fn get_counter(State(_): State<Arc<AppState>>) -> String {
+    let cur = persistence::counter::get().await.unwrap();
     format!("Counter: {cur}")
 }
 
-async fn inc_counter(State(state): State<Arc<AppState>>) -> String {
-    let cur = state.pstnce.increment().await.unwrap();
+async fn inc_counter(State(_): State<Arc<AppState>>) -> String {
+    let cur = persistence::counter::increment().await.unwrap();
     format!("Counter: {cur}",)
 }
 
