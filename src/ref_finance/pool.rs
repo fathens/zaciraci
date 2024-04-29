@@ -2,7 +2,7 @@ use crate::logging::*;
 use crate::persistence::tables;
 use crate::ref_finance::{CLIENT, CONTRACT_ADDRESS};
 use crate::Result;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::types::{BlockReference, Finality, FunctionArgs};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct PoolInfo {
+pub struct PoolInfoBared {
     pub pool_kind: String,
     pub token_account_ids: Vec<AccountId>,
     pub amounts: Vec<U128>,
@@ -22,90 +22,134 @@ pub struct PoolInfo {
     pub amp: u64,
 }
 
-impl PoolInfo {
-    fn to_record(&self, id: i32) -> tables::pool_info::PoolInfo {
+pub struct PoolInfo {
+    pub id: u32,
+    pub bare: PoolInfoBared,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+pub struct PoolInfoList(pub Vec<PoolInfo>);
+
+impl From<PoolInfo> for tables::pool_info::PoolInfo {
+    fn from(src: PoolInfo) -> Self {
         fn from_u128(value: U128) -> BigDecimal {
             let v: u128 = value.into();
             BigDecimal::from(v)
         }
         tables::pool_info::PoolInfo {
-            id,
-            pool_kind: self.pool_kind.clone(),
-            token_account_ids: self
+            id: src.id as i32,
+            pool_kind: src.bare.pool_kind.clone(),
+            token_account_ids: src
+                .bare
                 .token_account_ids
-                .iter()
-                .map(|v| v.clone().into())
+                .into_iter()
+                .map(|v| v.into())
                 .collect(),
-            amounts: self.amounts.iter().map(|v| from_u128(*v)).collect(),
-            total_fee: self.total_fee as i64,
-            shares_total_supply: from_u128(self.shares_total_supply),
-            amp: BigDecimal::from(self.amp),
-            updated_at: chrono::Utc::now().naive_utc(),
+            amounts: src.bare.amounts.into_iter().map(from_u128).collect(),
+            total_fee: src.bare.total_fee as i64,
+            shares_total_supply: from_u128(src.bare.shares_total_supply),
+            amp: BigDecimal::from(src.bare.amp),
+            updated_at: src.updated_at,
         }
     }
 }
 
-pub struct PoolInfoList(Vec<PoolInfo>);
+impl From<tables::pool_info::PoolInfo> for PoolInfo {
+    fn from(src: tables::pool_info::PoolInfo) -> Self {
+        fn to_u128(value: BigDecimal) -> U128 {
+            let v: u128 = value.to_u128().unwrap();
+            v.into()
+        }
+        PoolInfo {
+            id: src.id as u32,
+            bare: PoolInfoBared {
+                pool_kind: src.pool_kind.clone(),
+                token_account_ids: src
+                    .token_account_ids
+                    .iter()
+                    .map(|v| v.parse().unwrap())
+                    .collect(),
+                amounts: src.amounts.into_iter().map(to_u128).collect(),
+                total_fee: src.total_fee as u32,
+                shares_total_supply: to_u128(src.shares_total_supply.clone()),
+                amp: src.amp.to_u64().unwrap(),
+            },
+            updated_at: src.updated_at,
+        }
+    }
+}
 
 impl PoolInfoList {
-    fn to_records(&self) -> Vec<tables::pool_info::PoolInfo> {
-        self.0
-            .iter()
-            .enumerate()
-            .map(|(id, pool)| pool.to_record(id as i32))
-            .collect()
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 
-    pub async fn update_all(&self) -> Result<usize> {
-        tables::pool_info::update_all(self.to_records()).await
+    pub async fn update_all(self) -> Result<usize> {
+        let records = self.0.into_iter().map(|info| info.into()).collect();
+        tables::pool_info::update_all(records).await
     }
-}
 
-pub async fn get_all_from_node() -> Result<PoolInfoList> {
-    let log = DEFAULT.new(o!("function" => "get_all_from_node"));
-    info!(log, "start");
+    pub async fn from_db() -> Result<PoolInfoList> {
+        let records = tables::pool_info::select_all().await?;
+        let pools = records.into_iter().map(|record| record.into()).collect();
+        Ok(PoolInfoList(pools))
+    }
 
-    let methods_name = "get_pools".to_string();
+    pub async fn from_node() -> Result<PoolInfoList> {
+        let log = DEFAULT.new(o!("function" => "get_all_from_node"));
+        info!(log, "start");
 
-    let limit = 100;
-    let mut index = 0;
-    let mut pools = vec![];
+        let methods_name = "get_pools".to_string();
 
-    loop {
-        trace!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
-        let request = methods::query::RpcQueryRequest {
-            block_reference: BlockReference::Finality(Finality::Final),
-            request: QueryRequest::CallFunction {
-                account_id: CONTRACT_ADDRESS.clone(),
-                method_name: methods_name.clone(),
-                args: FunctionArgs::from(
-                    json!({
-                        "from_index": index,
-                        "limit": limit,
-                    })
-                    .to_string()
-                    .into_bytes(),
-                ),
-            },
-        };
+        let limit = 100;
+        let mut index = 0;
+        let mut pools = vec![];
 
-        let response = CLIENT.call(request).await?;
+        loop {
+            trace!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
+            let request = methods::query::RpcQueryRequest {
+                block_reference: BlockReference::Finality(Finality::Final),
+                request: QueryRequest::CallFunction {
+                    account_id: CONTRACT_ADDRESS.clone(),
+                    method_name: methods_name.clone(),
+                    args: FunctionArgs::from(
+                        json!({
+                            "from_index": index,
+                            "limit": limit,
+                        })
+                        .to_string()
+                        .into_bytes(),
+                    ),
+                },
+            };
 
-        if let QueryResponseKind::CallResult(result) = response.kind {
-            let list: Vec<PoolInfo> = from_slice(&result.result)?;
-            let count = list.len();
-            trace!(log, "Got pools"; "count" => count);
-            pools.extend(list);
-            if count < limit {
-                break;
+            let response = CLIENT.call(request).await?;
+
+            if let QueryResponseKind::CallResult(result) = response.kind {
+                let list: Vec<PoolInfoBared> = from_slice(&result.result)?;
+                let count = list.len();
+                trace!(log, "Got pools"; "count" => count);
+                pools.extend(list);
+                if count < limit {
+                    break;
+                }
             }
+
+            index += limit;
         }
 
-        index += limit;
+        info!(log, "finish"; "count" => pools.len());
+        let pools = pools
+            .into_iter()
+            .enumerate()
+            .map(|(i, bare)| PoolInfo {
+                id: i as u32,
+                bare,
+                updated_at: chrono::Utc::now().naive_utc(),
+            })
+            .collect();
+        Ok(PoolInfoList(pools))
     }
-
-    info!(log, "finish"; "count" => pools.len());
-    Ok(PoolInfoList(pools))
 }
 
 #[cfg(test)]
@@ -129,7 +173,7 @@ mod test {
             "total_fee": 30
         }"#;
 
-        let pool_info: PoolInfo = serde_json::from_str(json).unwrap();
+        let pool_info: PoolInfoBared = serde_json::from_str(json).unwrap();
         assert_eq!(pool_info.pool_kind, "SIMPLE_POOL");
         assert_eq!(
             pool_info.token_account_ids,
@@ -183,7 +227,7 @@ mod test {
           }
         ]"#;
 
-        let pools: Vec<PoolInfo> = from_slice(json.as_bytes()).unwrap();
+        let pools: Vec<PoolInfoBared> = from_slice(json.as_bytes()).unwrap();
         assert_eq!(pools.len(), 2);
         assert_eq!(pools[0].pool_kind, "SIMPLE_POOL");
         assert_eq!(

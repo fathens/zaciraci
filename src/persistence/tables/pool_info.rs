@@ -19,6 +19,17 @@ pub struct PoolInfo {
     pub updated_at: chrono::NaiveDateTime,
 }
 
+pub async fn select_all() -> Result<Vec<PoolInfo>> {
+    let log = DEFAULT.new(o!("function" => "select_all"));
+    trace!(log, "start");
+    let result = connection_pool::get()
+        .await?
+        .interact(|conn| pool_info.load::<PoolInfo>(conn))
+        .await??;
+    trace!(log, "finish"; "count" => result.len());
+    Ok(result)
+}
+
 pub async fn update_all(records: Vec<PoolInfo>) -> Result<usize> {
     let log = DEFAULT.new(o!(
         "function" => "update_all",

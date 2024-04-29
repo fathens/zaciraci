@@ -15,7 +15,9 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/counter/increase", get(inc_counter))
         .with_state(state.clone())
-        .route("/pools/update", get(update_pools))
+        .route("/pools/get_all", get(get_all_pools))
+        .with_state(state.clone())
+        .route("/pools/update_all", get(update_all_pools))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -32,8 +34,13 @@ async fn inc_counter(State(_): State<Arc<AppState>>) -> String {
     format!("Counter: {cur}",)
 }
 
-async fn update_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool::get_all_from_node().await.unwrap();
+async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
+    let pools = pool::PoolInfoList::from_db().await.unwrap();
+    format!("Pools: {}", pools.len())
+}
+
+async fn update_all_pools(State(_): State<Arc<AppState>>) -> String {
+    let pools = pool::PoolInfoList::from_node().await.unwrap();
     let n = pools.update_all().await.unwrap();
-    format!("Pools: {}", n)
+    format!("Pools: {n}")
 }
