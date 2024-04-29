@@ -169,7 +169,7 @@ impl PoolInfo {
             "pool_id" => self.id,
             "amount_in" => amount_in,
         ));
-        debug!(log, "start");
+        info!(log, "start");
         let method_name = "get_return".to_string();
 
         let request_json = json!({
@@ -193,12 +193,11 @@ impl PoolInfo {
 
         if let QueryResponseKind::CallResult(result) = response.kind {
             let raw = result.result;
-            let plain = std::str::from_utf8(&raw).unwrap();
-            debug!(log, "plain"; "result" => %plain);
             let value: U128 = from_slice(&raw)?;
+            info!(log, "finish"; "value" => %value.0);
             return Ok(value.into());
         }
-        Err(Error::UnknownResponse(format!("{:?}", response.kind)).into())
+        Err(Error::UnknownResponse(response.kind).into())
     }
 }
 
@@ -263,7 +262,7 @@ impl PoolInfoList {
                     break;
                 }
             } else {
-                return Err(Error::UnknownResponse(format!("{:?}", response.kind)).into());
+                return Err(Error::UnknownResponse(response.kind).into());
             }
 
             index += limit;

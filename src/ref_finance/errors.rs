@@ -1,6 +1,7 @@
-use std::fmt::Display;
+use near_jsonrpc_primitives::types::query::QueryResponseKind;
+use std::fmt::{Debug, Display};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Error {
     SwapSameToken,
     ZeroAmount,
@@ -9,7 +10,7 @@ pub enum Error {
     OutOfIndexOfTokens(usize),
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
-    UnknownResponse(String),
+    UnknownResponse(QueryResponseKind),
 }
 
 impl Display for Error {
