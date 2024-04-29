@@ -371,4 +371,25 @@ mod test {
             U128(335641087635970260772416710)
         );
     }
+
+    #[test]
+    fn test_pool_info_estimate_return() {
+        let sample = PoolInfo {
+            id: 0,
+            bare: PoolInfoBared {
+                pool_kind: "SIMPLE_POOL".to_string(),
+                token_account_ids: vec!["token_a".parse().unwrap(), "wrap.near".parse().unwrap()],
+                amounts: vec![
+                    49821249287591105626851_u128.into(),
+                    5375219608484426244903787070_u128.into(),
+                ],
+                total_fee: 30,
+                shares_total_supply: 0_u128.into(),
+                amp: 0,
+            },
+            updated_at: chrono::Utc::now().naive_utc(),
+        };
+        let result = sample.estimate_return(0, 100, 1);
+        assert_eq!(Ok(10756643_u128), result);
+    }
 }
