@@ -11,12 +11,8 @@ diesel::table! {
     pool_info (id) {
         id -> Int4,
         pool_kind -> Varchar,
-        #[max_length = 64]
-        token_account_id_a -> Varchar,
-        #[max_length = 64]
-        token_account_id_b -> Varchar,
-        amount_a -> Numeric,
-        amount_b -> Numeric,
+        token_account_ids -> Array<Text>,
+        amounts -> Array<Numeric>,
         total_fee -> Int8,
         shares_total_supply -> Numeric,
         amp -> Numeric,
@@ -24,7 +20,4 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(
-    counter,
-    pool_info,
-);
+diesel::allow_tables_to_appear_in_same_query!(counter, pool_info,);

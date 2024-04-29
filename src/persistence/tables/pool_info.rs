@@ -11,24 +11,12 @@ use diesel::prelude::*;
 pub struct PoolInfo {
     pub id: i32,
     pub pool_kind: String,
-    pub token_account_id_a: String,
-    pub token_account_id_b: String,
-    pub amount_a: BigDecimal,
-    pub amount_b: BigDecimal,
+    pub token_account_ids: Vec<String>,
+    pub amounts: Vec<BigDecimal>,
     pub total_fee: i64,
     pub shares_total_supply: BigDecimal,
     pub amp: BigDecimal,
     pub updated_at: chrono::NaiveDateTime,
-}
-
-impl PoolInfo {
-    pub fn key(&self) -> (String, String, String) {
-        (
-            self.pool_kind.clone(),
-            self.token_account_id_a.clone(),
-            self.token_account_id_b.clone(),
-        )
-    }
 }
 
 pub async fn update_all(records: Vec<PoolInfo>) -> Result<usize> {
@@ -48,10 +36,8 @@ pub async fn update_all(records: Vec<PoolInfo>) -> Result<usize> {
                         .do_update()
                         .set((
                             pool_kind.eq(&record.pool_kind),
-                            token_account_id_a.eq(&record.token_account_id_a),
-                            token_account_id_b.eq(&record.token_account_id_b),
-                            amount_a.eq(&record.amount_a),
-                            amount_b.eq(&record.amount_b),
+                            token_account_ids.eq(&record.token_account_ids),
+                            amounts.eq(&record.amounts),
                             total_fee.eq(&record.total_fee),
                             shares_total_supply.eq(&record.shares_total_supply),
                             amp.eq(&record.amp),
