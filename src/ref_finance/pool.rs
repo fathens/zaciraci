@@ -23,12 +23,12 @@ pub struct PoolInfo {
 }
 
 impl PoolInfo {
-    fn to_record(&self, id: i32) -> Result<tables::pool_info::PoolInfo> {
+    fn to_record(&self, id: i32) -> tables::pool_info::PoolInfo {
         fn from_u128(value: U128) -> BigDecimal {
             let v: u128 = value.into();
             BigDecimal::from(v)
         }
-        Ok(tables::pool_info::PoolInfo {
+        tables::pool_info::PoolInfo {
             id,
             pool_kind: self.pool_kind.clone(),
             token_account_ids: self
@@ -41,33 +41,23 @@ impl PoolInfo {
             shares_total_supply: from_u128(self.shares_total_supply),
             amp: BigDecimal::from(self.amp),
             updated_at: chrono::Utc::now().naive_utc(),
-        })
+        }
     }
 }
 
 pub struct PoolInfoList(Vec<PoolInfo>);
 
 impl PoolInfoList {
-    fn to_records(&self) -> Result<Vec<tables::pool_info::PoolInfo>> {
-        let log = DEFAULT.new(o!("function" => "PoolInfoList::to_records"));
+    fn to_records(&self) -> Vec<tables::pool_info::PoolInfo> {
         self.0
             .iter()
             .enumerate()
-            .try_fold(vec![], |mut records, (id, pool)| {
-                let record = pool.to_record(id as i32).map_err(|err| {
-                    let pool_info = serde_json::to_value(pool).unwrap();
-                    info!(log, "failed to convert PoolInfo to PoolInfoRecord";
-                        "pool" => pool_info.to_string(),
-                    );
-                    err
-                })?;
-                records.push(record);
-                Ok(records)
-            })
+            .map(|(id, pool)| pool.to_record(id as i32))
+            .collect()
     }
 
     pub async fn update_all(&self) -> Result<usize> {
-        tables::pool_info::update_all(self.to_records()?).await
+        tables::pool_info::update_all(self.to_records()).await
     }
 }
 
