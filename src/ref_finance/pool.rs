@@ -227,7 +227,7 @@ impl PoolInfoList {
         let log = DEFAULT.new(o!("function" => "get_all_from_node"));
         info!(log, "start");
 
-        let methods_name = "get_pools".to_string();
+        let method_name = "get_pools".to_string();
 
         let limit = 100;
         let mut index = 0;
@@ -239,7 +239,7 @@ impl PoolInfoList {
                 block_reference: BlockReference::Finality(Finality::Final),
                 request: QueryRequest::CallFunction {
                     account_id: CONTRACT_ADDRESS.clone(),
-                    method_name: methods_name.clone(),
+                    method_name: method_name.clone(),
                     args: FunctionArgs::from(
                         json!({
                             "from_index": index,
