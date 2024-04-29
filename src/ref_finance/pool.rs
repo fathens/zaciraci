@@ -127,7 +127,7 @@ impl PoolInfo {
             "pool_id" => self.id,
             "amount_in" => amount_in,
         ));
-        debug!(log, "start";
+        info!(log, "start";
             "token_in" => token_in,
             "token_out" => token_out,
         );
@@ -146,6 +146,7 @@ impl PoolInfo {
         let amount_with_fee = amount_in * BigDecimal::from(FEE_DIVISOR - self.bare.total_fee);
         let result = &amount_with_fee * out_balance
             / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
+        info!(log, "finish"; "value" => %result);
         result.to_u128().ok_or(Error::Overflow.into())
     }
 
