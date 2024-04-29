@@ -3896,6 +3896,7 @@ dependencies = [
  "near-primitives",
  "near-sdk",
  "num-bigint 0.4.4",
+ "num-traits",
  "once_cell",
  "serde",
  "serde_json",
