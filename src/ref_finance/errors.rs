@@ -9,6 +9,7 @@ pub enum Error {
     OutOfIndexOfTokens(usize),
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
+    UnknownResponse(String),
 }
 
 impl Display for Error {
@@ -25,6 +26,7 @@ impl Display for Error {
                 "Different length of tokens: {} and {}",
                 token_ids, amounts
             ),
+            Error::UnknownResponse(kind) => write!(f, "Unknown response: {:?}", kind),
         }
     }
 }

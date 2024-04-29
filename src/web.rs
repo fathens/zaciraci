@@ -22,6 +22,8 @@ pub async fn run() {
             get(estimate_return),
         )
         .with_state(state.clone())
+        .route("/pools/get_return/:pool_id/:amount", get(get_return))
+        .with_state(state.clone())
         .route("/pools/update_all", get(update_all_pools))
         .with_state(state.clone());
 
@@ -62,8 +64,32 @@ async fn estimate_return(
     let tokens = pool.tokens().unwrap();
     let n = tokens.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
-    let amount_out = pool.estimate_return(0, amount_in, n - 1).unwrap();
-    let token_a = tokens[0].0;
-    let token_b = tokens[n - 1].0;
+    let token_in = 0;
+    let token_out = n - 1;
+    let amount_out = pool
+        .estimate_return(token_in, amount_in, token_out)
+        .unwrap();
+    let token_a = tokens[token_in].0;
+    let token_b = tokens[token_out].0;
     format!("Estimated: {token_a}({amount_in}) -> {token_b}({amount_out})")
+}
+
+async fn get_return(
+    State(_): State<Arc<AppState>>,
+    Path((pool_id, amount)): Path<(usize, u128)>,
+) -> String {
+    use crate::ref_finance::errors::Error;
+
+    let pools = pool::PoolInfoList::from_db().await.unwrap();
+    let pool = pools.get(pool_id).unwrap();
+    let amount_in = amount;
+    let tokens = pool.tokens().unwrap();
+    let n = tokens.len();
+    assert!(n > 1, "{}", Error::InvalidPoolSize(n));
+    let token_in = 0;
+    let token_out = n - 1;
+    let token_a = tokens[token_in].0;
+    let token_b = tokens[token_out].0;
+    let amount_out = pool.get_return(token_a, amount_in, token_b).await.unwrap();
+    format!("Return: {token_a}({amount_in}) -> {token_b}({amount_out})")
 }

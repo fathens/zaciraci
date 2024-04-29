@@ -157,6 +157,49 @@ impl PoolInfo {
     ) -> Result<u128> {
         self.internal_get_return(token_in, amount_in, token_out)
     }
+
+    pub async fn get_return(
+        &self,
+        token_in: &AccountId,
+        amount_in: u128,
+        token_out: &AccountId,
+    ) -> Result<u128> {
+        let log = DEFAULT.new(o!(
+            "function" => "get_return",
+            "pool_id" => self.id,
+            "amount_in" => amount_in,
+        ));
+        debug!(log, "start");
+        let method_name = "get_return".to_string();
+
+        let request_json = json!({
+            "pool_id": self.id,
+            "token_in": token_in,
+            "amount_in": U128::from(amount_in),
+            "token_out": token_out,
+        })
+        .to_string();
+        debug!(log, "request_json"; "value" => %request_json);
+        let request = methods::query::RpcQueryRequest {
+            block_reference: BlockReference::Finality(Finality::Final),
+            request: QueryRequest::CallFunction {
+                account_id: CONTRACT_ADDRESS.clone(),
+                method_name: method_name.clone(),
+                args: FunctionArgs::from(request_json.into_bytes()),
+            },
+        };
+
+        let response = CLIENT.call(request).await?;
+
+        if let QueryResponseKind::CallResult(result) = response.kind {
+            let raw = result.result;
+            let plain = std::str::from_utf8(&raw).unwrap();
+            debug!(log, "plain"; "result" => %plain);
+            let value: U128 = from_slice(&raw)?;
+            return Ok(value.into());
+        }
+        Err(Error::UnknownResponse(format!("{:?}", response.kind)).into())
+    }
 }
 
 impl PoolInfoList {
@@ -219,6 +262,8 @@ impl PoolInfoList {
                 if count < limit {
                     break;
                 }
+            } else {
+                return Err(Error::UnknownResponse(format!("{:?}", response.kind)).into());
             }
 
             index += limit;
