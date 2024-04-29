@@ -1,6 +1,6 @@
 use crate::logging::*;
 use crate::persistence::tables;
-use crate::ref_finance::{CLIENT, CONTRACT_ADDRESS};
+use crate::ref_finance::{errors::Error, CLIENT, CONTRACT_ADDRESS};
 use crate::Result;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use near_jsonrpc_client::methods;
@@ -9,6 +9,7 @@ use near_primitives::types::{BlockReference, Finality, FunctionArgs};
 use near_primitives::views::QueryRequest;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
+use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 
@@ -79,9 +80,94 @@ impl From<tables::pool_info::PoolInfo> for PoolInfo {
     }
 }
 
+pub const FEE_DIVISOR: u32 = 10_000;
+
+impl PoolInfo {
+    pub fn tokens(&self) -> Result<Vec<(&AccountId, u128)>> {
+        if self.bare.token_account_ids.len() != self.bare.amounts.len() {
+            return Err(Error::DifferentLengthOfTokens(
+                self.bare.token_account_ids.len(),
+                self.bare.amounts.len(),
+            )
+            .into());
+        }
+        let vs = self
+            .bare
+            .token_account_ids
+            .iter()
+            .zip(self.bare.amounts.iter().map(|v| v.0))
+            .collect();
+        Ok(vs)
+    }
+
+    pub fn token(&self, index: usize) -> Result<&AccountId> {
+        self.bare
+            .token_account_ids
+            .get(index)
+            .ok_or(Error::OutOfIndexOfTokens(index).into())
+    }
+
+    fn amount(&self, index: usize) -> Result<BigDecimal> {
+        let v = self
+            .bare
+            .amounts
+            .get(index)
+            .ok_or(Error::OutOfIndexOfTokens(index))?;
+        Ok(BigDecimal::from(v.0))
+    }
+
+    fn internal_get_return(
+        &self,
+        token_in: usize,
+        amount_in: u128,
+        token_out: usize,
+    ) -> Result<u128> {
+        let log = DEFAULT.new(o!(
+            "function" => "internal_get_return",
+            "pool_id" => self.id,
+            "amount_in" => amount_in,
+        ));
+        debug!(log, "start";
+            "token_in" => token_in,
+            "token_out" => token_out,
+        );
+        if token_in == token_out {
+            return Err(Error::SwapSameToken.into());
+        }
+        let in_balance = self.amount(token_in)?;
+        trace!(log, "in_balance"; "value" => %in_balance);
+        let out_balance = self.amount(token_out)?;
+        trace!(log, "out_balance"; "value" => %out_balance);
+        let amount_in = BigDecimal::from(amount_in);
+        if in_balance.sign() <= NoSign || out_balance.sign() <= NoSign || amount_in.sign() <= NoSign
+        {
+            return Err(Error::ZeroAmount.into());
+        }
+        let amount_with_fee = amount_in * BigDecimal::from(FEE_DIVISOR - self.bare.total_fee);
+        let result = &amount_with_fee * out_balance
+            / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
+        result.to_u128().ok_or(Error::Overflow.into())
+    }
+
+    pub fn estimate_return(
+        &self,
+        token_in: usize,
+        amount_in: u128,
+        token_out: usize,
+    ) -> Result<u128> {
+        self.internal_get_return(token_in, amount_in, token_out)
+    }
+}
+
 impl PoolInfoList {
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn get(&self, index: usize) -> Result<&PoolInfo> {
+        self.0
+            .get(index)
+            .ok_or(Error::OutOfIndexOfPools(index).into())
     }
 
     pub async fn update_all(self) -> Result<usize> {

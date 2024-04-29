@@ -24,7 +24,7 @@ pub async fn select_all() -> Result<Vec<PoolInfo>> {
     trace!(log, "start");
     let result = connection_pool::get()
         .await?
-        .interact(|conn| pool_info.load::<PoolInfo>(conn))
+        .interact(|conn| pool_info.order_by(id).load::<PoolInfo>(conn))
         .await??;
     trace!(log, "finish"; "count" => result.len());
     Ok(result)
