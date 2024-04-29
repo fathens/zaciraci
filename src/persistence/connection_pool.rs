@@ -1,7 +1,10 @@
 use crate::config;
-use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+use crate::Result;
+pub use deadpool_diesel::postgres::Pool;
+use deadpool_diesel::{Manager, ManagerConfig, RecyclingMethod};
 use once_cell::sync::Lazy;
-use tokio_postgres::NoTls;
+
+pub type Client = deadpool_diesel::postgres::Connection;
 
 static POOL: Lazy<Pool> = Lazy::new(|| {
     let max_size: usize = config::get("PG_POOL_SIZE")
@@ -9,14 +12,13 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
         .and_then(|s| s.parse().ok())
         .unwrap_or(16);
     let dsn = config::get("PG_DSN").unwrap();
-    let pg_config = dsn.parse().unwrap();
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     };
-    let mgr = Manager::from_config(pg_config, NoTls, mgr_config);
+    let mgr = Manager::from_config(dsn, deadpool_diesel::Runtime::Tokio1, mgr_config);
     Pool::builder(mgr).max_size(max_size).build().unwrap()
 });
 
-pub fn get() -> Pool {
-    POOL.clone()
+pub async fn get() -> Result<Client> {
+    Ok(POOL.get().await?)
 }

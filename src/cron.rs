@@ -14,5 +14,7 @@ pub async fn run() {
 }
 
 async fn job() {
-    info!(DEFAULT, "CRON");
+    let log = DEFAULT.new(o!("function" => "job"));
+
+    info!(log, "CRON");
 }

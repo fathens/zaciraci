@@ -1,6 +1,11 @@
 app = 'zaciraci'
 primary_region = 'lax'
 
+[build.args]
+  CARGO_BUILD_ARGS = '--release'
+[env]
+  RUST_LOG = 'info'
+
 [http_service]
   internal_port = 8080
   force_https = true
