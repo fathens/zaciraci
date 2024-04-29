@@ -116,21 +116,20 @@ impl PoolInfo {
         Ok(BigDecimal::from(v.0))
     }
 
-    fn internal_get_return(
+    pub fn estimate_return(
         &self,
         token_in: usize,
         amount_in: u128,
         token_out: usize,
     ) -> Result<u128> {
         let log = DEFAULT.new(o!(
-            "function" => "internal_get_return",
+            "function" => "estimate_return",
             "pool_id" => self.id,
             "amount_in" => amount_in,
-        ));
-        info!(log, "start";
             "token_in" => token_in,
             "token_out" => token_out,
-        );
+        ));
+        info!(log, "start");
         if token_in == token_out {
             return Err(Error::SwapSameToken.into());
         }
@@ -148,15 +147,6 @@ impl PoolInfo {
             / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
         info!(log, "finish"; "value" => %result);
         result.to_u128().ok_or(Error::Overflow.into())
-    }
-
-    pub fn estimate_return(
-        &self,
-        token_in: usize,
-        amount_in: u128,
-        token_out: usize,
-    ) -> Result<u128> {
-        self.internal_get_return(token_in, amount_in, token_out)
     }
 
     pub async fn get_return(
