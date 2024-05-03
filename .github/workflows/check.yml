@@ -26,8 +26,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Report test coverage
-        run: |
-          cargo tarpaulin --release --timeout 180 --out Lcov
+        run: cargo tarpaulin --release --timeout 180 --out Lcov
 
       - name: Upload to Coveralls
         uses: coverallsapp/github-action@master
