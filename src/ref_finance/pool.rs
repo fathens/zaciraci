@@ -82,7 +82,56 @@ impl From<tables::pool_info::PoolInfo> for PoolInfo {
 
 pub const FEE_DIVISOR: u32 = 10_000;
 
+pub struct TokenPair<'a> {
+    pool: &'a PoolInfo,
+    token_in: usize,
+    token_out: usize,
+}
+
+impl<'a> TokenPair<'a> {
+    pub fn token_in_id(&self) -> &AccountId {
+        self.pool.token(self.token_in).unwrap()
+    }
+
+    pub fn token_out_id(&self) -> &AccountId {
+        self.pool.token(self.token_out).unwrap()
+    }
+
+    pub fn estimate_return(&self, amount_in: u128) -> Result<u128> {
+        self.pool
+            .estimate_return(self.token_in, amount_in, self.token_out)
+    }
+
+    pub async fn get_return(&self, amount_in: u128) -> Result<u128> {
+        self.pool
+            .get_return(
+                self.pool.token(self.token_in)?,
+                amount_in,
+                self.pool.token(self.token_out)?,
+            )
+            .await
+    }
+}
+
 impl PoolInfo {
+    pub fn len(&self) -> usize {
+        self.bare.token_account_ids.len()
+    }
+
+    pub fn get_pair(&self, token_in: usize, token_out: usize) -> Result<TokenPair> {
+        if token_in == token_out {
+            return Err(Error::SwapSameToken.into());
+        }
+        if token_in >= self.len() || token_out >= self.len() {
+            return Err(Error::OutOfIndexOfTokens(token_in.max(token_out)).into());
+        }
+        Ok(TokenPair {
+            pool: self,
+            token_in,
+            token_out,
+        })
+    }
+
     pub fn tokens(&self) -> Result<Vec<(&AccountId, u128)>> {
         if self.bare.token_account_ids.len() != self.bare.amounts.len() {
             return Err(Error::DifferentLengthOfTokens(
@@ -116,12 +165,7 @@ impl PoolInfo {
         Ok(BigDecimal::from(v.0))
     }
 
-    pub fn estimate_return(
-        &self,
-        token_in: usize,
-        amount_in: u128,
-        token_out: usize,
-    ) -> Result<u128> {
+    fn estimate_return(&self, token_in: usize, amount_in: u128, token_out: usize) -> Result<u128> {
         let log = DEFAULT.new(o!(
             "function" => "estimate_return",
             "pool_id" => self.id,
@@ -149,7 +193,7 @@ impl PoolInfo {
         result.to_u128().ok_or(Error::Overflow.into())
     }
 
-    pub async fn get_return(
+    async fn get_return(
         &self,
         token_in: &AccountId,
         amount_in: u128,

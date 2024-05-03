@@ -60,17 +60,15 @@ async fn estimate_return(
 
     let pools = pool::PoolInfoList::from_db().await.unwrap();
     let pool = pools.get(pool_id).unwrap();
-    let amount_in = amount;
-    let tokens = pool.tokens().unwrap();
-    let n = tokens.len();
+    let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
     let token_in = 0;
     let token_out = n - 1;
-    let amount_out = pool
-        .estimate_return(token_in, amount_in, token_out)
-        .unwrap();
-    let token_a = tokens[token_in].0;
-    let token_b = tokens[token_out].0;
+    let amount_in = amount;
+    let pair = pool.get_pair(token_in, token_out).unwrap();
+    let amount_out = pair.estimate_return(amount_in).unwrap();
+    let token_a = pair.token_in_id();
+    let token_b = pair.token_out_id();
     format!("Estimated: {token_a}({amount_in}) -> {token_b}({amount_out})")
 }
 
@@ -82,14 +80,14 @@ async fn get_return(
 
     let pools = pool::PoolInfoList::from_db().await.unwrap();
     let pool = pools.get(pool_id).unwrap();
-    let amount_in = amount;
-    let tokens = pool.tokens().unwrap();
-    let n = tokens.len();
+    let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
     let token_in = 0;
     let token_out = n - 1;
-    let token_a = tokens[token_in].0;
-    let token_b = tokens[token_out].0;
-    let amount_out = pool.get_return(token_a, amount_in, token_b).await.unwrap();
+    let amount_in = amount;
+    let pair = pool.get_pair(token_in, token_out).unwrap();
+    let token_a = pair.token_in_id();
+    let token_b = pair.token_out_id();
+    let amount_out = pair.get_return(amount_in).await.unwrap();
     format!("Return: {token_a}({amount_in}) -> {token_b}({amount_out})")
 }
