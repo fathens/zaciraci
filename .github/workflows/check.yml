@@ -5,9 +5,6 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Install protoc
-        run: sudo apt-get install protobuf-compiler
-
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
