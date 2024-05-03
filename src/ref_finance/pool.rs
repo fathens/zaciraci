@@ -252,13 +252,13 @@ impl PoolInfoList {
         tables::pool_info::update_all(records).await
     }
 
-    pub async fn from_db() -> Result<PoolInfoList> {
+    pub async fn load_from_db() -> Result<PoolInfoList> {
         let records = tables::pool_info::select_all().await?;
         let pools = records.into_iter().map(|record| record.into()).collect();
         Ok(PoolInfoList(pools))
     }
 
-    pub async fn from_node() -> Result<PoolInfoList> {
+    pub async fn read_from_node() -> Result<PoolInfoList> {
         let log = DEFAULT.new(o!("function" => "get_all_from_node"));
         info!(log, "start");
 

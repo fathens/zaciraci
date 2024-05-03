@@ -42,12 +42,12 @@ async fn inc_counter(State(_): State<Arc<AppState>>) -> String {
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool::PoolInfoList::from_db().await.unwrap();
+    let pools = pool::PoolInfoList::load_from_db().await.unwrap();
     format!("Pools: {}", pools.len())
 }
 
 async fn update_all_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool::PoolInfoList::from_node().await.unwrap();
+    let pools = pool::PoolInfoList::read_from_node().await.unwrap();
     let n = pools.update_all().await.unwrap();
     format!("Pools: {n}")
 }
@@ -58,7 +58,7 @@ async fn estimate_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let pools = pool::PoolInfoList::from_db().await.unwrap();
+    let pools = pool::PoolInfoList::load_from_db().await.unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -78,7 +78,7 @@ async fn get_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let pools = pool::PoolInfoList::from_db().await.unwrap();
+    let pools = pool::PoolInfoList::load_from_db().await.unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
