@@ -1,6 +1,6 @@
 use crate::persistence::tables;
 use crate::ref_finance::pool;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
 use std::sync::Arc;
@@ -16,6 +16,13 @@ pub async fn run() {
         .route("/counter/increase", get(inc_counter))
         .with_state(state.clone())
         .route("/pools/get_all", get(get_all_pools))
+        .with_state(state.clone())
+        .route(
+            "/pools/estimate_return/:pool_id/:amount",
+            get(estimate_return),
+        )
+        .with_state(state.clone())
+        .route("/pools/get_return/:pool_id/:amount", get(get_return))
         .with_state(state.clone())
         .route("/pools/update_all", get(update_all_pools))
         .with_state(state.clone());
@@ -43,4 +50,44 @@ async fn update_all_pools(State(_): State<Arc<AppState>>) -> String {
     let pools = pool::PoolInfoList::from_node().await.unwrap();
     let n = pools.update_all().await.unwrap();
     format!("Pools: {n}")
+}
+
+async fn estimate_return(
+    State(_): State<Arc<AppState>>,
+    Path((pool_id, amount)): Path<(usize, u128)>,
+) -> String {
+    use crate::ref_finance::errors::Error;
+
+    let pools = pool::PoolInfoList::from_db().await.unwrap();
+    let pool = pools.get(pool_id).unwrap();
+    let n = pool.len();
+    assert!(n > 1, "{}", Error::InvalidPoolSize(n));
+    let token_in = 0;
+    let token_out = n - 1;
+    let amount_in = amount;
+    let pair = pool.get_pair(token_in, token_out).unwrap();
+    let amount_out = pair.estimate_return(amount_in).unwrap();
+    let token_a = pair.token_in_id();
+    let token_b = pair.token_out_id();
+    format!("Estimated: {token_a}({amount_in}) -> {token_b}({amount_out})")
+}
+
+async fn get_return(
+    State(_): State<Arc<AppState>>,
+    Path((pool_id, amount)): Path<(usize, u128)>,
+) -> String {
+    use crate::ref_finance::errors::Error;
+
+    let pools = pool::PoolInfoList::from_db().await.unwrap();
+    let pool = pools.get(pool_id).unwrap();
+    let n = pool.len();
+    assert!(n > 1, "{}", Error::InvalidPoolSize(n));
+    let token_in = 0;
+    let token_out = n - 1;
+    let amount_in = amount;
+    let pair = pool.get_pair(token_in, token_out).unwrap();
+    let token_a = pair.token_in_id();
+    let token_b = pair.token_out_id();
+    let amount_out = pair.get_return(amount_in).await.unwrap();
+    format!("Return: {token_a}({amount_in}) -> {token_b}({amount_out})")
 }
