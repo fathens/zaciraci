@@ -1,0 +1,44 @@
+name: Check
+on: [push]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install protoc
+        run: sudo apt-get install protobuf-compiler
+
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-tarpaulin
+
+      - uses: r7kamura/rust-problem-matchers@v1
+
+      - name: Check format
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+
+      - name: Check clippy
+        continue-on-error: true
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - uses: giraffate/clippy-action@v1
+        with:
+          reporter: 'github-pr-review'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report test coverage
+        run: |
+          cargo tarpaulin --release --timeout 180 --out Lcov
+
+      - name: Upload to Coveralls
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path-to-lcov: lcov.info
