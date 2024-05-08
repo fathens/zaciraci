@@ -1,5 +1,5 @@
 pub mod errors;
-pub mod pool;
+pub mod pool_info;
 
 use near_jsonrpc_client::JsonRpcClient;
 use near_sdk::AccountId;
