@@ -116,6 +116,14 @@ impl<'a> TokenPair<'a> {
 }
 
 impl PoolInfo {
+    pub fn new(id: u32, bare: PoolInfoBared) -> Self {
+        PoolInfo {
+            id,
+            bare,
+            updated_at: chrono::Utc::now().naive_utc(),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.bare.token_account_ids.len()
     }
@@ -309,11 +317,7 @@ impl PoolInfoList {
         let pools = pools
             .into_iter()
             .enumerate()
-            .map(|(i, bare)| PoolInfo {
-                id: i as u32,
-                bare,
-                updated_at: chrono::Utc::now().naive_utc(),
-            })
+            .map(|(i, bare)| PoolInfo::new(i as u32, bare))
             .collect();
         Ok(PoolInfoList(pools))
     }
@@ -410,9 +414,9 @@ mod test {
 
     #[test]
     fn test_pool_info_estimate_return() {
-        let sample = PoolInfo {
-            id: 0,
-            bare: PoolInfoBared {
+        let sample = PoolInfo::new(
+            0,
+            PoolInfoBared {
                 pool_kind: "SIMPLE_POOL".to_string(),
                 token_account_ids: vec!["token_a".parse().unwrap(), "wrap.near".parse().unwrap()],
                 amounts: vec![
@@ -423,8 +427,7 @@ mod test {
                 shares_total_supply: 0_u128.into(),
                 amp: 0,
             },
-            updated_at: chrono::Utc::now().naive_utc(),
-        };
+        );
         let result = sample.estimate_return(0, 100, 1);
         assert_eq!(Ok(10756643_u128), result);
     }
