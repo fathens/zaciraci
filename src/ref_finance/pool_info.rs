@@ -13,7 +13,7 @@ use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolInfoBared {
     pub pool_kind: String,
     pub token_account_ids: Vec<AccountId>,
@@ -23,6 +23,7 @@ pub struct PoolInfoBared {
     pub amp: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolInfo {
     pub id: u32,
     pub bare: PoolInfoBared,
@@ -82,6 +83,7 @@ impl From<tables::pool_info::PoolInfo> for PoolInfo {
 
 pub const FEE_DIVISOR: u32 = 10_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenPair<'a> {
     pool: &'a PoolInfo,
     token_in: usize,
