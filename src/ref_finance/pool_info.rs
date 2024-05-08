@@ -25,9 +25,9 @@ pub struct PoolInfoBared {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolInfo {
-    pub id: u32,
-    pub bare: PoolInfoBared,
-    pub updated_at: chrono::NaiveDateTime,
+    id: u32,
+    bare: PoolInfoBared,
+    updated_at: chrono::NaiveDateTime,
 }
 
 pub struct PoolInfoList(pub Vec<PoolInfo>);
@@ -86,8 +86,8 @@ pub const FEE_DIVISOR: u32 = 10_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenPair<'a> {
     pool: &'a PoolInfo,
-    token_in: usize,
-    token_out: usize,
+    pub token_in: usize,
+    pub token_out: usize,
 }
 
 impl<'a> TokenPair<'a> {
