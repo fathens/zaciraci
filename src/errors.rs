@@ -3,7 +3,7 @@ use near_jsonrpc_primitives::errors::RpcError;
 use std::env::VarError;
 use std::fmt::{Debug, Display};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     message: String,
 }
