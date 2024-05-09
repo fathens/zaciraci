@@ -1,4 +1,5 @@
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
+use near_primitives::types::AccountId;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
@@ -11,6 +12,7 @@ pub enum Error {
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
     UnknownResponse(QueryResponseKind),
+    UnmatchedTokenPath((AccountId, AccountId), (AccountId, AccountId)),
 }
 
 impl Display for Error {
@@ -28,6 +30,11 @@ impl Display for Error {
                 token_ids, amounts
             ),
             Error::UnknownResponse(kind) => write!(f, "Unknown response: {:?}", kind),
+            Error::UnmatchedTokenPath((token_in, token_out), (token_in2, token_out2)) => write!(
+                f,
+                "Unmatched token path: ({}, {}) and ({}, {})",
+                token_in, token_out, token_in2, token_out2
+            ),
         }
     }
 }

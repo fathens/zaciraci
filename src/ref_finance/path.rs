@@ -1,28 +1,42 @@
+use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair};
 use crate::Result;
+use near_primitives::types::AccountId;
+use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug)]
-struct PoolEdges {
-    pool: Arc<PoolInfo>,
-
-    cached_edges: Mutex<HashMap<(usize, usize), Arc<Edge>>>,
-}
+const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
 #[derive(Debug, Clone)]
 pub struct Edge {
-    pool: Arc<PoolEdges>,
+    pool: Arc<EdgesInSamePool>,
     pair: TokenPair,
     estimated_return: Option<u128>,
 }
 
-#[derive(Debug, Clone)]
-pub struct PathGroup {
-    pairs: BinaryHeap<Arc<Edge>>,
+impl Edge {
+    fn reversed(&self) -> Arc<Self> {
+        self.pool
+            .get_path(self.pair.token_out, self.pair.token_in)
+            .expect("should be valid index")
+    }
 }
 
-impl PoolEdges {
+impl PartialEq for Edge {
+    fn eq(&self, other: &Self) -> bool {
+        self.pair == other.pair
+    }
+}
+impl Eq for Edge {}
+
+#[derive(Debug)]
+struct EdgesInSamePool {
+    pool: Arc<PoolInfo>,
+    cached_edges: Mutex<HashMap<(usize, usize), Arc<Edge>>>,
+}
+
+impl EdgesInSamePool {
     #[allow(dead_code)]
     pub fn new(pool: Arc<PoolInfo>) -> Self {
         Self {
@@ -38,7 +52,7 @@ impl PoolEdges {
             return Ok(Arc::clone(path));
         }
         let pair = self.pool.get_pair(token_in, token_out)?;
-        let er = pair.estimate_return(Edge::AMOUNT_IN);
+        let er = pair.estimate_return(AMOUNT_IN);
         let path = Arc::new(Edge {
             pool: Arc::clone(self),
             pair,
@@ -49,55 +63,78 @@ impl PoolEdges {
     }
 }
 
-impl Edge {
-    const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
+mod one_step {
+    use super::*;
 
-    fn reversed(&self) -> Arc<Self> {
-        self.pool
-            .get_path(self.pair.token_out, self.pair.token_in)
-            .expect("should be valid index")
-    }
-}
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SamePathEdge(Arc<Edge>);
 
-impl PartialEq for Edge {
-    fn eq(&self, other: &Self) -> bool {
-        self.estimated_return == other.estimated_return
-    }
-}
-impl Eq for Edge {}
-
-impl PartialOrd for Edge {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Edge {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.estimated_return.cmp(&other.estimated_return)
-    }
-}
-
-#[allow(dead_code)]
-impl PathGroup {
-    pub fn new() -> Self {
-        Self {
-            pairs: BinaryHeap::new(),
+    impl PartialOrd for SamePathEdge {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
-    pub fn push(&mut self, path: Arc<Edge>) {
-        self.pairs.push(path);
+    impl Ord for SamePathEdge {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.0.estimated_return.cmp(&other.0.estimated_return)
+        }
     }
 
-    pub fn at_top(&self) -> Option<Arc<Edge>> {
-        self.pairs.peek().cloned()
+    #[derive(Debug, Clone)]
+    pub struct PathEdges {
+        token_in_id: AccountId,
+        token_out_id: AccountId,
+        pairs: BinaryHeap<SamePathEdge>,
     }
 
-    #[allow(dead_code)]
-    pub fn reversed(&self) -> Self {
-        Self {
-            pairs: self.pairs.iter().map(|p| p.reversed()).collect(),
+    impl PathEdges {
+        #[allow(dead_code)]
+        pub fn new(token_in_id: AccountId, token_out_id: AccountId) -> Self {
+            Self {
+                token_in_id,
+                token_out_id,
+                pairs: BinaryHeap::new(),
+            }
+        }
+
+        #[allow(dead_code)]
+        pub fn push(&mut self, path: Arc<Edge>) -> Result<()> {
+            if path.pair.token_in_id() != self.token_in_id
+                || path.pair.token_out_id() != self.token_out_id
+            {
+                return Err(Error::UnmatchedTokenPath(
+                    (self.token_in_id.clone(), self.token_out_id.clone()),
+                    (
+                        path.pair.token_in_id().clone(),
+                        path.pair.token_out_id().clone(),
+                    ),
+                )
+                .into());
+            }
+            self.pairs.push(SamePathEdge(path));
+            Ok(())
+        }
+
+        #[allow(dead_code)]
+        pub fn at_top(&self) -> Option<Arc<Edge>> {
+            self.pairs.peek().map(|e| {
+                let edge = &e.0;
+                Arc::clone(edge)
+            })
+        }
+
+        #[allow(dead_code)]
+        pub fn reversed(&self) -> Self {
+            Self {
+                token_in_id: self.token_out_id.clone(),
+                token_out_id: self.token_in_id.clone(),
+                pairs: self
+                    .pairs
+                    .iter()
+                    .map(|p| SamePathEdge(p.0.reversed()))
+                    .collect(),
+            }
         }
     }
 }
