@@ -12,6 +12,8 @@ use near_sdk::AccountId;
 use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
+use std::ops::Deref;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolInfoBared {
@@ -30,7 +32,7 @@ pub struct PoolInfo {
     updated_at: chrono::NaiveDateTime,
 }
 
-pub struct PoolInfoList(pub Vec<PoolInfo>);
+pub struct PoolInfoList(pub Vec<Arc<PoolInfo>>);
 
 impl From<PoolInfo> for tables::pool_info::PoolInfo {
     fn from(src: PoolInfo) -> Self {
@@ -83,14 +85,14 @@ impl From<tables::pool_info::PoolInfo> for PoolInfo {
 
 pub const FEE_DIVISOR: u32 = 10_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TokenPair<'a> {
-    pool: &'a PoolInfo,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenPair {
+    pool: Arc<PoolInfo>,
     pub token_in: usize,
     pub token_out: usize,
 }
 
-impl<'a> TokenPair<'a> {
+impl TokenPair {
     pub fn token_in_id(&self) -> &AccountId {
         self.pool.token(self.token_in).unwrap()
     }
@@ -128,7 +130,7 @@ impl PoolInfo {
         self.bare.token_account_ids.len()
     }
 
-    pub fn get_pair(&self, token_in: usize, token_out: usize) -> Result<TokenPair> {
+    pub fn get_pair(self: &Arc<Self>, token_in: usize, token_out: usize) -> Result<TokenPair> {
         if token_in == token_out {
             return Err(Error::SwapSameToken.into());
         }
@@ -136,7 +138,7 @@ impl PoolInfo {
             return Err(Error::OutOfIndexOfTokens(token_in.max(token_out)).into());
         }
         Ok(TokenPair {
-            pool: self,
+            pool: Arc::clone(self),
             token_in,
             token_out,
         })
@@ -251,20 +253,28 @@ impl PoolInfoList {
         self.0.len()
     }
 
-    pub fn get(&self, index: usize) -> Result<&PoolInfo> {
+    pub fn get(&self, index: usize) -> Result<Arc<PoolInfo>> {
         self.0
             .get(index)
+            .cloned()
             .ok_or(Error::OutOfIndexOfPools(index).into())
     }
 
-    pub async fn update_all(self) -> Result<usize> {
-        let records = self.0.into_iter().map(|info| info.into()).collect();
+    pub async fn update_all(&self) -> Result<usize> {
+        let records = self
+            .0
+            .iter()
+            .map(|info| info.deref().clone().into())
+            .collect();
         tables::pool_info::update_all(records).await
     }
 
     pub async fn load_from_db() -> Result<PoolInfoList> {
         let records = tables::pool_info::select_all().await?;
-        let pools = records.into_iter().map(|record| record.into()).collect();
+        let pools = records
+            .into_iter()
+            .map(|record| Arc::new(record.into()))
+            .collect();
         Ok(PoolInfoList(pools))
     }
 
@@ -317,7 +327,7 @@ impl PoolInfoList {
         let pools = pools
             .into_iter()
             .enumerate()
-            .map(|(i, bare)| PoolInfo::new(i as u32, bare))
+            .map(|(i, bare)| Arc::new(PoolInfo::new(i as u32, bare)))
             .collect();
         Ok(PoolInfoList(pools))
     }
