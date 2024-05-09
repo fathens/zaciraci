@@ -61,7 +61,7 @@ impl From<PoolInfo> for tables::pool_info::PoolInfo {
 impl From<tables::pool_info::PoolInfo> for PoolInfo {
     fn from(src: tables::pool_info::PoolInfo) -> Self {
         fn to_u128(value: BigDecimal) -> U128 {
-            let v: u128 = value.to_u128().unwrap();
+            let v: u128 = value.to_u128().expect("should be valid value");
             v.into()
         }
         PoolInfo {
@@ -71,12 +71,12 @@ impl From<tables::pool_info::PoolInfo> for PoolInfo {
                 token_account_ids: src
                     .token_account_ids
                     .iter()
-                    .map(|v| v.parse().unwrap())
+                    .map(|v| v.parse().expect("should be valid AccountId"))
                     .collect(),
                 amounts: src.amounts.into_iter().map(to_u128).collect(),
                 total_fee: src.total_fee as u32,
                 shares_total_supply: to_u128(src.shares_total_supply.clone()),
-                amp: src.amp.to_u64().unwrap(),
+                amp: src.amp.to_u64().expect("should be valid value"),
             },
             updated_at: src.updated_at,
         }
@@ -93,12 +93,16 @@ pub struct TokenPair {
 }
 
 impl TokenPair {
-    pub fn token_in_id(&self) -> &AccountId {
-        self.pool.token(self.token_in).unwrap()
+    pub fn token_in_id(&self) -> AccountId {
+        self.pool
+            .token(self.token_in)
+            .expect("should be valid index")
     }
 
-    pub fn token_out_id(&self) -> &AccountId {
-        self.pool.token(self.token_out).unwrap()
+    pub fn token_out_id(&self) -> AccountId {
+        self.pool
+            .token(self.token_out)
+            .expect("should be valid index")
     }
 
     pub fn estimate_return(&self, amount_in: u128) -> Result<u128> {
@@ -144,7 +148,7 @@ impl PoolInfo {
         })
     }
 
-    pub fn tokens(&self) -> Result<Vec<(&AccountId, u128)>> {
+    pub fn tokens(&self) -> Result<Vec<(AccountId, u128)>> {
         if self.bare.token_account_ids.len() != self.bare.amounts.len() {
             return Err(Error::DifferentLengthOfTokens(
                 self.bare.token_account_ids.len(),
@@ -156,15 +160,17 @@ impl PoolInfo {
             .bare
             .token_account_ids
             .iter()
+            .cloned()
             .zip(self.bare.amounts.iter().map(|v| v.0))
             .collect();
         Ok(vs)
     }
 
-    pub fn token(&self, index: usize) -> Result<&AccountId> {
+    pub fn token(&self, index: usize) -> Result<AccountId> {
         self.bare
             .token_account_ids
             .get(index)
+            .cloned()
             .ok_or(Error::OutOfIndexOfTokens(index).into())
     }
 
@@ -207,9 +213,9 @@ impl PoolInfo {
 
     async fn get_return(
         &self,
-        token_in: &AccountId,
+        token_in: AccountId,
         amount_in: u128,
-        token_out: &AccountId,
+        token_out: AccountId,
     ) -> Result<u128> {
         let log = DEFAULT.new(o!(
             "function" => "get_return",
