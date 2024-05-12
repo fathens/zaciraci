@@ -32,7 +32,7 @@ impl Display for Error {
             Error::UnknownResponse(kind) => write!(f, "Unknown response: {:?}", kind),
             Error::UnmatchedTokenPath((token_in, token_out), (token_in2, token_out2)) => write!(
                 f,
-                "Unmatched token path: ({}, {}) and ({}, {})",
+                "Unmatched token path: ({} -> {}) and ({} -> {})",
                 token_in, token_out, token_in2, token_out2
             ),
         }

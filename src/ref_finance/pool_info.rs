@@ -13,6 +13,7 @@ use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 use std::ops::Deref;
+use std::slice::Iter;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -141,6 +142,13 @@ impl PoolInfo {
         if token_in >= self.len() || token_out >= self.len() {
             return Err(Error::OutOfIndexOfTokens(token_in.max(token_out)).into());
         }
+        if token_in >= self.bare.amounts.len() || token_out >= self.bare.amounts.len() {
+            return Err(Error::DifferentLengthOfTokens(
+                self.bare.token_account_ids.len(),
+                self.bare.amounts.len(),
+            )
+            .into());
+        }
         Ok(TokenPair {
             pool: Arc::clone(self),
             token_in,
@@ -148,22 +156,8 @@ impl PoolInfo {
         })
     }
 
-    pub fn tokens(&self) -> Result<Vec<(AccountId, u128)>> {
-        if self.bare.token_account_ids.len() != self.bare.amounts.len() {
-            return Err(Error::DifferentLengthOfTokens(
-                self.bare.token_account_ids.len(),
-                self.bare.amounts.len(),
-            )
-            .into());
-        }
-        let vs = self
-            .bare
-            .token_account_ids
-            .iter()
-            .cloned()
-            .zip(self.bare.amounts.iter().map(|v| v.0))
-            .collect();
-        Ok(vs)
+    pub fn tokens(&self) -> Iter<AccountId> {
+        self.bare.token_account_ids.iter()
     }
 
     pub fn token(&self, index: usize) -> Result<AccountId> {
@@ -257,6 +251,10 @@ impl PoolInfo {
 impl PoolInfoList {
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn iter(&self) -> Iter<Arc<PoolInfo>> {
+        self.0.iter()
     }
 
     pub fn get(&self, index: usize) -> Result<Arc<PoolInfo>> {
