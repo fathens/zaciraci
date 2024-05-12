@@ -10,15 +10,15 @@ const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
 #[derive(Debug, Clone)]
 pub struct Edge {
-    pool: Arc<EdgesInSamePool>,
+    cache: Arc<same_pool::CachedEdges>,
     pair: TokenPair,
     estimated_return: Option<u128>,
 }
 
 impl Edge {
     fn reversed(&self) -> Arc<Self> {
-        self.pool
-            .get_path(self.pair.token_out, self.pair.token_in)
+        self.cache
+            .get(self.pair.token_out, self.pair.token_in)
             .expect("should be valid index")
     }
 }
@@ -30,36 +30,40 @@ impl PartialEq for Edge {
 }
 impl Eq for Edge {}
 
-#[derive(Debug)]
-struct EdgesInSamePool {
-    pool: Arc<PoolInfo>,
-    cached_edges: Mutex<HashMap<(usize, usize), Arc<Edge>>>,
-}
+mod same_pool {
+    use super::*;
 
-impl EdgesInSamePool {
-    #[allow(dead_code)]
-    pub fn new(pool: Arc<PoolInfo>) -> Self {
-        Self {
-            pool,
-            cached_edges: Mutex::new(HashMap::new()),
-        }
+    #[derive(Debug)]
+    pub struct CachedEdges {
+        pool: Arc<PoolInfo>,
+        cached_edges: Mutex<HashMap<(usize, usize), Arc<Edge>>>,
     }
 
-    pub fn get_path(self: &Arc<Self>, token_in: usize, token_out: usize) -> Result<Arc<Edge>> {
-        let mut cached_edges = self.cached_edges.lock().unwrap();
-        let key = (token_in, token_out);
-        if let Some(path) = cached_edges.get(&key) {
-            return Ok(Arc::clone(path));
+    impl CachedEdges {
+        #[allow(dead_code)]
+        pub fn new(pool: Arc<PoolInfo>) -> Self {
+            Self {
+                pool,
+                cached_edges: Mutex::new(HashMap::new()),
+            }
         }
-        let pair = self.pool.get_pair(token_in, token_out)?;
-        let er = pair.estimate_return(AMOUNT_IN);
-        let path = Arc::new(Edge {
-            pool: Arc::clone(self),
-            pair,
-            estimated_return: er.ok(),
-        });
-        cached_edges.insert(key, Arc::clone(&path));
-        Ok(path)
+
+        pub fn get(self: &Arc<Self>, token_in: usize, token_out: usize) -> Result<Arc<Edge>> {
+            let mut cached_edges = self.cached_edges.lock().unwrap();
+            let key = (token_in, token_out);
+            if let Some(path) = cached_edges.get(&key) {
+                return Ok(Arc::clone(path));
+            }
+            let pair = self.pool.get_pair(token_in, token_out)?;
+            let er = pair.estimate_return(AMOUNT_IN);
+            let path = Arc::new(Edge {
+                cache: Arc::clone(self),
+                pair,
+                estimated_return: er.ok(),
+            });
+            cached_edges.insert(key, Arc::clone(&path));
+            Ok(path)
+        }
     }
 }
 
