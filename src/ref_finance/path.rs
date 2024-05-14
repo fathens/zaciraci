@@ -6,36 +6,40 @@ use std::sync::Arc;
 mod edge;
 
 pub struct PoolsByToken {
-    pools: HashMap<AccountId, Vec<Arc<edge::same_pool::CachedEdges>>>,
+    by_in: HashMap<AccountId, Vec<Arc<edge::same_pool::CachedEdges>>>,
 }
 
 #[allow(dead_code)]
 impl PoolsByToken {
     pub fn new(pool_list: PoolInfoList) -> Self {
-        let mut pools = HashMap::new();
+        let mut by_in = HashMap::new();
         pool_list.iter().for_each(|pool| {
             pool.tokens().for_each(|token| {
-                pools
+                by_in
                     .entry(token.clone())
                     .or_insert_with(Vec::new)
                     .push(edge::same_pool::CachedEdges::new(Arc::clone(pool)));
             });
         });
-        Self { pools }
+        Self { by_in }
+    }
+
+    pub fn tokens(&self) -> Vec<AccountId> {
+        self.by_in.keys().cloned().collect()
     }
 
     pub fn group_by_out(
         &self,
         token_in: &AccountId,
     ) -> HashMap<AccountId, edge::one_step::PathEdges> {
-        self.pools
+        self.by_in
             .get(token_in)
             .map(|edges| {
                 let mut edges_by_token_out = HashMap::new();
                 edges.iter().for_each(|edge| {
                     edge.pool
                         .tokens()
-                        .filter(|t| *t != token_in)
+                        .filter(|&t| t != token_in)
                         .for_each(|token_out| {
                             edges_by_token_out
                                 .entry(token_out.clone())
