@@ -33,7 +33,7 @@ pub struct PoolInfo {
     updated_at: chrono::NaiveDateTime,
 }
 
-pub struct PoolInfoList(pub Vec<Arc<PoolInfo>>);
+pub struct PoolInfoList(Vec<Arc<PoolInfo>>);
 
 impl From<PoolInfo> for tables::pool_info::PoolInfo {
     fn from(src: PoolInfo) -> Self {
