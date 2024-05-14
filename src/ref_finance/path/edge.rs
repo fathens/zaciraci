@@ -105,6 +105,8 @@ pub mod one_step {
     pub struct PathEdges {
         pub token_in_out: (AccountId, AccountId),
         pairs: BinaryHeap<SamePathEdge>,
+
+        cached_is_stop: Arc<Mutex<Option<bool>>>,
     }
 
     impl PathEdges {
@@ -112,6 +114,7 @@ pub mod one_step {
             Self {
                 token_in_out: (token_in_id, token_out_id),
                 pairs: BinaryHeap::new(),
+                cached_is_stop: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -136,6 +139,25 @@ pub mod one_step {
         }
 
         #[allow(dead_code)]
+        pub fn is_stop(&self) -> bool {
+            let mut cached_is_stop = self.cached_is_stop.lock().unwrap();
+            if let Some(is_stop) = *cached_is_stop {
+                return is_stop;
+            }
+            let calc = || -> bool {
+                if self.pairs.len() <= 1 {
+                    return true;
+                }
+                let top = self.pairs.peek().unwrap();
+                let bottom = self.pairs.iter().last().unwrap();
+                top.0.estimated_return == bottom.0.estimated_return
+            };
+            let reslut = calc();
+            *cached_is_stop = Some(reslut);
+            reslut
+        }
+
+        #[allow(dead_code)]
         pub fn at_top(&self) -> Option<Arc<Edge>> {
             self.pairs.peek().map(|e| {
                 let edge = &e.0;
@@ -152,6 +174,7 @@ pub mod one_step {
                     .iter()
                     .map(|p| SamePathEdge(p.0.reversed()))
                     .collect(),
+                cached_is_stop: self.cached_is_stop.clone(),
             }
         }
     }
