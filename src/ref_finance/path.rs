@@ -8,7 +8,7 @@ mod edge;
 type EdgesByToken = HashMap<AccountId, edge::one_step::PathEdges>;
 pub struct PoolsByToken {
     by_in: HashMap<AccountId, Vec<Arc<edge::same_pool::CachedEdges>>>,
-    cached_by_out: Arc<Mutex<HashMap<AccountId, Arc<EdgesByToken>>>>,
+    cached_by_out: Mutex<HashMap<AccountId, Arc<EdgesByToken>>>,
 }
 
 #[allow(dead_code)]
@@ -25,7 +25,7 @@ impl PoolsByToken {
         });
         Self {
             by_in,
-            cached_by_out: Arc::new(Mutex::new(HashMap::new())),
+            cached_by_out: Mutex::new(HashMap::new()),
         }
     }
 
