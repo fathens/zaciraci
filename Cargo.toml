@@ -12,8 +12,8 @@ chrono = "0.4.37"
 bigdecimal = { version = "0.4.3", features = ["serde"] }
 num-bigint = "0.4.4"
 diesel = { version = "2.1.6", features = ["postgres", "numeric", "chrono"] }
-deadpool = { version = "0.11.2", features = ["rt_tokio_1"] }
-deadpool-diesel = { version = "0.6.0", features = ["postgres"] }
+deadpool = { version = "0.12.1", features = ["rt_tokio_1"] }
+deadpool-diesel = { version = "0.6.1", features = ["postgres"] }
 slog = { version = "2.7.0", features = ["max_level_trace", "release_max_level_info"]  }
 slog-async = "2.8.0"
 slog-term = "2.9.1"
