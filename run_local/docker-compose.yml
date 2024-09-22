@@ -21,4 +21,4 @@ services:
     environment:
       - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
       - RUST_LOG=${RUST_LOG:-trace}
-      - LOG_FORMAT=${LOG_FORMAT:-plain}
+      - RUST_LOG_FORMAT=${LOG_FORMAT:-plain}

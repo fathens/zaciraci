@@ -1,7 +1,10 @@
 use once_cell::sync::Lazy;
 pub use slog::*;
 
-fn wrap<D: Drain<Err = Never, Ok = ()> + Send + 'static>(drain: D) -> Fuse<slog_async::Async> {
+fn wrap<D>(drain: D) -> Fuse<slog_async::Async>
+where
+    D: Drain<Err = Never, Ok = ()> + Send + 'static,
+{
     slog_async::Async::default(slog_envlogger::new(drain)).fuse()
 }
 
@@ -14,7 +17,7 @@ pub static DEFAULT: Lazy<Logger> = Lazy::new(|| {
 
     let mk_json = || slog_json::Json::default(std::io::stdout()).fuse();
 
-    let format = std::env::var("LOG_FORMAT").unwrap_or_default();
+    let format = std::env::var("RUST_LOG_FORMAT").unwrap_or_default();
     let drain = match format.as_str() {
         "json" => wrap(mk_json()),
         _ => wrap(mk_term()),

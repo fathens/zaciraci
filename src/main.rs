@@ -8,7 +8,9 @@ mod persistence;
 mod ref_finance;
 mod web;
 
+use bigdecimal::BigDecimal;
 use errors::Error;
+use num_bigint::BigUint;
 type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
@@ -22,6 +24,23 @@ async fn main() {
     error!(log, "log level check");
     warn!(log, "log level check");
     crit!(log, "log level check");
+
+    let a = 1_u8;
+    let b = BigUint::from(2_u8);
+    let c = &BigDecimal::from(3_u8);
+
+    debug!(log, "details";
+      "a" => a,
+      "b" => %b,
+      "c" => %c,
+    );
+
+    let x = b + 1_u8;
+    let y = c + 1_u8;
+    debug!(log, "details";
+      "x" => %x,
+      "y" => %y,
+    );
 
     tokio::spawn(cron::run());
     web::run().await
