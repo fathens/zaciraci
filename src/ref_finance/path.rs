@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 mod edge;
+mod graph;
 
 type EdgesByToken = HashMap<AccountId, edge::one_step::PathEdges>;
 pub struct PoolsByToken {
