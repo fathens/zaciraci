@@ -153,9 +153,9 @@ pub mod one_step {
                 let bottom = self.pairs.iter().last().unwrap();
                 top.0.estimated_return == bottom.0.estimated_return
             };
-            let reslut = calc();
-            *cached_is_stop = Some(reslut);
-            reslut
+            let result = calc();
+            *cached_is_stop = Some(result);
+            result
         }
 
         #[allow(dead_code)]
