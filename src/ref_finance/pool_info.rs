@@ -264,7 +264,7 @@ impl PoolInfoList {
             .ok_or(Error::OutOfIndexOfPools(index).into())
     }
 
-    pub async fn update_all(&self) -> Result<usize> {
+    pub async fn save_to_db(&self) -> Result<usize> {
         let records = self
             .0
             .iter()
