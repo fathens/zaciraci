@@ -1,3 +1,4 @@
+use crate::ref_finance::token_index::TokenIndex;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::types::AccountId;
 use std::fmt::{Debug, Display};
@@ -8,7 +9,7 @@ pub enum Error {
     ZeroAmount,
     Overflow,
     OutOfIndexOfPools(usize),
-    OutOfIndexOfTokens(usize),
+    OutOfIndexOfTokens(TokenIndex),
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
     UnknownResponse(QueryResponseKind),

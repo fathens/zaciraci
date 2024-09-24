@@ -65,7 +65,7 @@ async fn estimate_return(
     let token_in = 0;
     let token_out = n - 1;
     let amount_in = amount;
-    let pair = pool.get_pair(token_in, token_out).unwrap();
+    let pair = pool.get_pair(token_in.into(), token_out.into()).unwrap();
     let amount_out = pair.estimate_return(amount_in).unwrap();
     let token_a = pair.token_in_id();
     let token_b = pair.token_out_id();
@@ -85,7 +85,7 @@ async fn get_return(
     let token_in = 0;
     let token_out = n - 1;
     let amount_in = amount;
-    let pair = pool.get_pair(token_in, token_out).unwrap();
+    let pair = pool.get_pair(token_in.into(), token_out.into()).unwrap();
     let token_a = pair.token_in_id();
     let token_b = pair.token_out_id();
     let amount_out = pair.get_return(amount_in).await.unwrap();

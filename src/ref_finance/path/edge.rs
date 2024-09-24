@@ -17,7 +17,7 @@ pub struct Edge {
 impl Edge {
     fn reversed(&self) -> Arc<Self> {
         self.cache
-            .get(self.pair.token_out, self.pair.token_in)
+            .get(self.pair.token_in, self.pair.token_out)
             .expect("should be valid index")
     }
 }
@@ -31,11 +31,12 @@ impl Eq for Edge {}
 
 pub mod same_pool {
     use super::*;
+    use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 
     #[derive(Debug)]
     pub struct CachedEdges {
         pub pool: Arc<PoolInfo>,
-        cached_edges: Mutex<HashMap<(usize, usize), Arc<Edge>>>,
+        cached_edges: Mutex<HashMap<(TokenIn, TokenOut), Arc<Edge>>>,
     }
 
     impl CachedEdges {
@@ -46,8 +47,11 @@ pub mod same_pool {
             })
         }
 
-        pub fn get_token_id(&self, token: &AccountId) -> Option<usize> {
-            self.pool.tokens().position(|t| t == token)
+        pub fn get_token_id(&self, token: &AccountId) -> Option<TokenIndex> {
+            self.pool
+                .tokens()
+                .position(|t| t == token)
+                .map(|a| a.into())
         }
 
         pub fn get_by_ids(
@@ -57,13 +61,13 @@ pub mod same_pool {
         ) -> Option<Arc<Edge>> {
             let token_in = self.get_token_id(token_in)?;
             let token_out = self.get_token_id(token_out)?;
-            self.get(token_in, token_out).ok()
+            self.get(token_in.into(), token_out.into()).ok()
         }
 
         pub fn get(
             self: &Arc<Self>,
-            token_in: usize,
-            token_out: usize,
+            token_in: TokenIn,
+            token_out: TokenOut,
         ) -> crate::Result<Arc<Edge>> {
             let mut cached_edges = self.cached_edges.lock().unwrap();
             let key = (token_in, token_out);

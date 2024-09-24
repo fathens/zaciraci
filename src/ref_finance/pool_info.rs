@@ -1,5 +1,6 @@
 use crate::logging::*;
 use crate::persistence::tables;
+use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{errors::Error, CLIENT, CONTRACT_ADDRESS};
 use crate::Result;
 use bigdecimal::{BigDecimal, ToPrimitive};
@@ -89,20 +90,20 @@ pub const FEE_DIVISOR: u32 = 10_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenPair {
     pool: Arc<PoolInfo>,
-    pub token_in: usize,
-    pub token_out: usize,
+    pub token_in: TokenIn,
+    pub token_out: TokenOut,
 }
 
 impl TokenPair {
     pub fn token_in_id(&self) -> AccountId {
         self.pool
-            .token(self.token_in)
+            .token(self.token_in.as_index())
             .expect("should be valid index")
     }
 
     pub fn token_out_id(&self) -> AccountId {
         self.pool
-            .token(self.token_out)
+            .token(self.token_out.as_index())
             .expect("should be valid index")
     }
 
@@ -114,9 +115,9 @@ impl TokenPair {
     pub async fn get_return(&self, amount_in: u128) -> Result<u128> {
         self.pool
             .get_return(
-                self.pool.token(self.token_in)?,
+                self.pool.token(self.token_in.as_index())?,
                 amount_in,
-                self.pool.token(self.token_out)?,
+                self.pool.token(self.token_out.as_index())?,
             )
             .await
     }
@@ -135,14 +136,18 @@ impl PoolInfo {
         self.bare.token_account_ids.len()
     }
 
-    pub fn get_pair(self: &Arc<Self>, token_in: usize, token_out: usize) -> Result<TokenPair> {
-        if token_in == token_out {
+    pub fn get_pair(self: &Arc<Self>, token_in: TokenIn, token_out: TokenOut) -> Result<TokenPair> {
+        if token_in.as_index() == token_out.as_index() {
             return Err(Error::SwapSameToken.into());
         }
-        if token_in >= self.len() || token_out >= self.len() {
-            return Err(Error::OutOfIndexOfTokens(token_in.max(token_out)).into());
+        if token_in.as_usize() >= self.len() || token_out.as_usize() >= self.len() {
+            return Err(
+                Error::OutOfIndexOfTokens(token_in.as_index().max(token_out.as_index())).into(),
+            );
         }
-        if token_in >= self.bare.amounts.len() || token_out >= self.bare.amounts.len() {
+        if token_in.as_usize() >= self.bare.amounts.len()
+            || token_out.as_usize() >= self.bare.amounts.len()
+        {
             return Err(Error::DifferentLengthOfTokens(
                 self.bare.token_account_ids.len(),
                 self.bare.amounts.len(),
@@ -160,38 +165,43 @@ impl PoolInfo {
         self.bare.token_account_ids.iter()
     }
 
-    pub fn token(&self, index: usize) -> Result<AccountId> {
+    pub fn token(&self, index: TokenIndex) -> Result<AccountId> {
         self.bare
             .token_account_ids
-            .get(index)
+            .get(index.as_usize())
             .cloned()
             .ok_or(Error::OutOfIndexOfTokens(index).into())
     }
 
-    fn amount(&self, index: usize) -> Result<BigDecimal> {
+    fn amount(&self, index: TokenIndex) -> Result<BigDecimal> {
         let v = self
             .bare
             .amounts
-            .get(index)
+            .get(index.as_usize())
             .ok_or(Error::OutOfIndexOfTokens(index))?;
         Ok(BigDecimal::from(v.0))
     }
 
-    fn estimate_return(&self, token_in: usize, amount_in: u128, token_out: usize) -> Result<u128> {
+    fn estimate_return(
+        &self,
+        token_in: TokenIn,
+        amount_in: u128,
+        token_out: TokenOut,
+    ) -> Result<u128> {
         let log = DEFAULT.new(o!(
             "function" => "estimate_return",
             "pool_id" => self.id,
             "amount_in" => amount_in,
-            "token_in" => token_in,
-            "token_out" => token_out,
+            "token_in" => token_in.as_usize(),
+            "token_out" => token_out.as_usize(),
         ));
         info!(log, "start");
-        if token_in == token_out {
+        if token_in.as_index() == token_out.as_index() {
             return Err(Error::SwapSameToken.into());
         }
-        let in_balance = self.amount(token_in)?;
+        let in_balance = self.amount(token_in.as_index())?;
         trace!(log, "in_balance"; "value" => %in_balance);
-        let out_balance = self.amount(token_out)?;
+        let out_balance = self.amount(token_out.as_index())?;
         trace!(log, "out_balance"; "value" => %out_balance);
         let amount_in = BigDecimal::from(amount_in);
         if in_balance.sign() <= NoSign || out_balance.sign() <= NoSign || amount_in.sign() <= NoSign
@@ -442,7 +452,7 @@ mod test {
                 amp: 0,
             },
         );
-        let result = sample.estimate_return(0, 100, 1);
+        let result = sample.estimate_return(0.into(), 100, 1.into());
         assert_eq!(Ok(10756643_u128), result);
     }
 }

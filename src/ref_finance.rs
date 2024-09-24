@@ -1,6 +1,7 @@
 pub mod errors;
 mod path;
 pub mod pool_info;
+mod token_index;
 
 use near_jsonrpc_client::JsonRpcClient;
 use near_sdk::AccountId;
