@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TokenIndex(usize);
 
 impl TokenIndex {
@@ -27,7 +27,7 @@ impl From<usize> for TokenIndex {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TokenIn(TokenIndex);
 
 impl TokenIn {
@@ -52,7 +52,7 @@ impl From<TokenIndex> for TokenIn {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TokenOut(TokenIndex);
 
 impl TokenOut {
