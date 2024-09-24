@@ -11,7 +11,7 @@ const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 pub struct Edge {
     cache: Arc<same_pool::CachedEdges>,
     pair: TokenPair,
-    estimated_return: Option<u128>,
+    estimated_return: u128,
 }
 
 impl Edge {
@@ -71,14 +71,15 @@ pub mod same_pool {
                 return Ok(Arc::clone(path));
             }
             let pair = self.pool.get_pair(token_in, token_out)?;
-            let er = pair.estimate_return(AMOUNT_IN);
-            let path = Arc::new(Edge {
-                cache: Arc::clone(self),
-                pair,
-                estimated_return: er.ok(),
-            });
-            cached_edges.insert(key, Arc::clone(&path));
-            Ok(path)
+            pair.estimate_return(AMOUNT_IN).map(|er| {
+                let path = Arc::new(Edge {
+                    cache: Arc::clone(self),
+                    pair,
+                    estimated_return: er,
+                });
+                cached_edges.insert(key, Arc::clone(&path));
+                path
+            })
         }
     }
 }
