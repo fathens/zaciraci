@@ -173,8 +173,10 @@ pub mod one_step {
 
         #[allow(dead_code)]
         pub fn reversed(&self) -> Self {
+            let token_in = self.token_in_out.1.as_account().clone().into();
+            let token_out = self.token_in_out.0.as_account().clone().into();
             Self {
-                token_in_out: (self.token_in_out.0.clone(), self.token_in_out.1.clone()),
+                token_in_out: (token_in, token_out),
                 pairs: self
                     .pairs
                     .iter()
