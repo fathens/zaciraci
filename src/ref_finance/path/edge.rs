@@ -1,6 +1,5 @@
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair};
-use near_primitives::types::AccountId;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex};
@@ -31,6 +30,7 @@ impl Eq for Edge {}
 
 pub mod same_pool {
     use super::*;
+    use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
     use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 
     #[derive(Debug)]
@@ -47,7 +47,7 @@ pub mod same_pool {
             })
         }
 
-        pub fn get_token_id(&self, token: &AccountId) -> Option<TokenIndex> {
+        pub fn get_token_id(&self, token: &TokenAccount) -> Option<TokenIndex> {
             self.pool
                 .tokens()
                 .position(|t| t == token)
@@ -56,11 +56,11 @@ pub mod same_pool {
 
         pub fn get_by_ids(
             self: &Arc<Self>,
-            token_in: &AccountId,
-            token_out: &AccountId,
+            token_in: &TokenInAccount,
+            token_out: &TokenOutAccount,
         ) -> Option<Arc<Edge>> {
-            let token_in = self.get_token_id(token_in)?;
-            let token_out = self.get_token_id(token_out)?;
+            let token_in = self.get_token_id(token_in.as_account())?;
+            let token_out = self.get_token_id(token_out.as_account())?;
             self.get(token_in.into(), token_out.into()).ok()
         }
 
@@ -90,6 +90,7 @@ pub mod same_pool {
 
 pub mod one_step {
     use super::*;
+    use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct SamePathEdge(Arc<Edge>);
@@ -108,14 +109,14 @@ pub mod one_step {
 
     #[derive(Debug, Clone)]
     pub struct PathEdges {
-        pub token_in_out: (AccountId, AccountId),
+        pub token_in_out: (TokenInAccount, TokenOutAccount),
         pairs: BinaryHeap<SamePathEdge>,
 
         cached_is_stop: Arc<Mutex<Option<bool>>>,
     }
 
     impl PathEdges {
-        pub fn new(token_in_id: AccountId, token_out_id: AccountId) -> Self {
+        pub fn new(token_in_id: TokenInAccount, token_out_id: TokenOutAccount) -> Self {
             Self {
                 token_in_out: (token_in_id, token_out_id),
                 pairs: BinaryHeap::new(),
@@ -173,7 +174,7 @@ pub mod one_step {
         #[allow(dead_code)]
         pub fn reversed(&self) -> Self {
             Self {
-                token_in_out: (self.token_in_out.1.clone(), self.token_in_out.0.clone()),
+                token_in_out: (self.token_in_out.0.clone(), self.token_in_out.1.clone()),
                 pairs: self
                     .pairs
                     .iter()

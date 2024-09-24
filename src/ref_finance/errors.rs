@@ -1,6 +1,6 @@
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::TokenIndex;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
-use near_primitives::types::AccountId;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
@@ -12,8 +12,12 @@ pub enum Error {
     OutOfIndexOfTokens(TokenIndex),
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
+    InvalidTokenAccountId(String),
     UnknownResponse(QueryResponseKind),
-    UnmatchedTokenPath((AccountId, AccountId), (AccountId, AccountId)),
+    UnmatchedTokenPath(
+        (TokenInAccount, TokenOutAccount),
+        (TokenInAccount, TokenOutAccount),
+    ),
 }
 
 impl Display for Error {
@@ -25,6 +29,9 @@ impl Display for Error {
             Error::OutOfIndexOfPools(index) => write!(f, "Out of index of pools: {}", index),
             Error::Overflow => write!(f, "Overflow"),
             Error::InvalidPoolSize(n) => write!(f, "Invalid pool size: {}", n),
+            Error::InvalidTokenAccountId(msg) => {
+                write!(f, "Invalid token account ID: {}", msg)
+            }
             Error::DifferentLengthOfTokens(token_ids, amounts) => write!(
                 f,
                 "Different length of tokens: {} and {}",

@@ -1,5 +1,6 @@
 use crate::logging::*;
 use crate::persistence::tables;
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{errors::Error, CLIENT, CONTRACT_ADDRESS};
 use crate::Result;
@@ -9,7 +10,6 @@ use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::types::{BlockReference, Finality, FunctionArgs};
 use near_primitives::views::QueryRequest;
 use near_sdk::json_types::U128;
-use near_sdk::AccountId;
 use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
@@ -20,7 +20,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolInfoBared {
     pub pool_kind: String,
-    pub token_account_ids: Vec<AccountId>,
+    pub token_account_ids: Vec<TokenAccount>,
     pub amounts: Vec<U128>,
     pub total_fee: u32,
     pub shares_total_supply: U128,
@@ -49,7 +49,7 @@ impl From<PoolInfo> for tables::pool_info::PoolInfo {
                 .bare
                 .token_account_ids
                 .into_iter()
-                .map(|v| v.into())
+                .map(|v| v.to_string())
                 .collect(),
             amounts: src.bare.amounts.into_iter().map(from_u128).collect(),
             total_fee: src.bare.total_fee as i64,
@@ -95,15 +95,17 @@ pub struct TokenPair {
 }
 
 impl TokenPair {
-    pub fn token_in_id(&self) -> AccountId {
+    pub fn token_in_id(&self) -> TokenInAccount {
         self.pool
             .token(self.token_in.as_index())
+            .map(|v| v.into())
             .expect("should be valid index")
     }
 
-    pub fn token_out_id(&self) -> AccountId {
+    pub fn token_out_id(&self) -> TokenOutAccount {
         self.pool
             .token(self.token_out.as_index())
+            .map(|v| v.into())
             .expect("should be valid index")
     }
 
@@ -115,9 +117,9 @@ impl TokenPair {
     pub async fn get_return(&self, amount_in: u128) -> Result<u128> {
         self.pool
             .get_return(
-                self.pool.token(self.token_in.as_index())?,
+                self.pool.token(self.token_in.as_index())?.into(),
                 amount_in,
-                self.pool.token(self.token_out.as_index())?,
+                self.pool.token(self.token_out.as_index())?.into(),
             )
             .await
     }
@@ -161,11 +163,11 @@ impl PoolInfo {
         })
     }
 
-    pub fn tokens(&self) -> Iter<AccountId> {
+    pub fn tokens(&self) -> Iter<TokenAccount> {
         self.bare.token_account_ids.iter()
     }
 
-    pub fn token(&self, index: TokenIndex) -> Result<AccountId> {
+    pub fn token(&self, index: TokenIndex) -> Result<TokenAccount> {
         self.bare
             .token_account_ids
             .get(index.as_usize())
@@ -217,9 +219,9 @@ impl PoolInfo {
 
     async fn get_return(
         &self,
-        token_in: AccountId,
+        token_in: TokenInAccount,
         amount_in: u128,
-        token_out: AccountId,
+        token_out: TokenOutAccount,
     ) -> Result<u128> {
         let log = DEFAULT.new(o!(
             "function" => "get_return",
@@ -231,9 +233,9 @@ impl PoolInfo {
 
         let request_json = json!({
             "pool_id": self.id,
-            "token_in": token_in,
+            "token_in": token_in.as_id(),
             "amount_in": U128::from(amount_in),
-            "token_out": token_out,
+            "token_out": token_out.as_id(),
         })
         .to_string();
         debug!(log, "request_json"; "value" => %request_json);
@@ -371,7 +373,11 @@ mod test {
         let pool_info: PoolInfoBared = serde_json::from_str(json).unwrap();
         assert_eq!(pool_info.pool_kind, "SIMPLE_POOL");
         assert_eq!(
-            pool_info.token_account_ids,
+            pool_info
+                .token_account_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<String>>(),
             vec!["token.skyward.near".to_string(), "wrap.near".to_string()]
         );
         assert_eq!(

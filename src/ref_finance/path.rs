@@ -1,15 +1,15 @@
 use crate::ref_finance::pool_info::PoolInfoList;
-use near_sdk::AccountId;
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 mod edge;
 mod graph;
 
-type EdgesByToken = HashMap<AccountId, edge::one_step::PathEdges>;
+type EdgesByToken = HashMap<TokenOutAccount, edge::one_step::PathEdges>;
 pub struct PoolsByToken {
-    by_in: HashMap<AccountId, Vec<Arc<edge::same_pool::CachedEdges>>>,
-    cached_by_out: Mutex<HashMap<AccountId, Arc<EdgesByToken>>>,
+    by_in: HashMap<TokenInAccount, Vec<Arc<edge::same_pool::CachedEdges>>>,
+    cached_by_out: Mutex<HashMap<TokenInAccount, Arc<EdgesByToken>>>,
 }
 
 #[allow(dead_code)]
@@ -19,7 +19,7 @@ impl PoolsByToken {
         pool_list.iter().for_each(|pool| {
             pool.tokens().for_each(|token| {
                 by_in
-                    .entry(token.clone())
+                    .entry(token.clone().into())
                     .or_insert_with(Vec::new)
                     .push(edge::same_pool::CachedEdges::new(Arc::clone(pool)));
             });
@@ -30,11 +30,11 @@ impl PoolsByToken {
         }
     }
 
-    pub fn tokens(&self) -> Vec<AccountId> {
+    pub fn tokens(&self) -> Vec<TokenInAccount> {
         self.by_in.keys().cloned().collect()
     }
 
-    pub fn get_groups_by_out(&self, token_in: &AccountId) -> Arc<EdgesByToken> {
+    pub fn get_groups_by_out(&self, token_in: &TokenInAccount) -> Arc<EdgesByToken> {
         self.cached_by_out
             .lock()
             .map(|mut cached_map| {
@@ -49,14 +49,15 @@ impl PoolsByToken {
             .unwrap_or_default()
     }
 
-    fn group_by_out(&self, token_in: &AccountId) -> Option<EdgesByToken> {
+    fn group_by_out(&self, token_in: &TokenInAccount) -> Option<EdgesByToken> {
         self.by_in.get(token_in).map(|edges| {
             let mut edges_by_token_out = HashMap::new();
             edges.iter().for_each(|edge| {
                 edge.pool
                     .tokens()
-                    .filter(|&t| t != token_in)
+                    .filter(|&t| t != token_in.as_account())
                     .for_each(|token_out| {
+                        let token_out: TokenOutAccount = token_out.clone().into();
                         edges_by_token_out
                             .entry(token_out.clone())
                             .or_insert_with(|| {
@@ -64,7 +65,7 @@ impl PoolsByToken {
                             })
                             .push(Arc::clone(
                                 &edge
-                                    .get_by_ids(token_in, token_out)
+                                    .get_by_ids(token_in, &token_out)
                                     .expect("should be valid tokens"),
                             ))
                             .expect("should be same path")
