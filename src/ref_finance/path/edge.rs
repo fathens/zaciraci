@@ -64,7 +64,7 @@ pub mod same_pool {
             self.get(token_in.into(), token_out.into()).ok()
         }
 
-        pub fn get(
+        pub(super) fn get(
             self: &Arc<Self>,
             token_in: TokenIn,
             token_out: TokenOut,
