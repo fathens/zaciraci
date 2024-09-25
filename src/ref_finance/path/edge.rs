@@ -1,5 +1,6 @@
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair};
+use num_traits::ToPrimitive;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex};
@@ -11,9 +12,22 @@ pub struct Edge {
     cache: Arc<same_pool::CachedEdges>,
     pair: TokenPair,
     estimated_return: u128,
+
+    cached_weight: Arc<Mutex<Option<f32>>>,
 }
 
 impl Edge {
+    #[allow(dead_code)]
+    pub fn weight(&self) -> f32 {
+        let mut cached_weight = self.cached_weight.lock().unwrap();
+        if let Some(weight) = *cached_weight {
+            return weight;
+        }
+        let w = AMOUNT_IN.to_f32().unwrap() / self.estimated_return.to_f32().unwrap();
+        *cached_weight = Some(w);
+        w
+    }
+
     fn reversed(&self) -> Arc<Self> {
         self.cache
             .get(self.pair.token_in, self.pair.token_out)
@@ -80,6 +94,7 @@ pub mod same_pool {
                     cache: Arc::clone(self),
                     pair,
                     estimated_return: er,
+                    cached_weight: Arc::new(Mutex::new(None)),
                 });
                 cached_edges.insert(key, Arc::clone(&path));
                 path
