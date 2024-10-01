@@ -1,6 +1,6 @@
 use crate::ref_finance::path::edge;
 use crate::ref_finance::pool_info::PoolInfoList;
-use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -28,8 +28,8 @@ impl PoolsByToken {
         }
     }
 
-    pub fn tokens(&self) -> Vec<TokenInAccount> {
-        self.by_in.keys().cloned().collect()
+    pub fn tokens(&self) -> Vec<TokenAccount> {
+        self.by_in.keys().cloned().map(|ta| ta.into()).collect()
     }
 
     pub fn get_groups_by_out(&self, token_in: &TokenInAccount) -> Arc<EdgesByToken> {

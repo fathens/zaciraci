@@ -1,4 +1,4 @@
-use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::TokenIndex;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use std::fmt::{Debug, Display};
@@ -13,6 +13,7 @@ pub enum Error {
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
     InvalidTokenAccountId(String),
+    TokenNotFound(TokenAccount),
     UnknownResponse(QueryResponseKind),
     UnmatchedTokenPath(
         (TokenInAccount, TokenOutAccount),
@@ -25,6 +26,7 @@ impl Display for Error {
         match self {
             Error::SwapSameToken => write!(f, "Cannot swap the same token"),
             Error::ZeroAmount => write!(f, "Cannot handle zero amount"),
+            Error::TokenNotFound(token) => write!(f, "Token not found: {}", token),
             Error::OutOfIndexOfTokens(index) => write!(f, "Out of index of tokens: {}", index),
             Error::OutOfIndexOfPools(index) => write!(f, "Out of index of pools: {}", index),
             Error::Overflow => write!(f, "Overflow"),

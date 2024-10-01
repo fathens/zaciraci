@@ -69,6 +69,12 @@ impl From<TokenAccount> for TokenInAccount {
     }
 }
 
+impl From<TokenInAccount> for TokenAccount {
+    fn from(value: TokenInAccount) -> Self {
+        value.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct TokenOutAccount(TokenAccount);
 
@@ -97,5 +103,11 @@ impl From<AccountId> for TokenOutAccount {
 impl From<TokenAccount> for TokenOutAccount {
     fn from(value: TokenAccount) -> Self {
         TokenOutAccount(value)
+    }
+}
+
+impl From<TokenOutAccount> for TokenAccount {
+    fn from(value: TokenOutAccount) -> Self {
+        value.0
     }
 }

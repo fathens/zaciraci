@@ -1,11 +1,40 @@
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair};
-use num_traits::ToPrimitive;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
+use std::ops::Add;
 use std::sync::{Arc, Mutex};
 
 const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Copy, Clone)]
+pub struct EdgeWeight {
+    estimated_return: u128,
+}
+
+impl Ord for EdgeWeight {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // estimated_return が大きい方が小さいとして返す
+        self.estimated_return.cmp(&other.estimated_return).reverse()
+    }
+}
+
+impl Default for EdgeWeight {
+    fn default() -> Self {
+        EdgeWeight {
+            estimated_return: AMOUNT_IN,
+        }
+    }
+}
+
+impl Add<EdgeWeight> for EdgeWeight {
+    type Output = Self;
+    fn add(self, rhs: EdgeWeight) -> Self::Output {
+        EdgeWeight {
+            estimated_return: self.estimated_return + rhs.estimated_return,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Edge {
@@ -13,19 +42,21 @@ pub struct Edge {
     pair: TokenPair,
     estimated_return: u128,
 
-    cached_weight: Arc<Mutex<Option<f32>>>,
+    cached_weight: Arc<Mutex<Option<EdgeWeight>>>,
 }
 
 impl Edge {
     #[allow(dead_code)]
-    pub fn weight(&self) -> f32 {
+    pub fn weight(&self) -> EdgeWeight {
         let mut cached_weight = self.cached_weight.lock().unwrap();
         if let Some(weight) = *cached_weight {
             return weight;
         }
-        let w = AMOUNT_IN.to_f32().unwrap() / self.estimated_return.to_f32().unwrap();
-        *cached_weight = Some(w);
-        w
+        let weight = EdgeWeight {
+            estimated_return: self.estimated_return,
+        };
+        *cached_weight = Some(weight);
+        weight
     }
 
     fn reversed(&self) -> Arc<Self> {
@@ -137,6 +168,11 @@ pub mod one_step {
                 pairs: BinaryHeap::new(),
                 cached_is_stop: Arc::new(Mutex::new(None)),
             }
+        }
+
+        #[allow(dead_code)]
+        pub fn edges(&self) -> Vec<Arc<Edge>> {
+            self.pairs.iter().map(|e| Arc::clone(&e.0)).collect()
         }
 
         pub fn push(&mut self, path: Arc<Edge>) -> crate::Result<()> {
