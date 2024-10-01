@@ -56,7 +56,10 @@ impl TokenGraph {
         ));
         info!(log, "start");
 
-        let &start = self.nodes.get(&from).ok_or(Error::TokenNotFound(from))?;
+        let &start = self
+            .nodes
+            .get(&from)
+            .ok_or(Error::TokenNotFound(from.clone()))?;
         let goals = algo::dijkstra(&self.graph, start, None, |e| *e.weight());
         debug!(log, "goals"; "goals" => ?goals);
 
@@ -65,7 +68,17 @@ impl TokenGraph {
             goals: goals.clone(),
         };
 
-        let _ = finder.find_all_path();
+        let paths = finder.find_all_path();
+        let mut path_to_outs = HashMap::new();
+        for mut path in paths.into_iter() {
+            if let Some(out) = path.pop() {
+                path_to_outs.insert(out.into(), path);
+            }
+        }
+        self.cached_path
+            .lock()
+            .unwrap()
+            .insert(from.into(), path_to_outs);
 
         todo!()
     }
@@ -78,15 +91,27 @@ struct GraphPath<N, W> {
 
 impl<N, W> GraphPath<N, W>
 where
+    N: std::hash::Hash + Eq + Clone,
     W: Eq + std::ops::Add<Output = W> + Copy,
 {
-    fn find_all_path(&self) -> HashMap<NodeIndex, Vec<NodeIndex>> {
+    pub fn find_all_path(&self) -> Vec<Vec<N>> {
         let paths = Rc::new(Mutex::new(HashMap::new()));
         for (&goal, _) in self.goals.iter() {
             self.find_path(Rc::clone(&paths), goal);
         }
-        let paths = paths.lock().unwrap().clone();
-        paths
+        let paths = paths.lock().unwrap();
+        let mut results = Vec::new();
+
+        for (_, path) in paths.iter() {
+            let path: Vec<N> = path
+                .iter()
+                .rev()
+                .map(|&node_index| self.graph.node_weight(node_index).unwrap().clone())
+                .collect();
+            results.push(path);
+        }
+
+        results
     }
 
     fn find_path(
@@ -145,10 +170,7 @@ where
 #[cfg(test)]
 mod test {
     use petgraph::algo::dijkstra;
-    use petgraph::graph::NodeIndex;
-    use petgraph::visit::IntoNodeReferences;
     use petgraph::Graph;
-    use std::collections::HashMap;
     use std::thread::sleep;
 
     #[test]
@@ -205,36 +227,24 @@ mod test {
             graph: graph.clone(),
             goals,
         };
-        let paths = finder.find_all_path();
+        let mut results = finder.find_all_path();
+        assert_eq!(results.len(), 9);
+        results.sort();
 
-        fn get_node<'a>(graph: &Graph<&'a str, i32>, index: NodeIndex) -> &'a str {
-            graph
-                .node_references()
-                .find_map(|(i, &node)| (i == index).then_some(node))
-                .expect("node not found")
-        }
-        assert_eq!(paths.len(), 9);
-
-        let mut results = HashMap::new();
-        for (node_index, path) in paths {
-            let node = get_node(&graph, node_index);
-            let path: Vec<_> = path
-                .iter()
-                .rev()
-                .map(|&node_index| get_node(&graph, node_index))
-                .collect();
-            results.insert(node, path);
-        }
-
-        assert_eq!(results["J"], vec!["J"]);
-        assert_eq!(results["H"], vec!["J", "H"]);
-        assert_eq!(results["F"], vec!["J", "H", "F"]);
-        assert_eq!(results["D"], vec!["J", "H", "F", "D"]);
-        assert_eq!(results["B"], vec!["J", "H", "F", "D", "B"]);
-        assert_eq!(results["I"], vec!["J", "I"]);
-        assert_eq!(results["G"], vec!["J", "I", "G"]);
-        assert_eq!(results["E"], vec!["J", "I", "G", "E"]);
-        assert_eq!(results["C"], vec!["J", "I", "G", "E", "C"]);
+        assert_eq!(
+            results,
+            vec![
+                vec!["J"],
+                vec!["J", "H"],
+                vec!["J", "H", "F"],
+                vec!["J", "H", "F", "D"],
+                vec!["J", "H", "F", "D", "B"],
+                vec!["J", "I"],
+                vec!["J", "I", "G"],
+                vec!["J", "I", "G", "E"],
+                vec!["J", "I", "G", "E", "C"],
+            ]
+        );
 
         sleep(std::time::Duration::from_secs(1));
     }
