@@ -129,33 +129,28 @@ impl TokenGraph {
 
         let mut prev = start;
         for token in path.iter() {
-            value = self.mul_return(value, prev, token.clone().into())?;
+            value = value.mul(self.get_weight(prev, token.clone().into())?.to_rational());
             prev = token.clone().into();
         }
-        value = self.mul_return(value, prev, goal.clone())?;
+        value = value.mul(self.get_weight(prev, goal.clone())?.to_rational());
 
         Ok(EdgeWeight::from(value).to_u128())
     }
 
-    fn mul_return(
+    fn get_weight(
         &self,
-        prev_value: BigRational,
         token_in: TokenInAccount,
         token_out: TokenOutAccount,
-    ) -> Result<BigRational> {
-        let edge = self
+    ) -> Result<EdgeWeight> {
+        let weight: Option<_> = self
             .graph
             .find_edge(
                 self.node_index(token_in.clone().into())?,
                 self.node_index(token_out.clone().into())?,
             )
-            .ok_or(Error::NoValidEddge(token_in.clone(), token_out.clone()))?;
-        let weight = self
-            .graph
-            .edge_weight(edge)
-            .ok_or(Error::NoValidEddge(token_in, token_out))?;
-        let value = prev_value.mul(weight.to_rational());
-        Ok(value)
+            .iter()
+            .find_map(|&edge| self.graph.edge_weight(edge).cloned());
+        weight.ok_or(Error::NoValidEddge(token_in, token_out).into())
     }
 }
 
