@@ -5,7 +5,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
 
-const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
+pub const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EdgeWeight {
