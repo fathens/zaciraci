@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EdgeWeight {
     estimated_return: u128,
 }
@@ -16,6 +16,12 @@ impl Ord for EdgeWeight {
     fn cmp(&self, other: &Self) -> Ordering {
         // estimated_return が大きい方が小さいとして返す
         self.estimated_return.cmp(&other.estimated_return).reverse()
+    }
+}
+
+impl PartialOrd for EdgeWeight {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
