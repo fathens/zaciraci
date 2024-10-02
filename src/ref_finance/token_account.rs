@@ -49,6 +49,10 @@ impl TokenInAccount {
     pub fn as_account(&self) -> &TokenAccount {
         &self.0
     }
+
+    pub fn as_out(&self) -> TokenOutAccount {
+        TokenOutAccount(self.0.clone())
+    }
 }
 
 impl std::fmt::Display for TokenInAccount {
@@ -85,6 +89,10 @@ impl TokenOutAccount {
 
     pub fn as_account(&self) -> &TokenAccount {
         &self.0
+    }
+
+    pub fn as_in(&self) -> TokenInAccount {
+        TokenInAccount(self.0.clone())
     }
 }
 
