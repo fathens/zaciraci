@@ -4,10 +4,12 @@ use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
+use near_primitives::num_rational::BigRational;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
+use std::ops::Mul;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -49,18 +51,47 @@ impl TokenGraph {
         }
     }
 
-    pub fn list_asymmetric_path(&self, from: TokenAccount) -> Result<Vec<TokenAccount>> {
+    pub fn list_asymmetric_path(
+        &self,
+        start: TokenInAccount,
+    ) -> Result<HashMap<TokenOutAccount, u128>> {
+        let goals = self.update_path(start.clone(), None)?;
+        for goal in goals.iter() {
+            self.update_path(goal.as_in(), Some(start.as_out()))?;
+        }
+
+        let mut returns = HashMap::new();
+        for goal in goals.into_iter() {
+            let value = self.estimate_return(start.clone(), goal.clone())?;
+            returns.insert(goal, value);
+        }
+        Ok(returns)
+    }
+
+    fn node_index(&self, token: TokenAccount) -> Result<NodeIndex> {
+        let &index = self.nodes.get(&token).ok_or(Error::TokenNotFound(token))?;
+        Ok(index)
+    }
+
+    fn update_path(
+        &self,
+        start: TokenInAccount,
+        goal: Option<TokenOutAccount>,
+    ) -> Result<Vec<TokenOutAccount>> {
         let log = DEFAULT.new(o!(
             "function" => "TokenGraph::list_asymmetric_path",
-            "from" => format!("{:?}", from),
+            "start" => format!("{:?}", start),
+            "goal" => format!("{:?}", goal),
         ));
         info!(log, "start");
 
-        let &start = self
-            .nodes
-            .get(&from)
-            .ok_or(Error::TokenNotFound(from.clone()))?;
-        let goals = algo::dijkstra(&self.graph, start, None, |e| *e.weight());
+        let from = self.node_index(start.clone().into())?;
+        let to = if let Some(goal) = goal {
+            Some(self.node_index(goal.into())?)
+        } else {
+            None
+        };
+        let goals = algo::dijkstra(&self.graph, from, to, |e| *e.weight());
         debug!(log, "goals"; "goals" => ?goals);
 
         let finder = GraphPath {
@@ -70,17 +101,61 @@ impl TokenGraph {
 
         let paths = finder.find_all_path();
         let mut path_to_outs = HashMap::new();
+        let mut outs = Vec::new();
         for mut path in paths.into_iter() {
             if let Some(out) = path.pop() {
-                path_to_outs.insert(out.into(), path);
+                path_to_outs.insert(out.clone().into(), path);
+                outs.push(out.into());
             }
         }
-        self.cached_path
-            .lock()
-            .unwrap()
-            .insert(from.into(), path_to_outs);
+        self.cached_path.lock().unwrap().insert(start, path_to_outs);
+        Ok(outs)
+    }
 
-        todo!()
+    fn get_path(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenAccount>> {
+        let cached_path = self.cached_path.lock().unwrap();
+        let path = cached_path
+            .get(&start)
+            .ok_or(Error::TokenNotFound(start.as_account().clone()))?
+            .get(&goal)
+            .ok_or(Error::TokenNotFound(goal.as_account().clone()))?;
+        Ok(path.clone())
+    }
+
+    fn estimate_return(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<u128> {
+        let path = self.get_path(start.clone(), goal.clone())?;
+
+        let mut value = EdgeWeight::default().to_rational();
+
+        let mut prev = start;
+        for token in path.iter() {
+            value = self.mul_return(value, prev, token.clone().into())?;
+            prev = token.clone().into();
+        }
+        value = self.mul_return(value, prev, goal.clone())?;
+
+        Ok(EdgeWeight::from(value).to_u128())
+    }
+
+    fn mul_return(
+        &self,
+        prev_value: BigRational,
+        token_in: TokenInAccount,
+        token_out: TokenOutAccount,
+    ) -> Result<BigRational> {
+        let edge = self
+            .graph
+            .find_edge(
+                self.node_index(token_in.clone().into())?,
+                self.node_index(token_out.clone().into())?,
+            )
+            .ok_or(Error::NoValidEddge(token_in.clone(), token_out.clone()))?;
+        let weight = self
+            .graph
+            .edge_weight(edge)
+            .ok_or(Error::NoValidEddge(token_in, token_out))?;
+        let value = prev_value.mul(weight.to_rational());
+        Ok(value)
     }
 }
 
