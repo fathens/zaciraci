@@ -15,6 +15,7 @@ pub enum Error {
     InvalidTokenAccountId(String),
     TokenNotFound(TokenAccount),
     NoValidPathFromToken(TokenInAccount),
+    NoValidEddge(TokenInAccount, TokenOutAccount),
     UnknownResponse(QueryResponseKind),
     UnmatchedTokenPath(
         (TokenInAccount, TokenOutAccount),
@@ -34,6 +35,11 @@ impl Display for Error {
             Error::InvalidPoolSize(n) => write!(f, "Invalid pool size: {}", n),
             Error::InvalidTokenAccountId(msg) => write!(f, "Invalid token account ID: {}", msg),
             Error::NoValidPathFromToken(token) => write!(f, "No valid path from token: {}", token),
+            Error::NoValidEddge(token_in, token_out) => write!(
+                f,
+                "No valid edge from token in: {} to token out: {}",
+                token_in, token_out
+            ),
             Error::DifferentLengthOfTokens(token_ids, amounts) => write!(
                 f,
                 "Different length of tokens: {} and {}",
