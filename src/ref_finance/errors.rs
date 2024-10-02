@@ -14,6 +14,7 @@ pub enum Error {
     InvalidPoolSize(usize),
     InvalidTokenAccountId(String),
     TokenNotFound(TokenAccount),
+    NoValidPathFromToken(TokenInAccount),
     UnknownResponse(QueryResponseKind),
     UnmatchedTokenPath(
         (TokenInAccount, TokenOutAccount),
@@ -31,9 +32,8 @@ impl Display for Error {
             Error::OutOfIndexOfPools(index) => write!(f, "Out of index of pools: {}", index),
             Error::Overflow => write!(f, "Overflow"),
             Error::InvalidPoolSize(n) => write!(f, "Invalid pool size: {}", n),
-            Error::InvalidTokenAccountId(msg) => {
-                write!(f, "Invalid token account ID: {}", msg)
-            }
+            Error::InvalidTokenAccountId(msg) => write!(f, "Invalid token account ID: {}", msg),
+            Error::NoValidPathFromToken(token) => write!(f, "No valid path from token: {}", token),
             Error::DifferentLengthOfTokens(token_ids, amounts) => write!(
                 f,
                 "Different length of tokens: {} and {}",
