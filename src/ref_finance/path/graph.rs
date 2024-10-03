@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 type PathToOut = HashMap<TokenOutAccount, Vec<TokenAccount>>;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct TokenGraph {
     graph: petgraph::Graph<TokenAccount, EdgeWeight>,
     nodes: HashMap<TokenAccount, NodeIndex>,
@@ -23,7 +22,6 @@ pub struct TokenGraph {
     cached_path: Arc<Mutex<HashMap<TokenInAccount, PathToOut>>>,
 }
 
-#[allow(dead_code)]
 impl TokenGraph {
     pub fn new(pools_by_token: PoolsByToken) -> Self {
         let mut graph = petgraph::Graph::new();

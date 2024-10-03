@@ -10,7 +10,6 @@ pub struct PoolsByToken {
     cached_by_out: Mutex<HashMap<TokenInAccount, Arc<EdgesByToken>>>,
 }
 
-#[allow(dead_code)]
 impl PoolsByToken {
     pub fn new(pool_list: PoolInfoList) -> Self {
         let mut by_in = HashMap::new();

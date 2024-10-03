@@ -51,6 +51,7 @@ impl Add<EdgeWeight> for EdgeWeight {
 
 #[derive(Debug, Clone)]
 pub struct Edge {
+    #[allow(dead_code)]
     cache: Arc<same_pool::CachedEdges>,
     pair: TokenPair,
     estimated_return: u128,
@@ -59,7 +60,6 @@ pub struct Edge {
 }
 
 impl Edge {
-    #[allow(dead_code)]
     pub fn weight(&self) -> EdgeWeight {
         let mut cached_weight = self.cached_weight.lock().unwrap();
         if let Some(weight) = *cached_weight {
@@ -72,6 +72,7 @@ impl Edge {
         weight
     }
 
+    #[allow(dead_code)]
     fn reversed(&self) -> Arc<Self> {
         self.cache
             .get(self.pair.token_in, self.pair.token_out)
@@ -227,7 +228,6 @@ pub mod one_step {
             result
         }
 
-        #[allow(dead_code)]
         pub fn at_top(&self) -> Option<Arc<Edge>> {
             self.pairs.peek().map(|e| {
                 let edge = &e.0;
