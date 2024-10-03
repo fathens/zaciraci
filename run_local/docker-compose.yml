@@ -2,7 +2,7 @@ services:
   postgres:
     image: postgres:15-bookworm
     ports:
-      - 5432:5432
+      - "5432:5432"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -17,7 +17,7 @@ services:
       args:
         - CARGO_BUILD_ARGS=${CARGO_BUILD_ARGS:-}
     ports:
-      - 8080:8080
+      - "8080:8080"
     environment:
       - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
       - RUST_LOG=${RUST_LOG:-trace}
