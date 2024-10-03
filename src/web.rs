@@ -27,6 +27,8 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/pools/update_all", get(update_all_pools))
         .with_state(state.clone())
+        .route("/pools/list_all_tokens", get(list_all_tokens))
+        .with_state(state.clone())
         .route("/pools/list_returns/:token_account", get(list_returns))
         .with_state(state.clone());
 
@@ -93,6 +95,16 @@ async fn get_return(
     let token_b = pair.token_out_id();
     let amount_out = pair.get_return(amount_in).await.unwrap();
     format!("Return: {token_a}({amount_in}) -> {token_b}({amount_out})")
+}
+
+async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
+    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
+    let tokens = crate::ref_finance::path::all_tokens(pools);
+    let mut result = String::from("Tokens:\n");
+    for token in tokens {
+        result.push_str(&format!("{token}\n"));
+    }
+    result
 }
 
 async fn list_returns(State(_): State<Arc<AppState>>, Path(token_account): Path<String>) -> String {
