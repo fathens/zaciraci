@@ -9,7 +9,6 @@ use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
-use std::ops::Mul;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -51,10 +50,10 @@ impl TokenGraph {
         }
     }
 
-    pub fn list_asymmetric_path(
+    pub fn list_returns(
         &self,
         start: TokenInAccount,
-    ) -> Result<HashMap<TokenOutAccount, u128>> {
+    ) -> Result<HashMap<TokenOutAccount, BigRational>> {
         let goals = self.update_path(start.clone(), None)?;
         for goal in goals.iter() {
             self.update_path(goal.as_in(), Some(start.as_out()))?;
@@ -62,10 +61,29 @@ impl TokenGraph {
 
         let mut returns = HashMap::new();
         for goal in goals.into_iter() {
-            let value = self.estimate_return(start.clone(), goal.clone())?;
-            returns.insert(goal, value);
+            let recto = self.estimate_return(start.clone(), goal.clone())?;
+            let verso = self.estimate_return(
+                goal.as_account().clone().into(),
+                start.as_account().clone().into(),
+            )?;
+            returns.insert(goal, recto * verso);
         }
         Ok(returns)
+    }
+
+    fn estimate_return(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<BigRational> {
+        let path = self.get_path(start.clone(), goal.clone())?;
+
+        let mut value = EdgeWeight::default().to_rational();
+
+        let mut prev = start;
+        for token in path.iter() {
+            value *= self.get_weight(prev, token.clone().into())?.to_rational();
+            prev = token.clone().into();
+        }
+        value *= self.get_weight(prev, goal.clone())?.to_rational();
+
+        Ok(value)
     }
 
     fn node_index(&self, token: TokenAccount) -> Result<NodeIndex> {
@@ -120,21 +138,6 @@ impl TokenGraph {
             .get(&goal)
             .ok_or(Error::TokenNotFound(goal.as_account().clone()))?;
         Ok(path.clone())
-    }
-
-    fn estimate_return(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<u128> {
-        let path = self.get_path(start.clone(), goal.clone())?;
-
-        let mut value = EdgeWeight::default().to_rational();
-
-        let mut prev = start;
-        for token in path.iter() {
-            value = value.mul(self.get_weight(prev, token.clone().into())?.to_rational());
-            prev = token.clone().into();
-        }
-        value = value.mul(self.get_weight(prev, goal.clone())?.to_rational());
-
-        Ok(EdgeWeight::from(value).to_u128())
     }
 
     fn get_weight(

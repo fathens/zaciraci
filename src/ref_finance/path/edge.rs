@@ -4,10 +4,10 @@ use near_primitives::num_rational::BigRational;
 use num_traits::ToPrimitive;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
-use std::ops::{Add, Mul};
+use std::ops::Add;
 use std::sync::{Arc, Mutex};
 
-pub const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
+const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EdgeWeight {
@@ -39,16 +39,12 @@ impl EdgeWeight {
     pub fn to_rational(self) -> BigRational {
         BigRational::new(self.estimated_return.into(), AMOUNT_IN.into())
     }
-
-    pub fn to_u128(self) -> u128 {
-        self.estimated_return
-    }
 }
 
 impl From<BigRational> for EdgeWeight {
     fn from(r: BigRational) -> Self {
         let a = BigRational::new(AMOUNT_IN.into(), 1.into());
-        let estimated_return = r.mul(a).to_integer().to_u128().unwrap();
+        let estimated_return = (r * a).to_integer().to_u128().unwrap();
         EdgeWeight { estimated_return }
     }
 }
