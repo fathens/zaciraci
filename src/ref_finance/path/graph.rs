@@ -27,9 +27,8 @@ pub struct TokenGraph {
 impl TokenGraph {
     pub fn new(pools_by_token: PoolsByToken) -> Self {
         let mut graph = petgraph::Graph::new();
-        let pools = pools_by_token.tokens();
         let mut nodes = HashMap::new();
-        for token_in in pools {
+        for token_in in pools_by_token.tokens() {
             let node = graph.add_node(token_in.clone());
             nodes.insert(token_in, node);
         }
@@ -53,7 +52,7 @@ impl TokenGraph {
     pub fn list_returns(
         &self,
         start: TokenInAccount,
-    ) -> Result<HashMap<TokenOutAccount, BigRational>> {
+    ) -> Result<Vec<(TokenOutAccount, BigRational)>> {
         let goals = self.update_path(start.clone(), None)?;
         for goal in goals.iter() {
             self.update_path(goal.as_in(), Some(start.as_out()))?;
@@ -68,6 +67,9 @@ impl TokenGraph {
             )?;
             returns.insert(goal, recto * verso);
         }
+        let mut returns: Vec<_> = returns.into_iter().collect();
+        returns.sort_by_key(|(_, value)| value.clone());
+        returns.reverse();
         Ok(returns)
     }
 

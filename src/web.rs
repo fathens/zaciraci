@@ -1,5 +1,6 @@
 use crate::persistence::tables;
 use crate::ref_finance::pool_info;
+use crate::ref_finance::token_account::TokenAccount;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -25,6 +26,8 @@ pub async fn run() {
         .route("/pools/get_return/:pool_id/:amount", get(get_return))
         .with_state(state.clone())
         .route("/pools/update_all", get(update_all_pools))
+        .with_state(state.clone())
+        .route("/pools/list_returns/:token_account", get(list_returns))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -90,4 +93,16 @@ async fn get_return(
     let token_b = pair.token_out_id();
     let amount_out = pair.get_return(amount_in).await.unwrap();
     format!("Return: {token_a}({amount_in}) -> {token_b}({amount_out})")
+}
+
+async fn list_returns(State(_): State<Arc<AppState>>, Path(token_account): Path<String>) -> String {
+    let start: TokenAccount = token_account.parse().unwrap();
+    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
+    let sorted_returns = crate::ref_finance::path::sorted_returns(pools, start.into()).unwrap();
+
+    let mut result = String::from("from: {token_account}\n");
+    for (goal, ret) in sorted_returns {
+        result.push_str(&format!("{goal}: {ret}\n"));
+    }
+    result
 }
