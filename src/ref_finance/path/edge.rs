@@ -1,7 +1,6 @@
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair};
 use near_primitives::num_rational::BigRational;
-use num_traits::ToPrimitive;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
@@ -38,14 +37,6 @@ impl Default for EdgeWeight {
 impl EdgeWeight {
     pub fn to_rational(self) -> BigRational {
         BigRational::new(self.estimated_return.into(), AMOUNT_IN.into())
-    }
-}
-
-impl From<BigRational> for EdgeWeight {
-    fn from(r: BigRational) -> Self {
-        let a = BigRational::new(AMOUNT_IN.into(), 1.into());
-        let estimated_return = (r * a).to_integer().to_u128().unwrap();
-        EdgeWeight { estimated_return }
     }
 }
 
