@@ -80,7 +80,7 @@ impl TokenGraph {
                 .to_rational();
             prev = token.clone().into();
         }
-        value *= self.graph.get_weight(prev, goal.clone())?.to_rational();
+        value *= self.graph.get_weight(prev, goal)?.to_rational();
 
         Ok(value)
     }
