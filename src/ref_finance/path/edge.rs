@@ -1,3 +1,4 @@
+use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair};
 use near_primitives::num_rational::BigRational;
@@ -117,10 +118,24 @@ pub mod same_pool {
             self: &Arc<Self>,
             token_in: &TokenInAccount,
             token_out: &TokenOutAccount,
-        ) -> Option<Arc<Edge>> {
-            let token_in = self.get_token_id(token_in.as_account())?;
-            let token_out = self.get_token_id(token_out.as_account())?;
-            self.get(token_in.into(), token_out.into()).ok()
+        ) -> crate::Result<Arc<Edge>> {
+            let log = DEFAULT.new(o!(
+                "function" => "get_by_ids",
+                "token_in" => token_in.to_string(),
+                "token_out" => token_out.to_string(),
+            ));
+            debug!(log, "converting to index");
+            let token_in = self
+                .get_token_id(token_in.as_account())
+                .ok_or(Error::TokenNotFound(token_in.as_account().clone()))?;
+            let token_out = self
+                .get_token_id(token_out.as_account())
+                .ok_or(Error::TokenNotFound(token_out.as_account().clone()))?;
+            debug!(log, "index";
+                "token_in" => token_in.to_string(),
+                "token_out" => token_out.to_string(),
+            );
+            self.get(token_in.into(), token_out.into())
         }
 
         pub(super) fn get(

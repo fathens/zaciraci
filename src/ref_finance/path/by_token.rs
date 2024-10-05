@@ -1,3 +1,4 @@
+use crate::logging::*;
 use crate::ref_finance::path::edge;
 use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
@@ -13,14 +14,14 @@ pub struct PoolsByToken {
 impl PoolsByToken {
     pub fn new(pool_list: PoolInfoList) -> Self {
         let mut by_in = HashMap::new();
-        pool_list.iter().for_each(|pool| {
-            pool.tokens().for_each(|token| {
+        for pool in pool_list.iter() {
+            for token in pool.tokens() {
                 by_in
                     .entry(token.clone().into())
                     .or_insert_with(Vec::new)
                     .push(edge::same_pool::CachedEdges::new(Arc::clone(pool)));
-            });
-        });
+            }
+        }
         Self {
             by_in,
             cached_by_out: Mutex::new(HashMap::new()),
@@ -47,27 +48,33 @@ impl PoolsByToken {
     }
 
     fn group_by_out(&self, token_in: &TokenInAccount) -> Option<EdgesByToken> {
+        let log = DEFAULT.new(o!(
+            "function" => "group_by_out",
+            "token_in" => token_in.to_string(),
+        ));
+        info!(log, "finding edges");
+
         self.by_in.get(token_in).map(|edges| {
             let mut edges_by_token_out = HashMap::new();
-            edges.iter().for_each(|edge| {
-                edge.pool
-                    .tokens()
-                    .filter(|&t| t != token_in.as_account())
-                    .for_each(|token_out| {
-                        let token_out: TokenOutAccount = token_out.clone().into();
-                        edges_by_token_out
+            for edge in edges.iter() {
+                for token_out in edge.pool.tokens().filter(|&t| t != token_in.as_account()) {
+                    let token_out: TokenOutAccount = token_out.clone().into();
+                    let log = log.new(o!(
+                        "token_out" => token_out.to_string(),
+                    ));
+                    debug!(log, "finding edge");
+                    match &edge.get_by_ids(token_in, &token_out) {
+                        Ok(edge) => edges_by_token_out
                             .entry(token_out.clone())
                             .or_insert_with(|| {
                                 edge::one_step::PathEdges::new(token_in.clone(), token_out.clone())
                             })
-                            .push(Arc::clone(
-                                &edge
-                                    .get_by_ids(token_in, &token_out)
-                                    .expect("should be valid tokens"),
-                            ))
-                            .expect("should be same path")
-                    });
-            });
+                            .push(Arc::clone(edge))
+                            .expect("should be same path"),
+                        Err(e) => info!(log, "no edge found"; "error" => %e),
+                    }
+                }
+            }
             edges_by_token_out
         })
     }
