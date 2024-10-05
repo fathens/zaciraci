@@ -4,6 +4,7 @@ use crate::ref_finance::token_account::TokenAccount;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
+use num_traits::ToPrimitive;
 use std::sync::Arc;
 
 struct AppState {}
@@ -112,10 +113,12 @@ async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
 async fn list_returns(State(_): State<Arc<AppState>>, Path(token_account): Path<String>) -> String {
     let start: TokenAccount = token_account.parse().unwrap();
     let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let sorted_returns = crate::ref_finance::path::sorted_returns(pools, start.into()).unwrap();
+    let mut sorted_returns = crate::ref_finance::path::sorted_returns(pools, start.into()).unwrap();
+    sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
-    for (goal, ret) in sorted_returns {
+    for (goal, rational) in sorted_returns {
+        let ret = rational.to_f32().unwrap();
         result.push_str(&format!("{goal}: {ret}\n"));
     }
     result
