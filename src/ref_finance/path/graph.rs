@@ -9,17 +9,15 @@ use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::ops::Add;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-type PathToOut = HashMap<TokenOutAccount, Vec<TokenAccount>>;
-
 #[derive(Debug)]
 pub struct TokenGraph {
-    graph: petgraph::Graph<TokenAccount, EdgeWeight>,
-    nodes: HashMap<TokenAccount, NodeIndex>,
-
-    cached_path: Arc<Mutex<HashMap<TokenInAccount, PathToOut>>>,
+    graph: CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight>,
 }
 
 impl TokenGraph {
@@ -41,9 +39,7 @@ impl TokenGraph {
             }
         }
         Self {
-            graph,
-            nodes,
-            cached_path: Arc::new(Mutex::new(HashMap::new())),
+            graph: CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge),
         }
     }
 
@@ -51,9 +47,9 @@ impl TokenGraph {
         &self,
         start: TokenInAccount,
     ) -> Result<Vec<(TokenOutAccount, BigRational)>> {
-        let goals = self.update_path(start.clone(), None)?;
+        let goals = self.graph.update_path(start.clone(), None)?;
         for goal in goals.iter() {
-            self.update_path(goal.as_in(), Some(start.as_out()))?;
+            self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
         }
 
         let mut returns = HashMap::new();
@@ -72,30 +68,73 @@ impl TokenGraph {
     }
 
     fn estimate_return(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<BigRational> {
-        let path = self.get_path(start.clone(), goal.clone())?;
+        let path = self.graph.get_path(start.clone(), goal.clone())?;
 
         let mut value = EdgeWeight::default().to_rational();
 
         let mut prev = start;
         for token in path.iter() {
-            value *= self.get_weight(prev, token.clone().into())?.to_rational();
+            value *= self
+                .graph
+                .get_weight(prev, token.clone().into())?
+                .to_rational();
             prev = token.clone().into();
         }
-        value *= self.get_weight(prev, goal.clone())?.to_rational();
+        value *= self.graph.get_weight(prev, goal.clone())?.to_rational();
 
         Ok(value)
     }
+}
 
-    fn node_index(&self, token: TokenAccount) -> Result<NodeIndex> {
-        let &index = self.nodes.get(&token).ok_or(Error::TokenNotFound(token))?;
+type PathToOut<O, N> = HashMap<O, Vec<N>>;
+
+#[derive(Debug)]
+struct CachedPath<I, O, N, E> {
+    graph: petgraph::Graph<N, E>,
+    nodes: HashMap<N, NodeIndex>,
+
+    err_not_found: fn(N) -> Error,
+    err_no_edge: fn(I, O) -> Error,
+
+    cached_path: Arc<Mutex<HashMap<I, PathToOut<O, N>>>>,
+}
+
+impl<I, O, N, E> CachedPath<I, O, N, E>
+where
+    I: Debug + Eq + Clone + Hash + From<N> + Into<N>,
+    O: Debug + Eq + Clone + Hash + From<N> + Into<N>,
+    N: Debug + Eq + Clone + Hash,
+    E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E>,
+{
+    fn new(
+        graph: petgraph::Graph<N, E>,
+        nodes: HashMap<N, NodeIndex>,
+        err_not_found: fn(N) -> Error,
+        err_no_edge: fn(I, O) -> Error,
+    ) -> Self {
+        Self {
+            graph,
+            nodes,
+            cached_path: Arc::new(Mutex::new(HashMap::new())),
+            err_not_found,
+            err_no_edge,
+        }
+    }
+
+    fn err_not_found(&self, node: N) -> Error {
+        (self.err_not_found)(node)
+    }
+
+    fn err_no_edge(&self, node_in: I, node_out: O) -> Error {
+        (self.err_no_edge)(node_in, node_out)
+    }
+
+    fn node_index(&self, token: N) -> Result<NodeIndex> {
+        let &index = self.nodes.get(&token).ok_or(self.err_not_found(token))?;
         Ok(index)
     }
 
-    fn update_path(
-        &self,
-        start: TokenInAccount,
-        goal: Option<TokenOutAccount>,
-    ) -> Result<Vec<TokenOutAccount>> {
+    fn update_path(&self, start: I, goal: Option<O>) -> Result<Vec<O>> {
         let log = DEFAULT.new(o!(
             "function" => "TokenGraph::list_asymmetric_path",
             "start" => format!("{:?}", start),
@@ -130,21 +169,17 @@ impl TokenGraph {
         Ok(outs)
     }
 
-    fn get_path(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenAccount>> {
+    fn get_path(&self, start: I, goal: O) -> Result<Vec<N>> {
         let cached_path = self.cached_path.lock().unwrap();
         let path = cached_path
             .get(&start)
-            .ok_or(Error::TokenNotFound(start.as_account().clone()))?
+            .ok_or(self.err_not_found(start.into()))?
             .get(&goal)
-            .ok_or(Error::TokenNotFound(goal.as_account().clone()))?;
+            .ok_or(self.err_not_found(goal.into()))?;
         Ok(path.clone())
     }
 
-    fn get_weight(
-        &self,
-        token_in: TokenInAccount,
-        token_out: TokenOutAccount,
-    ) -> Result<EdgeWeight> {
+    fn get_weight(&self, token_in: I, token_out: O) -> Result<E> {
         let weight: Option<_> = self
             .graph
             .find_edge(
@@ -153,7 +188,7 @@ impl TokenGraph {
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
-        weight.ok_or(Error::NoValidEddge(token_in, token_out).into())
+        weight.ok_or(self.err_no_edge(token_in, token_out).into())
     }
 }
 
@@ -164,8 +199,8 @@ struct GraphPath<N, W> {
 
 impl<N, W> GraphPath<N, W>
 where
-    N: std::hash::Hash + Eq + Clone,
-    W: Eq + std::ops::Add<Output = W> + Copy,
+    N: Hash + Eq + Clone,
+    W: Eq + Add<Output = W> + Copy,
 {
     pub fn find_all_path(&self) -> Vec<Vec<N>> {
         let paths = Rc::new(Mutex::new(HashMap::new()));
