@@ -17,6 +17,8 @@ use std::ops::Deref;
 use std::slice::Iter;
 use std::sync::Arc;
 
+const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolInfoBared {
     pub pool_kind: String,
@@ -132,6 +134,14 @@ impl PoolInfo {
             bare,
             updated_at: chrono::Utc::now().naive_utc(),
         }
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.bare.pool_kind
+    }
+
+    pub fn is_simple(&self) -> bool {
+        self.bare.pool_kind == POOL_KIND_SIMPLE
     }
 
     pub fn len(&self) -> usize {
