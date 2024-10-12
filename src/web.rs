@@ -4,6 +4,7 @@ use crate::ref_finance::token_account::TokenAccount;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
+use near_primitives::num_rational::BigRational;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
 
@@ -30,7 +31,10 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/pools/list_all_tokens", get(list_all_tokens))
         .with_state(state.clone())
-        .route("/pools/list_returns/:token_account", get(list_returns))
+        .route(
+            "/pools/list_returns/:token_account/:amount",
+            get(list_returns),
+        )
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -110,14 +114,19 @@ async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
     result
 }
 
-async fn list_returns(State(_): State<Arc<AppState>>, Path(token_account): Path<String>) -> String {
+async fn list_returns(
+    State(_): State<Arc<AppState>>,
+    Path((token_account, initial_value)): Path<(String, u128)>,
+) -> String {
     let start: TokenAccount = token_account.parse().unwrap();
     let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let mut sorted_returns = crate::ref_finance::path::sorted_returns(pools, start.into()).unwrap();
+    let mut sorted_returns =
+        crate::ref_finance::path::sorted_returns(pools, start.into(), initial_value).unwrap();
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
-    for (goal, rational) in sorted_returns {
+    for (goal, value) in sorted_returns {
+        let rational = BigRational::new(value.into(), initial_value.into());
         let ret = rational.to_f32().unwrap();
         result.push_str(&format!("{goal}: {ret}\n"));
     }

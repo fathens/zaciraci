@@ -14,7 +14,8 @@ pub fn all_tokens(pools: PoolInfoList) -> Vec<TokenAccount> {
 pub fn sorted_returns(
     pools: PoolInfoList,
     start: TokenInAccount,
+    initial: u128,
 ) -> Result<Vec<(TokenOutAccount, u128)>> {
     let graph = graph::TokenGraph::new(pools);
-    graph.list_returns(start)
+    graph.list_returns(initial, start)
 }

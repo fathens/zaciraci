@@ -2,7 +2,7 @@ use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
-use crate::ref_finance::pool_info::PoolInfoList;
+use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
 use petgraph::algo;
@@ -46,7 +46,11 @@ impl TokenGraph {
         }
     }
 
-    pub fn list_returns(&self, start: TokenInAccount) -> Result<Vec<(TokenOutAccount, u128)>> {
+    pub fn list_returns(
+        &self,
+        initial: u128,
+        start: TokenInAccount,
+    ) -> Result<Vec<(TokenOutAccount, u128)>> {
         let goals = self.graph.update_path(start.clone(), None)?;
         for goal in goals.iter() {
             self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
@@ -54,17 +58,8 @@ impl TokenGraph {
 
         let mut returns = HashMap::new();
         for goal in goals.into_iter() {
-            let vise = self.estimate_return(
-                EdgeWeight::default().estimated_return,
-                start.clone(),
-                goal.clone(),
-            )?;
-            let versa = self.estimate_return(
-                vise,
-                goal.as_account().clone().into(),
-                start.as_account().clone().into(),
-            )?;
-            returns.insert(goal, versa);
+            let value = self.estimate_return(initial, start.clone(), goal.clone())?;
+            returns.insert(goal, value);
         }
         let mut returns: Vec<_> = returns.into_iter().collect();
         returns.sort_by_key(|(_, value)| *value);
@@ -83,25 +78,37 @@ impl TokenGraph {
         }
         let mut value = initial;
 
-        let mut path = self.graph.get_path(start.clone(), goal.clone())?;
-        path.push(goal.clone().into());
-
-        let mut prev = start;
-        for token in path.iter() {
-            let weight = self.graph.get_weight(prev.clone(), token.clone().into())?;
-            if let Some(pair_id) = weight.pair_id {
-                let pair = self.pools.get_pair(pair_id)?;
-                value = pair.estimate_return(value)?;
-                if value == 0 {
-                    return Ok(0);
-                }
-                prev = token.clone().into();
-            } else {
-                return Err(Error::NoValidEddge(prev, token.clone().into()).into());
+        let pairs = self.get_path_with_return(start.clone(), goal.clone())?;
+        for pair in pairs.iter() {
+            value = pair.estimate_return(value)?;
+            if value == 0 {
+                return Ok(0);
             }
         }
 
         Ok(value)
+    }
+
+    fn get_path(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
+        let mut result = Vec::new();
+        let edges = self.graph.get_edges(start.clone(), goal.clone())?;
+        for edge in edges.iter() {
+            let pair_id = edge.pair_id.expect("should be pair id");
+            let pair = self.pools.get_pair(pair_id)?;
+            result.push(pair);
+        }
+        Ok(result)
+    }
+
+    // 往路と復路のパスを TokenPair のリストで返す
+    pub fn get_path_with_return(
+        &self,
+        start: TokenInAccount,
+        goal: TokenOutAccount,
+    ) -> Result<Vec<TokenPair>> {
+        let mut path = self.get_path(start.clone(), goal.clone())?;
+        path.extend(self.get_path(goal.as_in(), start.as_out())?);
+        Ok(path)
     }
 }
 
@@ -196,6 +203,20 @@ where
             .get(&goal)
             .ok_or(self.err_not_found(goal.into()))?;
         Ok(path.clone())
+    }
+
+    fn get_edges(&self, start: I, goal: O) -> Result<Vec<E>> {
+        let path = self.get_path(start.clone(), goal.clone())?;
+        let mut edges = Vec::new();
+        let mut prev = start;
+        for token in path.into_iter() {
+            let edge = self.get_weight(prev, token.clone().into())?;
+            edges.push(edge);
+            prev = token.into();
+        }
+        let edge = self.get_weight(prev, goal)?;
+        edges.push(edge);
+        Ok(edges)
     }
 
     fn get_weight(&self, token_in: I, token_out: O) -> Result<E> {
