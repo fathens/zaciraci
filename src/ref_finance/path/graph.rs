@@ -2,9 +2,9 @@ use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
+use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
-use near_primitives::num_rational::BigRational;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -17,11 +17,13 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub struct TokenGraph {
+    pools: PoolInfoList,
     graph: CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight>,
 }
 
 impl TokenGraph {
-    pub fn new(pools_by_token: PoolsByToken) -> Self {
+    pub fn new(pools: PoolInfoList) -> Self {
+        let pools_by_token = PoolsByToken::new(pools.clone());
         let mut graph = petgraph::Graph::new();
         let mut nodes = HashMap::new();
         for token_in in pools_by_token.tokens() {
@@ -39,14 +41,12 @@ impl TokenGraph {
             }
         }
         Self {
+            pools,
             graph: CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge),
         }
     }
 
-    pub fn list_returns(
-        &self,
-        start: TokenInAccount,
-    ) -> Result<Vec<(TokenOutAccount, BigRational)>> {
+    pub fn list_returns(&self, start: TokenInAccount) -> Result<Vec<(TokenOutAccount, u128)>> {
         let goals = self.graph.update_path(start.clone(), None)?;
         for goal in goals.iter() {
             self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
@@ -54,33 +54,52 @@ impl TokenGraph {
 
         let mut returns = HashMap::new();
         for goal in goals.into_iter() {
-            let recto = self.estimate_return(start.clone(), goal.clone())?;
-            let verso = self.estimate_return(
+            let vise = self.estimate_return(
+                EdgeWeight::default().estimated_return,
+                start.clone(),
+                goal.clone(),
+            )?;
+            let versa = self.estimate_return(
+                vise,
                 goal.as_account().clone().into(),
                 start.as_account().clone().into(),
             )?;
-            returns.insert(goal, recto * verso);
+            returns.insert(goal, versa);
         }
         let mut returns: Vec<_> = returns.into_iter().collect();
-        returns.sort_by_key(|(_, value)| value.clone());
+        returns.sort_by_key(|(_, value)| *value);
         returns.reverse();
         Ok(returns)
     }
 
-    fn estimate_return(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<BigRational> {
-        let path = self.graph.get_path(start.clone(), goal.clone())?;
+    fn estimate_return(
+        &self,
+        initial: u128,
+        start: TokenInAccount,
+        goal: TokenOutAccount,
+    ) -> Result<u128> {
+        if initial == 0 {
+            return Ok(0);
+        }
+        let mut value = initial;
 
-        let mut value = EdgeWeight::default().to_rational();
+        let mut path = self.graph.get_path(start.clone(), goal.clone())?;
+        path.push(goal.clone().into());
 
         let mut prev = start;
         for token in path.iter() {
-            value *= self
-                .graph
-                .get_weight(prev, token.clone().into())?
-                .to_rational();
-            prev = token.clone().into();
+            let weight = self.graph.get_weight(prev.clone(), token.clone().into())?;
+            if let Some(pair_id) = weight.pair_id {
+                let pair = self.pools.get_pair(pair_id)?;
+                value = pair.estimate_return(value)?;
+                if value == 0 {
+                    return Ok(0);
+                }
+                prev = token.clone().into();
+            } else {
+                return Err(Error::NoValidEddge(prev, token.clone().into()).into());
+            }
         }
-        value *= self.graph.get_weight(prev, goal)?.to_rational();
 
         Ok(value)
     }

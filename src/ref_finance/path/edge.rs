@@ -1,7 +1,6 @@
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
-use crate::ref_finance::pool_info::{PoolInfo, TokenPair};
-use near_primitives::num_rational::BigRational;
+use crate::ref_finance::pool_info::{PoolInfo, TokenPair, TokenPairId};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
@@ -11,7 +10,8 @@ const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EdgeWeight {
-    estimated_return: u128,
+    pub pair_id: Option<TokenPairId>,
+    pub estimated_return: u128,
 }
 
 impl Ord for EdgeWeight {
@@ -30,14 +30,9 @@ impl PartialOrd for EdgeWeight {
 impl Default for EdgeWeight {
     fn default() -> Self {
         EdgeWeight {
+            pair_id: None,
             estimated_return: AMOUNT_IN,
         }
-    }
-}
-
-impl EdgeWeight {
-    pub fn to_rational(self) -> BigRational {
-        BigRational::new(self.estimated_return.into(), AMOUNT_IN.into())
     }
 }
 
@@ -45,6 +40,7 @@ impl Add<EdgeWeight> for EdgeWeight {
     type Output = Self;
     fn add(self, rhs: EdgeWeight) -> Self::Output {
         EdgeWeight {
+            pair_id: None,
             estimated_return: self.estimated_return + rhs.estimated_return,
         }
     }
@@ -66,8 +62,11 @@ impl Edge {
         if let Some(weight) = *cached_weight {
             return weight;
         }
-        let weight = EdgeWeight {
-            estimated_return: self.estimated_return,
+        let weight = {
+            EdgeWeight {
+                pair_id: Some(self.pair.pair_id()),
+                estimated_return: self.estimated_return,
+            }
         };
         *cached_weight = Some(weight);
         weight

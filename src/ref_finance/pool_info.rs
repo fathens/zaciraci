@@ -13,6 +13,7 @@ use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::slice::Iter;
 use std::sync::Arc;
@@ -36,7 +37,11 @@ pub struct PoolInfo {
     updated_at: chrono::NaiveDateTime,
 }
 
-pub struct PoolInfoList(Vec<Arc<PoolInfo>>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolInfoList {
+    list: Vec<Arc<PoolInfo>>,
+    by_id: HashMap<u32, Arc<PoolInfo>>,
+}
 
 impl From<PoolInfo> for tables::pool_info::PoolInfo {
     fn from(src: PoolInfo) -> Self {
@@ -96,7 +101,22 @@ pub struct TokenPair {
     pub token_out: TokenOut,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct TokenPairId {
+    pub pool_id: u32,
+    pub token_in: TokenIn,
+    pub token_out: TokenOut,
+}
+
 impl TokenPair {
+    pub fn pair_id(&self) -> TokenPairId {
+        TokenPairId {
+            pool_id: self.pool.id,
+            token_in: self.token_in,
+            token_out: self.token_out,
+        }
+    }
+
     pub fn token_in_id(&self) -> TokenInAccount {
         self.pool
             .token(self.token_in.as_index())
@@ -271,24 +291,37 @@ impl PoolInfo {
 }
 
 impl PoolInfoList {
+    fn new(list: Vec<Arc<PoolInfo>>) -> Self {
+        let mut by_id = HashMap::new();
+        for pool in list.iter() {
+            by_id.insert(pool.id, Arc::clone(pool));
+        }
+        PoolInfoList { list, by_id }
+    }
+
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.list.len()
     }
 
     pub fn iter(&self) -> Iter<Arc<PoolInfo>> {
-        self.0.iter()
+        self.list.iter()
     }
 
-    pub fn get(&self, index: usize) -> Result<Arc<PoolInfo>> {
-        self.0
-            .get(index)
+    pub fn get_pair(&self, pair_id: TokenPairId) -> Result<TokenPair> {
+        self.get(pair_id.pool_id)?
+            .get_pair(pair_id.token_in, pair_id.token_out)
+    }
+
+    pub fn get(&self, index: u32) -> Result<Arc<PoolInfo>> {
+        self.by_id
+            .get(&index)
             .cloned()
             .ok_or(Error::OutOfIndexOfPools(index).into())
     }
 
     pub async fn save_to_db(&self) -> Result<usize> {
         let records = self
-            .0
+            .list
             .iter()
             .map(|info| info.deref().clone().into())
             .collect();
@@ -301,7 +334,7 @@ impl PoolInfoList {
             .into_iter()
             .map(|record| Arc::new(record.into()))
             .collect();
-        Ok(PoolInfoList(pools))
+        Ok(PoolInfoList::new(pools))
     }
 
     pub async fn read_from_node() -> Result<PoolInfoList> {
@@ -355,7 +388,7 @@ impl PoolInfoList {
             .enumerate()
             .map(|(i, bare)| Arc::new(PoolInfo::new(i as u32, bare)))
             .collect();
-        Ok(PoolInfoList(pools))
+        Ok(PoolInfoList::new(pools))
     }
 }
 

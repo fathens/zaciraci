@@ -60,7 +60,7 @@ async fn update_all_pools(State(_): State<Arc<AppState>>) -> String {
 
 async fn estimate_return(
     State(_): State<Arc<AppState>>,
-    Path((pool_id, amount)): Path<(usize, u128)>,
+    Path((pool_id, amount)): Path<(u32, u128)>,
 ) -> String {
     use crate::ref_finance::errors::Error;
 
@@ -80,7 +80,7 @@ async fn estimate_return(
 
 async fn get_return(
     State(_): State<Arc<AppState>>,
-    Path((pool_id, amount)): Path<(usize, u128)>,
+    Path((pool_id, amount)): Path<(u32, u128)>,
 ) -> String {
     use crate::ref_finance::errors::Error;
 

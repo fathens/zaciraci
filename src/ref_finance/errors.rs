@@ -8,7 +8,7 @@ pub enum Error {
     SwapSameToken,
     ZeroAmount,
     Overflow,
-    OutOfIndexOfPools(usize),
+    OutOfIndexOfPools(u32),
     OutOfIndexOfTokens(TokenIndex),
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
