@@ -156,13 +156,16 @@ where
     }
 
     fn node_index(&self, token: N) -> Result<NodeIndex> {
-        let &index = self.nodes.get(&token).ok_or(self.err_not_found(token))?;
+        let &index = self
+            .nodes
+            .get(&token)
+            .ok_or_else(|| self.err_not_found(token))?;
         Ok(index)
     }
 
     fn update_path(&self, start: I, goal: Option<O>) -> Result<Vec<O>> {
         let log = DEFAULT.new(o!(
-            "function" => "TokenGraph::list_asymmetric_path",
+            "function" => "CachedPath::update_path",
             "start" => format!("{:?}", start),
             "goal" => format!("{:?}", goal),
         ));
@@ -195,16 +198,6 @@ where
         Ok(outs)
     }
 
-    fn get_path(&self, start: I, goal: O) -> Result<Vec<N>> {
-        let cached_path = self.cached_path.lock().unwrap();
-        let path = cached_path
-            .get(&start)
-            .ok_or(self.err_not_found(start.into()))?
-            .get(&goal)
-            .ok_or(self.err_not_found(goal.into()))?;
-        Ok(path.clone())
-    }
-
     fn get_edges(&self, start: I, goal: O) -> Result<Vec<E>> {
         let path = self.get_path(start.clone(), goal.clone())?;
         let mut edges = Vec::new();
@@ -217,6 +210,16 @@ where
         let edge = self.get_weight(prev, goal)?;
         edges.push(edge);
         Ok(edges)
+    }
+
+    fn get_path(&self, start: I, goal: O) -> Result<Vec<N>> {
+        let cached_path = self.cached_path.lock().unwrap();
+        let path = cached_path
+            .get(&start)
+            .ok_or(self.err_not_found(start.into()))?
+            .get(&goal)
+            .ok_or(self.err_not_found(goal.into()))?;
+        Ok(path.clone())
     }
 
     fn get_weight(&self, token_in: I, token_out: O) -> Result<E> {
