@@ -42,7 +42,7 @@ impl TokenGraph {
         }
         Self {
             pools,
-            graph: CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge),
+            graph: CachedPath::new(graph, nodes, Error::TokenNotFound),
         }
     }
 
@@ -120,7 +120,6 @@ struct CachedPath<I, O, N, E> {
     nodes: HashMap<N, NodeIndex>,
 
     err_not_found: fn(N) -> Error,
-    err_no_edge: fn(I, O) -> Error,
 
     cached_path: Arc<Mutex<HashMap<I, PathToOut<O, N>>>>,
 }
@@ -136,23 +135,17 @@ where
         graph: petgraph::Graph<N, E>,
         nodes: HashMap<N, NodeIndex>,
         err_not_found: fn(N) -> Error,
-        err_no_edge: fn(I, O) -> Error,
     ) -> Self {
         Self {
             graph,
             nodes,
             cached_path: Arc::new(Mutex::new(HashMap::new())),
             err_not_found,
-            err_no_edge,
         }
     }
 
     fn err_not_found(&self, node: N) -> Error {
         (self.err_not_found)(node)
-    }
-
-    fn err_no_edge(&self, node_in: I, node_out: O) -> Error {
-        (self.err_no_edge)(node_in, node_out)
     }
 
     fn node_index(&self, token: N) -> Result<NodeIndex> {
@@ -231,7 +224,7 @@ where
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
-        weight.ok_or_else(|| self.err_no_edge(token_in, token_out).into())
+        Ok(weight.unwrap())
     }
 }
 
@@ -352,7 +345,7 @@ mod test {
 
     impl Debug for Edge<'_> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{} <-{}-> {}", self.i, self.weight, self.o)
+            write!(f, "{} {}-> {}", self.i, self.weight, self.o)
         }
     }
 
@@ -433,12 +426,7 @@ mod test {
         assert_eq!(nodes.len(), 6);
         assert!(nodes.contains_key("A"));
 
-        let cached_path = CachedPath::new(
-            graph,
-            nodes,
-            |node| panic!("not found: {:?}", node),
-            |i: &'static str, o: &'static str| panic!("no edge: {:?} -> {:?}", i, o),
-        );
+        let cached_path = CachedPath::new(graph, nodes, |node| panic!("not found: {:?}", node));
 
         match panic::catch_unwind(|| cached_path.update_path("X", None)) {
             Err(e) => {
@@ -463,11 +451,11 @@ mod test {
 
         assert_eq!(
             format!("{:?}", cached_path.get_edges("A", "F").unwrap()),
-            "[A <-1-> B, B <-4-> D, D <-8-> F]"
+            "[A 1-> B, B 4-> D, D 8-> F]"
         );
         assert_eq!(
             format!("{:?}", cached_path.get_edges("F", "A").unwrap()),
-            "[F <-9-> D, D <-3-> C, C <-2-> A]"
+            "[F 9-> D, D 3-> C, C 2-> A]"
         );
     }
 
