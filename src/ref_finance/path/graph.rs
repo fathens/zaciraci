@@ -320,12 +320,150 @@ where
 
 #[cfg(test)]
 mod test {
+    use crate::ref_finance::path::graph::CachedPath;
     use petgraph::algo::dijkstra;
+    use petgraph::graph::NodeIndex;
     use petgraph::Graph;
+    use std::collections::HashMap;
+    use std::fmt::Debug;
+    use std::ops::Add;
+    use std::panic;
     use std::thread::sleep;
 
+    #[derive(Default, PartialOrd, Eq, Hash, Copy, Clone)]
+    struct Edge<'a> {
+        i: &'a str,
+        o: &'a str,
+
+        weight: u32,
+    }
+
+    impl Add<Edge<'_>> for Edge<'_> {
+        type Output = Self;
+
+        fn add(self, rhs: Edge<'_>) -> Self::Output {
+            Self {
+                i: "",
+                o: "",
+                weight: self.weight + rhs.weight,
+            }
+        }
+    }
+
+    impl Debug for Edge<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{} <-{}-> {}", self.i, self.weight, self.o)
+        }
+    }
+
+    impl PartialEq<Self> for Edge<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            self.weight == other.weight
+        }
+    }
+
+    impl Ord for Edge<'_> {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.weight.cmp(&other.weight)
+        }
+    }
+
     #[test]
-    fn test_find_path() {
+    fn test_update_path() {
+        let mut graph = Graph::new();
+        let mut nodes = HashMap::new();
+        fn add_node(
+            graph: &mut Graph<&'static str, Edge>,
+            nodes: &mut HashMap<&'static str, NodeIndex>,
+            i: &'static str,
+            o: &'static str,
+            weight_io: u32,
+            weight_oi: u32,
+        ) {
+            let &mut node_i = nodes.entry(i).or_insert_with(|| graph.add_node(i));
+            let &mut node_o = nodes.entry(o).or_insert_with(|| graph.add_node(o));
+            graph.add_edge(
+                node_i,
+                node_o,
+                Edge {
+                    i,
+                    o,
+                    weight: weight_io,
+                },
+            );
+            graph.add_edge(
+                node_o,
+                node_i,
+                Edge {
+                    i: o,
+                    o: i,
+                    weight: weight_oi,
+                },
+            );
+        }
+
+        //  A --1|2-- B
+        //  |         |
+        // 3|2       4|5
+        //  |         |
+        //  C --4|3-- D
+        //  |         |
+        // 6|7       8|9
+        //  |         |
+        //  E --5|6-- F
+
+        // 往路
+        // A 1-> B 4-> D 8-> F = 13
+        // A 3-> C 6-> E 5-> F = 14
+        // A 3-> C 4-> D 8-> F = 15
+
+        // 復路
+        // F 9-> D 3-> C 2-> A = 14
+        // F 6-> E 7-> C 2-> A = 15
+        // F 9-> D 5-> B 2-> A = 16
+
+        add_node(&mut graph, &mut nodes, "A", "B", 1, 2);
+        add_node(&mut graph, &mut nodes, "A", "C", 3, 2);
+        add_node(&mut graph, &mut nodes, "B", "D", 4, 5);
+        add_node(&mut graph, &mut nodes, "C", "D", 4, 3);
+        add_node(&mut graph, &mut nodes, "C", "E", 6, 7);
+        add_node(&mut graph, &mut nodes, "D", "F", 8, 9);
+        add_node(&mut graph, &mut nodes, "E", "F", 5, 6);
+
+        assert_eq!(nodes.len(), 6);
+        assert!(nodes.contains_key("A"));
+
+        let cached_path = CachedPath::new(
+            graph,
+            nodes,
+            |node| panic!("not found: {:?}", node),
+            |i: &'static str, o: &'static str| panic!("no edge: {:?} -> {:?}", i, o),
+        );
+
+        match panic::catch_unwind(|| cached_path.update_path("X", None)) {
+            Err(e) => {
+                let msg = e.downcast_ref::<String>().unwrap();
+                assert_eq!(msg, "not found: \"X\"");
+            }
+            _ => panic!("should panic"),
+        }
+        match panic::catch_unwind(|| cached_path.update_path("A", Some("X"))) {
+            Err(e) => {
+                let msg = e.downcast_ref::<String>().unwrap();
+                assert_eq!(msg, "not found: \"X\"");
+            }
+            _ => panic!("should panic"),
+        }
+        let goals = cached_path.update_path("A", None).unwrap();
+        assert_eq!(goals.len(), 5);
+        for goal in goals.into_iter() {
+            let gs = cached_path.update_path(goal, Some("A")).unwrap();
+            assert!(gs.len() < 6);
+        }
+    }
+
+    #[test]
+    fn test_find_all_path() {
         //     B --2-- C
         //     |       |
         //     3       2
