@@ -216,9 +216,9 @@ where
         let cached_path = self.cached_path.lock().unwrap();
         let path = cached_path
             .get(&start)
-            .ok_or(self.err_not_found(start.into()))?
+            .ok_or_else(|| self.err_not_found(start.into()))?
             .get(&goal)
-            .ok_or(self.err_not_found(goal.into()))?;
+            .ok_or_else(|| self.err_not_found(goal.into()))?;
         Ok(path.clone())
     }
 
@@ -231,7 +231,7 @@ where
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
-        weight.ok_or(self.err_no_edge(token_in, token_out).into())
+        weight.ok_or_else(|| self.err_no_edge(token_in, token_out).into())
     }
 }
 
@@ -460,6 +460,15 @@ mod test {
             let gs = cached_path.update_path(goal, Some("A")).unwrap();
             assert!(gs.len() < 6);
         }
+
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges("A", "F").unwrap()),
+            "[A <-1-> B, B <-4-> D, D <-8-> F]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges("F", "A").unwrap()),
+            "[F <-9-> D, D <-3-> C, C <-2-> A]"
+        );
     }
 
     #[test]
