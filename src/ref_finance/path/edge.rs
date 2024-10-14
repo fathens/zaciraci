@@ -126,10 +126,10 @@ pub mod same_pool {
             debug!(log, "converting to index");
             let token_in = self
                 .get_token_id(token_in.as_account())
-                .ok_or(Error::TokenNotFound(token_in.as_account().clone()))?;
+                .ok_or_else(|| Error::TokenNotFound(token_in.as_account().clone()))?;
             let token_out = self
                 .get_token_id(token_out.as_account())
-                .ok_or(Error::TokenNotFound(token_out.as_account().clone()))?;
+                .ok_or_else(|| Error::TokenNotFound(token_out.as_account().clone()))?;
             debug!(log, "index";
                 "token_in" => token_in.to_string(),
                 "token_out" => token_out.to_string(),

@@ -202,7 +202,7 @@ impl PoolInfo {
             .token_account_ids
             .get(index.as_usize())
             .cloned()
-            .ok_or(Error::OutOfIndexOfTokens(index).into())
+            .ok_or_else(|| Error::OutOfIndexOfTokens(index).into())
     }
 
     fn amount(&self, index: TokenIndex) -> Result<BigDecimal> {
@@ -210,7 +210,7 @@ impl PoolInfo {
             .bare
             .amounts
             .get(index.as_usize())
-            .ok_or(Error::OutOfIndexOfTokens(index))?;
+            .ok_or_else(|| Error::OutOfIndexOfTokens(index))?;
         Ok(BigDecimal::from(v.0))
     }
 
@@ -244,7 +244,7 @@ impl PoolInfo {
         let result = &amount_with_fee * out_balance
             / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
         info!(log, "finish"; "value" => %result);
-        result.to_u128().ok_or(Error::Overflow.into())
+        result.to_u128().ok_or_else(|| Error::Overflow.into())
     }
 
     async fn get_return(
@@ -316,7 +316,7 @@ impl PoolInfoList {
         self.by_id
             .get(&index)
             .cloned()
-            .ok_or(Error::OutOfIndexOfPools(index).into())
+            .ok_or_else(|| Error::OutOfIndexOfPools(index).into())
     }
 
     pub async fn save_to_db(&self) -> Result<usize> {
