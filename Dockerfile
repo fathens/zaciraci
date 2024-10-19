@@ -1,4 +1,4 @@
-FROM rust:1.81.0-bookworm as builder
+FROM rust:1.82.0-bookworm as builder
 ARG CARGO_BUILD_ARGS
 
 RUN apt update && apt install -y clang
