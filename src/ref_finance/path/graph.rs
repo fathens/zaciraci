@@ -5,6 +5,7 @@ use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
+use num_traits::Zero;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -129,7 +130,7 @@ where
     I: Debug + Eq + Clone + Hash + From<N> + Into<N>,
     O: Debug + Eq + Clone + Hash + From<N> + Into<N>,
     N: Debug + Eq + Clone + Hash,
-    E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E>,
+    E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E> + Zero<Output = E>,
 {
     fn new(
         graph: petgraph::Graph<N, E>,
@@ -235,8 +236,8 @@ struct GraphPath<N, W> {
 
 impl<N, W> GraphPath<N, W>
 where
-    N: Hash + Eq + Clone,
-    W: Eq + Add<Output = W> + Copy,
+    N: Debug + Hash + Eq + Clone,
+    W: Debug + Eq + Add<Output = W> + Copy + Zero<Output = W>,
 {
     pub fn find_all_path(&self) -> Vec<Vec<N>> {
         let paths = Rc::new(Mutex::new(HashMap::new()));
@@ -293,27 +294,30 @@ where
         ));
         debug!(log, "start");
 
-        self.goals.iter().find_map(|(&node, &d)| {
-            if node == target {
-                self.graph
-                    .edges_directed(node, petgraph::Direction::Incoming)
-                    .find_map(|edge| {
-                        let source = edge.source();
-                        self.goals.get(&source).into_iter().find_map(|&sd| {
-                            let x = sd + *edge.weight();
-                            (d == x).then_some(source)
-                        })
+        self.goals.get(&target).into_iter().find_map(|&d| {
+            debug!(log, "goal"; "d" => format!("{:?}", d));
+            self.graph
+                .edges_directed(target, petgraph::Direction::Incoming)
+                .find_map(|edge| {
+                    let source = edge.source();
+                    self.goals.get(&source).into_iter().find_map(|&sd| {
+                        let w = *edge.weight();
+                        if w.is_zero() {
+                            return None;
+                        }
+                        let x = sd + w;
+                        (d == x).then_some(source)
                     })
-            } else {
-                None
-            }
+                })
         })
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
+    use num_traits::Zero;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
     use petgraph::Graph;
@@ -340,6 +344,20 @@ mod test {
                 o: "",
                 weight: self.weight + rhs.weight,
             }
+        }
+    }
+
+    impl Zero for Edge<'_> {
+        fn zero() -> Self {
+            Self {
+                i: "",
+                o: "",
+                weight: 0,
+            }
+        }
+
+        fn is_zero(&self) -> bool {
+            self.weight == 0
         }
     }
 
@@ -531,6 +549,46 @@ mod test {
                 vec!["J", "I", "G", "E", "C"],
             ]
         );
+
+        sleep(std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_find_all_path_looped() {
+        fn weight(v: u8) -> EdgeWeight {
+            let d = EdgeWeight::default();
+            EdgeWeight {
+                pair_id: None,
+                estimated_return: (v as u128) * d.estimated_return,
+            }
+        }
+        //  B-0-C
+        //  |   |
+        //  1   1
+        //   \ /
+        //    A
+        let mut graph = Graph::new();
+        let a = graph.add_node("A");
+        let b = graph.add_node("B");
+        let c = graph.add_node("C");
+
+        graph.add_edge(a, b, weight(1));
+        graph.add_edge(a, c, weight(1));
+        graph.add_edge(b, c, weight(0));
+        graph.add_edge(c, b, weight(0));
+
+        let goals = dijkstra(&graph, a, None, |e| *e.weight());
+        assert_eq!(goals.len(), 3);
+
+        let finder = super::GraphPath {
+            graph: graph.clone(),
+            goals,
+        };
+        let mut results = finder.find_all_path();
+        assert_eq!(results.len(), 2);
+        results.sort();
+
+        assert_eq!(results, vec![vec!["B"], vec!["C"]]);
 
         sleep(std::time::Duration::from_secs(1));
     }
