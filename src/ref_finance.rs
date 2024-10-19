@@ -9,5 +9,10 @@ use near_sdk::AccountId;
 use once_cell::sync::Lazy;
 
 static CONTRACT_ADDRESS: Lazy<AccountId> = Lazy::new(|| "v2.ref-finance.near".parse().unwrap());
-static CLIENT: Lazy<JsonRpcClient> =
-    Lazy::new(|| JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL));
+static CLIENT: Lazy<JsonRpcClient> = Lazy::new(|| {
+    if std::env::var("USE_TESTNET").unwrap_or_default().is_empty() {
+        JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
+    } else {
+        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
+    }
+});
