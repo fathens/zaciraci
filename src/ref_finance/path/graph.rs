@@ -42,7 +42,7 @@ impl TokenGraph {
         }
         Self {
             pools,
-            graph: CachedPath::new(graph, nodes, Error::TokenNotFound),
+            graph: CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge),
         }
     }
 
@@ -51,6 +51,11 @@ impl TokenGraph {
         initial: u128,
         start: TokenInAccount,
     ) -> Result<Vec<(TokenOutAccount, u128)>> {
+        let log = DEFAULT.new(o!(
+            "function" => "TokenGraph::list_returns",
+            "initial" => initial,
+            "start" => format!("{:?}", start),
+        ));
         let goals = self.graph.update_path(start.clone(), None)?;
         for goal in goals.iter() {
             self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
@@ -58,8 +63,14 @@ impl TokenGraph {
 
         let mut returns = HashMap::new();
         for goal in goals.into_iter() {
-            let value = self.estimate_return(initial, start.clone(), goal.clone())?;
-            returns.insert(goal, value);
+            match self.estimate_return(initial, start.clone(), goal.clone()) {
+                Ok(value) => {
+                    returns.insert(goal, value);
+                }
+                Err(e) => {
+                    error!(log, "failed to estimate return"; "goal" => ?goal, "error" => ?e);
+                }
+            }
         }
         let mut returns: Vec<_> = returns.into_iter().collect();
         returns.sort_by_key(|(_, value)| *value);
@@ -120,6 +131,7 @@ struct CachedPath<I, O, N, E> {
     nodes: HashMap<N, NodeIndex>,
 
     err_not_found: fn(N) -> Error,
+    err_no_edge: fn(I, O) -> Error,
 
     cached_path: Arc<Mutex<HashMap<I, PathToOut<O, N>>>>,
 }
@@ -135,17 +147,23 @@ where
         graph: petgraph::Graph<N, E>,
         nodes: HashMap<N, NodeIndex>,
         err_not_found: fn(N) -> Error,
+        err_no_edge: fn(I, O) -> Error,
     ) -> Self {
         Self {
             graph,
             nodes,
             cached_path: Arc::new(Mutex::new(HashMap::new())),
             err_not_found,
+            err_no_edge,
         }
     }
 
     fn err_not_found(&self, node: N) -> Error {
         (self.err_not_found)(node)
+    }
+
+    fn err_no_edge(&self, token_in: I, token_out: O) -> Error {
+        (self.err_no_edge)(token_in, token_out)
     }
 
     fn node_index(&self, token: N) -> Result<NodeIndex> {
@@ -224,7 +242,7 @@ where
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
-        Ok(weight.unwrap())
+        weight.ok_or_else(|| self.err_no_edge(token_in, token_out).into())
     }
 }
 
@@ -424,7 +442,12 @@ mod test {
         assert_eq!(nodes.len(), 6);
         assert!(nodes.contains_key("A"));
 
-        let cached_path = CachedPath::new(graph, nodes, |node| panic!("not found: {:?}", node));
+        let cached_path = CachedPath::new(
+            graph,
+            nodes,
+            |node| panic!("not found: {:?}", node),
+            |i, o| panic!("no edge: {} -> {}", i, o),
+        );
 
         match panic::catch_unwind(|| cached_path.update_path("X", None)) {
             Err(e) => {
