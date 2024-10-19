@@ -236,8 +236,8 @@ struct GraphPath<N, W> {
 
 impl<N, W> GraphPath<N, W>
 where
-    N: Debug + Hash + Eq + Clone,
-    W: Debug + Eq + Add<Output = W> + Copy + Zero<Output = W>,
+    N: Debug + Eq + Clone + Hash,
+    W: Debug + Eq + Copy + Add<Output = W> + Zero<Output = W>,
 {
     pub fn find_all_path(&self) -> Vec<Vec<N>> {
         let paths = Rc::new(Mutex::new(HashMap::new()));
