@@ -35,6 +35,11 @@ pub async fn run() {
             "/pools/list_returns/:token_account/:amount",
             get(list_returns),
         )
+        .with_state(state.clone())
+        .route(
+            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account",
+            get(run_swap),
+        )
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -116,19 +121,35 @@ async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
 
 async fn list_returns(
     State(_): State<Arc<AppState>>,
-    Path((token_account, initial_value)): Path<(String, u128)>,
+    Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
+    let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
     let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
     let mut sorted_returns =
-        crate::ref_finance::path::sorted_returns(pools, start.into(), initial_value).unwrap();
+        crate::ref_finance::path::sorted_returns(pools, start.into(), amount_in).unwrap();
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
     for (goal, value) in sorted_returns {
-        let rational = BigRational::new(value.into(), initial_value.into());
+        let rational = BigRational::new(value.into(), amount_in.into());
         let ret = rational.to_f32().unwrap();
         result.push_str(&format!("{goal}: {ret}\n"));
     }
     result
+}
+
+async fn run_swap(
+    State(_): State<Arc<AppState>>,
+    Path((token_in_account, initial_value, token_out_account)): Path<(String, String, String)>,
+) -> String {
+    let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
+    let start: TokenAccount = token_in_account.parse().unwrap();
+    let goal: TokenAccount = token_out_account.parse().unwrap();
+    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
+    let value =
+        crate::ref_finance::path::estimate_return(pools, start.into(), goal.into(), amount_in)
+            .unwrap();
+
+    value.to_string()
 }

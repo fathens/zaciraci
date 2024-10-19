@@ -67,7 +67,7 @@ impl TokenGraph {
         Ok(returns)
     }
 
-    fn estimate_return(
+    pub fn estimate_return(
         &self,
         initial: u128,
         start: TokenInAccount,

@@ -19,3 +19,13 @@ pub fn sorted_returns(
     let graph = graph::TokenGraph::new(pools);
     graph.list_returns(initial, start)
 }
+
+pub fn estimate_return(
+    pools: PoolInfoList,
+    start: TokenInAccount,
+    goal: TokenOutAccount,
+    initial: u128,
+) -> Result<u128> {
+    let graph = graph::TokenGraph::new(pools);
+    graph.estimate_return(initial, start, goal)
+}
