@@ -22,3 +22,4 @@ services:
       - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
       - RUST_LOG=${RUST_LOG:-trace}
       - RUST_LOG_FORMAT=${LOG_FORMAT:-plain}
+      - USE_TESTNET=${USE_TESTNET}
