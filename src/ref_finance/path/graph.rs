@@ -174,8 +174,8 @@ where
         debug!(log, "goals"; "goals" => ?goals);
 
         let finder = GraphPath {
-            graph: self.graph.clone(),
-            goals: goals.clone(),
+            graph: &self.graph,
+            goals: &goals,
         };
 
         let paths = finder.find_all_path();
@@ -228,12 +228,12 @@ where
     }
 }
 
-struct GraphPath<N, W> {
-    graph: petgraph::Graph<N, W>,
-    goals: HashMap<NodeIndex, W>,
+struct GraphPath<'a, N, W> {
+    graph: &'a petgraph::Graph<N, W>,
+    goals: &'a HashMap<NodeIndex, W>,
 }
 
-impl<N, W> GraphPath<N, W>
+impl<'a, N, W> GraphPath<'a, N, W>
 where
     N: Debug + Eq + Clone + Hash,
     W: Debug + Eq + Copy + Add<Output = W>,
@@ -508,8 +508,8 @@ mod test {
         assert_eq!(goals.len(), 10);
 
         let finder = super::GraphPath {
-            graph: graph.clone(),
-            goals,
+            graph: &graph,
+            goals: &goals,
         };
         let mut results = finder.find_all_path();
         assert_eq!(results.len(), 9);
@@ -561,8 +561,8 @@ mod test {
         assert_eq!(goals.len(), 3);
 
         let finder = super::GraphPath {
-            graph: graph.clone(),
-            goals,
+            graph: &graph,
+            goals: &goals,
         };
         let mut results = finder.find_all_path();
         assert_eq!(results.len(), 2);
