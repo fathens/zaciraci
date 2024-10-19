@@ -1,7 +1,6 @@
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair, TokenPairId};
-use num_traits::Zero;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
@@ -25,23 +24,6 @@ impl Ord for EdgeWeight {
 impl PartialOrd for EdgeWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl Zero for EdgeWeight {
-    fn zero() -> Self {
-        EdgeWeight {
-            pair_id: None,
-            estimated_return: 0,
-        }
-    }
-
-    fn set_zero(&mut self) {
-        self.estimated_return = 0;
-    }
-
-    fn is_zero(&self) -> bool {
-        self.estimated_return == 0
     }
 }
 

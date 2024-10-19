@@ -5,7 +5,6 @@ use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
-use num_traits::Zero;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -130,7 +129,7 @@ where
     I: Debug + Eq + Clone + Hash + From<N> + Into<N>,
     O: Debug + Eq + Clone + Hash + From<N> + Into<N>,
     N: Debug + Eq + Clone + Hash,
-    E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E> + Zero<Output = E>,
+    E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E>,
 {
     fn new(
         graph: petgraph::Graph<N, E>,
@@ -237,7 +236,7 @@ struct GraphPath<N, W> {
 impl<N, W> GraphPath<N, W>
 where
     N: Debug + Eq + Clone + Hash,
-    W: Debug + Eq + Copy + Add<Output = W> + Zero<Output = W>,
+    W: Debug + Eq + Copy + Add<Output = W>,
 {
     pub fn find_all_path(&self) -> Vec<Vec<N>> {
         let paths = Rc::new(Mutex::new(HashMap::new()));
@@ -301,12 +300,8 @@ where
                 .find_map(|edge| {
                     let source = edge.source();
                     self.goals.get(&source).into_iter().find_map(|&sd| {
-                        let w = *edge.weight();
-                        if w.is_zero() {
-                            return None;
-                        }
-                        let x = sd + w;
-                        (d == x).then_some(source)
+                        let x = sd + *edge.weight();
+                        (d == x && sd != x).then_some(source)
                     })
                 })
         })
@@ -317,7 +312,6 @@ where
 mod test {
     use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
-    use num_traits::Zero;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
     use petgraph::Graph;
@@ -344,20 +338,6 @@ mod test {
                 o: "",
                 weight: self.weight + rhs.weight,
             }
-        }
-    }
-
-    impl Zero for Edge<'_> {
-        fn zero() -> Self {
-            Self {
-                i: "",
-                o: "",
-                weight: 0,
-            }
-        }
-
-        fn is_zero(&self) -> bool {
-            self.weight == 0
         }
     }
 
