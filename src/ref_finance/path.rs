@@ -1,8 +1,8 @@
-use crate::ref_finance::pool_info::PoolInfoList;
+use crate::ref_finance::pool_info::{PoolInfoList, TokenPairId};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
 
-pub mod by_token;
+mod by_token;
 mod edge;
 mod graph;
 
@@ -18,4 +18,14 @@ pub fn sorted_returns(
 ) -> Result<Vec<(TokenOutAccount, u128)>> {
     let graph = graph::TokenGraph::new(pools);
     graph.list_returns(initial, start)
+}
+
+pub fn swap_path(
+    pools: PoolInfoList,
+    start: TokenInAccount,
+    goal: TokenOutAccount,
+) -> Result<Vec<TokenPairId>> {
+    let graph = graph::TokenGraph::new(pools);
+    let path = graph.get_path_with_return(start, goal)?;
+    Ok(path.into_iter().map(|pair| pair.pair_id()).collect())
 }

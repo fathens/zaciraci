@@ -1,4 +1,5 @@
 use crate::logging::*;
+use crate::ref_finance::path;
 use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 
@@ -14,8 +15,7 @@ pub fn run_swap(
         "goal" => format!("{}", goal),
         "initial" => initial,
     ));
-    let graph = crate::ref_finance::path::graph::TokenGraph::new(pools);
-    let path = graph.get_path_with_return(start, goal)?;
-    debug!(log, "path"; "path" => format!("{:?}", path));
+    let path = path::swap_path(pools, start.clone(), goal.clone())?;
+    trace!(log, "path"; "path" => format!("{:?}", path));
     todo!("run_swap")
 }
