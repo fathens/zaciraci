@@ -4,6 +4,7 @@ pub mod pool_info;
 pub mod token_account;
 mod token_index;
 
+use crate::config;
 use near_jsonrpc_client::JsonRpcClient;
 use near_sdk::AccountId;
 use once_cell::sync::Lazy;
@@ -24,5 +25,5 @@ static CLIENT: Lazy<JsonRpcClient> = Lazy::new(|| {
 });
 
 pub fn is_testnet() -> bool {
-    std::env::var("USE_TESTNET").is_ok()
+    config::get("USE_TESTNET").is_ok()
 }
