@@ -1,28 +1,29 @@
 [package]
 name = "zaciraci"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.37.0", features = ["full"] }
-axum = "0.7.5"
+tokio = { version = "1.40.0", features = ["full"] }
+axum = "0.7.6"
 once_cell = "1.19.0"
 cron = "0.12.1"
-chrono = "0.4.37"
-bigdecimal = { version = "0.4.3", features = ["serde"] }
-num-bigint = "0.4.4"
-diesel = { version = "2.1.6", features = ["postgres", "numeric", "chrono"] }
-deadpool = { version = "0.11.2", features = ["rt_tokio_1"] }
-deadpool-diesel = { version = "0.6.0", features = ["postgres"] }
+chrono = "0.4.38"
+bigdecimal = { version = "0.4.5", features = ["serde"] }
+num-bigint = "0.4.6"
+diesel = { version = "2.2.4", features = ["postgres", "numeric", "chrono"] }
+deadpool = { version = "0.12.1", features = ["rt_tokio_1"] }
+deadpool-diesel = { version = "0.6.1", features = ["postgres"] }
 slog = { version = "2.7.0", features = ["max_level_trace", "release_max_level_info"]  }
 slog-async = "2.8.0"
 slog-term = "2.9.1"
 slog-json = "2.6.1"
 slog-envlogger = "2.2.0"
-near-sdk = "5.1.0"
-near-jsonrpc-client = "0.9.0"
-near-jsonrpc-primitives = "=0.21.2"
-near-primitives = "=0.21.2"
-serde_json = "1.0.116"
-serde = { version = "1.0.200", features = ["derive"] }
-num-traits = "0.2.18"
+near-sdk = "5.5.0"
+near-jsonrpc-client = "0.13.0"
+near-jsonrpc-primitives = "0.26.0"
+near-primitives = "0.26.0"
+serde_json = "1.0.128"
+serde = { version = "1.0.210", features = ["derive"] }
+num-traits = "0.2.19"
+petgraph = "0.6.5"

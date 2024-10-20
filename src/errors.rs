@@ -1,9 +1,10 @@
 use near_jsonrpc_client::errors::JsonRpcError;
 use near_jsonrpc_primitives::errors::RpcError;
+use near_primitives::account::id::ParseAccountError;
 use std::env::VarError;
 use std::fmt::{Debug, Display};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     message: String,
 }
@@ -32,6 +33,14 @@ impl From<VarError> for Error {
 
 impl From<deadpool::managed::PoolError<deadpool_diesel::Error>> for Error {
     fn from(e: deadpool::managed::PoolError<deadpool_diesel::Error>) -> Error {
+        Error {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<ParseAccountError> for Error {
+    fn from(e: ParseAccountError) -> Error {
         Error {
             message: e.to_string(),
         }

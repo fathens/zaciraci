@@ -5,7 +5,7 @@ use crate::Result;
 use bigdecimal::BigDecimal;
 use diesel::prelude::*;
 
-#[derive(Queryable, Selectable, Insertable)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Queryable, Selectable, Insertable)]
 #[diesel(table_name = crate::persistence::schema::pool_info)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct PoolInfo {
