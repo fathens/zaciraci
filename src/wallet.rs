@@ -2,7 +2,7 @@ use crate::config;
 use crate::logging::*;
 use crate::Result;
 
-const DEFAULT_HDPATH: &str = "m/44'/397'/0'/0'/0'";
+const DEFAULT_HDPATH: &str = "m/44'/397'/0'";
 const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
