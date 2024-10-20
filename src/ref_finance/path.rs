@@ -1,4 +1,4 @@
-use crate::ref_finance::pool_info::{PoolInfoList, TokenPairId};
+use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
 
@@ -24,8 +24,7 @@ pub fn swap_path(
     pools: PoolInfoList,
     start: TokenInAccount,
     goal: TokenOutAccount,
-) -> Result<Vec<TokenPairId>> {
+) -> Result<Vec<TokenPair>> {
     let graph = graph::TokenGraph::new(pools);
-    let path = graph.get_path_with_return(start, goal)?;
-    Ok(path.into_iter().map(|pair| pair.pair_id()).collect())
+    graph.get_path_with_return(start, goal)
 }
