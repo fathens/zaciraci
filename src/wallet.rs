@@ -45,7 +45,6 @@ impl Wallet {
         bs58::encode(self.signing_key.verifying_key()).into_string()
     }
 
-    #[allow(dead_code)]
     pub fn derive(&self, index: i32) -> Result<Wallet> {
         let mut hdpath = self.hdpath.clone();
         hdpath.push(HARDEND);
