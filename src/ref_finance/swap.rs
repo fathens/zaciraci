@@ -1,0 +1,21 @@
+use crate::logging::*;
+use crate::ref_finance::pool_info::PoolInfoList;
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+
+pub fn run_swap(
+    pools: PoolInfoList,
+    start: TokenInAccount,
+    goal: TokenOutAccount,
+    initial: u128,
+) -> crate::Result<u128> {
+    let log = DEFAULT.new(o!(
+        "function" => "run_swap",
+        "start" => format!("{}", start),
+        "goal" => format!("{}", goal),
+        "initial" => initial,
+    ));
+    let graph = crate::ref_finance::path::graph::TokenGraph::new(pools);
+    let path = graph.get_path_with_return(start, goal)?;
+    debug!(log, "path"; "path" => format!("{:?}", path));
+    todo!("run_swap")
+}

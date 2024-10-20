@@ -148,7 +148,7 @@ async fn run_swap(
     let goal: TokenAccount = token_out_account.parse().unwrap();
     let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
     let value =
-        crate::ref_finance::path::run_swap(pools, start.into(), goal.into(), amount_in).unwrap();
+        crate::ref_finance::swap::run_swap(pools, start.into(), goal.into(), amount_in).unwrap();
 
     value.to_string()
 }
