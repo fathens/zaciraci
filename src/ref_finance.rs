@@ -25,5 +25,6 @@ static CLIENT: Lazy<JsonRpcClient> = Lazy::new(|| {
 });
 
 pub fn is_testnet() -> bool {
-    config::get("USE_TESTNET").is_ok()
+    let var = config::get("USE_TESTNET").unwrap_or_default();
+    var.parse().unwrap_or_default()
 }
