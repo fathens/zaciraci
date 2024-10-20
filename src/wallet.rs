@@ -1,11 +1,24 @@
 use crate::config;
 use crate::logging::*;
 use crate::Result;
+use once_cell::sync::Lazy;
 
 const DEFAULT_HDPATH: &str = "m/44'/397'/0'";
 const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
+pub static WALLET: Lazy<Wallet> = Lazy::new(|| {
+    let log = DEFAULT.new(o!("function" => "wallet::WALLET"));
+    match Wallet::new_from_config() {
+        Ok(wallet) => wallet,
+        Err(e) => {
+            error!(log, "Failed to create wallet"; "error" => %e);
+            panic!("{}", format!("Failed to create wallet: {e}"));
+        }
+    }
+});
+
+#[derive(Clone)]
 pub struct Wallet {
     mnemonic: bip39::Mnemonic,
     hdpath: slipped10::BIP32Path,
@@ -25,14 +38,16 @@ impl Wallet {
 
     fn new(mnemonic: bip39::Mnemonic, hdpath: slipped10::BIP32Path) -> Result<Wallet> {
         let log = DEFAULT.new(o!("function" => "Wallet::new"));
-        debug!(log, "create"; "hdpath" => %hdpath);
+        debug!(log, "creating"; "hdpath" => %hdpath);
         let key = slipped10::derive_key_from_path(&mnemonic.to_seed(""), CURVE, &hdpath)?;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&key.key);
-        Ok(Wallet {
+        let wallet = Wallet {
             mnemonic,
             hdpath,
             signing_key,
-        })
+        };
+        info!(log, "created"; "pubkey" => %wallet.pub_base58());
+        Ok(wallet)
     }
 
     pub fn new_from_config() -> Result<Wallet> {

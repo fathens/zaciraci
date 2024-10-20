@@ -43,9 +43,7 @@ async fn main() {
       "y" => %y,
     );
 
-    let wallet = wallet::Wallet::new_from_config().unwrap();
-    info!(log, "Wallet created"; "pubkey" => %wallet.pub_base58());
-    let account_zero = wallet.derive(0).unwrap();
+    let account_zero = wallet::WALLET.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(cron::run());
