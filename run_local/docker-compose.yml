@@ -23,3 +23,5 @@ services:
       - RUST_LOG=${RUST_LOG:-trace}
       - RUST_LOG_FORMAT=${LOG_FORMAT:-plain}
       - USE_TESTNET=${USE_TESTNET}
+      - ROOT_MNEMONIC=${ROOT_MNEMONIC}
+      - ROOT_HDPATH=${ROOT_HDPATH}

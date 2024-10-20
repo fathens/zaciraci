@@ -6,6 +6,7 @@ mod errors;
 mod logging;
 mod persistence;
 mod ref_finance;
+mod wallet;
 mod web;
 
 use bigdecimal::BigDecimal;
@@ -41,6 +42,9 @@ async fn main() {
       "x" => %x,
       "y" => %y,
     );
+
+    let wallet = wallet::Wallet::new_from_config().unwrap();
+    info!(log, "Wallet created"; "pubkey" => %wallet.pub_base58());
 
     tokio::spawn(cron::run());
     web::run().await

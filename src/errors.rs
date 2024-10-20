@@ -86,3 +86,19 @@ impl From<serde_json::Error> for Error {
         }
     }
 }
+
+impl From<bip39::Error> for Error {
+    fn from(e: bip39::Error) -> Error {
+        Error {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<slipped10::Error> for Error {
+    fn from(value: slipped10::Error) -> Self {
+        Error {
+            message: value.to_string(),
+        }
+    }
+}
