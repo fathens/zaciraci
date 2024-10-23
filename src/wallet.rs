@@ -62,7 +62,6 @@ impl Wallet {
 
     pub fn derive(&self, index: i32) -> Result<Wallet> {
         let mut hdpath = self.hdpath.clone();
-        hdpath.push(HARDEND);
         hdpath.push(index as u32 + HARDEND);
         Self::new(self.mnemonic.clone(), hdpath)
     }
