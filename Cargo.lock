@@ -3111,6 +3111,7 @@ dependencies = [
  "deadpool-diesel",
  "diesel",
  "ed25519-dalek",
+ "near-crypto",
  "near-jsonrpc-client",
  "near-jsonrpc-primitives",
  "near-primitives",
