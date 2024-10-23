@@ -117,6 +117,10 @@ impl TokenPair {
         }
     }
 
+    pub fn pool_id(&self) -> u32 {
+        self.pool.id
+    }
+
     pub fn token_in_id(&self) -> TokenInAccount {
         self.pool
             .token(self.token_in.as_index())
