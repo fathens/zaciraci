@@ -3,9 +3,11 @@ use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::ref_finance::{path, CLIENT, CONTRACT_ADDRESS};
 use crate::{wallet, Result};
 use near_jsonrpc_client::methods;
+use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::action::{Action, FunctionCallAction};
-use near_primitives::hash::CryptoHash;
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV1};
+use near_primitives::types::Finality;
+use near_primitives::views::QueryRequest;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, Gas};
 use serde::{Deserialize, Serialize};
@@ -69,12 +71,35 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
 
     let signer = wallet::WALLET.signer();
 
+    let access_key = match CLIENT
+        .call(methods::query::RpcQueryRequest {
+            block_reference: Finality::Final.into(),
+            request: QueryRequest::ViewAccessKey {
+                account_id: signer.account_id.clone(),
+                public_key: signer.public_key(),
+            },
+        })
+        .await?
+        .kind
+    {
+        QueryResponseKind::AccessKey(access_key) => access_key,
+        _ => panic!("unexpected response"),
+    };
+
+    let block_info = CLIENT
+        .call(methods::block::RpcBlockRequest {
+            block_reference: Finality::Final.into(),
+        })
+        .await?;
+
+    let nonce = access_key.nonce + 1;
+    let block_hash = block_info.header.hash;
     let transaction = Transaction::V1(TransactionV1 {
         signer_id: signer.account_id.clone(),
         public_key: signer.public_key(),
-        nonce: 0,
+        nonce,
         receiver_id: CONTRACT_ADDRESS.clone(),
-        block_hash: CryptoHash::default(),
+        block_hash,
         actions: vec![action],
         priority_fee: 0,
     });
@@ -91,6 +116,10 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
     info!(log, "broadcasted";
         "response" => format!("{:?}", response),
         "server" => CLIENT.server_addr(),
+        "nonce" => nonce,
+        "block_hash" => format!("{}", block_hash),
+        "account_id" => format!("{}", signer.account_id),
+        "public_key" => format!("{}", signer.public_key()),
     );
 
     Ok(out)
