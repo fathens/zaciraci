@@ -84,10 +84,10 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
 
     let (hash, _) = transaction.get_hash_and_size();
     let signature = signer.sign(hash.as_bytes());
-    let _signed_tx = SignedTransaction::new(signature, transaction);
+    let signed_tx = SignedTransaction::new(signature, transaction);
 
     let request = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
-        signed_transaction: _signed_tx,
+        signed_transaction: signed_tx,
     };
 
     let response = jsonrpc::CLIENT.call(request).await?;
