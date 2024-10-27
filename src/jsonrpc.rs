@@ -55,9 +55,9 @@ pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyVie
     }
 }
 
-pub async fn simulate_tx<T>(
-    receiver: AccountId,
-    method_name: String,
+pub async fn view_contract<T>(
+    receiver: &AccountId,
+    method_name: &str,
     args: &T,
 ) -> Result<CallResult>
 where
@@ -66,8 +66,8 @@ where
     let req = methods::query::RpcQueryRequest {
         block_reference: Finality::Final.into(),
         request: QueryRequest::CallFunction {
-            account_id: receiver,
-            method_name,
+            account_id: receiver.clone(),
+            method_name: method_name.to_string(),
             args: serde_json::to_vec(args)?.into(),
         },
     };
