@@ -33,26 +33,23 @@ pub static CLIENT: Lazy<JsonRpcClient> = Lazy::new(|| {
 });
 
 pub async fn get_recent_block() -> Result<BlockView> {
-    let res = CLIENT
-        .call(methods::block::RpcBlockRequest {
-            block_reference: Finality::Final.into(),
-        })
-        .await?;
+    let req = methods::block::RpcBlockRequest {
+        block_reference: Finality::Final.into(),
+    };
+    let res = CLIENT.call(req).await?;
     Ok(res)
 }
 
 pub async fn get_access_key_info(signer: InMemorySigner) -> Result<AccessKeyView> {
-    match CLIENT
-        .call(methods::query::RpcQueryRequest {
-            block_reference: Finality::Final.into(),
-            request: QueryRequest::ViewAccessKey {
-                account_id: signer.account_id.clone(),
-                public_key: signer.public_key(),
-            },
-        })
-        .await?
-        .kind
-    {
+    let req = methods::query::RpcQueryRequest {
+        block_reference: Finality::Final.into(),
+        request: QueryRequest::ViewAccessKey {
+            account_id: signer.account_id.clone(),
+            public_key: signer.public_key(),
+        },
+    };
+    let res = CLIENT.call(req).await?;
+    match res.kind {
         QueryResponseKind::AccessKey(access_key) => Ok(access_key),
         _ => panic!("unexpected response"),
     }
