@@ -2,13 +2,10 @@ use crate::logging::*;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::ref_finance::{path, CONTRACT_ADDRESS};
 use crate::{jsonrpc, wallet, Result};
-use near_jsonrpc_client::methods;
-use near_primitives::action::{Action, FunctionCallAction};
-use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV1};
 use near_sdk::json_types::U128;
-use near_sdk::{AccountId, Gas};
+use near_sdk::AccountId;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde_json::json;
 
 /// Single swap action.
 #[derive(Serialize, Deserialize, Clone)]
@@ -57,61 +54,15 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
             actions.push(action);
             Ok(next_out)
         })?;
-    let mut args = HashMap::new();
-    args.insert("actions".to_string(), actions);
-
-    match jsonrpc::simulate_tx(CONTRACT_ADDRESS.clone(), METHOD_NAME.to_string(), &args).await {
-        Ok(simulated) => info!(log, "simulated";
-            "simulated" => format!("{:?}", simulated),
-        ),
-        Err(e) => error!(log, "simulation failed";
-            "error" => format!("{:?}", e),
-        ),
-    }
-
-    let action = Action::FunctionCall(
-        FunctionCallAction {
-            method_name: METHOD_NAME.to_string(),
-            args: serde_json::to_vec(&args)?,
-            gas: Gas::from_tgas(300).as_gas(),
-            deposit: 0,
-        }
-        .into(),
-    );
-
-    let signer = wallet::WALLET.signer();
-    let access_key = jsonrpc::get_access_key_info(&signer).await?;
-    let block = jsonrpc::get_recent_block().await?;
-
-    let nonce = access_key.nonce + 1;
-    let block_hash = block.header.hash;
-    let transaction = Transaction::V1(TransactionV1 {
-        signer_id: signer.account_id.clone(),
-        public_key: signer.public_key(),
-        nonce,
-        receiver_id: CONTRACT_ADDRESS.clone(),
-        block_hash,
-        actions: vec![action],
-        priority_fee: 0,
+    let args = json!({
+        "actions": actions,
     });
 
-    let (hash, _) = transaction.get_hash_and_size();
-    let signature = signer.sign(hash.as_bytes());
-    let signed_tx = SignedTransaction::new(signature, transaction);
+    let deposit = 0;
 
-    let request = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
-        signed_transaction: signed_tx,
-    };
+    let signer = wallet::WALLET.signer();
 
-    let response = jsonrpc::CLIENT.call(request).await?;
-    info!(log, "broadcasted";
-        "response" => format!("{:?}", response),
-        "server" => jsonrpc::CLIENT.server_addr(),
-        "nonce" => nonce,
-        "block_hash" => format!("{}", block_hash),
-        "account_id" => format!("{}", signer.account_id),
-        "public_key" => format!("{}", signer.public_key()),
-    );
+    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
 
     Ok(out)
 }
