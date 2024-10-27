@@ -125,9 +125,9 @@ async fn list_returns(
 ) -> String {
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let mut sorted_returns =
-        crate::ref_finance::path::sorted_returns(pools, start.into(), amount_in).unwrap();
+    let mut sorted_returns = crate::ref_finance::path::sorted_returns(start.into(), amount_in)
+        .await
+        .unwrap();
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
@@ -146,8 +146,7 @@ async fn run_swap(
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_in_account.parse().unwrap();
     let goal: TokenAccount = token_out_account.parse().unwrap();
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let value = crate::ref_finance::swap::run_swap(pools, start.into(), goal.into(), amount_in)
+    let value = crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in)
         .await
         .unwrap();
 

@@ -1,5 +1,4 @@
 use crate::logging::*;
-use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::ref_finance::{path, CLIENT, CONTRACT_ADDRESS};
 use crate::{wallet, Result};
@@ -29,12 +28,7 @@ pub struct SwapAction {
     pub min_amount_out: U128,
 }
 
-pub async fn run_swap(
-    pools: PoolInfoList,
-    start: TokenInAccount,
-    goal: TokenOutAccount,
-    initial: u128,
-) -> Result<u128> {
+pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u128) -> Result<u128> {
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
         "start" => format!("{}", start),
@@ -42,7 +36,7 @@ pub async fn run_swap(
         "initial" => initial,
     ));
     info!(log, "entered");
-    let path = path::swap_path(pools, start.clone(), goal.clone())?;
+    let path = path::swap_path(start.clone(), goal.clone()).await?;
     let mut actions = Vec::new();
     let out = path
         .into_iter()
@@ -94,7 +88,10 @@ pub async fn run_swap(
     };
 
     let response = CLIENT.call(request).await?;
-    info!(log, "broadcasted"; "response" => format!("{:?}", response));
+    info!(log, "broadcasted";
+        "response" => format!("{:?}", response),
+        "server" => CLIENT.server_addr(),
+    );
 
     Ok(out)
 }

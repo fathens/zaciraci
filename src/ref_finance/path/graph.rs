@@ -23,7 +23,19 @@ pub struct TokenGraph {
 
 impl TokenGraph {
     pub fn new(pools: PoolInfoList) -> Self {
-        let pools_by_token = PoolsByToken::new(pools.clone());
+        let graph = Self::cached_path(pools.clone());
+        Self { pools, graph }
+    }
+
+    pub fn _refresh(&mut self, pools: PoolInfoList) {
+        self.pools = pools.clone();
+        self.graph = Self::cached_path(pools);
+    }
+
+    fn cached_path(
+        pools: PoolInfoList,
+    ) -> CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight> {
+        let pools_by_token = PoolsByToken::new(pools);
         let mut graph = petgraph::Graph::new();
         let mut nodes = HashMap::new();
         for token_in in pools_by_token.tokens() {
@@ -40,10 +52,7 @@ impl TokenGraph {
                 }
             }
         }
-        Self {
-            pools,
-            graph: CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge),
-        }
+        CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge)
     }
 
     pub fn list_returns(
