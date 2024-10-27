@@ -3,6 +3,7 @@
 mod config;
 mod cron;
 mod errors;
+mod jsonrpc;
 mod logging;
 mod persistence;
 mod ref_finance;

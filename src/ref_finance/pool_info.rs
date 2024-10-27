@@ -1,8 +1,9 @@
+use crate::jsonrpc;
 use crate::logging::*;
 use crate::persistence::tables;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
-use crate::ref_finance::{errors::Error, CLIENT, CONTRACT_ADDRESS};
+use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
 use crate::Result;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use near_jsonrpc_client::methods;
@@ -282,7 +283,7 @@ impl PoolInfo {
             },
         };
 
-        let response = CLIENT.call(request).await?;
+        let response = jsonrpc::CLIENT.call(request).await?;
 
         if let QueryResponseKind::CallResult(result) = response.kind {
             let raw = result.result;
@@ -369,7 +370,7 @@ impl PoolInfoList {
                 },
             };
 
-            let response = CLIENT.call(request).await?;
+            let response = jsonrpc::CLIENT.call(request).await?;
 
             if let QueryResponseKind::CallResult(result) = response.kind {
                 let list: Vec<PoolInfoBared> = from_slice(&result.result)?;

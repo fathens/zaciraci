@@ -1,13 +1,10 @@
 use crate::logging::*;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
-use crate::ref_finance::{path, CLIENT, CONTRACT_ADDRESS};
-use crate::{wallet, Result};
+use crate::ref_finance::{path, CONTRACT_ADDRESS};
+use crate::{jsonrpc, wallet, Result};
 use near_jsonrpc_client::methods;
-use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::action::{Action, FunctionCallAction};
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV1};
-use near_primitives::types::Finality;
-use near_primitives::views::QueryRequest;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, Gas};
 use serde::{Deserialize, Serialize};
@@ -70,30 +67,11 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
     );
 
     let signer = wallet::WALLET.signer();
-
-    let access_key = match CLIENT
-        .call(methods::query::RpcQueryRequest {
-            block_reference: Finality::Final.into(),
-            request: QueryRequest::ViewAccessKey {
-                account_id: signer.account_id.clone(),
-                public_key: signer.public_key(),
-            },
-        })
-        .await?
-        .kind
-    {
-        QueryResponseKind::AccessKey(access_key) => access_key,
-        _ => panic!("unexpected response"),
-    };
-
-    let block_info = CLIENT
-        .call(methods::block::RpcBlockRequest {
-            block_reference: Finality::Final.into(),
-        })
-        .await?;
+    let access_key = jsonrpc::get_access_key_info(signer.clone()).await?;
+    let block = jsonrpc::get_recent_block().await?;
 
     let nonce = access_key.nonce + 1;
-    let block_hash = block_info.header.hash;
+    let block_hash = block.header.hash;
     let transaction = Transaction::V1(TransactionV1 {
         signer_id: signer.account_id.clone(),
         public_key: signer.public_key(),
@@ -112,10 +90,10 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
         signed_transaction: _signed_tx,
     };
 
-    let response = CLIENT.call(request).await?;
+    let response = jsonrpc::CLIENT.call(request).await?;
     info!(log, "broadcasted";
         "response" => format!("{:?}", response),
-        "server" => CLIENT.server_addr(),
+        "server" => jsonrpc::CLIENT.server_addr(),
         "nonce" => nonce,
         "block_hash" => format!("{}", block_hash),
         "account_id" => format!("{}", signer.account_id),
