@@ -1,13 +1,13 @@
 use crate::config;
-use crate::logging::DEFAULT;
+use crate::logging::*;
 use crate::Result;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{methods, JsonRpcClient};
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::types::Finality;
-use near_primitives::views::{AccessKeyView, BlockView, QueryRequest};
+use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest};
+use near_sdk::AccountId;
 use once_cell::sync::Lazy;
-use slog::{info, o};
 
 pub static IS_TESTNET: Lazy<bool> = Lazy::new(|| {
     let str = config::get("USE_TESTNET").unwrap_or_default();
@@ -51,6 +51,29 @@ pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyVie
     let res = CLIENT.call(req).await?;
     match res.kind {
         QueryResponseKind::AccessKey(access_key) => Ok(access_key),
+        _ => panic!("unexpected response"),
+    }
+}
+
+pub async fn simulate_tx<T>(
+    receiver: AccountId,
+    method_name: String,
+    args: &T,
+) -> Result<CallResult>
+where
+    T: ?Sized + serde::Serialize,
+{
+    let req = methods::query::RpcQueryRequest {
+        block_reference: Finality::Final.into(),
+        request: QueryRequest::CallFunction {
+            account_id: receiver,
+            method_name,
+            args: serde_json::to_vec(args)?.into(),
+        },
+    };
+    let res = CLIENT.call(req).await?;
+    match res.kind {
+        QueryResponseKind::CallResult(r) => Ok(r),
         _ => panic!("unexpected response"),
     }
 }

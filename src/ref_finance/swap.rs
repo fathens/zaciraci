@@ -8,6 +8,7 @@ use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV1
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, Gas};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Single swap action.
 #[derive(Serialize, Deserialize, Clone)]
@@ -26,6 +27,7 @@ pub struct SwapAction {
     /// Required minimum amount of token_out.
     pub min_amount_out: U128,
 }
+const METHOD_NAME: &str = "swap";
 
 pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u128) -> Result<u128> {
     let log = DEFAULT.new(o!(
@@ -55,12 +57,23 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
             actions.push(action);
             Ok(next_out)
         })?;
+    let mut args = HashMap::new();
+    args.insert("actions".to_string(), actions);
+
+    match jsonrpc::simulate_tx(CONTRACT_ADDRESS.clone(), METHOD_NAME.to_string(), &args).await {
+        Ok(simulated) => info!(log, "simulated";
+            "simulated" => format!("{:?}", simulated),
+        ),
+        Err(e) => error!(log, "simulation failed";
+            "error" => format!("{:?}", e),
+        ),
+    }
 
     let action = Action::FunctionCall(
         FunctionCallAction {
-            method_name: "swap".to_string(),
-            args: serde_json::to_vec(&actions)?,
-            gas: Gas::from_tgas(1).as_gas(),
+            method_name: METHOD_NAME.to_string(),
+            args: serde_json::to_vec(&args)?,
+            gas: Gas::from_tgas(300).as_gas(),
             deposit: 0,
         }
         .into(),
