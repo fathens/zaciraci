@@ -21,7 +21,7 @@ services:
     environment:
       - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
       - RUST_LOG=${RUST_LOG:-trace}
-      - RUST_LOG_FORMAT=${LOG_FORMAT:-plain}
+      - RUST_LOG_FORMAT=${RUST_LOG_FORMAT:-plain}
       - RUST_BACKTRACE=${RUST_BACKTRACE:-1}
       - USE_TESTNET=${USE_TESTNET}
       - ROOT_MNEMONIC=${ROOT_MNEMONIC}
