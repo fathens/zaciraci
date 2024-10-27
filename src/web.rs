@@ -146,9 +146,10 @@ async fn run_swap(
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_in_account.parse().unwrap();
     let goal: TokenAccount = token_out_account.parse().unwrap();
-    let value = crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in)
-        .await
-        .unwrap();
+    let res = crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in).await;
 
-    value.to_string()
+    match res {
+        Ok(value) => format!("Result: {value}"),
+        Err(e) => format!("Error: {e}"),
+    }
 }
