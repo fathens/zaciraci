@@ -5,7 +5,7 @@ use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{methods, JsonRpcClient};
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::action::{Action, FunctionCallAction};
-use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV1};
+use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
 use near_primitives::types::{Balance, Finality};
 use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest};
 use near_sdk::{AccountId, CryptoHash, Gas};
@@ -114,14 +114,13 @@ where
         .into(),
     );
 
-    let transaction = Transaction::V1(TransactionV1 {
+    let transaction = Transaction::V0(TransactionV0 {
         signer_id: signer.account_id.clone(),
         public_key: signer.public_key(),
         nonce,
         receiver_id: receiver.clone(),
         block_hash,
         actions: vec![action],
-        priority_fee: 0,
     });
 
     let (hash, _) = transaction.get_hash_and_size();
