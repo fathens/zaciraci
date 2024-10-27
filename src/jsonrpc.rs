@@ -40,7 +40,7 @@ pub async fn get_recent_block() -> Result<BlockView> {
     Ok(res)
 }
 
-pub async fn get_access_key_info(signer: InMemorySigner) -> Result<AccessKeyView> {
+pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyView> {
     let req = methods::query::RpcQueryRequest {
         block_reference: Finality::Final.into(),
         request: QueryRequest::ViewAccessKey {

@@ -67,7 +67,7 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
     );
 
     let signer = wallet::WALLET.signer();
-    let access_key = jsonrpc::get_access_key_info(signer.clone()).await?;
+    let access_key = jsonrpc::get_access_key_info(&signer).await?;
     let block = jsonrpc::get_recent_block().await?;
 
     let nonce = access_key.nonce + 1;
