@@ -1,8 +1,9 @@
 use crate::logging::*;
 use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
-use crate::ref_finance::{path, CONTRACT_ADDRESS};
+use crate::ref_finance::{path, CLIENT, CONTRACT_ADDRESS};
 use crate::{wallet, Result};
+use near_jsonrpc_client::methods;
 use near_primitives::action::{Action, FunctionCallAction};
 use near_primitives::hash::CryptoHash;
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV1};
@@ -28,7 +29,7 @@ pub struct SwapAction {
     pub min_amount_out: U128,
 }
 
-pub fn run_swap(
+pub async fn run_swap(
     pools: PoolInfoList,
     start: TokenInAccount,
     goal: TokenOutAccount,
@@ -87,6 +88,13 @@ pub fn run_swap(
     let (hash, _) = transaction.get_hash_and_size();
     let signature = signer.sign(hash.as_bytes());
     let _signed_tx = SignedTransaction::new(signature, transaction);
+
+    let request = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
+        signed_transaction: _signed_tx,
+    };
+
+    let response = CLIENT.call(request).await?;
+    info!(log, "broadcasted"; "response" => format!("{:?}", response));
 
     Ok(out)
 }
