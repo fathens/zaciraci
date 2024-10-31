@@ -40,6 +40,8 @@ pub async fn run() {
             "/pools/run_swap/:token_in_account/:initial_value/:token_out_account",
             get(run_swap),
         )
+        .with_state(state.clone())
+        .route("/storage/deposit_min", get(deposit_min))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -150,6 +152,16 @@ async fn run_swap(
 
     match res {
         Ok(value) => format!("Result: {value}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn deposit_min(State(_): State<Arc<AppState>>) -> String {
+    let bounds = crate::ref_finance::storage::check_bounds().await.unwrap();
+    let value = bounds.min.0;
+    let res = crate::ref_finance::storage::deposit(value).await;
+    match res {
+        Ok(_) => format!("Deposited: {value}"),
         Err(e) => format!("Error: {e}"),
     }
 }

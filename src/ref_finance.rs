@@ -1,6 +1,7 @@
 pub mod errors;
 pub mod path;
 pub mod pool_info;
+pub mod storage;
 pub mod swap;
 pub mod token_account;
 mod token_index;
