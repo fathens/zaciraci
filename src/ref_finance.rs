@@ -1,3 +1,4 @@
+pub mod deposit;
 pub mod errors;
 pub mod path;
 pub mod pool_info;
