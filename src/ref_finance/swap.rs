@@ -46,9 +46,9 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
             let next_out = pair.estimate_return(initial)?;
             let action = SwapAction {
                 pool_id,
-                token_in: token_in.as_id().clone(),
+                token_in: token_in.as_id().to_owned(),
                 amount_in: Some(U128(amount_in)),
-                token_out: token_out.as_id().clone(),
+                token_out: token_out.as_id().to_owned(),
                 min_amount_out: U128(next_out),
             };
             actions.push(action);
