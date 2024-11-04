@@ -43,6 +43,8 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/storage/deposit_min", get(storage_deposit_min))
         .with_state(state.clone())
+        .route("/storage/deposit/:amount", get(storage_deposit))
+        .with_state(state.clone())
         .route("/deposit/:token_account/:amount", get(deposit_token))
         .with_state(state.clone());
 
@@ -161,9 +163,18 @@ async fn run_swap(
 async fn storage_deposit_min(State(_): State<Arc<AppState>>) -> String {
     let bounds = crate::ref_finance::storage::check_bounds().await.unwrap();
     let value = bounds.min.0;
-    let res = crate::ref_finance::storage::deposit(value).await;
+    let res = crate::ref_finance::storage::deposit(value, true).await;
     match res {
         Ok(_) => format!("Deposited: {value}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn storage_deposit(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let amount: u128 = amount.replace("_", "").parse().unwrap();
+    let res = crate::ref_finance::storage::deposit(amount, false).await;
+    match res {
+        Ok(_) => format!("Deposited: {amount}"),
         Err(e) => format!("Error: {e}"),
     }
 }

@@ -23,11 +23,11 @@ pub async fn check_bounds() -> Result<StorageBalanceBounds> {
     Ok(bounds)
 }
 
-pub async fn deposit(value: u128) -> Result<()> {
+pub async fn deposit(value: u128, registration_only: bool) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "storage::deposit"));
     const METHOD_NAME: &str = "storage_deposit";
     let args = json!({
-        "registration_only": true,
+        "registration_only": registration_only,
     });
     let signer = wallet::WALLET.signer();
     info!(log, "depositing";
