@@ -5,6 +5,7 @@ use crate::Result;
 use crate::{jsonrpc, wallet};
 use near_primitives::types::AccountId;
 use near_sdk::json_types::U128;
+use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -63,7 +64,11 @@ pub async fn balance_of(account: AccountId) -> Result<StorageBalance> {
     Ok(balance)
 }
 
-pub async fn check_deposits(account: AccountId, tokens: &[TokenAccount]) -> Result<u128> {
+// 現状の deposits を確認し、削除すべき token と追加すべき deposit を返す
+pub async fn check_deposits(
+    account: AccountId,
+    tokens: &[TokenAccount],
+) -> Result<(Vec<TokenAccount>, u128)> {
     let log = DEFAULT.new(o!("function" => "storage::check_deposits"));
 
     let bounds = check_bounds().await?;
@@ -89,23 +94,44 @@ pub async fn check_deposits(account: AccountId, tokens: &[TokenAccount]) -> Resu
     let more_needed = mores.len() as u128 * per_token;
     info!(log, "missing token deposits"; "more_needed" => more_needed);
     if more_needed <= available {
-        return Ok(0);
+        return Ok((vec![], 0));
     }
 
-    // TODO: 既存の deposits を削除して足りるかを計算
+    let shortage = more_needed - available;
+    let mut needing_count = (shortage / per_token) as usize;
+    if shortage % per_token != 0 {
+        needing_count += 1;
+    }
+    let mut noneeds: Vec<_> = deposits
+        .into_iter()
+        .filter(|(token, amount)| !tokens.contains(token) && amount.0.is_zero())
+        .map(|(token, _)| token)
+        .collect();
 
-    Ok(total)
+    if needing_count < noneeds.len() {
+        noneeds.drain(needing_count..);
+    }
+    if needing_count <= noneeds.len() {
+        return Ok((noneeds, 0));
+    }
+
+    let more_posts = needing_count - noneeds.len();
+    let more = more_posts as u128 * per_token;
+
+    Ok((noneeds, more))
 }
 
 pub async fn check_and_deposit(account: AccountId, tokens: &[TokenAccount]) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "storage::check_and_deposit"));
 
-    let more = check_deposits(account.clone(), tokens).await?;
-    if more == 0 {
-        return Ok(());
+    let (deleting_tokens, more) = check_deposits(account.clone(), tokens).await?;
+    if !deleting_tokens.is_empty() {
+        // TODO: ここで deposits から削除する
     }
-    info!(log, "needing more deposit"; "more" => more);
-    deposit(more, false).await?;
+    if more > 0 {
+        info!(log, "needing more deposit"; "more" => more);
+        deposit(more, false).await?;
+    }
     Ok(())
 }
 
