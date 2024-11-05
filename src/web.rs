@@ -37,9 +37,15 @@ pub async fn run() {
         )
         .with_state(state.clone())
         .route(
-            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account",
+            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account/:min_out_ratio",
             get(run_swap),
         )
+        .with_state(state.clone())
+        .route("/storage/deposit_min", get(storage_deposit_min))
+        .with_state(state.clone())
+        .route("/storage/deposit/:amount", get(storage_deposit))
+        .with_state(state.clone())
+        .route("/deposit/:token_account/:amount", get(deposit_token))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -125,9 +131,9 @@ async fn list_returns(
 ) -> String {
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let mut sorted_returns =
-        crate::ref_finance::path::sorted_returns(pools, start.into(), amount_in).unwrap();
+    let mut sorted_returns = crate::ref_finance::path::sorted_returns(start.into(), amount_in)
+        .await
+        .unwrap();
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
@@ -141,15 +147,54 @@ async fn list_returns(
 
 async fn run_swap(
     State(_): State<Arc<AppState>>,
-    Path((token_in_account, initial_value, token_out_account)): Path<(String, String, String)>,
+    Path((token_in_account, initial_value, token_out_account, min_out_ratio)): Path<(
+        String,
+        String,
+        String,
+        u128,
+    )>,
 ) -> String {
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_in_account.parse().unwrap();
     let goal: TokenAccount = token_out_account.parse().unwrap();
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let value =
-        crate::ref_finance::path::estimate_return(pools, start.into(), goal.into(), amount_in)
-            .unwrap();
+    let res =
+        crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in, min_out_ratio)
+            .await;
 
-    value.to_string()
+    match res {
+        Ok(value) => format!("Result: {value}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn storage_deposit_min(State(_): State<Arc<AppState>>) -> String {
+    let bounds = crate::ref_finance::storage::check_bounds().await.unwrap();
+    let value = bounds.min.0;
+    let res = crate::ref_finance::storage::deposit(value, true).await;
+    match res {
+        Ok(_) => format!("Deposited: {value}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn storage_deposit(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let amount: u128 = amount.replace("_", "").parse().unwrap();
+    let res = crate::ref_finance::storage::deposit(amount, false).await;
+    match res {
+        Ok(_) => format!("Deposited: {amount}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn deposit_token(
+    State(_): State<Arc<AppState>>,
+    Path((token_account, amount)): Path<(String, String)>,
+) -> String {
+    let amount: u128 = amount.replace("_", "").parse().unwrap();
+    let token: TokenAccount = token_account.parse().unwrap();
+    let res = crate::ref_finance::deposit::deposit(token, amount).await;
+    match res {
+        Ok(_) => format!("Deposited: {amount}"),
+        Err(e) => format!("Error: {e}"),
+    }
 }

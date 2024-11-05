@@ -1,14 +1,11 @@
+use crate::jsonrpc;
 use crate::logging::*;
 use crate::persistence::tables;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
-use crate::ref_finance::{errors::Error, CLIENT, CONTRACT_ADDRESS};
+use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
 use crate::Result;
 use bigdecimal::{BigDecimal, ToPrimitive};
-use near_jsonrpc_client::methods;
-use near_jsonrpc_primitives::types::query::QueryResponseKind;
-use near_primitives::types::{BlockReference, Finality, FunctionArgs};
-use near_primitives::views::QueryRequest;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
@@ -115,6 +112,10 @@ impl TokenPair {
             token_in: self.token_in,
             token_out: self.token_out,
         }
+    }
+
+    pub fn pool_id(&self) -> u32 {
+        self.pool.id
     }
 
     pub fn token_in_id(&self) -> TokenInAccount {
@@ -259,34 +260,23 @@ impl PoolInfo {
             "amount_in" => amount_in,
         ));
         info!(log, "start");
-        let method_name = "get_return".to_string();
+        let method_name = "get_return";
 
-        let request_json = json!({
+        let args = json!({
             "pool_id": self.id,
             "token_in": token_in.as_id(),
             "amount_in": U128::from(amount_in),
             "token_out": token_out.as_id(),
         })
         .to_string();
-        debug!(log, "request_json"; "value" => %request_json);
-        let request = methods::query::RpcQueryRequest {
-            block_reference: BlockReference::Finality(Finality::Final),
-            request: QueryRequest::CallFunction {
-                account_id: CONTRACT_ADDRESS.clone(),
-                method_name: method_name.clone(),
-                args: FunctionArgs::from(request_json.into_bytes()),
-            },
-        };
+        debug!(log, "request_json"; "value" => %args);
 
-        let response = CLIENT.call(request).await?;
+        let result = jsonrpc::view_contract(&CONTRACT_ADDRESS, method_name, &args).await?;
 
-        if let QueryResponseKind::CallResult(result) = response.kind {
-            let raw = result.result;
-            let value: U128 = from_slice(&raw)?;
-            info!(log, "finish"; "value" => %value.0);
-            return Ok(value.into());
-        }
-        Err(Error::UnknownResponse(response.kind).into())
+        let raw = result.result;
+        let value: U128 = from_slice(&raw)?;
+        info!(log, "finish"; "value" => %value.0);
+        Ok(value.into())
     }
 }
 
@@ -341,7 +331,7 @@ impl PoolInfoList {
         let log = DEFAULT.new(o!("function" => "get_all_from_node"));
         info!(log, "start");
 
-        let method_name = "get_pools".to_string();
+        let method_name = "get_pools";
 
         let limit = 100;
         let mut index = 0;
@@ -349,34 +339,19 @@ impl PoolInfoList {
 
         loop {
             trace!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
-            let request = methods::query::RpcQueryRequest {
-                block_reference: BlockReference::Finality(Finality::Final),
-                request: QueryRequest::CallFunction {
-                    account_id: CONTRACT_ADDRESS.clone(),
-                    method_name: method_name.clone(),
-                    args: FunctionArgs::from(
-                        json!({
-                            "from_index": index,
-                            "limit": limit,
-                        })
-                        .to_string()
-                        .into_bytes(),
-                    ),
-                },
-            };
+            let args = json!({
+                "from_index": index,
+                "limit": limit,
+            });
 
-            let response = CLIENT.call(request).await?;
+            let result = jsonrpc::view_contract(&CONTRACT_ADDRESS, method_name, &args).await?;
 
-            if let QueryResponseKind::CallResult(result) = response.kind {
-                let list: Vec<PoolInfoBared> = from_slice(&result.result)?;
-                let count = list.len();
-                trace!(log, "Got pools"; "count" => count);
-                pools.extend(list);
-                if count < limit {
-                    break;
-                }
-            } else {
-                return Err(Error::UnknownResponse(response.kind).into());
+            let list: Vec<PoolInfoBared> = from_slice(&result.result)?;
+            let count = list.len();
+            trace!(log, "Got pools"; "count" => count);
+            pools.extend(list);
+            if count < limit {
+                break;
             }
 
             index += limit;

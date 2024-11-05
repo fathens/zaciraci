@@ -1,3 +1,4 @@
+use crate::config;
 use once_cell::sync::Lazy;
 pub use slog::*;
 
@@ -17,7 +18,7 @@ pub static DEFAULT: Lazy<Logger> = Lazy::new(|| {
 
     let mk_json = || slog_json::Json::default(std::io::stdout()).fuse();
 
-    let format = std::env::var("RUST_LOG_FORMAT").unwrap_or_default();
+    let format = config::get("RUST_LOG_FORMAT").unwrap_or_default();
     let drain = match format.as_str() {
         "json" => wrap(mk_json()),
         _ => wrap(mk_term()),

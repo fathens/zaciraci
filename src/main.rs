@@ -3,9 +3,11 @@
 mod config;
 mod cron;
 mod errors;
+mod jsonrpc;
 mod logging;
 mod persistence;
 mod ref_finance;
+mod wallet;
 mod web;
 
 use bigdecimal::BigDecimal;
@@ -41,6 +43,10 @@ async fn main() {
       "x" => %x,
       "y" => %y,
     );
+
+    let base = wallet::WALLET.derive(0).unwrap();
+    let account_zero = base.derive(0).unwrap();
+    info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(cron::run());
     web::run().await
