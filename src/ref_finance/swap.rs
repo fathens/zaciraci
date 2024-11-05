@@ -1,6 +1,7 @@
 use crate::logging::*;
-use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
-use crate::ref_finance::{path, CONTRACT_ADDRESS};
+use crate::ref_finance::pool_info::TokenPair;
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::ref_finance::{path, storage, CONTRACT_ADDRESS};
 use crate::{jsonrpc, wallet, Result};
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
@@ -39,7 +40,12 @@ pub async fn run_swap(
         "initial" => initial,
     ));
     info!(log, "entered");
+
     let path = path::swap_path(start.clone(), goal.clone()).await?;
+    let account = wallet::WALLET.account_id();
+    let tokens = gather_token_accounts(&path);
+    storage::check_and_deposit(account, &tokens).await?;
+
     let mut actions = Vec::new();
     let out = path
         .into_iter()
@@ -73,10 +79,20 @@ pub async fn run_swap(
     });
 
     let deposit = 1;
-
     let signer = wallet::WALLET.signer();
 
     jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
 
     Ok(out)
+}
+
+fn gather_token_accounts(pairs: &[TokenPair]) -> Vec<TokenAccount> {
+    let mut tokens = Vec::new();
+    for pair in pairs {
+        tokens.push(pair.token_in_id().into());
+        tokens.push(pair.token_out_id().into());
+    }
+    tokens.sort();
+    tokens.dedup();
+    tokens
 }

@@ -3,7 +3,9 @@ use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::{jsonrpc, wallet, Result};
 use near_sdk::json_types::U128;
+use near_sdk::AccountId;
 use serde_json::json;
+use std::collections::HashMap;
 
 pub async fn deposit(token: TokenAccount, amount: u128) -> Result<()> {
     let log = DEFAULT.new(o!(
@@ -26,4 +28,34 @@ pub async fn deposit(token: TokenAccount, amount: u128) -> Result<()> {
 
     jsonrpc::exec_contract(&signer, token.as_id(), METHOD_NAME, &args, deposit).await?;
     Ok(())
+}
+
+pub async fn get_deposits(account: AccountId) -> Result<HashMap<TokenAccount, U128>> {
+    let log = DEFAULT.new(o!(
+        "function" => "get_deposits",
+        "account" => format!("{}", account),
+    ));
+    info!(log, "entered");
+
+    const METHOD_NAME: &str = "get_deposits";
+    let args = json!({
+        "account_id": account,
+    });
+
+    let result = jsonrpc::view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args).await?;
+
+    let deposits: HashMap<TokenAccount, U128> = serde_json::from_slice(&result.result)?;
+    info!(log, "deposits"; "deposits" => ?deposits);
+    Ok(deposits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_deposits() {
+        let result = get_deposits("app.zaciraci.testnet".parse().unwrap()).await;
+        assert!(result.is_ok());
+    }
 }
