@@ -26,7 +26,12 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
-pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u128) -> Result<u128> {
+pub async fn run_swap(
+    start: TokenInAccount,
+    goal: TokenOutAccount,
+    initial: u128,
+    min_out_ratio: u128,
+) -> Result<u128> {
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
         "start" => format!("{}", start),
@@ -39,26 +44,35 @@ pub async fn run_swap(start: TokenInAccount, goal: TokenOutAccount, initial: u12
     let out = path
         .into_iter()
         .try_fold(initial, |prev, pair| -> Result<u128> {
-            let amount_in = prev;
+            let amount_in = (prev == initial).then_some(U128(prev));
             let pool_id = pair.pool_id() as u64;
             let token_in = pair.token_in_id();
             let token_out = pair.token_out_id();
-            let next_out = pair.estimate_return(initial)?;
+            let next_out = pair.estimate_return(prev)?;
+            let min_out = next_out * min_out_ratio / 100;
+            debug!(log, "adding swap action";
+                "pool_id" => pool_id,
+                "token_in" => format!("{}", token_in),
+                "amount_in" => prev,
+                "token_out" => format!("{}", token_out),
+                "next_out" => next_out,
+                "min_out" => min_out,
+            );
             let action = SwapAction {
                 pool_id,
                 token_in: token_in.as_id().to_owned(),
-                amount_in: Some(U128(amount_in)),
+                amount_in,
                 token_out: token_out.as_id().to_owned(),
-                min_amount_out: U128(next_out),
+                min_amount_out: U128(min_out),
             };
             actions.push(action);
-            Ok(next_out)
+            Ok(min_out)
         })?;
     let args = json!({
         "actions": actions,
     });
 
-    let deposit = 0;
+    let deposit = 1;
 
     let signer = wallet::WALLET.signer();
 

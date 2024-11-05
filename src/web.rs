@@ -37,7 +37,7 @@ pub async fn run() {
         )
         .with_state(state.clone())
         .route(
-            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account",
+            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account/:min_out_ratio",
             get(run_swap),
         )
         .with_state(state.clone())
@@ -147,12 +147,19 @@ async fn list_returns(
 
 async fn run_swap(
     State(_): State<Arc<AppState>>,
-    Path((token_in_account, initial_value, token_out_account)): Path<(String, String, String)>,
+    Path((token_in_account, initial_value, token_out_account, min_out_ratio)): Path<(
+        String,
+        String,
+        String,
+        u128,
+    )>,
 ) -> String {
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_in_account.parse().unwrap();
     let goal: TokenAccount = token_out_account.parse().unwrap();
-    let res = crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in).await;
+    let res =
+        crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in, min_out_ratio)
+            .await;
 
     match res {
         Ok(value) => format!("Result: {value}"),
