@@ -2,6 +2,7 @@ use crate::logging::*;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::Result;
 use crate::{jsonrpc, wallet};
+use near_primitives::types::AccountId;
 use near_sdk::json_types::U128;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -10,6 +11,12 @@ use serde_json::json;
 pub struct StorageBalanceBounds {
     pub min: U128,
     pub max: Option<U128>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct StorageBalance {
+    pub total: U128,
+    pub available: U128,
 }
 
 pub async fn check_bounds() -> Result<StorageBalanceBounds> {
@@ -37,6 +44,23 @@ pub async fn deposit(value: u128, registration_only: bool) -> Result<()> {
 
     jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, value).await?;
     Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn balance_of(account: AccountId) -> Result<StorageBalance> {
+    let log = DEFAULT.new(o!("function" => "storage::balance_of"));
+    const METHOD_NAME: &str = "storage_balance_of";
+    let args = json!({
+        "account_id": account,
+    });
+    let result = jsonrpc::view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args).await?;
+
+    let balance: StorageBalance = serde_json::from_slice(&result.result)?;
+    info!(log, "balance";
+        "total" => ?balance.total,
+        "available" => ?balance.available,
+    );
+    Ok(balance)
 }
 
 #[cfg(test)]
