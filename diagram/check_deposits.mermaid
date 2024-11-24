@@ -2,4 +2,4 @@ graph TD
     TokenPath --> CheckDeposits
     CheckDeposits -->|不要な tokens| RemoveTokens
     RemoveTokens -->|不足した deposit| DepositStorage
-    DepositStorage -->|追加すべき tokens| AddTokens
+    DepositStorage --> AddTokens["（deposit があれば自動で追加される）"]
