@@ -1,5 +1,5 @@
 graph TD
-    StatsHistory[履歴の集計] -->|必要額（履歴無しなら default を使う）| WrappedAmount
+    StatsHistory[履歴の集計] -->|必要額<br>（履歴無しなら default を使う）| WrappedAmount
     WrappedAmount -->|余分がある| Withdraw
     WrappedAmount -->|不足している| CheckNative[ネイティブ残高の確認]
     CheckNative -->|足りる| DepositFull[必要なだけ Deposit]
