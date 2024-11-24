@@ -60,8 +60,10 @@ pub async fn unregister_tokens(tokens: &[TokenAccount]) -> Result<()> {
         "token_ids": tokens
     });
 
+    let deposit = 1; // minimum deposit
     let signer = wallet::WALLET.signer();
-    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, 0).await?;
+
+    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
     Ok(())
 }
 
