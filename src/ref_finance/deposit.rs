@@ -49,6 +49,22 @@ pub async fn get_deposits(account: AccountId) -> Result<HashMap<TokenAccount, U1
     Ok(deposits)
 }
 
+pub async fn unregister_tokens(tokens: &[TokenAccount]) -> Result<()> {
+    let log = DEFAULT.new(o!(
+        "function" => "unregister_tokens",
+    ));
+    info!(log, "entered");
+
+    const METHOD_NAME: &str = "unregister_tokens";
+    let args = json!({
+        "token_ids": tokens
+    });
+
+    let signer = wallet::WALLET.signer();
+    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, 0).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

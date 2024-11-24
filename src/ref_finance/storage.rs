@@ -126,7 +126,7 @@ pub async fn check_and_deposit(account: AccountId, tokens: &[TokenAccount]) -> R
 
     let (deleting_tokens, more) = check_deposits(account.clone(), tokens).await?;
     if !deleting_tokens.is_empty() {
-        // TODO: ここで deposits から削除する
+        deposit::unregister_tokens(&deleting_tokens).await?;
     }
     if more > 0 {
         info!(log, "needing more deposit"; "more" => more);
