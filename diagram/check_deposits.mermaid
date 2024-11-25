@@ -1,5 +1,4 @@
 graph TD
-    TokenPath --> CheckDeposits
-    CheckDeposits -->|不要な tokens| RemoveTokens
-    RemoveTokens -->|不足した deposit| DepositStorage
-    DepositStorage --> AddTokens["（deposit があれば自動で追加される）"]
+    TokenPath --> CheckDeposits[不要なトークンと deposit の不足分を計算]
+    CheckDeposits --> RemoveTokens[不要なトークンを削除]
+    RemoveTokens --> DepositStorage["不足分を deposit<br>（トークンは自動で追加される）"]
