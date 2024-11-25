@@ -1,0 +1,12 @@
+graph TD
+    StatsHistory[履歴の集計] -->|必要額<br>（履歴無しなら default を使う）| WrappedAmount
+    WrappedAmount -->|余分がある| Withdraw
+    WrappedAmount -->|不足している| CheckNative[ネイティブ残高の確認]
+    CheckNative -->|足りる| DepositFull[必要なだけ Deposit]
+    CheckNative -->|足りない| DepositLess[minimum だけ残して Deposit]
+    DepositFull --> END
+    DepositLess --> END
+    Withdraw --> NativeAmount
+    NativeAmount -->|必要額の10倍以下| END
+    NativeAmount -->|必要額の10倍より大きい| PutBack
+    PutBack --> END

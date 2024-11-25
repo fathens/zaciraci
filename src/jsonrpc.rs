@@ -11,26 +11,26 @@ use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest}
 use near_sdk::{AccountId, CryptoHash, Gas};
 use once_cell::sync::Lazy;
 
-pub static IS_TESTNET: Lazy<bool> = Lazy::new(|| {
-    let str = config::get("USE_TESTNET").unwrap_or_default();
+pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
+    let str = config::get("USE_MAINNET").unwrap_or_default();
     let log = DEFAULT.new(o!(
-        "function" => "IS_TESTNET",
+        "function" => "IS_MAINNET",
         "given_value" => format!("{}", str),
     ));
     let value = str.parse().unwrap_or_default();
     if value {
-        info!(log, "Using testnet");
-    } else {
         info!(log, "Using mainnet");
+    } else {
+        info!(log, "Using testnet");
     }
     value
 });
 
 pub static CLIENT: Lazy<JsonRpcClient> = Lazy::new(|| {
-    if *IS_TESTNET {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
-    } else {
+    if *IS_MAINNET {
         JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
+    } else {
+        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
     }
 });
 

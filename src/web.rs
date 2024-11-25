@@ -45,6 +45,11 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/storage/deposit/:amount", get(storage_deposit))
         .with_state(state.clone())
+        .route(
+            "/storage/unregister/:token_account",
+            get(storage_unregister_token),
+        )
+        .with_state(state.clone())
         .route("/deposit/:token_account/:amount", get(deposit_token))
         .with_state(state.clone());
 
@@ -182,6 +187,18 @@ async fn storage_deposit(State(_): State<Arc<AppState>>, Path(amount): Path<Stri
     let res = crate::ref_finance::storage::deposit(amount, false).await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn storage_unregister_token(
+    State(_): State<Arc<AppState>>,
+    Path(token_account): Path<String>,
+) -> String {
+    let token: TokenAccount = token_account.parse().unwrap();
+    let res = crate::ref_finance::deposit::unregister_tokens(&vec![token]).await;
+    match res {
+        Ok(_) => format!("Unregistered: {token_account}"),
         Err(e) => format!("Error: {e}"),
     }
 }

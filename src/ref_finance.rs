@@ -13,10 +13,10 @@ use once_cell::sync::Lazy;
 
 static CONTRACT_ADDRESS: Lazy<AccountId> = Lazy::new(|| {
     let log = DEFAULT.new(o!("function" => "ref_finance::CONTRACT_ADDRESS"));
-    let account_id = if *crate::jsonrpc::IS_TESTNET {
-        "ref-finance-101.testnet".parse().unwrap()
-    } else {
+    let account_id = if *crate::jsonrpc::IS_MAINNET {
         "v2.ref-finance.near".parse().unwrap()
+    } else {
+        "ref-finance-101.testnet".parse().unwrap()
     };
     info!(log, "contract address"; "account_id" => %account_id);
     account_id
