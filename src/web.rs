@@ -196,7 +196,7 @@ async fn storage_unregister_token(
     Path(token_account): Path<String>,
 ) -> String {
     let token: TokenAccount = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::unregister_tokens(&vec![token]).await;
+    let res = crate::ref_finance::deposit::unregister_tokens(&[token]).await;
     match res {
         Ok(_) => format!("Unregistered: {token_account}"),
         Err(e) => format!("Error: {e}"),
