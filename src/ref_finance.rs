@@ -6,6 +6,7 @@ pub mod storage;
 pub mod swap;
 pub mod token_account;
 mod token_index;
+mod history;
 
 use crate::logging::*;
 use near_sdk::AccountId;
