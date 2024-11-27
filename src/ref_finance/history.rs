@@ -70,15 +70,15 @@ impl History {
     fn new(entries: Vec<HistoryEntry>) -> Self {
         let inputs: Vec<_> = entries
             .iter()
-            .map(|entry| (&entry.inputs, entry.logs.len() as u64))
+            .map(|entry| (&entry.inputs, entry.logs.len()))
             .collect();
         let outputs: Vec<_> = entries
             .iter()
-            .map(|entry| (&entry.outputs, entry.logs.len() as u64))
+            .map(|entry| (&entry.outputs, entry.logs.len()))
             .collect();
         let gains: Vec<_> = entries
             .iter()
-            .map(|entry| (&entry.gains, entry.logs.len() as u64))
+            .map(|entry| (&entry.gains, entry.logs.len()))
             .collect();
         let inputs = Statistics::gather(&inputs);
         let outputs = Statistics::gather(&outputs);
@@ -167,7 +167,7 @@ pub mod statistics {
             Statistics { max, min, average }
         }
 
-        pub fn gather(stats: &[(&Self, u64)]) -> Self {
+        pub fn gather(stats: &[(&Self, usize)]) -> Self {
             let mut max = A::zero();
             let mut min = A::zero();
             let mut sum = A::zero();
@@ -175,7 +175,7 @@ pub mod statistics {
             for (stat, n) in stats.iter() {
                 max = max.max(stat.max);
                 min = min.min(stat.min);
-                let c: A = (*n).into();
+                let c: A = (*n as u64).into();
                 sum = sum + stat.average * c;
                 count = count + c;
             }
