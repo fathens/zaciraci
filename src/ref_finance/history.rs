@@ -3,7 +3,7 @@
 use crate::ref_finance::history::statistics::Statistics;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use once_cell::sync::Lazy;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Debug)]
 pub struct History {
@@ -32,17 +32,17 @@ pub struct SwapLog {
     output_value: u64,
 }
 
-static HISTORY: Lazy<Arc<History>> = Lazy::new(|| {
-    Arc::new(History {
+static HISTORY: Lazy<Arc<RwLock<History>>> = Lazy::new(|| {
+    Arc::new(RwLock::new(History {
         entries: vec![],
 
         inputs: Statistics::default(),
         outputs: Statistics::default(),
         gains: Statistics::default(),
-    })
+    }))
 });
 
-pub fn get_history() -> Arc<History> {
+pub fn get_history() -> Arc<RwLock<History>> {
     Arc::clone(&*HISTORY)
 }
 
@@ -67,7 +67,7 @@ impl HistoryEntry {
 }
 
 impl History {
-    pub fn new(entries: Vec<HistoryEntry>) -> Self {
+    fn new(entries: Vec<HistoryEntry>) -> Self {
         let inputs: Vec<_> = entries
             .iter()
             .map(|entry| (&entry.inputs, entry.logs.len() as u32))
@@ -93,13 +93,17 @@ impl History {
 
     const LIMIT: usize = 100;
 
-    pub fn add(&self, entry: HistoryEntry) -> Self {
+    pub fn add(&mut self, entry: HistoryEntry) {
         let mut entries = self.entries.clone();
         entries.push(entry);
         if entries.len() > Self::LIMIT {
             entries.drain(0..(entries.len() - Self::LIMIT));
         }
-        Self::new(entries)
+        let next = Self::new(entries);
+        self.entries = next.entries;
+        self.inputs = next.inputs;
+        self.outputs = next.outputs;
+        self.gains = next.gains;
     }
 }
 
