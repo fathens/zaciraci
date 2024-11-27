@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 
 mod by_token;
 mod edge;
-mod graph;
+pub mod graph;
 
 use graph::TokenGraph;
 
