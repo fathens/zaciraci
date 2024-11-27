@@ -128,6 +128,20 @@ pub mod statistics {
         }
     }
 
+    impl<A: Copy> Statistics<A> {
+        pub fn max(&self) -> A {
+            self.max
+        }
+
+        pub fn min(&self) -> A {
+            self.min
+        }
+
+        pub fn average(&self) -> A {
+            self.average
+        }
+    }
+
     impl<A> Statistics<A>
     where
         A: Zero,
