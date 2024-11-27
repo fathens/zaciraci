@@ -9,18 +9,18 @@ use std::sync::{Arc, RwLock};
 pub struct History {
     entries: Vec<HistoryEntry>,
 
-    pub inputs: Statistics<u64>,
-    pub outputs: Statistics<u64>,
-    pub gains: Statistics<u64>,
+    pub inputs: Statistics<u128>,
+    pub outputs: Statistics<u128>,
+    pub gains: Statistics<u128>,
 }
 
 #[derive(Clone, Debug)]
 pub struct HistoryEntry {
     logs: Vec<SwapLog>,
 
-    inputs: Statistics<u64>,
-    outputs: Statistics<u64>,
-    gains: Statistics<u64>,
+    inputs: Statistics<u128>,
+    outputs: Statistics<u128>,
+    gains: Statistics<u128>,
 }
 
 #[derive(Clone, Debug)]
@@ -28,8 +28,8 @@ pub struct SwapLog {
     start: TokenInAccount,
     goal: TokenOutAccount,
 
-    input_value: u64,
-    output_value: u64,
+    input_value: u128,
+    output_value: u128,
 }
 
 static HISTORY: Lazy<Arc<RwLock<History>>> = Lazy::new(|| {
@@ -70,15 +70,15 @@ impl History {
     fn new(entries: Vec<HistoryEntry>) -> Self {
         let inputs: Vec<_> = entries
             .iter()
-            .map(|entry| (&entry.inputs, entry.logs.len() as u32))
+            .map(|entry| (&entry.inputs, entry.logs.len() as u64))
             .collect();
         let outputs: Vec<_> = entries
             .iter()
-            .map(|entry| (&entry.outputs, entry.logs.len() as u32))
+            .map(|entry| (&entry.outputs, entry.logs.len() as u64))
             .collect();
         let gains: Vec<_> = entries
             .iter()
-            .map(|entry| (&entry.gains, entry.logs.len() as u32))
+            .map(|entry| (&entry.gains, entry.logs.len() as u64))
             .collect();
         let inputs = Statistics::gather(&inputs);
         let outputs = Statistics::gather(&outputs);
@@ -134,7 +134,7 @@ pub mod statistics {
         A: Add<Output = A> + Div<Output = A> + Mul<Output = A>,
         A: Copy,
         A: Ord,
-        A: From<u32>,
+        A: From<u64>,
     {
         pub fn new(values: &[A]) -> Self {
             let mut max = A::zero();
@@ -148,12 +148,12 @@ pub mod statistics {
             let average = if values.is_empty() {
                 A::zero()
             } else {
-                sum / (values.len() as u32).into()
+                sum / (values.len() as u64).into()
             };
             Statistics { max, min, average }
         }
 
-        pub fn gather(stats: &[(&Self, u32)]) -> Self {
+        pub fn gather(stats: &[(&Self, u64)]) -> Self {
             let mut max = A::zero();
             let mut min = A::zero();
             let mut sum = A::zero();
