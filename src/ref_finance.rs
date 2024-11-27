@@ -1,12 +1,13 @@
 pub mod deposit;
 pub mod errors;
+mod history;
 pub mod path;
+mod pick;
 pub mod pool_info;
 pub mod storage;
 pub mod swap;
 pub mod token_account;
 mod token_index;
-mod history;
 
 use crate::logging::*;
 use near_sdk::AccountId;
