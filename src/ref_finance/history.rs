@@ -111,7 +111,7 @@ pub mod statistics {
     use num_traits::Zero;
     use std::ops::{Add, Div, Mul};
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone)]
     pub struct Statistics<A> {
         max: A,
         min: A,
