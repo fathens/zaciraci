@@ -2,7 +2,6 @@ pub mod deposit;
 pub mod errors;
 mod history;
 pub mod path;
-mod pick;
 pub mod pool_info;
 pub mod storage;
 pub mod swap;
