@@ -16,26 +16,22 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
-pub struct TokenGraph {
-    pools: PoolInfoList,
+pub struct TokenGraph<'a> {
+    pools: &'a PoolInfoList,
     graph: CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight>,
 }
 
-impl TokenGraph {
-    pub fn new(pools: PoolInfoList) -> Self {
-        let graph = Self::cached_path(pools.clone());
+impl<'a> TokenGraph<'a> {
+    pub fn new(pools: &'a PoolInfoList, input_value: u128) -> Self {
+        let graph = Self::cached_path(pools, input_value);
         Self { pools, graph }
     }
 
-    pub fn _refresh(&mut self, pools: PoolInfoList) {
-        self.pools = pools.clone();
-        self.graph = Self::cached_path(pools);
-    }
-
     fn cached_path(
-        pools: PoolInfoList,
+        pools: &PoolInfoList,
+        input_value: u128,
     ) -> CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight> {
-        let pools_by_token = PoolsByToken::new(pools);
+        let pools_by_token = PoolsByToken::new(pools, input_value);
         let mut graph = petgraph::Graph::new();
         let mut nodes = HashMap::new();
         for token_in in pools_by_token.tokens() {
@@ -339,6 +335,7 @@ where
 mod test {
     use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
+    use num_rational::Ratio;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
     use petgraph::Graph;
@@ -568,10 +565,9 @@ mod test {
     #[test]
     fn test_find_all_path_looped() {
         fn weight(v: u8) -> EdgeWeight {
-            let d = EdgeWeight::default();
             EdgeWeight {
                 pair_id: None,
-                estimated_return: (v as u128) * d.estimated_return,
+                estimated_rate: Ratio::new(v as u128, 1),
             }
         }
         //  B-0-C

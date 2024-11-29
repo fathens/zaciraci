@@ -1,23 +1,21 @@
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair, TokenPairId};
+use num_rational::Ratio;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
 
-const AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
-
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EdgeWeight {
     pub pair_id: Option<TokenPairId>,
-    pub estimated_return: u128,
+    pub estimated_rate: Ratio<u128>,
 }
 
 impl Ord for EdgeWeight {
     fn cmp(&self, other: &Self) -> Ordering {
-        // estimated_return が大きい方が小さいとして返す
-        self.estimated_return.cmp(&other.estimated_return).reverse()
+        self.estimated_rate.cmp(&other.estimated_rate)
     }
 }
 
@@ -31,7 +29,7 @@ impl Default for EdgeWeight {
     fn default() -> Self {
         EdgeWeight {
             pair_id: None,
-            estimated_return: AMOUNT_IN,
+            estimated_rate: Ratio::new(1, 1),
         }
     }
 }
@@ -41,16 +39,17 @@ impl Add<EdgeWeight> for EdgeWeight {
     fn add(self, rhs: EdgeWeight) -> Self::Output {
         EdgeWeight {
             pair_id: None,
-            estimated_return: self.estimated_return + rhs.estimated_return,
+            estimated_rate: self.estimated_rate + rhs.estimated_rate,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Edge {
-    #[allow(dead_code)]
     cache: Arc<same_pool::CachedEdges>,
     pair: TokenPair,
+
+    input_value: u128,
     estimated_return: u128,
 
     cached_weight: Arc<Mutex<Option<EdgeWeight>>>,
@@ -65,7 +64,7 @@ impl Edge {
         let weight = {
             EdgeWeight {
                 pair_id: Some(self.pair.pair_id()),
-                estimated_return: self.estimated_return,
+                estimated_rate: Ratio::new(self.estimated_return, self.input_value),
             }
         };
         *cached_weight = Some(weight);
@@ -94,13 +93,15 @@ pub mod same_pool {
 
     #[derive(Debug)]
     pub struct CachedEdges {
+        input_value: u128,
         pub pool: Arc<PoolInfo>,
         cached_edges: Mutex<HashMap<(TokenIn, TokenOut), Arc<Edge>>>,
     }
 
     impl CachedEdges {
-        pub fn new(pool: Arc<PoolInfo>) -> Arc<Self> {
+        pub fn new(pool: Arc<PoolInfo>, input_value: u128) -> Arc<Self> {
             Arc::new(Self {
+                input_value,
                 pool,
                 cached_edges: Mutex::new(HashMap::new()),
             })
@@ -148,10 +149,11 @@ pub mod same_pool {
                 return Ok(Arc::clone(path));
             }
             let pair = self.pool.get_pair(token_in, token_out)?;
-            pair.estimate_return(AMOUNT_IN).map(|er| {
+            pair.estimate_return(self.input_value).map(|er| {
                 let path = Arc::new(Edge {
                     cache: Arc::clone(self),
                     pair,
+                    input_value: self.input_value,
                     estimated_return: er,
                     cached_weight: Arc::new(Mutex::new(None)),
                 });

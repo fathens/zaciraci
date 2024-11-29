@@ -120,7 +120,7 @@ async fn get_return(
 
 async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
     let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let tokens = crate::ref_finance::path::all_tokens(pools);
+    let tokens = crate::ref_finance::path::all_tokens(&pools);
     let mut tokens: Vec<_> = tokens.iter().map(|t| t.to_string()).collect();
     tokens.sort();
     let mut result = String::from("Tokens:\n");

@@ -12,14 +12,17 @@ pub struct PoolsByToken {
 }
 
 impl PoolsByToken {
-    pub fn new(pool_list: PoolInfoList) -> Self {
+    pub fn new(pool_list: &PoolInfoList, input_value: u128) -> Self {
         let mut by_in = HashMap::new();
         for pool in pool_list.iter().filter(|pool| pool.is_simple()) {
             for token in pool.tokens() {
                 by_in
                     .entry(token.clone().into())
                     .or_insert_with(Vec::new)
-                    .push(edge::same_pool::CachedEdges::new(Arc::clone(pool)));
+                    .push(edge::same_pool::CachedEdges::new(
+                        Arc::clone(pool),
+                        input_value,
+                    ));
             }
         }
         Self {
