@@ -4,6 +4,7 @@ use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
+use std::collections::HashMap;
 
 mod by_token;
 mod edge;
@@ -99,7 +100,7 @@ pub async fn pick_pools(start: TokenInAccount, total_amount: u128) -> Result<Opt
     };
 
     let result = search_best_path(1, stats_ave, total_amount, &do_pick, &|a| a.total_gain)?;
-    Ok(result.as_ref().map(|a| a.list.clone()))
+    Ok(result.map(|a| a.list))
 }
 
 fn pick_by_amount(
@@ -140,10 +141,14 @@ where
     C: Fn(u128) -> Result<Option<A>>,
     G: Fn(&A) -> u128,
 {
-    // let mut cached_calc = HashMap::new();
-    let calc = |value| -> Result<&Option<A>> {
-        let _ = calc_res(value)?;
-        todo!("calc");
+    let mut cached_calc: HashMap<u128, Box<Option<A>>> = HashMap::new();
+    let mut calc = |value| -> Result<Box<Option<A>>> {
+        if let Some(res) = cached_calc.get(&value) {
+            return Ok(res.clone());
+        }
+        let res = Box::new(calc_res(value)?);
+        cached_calc.insert(value, res.clone());
+        Ok(res)
     };
 
     let mut in_a = min;
@@ -153,16 +158,15 @@ where
         let res_a = calc(in_a)?;
         let res_b = calc(in_b)?;
         let res_c = calc(in_c)?;
-        let a = res_a.as_ref().map(get_gain).unwrap_or(0);
-        let b = res_b.as_ref().map(get_gain).unwrap_or(0);
-        let c = res_c.as_ref().map(get_gain).unwrap_or(0);
+        let a = (*res_a).as_ref().map(get_gain).unwrap_or(0);
+        let b = (*res_b).as_ref().map(get_gain).unwrap_or(0);
+        let c = (*res_c).as_ref().map(get_gain).unwrap_or(0);
 
         if a == b && b == c {
             // 全て等しい
             if a == 0 {
                 return Ok(None);
             }
-            return Ok(res_a.clone());
         } else if a <= b && c <= b {
             // b が最大
             in_a = (in_a + in_b) / 2;
@@ -191,5 +195,5 @@ where
             }
         }
     }
-    Ok(None)
+    Ok(*calc(in_a)?.clone())
 }
