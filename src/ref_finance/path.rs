@@ -173,16 +173,16 @@ where
                a - b - c (> 0)
 
                a
-                \
-                  b - c
+                 \
+                   b - c
 
                a - b
-                    \
-                      c
+                     \
+                       c
 
-               a      c
-                \   /
-                  b
+               a       c
+                 \   /
+                   b
             */
             let step = (in_b - in_a) / 2;
             if min < in_a {
@@ -193,15 +193,29 @@ where
                 in_b = in_a + step;
                 in_c = in_a + 2 * step;
             }
-        } else if a <= c && b <= c {
-            /* c が最大
-                       c
-                     /
-               a - b
+        } else if a <= b && c <= b {
+            /* b が最大
+                   b
+                 /   \
+               a       c
 
                    b - c
                  /
                a
+            */
+            in_a = {
+                let step = (in_b - in_a) / 2;
+                in_b - step
+            };
+            in_c = {
+                let step = (in_c - in_b) / 2;
+                in_b + step
+            };
+        } else {
+            /* c が最大
+                       c
+                     /
+               a - b
             */
             let step = (in_c - in_b) / 2;
             if in_c < max {
@@ -212,14 +226,6 @@ where
                 in_b = in_c - step;
                 in_a = in_c - 2 * step;
             }
-        } else {
-            /* b が最大
-                   b
-                 /  \
-               a     c
-            */
-            in_a = (in_a + in_b) / 2;
-            in_c = (in_b + in_c) / 2;
         }
     }
     cache.get(&in_a).await.unwrap_or(Ok(None))
@@ -354,9 +360,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let f = search_best_path(1, 2, 3, calc, get_gain);
-            let w = f.await;
-            let result = w.unwrap();
+            let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
             assert_eq!(result.map(result_pair), Some((2, 2)));
         }
         {
@@ -406,8 +410,68 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
             assert_eq!(result.map(result_pair), Some((70, 20)));
+        }
+        {
+            let maker = TestCalc::maker(&[(30, 20), (50, 10), (70, 10)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((30, 20)));
+        }
+        {
+            let maker = TestCalc::maker(&[(30, 20), (50, 20), (70, 10)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((30, 20)));
+        }
+        {
+            let maker = TestCalc::maker(&[(30, 10), (50, 20), (70, 10)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((50, 20)));
+        }
+        {
+            let maker = TestCalc::maker(&[(30, 10), (50, 20), (70, 20)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((51, 20)));
+        }
+        {
+            let maker = TestCalc::maker(&[(30, 10), (50, 10), (70, 20)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((70, 20)));
+        }
+        {
+            let maker = TestCalc::maker(&[(30, 20), (50, 20), (70, 20)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((30, 20)));
         }
     }
 }
