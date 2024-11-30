@@ -4,14 +4,33 @@ use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
+use async_once_cell::Lazy;
 use moka::future::Cache;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 mod by_token;
 mod edge;
 mod graph;
 
 use graph::TokenGraph;
+
+struct FutureTokenGraph(Option<Pin<Box<dyn Future<Output = PoolInfoList> + Send>>>);
+impl Future for FutureTokenGraph {
+    type Output = PoolInfoList;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(
+            self.0.get_or_insert_with(|| {
+                Box::pin(async { PoolInfoList::load_from_db().await.unwrap() })
+            }),
+        )
+        .poll(cx)
+    }
+}
+static POOL_INFO_LIST: Lazy<PoolInfoList, FutureTokenGraph> = Lazy::new(FutureTokenGraph(None));
 
 const DEFAULT_AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
@@ -24,14 +43,14 @@ pub async fn sorted_returns(
     start: TokenInAccount,
     initial: u128,
 ) -> Result<Vec<(TokenOutAccount, u128)>> {
-    let pools = PoolInfoList::load_from_db().await?;
-    let graph = TokenGraph::new(&pools, DEFAULT_AMOUNT_IN);
+    let pools = POOL_INFO_LIST.get_unpin().await;
+    let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
     graph.list_returns(initial, start)
 }
 
 pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
-    let pools = PoolInfoList::load_from_db().await?;
-    let graph = TokenGraph::new(&pools, DEFAULT_AMOUNT_IN);
+    let pools = POOL_INFO_LIST.get_unpin().await;
+    let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
     graph.get_path_with_return(start, goal)
 }
 
