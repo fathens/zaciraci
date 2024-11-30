@@ -230,9 +230,13 @@ mod test {
                 Ok(pos) => self.sorted_points[pos].1,
                 Err(pos) => {
                     if 0 < pos && pos < self.sorted_points.len() {
-                        let a = self.sorted_points[pos - 1].1;
-                        let b = self.sorted_points[pos].1;
-                        (a + b) / 2
+                        let p0 = self.sorted_points[pos - 1];
+                        let p1 = self.sorted_points[pos];
+                        let (x0, y0) = (p0.0 as i128, p0.1 as i128);
+                        let (x1, y1) = (p1.0 as i128, p1.1 as i128);
+                        let x = self.input_value as i128;
+                        let y = (x - x0) * (y1 - y0) / (x1 - x0) + y0;
+                        y as u128
                     } else {
                         0
                     }
@@ -284,10 +288,12 @@ mod test {
             let calc10 = maker(10);
             let calc30 = maker(30);
             let calc45 = maker(45);
+            let calc55 = maker(55);
             let calc60 = maker(60);
             assert_eq!(calc10.calc_gain(), 0);
             assert_eq!(calc30.calc_gain(), 30);
             assert_eq!(calc45.calc_gain(), 35);
+            assert_eq!(calc55.calc_gain(), 35);
             assert_eq!(calc60.calc_gain(), 40);
         }
     }
@@ -343,7 +349,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 30, 70, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
             assert_eq!(result.map(|a| a.calc_gain()), Some(50));
         }
     }
