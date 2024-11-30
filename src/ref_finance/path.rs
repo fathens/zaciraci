@@ -22,11 +22,9 @@ impl Future for FutureTokenGraph {
     type Output = PoolInfoList;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(
-            self.0.get_or_insert_with(|| {
-                Box::pin(async { PoolInfoList::load_from_db().await.unwrap() })
-            }),
-        )
+        Pin::new(self.0.get_or_insert_with(|| {
+            Box::pin(async { PoolInfoList::read_from_node().await.unwrap() })
+        }))
         .poll(cx)
     }
 }
