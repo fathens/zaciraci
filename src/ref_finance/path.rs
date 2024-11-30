@@ -136,7 +136,7 @@ fn pick_by_amount(
     Ok(PreviewList::new(amount, goals))
 }
 
-async fn search_best_path<'a, A, C, G>(
+async fn search_best_path<A, C, G>(
     min: u128,
     average: u128,
     max: u128,
@@ -145,7 +145,7 @@ async fn search_best_path<'a, A, C, G>(
 ) -> Result<Option<Arc<A>>>
 where
     A: Send + Sync + 'static,
-    C: Send + Sync + Copy + 'static,
+    C: Send + Sync + Clone,
     G: Copy,
     C: Fn(u128) -> Result<Option<Arc<A>>>,
     G: Fn(Arc<A>) -> u128,
@@ -154,7 +154,7 @@ where
     let calc = |value| {
         let calc_res = calc_res.clone();
         let cache = cache.clone();
-        tokio::spawn(async move { cache.get_with(value, async { calc_res(value) }).await })
+        async move { cache.get_with(value, async { calc_res(value) }).await }
     };
 
     let mut in_a = min;
@@ -163,9 +163,9 @@ where
     while in_a < in_c {
         let (res_a, res_b, res_c) =
             futures_util::future::join3(calc(in_a), calc(in_b), calc(in_c)).await;
-        let a = res_a??.map(get_gain).unwrap_or(0);
-        let b = res_b??.map(get_gain).unwrap_or(0);
-        let c = res_c??.map(get_gain).unwrap_or(0);
+        let a = res_a?.map(get_gain).unwrap_or(0);
+        let b = res_b?.map(get_gain).unwrap_or(0);
+        let c = res_c?.map(get_gain).unwrap_or(0);
 
         if a == b && b == c {
             // 全て等しい
