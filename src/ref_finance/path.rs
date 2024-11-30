@@ -158,11 +158,10 @@ where
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let (res_a, res_b, res_c) =
-            futures_util::future::join3(calc(in_a), calc(in_b), calc(in_c)).await;
-        let a = res_a?.map(get_gain).unwrap_or(0);
-        let b = res_b?.map(get_gain).unwrap_or(0);
-        let c = res_c?.map(get_gain).unwrap_or(0);
+        let (res_a, res_b, res_c) = (calc(in_a), calc(in_b), calc(in_c));
+        let a = res_a.await?.map(get_gain).unwrap_or(0);
+        let b = res_b.await?.map(get_gain).unwrap_or(0);
+        let c = res_c.await?.map(get_gain).unwrap_or(0);
 
         if a == b && b == c && a == 0 {
             /* 全てゼロ
@@ -185,7 +184,6 @@ where
                 \   /
                   b
             */
-
             let step = (in_b - in_a) / 2;
             if min < in_a {
                 in_b = in_a;
@@ -390,6 +388,26 @@ mod test {
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
             let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
             assert_eq!(result.map(result_pair), None);
+        }
+        {
+            let maker = TestCalc::maker(&[(1, 10), (100, 10)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((1, 10)));
+        }
+        {
+            let maker = TestCalc::maker(&[(1, 10), (70, 20), (100, 10)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(result_pair), Some((70, 20)));
         }
     }
 }
