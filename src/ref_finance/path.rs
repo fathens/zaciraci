@@ -143,14 +143,13 @@ async fn search_best_path<A, C, G>(
 ) -> Result<Option<Arc<A>>>
 where
     A: Send + Sync + 'static,
-    C: Send + Sync + Clone,
+    C: Send + Sync + Copy,
     G: Copy,
     C: Fn(u128) -> Result<Option<Arc<A>>>,
     G: Fn(Arc<A>) -> u128,
 {
     let cache = Cache::new(1 << 16);
     let calc = |value| {
-        let calc_res = calc_res.clone();
         let cache = cache.clone();
         async move { cache.get_with(value, async { calc_res(value) }).await }
     };
