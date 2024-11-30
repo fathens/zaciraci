@@ -5,7 +5,6 @@ use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
 use moka::future::Cache;
-use std::ops::Deref;
 use std::sync::Arc;
 
 mod by_token;
@@ -90,14 +89,13 @@ impl PreviewList {
 const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000_000;
 
 pub async fn pick_pools(start: TokenInAccount, total_amount: u128) -> Result<Option<Vec<Preview>>> {
-    let all_pools = Arc::new(PoolInfoList::read_from_node().await?);
+    let all_pools = PoolInfoList::read_from_node().await?;
     let stats_ave = history::get_history().read().unwrap().inputs.average();
 
     let do_pick = |value: u128| -> Result<Option<Arc<PreviewList>>> {
-        let pools = Arc::clone(&all_pools);
         let limit = (total_amount / value) as usize;
         if limit > 0 {
-            let graph = TokenGraph::new(pools.deref(), value);
+            let graph = TokenGraph::new(&all_pools, value);
             let previews = pick_by_amount(&graph, &start, value, limit)?;
             if previews.total_gain > 0 {
                 return Ok(Some(Arc::new(previews)));
