@@ -256,7 +256,7 @@ struct GraphPath<'a, N, W> {
     goals: &'a HashMap<NodeIndex, W>,
 }
 
-impl<'a, N, W> GraphPath<'a, N, W>
+impl<N, W> GraphPath<'_, N, W>
 where
     N: Debug + Eq + Clone + Hash,
     W: Debug + Eq + Copy + Add<Output = W>,
