@@ -92,7 +92,7 @@ pub async fn pick_pools(start: TokenInAccount, total_amount: u128) -> Result<Opt
     let all_pools = PoolInfoList::read_from_node().await?;
     let stats_ave = history::get_history().read().unwrap().inputs.average();
 
-    let do_pick = |value: u128| -> Result<Option<Arc<PreviewList>>> {
+    let do_pick = |value| {
         let limit = (total_amount / value) as usize;
         if limit > 0 {
             let graph = TokenGraph::new(&all_pools, value);
