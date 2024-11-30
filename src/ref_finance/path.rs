@@ -151,7 +151,10 @@ where
     let cache = Cache::new(1 << 16);
     let calc = |value| {
         let cache = cache.clone();
-        async move { cache.get_with(value, async { calc_res(value) }).await }
+        async move {
+            let r = cache.get_with(value, async { calc_res(value) }).await;
+            r.map(|o| o.map(get_gain).unwrap_or(0_u128))
+        }
     };
 
     let mut in_a = min;
@@ -159,9 +162,9 @@ where
     let mut in_c = max;
     while in_a < in_c {
         let (res_a, res_b, res_c) = (calc(in_a), calc(in_b), calc(in_c));
-        let a = res_a.await?.map(get_gain).unwrap_or(0);
-        let b = res_b.await?.map(get_gain).unwrap_or(0);
-        let c = res_c.await?.map(get_gain).unwrap_or(0);
+        let a = res_a.await?;
+        let b = res_b.await?;
+        let c = res_c.await?;
 
         if a == b && b == c && a == 0 {
             /* 全てゼロ
