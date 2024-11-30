@@ -4,7 +4,9 @@ use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
-use std::collections::HashMap;
+use moka::future::Cache;
+use std::ops::Deref;
+use std::sync::Arc;
 
 mod by_token;
 mod edge;
@@ -42,7 +44,7 @@ pub struct Preview {
     pub output_value: u128,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Eq, PartialEq, Hash)]
 struct PreviewList {
     input_value: u128,
     list: Vec<Preview>,
@@ -63,11 +65,11 @@ impl Preview {
 }
 
 impl PreviewList {
-    fn new(input_value: u128, previews: &[Preview]) -> Self {
+    fn new(input_value: u128, previews: Vec<Preview>) -> Self {
         if previews.is_empty() {
             return PreviewList {
                 input_value,
-                list: vec![],
+                list: previews,
                 total_gain: 0,
             };
         }
@@ -75,37 +77,42 @@ impl PreviewList {
         let total_gain = gains - MIN_GAIN;
         PreviewList {
             input_value,
-            list: previews.to_vec(),
+            list: previews,
             total_gain,
         }
+    }
+
+    fn get_list(&self) -> Vec<Preview> {
+        self.list.clone()
     }
 }
 
 const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000_000;
 
 pub async fn pick_pools(start: TokenInAccount, total_amount: u128) -> Result<Option<Vec<Preview>>> {
-    let all_pools = PoolInfoList::read_from_node().await?;
+    let all_pools = Arc::new(PoolInfoList::read_from_node().await?);
     let stats_ave = history::get_history().read().unwrap().inputs.average();
 
-    let do_pick = |value: u128| -> Result<Option<PreviewList>> {
+    let do_pick = |value: u128| -> Result<Option<Arc<PreviewList>>> {
+        let pools = Arc::clone(&all_pools);
         let limit = (total_amount / value) as usize;
         if limit > 0 {
-            let graph = TokenGraph::new(&all_pools, value);
-            let previews = pick_by_amount(&graph, start.clone(), value, limit)?;
+            let graph = TokenGraph::new(pools.deref(), value);
+            let previews = pick_by_amount(&graph, &start, value, limit)?;
             if previews.total_gain > 0 {
-                return Ok(Some(previews));
+                return Ok(Some(Arc::new(previews)));
             }
         }
         Ok(None)
     };
 
-    let result = search_best_path(1, stats_ave, total_amount, &do_pick, &|a| a.total_gain)?;
-    Ok(result.map(|a| a.list))
+    let result = search_best_path(1, stats_ave, total_amount, do_pick, |a| a.total_gain).await?;
+    Ok(result.map(|a| a.get_list()))
 }
 
 fn pick_by_amount(
     graph: &TokenGraph,
-    start: TokenInAccount,
+    start: &TokenInAccount,
     amount: u128,
     limit: usize,
 ) -> Result<PreviewList> {
@@ -126,41 +133,39 @@ fn pick_by_amount(
             break;
         }
     }
-    Ok(PreviewList::new(amount, &goals))
+    Ok(PreviewList::new(amount, goals))
 }
 
-fn search_best_path<A, C, G>(
+async fn search_best_path<'a, A, C, G>(
     min: u128,
     average: u128,
     max: u128,
-    calc_res: &C,
-    get_gain: &G,
-) -> Result<Option<A>>
+    calc_res: C,
+    get_gain: G,
+) -> Result<Option<Arc<A>>>
 where
-    A: Clone,
-    C: Fn(u128) -> Result<Option<A>>,
-    G: Fn(&A) -> u128,
+    A: Send + Sync + 'static,
+    C: Send + Sync + Copy + 'static,
+    G: Copy,
+    C: Fn(u128) -> Result<Option<Arc<A>>>,
+    G: Fn(Arc<A>) -> u128,
 {
-    let mut cached_calc: HashMap<u128, Box<Option<A>>> = HashMap::new();
-    let mut calc = |value| -> Result<Box<Option<A>>> {
-        if let Some(res) = cached_calc.get(&value) {
-            return Ok(res.clone());
-        }
-        let res = Box::new(calc_res(value)?);
-        cached_calc.insert(value, res.clone());
-        Ok(res)
+    let cache = Cache::new(1 << 16);
+    let calc = |value| {
+        let calc_res = calc_res.clone();
+        let cache = cache.clone();
+        tokio::spawn(async move { cache.get_with(value, async { calc_res(value) }).await })
     };
 
     let mut in_a = min;
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let res_a = calc(in_a)?;
-        let res_b = calc(in_b)?;
-        let res_c = calc(in_c)?;
-        let a = (*res_a).as_ref().map(get_gain).unwrap_or(0);
-        let b = (*res_b).as_ref().map(get_gain).unwrap_or(0);
-        let c = (*res_c).as_ref().map(get_gain).unwrap_or(0);
+        let (res_a, res_b, res_c) =
+            futures_util::future::join3(calc(in_a), calc(in_b), calc(in_c)).await;
+        let a = res_a??.map(get_gain).unwrap_or(0);
+        let b = res_b??.map(get_gain).unwrap_or(0);
+        let c = res_c??.map(get_gain).unwrap_or(0);
 
         if a == b && b == c {
             // 全て等しい
@@ -195,5 +200,5 @@ where
             }
         }
     }
-    Ok(*calc(in_a)?.clone())
+    cache.get(&in_a).await.unwrap_or(Ok(None))
 }

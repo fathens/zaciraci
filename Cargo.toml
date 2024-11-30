@@ -34,3 +34,5 @@ bip39 = { version = "2.1.0", features = ["rand"] }
 bs58 = "0.5.1"
 ed25519-dalek = { version = "2", default-features = false }
 num-rational = "0.4.2"
+moka = { version = "0.12.8", features = ["future"] }
+futures-util = "0.3.30"
