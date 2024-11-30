@@ -36,6 +36,8 @@ pub async fn run() {
             get(list_returns),
         )
         .with_state(state.clone())
+        .route("/pools/pick_goals/:token_account/:amount", get(pick_goals))
+        .with_state(state.clone())
         .route(
             "/pools/run_swap/:token_in_account/:initial_value/:token_out_account/:min_out_ratio",
             get(run_swap),
@@ -146,6 +148,29 @@ async fn list_returns(
         let rational = BigRational::new(value.into(), amount_in.into());
         let ret = rational.to_f32().unwrap();
         result.push_str(&format!("{goal}: {ret}\n"));
+    }
+    result
+}
+
+async fn pick_goals(
+    State(_): State<Arc<AppState>>,
+    Path((token_account, initial_value)): Path<(String, String)>,
+) -> String {
+    let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
+    let start: TokenAccount = token_account.parse().unwrap();
+    let goals = crate::ref_finance::path::pick_goals(start.into(), amount_in)
+        .await
+        .unwrap();
+    let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
+    match goals {
+        None => {
+            result.push_str("No goals found\n");
+        }
+        Some(goals) => {
+            for path in goals {
+                result.push_str(&format!("{path:?}\n"));
+            }
+        }
     }
     result
 }

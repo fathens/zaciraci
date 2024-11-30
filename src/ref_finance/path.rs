@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
@@ -50,6 +48,16 @@ pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<V
     let pools = POOL_INFO_LIST.get_unpin().await;
     let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
     graph.get_path_with_return(start, goal)
+}
+
+pub async fn pick_goals(
+    start: TokenInAccount,
+    total_amount: u128,
+) -> Result<Option<Vec<TokenOutAccount>>> {
+    let pools = POOL_INFO_LIST.get_unpin().await;
+    let previews = pick_previews(pools, start, total_amount).await?;
+    let goals = previews.map(|a| a.into_iter().map(|p| p.token).collect());
+    Ok(goals)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -105,14 +113,17 @@ impl PreviewList {
 
 const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000_000;
 
-pub async fn pick_pools(start: TokenInAccount, total_amount: u128) -> Result<Option<Vec<Preview>>> {
-    let all_pools = PoolInfoList::read_from_node().await?;
+pub async fn pick_previews(
+    all_pools: &PoolInfoList,
+    start: TokenInAccount,
+    total_amount: u128,
+) -> Result<Option<Vec<Preview>>> {
     let stats_ave = history::get_history().read().unwrap().inputs.average();
 
     let do_pick = |value| {
         let limit = (total_amount / value) as usize;
         if limit > 0 {
-            let graph = TokenGraph::new(&all_pools, value);
+            let graph = TokenGraph::new(all_pools, value);
             let previews = pick_by_amount(&graph, &start, value, limit)?;
             if previews.total_gain > 0 {
                 return Ok(Some(Arc::new(previews)));
