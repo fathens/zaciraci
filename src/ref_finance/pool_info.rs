@@ -207,12 +207,11 @@ impl PoolInfo {
     }
 
     fn amount(&self, index: TokenIndex) -> Result<BigDecimal> {
-        let v = self
-            .bare
+        self.bare
             .amounts
             .get(index.as_usize())
-            .ok_or_else(|| Error::OutOfIndexOfTokens(index))?;
-        Ok(BigDecimal::from(v.0))
+            .map(|v| BigDecimal::from(v.0))
+            .ok_or_else(|| Error::OutOfIndexOfTokens(index).into())
     }
 
     fn estimate_return(
