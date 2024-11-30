@@ -169,10 +169,6 @@ where
             if a == 0 {
                 return Ok(None);
             }
-        } else if a <= b && c <= b {
-            // b が最大
-            in_a = (in_a + in_b) / 2;
-            in_c = (in_b + in_c) / 2;
         } else if b <= a && c <= a {
             // a が最大
             let step = (in_b - in_a) / 2;
@@ -184,7 +180,7 @@ where
                 in_b = in_a + step;
                 in_c = in_a + 2 * step;
             }
-        } else {
+        } else if a <= c && b <= c {
             // c が最大
             let step = (in_c - in_b) / 2;
             if in_c < max {
@@ -195,7 +191,160 @@ where
                 in_b = in_c - step;
                 in_a = in_c - 2 * step;
             }
+        } else if a <= b && c <= b {
+            // b が最大
+            in_a = (in_a + in_b) / 2;
+            in_c = (in_b + in_c) / 2;
         }
     }
     cache.get(&in_a).await.unwrap_or(Ok(None))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    struct TestCalc {
+        sorted_points: Vec<(u128, u128)>,
+        input_value: u128,
+    }
+
+    impl TestCalc {
+        fn maker(points: &[(u128, u128)]) -> impl Fn(u128) -> Self {
+            if points.len() < 2 {
+                panic!("points must be more than 2");
+            }
+            let mut sorted_points = points.to_vec();
+            sorted_points.sort_by_key(|(a, _)| *a);
+            move |input_value| TestCalc {
+                sorted_points: sorted_points.clone(),
+                input_value,
+            }
+        }
+
+        fn calc_gain(&self) -> u128 {
+            let pos = self
+                .sorted_points
+                .binary_search_by_key(&self.input_value, |(a, _)| *a);
+            match pos {
+                Ok(pos) => self.sorted_points[pos].1,
+                Err(pos) => {
+                    if 0 < pos && pos < self.sorted_points.len() {
+                        let a = self.sorted_points[pos - 1].1;
+                        let b = self.sorted_points[pos].1;
+                        (a + b) / 2
+                    } else {
+                        0
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_test_calc() {
+        {
+            let maker = TestCalc::maker(&[(1, 1), (2, 2), (3, 3)]);
+            let calc1 = maker(1);
+            let calc2 = maker(2);
+            let calc3 = maker(3);
+            assert_eq!(calc1.calc_gain(), 1);
+            assert_eq!(calc2.calc_gain(), 2);
+            assert_eq!(calc3.calc_gain(), 3);
+        }
+        {
+            let maker = TestCalc::maker(&[(1, 1), (3, 3)]);
+            let calc1 = maker(1);
+            let calc2 = maker(2);
+            let calc3 = maker(3);
+            assert_eq!(calc1.calc_gain(), 1);
+            assert_eq!(calc2.calc_gain(), 2);
+            assert_eq!(calc3.calc_gain(), 3);
+        }
+        {
+            let maker = TestCalc::maker(&[(1, 1), (2, 2)]);
+            let calc1 = maker(1);
+            let calc2 = maker(2);
+            let calc3 = maker(3);
+            assert_eq!(calc1.calc_gain(), 1);
+            assert_eq!(calc2.calc_gain(), 2);
+            assert_eq!(calc3.calc_gain(), 0);
+        }
+        {
+            let maker = TestCalc::maker(&[(10, 20), (30, 50)]);
+            let calc1 = maker(1);
+            let calc9 = maker(9);
+            let calc20 = maker(20);
+            assert_eq!(calc1.calc_gain(), 0);
+            assert_eq!(calc9.calc_gain(), 0);
+            assert_eq!(calc20.calc_gain(), 35);
+        }
+        {
+            let maker = TestCalc::maker(&[(20, 20), (40, 40), (50, 30), (70, 50)]);
+            let calc10 = maker(10);
+            let calc30 = maker(30);
+            let calc45 = maker(45);
+            let calc60 = maker(60);
+            assert_eq!(calc10.calc_gain(), 0);
+            assert_eq!(calc30.calc_gain(), 30);
+            assert_eq!(calc45.calc_gain(), 35);
+            assert_eq!(calc60.calc_gain(), 40);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_best_path() {
+        {
+            let maker = TestCalc::maker(&[(1, 1), (2, 2), (3, 3)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(|a| a.calc_gain()), Some(3));
+        }
+        {
+            let maker = TestCalc::maker(&[(1, 1), (3, 3)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(|a| a.calc_gain()), Some(3));
+        }
+        {
+            let maker = TestCalc::maker(&[(1, 1), (2, 2)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let f = search_best_path(1, 2, 3, calc, get_gain);
+            let w = f.await;
+            let result = w.unwrap();
+            assert_eq!(result.map(|a| a.calc_gain()), Some(2));
+        }
+        {
+            let maker = TestCalc::maker(&[(10, 20), (30, 50)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 2, 30, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(|a| a.calc_gain()), Some(50));
+        }
+        {
+            let maker = TestCalc::maker(&[(20, 20), (40, 40), (50, 30), (70, 50)]);
+            let calc = |value| {
+                let calc = maker(value);
+                Ok(Some(Arc::new(calc)))
+            };
+            let get_gain = |a: Arc<TestCalc>| a.calc_gain();
+            let result = search_best_path(1, 30, 70, calc, get_gain).await.unwrap();
+            assert_eq!(result.map(|a| a.calc_gain()), Some(50));
+        }
+    }
 }
