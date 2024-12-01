@@ -1,4 +1,3 @@
-use crate::errors::Error;
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
@@ -168,34 +167,24 @@ where
     C: Fn(u128) -> Result<Option<Arc<A>>>,
     G: Fn(Arc<A>) -> u128,
 {
-    let mut cache: HashMap<u128, Result<Option<Arc<A>>>> = HashMap::new();
-    let mut fill_missings = |a, b, c| {
-        let mut results = HashMap::new();
-        let mut put_res = |v: u128, o: Option<Arc<A>>| {
-            let g = o.map(get_gain).unwrap_or(0_u128);
-            results.insert(v, g);
-        };
-
-        let mut missings = vec![];
-        for value in [a, b, c] {
-            match cache.get(&value) {
-                Some(r) => put_res(value, r.clone()?),
-                None => missings.push(value),
-            }
-        }
+    let mut cache = HashMap::new();
+    let mut join_calcs = |a, b, c| -> Result<(u128, u128, u128)> {
+        let missings: Vec<_> = [a, b, c]
+            .into_iter()
+            .filter(|value| !cache.contains_key(value))
+            .collect();
         for (v, r) in missings
             .par_iter()
             .map(|&v| (v, calc_res(v)))
             .collect::<Vec<_>>()
         {
             cache.insert(v, r.clone());
-            put_res(v, r?);
         }
 
-        Ok::<(u128, u128, u128), Error>((
-            *results.get(&a).unwrap(),
-            *results.get(&b).unwrap(),
-            *results.get(&c).unwrap(),
+        Ok((
+            cache.get(&a).unwrap().clone()?.map(get_gain).unwrap_or(0),
+            cache.get(&b).unwrap().clone()?.map(get_gain).unwrap_or(0),
+            cache.get(&c).unwrap().clone()?.map(get_gain).unwrap_or(0),
         ))
     };
 
@@ -203,7 +192,7 @@ where
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let (a, b, c) = fill_missings(in_a, in_b, in_c)?;
+        let (a, b, c) = join_calcs(in_a, in_b, in_c)?;
 
         if a == b && b == c && a == 0 {
             /* 全てゼロ
