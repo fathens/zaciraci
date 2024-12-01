@@ -46,7 +46,7 @@ pub async fn pick_goals(
     total_amount: u128,
 ) -> Result<Option<Vec<TokenOutAccount>>> {
     let pools = get_pools_in_db().await?;
-    let previews = pick_previews(pools, start, total_amount).await?;
+    let previews = pick_previews(pools, start, total_amount)?;
     let goals = previews.map(|a| a.into_iter().map(|p| p.token).collect());
     Ok(goals)
 }
@@ -108,7 +108,7 @@ impl PreviewList {
 
 const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000_000;
 
-pub async fn pick_previews(
+pub fn pick_previews(
     all_pools: &PoolInfoList,
     start: TokenInAccount,
     total_amount: u128,
