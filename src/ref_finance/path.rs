@@ -5,7 +5,6 @@ use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAc
 use crate::Result;
 use async_once_cell::OnceCell;
 use graph::TokenGraph;
-use moka::future::Cache;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -125,7 +124,7 @@ pub async fn pick_previews(
         Ok(None)
     };
 
-    let result = search_best_path(1, stats_ave, total_amount, do_pick, |a| a.total_gain).await?;
+    let result = search_best_path(1, stats_ave, total_amount, do_pick, |a| a.total_gain)?;
     Ok(result.map(|a| a.get_list()))
 }
 
@@ -155,7 +154,7 @@ fn pick_by_amount(
     Ok(PreviewList::new(amount, goals))
 }
 
-async fn search_best_path<A, C, G>(
+fn search_best_path<A, C, G>(
     min: u128,
     average: u128,
     max: u128,
@@ -163,51 +162,48 @@ async fn search_best_path<A, C, G>(
     get_gain: G,
 ) -> Result<Option<Arc<A>>>
 where
-    A: Send + Sync + 'static,
-    C: Send + Sync + Copy,
+    A: Send + Sync,
+    C: Send + Sync,
     G: Copy,
     C: Fn(u128) -> Result<Option<Arc<A>>>,
     G: Fn(Arc<A>) -> u128,
 {
-    let cache: Cache<u128, C::Output> = Cache::new(1 << 16);
-    let fill_missings = |a, b, c| {
-        let cache = cache.clone();
-        async move {
-            let mut results = HashMap::new();
-            let mut put_res = |v: u128, o: Option<Arc<A>>| {
-                let g = o.map(get_gain).unwrap_or(0_u128);
-                results.insert(v, g);
-            };
+    let mut cache: HashMap<u128, Result<Option<Arc<A>>>> = HashMap::new();
+    let mut fill_missings = |a, b, c| {
+        let mut results = HashMap::new();
+        let mut put_res = |v: u128, o: Option<Arc<A>>| {
+            let g = o.map(get_gain).unwrap_or(0_u128);
+            results.insert(v, g);
+        };
 
-            let mut missings = vec![];
-            for value in [a, b, c] {
-                match cache.get(&value).await {
-                    Some(r) => put_res(value, r?),
-                    None => missings.push(value),
-                }
+        let mut missings = vec![];
+        for value in [a, b, c] {
+            match cache.get(&value) {
+                Some(r) => put_res(value, r.clone()?),
+                None => missings.push(value),
             }
-            for (v, r) in missings
-                .par_iter()
-                .map(|&v| (v, calc_res(v)))
-                .collect::<Vec<_>>()
-            {
-                cache.insert(v, r.clone()).await;
-                put_res(v, r?);
-            }
-
-            Ok::<(u128, u128, u128), Error>((
-                *results.get(&a).unwrap(),
-                *results.get(&b).unwrap(),
-                *results.get(&c).unwrap(),
-            ))
         }
+        for (v, r) in missings
+            .par_iter()
+            .map(|&v| (v, calc_res(v)))
+            .collect::<Vec<_>>()
+        {
+            cache.insert(v, r.clone());
+            put_res(v, r?);
+        }
+
+        Ok::<(u128, u128, u128), Error>((
+            *results.get(&a).unwrap(),
+            *results.get(&b).unwrap(),
+            *results.get(&c).unwrap(),
+        ))
     };
 
     let mut in_a = min;
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let (a, b, c) = fill_missings(in_a, in_b, in_c).await?;
+        let (a, b, c) = fill_missings(in_a, in_b, in_c)?;
 
         if a == b && b == c && a == 0 {
             /* 全てゼロ
@@ -274,7 +270,7 @@ where
             }
         }
     }
-    cache.get(&in_a).await.unwrap_or(Ok(None))
+    cache.get(&in_a).cloned().unwrap_or(Ok(None))
 }
 
 #[cfg(test)]
@@ -376,8 +372,8 @@ mod test {
         }
     }
 
-    #[tokio::test]
-    async fn test_search_best_path() {
+    #[test]
+    fn test_search_best_path() {
         let result_pair = |a: Arc<TestCalc>| (a.input_value, a.calc_gain());
 
         {
@@ -387,7 +383,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 2, 3, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((3, 3)));
         }
         {
@@ -397,7 +393,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 2, 3, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((3, 3)));
         }
         {
@@ -407,7 +403,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 2, 3, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((2, 2)));
         }
         {
@@ -417,7 +413,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 2, 30, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 2, 30, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((30, 50)));
         }
         {
@@ -427,7 +423,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 30, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((70, 50)));
         }
         {
@@ -437,7 +433,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 30, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), None);
         }
         {
@@ -447,7 +443,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 30, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 30, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((1, 10)));
         }
         {
@@ -457,7 +453,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((70, 20)));
         }
         {
@@ -467,7 +463,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((30, 20)));
         }
         {
@@ -477,7 +473,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((30, 20)));
         }
         {
@@ -487,7 +483,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((50, 20)));
         }
         {
@@ -497,7 +493,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((51, 20)));
         }
         {
@@ -507,7 +503,7 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((70, 20)));
         }
         {
@@ -517,13 +513,13 @@ mod test {
                 Ok(Some(Arc::new(calc)))
             };
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
-            let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
+            let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((30, 20)));
         }
     }
 
-    #[tokio::test]
-    async fn test_search_best_path_async() {
+    #[test]
+    fn test_search_best_path_parallel() {
         use std::sync::{Arc, Mutex};
         let logs: Mutex<HashMap<u64, Vec<String>>> = Mutex::new(HashMap::new());
         let started = std::time::Instant::now();
@@ -547,7 +543,7 @@ mod test {
         };
         let get_gain = |a: Arc<u128>| *a;
 
-        let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
+        let result = search_best_path(1, 2, 3, calc, get_gain).unwrap();
         assert_eq!(result, Some(Arc::new(3)));
         let guard = logs.lock().unwrap();
         let mut list: Vec<_> = guard.iter().collect();
