@@ -2,12 +2,9 @@ use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
-use async_once_cell::Lazy;
+use async_once_cell::OnceCell;
 use moka::future::Cache;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 mod by_token;
 mod edge;
@@ -15,18 +12,12 @@ mod graph;
 
 use graph::TokenGraph;
 
-struct FutureTokenGraph(Option<Pin<Box<dyn Future<Output = PoolInfoList> + Send>>>);
-impl Future for FutureTokenGraph {
-    type Output = PoolInfoList;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(self.0.get_or_insert_with(|| {
-            Box::pin(async { PoolInfoList::read_from_node().await.unwrap() })
-        }))
-        .poll(cx)
-    }
+static CACHED_POOLS_IN_DB: OnceCell<PoolInfoList> = OnceCell::new();
+async fn get_pools_in_db() -> Result<&'static PoolInfoList> {
+    CACHED_POOLS_IN_DB
+        .get_or_try_init(PoolInfoList::load_from_db())
+        .await
 }
-static POOL_INFO_LIST: Lazy<PoolInfoList, FutureTokenGraph> = Lazy::new(FutureTokenGraph(None));
 
 const DEFAULT_AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
 
@@ -39,13 +30,13 @@ pub async fn sorted_returns(
     start: TokenInAccount,
     initial: u128,
 ) -> Result<Vec<(TokenOutAccount, u128)>> {
-    let pools = POOL_INFO_LIST.get_unpin().await;
+    let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
     graph.list_returns(initial, start)
 }
 
 pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
-    let pools = POOL_INFO_LIST.get_unpin().await;
+    let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
     graph.get_path_with_return(start, goal)
 }
@@ -54,7 +45,7 @@ pub async fn pick_goals(
     start: TokenInAccount,
     total_amount: u128,
 ) -> Result<Option<Vec<TokenOutAccount>>> {
-    let pools = POOL_INFO_LIST.get_unpin().await;
+    let pools = get_pools_in_db().await?;
     let previews = pick_previews(pools, start, total_amount).await?;
     let goals = previews.map(|a| a.into_iter().map(|p| p.token).collect());
     Ok(goals)
@@ -503,6 +494,59 @@ mod test {
             let get_gain = |a: Arc<TestCalc>| a.calc_gain();
             let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
             assert_eq!(result.map(result_pair), Some((30, 20)));
+        }
+    }
+
+    mod test_static {
+        use crate::Result;
+        use async_once_cell::OnceCell;
+        use std::ops::Deref;
+        use std::sync::{LazyLock, Mutex};
+        use tokio::time::sleep;
+
+        static CACHED_STRING: OnceCell<String> = OnceCell::new();
+        async fn get_cached_string() -> Result<&'static String> {
+            CACHED_STRING.get_or_try_init(mk_string()).await
+        }
+
+        static LIST: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(vec![]));
+
+        fn push_log(s: &str) {
+            let mut list = LIST.lock().unwrap();
+            list.push(s.to_string());
+        }
+
+        async fn mk_string() -> Result<String> {
+            push_log("start mk_string");
+            sleep(tokio::time::Duration::from_secs(1)).await;
+            push_log("end mk_string");
+            Ok("test".to_string())
+        }
+
+        #[tokio::test]
+        async fn test_once_cell() {
+            push_log("start 0");
+            let r1 = get_cached_string().await.unwrap();
+            push_log("end 0");
+
+            push_log("start 1");
+            let r2 = get_cached_string().await.unwrap();
+            push_log("end 1");
+
+            assert_eq!(r1, r2);
+            let guard = LIST.lock().unwrap();
+            let list = guard.deref();
+            assert_eq!(
+                list,
+                &[
+                    "start 0",
+                    "start mk_string",
+                    "end mk_string",
+                    "end 0",
+                    "start 1",
+                    "end 1",
+                ]
+            );
         }
     }
 }
