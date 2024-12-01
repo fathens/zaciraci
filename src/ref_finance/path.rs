@@ -75,26 +75,30 @@ impl Preview {
     }
 
     fn gain(&self) -> u128 {
-        self.output_value - self.input_value - self.cost()
+        if self.output_value <= self.input_value {
+            return 0;
+        }
+        let gain = self.output_value - self.input_value;
+        let cost = self.cost();
+        if gain <= cost {
+            return 0;
+        }
+        gain - cost
     }
 }
 
 impl PreviewList {
-    fn new(input_value: u128, previews: Vec<Preview>) -> Self {
-        if previews.is_empty() {
-            return PreviewList {
-                input_value,
-                list: previews,
-                total_gain: 0,
-            };
-        }
+    fn new(input_value: u128, previews: Vec<Preview>) -> Option<Self> {
         let gains: u128 = previews.iter().map(|p| p.gain()).sum();
+        if gains <= MIN_GAIN {
+            return None;
+        }
         let total_gain = gains - MIN_GAIN;
-        PreviewList {
+        Some(PreviewList {
             input_value,
             list: previews,
             total_gain,
-        }
+        })
     }
 
     fn get_list(&self) -> Vec<Preview> {
@@ -116,9 +120,7 @@ pub async fn pick_previews(
         if limit > 0 {
             let graph = TokenGraph::new(all_pools, value);
             let previews = pick_by_amount(&graph, &start, value, limit)?;
-            if previews.total_gain > 0 {
-                return Ok(Some(Arc::new(previews)));
-            }
+            return Ok(previews.map(Arc::new));
         }
         Ok(None)
     };
@@ -132,7 +134,7 @@ fn pick_by_amount(
     start: &TokenInAccount,
     amount: u128,
     limit: usize,
-) -> Result<PreviewList> {
+) -> Result<Option<PreviewList>> {
     let list = graph.list_returns(amount, start.clone())?;
     let mut goals = vec![];
     for (goal, output) in list.into_iter().take(limit) {
