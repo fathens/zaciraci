@@ -256,6 +256,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::collections::HashMap;
 
     struct TestCalc {
         sorted_points: Vec<(u128, u128)>,
@@ -495,6 +496,56 @@ mod test {
             let result = search_best_path(1, 40, 100, calc, get_gain).await.unwrap();
             assert_eq!(result.map(result_pair), Some((30, 20)));
         }
+    }
+
+    #[tokio::test]
+    async fn test_search_best_path_async() {
+        use std::sync::{Arc, Mutex};
+        let logs: Mutex<HashMap<u64, Vec<String>>> = Mutex::new(HashMap::new());
+        let started = std::time::Instant::now();
+        let log = |s: &str| {
+            let mut by_sec = logs.lock().unwrap();
+            let sec = started.elapsed().as_secs();
+            match by_sec.get_mut(&sec) {
+                Some(list) => {
+                    list.push(s.to_string());
+                }
+                None => {
+                    by_sec.insert(sec, vec![s.to_string()]);
+                }
+            }
+        };
+        let calc = |value: u128| {
+            log(&format!("start calc: {}", value));
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            log(&format!("end calc: {}", value));
+            Ok(Some(Arc::new(value)))
+        };
+        let get_gain = |a: Arc<u128>| *a;
+
+        let result = search_best_path(1, 2, 3, calc, get_gain).await.unwrap();
+        assert_eq!(result, Some(Arc::new(3)));
+        let guard = logs.lock().unwrap();
+        let mut list: Vec<_> = guard.iter().collect();
+        list.sort_by_key(|(a, _)| *a);
+        let actual: Vec<_> = list
+            .into_iter()
+            .map(|(n, v)| {
+                let mut v = v.clone();
+                v.sort();
+                (*n, v.join(", "))
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            &[
+                (
+                    0_u64,
+                    "start calc: 1, start calc: 2, start calc: 3".to_string()
+                ),
+                (1_u64, "end calc: 1, end calc: 2, end calc: 3".to_string())
+            ]
+        );
     }
 
     mod test_static {
