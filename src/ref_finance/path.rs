@@ -1,16 +1,18 @@
+use crate::errors::Error;
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
 use async_once_cell::OnceCell;
+use graph::TokenGraph;
 use moka::future::Cache;
+use rayon::prelude::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 mod by_token;
 mod edge;
 mod graph;
-
-use graph::TokenGraph;
 
 static CACHED_POOLS_IN_DB: OnceCell<PoolInfoList> = OnceCell::new();
 async fn get_pools_in_db() -> Result<&'static PoolInfoList> {
@@ -167,12 +169,37 @@ where
     C: Fn(u128) -> Result<Option<Arc<A>>>,
     G: Fn(Arc<A>) -> u128,
 {
-    let cache = Cache::new(1 << 16);
-    let calc = |value| {
+    let cache: Cache<u128, C::Output> = Cache::new(1 << 16);
+    let fill_missings = |a, b, c| {
         let cache = cache.clone();
         async move {
-            let r = cache.get_with(value, async { calc_res(value) }).await;
-            r.map(|o| o.map(get_gain).unwrap_or(0_u128))
+            let mut results = HashMap::new();
+            let mut put_res = |v: u128, o: Option<Arc<A>>| {
+                let g = o.map(get_gain).unwrap_or(0_u128);
+                results.insert(v, g);
+            };
+
+            let mut missings = vec![];
+            for value in [a, b, c] {
+                match cache.get(&value).await {
+                    Some(r) => put_res(value, r?),
+                    None => missings.push(value),
+                }
+            }
+            for (v, r) in missings
+                .par_iter()
+                .map(|&v| (v, calc_res(v)))
+                .collect::<Vec<_>>()
+            {
+                cache.insert(v, r.clone()).await;
+                put_res(v, r?);
+            }
+
+            Ok::<(u128, u128, u128), Error>((
+                *results.get(&a).unwrap(),
+                *results.get(&b).unwrap(),
+                *results.get(&c).unwrap(),
+            ))
         }
     };
 
@@ -180,10 +207,7 @@ where
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let (res_a, res_b, res_c) = (calc(in_a), calc(in_b), calc(in_c));
-        let a = res_a.await?;
-        let b = res_b.await?;
-        let c = res_c.await?;
+        let (a, b, c) = fill_missings(in_a, in_b, in_c).await?;
 
         if a == b && b == c && a == 0 {
             /* 全てゼロ
