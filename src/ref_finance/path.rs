@@ -194,28 +194,12 @@ where
             cache.insert(v, r.clone());
         }
 
+        let gain = |a| get_gain(a).into();
+
         Ok((
-            cache
-                .get(&a)
-                .unwrap()
-                .clone()?
-                .map(get_gain)
-                .map(|m| m.into())
-                .unwrap_or(zero()),
-            cache
-                .get(&b)
-                .unwrap()
-                .clone()?
-                .map(get_gain)
-                .map(|m| m.into())
-                .unwrap_or(zero()),
-            cache
-                .get(&c)
-                .unwrap()
-                .clone()?
-                .map(get_gain)
-                .map(|m| m.into())
-                .unwrap_or(zero()),
+            cache.get(&a).unwrap().clone()?.map(gain).unwrap_or(zero()),
+            cache.get(&b).unwrap().clone()?.map(gain).unwrap_or(zero()),
+            cache.get(&c).unwrap().clone()?.map(gain).unwrap_or(zero()),
         ))
     };
 
