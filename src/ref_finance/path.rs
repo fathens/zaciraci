@@ -1,11 +1,15 @@
+use crate::milli_near::MilliNear;
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
 use async_once_cell::OnceCell;
 use graph::TokenGraph;
+use num_traits::{one, zero, Zero};
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::hash::Hash;
+use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
 
 mod by_token;
@@ -115,7 +119,8 @@ pub fn pick_previews(
 ) -> Result<Option<Vec<Preview>>> {
     let stats_ave = history::get_history().read().unwrap().inputs.average();
 
-    let do_pick = |value| {
+    let do_pick = |value_in_milli: MilliNear| {
+        let value = value_in_milli.to_yocto();
         let limit = (total_amount / value) as usize;
         if limit > 0 {
             let graph = TokenGraph::new(all_pools, value);
@@ -125,7 +130,9 @@ pub fn pick_previews(
         Ok(None)
     };
 
-    let result = search_best_path(1, stats_ave, total_amount, do_pick, |a| a.total_gain)?;
+    let result = search_best_path(one(), stats_ave.into(), total_amount.into(), do_pick, |a| {
+        a.total_gain
+    })?;
     Ok(result.map(|a| a.get_list()))
 }
 
@@ -155,10 +162,10 @@ fn pick_by_amount(
     Ok(PreviewList::new(amount, goals))
 }
 
-fn search_best_path<A, C, G>(
-    min: u128,
-    average: u128,
-    max: u128,
+fn search_best_path<A, M, C, G>(
+    min: M,
+    average: M,
+    max: M,
     calc_res: C,
     get_gain: G,
 ) -> Result<Option<Arc<A>>>
@@ -166,11 +173,15 @@ where
     A: Send + Sync,
     C: Send + Sync,
     G: Copy,
-    C: Fn(u128) -> Result<Option<Arc<A>>>,
+    C: Fn(M) -> Result<Option<Arc<A>>>,
     G: Fn(Arc<A>) -> u128,
+    M: Send + Sync + Copy + Hash,
+    M: Eq + Ord + Zero,
+    M: Add<Output = M> + Sub<Output = M> + Mul<Output = M> + Div<Output = M>,
+    M: From<u128>,
 {
     let mut cache = HashMap::new();
-    let mut join_calcs = |a, b, c| -> Result<(u128, u128, u128)> {
+    let mut join_calcs = |a, b, c| -> Result<(M, M, M)> {
         let missings: Vec<_> = [a, b, c]
             .into_iter()
             .filter(|value| !cache.contains_key(value))
@@ -184,11 +195,31 @@ where
         }
 
         Ok((
-            cache.get(&a).unwrap().clone()?.map(get_gain).unwrap_or(0),
-            cache.get(&b).unwrap().clone()?.map(get_gain).unwrap_or(0),
-            cache.get(&c).unwrap().clone()?.map(get_gain).unwrap_or(0),
+            cache
+                .get(&a)
+                .unwrap()
+                .clone()?
+                .map(get_gain)
+                .map(|m| m.into())
+                .unwrap_or(zero()),
+            cache
+                .get(&b)
+                .unwrap()
+                .clone()?
+                .map(get_gain)
+                .map(|m| m.into())
+                .unwrap_or(zero()),
+            cache
+                .get(&c)
+                .unwrap()
+                .clone()?
+                .map(get_gain)
+                .map(|m| m.into())
+                .unwrap_or(zero()),
         ))
     };
+
+    let m2 = 2.into();
 
     let mut in_a = min;
     let mut in_b = average;
@@ -196,7 +227,7 @@ where
     while in_a < in_c {
         let (a, b, c) = join_calcs(in_a, in_b, in_c)?;
 
-        if a == b && b == c && a == 0 {
+        if a == b && b == c && a == 0.into() {
             /* 全てゼロ
                a - b - c (== 0)
             */
@@ -217,14 +248,14 @@ where
                  \   /
                    b
             */
-            let step = (in_b - in_a) / 2;
+            let step = (in_b - in_a) / m2;
             if min < in_a {
                 in_b = in_a;
                 in_c = in_a + step;
                 in_a = min.max(in_a - step);
             } else {
                 in_b = in_a + step;
-                in_c = in_a + 2 * step;
+                in_c = in_a + m2 * step;
             }
         } else if a <= b && c <= b {
             /* b が最大
@@ -237,11 +268,11 @@ where
                a
             */
             in_a = {
-                let step = (in_b - in_a) / 2;
+                let step = (in_b - in_a) / m2;
                 in_b - step
             };
             in_c = {
-                let step = (in_c - in_b) / 2;
+                let step = (in_c - in_b) / m2;
                 in_b + step
             };
         } else {
@@ -250,14 +281,14 @@ where
                      /
                a - b
             */
-            let step = (in_c - in_b) / 2;
+            let step = (in_c - in_b) / m2;
             if in_c < max {
                 in_b = in_c;
                 in_a = in_c - step;
                 in_c = max.min(in_c + step);
             } else {
                 in_b = in_c - step;
-                in_a = in_c - 2 * step;
+                in_a = in_c - m2 * step;
             }
         }
     }
