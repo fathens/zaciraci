@@ -5,6 +5,7 @@ mod cron;
 mod errors;
 mod jsonrpc;
 mod logging;
+pub mod milli_near;
 mod persistence;
 mod ref_finance;
 mod wallet;
