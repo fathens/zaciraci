@@ -56,7 +56,11 @@ impl Sub<MilliNear> for MilliNear {
     type Output = MilliNear;
 
     fn sub(self, other: MilliNear) -> Self::Output {
-        MilliNear(self.0 - other.0)
+        if self.0 < other.0 {
+            MilliNear(0)
+        } else {
+            MilliNear(self.0 - other.0)
+        }
     }
 }
 
@@ -72,6 +76,67 @@ impl Div<MilliNear> for MilliNear {
     type Output = MilliNear;
 
     fn div(self, other: MilliNear) -> Self::Output {
-        MilliNear((self.0 as u64 / other.0 as u64) as u32)
+        if other.0 == 0 {
+            MilliNear::zero()
+        } else {
+            MilliNear((self.0 as u64 / other.0 as u64) as u32)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_milli_near_transform() {
+        let zero = MilliNear::zero();
+        assert_eq!(zero, MilliNear::from_yocto(0));
+        assert_eq!(zero.to_yocto(), 0);
+
+        let one_yocto = MilliNear::from_yocto(1);
+        assert_eq!(one_yocto, MilliNear(0));
+        assert_eq!(one_yocto.to_yocto(), 0);
+
+        let one_milli = MilliNear::one();
+        assert_eq!(one_milli, MilliNear(1));
+        assert_eq!(one_milli, MilliNear::from_yocto(10_i128.pow(24) as u128));
+        assert_eq!(one_milli.to_yocto(), 10_i128.pow(24) as u128);
+
+        let one_near = MilliNear::from_yocto(10_i128.pow(27) as u128);
+        assert_eq!(one_near, MilliNear(1_000));
+        assert_eq!(one_near.to_yocto(), 10_i128.pow(27) as u128);
+    }
+
+    #[test]
+    fn test_milli_near_add() {
+        assert_eq!(MilliNear::zero() + MilliNear::zero(), MilliNear::zero());
+        assert_eq!(MilliNear::zero() + MilliNear::one(), MilliNear::one());
+        assert_eq!(MilliNear::one() + MilliNear::zero(), MilliNear::one());
+        assert_eq!(MilliNear::one() + MilliNear::one(), MilliNear(2));
+    }
+
+    #[test]
+    fn test_milli_near_sub() {
+        assert_eq!(MilliNear::zero() - MilliNear::zero(), MilliNear::zero());
+        assert_eq!(MilliNear::zero() - MilliNear::one(), MilliNear::zero());
+        assert_eq!(MilliNear::one() - MilliNear::zero(), MilliNear::one());
+        assert_eq!(MilliNear::one() - MilliNear::one(), MilliNear::zero());
+    }
+
+    #[test]
+    fn test_milli_near_mul() {
+        assert_eq!(MilliNear::zero() * MilliNear::zero(), MilliNear::zero());
+        assert_eq!(MilliNear::zero() * MilliNear::one(), MilliNear::zero());
+        assert_eq!(MilliNear::one() * MilliNear::zero(), MilliNear::zero());
+        assert_eq!(MilliNear::one() * MilliNear::one(), MilliNear::one());
+        assert_eq!(MilliNear(2) * MilliNear(3), MilliNear(6));
+    }
+
+    #[test]
+    fn test_milli_near_div() {
+        assert_eq!(MilliNear::zero() / MilliNear::one(), MilliNear::zero());
+        assert_eq!(MilliNear::one() / MilliNear::one(), MilliNear::one());
+        assert_eq!(MilliNear(6) / MilliNear(3), MilliNear(2));
     }
 }
