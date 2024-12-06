@@ -1,3 +1,4 @@
+use crate::logging::*;
 use crate::milli_near::MilliNear;
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
@@ -7,7 +8,9 @@ use async_once_cell::OnceCell;
 use graph::TokenGraph;
 use num_traits::{one, zero, Zero};
 use rayon::prelude::*;
+use slog::info;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
@@ -117,9 +120,22 @@ pub fn pick_previews(
     start: TokenInAccount,
     total_amount: u128,
 ) -> Result<Option<Vec<Preview>>> {
+    let log = DEFAULT.new(o!(
+        "function" => "pick_previews",
+        "start" => format!("{:?}", start),
+        "total_amount" => total_amount
+    ));
+    info!(log, "start");
+
     let stats_ave = history::get_history().read().unwrap().inputs.average();
 
     let do_pick = |value_in_milli: MilliNear| {
+        debug!(log, "do_pick";
+            "value" => format!("{:?}", value_in_milli)
+        );
+        if value_in_milli.is_zero() {
+            return Ok(None);
+        }
         let value = value_in_milli.to_yocto();
         let limit = (total_amount / value) as usize;
         if limit > 0 {
@@ -133,6 +149,7 @@ pub fn pick_previews(
     let result = search_best_path(one(), stats_ave.into(), total_amount.into(), do_pick, |a| {
         a.total_gain
     })?;
+    info!(log, "finish");
     Ok(result.map(|a| a.get_list()))
 }
 
@@ -142,6 +159,14 @@ fn pick_by_amount(
     amount: u128,
     limit: usize,
 ) -> Result<Option<PreviewList>> {
+    let log = DEFAULT.new(o!(
+        "function" => "pick_by_amount",
+        "start" => format!("{:?}", start),
+        "amount" => amount,
+        "limit" => limit
+    ));
+    info!(log, "start");
+
     let list = graph.list_returns(amount, start.clone())?;
     let mut goals = vec![];
     for (goal, output) in list.into_iter().take(limit) {
@@ -175,11 +200,20 @@ where
     G: Copy,
     C: Fn(M) -> Result<Option<Arc<A>>>,
     G: Fn(Arc<A>) -> u128,
-    M: Send + Sync + Copy + Hash,
+    M: Send + Sync + Copy + Hash + Debug,
     M: Eq + Ord + Zero,
     M: Add<Output = M> + Sub<Output = M> + Mul<Output = M> + Div<Output = M>,
     M: From<u128>,
 {
+    let log = DEFAULT.new(o!(
+        "function" => "search_best_path",
+        "min" => format!("{:?}", min),
+        "average" => format!("{:?}", average),
+        "max" => format!("{:?}", max)
+    ));
+    info!(log, "start");
+
+    let gain = |a| get_gain(a).into();
     let mut cache = HashMap::new();
     let mut join_calcs = |a, b, c| -> Result<(M, M, M)> {
         let missings: Vec<_> = [a, b, c]
@@ -193,8 +227,6 @@ where
         {
             cache.insert(v, r.clone());
         }
-
-        let gain = |a| get_gain(a).into();
 
         Ok((
             cache.get(&a).unwrap().clone()?.map(gain).unwrap_or(zero()),
@@ -276,6 +308,8 @@ where
             }
         }
     }
+
+    info!(log, "finish");
     cache.get(&in_a).cloned().unwrap_or(Ok(None))
 }
 
