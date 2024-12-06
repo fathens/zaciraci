@@ -132,6 +132,15 @@ impl TokenPair {
             .expect("should be valid index")
     }
 
+    pub fn estimate_normal_return(&self) -> Result<(u128, u128)> {
+        let balance_in = self.pool.amount(self.token_in.as_index())?;
+        let in_value = balance_in.to_u128().ok_or(Error::Overflow)?;
+        let out_value = self
+            .pool
+            .estimate_return(self.token_in, in_value, self.token_out)?;
+        Ok((in_value, out_value))
+    }
+
     pub fn estimate_return(&self, amount_in: u128) -> Result<u128> {
         self.pool
             .estimate_return(self.token_in, amount_in, self.token_out)

@@ -93,6 +93,7 @@ pub mod same_pool {
 
     #[derive(Debug)]
     pub struct CachedEdges {
+        #[allow(dead_code)]
         input_value: u128,
         pub pool: Arc<PoolInfo>,
         cached_edges: Mutex<HashMap<(TokenIn, TokenOut), Arc<Edge>>>,
@@ -149,17 +150,18 @@ pub mod same_pool {
                 return Ok(Arc::clone(path));
             }
             let pair = self.pool.get_pair(token_in, token_out)?;
-            pair.estimate_return(self.input_value).map(|er| {
-                let path = Arc::new(Edge {
-                    cache: Arc::clone(self),
-                    pair,
-                    input_value: self.input_value,
-                    estimated_return: er,
-                    cached_weight: Arc::new(Mutex::new(None)),
-                });
-                cached_edges.insert(key, Arc::clone(&path));
-                path
-            })
+            pair.estimate_normal_return()
+                .map(|(input_value, estimated_return)| {
+                    let path = Arc::new(Edge {
+                        cache: Arc::clone(self),
+                        pair,
+                        input_value,
+                        estimated_return,
+                        cached_weight: Arc::new(Mutex::new(None)),
+                    });
+                    cached_edges.insert(key, Arc::clone(&path));
+                    path
+                })
         }
     }
 }

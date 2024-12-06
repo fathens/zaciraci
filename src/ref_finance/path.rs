@@ -124,6 +124,7 @@ pub fn pick_previews(
     info!(log, "start");
 
     let stats_ave = history::get_history().read().unwrap().inputs.average();
+    let graph = TokenGraph::new(all_pools, DEFAULT_AMOUNT_IN);
 
     let do_pick = |value_in_milli: MilliNear| {
         debug!(log, "do_pick";
@@ -135,7 +136,6 @@ pub fn pick_previews(
         let value = value_in_milli.to_yocto();
         let limit = (total_amount / value) as usize;
         if limit > 0 {
-            let graph = TokenGraph::new(all_pools, value);
             let previews = pick_by_amount(&graph, &start, value, limit)?;
             return Ok(previews.map(Arc::new));
         }
