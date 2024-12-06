@@ -157,9 +157,9 @@ async fn pick_goals(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
+    let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let goals = crate::ref_finance::path::pick_goals(start.into(), amount_in)
+    let goals = crate::ref_finance::path::pick_goals(start.into(), MilliNear::of(amount_in))
         .await
         .unwrap();
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));

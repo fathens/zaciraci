@@ -7,6 +7,10 @@ pub struct MilliNear(u32);
 impl MilliNear {
     const IN_YOCTO: u128 = 1_000_000_000_000_000_000_000_000; // 1e24
 
+    pub fn of(value: u32) -> Self {
+        MilliNear(value)
+    }
+
     pub fn from_yocto(yocto: u128) -> Self {
         MilliNear((yocto / Self::IN_YOCTO) as u32)
     }

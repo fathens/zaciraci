@@ -48,7 +48,10 @@ pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<V
     graph.get_path_with_return(start, goal)
 }
 
-pub async fn pick_goals(start: TokenInAccount, total_amount: u128) -> Result<Option<Vec<Preview>>> {
+pub async fn pick_goals(
+    start: TokenInAccount,
+    total_amount: MilliNear,
+) -> Result<Option<Vec<Preview>>> {
     let pools = get_pools_in_db().await?;
     let previews = pick_previews(pools, start, total_amount)?;
     Ok(previews)
@@ -114,12 +117,12 @@ const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000_000;
 pub fn pick_previews(
     all_pools: &PoolInfoList,
     start: TokenInAccount,
-    total_amount: u128,
+    total_amount: MilliNear,
 ) -> Result<Option<Vec<Preview>>> {
     let log = DEFAULT.new(o!(
         "function" => "pick_previews",
         "start" => format!("{:?}", start),
-        "total_amount" => total_amount
+        "total_amount" => format!("{:?}", total_amount)
     ));
     info!(log, "start");
 
@@ -134,7 +137,7 @@ pub fn pick_previews(
             return Ok(None);
         }
         let value = value_in_milli.to_yocto();
-        let limit = (total_amount / value) as usize;
+        let limit = (total_amount.to_yocto() / value) as usize;
         if limit > 0 {
             let previews = pick_by_amount(&graph, &start, value, limit)?;
             return Ok(previews.map(Arc::new));
@@ -142,7 +145,7 @@ pub fn pick_previews(
         Ok(None)
     };
 
-    let result = search_best_path(one(), stats_ave.into(), total_amount.into(), do_pick, |a| {
+    let result = search_best_path(one(), stats_ave.into(), total_amount, do_pick, |a| {
         a.total_gain
     })?;
     info!(log, "finish");
