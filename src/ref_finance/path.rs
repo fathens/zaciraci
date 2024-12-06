@@ -7,7 +7,6 @@ use crate::Result;
 use async_once_cell::OnceCell;
 use graph::TokenGraph;
 use num_traits::{one, zero, Zero};
-use rayon::prelude::*;
 use slog::info;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -39,7 +38,8 @@ pub async fn sorted_returns(
 ) -> Result<Vec<(TokenOutAccount, u128)>> {
     let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
-    graph.list_returns(initial, start)
+    let goals = graph.update_graph(start.clone())?;
+    graph.list_returns(initial, start, &goals)
 }
 
 pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
@@ -128,6 +128,7 @@ pub fn pick_previews(
 
     let stats_ave = history::get_history().read().unwrap().inputs.average();
     let graph = TokenGraph::new(all_pools, DEFAULT_AMOUNT_IN);
+    let goals = graph.update_graph(start.clone())?;
 
     let do_pick = |value_in_milli: MilliNear| {
         debug!(log, "do_pick";
@@ -139,7 +140,7 @@ pub fn pick_previews(
         let value = value_in_milli.to_yocto();
         let limit = (total_amount.to_yocto() / value) as usize;
         if limit > 0 {
-            let previews = pick_by_amount(&graph, &start, value, limit)?;
+            let previews = pick_by_amount(&graph, &start, &goals, value, limit)?;
             return Ok(previews.map(Arc::new));
         }
         Ok(None)
@@ -155,6 +156,7 @@ pub fn pick_previews(
 fn pick_by_amount(
     graph: &TokenGraph,
     start: &TokenInAccount,
+    goals: &[TokenOutAccount],
     amount: u128,
     limit: usize,
 ) -> Result<Option<PreviewList>> {
@@ -166,7 +168,7 @@ fn pick_by_amount(
     ));
     info!(log, "start");
 
-    let list = graph.list_returns(amount, start.clone())?;
+    let list = graph.list_returns(amount, start.clone(), goals)?;
     let mut goals = vec![];
     for (goal, output) in list.into_iter().take(limit) {
         let path = graph.get_path_with_return(start.clone(), goal.clone())?;
@@ -220,7 +222,7 @@ where
             .filter(|value| !cache.contains_key(value))
             .collect();
         for (v, r) in missings
-            .par_iter()
+            .iter()
             .map(|&v| (v, calc_res(v)))
             .collect::<Vec<_>>()
         {

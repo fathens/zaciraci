@@ -51,26 +51,38 @@ impl<'a> TokenGraph<'a> {
         CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge)
     }
 
+    pub fn update_graph(&self, start: TokenInAccount) -> Result<Vec<TokenOutAccount>> {
+        let log = DEFAULT.new(o!(
+            "function" => "TokenGraph::update_graph",
+            "start" => format!("{:?}", start),
+        ));
+        info!(log, "find goals from start");
+
+        let goals = self.graph.update_path(start.clone(), None)?;
+        for goal in goals.iter() {
+            self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
+        }
+        Ok(goals)
+    }
+
     pub fn list_returns(
         &self,
         initial: u128,
         start: TokenInAccount,
+        goals: &[TokenOutAccount],
     ) -> Result<Vec<(TokenOutAccount, u128)>> {
         let log = DEFAULT.new(o!(
             "function" => "TokenGraph::list_returns",
             "initial" => initial,
             "start" => format!("{:?}", start),
         ));
-        let goals = self.graph.update_path(start.clone(), None)?;
-        for goal in goals.iter() {
-            self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
-        }
+        info!(log, "start");
 
         let mut returns = HashMap::new();
-        for goal in goals.into_iter() {
+        for goal in goals.iter() {
             match self.estimate_return(initial, start.clone(), goal.clone()) {
                 Ok(value) => {
-                    returns.insert(goal, value);
+                    returns.insert(goal.clone(), value);
                 }
                 Err(e) => {
                     error!(log, "failed to estimate return"; "goal" => ?goal, "error" => ?e);
