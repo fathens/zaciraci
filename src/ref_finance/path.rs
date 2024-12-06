@@ -48,14 +48,10 @@ pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<V
     graph.get_path_with_return(start, goal)
 }
 
-pub async fn pick_goals(
-    start: TokenInAccount,
-    total_amount: u128,
-) -> Result<Option<Vec<TokenOutAccount>>> {
+pub async fn pick_goals(start: TokenInAccount, total_amount: u128) -> Result<Option<Vec<Preview>>> {
     let pools = get_pools_in_db().await?;
     let previews = pick_previews(pools, start, total_amount)?;
-    let goals = previews.map(|a| a.into_iter().map(|p| p.token).collect());
-    Ok(goals)
+    Ok(previews)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

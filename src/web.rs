@@ -1,3 +1,4 @@
+use crate::milli_near::MilliNear;
 use crate::persistence::tables;
 use crate::ref_finance::pool_info;
 use crate::ref_finance::token_account::TokenAccount;
@@ -166,9 +167,12 @@ async fn pick_goals(
         None => {
             result.push_str("No goals found\n");
         }
-        Some(goals) => {
-            for path in goals {
-                result.push_str(&format!("{path:?}\n"));
+        Some(previews) => {
+            for preview in previews {
+                let in_milli = MilliNear::from_yocto(preview.input_value);
+                let token_name = preview.token.to_string();
+                let gain = MilliNear::from_yocto(preview.output_value - preview.input_value);
+                result.push_str(&format!("{in_milli:?} -> {token_name} -> {gain:?}\n"));
             }
         }
     }
