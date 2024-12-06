@@ -15,7 +15,7 @@ pub struct EdgeWeight {
 
 impl Ord for EdgeWeight {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.estimated_rate.cmp(&other.estimated_rate)
+        self.estimated_rate.cmp(&other.estimated_rate).reverse() // レートが大きいほど望ましい
     }
 }
 
