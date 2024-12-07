@@ -348,7 +348,6 @@ where
 mod test {
     use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
-    use num_rational::Ratio;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
     use petgraph::Graph;
@@ -578,7 +577,7 @@ mod test {
     #[test]
     fn test_find_all_path_looped() {
         fn weight(v: u8) -> EdgeWeight {
-            EdgeWeight::without_token(Ratio::new(v as u128, 1))
+            EdgeWeight::without_token(1, v as u128)
         }
         //  B-0-C
         //  |   |

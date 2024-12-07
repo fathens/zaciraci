@@ -3,7 +3,7 @@ use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair, TokenPairId};
 use num_bigint::{BigUint, ToBigUint};
 use num_rational::Ratio;
-use num_traits::{one, zero, ToPrimitive};
+use num_traits::ToPrimitive;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
@@ -24,7 +24,8 @@ impl EdgeWeight {
         }
     }
 
-    pub fn without_token(estimated_rate: Ratio<u128>) -> Self {
+    pub fn without_token(input_value: u128, estimated_rate: u128) -> Self {
+        let estimated_rate = Ratio::new(estimated_rate, input_value);
         Self {
             pair_id: None,
             estimated_rate,
@@ -50,7 +51,7 @@ impl PartialOrd for EdgeWeight {
 
 impl Default for EdgeWeight {
     fn default() -> Self {
-        EdgeWeight::without_token(one())
+        EdgeWeight::without_token(1, 1)
     }
 }
 
@@ -63,20 +64,17 @@ impl Add<EdgeWeight> for EdgeWeight {
                 src.denom().to_biguint().unwrap(),
             )
         }
-        fn to_u128(src: Ratio<BigUint>) -> Ratio<u128> {
+        fn to_u128(src: Ratio<BigUint>) -> (u128, u128) {
             let fv = src.to_f64().expect("should be valid");
-            if fv.is_sign_negative() {
-                zero()
-            } else {
-                let src: Ratio<i128> = Ratio::approximate_float(fv).expect("should be valid");
-                Ratio::new(
-                    src.numer().to_u128().expect("should be valid"),
-                    src.denom().to_u128().expect("should be valid"),
-                )
-            }
+            let src: Ratio<i128> = Ratio::approximate_float(fv).expect("should be valid");
+            (
+                src.numer().to_u128().expect("should be valid"),
+                src.denom().to_u128().expect("should be valid"),
+            )
         }
-        let added = to_big_rational(self.estimated_rate) + to_big_rational(rhs.estimated_rate);
-        EdgeWeight::without_token(to_u128(added))
+        let (n, d) =
+            to_u128(to_big_rational(self.estimated_rate) + to_big_rational(rhs.estimated_rate));
+        EdgeWeight::without_token(n, d)
     }
 }
 
