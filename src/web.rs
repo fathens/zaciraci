@@ -77,6 +77,7 @@ async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
 
 async fn update_all_pools(State(_): State<Arc<AppState>>) -> String {
     let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    tables::pool_info::delete_all().await.unwrap();
     let n = pools.save_to_db().await.unwrap();
     format!("Pools: {n}")
 }
