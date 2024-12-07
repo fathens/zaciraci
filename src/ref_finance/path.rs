@@ -18,6 +18,9 @@ use std::sync::Arc;
 mod by_token;
 mod edge;
 mod graph;
+mod preview;
+
+use preview::{Preview, PreviewList};
 
 static CACHED_POOLS_IN_DB: OnceCell<PoolInfoList> = OnceCell::new();
 async fn get_pools_in_db() -> Result<&'static PoolInfoList> {
@@ -61,63 +64,6 @@ pub async fn pick_goals(
     Ok(previews)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct Preview {
-    pub input_value: u128,
-    pub token: TokenOutAccount,
-    pub depth: usize,
-    pub output_value: u128,
-}
-
-#[derive(Debug, Eq, PartialEq, Hash)]
-struct PreviewList {
-    input_value: u128,
-    list: Vec<Preview>,
-    total_gain: u128,
-}
-
-impl Preview {
-    const HEAD: u128 = 270_000_000_000_000_000_000;
-    const BY_STEP: u128 = 260_000_000_000_000_000_000;
-
-    fn cost(&self) -> u128 {
-        Self::HEAD + Self::BY_STEP * (self.depth as u128)
-    }
-
-    fn gain(&self) -> u128 {
-        if self.output_value <= self.input_value {
-            return 0;
-        }
-        let gain = self.output_value - self.input_value;
-        let cost = self.cost();
-        if gain <= cost {
-            return 0;
-        }
-        gain - cost
-    }
-}
-
-impl PreviewList {
-    fn new(input_value: u128, previews: Vec<Preview>) -> Option<Self> {
-        let gains: u128 = previews.iter().map(|p| p.gain()).sum();
-        if gains <= MIN_GAIN {
-            return None;
-        }
-        let total_gain = gains - MIN_GAIN;
-        Some(PreviewList {
-            input_value,
-            list: previews,
-            total_gain,
-        })
-    }
-
-    fn get_list(&self) -> Vec<Preview> {
-        self.list.clone()
-    }
-}
-
-const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
-
 pub fn pick_previews(
     all_pools: &PoolInfoList,
     start: TokenInAccount,
@@ -151,7 +97,7 @@ pub fn pick_previews(
     };
 
     let result = search_best_path(one(), stats_ave.into(), total_amount, do_pick, |a| {
-        a.total_gain
+        a.total_gain()
     })?;
     info!(log, "finish");
     Ok(result.map(|a| a.get_list()))
