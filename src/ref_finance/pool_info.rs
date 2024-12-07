@@ -8,12 +8,13 @@ use crate::Result;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
+use num_integer::Roots;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::slice::Iter;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
 
@@ -89,8 +90,6 @@ impl From<tables::pool_info::PoolInfo> for PoolInfo {
     }
 }
 
-pub const FEE_DIVISOR: u32 = 10_000;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenPair {
     pool: Arc<PoolInfo>,
@@ -134,7 +133,7 @@ impl TokenPair {
 
     pub fn estimate_normal_return(&self) -> Result<(u128, u128)> {
         let balance_in = self.pool.amount(self.token_in.as_index())?;
-        let in_value = balance_in.to_u128().ok_or(Error::Overflow)?;
+        let in_value = (balance_in / 2).min(*MAX_AMOUNT);
         let out_value = self
             .pool
             .estimate_return(self.token_in, in_value, self.token_out)?;
@@ -156,6 +155,9 @@ impl TokenPair {
             .await
     }
 }
+
+pub const FEE_DIVISOR: u32 = 10_000;
+pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| u128::MAX.sqrt().sqrt());
 
 impl PoolInfo {
     pub fn new(id: u32, bare: PoolInfoBared) -> Self {
@@ -215,11 +217,11 @@ impl PoolInfo {
             .ok_or_else(|| Error::OutOfIndexOfTokens(index).into())
     }
 
-    fn amount(&self, index: TokenIndex) -> Result<BigDecimal> {
+    fn amount(&self, index: TokenIndex) -> Result<u128> {
         self.bare
             .amounts
             .get(index.as_usize())
-            .map(|v| BigDecimal::from(v.0))
+            .map(|v| v.0)
             .ok_or_else(|| Error::OutOfIndexOfTokens(index).into())
     }
 
@@ -240,9 +242,9 @@ impl PoolInfo {
         if token_in.as_index() == token_out.as_index() {
             return Err(Error::SwapSameToken.into());
         }
-        let in_balance = self.amount(token_in.as_index())?;
+        let in_balance = BigDecimal::from(self.amount(token_in.as_index())?);
         trace!(log, "in_balance"; "value" => %in_balance);
-        let out_balance = self.amount(token_out.as_index())?;
+        let out_balance = BigDecimal::from(self.amount(token_out.as_index())?);
         trace!(log, "out_balance"; "value" => %out_balance);
         let amount_in = BigDecimal::from(amount_in);
         if in_balance.sign() <= NoSign || out_balance.sign() <= NoSign || amount_in.sign() <= NoSign

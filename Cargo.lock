@@ -3325,6 +3325,7 @@ dependencies = [
  "near-primitives",
  "near-sdk",
  "num-bigint 0.4.6",
+ "num-integer",
  "num-rational 0.4.2",
  "num-traits",
  "once_cell",
