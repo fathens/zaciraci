@@ -25,10 +25,8 @@ async fn get_pools_in_db() -> Result<&'static PoolInfoList> {
         .await
 }
 
-const DEFAULT_AMOUNT_IN: u128 = 1_000_000_000_000_000_000; // 1e18
-
 pub fn all_tokens(pools: &PoolInfoList) -> Vec<TokenAccount> {
-    let by_tokens = by_token::PoolsByToken::new(pools, DEFAULT_AMOUNT_IN);
+    let by_tokens = by_token::PoolsByToken::new(pools);
     by_tokens.tokens()
 }
 
@@ -37,14 +35,14 @@ pub async fn sorted_returns(
     initial: u128,
 ) -> Result<Vec<(TokenOutAccount, u128)>> {
     let pools = get_pools_in_db().await?;
-    let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
+    let graph = TokenGraph::new(pools);
     let goals = graph.update_graph(start.clone())?;
     graph.list_returns(initial, start, &goals)
 }
 
 pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
     let pools = get_pools_in_db().await?;
-    let graph = TokenGraph::new(pools, DEFAULT_AMOUNT_IN);
+    let graph = TokenGraph::new(pools);
     graph.get_path_with_return(start, goal)
 }
 
@@ -127,7 +125,7 @@ pub fn pick_previews(
     info!(log, "start");
 
     let stats_ave = history::get_history().read().unwrap().inputs.average();
-    let graph = TokenGraph::new(all_pools, DEFAULT_AMOUNT_IN);
+    let graph = TokenGraph::new(all_pools);
     let goals = graph.update_graph(start.clone())?;
 
     let do_pick = |value_in_milli: MilliNear| {

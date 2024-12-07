@@ -122,16 +122,13 @@ pub mod same_pool {
 
     #[derive(Debug)]
     pub struct CachedEdges {
-        #[allow(dead_code)]
-        input_value: u128,
         pub pool: Arc<PoolInfo>,
         cached_edges: Mutex<HashMap<(TokenIn, TokenOut), Arc<Edge>>>,
     }
 
     impl CachedEdges {
-        pub fn new(pool: Arc<PoolInfo>, input_value: u128) -> Arc<Self> {
+        pub fn new(pool: Arc<PoolInfo>) -> Arc<Self> {
             Arc::new(Self {
-                input_value,
                 pool,
                 cached_edges: Mutex::new(HashMap::new()),
             })

@@ -22,16 +22,15 @@ pub struct TokenGraph<'a> {
 }
 
 impl<'a> TokenGraph<'a> {
-    pub fn new(pools: &'a PoolInfoList, input_value: u128) -> Self {
-        let graph = Self::cached_path(pools, input_value);
+    pub fn new(pools: &'a PoolInfoList) -> Self {
+        let graph = Self::cached_path(pools);
         Self { pools, graph }
     }
 
     fn cached_path(
         pools: &PoolInfoList,
-        input_value: u128,
     ) -> CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight> {
-        let pools_by_token = PoolsByToken::new(pools, input_value);
+        let pools_by_token = PoolsByToken::new(pools);
         let mut graph = petgraph::Graph::new();
         let mut nodes = HashMap::new();
         for token_in in pools_by_token.tokens() {
