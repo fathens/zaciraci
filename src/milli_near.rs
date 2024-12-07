@@ -9,7 +9,7 @@ const ONE_NEAR: u128 = 10_u128.pow(24);
 const ONE_MILLINEAR: u128 = 10_u128.pow(21);
 
 impl MilliNear {
-    pub fn of(value: u32) -> Self {
+    pub const fn of(value: u32) -> Self {
         MilliNear(value)
     }
 

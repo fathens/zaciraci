@@ -116,7 +116,7 @@ impl PreviewList {
     }
 }
 
-const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000;
+const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
 
 pub fn pick_previews(
     all_pools: &PoolInfoList,
