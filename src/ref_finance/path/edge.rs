@@ -82,7 +82,7 @@ impl Add<EdgeWeight> for EdgeWeight {
         }
         let (n, d) =
             to_u128(to_big_rational(self.estimated_rate) + to_big_rational(rhs.estimated_rate));
-        EdgeWeight::without_token(n, d)
+        EdgeWeight::without_token(d, n)
     }
 }
 
