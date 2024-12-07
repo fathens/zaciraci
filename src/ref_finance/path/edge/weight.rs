@@ -1,7 +1,7 @@
 use crate::ref_finance::pool_info::TokenPairId;
 use num_bigint::{BigUint, ToBigUint};
 use num_rational::Ratio;
-use num_traits::{zero, ToPrimitive};
+use num_traits::{one, zero, ToPrimitive};
 use std::cmp::Ordering;
 use std::ops::Add;
 
@@ -27,13 +27,6 @@ impl EdgeWeight {
         }
     }
 
-    pub fn without_token(input_value: u128, estimated_rate: u128) -> Self {
-        Self {
-            pair_id: None,
-            estimated_rate: Self::calc_rate(input_value, estimated_rate),
-        }
-    }
-
     pub fn pair_id(&self) -> Option<TokenPairId> {
         self.pair_id
     }
@@ -53,10 +46,14 @@ impl PartialOrd for EdgeWeight {
 
 impl Default for EdgeWeight {
     fn default() -> Self {
-        EdgeWeight::without_token(1, 1)
+        EdgeWeight {
+            pair_id: None,
+            estimated_rate: one(),
+        }
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Add<EdgeWeight> for EdgeWeight {
     type Output = Self;
     fn add(self, rhs: EdgeWeight) -> Self::Output {
@@ -75,8 +72,11 @@ impl Add<EdgeWeight> for EdgeWeight {
             )
         }
         let (n, d) =
-            to_u128(to_big_rational(self.estimated_rate) + to_big_rational(rhs.estimated_rate));
-        EdgeWeight::without_token(d, n)
+            to_u128(to_big_rational(self.estimated_rate) * to_big_rational(rhs.estimated_rate));
+        EdgeWeight {
+            pair_id: None,
+            estimated_rate: Self::calc_rate(d, n),
+        }
     }
 }
 
@@ -85,7 +85,29 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_weight_calc_rate() {
+    fn test_calc_rate() {
         assert_eq!(EdgeWeight::calc_rate(1, 1), Ratio::new(1, 1));
+        assert_eq!(EdgeWeight::calc_rate(1, 2), Ratio::new(2, 1));
+        assert_eq!(EdgeWeight::calc_rate(2, 2), Ratio::new(2, 2));
+        assert_eq!(EdgeWeight::calc_rate(2, 0), Ratio::new(0, 1));
+    }
+
+    #[test]
+    fn test_add() {
+        fn weight(d: u128, n: u128) -> EdgeWeight {
+            EdgeWeight {
+                pair_id: None,
+                estimated_rate: EdgeWeight::calc_rate(d, n),
+            }
+        }
+
+        assert_eq!(
+            (weight(1, 1) + weight(1, 1)).estimated_rate,
+            EdgeWeight::calc_rate(1, 1)
+        );
+        assert_eq!(
+            (weight(1, 2) + weight(2, 1)).estimated_rate,
+            EdgeWeight::calc_rate(1, 1)
+        );
     }
 }
