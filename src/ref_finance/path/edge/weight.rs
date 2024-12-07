@@ -1,22 +1,21 @@
 use crate::ref_finance::pool_info::TokenPairId;
-use num_bigint::{BigUint, ToBigUint};
 use num_rational::Ratio;
 use num_traits::{one, zero, ToPrimitive};
 use std::cmp::Ordering;
 use std::ops::Add;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub struct EdgeWeight {
     pair_id: Option<TokenPairId>,
-    estimated_rate: Ratio<u128>,
+    estimated_rate: f32,
 }
 
 impl EdgeWeight {
-    fn calc_rate(input_value: u128, estimated_return: u128) -> Ratio<u128> {
+    fn calc_rate(input_value: u128, estimated_return: u128) -> f32 {
         if input_value == 0 {
             zero()
         } else {
-            Ratio::new(estimated_return, input_value)
+            Ratio::new(estimated_return, input_value).to_f32().unwrap()
         }
     }
 
@@ -32,9 +31,18 @@ impl EdgeWeight {
     }
 }
 
+impl Eq for EdgeWeight {}
+
 impl Ord for EdgeWeight {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.estimated_rate.cmp(&other.estimated_rate).reverse() // レートが大きいほど望ましい
+        // レートが大きいほど望ましい -> Less
+        if self.estimated_rate < other.estimated_rate {
+            Ordering::Greater
+        } else if self.estimated_rate > other.estimated_rate {
+            Ordering::Less
+        } else {
+            Ordering::Equal
+        }
     }
 }
 
@@ -57,25 +65,9 @@ impl Default for EdgeWeight {
 impl Add<EdgeWeight> for EdgeWeight {
     type Output = Self;
     fn add(self, rhs: EdgeWeight) -> Self::Output {
-        fn to_big_rational(src: Ratio<u128>) -> Ratio<BigUint> {
-            Ratio::new(
-                src.numer().to_biguint().unwrap(),
-                src.denom().to_biguint().unwrap(),
-            )
-        }
-        fn to_u128(src: Ratio<BigUint>) -> (u128, u128) {
-            let fv = src.to_f64().expect("should be valid");
-            let src: Ratio<i128> = Ratio::approximate_float(fv).expect("should be valid");
-            (
-                src.numer().to_u128().expect("should be valid"),
-                src.denom().to_u128().expect("should be valid"),
-            )
-        }
-        let (n, d) =
-            to_u128(to_big_rational(self.estimated_rate) * to_big_rational(rhs.estimated_rate));
         EdgeWeight {
             pair_id: None,
-            estimated_rate: Self::calc_rate(d, n),
+            estimated_rate: self.estimated_rate * rhs.estimated_rate,
         }
     }
 }
@@ -93,10 +85,22 @@ mod test {
 
     #[test]
     fn test_calc_rate() {
-        assert_eq!(EdgeWeight::calc_rate(1, 1), Ratio::new(1, 1));
-        assert_eq!(EdgeWeight::calc_rate(1, 2), Ratio::new(2, 1));
-        assert_eq!(EdgeWeight::calc_rate(2, 2), Ratio::new(2, 2));
-        assert_eq!(EdgeWeight::calc_rate(2, 0), Ratio::new(0, 1));
+        assert_eq!(
+            EdgeWeight::calc_rate(1, 1),
+            Ratio::new(1, 1).to_f32().unwrap()
+        );
+        assert_eq!(
+            EdgeWeight::calc_rate(1, 2),
+            Ratio::new(2, 1).to_f32().unwrap()
+        );
+        assert_eq!(
+            EdgeWeight::calc_rate(2, 2),
+            Ratio::new(2, 2).to_f32().unwrap()
+        );
+        assert_eq!(
+            EdgeWeight::calc_rate(2, 0),
+            Ratio::new(0, 1).to_f32().unwrap()
+        );
     }
 
     #[test]
