@@ -3,7 +3,7 @@ use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair, TokenPairId};
 use num_bigint::{BigUint, ToBigUint};
 use num_rational::Ratio;
-use num_traits::ToPrimitive;
+use num_traits::{zero, ToPrimitive};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
@@ -17,7 +17,11 @@ pub struct EdgeWeight {
 
 impl EdgeWeight {
     pub fn new(pair_id: TokenPairId, input_value: u128, estimated_return: u128) -> Self {
-        let estimated_rate = Ratio::new(estimated_return, input_value);
+        let estimated_rate = if input_value == 0 {
+            zero()
+        } else {
+            Ratio::new(estimated_return, input_value)
+        };
         Self {
             pair_id: Some(pair_id),
             estimated_rate,
@@ -25,7 +29,11 @@ impl EdgeWeight {
     }
 
     pub fn without_token(input_value: u128, estimated_rate: u128) -> Self {
-        let estimated_rate = Ratio::new(estimated_rate, input_value);
+        let estimated_rate = if input_value == 0 {
+            zero()
+        } else {
+            Ratio::new(estimated_rate, input_value)
+        };
         Self {
             pair_id: None,
             estimated_rate,
