@@ -133,6 +133,9 @@ impl TokenPair {
 
     pub fn estimate_normal_return(&self) -> Result<(u128, u128)> {
         let balance_in = self.pool.amount(self.token_in.as_index())?;
+        if balance_in == 0 {
+            return Err(Error::ZeroAmount.into());
+        }
         let in_value = (balance_in / 2).min(*MAX_AMOUNT);
         let out_value = self
             .pool
