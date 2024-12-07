@@ -137,11 +137,12 @@ async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
+    let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let mut sorted_returns = crate::ref_finance::path::sorted_returns(start.into(), amount_in)
-        .await
-        .unwrap();
+    let mut sorted_returns =
+        crate::ref_finance::path::sorted_returns(start.into(), MilliNear::of(amount_in))
+            .await
+            .unwrap();
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");

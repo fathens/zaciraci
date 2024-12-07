@@ -32,12 +32,12 @@ pub fn all_tokens(pools: &PoolInfoList) -> Vec<TokenAccount> {
 
 pub async fn sorted_returns(
     start: TokenInAccount,
-    initial: u128,
+    initial: MilliNear,
 ) -> Result<Vec<(TokenOutAccount, u128)>> {
     let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools);
     let goals = graph.update_graph(start.clone())?;
-    graph.list_returns(initial, start, &goals)
+    graph.list_returns(initial.to_yocto(), start, &goals)
 }
 
 pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
