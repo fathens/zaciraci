@@ -33,11 +33,16 @@ pub fn all_tokens(pools: &PoolInfoList) -> Vec<TokenAccount> {
 pub async fn sorted_returns(
     start: TokenInAccount,
     initial: MilliNear,
-) -> Result<Vec<(TokenOutAccount, u128)>> {
+) -> Result<Vec<(TokenOutAccount, MilliNear)>> {
     let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools);
     let goals = graph.update_graph(start.clone())?;
-    graph.list_returns(initial.to_yocto(), start, &goals)
+    let returns = graph.list_returns(initial.to_yocto(), start, &goals)?;
+    let in_milli = returns
+        .iter()
+        .map(|(k, v)| (k.clone(), MilliNear::from_yocto(*v)))
+        .collect();
+    Ok(in_milli)
 }
 
 pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {

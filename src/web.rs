@@ -5,7 +5,7 @@ use crate::ref_finance::token_account::TokenAccount;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
-use near_primitives::num_rational::BigRational;
+use num_rational::Ratio;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
 
@@ -137,17 +137,16 @@ async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
+    let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
-    let mut sorted_returns =
-        crate::ref_finance::path::sorted_returns(start.into(), MilliNear::of(amount_in))
-            .await
-            .unwrap();
+    let mut sorted_returns = crate::ref_finance::path::sorted_returns(start.into(), amount_in)
+        .await
+        .unwrap();
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
     for (goal, value) in sorted_returns {
-        let rational = BigRational::new(value.into(), amount_in.into());
+        let rational = Ratio::new(value.to_yocto(), amount_in.to_yocto());
         let ret = rational.to_f32().unwrap();
         result.push_str(&format!("{goal}: {ret}\n"));
     }

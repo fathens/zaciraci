@@ -1,6 +1,5 @@
 use crate::ref_finance::pool_info::TokenPairId;
-use num_rational::Ratio;
-use num_traits::{one, zero, ToPrimitive};
+use num_traits::{one, zero};
 use std::cmp::Ordering;
 use std::ops::Add;
 
@@ -15,7 +14,7 @@ impl EdgeWeight {
         if input_value == 0 {
             zero()
         } else {
-            Ratio::new(estimated_return, input_value).to_f32().unwrap()
+            estimated_return as f32 / input_value as f32
         }
     }
 
@@ -85,22 +84,11 @@ mod test {
 
     #[test]
     fn test_calc_rate() {
-        assert_eq!(
-            EdgeWeight::calc_rate(1, 1),
-            Ratio::new(1, 1).to_f32().unwrap()
-        );
-        assert_eq!(
-            EdgeWeight::calc_rate(1, 2),
-            Ratio::new(2, 1).to_f32().unwrap()
-        );
-        assert_eq!(
-            EdgeWeight::calc_rate(2, 2),
-            Ratio::new(2, 2).to_f32().unwrap()
-        );
-        assert_eq!(
-            EdgeWeight::calc_rate(2, 0),
-            Ratio::new(0, 1).to_f32().unwrap()
-        );
+        assert_eq!(EdgeWeight::calc_rate(1, 1), 1.0);
+        assert_eq!(EdgeWeight::calc_rate(1, 2), 2.0);
+        assert_eq!(EdgeWeight::calc_rate(2, 1), 0.5);
+        assert_eq!(EdgeWeight::calc_rate(2, 2), 1.0);
+        assert_eq!(EdgeWeight::calc_rate(2, 0), 0.0,);
     }
 
     #[test]
