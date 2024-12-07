@@ -88,7 +88,6 @@ impl Add<EdgeWeight> for EdgeWeight {
 
 #[derive(Debug, Clone)]
 pub struct Edge {
-    cache: Arc<same_pool::CachedEdges>,
     pair: TokenPair,
 
     input_value: u128,
@@ -106,13 +105,6 @@ impl Edge {
         let weight = EdgeWeight::new(self.pair.pair_id(), self.input_value, self.estimated_return);
         *cached_weight = Some(weight);
         weight
-    }
-
-    #[allow(dead_code)]
-    fn reversed(&self) -> Arc<Self> {
-        self.cache
-            .get(self.pair.token_in, self.pair.token_out)
-            .expect("should be valid index")
     }
 }
 
@@ -187,7 +179,6 @@ pub mod same_pool {
             pair.estimate_normal_return()
                 .map(|(input_value, estimated_return)| {
                     let path = Arc::new(Edge {
-                        cache: Arc::clone(self),
                         pair,
                         input_value,
                         estimated_return,
@@ -223,8 +214,6 @@ pub mod one_step {
     pub struct PathEdges {
         pub token_in_out: (TokenInAccount, TokenOutAccount),
         pairs: BinaryHeap<SamePathEdge>,
-
-        cached_is_stop: Arc<Mutex<Option<bool>>>,
     }
 
     impl PathEdges {
@@ -232,13 +221,7 @@ pub mod one_step {
             Self {
                 token_in_out: (token_in_id, token_out_id),
                 pairs: BinaryHeap::new(),
-                cached_is_stop: Arc::new(Mutex::new(None)),
             }
-        }
-
-        #[allow(dead_code)]
-        pub fn edges(&self) -> Vec<Arc<Edge>> {
-            self.pairs.iter().map(|e| Arc::clone(&e.0)).collect()
         }
 
         pub fn push(&mut self, path: Arc<Edge>) -> crate::Result<()> {
@@ -261,45 +244,11 @@ pub mod one_step {
             Ok(())
         }
 
-        #[allow(dead_code)]
-        pub fn is_stop(&self) -> bool {
-            let mut cached_is_stop = self.cached_is_stop.lock().unwrap();
-            if let Some(is_stop) = *cached_is_stop {
-                return is_stop;
-            }
-            let calc = || -> bool {
-                if self.pairs.len() <= 1 {
-                    return true;
-                }
-                let top = self.pairs.peek().unwrap();
-                let bottom = self.pairs.iter().last().unwrap();
-                top.0.estimated_return == bottom.0.estimated_return
-            };
-            let result = calc();
-            *cached_is_stop = Some(result);
-            result
-        }
-
         pub fn at_top(&self) -> Option<Arc<Edge>> {
             self.pairs.peek().map(|e| {
                 let edge = &e.0;
                 Arc::clone(edge)
             })
-        }
-
-        #[allow(dead_code)]
-        pub fn reversed(&self) -> Self {
-            let token_in = self.token_in_out.1.as_account().clone().into();
-            let token_out = self.token_in_out.0.as_account().clone().into();
-            Self {
-                token_in_out: (token_in, token_out),
-                pairs: self
-                    .pairs
-                    .iter()
-                    .map(|p| SamePathEdge(p.0.reversed()))
-                    .collect(),
-                cached_is_stop: self.cached_is_stop.clone(),
-            }
         }
     }
 }
