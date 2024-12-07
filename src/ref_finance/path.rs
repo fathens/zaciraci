@@ -7,6 +7,7 @@ use crate::Result;
 use async_once_cell::OnceCell;
 use graph::TokenGraph;
 use num_traits::{one, zero, Zero};
+use rayon::prelude::*;
 use slog::info;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -225,7 +226,7 @@ where
             .filter(|value| !cache.contains_key(value))
             .collect();
         for (v, r) in missings
-            .iter()
+            .par_iter()
             .map(|&v| (v, calc_res(v)))
             .collect::<Vec<_>>()
         {
