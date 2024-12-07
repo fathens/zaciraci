@@ -4,19 +4,28 @@ use std::ops::{Add, Div, Mul, Sub};
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MilliNear(u32);
 
+// copy from near-token-0.3.0
+const ONE_NEAR: u128 = 10_u128.pow(24);
+const ONE_MILLINEAR: u128 = 10_u128.pow(21);
+
 impl MilliNear {
-    const IN_YOCTO: u128 = 1_000_000_000_000_000_000_000_000; // 1e24
+    const IN_YOCTO: u128 = ONE_MILLINEAR;
 
     pub fn of(value: u32) -> Self {
         MilliNear(value)
     }
 
-    pub fn from_yocto(yocto: u128) -> Self {
+    pub const fn from_yocto(yocto: u128) -> Self {
         MilliNear((yocto / Self::IN_YOCTO) as u32)
     }
 
-    pub fn to_yocto(&self) -> u128 {
+    pub const fn to_yocto(&self) -> u128 {
         self.0 as u128 * Self::IN_YOCTO
+    }
+
+    pub const fn from_near(near: u128) -> Self {
+        let v = near * (ONE_NEAR / ONE_MILLINEAR);
+        MilliNear(v as u32)
     }
 }
 
@@ -104,12 +113,16 @@ mod tests {
 
         let one_milli = MilliNear::one();
         assert_eq!(one_milli, MilliNear(1));
-        assert_eq!(one_milli, MilliNear::from_yocto(10_i128.pow(24) as u128));
-        assert_eq!(one_milli.to_yocto(), 10_i128.pow(24) as u128);
+        assert_eq!(one_milli, MilliNear::from_yocto(ONE_MILLINEAR));
+        assert_eq!(one_milli.to_yocto(), ONE_MILLINEAR);
 
-        let one_near = MilliNear::from_yocto(10_i128.pow(27) as u128);
+        let one_near = MilliNear::from_yocto(ONE_NEAR);
         assert_eq!(one_near, MilliNear(1_000));
-        assert_eq!(one_near.to_yocto(), 10_i128.pow(27) as u128);
+        assert_eq!(one_near.to_yocto(), ONE_NEAR);
+
+        let ten_near = MilliNear::from_near(10);
+        assert_eq!(ten_near, MilliNear(10_000));
+        assert_eq!(ten_near.to_yocto(), 10 * ONE_NEAR);
     }
 
     #[test]

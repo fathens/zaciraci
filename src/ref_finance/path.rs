@@ -73,8 +73,8 @@ struct PreviewList {
 }
 
 impl Preview {
-    const HEAD: u128 = 270_000_000_000_000_000_000_000;
-    const BY_STEP: u128 = 260_000_000_000_000_000_000_000;
+    const HEAD: u128 = 270_000_000_000_000_000_000;
+    const BY_STEP: u128 = 260_000_000_000_000_000_000;
 
     fn cost(&self) -> u128 {
         Self::HEAD + Self::BY_STEP * (self.depth as u128)
@@ -112,7 +112,7 @@ impl PreviewList {
     }
 }
 
-const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000_000;
+const MIN_GAIN: u128 = 1_000_000_000_000_000_000_000;
 
 pub fn pick_previews(
     all_pools: &PoolInfoList,
