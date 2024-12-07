@@ -61,3 +61,88 @@ impl PreviewList {
         self.total_gain
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ref_finance::token_account::{TokenAccount, TokenOutAccount};
+
+    fn token_out(token: &str) -> TokenOutAccount {
+        let token: TokenAccount = token.parse().unwrap();
+        token.into()
+    }
+
+    #[test]
+    fn test_preview_cost() {
+        const HEAD: u128 = 270_000_000_000_000_000_000;
+        const BY_STEP: u128 = 260_000_000_000_000_000_000;
+
+        assert_eq!(
+            Preview {
+                input_value: 0,
+                token: token_out("a.token"),
+                depth: 1,
+                output_value: 0,
+            }
+            .cost(),
+            HEAD + BY_STEP
+        );
+
+        assert_eq!(
+            Preview {
+                input_value: 0,
+                token: token_out("a.token"),
+                depth: 2,
+                output_value: 0,
+            }
+            .cost(),
+            HEAD + 2 * BY_STEP
+        );
+    }
+
+    #[test]
+    fn test_preview_gain() {
+        assert_eq!(
+            Preview {
+                input_value: MilliNear::of(100).to_yocto(),
+                token: token_out("a.token"),
+                depth: 1,
+                output_value: MilliNear::of(300).to_yocto(),
+            }
+            .gain(),
+            MilliNear::of(200).to_yocto() - Preview::HEAD - Preview::BY_STEP
+        );
+
+        assert_eq!(
+            Preview {
+                input_value: MilliNear::of(100).to_yocto(),
+                token: token_out("a.token"),
+                depth: 2,
+                output_value: MilliNear::of(200).to_yocto(),
+            }
+            .gain(),
+            MilliNear::of(100).to_yocto() - Preview::HEAD - 2 * Preview::BY_STEP
+        );
+    }
+
+    #[test]
+    fn test_preview_list_total_gain() {
+        const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
+
+        let a = Preview {
+            input_value: MilliNear::of(100).to_yocto(),
+            token: token_out("a.token"),
+            depth: 1,
+            output_value: MilliNear::of(300).to_yocto(),
+        };
+        let b = Preview {
+            input_value: MilliNear::of(100).to_yocto(),
+            token: token_out("b.token"),
+            depth: 1,
+            output_value: MilliNear::of(200).to_yocto(),
+        };
+        let previews = vec![a.clone(), b.clone()];
+        let preview_list = PreviewList::new(MilliNear::of(100).to_yocto(), previews).unwrap();
+        assert_eq!(preview_list.total_gain(), a.gain() + b.gain() - MIN_GAIN);
+    }
+}
