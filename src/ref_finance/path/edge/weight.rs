@@ -84,6 +84,13 @@ impl Add<EdgeWeight> for EdgeWeight {
 mod test {
     use super::*;
 
+    fn weight(d: u128, n: u128) -> EdgeWeight {
+        EdgeWeight {
+            pair_id: None,
+            estimated_rate: EdgeWeight::calc_rate(d, n),
+        }
+    }
+
     #[test]
     fn test_calc_rate() {
         assert_eq!(EdgeWeight::calc_rate(1, 1), Ratio::new(1, 1));
@@ -93,14 +100,21 @@ mod test {
     }
 
     #[test]
-    fn test_add() {
-        fn weight(d: u128, n: u128) -> EdgeWeight {
-            EdgeWeight {
-                pair_id: None,
-                estimated_rate: EdgeWeight::calc_rate(d, n),
-            }
-        }
+    fn test_cmp() {
+        let a = weight(1, 1);
+        let b = weight(1, 2);
+        let c = weight(2, 1);
+        assert_eq!(a.cmp(&b), Ordering::Greater);
+        assert_eq!(b.cmp(&a), Ordering::Less);
+        assert_eq!(a.cmp(&a), Ordering::Equal);
+        assert_eq!(a.cmp(&c), Ordering::Less);
+        assert_eq!(c.cmp(&a), Ordering::Greater);
+        assert_eq!(b.cmp(&c), Ordering::Less);
+        assert_eq!(c.cmp(&b), Ordering::Greater);
+    }
 
+    #[test]
+    fn test_add() {
         assert_eq!(
             (weight(1, 1) + weight(1, 1)).estimated_rate,
             EdgeWeight::calc_rate(1, 1)
