@@ -1,7 +1,9 @@
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::{PoolInfo, TokenPair, TokenPairId};
+use num_bigint::{BigUint, ToBigUint};
 use num_rational::Ratio;
+use num_traits::{one, zero, ToPrimitive};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
@@ -9,8 +11,29 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EdgeWeight {
-    pub pair_id: Option<TokenPairId>,
-    pub estimated_rate: Ratio<u128>,
+    pair_id: Option<TokenPairId>,
+    estimated_rate: Ratio<u128>,
+}
+
+impl EdgeWeight {
+    pub fn new(pair_id: TokenPairId, input_value: u128, estimated_return: u128) -> Self {
+        let estimated_rate = Ratio::new(estimated_return, input_value);
+        Self {
+            pair_id: Some(pair_id),
+            estimated_rate,
+        }
+    }
+
+    pub fn without_token(estimated_rate: Ratio<u128>) -> Self {
+        Self {
+            pair_id: None,
+            estimated_rate,
+        }
+    }
+
+    pub fn pair_id(&self) -> Option<TokenPairId> {
+        self.pair_id
+    }
 }
 
 impl Ord for EdgeWeight {
@@ -27,20 +50,33 @@ impl PartialOrd for EdgeWeight {
 
 impl Default for EdgeWeight {
     fn default() -> Self {
-        EdgeWeight {
-            pair_id: None,
-            estimated_rate: Ratio::new(1, 1),
-        }
+        EdgeWeight::without_token(one())
     }
 }
 
 impl Add<EdgeWeight> for EdgeWeight {
     type Output = Self;
     fn add(self, rhs: EdgeWeight) -> Self::Output {
-        EdgeWeight {
-            pair_id: None,
-            estimated_rate: self.estimated_rate + rhs.estimated_rate,
+        fn to_big_rational(src: Ratio<u128>) -> Ratio<BigUint> {
+            Ratio::new(
+                src.numer().to_biguint().unwrap(),
+                src.denom().to_biguint().unwrap(),
+            )
         }
+        fn to_u128(src: Ratio<BigUint>) -> Ratio<u128> {
+            let fv = src.to_f64().expect("should be valid");
+            if fv.is_sign_negative() {
+                zero()
+            } else {
+                let src: Ratio<i128> = Ratio::approximate_float(fv).expect("should be valid");
+                Ratio::new(
+                    src.numer().to_u128().expect("should be valid"),
+                    src.denom().to_u128().expect("should be valid"),
+                )
+            }
+        }
+        let added = to_big_rational(self.estimated_rate) + to_big_rational(rhs.estimated_rate);
+        EdgeWeight::without_token(to_u128(added))
     }
 }
 
@@ -61,12 +97,7 @@ impl Edge {
         if let Some(weight) = *cached_weight {
             return weight;
         }
-        let weight = {
-            EdgeWeight {
-                pair_id: Some(self.pair.pair_id()),
-                estimated_rate: Ratio::new(self.estimated_return, self.input_value),
-            }
-        };
+        let weight = EdgeWeight::new(self.pair.pair_id(), self.input_value, self.estimated_return);
         *cached_weight = Some(weight);
         weight
     }

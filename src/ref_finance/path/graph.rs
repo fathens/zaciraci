@@ -121,7 +121,7 @@ impl<'a> TokenGraph<'a> {
         let mut result = Vec::new();
         let edges = self.graph.get_edges(start.clone(), goal.clone())?;
         for edge in edges.iter() {
-            let pair_id = edge.pair_id.expect("should be pair id");
+            let pair_id = edge.pair_id().expect("should be pair id");
             let pair = self.pools.get_pair(pair_id)?;
             result.push(pair);
         }
@@ -578,10 +578,7 @@ mod test {
     #[test]
     fn test_find_all_path_looped() {
         fn weight(v: u8) -> EdgeWeight {
-            EdgeWeight {
-                pair_id: None,
-                estimated_rate: Ratio::new(v as u128, 1),
-            }
+            EdgeWeight::without_token(Ratio::new(v as u128, 1))
         }
         //  B-0-C
         //  |   |
