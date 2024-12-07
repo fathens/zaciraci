@@ -205,6 +205,7 @@ where
         } else {
             None
         };
+        debug!(log, "finding by dijkstra"; "from" => ?from, "to" => ?to);
         let goals = algo::dijkstra(&self.graph, from, to, |e| *e.weight());
         debug!(log, "goals"; "goals" => ?goals);
 
