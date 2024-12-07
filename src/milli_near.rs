@@ -9,18 +9,16 @@ const ONE_NEAR: u128 = 10_u128.pow(24);
 const ONE_MILLINEAR: u128 = 10_u128.pow(21);
 
 impl MilliNear {
-    const IN_YOCTO: u128 = ONE_MILLINEAR;
-
     pub fn of(value: u32) -> Self {
         MilliNear(value)
     }
 
     pub const fn from_yocto(yocto: u128) -> Self {
-        MilliNear((yocto / Self::IN_YOCTO) as u32)
+        MilliNear((yocto / ONE_MILLINEAR) as u32)
     }
 
     pub const fn to_yocto(&self) -> u128 {
-        self.0 as u128 * Self::IN_YOCTO
+        self.0 as u128 * ONE_MILLINEAR
     }
 
     pub const fn from_near(near: u128) -> Self {
@@ -108,20 +106,20 @@ mod tests {
         assert_eq!(zero.to_yocto(), 0);
 
         let one_yocto = MilliNear::from_yocto(1);
-        assert_eq!(one_yocto, MilliNear(0));
+        assert_eq!(one_yocto, MilliNear::zero());
         assert_eq!(one_yocto.to_yocto(), 0);
 
         let one_milli = MilliNear::one();
-        assert_eq!(one_milli, MilliNear(1));
+        assert_eq!(one_milli, MilliNear::one());
         assert_eq!(one_milli, MilliNear::from_yocto(ONE_MILLINEAR));
         assert_eq!(one_milli.to_yocto(), ONE_MILLINEAR);
 
         let one_near = MilliNear::from_yocto(ONE_NEAR);
-        assert_eq!(one_near, MilliNear(1_000));
+        assert_eq!(one_near, MilliNear::of(1_000));
         assert_eq!(one_near.to_yocto(), ONE_NEAR);
 
         let ten_near = MilliNear::from_near(10);
-        assert_eq!(ten_near, MilliNear(10_000));
+        assert_eq!(ten_near, MilliNear::of(10_000));
         assert_eq!(ten_near.to_yocto(), 10 * ONE_NEAR);
     }
 
