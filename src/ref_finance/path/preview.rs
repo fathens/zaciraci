@@ -1,5 +1,8 @@
 use crate::milli_near::MilliNear;
 use crate::ref_finance::token_account::TokenOutAccount;
+use near_gas::NearGas;
+
+const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Preview {
@@ -17,11 +20,13 @@ pub struct PreviewList {
 }
 
 impl Preview {
-    const HEAD: u128 = 270_000_000_000_000_000_000;
-    const BY_STEP: u128 = 260_000_000_000_000_000_000;
+    const HEAD: NearGas = NearGas::from_ggas(2700);
+    const BY_STEP: NearGas = NearGas::from_ggas(2600);
 
     fn cost(&self) -> u128 {
-        Self::HEAD + Self::BY_STEP * (self.depth as u128)
+        let gas_price = (MilliNear::of(1).to_yocto() / 10) / 10_u128.pow(12); // 0.0001 NEAR
+        let gas = Self::HEAD.as_gas() + Self::BY_STEP.as_gas() * (self.depth as u64);
+        gas as u128 * gas_price
     }
 
     pub fn gain(&self) -> u128 {
@@ -36,8 +41,6 @@ impl Preview {
         gain - cost
     }
 }
-
-const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
 
 impl PreviewList {
     pub fn new(input_value: u128, previews: Vec<Preview>) -> Option<Self> {
@@ -72,11 +75,12 @@ mod tests {
         token.into()
     }
 
+    const HEAD: u128 = 270_000_000_000_000_000_000;
+    const BY_STEP: u128 = 260_000_000_000_000_000_000;
+    const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
+
     #[test]
     fn test_preview_cost() {
-        const HEAD: u128 = 270_000_000_000_000_000_000;
-        const BY_STEP: u128 = 260_000_000_000_000_000_000;
-
         assert_eq!(
             Preview {
                 input_value: 0,
@@ -110,7 +114,7 @@ mod tests {
                 output_value: MilliNear::of(300).to_yocto(),
             }
             .gain(),
-            MilliNear::of(200).to_yocto() - Preview::HEAD - Preview::BY_STEP
+            MilliNear::of(200).to_yocto() - HEAD - BY_STEP
         );
 
         assert_eq!(
@@ -121,14 +125,12 @@ mod tests {
                 output_value: MilliNear::of(200).to_yocto(),
             }
             .gain(),
-            MilliNear::of(100).to_yocto() - Preview::HEAD - 2 * Preview::BY_STEP
+            MilliNear::of(100).to_yocto() - HEAD - 2 * BY_STEP
         );
     }
 
     #[test]
     fn test_preview_list_total_gain() {
-        const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
-
         let a = Preview {
             input_value: MilliNear::of(100).to_yocto(),
             token: token_out("a.token"),

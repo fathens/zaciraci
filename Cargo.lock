@@ -3320,6 +3320,7 @@ dependencies = [
  "futures-util",
  "moka",
  "near-crypto",
+ "near-gas",
  "near-jsonrpc-client",
  "near-jsonrpc-primitives",
  "near-primitives",
