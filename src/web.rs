@@ -1,7 +1,7 @@
 use crate::persistence::tables;
 use crate::ref_finance::pool_info;
 use crate::ref_finance::token_account::TokenAccount;
-use crate::types::MilliNear;
+use crate::types::{MicroNear, MilliNear};
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -172,7 +172,7 @@ async fn pick_goals(
             for preview in previews {
                 let input_value = preview.input_value;
                 let token_name = preview.token.to_string();
-                let gain = MilliNear::from_yocto(preview.output_value - input_value.to_yocto());
+                let gain = MicroNear::from_yocto(preview.output_value - input_value.to_yocto());
                 result.push_str(&format!("{input_value:?} -> {token_name} -> {gain:?}\n"));
             }
         }
