@@ -136,10 +136,7 @@ fn pick_by_amount<M>(
     limit: usize,
 ) -> Result<Option<PreviewList<M>>>
 where
-    M: Send + Sync + Copy + Hash + Debug,
-    M: Eq + Ord + Zero,
-    M: Add<Output = M> + Sub<Output = M> + Mul<Output = M> + Div<Output = M>,
-    M: From<u128> + Into<u128>,
+    M: Copy + Debug + Into<u128>,
 {
     let log = DEFAULT.new(o!(
         "function" => "pick_by_amount",
