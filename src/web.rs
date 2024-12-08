@@ -146,10 +146,10 @@ async fn list_returns(
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
-    for (goal, value) in sorted_returns {
+    for (goal, value, depth) in sorted_returns {
         let rational = Ratio::new(value.to_yocto(), amount_in.to_yocto());
         let ret = rational.to_f32().unwrap();
-        result.push_str(&format!("{goal}: {ret}\n"));
+        result.push_str(&format!("{goal}: {ret}({depth})\n"));
     }
     result
 }
