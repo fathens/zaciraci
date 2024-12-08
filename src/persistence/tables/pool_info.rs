@@ -30,6 +30,17 @@ pub async fn select_all() -> Result<Vec<PoolInfo>> {
     Ok(result)
 }
 
+pub async fn delete_all() -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "delete_all"));
+    trace!(log, "start");
+    let result = connection_pool::get()
+        .await?
+        .interact(|conn| diesel::delete(pool_info).execute(conn))
+        .await?;
+    trace!(log, "finish"; "count" => result?);
+    Ok(())
+}
+
 pub async fn update_all(records: Vec<PoolInfo>) -> Result<usize> {
     let log = DEFAULT.new(o!(
         "function" => "update_all",

@@ -1,10 +1,11 @@
 use crate::persistence::tables;
 use crate::ref_finance::pool_info;
 use crate::ref_finance::token_account::TokenAccount;
+use crate::types::{MicroNear, MilliNear};
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
-use near_primitives::num_rational::BigRational;
+use num_rational::Ratio;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
 
@@ -35,6 +36,8 @@ pub async fn run() {
             "/pools/list_returns/:token_account/:amount",
             get(list_returns),
         )
+        .with_state(state.clone())
+        .route("/pools/pick_goals/:token_account/:amount", get(pick_goals))
         .with_state(state.clone())
         .route(
             "/pools/run_swap/:token_in_account/:initial_value/:token_out_account/:min_out_ratio",
@@ -74,6 +77,7 @@ async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
 
 async fn update_all_pools(State(_): State<Arc<AppState>>) -> String {
     let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    tables::pool_info::delete_all().await.unwrap();
     let n = pools.save_to_db().await.unwrap();
     format!("Pools: {n}")
 }
@@ -120,7 +124,7 @@ async fn get_return(
 
 async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
     let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let tokens = crate::ref_finance::path::all_tokens(pools);
+    let tokens = crate::ref_finance::path::all_tokens(&pools);
     let mut tokens: Vec<_> = tokens.iter().map(|t| t.to_string()).collect();
     tokens.sort();
     let mut result = String::from("Tokens:\n");
@@ -134,7 +138,7 @@ async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
+    let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
     let mut sorted_returns = crate::ref_finance::path::sorted_returns(start.into(), amount_in)
         .await
@@ -142,10 +146,36 @@ async fn list_returns(
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
-    for (goal, value) in sorted_returns {
-        let rational = BigRational::new(value.into(), amount_in.into());
+    for (goal, value, depth) in sorted_returns {
+        let rational = Ratio::new(value.to_yocto(), amount_in.to_yocto());
         let ret = rational.to_f32().unwrap();
-        result.push_str(&format!("{goal}: {ret}\n"));
+        result.push_str(&format!("{goal}: {ret}({depth})\n"));
+    }
+    result
+}
+
+async fn pick_goals(
+    State(_): State<Arc<AppState>>,
+    Path((token_account, initial_value)): Path<(String, String)>,
+) -> String {
+    let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
+    let start: TokenAccount = token_account.parse().unwrap();
+    let goals = crate::ref_finance::path::pick_goals(start.into(), MilliNear::of(amount_in))
+        .await
+        .unwrap();
+    let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
+    match goals {
+        None => {
+            result.push_str("No goals found\n");
+        }
+        Some(previews) => {
+            for preview in previews {
+                let input_value = MicroNear::from_yocto(preview.input_value);
+                let token_name = preview.token.to_string();
+                let gain = MicroNear::from_yocto(preview.output_value - input_value.to_yocto());
+                result.push_str(&format!("{input_value:?} -> {token_name} -> {gain:?}\n"));
+            }
+        }
     }
     result
 }

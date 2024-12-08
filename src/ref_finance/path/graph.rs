@@ -16,24 +16,19 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
-pub struct TokenGraph {
-    pools: PoolInfoList,
+pub struct TokenGraph<'a> {
+    pools: &'a PoolInfoList,
     graph: CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight>,
 }
 
-impl TokenGraph {
-    pub fn new(pools: PoolInfoList) -> Self {
-        let graph = Self::cached_path(pools.clone());
+impl<'a> TokenGraph<'a> {
+    pub fn new(pools: &'a PoolInfoList) -> Self {
+        let graph = Self::cached_path(pools);
         Self { pools, graph }
     }
 
-    pub fn _refresh(&mut self, pools: PoolInfoList) {
-        self.pools = pools.clone();
-        self.graph = Self::cached_path(pools);
-    }
-
     fn cached_path(
-        pools: PoolInfoList,
+        pools: &PoolInfoList,
     ) -> CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight> {
         let pools_by_token = PoolsByToken::new(pools);
         let mut graph = petgraph::Graph::new();
@@ -55,26 +50,38 @@ impl TokenGraph {
         CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge)
     }
 
+    pub fn update_graph(&self, start: TokenInAccount) -> Result<Vec<TokenOutAccount>> {
+        let log = DEFAULT.new(o!(
+            "function" => "TokenGraph::update_graph",
+            "start" => format!("{:?}", start),
+        ));
+        info!(log, "find goals from start");
+
+        let goals = self.graph.update_path(start.clone(), None)?;
+        for goal in goals.iter() {
+            self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
+        }
+        Ok(goals)
+    }
+
     pub fn list_returns(
         &self,
         initial: u128,
         start: TokenInAccount,
+        goals: &[TokenOutAccount],
     ) -> Result<Vec<(TokenOutAccount, u128)>> {
         let log = DEFAULT.new(o!(
             "function" => "TokenGraph::list_returns",
             "initial" => initial,
             "start" => format!("{:?}", start),
         ));
-        let goals = self.graph.update_path(start.clone(), None)?;
-        for goal in goals.iter() {
-            self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
-        }
+        info!(log, "start");
 
         let mut returns = HashMap::new();
-        for goal in goals.into_iter() {
+        for goal in goals.iter() {
             match self.estimate_return(initial, start.clone(), goal.clone()) {
                 Ok(value) => {
-                    returns.insert(goal, value);
+                    returns.insert(goal.clone(), value);
                 }
                 Err(e) => {
                     error!(log, "failed to estimate return"; "goal" => ?goal, "error" => ?e);
@@ -113,7 +120,7 @@ impl TokenGraph {
         let mut result = Vec::new();
         let edges = self.graph.get_edges(start.clone(), goal.clone())?;
         for edge in edges.iter() {
-            let pair_id = edge.pair_id.expect("should be pair id");
+            let pair_id = edge.pair_id().expect("should be pair id");
             let pair = self.pools.get_pair(pair_id)?;
             result.push(pair);
         }
@@ -197,6 +204,7 @@ where
         } else {
             None
         };
+        debug!(log, "finding by dijkstra"; "from" => ?from, "to" => ?to);
         let goals = algo::dijkstra(&self.graph, from, to, |e| *e.weight());
         debug!(log, "goals"; "goals" => ?goals);
 
@@ -260,7 +268,7 @@ struct GraphPath<'a, N, W> {
     goals: &'a HashMap<NodeIndex, W>,
 }
 
-impl<'a, N, W> GraphPath<'a, N, W>
+impl<N, W> GraphPath<'_, N, W>
 where
     N: Debug + Eq + Clone + Hash,
     W: Debug + Eq + Copy + Add<Output = W>,
@@ -339,6 +347,7 @@ where
 mod test {
     use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
+    use crate::ref_finance::pool_info::TokenPairId;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
     use petgraph::Graph;
@@ -346,7 +355,6 @@ mod test {
     use std::fmt::Debug;
     use std::ops::Add;
     use std::panic;
-    use std::thread::sleep;
 
     #[derive(Default, PartialOrd, Eq, Hash, Copy, Clone)]
     struct Edge<'a> {
@@ -561,22 +569,24 @@ mod test {
                 vec!["J", "I", "G", "E", "C"],
             ]
         );
-
-        sleep(std::time::Duration::from_secs(1));
     }
 
     #[test]
     fn test_find_all_path_looped() {
         fn weight(v: u8) -> EdgeWeight {
-            let d = EdgeWeight::default();
-            EdgeWeight {
-                pair_id: None,
-                estimated_return: (v as u128) * d.estimated_return,
-            }
+            EdgeWeight::new(
+                TokenPairId {
+                    pool_id: 0,
+                    token_in: 0.into(),
+                    token_out: 0.into(),
+                },
+                1,
+                v as u128,
+            )
         }
-        //  B-0-C
+        //  B-1-C
         //  |   |
-        //  1   1
+        //  2   2
         //   \ /
         //    A
         let mut graph = Graph::new();
@@ -584,10 +594,10 @@ mod test {
         let b = graph.add_node("B");
         let c = graph.add_node("C");
 
-        graph.add_edge(a, b, weight(1));
-        graph.add_edge(a, c, weight(1));
-        graph.add_edge(b, c, weight(0));
-        graph.add_edge(c, b, weight(0));
+        graph.add_edge(a, b, weight(2));
+        graph.add_edge(a, c, weight(2));
+        graph.add_edge(b, c, weight(1));
+        graph.add_edge(c, b, weight(1));
 
         let goals = dijkstra(&graph, a, None, |e| *e.weight());
         assert_eq!(goals.len(), 3);
@@ -601,7 +611,5 @@ mod test {
         results.sort();
 
         assert_eq!(results, vec![vec!["B"], vec!["C"]]);
-
-        sleep(std::time::Duration::from_secs(1));
     }
 }

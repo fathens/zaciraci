@@ -82,3 +82,9 @@ impl From<slipped10::Error> for Error {
         Error::Plain(value.to_string())
     }
 }
+
+impl From<tokio::task::JoinError> for Error {
+    fn from(e: tokio::task::JoinError) -> Error {
+        Error::Plain(e.to_string())
+    }
+}

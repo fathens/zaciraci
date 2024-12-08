@@ -7,6 +7,7 @@ mod jsonrpc;
 mod logging;
 mod persistence;
 mod ref_finance;
+mod types;
 mod wallet;
 mod web;
 
