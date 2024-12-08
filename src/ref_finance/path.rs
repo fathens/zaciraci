@@ -198,6 +198,11 @@ where
     let gain = |a| get_gain(a).into();
     let mut cache = HashMap::new();
     let mut join_calcs = |a, b, c| -> Result<(M, M, M)> {
+        debug!(log, "join_calcs";
+            "a" => format!("{:?}", a),
+            "b" => format!("{:?}", b),
+            "c" => format!("{:?}", c)
+        );
         let missings: Vec<_> = [a, b, c]
             .into_iter()
             .filter(|value| !cache.contains_key(value))
@@ -291,7 +296,11 @@ where
         }
     }
 
-    info!(log, "finish");
+    info!(log, "finish";
+        "a" => format!("{:?}", in_a),
+        "b" => format!("{:?}", in_b),
+        "c" => format!("{:?}", in_c)
+    );
     cache.get(&in_a).cloned().unwrap_or(Ok(None))
 }
 
