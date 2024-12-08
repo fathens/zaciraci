@@ -1,5 +1,5 @@
-use crate::milli_near::MilliNear;
 use crate::ref_finance::token_account::TokenOutAccount;
+use crate::types::MilliNear;
 use near_gas::NearGas;
 use near_primitives::types::Balance;
 

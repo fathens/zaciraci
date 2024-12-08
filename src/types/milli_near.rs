@@ -15,7 +15,7 @@ impl MilliNear {
         MilliNear(n.as_millinear() as u32)
     }
 
-    pub const fn to_yocto(&self) -> u128 {
+    pub const fn to_yocto(self) -> u128 {
         let n = NearToken::from_millinear(self.0 as u128);
         n.as_yoctonear()
     }

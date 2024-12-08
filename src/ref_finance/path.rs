@@ -1,8 +1,8 @@
 use crate::logging::*;
-use crate::milli_near::MilliNear;
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::types::MilliNear;
 use crate::{jsonrpc, Result};
 use async_once_cell::OnceCell;
 use graph::TokenGraph;
