@@ -74,6 +74,34 @@ impl<M> PreviewList<M> {
     }
 }
 
+impl<M> PreviewList<M>
+where
+    M: Copy,
+{
+    pub fn convert<F, D>(&self, converter: F) -> PreviewList<D>
+    where
+        F: Fn(M) -> D,
+    {
+        let list = self
+            .list
+            .iter()
+            .map(|p| Preview {
+                gas_price: p.gas_price,
+                input_value: converter(p.input_value),
+                token: p.token.clone(),
+                depth: p.depth,
+                output_value: p.output_value,
+                gain: p.gain,
+            })
+            .collect();
+        PreviewList {
+            input_value: converter(self.input_value),
+            list,
+            total_gain: self.total_gain,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

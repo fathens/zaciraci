@@ -60,7 +60,7 @@ pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<V
 pub async fn pick_goals(
     start: TokenInAccount,
     total_amount: MilliNear,
-) -> Result<Option<Vec<Preview<MicroNear>>>> {
+) -> Result<Option<Vec<Preview<Balance>>>> {
     let pools = get_pools_in_db().await?;
     let gas_price = jsonrpc::get_gas_price(None).await?;
     let previews = pick_previews(pools, start, MicroNear::from_milli(total_amount), gas_price)?;
@@ -73,7 +73,7 @@ pub async fn pick_goals(
             total_gain >= MIN_GAIN
         })
         .into_iter()
-        .map(|previews| previews.list)
+        .map(|previews| previews.convert(|m| m.to_yocto()).list)
         .next();
 
     Ok(result)
