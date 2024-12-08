@@ -101,7 +101,14 @@ where
     ));
     info!(log, "start");
 
-    let stats_ave = history::get_history().read().unwrap().inputs.average();
+    let stats_ave = {
+        let ave = history::get_history().read().unwrap().inputs.average();
+        if ave.is_zero() {
+            total_amount.into() / 2
+        } else {
+            ave
+        }
+    };
     let graph = TokenGraph::new(all_pools);
     let goals = graph.update_graph(start.clone())?;
 
