@@ -118,7 +118,7 @@ pub fn pick_previews(
         a.total_gain
     })?;
     info!(log, "finish");
-    Ok(result.map(|a| Arc::try_unwrap(a).expect("should be unwrapped")))
+    Ok(result.map(|a| Arc::into_inner(a).expect("should be unwrapped")))
 }
 
 fn pick_by_amount(
