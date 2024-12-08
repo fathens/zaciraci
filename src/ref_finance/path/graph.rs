@@ -355,7 +355,6 @@ mod test {
     use std::fmt::Debug;
     use std::ops::Add;
     use std::panic;
-    use std::thread::sleep;
 
     #[derive(Default, PartialOrd, Eq, Hash, Copy, Clone)]
     struct Edge<'a> {
@@ -570,8 +569,6 @@ mod test {
                 vec!["J", "I", "G", "E", "C"],
             ]
         );
-
-        sleep(std::time::Duration::from_secs(1));
     }
 
     #[test]
@@ -614,7 +611,5 @@ mod test {
         results.sort();
 
         assert_eq!(results, vec![vec!["B"], vec!["C"]]);
-
-        sleep(std::time::Duration::from_secs(1));
     }
 }
