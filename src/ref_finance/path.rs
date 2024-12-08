@@ -7,6 +7,7 @@ use crate::{jsonrpc, Result};
 use async_once_cell::OnceCell;
 use graph::TokenGraph;
 use near_primitives::types::Balance;
+use num_integer::Roots;
 use num_traits::{one, zero, One, Zero};
 use rayon::prelude::*;
 use slog::info;
@@ -101,12 +102,15 @@ where
     ));
     info!(log, "start");
 
-    let stats_ave = {
+    let min_input: M = one();
+    let ave_input: M = {
         let ave = history::get_history().read().unwrap().inputs.average();
         if ave.is_zero() {
-            total_amount.into() / 2
+            let min = min_input.into();
+            let max = total_amount.into();
+            ((max / min).sqrt() * min).into()
         } else {
-            ave
+            ave.into()
         }
     };
     let graph = TokenGraph::new(all_pools);
@@ -119,7 +123,7 @@ where
         if value.is_zero() {
             return Ok(None);
         }
-        let limit = (total_amount / value).into() as usize;
+        let limit = (total_amount.into() / value.into()) as usize;
         if limit > 0 {
             let previews = pick_by_amount(&graph, &start, &goals, gas_price, value, limit)?;
             return Ok(previews.map(Arc::new));
@@ -127,7 +131,7 @@ where
         Ok(None)
     };
 
-    let result = search_best_path(one(), stats_ave.into(), total_amount, do_pick, |a| {
+    let result = search_best_path(min_input, ave_input, total_amount, do_pick, |a| {
         a.total_gain
     })?;
     info!(log, "finish");
@@ -198,11 +202,6 @@ where
     let gain = |a| get_gain(a).into();
     let mut cache = HashMap::new();
     let mut join_calcs = |a, b, c| -> Result<(M, M, M)> {
-        debug!(log, "join_calcs";
-            "a" => format!("{:?}", a),
-            "b" => format!("{:?}", b),
-            "c" => format!("{:?}", c)
-        );
         let missings: Vec<_> = [a, b, c]
             .into_iter()
             .filter(|value| !cache.contains_key(value))
@@ -229,6 +228,14 @@ where
     let mut in_c = max;
     while in_a < in_c {
         let (a, b, c) = join_calcs(in_a, in_b, in_c)?;
+        debug!(log, "join_calced";
+            "in_a" => format!("{:?}", in_a),
+            "in_b" => format!("{:?}", in_b),
+            "in_c" => format!("{:?}", in_c),
+            "a" => format!("{:?}", a),
+            "b" => format!("{:?}", b),
+            "c" => format!("{:?}", c)
+        );
 
         if a == b && b == c && a == 0.into() {
             /* 全てゼロ
