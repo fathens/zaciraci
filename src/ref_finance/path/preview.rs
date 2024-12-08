@@ -3,8 +3,6 @@ use crate::ref_finance::token_account::TokenOutAccount;
 use near_gas::NearGas;
 use near_primitives::types::Balance;
 
-const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
-
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Preview {
     pub gas_price: Balance,
@@ -63,31 +61,19 @@ impl Preview {
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct PreviewList {
-    input_value: MilliNear,
-    list: Vec<Preview>,
-    total_gain: u128,
+    pub input_value: MilliNear,
+    pub list: Vec<Preview>,
+    pub total_gain: u128,
 }
 
 impl PreviewList {
     pub fn new(input_value: MilliNear, previews: Vec<Preview>) -> Option<Self> {
-        let gains: u128 = previews.iter().map(|p| p.gain).sum();
-        if gains <= MIN_GAIN {
-            return None;
-        }
-        let total_gain = gains - MIN_GAIN;
+        let total_gain: u128 = previews.iter().map(|p| p.gain).sum();
         Some(PreviewList {
             input_value,
             list: previews,
             total_gain,
         })
-    }
-
-    pub fn get_list(&self) -> Vec<Preview> {
-        self.list.clone()
-    }
-
-    pub fn total_gain(&self) -> u128 {
-        self.total_gain
     }
 }
 
@@ -103,7 +89,6 @@ mod tests {
 
     const HEAD: u128 = 270_000_000_000_000_000_000;
     const BY_STEP: u128 = 260_000_000_000_000_000_000;
-    const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
     const MIN_GAS_PRICE: Balance = 100_000_000;
 
     #[test]
@@ -153,6 +138,6 @@ mod tests {
         );
         let previews = vec![a.clone(), b.clone()];
         let preview_list = PreviewList::new(MilliNear::of(100), previews).unwrap();
-        assert_eq!(preview_list.total_gain(), a.gain + b.gain - MIN_GAIN);
+        assert_eq!(preview_list.total_gain, a.gain + b.gain);
     }
 }

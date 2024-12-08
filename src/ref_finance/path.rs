@@ -63,15 +63,29 @@ pub async fn pick_goals(
     let pools = get_pools_in_db().await?;
     let gas_price = jsonrpc::get_gas_price(None).await?;
     let previews = pick_previews(pools, start, total_amount, gas_price)?;
-    Ok(previews)
+
+    const REPEAT: usize = 3;
+
+    let result = previews
+        .filter(|previews| {
+            let total_gain = previews.total_gain * REPEAT as u128;
+            total_gain >= MIN_GAIN
+        })
+        .into_iter()
+        .map(|previews| previews.list)
+        .next();
+
+    Ok(result)
 }
+
+const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
 
 pub fn pick_previews(
     all_pools: &PoolInfoList,
     start: TokenInAccount,
     total_amount: MilliNear,
     gas_price: Balance,
-) -> Result<Option<Vec<Preview>>> {
+) -> Result<Option<PreviewList>> {
     let log = DEFAULT.new(o!(
         "function" => "pick_previews",
         "start" => format!("{:?}", start),
@@ -100,10 +114,10 @@ pub fn pick_previews(
     };
 
     let result = search_best_path(one(), stats_ave.into(), total_amount, do_pick, |a| {
-        a.total_gain()
+        a.total_gain
     })?;
     info!(log, "finish");
-    Ok(result.map(|a| a.get_list()))
+    Ok(result.map(|a| Arc::try_unwrap(a).expect("should be unwrapped")))
 }
 
 fn pick_by_amount(
