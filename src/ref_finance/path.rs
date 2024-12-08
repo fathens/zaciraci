@@ -82,6 +82,13 @@ pub async fn pick_goals(
 
 const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
 
+fn rate_average<M: Into<u128>>(min: M, max: M) -> u128 {
+    let min = min.into();
+    let max = max.into();
+    let s = (max / min).sqrt();
+    s * min
+}
+
 pub fn pick_previews<M>(
     all_pools: &PoolInfoList,
     start: TokenInAccount,
@@ -102,13 +109,11 @@ where
     ));
     info!(log, "start");
 
-    let min_input: M = one();
-    let ave_input: M = {
+    let min_input = one();
+    let ave_input = {
         let ave = history::get_history().read().unwrap().inputs.average();
         if ave.is_zero() {
-            let min = min_input.into();
-            let max = total_amount.into();
-            ((max / min).sqrt() * min).into()
+            rate_average(min_input, total_amount).into()
         } else {
             ave.into()
         }
@@ -604,6 +609,14 @@ mod test {
                 (1_u64, "end calc: 1, end calc: 2, end calc: 3".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn test_rate_averate() {
+        assert_eq!(rate_average(1_u128, 1), 1);
+        assert_eq!(rate_average(1_u128, 100), 10);
+        assert_eq!(rate_average(10_u128, 1000), 100);
+        assert_eq!(rate_average(10_u128, 100000), 1000);
     }
 
     mod test_static {
