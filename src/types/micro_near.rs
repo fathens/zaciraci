@@ -1,4 +1,5 @@
 use crate::types::MilliNear;
+use near_primitives::types::Balance;
 use near_sdk::NearToken;
 use num_traits::{One, Zero};
 use std::ops::{Add, Div, Mul, Sub};
@@ -33,13 +34,13 @@ impl MicroNear {
     }
 }
 
-impl From<u128> for MicroNear {
+impl From<Balance> for MicroNear {
     fn from(yocto: u128) -> Self {
         MicroNear::from_yocto(yocto)
     }
 }
 
-impl From<MicroNear> for u128 {
+impl From<MicroNear> for Balance {
     fn from(micro: MicroNear) -> Self {
         micro.to_yocto()
     }

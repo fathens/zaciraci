@@ -14,7 +14,7 @@ pub struct Preview<M> {
 
 impl<M> Preview<M>
 where
-    M: Into<u128> + Copy,
+    M: Into<Balance> + Copy,
 {
     const HEAD: NearGas = NearGas::from_ggas(2700);
     const BY_STEP: NearGas = NearGas::from_ggas(2600);
@@ -114,7 +114,7 @@ mod tests {
             Preview::gain(
                 MIN_GAS_PRICE,
                 2,
-                MilliNear::of(100),
+                MicroNear::of(100_000),
                 MilliNear::of(200).to_yocto()
             ),
             MilliNear::of(100).to_yocto() - HEAD - 2 * BY_STEP
@@ -122,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn test_preview_list_total_gain() {
+    fn test_preview_list_total_gain_milli() {
         let a = Preview::new(
             MIN_GAS_PRICE,
             MilliNear::of(100),
@@ -139,6 +139,27 @@ mod tests {
         );
         let previews = vec![a.clone(), b.clone()];
         let preview_list = PreviewList::new(MilliNear::of(100), previews).unwrap();
+        assert_eq!(preview_list.total_gain, a.gain + b.gain);
+    }
+
+    #[test]
+    fn test_preview_list_total_gain_micro() {
+        let a = Preview::new(
+            MIN_GAS_PRICE,
+            MicroNear::of(100_000),
+            token_out("a.token"),
+            1,
+            MilliNear::of(300).to_yocto(),
+        );
+        let b = Preview::new(
+            MIN_GAS_PRICE,
+            MicroNear::of(100_000),
+            token_out("b.token"),
+            1,
+            MilliNear::of(200).to_yocto(),
+        );
+        let previews = vec![a.clone(), b.clone()];
+        let preview_list = PreviewList::new(MicroNear::of(100_000), previews).unwrap();
         assert_eq!(preview_list.total_gain, a.gain + b.gain);
     }
 }

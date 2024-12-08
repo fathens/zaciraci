@@ -1,3 +1,4 @@
+use near_primitives::types::Balance;
 use near_sdk::NearToken;
 use num_traits::{One, Zero};
 use std::ops::{Add, Div, Mul, Sub};
@@ -26,13 +27,13 @@ impl MilliNear {
     }
 }
 
-impl From<u128> for MilliNear {
+impl From<Balance> for MilliNear {
     fn from(yocto: u128) -> Self {
         MilliNear::from_yocto(yocto)
     }
 }
 
-impl From<MilliNear> for u128 {
+impl From<MilliNear> for Balance {
     fn from(milli: MilliNear) -> Self {
         milli.to_yocto()
     }
