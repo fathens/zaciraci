@@ -1,25 +1,27 @@
 use crate::ref_finance::token_account::TokenOutAccount;
-use crate::types::MilliNear;
 use near_gas::NearGas;
 use near_primitives::types::Balance;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct Preview {
+pub struct Preview<M> {
     pub gas_price: Balance,
-    pub input_value: MilliNear,
+    pub input_value: M,
     pub token: TokenOutAccount,
     pub depth: usize,
     pub output_value: u128,
     pub gain: Balance,
 }
 
-impl Preview {
+impl<M> Preview<M>
+where
+    M: Into<u128> + Copy,
+{
     const HEAD: NearGas = NearGas::from_ggas(2700);
     const BY_STEP: NearGas = NearGas::from_ggas(2600);
 
     pub fn new(
         gas_price: Balance,
-        input_value: MilliNear,
+        input_value: M,
         token: TokenOutAccount,
         depth: usize,
         output_value: Balance,
@@ -40,13 +42,8 @@ impl Preview {
         gas as u128 * gas_price
     }
 
-    fn gain(
-        gas_price: Balance,
-        depth: usize,
-        input_value: MilliNear,
-        output_value: Balance,
-    ) -> u128 {
-        let input_value = input_value.to_yocto();
+    fn gain(gas_price: Balance, depth: usize, input_value: M, output_value: Balance) -> u128 {
+        let input_value = input_value.into();
         if output_value <= input_value {
             return 0;
         }
@@ -60,14 +57,14 @@ impl Preview {
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
-pub struct PreviewList {
-    pub input_value: MilliNear,
-    pub list: Vec<Preview>,
+pub struct PreviewList<M> {
+    pub input_value: M,
+    pub list: Vec<Preview<M>>,
     pub total_gain: u128,
 }
 
-impl PreviewList {
-    pub fn new(input_value: MilliNear, previews: Vec<Preview>) -> Option<Self> {
+impl<M> PreviewList<M> {
+    pub fn new(input_value: M, previews: Vec<Preview<M>>) -> Option<Self> {
         let total_gain: u128 = previews.iter().map(|p| p.gain).sum();
         Some(PreviewList {
             input_value,
@@ -81,20 +78,24 @@ impl PreviewList {
 mod tests {
     use super::*;
     use crate::ref_finance::token_account::{TokenAccount, TokenOutAccount};
+    use crate::types::{MicroNear, MilliNear};
 
     fn token_out(token: &str) -> TokenOutAccount {
         let token: TokenAccount = token.parse().unwrap();
         token.into()
     }
 
-    const HEAD: u128 = 270_000_000_000_000_000_000;
-    const BY_STEP: u128 = 260_000_000_000_000_000_000;
+    const HEAD: u128 = MicroNear::of(270).to_yocto();
+    const BY_STEP: u128 = MicroNear::of(260).to_yocto();
     const MIN_GAS_PRICE: Balance = 100_000_000;
 
     #[test]
     fn test_preview_cost() {
-        assert_eq!(Preview::cost(MIN_GAS_PRICE, 1), HEAD + BY_STEP);
-        assert_eq!(Preview::cost(MIN_GAS_PRICE, 2), HEAD + 2 * BY_STEP);
+        assert_eq!(Preview::<MilliNear>::cost(MIN_GAS_PRICE, 1), HEAD + BY_STEP);
+        assert_eq!(
+            Preview::<MilliNear>::cost(MIN_GAS_PRICE, 2),
+            HEAD + 2 * BY_STEP
+        );
     }
 
     #[test]
