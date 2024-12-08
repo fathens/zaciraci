@@ -155,6 +155,7 @@ mod tests {
     fn test_milli_near_div() {
         assert_eq!(MilliNear::zero() / MilliNear::one(), MilliNear::zero());
         assert_eq!(MilliNear::one() / MilliNear::one(), MilliNear::one());
+        assert_eq!(MilliNear::one() / MilliNear::zero(), MilliNear::zero());
         assert_eq!(MilliNear(6) / MilliNear(3), MilliNear(2));
     }
 }
