@@ -584,9 +584,9 @@ mod test {
                 v as u128,
             )
         }
-        //  B-0-C
+        //  B-1-C
         //  |   |
-        //  1   1
+        //  2   2
         //   \ /
         //    A
         let mut graph = Graph::new();
@@ -594,10 +594,10 @@ mod test {
         let b = graph.add_node("B");
         let c = graph.add_node("C");
 
-        graph.add_edge(a, b, weight(1));
-        graph.add_edge(a, c, weight(1));
-        graph.add_edge(b, c, weight(0));
-        graph.add_edge(c, b, weight(0));
+        graph.add_edge(a, b, weight(2));
+        graph.add_edge(a, c, weight(2));
+        graph.add_edge(b, c, weight(1));
+        graph.add_edge(c, b, weight(1));
 
         let goals = dijkstra(&graph, a, None, |e| *e.weight());
         assert_eq!(goals.len(), 3);
