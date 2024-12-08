@@ -6,7 +6,7 @@ use near_jsonrpc_client::{methods, JsonRpcClient};
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::action::{Action, FunctionCallAction};
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
-use near_primitives::types::{Balance, Finality};
+use near_primitives::types::{Balance, BlockId, Finality};
 use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest};
 use near_sdk::{AccountId, CryptoHash, Gas};
 use once_cell::sync::Lazy;
@@ -40,6 +40,12 @@ pub async fn get_recent_block() -> Result<BlockView> {
     };
     let res = CLIENT.call(req).await?;
     Ok(res)
+}
+
+pub async fn get_gas_price(block: Option<BlockId>) -> Result<Balance> {
+    let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
+    let res = CLIENT.call(req).await?;
+    Ok(res.gas_price)
 }
 
 pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyView> {

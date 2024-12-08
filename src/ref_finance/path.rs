@@ -3,9 +3,10 @@ use crate::milli_near::MilliNear;
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
-use crate::Result;
+use crate::{jsonrpc, Result};
 use async_once_cell::OnceCell;
 use graph::TokenGraph;
+use near_primitives::types::Balance;
 use num_traits::{one, zero, Zero};
 use rayon::prelude::*;
 use slog::info;
@@ -60,7 +61,8 @@ pub async fn pick_goals(
     total_amount: MilliNear,
 ) -> Result<Option<Vec<Preview>>> {
     let pools = get_pools_in_db().await?;
-    let previews = pick_previews(pools, start, total_amount)?;
+    let gas_price = jsonrpc::get_gas_price(None).await?;
+    let previews = pick_previews(pools, start, total_amount, gas_price)?;
     Ok(previews)
 }
 
@@ -68,11 +70,13 @@ pub fn pick_previews(
     all_pools: &PoolInfoList,
     start: TokenInAccount,
     total_amount: MilliNear,
+    gas_price: Balance,
 ) -> Result<Option<Vec<Preview>>> {
     let log = DEFAULT.new(o!(
         "function" => "pick_previews",
         "start" => format!("{:?}", start),
-        "total_amount" => format!("{:?}", total_amount)
+        "total_amount" => format!("{:?}", total_amount),
+        "gas_price" => format!("{:?}", gas_price),
     ));
     info!(log, "start");
 
@@ -80,17 +84,16 @@ pub fn pick_previews(
     let graph = TokenGraph::new(all_pools);
     let goals = graph.update_graph(start.clone())?;
 
-    let do_pick = |value_in_milli: MilliNear| {
+    let do_pick = |value: MilliNear| {
         debug!(log, "do_pick";
-            "value" => format!("{:?}", value_in_milli)
+            "value" => format!("{:?}", value)
         );
-        if value_in_milli.is_zero() {
+        if value.is_zero() {
             return Ok(None);
         }
-        let value = value_in_milli.to_yocto();
-        let limit = (total_amount.to_yocto() / value) as usize;
+        let limit = (total_amount / value).to_yocto() as usize;
         if limit > 0 {
-            let previews = pick_by_amount(&graph, &start, &goals, value, limit)?;
+            let previews = pick_by_amount(&graph, &start, &goals, gas_price, value, limit)?;
             return Ok(previews.map(Arc::new));
         }
         Ok(None)
@@ -107,28 +110,25 @@ fn pick_by_amount(
     graph: &TokenGraph,
     start: &TokenInAccount,
     goals: &[TokenOutAccount],
-    amount: u128,
+    gas_price: Balance,
+    amount: MilliNear,
     limit: usize,
 ) -> Result<Option<PreviewList>> {
     let log = DEFAULT.new(o!(
         "function" => "pick_by_amount",
         "start" => format!("{:?}", start),
-        "amount" => amount,
+        "gas_price" => format!("{:?}", gas_price),
+        "amount" => format!("{:?}", amount),
         "limit" => limit
     ));
     info!(log, "start");
 
-    let list = graph.list_returns(amount, start.clone(), goals)?;
+    let list = graph.list_returns(amount.to_yocto(), start.clone(), goals)?;
     let mut goals = vec![];
     for (goal, output) in list.into_iter().take(limit) {
         let path = graph.get_path_with_return(start.clone(), goal.clone())?;
-        let preview = Preview {
-            input_value: amount,
-            token: goal,
-            depth: path.len(),
-            output_value: output,
-        };
-        let gain = preview.gain();
+        let preview = Preview::new(gas_price, amount, goal, path.len(), output);
+        let gain = preview.gain;
         if gain > 0 {
             goals.push(preview);
         } else {

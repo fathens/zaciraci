@@ -170,10 +170,10 @@ async fn pick_goals(
         }
         Some(previews) => {
             for preview in previews {
-                let in_milli = MilliNear::from_yocto(preview.input_value);
+                let input_value = preview.input_value;
                 let token_name = preview.token.to_string();
-                let gain = MilliNear::from_yocto(preview.output_value - preview.input_value);
-                result.push_str(&format!("{in_milli:?} -> {token_name} -> {gain:?}\n"));
+                let gain = MilliNear::from_yocto(preview.output_value - input_value.to_yocto());
+                result.push_str(&format!("{input_value:?} -> {token_name} -> {gain:?}\n"));
             }
         }
     }
