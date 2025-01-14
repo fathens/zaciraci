@@ -9,7 +9,6 @@ pub struct MicroNear(u64);
 
 const ONE_MICRONEAR: u128 = 10_u128.pow(18);
 
-#[allow(dead_code)]
 impl MicroNear {
     pub const fn of(value: u64) -> Self {
         MicroNear(value)
