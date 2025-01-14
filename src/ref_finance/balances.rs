@@ -13,11 +13,11 @@ const INTERVAL_OF_PUTBACK: u64 = 24 * 60 * 60;
 static LAST_PUTBACK: AtomicU64 = AtomicU64::new(0);
 
 fn is_time_to_putback() -> bool {
+    let last = LAST_PUTBACK.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let last = LAST_PUTBACK.load(Ordering::Relaxed);
     now - last > INTERVAL_OF_PUTBACK
 }
 
