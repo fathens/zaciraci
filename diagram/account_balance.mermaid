@@ -1,7 +1,8 @@
 graph TD
-    StatsHistory[履歴の集計] -->|必要額 = 今までの最大値<br>（履歴無しなら default を使う）| WrappedAmount{Wrapped の残高}
+    Start((START)) --> StatsHistory[履歴の集計]
+    StatsHistory -->|必要額 = 今までの最大値<br>（履歴無しなら default を使う）| WrappedAmount{Wrapped の残高}
     WrappedAmount -->|必要額の10倍より大きい| PutBack
-    WrappedAmount -->|必要額以上で<br>必要額の10倍以下| END
+    WrappedAmount -->|必要額以上で<br>必要額の10倍以下| End((END))
     WrappedAmount -->|必要額より小さい| PutWrap
 
     subgraph PutWrap[補充]
@@ -16,3 +17,6 @@ graph TD
         Withdraw -->|YES| Back
         NativeAmount -->|NO| NoAction
     end
+
+    PutWrap --> End
+    PutBack --> End
