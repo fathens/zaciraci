@@ -1,12 +1,18 @@
 graph TD
-    StatsHistory[履歴の集計] -->|必要額<br>（履歴無しなら default を使う）| WrappedAmount
-    WrappedAmount -->|余分がある| Withdraw
-    WrappedAmount -->|不足している| CheckNative[ネイティブ残高の確認]
-    CheckNative -->|足りる| DepositFull[必要なだけ Deposit]
-    CheckNative -->|足りない| DepositLess[minimum だけ残して Deposit]
-    DepositFull --> END
-    DepositLess --> END
-    Withdraw --> NativeAmount
-    NativeAmount -->|必要額の10倍以下| END
-    NativeAmount -->|必要額の10倍より大きい| PutBack
-    PutBack --> END
+    StatsHistory[履歴の集計] -->|必要額 = 今までの最大値<br>（履歴無しなら default を使う）| WrappedAmount{Wrapped の残高}
+    WrappedAmount -->|必要額の10倍より大きい| PutBack
+    WrappedAmount -->|必要額以上で<br>必要額の10倍以下| END
+    WrappedAmount -->|必要額より小さい| PutWrap
+
+    subgraph PutWrap[補充]
+        CheckNative{ネイティブ残高の確認}
+        CheckNative -->|足りる| DepositFull[必要なだけ Deposit]
+        CheckNative -->|足りない| DepositLess[minimum だけ残して Deposit]
+    end
+
+    subgraph PutBack[引き出し]
+        NativeAmount{Nativeが<br>必要額の100倍より大きく<br>前回の PutBack から<br>24時間以上経過}
+        NativeAmount --> Withdraw
+        Withdraw -->|YES| Back
+        NativeAmount -->|NO| NoAction
+    end
