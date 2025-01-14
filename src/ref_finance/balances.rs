@@ -70,6 +70,10 @@ mod tests {
     fn test_update_last_putback() {
         LAST_PUTBACK.store(0, Ordering::Relaxed);
         update_last_putback();
-        assert!(LAST_PUTBACK.load(Ordering::Relaxed) > 0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(now, LAST_PUTBACK.load(Ordering::Relaxed));
     }
 }
