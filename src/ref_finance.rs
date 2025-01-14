@@ -1,3 +1,4 @@
+pub mod balances;
 pub mod deposit;
 pub mod errors;
 mod history;
