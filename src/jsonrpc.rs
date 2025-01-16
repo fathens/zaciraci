@@ -42,6 +42,21 @@ pub async fn get_recent_block() -> Result<BlockView> {
     Ok(res)
 }
 
+pub async fn get_native_amount() -> Result<Balance> {
+    let req = methods::query::RpcQueryRequest {
+        block_reference: Finality::Final.into(),
+        request: QueryRequest::ViewAccount {
+            account_id: "account.testnet".parse().unwrap(),
+        },
+    };
+    let res = CLIENT.call(req).await?;
+    if let QueryResponseKind::ViewAccount(am) = res.kind {
+        Ok(am.amount)
+    } else {
+        panic!("View account is not view account")
+    }
+}
+
 pub async fn get_gas_price(block: Option<BlockId>) -> Result<Balance> {
     let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
     let res = CLIENT.call(req).await?;

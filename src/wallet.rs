@@ -75,8 +75,8 @@ impl Wallet {
         bs58::encode(self.signing_key.verifying_key()).into_string()
     }
 
-    pub fn account_id(&self) -> AccountId {
-        self.account_id.clone()
+    pub fn account_id(&self) -> &AccountId {
+        &self.account_id
     }
 
     pub fn derive(&self, index: i32) -> Result<Wallet> {

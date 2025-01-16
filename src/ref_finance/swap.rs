@@ -44,7 +44,7 @@ pub async fn run_swap(
     let path = path::swap_path(start, goal).await?;
     let account = wallet::WALLET.account_id();
     let tokens = gather_token_accounts(&path);
-    storage::check_and_deposit(&account, &tokens).await?;
+    storage::check_and_deposit(account, &tokens).await?;
 
     let mut actions = Vec::new();
     let out = path
