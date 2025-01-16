@@ -73,8 +73,10 @@ async fn balance_of_start_token() -> Result<Balance> {
 
 async fn refill(want: Balance) -> Result<()> {
     let native_balance = jsonrpc::get_native_amount().await?;
-    let avalable = native_balance - MINIMUM_NATIVE_BALANCE;
-    let amount = want.min(avalable);
+    let amount = native_balance
+        .checked_sub(MINIMUM_NATIVE_BALANCE)
+        .unwrap_or_default()
+        .min(want);
 
     let token = &*token_account::START_TOKEN;
     deposit::deposit(token, amount).await
