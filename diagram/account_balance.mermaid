@@ -12,9 +12,8 @@ graph TD
     end
 
     subgraph Harvest[収穫]
-        NativeAmount{Nativeが<br>必要額の100倍より大きく<br>前回の PutBack から<br>24時間以上経過}
-        NativeAmount --> Withdraw
-        Withdraw -->|YES| Back
+        Withdraw --> NativeAmount{Native が<br>必要額の100倍より大きく<br>前回の収穫から<br>24時間以上経過}
+        NativeAmount -->|YES| Back
         NativeAmount -->|NO| NoAction
     end
 

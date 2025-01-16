@@ -2,6 +2,7 @@ use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::{jsonrpc, wallet, Result};
+use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
 use serde_json::json;
@@ -47,6 +48,10 @@ pub async fn get_deposits(account: &AccountId) -> Result<HashMap<TokenAccount, U
     let deposits: HashMap<TokenAccount, U128> = serde_json::from_slice(&result.result)?;
     info!(log, "deposits"; "deposits" => ?deposits);
     Ok(deposits)
+}
+
+pub async fn withdraw(_: &TokenAccount, _: Balance) -> Result<()> {
+    todo!()
 }
 
 pub async fn unregister_tokens(tokens: &[TokenAccount]) -> Result<()> {

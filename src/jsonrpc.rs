@@ -57,6 +57,10 @@ pub async fn get_native_amount() -> Result<Balance> {
     }
 }
 
+pub async fn send_token(_: &AccountId, _: Balance) -> Result<()> {
+    todo!()
+}
+
 pub async fn get_gas_price(block: Option<BlockId>) -> Result<Balance> {
     let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
     let res = CLIENT.call(req).await?;
