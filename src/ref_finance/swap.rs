@@ -28,8 +28,8 @@ pub struct SwapAction {
 const METHOD_NAME: &str = "swap";
 
 pub async fn run_swap(
-    start: TokenInAccount,
-    goal: TokenOutAccount,
+    start: &TokenInAccount,
+    goal: &TokenOutAccount,
     initial: u128,
     min_out_ratio: u128,
 ) -> Result<u128> {
@@ -41,10 +41,10 @@ pub async fn run_swap(
     ));
     info!(log, "entered");
 
-    let path = path::swap_path(start.clone(), goal.clone()).await?;
+    let path = path::swap_path(start, goal).await?;
     let account = wallet::WALLET.account_id();
     let tokens = gather_token_accounts(&path);
-    storage::check_and_deposit(account, &tokens).await?;
+    storage::check_and_deposit(&account, &tokens).await?;
 
     let mut actions = Vec::new();
     let out = path

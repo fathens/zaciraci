@@ -140,7 +140,7 @@ async fn list_returns(
 ) -> String {
     let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
-    let mut sorted_returns = crate::ref_finance::path::sorted_returns(start.into(), amount_in)
+    let mut sorted_returns = crate::ref_finance::path::sorted_returns(&start.into(), amount_in)
         .await
         .unwrap();
     sorted_returns.reverse();
@@ -160,7 +160,7 @@ async fn pick_goals(
 ) -> String {
     let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let goals = crate::ref_finance::path::pick_goals(start.into(), MilliNear::of(amount_in))
+    let goals = crate::ref_finance::path::pick_goals(&start.into(), MilliNear::of(amount_in))
         .await
         .unwrap();
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
@@ -193,7 +193,7 @@ async fn run_swap(
     let start: TokenAccount = token_in_account.parse().unwrap();
     let goal: TokenAccount = token_out_account.parse().unwrap();
     let res =
-        crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in, min_out_ratio)
+        crate::ref_finance::swap::run_swap(&start.into(), &goal.into(), amount_in, min_out_ratio)
             .await;
 
     match res {
@@ -239,7 +239,7 @@ async fn deposit_token(
 ) -> String {
     let amount: u128 = amount.replace("_", "").parse().unwrap();
     let token: TokenAccount = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::deposit(token, amount).await;
+    let res = crate::ref_finance::deposit::deposit(&token, amount).await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
         Err(e) => format!("Error: {e}"),

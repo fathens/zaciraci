@@ -1,7 +1,19 @@
+use crate::jsonrpc::IS_MAINNET;
 use near_primitives::account::id::ParseAccountError;
 use near_sdk::AccountId;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+
+#[allow(dead_code)]
+pub static START_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
+    let id = if *IS_MAINNET {
+        "wrap.near"
+    } else {
+        "wrap.testnet"
+    };
+    TokenAccount(id.parse().unwrap())
+});
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct TokenAccount(AccountId);

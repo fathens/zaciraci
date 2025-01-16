@@ -48,7 +48,7 @@ pub async fn deposit(value: u128, registration_only: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn balance_of(account: AccountId) -> Result<StorageBalance> {
+pub async fn balance_of(account: &AccountId) -> Result<StorageBalance> {
     let log = DEFAULT.new(o!("function" => "storage::balance_of"));
     const METHOD_NAME: &str = "storage_balance_of";
     let args = json!({
@@ -66,13 +66,13 @@ pub async fn balance_of(account: AccountId) -> Result<StorageBalance> {
 
 // 現状の deposits を確認し、削除すべき token と追加すべき deposit を返す
 pub async fn check_deposits(
-    account: AccountId,
+    account: &AccountId,
     tokens: &[TokenAccount],
 ) -> Result<(Vec<TokenAccount>, u128)> {
     let log = DEFAULT.new(o!("function" => "storage::check_deposits"));
 
     let bounds = check_bounds().await?;
-    let deposits = deposit::get_deposits(account.clone()).await?;
+    let deposits = deposit::get_deposits(account).await?;
     let balance = balance_of(account).await?;
 
     let total = balance.total.0;
@@ -121,10 +121,10 @@ pub async fn check_deposits(
     Ok((noneeds, more))
 }
 
-pub async fn check_and_deposit(account: AccountId, tokens: &[TokenAccount]) -> Result<()> {
+pub async fn check_and_deposit(account: &AccountId, tokens: &[TokenAccount]) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "storage::check_and_deposit"));
 
-    let (deleting_tokens, more) = check_deposits(account.clone(), tokens).await?;
+    let (deleting_tokens, more) = check_deposits(account, tokens).await?;
     if !deleting_tokens.is_empty() {
         deposit::unregister_tokens(&deleting_tokens).await?;
     }

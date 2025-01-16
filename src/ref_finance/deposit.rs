@@ -7,7 +7,7 @@ use near_sdk::AccountId;
 use serde_json::json;
 use std::collections::HashMap;
 
-pub async fn deposit(token: TokenAccount, amount: u128) -> Result<()> {
+pub async fn deposit(token: &TokenAccount, amount: u128) -> Result<()> {
     let log = DEFAULT.new(o!(
         "function" => "deposit",
         "token" => format!("{}", token),
@@ -30,7 +30,7 @@ pub async fn deposit(token: TokenAccount, amount: u128) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_deposits(account: AccountId) -> Result<HashMap<TokenAccount, U128>> {
+pub async fn get_deposits(account: &AccountId) -> Result<HashMap<TokenAccount, U128>> {
     let log = DEFAULT.new(o!(
         "function" => "get_deposits",
         "account" => format!("{}", account),
@@ -73,7 +73,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_deposits() {
-        let result = get_deposits("app.zaciraci.testnet".parse().unwrap()).await;
+        let token = "wrap.testnet".parse().unwrap();
+        let account = "app.zaciraci.testnet".parse().unwrap();
+        let result = get_deposits(&account).await;
         assert!(result.is_ok());
+        let deposits = result.unwrap();
+        assert!(!deposits.is_empty());
+        assert!(deposits.contains_key(&token));
     }
 }
