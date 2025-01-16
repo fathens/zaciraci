@@ -1,22 +1,22 @@
 graph TD
     Start((START)) --> StatsHistory[履歴の集計]
     StatsHistory -->|必要額 = 今までの最大値<br>（履歴無しなら default を使う）| WrappedAmount{Wrapped の残高}
-    WrappedAmount -->|必要額の10倍より大きい| PutBack
+    WrappedAmount -->|必要額の10倍より大きい| Harvest
     WrappedAmount -->|必要額以上で<br>必要額の10倍以下| End((END))
-    WrappedAmount -->|必要額より小さい| PutWrap
+    WrappedAmount -->|必要額より小さい| Refill
 
-    subgraph PutWrap[補充]
+    subgraph Refill[補充]
         CheckNative{ネイティブ残高の確認}
         CheckNative -->|足りる| DepositFull[必要なだけ Deposit]
         CheckNative -->|足りない| DepositLess[minimum だけ残して Deposit]
     end
 
-    subgraph PutBack[引き出し]
+    subgraph Harvest[収穫]
         NativeAmount{Nativeが<br>必要額の100倍より大きく<br>前回の PutBack から<br>24時間以上経過}
         NativeAmount --> Withdraw
         Withdraw -->|YES| Back
         NativeAmount -->|NO| NoAction
     end
 
-    PutWrap --> End
-    PutBack --> End
+    Refill --> End
+    Harvest --> End
