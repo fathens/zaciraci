@@ -16,7 +16,7 @@ pub static WALLET: Lazy<Wallet> = Lazy::new(|| {
         Ok(wallet) => wallet,
         Err(e) => {
             error!(log, "Failed to create wallet"; "error" => %e);
-            panic!("{}", format!("Failed to create wallet: {e}"));
+            panic!("Failed to create wallet: {}", e);
         }
     }
 });
