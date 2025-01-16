@@ -1,7 +1,11 @@
 #![allow(dead_code)]
 
 use crate::logging::*;
+use crate::ref_finance::deposit::get_deposits;
 use crate::ref_finance::history::get_history;
+use crate::ref_finance::token_account;
+use crate::wallet;
+use crate::Result;
 use near_primitives::types::Balance;
 use near_sdk::NearToken;
 use num_traits::Zero;
@@ -44,6 +48,13 @@ pub fn start() {
     info!(log, "Starting balances";
         "required_value" => %required_value,
     );
+}
+
+async fn balance_of_start_token() -> Result<Balance> {
+    let account = wallet::WALLET.account_id();
+    let token = token_account::START_TOKEN.clone();
+    let deposits = get_deposits(&account).await?;
+    Ok(deposits.get(&token).map(|u| u.0).unwrap_or_default())
 }
 
 #[cfg(test)]
