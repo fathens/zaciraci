@@ -89,8 +89,8 @@ async fn refill(want: Balance) -> Result<()> {
         .unwrap_or_default()
         .min(want);
 
-    let token = &*token_account::START_TOKEN;
-    deposit::deposit(token, amount).await
+    let token = deposit::wrap_near(amount).await?;
+    deposit::deposit(&token, amount).await
 }
 
 async fn harvest(withdraw: Balance, required: Balance) -> Result<()> {
