@@ -103,7 +103,7 @@ async fn harvest(withdraw: Balance, required: Balance) -> Result<()> {
         let amount = native_balance - upper;
         let target = &*HARVEST_ACCOUNT;
         let signer = wallet::WALLET.signer();
-        jsonrpc::transfer_native_token(&signer, target, amount).await?;
+        jsonrpc::transfer_native_token(signer, target, amount).await?;
         update_last_harvest()
     }
     Ok(())

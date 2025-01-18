@@ -27,6 +27,7 @@ pub struct Wallet {
     mnemonic: bip39::Mnemonic,
     hdpath: slipped10::BIP32Path,
     signing_key: ed25519_dalek::SigningKey,
+    signer: InMemorySigner,
 }
 
 impl Wallet {
@@ -54,11 +55,14 @@ impl Wallet {
         debug!(log, "creating"; "hdpath" => %hdpath);
         let key = slipped10::derive_key_from_path(&mnemonic.to_seed(""), CURVE, &hdpath)?;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&key.key);
+        let seckey = ED25519SecretKey(signing_key.to_keypair_bytes());
+        let signer = InMemorySigner::from_secret_key(account_id.clone(), ED25519(seckey));
         let wallet = Wallet {
             account_id,
             mnemonic,
             hdpath,
             signing_key,
+            signer,
         };
         info!(log, "created"; "pubkey" => %wallet.pub_base58());
         Ok(wallet)
@@ -85,8 +89,7 @@ impl Wallet {
         Self::new(self.account_id.clone(), self.mnemonic.clone(), hdpath)
     }
 
-    pub fn signer(&self) -> InMemorySigner {
-        let seckey = ED25519SecretKey(self.signing_key.to_keypair_bytes());
-        InMemorySigner::from_secret_key(self.account_id.clone(), ED25519(seckey))
+    pub fn signer(&self) -> &InMemorySigner {
+        &self.signer
     }
 }

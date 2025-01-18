@@ -21,7 +21,7 @@ pub async fn wrap_near(amount: Balance) -> Result<TokenAccount> {
     let args = json!({});
     let signer = wallet::WALLET.signer();
 
-    jsonrpc::exec_contract(&signer, token.as_id(), METHOD_NAME, &args, amount).await?;
+    jsonrpc::exec_contract(signer, token.as_id(), METHOD_NAME, &args, amount).await?;
     Ok(token)
 }
 
@@ -44,7 +44,7 @@ pub async fn deposit(token: &TokenAccount, amount: Balance) -> Result<()> {
     let deposit = 1; // minimum deposit
     let signer = wallet::WALLET.signer();
 
-    jsonrpc::exec_contract(&signer, token.as_id(), METHOD_NAME, &args, deposit).await?;
+    jsonrpc::exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit).await?;
     Ok(())
 }
 
@@ -83,7 +83,7 @@ pub async fn withdraw(token: &TokenAccount, amount: Balance) -> Result<()> {
     let deposit = 1; // minimum deposit
     let signer = wallet::WALLET.signer();
 
-    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
+    jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
     Ok(())
 }
 
@@ -101,7 +101,7 @@ pub async fn unregister_tokens(tokens: &[TokenAccount]) -> Result<()> {
     let deposit = 1; // minimum deposit
     let signer = wallet::WALLET.signer();
 
-    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
+    jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
     Ok(())
 }
 

@@ -81,7 +81,7 @@ pub async fn run_swap(
     let deposit = 1;
     let signer = wallet::WALLET.signer();
 
-    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
+    jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
 
     Ok(out)
 }

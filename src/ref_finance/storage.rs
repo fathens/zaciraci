@@ -44,7 +44,7 @@ pub async fn deposit(value: u128, registration_only: bool) -> Result<()> {
         "signer" => ?signer.account_id,
     );
 
-    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, value).await?;
+    jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, value).await?;
     Ok(())
 }
 

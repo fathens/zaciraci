@@ -319,7 +319,7 @@ async fn native_token_transfer(
     let amount = MicroNear::of(amount_micro).to_yocto();
     let receiver = receiver.parse().unwrap();
     let signer = wallet::WALLET.signer();
-    let res = crate::jsonrpc::transfer_native_token(&signer, &receiver, amount).await;
+    let res = crate::jsonrpc::transfer_native_token(signer, &receiver, amount).await;
     match res {
         Ok(_) => "OK".to_owned(),
         Err(err) => {
