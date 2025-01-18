@@ -17,7 +17,7 @@ const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear()
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
-static LAST_PUTBACK: AtomicU64 = AtomicU64::new(0);
+static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
 static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
     let value = config::get("HARVEST_ACCOUNT").unwrap_or_else(|err| panic!("{}", err));
     value
@@ -26,7 +26,7 @@ static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
 });
 
 fn is_time_to_harvest() -> bool {
-    let last = LAST_PUTBACK.load(Ordering::Relaxed);
+    let last = LAST_HARVEST.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -39,7 +39,7 @@ fn update_last_harvest() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    LAST_PUTBACK.store(now, Ordering::Relaxed);
+    LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
 pub async fn start() -> Result<()> {
@@ -119,24 +119,24 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        LAST_PUTBACK.store(now - INTERVAL_OF_HARVEST - 1, Ordering::Relaxed);
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST - 1, Ordering::Relaxed);
         assert!(is_time_to_harvest());
-        LAST_PUTBACK.store(now - INTERVAL_OF_HARVEST, Ordering::Relaxed);
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST, Ordering::Relaxed);
         assert!(!is_time_to_harvest());
-        LAST_PUTBACK.store(now - INTERVAL_OF_HARVEST + 1, Ordering::Relaxed);
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 1, Ordering::Relaxed);
         assert!(!is_time_to_harvest());
-        LAST_PUTBACK.store(now - INTERVAL_OF_HARVEST + 2, Ordering::Relaxed);
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 2, Ordering::Relaxed);
         assert!(!is_time_to_harvest());
     }
 
     #[test]
     fn test_update_last_harvest() {
-        LAST_PUTBACK.store(0, Ordering::Relaxed);
+        LAST_HARVEST.store(0, Ordering::Relaxed);
         update_last_harvest();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        assert_eq!(now, LAST_PUTBACK.load(Ordering::Relaxed));
+        assert_eq!(now, LAST_HARVEST.load(Ordering::Relaxed));
     }
 }
