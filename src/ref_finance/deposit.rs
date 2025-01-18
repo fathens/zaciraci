@@ -1,6 +1,6 @@
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
-use crate::ref_finance::CONTRACT_ADDRESS;
+use crate::ref_finance::{token_account, CONTRACT_ADDRESS};
 use crate::{jsonrpc, wallet, Result};
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
@@ -8,7 +8,24 @@ use near_sdk::AccountId;
 use serde_json::json;
 use std::collections::HashMap;
 
-pub async fn deposit(token: &TokenAccount, amount: u128) -> Result<()> {
+pub async fn wrap_near(amount: Balance) -> Result<TokenAccount> {
+    let log = DEFAULT.new(o!(
+        "function" => "wrap_near",
+        "amount" => amount,
+    ));
+    info!(log, "wrapping native token");
+
+    const METHOD_NAME: &str = "near_deposit";
+
+    let token = token_account::START_TOKEN.clone();
+    let args = json!({});
+    let signer = wallet::WALLET.signer();
+
+    jsonrpc::exec_contract(&signer, token.as_id(), METHOD_NAME, &args, amount).await?;
+    Ok(token)
+}
+
+pub async fn deposit(token: &TokenAccount, amount: Balance) -> Result<()> {
     let log = DEFAULT.new(o!(
         "function" => "deposit",
         "token" => format!("{}", token),

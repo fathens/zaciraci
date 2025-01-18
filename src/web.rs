@@ -63,6 +63,8 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/amounts/list", get(deposit_list))
         .with_state(state.clone())
+        .route("/amounts/wrap/:amount", get(wrap_native_token))
+        .with_state(state.clone())
         .route(
             "/amounts/deposit/:token_account/:amount",
             get(deposit_token),
@@ -323,5 +325,15 @@ async fn native_token_transfer(
         Err(err) => {
             format!("Error: {err}")
         }
+    }
+}
+
+async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let res = crate::ref_finance::deposit::wrap_near(amount).await;
+    match res {
+        Ok(token) => format!("Wrapped: {token} {amount}"),
+        Err(e) => format!("Error: {e}"),
     }
 }
