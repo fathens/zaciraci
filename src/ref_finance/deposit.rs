@@ -50,8 +50,24 @@ pub async fn get_deposits(account: &AccountId) -> Result<HashMap<TokenAccount, U
     Ok(deposits)
 }
 
-pub async fn withdraw(_: &TokenAccount, _: Balance) -> Result<()> {
-    todo!()
+pub async fn withdraw(token: &TokenAccount, amount: Balance) -> Result<()> {
+    let log = DEFAULT.new(o!(
+        "function" => "withdraw",
+    ));
+    info!(log, "entered");
+
+    const METHOD_NAME: &str = "withdraw";
+    let args = json!({
+        "token_id": token,
+        "amount": U128(amount),
+        "skip_unwrap_near": false,
+    });
+
+    let deposit = 1; // minimum deposit
+    let signer = wallet::WALLET.signer();
+
+    jsonrpc::exec_contract(&signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
+    Ok(())
 }
 
 pub async fn unregister_tokens(tokens: &[TokenAccount]) -> Result<()> {

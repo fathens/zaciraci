@@ -2,6 +2,7 @@ use crate::persistence::tables;
 use crate::ref_finance::pool_info;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::types::{MicroNear, MilliNear};
+use crate::wallet;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -53,7 +54,17 @@ pub async fn run() {
             get(storage_unregister_token),
         )
         .with_state(state.clone())
-        .route("/deposit/:token_account/:amount", get(deposit_token))
+        .route("/amounts/list", get(deposit_list))
+        .with_state(state.clone())
+        .route(
+            "/amounts/deposit/:token_account/:amount",
+            get(deposit_token),
+        )
+        .with_state(state.clone())
+        .route(
+            "/amounts/withdraw/:token_account/:amount",
+            get(withdraw_token),
+        )
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -233,15 +244,47 @@ async fn storage_unregister_token(
     }
 }
 
+async fn deposit_list(State(_): State<Arc<AppState>>) -> String {
+    let account = wallet::WALLET.account_id();
+    let res = crate::ref_finance::deposit::get_deposits(account).await;
+    match res {
+        Err(e) => format!("Error: {e}"),
+        Ok(deposits) => {
+            let mut results = String::new();
+            for (token, amount) in deposits.iter() {
+                let m = MicroNear::from_yocto(amount.0);
+                let line = format!("{token} -> {m:?}\n");
+                results.push_str(&line);
+            }
+            results
+        }
+    }
+}
+
 async fn deposit_token(
     State(_): State<Arc<AppState>>,
     Path((token_account, amount)): Path<(String, String)>,
 ) -> String {
-    let amount: u128 = amount.replace("_", "").parse().unwrap();
-    let token: TokenAccount = token_account.parse().unwrap();
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let token = token_account.parse().unwrap();
     let res = crate::ref_finance::deposit::deposit(&token, amount).await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn withdraw_token(
+    State(_): State<Arc<AppState>>,
+    Path((token_account, amount)): Path<(String, String)>,
+) -> String {
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let token = token_account.parse().unwrap();
+    let res = crate::ref_finance::deposit::withdraw(&token, amount).await;
+    match res {
+        Ok(_) => format!("Withdrawn: {amount}"),
         Err(e) => format!("Error: {e}"),
     }
 }
