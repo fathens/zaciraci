@@ -20,6 +20,13 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/counter/increase", get(inc_counter))
         .with_state(state.clone())
+        .route("/native_token/balance", get(native_token_balance))
+        .with_state(state.clone())
+        .route(
+            "/native_token/transfer/:receiver/:amount",
+            get(native_token_transfer),
+        )
+        .with_state(state.clone())
         .route("/pools/get_all", get(get_all_pools))
         .with_state(state.clone())
         .route(
@@ -286,5 +293,35 @@ async fn withdraw_token(
     match res {
         Ok(_) => format!("Withdrawn: {amount}"),
         Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn native_token_balance(State(_): State<Arc<AppState>>) -> String {
+    let account = wallet::WALLET.account_id();
+    let res = crate::jsonrpc::get_native_amount(account).await;
+    match res {
+        Ok(balance) => {
+            format!("Balance: {balance:?}\n")
+        }
+        Err(err) => {
+            format!("Error: {err}")
+        }
+    }
+}
+
+async fn native_token_transfer(
+    State(_): State<Arc<AppState>>,
+    Path((receiver, amount)): Path<(String, String)>,
+) -> String {
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let receiver = receiver.parse().unwrap();
+    let signer = wallet::WALLET.signer();
+    let res = crate::jsonrpc::transfer_native_token(&signer, &receiver, amount).await;
+    match res {
+        Ok(_) => "OK".to_owned(),
+        Err(err) => {
+            format!("Error: {err}")
+        }
     }
 }

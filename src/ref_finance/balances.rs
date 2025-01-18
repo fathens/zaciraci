@@ -82,7 +82,8 @@ async fn balance_of_start_token() -> Result<Balance> {
 }
 
 async fn refill(want: Balance) -> Result<()> {
-    let native_balance = jsonrpc::get_native_amount().await?;
+    let account = wallet::WALLET.account_id();
+    let native_balance = jsonrpc::get_native_amount(account).await?;
     let amount = native_balance
         .checked_sub(MINIMUM_NATIVE_BALANCE)
         .unwrap_or_default()
@@ -95,12 +96,14 @@ async fn refill(want: Balance) -> Result<()> {
 async fn harvest(withdraw: Balance, required: Balance) -> Result<()> {
     let token = &*token_account::START_TOKEN;
     deposit::withdraw(token, withdraw).await?;
-    let native_balance = jsonrpc::get_native_amount().await?;
+    let account = wallet::WALLET.account_id();
+    let native_balance = jsonrpc::get_native_amount(account).await?;
     let upper = required << 4;
     if upper < native_balance && is_time_to_harvest() {
         let amount = native_balance - upper;
         let target = &*HARVEST_ACCOUNT;
-        jsonrpc::send_token(target, amount).await?;
+        let signer = wallet::WALLET.signer();
+        jsonrpc::transfer_native_token(&signer, target, amount).await?;
         update_last_harvest()
     }
     Ok(())
