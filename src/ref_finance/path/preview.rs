@@ -1,5 +1,8 @@
-use crate::ref_finance::token_account::TokenOutAccount;
+use crate::ref_finance;
+use crate::ref_finance::pool_info::TokenPair;
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::gas_price::GasPrice;
+use crate::Result;
 use near_gas::NearGas;
 use near_primitives::types::Balance;
 
@@ -72,6 +75,26 @@ impl<M> PreviewList<M> {
             list: previews,
             total_gain,
         })
+    }
+
+    pub async fn into_with_path(
+        self,
+        start: &TokenInAccount,
+    ) -> Result<(Vec<(Preview<M>, Vec<TokenPair>)>, Vec<TokenAccount>)> {
+        let mut tokens = Vec::new();
+        let mut pre_path = Vec::new();
+        for p in self.list {
+            let path = ref_finance::path::swap_path(start, &p.token).await?;
+            for pair in path.iter() {
+                tokens.push(pair.token_in_id().into());
+                tokens.push(pair.token_out_id().into());
+            }
+            pre_path.push((p, path));
+        }
+        tokens.sort();
+        tokens.dedup();
+
+        Ok((pre_path, tokens))
     }
 }
 

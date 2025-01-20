@@ -69,23 +69,18 @@ async fn single_loop() -> Result<()> {
     let previews = ref_finance::path::pick_previews(&pools, start, balance, gas_price)?;
 
     if let Some(previews) = previews {
-        let mut tokens = Vec::new();
-        let mut pre_path = Vec::new();
-        for p in previews.list {
-            let path = ref_finance::path::swap_path(start, &p.token).await?;
-            for pair in path.iter() {
-                tokens.push(pair.token_in_id().into());
-                tokens.push(pair.token_out_id().into());
-            }
-            pre_path.push((p, path));
-        }
-        tokens.sort();
-        tokens.dedup();
+        let (pre_path, tokens) = previews.into_with_path(start).await?;
 
         let account = wallet::WALLET.account_id();
         ref_finance::storage::check_and_deposit(account, &tokens).await?;
 
-        // TODO: run swap
+        for (preview, path) in pre_path {
+            info!(log, "run swap";
+                "preview" => ?preview.gain,
+                "path" => ?path.len(),
+            );
+            // TODO: run swap
+        }
     } else {
         info!(log, "previews not found");
         sleep(Duration::from_secs(10)).await;
