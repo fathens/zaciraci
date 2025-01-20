@@ -1,5 +1,6 @@
 use crate::config;
 use crate::logging::*;
+use crate::types::gas_price::GasPrice;
 use crate::Result;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{methods, JsonRpcClient};
@@ -57,10 +58,10 @@ pub async fn get_native_amount(account: &AccountId) -> Result<Balance> {
     }
 }
 
-pub async fn get_gas_price(block: Option<BlockId>) -> Result<Balance> {
+pub async fn get_gas_price(block: Option<BlockId>) -> Result<GasPrice> {
     let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
     let res = CLIENT.call(req).await?;
-    Ok(res.gas_price)
+    Ok(GasPrice::from_balance(res.gas_price))
 }
 
 pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyView> {

@@ -22,6 +22,7 @@ mod edge;
 mod graph;
 mod preview;
 
+use crate::types::gas_price::GasPrice;
 use preview::{Preview, PreviewList};
 
 static CACHED_POOLS_IN_DB: OnceCell<PoolInfoList> = OnceCell::new();
@@ -93,7 +94,7 @@ pub fn pick_previews<M>(
     all_pools: &PoolInfoList,
     start: &TokenInAccount,
     total_amount: M,
-    gas_price: Balance,
+    gas_price: GasPrice,
 ) -> Result<Option<PreviewList<M>>>
 where
     M: Send + Sync + Copy + Hash + Debug,
@@ -147,7 +148,7 @@ fn pick_by_amount<M>(
     graph: &TokenGraph,
     start: &TokenInAccount,
     goals: &[TokenOutAccount],
-    gas_price: Balance,
+    gas_price: GasPrice,
     amount: M,
     limit: usize,
 ) -> Result<Option<PreviewList<M>>>
