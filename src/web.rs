@@ -1,8 +1,9 @@
 use crate::persistence::tables;
-use crate::ref_finance::pool_info;
+use crate::ref_finance::swap::gather_token_accounts;
 use crate::ref_finance::token_account::TokenAccount;
+use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
-use crate::wallet;
+use crate::{ref_finance, wallet};
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -210,11 +211,17 @@ async fn run_swap(
     )>,
 ) -> String {
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
-    let start: TokenAccount = token_in_account.parse().unwrap();
-    let goal: TokenAccount = token_out_account.parse().unwrap();
-    let res =
-        crate::ref_finance::swap::run_swap(&start.into(), &goal.into(), amount_in, min_out_ratio)
-            .await;
+    let start_token: TokenAccount = token_in_account.parse().unwrap();
+    let goal_token: TokenAccount = token_out_account.parse().unwrap();
+    let start = &start_token.into();
+    let goal = &goal_token.into();
+
+    let path = ref_finance::path::swap_path(start, goal).await.unwrap();
+    let account = wallet::WALLET.account_id();
+    let tokens = gather_token_accounts(&path);
+    storage::check_and_deposit(account, &tokens).await.unwrap();
+
+    let res = ref_finance::swap::run_swap(&path, amount_in, min_out_ratio).await;
 
     match res {
         Ok(value) => format!("Result: {value}"),

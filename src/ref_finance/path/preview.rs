@@ -1,4 +1,7 @@
-use crate::ref_finance::token_account::TokenOutAccount;
+use crate::ref_finance::path::swap_path;
+use crate::ref_finance::swap::gather_token_accounts;
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::Result;
 use near_gas::NearGas;
 use near_primitives::types::Balance;
 
@@ -71,6 +74,15 @@ impl<M> PreviewList<M> {
             list: previews,
             total_gain,
         })
+    }
+
+    pub async fn all_tokens(&self, start: &TokenInAccount) -> Result<Vec<TokenAccount>> {
+        let mut paths = Vec::new();
+        for p in &self.list {
+            let path = swap_path(start, &p.token).await?;
+            paths.extend(path);
+        }
+        Ok(gather_token_accounts(&paths))
     }
 }
 

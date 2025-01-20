@@ -11,9 +11,13 @@ mod types;
 mod wallet;
 mod web;
 
-use bigdecimal::BigDecimal;
+use crate::logging::DEFAULT;
+use crate::ref_finance::token_account::TokenInAccount;
 use errors::Error;
-use num_bigint::BigUint;
+use slog::{error, info, o};
+use std::time::Duration;
+use tokio::time::sleep;
+
 type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
@@ -28,27 +32,52 @@ async fn main() {
     warn!(log, "log level check");
     crit!(log, "log level check");
 
-    let a = 1_u8;
-    let b = BigUint::from(2_u8);
-    let c = &BigDecimal::from(3_u8);
-
-    debug!(log, "details";
-      "a" => a,
-      "b" => %b,
-      "c" => %c,
-    );
-
-    let x = b + 1_u8;
-    let y = c + 1_u8;
-    debug!(log, "details";
-      "x" => %x,
-      "y" => %y,
-    );
-
     let base = wallet::WALLET.derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(cron::run());
-    web::run().await
+    tokio::spawn(web::run());
+
+    match main_looop().await {
+        Ok(_) => info!(log, "shutting down"),
+        Err(err) => error!(log, "shutting down: {}", err),
+    }
+}
+
+async fn main_looop() -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "main_looop"));
+    loop {
+        match single_loop().await {
+            Ok(_) => info!(log, "success, go next"),
+            Err(err) => {
+                error!(log, "failure: {}", err);
+                sleep(Duration::from_secs(10)).await;
+            }
+        }
+    }
+}
+
+async fn single_loop() -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "single_loop"));
+
+    let (token, balance) = ref_finance::balances::start().await?;
+    let start: &TokenInAccount = &token.into();
+
+    let pools = ref_finance::pool_info::PoolInfoList::read_from_node().await?;
+    let gas_price = jsonrpc::get_gas_price(None).await?;
+    let previews = ref_finance::path::pick_previews(&pools, start, balance, gas_price)?;
+
+    if let Some(previews) = previews {
+        let tokens = previews.all_tokens(start).await?;
+        let account = wallet::WALLET.account_id();
+        ref_finance::storage::check_and_deposit(account, &tokens).await?;
+
+        // TODO: run swap
+    } else {
+        info!(log, "previews not found");
+        sleep(Duration::from_secs(10)).await;
+    }
+
+    Ok(())
 }

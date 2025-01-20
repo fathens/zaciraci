@@ -4,6 +4,7 @@ use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account;
+use crate::ref_finance::token_account::TokenAccount;
 use crate::wallet;
 use crate::Result;
 use crate::{config, jsonrpc};
@@ -42,7 +43,7 @@ fn update_last_harvest() {
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
-pub async fn start() -> Result<()> {
+pub async fn start() -> Result<(TokenAccount, Balance)> {
     let log = DEFAULT.new(o!(
         "function" => "balances.start",
     ));
@@ -58,25 +59,27 @@ pub async fn start() -> Result<()> {
         "required_balance" => %required_balance,
     );
 
-    let wrapped_balance = balance_of_start_token().await?;
+    let token = token_account::START_TOKEN.clone();
+
+    let wrapped_balance = balance_of_start_token(&token).await?;
     info!(log, "comparing";
         "wrapped_balance" => wrapped_balance,
     );
 
     if wrapped_balance < required_balance {
         refill(required_balance - wrapped_balance).await?;
+        Ok((token, wrapped_balance))
     } else {
         let upper = required_balance << 4;
         if upper < wrapped_balance {
-            harvest(wrapped_balance - upper, upper).await?;
+            harvest(&token, wrapped_balance - upper, upper).await?;
         }
+        Ok((token, upper))
     }
-    Ok(())
 }
 
-async fn balance_of_start_token() -> Result<Balance> {
+async fn balance_of_start_token(token: &TokenAccount) -> Result<Balance> {
     let account = wallet::WALLET.account_id();
-    let token = &*token_account::START_TOKEN;
     let deposits = deposit::get_deposits(account).await?;
     Ok(deposits.get(token).map(|u| u.0).unwrap_or_default())
 }
@@ -93,8 +96,7 @@ async fn refill(want: Balance) -> Result<()> {
     deposit::deposit(&token, amount).await
 }
 
-async fn harvest(withdraw: Balance, required: Balance) -> Result<()> {
-    let token = &*token_account::START_TOKEN;
+async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> Result<()> {
     deposit::withdraw(token, withdraw).await?;
     let account = wallet::WALLET.account_id();
     let native_balance = jsonrpc::get_native_amount(account).await?;
