@@ -1,5 +1,4 @@
 use crate::persistence::tables;
-use crate::ref_finance::swap::gather_token_accounts;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
@@ -218,7 +217,7 @@ async fn run_swap(
 
     let path = ref_finance::path::swap_path(start, goal).await.unwrap();
     let account = wallet::WALLET.account_id();
-    let tokens = gather_token_accounts(&path);
+    let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
     storage::check_and_deposit(account, &tokens).await.unwrap();
 
     let res = ref_finance::swap::run_swap(&path, amount_in, min_out_ratio).await;

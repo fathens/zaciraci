@@ -75,11 +75,13 @@ pub async fn run_swap(path: &[TokenPair], initial: u128, min_out_ratio: u128) ->
     Ok(out)
 }
 
-pub fn gather_token_accounts(pairs: &[TokenPair]) -> Vec<TokenAccount> {
+pub fn gather_token_accounts(pairs_list: &[&[TokenPair]]) -> Vec<TokenAccount> {
     let mut tokens = Vec::new();
-    for pair in pairs {
-        tokens.push(pair.token_in_id().into());
-        tokens.push(pair.token_out_id().into());
+    for pairs in pairs_list.iter() {
+        for pair in pairs.iter() {
+            tokens.push(pair.token_in_id().into());
+            tokens.push(pair.token_out_id().into());
+        }
     }
     tokens.sort();
     tokens.dedup();
