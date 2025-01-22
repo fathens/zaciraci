@@ -200,9 +200,17 @@ where
     ));
     info!(log, "start");
 
+    #[derive(Debug, Clone)]
+    struct InnerError(Arc<anyhow::Error>);
+    impl InnerError {
+        fn unwrap(self) -> anyhow::Error {
+            Arc::try_unwrap(self.0).unwrap()
+        }
+    }
+
     let gain = |a| get_gain(a).into();
     let mut cache = HashMap::new();
-    let mut join_calcs = |a, b, c| -> Result<(M, M, M)> {
+    let mut join_calcs = |a, b, c| -> std::result::Result<(M, M, M), InnerError> {
         let missings: Vec<_> = [a, b, c]
             .into_iter()
             .filter(|value| !cache.contains_key(value))
@@ -212,7 +220,7 @@ where
             .map(|&v| (v, calc_res(v)))
             .collect::<Vec<_>>()
         {
-            cache.insert(v, r.clone());
+            cache.insert(v, r.map_err(|e| InnerError(Arc::new(e))));
         }
 
         Ok((
@@ -228,7 +236,7 @@ where
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let (a, b, c) = join_calcs(in_a, in_b, in_c)?;
+        let (a, b, c) = join_calcs(in_a, in_b, in_c).map_err(|ie| ie.unwrap())?;
         debug!(log, "join_calced";
             "in_a" => format!("{:?}", in_a),
             "in_b" => format!("{:?}", in_b),
@@ -309,7 +317,11 @@ where
         "b" => format!("{:?}", in_b),
         "c" => format!("{:?}", in_c)
     );
-    cache.get(&in_a).cloned().unwrap_or(Ok(None))
+    cache
+        .get(&in_a)
+        .cloned()
+        .unwrap_or(Ok(None))
+        .map_err(|ie| ie.unwrap())
 }
 
 #[cfg(test)]

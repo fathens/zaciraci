@@ -1,6 +1,7 @@
 use crate::config;
 use crate::logging::*;
 use crate::Result;
+use anyhow::anyhow;
 use near_crypto::SecretKey::ED25519;
 use near_crypto::{ED25519SecretKey, InMemorySigner};
 use near_sdk::AccountId;
@@ -43,7 +44,7 @@ impl Wallet {
 
     fn get_hdpath() -> Result<slipped10::BIP32Path> {
         let strval = config::get("ROOT_HDPATH").unwrap_or(DEFAULT_HDPATH.to_string());
-        Ok(strval.parse()?)
+        strval.parse().map_err(|e| anyhow!("{}", e))
     }
 
     fn new(
@@ -53,7 +54,8 @@ impl Wallet {
     ) -> Result<Wallet> {
         let log = DEFAULT.new(o!("function" => "Wallet::new"));
         debug!(log, "creating"; "hdpath" => %hdpath);
-        let key = slipped10::derive_key_from_path(&mnemonic.to_seed(""), CURVE, &hdpath)?;
+        let key = slipped10::derive_key_from_path(&mnemonic.to_seed(""), CURVE, &hdpath)
+            .map_err(|e| anyhow!("{}", e))?;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&key.key);
         let seckey = ED25519SecretKey(signing_key.to_keypair_bytes());
         let signer = InMemorySigner::from_secret_key(account_id.clone(), ED25519(seckey));

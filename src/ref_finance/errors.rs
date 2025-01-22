@@ -1,6 +1,5 @@
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::TokenIndex;
-use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use std::fmt::{Debug, Display};
 use thiserror::Error;
 
@@ -13,11 +12,8 @@ pub enum Error {
     OutOfIndexOfTokens(TokenIndex),
     DifferentLengthOfTokens(usize, usize),
     InvalidPoolSize(usize),
-    InvalidTokenAccountId(String),
     TokenNotFound(TokenAccount),
-    NoValidPathFromToken(TokenInAccount),
     NoValidEddge(TokenInAccount, TokenOutAccount),
-    UnknownResponse(QueryResponseKind),
     UnmatchedTokenPath(
         (TokenInAccount, TokenOutAccount),
         (TokenInAccount, TokenOutAccount),
@@ -34,8 +30,6 @@ impl Display for Error {
             Error::OutOfIndexOfPools(index) => write!(f, "Out of index of pools: {}", index),
             Error::Overflow => write!(f, "Overflow"),
             Error::InvalidPoolSize(n) => write!(f, "Invalid pool size: {}", n),
-            Error::InvalidTokenAccountId(msg) => write!(f, "Invalid token account ID: {}", msg),
-            Error::NoValidPathFromToken(token) => write!(f, "No valid path from token: {}", token),
             Error::NoValidEddge(token_in, token_out) => write!(
                 f,
                 "No valid edge from token in: {} to token out: {}",
@@ -46,7 +40,6 @@ impl Display for Error {
                 "Different length of tokens: {} and {}",
                 token_ids, amounts
             ),
-            Error::UnknownResponse(kind) => write!(f, "Unknown response: {:?}", kind),
             Error::UnmatchedTokenPath((token_in, token_out), (token_in2, token_out2)) => write!(
                 f,
                 "Unmatched token path: ({} -> {}) and ({} -> {})",

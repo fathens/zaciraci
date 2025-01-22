@@ -3,7 +3,7 @@ use crate::logging::*;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
-use crate::Result;
+use anyhow::Result;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;

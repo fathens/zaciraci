@@ -2,7 +2,6 @@
 
 mod config;
 mod cron;
-mod errors;
 mod jsonrpc;
 mod logging;
 mod ref_finance;
@@ -15,13 +14,12 @@ use crate::ref_finance::path::preview::Preview;
 use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::TokenInAccount;
 use crate::types::MicroNear;
-use errors::Error;
 use futures_util::future::join_all;
 use near_primitives::types::Balance;
 use std::time::Duration;
 use tokio::time::sleep;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = anyhow::Result<T>;
 
 #[tokio::main]
 async fn main() {
