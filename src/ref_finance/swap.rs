@@ -3,6 +3,7 @@ use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::{jsonrpc, wallet, Result};
+use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
 use serde::{Deserialize, Serialize};
@@ -27,7 +28,7 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
-pub async fn run_swap(path: &[TokenPair], initial: u128, min_out_ratio: u128) -> Result<u128> {
+pub async fn run_swap(path: &[TokenPair], initial: Balance, min_out_ratio: f32) -> Result<Balance> {
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
         "path.length" => format!("{}", path.len()),
@@ -38,13 +39,13 @@ pub async fn run_swap(path: &[TokenPair], initial: u128, min_out_ratio: u128) ->
     let mut actions = Vec::new();
     let out = path
         .iter()
-        .try_fold(initial, |prev, pair| -> Result<u128> {
+        .try_fold(initial, |prev, pair| -> Result<Balance> {
             let amount_in = (prev == initial).then_some(U128(prev));
             let pool_id = pair.pool_id() as u64;
             let token_in = pair.token_in_id();
             let token_out = pair.token_out_id();
             let next_out = pair.estimate_return(prev)?;
-            let min_out = next_out * min_out_ratio / 100;
+            let min_out = ((next_out as f32) * min_out_ratio) as Balance;
             debug!(log, "adding swap action";
                 "pool_id" => pool_id,
                 "token_in" => format!("{}", token_in),

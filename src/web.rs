@@ -219,8 +219,9 @@ async fn run_swap(
     let account = wallet::WALLET.account_id();
     let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
     storage::check_and_deposit(account, &tokens).await.unwrap();
+    let ratio = min_out_ratio as f32 / 100.0;
 
-    let res = ref_finance::swap::run_swap(&path, amount_in, min_out_ratio).await;
+    let res = ref_finance::swap::run_swap(&path, amount_in, ratio).await;
 
     match res {
         Ok(value) => format!("Result: {value}"),
