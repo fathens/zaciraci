@@ -75,11 +75,21 @@ async fn single_loop() -> Result<()> {
         ref_finance::storage::check_and_deposit(account, &tokens).await?;
 
         for (preview, path) in pre_path {
+            let under_limit = preview.output_value - preview.gain / 10;
+            let under_ratio = (under_limit as f32) / (preview.output_value as f32);
+            let ratio_by_step = under_ratio.powf(path.len() as f32);
+
             info!(log, "run swap";
-                "preview" => ?preview.gain,
-                "path" => ?path.len(),
+                "preview.output_value" => ?preview.output_value,
+                "preview.gain" => ?preview.gain,
+                "path.len" => ?path.len(),
+                "under_limit" => ?under_limit,
+                "ratio_by_step" => ?ratio_by_step,
             );
-            // TODO: run swap
+            let out = ref_finance::swap::run_swap(&path, under_limit, ratio_by_step).await?;
+            info!(log, "swap done";
+                "out" => out,
+            );
         }
     } else {
         info!(log, "previews not found");
