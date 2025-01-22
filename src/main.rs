@@ -56,7 +56,7 @@ async fn main_loop() -> Result<()> {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
                 error!(log, "failure: {}", err);
-                sleep(Duration::from_secs(10)).await;
+                return Err(err);
             }
         }
     }
