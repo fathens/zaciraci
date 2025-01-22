@@ -11,10 +11,14 @@ mod types;
 mod wallet;
 mod web;
 
-use crate::logging::DEFAULT;
+use crate::logging::*;
+use crate::ref_finance::path::preview::Preview;
+use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::TokenInAccount;
+use crate::types::MicroNear;
 use errors::Error;
-use slog::{error, info, o};
+use futures_util::future::join_all;
+use near_primitives::types::Balance;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -74,27 +78,41 @@ async fn single_loop() -> Result<()> {
         let account = wallet::WALLET.account_id();
         ref_finance::storage::check_and_deposit(account, &tokens).await?;
 
-        for (preview, path) in pre_path {
-            let under_limit = preview.output_value - preview.gain / 10;
-            let under_ratio = (under_limit as f32) / (preview.output_value as f32);
-            let ratio_by_step = under_ratio.powf(path.len() as f32);
-
-            info!(log, "run swap";
-                "preview.output_value" => ?preview.output_value,
-                "preview.gain" => ?preview.gain,
-                "path.len" => ?path.len(),
-                "under_limit" => ?under_limit,
-                "ratio_by_step" => ?ratio_by_step,
-            );
-            let out = ref_finance::swap::run_swap(&path, under_limit, ratio_by_step).await?;
-            info!(log, "swap done";
-                "out" => out,
-            );
-        }
+        let swaps = pre_path
+            .into_iter()
+            .map(|(p, v)| tokio::spawn(async move { swap_each(p, v).await }));
+        join_all(swaps).await;
     } else {
         info!(log, "previews not found");
         sleep(Duration::from_secs(10)).await;
     }
 
+    Ok(())
+}
+
+async fn swap_each<A>(preview: Preview<A>, path: Vec<TokenPair>) -> Result<()>
+where
+    A: Into<Balance> + Copy,
+{
+    let log = DEFAULT.new(o!(
+        "function" => "swap_each",
+        "preview.output_value" => format!("{}", preview.output_value),
+        "preview.gain" => format!("{}", preview.gain),
+        "path.len" => format!("{}", path.len()),
+    ));
+
+    let under_limit = (preview.output_value as f32) - (preview.gain as f32) * 0.99;
+    let under_ratio = under_limit / (preview.output_value as f32);
+    let ratio_by_step = under_ratio.powf(path.len() as f32);
+
+    info!(log, "run swap";
+        "under_limit" => ?under_limit,
+        "ratio_by_step" => ?ratio_by_step,
+    );
+    let out = ref_finance::swap::run_swap(&path, preview.input_value.into(), ratio_by_step).await?;
+
+    info!(log, "swap done";
+        "out" => out,
+    );
     Ok(())
 }

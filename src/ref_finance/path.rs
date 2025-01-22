@@ -20,7 +20,7 @@ use std::sync::Arc;
 mod by_token;
 mod edge;
 mod graph;
-mod preview;
+pub mod preview;
 
 use crate::types::gas_price::GasPrice;
 use preview::{Preview, PreviewList};
