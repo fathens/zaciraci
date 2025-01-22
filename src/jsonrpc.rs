@@ -1,10 +1,11 @@
 use crate::config;
 use crate::logging::*;
+use crate::types::gas_price::GasPrice;
 use crate::Result;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{methods, JsonRpcClient};
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
-use near_primitives::action::{Action, FunctionCallAction};
+use near_primitives::action::{Action, FunctionCallAction, TransferAction};
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
 use near_primitives::types::{Balance, BlockId, Finality};
 use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest};
@@ -42,10 +43,25 @@ pub async fn get_recent_block() -> Result<BlockView> {
     Ok(res)
 }
 
-pub async fn get_gas_price(block: Option<BlockId>) -> Result<Balance> {
+pub async fn get_native_amount(account: &AccountId) -> Result<Balance> {
+    let req = methods::query::RpcQueryRequest {
+        block_reference: Finality::Final.into(),
+        request: QueryRequest::ViewAccount {
+            account_id: account.clone(),
+        },
+    };
+    let res = CLIENT.call(req).await?;
+    if let QueryResponseKind::ViewAccount(am) = res.kind {
+        Ok(am.amount)
+    } else {
+        panic!("View account is not view account")
+    }
+}
+
+pub async fn get_gas_price(block: Option<BlockId>) -> Result<GasPrice> {
     let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
     let res = CLIENT.call(req).await?;
-    Ok(res.gas_price)
+    Ok(GasPrice::from_balance(res.gas_price))
 }
 
 pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyView> {
@@ -86,6 +102,23 @@ where
     }
 }
 
+pub async fn transfer_native_token(
+    signer: &InMemorySigner,
+    receiver: &AccountId,
+    amount: Balance,
+) -> Result<CryptoHash> {
+    let log = DEFAULT.new(o!(
+        "function" => "transfer_native_token",
+        "signer" => format!("{}", signer.account_id),
+        "receiver" => format!("{}", receiver),
+        "amount" => amount,
+    ));
+    info!(log, "transferring native token");
+    let action = Action::Transfer(TransferAction { deposit: amount });
+
+    send_tx(signer, receiver, &[action]).await
+}
+
 pub async fn exec_contract<T>(
     signer: &InMemorySigner,
     receiver: &AccountId,
@@ -98,17 +131,12 @@ where
 {
     let log = DEFAULT.new(o!(
         "function" => "exec_contract",
-        "server" => CLIENT.server_addr(),
         "signer" => format!("{}", signer.account_id),
         "receiver" => format!("{}", receiver),
         "method_name" => format!("{}", method_name),
         "deposit" => deposit,
     ));
-
-    let access_key = get_access_key_info(signer).await?;
-    let block = get_recent_block().await?;
-    let nonce = access_key.nonce + 1;
-    let block_hash = block.header.hash;
+    info!(log, "executing contract");
 
     let action = Action::FunctionCall(
         FunctionCallAction {
@@ -120,13 +148,33 @@ where
         .into(),
     );
 
+    send_tx(signer, receiver, &[action]).await
+}
+
+async fn send_tx(
+    signer: &InMemorySigner,
+    receiver: &AccountId,
+    actions: &[Action],
+) -> Result<CryptoHash> {
+    let log = DEFAULT.new(o!(
+        "function" => "exec_contract",
+        "server" => CLIENT.server_addr(),
+        "signer" => format!("{}", signer.account_id),
+        "receiver" => format!("{}", receiver),
+    ));
+
+    let access_key = get_access_key_info(signer).await?;
+    let block = get_recent_block().await?;
+    let nonce = access_key.nonce + 1;
+    let block_hash = block.header.hash;
+
     let transaction = Transaction::V0(TransactionV0 {
         signer_id: signer.account_id.clone(),
         public_key: signer.public_key(),
         nonce,
         receiver_id: receiver.clone(),
         block_hash,
-        actions: vec![action],
+        actions: actions.to_vec(),
     });
 
     let (hash, _) = transaction.get_hash_and_size();

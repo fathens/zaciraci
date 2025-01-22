@@ -22,6 +22,7 @@ mod edge;
 mod graph;
 mod preview;
 
+use crate::types::gas_price::GasPrice;
 use preview::{Preview, PreviewList};
 
 static CACHED_POOLS_IN_DB: OnceCell<PoolInfoList> = OnceCell::new();
@@ -37,29 +38,29 @@ pub fn all_tokens(pools: &PoolInfoList) -> Vec<TokenAccount> {
 }
 
 pub async fn sorted_returns(
-    start: TokenInAccount,
+    start: &TokenInAccount,
     initial: MilliNear,
 ) -> Result<Vec<(TokenOutAccount, MilliNear, usize)>> {
     let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools);
-    let goals = graph.update_graph(start.clone())?;
-    let returns = graph.list_returns(initial.to_yocto(), start.clone(), &goals)?;
+    let goals = graph.update_graph(start)?;
+    let returns = graph.list_returns(initial.to_yocto(), start, &goals)?;
     let mut in_milli = vec![];
     for (k, v) in returns.iter() {
-        let depth = graph.get_path_with_return(start.clone(), k.clone())?.len();
+        let depth = graph.get_path_with_return(start, k)?.len();
         in_milli.push((k.clone(), MilliNear::from_yocto(*v), depth));
     }
     Ok(in_milli)
 }
 
-pub async fn swap_path(start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
+pub async fn swap_path(start: &TokenInAccount, goal: &TokenOutAccount) -> Result<Vec<TokenPair>> {
     let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools);
     graph.get_path_with_return(start, goal)
 }
 
 pub async fn pick_goals(
-    start: TokenInAccount,
+    start: &TokenInAccount,
     total_amount: MilliNear,
 ) -> Result<Option<Vec<Preview<Balance>>>> {
     let pools = get_pools_in_db().await?;
@@ -91,9 +92,9 @@ fn rate_average<M: Into<u128>>(min: M, max: M) -> u128 {
 
 pub fn pick_previews<M>(
     all_pools: &PoolInfoList,
-    start: TokenInAccount,
+    start: &TokenInAccount,
     total_amount: M,
-    gas_price: Balance,
+    gas_price: GasPrice,
 ) -> Result<Option<PreviewList<M>>>
 where
     M: Send + Sync + Copy + Hash + Debug,
@@ -119,7 +120,7 @@ where
         }
     };
     let graph = TokenGraph::new(all_pools);
-    let goals = graph.update_graph(start.clone())?;
+    let goals = graph.update_graph(start)?;
 
     let do_pick = |value: M| {
         debug!(log, "do_pick";
@@ -130,7 +131,7 @@ where
         }
         let limit = (total_amount.into() / value.into()) as usize;
         if limit > 0 {
-            let previews = pick_by_amount(&graph, &start, &goals, gas_price, value, limit)?;
+            let previews = pick_by_amount(&graph, start, &goals, gas_price, value, limit)?;
             return Ok(previews.map(Arc::new));
         }
         Ok(None)
@@ -147,7 +148,7 @@ fn pick_by_amount<M>(
     graph: &TokenGraph,
     start: &TokenInAccount,
     goals: &[TokenOutAccount],
-    gas_price: Balance,
+    gas_price: GasPrice,
     amount: M,
     limit: usize,
 ) -> Result<Option<PreviewList<M>>>
@@ -163,10 +164,10 @@ where
     ));
     info!(log, "start");
 
-    let list = graph.list_returns(amount.into(), start.clone(), goals)?;
+    let list = graph.list_returns(amount.into(), start, goals)?;
     let mut goals = vec![];
     for (goal, output) in list.into_iter().take(limit) {
-        let path = graph.get_path_with_return(start.clone(), goal.clone())?;
+        let path = graph.get_path_with_return(start, &goal)?;
         let preview = Preview::new(gas_price, amount, goal, path.len(), output);
         let gain = preview.gain;
         if gain > 0 {

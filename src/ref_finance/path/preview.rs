@@ -1,14 +1,18 @@
-use crate::ref_finance::token_account::TokenOutAccount;
+use crate::ref_finance;
+use crate::ref_finance::pool_info::TokenPair;
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::types::gas_price::GasPrice;
+use crate::Result;
 use near_gas::NearGas;
 use near_primitives::types::Balance;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Preview<M> {
-    pub gas_price: Balance,
+    pub gas_price: GasPrice,
     pub input_value: M,
     pub token: TokenOutAccount,
     pub depth: usize,
-    pub output_value: u128,
+    pub output_value: Balance,
     pub gain: Balance,
 }
 
@@ -20,7 +24,7 @@ where
     const BY_STEP: NearGas = NearGas::from_ggas(2600);
 
     pub fn new(
-        gas_price: Balance,
+        gas_price: GasPrice,
         input_value: M,
         token: TokenOutAccount,
         depth: usize,
@@ -37,12 +41,12 @@ where
         }
     }
 
-    fn cost(gas_price: Balance, depth: usize) -> u128 {
+    fn cost(gas_price: GasPrice, depth: usize) -> u128 {
         let gas = Self::HEAD.as_gas() + Self::BY_STEP.as_gas() * (depth as u64);
-        gas as u128 * gas_price
+        gas as u128 * gas_price.to_balance()
     }
 
-    fn gain(gas_price: Balance, depth: usize, input_value: M, output_value: Balance) -> u128 {
+    fn gain(gas_price: GasPrice, depth: usize, input_value: M, output_value: Balance) -> u128 {
         let input_value = input_value.into();
         if output_value <= input_value {
             return 0;
@@ -71,6 +75,26 @@ impl<M> PreviewList<M> {
             list: previews,
             total_gain,
         })
+    }
+
+    pub async fn into_with_path(
+        self,
+        start: &TokenInAccount,
+    ) -> Result<(Vec<(Preview<M>, Vec<TokenPair>)>, Vec<TokenAccount>)> {
+        let mut tokens = Vec::new();
+        let mut pre_path = Vec::new();
+        for p in self.list {
+            let path = ref_finance::path::swap_path(start, &p.token).await?;
+            for pair in path.iter() {
+                tokens.push(pair.token_in_id().into());
+                tokens.push(pair.token_out_id().into());
+            }
+            pre_path.push((p, path));
+        }
+        tokens.sort();
+        tokens.dedup();
+
+        Ok((pre_path, tokens))
     }
 }
 
@@ -115,7 +139,7 @@ mod tests {
 
     const HEAD: u128 = MicroNear::of(270).to_yocto();
     const BY_STEP: u128 = MicroNear::of(260).to_yocto();
-    const MIN_GAS_PRICE: Balance = 100_000_000;
+    const MIN_GAS_PRICE: GasPrice = GasPrice::from_balance(100_000_000);
 
     #[test]
     fn test_preview_cost() {

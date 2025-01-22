@@ -1,7 +1,8 @@
 use crate::persistence::tables;
-use crate::ref_finance::pool_info;
 use crate::ref_finance::token_account::TokenAccount;
+use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
+use crate::{ref_finance, wallet};
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -18,6 +19,13 @@ pub async fn run() {
         .route("/counter", get(get_counter))
         .with_state(state.clone())
         .route("/counter/increase", get(inc_counter))
+        .with_state(state.clone())
+        .route("/native_token/balance", get(native_token_balance))
+        .with_state(state.clone())
+        .route(
+            "/native_token/transfer/:receiver/:amount",
+            get(native_token_transfer),
+        )
         .with_state(state.clone())
         .route("/pools/get_all", get(get_all_pools))
         .with_state(state.clone())
@@ -53,7 +61,19 @@ pub async fn run() {
             get(storage_unregister_token),
         )
         .with_state(state.clone())
-        .route("/deposit/:token_account/:amount", get(deposit_token))
+        .route("/amounts/list", get(deposit_list))
+        .with_state(state.clone())
+        .route("/amounts/wrap/:amount", get(wrap_native_token))
+        .with_state(state.clone())
+        .route(
+            "/amounts/deposit/:token_account/:amount",
+            get(deposit_token),
+        )
+        .with_state(state.clone())
+        .route(
+            "/amounts/withdraw/:token_account/:amount",
+            get(withdraw_token),
+        )
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -140,7 +160,7 @@ async fn list_returns(
 ) -> String {
     let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
-    let mut sorted_returns = crate::ref_finance::path::sorted_returns(start.into(), amount_in)
+    let mut sorted_returns = crate::ref_finance::path::sorted_returns(&start.into(), amount_in)
         .await
         .unwrap();
     sorted_returns.reverse();
@@ -160,7 +180,7 @@ async fn pick_goals(
 ) -> String {
     let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let goals = crate::ref_finance::path::pick_goals(start.into(), MilliNear::of(amount_in))
+    let goals = crate::ref_finance::path::pick_goals(&start.into(), MilliNear::of(amount_in))
         .await
         .unwrap();
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
@@ -190,11 +210,18 @@ async fn run_swap(
     )>,
 ) -> String {
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
-    let start: TokenAccount = token_in_account.parse().unwrap();
-    let goal: TokenAccount = token_out_account.parse().unwrap();
-    let res =
-        crate::ref_finance::swap::run_swap(start.into(), goal.into(), amount_in, min_out_ratio)
-            .await;
+    let start_token: TokenAccount = token_in_account.parse().unwrap();
+    let goal_token: TokenAccount = token_out_account.parse().unwrap();
+    let start = &start_token.into();
+    let goal = &goal_token.into();
+
+    let path = ref_finance::path::swap_path(start, goal).await.unwrap();
+    let account = wallet::WALLET.account_id();
+    let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
+    storage::check_and_deposit(account, &tokens).await.unwrap();
+    let ratio = min_out_ratio as f32 / 100.0;
+
+    let res = ref_finance::swap::run_swap(&path, amount_in, ratio).await;
 
     match res {
         Ok(value) => format!("Result: {value}"),
@@ -233,15 +260,87 @@ async fn storage_unregister_token(
     }
 }
 
+async fn deposit_list(State(_): State<Arc<AppState>>) -> String {
+    let account = wallet::WALLET.account_id();
+    let res = crate::ref_finance::deposit::get_deposits(account).await;
+    match res {
+        Err(e) => format!("Error: {e}"),
+        Ok(deposits) => {
+            let mut results = String::new();
+            for (token, amount) in deposits.iter() {
+                let m = MicroNear::from_yocto(amount.0);
+                let line = format!("{token} -> {m:?}\n");
+                results.push_str(&line);
+            }
+            results
+        }
+    }
+}
+
 async fn deposit_token(
     State(_): State<Arc<AppState>>,
     Path((token_account, amount)): Path<(String, String)>,
 ) -> String {
-    let amount: u128 = amount.replace("_", "").parse().unwrap();
-    let token: TokenAccount = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::deposit(token, amount).await;
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let token = token_account.parse().unwrap();
+    let res = crate::ref_finance::deposit::deposit(&token, amount).await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn withdraw_token(
+    State(_): State<Arc<AppState>>,
+    Path((token_account, amount)): Path<(String, String)>,
+) -> String {
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let token = token_account.parse().unwrap();
+    let res = crate::ref_finance::deposit::withdraw(&token, amount).await;
+    match res {
+        Ok(_) => format!("Withdrawn: {amount}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+async fn native_token_balance(State(_): State<Arc<AppState>>) -> String {
+    let account = wallet::WALLET.account_id();
+    let res = crate::jsonrpc::get_native_amount(account).await;
+    match res {
+        Ok(balance) => {
+            format!("Balance: {balance:?}\n")
+        }
+        Err(err) => {
+            format!("Error: {err}")
+        }
+    }
+}
+
+async fn native_token_transfer(
+    State(_): State<Arc<AppState>>,
+    Path((receiver, amount)): Path<(String, String)>,
+) -> String {
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let receiver = receiver.parse().unwrap();
+    let signer = wallet::WALLET.signer();
+    let res = crate::jsonrpc::transfer_native_token(signer, &receiver, amount).await;
+    match res {
+        Ok(_) => "OK".to_owned(),
+        Err(err) => {
+            format!("Error: {err}")
+        }
+    }
+}
+
+async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let res = crate::ref_finance::deposit::wrap_near(amount).await;
+    match res {
+        Ok(token) => format!("Wrapped: {token} {amount}"),
         Err(e) => format!("Error: {e}"),
     }
 }

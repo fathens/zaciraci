@@ -1,3 +1,4 @@
+pub mod gas_price;
 pub mod micro_near;
 pub mod milli_near;
 

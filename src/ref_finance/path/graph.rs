@@ -50,16 +50,17 @@ impl<'a> TokenGraph<'a> {
         CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge)
     }
 
-    pub fn update_graph(&self, start: TokenInAccount) -> Result<Vec<TokenOutAccount>> {
+    pub fn update_graph(&self, start: &TokenInAccount) -> Result<Vec<TokenOutAccount>> {
         let log = DEFAULT.new(o!(
             "function" => "TokenGraph::update_graph",
             "start" => format!("{:?}", start),
         ));
         info!(log, "find goals from start");
 
-        let goals = self.graph.update_path(start.clone(), None)?;
+        let goals = self.graph.update_path(start, None)?;
         for goal in goals.iter() {
-            self.graph.update_path(goal.as_in(), Some(start.as_out()))?;
+            self.graph
+                .update_path(&goal.as_in(), Some(start.as_out()))?;
         }
         Ok(goals)
     }
@@ -67,7 +68,7 @@ impl<'a> TokenGraph<'a> {
     pub fn list_returns(
         &self,
         initial: u128,
-        start: TokenInAccount,
+        start: &TokenInAccount,
         goals: &[TokenOutAccount],
     ) -> Result<Vec<(TokenOutAccount, u128)>> {
         let log = DEFAULT.new(o!(
@@ -79,7 +80,7 @@ impl<'a> TokenGraph<'a> {
 
         let mut returns = HashMap::new();
         for goal in goals.iter() {
-            match self.estimate_return(initial, start.clone(), goal.clone()) {
+            match self.estimate_return(initial, start, goal) {
                 Ok(value) => {
                     returns.insert(goal.clone(), value);
                 }
@@ -97,15 +98,15 @@ impl<'a> TokenGraph<'a> {
     pub fn estimate_return(
         &self,
         initial: u128,
-        start: TokenInAccount,
-        goal: TokenOutAccount,
+        start: &TokenInAccount,
+        goal: &TokenOutAccount,
     ) -> Result<u128> {
         if initial == 0 {
             return Ok(0);
         }
         let mut value = initial;
 
-        let pairs = self.get_path_with_return(start.clone(), goal.clone())?;
+        let pairs = self.get_path_with_return(start, goal)?;
         for pair in pairs.iter() {
             value = pair.estimate_return(value)?;
             if value == 0 {
@@ -116,9 +117,9 @@ impl<'a> TokenGraph<'a> {
         Ok(value)
     }
 
-    fn get_path(&self, start: TokenInAccount, goal: TokenOutAccount) -> Result<Vec<TokenPair>> {
+    fn get_path(&self, start: &TokenInAccount, goal: &TokenOutAccount) -> Result<Vec<TokenPair>> {
         let mut result = Vec::new();
-        let edges = self.graph.get_edges(start.clone(), goal.clone())?;
+        let edges = self.graph.get_edges(start, goal)?;
         for edge in edges.iter() {
             let pair_id = edge.pair_id().expect("should be pair id");
             let pair = self.pools.get_pair(pair_id)?;
@@ -130,11 +131,11 @@ impl<'a> TokenGraph<'a> {
     // 往路と復路のパスを TokenPair のリストで返す
     pub fn get_path_with_return(
         &self,
-        start: TokenInAccount,
-        goal: TokenOutAccount,
+        start: &TokenInAccount,
+        goal: &TokenOutAccount,
     ) -> Result<Vec<TokenPair>> {
-        let mut path = self.get_path(start.clone(), goal.clone())?;
-        path.extend(self.get_path(goal.as_in(), start.as_out())?);
+        let mut path = self.get_path(start, goal)?;
+        path.extend(self.get_path(&goal.as_in(), &start.as_out())?);
         Ok(path)
     }
 }
@@ -174,23 +175,23 @@ where
         }
     }
 
-    fn err_not_found(&self, node: N) -> Error {
-        (self.err_not_found)(node)
+    fn err_not_found(&self, node: &N) -> Error {
+        (self.err_not_found)(node.clone())
     }
 
-    fn err_no_edge(&self, token_in: I, token_out: O) -> Error {
-        (self.err_no_edge)(token_in, token_out)
+    fn err_no_edge(&self, token_in: &I, token_out: &O) -> Error {
+        (self.err_no_edge)(token_in.clone(), token_out.clone())
     }
 
-    fn node_index(&self, token: N) -> Result<NodeIndex> {
+    fn node_index(&self, token: &N) -> Result<NodeIndex> {
         let &index = self
             .nodes
-            .get(&token)
+            .get(token)
             .ok_or_else(|| self.err_not_found(token))?;
         Ok(index)
     }
 
-    fn update_path(&self, start: I, goal: Option<O>) -> Result<Vec<O>> {
+    fn update_path(&self, start: &I, goal: Option<O>) -> Result<Vec<O>> {
         let log = DEFAULT.new(o!(
             "function" => "CachedPath::update_path",
             "start" => format!("{:?}", start),
@@ -198,9 +199,9 @@ where
         ));
         info!(log, "start");
 
-        let from = self.node_index(start.clone().into())?;
+        let from = self.node_index(&start.clone().into())?;
         let to = if let Some(goal) = goal {
-            Some(self.node_index(goal.into())?)
+            Some(self.node_index(&goal.into())?)
         } else {
             None
         };
@@ -222,40 +223,43 @@ where
                 outs.push(out.into());
             }
         }
-        self.cached_path.lock().unwrap().insert(start, path_to_outs);
+        self.cached_path
+            .lock()
+            .unwrap()
+            .insert(start.clone(), path_to_outs);
         Ok(outs)
     }
 
-    fn get_edges(&self, start: I, goal: O) -> Result<Vec<E>> {
-        let path = self.get_path(start.clone(), goal.clone())?;
+    fn get_edges(&self, start: &I, goal: &O) -> Result<Vec<E>> {
+        let path = self.get_path(start, goal)?;
         let mut edges = Vec::new();
-        let mut prev = start;
+        let mut prev = start.clone();
         for token in path.into_iter() {
-            let edge = self.get_weight(prev, token.clone().into())?;
+            let edge = self.get_weight(&prev, &token.clone().into())?;
             edges.push(edge);
             prev = token.into();
         }
-        let edge = self.get_weight(prev, goal)?;
+        let edge = self.get_weight(&prev, goal)?;
         edges.push(edge);
         Ok(edges)
     }
 
-    fn get_path(&self, start: I, goal: O) -> Result<Vec<N>> {
+    fn get_path(&self, start: &I, goal: &O) -> Result<Vec<N>> {
         let cached_path = self.cached_path.lock().unwrap();
         let path = cached_path
-            .get(&start)
-            .ok_or_else(|| self.err_not_found(start.into()))?
-            .get(&goal)
-            .ok_or_else(|| self.err_not_found(goal.into()))?;
+            .get(start)
+            .ok_or_else(|| self.err_not_found(&start.clone().into()))?
+            .get(goal)
+            .ok_or_else(|| self.err_not_found(&goal.clone().into()))?;
         Ok(path.clone())
     }
 
-    fn get_weight(&self, token_in: I, token_out: O) -> Result<E> {
+    fn get_weight(&self, token_in: &I, token_out: &O) -> Result<E> {
         let weight: Option<_> = self
             .graph
             .find_edge(
-                self.node_index(token_in.clone().into())?,
-                self.node_index(token_out.clone().into())?,
+                self.node_index(&token_in.clone().into())?,
+                self.node_index(&token_out.clone().into())?,
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
@@ -463,36 +467,36 @@ mod test {
             graph,
             nodes,
             |node| panic!("not found: {:?}", node),
-            |i, o| panic!("no edge: {} -> {}", i, o),
+            |i: &str, o| panic!("no edge: {} -> {}", i, o),
         );
 
-        match panic::catch_unwind(|| cached_path.update_path("X", None)) {
+        match panic::catch_unwind(|| cached_path.update_path(&"X", None)) {
             Err(e) => {
                 let msg = e.downcast_ref::<String>().unwrap();
                 assert_eq!(msg, "not found: \"X\"");
             }
             _ => panic!("should panic"),
         }
-        match panic::catch_unwind(|| cached_path.update_path("A", Some("X"))) {
+        match panic::catch_unwind(|| cached_path.update_path(&"A", Some("X"))) {
             Err(e) => {
                 let msg = e.downcast_ref::<String>().unwrap();
                 assert_eq!(msg, "not found: \"X\"");
             }
             _ => panic!("should panic"),
         }
-        let goals = cached_path.update_path("A", None).unwrap();
+        let goals = cached_path.update_path(&"A", None).unwrap();
         assert_eq!(goals.len(), 5);
         for goal in goals.into_iter() {
-            let gs = cached_path.update_path(goal, Some("A")).unwrap();
+            let gs = cached_path.update_path(&goal, Some("A")).unwrap();
             assert!(gs.len() < 6);
         }
 
         assert_eq!(
-            format!("{:?}", cached_path.get_edges("A", "F").unwrap()),
+            format!("{:?}", cached_path.get_edges(&"A", &"F").unwrap()),
             "[A 1-> B, B 4-> D, D 8-> F]"
         );
         assert_eq!(
-            format!("{:?}", cached_path.get_edges("F", "A").unwrap()),
+            format!("{:?}", cached_path.get_edges(&"F", &"A").unwrap()),
             "[F 9-> D, D 3-> C, C 2-> A]"
         );
     }
