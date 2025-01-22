@@ -67,10 +67,16 @@ async fn single_loop() -> Result<()> {
 
     let (token, balance) = ref_finance::balances::start().await?;
     let start: &TokenInAccount = &token.into();
+    let start_balance = MicroNear::from_yocto(balance);
+    info!(log, "start";
+        "start.token" => ?start,
+        "start.balance" => ?balance,
+        "start.balance_in_micro" => ?start_balance,
+    );
 
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node().await?;
     let gas_price = jsonrpc::get_gas_price(None).await?;
-    let previews = ref_finance::path::pick_previews(&pools, start, balance, gas_price)?;
+    let previews = ref_finance::path::pick_previews(&pools, start, start_balance, gas_price)?;
 
     if let Some(previews) = previews {
         let (pre_path, tokens) = previews.into_with_path(start).await?;
