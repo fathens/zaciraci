@@ -2,8 +2,9 @@ use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAc
 use crate::ref_finance::token_index::TokenIndex;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use std::fmt::{Debug, Display};
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum Error {
     SwapSameToken,
     ZeroAmount,

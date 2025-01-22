@@ -5,7 +5,6 @@ mod cron;
 mod errors;
 mod jsonrpc;
 mod logging;
-mod persistence;
 mod ref_finance;
 mod types;
 mod wallet;
@@ -79,7 +78,7 @@ async fn single_loop() -> Result<()> {
     let previews = ref_finance::path::pick_previews(&pools, start, start_balance, gas_price)?;
 
     if let Some(previews) = previews {
-        let (pre_path, tokens) = previews.into_with_path(start).await?;
+        let (pre_path, tokens) = previews.into_with_path(&pools, start).await?;
 
         let account = wallet::WALLET.account_id();
         ref_finance::storage::check_and_deposit(account, &tokens).await?;

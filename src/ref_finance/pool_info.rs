@@ -1,6 +1,5 @@
 use crate::jsonrpc;
 use crate::logging::*;
-use crate::persistence::tables;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
@@ -12,7 +11,6 @@ use num_integer::Roots;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::slice::Iter;
 use std::sync::{Arc, LazyLock};
 
@@ -39,55 +37,6 @@ pub struct PoolInfo {
 pub struct PoolInfoList {
     list: Vec<Arc<PoolInfo>>,
     by_id: HashMap<u32, Arc<PoolInfo>>,
-}
-
-impl From<PoolInfo> for tables::pool_info::PoolInfo {
-    fn from(src: PoolInfo) -> Self {
-        fn from_u128(value: U128) -> BigDecimal {
-            let v: u128 = value.into();
-            BigDecimal::from(v)
-        }
-        tables::pool_info::PoolInfo {
-            id: src.id as i32,
-            pool_kind: src.bare.pool_kind.clone(),
-            token_account_ids: src
-                .bare
-                .token_account_ids
-                .into_iter()
-                .map(|v| v.to_string())
-                .collect(),
-            amounts: src.bare.amounts.into_iter().map(from_u128).collect(),
-            total_fee: src.bare.total_fee as i64,
-            shares_total_supply: from_u128(src.bare.shares_total_supply),
-            amp: BigDecimal::from(src.bare.amp),
-            updated_at: src.updated_at,
-        }
-    }
-}
-
-impl From<tables::pool_info::PoolInfo> for PoolInfo {
-    fn from(src: tables::pool_info::PoolInfo) -> Self {
-        fn to_u128(value: BigDecimal) -> U128 {
-            let v: u128 = value.to_u128().expect("should be valid value");
-            v.into()
-        }
-        PoolInfo {
-            id: src.id as u32,
-            bare: PoolInfoBared {
-                pool_kind: src.pool_kind.clone(),
-                token_account_ids: src
-                    .token_account_ids
-                    .iter()
-                    .map(|v| v.parse().expect("should be valid AccountId"))
-                    .collect(),
-                amounts: src.amounts.into_iter().map(to_u128).collect(),
-                total_fee: src.total_fee as u32,
-                shares_total_supply: to_u128(src.shares_total_supply.clone()),
-                amp: src.amp.to_u64().expect("should be valid value"),
-            },
-            updated_at: src.updated_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,10 +118,6 @@ impl PoolInfo {
             bare,
             updated_at: chrono::Utc::now().naive_utc(),
         }
-    }
-
-    pub fn kind(&self) -> &str {
-        &self.bare.pool_kind
     }
 
     pub fn is_simple(&self) -> bool {
@@ -320,24 +265,6 @@ impl PoolInfoList {
             .get(&index)
             .cloned()
             .ok_or_else(|| Error::OutOfIndexOfPools(index).into())
-    }
-
-    pub async fn save_to_db(&self) -> Result<usize> {
-        let records = self
-            .list
-            .iter()
-            .map(|info| info.deref().clone().into())
-            .collect();
-        tables::pool_info::update_all(records).await
-    }
-
-    pub async fn load_from_db() -> Result<PoolInfoList> {
-        let records = tables::pool_info::select_all().await?;
-        let pools = records
-            .into_iter()
-            .map(|record| Arc::new(record.into()))
-            .collect();
-        Ok(PoolInfoList::new(pools))
     }
 
     pub async fn read_from_node() -> Result<PoolInfoList> {
@@ -490,6 +417,7 @@ mod test {
             },
         );
         let result = sample.estimate_return(0.into(), 100, 1.into());
-        assert_eq!(Ok(10756643_u128), result);
+        assert!(result.is_ok());
+        assert_eq!(10756643_u128, result.unwrap());
     }
 }

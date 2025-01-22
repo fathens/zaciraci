@@ -4,7 +4,6 @@ use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::{MicroNear, MilliNear};
 use crate::{jsonrpc, Result};
-use async_once_cell::OnceCell;
 use graph::TokenGraph;
 use near_primitives::types::Balance;
 use num_integer::Roots;
@@ -25,23 +24,16 @@ pub mod preview;
 use crate::types::gas_price::GasPrice;
 use preview::{Preview, PreviewList};
 
-static CACHED_POOLS_IN_DB: OnceCell<PoolInfoList> = OnceCell::new();
-async fn get_pools_in_db() -> Result<&'static PoolInfoList> {
-    CACHED_POOLS_IN_DB
-        .get_or_try_init(PoolInfoList::load_from_db())
-        .await
-}
-
 pub fn all_tokens(pools: &PoolInfoList) -> Vec<TokenAccount> {
     let by_tokens = by_token::PoolsByToken::new(pools);
     by_tokens.tokens()
 }
 
 pub async fn sorted_returns(
+    pools: &PoolInfoList,
     start: &TokenInAccount,
     initial: MilliNear,
 ) -> Result<Vec<(TokenOutAccount, MilliNear, usize)>> {
-    let pools = get_pools_in_db().await?;
     let graph = TokenGraph::new(pools);
     let goals = graph.update_graph(start)?;
     let returns = graph.list_returns(initial.to_yocto(), start, &goals)?;
@@ -53,17 +45,20 @@ pub async fn sorted_returns(
     Ok(in_milli)
 }
 
-pub async fn swap_path(start: &TokenInAccount, goal: &TokenOutAccount) -> Result<Vec<TokenPair>> {
-    let pools = get_pools_in_db().await?;
+pub async fn swap_path(
+    pools: &PoolInfoList,
+    start: &TokenInAccount,
+    goal: &TokenOutAccount,
+) -> Result<Vec<TokenPair>> {
     let graph = TokenGraph::new(pools);
     graph.get_path_with_return(start, goal)
 }
 
 pub async fn pick_goals(
+    pools: &PoolInfoList,
     start: &TokenInAccount,
     total_amount: MilliNear,
 ) -> Result<Option<Vec<Preview<Balance>>>> {
-    let pools = get_pools_in_db().await?;
     let gas_price = jsonrpc::get_gas_price(None).await?;
     let previews = pick_previews(pools, start, MicroNear::from_milli(total_amount), gas_price)?;
 
