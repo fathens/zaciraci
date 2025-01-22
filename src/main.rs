@@ -39,14 +39,14 @@ async fn main() {
     tokio::spawn(cron::run());
     tokio::spawn(web::run());
 
-    match main_looop().await {
+    match main_loop().await {
         Ok(_) => info!(log, "shutting down"),
         Err(err) => error!(log, "shutting down: {}", err),
     }
 }
 
-async fn main_looop() -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "main_looop"));
+async fn main_loop() -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "main_loop"));
     loop {
         match single_loop().await {
             Ok(_) => info!(log, "success, go next"),
