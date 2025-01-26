@@ -166,7 +166,7 @@ where
     }
 
     fn err_not_found(&self, node: &N) -> Error {
-        anyhow!("token not found: {:?}", node).context("not found")
+        anyhow!("token not found: {:?}", node)
     }
 
     fn err_no_edge(&self, token_in: &I, token_out: &O) -> Error {
@@ -221,6 +221,12 @@ where
     }
 
     fn get_edges(&self, start: &I, goal: &O) -> Result<Vec<E>> {
+        let log = DEFAULT.new(o!(
+            "function" => "CachedPath::get_edges",
+            "start" => format!("{:?}", start),
+            "goal" => format!("{:?}", goal),
+        ));
+        info!(log, "start");
         let path = self.get_path(start, goal)?;
         let mut edges = Vec::new();
         let mut prev = start.clone();
@@ -245,6 +251,12 @@ where
     }
 
     fn get_weight(&self, token_in: &I, token_out: &O) -> Result<E> {
+        let log = DEFAULT.new(o!(
+            "function" => "CachedPath::get_weight",
+            "token_in" => format!("{:?}", token_in),
+            "token_out" => format!("{:?}", token_out),
+        ));
+        debug!(log, "start");
         let weight: Option<_> = self
             .graph
             .find_edge(
