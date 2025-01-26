@@ -18,23 +18,22 @@ use std::sync::Arc;
 
 mod by_token;
 mod edge;
-mod graph;
+pub mod graph;
 pub mod preview;
 
 use crate::types::gas_price::GasPrice;
 use preview::{Preview, PreviewList};
 
-pub fn all_tokens(pools: &PoolInfoList) -> Vec<TokenAccount> {
+pub fn all_tokens(pools: Arc<PoolInfoList>) -> Vec<TokenAccount> {
     let by_tokens = by_token::PoolsByToken::new(pools);
     by_tokens.tokens()
 }
 
 pub async fn sorted_returns(
-    pools: &PoolInfoList,
+    graph: &TokenGraph,
     start: &TokenInAccount,
     initial: MilliNear,
 ) -> Result<Vec<(TokenOutAccount, MilliNear, usize)>> {
-    let graph = TokenGraph::new(pools);
     let goals = graph.update_graph(start)?;
     let returns = graph.list_returns(initial.to_yocto(), start, &goals)?;
     let mut in_milli = vec![];
@@ -46,21 +45,20 @@ pub async fn sorted_returns(
 }
 
 pub async fn swap_path(
-    pools: &PoolInfoList,
+    graph: &TokenGraph,
     start: &TokenInAccount,
     goal: &TokenOutAccount,
 ) -> Result<Vec<TokenPair>> {
-    let graph = TokenGraph::new(pools);
     graph.get_path_with_return(start, goal)
 }
 
 pub async fn pick_goals(
-    pools: &PoolInfoList,
+    graph: &TokenGraph,
     start: &TokenInAccount,
     total_amount: MilliNear,
 ) -> Result<Option<Vec<Preview<Balance>>>> {
     let gas_price = jsonrpc::get_gas_price(None).await?;
-    let previews = pick_previews(pools, start, MicroNear::from_milli(total_amount), gas_price)?;
+    let previews = pick_previews(graph, start, MicroNear::from_milli(total_amount), gas_price)?;
 
     const REPEAT: usize = 3;
 
@@ -86,7 +84,7 @@ fn rate_average<M: Into<u128>>(min: M, max: M) -> u128 {
 }
 
 pub fn pick_previews<M>(
-    all_pools: &PoolInfoList,
+    graph: &TokenGraph,
     start: &TokenInAccount,
     total_amount: M,
     gas_price: GasPrice,
@@ -114,7 +112,6 @@ where
             ave.into()
         }
     };
-    let graph = TokenGraph::new(all_pools);
     let goals = graph.update_graph(start)?;
 
     let do_pick = |value: M| {
@@ -126,7 +123,7 @@ where
         }
         let limit = (total_amount.into() / value.into()) as usize;
         if limit > 0 {
-            let previews = pick_by_amount(&graph, start, &goals, gas_price, value, limit)?;
+            let previews = pick_by_amount(graph, start, &goals, gas_price, value, limit)?;
             return Ok(previews.map(Arc::new));
         }
         Ok(None)

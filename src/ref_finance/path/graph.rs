@@ -16,19 +16,20 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
-pub struct TokenGraph<'a> {
-    pools: &'a PoolInfoList,
+pub struct TokenGraph {
+    pools: Arc<PoolInfoList>,
     graph: CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight>,
 }
 
-impl<'a> TokenGraph<'a> {
-    pub fn new(pools: &'a PoolInfoList) -> Self {
-        let graph = Self::cached_path(pools);
+impl TokenGraph {
+    pub fn new(pools_list: Arc<PoolInfoList>) -> Self {
+        let pools = Arc::clone(&pools_list);
+        let graph = Self::cached_path(pools_list);
         Self { pools, graph }
     }
 
     fn cached_path(
-        pools: &PoolInfoList,
+        pools: Arc<PoolInfoList>,
     ) -> CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight> {
         let pools_by_token = PoolsByToken::new(pools);
         let mut graph = petgraph::Graph::new();

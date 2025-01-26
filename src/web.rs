@@ -120,7 +120,7 @@ async fn get_return(
 
 async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
     let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
-    let tokens = crate::ref_finance::path::all_tokens(&pools);
+    let tokens = ref_finance::path::all_tokens(pools);
     let mut tokens: Vec<_> = tokens.iter().map(|t| t.to_string()).collect();
     tokens.sort();
     let mut result = String::from("Tokens:\n");
@@ -135,12 +135,12 @@ async fn list_returns(
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
     let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
-    let mut sorted_returns =
-        crate::ref_finance::path::sorted_returns(&pools, &start.into(), amount_in)
-            .await
-            .unwrap();
+    let mut sorted_returns = ref_finance::path::sorted_returns(&graph, &start.into(), amount_in)
+        .await
+        .unwrap();
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
@@ -157,10 +157,11 @@ async fn pick_goals(
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
     let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
     let goals =
-        crate::ref_finance::path::pick_goals(&pools, &start.into(), MilliNear::of(amount_in))
+        crate::ref_finance::path::pick_goals(&graph, &start.into(), MilliNear::of(amount_in))
             .await
             .unwrap();
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
@@ -190,13 +191,14 @@ async fn run_swap(
     )>,
 ) -> String {
     let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start_token: TokenAccount = token_in_account.parse().unwrap();
     let goal_token: TokenAccount = token_out_account.parse().unwrap();
     let start = &start_token.into();
     let goal = &goal_token.into();
 
-    let path = ref_finance::path::swap_path(&pools, start, goal)
+    let path = ref_finance::path::swap_path(&graph, start, goal)
         .await
         .unwrap();
     let account = wallet::WALLET.account_id();

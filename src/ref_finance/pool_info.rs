@@ -270,7 +270,7 @@ impl PoolInfoList {
             .ok_or_else(|| Error::OutOfIndexOfPools(index).into())
     }
 
-    pub async fn read_from_node() -> Result<PoolInfoList> {
+    pub async fn read_from_node() -> Result<Arc<PoolInfoList>> {
         let log = DEFAULT.new(o!("function" => "get_all_from_node"));
         info!(log, "start");
 
@@ -320,7 +320,7 @@ impl PoolInfoList {
         let pools: Vec<_> = lists.into_iter().flatten().flatten().collect();
 
         info!(log, "finish"; "count" => pools.len());
-        Ok(PoolInfoList::new(pools))
+        Ok(Arc::new(PoolInfoList::new(pools)))
     }
 }
 

@@ -12,7 +12,7 @@ pub struct PoolsByToken {
 }
 
 impl PoolsByToken {
-    pub fn new(pool_list: &PoolInfoList) -> Self {
+    pub fn new(pool_list: Arc<PoolInfoList>) -> Self {
         let mut by_in = HashMap::new();
         for pool in pool_list.iter().filter(|pool| pool.is_simple()) {
             for token in pool.tokens() {

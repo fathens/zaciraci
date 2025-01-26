@@ -72,11 +72,12 @@ async fn single_loop() -> Result<()> {
     );
 
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node().await?;
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let gas_price = jsonrpc::get_gas_price(None).await?;
-    let previews = ref_finance::path::pick_previews(&pools, start, start_balance, gas_price)?;
+    let previews = ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
 
     if let Some(previews) = previews {
-        let (pre_path, tokens) = previews.into_with_path(&pools, start).await?;
+        let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
 
         let account = wallet::WALLET.account_id();
         ref_finance::storage::check_and_deposit(account, &tokens).await?;
