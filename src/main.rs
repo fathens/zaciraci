@@ -42,7 +42,7 @@ async fn main() {
 
     match main_loop().await {
         Ok(_) => info!(log, "shutting down"),
-        Err(err) => error!(log, "shutting down: {}", err),
+        Err(err) => error!(log, "shutting down: {:?}", err),
     }
 }
 
