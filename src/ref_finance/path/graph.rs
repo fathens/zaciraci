@@ -456,18 +456,20 @@ mod test {
         let cached_path = CachedPath::new(graph, nodes);
 
         match panic::catch_unwind(|| cached_path.update_path(&"X", None)) {
-            Err(e) => {
+            Err(e) => panic!("something wrong: {:?}", e),
+            Ok(Ok(v)) => panic!("should error: {:?}", v),
+            Ok(Err(e)) => {
                 let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "not found: \"X\"");
+                assert_eq!(msg, "token not found: \"X\"");
             }
-            _ => panic!("should panic"),
         }
         match panic::catch_unwind(|| cached_path.update_path(&"A", Some("X"))) {
-            Err(e) => {
+            Err(e) => panic!("something wrong: {:?}", e),
+            Ok(Ok(v)) => panic!("should error: {:?}", v),
+            Ok(Err(e)) => {
                 let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "not found: \"X\"");
+                assert_eq!(msg, "token not found: \"X\"");
             }
-            _ => panic!("should panic"),
         }
         let goals = cached_path.update_path(&"A", None).unwrap();
         assert_eq!(goals.len(), 5);
