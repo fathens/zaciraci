@@ -3,8 +3,9 @@ use crate::logging::*;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
+use futures_util::future::join_all;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
 use num_integer::Roots;
@@ -239,11 +240,13 @@ impl PoolInfo {
 }
 
 impl PoolInfoList {
-    fn new(list: Vec<Arc<PoolInfo>>) -> Self {
+    fn new(src_list: Vec<Arc<PoolInfo>>) -> Self {
         let mut by_id = HashMap::new();
-        for pool in list.iter() {
+        for pool in src_list.iter() {
             by_id.insert(pool.id, Arc::clone(pool));
         }
+        let mut list = src_list;
+        list.sort_by_key(|v| v.id);
         PoolInfoList { list, by_id }
     }
 
@@ -271,38 +274,52 @@ impl PoolInfoList {
         let log = DEFAULT.new(o!("function" => "get_all_from_node"));
         info!(log, "start");
 
-        let method_name = "get_pools";
+        let number_of_pools: u32 = {
+            let args = json!({});
+            let res =
+                jsonrpc::view_contract(&CONTRACT_ADDRESS, "get_number_of_pools", &args).await?;
+            let raw = res.result;
+            from_slice(&raw).context(format!(
+                "failed to parse count of pools: {:?}",
+                String::from_utf8(raw)
+            ))?
+        };
+        info!(log, "number_of_pools"; "value" => number_of_pools);
 
-        let limit = 100;
-        let mut index = 0;
-        let mut pools = vec![];
+        const METHOD_NAME: &str = "get_pools";
+        const LIMIT: usize = 2 << 8;
 
-        loop {
-            trace!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
-            let args = json!({
-                "from_index": index,
-                "limit": limit,
-            });
-
-            let result = jsonrpc::view_contract(&CONTRACT_ADDRESS, method_name, &args).await?;
-
-            let list: Vec<PoolInfoBared> = from_slice(&result.result)?;
-            let count = list.len();
-            trace!(log, "Got pools"; "count" => count);
-            pools.extend(list);
-            if count < limit {
-                break;
-            }
-
-            index += limit;
-        }
+        let results: Vec<_> = (0..number_of_pools)
+            .step_by(LIMIT)
+            .map(|index| async move {
+                let log = DEFAULT.new(o!(
+                    "function" => "get_pools",
+                    "index" => index,
+                    "limit" => LIMIT,
+                ));
+                let args = json!({
+                    "from_index": index,
+                    "limit": LIMIT,
+                });
+                debug!(log, "requesting");
+                let res = jsonrpc::view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args).await;
+                let result: Result<Vec<PoolInfoBared>> = match res {
+                    Ok(v) => from_slice(&v.result).context("failed to parse"),
+                    Err(e) => bail!("failed to request: {:?}", e),
+                };
+                let count = result.as_ref().map(|v| v.len()).unwrap_or(0);
+                debug!(log, "result"; "count" => count);
+                result.map(move |list| {
+                    list.into_iter()
+                        .enumerate()
+                        .map(move |(i, bare)| Arc::new(PoolInfo::new(i as u32 + index, bare)))
+                })
+            })
+            .collect();
+        let lists = join_all(results).await;
+        let pools: Vec<_> = lists.into_iter().flatten().flatten().collect();
 
         info!(log, "finish"; "count" => pools.len());
-        let pools = pools
-            .into_iter()
-            .enumerate()
-            .map(|(i, bare)| Arc::new(PoolInfo::new(i as u32, bare)))
-            .collect();
         Ok(PoolInfoList::new(pools))
     }
 }
