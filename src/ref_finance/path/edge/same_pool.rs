@@ -1,8 +1,8 @@
 use super::*;
-use crate::ref_finance::errors::Error;
 use crate::ref_finance::pool_info::PoolInfo;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
+use anyhow::anyhow;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -39,10 +39,10 @@ impl CachedEdges {
         debug!(log, "converting to index");
         let token_in = self
             .get_token_id(token_in.as_account())
-            .ok_or_else(|| Error::TokenNotFound(token_in.as_account().clone()))?;
+            .ok_or_else(|| anyhow!("token not found: {:?}", token_in))?;
         let token_out = self
             .get_token_id(token_out.as_account())
-            .ok_or_else(|| Error::TokenNotFound(token_out.as_account().clone()))?;
+            .ok_or_else(|| anyhow!("token not found: {:?}", token_out))?;
         debug!(log, "index";
             "token_in" => token_in.to_string(),
             "token_out" => token_out.to_string(),
