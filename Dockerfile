@@ -13,7 +13,7 @@ RUN cargo build ${CARGO_BUILD_ARGS}
 COPY src src
 RUN touch src/main.rs
 RUN cargo build ${CARGO_BUILD_ARGS}
-RUN strip target/*/zaciraci -o main
+RUN if [ "x$RUST_BACKTRACE" == "x0"]; then strip target/*/zaciraci -o main; else cp target/*/zaciraci main; fi
 
 FROM debian:bookworm-slim
 WORKDIR /app
