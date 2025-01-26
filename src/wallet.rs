@@ -52,7 +52,10 @@ impl Wallet {
         mnemonic: bip39::Mnemonic,
         hdpath: slipped10::BIP32Path,
     ) -> Result<Wallet> {
-        let log = DEFAULT.new(o!("function" => "Wallet::new"));
+        let log = DEFAULT.new(o!(
+            "function" => "Wallet::new",
+            "account_id" => format!("{}", account_id),
+        ));
         debug!(log, "creating"; "hdpath" => %hdpath);
         let key = slipped10::derive_key_from_path(&mnemonic.to_seed(""), CURVE, &hdpath)
             .map_err(|e| anyhow!("{}", e))?;
