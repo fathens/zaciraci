@@ -1,18 +1,17 @@
 use crate::jsonrpc;
 use crate::logging::*;
-use crate::persistence::tables;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
-use crate::Result;
+use anyhow::{bail, Context, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
+use futures_util::future::join_all;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
 use num_integer::Roots;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::slice::Iter;
 use std::sync::{Arc, LazyLock};
 
@@ -39,55 +38,6 @@ pub struct PoolInfo {
 pub struct PoolInfoList {
     list: Vec<Arc<PoolInfo>>,
     by_id: HashMap<u32, Arc<PoolInfo>>,
-}
-
-impl From<PoolInfo> for tables::pool_info::PoolInfo {
-    fn from(src: PoolInfo) -> Self {
-        fn from_u128(value: U128) -> BigDecimal {
-            let v: u128 = value.into();
-            BigDecimal::from(v)
-        }
-        tables::pool_info::PoolInfo {
-            id: src.id as i32,
-            pool_kind: src.bare.pool_kind.clone(),
-            token_account_ids: src
-                .bare
-                .token_account_ids
-                .into_iter()
-                .map(|v| v.to_string())
-                .collect(),
-            amounts: src.bare.amounts.into_iter().map(from_u128).collect(),
-            total_fee: src.bare.total_fee as i64,
-            shares_total_supply: from_u128(src.bare.shares_total_supply),
-            amp: BigDecimal::from(src.bare.amp),
-            updated_at: src.updated_at,
-        }
-    }
-}
-
-impl From<tables::pool_info::PoolInfo> for PoolInfo {
-    fn from(src: tables::pool_info::PoolInfo) -> Self {
-        fn to_u128(value: BigDecimal) -> U128 {
-            let v: u128 = value.to_u128().expect("should be valid value");
-            v.into()
-        }
-        PoolInfo {
-            id: src.id as u32,
-            bare: PoolInfoBared {
-                pool_kind: src.pool_kind.clone(),
-                token_account_ids: src
-                    .token_account_ids
-                    .iter()
-                    .map(|v| v.parse().expect("should be valid AccountId"))
-                    .collect(),
-                amounts: src.amounts.into_iter().map(to_u128).collect(),
-                total_fee: src.total_fee as u32,
-                shares_total_supply: to_u128(src.shares_total_supply.clone()),
-                amp: src.amp.to_u64().expect("should be valid value"),
-            },
-            updated_at: src.updated_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,10 +119,6 @@ impl PoolInfo {
             bare,
             updated_at: chrono::Utc::now().naive_utc(),
         }
-    }
-
-    pub fn kind(&self) -> &str {
-        &self.bare.pool_kind
     }
 
     pub fn is_simple(&self) -> bool {
@@ -294,11 +240,13 @@ impl PoolInfo {
 }
 
 impl PoolInfoList {
-    fn new(list: Vec<Arc<PoolInfo>>) -> Self {
+    fn new(src_list: Vec<Arc<PoolInfo>>) -> Self {
         let mut by_id = HashMap::new();
-        for pool in list.iter() {
+        for pool in src_list.iter() {
             by_id.insert(pool.id, Arc::clone(pool));
         }
+        let mut list = src_list;
+        list.sort_by_key(|v| v.id);
         PoolInfoList { list, by_id }
     }
 
@@ -322,61 +270,57 @@ impl PoolInfoList {
             .ok_or_else(|| Error::OutOfIndexOfPools(index).into())
     }
 
-    pub async fn save_to_db(&self) -> Result<usize> {
-        let records = self
-            .list
-            .iter()
-            .map(|info| info.deref().clone().into())
-            .collect();
-        tables::pool_info::update_all(records).await
-    }
-
-    pub async fn load_from_db() -> Result<PoolInfoList> {
-        let records = tables::pool_info::select_all().await?;
-        let pools = records
-            .into_iter()
-            .map(|record| Arc::new(record.into()))
-            .collect();
-        Ok(PoolInfoList::new(pools))
-    }
-
-    pub async fn read_from_node() -> Result<PoolInfoList> {
+    pub async fn read_from_node() -> Result<Arc<PoolInfoList>> {
         let log = DEFAULT.new(o!("function" => "get_all_from_node"));
         info!(log, "start");
 
-        let method_name = "get_pools";
+        let number_of_pools: u32 = {
+            let args = json!({});
+            let res =
+                jsonrpc::view_contract(&CONTRACT_ADDRESS, "get_number_of_pools", &args).await?;
+            let raw = res.result;
+            from_slice(&raw).context(format!(
+                "failed to parse count of pools: {:?}",
+                String::from_utf8(raw)
+            ))?
+        };
+        info!(log, "number_of_pools"; "value" => number_of_pools);
 
-        let limit = 100;
-        let mut index = 0;
-        let mut pools = vec![];
+        const METHOD_NAME: &str = "get_pools";
+        const LIMIT: usize = 2 << 8;
 
-        loop {
-            trace!(log, "Getting all pools"; "count" => pools.len(), "index" => index, "limit" => limit);
-            let args = json!({
-                "from_index": index,
-                "limit": limit,
-            });
-
-            let result = jsonrpc::view_contract(&CONTRACT_ADDRESS, method_name, &args).await?;
-
-            let list: Vec<PoolInfoBared> = from_slice(&result.result)?;
-            let count = list.len();
-            trace!(log, "Got pools"; "count" => count);
-            pools.extend(list);
-            if count < limit {
-                break;
-            }
-
-            index += limit;
-        }
+        let results: Vec<_> = (0..number_of_pools)
+            .step_by(LIMIT)
+            .map(|index| async move {
+                let log = DEFAULT.new(o!(
+                    "function" => "get_pools",
+                    "index" => index,
+                    "limit" => LIMIT,
+                ));
+                let args = json!({
+                    "from_index": index,
+                    "limit": LIMIT,
+                });
+                debug!(log, "requesting");
+                let res = jsonrpc::view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args).await;
+                let result: Result<Vec<PoolInfoBared>> = match res {
+                    Ok(v) => from_slice(&v.result).context("failed to parse"),
+                    Err(e) => bail!("failed to request: {:?}", e),
+                };
+                let count = result.as_ref().map(|v| v.len()).unwrap_or(0);
+                debug!(log, "result"; "count" => count);
+                result.map(move |list| {
+                    list.into_iter()
+                        .enumerate()
+                        .map(move |(i, bare)| Arc::new(PoolInfo::new(i as u32 + index, bare)))
+                })
+            })
+            .collect();
+        let lists = join_all(results).await;
+        let pools: Vec<_> = lists.into_iter().flatten().flatten().collect();
 
         info!(log, "finish"; "count" => pools.len());
-        let pools = pools
-            .into_iter()
-            .enumerate()
-            .map(|(i, bare)| Arc::new(PoolInfo::new(i as u32, bare)))
-            .collect();
-        Ok(PoolInfoList::new(pools))
+        Ok(Arc::new(PoolInfoList::new(pools)))
     }
 }
 
@@ -490,6 +434,7 @@ mod test {
             },
         );
         let result = sample.estimate_return(0.into(), 100, 1.into());
-        assert_eq!(Ok(10756643_u128), result);
+        assert!(result.is_ok());
+        assert_eq!(10756643_u128, result.unwrap());
     }
 }

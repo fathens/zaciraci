@@ -1,4 +1,3 @@
-use crate::persistence::tables;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
@@ -16,10 +15,6 @@ pub async fn run() {
     let state = Arc::new(AppState {});
     let app = Router::new()
         .route("/healthcheck", get(|| async { "OK" }))
-        .route("/counter", get(get_counter))
-        .with_state(state.clone())
-        .route("/counter/increase", get(inc_counter))
-        .with_state(state.clone())
         .route("/native_token/balance", get(native_token_balance))
         .with_state(state.clone())
         .route(
@@ -35,8 +30,6 @@ pub async fn run() {
         )
         .with_state(state.clone())
         .route("/pools/get_return/:pool_id/:amount", get(get_return))
-        .with_state(state.clone())
-        .route("/pools/update_all", get(update_all_pools))
         .with_state(state.clone())
         .route("/pools/list_all_tokens", get(list_all_tokens))
         .with_state(state.clone())
@@ -80,26 +73,9 @@ pub async fn run() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_counter(State(_): State<Arc<AppState>>) -> String {
-    let cur = tables::counter::get().await.unwrap();
-    format!("Counter: {cur}")
-}
-
-async fn inc_counter(State(_): State<Arc<AppState>>) -> String {
-    let cur = tables::counter::increment().await.unwrap();
-    format!("Counter: {cur}",)
-}
-
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    format!("Pools: {}", pools.len())
-}
-
-async fn update_all_pools(State(_): State<Arc<AppState>>) -> String {
     let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
-    tables::pool_info::delete_all().await.unwrap();
-    let n = pools.save_to_db().await.unwrap();
-    format!("Pools: {n}")
+    format!("Pools: {}", pools.len())
 }
 
 async fn estimate_return(
@@ -108,7 +84,7 @@ async fn estimate_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
+    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -128,7 +104,7 @@ async fn get_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
+    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -143,8 +119,8 @@ async fn get_return(
 }
 
 async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool_info::PoolInfoList::load_from_db().await.unwrap();
-    let tokens = crate::ref_finance::path::all_tokens(&pools);
+    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let tokens = ref_finance::path::all_tokens(pools);
     let mut tokens: Vec<_> = tokens.iter().map(|t| t.to_string()).collect();
     tokens.sort();
     let mut result = String::from("Tokens:\n");
@@ -158,9 +134,11 @@ async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
+    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
-    let mut sorted_returns = crate::ref_finance::path::sorted_returns(&start.into(), amount_in)
+    let mut sorted_returns = ref_finance::path::sorted_returns(&graph, &start.into(), amount_in)
         .await
         .unwrap();
     sorted_returns.reverse();
@@ -178,11 +156,14 @@ async fn pick_goals(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
+    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let goals = crate::ref_finance::path::pick_goals(&start.into(), MilliNear::of(amount_in))
-        .await
-        .unwrap();
+    let goals =
+        crate::ref_finance::path::pick_goals(&graph, &start.into(), MilliNear::of(amount_in))
+            .await
+            .unwrap();
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
     match goals {
         None => {
@@ -209,13 +190,17 @@ async fn run_swap(
         u128,
     )>,
 ) -> String {
+    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start_token: TokenAccount = token_in_account.parse().unwrap();
     let goal_token: TokenAccount = token_out_account.parse().unwrap();
     let start = &start_token.into();
     let goal = &goal_token.into();
 
-    let path = ref_finance::path::swap_path(start, goal).await.unwrap();
+    let path = ref_finance::path::swap_path(&graph, start, goal)
+        .await
+        .unwrap();
     let account = wallet::WALLET.account_id();
     let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
     storage::check_and_deposit(account, &tokens).await.unwrap();

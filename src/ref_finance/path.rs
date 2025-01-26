@@ -4,7 +4,6 @@ use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::{MicroNear, MilliNear};
 use crate::{jsonrpc, Result};
-use async_once_cell::OnceCell;
 use graph::TokenGraph;
 use near_primitives::types::Balance;
 use num_integer::Roots;
@@ -19,30 +18,22 @@ use std::sync::Arc;
 
 mod by_token;
 mod edge;
-mod graph;
-mod preview;
+pub mod graph;
+pub mod preview;
 
 use crate::types::gas_price::GasPrice;
 use preview::{Preview, PreviewList};
 
-static CACHED_POOLS_IN_DB: OnceCell<PoolInfoList> = OnceCell::new();
-async fn get_pools_in_db() -> Result<&'static PoolInfoList> {
-    CACHED_POOLS_IN_DB
-        .get_or_try_init(PoolInfoList::load_from_db())
-        .await
-}
-
-pub fn all_tokens(pools: &PoolInfoList) -> Vec<TokenAccount> {
+pub fn all_tokens(pools: Arc<PoolInfoList>) -> Vec<TokenAccount> {
     let by_tokens = by_token::PoolsByToken::new(pools);
     by_tokens.tokens()
 }
 
 pub async fn sorted_returns(
+    graph: &TokenGraph,
     start: &TokenInAccount,
     initial: MilliNear,
 ) -> Result<Vec<(TokenOutAccount, MilliNear, usize)>> {
-    let pools = get_pools_in_db().await?;
-    let graph = TokenGraph::new(pools);
     let goals = graph.update_graph(start)?;
     let returns = graph.list_returns(initial.to_yocto(), start, &goals)?;
     let mut in_milli = vec![];
@@ -53,19 +44,21 @@ pub async fn sorted_returns(
     Ok(in_milli)
 }
 
-pub async fn swap_path(start: &TokenInAccount, goal: &TokenOutAccount) -> Result<Vec<TokenPair>> {
-    let pools = get_pools_in_db().await?;
-    let graph = TokenGraph::new(pools);
+pub async fn swap_path(
+    graph: &TokenGraph,
+    start: &TokenInAccount,
+    goal: &TokenOutAccount,
+) -> Result<Vec<TokenPair>> {
     graph.get_path_with_return(start, goal)
 }
 
 pub async fn pick_goals(
+    graph: &TokenGraph,
     start: &TokenInAccount,
     total_amount: MilliNear,
 ) -> Result<Option<Vec<Preview<Balance>>>> {
-    let pools = get_pools_in_db().await?;
     let gas_price = jsonrpc::get_gas_price(None).await?;
-    let previews = pick_previews(pools, start, MicroNear::from_milli(total_amount), gas_price)?;
+    let previews = pick_previews(graph, start, MicroNear::from_milli(total_amount), gas_price)?;
 
     const REPEAT: usize = 3;
 
@@ -91,7 +84,7 @@ fn rate_average<M: Into<u128>>(min: M, max: M) -> u128 {
 }
 
 pub fn pick_previews<M>(
-    all_pools: &PoolInfoList,
+    graph: &TokenGraph,
     start: &TokenInAccount,
     total_amount: M,
     gas_price: GasPrice,
@@ -119,7 +112,6 @@ where
             ave.into()
         }
     };
-    let graph = TokenGraph::new(all_pools);
     let goals = graph.update_graph(start)?;
 
     let do_pick = |value: M| {
@@ -131,7 +123,7 @@ where
         }
         let limit = (total_amount.into() / value.into()) as usize;
         if limit > 0 {
-            let previews = pick_by_amount(&graph, start, &goals, gas_price, value, limit)?;
+            let previews = pick_by_amount(graph, start, &goals, gas_price, value, limit)?;
             return Ok(previews.map(Arc::new));
         }
         Ok(None)
@@ -205,9 +197,17 @@ where
     ));
     info!(log, "start");
 
+    #[derive(Debug, Clone)]
+    struct InnerError(Arc<anyhow::Error>);
+    impl InnerError {
+        fn unwrap(self) -> anyhow::Error {
+            Arc::try_unwrap(self.0).unwrap()
+        }
+    }
+
     let gain = |a| get_gain(a).into();
     let mut cache = HashMap::new();
-    let mut join_calcs = |a, b, c| -> Result<(M, M, M)> {
+    let mut join_calcs = |a, b, c| -> std::result::Result<(M, M, M), InnerError> {
         let missings: Vec<_> = [a, b, c]
             .into_iter()
             .filter(|value| !cache.contains_key(value))
@@ -217,7 +217,7 @@ where
             .map(|&v| (v, calc_res(v)))
             .collect::<Vec<_>>()
         {
-            cache.insert(v, r.clone());
+            cache.insert(v, r.map_err(|e| InnerError(Arc::new(e))));
         }
 
         Ok((
@@ -233,7 +233,7 @@ where
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let (a, b, c) = join_calcs(in_a, in_b, in_c)?;
+        let (a, b, c) = join_calcs(in_a, in_b, in_c).map_err(|ie| ie.unwrap())?;
         debug!(log, "join_calced";
             "in_a" => format!("{:?}", in_a),
             "in_b" => format!("{:?}", in_b),
@@ -314,7 +314,11 @@ where
         "b" => format!("{:?}", in_b),
         "c" => format!("{:?}", in_c)
     );
-    cache.get(&in_a).cloned().unwrap_or(Ok(None))
+    cache
+        .get(&in_a)
+        .cloned()
+        .unwrap_or(Ok(None))
+        .map_err(|ie| ie.unwrap())
 }
 
 #[cfg(test)]

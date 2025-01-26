@@ -1,10 +1,10 @@
 use crate::logging::*;
-use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
+use anyhow::{anyhow, Error};
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -16,19 +16,20 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
-pub struct TokenGraph<'a> {
-    pools: &'a PoolInfoList,
+pub struct TokenGraph {
+    pools: Arc<PoolInfoList>,
     graph: CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight>,
 }
 
-impl<'a> TokenGraph<'a> {
-    pub fn new(pools: &'a PoolInfoList) -> Self {
-        let graph = Self::cached_path(pools);
+impl TokenGraph {
+    pub fn new(pools_list: Arc<PoolInfoList>) -> Self {
+        let pools = Arc::clone(&pools_list);
+        let graph = Self::cached_path(pools_list);
         Self { pools, graph }
     }
 
     fn cached_path(
-        pools: &PoolInfoList,
+        pools: Arc<PoolInfoList>,
     ) -> CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight> {
         let pools_by_token = PoolsByToken::new(pools);
         let mut graph = petgraph::Graph::new();
@@ -47,7 +48,7 @@ impl<'a> TokenGraph<'a> {
                 }
             }
         }
-        CachedPath::new(graph, nodes, Error::TokenNotFound, Error::NoValidEddge)
+        CachedPath::new(graph, nodes)
     }
 
     pub fn update_graph(&self, start: &TokenInAccount) -> Result<Vec<TokenOutAccount>> {
@@ -147,9 +148,6 @@ struct CachedPath<I, O, N, E> {
     graph: petgraph::Graph<N, E>,
     nodes: HashMap<N, NodeIndex>,
 
-    err_not_found: fn(N) -> Error,
-    err_no_edge: fn(I, O) -> Error,
-
     cached_path: Arc<Mutex<HashMap<I, PathToOut<O, N>>>>,
 }
 
@@ -160,27 +158,20 @@ where
     N: Debug + Eq + Clone + Hash,
     E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E>,
 {
-    fn new(
-        graph: petgraph::Graph<N, E>,
-        nodes: HashMap<N, NodeIndex>,
-        err_not_found: fn(N) -> Error,
-        err_no_edge: fn(I, O) -> Error,
-    ) -> Self {
+    fn new(graph: petgraph::Graph<N, E>, nodes: HashMap<N, NodeIndex>) -> Self {
         Self {
             graph,
             nodes,
             cached_path: Arc::new(Mutex::new(HashMap::new())),
-            err_not_found,
-            err_no_edge,
         }
     }
 
     fn err_not_found(&self, node: &N) -> Error {
-        (self.err_not_found)(node.clone())
+        anyhow!("token not found: {:?}", node)
     }
 
     fn err_no_edge(&self, token_in: &I, token_out: &O) -> Error {
-        (self.err_no_edge)(token_in.clone(), token_out.clone())
+        anyhow!("invalid edge: {:?} -> {:?}", token_in, token_out)
     }
 
     fn node_index(&self, token: &N) -> Result<NodeIndex> {
@@ -231,6 +222,12 @@ where
     }
 
     fn get_edges(&self, start: &I, goal: &O) -> Result<Vec<E>> {
+        let log = DEFAULT.new(o!(
+            "function" => "CachedPath::get_edges",
+            "start" => format!("{:?}", start),
+            "goal" => format!("{:?}", goal),
+        ));
+        info!(log, "start");
         let path = self.get_path(start, goal)?;
         let mut edges = Vec::new();
         let mut prev = start.clone();
@@ -255,6 +252,12 @@ where
     }
 
     fn get_weight(&self, token_in: &I, token_out: &O) -> Result<E> {
+        let log = DEFAULT.new(o!(
+            "function" => "CachedPath::get_weight",
+            "token_in" => format!("{:?}", token_in),
+            "token_out" => format!("{:?}", token_out),
+        ));
+        debug!(log, "start");
         let weight: Option<_> = self
             .graph
             .find_edge(
@@ -263,7 +266,7 @@ where
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
-        weight.ok_or_else(|| self.err_no_edge(token_in, token_out).into())
+        weight.ok_or_else(|| self.err_no_edge(token_in, token_out))
     }
 }
 
@@ -463,26 +466,23 @@ mod test {
         assert_eq!(nodes.len(), 6);
         assert!(nodes.contains_key("A"));
 
-        let cached_path = CachedPath::new(
-            graph,
-            nodes,
-            |node| panic!("not found: {:?}", node),
-            |i: &str, o| panic!("no edge: {} -> {}", i, o),
-        );
+        let cached_path = CachedPath::new(graph, nodes);
 
         match panic::catch_unwind(|| cached_path.update_path(&"X", None)) {
-            Err(e) => {
+            Err(e) => panic!("something wrong: {:?}", e),
+            Ok(Ok(v)) => panic!("should error: {:?}", v),
+            Ok(Err(e)) => {
                 let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "not found: \"X\"");
+                assert_eq!(msg, "token not found: \"X\"");
             }
-            _ => panic!("should panic"),
         }
         match panic::catch_unwind(|| cached_path.update_path(&"A", Some("X"))) {
-            Err(e) => {
+            Err(e) => panic!("something wrong: {:?}", e),
+            Ok(Ok(v)) => panic!("should error: {:?}", v),
+            Ok(Err(e)) => {
                 let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "not found: \"X\"");
+                assert_eq!(msg, "token not found: \"X\"");
             }
-            _ => panic!("should panic"),
         }
         let goals = cached_path.update_path(&"A", None).unwrap();
         assert_eq!(goals.len(), 5);

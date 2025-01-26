@@ -142,7 +142,7 @@ mod test {
     #[tokio::test]
     async fn test_check_bounds() {
         let res = check_bounds().await;
-        assert_eq!(res.clone().err(), None);
+        assert!(res.is_ok());
         let bounds = res.unwrap();
         assert!(bounds.min >= U128(1_000_000_000_000_000_000_000));
         assert!(bounds.max.unwrap_or(U128(0)) >= U128(0));
