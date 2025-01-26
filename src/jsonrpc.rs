@@ -154,7 +154,6 @@ async fn send_tx(
 ) -> Result<CryptoHash> {
     let log = DEFAULT.new(o!(
         "function" => "exec_contract",
-        "server" => CLIENT.server_addr(),
         "signer" => format!("{}", signer.account_id),
         "receiver" => format!("{}", receiver),
     ));
