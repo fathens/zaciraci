@@ -41,3 +41,7 @@ ed25519-dalek = { version = "2", default-features = false }
 moka = { version = "0.12.8", features = ["future"] }
 futures-util = "0.3.30"
 rayon = "1.10.0"
+
+[dev-dependencies]
+assertables = "9.5"
+proptest = "1.6"
