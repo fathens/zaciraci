@@ -133,21 +133,19 @@ mod tests {
         let retry_dur = calc_retry_duration(upper, limit);
 
         assert_eq!(retry_dur(0), Duration::ZERO);
-        assert_eq!(retry_dur(limit + 1), Duration::ZERO);
         assert_eq!(retry_dur(1), Duration::ZERO);
-        assert_gt!(retry_dur(10), Duration::from_secs(10));
         assert_eq!(retry_dur(limit), upper);
+        assert_eq!(retry_dur(limit + 1), Duration::ZERO);
     }
 
     proptest! {
         #[test]
-        fn test_calc_retry_duration_range(retry_count in     1u16..=128) {
+        fn test_calc_retry_duration_range(retry_count in     2u16..128) {
             let limit = 128u16;
-            let upper = Duration::from_secs(60);
+            let upper = Duration::from_secs(128);
             let retry_dur = calc_retry_duration(upper, limit);
 
-            assert_le!(retry_dur(retry_count), upper);
-            assert_ge!(retry_dur(retry_count), Duration::ZERO);
+            assert_gt!(retry_dur(retry_count), Duration::from_secs(retry_count as u64));
         }
     }
 }
