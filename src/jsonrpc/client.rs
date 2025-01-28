@@ -1,7 +1,8 @@
 use crate::jsonrpc::IS_MAINNET;
 use crate::logging::*;
 use near_jsonrpc_client::errors::{
-    JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError,
+    JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError, JsonRpcTransportSendError,
+    RpcTransportError,
 };
 use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
 use once_cell::sync::Lazy;
@@ -88,18 +89,26 @@ impl Client {
                 info!(log, "success");
                 MaybeRetry::Through(Ok(res))
             }
-            Err(err) => {
-                if let JsonRpcError::ServerError(JsonRpcServerError::ResponseStatusError(
+            Err(err) => match err {
+                JsonRpcError::ServerError(JsonRpcServerError::ResponseStatusError(
                     JsonRpcServerResponseStatusError::TooManyRequests,
-                )) = err
-                {
+                )) => {
                     info!(log, "response status error: too many requests");
                     MaybeRetry::Retry(err)
-                } else {
+                }
+                JsonRpcError::TransportError(RpcTransportError::SendError(
+                    JsonRpcTransportSendError::PayloadSendError(e),
+                )) => {
+                    info!(log, "transport error: payload send error: {:?}", e);
+                    MaybeRetry::Retry(JsonRpcError::TransportError(RpcTransportError::SendError(
+                        JsonRpcTransportSendError::PayloadSendError(e),
+                    )))
+                }
+                _ => {
                     info!(log, "failure");
                     MaybeRetry::Through(Err(err))
                 }
-            }
+            },
         }
     }
 }
