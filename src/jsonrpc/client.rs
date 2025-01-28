@@ -109,12 +109,13 @@ enum MaybeRetry<A, B> {
 }
 
 fn calc_retry_duration(upper: Duration, retry_limit: u16) -> impl Fn(u16) -> Duration {
+    const N: f32 = 1.0 / std::f32::consts::E;
     move |retry_count: u16| -> Duration {
         if retry_count == 0 || retry_limit < retry_count {
             return Duration::ZERO;
         }
         let b = (retry_count - 1) as f32 / (retry_limit - 1) as f32;
-        let y = (upper.as_millis() as f32) / (1.0 / b).sqrt();
+        let y = (upper.as_millis() as f32) / (1.0 / b).powf(N);
         Duration::from_millis(y as u64)
     }
 }
@@ -134,6 +135,7 @@ mod tests {
         assert_eq!(retry_dur(0), Duration::ZERO);
         assert_eq!(retry_dur(limit + 1), Duration::ZERO);
         assert_eq!(retry_dur(1), Duration::ZERO);
+        assert_gt!(retry_dur(10), Duration::from_secs(10));
         assert_eq!(retry_dur(limit), upper);
     }
 
