@@ -5,6 +5,7 @@ use near_jsonrpc_client::errors::{
 };
 use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
 use once_cell::sync::Lazy;
+use rand::Rng;
 use std::time::Duration;
 
 pub static CLIENT: Lazy<Client> = Lazy::new(|| {
@@ -42,7 +43,7 @@ impl Client {
             "method" => method.method_name().to_owned(),
             "retry_limit" => format!("{}", RETRY_LIMIT),
         ));
-        let retry_dur = calc_retry_duration(DELAY_LIMIT, RETRY_LIMIT);
+        let calc_delay = calc_retry_duration(DELAY_LIMIT, RETRY_LIMIT, 0.1);
         let mut retry_count = 0;
         loop {
             let log = log.new(o!(
@@ -58,7 +59,7 @@ impl Client {
                         return Err(err);
                     }
 
-                    let delay = retry_dur(retry_count);
+                    let delay = calc_delay(retry_count);
                     info!(log, "retrying";
                         "delay" => format!("{:?}", delay),
                     );
@@ -108,7 +109,7 @@ enum MaybeRetry<A, B> {
     Retry(B),
 }
 
-fn calc_retry_duration(upper: Duration, retry_limit: u16) -> impl Fn(u16) -> Duration {
+fn calc_retry_duration(upper: Duration, retry_limit: u16, fr: f32) -> impl Fn(u16) -> Duration {
     const N: f32 = 1.0 / std::f32::consts::E;
     move |retry_count: u16| -> Duration {
         if retry_count == 0 || retry_limit < retry_count {
@@ -116,8 +117,20 @@ fn calc_retry_duration(upper: Duration, retry_limit: u16) -> impl Fn(u16) -> Dur
         }
         let b = (retry_count - 1) as f32 / (retry_limit - 1) as f32;
         let y = (upper.as_millis() as f32) / (1.0 / b).powf(N);
+        let y = fluctuate(y, fr);
         Duration::from_millis(y as u64)
     }
+}
+
+fn fluctuate(y: f32, fr: f32) -> f32 {
+    let v = if fr > 0.0 {
+        let r = y * fr;
+        let mut rng = rand::thread_rng();
+        rng.gen_range(0.0..(r * 2.0)) - r
+    } else {
+        0.0
+    };
+    y + v
 }
 
 #[cfg(test)]
@@ -130,7 +143,7 @@ mod tests {
     fn test_calc_retry_duration() {
         let upper = Duration::from_secs(60);
         let limit = 128;
-        let retry_dur = calc_retry_duration(upper, limit);
+        let retry_dur = calc_retry_duration(upper, limit, 0.0);
 
         assert_eq!(retry_dur(0), Duration::ZERO);
         assert_eq!(retry_dur(1), Duration::ZERO);
@@ -140,12 +153,25 @@ mod tests {
 
     proptest! {
         #[test]
-        fn test_calc_retry_duration_range(retry_count in     2u16..128) {
+        fn test_calc_retry_duration_range(retry_count in 2u16..128) {
             let limit = 128u16;
             let upper = Duration::from_secs(128);
-            let retry_dur = calc_retry_duration(upper, limit);
+            let retry_dur = calc_retry_duration(upper, limit, 0.0);
 
             assert_gt!(retry_dur(retry_count), Duration::from_secs(retry_count as u64));
+        }
+
+        #[test]
+        fn test_fluctuate_zero(y in 0.0..1000_f32) {
+            let v = fluctuate(y, 0.0);
+            assert_eq!(v, y);
+        }
+
+        #[test]
+        fn test_fluctuate(y in 1.0..1000_f32, fr in 0.01..1_f32) {
+            let v = fluctuate(y, fr);
+            assert_ge!(v, y - y * fr);
+            assert_le!(v, y + y * fr);
         }
     }
 }
