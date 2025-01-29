@@ -6,7 +6,11 @@ fn wrap<D>(drain: D) -> Fuse<slog_async::Async>
 where
     D: Drain<Err = Never, Ok = ()> + Send + 'static,
 {
-    slog_async::Async::default(slog_envlogger::new(drain)).fuse()
+    slog_async::Async::new(slog_envlogger::new(drain))
+        .chan_size(2 << 16)
+        .thread_name("slog-async".into())
+        .build()
+        .fuse()
 }
 
 pub static DEFAULT: Lazy<Logger> = Lazy::new(|| {
