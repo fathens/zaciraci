@@ -4,7 +4,7 @@ use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
-use anyhow::{anyhow, Error};
+use anyhow::anyhow;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -166,19 +166,11 @@ where
         }
     }
 
-    fn err_not_found(&self, node: &N) -> Error {
-        anyhow!("token not found: {:?}", node)
-    }
-
-    fn err_no_edge(&self, token_in: &I, token_out: &O) -> Error {
-        anyhow!("invalid edge: {:?} -> {:?}", token_in, token_out)
-    }
-
     fn node_index(&self, token: &N) -> Result<NodeIndex> {
         let &index = self
             .nodes
             .get(token)
-            .ok_or_else(|| self.err_not_found(token))?;
+            .ok_or_else(|| anyhow!("token not found: {:?}", token))?;
         Ok(index)
     }
 
@@ -245,9 +237,9 @@ where
         let cached_path = self.cached_path.lock().unwrap();
         let path = cached_path
             .get(start)
-            .ok_or_else(|| self.err_not_found(&start.clone().into()))?
+            .ok_or_else(|| anyhow!("start token not found: {:?} X-> {:?}", start, goal))?
             .get(goal)
-            .ok_or_else(|| self.err_not_found(&goal.clone().into()))?;
+            .ok_or_else(|| anyhow!("goal token not found: {:?} ->X {:?}", start, goal))?;
         Ok(path.clone())
     }
 
@@ -266,7 +258,7 @@ where
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
-        weight.ok_or_else(|| self.err_no_edge(token_in, token_out))
+        weight.ok_or_else(|| anyhow!("invalid edge: {:?} -> {:?}", token_in, token_out))
     }
 }
 
