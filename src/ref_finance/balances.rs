@@ -20,7 +20,7 @@ const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
 static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
-    let value = config::get("HARVEST_ACCOUNT").unwrap_or_else(|err| panic!("{}", err));
+    let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| panic!("{}", err));
     value
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse config `{}`: {}", value, err))
