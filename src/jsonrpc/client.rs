@@ -37,6 +37,7 @@ impl Client {
     {
         const DELAY_LIMIT: Duration = Duration::from_secs(60);
         const RETRY_LIMIT: u16 = 128;
+        const FLUCTUATION: f32 = 0.1;
 
         let log = DEFAULT.new(o!(
             "function" => "jsonrpc::Client::call",
@@ -44,7 +45,7 @@ impl Client {
             "method" => method.method_name().to_owned(),
             "retry_limit" => format!("{}", RETRY_LIMIT),
         ));
-        let calc_delay = calc_retry_duration(DELAY_LIMIT, RETRY_LIMIT, 0.1);
+        let calc_delay = calc_retry_duration(DELAY_LIMIT, RETRY_LIMIT, FLUCTUATION);
         let mut retry_count = 0;
         loop {
             let log = log.new(o!(
@@ -171,7 +172,13 @@ mod tests {
         }
 
         #[test]
-        fn test_fluctuate_zero(y in 0.0..1000_f32) {
+        fn test_fluctuate_zero_y(fr in 0.0..1_f32) {
+            let v = fluctuate(0.0, fr);
+            assert_eq!(v, 0.0);
+        }
+
+        #[test]
+        fn test_fluctuate_zero_fr(y in 0.0..1000_f32) {
             let v = fluctuate(y, 0.0);
             assert_eq!(v, y);
         }
