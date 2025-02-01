@@ -87,7 +87,10 @@ impl TokenGraph {
                     returns.insert(goal.clone(), value);
                 }
                 Err(e) => {
-                    error!(log, "failed to estimate return"; "goal" => ?goal, "error" => ?e);
+                    error!(log, "failed to estimate return";
+                        "goal" => %goal,
+                        "error" => %e,
+                    );
                 }
             }
         }
