@@ -10,9 +10,10 @@ mod wallet;
 mod web;
 
 use crate::logging::*;
+use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
 use crate::ref_finance::pool_info::TokenPair;
-use crate::ref_finance::token_account::TokenInAccount;
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, START_TOKEN};
 use crate::types::MicroNear;
 use futures_util::future::join_all;
 use near_primitives::types::Balance;
@@ -52,7 +53,15 @@ async fn main_loop() -> Result<()> {
         match single_loop().await {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
-                error!(log, "failure: {}", err);
+                warn!(log, "failure: {}", err);
+                if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
+                    let token: TokenAccount = name.parse()?;
+                    if token == *START_TOKEN {
+                        info!(log, "token not found, retry");
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
                 return Err(err);
             }
         }
