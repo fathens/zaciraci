@@ -210,10 +210,14 @@ where
                 outs.push(out.into());
             }
         }
-        self.cached_path
-            .lock()
-            .unwrap()
-            .insert(start.clone(), path_to_outs);
+        if path_to_outs.is_empty() {
+            info!(log, "no path found");
+        } else {
+            self.cached_path
+                .lock()
+                .unwrap()
+                .insert(start.clone(), path_to_outs);
+        }
         Ok(outs)
     }
 
