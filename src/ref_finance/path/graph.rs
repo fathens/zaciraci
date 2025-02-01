@@ -472,16 +472,16 @@ mod test {
             Err(e) => panic!("something wrong: {:?}", e),
             Ok(Ok(v)) => panic!("should error: {:?}", v),
             Ok(Err(e)) => {
-                let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "token not found: \"X\"");
+                let msg = format!("{}", e);
+                assert_eq!(msg, "Cannot find token account: \"X\"");
             }
         }
         match panic::catch_unwind(|| cached_path.update_path(&"A", Some("X"))) {
             Err(e) => panic!("something wrong: {:?}", e),
             Ok(Ok(v)) => panic!("should error: {:?}", v),
             Ok(Err(e)) => {
-                let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "token not found: \"X\"");
+                let msg = format!("{}", e);
+                assert_eq!(msg, "Cannot find token account: \"X\"");
             }
         }
         let goals = cached_path.update_path(&"A", None).unwrap();
