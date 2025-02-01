@@ -1,4 +1,5 @@
 use crate::logging::*;
+use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
@@ -167,10 +168,10 @@ where
     }
 
     fn node_index(&self, token: &N) -> Result<NodeIndex> {
-        let &index = self
-            .nodes
-            .get(token)
-            .ok_or_else(|| anyhow!("token not found: {:?}", token))?;
+        let &index = self.nodes.get(token).ok_or_else(|| {
+            let name = format!("{:?}", token);
+            Error::TokenNotFound(name)
+        })?;
         Ok(index)
     }
 
