@@ -59,10 +59,17 @@ impl TokenGraph {
         ));
         info!(log, "find goals from start");
 
-        let goals = self.graph.update_path(start, None)?;
-        for goal in goals.iter() {
-            self.graph
+        let outs = self.graph.update_path(start, None)?;
+        let mut goals = Vec::new();
+        for goal in outs.iter() {
+            let reversed = self
+                .graph
                 .update_path(&goal.as_in(), Some(start.as_out()))?;
+            if reversed.is_empty() {
+                info!(log, "no reversed path found"; "goal" => %goal);
+            } else {
+                goals.push(goal.clone());
+            }
         }
         Ok(goals)
     }
