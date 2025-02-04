@@ -130,3 +130,34 @@ impl From<TokenOutAccount> for TokenAccount {
         value.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_account() {
+        let token: TokenAccount = "wrap.near".parse().unwrap();
+        let account = token.0.clone();
+        assert_eq!(token.as_id(), &account);
+        assert_eq!(token.to_string(), "wrap.near");
+    }
+
+    #[test]
+    fn test_token_in_account() {
+        let base: TokenAccount = "wrap.near".parse().unwrap();
+        let account = base.0.clone();
+        let token: TokenInAccount = base.into();
+        assert_eq!(token.as_id(), &account);
+        assert_eq!(token.to_string(), "wrap.near");
+    }
+
+    #[test]
+    fn test_token_out_account() {
+        let base = TokenAccount::from_str("wrap.near").unwrap();
+        let account = base.0.clone();
+        let token: TokenOutAccount = base.into();
+        assert_eq!(token.as_id(), &account);
+        assert_eq!(token.to_string(), "wrap.near");
+    }
+}

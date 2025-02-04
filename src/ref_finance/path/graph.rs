@@ -10,7 +10,7 @@ use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::Add;
 use std::rc::Rc;
@@ -166,7 +166,7 @@ impl<I, O, N, E> CachedPath<I, O, N, E>
 where
     I: Debug + Eq + Clone + Hash + From<N> + Into<N>,
     O: Debug + Eq + Clone + Hash + From<N> + Into<N>,
-    N: Debug + Eq + Clone + Hash,
+    N: Debug + Eq + Clone + Hash + Display,
     E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E>,
 {
     fn new(graph: petgraph::Graph<N, E>, nodes: HashMap<N, NodeIndex>) -> Self {
@@ -179,7 +179,7 @@ where
 
     fn node_index(&self, token: &N) -> Result<NodeIndex> {
         let &index = self.nodes.get(token).ok_or_else(|| {
-            let name = format!("{:?}", token);
+            let name = token.to_string();
             Error::TokenNotFound(name)
         })?;
         Ok(index)
