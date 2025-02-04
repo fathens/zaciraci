@@ -18,7 +18,6 @@ use crate::types::MicroNear;
 use futures_util::future::join_all;
 use near_primitives::types::Balance;
 use std::time::Duration;
-use tokio::time::sleep;
 
 type Result<T> = anyhow::Result<T>;
 
@@ -57,7 +56,7 @@ async fn main_loop() -> Result<()> {
                 if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
                     if START_TOKEN.to_string().eq(name) {
                         info!(log, "token not found, retry");
-                        sleep(Duration::from_secs(1)).await;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 }
@@ -96,7 +95,7 @@ async fn single_loop() -> Result<()> {
         join_all(swaps).await;
     } else {
         info!(log, "previews not found");
-        sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
 
     Ok(())
