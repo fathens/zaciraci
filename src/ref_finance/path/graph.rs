@@ -480,7 +480,7 @@ mod test {
             Ok(Ok(v)) => panic!("should error: {:?}", v),
             Ok(Err(e)) => {
                 let msg = format!("{}", e);
-                assert_eq!(msg, "Cannot find token account: \"X\"");
+                assert_eq!(msg, "Cannot find token account: X");
             }
         }
         match panic::catch_unwind(|| cached_path.update_path(&"A", Some("X"))) {
@@ -488,7 +488,7 @@ mod test {
             Ok(Ok(v)) => panic!("should error: {:?}", v),
             Ok(Err(e)) => {
                 let msg = format!("{}", e);
-                assert_eq!(msg, "Cannot find token account: \"X\"");
+                assert_eq!(msg, "Cannot find token account: X");
             }
         }
         let goals = cached_path.update_path(&"A", None).unwrap();
