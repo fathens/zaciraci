@@ -54,16 +54,19 @@ impl Client {
             info!(log, "calling");
             match self.call_maybe_retry(&method).await {
                 MaybeRetry::Through(res) => return res,
-                MaybeRetry::Retry(err) => {
+                MaybeRetry::Retry { err, msg, min_dur } => {
                     retry_count += 1;
                     if RETRY_LIMIT < retry_count {
-                        info!(log, "retry limit reached");
+                        info!(log, "retry limit reached";
+                            "reason" => msg,
+                        );
                         return Err(err);
                     }
 
-                    let delay = calc_delay(retry_count);
+                    let delay = calc_delay(retry_count).min(min_dur);
                     info!(log, "retrying";
                         "delay" => format!("{:?}", delay),
+                        "reason" => msg,
                     );
                     tokio::time::sleep(delay).await;
                 }
@@ -95,15 +98,23 @@ impl Client {
                     JsonRpcServerResponseStatusError::TooManyRequests,
                 )) => {
                     info!(log, "response status error: too many requests");
-                    MaybeRetry::Retry(err)
+                    MaybeRetry::Retry {
+                        err,
+                        msg: "too many requests".to_owned(),
+                        min_dur: Duration::from_secs_f32(0.5),
+                    }
                 }
                 JsonRpcError::TransportError(RpcTransportError::SendError(
                     JsonRpcTransportSendError::PayloadSendError(e),
                 )) => {
                     info!(log, "transport error: payload send error: {:?}", e);
-                    MaybeRetry::Retry(JsonRpcError::TransportError(RpcTransportError::SendError(
-                        JsonRpcTransportSendError::PayloadSendError(e),
-                    )))
+                    MaybeRetry::Retry {
+                        err: JsonRpcError::TransportError(RpcTransportError::SendError(
+                            JsonRpcTransportSendError::PayloadSendError(e),
+                        )),
+                        msg: "payload send error".to_owned(),
+                        min_dur: Duration::ZERO,
+                    }
                 }
                 _ => {
                     info!(log, "failure");
@@ -116,7 +127,11 @@ impl Client {
 
 enum MaybeRetry<A, B> {
     Through(A),
-    Retry(B),
+    Retry {
+        err: B,
+        msg: String,
+        min_dur: Duration,
+    },
 }
 
 fn calc_retry_duration(upper: Duration, retry_limit: u16, fr: f32) -> impl Fn(u16) -> Duration {
