@@ -5,9 +5,11 @@ use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account;
 use crate::ref_finance::token_account::TokenAccount;
+use crate::types::{MicroNear, MilliNear};
 use crate::wallet;
 use crate::Result;
 use crate::{config, jsonrpc};
+use anyhow::anyhow;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
@@ -95,6 +97,14 @@ async fn refill(want: Balance) -> Result<()> {
         .checked_sub(MINIMUM_NATIVE_BALANCE)
         .unwrap_or_default()
         .min(want);
+    if amount.is_zero() {
+        return Err(anyhow!(
+            "Insufficient balance: {}, {:?}, {:?}",
+            native_balance,
+            MilliNear::from_yocto(native_balance),
+            MicroNear::from_yocto(native_balance),
+        ));
+    }
     info!(log, "refilling";
         "native_balance" => %native_balance,
         "amount" => %amount,
