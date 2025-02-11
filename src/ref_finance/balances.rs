@@ -20,7 +20,7 @@ const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
 static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
-    let value = config::get("HARVEST_ACCOUNT").unwrap_or_else(|err| panic!("{}", err));
+    let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| panic!("{}", err));
     value
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse config `{}`: {}", value, err))
@@ -85,25 +85,49 @@ async fn balance_of_start_token(token: &TokenAccount) -> Result<Balance> {
 }
 
 async fn refill(want: Balance) -> Result<()> {
+    let log = DEFAULT.new(o!(
+        "function" => "balances.refill",
+        "want" => format!("{}", want),
+    ));
     let account = wallet::WALLET.account_id();
     let native_balance = jsonrpc::get_native_amount(account).await?;
     let amount = native_balance
         .checked_sub(MINIMUM_NATIVE_BALANCE)
         .unwrap_or_default()
         .min(want);
+    info!(log, "refilling";
+        "native_balance" => %native_balance,
+        "amount" => %amount,
+    );
 
     let token = deposit::wrap_near(amount).await?;
     deposit::deposit(&token, amount).await
 }
 
 async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> Result<()> {
+    let log = DEFAULT.new(o!(
+        "function" => "balances.harvest",
+        "withdraw" => format!("{}", withdraw),
+        "required" => format!("{}", required),
+    ));
+    info!(log, "withdrawing";
+        "token" => %token,
+    );
     deposit::withdraw(token, withdraw).await?;
     let account = wallet::WALLET.account_id();
     let native_balance = jsonrpc::get_native_amount(account).await?;
     let upper = required << 4;
+    info!(log, "checking";
+        "native_balance" => %native_balance,
+        "upper" => %upper,
+    );
     if upper < native_balance && is_time_to_harvest() {
         let amount = native_balance - upper;
         let target = &*HARVEST_ACCOUNT;
+        info!(log, "harvesting";
+            "target" => %target,
+            "amount" => %amount,
+        );
         let signer = wallet::WALLET.signer();
         jsonrpc::transfer_native_token(signer, target, amount).await?;
         update_last_harvest()

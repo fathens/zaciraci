@@ -1,15 +1,16 @@
 use crate::logging::*;
+use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
-use anyhow::{anyhow, Error};
+use anyhow::anyhow;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::Add;
 use std::rc::Rc;
@@ -58,10 +59,17 @@ impl TokenGraph {
         ));
         info!(log, "find goals from start");
 
-        let goals = self.graph.update_path(start, None)?;
-        for goal in goals.iter() {
-            self.graph
+        let outs = self.graph.update_path(start, None)?;
+        let mut goals = Vec::new();
+        for goal in outs.iter() {
+            let reversed = self
+                .graph
                 .update_path(&goal.as_in(), Some(start.as_out()))?;
+            if reversed.is_empty() {
+                info!(log, "no reversed path found"; "goal" => %goal);
+            } else {
+                goals.push(goal.clone());
+            }
         }
         Ok(goals)
     }
@@ -86,7 +94,10 @@ impl TokenGraph {
                     returns.insert(goal.clone(), value);
                 }
                 Err(e) => {
-                    error!(log, "failed to estimate return"; "goal" => ?goal, "error" => ?e);
+                    error!(log, "failed to estimate return";
+                        "goal" => %goal,
+                        "error" => %e,
+                    );
                 }
             }
         }
@@ -155,7 +166,7 @@ impl<I, O, N, E> CachedPath<I, O, N, E>
 where
     I: Debug + Eq + Clone + Hash + From<N> + Into<N>,
     O: Debug + Eq + Clone + Hash + From<N> + Into<N>,
-    N: Debug + Eq + Clone + Hash,
+    N: Debug + Eq + Clone + Hash + Display,
     E: Debug + Eq + Copy + Default + PartialOrd + Add<Output = E>,
 {
     fn new(graph: petgraph::Graph<N, E>, nodes: HashMap<N, NodeIndex>) -> Self {
@@ -166,19 +177,11 @@ where
         }
     }
 
-    fn err_not_found(&self, node: &N) -> Error {
-        anyhow!("token not found: {:?}", node)
-    }
-
-    fn err_no_edge(&self, token_in: &I, token_out: &O) -> Error {
-        anyhow!("invalid edge: {:?} -> {:?}", token_in, token_out)
-    }
-
     fn node_index(&self, token: &N) -> Result<NodeIndex> {
-        let &index = self
-            .nodes
-            .get(token)
-            .ok_or_else(|| self.err_not_found(token))?;
+        let &index = self.nodes.get(token).ok_or_else(|| {
+            let name = token.to_string();
+            Error::TokenNotFound(name)
+        })?;
         Ok(index)
     }
 
@@ -214,10 +217,14 @@ where
                 outs.push(out.into());
             }
         }
-        self.cached_path
-            .lock()
-            .unwrap()
-            .insert(start.clone(), path_to_outs);
+        if path_to_outs.is_empty() {
+            info!(log, "no path found");
+        } else {
+            self.cached_path
+                .lock()
+                .unwrap()
+                .insert(start.clone(), path_to_outs);
+        }
         Ok(outs)
     }
 
@@ -245,9 +252,9 @@ where
         let cached_path = self.cached_path.lock().unwrap();
         let path = cached_path
             .get(start)
-            .ok_or_else(|| self.err_not_found(&start.clone().into()))?
+            .ok_or_else(|| anyhow!("start token not found: {:?} X-> {:?}", start, goal))?
             .get(goal)
-            .ok_or_else(|| self.err_not_found(&goal.clone().into()))?;
+            .ok_or_else(|| anyhow!("goal token not found: {:?} ->X {:?}", start, goal))?;
         Ok(path.clone())
     }
 
@@ -266,7 +273,7 @@ where
             )
             .iter()
             .find_map(|&edge| self.graph.edge_weight(edge).cloned());
-        weight.ok_or_else(|| self.err_no_edge(token_in, token_out))
+        weight.ok_or_else(|| anyhow!("invalid edge: {:?} -> {:?}", token_in, token_out))
     }
 }
 
@@ -472,16 +479,16 @@ mod test {
             Err(e) => panic!("something wrong: {:?}", e),
             Ok(Ok(v)) => panic!("should error: {:?}", v),
             Ok(Err(e)) => {
-                let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "token not found: \"X\"");
+                let msg = format!("{}", e);
+                assert_eq!(msg, "Cannot find token account: X");
             }
         }
         match panic::catch_unwind(|| cached_path.update_path(&"A", Some("X"))) {
             Err(e) => panic!("something wrong: {:?}", e),
             Ok(Ok(v)) => panic!("should error: {:?}", v),
             Ok(Err(e)) => {
-                let msg = e.downcast_ref::<String>().unwrap();
-                assert_eq!(msg, "token not found: \"X\"");
+                let msg = format!("{}", e);
+                assert_eq!(msg, "Cannot find token account: X");
             }
         }
         let goals = cached_path.update_path(&"A", None).unwrap();

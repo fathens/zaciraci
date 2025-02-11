@@ -1,9 +1,11 @@
+mod client;
+
 use crate::config;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
 use crate::Result;
 use near_crypto::InMemorySigner;
-use near_jsonrpc_client::{methods, JsonRpcClient};
+use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::action::{Action, FunctionCallAction, TransferAction};
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
@@ -11,6 +13,8 @@ use near_primitives::types::{Balance, BlockId, Finality};
 use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest};
 use near_sdk::{AccountId, CryptoHash, Gas};
 use once_cell::sync::Lazy;
+
+use client::CLIENT;
 
 pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
     let str = config::get("USE_MAINNET").unwrap_or_default();
@@ -25,14 +29,6 @@ pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
         info!(log, "Using testnet");
     }
     value
-});
-
-pub static CLIENT: Lazy<JsonRpcClient> = Lazy::new(|| {
-    if *IS_MAINNET {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
-    } else {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
-    }
 });
 
 pub async fn get_recent_block() -> Result<BlockView> {
@@ -158,7 +154,6 @@ async fn send_tx(
 ) -> Result<CryptoHash> {
     let log = DEFAULT.new(o!(
         "function" => "exec_contract",
-        "server" => CLIENT.server_addr(),
         "signer" => format!("{}", signer.account_id),
         "receiver" => format!("{}", receiver),
     ));

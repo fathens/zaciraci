@@ -10,14 +10,14 @@ mod wallet;
 mod web;
 
 use crate::logging::*;
+use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
 use crate::ref_finance::pool_info::TokenPair;
-use crate::ref_finance::token_account::TokenInAccount;
+use crate::ref_finance::token_account::{TokenInAccount, START_TOKEN};
 use crate::types::MicroNear;
 use futures_util::future::join_all;
 use near_primitives::types::Balance;
 use std::time::Duration;
-use tokio::time::sleep;
 
 type Result<T> = anyhow::Result<T>;
 
@@ -52,7 +52,14 @@ async fn main_loop() -> Result<()> {
         match single_loop().await {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
-                error!(log, "failure: {}", err);
+                warn!(log, "failure: {}", err);
+                if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
+                    if START_TOKEN.to_string().eq(name) {
+                        info!(log, "token not found, retry");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
                 return Err(err);
             }
         }
@@ -88,7 +95,7 @@ async fn single_loop() -> Result<()> {
         join_all(swaps).await;
     } else {
         info!(log, "previews not found");
-        sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
 
     Ok(())
