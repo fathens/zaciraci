@@ -7,7 +7,6 @@ use near_crypto::{ED25519SecretKey, InMemorySigner};
 use near_sdk::AccountId;
 use once_cell::sync::Lazy;
 
-const DEFAULT_HDPATH: &str = "m/44'/397'/0'";
 const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
@@ -43,7 +42,7 @@ impl Wallet {
     }
 
     fn get_hdpath() -> Result<slipped10::BIP32Path> {
-        let strval = config::get("ROOT_HDPATH").unwrap_or(DEFAULT_HDPATH.to_string());
+        let strval = config::get("ROOT_HDPATH")?;
         strval.parse().map_err(|e| anyhow!("{}", e))
     }
 
