@@ -255,13 +255,14 @@ async fn deposit_list(State(_): State<Arc<AppState>>) -> String {
     match res {
         Err(e) => format!("Error: {e}"),
         Ok(deposits) => {
-            let mut results = String::new();
+            let mut lines = Vec::new();
             for (token, amount) in deposits.iter() {
                 let m = MicroNear::from_yocto(amount.0);
-                let line = format!("{token} -> {m:?}\n");
-                results.push_str(&line);
+                let line = format!("{token} -> {m:?}");
+                lines.push(line);
             }
-            results
+            lines.sort();
+            lines.join("\n")
         }
     }
 }
