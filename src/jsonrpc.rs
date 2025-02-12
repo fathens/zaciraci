@@ -102,7 +102,6 @@ pub async fn wait_tx_result(
     };
     let res = CLIENT.call(req).await?;
     info!(log, "Transaction status";
-        "outcome" => format!("{:?}", res.final_execution_outcome),
         "status" => format!("{:?}", res.final_execution_status),
     );
     Ok(res)
