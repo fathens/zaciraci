@@ -1,7 +1,7 @@
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
-use crate::{ref_finance, wallet};
+use crate::{jsonrpc, ref_finance, wallet};
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -328,10 +328,19 @@ async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<St
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
     let res = ref_finance::deposit::wnear::wrap(amount).await;
+    let account = wallet::WALLET.account_id();
+    let before = ref_finance::deposit::wnear::balance_of(account)
+        .await
+        .map(|balance| format!("before completed: {amount} (balance: {balance:?})"))
+        .unwrap();
     match res {
         Ok(tx_hash) => {
-            let encoded = bs58::encode(&tx_hash).into_string();
-            format!("Wrapped: {amount} by {encoded}")
+            jsonrpc::wait_tx_executed(account, &tx_hash).await.unwrap();
+            let after = ref_finance::deposit::wnear::balance_of(account)
+                .await
+                .map(|balance| format!("after  completed: {amount} (balance: {balance:?})"))
+                .unwrap();
+            format!("Wrapped:\n{before}\n{after}")
         }
         Err(e) => format!("Error: {e}"),
     }
