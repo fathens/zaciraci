@@ -209,7 +209,11 @@ async fn run_swap(
     let res = ref_finance::swap::run_swap(&path, amount_in, ratio).await;
 
     match res {
-        Ok(value) => format!("Result: {value}"),
+        Ok((tx_hash, value)) => {
+            let outcome =
+                crate::jsonrpc::wait_tx_executed(wallet::WALLET.account_id(), &tx_hash).await;
+            format!("Result: {value} ({outcome:?})")
+        }
         Err(e) => format!("Error: {e}"),
     }
 }

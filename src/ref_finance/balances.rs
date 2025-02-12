@@ -14,7 +14,6 @@ use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::time::sleep;
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
@@ -113,15 +112,11 @@ async fn refill(want: Balance) -> Result<()> {
             "amount" => %wrapping,
         );
         let tx_hash = deposit::wnear::wrap(wrapping).await?;
-        let bs58_tx_hash = bs58::encode(&tx_hash).into_string();
-        let dur = std::time::Duration::from_secs(1);
-        info!(log, "waiting for wrapping";
-            "tx_hash" => bs58_tx_hash,
-            "duration" => ?dur,
-        );
-        sleep(dur).await;
+        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
     }
-    deposit::deposit(&WNEAR_TOKEN, want).await
+    let tx_hash = deposit::deposit(&WNEAR_TOKEN, want).await?;
+    jsonrpc::wait_tx_executed(account, &tx_hash).await?;
+    Ok(())
 }
 
 async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> Result<()> {
@@ -133,7 +128,8 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
     info!(log, "withdrawing";
         "token" => %token,
     );
-    deposit::withdraw(token, withdraw).await?;
+    let tx_hash = deposit::withdraw(token, withdraw).await?;
+    jsonrpc::wait_tx_executed(wallet::WALLET.account_id(), &tx_hash).await?;
     let account = wallet::WALLET.account_id();
     let native_balance = jsonrpc::get_native_amount(account).await?;
     let upper = required << 4;
@@ -149,7 +145,8 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
             "amount" => %amount,
         );
         let signer = wallet::WALLET.signer();
-        jsonrpc::transfer_native_token(signer, target, amount).await?;
+        let tx_hash = jsonrpc::transfer_native_token(signer, target, amount).await?;
+        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
         update_last_harvest()
     }
     Ok(())

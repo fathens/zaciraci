@@ -3,6 +3,7 @@ use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{deposit, CONTRACT_ADDRESS};
 use crate::Result;
 use crate::{jsonrpc, wallet};
+use near_primitives::hash::CryptoHash;
 use near_primitives::types::AccountId;
 use near_sdk::json_types::U128;
 use num_traits::Zero;
@@ -32,7 +33,7 @@ pub async fn check_bounds() -> Result<StorageBalanceBounds> {
     Ok(bounds)
 }
 
-pub async fn deposit(value: u128, registration_only: bool) -> Result<()> {
+pub async fn deposit(value: u128, registration_only: bool) -> Result<CryptoHash> {
     let log = DEFAULT.new(o!("function" => "storage::deposit"));
     const METHOD_NAME: &str = "storage_deposit";
     let args = json!({
@@ -44,8 +45,7 @@ pub async fn deposit(value: u128, registration_only: bool) -> Result<()> {
         "signer" => ?signer.account_id,
     );
 
-    jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, value).await?;
-    Ok(())
+    jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, value).await
 }
 
 pub async fn balance_of(account: &AccountId) -> Result<StorageBalance> {
@@ -126,11 +126,13 @@ pub async fn check_and_deposit(account: &AccountId, tokens: &[TokenAccount]) -> 
 
     let (deleting_tokens, more) = check_deposits(account, tokens).await?;
     if !deleting_tokens.is_empty() {
-        deposit::unregister_tokens(&deleting_tokens).await?;
+        let tx_hash = deposit::unregister_tokens(&deleting_tokens).await?;
+        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
     }
     if more > 0 {
         info!(log, "needing more deposit"; "more" => more);
-        deposit(more, false).await?;
+        let tx_hash = deposit(more, false).await?;
+        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
     }
     Ok(())
 }

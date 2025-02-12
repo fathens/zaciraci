@@ -4,14 +4,20 @@ use crate::config;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
 use crate::Result;
+use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
+use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
 use near_primitives::action::{Action, FunctionCallAction, TransferAction};
+use near_primitives::hash::CryptoHash;
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
 use near_primitives::types::{Balance, BlockId, Finality};
-use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest};
-use near_sdk::{AccountId, CryptoHash, Gas};
+use near_primitives::views::{
+    AccessKeyView, BlockView, CallResult, FinalExecutionOutcomeViewEnum, QueryRequest,
+    TxExecutionStatus,
+};
+use near_sdk::{AccountId, Gas};
 use once_cell::sync::Lazy;
 
 use client::CLIENT;
@@ -73,6 +79,42 @@ pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyVie
         QueryResponseKind::AccessKey(access_key) => Ok(access_key),
         _ => panic!("unexpected response"),
     }
+}
+
+pub async fn wait_tx_result(
+    sender: &AccountId,
+    tx_hash: &CryptoHash,
+    wait_until: TxExecutionStatus,
+) -> Result<RpcTransactionResponse> {
+    let log = DEFAULT.new(o!(
+        "function" => "wait_tx_result",
+        "sender" => format!("{}", sender),
+        "tx_hash" => format!("{}", tx_hash),
+        "wait_until" => format!("{:?}", wait_until),
+    ));
+    info!(log, "asking for transaction status");
+    let req = methods::tx::RpcTransactionStatusRequest {
+        transaction_info: methods::tx::TransactionInfo::TransactionId {
+            tx_hash: tx_hash.to_owned(),
+            sender_account_id: sender.clone(),
+        },
+        wait_until,
+    };
+    let res = CLIENT.call(req).await?;
+    info!(log, "Transaction status";
+        "outcome" => format!("{:?}", res.final_execution_outcome),
+        "status" => format!("{:?}", res.final_execution_status),
+    );
+    Ok(res)
+}
+
+pub async fn wait_tx_executed(
+    sender: &AccountId,
+    tx_hash: &CryptoHash,
+) -> Result<FinalExecutionOutcomeViewEnum> {
+    let res = wait_tx_result(sender, tx_hash, TxExecutionStatus::Executed).await?;
+    res.final_execution_outcome
+        .ok_or_else(|| anyhow!("No outcome of tx: {}", tx_hash))
 }
 
 pub async fn view_contract<T>(
@@ -182,10 +224,10 @@ async fn send_tx(
 
     let res = CLIENT.call(req).await?;
     info!(log, "broadcasted";
-        "response" => format!("{:?}", res),
+        "response" => %res,
         "nonce" => nonce,
-        "block_hash" => format!("{}", block_hash),
-        "public_key" => format!("{}", signer.public_key()),
+        "block_hash" => %block_hash,
+        "public_key" => %signer.public_key(),
     );
-    Ok(res.0)
+    Ok(res)
 }

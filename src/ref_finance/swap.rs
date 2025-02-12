@@ -3,6 +3,7 @@ use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::{jsonrpc, wallet, Result};
+use near_primitives::hash::CryptoHash;
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
@@ -28,7 +29,11 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
-pub async fn run_swap(path: &[TokenPair], initial: Balance, min_out_ratio: f32) -> Result<Balance> {
+pub async fn run_swap(
+    path: &[TokenPair],
+    initial: Balance,
+    min_out_ratio: f32,
+) -> Result<(CryptoHash, Balance)> {
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
         "path.length" => format!("{}", path.len()),
@@ -71,9 +76,10 @@ pub async fn run_swap(path: &[TokenPair], initial: Balance, min_out_ratio: f32) 
     let deposit = 1;
     let signer = wallet::WALLET.signer();
 
-    jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
+    let tx_hash =
+        jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
 
-    Ok(out)
+    Ok((tx_hash, out))
 }
 
 pub fn gather_token_accounts(pairs_list: &[&[TokenPair]]) -> Vec<TokenAccount> {
