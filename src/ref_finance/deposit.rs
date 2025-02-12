@@ -1,6 +1,6 @@
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
-use crate::ref_finance::{token_account, CONTRACT_ADDRESS};
+use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::{jsonrpc, wallet, Result};
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
@@ -8,21 +8,47 @@ use near_sdk::AccountId;
 use serde_json::json;
 use std::collections::HashMap;
 
-pub async fn wrap_near(amount: Balance) -> Result<TokenAccount> {
-    let log = DEFAULT.new(o!(
-        "function" => "wrap_near",
-        "amount" => amount,
-    ));
-    info!(log, "wrapping native token");
+pub mod wnear {
+    use crate::logging::*;
+    use crate::ref_finance::token_account::WNEAR_TOKEN;
+    use crate::{jsonrpc, wallet, Result};
+    use near_primitives::types::Balance;
+    use near_sdk::json_types::U128;
+    use near_sdk::{AccountId, CryptoHash};
+    use serde_json::json;
 
-    const METHOD_NAME: &str = "near_deposit";
+    pub async fn balance_of(account: &AccountId) -> Result<Balance> {
+        let log = DEFAULT.new(o!(
+            "function" => "balance_of",
+            "account" => format!("{}", account),
+        ));
+        info!(log, "entered");
 
-    let token = token_account::START_TOKEN.clone();
-    let args = json!({});
-    let signer = wallet::WALLET.signer();
+        const METHOD_NAME: &str = "ft_balance_of";
+        let args = json!({
+            "account_id": account,
+        });
 
-    jsonrpc::exec_contract(signer, token.as_id(), METHOD_NAME, &args, amount).await?;
-    Ok(token)
+        let result = jsonrpc::view_contract(WNEAR_TOKEN.as_id(), METHOD_NAME, &args).await?;
+        let balance: U128 = serde_json::from_slice(&result.result)?;
+        Ok(balance.into())
+    }
+
+    pub async fn wrap(amount: Balance) -> Result<CryptoHash> {
+        let log = DEFAULT.new(o!(
+            "function" => "wrap_near",
+            "amount" => amount,
+        ));
+        info!(log, "wrapping native token");
+
+        const METHOD_NAME: &str = "near_deposit";
+
+        let token = WNEAR_TOKEN.clone();
+        let args = json!({});
+        let signer = wallet::WALLET.signer();
+
+        jsonrpc::exec_contract(signer, token.as_id(), METHOD_NAME, &args, amount).await
+    }
 }
 
 pub async fn deposit(token: &TokenAccount, amount: Balance) -> Result<()> {

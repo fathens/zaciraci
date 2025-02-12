@@ -3,8 +3,7 @@
 use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
-use crate::ref_finance::token_account;
-use crate::ref_finance::token_account::TokenAccount;
+use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::types::{MicroNear, MilliNear};
 use crate::wallet;
 use crate::Result;
@@ -15,6 +14,7 @@ use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::time::sleep;
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
@@ -61,7 +61,7 @@ pub async fn start() -> Result<(TokenAccount, Balance)> {
         "required_balance" => %required_balance,
     );
 
-    let token = token_account::START_TOKEN.clone();
+    let token = WNEAR_TOKEN.clone();
 
     let wrapped_balance = balance_of_start_token(&token).await?;
     info!(log, "comparing";
@@ -92,26 +92,36 @@ async fn refill(want: Balance) -> Result<()> {
         "want" => format!("{}", want),
     ));
     let account = wallet::WALLET.account_id();
-    let native_balance = jsonrpc::get_native_amount(account).await?;
-    let amount = native_balance
-        .checked_sub(MINIMUM_NATIVE_BALANCE)
-        .unwrap_or_default()
-        .min(want);
-    if amount.is_zero() {
-        return Err(anyhow!(
-            "Insufficient balance: {}, {:?}, {:?}",
-            native_balance,
-            MilliNear::from_yocto(native_balance),
-            MicroNear::from_yocto(native_balance),
-        ));
+    let wrapped_balance = deposit::wnear::balance_of(account).await?;
+    if wrapped_balance < want {
+        let wrapping = want - wrapped_balance;
+        let native_balance = jsonrpc::get_native_amount(account).await?;
+        let available = native_balance
+            .checked_sub(MINIMUM_NATIVE_BALANCE)
+            .unwrap_or_default();
+        if available < wrapping {
+            return Err(anyhow!(
+                "Insufficient balance: required: {:?}, native_balance {}, {:?}, {:?}",
+                MilliNear::from_yocto(want),
+                native_balance,
+                MilliNear::from_yocto(native_balance),
+                MicroNear::from_yocto(native_balance),
+            ));
+        }
+        info!(log, "wrapping";
+            "native_balance" => %native_balance,
+            "amount" => %wrapping,
+        );
+        let tx_hash = deposit::wnear::wrap(wrapping).await?;
+        let bs58_tx_hash = bs58::encode(&tx_hash).into_string();
+        let dur = std::time::Duration::from_secs(1);
+        info!(log, "waiting for wrapping";
+            "tx_hash" => bs58_tx_hash,
+            "duration" => ?dur,
+        );
+        sleep(dur).await;
     }
-    info!(log, "refilling";
-        "native_balance" => %native_balance,
-        "amount" => %amount,
-    );
-
-    let token = deposit::wrap_near(amount).await?;
-    deposit::deposit(&token, amount).await
+    deposit::deposit(&WNEAR_TOKEN, want).await
 }
 
 async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> Result<()> {

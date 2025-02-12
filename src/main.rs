@@ -13,7 +13,7 @@ use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
 use crate::ref_finance::pool_info::TokenPair;
-use crate::ref_finance::token_account::{TokenInAccount, START_TOKEN};
+use crate::ref_finance::token_account::{TokenInAccount, WNEAR_TOKEN};
 use crate::types::MicroNear;
 use futures_util::future::join_all;
 use near_primitives::types::Balance;
@@ -54,7 +54,7 @@ async fn main_loop() -> Result<()> {
             Err(err) => {
                 warn!(log, "failure: {}", err);
                 if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
-                    if START_TOKEN.to_string().eq(name) {
+                    if WNEAR_TOKEN.to_string().eq(name) {
                         info!(log, "token not found, retry");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;

@@ -323,9 +323,12 @@ async fn native_token_transfer(
 async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
-    let res = crate::ref_finance::deposit::wrap_near(amount).await;
+    let res = ref_finance::deposit::wnear::wrap(amount).await;
     match res {
-        Ok(token) => format!("Wrapped: {token} {amount}"),
+        Ok(tx_hash) => {
+            let encoded = bs58::encode(&tx_hash).into_string();
+            format!("Wrapped: {amount} by {encoded}")
+        }
         Err(e) => format!("Error: {e}"),
     }
 }
