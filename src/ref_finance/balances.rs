@@ -114,6 +114,9 @@ async fn refill(want: Balance) -> Result<()> {
         let tx_hash = deposit::wnear::wrap(wrapping).await?;
         jsonrpc::wait_tx_executed(account, &tx_hash).await?;
     }
+    info!(log, "refilling";
+        "amount" => %want,
+    );
     let tx_hash = deposit::deposit(&WNEAR_TOKEN, want).await?;
     jsonrpc::wait_tx_executed(account, &tx_hash).await?;
     Ok(())
