@@ -1,10 +1,9 @@
-use crate::jsonrpc::TxHash;
+use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{deposit, CONTRACT_ADDRESS};
 use crate::Result;
 use crate::{jsonrpc, wallet};
-use near_primitives::hash::CryptoHash;
 use near_primitives::types::AccountId;
 use near_sdk::json_types::U128;
 use num_traits::Zero;
@@ -34,7 +33,7 @@ pub async fn check_bounds() -> Result<StorageBalanceBounds> {
     Ok(bounds)
 }
 
-pub async fn deposit(value: u128, registration_only: bool) -> Result<CryptoHash> {
+pub async fn deposit(value: u128, registration_only: bool) -> Result<SentTx> {
     let log = DEFAULT.new(o!("function" => "storage::deposit"));
     const METHOD_NAME: &str = "storage_deposit";
     let args = json!({
@@ -129,15 +128,12 @@ pub async fn check_and_deposit(account: &AccountId, tokens: &[TokenAccount]) -> 
     if !deleting_tokens.is_empty() {
         deposit::unregister_tokens(&deleting_tokens)
             .await?
-            .wait_for_success(account)
+            .wait_for_success()
             .await?;
     }
     if more > 0 {
         info!(log, "needing more deposit"; "more" => more);
-        deposit(more, false)
-            .await?
-            .wait_for_success(account)
-            .await?;
+        deposit(more, false).await?.wait_for_success().await?;
     }
     Ok(())
 }

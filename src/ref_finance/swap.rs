@@ -1,9 +1,9 @@
+use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::{jsonrpc, wallet, Result};
-use near_primitives::hash::CryptoHash;
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
@@ -33,7 +33,7 @@ pub async fn run_swap(
     path: &[TokenPair],
     initial: Balance,
     min_out_ratio: f32,
-) -> Result<(CryptoHash, Balance)> {
+) -> Result<(SentTx, Balance)> {
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
         "path.length" => format!("{}", path.len()),

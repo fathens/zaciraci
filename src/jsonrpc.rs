@@ -134,7 +134,7 @@ pub async fn transfer_native_token(
     signer: &InMemorySigner,
     receiver: &AccountId,
     amount: Balance,
-) -> Result<CryptoHash> {
+) -> Result<SentTx> {
     let log = DEFAULT.new(o!(
         "function" => "transfer_native_token",
         "signer" => format!("{}", signer.account_id),
@@ -153,7 +153,7 @@ pub async fn exec_contract<T>(
     method_name: &str,
     args: &T,
     deposit: Balance,
-) -> Result<CryptoHash>
+) -> Result<SentTx>
 where
     T: ?Sized + serde::Serialize,
 {
@@ -183,7 +183,7 @@ async fn send_tx(
     signer: &InMemorySigner,
     receiver: &AccountId,
     actions: &[Action],
-) -> Result<CryptoHash> {
+) -> Result<SentTx> {
     let log = DEFAULT.new(o!(
         "function" => "exec_contract",
         "signer" => format!("{}", signer.account_id),
@@ -219,29 +219,27 @@ async fn send_tx(
         "block_hash" => %block_hash,
         "public_key" => %signer.public_key(),
     );
-    Ok(res)
+    Ok(SentTx {
+        account: signer.account_id.clone(),
+        tx_hash: res,
+    })
 }
 
-pub trait TxHash {
-    async fn wait_for_executed(&self, account: &AccountId)
-        -> Result<FinalExecutionOutcomeViewEnum>;
-
-    async fn wait_for_success(&self, account: &AccountId) -> Result<ExecutionOutcomeView>;
+pub struct SentTx {
+    account: AccountId,
+    tx_hash: CryptoHash,
 }
 
-impl TxHash for CryptoHash {
-    async fn wait_for_executed(
-        &self,
-        account: &AccountId,
-    ) -> Result<FinalExecutionOutcomeViewEnum> {
-        wait_tx_result(account, self, TxExecutionStatus::Executed)
+impl SentTx {
+    pub async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum> {
+        wait_tx_result(&self.account, &self.tx_hash, TxExecutionStatus::Executed)
             .await?
             .final_execution_outcome
-            .ok_or_else(|| anyhow!("No outcome of tx: {}", self))
+            .ok_or_else(|| anyhow!("No outcome of tx: {}", self.tx_hash))
     }
 
-    async fn wait_for_success(&self, account: &AccountId) -> Result<ExecutionOutcomeView> {
-        let view = match self.wait_for_executed(account).await? {
+    pub async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
+        let view = match self.wait_for_executed().await? {
             FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(view) => view,
             FinalExecutionOutcomeViewEnum::FinalExecutionOutcomeWithReceipt(view) => {
                 view.final_outcome

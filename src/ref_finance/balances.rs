@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use crate::jsonrpc::TxHash;
 use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
@@ -125,7 +124,7 @@ async fn refill(want: Balance) -> Result<()> {
         info!(log, "wrapping");
         deposit::wnear::wrap(wrapping)
             .await?
-            .wait_for_success(account)
+            .wait_for_success()
             .await?;
     }
     info!(log, "refilling";
@@ -133,7 +132,7 @@ async fn refill(want: Balance) -> Result<()> {
     );
     deposit::deposit(&WNEAR_TOKEN, want)
         .await?
-        .wait_for_success(account)
+        .wait_for_success()
         .await?;
     Ok(())
 }
@@ -149,7 +148,7 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
     );
     deposit::withdraw(token, withdraw)
         .await?
-        .wait_for_success(wallet::WALLET.account_id())
+        .wait_for_success()
         .await?;
     let account = wallet::WALLET.account_id();
     let native_balance = jsonrpc::get_native_amount(account).await?;
@@ -168,7 +167,7 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
         let signer = wallet::WALLET.signer();
         jsonrpc::transfer_native_token(signer, target, amount)
             .await?
-            .wait_for_success(account)
+            .wait_for_success()
             .await?;
         update_last_harvest()
     }

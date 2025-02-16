@@ -1,8 +1,8 @@
+use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::{jsonrpc, wallet, Result};
-use near_primitives::hash::CryptoHash;
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
@@ -10,10 +10,10 @@ use serde_json::json;
 use std::collections::HashMap;
 
 pub mod wnear {
+    use crate::jsonrpc::SentTx;
     use crate::logging::*;
     use crate::ref_finance::token_account::WNEAR_TOKEN;
     use crate::{jsonrpc, wallet, Result};
-    use near_primitives::hash::CryptoHash;
     use near_primitives::types::Balance;
     use near_sdk::json_types::U128;
     use near_sdk::AccountId;
@@ -36,7 +36,7 @@ pub mod wnear {
         Ok(balance.into())
     }
 
-    pub async fn wrap(amount: Balance) -> Result<CryptoHash> {
+    pub async fn wrap(amount: Balance) -> Result<SentTx> {
         let log = DEFAULT.new(o!(
             "function" => "wrap_near",
             "amount" => amount,
@@ -53,7 +53,7 @@ pub mod wnear {
     }
 }
 
-pub async fn deposit(token: &TokenAccount, amount: Balance) -> Result<CryptoHash> {
+pub async fn deposit(token: &TokenAccount, amount: Balance) -> Result<SentTx> {
     let log = DEFAULT.new(o!(
         "function" => "deposit",
         "token" => format!("{}", token),
@@ -94,7 +94,7 @@ pub async fn get_deposits(account: &AccountId) -> Result<HashMap<TokenAccount, U
     Ok(deposits)
 }
 
-pub async fn withdraw(token: &TokenAccount, amount: Balance) -> Result<CryptoHash> {
+pub async fn withdraw(token: &TokenAccount, amount: Balance) -> Result<SentTx> {
     let log = DEFAULT.new(o!(
         "function" => "withdraw",
     ));
@@ -113,7 +113,7 @@ pub async fn withdraw(token: &TokenAccount, amount: Balance) -> Result<CryptoHas
     jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await
 }
 
-pub async fn unregister_tokens(tokens: &[TokenAccount]) -> Result<CryptoHash> {
+pub async fn unregister_tokens(tokens: &[TokenAccount]) -> Result<SentTx> {
     let log = DEFAULT.new(o!(
         "function" => "unregister_tokens",
     ));
