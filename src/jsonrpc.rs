@@ -185,7 +185,7 @@ async fn send_tx(
     actions: &[Action],
 ) -> Result<SentTx> {
     let log = DEFAULT.new(o!(
-        "function" => "exec_contract",
+        "function" => "send_tx",
         "signer" => format!("{}", signer.account_id),
         "receiver" => format!("{}", receiver),
     ));
