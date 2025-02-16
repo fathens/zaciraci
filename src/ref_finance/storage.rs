@@ -1,3 +1,4 @@
+use crate::jsonrpc::TxHash;
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{deposit, CONTRACT_ADDRESS};
@@ -126,13 +127,17 @@ pub async fn check_and_deposit(account: &AccountId, tokens: &[TokenAccount]) -> 
 
     let (deleting_tokens, more) = check_deposits(account, tokens).await?;
     if !deleting_tokens.is_empty() {
-        let tx_hash = deposit::unregister_tokens(&deleting_tokens).await?;
-        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
+        deposit::unregister_tokens(&deleting_tokens)
+            .await?
+            .wait_for_success(account)
+            .await?;
     }
     if more > 0 {
         info!(log, "needing more deposit"; "more" => more);
-        let tx_hash = deposit(more, false).await?;
-        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
+        deposit(more, false)
+            .await?
+            .wait_for_success(account)
+            .await?;
     }
     Ok(())
 }

@@ -9,6 +9,7 @@ mod types;
 mod wallet;
 mod web;
 
+use crate::jsonrpc::TxHash;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
@@ -122,7 +123,9 @@ where
     );
     let (tx_hash, out) =
         ref_finance::swap::run_swap(&path, preview.input_value.into(), ratio_by_step).await?;
-    let outcome = jsonrpc::wait_tx_executed(wallet::WALLET.account_id(), &tx_hash).await?;
+    let outcome = tx_hash
+        .wait_for_success(wallet::WALLET.account_id())
+        .await?;
 
     info!(log, "swap done";
         "out_balance" => out,

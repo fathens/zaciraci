@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::jsonrpc::TxHash;
 use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
@@ -73,7 +74,12 @@ pub async fn start() -> Result<(TokenAccount, Balance)> {
     } else {
         let upper = required_balance << 4;
         if upper < wrapped_balance {
-            harvest(&token, wrapped_balance - upper, upper).await?;
+            tokio::spawn(async move {
+                match harvest(&WNEAR_TOKEN, wrapped_balance - upper, upper).await {
+                    Ok(_) => info!(log, "successfully harvested"),
+                    Err(err) => warn!(log, "failed to harvest: {}", err),
+                };
+            });
         }
         Ok((token, upper))
     }
@@ -92,9 +98,18 @@ async fn refill(want: Balance) -> Result<()> {
     ));
     let account = wallet::WALLET.account_id();
     let wrapped_balance = deposit::wnear::balance_of(account).await?;
+    let log = log.new(o!(
+        "wrapped_balance" => format!("{}", wrapped_balance),
+    ));
+    debug!(log, "checking");
     if wrapped_balance < want {
         let wrapping = want - wrapped_balance;
         let native_balance = jsonrpc::get_native_amount(account).await?;
+        let log = log.new(o!(
+            "native_balance" => format!("{}", native_balance),
+            "wrapping" => format!("{}", wrapping),
+        ));
+        debug!(log, "checking");
         let available = native_balance
             .checked_sub(MINIMUM_NATIVE_BALANCE)
             .unwrap_or_default();
@@ -107,18 +122,19 @@ async fn refill(want: Balance) -> Result<()> {
                 MicroNear::from_yocto(native_balance),
             ));
         }
-        info!(log, "wrapping";
-            "native_balance" => %native_balance,
-            "amount" => %wrapping,
-        );
-        let tx_hash = deposit::wnear::wrap(wrapping).await?;
-        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
+        info!(log, "wrapping");
+        deposit::wnear::wrap(wrapping)
+            .await?
+            .wait_for_success(account)
+            .await?;
     }
     info!(log, "refilling";
         "amount" => %want,
     );
-    let tx_hash = deposit::deposit(&WNEAR_TOKEN, want).await?;
-    jsonrpc::wait_tx_executed(account, &tx_hash).await?;
+    deposit::deposit(&WNEAR_TOKEN, want)
+        .await?
+        .wait_for_success(account)
+        .await?;
     Ok(())
 }
 
@@ -131,8 +147,10 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
     info!(log, "withdrawing";
         "token" => %token,
     );
-    let tx_hash = deposit::withdraw(token, withdraw).await?;
-    jsonrpc::wait_tx_executed(wallet::WALLET.account_id(), &tx_hash).await?;
+    deposit::withdraw(token, withdraw)
+        .await?
+        .wait_for_success(wallet::WALLET.account_id())
+        .await?;
     let account = wallet::WALLET.account_id();
     let native_balance = jsonrpc::get_native_amount(account).await?;
     let upper = required << 4;
@@ -148,8 +166,10 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
             "amount" => %amount,
         );
         let signer = wallet::WALLET.signer();
-        let tx_hash = jsonrpc::transfer_native_token(signer, target, amount).await?;
-        jsonrpc::wait_tx_executed(account, &tx_hash).await?;
+        jsonrpc::transfer_native_token(signer, target, amount)
+            .await?
+            .wait_for_success(account)
+            .await?;
         update_last_harvest()
     }
     Ok(())

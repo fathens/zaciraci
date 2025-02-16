@@ -1,7 +1,8 @@
+use crate::jsonrpc::TxHash;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
-use crate::{jsonrpc, ref_finance, wallet};
+use crate::{ref_finance, wallet};
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -210,8 +211,10 @@ async fn run_swap(
 
     match res {
         Ok((tx_hash, value)) => {
-            let outcome =
-                crate::jsonrpc::wait_tx_executed(wallet::WALLET.account_id(), &tx_hash).await;
+            let outcome = tx_hash
+                .wait_for_success(wallet::WALLET.account_id())
+                .await
+                .unwrap();
             format!("Result: {value} ({outcome:?})")
         }
         Err(e) => format!("Error: {e}"),
@@ -336,7 +339,7 @@ async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<St
         .unwrap();
     match res {
         Ok(tx_hash) => {
-            jsonrpc::wait_tx_executed(account, &tx_hash).await.unwrap();
+            tx_hash.wait_for_success(account).await.unwrap();
             let after = ref_finance::deposit::wnear::balance_of(account)
                 .await
                 .map(|balance| format!("after  completed: {amount} (balance: {balance:?})"))

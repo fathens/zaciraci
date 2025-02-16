@@ -4,7 +4,7 @@ use crate::config;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
 use crate::Result;
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
@@ -14,8 +14,8 @@ use near_primitives::hash::CryptoHash;
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
 use near_primitives::types::{Balance, BlockId, Finality};
 use near_primitives::views::{
-    AccessKeyView, BlockView, CallResult, FinalExecutionOutcomeViewEnum, QueryRequest,
-    TxExecutionStatus,
+    AccessKeyView, BlockView, CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
+    FinalExecutionStatus, QueryRequest, TxExecutionStatus,
 };
 use near_sdk::{AccountId, Gas};
 use once_cell::sync::Lazy;
@@ -105,15 +105,6 @@ pub async fn wait_tx_result(
         "status" => format!("{:?}", res.final_execution_status),
     );
     Ok(res)
-}
-
-pub async fn wait_tx_executed(
-    sender: &AccountId,
-    tx_hash: &CryptoHash,
-) -> Result<FinalExecutionOutcomeViewEnum> {
-    let res = wait_tx_result(sender, tx_hash, TxExecutionStatus::Executed).await?;
-    res.final_execution_outcome
-        .ok_or_else(|| anyhow!("No outcome of tx: {}", tx_hash))
 }
 
 pub async fn view_contract<T>(
@@ -229,4 +220,38 @@ async fn send_tx(
         "public_key" => %signer.public_key(),
     );
     Ok(res)
+}
+
+pub trait TxHash {
+    async fn wait_for_executed(&self, account: &AccountId)
+        -> Result<FinalExecutionOutcomeViewEnum>;
+
+    async fn wait_for_success(&self, account: &AccountId) -> Result<ExecutionOutcomeView>;
+}
+
+impl TxHash for CryptoHash {
+    async fn wait_for_executed(
+        &self,
+        account: &AccountId,
+    ) -> Result<FinalExecutionOutcomeViewEnum> {
+        wait_tx_result(account, self, TxExecutionStatus::Executed)
+            .await?
+            .final_execution_outcome
+            .ok_or_else(|| anyhow!("No outcome of tx: {}", self))
+    }
+
+    async fn wait_for_success(&self, account: &AccountId) -> Result<ExecutionOutcomeView> {
+        let view = match self.wait_for_executed(account).await? {
+            FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(view) => view,
+            FinalExecutionOutcomeViewEnum::FinalExecutionOutcomeWithReceipt(view) => {
+                view.final_outcome
+            }
+        };
+        match view.status {
+            FinalExecutionStatus::NotStarted => bail!("tx must be executed"),
+            FinalExecutionStatus::Started => bail!("tx must be executed"),
+            FinalExecutionStatus::Failure(err) => Err(err.into()),
+            FinalExecutionStatus::SuccessValue(_) => Ok(view.transaction_outcome.outcome),
+        }
+    }
 }
