@@ -1,5 +1,5 @@
+use crate::ref_finance::pool_info;
 use crate::ref_finance::token_account::TokenAccount;
-use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
 use crate::{ref_finance, wallet};
 use axum::extract::{Path, State};
@@ -160,10 +160,9 @@ async fn pick_goals(
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
-    let goals =
-        crate::ref_finance::path::pick_goals(&graph, &start.into(), MilliNear::of(amount_in))
-            .await
-            .unwrap();
+    let goals = ref_finance::path::pick_goals(&graph, &start.into(), MilliNear::of(amount_in))
+        .await
+        .unwrap();
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
     match goals {
         None => {
@@ -203,7 +202,9 @@ async fn run_swap(
         .unwrap();
     let account = wallet::WALLET.account_id();
     let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
-    storage::check_and_deposit(account, &tokens).await.unwrap();
+    ref_finance::storage::check_and_deposit(account, &tokens)
+        .await
+        .unwrap();
     let ratio = min_out_ratio as f32 / 100.0;
 
     let res = ref_finance::swap::run_swap(&path, amount_in, ratio).await;
@@ -218,7 +219,7 @@ async fn run_swap(
 }
 
 async fn storage_deposit_min(State(_): State<Arc<AppState>>) -> String {
-    let bounds = crate::ref_finance::storage::check_bounds().await.unwrap();
+    let bounds = ref_finance::storage::check_bounds().await.unwrap();
     let value = bounds.min.0;
     let res = crate::ref_finance::storage::deposit(value, true).await;
     match res {
@@ -241,7 +242,7 @@ async fn storage_unregister_token(
     Path(token_account): Path<String>,
 ) -> String {
     let token: TokenAccount = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::unregister_tokens(&[token]).await;
+    let res = ref_finance::deposit::unregister_tokens(&[token]).await;
     match res {
         Ok(_) => format!("Unregistered: {token_account}"),
         Err(e) => format!("Error: {e}"),
@@ -250,7 +251,7 @@ async fn storage_unregister_token(
 
 async fn deposit_list(State(_): State<Arc<AppState>>) -> String {
     let account = wallet::WALLET.account_id();
-    let res = crate::ref_finance::deposit::get_deposits(account).await;
+    let res = ref_finance::deposit::get_deposits(account).await;
     match res {
         Err(e) => format!("Error: {e}"),
         Ok(deposits) => {
@@ -273,7 +274,7 @@ async fn deposit_token(
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
     let token = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::deposit(&token, amount).await;
+    let res = ref_finance::deposit::deposit(&token, amount).await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
         Err(e) => format!("Error: {e}"),
@@ -287,7 +288,7 @@ async fn withdraw_token(
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
     let token = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::withdraw(&token, amount).await;
+    let res = ref_finance::deposit::withdraw(&token, amount).await;
     match res {
         Ok(_) => format!("Withdrawn: {amount}"),
         Err(e) => format!("Error: {e}"),
