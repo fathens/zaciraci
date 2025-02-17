@@ -51,6 +51,26 @@ pub mod wnear {
 
         jsonrpc::exec_contract(signer, token.as_id(), METHOD_NAME, &args, amount).await
     }
+
+    pub async fn unwrap(amount: Balance) -> Result<SentTx> {
+        let log = DEFAULT.new(o!(
+            "function" => "unwrap_near",
+            "amount" => amount,
+        ));
+        info!(log, "unwrapping native token");
+
+        const METHOD_NAME: &str = "near_withdraw";
+
+        let token = WNEAR_TOKEN.clone();
+        let args = json!({
+            "amount": U128(amount),
+        });
+
+        let deposit = 1; // minimum deposit
+        let signer = wallet::WALLET.signer();
+
+        jsonrpc::exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit).await
+    }
 }
 
 pub async fn deposit(token: &TokenAccount, amount: Balance) -> Result<SentTx> {

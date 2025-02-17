@@ -58,6 +58,8 @@ pub async fn run() {
         .with_state(state.clone())
         .route("/amounts/wrap/:amount", get(wrap_native_token))
         .with_state(state.clone())
+        .route("/amounts/unwrap/:amount", get(unwrap_native_token))
+        .with_state(state.clone())
         .route(
             "/amounts/deposit/:token_account/:amount",
             get(deposit_token),
@@ -328,21 +330,47 @@ async fn native_token_transfer(
 async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
-    let res = ref_finance::deposit::wnear::wrap(amount).await;
     let account = wallet::WALLET.account_id();
     let before = ref_finance::deposit::wnear::balance_of(account)
         .await
-        .map(|balance| format!("before completed: {amount} (balance: {balance:?})"))
         .unwrap();
-    match res {
-        Ok(tx_hash) => {
-            tx_hash.wait_for_success().await.unwrap();
+    let call = async {
+        ref_finance::deposit::wnear::wrap(amount)
+            .await?
+            .wait_for_success()
+            .await
+    };
+    match call.await {
+        Ok(_) => {
             let after = ref_finance::deposit::wnear::balance_of(account)
                 .await
-                .map(|balance| format!("after  completed: {amount} (balance: {balance:?})"))
                 .unwrap();
-            format!("Wrapped:\n{before}\n{after}")
+            format!("Wrapped: {amount}\n{before}\n{after}")
         }
-        Err(e) => format!("Error: {e}"),
+        Err(err) => format!("Error: {err}"),
+    }
+}
+
+async fn unwrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let account = wallet::WALLET.account_id();
+    let before = ref_finance::deposit::wnear::balance_of(account)
+        .await
+        .unwrap();
+    let call = async {
+        ref_finance::deposit::wnear::unwrap(amount)
+            .await?
+            .wait_for_success()
+            .await
+    };
+    match call.await {
+        Ok(_) => {
+            let after = ref_finance::deposit::wnear::balance_of(account)
+                .await
+                .unwrap();
+            format!("Unwrapped: {amount}\n{before}\n{after}")
+        }
+        Err(err) => format!("Error: {err}"),
     }
 }
