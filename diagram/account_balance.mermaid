@@ -6,9 +6,13 @@ graph TD
     WrappedAmount -->|必要額より小さい| Refill
 
     subgraph Refill[補充]
+        CheckWrapped{Wrapped残高の確認} -->|足りる| DepositFull[必要なだけ Deposit]
+        CheckWrapped -->|足りない| CheckNative
         CheckNative{ネイティブ残高の確認}
-        CheckNative -->|足りる| DepositFull[必要なだけ Deposit]
-        CheckNative -->|足りない| DepositLess[minimum だけ残して Deposit]
+        CheckNative -->|足りる| WrapFull[必要なだけ Wrap]
+        CheckNative -->|足りない| WrapLess[最低額だけ残して Wrap]
+        WrapFull --> DepositFull
+        WrapLess --> DepositLess[最低額だけ残して Deposit]
     end
 
     subgraph Harvest[収穫]
