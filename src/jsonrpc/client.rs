@@ -1,37 +1,75 @@
-use crate::jsonrpc::IS_MAINNET;
 use crate::logging::*;
 use near_jsonrpc_client::errors::{
     JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError, JsonRpcTransportSendError,
     RpcTransportError,
 };
 use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
-use once_cell::sync::Lazy;
 use rand::Rng;
 use std::time::Duration;
 
-pub static CLIENT: Lazy<Client> = Lazy::new(|| {
-    let underlying = if *IS_MAINNET {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
-    } else {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
-    };
-    Client::new(underlying)
-});
-
-pub struct Client {
-    underlying: JsonRpcClient,
+#[derive(Debug, Clone)]
+pub struct StandardClient {
+    pub(super) underlying: JsonRpcClient,
 }
 
-impl Client {
-    pub fn new(underlying: JsonRpcClient) -> Self {
-        Self { underlying }
+impl StandardClient {
+    async fn call_maybe_retry<M>(
+        &self,
+        method: M,
+    ) -> MaybeRetry<MethodCallResult<M::Response, M::Error>, JsonRpcError<M::Error>>
+    where
+        M: methods::RpcMethod,
+    {
+        let log = DEFAULT.new(o!(
+            "function" => "jsonrpc::Client::call_maybe_retry",
+            "server" => self.underlying.server_addr().to_owned(),
+            "method" => method.method_name().to_owned(),
+        ));
+        info!(log, "calling");
+        let res = self.underlying.call(method).await;
+        match res {
+            Ok(res) => {
+                info!(log, "success");
+                MaybeRetry::Through(Ok(res))
+            }
+            Err(err) => match err {
+                JsonRpcError::ServerError(JsonRpcServerError::ResponseStatusError(
+                    JsonRpcServerResponseStatusError::TooManyRequests,
+                )) => {
+                    info!(log, "response status error: too many requests");
+                    MaybeRetry::Retry {
+                        err,
+                        msg: "too many requests".to_owned(),
+                        min_dur: Duration::from_secs_f32(0.5),
+                    }
+                }
+                JsonRpcError::TransportError(RpcTransportError::SendError(
+                    JsonRpcTransportSendError::PayloadSendError(e),
+                )) => {
+                    info!(log, "transport error: payload send error: {:?}", e);
+                    MaybeRetry::Retry {
+                        err: JsonRpcError::TransportError(RpcTransportError::SendError(
+                            JsonRpcTransportSendError::PayloadSendError(e),
+                        )),
+                        msg: "payload send error".to_owned(),
+                        min_dur: Duration::ZERO,
+                    }
+                }
+                _ => {
+                    info!(log, "failure");
+                    MaybeRetry::Through(Err(err))
+                }
+            },
+        }
     }
+}
 
-    pub fn server_addr(&self) -> &str {
+impl super::Client for StandardClient {
+    fn server_addr(&self) -> &str {
         self.underlying.server_addr()
     }
 
-    pub async fn call<M>(&self, method: M) -> MethodCallResult<M::Response, M::Error>
+    async fn call<M>(&self, method: M) -> MethodCallResult<M::Response, M::Error>
     where
         M: methods::RpcMethod,
     {
@@ -71,56 +109,6 @@ impl Client {
                     tokio::time::sleep(delay).await;
                 }
             }
-        }
-    }
-
-    async fn call_maybe_retry<M>(
-        &self,
-        method: M,
-    ) -> MaybeRetry<MethodCallResult<M::Response, M::Error>, JsonRpcError<M::Error>>
-    where
-        M: methods::RpcMethod,
-    {
-        let log = DEFAULT.new(o!(
-            "function" => "jsonrpc::Client::call_maybe_retry",
-            "server" => self.server_addr().to_owned(),
-            "method" => method.method_name().to_owned(),
-        ));
-        info!(log, "calling");
-        let res = self.underlying.call(method).await;
-        match res {
-            Ok(res) => {
-                info!(log, "success");
-                MaybeRetry::Through(Ok(res))
-            }
-            Err(err) => match err {
-                JsonRpcError::ServerError(JsonRpcServerError::ResponseStatusError(
-                    JsonRpcServerResponseStatusError::TooManyRequests,
-                )) => {
-                    info!(log, "response status error: too many requests");
-                    MaybeRetry::Retry {
-                        err,
-                        msg: "too many requests".to_owned(),
-                        min_dur: Duration::from_secs_f32(0.5),
-                    }
-                }
-                JsonRpcError::TransportError(RpcTransportError::SendError(
-                    JsonRpcTransportSendError::PayloadSendError(e),
-                )) => {
-                    info!(log, "transport error: payload send error: {:?}", e);
-                    MaybeRetry::Retry {
-                        err: JsonRpcError::TransportError(RpcTransportError::SendError(
-                            JsonRpcTransportSendError::PayloadSendError(e),
-                        )),
-                        msg: "payload send error".to_owned(),
-                        min_dur: Duration::ZERO,
-                    }
-                }
-                _ => {
-                    info!(log, "failure");
-                    MaybeRetry::Through(Err(err))
-                }
-            },
         }
     }
 }
