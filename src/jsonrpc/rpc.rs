@@ -5,14 +5,33 @@ use near_jsonrpc_client::errors::{
 };
 use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
 use rand::Rng;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
-pub struct StandardClient {
-    pub(super) underlying: JsonRpcClient,
+pub struct StandardRpcClient {
+    underlying: Arc<JsonRpcClient>,
+
+    retry_limit: u16,
+    delay_limit: Duration,
+    delay_fluctuation: f32,
 }
 
-impl StandardClient {
+impl StandardRpcClient {
+    pub fn new(
+        underlying: Arc<JsonRpcClient>,
+        retry_limit: u16,
+        delay_limit: Duration,
+        delay_fluctuation: f32,
+    ) -> Self {
+        Self {
+            underlying,
+            retry_limit,
+            delay_limit,
+            delay_fluctuation,
+        }
+    }
+
     async fn call_maybe_retry<M>(
         &self,
         method: M,
@@ -64,7 +83,7 @@ impl StandardClient {
     }
 }
 
-impl super::Client for StandardClient {
+impl super::RpcClient for StandardRpcClient {
     fn server_addr(&self) -> &str {
         self.underlying.server_addr()
     }
@@ -73,17 +92,17 @@ impl super::Client for StandardClient {
     where
         M: methods::RpcMethod,
     {
-        const DELAY_LIMIT: Duration = Duration::from_secs(60);
-        const RETRY_LIMIT: u16 = 128;
-        const FLUCTUATION: f32 = 0.1;
+        let delay_limit = self.delay_limit;
+        let retry_limit = self.retry_limit;
+        let fluctuation = self.delay_fluctuation;
 
         let log = DEFAULT.new(o!(
             "function" => "jsonrpc::Client::call",
             "server" => self.server_addr().to_owned(),
             "method" => method.method_name().to_owned(),
-            "retry_limit" => format!("{}", RETRY_LIMIT),
+            "retry_limit" => format!("{}", retry_limit),
         ));
-        let calc_delay = calc_retry_duration(DELAY_LIMIT, RETRY_LIMIT, FLUCTUATION);
+        let calc_delay = calc_retry_duration(delay_limit, retry_limit, fluctuation);
         let mut retry_count = 0;
         loop {
             let log = log.new(o!(
@@ -94,7 +113,7 @@ impl super::Client for StandardClient {
                 MaybeRetry::Through(res) => return res,
                 MaybeRetry::Retry { err, msg, min_dur } => {
                     retry_count += 1;
-                    if RETRY_LIMIT < retry_count {
+                    if retry_limit < retry_count {
                         info!(log, "retry limit reached";
                             "reason" => msg,
                         );

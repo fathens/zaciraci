@@ -1,15 +1,17 @@
-mod client;
-mod delegate;
+mod near_client;
+mod rpc;
+mod sent_tx;
 
 use crate::config;
-use crate::jsonrpc::client::StandardClient;
-use crate::jsonrpc::delegate::StandardDelegate;
+use crate::jsonrpc::near_client::StandardNearClient;
+use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
 use crate::Result;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
 use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
+use near_primitives::action::Action;
 use near_primitives::hash::CryptoHash;
 use near_primitives::types::{Balance, BlockId};
 use near_primitives::views::{
@@ -18,6 +20,7 @@ use near_primitives::views::{
 };
 use near_sdk::AccountId;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
     let str = config::get("USE_MAINNET").unwrap_or_default();
@@ -34,30 +37,26 @@ pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
     value
 });
 
-fn new_jsonrpc_client() -> JsonRpcClient {
-    if *IS_MAINNET {
+static JSONRPC_CLIENT: Lazy<Arc<JsonRpcClient>> = Lazy::new(|| {
+    let client = if *IS_MAINNET {
         JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
     } else {
         JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
-    }
-}
+    };
+    Arc::new(client)
+});
 
-pub fn new_delegate(
+pub fn new_client(
 ) -> impl BlockInfo + GasInfo + AccountInfo + AccessKeyInfo + TxInfo + ViewContract + SendTx {
-    StandardDelegate {
-        client: StandardClient {
-            underlying: new_jsonrpc_client(),
-        },
-    }
+    StandardNearClient::new(&Arc::new(StandardRpcClient::new(
+        Arc::clone(&JSONRPC_CLIENT),
+        128,
+        std::time::Duration::from_secs(60),
+        0.1,
+    )))
 }
 
-pub fn new_client() -> impl Client {
-    StandardClient {
-        underlying: new_jsonrpc_client(),
-    }
-}
-
-pub trait Client {
+pub trait RpcClient {
     fn server_addr(&self) -> &str;
 
     async fn call<M: methods::RpcMethod>(
@@ -120,6 +119,13 @@ pub trait SendTx {
     ) -> Result<impl SentTx>
     where
         T: ?Sized + serde::Serialize;
+
+    async fn send_tx(
+        &self,
+        signer: &InMemorySigner,
+        receiver: &AccountId,
+        actions: Vec<Action>,
+    ) -> Result<impl SentTx>;
 }
 
 pub trait SentTx {

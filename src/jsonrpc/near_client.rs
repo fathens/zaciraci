@@ -1,9 +1,9 @@
-use super::{AccessKeyInfo, BlockInfo, Client, SentTx, TxInfo, ViewContract};
-use crate::jsonrpc::client::StandardClient;
+use super::{AccessKeyInfo, BlockInfo, RpcClient, SentTx, TxInfo, ViewContract};
+use crate::jsonrpc::rpc::StandardRpcClient;
+use crate::jsonrpc::sent_tx::StandardSentTx;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
 use crate::Result;
-use anyhow::{anyhow, bail};
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
@@ -13,85 +13,43 @@ use near_primitives::hash::CryptoHash;
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
 use near_primitives::types::{AccountId, Balance, BlockId, Finality};
 use near_primitives::views::{
-    AccessKeyView, BlockView, CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
-    FinalExecutionStatus, QueryRequest, TxExecutionStatus,
+    AccessKeyView, BlockView, CallResult, QueryRequest, TxExecutionStatus,
 };
 use near_sdk::Gas;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
-pub struct StandardDelegate {
-    pub(super) client: StandardClient,
+pub struct StandardNearClient {
+    rpc: Arc<StandardRpcClient>,
 }
 
-impl StandardDelegate {
-    async fn send_tx(
-        &self,
-        signer: &InMemorySigner,
-        receiver: &AccountId,
-        actions: &[Action],
-    ) -> Result<impl SentTx> {
-        let log = DEFAULT.new(o!(
-            "function" => "send_tx",
-            "signer" => format!("{}", signer.account_id),
-            "receiver" => format!("{}", receiver),
-        ));
-
-        let access_key = self.get_access_key_info(signer).await?;
-        let block = self.get_recent_block().await?;
-        let nonce = access_key.nonce + 1;
-        let block_hash = block.header.hash;
-
-        let transaction = Transaction::V0(TransactionV0 {
-            signer_id: signer.account_id.clone(),
-            public_key: signer.public_key(),
-            nonce,
-            receiver_id: receiver.clone(),
-            block_hash,
-            actions: actions.to_vec(),
-        });
-
-        let (hash, _) = transaction.get_hash_and_size();
-        let signature = signer.sign(hash.as_bytes());
-        let signed_tx = SignedTransaction::new(signature, transaction);
-
-        let req = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
-            signed_transaction: signed_tx,
-        };
-
-        let res = self.client.call(req).await?;
-        info!(log, "broadcasted";
-            "response" => %res,
-            "nonce" => nonce,
-            "block_hash" => %block_hash,
-            "public_key" => %signer.public_key(),
-        );
-        Ok(StandardSentTx {
-            tx_info: self.clone(),
-            account: signer.account_id.clone(),
-            tx_hash: res,
-        })
+impl StandardNearClient {
+    pub fn new(rpc: &Arc<StandardRpcClient>) -> Self {
+        Self {
+            rpc: Arc::clone(rpc),
+        }
     }
 }
 
-impl BlockInfo for StandardDelegate {
+impl BlockInfo for StandardNearClient {
     async fn get_recent_block(&self) -> Result<BlockView> {
         let req = methods::block::RpcBlockRequest {
             block_reference: Finality::Final.into(),
         };
-        let res = self.client.call(req).await?;
+        let res = self.rpc.call(req).await?;
         Ok(res)
     }
 }
 
-impl super::GasInfo for StandardDelegate {
+impl super::GasInfo for StandardNearClient {
     async fn get_gas_price(&self, block: Option<BlockId>) -> Result<GasPrice> {
         let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
-        let res = self.client.call(req).await?;
+        let res = self.rpc.call(req).await?;
         Ok(GasPrice::from_balance(res.gas_price))
     }
 }
 
-impl super::AccountInfo for StandardDelegate {
+impl super::AccountInfo for StandardNearClient {
     async fn get_native_amount(&self, account: &AccountId) -> Result<Balance> {
         let req = methods::query::RpcQueryRequest {
             block_reference: Finality::Final.into(),
@@ -99,7 +57,7 @@ impl super::AccountInfo for StandardDelegate {
                 account_id: account.clone(),
             },
         };
-        let res = self.client.call(req).await?;
+        let res = self.rpc.call(req).await?;
         if let QueryResponseKind::ViewAccount(am) = res.kind {
             Ok(am.amount)
         } else {
@@ -108,7 +66,7 @@ impl super::AccountInfo for StandardDelegate {
     }
 }
 
-impl AccessKeyInfo for StandardDelegate {
+impl AccessKeyInfo for StandardNearClient {
     async fn get_access_key_info(&self, signer: &InMemorySigner) -> Result<AccessKeyView> {
         let req = methods::query::RpcQueryRequest {
             block_reference: Finality::Final.into(),
@@ -117,7 +75,7 @@ impl AccessKeyInfo for StandardDelegate {
                 public_key: signer.public_key(),
             },
         };
-        let res = self.client.call(req).await?;
+        let res = self.rpc.call(req).await?;
         match res.kind {
             QueryResponseKind::AccessKey(access_key) => Ok(access_key),
             _ => panic!("unexpected response"),
@@ -125,7 +83,7 @@ impl AccessKeyInfo for StandardDelegate {
     }
 }
 
-impl ViewContract for StandardDelegate {
+impl ViewContract for StandardNearClient {
     async fn view_contract<T>(
         &self,
         receiver: &AccountId,
@@ -143,7 +101,7 @@ impl ViewContract for StandardDelegate {
                 args: serde_json::to_vec(args)?.into(),
             },
         };
-        let res = self.client.call(req).await?;
+        let res = self.rpc.call(req).await?;
         match res.kind {
             QueryResponseKind::CallResult(r) => Ok(r),
             _ => panic!("unexpected response"),
@@ -151,7 +109,7 @@ impl ViewContract for StandardDelegate {
     }
 }
 
-impl TxInfo for StandardDelegate {
+impl TxInfo for StandardNearClient {
     async fn wait_tx_result(
         &self,
         sender: &AccountId,
@@ -172,7 +130,7 @@ impl TxInfo for StandardDelegate {
             },
             wait_until,
         };
-        let res = self.client.call(req).await?;
+        let res = self.rpc.call(req).await?;
         info!(log, "Transaction status";
             "status" => format!("{:?}", res.final_execution_status),
         );
@@ -180,7 +138,7 @@ impl TxInfo for StandardDelegate {
     }
 }
 
-impl super::SendTx for StandardDelegate {
+impl super::SendTx for StandardNearClient {
     async fn transfer_native_token(
         &self,
         signer: &InMemorySigner,
@@ -196,7 +154,7 @@ impl super::SendTx for StandardDelegate {
         info!(log, "transferring native token");
         let action = Action::Transfer(TransferAction { deposit: amount });
 
-        self.send_tx(signer, receiver, &[action]).await
+        self.send_tx(signer, receiver, vec![action]).await
     }
 
     async fn exec_contract<T>(
@@ -229,37 +187,54 @@ impl super::SendTx for StandardDelegate {
             .into(),
         );
 
-        self.send_tx(signer, receiver, &[action]).await
-    }
-}
-
-pub struct StandardSentTx {
-    tx_info: StandardDelegate,
-    account: AccountId,
-    tx_hash: CryptoHash,
-}
-
-impl SentTx for StandardSentTx {
-    async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum> {
-        self.tx_info
-            .wait_tx_result(&self.account, &self.tx_hash, TxExecutionStatus::Executed)
-            .await?
-            .final_execution_outcome
-            .ok_or_else(|| anyhow!("No outcome of tx: {}", self.tx_hash))
+        self.send_tx(signer, receiver, vec![action]).await
     }
 
-    async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
-        let view = match self.wait_for_executed().await? {
-            FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(view) => view,
-            FinalExecutionOutcomeViewEnum::FinalExecutionOutcomeWithReceipt(view) => {
-                view.final_outcome
-            }
+    async fn send_tx(
+        &self,
+        signer: &InMemorySigner,
+        receiver: &AccountId,
+        actions: Vec<Action>,
+    ) -> Result<impl SentTx> {
+        let log = DEFAULT.new(o!(
+            "function" => "send_tx",
+            "signer" => format!("{}", signer.account_id),
+            "receiver" => format!("{}", receiver),
+        ));
+
+        let access_key = self.get_access_key_info(signer).await?;
+        let block = self.get_recent_block().await?;
+        let nonce = access_key.nonce + 1;
+        let block_hash = block.header.hash;
+
+        let transaction = Transaction::V0(TransactionV0 {
+            signer_id: signer.account_id.clone(),
+            public_key: signer.public_key(),
+            nonce,
+            receiver_id: receiver.clone(),
+            block_hash,
+            actions,
+        });
+
+        let (hash, _) = transaction.get_hash_and_size();
+        let signature = signer.sign(hash.as_bytes());
+        let signed_tx = SignedTransaction::new(signature, transaction);
+
+        let req = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
+            signed_transaction: signed_tx,
         };
-        match view.status {
-            FinalExecutionStatus::NotStarted => bail!("tx must be executed"),
-            FinalExecutionStatus::Started => bail!("tx must be executed"),
-            FinalExecutionStatus::Failure(err) => Err(err.into()),
-            FinalExecutionStatus::SuccessValue(_) => Ok(view.transaction_outcome.outcome),
-        }
+
+        let res = self.rpc.call(req).await?;
+        info!(log, "broadcasted";
+            "response" => %res,
+            "nonce" => nonce,
+            "block_hash" => %block_hash,
+            "public_key" => %signer.public_key(),
+        );
+        Ok(StandardSentTx::new(
+            self.clone(),
+            signer.account_id.clone(),
+            res,
+        ))
     }
 }
