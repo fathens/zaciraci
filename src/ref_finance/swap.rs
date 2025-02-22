@@ -1,4 +1,3 @@
-use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::TokenAccount;
@@ -29,11 +28,16 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
-pub async fn run_swap(
+pub async fn run_swap<A>(
+    client: &A,
     path: &[TokenPair],
     initial: Balance,
     min_out_ratio: f32,
-) -> Result<(SentTx, Balance)> {
+) -> Result<(A::Output, Balance)>
+where
+    A: jsonrpc::SendTx,
+    A: 'static,
+{
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
         "path.length" => format!("{}", path.len()),
@@ -76,8 +80,9 @@ pub async fn run_swap(
     let deposit = 1;
     let signer = wallet::WALLET.signer();
 
-    let tx_hash =
-        jsonrpc::exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit).await?;
+    let tx_hash = client
+        .exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, args, deposit)
+        .await?;
 
     Ok((tx_hash, out))
 }

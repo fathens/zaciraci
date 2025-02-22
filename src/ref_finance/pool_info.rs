@@ -1,4 +1,4 @@
-use crate::jsonrpc;
+use crate::jsonrpc::ViewContract;
 use crate::logging::*;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
@@ -98,9 +98,10 @@ impl TokenPair {
             .estimate_return(self.token_in, amount_in, self.token_out)
     }
 
-    pub async fn get_return(&self, amount_in: u128) -> Result<u128> {
+    pub async fn get_return<C: ViewContract>(&self, client: &C, amount_in: u128) -> Result<u128> {
         self.pool
             .get_return(
+                client,
                 self.pool.token(self.token_in.as_index())?.into(),
                 amount_in,
                 self.pool.token(self.token_out.as_index())?.into(),
@@ -207,8 +208,9 @@ impl PoolInfo {
         result.to_u128().ok_or_else(|| Error::Overflow.into())
     }
 
-    async fn get_return(
+    async fn get_return<C: ViewContract>(
         &self,
+        client: &C,
         token_in: TokenInAccount,
         amount_in: u128,
         token_out: TokenOutAccount,
@@ -230,7 +232,9 @@ impl PoolInfo {
         .to_string();
         debug!(log, "request_json"; "value" => %args);
 
-        let result = jsonrpc::view_contract(&CONTRACT_ADDRESS, method_name, &args).await?;
+        let result = client
+            .view_contract(&CONTRACT_ADDRESS, method_name, &args)
+            .await?;
 
         let raw = result.result;
         let value: U128 = from_slice(&raw)?;
@@ -270,14 +274,15 @@ impl PoolInfoList {
             .ok_or_else(|| Error::OutOfIndexOfPools(index).into())
     }
 
-    pub async fn read_from_node() -> Result<Arc<PoolInfoList>> {
+    pub async fn read_from_node<C: ViewContract>(client: &C) -> Result<Arc<PoolInfoList>> {
         let log = DEFAULT.new(o!("function" => "get_all_from_node"));
         info!(log, "start");
 
         let number_of_pools: u32 = {
             let args = json!({});
-            let res =
-                jsonrpc::view_contract(&CONTRACT_ADDRESS, "get_number_of_pools", &args).await?;
+            let res = client
+                .view_contract(&CONTRACT_ADDRESS, "get_number_of_pools", &args)
+                .await?;
             let raw = res.result;
             from_slice(&raw).context(format!(
                 "failed to parse count of pools: {:?}",
@@ -302,7 +307,9 @@ impl PoolInfoList {
                     "limit": LIMIT,
                 });
                 debug!(log, "requesting");
-                let res = jsonrpc::view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args).await;
+                let res = client
+                    .view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args)
+                    .await;
                 let result: Result<Vec<PoolInfoBared>> = match res {
                     Ok(v) => from_slice(&v.result).context("failed to parse"),
                     Err(e) => bail!("failed to request: {:?}", e),

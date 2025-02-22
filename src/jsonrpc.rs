@@ -46,8 +46,7 @@ static JSONRPC_CLIENT: Lazy<Arc<JsonRpcClient>> = Lazy::new(|| {
     Arc::new(client)
 });
 
-pub fn new_client(
-) -> impl BlockInfo + GasInfo + AccountInfo + AccessKeyInfo + TxInfo + ViewContract + SendTx {
+pub fn new_client() -> StandardNearClient<StandardRpcClient> {
     StandardNearClient::new(&Arc::new(StandardRpcClient::new(
         Arc::clone(&JSONRPC_CLIENT),
         128,
@@ -102,30 +101,32 @@ pub trait ViewContract {
 }
 
 pub trait SendTx {
+    type Output: SentTx;
+
     async fn transfer_native_token(
         &self,
         signer: &InMemorySigner,
         receiver: &AccountId,
         amount: Balance,
-    ) -> Result<impl SentTx>;
+    ) -> Result<Self::Output>;
 
     async fn exec_contract<T>(
         &self,
         signer: &InMemorySigner,
         receiver: &AccountId,
         method_name: &str,
-        args: &T,
+        args: T,
         deposit: Balance,
-    ) -> Result<impl SentTx>
+    ) -> Result<Self::Output>
     where
-        T: ?Sized + serde::Serialize;
+        T: Sized + serde::Serialize;
 
     async fn send_tx(
         &self,
         signer: &InMemorySigner,
         receiver: &AccountId,
         actions: Vec<Action>,
-    ) -> Result<impl SentTx>;
+    ) -> Result<Self::Output>;
 }
 
 pub trait SentTx {

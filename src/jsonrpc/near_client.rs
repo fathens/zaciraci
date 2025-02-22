@@ -1,5 +1,4 @@
-use super::{AccessKeyInfo, BlockInfo, RpcClient, SentTx, TxInfo, ViewContract};
-use crate::jsonrpc::rpc::StandardRpcClient;
+use super::{AccessKeyInfo, BlockInfo, RpcClient, SendTx, TxInfo, ViewContract};
 use crate::jsonrpc::sent_tx::StandardSentTx;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
@@ -18,20 +17,28 @@ use near_primitives::views::{
 use near_sdk::Gas;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
-pub struct StandardNearClient {
-    rpc: Arc<StandardRpcClient>,
+#[derive(Debug)]
+pub struct StandardNearClient<A> {
+    rpc: Arc<A>,
 }
 
-impl StandardNearClient {
-    pub fn new(rpc: &Arc<StandardRpcClient>) -> Self {
+impl<A> StandardNearClient<A> {
+    pub fn new(rpc: &Arc<A>) -> Self {
         Self {
             rpc: Arc::clone(rpc),
         }
     }
 }
 
-impl BlockInfo for StandardNearClient {
+impl<A> Clone for StandardNearClient<A> {
+    fn clone(&self) -> Self {
+        Self {
+            rpc: Arc::clone(&self.rpc),
+        }
+    }
+}
+
+impl<A: RpcClient> BlockInfo for StandardNearClient<A> {
     async fn get_recent_block(&self) -> Result<BlockView> {
         let req = methods::block::RpcBlockRequest {
             block_reference: Finality::Final.into(),
@@ -41,7 +48,7 @@ impl BlockInfo for StandardNearClient {
     }
 }
 
-impl super::GasInfo for StandardNearClient {
+impl<A: RpcClient> super::GasInfo for StandardNearClient<A> {
     async fn get_gas_price(&self, block: Option<BlockId>) -> Result<GasPrice> {
         let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
         let res = self.rpc.call(req).await?;
@@ -49,7 +56,7 @@ impl super::GasInfo for StandardNearClient {
     }
 }
 
-impl super::AccountInfo for StandardNearClient {
+impl<A: RpcClient> super::AccountInfo for StandardNearClient<A> {
     async fn get_native_amount(&self, account: &AccountId) -> Result<Balance> {
         let req = methods::query::RpcQueryRequest {
             block_reference: Finality::Final.into(),
@@ -66,7 +73,7 @@ impl super::AccountInfo for StandardNearClient {
     }
 }
 
-impl AccessKeyInfo for StandardNearClient {
+impl<A: RpcClient> AccessKeyInfo for StandardNearClient<A> {
     async fn get_access_key_info(&self, signer: &InMemorySigner) -> Result<AccessKeyView> {
         let req = methods::query::RpcQueryRequest {
             block_reference: Finality::Final.into(),
@@ -83,7 +90,7 @@ impl AccessKeyInfo for StandardNearClient {
     }
 }
 
-impl ViewContract for StandardNearClient {
+impl<A: RpcClient> ViewContract for StandardNearClient<A> {
     async fn view_contract<T>(
         &self,
         receiver: &AccountId,
@@ -109,7 +116,7 @@ impl ViewContract for StandardNearClient {
     }
 }
 
-impl TxInfo for StandardNearClient {
+impl<A: RpcClient> TxInfo for StandardNearClient<A> {
     async fn wait_tx_result(
         &self,
         sender: &AccountId,
@@ -138,13 +145,15 @@ impl TxInfo for StandardNearClient {
     }
 }
 
-impl super::SendTx for StandardNearClient {
+impl<A: RpcClient> SendTx for StandardNearClient<A> {
+    type Output = StandardSentTx<Self>;
+
     async fn transfer_native_token(
         &self,
         signer: &InMemorySigner,
         receiver: &AccountId,
         amount: Balance,
-    ) -> Result<impl SentTx> {
+    ) -> Result<Self::Output> {
         let log = DEFAULT.new(o!(
             "function" => "transfer_native_token",
             "signer" => format!("{}", signer.account_id),
@@ -162,11 +171,11 @@ impl super::SendTx for StandardNearClient {
         signer: &InMemorySigner,
         receiver: &AccountId,
         method_name: &str,
-        args: &T,
+        args: T,
         deposit: Balance,
-    ) -> Result<impl SentTx>
+    ) -> Result<Self::Output>
     where
-        T: ?Sized + serde::Serialize,
+        T: Sized + serde::Serialize,
     {
         let log = DEFAULT.new(o!(
             "function" => "exec_contract",
@@ -195,7 +204,7 @@ impl super::SendTx for StandardNearClient {
         signer: &InMemorySigner,
         receiver: &AccountId,
         actions: Vec<Action>,
-    ) -> Result<impl SentTx> {
+    ) -> Result<Self::Output> {
         let log = DEFAULT.new(o!(
             "function" => "send_tx",
             "signer" => format!("{}", signer.account_id),
@@ -231,10 +240,7 @@ impl super::SendTx for StandardNearClient {
             "block_hash" => %block_hash,
             "public_key" => %signer.public_key(),
         );
-        Ok(StandardSentTx::new(
-            self.clone(),
-            signer.account_id.clone(),
-            res,
-        ))
+        let sent_tx = StandardSentTx::new(self.clone(), signer.account_id.clone(), res);
+        Ok(sent_tx)
     }
 }

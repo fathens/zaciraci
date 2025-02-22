@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use crate::config;
+use crate::jsonrpc::{AccountInfo, SendTx, SentTx, ViewContract};
 use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
@@ -7,8 +9,8 @@ use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::types::{MicroNear, MilliNear};
 use crate::wallet;
 use crate::Result;
-use crate::{config, jsonrpc};
 use anyhow::anyhow;
+use futures_util::FutureExt;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
@@ -44,7 +46,10 @@ fn update_last_harvest() {
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
-pub async fn start() -> Result<(TokenAccount, Balance)> {
+pub async fn start<C>(client: &C) -> Result<(TokenAccount, Balance)>
+where
+    C: AccountInfo + SendTx + ViewContract,
+{
     let log = DEFAULT.new(o!(
         "function" => "balances.start",
     ));
@@ -62,48 +67,53 @@ pub async fn start() -> Result<(TokenAccount, Balance)> {
 
     let token = WNEAR_TOKEN.clone();
 
-    let wrapped_balance = balance_of_start_token(&token).await?;
+    let wrapped_balance = balance_of_start_token(client, &token).await?;
     info!(log, "comparing";
         "wrapped_balance" => wrapped_balance,
     );
 
     if wrapped_balance < required_balance {
-        refill(required_balance - wrapped_balance).await?;
+        refill(client, required_balance - wrapped_balance).await?;
         Ok((token, wrapped_balance))
     } else {
         let upper = required_balance << 4;
         if upper < wrapped_balance {
-            tokio::spawn(async move {
-                match harvest(&WNEAR_TOKEN, wrapped_balance - upper, upper).await {
+            let _ignore_response = harvest(client, &WNEAR_TOKEN, wrapped_balance - upper, upper)
+                .map(|r| match r {
                     Ok(_) => info!(log, "successfully harvested"),
                     Err(err) => warn!(log, "failed to harvest: {}", err),
-                };
-            });
+                });
         }
         Ok((token, upper))
     }
 }
 
-async fn balance_of_start_token(token: &TokenAccount) -> Result<Balance> {
+async fn balance_of_start_token<C: ViewContract>(
+    client: &C,
+    token: &TokenAccount,
+) -> Result<Balance> {
     let account = wallet::WALLET.account_id();
-    let deposits = deposit::get_deposits(account).await?;
+    let deposits = deposit::get_deposits(client, account).await?;
     Ok(deposits.get(token).map(|u| u.0).unwrap_or_default())
 }
 
-async fn refill(want: Balance) -> Result<()> {
+async fn refill<C>(client: &C, want: Balance) -> Result<()>
+where
+    C: AccountInfo + ViewContract + SendTx,
+{
     let log = DEFAULT.new(o!(
         "function" => "balances.refill",
         "want" => format!("{}", want),
     ));
     let account = wallet::WALLET.account_id();
-    let wrapped_balance = deposit::wnear::balance_of(account).await?;
+    let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
     let log = log.new(o!(
         "wrapped_balance" => format!("{}", wrapped_balance),
     ));
     debug!(log, "checking");
     if wrapped_balance < want {
         let wrapping = want - wrapped_balance;
-        let native_balance = jsonrpc::get_native_amount(account).await?;
+        let native_balance = client.get_native_amount(account).await?;
         let log = log.new(o!(
             "native_balance" => format!("{}", native_balance),
             "wrapping" => format!("{}", wrapping),
@@ -122,7 +132,7 @@ async fn refill(want: Balance) -> Result<()> {
             ));
         }
         info!(log, "wrapping");
-        deposit::wnear::wrap(wrapping)
+        deposit::wnear::wrap(client, wrapping)
             .await?
             .wait_for_success()
             .await?;
@@ -130,14 +140,22 @@ async fn refill(want: Balance) -> Result<()> {
     info!(log, "refilling";
         "amount" => %want,
     );
-    deposit::deposit(&WNEAR_TOKEN, want)
+    deposit::deposit(client, &WNEAR_TOKEN, want)
         .await?
         .wait_for_success()
         .await?;
     Ok(())
 }
 
-async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> Result<()> {
+async fn harvest<C>(
+    client: &C,
+    token: &TokenAccount,
+    withdraw: Balance,
+    required: Balance,
+) -> Result<()>
+where
+    C: AccountInfo + SendTx,
+{
     let log = DEFAULT.new(o!(
         "function" => "balances.harvest",
         "withdraw" => format!("{}", withdraw),
@@ -146,12 +164,12 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
     info!(log, "withdrawing";
         "token" => %token,
     );
-    deposit::withdraw(token, withdraw)
+    deposit::withdraw(client, token, withdraw)
         .await?
         .wait_for_success()
         .await?;
     let account = wallet::WALLET.account_id();
-    let native_balance = jsonrpc::get_native_amount(account).await?;
+    let native_balance = client.get_native_amount(account).await?;
     let upper = required << 4;
     info!(log, "checking";
         "native_balance" => %native_balance,
@@ -165,7 +183,8 @@ async fn harvest(token: &TokenAccount, withdraw: Balance, required: Balance) -> 
             "amount" => %amount,
         );
         let signer = wallet::WALLET.signer();
-        jsonrpc::transfer_native_token(signer, target, amount)
+        client
+            .transfer_native_token(signer, target, amount)
             .await?
             .wait_for_success()
             .await?;

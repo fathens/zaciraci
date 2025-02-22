@@ -9,6 +9,7 @@ mod types;
 mod wallet;
 mod web;
 
+use crate::jsonrpc::{GasInfo, SentTx};
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
@@ -48,8 +49,9 @@ async fn main() {
 
 async fn main_loop() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "main_loop"));
+    let client = jsonrpc::new_client();
     loop {
-        match single_loop().await {
+        match single_loop(&client).await {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
                 warn!(log, "failure: {}", err);
@@ -66,10 +68,17 @@ async fn main_loop() -> Result<()> {
     }
 }
 
-async fn single_loop() -> Result<()> {
+async fn single_loop<A>(client: &A) -> Result<()>
+where
+    A: jsonrpc::AccountInfo + jsonrpc::SendTx + jsonrpc::ViewContract,
+    A: GasInfo,
+    A: 'static,
+    A: Clone,
+    A: Send + Sync,
+{
     let log = DEFAULT.new(o!("function" => "single_loop"));
 
-    let (token, balance) = ref_finance::balances::start().await?;
+    let (token, balance) = ref_finance::balances::start(client).await?;
     let start: &TokenInAccount = &token.into();
     let start_balance = MicroNear::from_yocto(balance);
     info!(log, "start";
@@ -78,20 +87,18 @@ async fn single_loop() -> Result<()> {
         "start.balance_in_micro" => ?start_balance,
     );
 
-    let pools = ref_finance::pool_info::PoolInfoList::read_from_node().await?;
+    let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
-    let gas_price = jsonrpc::get_gas_price(None).await?;
+    let gas_price = client.get_gas_price(None).await?;
     let previews = ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
 
     if let Some(previews) = previews {
         let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
 
         let account = wallet::WALLET.account_id();
-        ref_finance::storage::check_and_deposit(account, &tokens).await?;
+        ref_finance::storage::check_and_deposit(client, account, &tokens).await?;
 
-        let swaps = pre_path
-            .into_iter()
-            .map(|(p, v)| tokio::spawn(async move { swap_each(p, v).await }));
+        let swaps = pre_path.into_iter().map(|(p, v)| swap_each(client, p, v));
         join_all(swaps).await;
     } else {
         info!(log, "previews not found");
@@ -101,9 +108,11 @@ async fn single_loop() -> Result<()> {
     Ok(())
 }
 
-async fn swap_each<A>(preview: Preview<A>, path: Vec<TokenPair>) -> Result<()>
+async fn swap_each<A, C>(client: &C, preview: Preview<A>, path: Vec<TokenPair>) -> Result<()>
 where
     A: Into<Balance> + Copy,
+    C: jsonrpc::SendTx,
+    C: 'static,
 {
     let log = DEFAULT.new(o!(
         "function" => "swap_each",
@@ -121,12 +130,12 @@ where
         "ratio_by_step" => ?ratio_by_step,
     );
     let (tx_hash, out) =
-        ref_finance::swap::run_swap(&path, preview.input_value.into(), ratio_by_step).await?;
-    let outcome = tx_hash.wait_for_success().await?;
+        ref_finance::swap::run_swap(client, &path, preview.input_value.into(), ratio_by_step)
+            .await?;
+    tx_hash.wait_for_success().await?;
 
     info!(log, "swap done";
         "out_balance" => out,
-        "gas_profile" => ?outcome.metadata.gas_profile,
     );
     Ok(())
 }
