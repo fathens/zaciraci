@@ -2,7 +2,8 @@ use crate::logging::*;
 use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
-use crate::{jsonrpc, wallet, Result};
+use crate::wallet::Wallet;
+use crate::{jsonrpc, Result};
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
@@ -28,8 +29,9 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
-pub async fn run_swap<A>(
+pub async fn run_swap<A, W>(
     client: &A,
+    wallet: &W,
     path: &[TokenPair],
     initial: Balance,
     min_out_ratio: f32,
@@ -37,6 +39,7 @@ pub async fn run_swap<A>(
 where
     A: jsonrpc::SendTx,
     A: 'static,
+    W: Wallet,
 {
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
@@ -78,7 +81,7 @@ where
     });
 
     let deposit = 1;
-    let signer = wallet::WALLET.signer();
+    let signer = wallet.signer();
 
     let tx_hash = client
         .exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, args, deposit)

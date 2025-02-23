@@ -7,11 +7,10 @@ use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::types::{MicroNear, MilliNear};
-use crate::wallet;
+use crate::wallet::Wallet;
 use crate::Result;
 use anyhow::anyhow;
 use futures_util::FutureExt;
-use near_crypto::InMemorySigner;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
@@ -50,11 +49,11 @@ fn update_last_harvest() {
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
-pub async fn start<C>(client: &C) -> Result<(TokenAccount, Balance)>
+pub async fn start<C, W>(client: &C, wallet: &W) -> Result<(TokenAccount, Balance)>
 where
     C: AccountInfo + SendTx + ViewContract,
+    W: Wallet,
 {
-    let wallet = &*wallet::WALLET;
     let log = DEFAULT.new(o!(
         "function" => "balances.start",
     ));
@@ -72,13 +71,13 @@ where
 
     let token = WNEAR_TOKEN.clone();
 
-    let wrapped_balance = balance_of_start_token(client, &token).await?;
+    let wrapped_balance = balance_of_start_token(client, wallet, &token).await?;
     info!(log, "comparing";
         "wrapped_balance" => wrapped_balance,
     );
 
     if wrapped_balance < required_balance {
-        refill(client, required_balance - wrapped_balance).await?;
+        refill(client, wallet, required_balance - wrapped_balance).await?;
         Ok((token, wrapped_balance))
     } else {
         let upper = required_balance << 4;
@@ -95,24 +94,30 @@ where
     }
 }
 
-async fn balance_of_start_token<C: ViewContract>(
+async fn balance_of_start_token<C, W>(
     client: &C,
+    wallet: &W,
     token: &TokenAccount,
-) -> Result<Balance> {
-    let account = wallet::WALLET.account_id();
+) -> Result<Balance>
+where
+    C: AccountInfo + ViewContract,
+    W: Wallet,
+{
+    let account = wallet.account_id();
     let deposits = deposit::get_deposits(client, account).await?;
     Ok(deposits.get(token).map(|u| u.0).unwrap_or_default())
 }
 
-async fn refill<C>(client: &C, want: Balance) -> Result<()>
+async fn refill<C, W>(client: &C, wallet: &W, want: Balance) -> Result<()>
 where
     C: AccountInfo + ViewContract + SendTx,
+    W: Wallet,
 {
     let log = DEFAULT.new(o!(
         "function" => "balances.refill",
         "want" => format!("{}", want),
     ));
-    let account = wallet::WALLET.account_id();
+    let account = wallet.account_id();
     let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
     let log = log.new(o!(
         "wrapped_balance" => format!("{}", wrapped_balance),
@@ -139,7 +144,7 @@ where
             ));
         }
         info!(log, "wrapping");
-        deposit::wnear::wrap(client, wrapping)
+        deposit::wnear::wrap(client, wallet, wrapping)
             .await?
             .wait_for_success()
             .await?;
@@ -147,21 +152,14 @@ where
     info!(log, "refilling";
         "amount" => %want,
     );
-    deposit::deposit(client, &WNEAR_TOKEN, want)
+    deposit::deposit(client, wallet, &WNEAR_TOKEN, want)
         .await?
         .wait_for_success()
         .await?;
     Ok(())
 }
 
-// トレイトとして定義
-pub trait Wallet {
-    fn account_id(&self) -> &AccountId;
-    fn signer(&self) -> &InMemorySigner;
-}
-
-// 実装を変更して、トレイトを使用するように
-async fn harvest<C, W>(
+pub async fn harvest<C, W>(
     client: &C,
     wallet: &W,
     token: &TokenAccount,
@@ -180,7 +178,7 @@ where
     info!(log, "withdrawing";
         "token" => %token,
     );
-    deposit::withdraw(client, token, withdraw)
+    deposit::withdraw(client, wallet, token, withdraw)
         .await?
         .wait_for_success()
         .await?;
@@ -212,14 +210,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use near_crypto::InMemorySigner;
     use near_primitives::action::Action;
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
     use std::sync::Once;
 
     static INIT: Once = Once::new();
 
-    // テスト用のモックウォレット
-    #[derive(Clone)]
     struct MockWallet {
         account_id: AccountId,
         signer: InMemorySigner,
@@ -245,10 +242,8 @@ mod tests {
         }
     }
 
-    // テスト用の初期化
     fn initialize() {
         INIT.call_once(|| {
-            // 環境変数の設定
             std::env::set_var("ROOT_ACCOUNT_ID", "test.near");
             std::env::set_var(
                 "ROOT_MNEMONIC",
@@ -259,7 +254,6 @@ mod tests {
         });
     }
 
-    // シンプルなモッククライアント
     struct MockClient {
         native_amount: Balance,
     }
@@ -270,8 +264,6 @@ mod tests {
         }
     }
 
-    // シンプルなモックトランザクション
-    #[derive(Clone)]
     struct MockSentTx;
 
     impl SentTx for MockSentTx {
@@ -396,6 +388,22 @@ mod tests {
         fn signer(&self) -> &InMemorySigner {
             &self.signer
         }
+    }
+
+    #[tokio::test]
+    async fn test_start() {
+        initialize();
+
+        let native_balance = DEFAULT_REQUIRED_BALANCE << 5;
+        let client = MockClient::new(native_balance);
+        let wallet = MockWallet::new();
+
+        let result = start(&client, &wallet).await;
+        assert!(result.is_ok());
+
+        let (token, balance) = result.unwrap();
+        assert_eq!(token, WNEAR_TOKEN.clone());
+        assert!(balance > DEFAULT_REQUIRED_BALANCE);
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@ use crate::jsonrpc::{SendTx, SentTx, ViewContract};
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{deposit, CONTRACT_ADDRESS};
-use crate::wallet;
+use crate::wallet::Wallet;
 use crate::Result;
 use near_primitives::types::AccountId;
 use near_sdk::json_types::U128;
@@ -35,8 +35,9 @@ pub async fn check_bounds<C: ViewContract>(client: &C) -> Result<StorageBalanceB
     Ok(bounds)
 }
 
-pub async fn deposit<C: SendTx>(
+pub async fn deposit<C: SendTx, W: Wallet>(
     client: &C,
+    wallet: &W,
     value: u128,
     registration_only: bool,
 ) -> Result<C::Output> {
@@ -45,7 +46,7 @@ pub async fn deposit<C: SendTx>(
     let args = json!({
         "registration_only": registration_only,
     });
-    let signer = wallet::WALLET.signer();
+    let signer = wallet.signer();
     info!(log, "depositing";
         "value" => value,
         "signer" => ?signer.account_id,
@@ -135,26 +136,23 @@ pub async fn check_deposits<C: ViewContract>(
     Ok((noneeds, more))
 }
 
-pub async fn check_and_deposit<C>(
-    client: &C,
-    account: &AccountId,
-    tokens: &[TokenAccount],
-) -> Result<()>
+pub async fn check_and_deposit<C, W>(client: &C, wallet: &W, tokens: &[TokenAccount]) -> Result<()>
 where
     C: SendTx + ViewContract,
+    W: Wallet,
 {
     let log = DEFAULT.new(o!("function" => "storage::check_and_deposit"));
-
+    let account = wallet.account_id();
     let (deleting_tokens, more) = check_deposits(client, account, tokens).await?;
     if !deleting_tokens.is_empty() {
-        deposit::unregister_tokens(client, &deleting_tokens)
+        deposit::unregister_tokens(client, wallet, &deleting_tokens)
             .await?
             .wait_for_success()
             .await?;
     }
     if more > 0 {
         info!(log, "needing more deposit"; "more" => more);
-        deposit(client, more, false)
+        deposit(client, wallet, more, false)
             .await?
             .wait_for_success()
             .await?;

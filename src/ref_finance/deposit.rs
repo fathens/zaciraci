@@ -2,7 +2,8 @@ use crate::jsonrpc::{SendTx, ViewContract};
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
-use crate::{wallet, Result};
+use crate::wallet::Wallet;
+use crate::{Result};
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
@@ -13,7 +14,8 @@ pub mod wnear {
     use crate::jsonrpc::{SendTx, ViewContract};
     use crate::logging::*;
     use crate::ref_finance::token_account::WNEAR_TOKEN;
-    use crate::{wallet, Result};
+    use crate::wallet::Wallet;
+    use crate::{Result};
     use near_primitives::types::Balance;
     use near_sdk::json_types::U128;
     use near_sdk::AccountId;
@@ -38,7 +40,7 @@ pub mod wnear {
         Ok(balance.into())
     }
 
-    pub async fn wrap<C: SendTx>(client: &C, amount: Balance) -> Result<C::Output> {
+    pub async fn wrap<C: SendTx, W: Wallet>(client: &C, wallet: &W, amount: Balance) -> Result<C::Output> {
         let log = DEFAULT.new(o!(
             "function" => "wrap_near",
             "amount" => amount,
@@ -49,14 +51,14 @@ pub mod wnear {
 
         let token = WNEAR_TOKEN.clone();
         let args = json!({});
-        let signer = wallet::WALLET.signer();
+        let signer = wallet.signer();
 
         client
             .exec_contract(signer, token.as_id(), METHOD_NAME, &args, amount)
             .await
     }
 
-    pub async fn unwrap<C: SendTx>(client: &C, amount: Balance) -> Result<C::Output> {
+    pub async fn unwrap<C: SendTx, W: Wallet>(client: &C, wallet: &W, amount: Balance) -> Result<C::Output> {
         let log = DEFAULT.new(o!(
             "function" => "unwrap_near",
             "amount" => amount,
@@ -71,7 +73,7 @@ pub mod wnear {
         });
 
         let deposit = 1; // minimum deposit
-        let signer = wallet::WALLET.signer();
+        let signer = wallet.signer();
 
         client
             .exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit)
@@ -79,8 +81,9 @@ pub mod wnear {
     }
 }
 
-pub async fn deposit<C: SendTx>(
+pub async fn deposit<C: SendTx, W: Wallet>(
     client: &C,
+    wallet: &W,
     token: &TokenAccount,
     amount: Balance,
 ) -> Result<C::Output> {
@@ -100,7 +103,7 @@ pub async fn deposit<C: SendTx>(
     });
 
     let deposit = 1; // minimum deposit
-    let signer = wallet::WALLET.signer();
+    let signer = wallet.signer();
 
     client
         .exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit)
@@ -131,17 +134,21 @@ pub async fn get_deposits<C: ViewContract>(
     Ok(deposits)
 }
 
-pub async fn withdraw<C: SendTx>(
+pub async fn withdraw<C: SendTx, W: Wallet>(
     client: &C,
+    wallet: &W,
     token: &TokenAccount,
     amount: Balance,
 ) -> Result<C::Output> {
     let log = DEFAULT.new(o!(
         "function" => "withdraw",
+        "token" => format!("{}", token),
+        "amount" => amount,
     ));
     info!(log, "entered");
 
     const METHOD_NAME: &str = "withdraw";
+
     let args = json!({
         "token_id": token,
         "amount": U128(amount),
@@ -149,19 +156,21 @@ pub async fn withdraw<C: SendTx>(
     });
 
     let deposit = 1; // minimum deposit
-    let signer = wallet::WALLET.signer();
+    let signer = wallet.signer();
 
     client
         .exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit)
         .await
 }
 
-pub async fn unregister_tokens<C: SendTx>(
+pub async fn unregister_tokens<C: SendTx, W: Wallet>(
     client: &C,
+    wallet: &W,
     tokens: &[TokenAccount],
 ) -> Result<C::Output> {
     let log = DEFAULT.new(o!(
         "function" => "unregister_tokens",
+        "tokens" => format!("{:?}", tokens),
     ));
     info!(log, "entered");
 
@@ -171,7 +180,7 @@ pub async fn unregister_tokens<C: SendTx>(
     });
 
     let deposit = 1; // minimum deposit
-    let signer = wallet::WALLET.signer();
+    let signer = wallet.signer();
 
     client
         .exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit)
