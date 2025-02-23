@@ -12,15 +12,11 @@ use crate::Result;
 use anyhow::anyhow;
 use futures_util::FutureExt;
 use near_crypto::InMemorySigner;
-use near_primitives::transaction::Action;
 use near_primitives::types::Balance;
-use near_primitives::views::CallResult;
-use near_primitives::views::{ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::str::FromStr;
 use std::sync::Once;
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
@@ -58,6 +54,7 @@ pub async fn start<C>(client: &C) -> Result<(TokenAccount, Balance)>
 where
     C: AccountInfo + SendTx + ViewContract,
 {
+    let wallet = &*wallet::WALLET;
     let log = DEFAULT.new(o!(
         "function" => "balances.start",
     ));
@@ -86,10 +83,12 @@ where
     } else {
         let upper = required_balance << 4;
         if upper < wrapped_balance {
-            let _ignore_response = harvest(client, &WNEAR_TOKEN, wrapped_balance - upper, upper)
-                .map(|r| match r {
-                    Ok(_) => info!(log, "successfully harvested"),
-                    Err(err) => warn!(log, "failed to harvest: {}", err),
+            let _ignore_response =
+                harvest(client, wallet, &WNEAR_TOKEN, wrapped_balance - upper, upper).map(|r| {
+                    match r {
+                        Ok(_) => info!(log, "successfully harvested"),
+                        Err(err) => warn!(log, "failed to harvest: {}", err),
+                    }
                 });
         }
         Ok((token, upper))
@@ -213,6 +212,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use near_primitives::action::Action;
+    use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -226,7 +227,7 @@ mod tests {
 
     impl MockWallet {
         fn new() -> Self {
-            let account_id = AccountId::from_str("test.near").unwrap();
+            let account_id: AccountId = "test.near".parse().unwrap();
             let signer = InMemorySigner::from_seed(
                 account_id.clone(),
                 near_crypto::KeyType::ED25519,
@@ -249,7 +250,10 @@ mod tests {
         INIT.call_once(|| {
             // 環境変数の設定
             std::env::set_var("ROOT_ACCOUNT_ID", "test.near");
-            std::env::set_var("ROOT_MNEMONIC", "test test test test test test test test test test test junk");
+            std::env::set_var(
+                "ROOT_MNEMONIC",
+                "test test test test test test test test test test test junk",
+            );
             std::env::set_var("ROOT_HDPATH", "m/44'/397'/0'");
             std::env::set_var("HARVEST_ACCOUNT_ID", "harvest.near");
         });
@@ -295,7 +299,9 @@ mod tests {
                             gas_burnt: 0,
                             tokens_burnt: 0,
                             executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
-                            status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
+                            status: near_primitives::views::ExecutionStatusView::SuccessValue(
+                                vec![],
+                            ),
                             metadata: near_primitives::views::ExecutionMetadataView {
                                 version: 1,
                                 gas_profile: None,
@@ -303,7 +309,7 @@ mod tests {
                         },
                     },
                     receipts_outcome: vec![],
-                }
+                },
             ))
         }
 
