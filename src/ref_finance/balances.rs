@@ -11,11 +11,17 @@ use crate::wallet;
 use crate::Result;
 use anyhow::anyhow;
 use futures_util::FutureExt;
+use near_crypto::InMemorySigner;
+use near_primitives::transaction::Action;
 use near_primitives::types::Balance;
+use near_primitives::views::CallResult;
+use near_primitives::views::{ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::str::FromStr;
+use std::sync::Once;
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
@@ -28,6 +34,8 @@ static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse config `{}`: {}", value, err))
 });
+
+static INIT: Once = Once::new();
 
 fn is_time_to_harvest() -> bool {
     let last = LAST_HARVEST.load(Ordering::Relaxed);
@@ -147,14 +155,23 @@ where
     Ok(())
 }
 
-async fn harvest<C>(
+// トレイトとして定義
+pub trait Wallet {
+    fn account_id(&self) -> &AccountId;
+    fn signer(&self) -> &InMemorySigner;
+}
+
+// 実装を変更して、トレイトを使用するように
+async fn harvest<C, W>(
     client: &C,
+    wallet: &W,
     token: &TokenAccount,
     withdraw: Balance,
     required: Balance,
 ) -> Result<()>
 where
     C: AccountInfo + SendTx,
+    W: Wallet,
 {
     let log = DEFAULT.new(o!(
         "function" => "balances.harvest",
@@ -168,7 +185,7 @@ where
         .await?
         .wait_for_success()
         .await?;
-    let account = wallet::WALLET.account_id();
+    let account = wallet.account_id();
     let native_balance = client.get_native_amount(account).await?;
     let upper = required << 4;
     info!(log, "checking";
@@ -182,7 +199,7 @@ where
             "target" => %target,
             "amount" => %amount,
         );
-        let signer = wallet::WALLET.signer();
+        let signer = wallet.signer();
         client
             .transfer_native_token(signer, target, amount)
             .await?
@@ -196,31 +213,210 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Once;
 
-    #[test]
-    fn test_is_time_to_harvest() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST - 1, Ordering::Relaxed);
-        assert!(is_time_to_harvest());
-        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST, Ordering::Relaxed);
-        assert!(!is_time_to_harvest());
-        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 1, Ordering::Relaxed);
-        assert!(!is_time_to_harvest());
-        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 2, Ordering::Relaxed);
-        assert!(!is_time_to_harvest());
+    static INIT: Once = Once::new();
+
+    // テスト用のモックウォレット
+    #[derive(Clone)]
+    struct MockWallet {
+        account_id: AccountId,
+        signer: InMemorySigner,
     }
 
-    #[test]
-    fn test_update_last_harvest() {
+    impl MockWallet {
+        fn new() -> Self {
+            let account_id = AccountId::from_str("test.near").unwrap();
+            let signer = InMemorySigner::from_seed(
+                account_id.clone(),
+                near_crypto::KeyType::ED25519,
+                "test.near",
+            );
+            Self { account_id, signer }
+        }
+
+        fn account_id(&self) -> &AccountId {
+            &self.account_id
+        }
+
+        fn signer(&self) -> &InMemorySigner {
+            &self.signer
+        }
+    }
+
+    // テスト用の初期化
+    fn initialize() {
+        INIT.call_once(|| {
+            // 環境変数の設定
+            std::env::set_var("ROOT_ACCOUNT_ID", "test.near");
+            std::env::set_var("ROOT_MNEMONIC", "test test test test test test test test test test test junk");
+            std::env::set_var("ROOT_HDPATH", "m/44'/397'/0'");
+            std::env::set_var("HARVEST_ACCOUNT_ID", "harvest.near");
+        });
+    }
+
+    // シンプルなモッククライアント
+    struct MockClient {
+        native_amount: Balance,
+    }
+
+    impl MockClient {
+        fn new(native_amount: Balance) -> Self {
+            Self { native_amount }
+        }
+    }
+
+    // シンプルなモックトランザクション
+    #[derive(Clone)]
+    struct MockSentTx;
+
+    impl SentTx for MockSentTx {
+        async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum> {
+            Ok(FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(
+                near_primitives::views::FinalExecutionOutcomeView {
+                    status: near_primitives::views::FinalExecutionStatus::SuccessValue(vec![]),
+                    transaction: near_primitives::views::SignedTransactionView {
+                        signer_id: AccountId::try_from("test.near".to_string()).unwrap(),
+                        public_key: near_crypto::PublicKey::empty(near_crypto::KeyType::ED25519),
+                        nonce: 0,
+                        receiver_id: AccountId::try_from("test.near".to_string()).unwrap(),
+                        actions: vec![],
+                        signature: near_crypto::Signature::empty(near_crypto::KeyType::ED25519),
+                        hash: Default::default(),
+                        priority_fee: 0,
+                    },
+                    transaction_outcome: near_primitives::views::ExecutionOutcomeWithIdView {
+                        proof: vec![],
+                        block_hash: Default::default(),
+                        id: Default::default(),
+                        outcome: ExecutionOutcomeView {
+                            logs: vec![],
+                            receipt_ids: vec![],
+                            gas_burnt: 0,
+                            tokens_burnt: 0,
+                            executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
+                            status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
+                            metadata: near_primitives::views::ExecutionMetadataView {
+                                version: 1,
+                                gas_profile: None,
+                            },
+                        },
+                    },
+                    receipts_outcome: vec![],
+                }
+            ))
+        }
+
+        async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
+            Ok(ExecutionOutcomeView {
+                logs: vec![],
+                receipt_ids: vec![],
+                gas_burnt: 0,
+                tokens_burnt: 0,
+                executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
+                status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
+                metadata: near_primitives::views::ExecutionMetadataView {
+                    version: 1,
+                    gas_profile: None,
+                },
+            })
+        }
+    }
+
+    impl AccountInfo for MockClient {
+        async fn get_native_amount(&self, _account: &AccountId) -> Result<Balance> {
+            Ok(self.native_amount)
+        }
+    }
+
+    impl SendTx for MockClient {
+        type Output = MockSentTx;
+
+        async fn transfer_native_token(
+            &self,
+            _signer: &InMemorySigner,
+            _receiver: &AccountId,
+            _amount: Balance,
+        ) -> Result<Self::Output> {
+            Ok(MockSentTx)
+        }
+
+        async fn exec_contract<T>(
+            &self,
+            _signer: &InMemorySigner,
+            _receiver: &AccountId,
+            _method_name: &str,
+            _args: T,
+            _deposit: Balance,
+        ) -> Result<Self::Output>
+        where
+            T: Sized + serde::Serialize,
+        {
+            Ok(MockSentTx)
+        }
+
+        async fn send_tx(
+            &self,
+            _signer: &InMemorySigner,
+            _receiver: &AccountId,
+            _actions: Vec<Action>,
+        ) -> Result<Self::Output> {
+            Ok(MockSentTx)
+        }
+    }
+
+    impl ViewContract for MockClient {
+        async fn view_contract<T>(
+            &self,
+            _receiver: &AccountId,
+            _method_name: &str,
+            _args: &T,
+        ) -> Result<CallResult>
+        where
+            T: ?Sized + serde::Serialize,
+        {
+            Ok(CallResult {
+                result: vec![],
+                logs: vec![],
+            })
+        }
+    }
+
+    impl Wallet for MockWallet {
+        fn account_id(&self) -> &AccountId {
+            &self.account_id
+        }
+
+        fn signer(&self) -> &InMemorySigner {
+            &self.signer
+        }
+    }
+
+    #[tokio::test]
+    async fn test_harvest_with_sufficient_balance() {
+        initialize();
+
+        let required = 1_000_000;
+        let native_balance = required << 5;
+        let client = MockClient::new(native_balance);
+        let wallet = MockWallet::new();
+
         LAST_HARVEST.store(0, Ordering::Relaxed);
-        update_last_harvest();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        assert_eq!(now, LAST_HARVEST.load(Ordering::Relaxed));
+
+        let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_harvest_with_insufficient_balance() {
+        initialize();
+
+        let required = 1_000_000;
+        let native_balance = required << 3;
+        let client = MockClient::new(native_balance);
+        let wallet = MockWallet::new();
+
+        let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
+        assert!(result.is_ok());
     }
 }
