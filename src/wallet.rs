@@ -5,10 +5,20 @@ use anyhow::anyhow;
 use near_crypto::SecretKey::ED25519;
 use near_crypto::{ED25519SecretKey, InMemorySigner};
 use near_sdk::AccountId;
-use once_cell::sync::Lazy;
 
 const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
+
+pub fn new_wallet() -> StandardWallet {
+    let log = DEFAULT.new(o!("function" => "wallet::new_wallet"));
+    match StandardWallet::new_from_config() {
+        Ok(wallet) => wallet,
+        Err(err) => {
+            error!(log, "Failed to create wallet"; "error" => format!("{:?}", err));
+            panic!("Failed to create wallet: {:?}", err)
+        }
+    }
+}
 
 pub trait Wallet {
     fn account_id(&self) -> &AccountId;
@@ -93,14 +103,3 @@ impl Wallet for StandardWallet {
         &self.signer
     }
 }
-
-pub static WALLET: Lazy<StandardWallet> = Lazy::new(|| {
-    let log = DEFAULT.new(o!("function" => "wallet::WALLET"));
-    match StandardWallet::new_from_config() {
-        Ok(wallet) => wallet,
-        Err(e) => {
-            error!(log, "Failed to create wallet"; "error" => %e);
-            panic!("Failed to create wallet: {}", e);
-        }
-    }
-});

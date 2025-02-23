@@ -35,7 +35,7 @@ async fn main() {
     warn!(log, "log level check");
     crit!(log, "log level check");
 
-    let base = wallet::WALLET.derive(0).unwrap();
+    let base = wallet::new_wallet().derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
@@ -51,9 +51,9 @@ async fn main() {
 async fn main_loop() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "main_loop"));
     let client = jsonrpc::new_client();
-    let wallet = &*wallet::WALLET;
+    let wallet = wallet::new_wallet();
     loop {
-        match single_loop(&client, wallet).await {
+        match single_loop(&client, &wallet).await {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
                 warn!(log, "failure: {}", err);
