@@ -404,4 +404,31 @@ mod tests {
         let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_is_time_to_harvest() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST - 1, Ordering::Relaxed);
+        assert!(is_time_to_harvest());
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST, Ordering::Relaxed);
+        assert!(!is_time_to_harvest());
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 1, Ordering::Relaxed);
+        assert!(!is_time_to_harvest());
+        LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 2, Ordering::Relaxed);
+        assert!(!is_time_to_harvest());
+    }
+
+    #[test]
+    fn test_update_last_harvest() {
+        LAST_HARVEST.store(0, Ordering::Relaxed);
+        update_last_harvest();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(now, LAST_HARVEST.load(Ordering::Relaxed));
+    }
 }
