@@ -210,9 +210,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::bail;
     use near_crypto::InMemorySigner;
     use near_primitives::action::Action;
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+    use near_sdk::json_types::U128;
+    use serde_json::json;
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -232,7 +235,9 @@ mod tests {
             );
             Self { account_id, signer }
         }
+    }
 
+    impl Wallet for MockWallet {
         fn account_id(&self) -> &AccountId {
             &self.account_id
         }
@@ -244,81 +249,14 @@ mod tests {
 
     fn initialize() {
         INIT.call_once(|| {
-            std::env::set_var("ROOT_ACCOUNT_ID", "test.near");
-            std::env::set_var(
-                "ROOT_MNEMONIC",
-                "test test test test test test test test test test test junk",
-            );
-            std::env::set_var("ROOT_HDPATH", "m/44'/397'/0'");
             std::env::set_var("HARVEST_ACCOUNT_ID", "harvest.near");
         });
     }
 
     struct MockClient {
         native_amount: Balance,
-    }
-
-    impl MockClient {
-        fn new(native_amount: Balance) -> Self {
-            Self { native_amount }
-        }
-    }
-
-    struct MockSentTx;
-
-    impl SentTx for MockSentTx {
-        async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum> {
-            Ok(FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(
-                near_primitives::views::FinalExecutionOutcomeView {
-                    status: near_primitives::views::FinalExecutionStatus::SuccessValue(vec![]),
-                    transaction: near_primitives::views::SignedTransactionView {
-                        signer_id: AccountId::try_from("test.near".to_string()).unwrap(),
-                        public_key: near_crypto::PublicKey::empty(near_crypto::KeyType::ED25519),
-                        nonce: 0,
-                        receiver_id: AccountId::try_from("test.near".to_string()).unwrap(),
-                        actions: vec![],
-                        signature: near_crypto::Signature::empty(near_crypto::KeyType::ED25519),
-                        hash: Default::default(),
-                        priority_fee: 0,
-                    },
-                    transaction_outcome: near_primitives::views::ExecutionOutcomeWithIdView {
-                        proof: vec![],
-                        block_hash: Default::default(),
-                        id: Default::default(),
-                        outcome: ExecutionOutcomeView {
-                            logs: vec![],
-                            receipt_ids: vec![],
-                            gas_burnt: 0,
-                            tokens_burnt: 0,
-                            executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
-                            status: near_primitives::views::ExecutionStatusView::SuccessValue(
-                                vec![],
-                            ),
-                            metadata: near_primitives::views::ExecutionMetadataView {
-                                version: 1,
-                                gas_profile: None,
-                            },
-                        },
-                    },
-                    receipts_outcome: vec![],
-                },
-            ))
-        }
-
-        async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
-            Ok(ExecutionOutcomeView {
-                logs: vec![],
-                receipt_ids: vec![],
-                gas_burnt: 0,
-                tokens_burnt: 0,
-                executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
-                status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
-                metadata: near_primitives::views::ExecutionMetadataView {
-                    version: 1,
-                    gas_profile: None,
-                },
-            })
-        }
+        wnear_amount: Balance,
+        wnear_deposited: Balance,
     }
 
     impl AccountInfo for MockClient {
@@ -367,26 +305,50 @@ mod tests {
         async fn view_contract<T>(
             &self,
             _receiver: &AccountId,
-            _method_name: &str,
+            method_name: &str,
             _args: &T,
         ) -> Result<CallResult>
         where
             T: ?Sized + serde::Serialize,
         {
+            let result = match method_name {
+                "get_deposits" => {
+                    let deposits = json!({
+                        WNEAR_TOKEN.to_string(): U128(self.wnear_deposited),
+                    });
+                    serde_json::to_vec(&deposits)?
+                }
+                "ft_balance_of" => serde_json::to_vec(&U128(self.wnear_amount))?,
+                _ => serde_json::to_vec(&U128(0))?,
+            };
+
             Ok(CallResult {
-                result: vec![],
+                result,
                 logs: vec![],
             })
         }
     }
 
-    impl Wallet for MockWallet {
-        fn account_id(&self) -> &AccountId {
-            &self.account_id
+    struct MockSentTx;
+
+    impl SentTx for MockSentTx {
+        async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum> {
+            bail!("Not implemented");
         }
 
-        fn signer(&self) -> &InMemorySigner {
-            &self.signer
+        async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
+            Ok(ExecutionOutcomeView {
+                logs: vec![],
+                receipt_ids: vec![],
+                gas_burnt: 0,
+                tokens_burnt: 0,
+                executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
+                status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
+                metadata: near_primitives::views::ExecutionMetadataView {
+                    version: 1,
+                    gas_profile: None,
+                },
+            })
         }
     }
 
@@ -394,16 +356,17 @@ mod tests {
     async fn test_start() {
         initialize();
 
-        let native_balance = DEFAULT_REQUIRED_BALANCE << 5;
-        let client = MockClient::new(native_balance);
+        let client = MockClient {
+            native_amount: DEFAULT_REQUIRED_BALANCE << 5,
+            wnear_amount: 0,
+            wnear_deposited: 0,
+        };
         let wallet = MockWallet::new();
 
         let result = start(&client, &wallet).await;
-        assert!(result.is_ok());
-
         let (token, balance) = result.unwrap();
         assert_eq!(token, WNEAR_TOKEN.clone());
-        assert!(balance > DEFAULT_REQUIRED_BALANCE);
+        assert!(balance.is_zero());
     }
 
     #[tokio::test]
@@ -412,7 +375,11 @@ mod tests {
 
         let required = 1_000_000;
         let native_balance = required << 5;
-        let client = MockClient::new(native_balance);
+        let client = MockClient {
+            native_amount: native_balance,
+            wnear_amount: 0,
+            wnear_deposited: 0,
+        };
         let wallet = MockWallet::new();
 
         LAST_HARVEST.store(0, Ordering::Relaxed);
@@ -427,7 +394,11 @@ mod tests {
 
         let required = 1_000_000;
         let native_balance = required << 3;
-        let client = MockClient::new(native_balance);
+        let client = MockClient {
+            native_amount: native_balance,
+            wnear_amount: 0,
+            wnear_deposited: 0,
+        };
         let wallet = MockWallet::new();
 
         let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
