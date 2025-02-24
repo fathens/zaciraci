@@ -148,14 +148,15 @@ where
             .await?
             .wait_for_success()
             .await?;
+
+        info!(log, "refilling";
+            "amount" => %wrapping,
+        );
+        deposit::deposit(client, wallet, &WNEAR_TOKEN, wrapping)
+            .await?
+            .wait_for_success()
+            .await?;
     }
-    info!(log, "refilling";
-        "amount" => %want,
-    );
-    deposit::deposit(client, wallet, &WNEAR_TOKEN, want)
-        .await?
-        .wait_for_success()
-        .await?;
     Ok(())
 }
 
@@ -210,9 +211,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::bail;
     use near_crypto::InMemorySigner;
-    use near_primitives::action::Action;
+    use near_primitives::transaction::Action;
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
     use near_sdk::json_types::U128;
     use serde_json::json;
@@ -254,14 +254,14 @@ mod tests {
     }
 
     struct MockClient {
-        native_amount: Balance,
-        wnear_amount: Balance,
-        wnear_deposited: Balance,
+        native_amount: std::cell::Cell<Balance>,
+        wnear_amount: std::cell::Cell<Balance>,
+        wnear_deposited: std::cell::Cell<Balance>,
     }
 
     impl AccountInfo for MockClient {
         async fn get_native_amount(&self, _account: &AccountId) -> Result<Balance> {
-            Ok(self.native_amount)
+            Ok(self.native_amount.get())
         }
     }
 
@@ -281,13 +281,34 @@ mod tests {
             &self,
             _signer: &InMemorySigner,
             _receiver: &AccountId,
-            _method_name: &str,
-            _args: T,
-            _deposit: Balance,
+            method_name: &str,
+            args: T,
+            deposit: Balance,
         ) -> Result<Self::Output>
         where
             T: Sized + serde::Serialize,
         {
+            match method_name {
+                "near_deposit" => {
+                    self.native_amount
+                        .set(self.native_amount.get().saturating_sub(deposit));
+                    self.wnear_amount
+                        .set(self.wnear_amount.get().saturating_add(deposit));
+                }
+                "ft_transfer_call" => {
+                    let args_str = serde_json::to_string(&args).unwrap();
+                    let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
+                    let amount: Balance = args_value["amount"]
+                        .as_str()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or_default();
+                    self.wnear_amount
+                        .set(self.wnear_amount.get().saturating_sub(amount));
+                    self.wnear_deposited
+                        .set(self.wnear_deposited.get().saturating_add(amount));
+                }
+                _ => {}
+            }
             Ok(MockSentTx)
         }
 
@@ -314,12 +335,18 @@ mod tests {
             let result = match method_name {
                 "get_deposits" => {
                     let deposits = json!({
-                        WNEAR_TOKEN.to_string(): U128(self.wnear_deposited),
+                        WNEAR_TOKEN.to_string(): U128(self.wnear_deposited.get()),
                     });
                     serde_json::to_vec(&deposits)?
                 }
-                "ft_balance_of" => serde_json::to_vec(&U128(self.wnear_amount))?,
-                _ => serde_json::to_vec(&U128(0))?,
+                "ft_balance_of" => {
+                    let balance = U128(self.wnear_amount.get());
+                    serde_json::to_vec(&balance)?
+                }
+                _ => {
+                    let balance = U128(0);
+                    serde_json::to_vec(&balance)?
+                }
             };
 
             Ok(CallResult {
@@ -333,7 +360,7 @@ mod tests {
 
     impl SentTx for MockSentTx {
         async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum> {
-            bail!("Not implemented");
+            unimplemented!()
         }
 
         async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
@@ -357,9 +384,9 @@ mod tests {
         initialize();
 
         let client = MockClient {
-            native_amount: DEFAULT_REQUIRED_BALANCE << 5,
-            wnear_amount: 0,
-            wnear_deposited: 0,
+            native_amount: std::cell::Cell::new(DEFAULT_REQUIRED_BALANCE << 5),
+            wnear_amount: std::cell::Cell::new(0),
+            wnear_deposited: std::cell::Cell::new(0),
         };
         let wallet = MockWallet::new();
 
@@ -376,9 +403,9 @@ mod tests {
         let required = 1_000_000;
         let native_balance = required << 5;
         let client = MockClient {
-            native_amount: native_balance,
-            wnear_amount: 0,
-            wnear_deposited: 0,
+            native_amount: std::cell::Cell::new(native_balance),
+            wnear_amount: std::cell::Cell::new(0),
+            wnear_deposited: std::cell::Cell::new(0),
         };
         let wallet = MockWallet::new();
 
@@ -395,9 +422,9 @@ mod tests {
         let required = 1_000_000;
         let native_balance = required << 3;
         let client = MockClient {
-            native_amount: native_balance,
-            wnear_amount: 0,
-            wnear_deposited: 0,
+            native_amount: std::cell::Cell::new(native_balance),
+            wnear_amount: std::cell::Cell::new(0),
+            wnear_deposited: std::cell::Cell::new(0),
         };
         let wallet = MockWallet::new();
 
@@ -430,5 +457,68 @@ mod tests {
             .unwrap()
             .as_secs();
         assert_eq!(now, LAST_HARVEST.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_refill_with_sufficient_wrapped_balance() {
+        initialize();
+
+        let required = 1_000_000;
+        let client = MockClient {
+            native_amount: std::cell::Cell::new(required << 1),
+            wnear_amount: std::cell::Cell::new(required << 1),
+            wnear_deposited: std::cell::Cell::new(required << 1),
+        };
+        let wallet = MockWallet::new();
+
+        let result = refill(&client, &wallet, required).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_refill_with_sufficient_native_balance() {
+        initialize();
+
+        let required = NearToken::from_near(2).as_yoctonear();
+        let client = MockClient {
+            native_amount: std::cell::Cell::new(required << 2),
+            wnear_amount: std::cell::Cell::new(0),
+            wnear_deposited: std::cell::Cell::new(0),
+        };
+        let wallet = MockWallet::new();
+
+        let result = refill(&client, &wallet, required).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_refill_with_insufficient_native_balance() {
+        initialize();
+
+        let required = 1_000_000;
+        let client = MockClient {
+            native_amount: std::cell::Cell::new(MINIMUM_NATIVE_BALANCE),
+            wnear_amount: std::cell::Cell::new(0),
+            wnear_deposited: std::cell::Cell::new(0),
+        };
+        let wallet = MockWallet::new();
+
+        let result = refill(&client, &wallet, required).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_u128_serialization() {
+        let amount = U128(1_000_000);
+        let args = json!({
+            "receiver_id": "contract.near",
+            "amount": amount,
+            "msg": "",
+        });
+        println!("args: {:?}", args);
+        let args_str = serde_json::to_string(&args).unwrap();
+        println!("args_str: {}", args_str);
+        let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
+        println!("args_value: {:?}", args_value);
     }
 }
