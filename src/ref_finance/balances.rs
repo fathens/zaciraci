@@ -6,10 +6,8 @@ use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
-use crate::types::{MicroNear, MilliNear};
 use crate::wallet::Wallet;
 use crate::Result;
-use anyhow::anyhow;
 use futures_util::FutureExt;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
@@ -123,7 +121,8 @@ where
         "wrapped_balance" => format!("{}", wrapped_balance),
     ));
     debug!(log, "checking");
-    if wrapped_balance < want {
+
+    let actual_wrapping = if wrapped_balance < want {
         let wrapping = want - wrapped_balance;
         let native_balance = client.get_native_amount(account).await?;
         let log = log.new(o!(
@@ -134,28 +133,42 @@ where
         let available = native_balance
             .checked_sub(MINIMUM_NATIVE_BALANCE)
             .unwrap_or_default();
-        if available < wrapping {
-            return Err(anyhow!(
-                "Insufficient balance: required: {:?}, native_balance {}, {:?}, {:?}",
-                MilliNear::from_yocto(want),
-                native_balance,
-                MilliNear::from_yocto(native_balance),
-                MicroNear::from_yocto(native_balance),
-            ));
-        }
-        info!(log, "wrapping");
-        deposit::wnear::wrap(client, wallet, wrapping)
-            .await?
-            .wait_for_success()
-            .await?;
 
+        let amount = if available < wrapping {
+            info!(log, "insufficient balance, using maximum available";
+                "available" => %available,
+                "wanted" => %wrapping,
+            );
+            available
+        } else {
+            wrapping
+        };
+
+        if amount > 0 {
+            info!(log, "wrapping";
+                "amount" => %amount,
+            );
+            deposit::wnear::wrap(client, wallet, amount)
+                .await?
+                .wait_for_success()
+                .await?;
+        }
+        amount
+    } else {
+        0
+    };
+
+    let total_deposit = wrapped_balance + actual_wrapping;
+    if total_deposit > 0 {
         info!(log, "refilling";
-            "amount" => %wrapping,
+            "amount" => %total_deposit,
         );
-        deposit::deposit(client, wallet, &WNEAR_TOKEN, wrapping)
+        deposit::deposit(client, wallet, &WNEAR_TOKEN, total_deposit)
             .await?
             .wait_for_success()
             .await?;
+    } else {
+        info!(log, "no amount to deposit")
     }
     Ok(())
 }
@@ -210,6 +223,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use near_crypto::InMemorySigner;
     use near_primitives::transaction::Action;
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
