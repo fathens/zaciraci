@@ -207,7 +207,6 @@ where
     }
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,7 +215,7 @@ mod tests {
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
     use near_sdk::json_types::U128;
     use serde_json::json;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -254,14 +253,47 @@ mod tests {
         });
     }
 
+    struct OperationsLog(RefCell<Vec<String>>);
+
+    impl OperationsLog {
+        fn new() -> Self {
+            Self(RefCell::new(Vec::new()))
+        }
+
+        fn push(&self, op: String) {
+            self.0.borrow_mut().push(op);
+        }
+
+        fn contains(&self, s: &str) -> bool {
+            self.0.borrow().iter().any(|log| log.contains(s))
+        }
+    }
+
     struct MockClient {
         native_amount: Cell<Balance>,
         wnear_amount: Cell<Balance>,
         wnear_deposited: Cell<Balance>,
+        operations_log: OperationsLog,
+    }
+
+    impl MockClient {
+        fn new(native: Balance, wnear: Balance, deposited: Balance) -> Self {
+            Self {
+                native_amount: Cell::new(native),
+                wnear_amount: Cell::new(wnear),
+                wnear_deposited: Cell::new(deposited),
+                operations_log: OperationsLog::new(),
+            }
+        }
+
+        fn log_operation(&self, operation: &str) {
+            self.operations_log.push(operation.to_string());
+        }
     }
 
     impl AccountInfo for MockClient {
         async fn get_native_amount(&self, _account: &AccountId) -> Result<Balance> {
+            self.log_operation("get_native_amount");
             Ok(self.native_amount.get())
         }
     }
@@ -275,6 +307,7 @@ mod tests {
             _receiver: &AccountId,
             _amount: Balance,
         ) -> Result<Self::Output> {
+            self.log_operation("transfer_native_token");
             Ok(MockSentTx)
         }
 
@@ -289,6 +322,7 @@ mod tests {
         where
             T: Sized + serde::Serialize,
         {
+            self.log_operation(&format!("exec_contract: {method_name}"));
             match method_name {
                 "near_deposit" => {
                     self.native_amount
@@ -319,6 +353,7 @@ mod tests {
             _receiver: &AccountId,
             _actions: Vec<Action>,
         ) -> Result<Self::Output> {
+            self.log_operation("send_tx");
             Ok(MockSentTx)
         }
     }
@@ -333,6 +368,7 @@ mod tests {
         where
             T: ?Sized + serde::Serialize,
         {
+            self.log_operation(&format!("view_contract: {method_name}"));
             let result = match method_name {
                 "get_deposits" => {
                     let deposits = json!({
@@ -384,17 +420,17 @@ mod tests {
     async fn test_start() {
         initialize();
 
-        let client = MockClient {
-            native_amount: Cell::new(DEFAULT_REQUIRED_BALANCE << 5),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(DEFAULT_REQUIRED_BALANCE << 5, 0, 0);
         let wallet = MockWallet::new();
 
         let result = start(&client, &wallet).await;
         let (token, balance) = result.unwrap();
         assert_eq!(token, WNEAR_TOKEN.clone());
         assert!(balance.is_zero());
+
+        assert!(client
+            .operations_log
+            .contains("view_contract: get_deposits"));
     }
 
     #[tokio::test]
@@ -403,17 +439,15 @@ mod tests {
 
         let required = 1_000_000;
         let native_balance = required << 5;
-        let client = MockClient {
-            native_amount: Cell::new(native_balance),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(native_balance, 0, 0);
         let wallet = MockWallet::new();
 
         LAST_HARVEST.store(0, Ordering::Relaxed);
 
         let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
         assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("get_native_amount"));
     }
 
     #[tokio::test]
@@ -422,15 +456,13 @@ mod tests {
 
         let required = 1_000_000;
         let native_balance = required << 3;
-        let client = MockClient {
-            native_amount: Cell::new(native_balance),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(native_balance, 0, 0);
         let wallet = MockWallet::new();
 
         let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
         assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("get_native_amount"));
     }
 
     #[test]
@@ -465,15 +497,15 @@ mod tests {
         initialize();
 
         let required = 1_000_000;
-        let client = MockClient {
-            native_amount: Cell::new(required << 1),
-            wnear_amount: Cell::new(required << 1),
-            wnear_deposited: Cell::new(required << 1),
-        };
+        let client = MockClient::new(required << 1, required << 1, required << 1);
         let wallet = MockWallet::new();
 
         let result = refill(&client, &wallet, required).await;
         assert!(result.is_ok());
+
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
     }
 
     #[tokio::test]
@@ -481,15 +513,18 @@ mod tests {
         initialize();
 
         let required = NearToken::from_near(2).as_yoctonear();
-        let client = MockClient {
-            native_amount: Cell::new(required << 2),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(required << 2, 0, 0);
         let wallet = MockWallet::new();
 
         let result = refill(&client, &wallet, required).await;
         assert!(result.is_ok());
+
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: near_deposit"));
     }
 
     #[tokio::test]
@@ -497,15 +532,16 @@ mod tests {
         initialize();
 
         let required = 1_000_000;
-        let client = MockClient {
-            native_amount: Cell::new(MINIMUM_NATIVE_BALANCE),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
         let wallet = MockWallet::new();
 
         let result = refill(&client, &wallet, required).await;
         assert!(result.is_err());
+
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("get_native_amount"));
     }
 
     #[test]
@@ -522,29 +558,31 @@ mod tests {
         let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
         println!("args_value: {:?}", args_value);
     }
+
     #[tokio::test]
     async fn test_refill_scenarios() {
         initialize();
         let required = NearToken::from_near(2).as_yoctonear();
 
         // Case 1: Wrapped残高が十分ある
-        let client = MockClient {
-            native_amount: Cell::new(required + MINIMUM_NATIVE_BALANCE),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(required), // 必要額と同じだけデポジット済み
-        };
+        let client = MockClient::new(required + MINIMUM_NATIVE_BALANCE, 0, required);
         let wallet = MockWallet::new();
         let result = refill(&client, &wallet, required).await;
         assert!(result.is_ok());
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
 
         // Case 2: Wrapped残高が不足、Native残高が十分
-        let client = MockClient {
-            native_amount: Cell::new(required + MINIMUM_NATIVE_BALANCE * 2), // 最低残高より十分多い
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(required + MINIMUM_NATIVE_BALANCE * 2, 0, 0);
         let result = refill(&client, &wallet, required).await;
         assert!(result.is_ok());
+        assert!(client
+            .operations_log
+            .contains("exec_contract: near_deposit"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: ft_transfer_call"));
     }
 
     #[tokio::test]
@@ -552,33 +590,32 @@ mod tests {
         initialize();
 
         // Case 1: want が 0 の場合
-        let client = MockClient {
-            native_amount: Cell::new(1_000_000),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(1_000_000, 0, 0);
         let wallet = MockWallet::new();
         let result = refill(&client, &wallet, 0).await;
         assert!(result.is_ok());
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
 
         // Case 2: 非常に大きな want 値の場合
         let large_want = u128::MAX / 2;
-        let client = MockClient {
-            native_amount: Cell::new(large_want),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(large_want, 0, 0);
         let result = refill(&client, &wallet, large_want).await;
         assert!(result.is_err());
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("get_native_amount"));
 
         // Case 3: ネイティブ残高がちょうど MINIMUM_NATIVE_BALANCE の場合
         let required = 1_000_000;
-        let client = MockClient {
-            native_amount: Cell::new(MINIMUM_NATIVE_BALANCE),
-            wnear_amount: Cell::new(0),
-            wnear_deposited: Cell::new(0),
-        };
+        let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
         let result = refill(&client, &wallet, required).await;
         assert!(result.is_err());
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("get_native_amount"));
     }
 }
