@@ -522,4 +522,63 @@ mod tests {
         let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
         println!("args_value: {:?}", args_value);
     }
+    #[tokio::test]
+    async fn test_refill_scenarios() {
+        initialize();
+        let required = NearToken::from_near(2).as_yoctonear();
+
+        // Case 1: Wrapped残高が十分ある
+        let client = MockClient {
+            native_amount: Cell::new(required + MINIMUM_NATIVE_BALANCE),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(required), // 必要額と同じだけデポジット済み
+        };
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, required).await;
+        assert!(result.is_ok());
+
+        // Case 2: Wrapped残高が不足、Native残高が十分
+        let client = MockClient {
+            native_amount: Cell::new(required + MINIMUM_NATIVE_BALANCE * 2), // 最低残高より十分多い
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
+        };
+        let result = refill(&client, &wallet, required).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_refill_edge_cases() {
+        initialize();
+
+        // Case 1: want が 0 の場合
+        let client = MockClient {
+            native_amount: Cell::new(1_000_000),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
+        };
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, 0).await;
+        assert!(result.is_ok());
+
+        // Case 2: 非常に大きな want 値の場合
+        let large_want = u128::MAX / 2;
+        let client = MockClient {
+            native_amount: Cell::new(large_want),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
+        };
+        let result = refill(&client, &wallet, large_want).await;
+        assert!(result.is_err());
+
+        // Case 3: ネイティブ残高がちょうど MINIMUM_NATIVE_BALANCE の場合
+        let required = 1_000_000;
+        let client = MockClient {
+            native_amount: Cell::new(MINIMUM_NATIVE_BALANCE),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
+        };
+        let result = refill(&client, &wallet, required).await;
+        assert!(result.is_err());
+    }
 }
