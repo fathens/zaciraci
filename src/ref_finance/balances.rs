@@ -274,6 +274,8 @@ mod tests {
         wnear_amount: Cell<Balance>,
         wnear_deposited: Cell<Balance>,
         operations_log: OperationsLog,
+        should_fail_near_deposit: Cell<bool>,
+        should_fail_ft_transfer: Cell<bool>,
     }
 
     impl MockClient {
@@ -283,7 +285,17 @@ mod tests {
                 wnear_amount: Cell::new(wnear),
                 wnear_deposited: Cell::new(deposited),
                 operations_log: OperationsLog::new(),
+                should_fail_near_deposit: Cell::new(false),
+                should_fail_ft_transfer: Cell::new(false),
             }
+        }
+
+        fn set_near_deposit_failure(&self, should_fail: bool) {
+            self.should_fail_near_deposit.set(should_fail);
+        }
+
+        fn set_ft_transfer_failure(&self, should_fail: bool) {
+            self.should_fail_ft_transfer.set(should_fail);
         }
 
         fn log_operation(&self, operation: &str) {
@@ -308,7 +320,7 @@ mod tests {
             _amount: Balance,
         ) -> Result<Self::Output> {
             self.log_operation("transfer_native_token");
-            Ok(MockSentTx)
+            Ok(MockSentTx { should_fail: false })
         }
 
         async fn exec_contract<T>(
@@ -323,28 +335,35 @@ mod tests {
             T: Sized + serde::Serialize,
         {
             self.log_operation(&format!("exec_contract: {method_name}"));
-            match method_name {
+            let should_fail = match method_name {
                 "near_deposit" => {
-                    self.native_amount
-                        .set(self.native_amount.get().saturating_sub(deposit));
-                    self.wnear_amount
-                        .set(self.wnear_amount.get().saturating_add(deposit));
+                    if !self.should_fail_near_deposit.get() {
+                        self.native_amount
+                            .set(self.native_amount.get().saturating_sub(deposit));
+                        self.wnear_amount
+                            .set(self.wnear_amount.get().saturating_add(deposit));
+                    }
+                    self.should_fail_near_deposit.get()
                 }
                 "ft_transfer_call" => {
-                    let args_str = serde_json::to_string(&args).unwrap();
-                    let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
-                    let amount: Balance = args_value["amount"]
-                        .as_str()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or_default();
-                    self.wnear_amount
-                        .set(self.wnear_amount.get().saturating_sub(amount));
-                    self.wnear_deposited
-                        .set(self.wnear_deposited.get().saturating_add(amount));
+                    if !self.should_fail_ft_transfer.get() {
+                        let args_str = serde_json::to_string(&args).unwrap();
+                        let args_value: serde_json::Value =
+                            serde_json::from_str(&args_str).unwrap();
+                        let amount: Balance = args_value["amount"]
+                            .as_str()
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or_default();
+                        self.wnear_amount
+                            .set(self.wnear_amount.get().saturating_sub(amount));
+                        self.wnear_deposited
+                            .set(self.wnear_deposited.get().saturating_add(amount));
+                    }
+                    self.should_fail_ft_transfer.get()
                 }
-                _ => {}
-            }
-            Ok(MockSentTx)
+                _ => false,
+            };
+            Ok(MockSentTx { should_fail })
         }
 
         async fn send_tx(
@@ -354,7 +373,7 @@ mod tests {
             _actions: Vec<Action>,
         ) -> Result<Self::Output> {
             self.log_operation("send_tx");
-            Ok(MockSentTx)
+            Ok(MockSentTx { should_fail: false })
         }
     }
 
@@ -393,7 +412,9 @@ mod tests {
         }
     }
 
-    struct MockSentTx;
+    struct MockSentTx {
+        should_fail: bool,
+    }
 
     impl SentTx for MockSentTx {
         async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum> {
@@ -401,6 +422,9 @@ mod tests {
         }
 
         async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
+            if self.should_fail {
+                return Err(anyhow!("Transaction failed"));
+            }
             Ok(ExecutionOutcomeView {
                 logs: vec![],
                 receipt_ids: vec![],
@@ -617,5 +641,119 @@ mod tests {
             .operations_log
             .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("get_native_amount"));
+    }
+
+    #[tokio::test]
+    async fn test_refill_boundary_conditions() {
+        initialize();
+
+        // Case 1: want値がMINIMUM_NATIVE_BALANCEと同じ
+        let client = MockClient::new(MINIMUM_NATIVE_BALANCE * 3, 0, 0);
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, MINIMUM_NATIVE_BALANCE).await;
+        assert!(result.is_ok());
+
+        // Case 2: Native残高がwant + MINIMUM_NATIVE_BALANCEちょうど
+        let want = 1_000_000;
+        let client = MockClient::new(want + MINIMUM_NATIVE_BALANCE, 0, 0);
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_refill_overflow_conditions() {
+        initialize();
+
+        // Case 1: want値が非常に大きく、Native残高との加算でオーバーフローする可能性
+        let want = u128::MAX - MINIMUM_NATIVE_BALANCE + 1;
+        let client = MockClient::new(u128::MAX, 0, 0);
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_err());
+
+        // Case 2: Native残高とWrapped残高の合計が要求額に満たない
+        let want = 1_000_000;
+        let native = want / 2;
+        let wrapped = want / 4;
+        let client = MockClient::new(native, wrapped, wrapped);
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_refill_transaction_failures() {
+        initialize();
+
+        // Case 1: near_depositトランザクションが失敗する場合
+        let want = 1_000_000;
+        let native = want * 2 + MINIMUM_NATIVE_BALANCE; // 十分なネイティブ残高（MINIMUM_NATIVE_BALANCEを加算）
+        let wrapped = 0; // wrapped_balanceを0に設定
+        let client = MockClient::new(native, wrapped, 0);
+        let wallet = MockWallet::new();
+        client.set_near_deposit_failure(true);
+
+        // 実行前のログを確認
+        println!(
+            "Operations log before refill: {:?}",
+            client.operations_log.0.borrow()
+        );
+
+        let result = refill(&client, &wallet, want).await;
+
+        // 実行後のログを確認
+        println!(
+            "Operations log after refill: {:?}",
+            client.operations_log.0.borrow()
+        );
+
+        assert!(result.is_err());
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("get_native_amount"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: near_deposit"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Transaction failed"));
+
+        // Case 2: ft_transfer_callトランザクションが失敗する場合
+        let want = 1_000_000;
+        let native = want * 2 + MINIMUM_NATIVE_BALANCE; // 十分なネイティブ残高（MINIMUM_NATIVE_BALANCEを加算）
+        let wrapped = 0; // wrapped_balanceを0に設定（want * 2より小さい値）
+        let client = MockClient::new(native, wrapped, 0);
+        client.set_ft_transfer_failure(true);
+
+        // 実行前のログを確認
+        println!(
+            "Operations log before refill (Case 2): {:?}",
+            client.operations_log.0.borrow()
+        );
+
+        let result = refill(&client, &wallet, want * 2).await;
+
+        // 実行後のログを確認
+        println!(
+            "Operations log after refill (Case 2): {:?}",
+            client.operations_log.0.borrow()
+        );
+
+        assert!(result.is_err());
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("get_native_amount"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: near_deposit"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: ft_transfer_call"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Transaction failed"));
     }
 }
