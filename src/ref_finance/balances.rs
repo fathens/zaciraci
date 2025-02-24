@@ -216,6 +216,7 @@ mod tests {
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
     use near_sdk::json_types::U128;
     use serde_json::json;
+    use std::cell::Cell;
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -254,9 +255,9 @@ mod tests {
     }
 
     struct MockClient {
-        native_amount: std::cell::Cell<Balance>,
-        wnear_amount: std::cell::Cell<Balance>,
-        wnear_deposited: std::cell::Cell<Balance>,
+        native_amount: Cell<Balance>,
+        wnear_amount: Cell<Balance>,
+        wnear_deposited: Cell<Balance>,
     }
 
     impl AccountInfo for MockClient {
@@ -384,9 +385,9 @@ mod tests {
         initialize();
 
         let client = MockClient {
-            native_amount: std::cell::Cell::new(DEFAULT_REQUIRED_BALANCE << 5),
-            wnear_amount: std::cell::Cell::new(0),
-            wnear_deposited: std::cell::Cell::new(0),
+            native_amount: Cell::new(DEFAULT_REQUIRED_BALANCE << 5),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
         };
         let wallet = MockWallet::new();
 
@@ -403,9 +404,9 @@ mod tests {
         let required = 1_000_000;
         let native_balance = required << 5;
         let client = MockClient {
-            native_amount: std::cell::Cell::new(native_balance),
-            wnear_amount: std::cell::Cell::new(0),
-            wnear_deposited: std::cell::Cell::new(0),
+            native_amount: Cell::new(native_balance),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
         };
         let wallet = MockWallet::new();
 
@@ -422,9 +423,9 @@ mod tests {
         let required = 1_000_000;
         let native_balance = required << 3;
         let client = MockClient {
-            native_amount: std::cell::Cell::new(native_balance),
-            wnear_amount: std::cell::Cell::new(0),
-            wnear_deposited: std::cell::Cell::new(0),
+            native_amount: Cell::new(native_balance),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
         };
         let wallet = MockWallet::new();
 
@@ -465,9 +466,9 @@ mod tests {
 
         let required = 1_000_000;
         let client = MockClient {
-            native_amount: std::cell::Cell::new(required << 1),
-            wnear_amount: std::cell::Cell::new(required << 1),
-            wnear_deposited: std::cell::Cell::new(required << 1),
+            native_amount: Cell::new(required << 1),
+            wnear_amount: Cell::new(required << 1),
+            wnear_deposited: Cell::new(required << 1),
         };
         let wallet = MockWallet::new();
 
@@ -481,9 +482,9 @@ mod tests {
 
         let required = NearToken::from_near(2).as_yoctonear();
         let client = MockClient {
-            native_amount: std::cell::Cell::new(required << 2),
-            wnear_amount: std::cell::Cell::new(0),
-            wnear_deposited: std::cell::Cell::new(0),
+            native_amount: Cell::new(required << 2),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
         };
         let wallet = MockWallet::new();
 
@@ -497,9 +498,9 @@ mod tests {
 
         let required = 1_000_000;
         let client = MockClient {
-            native_amount: std::cell::Cell::new(MINIMUM_NATIVE_BALANCE),
-            wnear_amount: std::cell::Cell::new(0),
-            wnear_deposited: std::cell::Cell::new(0),
+            native_amount: Cell::new(MINIMUM_NATIVE_BALANCE),
+            wnear_amount: Cell::new(0),
+            wnear_deposited: Cell::new(0),
         };
         let wallet = MockWallet::new();
 
