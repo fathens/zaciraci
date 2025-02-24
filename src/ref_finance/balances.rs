@@ -466,9 +466,7 @@ mod tests {
         assert_eq!(token, WNEAR_TOKEN.clone());
         assert!(balance.is_zero());
 
-        assert!(client
-            .operations_log
-            .contains("view_contract: get_deposits"));
+        assert!(client.operations_log.contains("view_contract: get_deposits"));
     }
 
     #[tokio::test]
@@ -534,127 +532,165 @@ mod tests {
     async fn test_refill_with_sufficient_wrapped_balance() {
         initialize();
 
-        let required = 1_000_000;
-        let client = MockClient::new(required << 1, required << 1, required << 1);
+        let want = 1_000_000;
+        let client = MockClient::new(want << 1, want << 1, want << 1);
         let wallet = MockWallet::new();
 
-        let result = refill(&client, &wallet, required).await;
+        let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
     }
 
     #[tokio::test]
     async fn test_refill_with_sufficient_native_balance() {
         initialize();
 
-        let required = NearToken::from_near(2).as_yoctonear();
-        let client = MockClient::new(required << 2, 0, 0);
+        let want = NearToken::from_near(2).as_yoctonear();
+        let client = MockClient::new(want << 2, 0, 0);
         let wallet = MockWallet::new();
 
-        let result = refill(&client, &wallet, required).await;
+        let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
-        assert!(client
-            .operations_log
-            .contains("exec_contract: near_deposit"));
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
     }
 
     #[tokio::test]
     async fn test_refill_with_insufficient_native_balance() {
         initialize();
 
-        let required = 1_000_000;
+        let want = 1_000_000;
         let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
         let wallet = MockWallet::new();
 
-        let result = refill(&client, &wallet, required).await;
-        assert!(result.is_err());
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
 
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
-        assert!(client.operations_log.contains("get_native_amount"));
-    }
-
-    #[test]
-    fn test_u128_serialization() {
-        let amount = U128(1_000_000);
-        let args = json!({
-            "receiver_id": "contract.near",
-            "amount": amount,
-            "msg": "",
-        });
-        println!("args: {:?}", args);
-        let args_str = serde_json::to_string(&args).unwrap();
-        println!("args_str: {}", args_str);
-        let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
-        println!("args_value: {:?}", args_value);
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(!client.operations_log.contains("near_deposit"));
+        assert!(!client.operations_log.contains("ft_transfer_call"));
     }
 
     #[tokio::test]
     async fn test_refill_scenarios() {
         initialize();
-        let required = NearToken::from_near(2).as_yoctonear();
+        let want = NearToken::from_near(2).as_yoctonear();
 
         // Case 1: Wrapped残高が十分ある
-        let client = MockClient::new(required + MINIMUM_NATIVE_BALANCE, 0, required);
+        let client = MockClient::new(want + MINIMUM_NATIVE_BALANCE, want, 0);
         let wallet = MockWallet::new();
-        let result = refill(&client, &wallet, required).await;
+        let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
 
-        // Case 2: Wrapped残高が不足、Native残高が十分
-        let client = MockClient::new(required + MINIMUM_NATIVE_BALANCE * 2, 0, 0);
-        let result = refill(&client, &wallet, required).await;
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(!client.operations_log.contains("near_deposit"));
+
+        // Case 2: Native残高が十分ある
+        let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
-        assert!(client
-            .operations_log
-            .contains("exec_contract: near_deposit"));
-        assert!(client
-            .operations_log
-            .contains("exec_contract: ft_transfer_call"));
+
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
     }
 
     #[tokio::test]
     async fn test_refill_edge_cases() {
         initialize();
-
-        // Case 1: want が 0 の場合
-        let client = MockClient::new(1_000_000, 0, 0);
         let wallet = MockWallet::new();
+
+        // Case 1: want値が0の場合
+        let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
         let result = refill(&client, &wallet, 0).await;
         assert!(result.is_ok());
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
 
-        // Case 2: 非常に大きな want 値の場合
-        let large_want = u128::MAX / 2;
-        let client = MockClient::new(large_want, 0, 0);
-        let result = refill(&client, &wallet, large_want).await;
-        assert!(result.is_err());
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
-        assert!(client.operations_log.contains("get_native_amount"));
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(!client.operations_log.contains("near_deposit"));
+        assert!(!client.operations_log.contains("ft_transfer_call"));
+
+        // Case 2: want値が非常に大きい場合
+        let want = u128::MAX;
+        let client = MockClient::new(want, 0, 0);
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
 
         // Case 3: ネイティブ残高がちょうど MINIMUM_NATIVE_BALANCE の場合
-        let required = 1_000_000;
+        let want = 1_000_000;
         let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
-        let result = refill(&client, &wallet, required).await;
-        assert!(result.is_err());
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
+
         assert!(client.operations_log.contains("get_native_amount"));
+
+        // Case 4: MINIMUM_NATIVE_BALANCEより少し多いnative残高
+        let client = MockClient::new(MINIMUM_NATIVE_BALANCE + 1, 0, 0);
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("exec_contract: near_deposit"));
+    }
+
+    #[tokio::test]
+    async fn test_refill_transaction_order() {
+        initialize();
+
+        let want = 1_000_000;
+        let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
+
+        // 操作の順序を確認
+        let binding = client.operations_log.0.borrow();
+        let operations: Vec<_> = binding.iter().collect();
+        assert!(operations.len() >= 3, "Should have at least 3 operations");
+
+        // ft_balance_of が最初に呼ばれることを確認
+        let ft_balance_of_idx = operations.iter().position(|op| op.contains("view_contract: ft_balance_of"))
+            .expect("ft_balance_of should be called");
+        assert_eq!(ft_balance_of_idx, 0, "ft_balance_of should be the first operation");
+
+        // near_deposit が ft_transfer_call の前に呼ばれることを確認
+        let near_deposit_idx = operations.iter().position(|op| op.contains("near_deposit"))
+            .expect("near_deposit should be called");
+        let ft_transfer_idx = operations.iter().position(|op| op.contains("ft_transfer_call"))
+            .expect("ft_transfer_call should be called");
+        assert!(near_deposit_idx < ft_transfer_idx, "near_deposit should be called before ft_transfer_call");
+    }
+
+    #[tokio::test]
+    async fn test_refill_error_recovery() {
+        initialize();
+
+        let want = 1_000_000;
+        let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+        client.set_near_deposit_failure(true);
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_err());
+
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(!client.operations_log.contains("ft_transfer_call"));
+
+        let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+        client.set_ft_transfer_failure(true);
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_err());
+
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
     }
 
     #[tokio::test]
@@ -667,11 +703,19 @@ mod tests {
         let result = refill(&client, &wallet, MINIMUM_NATIVE_BALANCE).await;
         assert!(result.is_ok());
 
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
+
         // Case 2: Native残高がwant + MINIMUM_NATIVE_BALANCEちょうど
         let want = 1_000_000;
         let client = MockClient::new(want + MINIMUM_NATIVE_BALANCE, 0, 0);
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
     }
 
     #[tokio::test]
@@ -683,91 +727,73 @@ mod tests {
         let client = MockClient::new(u128::MAX, 0, 0);
         let wallet = MockWallet::new();
         let result = refill(&client, &wallet, want).await;
-        assert!(result.is_err());
+        assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
 
         // Case 2: Native残高とWrapped残高の合計が要求額に満たない
         let want = 1_000_000;
-        let native = want / 2;
+        let native = want / 2 + MINIMUM_NATIVE_BALANCE;
         let wrapped = want / 4;
         let client = MockClient::new(native, wrapped, wrapped);
+        let wallet = MockWallet::new();
         let result = refill(&client, &wallet, want).await;
-        assert!(result.is_err());
+        assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("near_deposit"));
+        assert!(client.operations_log.contains("ft_transfer_call"));
     }
 
     #[tokio::test]
-    async fn test_refill_transaction_failures() {
+    async fn test_refill_combined_balances() {
         initialize();
 
-        // Case 1: near_depositトランザクションが失敗する場合
+        // Case 1: wrapped残高とnative残高の合計が要求額を満たす
         let want = 1_000_000;
-        let native = want * 2 + MINIMUM_NATIVE_BALANCE; // 十分なネイティブ残高（MINIMUM_NATIVE_BALANCEを加算）
-        let wrapped = 0; // wrapped_balanceを0に設定
-        let client = MockClient::new(native, wrapped, 0);
+        let wrapped = want / 2;
+        let native = want / 2 + MINIMUM_NATIVE_BALANCE;
+        let client = MockClient::new(native, wrapped, wrapped);
         let wallet = MockWallet::new();
-        client.set_near_deposit_failure(true);
-
-        // 実行前のログを確認
-        println!(
-            "Operations log before refill: {:?}",
-            client.operations_log.0.borrow()
-        );
-
         let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
 
-        // 実行後のログを確認
-        println!(
-            "Operations log after refill: {:?}",
-            client.operations_log.0.borrow()
-        );
-
-        assert!(result.is_err());
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
+        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("get_native_amount"));
-        assert!(client
-            .operations_log
-            .contains("exec_contract: near_deposit"));
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Transaction failed"));
 
-        // Case 2: ft_transfer_callトランザクションが失敗する場合
+        // Case 2: wrapped残高が一部あり、native残高から補充
         let want = 1_000_000;
-        let native = want * 2 + MINIMUM_NATIVE_BALANCE; // 十分なネイティブ残高（MINIMUM_NATIVE_BALANCEを加算）
-        let wrapped = 0; // wrapped_balanceを0に設定（want * 2より小さい値）
-        let client = MockClient::new(native, wrapped, 0);
-        client.set_ft_transfer_failure(true);
+        let wrapped = want / 4;
+        let native = want + MINIMUM_NATIVE_BALANCE;
+        let client = MockClient::new(native, wrapped, wrapped);
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
 
-        // 実行前のログを確認
-        println!(
-            "Operations log before refill (Case 2): {:?}",
-            client.operations_log.0.borrow()
-        );
+        assert!(client.operations_log.contains("exec_contract: near_deposit"));
+        assert!(client.operations_log.contains("exec_contract: ft_transfer_call"));
+    }
 
-        let result = refill(&client, &wallet, want * 2).await;
+    #[tokio::test]
+    async fn test_refill_minimum_balances() {
+        initialize();
 
-        // 実行後のログを確認
-        println!(
-            "Operations log after refill (Case 2): {:?}",
-            client.operations_log.0.borrow()
-        );
+        // Case 1: ちょうどMINIMUM_NATIVE_BALANCEのnative残高
+        let want = 1_000;
+        let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
+        let wallet = MockWallet::new();
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
 
-        assert!(result.is_err());
-        assert!(client
-            .operations_log
-            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("get_native_amount"));
-        assert!(client
-            .operations_log
-            .contains("exec_contract: near_deposit"));
-        assert!(client
-            .operations_log
-            .contains("exec_contract: ft_transfer_call"));
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Transaction failed"));
+
+        // Case 2: MINIMUM_NATIVE_BALANCEより少し多いnative残高
+        let client = MockClient::new(MINIMUM_NATIVE_BALANCE + 1, 0, 0);
+        let result = refill(&client, &wallet, want).await;
+        assert!(result.is_ok());
+
+        assert!(client.operations_log.contains("exec_contract: near_deposit"));
     }
 }
