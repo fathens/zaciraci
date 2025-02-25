@@ -47,7 +47,7 @@ fn update_last_harvest() {
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
-pub async fn start<C, W>(client: &C, wallet: &W) -> Result<(TokenAccount, Balance)>
+pub async fn start<C, W>(client: &C, wallet: &W, token: &TokenAccount) -> Result<Balance>
 where
     C: AccountInfo + SendTx + ViewContract,
     W: Wallet,
@@ -67,16 +67,14 @@ where
         "required_balance" => %required_balance,
     );
 
-    let token = WNEAR_TOKEN.clone();
-
-    let wrapped_balance = balance_of_start_token(client, wallet, &token).await?;
+    let wrapped_balance = balance_of_start_token(client, wallet, token).await?;
     info!(log, "comparing";
         "wrapped_balance" => wrapped_balance,
     );
 
     if wrapped_balance < required_balance {
         refill(client, wallet, required_balance - wrapped_balance).await?;
-        Ok((token, wrapped_balance))
+        Ok(wrapped_balance)
     } else {
         let upper = required_balance << 4;
         if upper < wrapped_balance {
@@ -88,7 +86,7 @@ where
                     }
                 });
         }
-        Ok((token, upper))
+        Ok(wrapped_balance)
     }
 }
 
@@ -461,12 +459,13 @@ mod tests {
         let client = MockClient::new(DEFAULT_REQUIRED_BALANCE << 5, 0, 0);
         let wallet = MockWallet::new();
 
-        let result = start(&client, &wallet).await;
-        let (token, balance) = result.unwrap();
-        assert_eq!(token, WNEAR_TOKEN.clone());
+        let result = start(&client, &wallet, &*WNEAR_TOKEN).await;
+        let balance = result.unwrap();
         assert!(balance.is_zero());
 
-        assert!(client.operations_log.contains("view_contract: get_deposits"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: get_deposits"));
     }
 
     #[tokio::test]
@@ -539,7 +538,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("ft_transfer_call"));
     }
 
@@ -554,7 +555,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
     }
@@ -570,7 +573,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(!client.operations_log.contains("near_deposit"));
         assert!(!client.operations_log.contains("ft_transfer_call"));
     }
@@ -586,7 +591,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(!client.operations_log.contains("near_deposit"));
 
         // Case 2: Native残高が十分ある
@@ -595,7 +602,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
     }
@@ -610,7 +619,9 @@ mod tests {
         let result = refill(&client, &wallet, 0).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(!client.operations_log.contains("near_deposit"));
         assert!(!client.operations_log.contains("ft_transfer_call"));
 
@@ -620,7 +631,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
 
@@ -637,7 +650,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("exec_contract: near_deposit"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: near_deposit"));
     }
 
     #[tokio::test]
@@ -656,16 +671,28 @@ mod tests {
         assert!(operations.len() >= 3, "Should have at least 3 operations");
 
         // ft_balance_of が最初に呼ばれることを確認
-        let ft_balance_of_idx = operations.iter().position(|op| op.contains("view_contract: ft_balance_of"))
+        let ft_balance_of_idx = operations
+            .iter()
+            .position(|op| op.contains("view_contract: ft_balance_of"))
             .expect("ft_balance_of should be called");
-        assert_eq!(ft_balance_of_idx, 0, "ft_balance_of should be the first operation");
+        assert_eq!(
+            ft_balance_of_idx, 0,
+            "ft_balance_of should be the first operation"
+        );
 
         // near_deposit が ft_transfer_call の前に呼ばれることを確認
-        let near_deposit_idx = operations.iter().position(|op| op.contains("near_deposit"))
+        let near_deposit_idx = operations
+            .iter()
+            .position(|op| op.contains("near_deposit"))
             .expect("near_deposit should be called");
-        let ft_transfer_idx = operations.iter().position(|op| op.contains("ft_transfer_call"))
+        let ft_transfer_idx = operations
+            .iter()
+            .position(|op| op.contains("ft_transfer_call"))
             .expect("ft_transfer_call should be called");
-        assert!(near_deposit_idx < ft_transfer_idx, "near_deposit should be called before ft_transfer_call");
+        assert!(
+            near_deposit_idx < ft_transfer_idx,
+            "near_deposit should be called before ft_transfer_call"
+        );
     }
 
     #[tokio::test]
@@ -679,7 +706,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_err());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(!client.operations_log.contains("ft_transfer_call"));
 
@@ -688,7 +717,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_err());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
     }
@@ -703,7 +734,9 @@ mod tests {
         let result = refill(&client, &wallet, MINIMUM_NATIVE_BALANCE).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
 
@@ -713,7 +746,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
     }
@@ -729,7 +764,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
 
@@ -742,7 +779,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("near_deposit"));
         assert!(client.operations_log.contains("ft_transfer_call"));
     }
@@ -760,7 +799,9 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("view_contract: ft_balance_of"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: ft_balance_of"));
         assert!(client.operations_log.contains("get_native_amount"));
 
         // Case 2: wrapped残高が一部あり、native残高から補充
@@ -772,8 +813,12 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("exec_contract: near_deposit"));
-        assert!(client.operations_log.contains("exec_contract: ft_transfer_call"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: near_deposit"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: ft_transfer_call"));
     }
 
     #[tokio::test]
@@ -794,6 +839,8 @@ mod tests {
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
-        assert!(client.operations_log.contains("exec_contract: near_deposit"));
+        assert!(client
+            .operations_log
+            .contains("exec_contract: near_deposit"));
     }
 }
