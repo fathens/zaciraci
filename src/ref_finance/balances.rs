@@ -27,8 +27,6 @@ static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
         .unwrap_or_else(|err| panic!("Failed to parse config `{}`: {}", value, err))
 });
 
-static INIT: Once = Once::new();
-
 fn is_time_to_harvest() -> bool {
     let last = LAST_HARVEST.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
@@ -929,5 +927,40 @@ mod tests {
         
         // Should not trigger harvest when exactly at upper limit
         assert!(!client.operations_log.contains("transfer_native_token"));
+    }
+
+    #[tokio::test]
+    async fn test_start_harvest_time_condition() {
+        initialize();
+        let required_balance = DEFAULT_REQUIRED_BALANCE;
+        
+        // Set balance above 128x to meet the balance condition
+        let client = MockClient::new(
+            required_balance << 8,  // 256x native balance
+            required_balance << 8,  // 256x wrapped balance
+            required_balance << 8,
+        );
+        let wallet = MockWallet::new();
+        
+        // Set last harvest time to 12 hours ago (less than INTERVAL_OF_HARVEST)
+        LAST_HARVEST.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() - INTERVAL_OF_HARVEST / 2,  // 12 hours ago
+            Ordering::Relaxed,
+        );
+        
+        let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+        assert!(result.is_ok());
+        
+        // Wait a bit to ensure any async operations complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+        // Should not trigger harvest when time condition is not met
+        assert!(!client.operations_log.contains("transfer_native_token"));
+        
+        // Verify that get_deposits was called (normal operation)
+        assert!(client.operations_log.contains("view_contract: get_deposits"));
     }
 }
