@@ -8,7 +8,6 @@ use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::wallet::Wallet;
 use crate::Result;
-use futures_util::FutureExt;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
@@ -76,15 +75,12 @@ where
         refill(client, wallet, required_balance - wrapped_balance).await?;
         Ok(wrapped_balance)
     } else {
-        let upper = required_balance << 4;
+        let upper = required_balance << 7;  // 128倍
         if upper < wrapped_balance {
-            let _ignore_response =
-                harvest(client, wallet, &WNEAR_TOKEN, wrapped_balance - upper, upper).map(|r| {
-                    match r {
-                        Ok(_) => info!(log, "successfully harvested"),
-                        Err(err) => warn!(log, "failed to harvest: {}", err),
-                    }
-                });
+            match harvest(client, wallet, &WNEAR_TOKEN, wrapped_balance - upper, required_balance).await {
+                Ok(_) => info!(log, "successfully harvested"),
+                Err(err) => warn!(log, "failed to harvest: {}", err),
+            }
         }
         Ok(wrapped_balance)
     }
@@ -196,7 +192,7 @@ where
         .await?;
     let account = wallet.account_id();
     let native_balance = client.get_native_amount(account).await?;
-    let upper = required << 4;
+    let upper = required << 7;  // 128倍
     info!(log, "checking";
         "native_balance" => %native_balance,
         "upper" => %upper,
@@ -227,8 +223,8 @@ mod tests {
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
     use near_sdk::json_types::U128;
     use serde_json::json;
-    use std::cell::{Cell, RefCell};
-    use std::sync::Once;
+    use std::cell::Cell;
+    use std::sync::{Arc, Mutex};
 
     static INIT: Once = Once::new();
 
@@ -265,19 +261,19 @@ mod tests {
         });
     }
 
-    struct OperationsLog(RefCell<Vec<String>>);
+    struct OperationsLog(Arc<Mutex<Vec<String>>>);
 
     impl OperationsLog {
         fn new() -> Self {
-            Self(RefCell::new(Vec::new()))
+            Self(Arc::new(Mutex::new(Vec::new())))
         }
 
         fn push(&self, op: String) {
-            self.0.borrow_mut().push(op);
+            self.0.lock().unwrap().push(op);
         }
 
         fn contains(&self, s: &str) -> bool {
-            self.0.borrow().iter().any(|log| log.contains(s))
+            self.0.lock().unwrap().iter().any(|log| log.contains(s))
         }
     }
 
@@ -372,6 +368,20 @@ mod tests {
                             .set(self.wnear_deposited.get().saturating_add(amount));
                     }
                     self.should_fail_ft_transfer.get()
+                }
+                "withdraw" => {
+                    let args_str = serde_json::to_string(&args).unwrap();
+                    let args_value: serde_json::Value =
+                        serde_json::from_str(&args_str).unwrap();
+                    let amount: Balance = args_value["amount"]
+                        .as_str()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or_default();
+                    self.native_amount
+                        .set(self.native_amount.get().saturating_add(amount));
+                    self.wnear_deposited
+                        .set(self.wnear_deposited.get().saturating_sub(amount));
+                    false
                 }
                 _ => false,
             };
@@ -640,6 +650,7 @@ mod tests {
         // Case 3: ネイティブ残高がちょうど MINIMUM_NATIVE_BALANCE の場合
         let want = 1_000_000;
         let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
+        let wallet = MockWallet::new();
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
@@ -666,7 +677,7 @@ mod tests {
         assert!(result.is_ok());
 
         // 操作の順序を確認
-        let binding = client.operations_log.0.borrow();
+        let binding = client.operations_log.0.lock().unwrap();
         let operations: Vec<_> = binding.iter().collect();
         assert!(operations.len() >= 3, "Should have at least 3 operations");
 
@@ -743,6 +754,7 @@ mod tests {
         // Case 2: Native残高がwant + MINIMUM_NATIVE_BALANCEちょうど
         let want = 1_000_000;
         let client = MockClient::new(want + MINIMUM_NATIVE_BALANCE, 0, 0);
+        let wallet = MockWallet::new();
         let result = refill(&client, &wallet, want).await;
         assert!(result.is_ok());
 
@@ -842,5 +854,48 @@ mod tests {
         assert!(client
             .operations_log
             .contains("exec_contract: near_deposit"));
+    }
+
+    #[tokio::test]
+    async fn test_start_boundary_values() {
+        initialize();
+        let required_balance = DEFAULT_REQUIRED_BALANCE;
+        
+        // Just below 128x
+        let client = MockClient::new(
+            0,
+            required_balance * 127,
+            required_balance * 127,
+        );
+        let wallet = MockWallet::new();
+        
+        let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+        assert!(result.is_ok());
+        assert!(!client.operations_log.contains("transfer_native_token"));
+        
+        // Above 128x with harvest time condition met
+        let client = MockClient::new(
+            required_balance * 256, // Set native balance high enough for harvest
+            required_balance * 129, // Set wrapped balance above 128x
+            required_balance * 129,
+        );
+        let wallet = MockWallet::new();
+        
+        // Set last harvest time to 24 hours ago
+        LAST_HARVEST.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() - INTERVAL_OF_HARVEST - 1,
+            Ordering::Relaxed,
+        );
+        
+        let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+        assert!(result.is_ok());
+        
+        // Wait a bit for the harvest operation to complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+        assert!(client.operations_log.contains("transfer_native_token"));
     }
 }
