@@ -18,36 +18,42 @@ use crate::ref_finance::token_account::{TokenInAccount, WNEAR_TOKEN};
 use crate::types::MicroNear;
 use crate::wallet::Wallet;
 use futures_util::future::join_all;
+use humantime::parse_duration;
+use near_jsonrpc_client::errors::JsonRpcError;
+use near_jsonrpc_primitives::errors::RpcError;
 use near_primitives::types::Balance;
 use once_cell::sync::Lazy;
 use std::time::Duration;
-use humantime::parse_duration;
 
 type Result<T> = anyhow::Result<T>;
 
 static TOKEN_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("TOKEN_NOT_FOUND_WAIT")
         .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(1))  // デフォルト: 1秒
+        .unwrap_or_else(|_| Duration::from_secs(1)) // デフォルト: 1秒
 });
 
 static JSONRPC_ERROR_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("JSONRPC_ERROR_WAIT")
         .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(5))  // デフォルト: 5秒
+        .unwrap_or_else(|_| Duration::from_secs(5)) // デフォルト: 5秒
 });
 
 static OTHER_ERROR_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("OTHER_ERROR_WAIT")
         .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(30))  // デフォルト: 30秒
+        .unwrap_or_else(|_| Duration::from_secs(30)) // デフォルト: 30秒
 });
 
 static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("PREVIEW_NOT_FOUND_WAIT")
         .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(10))  // デフォルト: 10秒
+        .unwrap_or_else(|_| Duration::from_secs(10)) // デフォルト: 10秒
 });
+
+fn is_jsonrpc_error<E>(maybe: Option<&JsonRpcError<E>>) -> bool {
+    maybe.is_some()
+}
 
 #[tokio::main]
 async fn main() {
@@ -86,21 +92,29 @@ async fn main_loop() -> Result<()> {
                 // WNEAR_TOKENのエラーは特別扱い
                 if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
                     if WNEAR_TOKEN.to_string().eq(name) {
-                        info!(log, "token not found, retrying after {:?}", *TOKEN_NOT_FOUND_WAIT);
+                        info!(
+                            log,
+                            "token not found, retrying after {:?}", *TOKEN_NOT_FOUND_WAIT
+                        );
                         tokio::time::sleep(*TOKEN_NOT_FOUND_WAIT).await;
                         continue;
                     }
                 }
 
                 // JSONRPCエラーかどうかを確認
-                let error_str = format!("{:?}", err);
-                if error_str.contains("JsonRpcError") {
+                if is_jsonrpc_error::<RpcError>(err.downcast_ref()) {
                     // JSONRPCエラーの場合は短い待機で再試行
-                    warn!(log, "jsonrpc error, retrying after {:?}", *JSONRPC_ERROR_WAIT);
+                    warn!(
+                        log,
+                        "jsonrpc error, retrying after {:?}", *JSONRPC_ERROR_WAIT
+                    );
                     tokio::time::sleep(*JSONRPC_ERROR_WAIT).await;
                 } else {
                     // その他のエラーは長めの待機
-                    warn!(log, "non-jsonrpc error, retrying after {:?}", *OTHER_ERROR_WAIT);
+                    warn!(
+                        log,
+                        "non-jsonrpc error, retrying after {:?}", *OTHER_ERROR_WAIT
+                    );
                     tokio::time::sleep(*OTHER_ERROR_WAIT).await;
                 }
                 continue;
@@ -194,4 +208,54 @@ where
         "out_balance" => out,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+    use near_jsonrpc_client::errors::{
+        JsonRpcError, JsonRpcServerError, JsonRpcTransportSendError, RpcTransportError,
+    };
+    use near_jsonrpc_primitives::errors::RpcError;
+    use std::io;
+
+    #[tokio::test]
+    async fn test_jsonrpc_error_handling() {
+        // JsonRpcError::ServerError の場合
+        {
+            let rpc_error = RpcError::new_internal_error(None, "test error".to_string());
+            let jsonrpc_error: JsonRpcError<RpcError> =
+                JsonRpcError::ServerError(JsonRpcServerError::NonContextualError(rpc_error));
+            let error: anyhow::Error = anyhow::Error::new(jsonrpc_error);
+            assert!(is_jsonrpc_error::<RpcError>(error.downcast_ref()));
+        }
+
+        // JsonRpcError::TransportError の場合
+        {
+            let io_error = io::Error::new(io::ErrorKind::Other, "transport error");
+            let transport_error = RpcTransportError::SendError(
+                JsonRpcTransportSendError::PayloadSerializeError(io_error),
+            );
+            let jsonrpc_error: JsonRpcError<RpcError> =
+                JsonRpcError::TransportError(transport_error);
+            let error: anyhow::Error = anyhow::Error::new(jsonrpc_error);
+            assert!(is_jsonrpc_error::<RpcError>(error.downcast_ref()));
+        }
+
+        // JsonRpcError<String> の場合（RpcError以外の型でも動作することを確認）
+        {
+            let jsonrpc_error: JsonRpcError<String> =
+                JsonRpcError::ServerError(JsonRpcServerError::InternalError {
+                    info: Some("test error".to_string()),
+                });
+            let error: anyhow::Error = anyhow::Error::new(jsonrpc_error);
+            assert!(is_jsonrpc_error::<String>(error.downcast_ref()));
+        }
+
+        // その他のエラーの場合
+        {
+            assert!(!is_jsonrpc_error::<String>(anyhow!("other error").downcast_ref()));
+        }
+    }
 }
