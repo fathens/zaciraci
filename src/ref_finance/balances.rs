@@ -898,4 +898,36 @@ mod tests {
         
         assert!(client.operations_log.contains("transfer_native_token"));
     }
+
+    #[tokio::test]
+    async fn test_start_exact_upper() {
+        initialize();
+        let required_balance = DEFAULT_REQUIRED_BALANCE;
+        
+        // Exactly 128x
+        let client = MockClient::new(
+            required_balance << 7,  // native balance
+            required_balance << 7,  // wrapped balance
+            required_balance << 7,
+        );
+        let wallet = MockWallet::new();
+        
+        // Set last harvest time to 24 hours ago
+        LAST_HARVEST.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() - INTERVAL_OF_HARVEST - 1,
+            Ordering::Relaxed,
+        );
+        
+        let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+        assert!(result.is_ok());
+        
+        // Wait a bit to ensure any async operations complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+        // Should not trigger harvest when exactly at upper limit
+        assert!(!client.operations_log.contains("transfer_native_token"));
+    }
 }
