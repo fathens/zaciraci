@@ -135,7 +135,11 @@ where
         let swaps = pre_path
             .into_iter()
             .map(|(p, v)| swap_each(client, wallet, p, v));
-        let _result = join_all(swaps).await;
+        let results = join_all(swaps).await;
+        let success_count = results.iter().filter(|r| r.is_ok()).count();
+        info!(log, "swaps completed";
+            "success" => format!("{}/{}", success_count, results.len()),
+        );
     } else {
         info!(log, "previews not found");
         tokio::time::sleep(*PREVIEW_NOT_FOUND_WAIT).await;
