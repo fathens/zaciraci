@@ -44,23 +44,24 @@ where
         "function" => "run_swap",
         "path.length" => format!("{}", path.len()),
         "initial" => initial,
+        "min_out_ratio" => min_out_ratio,
     ));
     info!(log, "entered");
 
     let mut actions = Vec::new();
     let out = path
         .iter()
-        .try_fold(initial, |prev, pair| -> Result<Balance> {
-            let amount_in = (prev == initial).then_some(U128(prev));
+        .try_fold(initial, |prev_out, pair| -> Result<Balance> {
+            let amount_in = (prev_out == initial).then_some(U128(initial));
             let pool_id = pair.pool_id() as u64;
             let token_in = pair.token_in_id();
             let token_out = pair.token_out_id();
-            let next_out = pair.estimate_return(prev)?;
+            let next_out = pair.estimate_return(prev_out)?;
             let min_out = ((next_out as f32) * min_out_ratio) as Balance;
             debug!(log, "adding swap action";
                 "pool_id" => pool_id,
                 "token_in" => format!("{}", token_in),
-                "amount_in" => prev,
+                "amount_in" => prev_out,
                 "token_out" => format!("{}", token_out),
                 "next_out" => next_out,
                 "min_out" => min_out,
