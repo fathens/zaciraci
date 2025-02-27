@@ -1,7 +1,7 @@
 use crate::logging::*;
 use near_jsonrpc_client::errors::{
-    JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError, JsonRpcTransportSendError,
-    RpcTransportError,
+    JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError, JsonRpcTransportRecvError,
+    JsonRpcTransportSendError, RpcTransportError,
 };
 use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
 use rand::Rng;
@@ -51,33 +51,132 @@ impl StandardRpcClient {
                 info!(log, "success");
                 MaybeRetry::Through(Ok(res))
             }
-            Err(err) => match err {
-                JsonRpcError::ServerError(JsonRpcServerError::ResponseStatusError(
-                    JsonRpcServerResponseStatusError::TooManyRequests,
-                )) => {
-                    info!(log, "response status error: too many requests");
-                    MaybeRetry::Retry {
-                        err,
-                        msg: "too many requests".to_owned(),
-                        min_dur: Duration::from_secs_f32(0.5),
+            Err(err) => match &err {
+                JsonRpcError::ServerError(server_err) => match server_err {
+                    JsonRpcServerError::ResponseStatusError(
+                        JsonRpcServerResponseStatusError::TooManyRequests,
+                    ) => {
+                        info!(log, "response status error: too many requests");
+                        MaybeRetry::Retry {
+                            err,
+                            msg: "too many requests".to_owned(),
+                            min_dur: Duration::from_secs(1),
+                        }
                     }
-                }
-                JsonRpcError::TransportError(RpcTransportError::SendError(
-                    JsonRpcTransportSendError::PayloadSendError(e),
-                )) => {
-                    info!(log, "transport error: payload send error: {:?}", e);
-                    MaybeRetry::Retry {
-                        err: JsonRpcError::TransportError(RpcTransportError::SendError(
-                            JsonRpcTransportSendError::PayloadSendError(e),
-                        )),
-                        msg: "payload send error".to_owned(),
-                        min_dur: Duration::ZERO,
+                    JsonRpcServerError::RequestValidationError(validation_err) => {
+                        info!(log, "server error: request validation error"; "error" => format!("{:?}", validation_err));
+                        MaybeRetry::Through(Err(err)) // リクエスト自体が無効なのでリトライしない
                     }
-                }
-                _ => {
-                    info!(log, "failure");
-                    MaybeRetry::Through(Err(err))
-                }
+                    JsonRpcServerError::HandlerError(_) => {
+                        info!(log, "server error: handler error");
+                        // ハンドラーエラーの内容によってはリトライ可能かもしれないが、
+                        // 基本的にはアプリケーションロジックのエラーなのでリトライしない
+                        MaybeRetry::Through(Err(err))
+                    }
+                    JsonRpcServerError::InternalError { info } => {
+                        info!(log, "server error: internal error"; "error_info" => format!("{:?}", info));
+                        // サーバー側の一時的な問題である可能性が高いのでリトライする
+                        MaybeRetry::Retry {
+                            err,
+                            msg: "server internal error".to_owned(),
+                            min_dur: Duration::from_secs_f32(0.5),
+                        }
+                    }
+                    JsonRpcServerError::NonContextualError(non_contextual_err) => {
+                        info!(log, "server error: non contextual error"; "error" => format!("{:?}", non_contextual_err));
+                        // 詳細不明なエラーだが、サーバー側の問題の可能性もあるので慎重にリトライ
+                        MaybeRetry::Retry {
+                            err,
+                            msg: "non contextual error".to_owned(),
+                            min_dur: Duration::from_secs_f32(0.5),
+                        }
+                    }
+                    JsonRpcServerError::ResponseStatusError(status_err) => {
+                        match status_err {
+                            JsonRpcServerResponseStatusError::Unauthorized => {
+                                info!(log, "server error: unauthorized");
+                                // 認証エラーはリトライしても解決しない
+                                MaybeRetry::Through(Err(err))
+                            }
+                            _ => {
+                                info!(log, "server error: response status error (other)"; "status_error" => format!("{:?}", status_err));
+                                // 5xx系のエラーはサーバー側の問題の可能性が高いのでリトライ
+                                let status = match status_err {
+                                    JsonRpcServerResponseStatusError::Unexpected { status } => {
+                                        Some(status)
+                                    }
+                                    _ => None,
+                                };
+
+                                if let Some(status) = status {
+                                    if status.is_server_error() {
+                                        let msg = format!("server error: {}", status);
+                                        return MaybeRetry::Retry {
+                                            err,
+                                            msg,
+                                            min_dur: Duration::from_secs_f32(0.5),
+                                        };
+                                    }
+                                }
+                                MaybeRetry::Through(Err(err))
+                            }
+                        }
+                    }
+                },
+                JsonRpcError::TransportError(transport_err) => match transport_err {
+                    RpcTransportError::SendError(send_err) => match send_err {
+                        JsonRpcTransportSendError::PayloadSendError(e) => {
+                            info!(log, "transport error: payload send error"; "error" => format!("{:?}", e));
+                            MaybeRetry::Retry {
+                                err,
+                                msg: "payload send error".to_owned(),
+                                min_dur: Duration::from_secs_f32(0.5), // ネットワーク一時障害の可能性
+                            }
+                        }
+                        JsonRpcTransportSendError::PayloadSerializeError(serialize_err) => {
+                            info!(log, "transport error: payload serialize error"; "error" => format!("{:?}", serialize_err));
+                            // シリアライズエラーはクライアント側の問題なのでリトライしない
+                            MaybeRetry::Through(Err(err))
+                        }
+                    },
+                    RpcTransportError::RecvError(recv_err) => match recv_err {
+                        JsonRpcTransportRecvError::UnexpectedServerResponse(response) => {
+                            info!(log, "transport error: unexpected server response"; "response" => format!("{:?}", response));
+                            // 予期しないレスポンス形式はリトライしても解決しにくい
+                            MaybeRetry::Through(Err(err))
+                        }
+                        JsonRpcTransportRecvError::PayloadRecvError(recv_error) => {
+                            let msg = recv_error.to_string();
+                            info!(log, "transport error: payload receive error"; "error" => format!("{:?}", recv_error));
+                            // ネットワーク一時障害の可能性が高い
+                            MaybeRetry::Retry {
+                                err,
+                                msg,
+                                min_dur: Duration::from_secs(1),
+                            }
+                        }
+                        JsonRpcTransportRecvError::PayloadParseError(parse_error) => {
+                            let msg = format!("{:?}", parse_error);
+                            info!(log, "transport error: payload parse error"; "error" => format!("{:?}", parse_error));
+                            // サーバー負荷による一時的な不完全レスポンスの可能性
+                            MaybeRetry::Retry {
+                                err,
+                                msg,
+                                min_dur: Duration::from_secs(2),
+                            }
+                        }
+                        JsonRpcTransportRecvError::ResponseParseError(response_parse_error) => {
+                            let msg = response_parse_error.to_string();
+                            info!(log, "transport error: response parse error"; "error" => format!("{:?}", response_parse_error));
+                            // サーバー側の一時的な問題の可能性
+                            MaybeRetry::Retry {
+                                err,
+                                msg,
+                                min_dur: Duration::from_secs_f32(0.5),
+                            }
+                        }
+                    },
+                },
             },
         }
     }
