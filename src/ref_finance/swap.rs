@@ -38,7 +38,6 @@ pub async fn run_swap<A, W>(
 ) -> Result<(A::Output, Balance)>
 where
     A: jsonrpc::SendTx,
-    A: 'static,
     W: Wallet,
 {
     let log = DEFAULT.new(o!(

@@ -9,7 +9,7 @@ mod types;
 mod wallet;
 mod web;
 
-use crate::jsonrpc::{GasInfo, SentTx};
+use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
@@ -102,11 +102,7 @@ async fn main_loop() -> Result<()> {
 
 async fn single_loop<A, W>(client: &A, wallet: &W) -> Result<()>
 where
-    A: jsonrpc::AccountInfo + jsonrpc::SendTx + jsonrpc::ViewContract,
-    A: GasInfo,
-    A: 'static,
-    A: Clone,
-    A: Send + Sync,
+    A: jsonrpc::AccountInfo + jsonrpc::SendTx + jsonrpc::ViewContract + jsonrpc::GasInfo,
     W: Wallet,
 {
     let log = DEFAULT.new(o!("function" => "single_loop"));
@@ -157,7 +153,6 @@ async fn swap_each<A, C, W>(
 where
     A: Into<Balance> + Copy,
     C: jsonrpc::SendTx,
-    C: 'static,
     W: Wallet,
 {
     let log = DEFAULT.new(o!(
