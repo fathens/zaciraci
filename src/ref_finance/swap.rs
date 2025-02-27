@@ -74,7 +74,7 @@ where
                 min_amount_out: U128(min_out),
             };
             actions.push(action);
-            Ok(min_out)
+            Ok(next_out)
         })?;
     let args = json!({
         "actions": actions,
