@@ -13,7 +13,6 @@ use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Once;
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
@@ -73,9 +72,17 @@ where
         refill(client, wallet, required_balance - wrapped_balance).await?;
         Ok(wrapped_balance)
     } else {
-        let upper = required_balance << 7;  // 128倍
+        let upper = required_balance << 7; // 128倍
         if upper < wrapped_balance {
-            match harvest(client, wallet, &WNEAR_TOKEN, wrapped_balance - upper, required_balance).await {
+            match harvest(
+                client,
+                wallet,
+                &WNEAR_TOKEN,
+                wrapped_balance - upper,
+                required_balance,
+            )
+            .await
+            {
                 Ok(_) => info!(log, "successfully harvested"),
                 Err(err) => warn!(log, "failed to harvest: {}", err),
             }
@@ -190,7 +197,7 @@ where
         .await?;
     let account = wallet.account_id();
     let native_balance = client.get_native_amount(account).await?;
-    let upper = required << 7;  // 128倍
+    let upper = required << 7; // 128倍
     info!(log, "checking";
         "native_balance" => %native_balance,
         "upper" => %upper,
@@ -222,7 +229,7 @@ mod tests {
     use near_sdk::json_types::U128;
     use serde_json::json;
     use std::cell::Cell;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Once};
 
     static INIT: Once = Once::new();
 
@@ -369,8 +376,7 @@ mod tests {
                 }
                 "withdraw" => {
                     let args_str = serde_json::to_string(&args).unwrap();
-                    let args_value: serde_json::Value =
-                        serde_json::from_str(&args_str).unwrap();
+                    let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
                     let amount: Balance = args_value["amount"]
                         .as_str()
                         .and_then(|s| s.parse().ok())
@@ -467,7 +473,7 @@ mod tests {
         let client = MockClient::new(DEFAULT_REQUIRED_BALANCE << 5, 0, 0);
         let wallet = MockWallet::new();
 
-        let result = start(&client, &wallet, &*WNEAR_TOKEN).await;
+        let result = start(&client, &wallet, &WNEAR_TOKEN).await;
         let balance = result.unwrap();
         assert!(balance.is_zero());
 
@@ -858,19 +864,15 @@ mod tests {
     async fn test_start_boundary_values() {
         initialize();
         let required_balance = DEFAULT_REQUIRED_BALANCE;
-        
+
         // Just below 128x
-        let client = MockClient::new(
-            0,
-            required_balance * 127,
-            required_balance * 127,
-        );
+        let client = MockClient::new(0, required_balance * 127, required_balance * 127);
         let wallet = MockWallet::new();
-        
+
         let result = start(&client, &wallet, &WNEAR_TOKEN).await;
         assert!(result.is_ok());
         assert!(!client.operations_log.contains("transfer_native_token"));
-        
+
         // Above 128x with harvest time condition met
         let client = MockClient::new(
             required_balance * 256, // Set native balance high enough for harvest
@@ -878,22 +880,24 @@ mod tests {
             required_balance * 129,
         );
         let wallet = MockWallet::new();
-        
+
         // Set last harvest time to 24 hours ago
         LAST_HARVEST.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() - INTERVAL_OF_HARVEST - 1,
+                .as_secs()
+                - INTERVAL_OF_HARVEST
+                - 1,
             Ordering::Relaxed,
         );
-        
+
         let result = start(&client, &wallet, &WNEAR_TOKEN).await;
         assert!(result.is_ok());
-        
+
         // Wait a bit for the harvest operation to complete
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
+
         assert!(client.operations_log.contains("transfer_native_token"));
     }
 
@@ -901,30 +905,32 @@ mod tests {
     async fn test_start_exact_upper() {
         initialize();
         let required_balance = DEFAULT_REQUIRED_BALANCE;
-        
+
         // Exactly 128x
         let client = MockClient::new(
-            required_balance << 7,  // native balance
-            required_balance << 7,  // wrapped balance
+            required_balance << 7, // native balance
+            required_balance << 7, // wrapped balance
             required_balance << 7,
         );
         let wallet = MockWallet::new();
-        
+
         // Set last harvest time to 24 hours ago
         LAST_HARVEST.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() - INTERVAL_OF_HARVEST - 1,
+                .as_secs()
+                - INTERVAL_OF_HARVEST
+                - 1,
             Ordering::Relaxed,
         );
-        
+
         let result = start(&client, &wallet, &WNEAR_TOKEN).await;
         assert!(result.is_ok());
-        
+
         // Wait a bit to ensure any async operations complete
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
+
         // Should not trigger harvest when exactly at upper limit
         assert!(!client.operations_log.contains("transfer_native_token"));
     }
@@ -933,34 +939,37 @@ mod tests {
     async fn test_start_harvest_time_condition() {
         initialize();
         let required_balance = DEFAULT_REQUIRED_BALANCE;
-        
+
         // Set balance above 128x to meet the balance condition
         let client = MockClient::new(
-            required_balance << 8,  // 256x native balance
-            required_balance << 8,  // 256x wrapped balance
+            required_balance << 8, // 256x native balance
+            required_balance << 8, // 256x wrapped balance
             required_balance << 8,
         );
         let wallet = MockWallet::new();
-        
+
         // Set last harvest time to 12 hours ago (less than INTERVAL_OF_HARVEST)
         LAST_HARVEST.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() - INTERVAL_OF_HARVEST / 2,  // 12 hours ago
+                .as_secs()
+                - INTERVAL_OF_HARVEST / 2, // 12 hours ago
             Ordering::Relaxed,
         );
-        
+
         let result = start(&client, &wallet, &WNEAR_TOKEN).await;
         assert!(result.is_ok());
-        
+
         // Wait a bit to ensure any async operations complete
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
+
         // Should not trigger harvest when time condition is not met
         assert!(!client.operations_log.contains("transfer_native_token"));
-        
+
         // Verify that get_deposits was called (normal operation)
-        assert!(client.operations_log.contains("view_contract: get_deposits"));
+        assert!(client
+            .operations_log
+            .contains("view_contract: get_deposits"));
     }
 }

@@ -19,8 +19,6 @@ use crate::types::MicroNear;
 use crate::wallet::Wallet;
 use futures_util::future::join_all;
 use humantime::parse_duration;
-use near_jsonrpc_client::errors::JsonRpcError;
-use near_jsonrpc_primitives::errors::RpcError;
 use near_primitives::types::Balance;
 use once_cell::sync::Lazy;
 use std::time::Duration;
@@ -44,10 +42,6 @@ static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
         .and_then(|v| Ok(parse_duration(&v)?))
         .unwrap_or_else(|_| Duration::from_secs(10)) // デフォルト: 10秒
 });
-
-fn is_jsonrpc_error<E>(maybe: Option<&JsonRpcError<E>>) -> bool {
-    maybe.is_some()
-}
 
 #[tokio::main]
 async fn main() {
