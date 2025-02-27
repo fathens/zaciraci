@@ -184,7 +184,7 @@ where
     let (sent_tx, out) = match swap_result {
         Ok(result) => result,
         Err(e) => {
-            error!(log, "swap operation failed"; "error" => %e);
+            error!(log, "swap operation failed"; "error" => ?e);
             return Err(e);
         }
     };
