@@ -12,6 +12,12 @@ pub struct StandardSentTx<A> {
     tx_hash: CryptoHash,
 }
 
+impl<A> std::fmt::Display for StandardSentTx<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tx(account={}, hash={})", self.account, self.tx_hash)
+    }
+}
+
 impl<A> StandardSentTx<A> {
     pub fn new(tx_info: A, account: AccountId, tx_hash: CryptoHash) -> Self {
         Self {

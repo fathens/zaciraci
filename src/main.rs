@@ -100,9 +100,10 @@ async fn main_loop() -> Result<()> {
     }
 }
 
-async fn single_loop<A, W>(client: &A, wallet: &W) -> Result<()>
+async fn single_loop<C, W>(client: &C, wallet: &W) -> Result<()>
 where
-    A: jsonrpc::AccountInfo + jsonrpc::SendTx + jsonrpc::ViewContract + jsonrpc::GasInfo,
+    C: jsonrpc::AccountInfo + jsonrpc::SendTx + jsonrpc::ViewContract + jsonrpc::GasInfo,
+    <C as jsonrpc::SendTx>::Output: std::fmt::Display,
     W: Wallet,
 {
     let log = DEFAULT.new(o!("function" => "single_loop"));
@@ -153,6 +154,7 @@ async fn swap_each<A, C, W>(
 where
     A: Into<Balance> + Copy,
     C: jsonrpc::SendTx,
+    <C as jsonrpc::SendTx>::Output: std::fmt::Display,
     W: Wallet,
 {
     let log = DEFAULT.new(o!(
@@ -170,15 +172,27 @@ where
         "under_limit" => ?under_limit,
         "ratio_by_step" => ?ratio_by_step,
     );
-    let (tx_hash, out) = ref_finance::swap::run_swap(
+    let swap_result = ref_finance::swap::run_swap(
         client,
         wallet,
         &path,
         preview.input_value.into(),
         ratio_by_step,
     )
-    .await?;
-    tx_hash.wait_for_success().await?;
+    .await;
+
+    let (sent_tx, out) = match swap_result {
+        Ok(result) => result,
+        Err(e) => {
+            error!(log, "swap operation failed"; "error" => %e);
+            return Err(e);
+        }
+    };
+
+    if let Err(e) = sent_tx.wait_for_success().await {
+        error!(log, "transaction failed"; "tx" => %sent_tx, "error" => %e);
+        return Err(e);
+    }
 
     info!(log, "swap done";
         "out_balance" => out,
