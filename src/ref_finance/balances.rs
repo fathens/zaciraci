@@ -219,6 +219,7 @@ where
     }
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +229,7 @@ mod tests {
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
     use near_sdk::json_types::U128;
     use serde_json::json;
+    use serial_test::serial;
     use std::cell::Cell;
     use std::sync::{Arc, Mutex, Once};
 
@@ -483,6 +485,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(harvest)]
     async fn test_harvest_with_sufficient_balance() {
         initialize();
 
@@ -515,6 +518,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(harvest)]
     fn test_is_time_to_harvest() {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -531,6 +535,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(harvest)]
     fn test_update_last_harvest() {
         LAST_HARVEST.store(0, Ordering::Relaxed);
         update_last_harvest();
@@ -861,6 +866,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(harvest)]
     async fn test_start_boundary_values() {
         initialize();
         let required_balance = DEFAULT_REQUIRED_BALANCE;
@@ -895,13 +901,11 @@ mod tests {
         let result = start(&client, &wallet, &WNEAR_TOKEN).await;
         assert!(result.is_ok());
 
-        // Wait a bit for the harvest operation to complete
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
         assert!(client.operations_log.contains("transfer_native_token"));
     }
 
     #[tokio::test]
+    #[serial(harvest)]
     async fn test_start_exact_upper() {
         initialize();
         let required_balance = DEFAULT_REQUIRED_BALANCE;
@@ -936,6 +940,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(harvest)]
     async fn test_start_harvest_time_condition() {
         initialize();
         let required_balance = DEFAULT_REQUIRED_BALANCE;
