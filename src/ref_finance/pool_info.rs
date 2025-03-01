@@ -17,6 +17,21 @@ use std::sync::{Arc, LazyLock};
 
 const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
 
+/// TokenPair の機能を抽象化するトレイト
+pub trait TokenPairLike {
+    /// プールIDを返す
+    fn pool_id(&self) -> u64;
+
+    /// 入力トークンIDを返す
+    fn token_in_id(&self) -> TokenInAccount;
+
+    /// 出力トークンIDを返す
+    fn token_out_id(&self) -> TokenOutAccount;
+
+    /// 入力量から推定出力量を計算する
+    fn estimate_return(&self, amount_in: u128) -> Result<u128>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolInfoBared {
     pub pool_kind: String,
@@ -40,6 +55,13 @@ pub struct PoolInfoList {
     by_id: HashMap<u32, Arc<PoolInfo>>,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct TokenPairId {
+    pub pool_id: u32,
+    pub token_in: TokenIn,
+    pub token_out: TokenOut,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenPair {
     pool: Arc<PoolInfo>,
@@ -47,11 +69,30 @@ pub struct TokenPair {
     pub token_out: TokenOut,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct TokenPairId {
-    pub pool_id: u32,
-    pub token_in: TokenIn,
-    pub token_out: TokenOut,
+// TokenPairLike トレイトの実装
+impl TokenPairLike for TokenPair {
+    fn pool_id(&self) -> u64 {
+        self.pool.id as u64
+    }
+
+    fn token_in_id(&self) -> TokenInAccount {
+        self.pool
+            .token(self.token_in.as_index())
+            .map(|v| v.into())
+            .expect("should be valid index")
+    }
+
+    fn token_out_id(&self) -> TokenOutAccount {
+        self.pool
+            .token(self.token_out.as_index())
+            .map(|v| v.into())
+            .expect("should be valid index")
+    }
+
+    fn estimate_return(&self, amount_in: u128) -> Result<u128> {
+        self.pool
+            .estimate_return(self.token_in, amount_in, self.token_out)
+    }
 }
 
 impl TokenPair {
@@ -61,24 +102,6 @@ impl TokenPair {
             token_in: self.token_in,
             token_out: self.token_out,
         }
-    }
-
-    pub fn pool_id(&self) -> u32 {
-        self.pool.id
-    }
-
-    pub fn token_in_id(&self) -> TokenInAccount {
-        self.pool
-            .token(self.token_in.as_index())
-            .map(|v| v.into())
-            .expect("should be valid index")
-    }
-
-    pub fn token_out_id(&self) -> TokenOutAccount {
-        self.pool
-            .token(self.token_out.as_index())
-            .map(|v| v.into())
-            .expect("should be valid index")
     }
 
     pub fn estimate_normal_return(&self) -> Result<(u128, u128)> {
@@ -91,11 +114,6 @@ impl TokenPair {
             .pool
             .estimate_return(self.token_in, in_value, self.token_out)?;
         Ok((in_value, out_value))
-    }
-
-    pub fn estimate_return(&self, amount_in: u128) -> Result<u128> {
-        self.pool
-            .estimate_return(self.token_in, amount_in, self.token_out)
     }
 
     pub async fn get_return<C: ViewContract>(&self, client: &C, amount_in: u128) -> Result<u128> {

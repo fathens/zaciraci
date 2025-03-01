@@ -1,5 +1,5 @@
 use crate::logging::*;
-use crate::ref_finance::pool_info::TokenPair;
+use crate::ref_finance::pool_info::{TokenPair, TokenPairLike};
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::wallet::Wallet;
@@ -29,6 +29,56 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
+/// 単一のスワップアクションを生成する関数
+pub fn create_swap_action<T>(
+    pair: &T,
+    prev_amount: Balance,
+    is_first_swap: bool,
+    min_out_ratio: f32,
+) -> Result<(SwapAction, Balance)>
+where
+    T: TokenPairLike,
+{
+    let amount_in = is_first_swap.then_some(U128(prev_amount));
+    let pool_id = pair.pool_id();
+    let token_in = pair.token_in_id();
+    let token_out = pair.token_out_id();
+    let next_out = pair.estimate_return(prev_amount)?;
+    let min_out = ((next_out as f32) * min_out_ratio) as Balance;
+
+    let action = SwapAction {
+        pool_id,
+        token_in: token_in.as_id().to_owned(),
+        amount_in,
+        token_out: token_out.as_id().to_owned(),
+        min_amount_out: U128(min_out),
+    };
+
+    Ok((action, next_out))
+}
+
+/// パスに沿って複数のスワップアクションを生成する関数
+pub fn build_swap_actions<T>(
+    path: &[T],
+    initial: Balance,
+    min_out_ratio: f32,
+) -> Result<(Vec<SwapAction>, Balance)>
+where
+    T: TokenPairLike,
+{
+    let mut actions = Vec::new();
+    let out = path
+        .iter()
+        .try_fold(initial, |prev_out, pair| -> Result<Balance> {
+            let is_first = prev_out == initial;
+            let (action, next_out) = create_swap_action(pair, prev_out, is_first, min_out_ratio)?;
+            actions.push(action);
+            Ok(next_out)
+        })?;
+
+    Ok((actions, out))
+}
+
 pub async fn run_swap<A, W>(
     client: &A,
     wallet: &W,
@@ -48,34 +98,22 @@ where
     ));
     info!(log, "entered");
 
-    let mut actions = Vec::new();
-    let out = path
-        .iter()
-        .try_fold(initial, |prev_out, pair| -> Result<Balance> {
-            let amount_in = (prev_out == initial).then_some(U128(initial));
-            let pool_id = pair.pool_id() as u64;
-            let token_in = pair.token_in_id();
-            let token_out = pair.token_out_id();
-            let next_out = pair.estimate_return(prev_out)?;
-            let min_out = ((next_out as f32) * min_out_ratio) as Balance;
-            debug!(log, "adding swap action";
-                "pool_id" => pool_id,
-                "token_in" => format!("{}", token_in),
-                "amount_in" => prev_out,
-                "token_out" => format!("{}", token_out),
-                "next_out" => next_out,
-                "min_out" => min_out,
+    // ジェネリックな build_swap_actions を使用
+    let (actions, out) = build_swap_actions(path, initial, min_out_ratio)?;
+
+    // デバッグログ
+    if log.is_debug_enabled() {
+        for action in &actions {
+            debug!(log, "swap action";
+                "pool_id" => action.pool_id,
+                "token_in" => format!("{}", action.token_in),
+                "amount_in" => action.amount_in.map_or(0, |u| u.0),
+                "token_out" => format!("{}", action.token_out),
+                "min_amount_out" => action.min_amount_out.0,
             );
-            let action = SwapAction {
-                pool_id,
-                token_in: token_in.as_id().to_owned(),
-                amount_in,
-                token_out: token_out.as_id().to_owned(),
-                min_amount_out: U128(min_out),
-            };
-            actions.push(action);
-            Ok(next_out)
-        })?;
+        }
+    }
+
     let args = json!({
         "actions": actions,
     });

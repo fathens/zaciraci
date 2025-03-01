@@ -1,5 +1,5 @@
 use crate::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx};
-use crate::ref_finance::pool_info;
+use crate::ref_finance::pool_info::{self, TokenPairLike};
 use crate::ref_finance::token_account::TokenAccount;
 use crate::types::{MicroNear, MilliNear};
 use crate::wallet::Wallet;
