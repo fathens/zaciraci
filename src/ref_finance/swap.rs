@@ -185,9 +185,216 @@ fn calculate_ratio_by_step(output_value: Balance, under_limit: f32, steps: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
     use proptest::prelude::*;
     use proptest::prop_oneof;
     use proptest::strategy::Just;
+
+    struct MockTokenPair {
+        pool_id: u64,
+        token_in: TokenAccount,
+        token_out: TokenAccount,
+        rate: f32,
+    }
+
+    impl TokenPairLike for MockTokenPair {
+        fn pool_id(&self) -> u64 {
+            self.pool_id
+        }
+
+        fn token_in_id(&self) -> TokenInAccount {
+            self.token_in.clone().into()
+        }
+
+        fn token_out_id(&self) -> TokenOutAccount {
+            self.token_out.clone().into()
+        }
+
+        fn estimate_return(&self, amount_in: u128) -> Result<u128> {
+            let amount_out = (amount_in as f32 * self.rate) as u128;
+            Ok(amount_out)
+        }
+    }
+
+    #[test]
+    fn test_create_swap_action() {
+        let pair = MockTokenPair {
+            pool_id: 123,
+            token_in: "token_a".parse().unwrap(),
+            token_out: "token_b".parse().unwrap(),
+            rate: 0.9,
+        };
+
+        // 最初のスワップアクション（amount_inが設定される）
+        let prev_out = OutputValue {
+            estimated: 1000,
+            minimum: 1000,
+        };
+        let min_out_ratio = 0.8;
+
+        let (action, output) = create_swap_action(&pair, prev_out, true, min_out_ratio).unwrap();
+
+        // 検証
+        assert_eq!(action.pool_id, 123);
+        assert_eq!(action.token_in.to_string(), "token_a");
+        assert_eq!(action.token_out.to_string(), "token_b");
+        assert_eq!(action.amount_in, Some(U128(1000)));
+        assert_eq!(action.min_amount_out.0, 720); // 1000 * 0.9 * 0.8 = 720
+
+        // 期待される出力値
+        assert_eq!(output.estimated, 900); // 1000 * 0.9 = 900
+        assert_eq!(output.minimum, 720); // 1000 * 0.9 * 0.8 = 720
+
+        // 連続したスワップアクション（amount_inはNone）
+        let (action2, output2) = create_swap_action(&pair, output, false, min_out_ratio).unwrap();
+
+        // 検証
+        assert_eq!(action2.amount_in, None);
+        assert_eq!(output2.estimated, 810); // 900 * 0.9 = 810
+        assert_eq!(output2.minimum, 519); // 720 * 0.9 * 0.8 = 518.3999 -> 519 切り上げられる
+    }
+
+    #[test]
+    fn test_build_swap_actions_single_pair() {
+        // 単一のペアでのスワップテスト
+        let pair = MockTokenPair {
+            pool_id: 1,
+            token_in: "token_a".parse().unwrap(),
+            token_out: "token_b".parse().unwrap(),
+            rate: 0.9,
+        };
+
+        let initial = 1000;
+        let min_out_ratio = 0.8;
+
+        let (actions, output) = build_swap_actions(&[pair], initial, min_out_ratio).unwrap();
+
+        // 検証
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].pool_id, 1);
+        assert_eq!(actions[0].token_in.to_string(), "token_a");
+        assert_eq!(actions[0].token_out.to_string(), "token_b");
+        assert_eq!(actions[0].amount_in, Some(U128(1000)));
+        assert_eq!(actions[0].min_amount_out.0, 720); // 1000 * 0.9 * 0.8
+
+        assert_eq!(output.estimated, 900); // 1000 * 0.9
+        assert_eq!(output.minimum, 720); // 1000 * 0.9 * 0.8
+    }
+
+    #[test]
+    fn test_build_swap_actions_multiple_pairs() {
+        // 複数のペアを経由するスワップテスト
+        let pair1 = MockTokenPair {
+            pool_id: 1,
+            token_in: "token_a".parse().unwrap(),
+            token_out: "token_b".parse().unwrap(),
+            rate: 0.9,
+        };
+
+        let pair2 = MockTokenPair {
+            pool_id: 2,
+            token_in: "token_b".parse().unwrap(),
+            token_out: "token_c".parse().unwrap(),
+            rate: 0.95,
+        };
+
+        let pair3 = MockTokenPair {
+            pool_id: 3,
+            token_in: "token_c".parse().unwrap(),
+            token_out: "token_d".parse().unwrap(),
+            rate: 0.98,
+        };
+
+        let initial = 1000;
+        let min_out_ratio = 0.8;
+
+        let path = vec![pair1, pair2, pair3];
+        let (actions, output) = build_swap_actions(&path, initial, min_out_ratio).unwrap();
+
+        // 検証
+        assert_eq!(actions.len(), 3);
+
+        // 最初のアクションの検証
+        assert_eq!(actions[0].pool_id, 1);
+        assert_eq!(actions[0].token_in.to_string(), "token_a");
+        assert_eq!(actions[0].token_out.to_string(), "token_b");
+        assert_eq!(actions[0].amount_in, Some(U128(1000)));
+        assert_eq!(actions[0].min_amount_out.0, 720); // 1000 * 0.9 * 0.8
+
+        // 2番目のアクションの検証
+        assert_eq!(actions[1].pool_id, 2);
+        assert_eq!(actions[1].token_in.to_string(), "token_b");
+        assert_eq!(actions[1].token_out.to_string(), "token_c");
+        assert_eq!(actions[1].amount_in, None);
+        assert_eq!(
+            actions[1].min_amount_out.0,
+            (actions[0].min_amount_out.0 as f32 * path[1].rate * min_out_ratio).ceil() as u128
+        );
+
+        // 3番目のアクションの検証
+        assert_eq!(actions[2].pool_id, 3);
+        assert_eq!(actions[2].token_in.to_string(), "token_c");
+        assert_eq!(actions[2].token_out.to_string(), "token_d");
+        assert_eq!(actions[2].amount_in, None);
+        assert_eq!(
+            actions[2].min_amount_out.0,
+            (actions[1].min_amount_out.0 as f32 * path[2].rate * min_out_ratio).ceil() as u128
+        );
+
+        // 最終的な出力の検証
+        // 1000 * 0.9 * 0.95 * 0.98 = 837.8999 ≈ 838
+        let expected_estimate = (1000_f32 * path[0].rate * path[1].rate * path[2].rate) as u128;
+        assert_eq!(output.estimated, expected_estimate);
+
+        // 最小出力値の検証（各ステップでmin_out_ratioを適用）
+        let expected_minimum = (((1000_f32 * path[0].rate * min_out_ratio)
+            * (path[1].rate * min_out_ratio))
+            * (path[2].rate * min_out_ratio))
+            .ceil() as u128;
+        assert_eq!(output.minimum, expected_minimum);
+        assert_eq!(output.minimum, actions[2].min_amount_out.0);
+    }
+
+    #[test]
+    fn test_build_swap_actions_empty_path() {
+        // 空のパスでのテスト
+        let initial = 1000;
+        let min_out_ratio = 0.8;
+        let path: Vec<MockTokenPair> = vec![];
+
+        let result = build_swap_actions(&path, initial, min_out_ratio);
+
+        // 期待される動作：空のアクションリストとinputと同じ値のoutputを返す
+        match result {
+            Ok((actions, output)) => {
+                assert!(actions.is_empty());
+                assert_eq!(output.estimated, initial);
+                assert_eq!(output.minimum, initial);
+            }
+            Err(_) => panic!("Expected successful execution with empty path"),
+        }
+    }
+
+    #[test]
+    fn test_build_swap_actions_with_very_small_amounts() {
+        // 非常に小さい金額のテスト
+        let pair = MockTokenPair {
+            pool_id: 1,
+            token_in: "token_a".parse().unwrap(),
+            token_out: "token_b".parse().unwrap(),
+            rate: 0.9,
+        };
+
+        let initial = 1; // 最小の金額
+        let min_out_ratio = 0.8;
+
+        let (actions, output) = build_swap_actions(&[pair], initial, min_out_ratio).unwrap();
+
+        // 検証
+        assert_eq!(actions.len(), 1);
+        assert_eq!(output.estimated, 0); // 1 * 0.9 = 0.9 → 0 (整数の切り捨て)
+        assert_eq!(actions[0].min_amount_out.0, 0);
+    }
 
     proptest! {
         // calculate_ratio_by_stepのプロパティテスト
