@@ -29,32 +29,39 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OutputValue {
+    pub estimated: Balance,
+    pub minimum: Balance,
+}
+
 /// 単一のスワップアクションを生成する関数
 pub fn create_swap_action<T>(
     pair: &T,
-    prev_amount: Balance,
+    prev_out: OutputValue,
     is_first_swap: bool,
     min_out_ratio: f32,
-) -> Result<(SwapAction, Balance)>
+) -> Result<(SwapAction, OutputValue)>
 where
     T: TokenPairLike,
 {
-    let amount_in = is_first_swap.then_some(U128(prev_amount));
+    let amount_in = is_first_swap.then_some(U128(prev_out.estimated));
     let pool_id = pair.pool_id();
     let token_in = pair.token_in_id();
     let token_out = pair.token_out_id();
-    let next_out = pair.estimate_return(prev_amount)?;
-    let min_out = ((next_out as f32) * min_out_ratio) as Balance;
+    let estimated = pair.estimate_return(prev_out.estimated)?;
+    let minimum = pair.estimate_return(prev_out.minimum)?;
+    let minimum = ((minimum as f32) * min_out_ratio).ceil() as Balance;
 
     let action = SwapAction {
         pool_id,
         token_in: token_in.as_id().to_owned(),
         amount_in,
         token_out: token_out.as_id().to_owned(),
-        min_amount_out: U128(min_out),
+        min_amount_out: U128(minimum),
     };
 
-    Ok((action, next_out))
+    Ok((action, OutputValue { estimated, minimum }))
 }
 
 /// パスに沿って複数のスワップアクションを生成する関数
@@ -62,7 +69,7 @@ pub fn build_swap_actions<T>(
     path: &[T],
     initial: Balance,
     min_out_ratio: f32,
-) -> Result<(Vec<SwapAction>, Balance)>
+) -> Result<(Vec<SwapAction>, OutputValue)>
 where
     T: TokenPairLike,
 {
@@ -75,10 +82,13 @@ where
     info!(log, "building swap actions");
 
     let mut actions = Vec::new();
-    let out = path
-        .iter()
-        .try_fold(initial, |prev_out, pair| -> Result<Balance> {
-            let is_first = prev_out == initial;
+    let out = path.iter().try_fold(
+        OutputValue {
+            estimated: initial,
+            minimum: initial,
+        },
+        |prev_out, pair| -> Result<OutputValue> {
+            let is_first = prev_out.estimated == initial;
             let (action, next_out) = create_swap_action(pair, prev_out, is_first, min_out_ratio)?;
 
             // デバッグログをここで出力
@@ -88,14 +98,17 @@ where
                 "amount_in" => action.amount_in.map_or(0, |u| u.0),
                 "token_out" => format!("{}", action.token_out),
                 "min_amount_out" => action.min_amount_out.0,
-                "estimated_out" => next_out,
+                "estimated_out" => next_out.estimated,
             );
 
             actions.push(action);
             Ok(next_out)
-        })?;
+        },
+    )?;
 
-    info!(log, "finished building swap actions"; o!("estimated_total_out" => format!("{}", out)));
+    info!(log, "finished building swap actions";
+        o!("estimated_total_out" => format!("{:?}", out)),
+    );
     Ok((actions, out))
 }
 
@@ -105,7 +118,7 @@ pub async fn run_swap<A, W>(
     path: &[TokenPair],
     initial: Balance,
     under_limit: f32,
-) -> Result<(A::Output, Balance)>
+) -> Result<(A::Output, OutputValue)>
 where
     A: jsonrpc::SendTx,
     W: Wallet,

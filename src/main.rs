@@ -189,7 +189,8 @@ where
     }
 
     info!(log, "swap done";
-        "out_balance" => out,
+        "estimated_output" => out.estimated,
+        "minimum_output" => out.minimum,
     );
     Ok(())
 }

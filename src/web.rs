@@ -232,14 +232,14 @@ async fn run_swap(
     ref_finance::storage::check_and_deposit(&client, &wallet, &tokens)
         .await
         .unwrap();
-    let ratio = min_out_ratio as f32 / 100.0;
+    let under_limit = (min_out_ratio as f32 / 100.0) * amount_in as f32;
 
-    let res = ref_finance::swap::run_swap(&client, &wallet, &path, amount_in, ratio).await;
+    let res = ref_finance::swap::run_swap(&client, &wallet, &path, amount_in, under_limit).await;
 
     match res {
         Ok((tx_hash, value)) => {
             let outcome = tx_hash.wait_for_success().await.unwrap();
-            format!("Result: {value} ({outcome:?})")
+            format!("Result: {value:?} ({outcome:?})")
         }
         Err(e) => format!("Error: {e}"),
     }
