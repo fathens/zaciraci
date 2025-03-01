@@ -165,14 +165,13 @@ where
     ));
 
     let under_limit = calculate_under_limit(preview.output_value, preview.gain);
-    let ratio_by_step = calculate_ratio_by_step(preview.output_value, under_limit, path.len());
 
     let swap_result = ref_finance::swap::run_swap(
         client,
         wallet,
         &path,
         preview.input_value.into(),
-        ratio_by_step,
+        under_limit,
     )
     .await;
 
@@ -198,27 +197,6 @@ where
 // output_valueとgainからunder_limitを計算する関数
 fn calculate_under_limit(output_value: Balance, gain: Balance) -> f32 {
     output_value as f32 - gain as f32 * 0.99
-}
-
-// output_valueとgainから、ratio_by_stepを計算する関数
-fn calculate_ratio_by_step(output_value: Balance, under_limit: f32, steps: usize) -> f32 {
-    let log = DEFAULT.new(o!(
-        "function" => "calculate_ratio_by_step",
-        "output_value" => format!("{}", output_value),
-        "under_limit" => format!("{}", under_limit),
-        "steps" => format!("{}", steps),
-    ));
-
-    let under_ratio = under_limit / (output_value as f32);
-
-    // stepsの乗根を計算（steps乗してunder_ratioになるような値）
-    let ratio_by_step = under_ratio.powf(1.0 / steps as f32);
-
-    info!(log, "calculated";
-        "under_limit" => ?under_limit,
-        "ratio_by_step" => ?ratio_by_step,
-    );
-    ratio_by_step
 }
 
 #[cfg(test)]
@@ -248,37 +226,6 @@ mod tests {
                 // gainが0の場合、under_limitはoutput_valueと等しい
                 prop_assert_eq!(under_limit, output_value as f32);
             }
-        }
-
-        // calculate_ratio_by_stepのプロパティテスト
-        #[test]
-        fn prop_ratio_by_step_composes_correctly(
-            output_value in 1_000_000_000_000_000_000_000_000..10_000_000_000_000_000_000_000_000u128,
-            under_limit_ratio in 0.5f32..0.99f32,
-            steps in prop_oneof![Just(1usize), 2usize..10usize]
-        ) {
-            let under_limit = (output_value as f32) * under_limit_ratio;
-
-            let ratio_by_step = calculate_ratio_by_step(output_value, under_limit, steps);
-
-            // ratio_by_stepをsteps回掛け合わせるとunder_ratioになることを確認
-            // steps = 1 の場合は計算不要
-            let total_ratio = if steps == 1 {
-                ratio_by_step
-            } else {
-                ratio_by_step.powi(steps as i32)
-            };
-            let expected_ratio = under_limit / (output_value as f32);
-
-            // 浮動小数点の精度の問題を考慮して、許容誤差を設定
-            let epsilon = 0.001f32;
-
-            // total_ratioがexpected_ratioに近いことを確認
-            prop_assert!((total_ratio - expected_ratio).abs() <= epsilon);
-
-            // 最終的な出力値がunder_limitに近いことを確認
-            let final_output = (output_value as f32) * total_ratio;
-            prop_assert!((final_output - under_limit).abs() <= epsilon * (output_value as f32));
         }
     }
 }

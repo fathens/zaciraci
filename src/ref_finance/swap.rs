@@ -66,16 +66,36 @@ pub fn build_swap_actions<T>(
 where
     T: TokenPairLike,
 {
+    let log = DEFAULT.new(o!(
+        "function" => "build_swap_actions",
+        "path.length" => format!("{}", path.len()),
+        "initial" => initial,
+        "min_out_ratio" => min_out_ratio,
+    ));
+    info!(log, "building swap actions");
+
     let mut actions = Vec::new();
     let out = path
         .iter()
         .try_fold(initial, |prev_out, pair| -> Result<Balance> {
             let is_first = prev_out == initial;
             let (action, next_out) = create_swap_action(pair, prev_out, is_first, min_out_ratio)?;
+
+            // デバッグログをここで出力
+            debug!(log, "created swap action";
+                "pool_id" => action.pool_id,
+                "token_in" => format!("{}", action.token_in),
+                "amount_in" => action.amount_in.map_or(0, |u| u.0),
+                "token_out" => format!("{}", action.token_out),
+                "min_amount_out" => action.min_amount_out.0,
+                "estimated_out" => next_out,
+            );
+
             actions.push(action);
             Ok(next_out)
         })?;
 
+    info!(log, "finished building swap actions"; o!("estimated_total_out" => format!("{}", out)));
     Ok((actions, out))
 }
 
@@ -84,7 +104,7 @@ pub async fn run_swap<A, W>(
     wallet: &W,
     path: &[TokenPair],
     initial: Balance,
-    min_out_ratio: f32,
+    under_limit: f32,
 ) -> Result<(A::Output, Balance)>
 where
     A: jsonrpc::SendTx,
@@ -94,25 +114,12 @@ where
         "function" => "run_swap",
         "path.length" => format!("{}", path.len()),
         "initial" => initial,
-        "min_out_ratio" => min_out_ratio,
+        "under_limit" => under_limit,
     ));
     info!(log, "entered");
 
-    // ジェネリックな build_swap_actions を使用
-    let (actions, out) = build_swap_actions(path, initial, min_out_ratio)?;
-
-    // デバッグログ
-    if log.is_debug_enabled() {
-        for action in &actions {
-            debug!(log, "swap action";
-                "pool_id" => action.pool_id,
-                "token_in" => format!("{}", action.token_in),
-                "amount_in" => action.amount_in.map_or(0, |u| u.0),
-                "token_out" => format!("{}", action.token_out),
-                "min_amount_out" => action.min_amount_out.0,
-            );
-        }
-    }
+    let ratio_by_step = calculate_ratio_by_step(initial, under_limit, path.len());
+    let (actions, out) = build_swap_actions(path, initial, ratio_by_step)?;
 
     let args = json!({
         "actions": actions,
@@ -139,4 +146,66 @@ pub fn gather_token_accounts(pairs_list: &[&[TokenPair]]) -> Vec<TokenAccount> {
     tokens.sort();
     tokens.dedup();
     tokens
+}
+
+// output_valueとgainから、ratio_by_stepを計算する関数
+fn calculate_ratio_by_step(output_value: Balance, under_limit: f32, steps: usize) -> f32 {
+    let log = DEFAULT.new(o!(
+        "function" => "calculate_ratio_by_step",
+        "output_value" => format!("{}", output_value),
+        "under_limit" => format!("{}", under_limit),
+        "steps" => format!("{}", steps),
+    ));
+
+    let under_ratio = under_limit / (output_value as f32);
+
+    // stepsの乗根を計算（steps乗してunder_ratioになるような値）
+    let ratio_by_step = under_ratio.powf(1.0 / steps as f32);
+
+    info!(log, "calculated";
+        "under_limit" => ?under_limit,
+        "ratio_by_step" => ?ratio_by_step,
+    );
+    ratio_by_step
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::prop_oneof;
+    use proptest::strategy::Just;
+
+    proptest! {
+        // calculate_ratio_by_stepのプロパティテスト
+        #[test]
+        fn prop_ratio_by_step_composes_correctly(
+            output_value in 1_000_000_000_000_000_000_000_000..10_000_000_000_000_000_000_000_000u128,
+            under_limit_ratio in 0.5f32..0.99f32,
+            steps in prop_oneof![Just(1usize), 2usize..10usize]
+        ) {
+            let under_limit = (output_value as f32) * under_limit_ratio;
+
+            let ratio_by_step = calculate_ratio_by_step(output_value, under_limit, steps);
+
+            // ratio_by_stepをsteps回掛け合わせるとunder_ratioになることを確認
+            // steps = 1 の場合は計算不要
+            let total_ratio = if steps == 1 {
+                ratio_by_step
+            } else {
+                ratio_by_step.powi(steps as i32)
+            };
+            let expected_ratio = under_limit / (output_value as f32);
+
+            // 浮動小数点の精度の問題を考慮して、許容誤差を設定
+            let epsilon = 0.001f32;
+
+            // total_ratioがexpected_ratioに近いことを確認
+            prop_assert!((total_ratio - expected_ratio).abs() <= epsilon);
+
+            // 最終的な出力値がunder_limitに近いことを確認
+            let final_output = (output_value as f32) * total_ratio;
+            prop_assert!((final_output - under_limit).abs() <= epsilon * (output_value as f32));
+        }
+    }
 }
