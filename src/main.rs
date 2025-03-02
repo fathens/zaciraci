@@ -76,7 +76,7 @@ async fn main_loop() -> Result<()> {
         match single_loop(&client, &wallet).await {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
-                warn!(log, "failure: {}", err);
+                warn!(log, "failure: {:?}", err);
                 // WNEAR_TOKENのエラーは特別扱い
                 if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
                     if WNEAR_TOKEN.to_string().eq(name) {
