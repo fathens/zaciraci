@@ -3,7 +3,7 @@ use crate::ref_finance::history;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::{MicroNear, MilliNear};
-use crate::{jsonrpc, Result};
+use crate::Result;
 use graph::TokenGraph;
 use near_primitives::types::Balance;
 use num_integer::Roots;
@@ -56,8 +56,8 @@ pub async fn pick_goals(
     graph: &TokenGraph,
     start: &TokenInAccount,
     total_amount: MilliNear,
+    gas_price: GasPrice,
 ) -> Result<Option<Vec<Preview<Balance>>>> {
-    let gas_price = jsonrpc::get_gas_price(None).await?;
     let previews = pick_previews(graph, start, MicroNear::from_milli(total_amount), gas_price)?;
 
     const REPEAT: usize = 3;

@@ -17,9 +17,6 @@ num-bigint = "0.4.6"
 num-traits = "0.2.19"
 num-rational = "0.4.2"
 num-integer = "0.1.46"
-diesel = { version = "2.2.4", features = ["postgres", "numeric", "chrono"] }
-deadpool = { version = "0.12.1", features = ["rt_tokio_1"] }
-deadpool-diesel = { version = "0.6.1", features = ["postgres"] }
 slog = { version = "2.7.0", features = ["max_level_trace", "release_max_level_info"] }
 slog-async = "2.8.0"
 slog-term = "2.9.1"
@@ -27,10 +24,10 @@ slog-json = "2.6.1"
 slog-envlogger = "2.2.0"
 near-gas = "0.3.0"
 near-sdk = "5.5.0"
-near-jsonrpc-client = "0.13.0"
-near-jsonrpc-primitives = "0.26.0"
-near-primitives = "0.26.0"
-near-crypto = "0.26.0"
+near-jsonrpc-client = "0.15.1"
+near-jsonrpc-primitives = "0.28.0"
+near-primitives = "0.28.0"
+near-crypto = "0.28.0"
 serde_json = "1.0.128"
 serde = { version = "1.0.210", features = ["derive"] }
 petgraph = "0.6.5"
@@ -38,11 +35,13 @@ slipped10 = "0.4.6"
 bip39 = { version = "2.1.0", features = ["rand"] }
 bs58 = "0.5.1"
 ed25519-dalek = { version = "2", default-features = false }
-moka = { version = "0.12.8", features = ["future"] }
 futures-util = "0.3.30"
 rayon = "1.10.0"
 rand = "0.8.5"
+humantime = "2.1"
 
 [dev-dependencies]
 assertables = "9.5"
 proptest = "1.6"
+serial_test = "3.2.0"
+tokio = { version = "1.0", features = ["full"] }

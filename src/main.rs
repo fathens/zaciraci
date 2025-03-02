@@ -9,17 +9,39 @@ mod types;
 mod wallet;
 mod web;
 
+use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
 use crate::ref_finance::pool_info::TokenPair;
-use crate::ref_finance::token_account::{TokenInAccount, START_TOKEN};
+use crate::ref_finance::token_account::{TokenInAccount, WNEAR_TOKEN};
 use crate::types::MicroNear;
+use crate::wallet::Wallet;
 use futures_util::future::join_all;
+use humantime::parse_duration;
 use near_primitives::types::Balance;
+use once_cell::sync::Lazy;
 use std::time::Duration;
 
 type Result<T> = anyhow::Result<T>;
+
+static TOKEN_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
+    config::get("TOKEN_NOT_FOUND_WAIT")
+        .and_then(|v| Ok(parse_duration(&v)?))
+        .unwrap_or_else(|_| Duration::from_secs(1)) // デフォルト: 1秒
+});
+
+static OTHER_ERROR_WAIT: Lazy<Duration> = Lazy::new(|| {
+    config::get("OTHER_ERROR_WAIT")
+        .and_then(|v| Ok(parse_duration(&v)?))
+        .unwrap_or_else(|_| Duration::from_secs(30)) // デフォルト: 30秒
+});
+
+static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
+    config::get("PREVIEW_NOT_FOUND_WAIT")
+        .and_then(|v| Ok(parse_duration(&v)?))
+        .unwrap_or_else(|_| Duration::from_secs(10)) // デフォルト: 10秒
+});
 
 #[tokio::main]
 async fn main() {
@@ -33,7 +55,7 @@ async fn main() {
     warn!(log, "log level check");
     crit!(log, "log level check");
 
-    let base = wallet::WALLET.derive(0).unwrap();
+    let base = wallet::new_wallet().derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
@@ -48,28 +70,47 @@ async fn main() {
 
 async fn main_loop() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "main_loop"));
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
     loop {
-        match single_loop().await {
+        match single_loop(&client, &wallet).await {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
-                warn!(log, "failure: {}", err);
+                warn!(log, "failure: {:?}", err);
+                // WNEAR_TOKENのエラーは特別扱い
                 if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
-                    if START_TOKEN.to_string().eq(name) {
-                        info!(log, "token not found, retry");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    if WNEAR_TOKEN.to_string().eq(name) {
+                        info!(
+                            log,
+                            "token not found, retrying after {:?}", *TOKEN_NOT_FOUND_WAIT
+                        );
+                        tokio::time::sleep(*TOKEN_NOT_FOUND_WAIT).await;
                         continue;
                     }
                 }
-                return Err(err);
+                // その他のエラーは長めの待機
+                warn!(
+                    log,
+                    "non-jsonrpc error, retrying after {:?}", *OTHER_ERROR_WAIT
+                );
+                tokio::time::sleep(*OTHER_ERROR_WAIT).await;
+                continue;
             }
         }
     }
 }
 
-async fn single_loop() -> Result<()> {
+async fn single_loop<C, W>(client: &C, wallet: &W) -> Result<()>
+where
+    C: jsonrpc::AccountInfo + jsonrpc::SendTx + jsonrpc::ViewContract + jsonrpc::GasInfo,
+    <C as jsonrpc::SendTx>::Output: std::fmt::Display,
+    W: Wallet,
+{
     let log = DEFAULT.new(o!("function" => "single_loop"));
 
-    let (token, balance) = ref_finance::balances::start().await?;
+    let token = WNEAR_TOKEN.clone();
+
+    let balance = ref_finance::balances::start(client, wallet, &token).await?;
     let start: &TokenInAccount = &token.into();
     let start_balance = MicroNear::from_yocto(balance);
     info!(log, "start";
@@ -78,32 +119,43 @@ async fn single_loop() -> Result<()> {
         "start.balance_in_micro" => ?start_balance,
     );
 
-    let pools = ref_finance::pool_info::PoolInfoList::read_from_node().await?;
+    let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
-    let gas_price = jsonrpc::get_gas_price(None).await?;
+    let gas_price = client.get_gas_price(None).await?;
     let previews = ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
 
     if let Some(previews) = previews {
         let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
 
-        let account = wallet::WALLET.account_id();
-        ref_finance::storage::check_and_deposit(account, &tokens).await?;
+        ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
 
         let swaps = pre_path
             .into_iter()
-            .map(|(p, v)| tokio::spawn(async move { swap_each(p, v).await }));
-        join_all(swaps).await;
+            .map(|(p, v)| swap_each(client, wallet, p, v));
+        let results = join_all(swaps).await;
+        let success_count = results.iter().filter(|r| r.is_ok()).count();
+        info!(log, "swaps completed";
+            "success" => format!("{}/{}", success_count, results.len()),
+        );
     } else {
         info!(log, "previews not found");
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(*PREVIEW_NOT_FOUND_WAIT).await;
     }
 
     Ok(())
 }
 
-async fn swap_each<A>(preview: Preview<A>, path: Vec<TokenPair>) -> Result<()>
+async fn swap_each<A, C, W>(
+    client: &C,
+    wallet: &W,
+    preview: Preview<A>,
+    path: Vec<TokenPair>,
+) -> Result<()>
 where
     A: Into<Balance> + Copy,
+    C: jsonrpc::SendTx,
+    <C as jsonrpc::SendTx>::Output: std::fmt::Display,
+    W: Wallet,
 {
     let log = DEFAULT.new(o!(
         "function" => "swap_each",
@@ -112,18 +164,27 @@ where
         "path.len" => format!("{}", path.len()),
     ));
 
-    let under_limit = (preview.output_value as f32) - (preview.gain as f32) * 0.99;
-    let under_ratio = under_limit / (preview.output_value as f32);
-    let ratio_by_step = under_ratio.powf(path.len() as f32);
+    let arg = ref_finance::swap::SwapArg {
+        initial_in: preview.input_value.into(),
+        min_out: preview.output_value - preview.gain,
+    };
+    let swap_result = ref_finance::swap::run_swap(client, wallet, &path, arg).await;
 
-    info!(log, "run swap";
-        "under_limit" => ?under_limit,
-        "ratio_by_step" => ?ratio_by_step,
-    );
-    let out = ref_finance::swap::run_swap(&path, preview.input_value.into(), ratio_by_step).await?;
+    let (sent_tx, out) = match swap_result {
+        Ok(result) => result,
+        Err(e) => {
+            error!(log, "swap operation failed"; "error" => ?e);
+            return Err(e);
+        }
+    };
+
+    if let Err(e) = sent_tx.wait_for_success().await {
+        error!(log, "transaction failed"; "tx" => %sent_tx, "error" => %e);
+        return Err(e);
+    }
 
     info!(log, "swap done";
-        "out" => out,
+        "estimated_output" => out,
     );
     Ok(())
 }

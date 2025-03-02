@@ -5,24 +5,28 @@ use anyhow::anyhow;
 use near_crypto::SecretKey::ED25519;
 use near_crypto::{ED25519SecretKey, InMemorySigner};
 use near_sdk::AccountId;
-use once_cell::sync::Lazy;
 
 const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
-pub static WALLET: Lazy<Wallet> = Lazy::new(|| {
-    let log = DEFAULT.new(o!("function" => "wallet::WALLET"));
-    match Wallet::new_from_config() {
+pub fn new_wallet() -> StandardWallet {
+    let log = DEFAULT.new(o!("function" => "wallet::new_wallet"));
+    match StandardWallet::new_from_config() {
         Ok(wallet) => wallet,
-        Err(e) => {
-            error!(log, "Failed to create wallet"; "error" => %e);
-            panic!("Failed to create wallet: {}", e);
+        Err(err) => {
+            error!(log, "Failed to create wallet"; "error" => format!("{:?}", err));
+            panic!("Failed to create wallet: {:?}", err)
         }
     }
-});
+}
+
+pub trait Wallet {
+    fn account_id(&self) -> &AccountId;
+    fn signer(&self) -> &InMemorySigner;
+}
 
 #[derive(Clone)]
-pub struct Wallet {
+pub struct StandardWallet {
     account_id: AccountId,
     mnemonic: bip39::Mnemonic,
     hdpath: slipped10::BIP32Path,
@@ -30,7 +34,7 @@ pub struct Wallet {
     signer: InMemorySigner,
 }
 
-impl Wallet {
+impl StandardWallet {
     fn get_account_id() -> Result<AccountId> {
         let strval = config::get("ROOT_ACCOUNT_ID")?;
         Ok(strval.parse()?)
@@ -50,9 +54,9 @@ impl Wallet {
         account_id: AccountId,
         mnemonic: bip39::Mnemonic,
         hdpath: slipped10::BIP32Path,
-    ) -> Result<Wallet> {
+    ) -> Result<StandardWallet> {
         let log = DEFAULT.new(o!(
-            "function" => "Wallet::new",
+            "function" => "StandardWallet::new",
             "account_id" => format!("{}", account_id),
         ));
         debug!(log, "creating"; "hdpath" => %hdpath);
@@ -61,7 +65,7 @@ impl Wallet {
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&key.key);
         let seckey = ED25519SecretKey(signing_key.to_keypair_bytes());
         let signer = InMemorySigner::from_secret_key(account_id.clone(), ED25519(seckey));
-        let wallet = Wallet {
+        let wallet = StandardWallet {
             account_id,
             mnemonic,
             hdpath,
@@ -72,7 +76,7 @@ impl Wallet {
         Ok(wallet)
     }
 
-    pub fn new_from_config() -> Result<Wallet> {
+    pub fn new_from_config() -> Result<StandardWallet> {
         let account_id = Self::get_account_id()?;
         let mnemonic = Self::get_mnemonic()?;
         let hdpath = Self::get_hdpath()?;
@@ -83,17 +87,19 @@ impl Wallet {
         bs58::encode(self.signing_key.verifying_key()).into_string()
     }
 
-    pub fn account_id(&self) -> &AccountId {
-        &self.account_id
-    }
-
-    pub fn derive(&self, index: i32) -> Result<Wallet> {
+    pub fn derive(&self, index: i32) -> Result<StandardWallet> {
         let mut hdpath = self.hdpath.clone();
         hdpath.push(index as u32 + HARDEND);
         Self::new(self.account_id.clone(), self.mnemonic.clone(), hdpath)
     }
+}
 
-    pub fn signer(&self) -> &InMemorySigner {
+impl Wallet for StandardWallet {
+    fn account_id(&self) -> &AccountId {
+        &self.account_id
+    }
+
+    fn signer(&self) -> &InMemorySigner {
         &self.signer
     }
 }

@@ -1,6 +1,6 @@
 use crate::ref_finance;
 use crate::ref_finance::path::graph::TokenGraph;
-use crate::ref_finance::pool_info::TokenPair;
+use crate::ref_finance::pool_info::{TokenPair, TokenPairLike};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::gas_price::GasPrice;
 use crate::Result;

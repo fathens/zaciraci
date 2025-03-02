@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-pub static START_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
+pub static WNEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
     let id = if *IS_MAINNET {
         "wrap.near"
     } else {

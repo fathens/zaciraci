@@ -1,7 +1,9 @@
+use crate::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx};
+use crate::ref_finance::pool_info::{self, TokenPairLike};
 use crate::ref_finance::token_account::TokenAccount;
-use crate::ref_finance::{pool_info, storage};
 use crate::types::{MicroNear, MilliNear};
-use crate::{ref_finance, wallet};
+use crate::wallet::Wallet;
+use crate::{jsonrpc, ref_finance, wallet};
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::Router;
@@ -41,7 +43,7 @@ pub async fn run() {
         .route("/pools/pick_goals/:token_account/:amount", get(pick_goals))
         .with_state(state.clone())
         .route(
-            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account/:min_out_ratio",
+            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account",
             get(run_swap),
         )
         .with_state(state.clone())
@@ -57,6 +59,8 @@ pub async fn run() {
         .route("/amounts/list", get(deposit_list))
         .with_state(state.clone())
         .route("/amounts/wrap/:amount", get(wrap_native_token))
+        .with_state(state.clone())
+        .route("/amounts/unwrap/:amount", get(unwrap_native_token))
         .with_state(state.clone())
         .route(
             "/amounts/deposit/:token_account/:amount",
@@ -74,7 +78,10 @@ pub async fn run() {
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let client = jsonrpc::new_client();
+    let pools = pool_info::PoolInfoList::read_from_node(&client)
+        .await
+        .unwrap();
     format!("Pools: {}", pools.len())
 }
 
@@ -84,7 +91,10 @@ async fn estimate_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let client = jsonrpc::new_client();
+    let pools = pool_info::PoolInfoList::read_from_node(&client)
+        .await
+        .unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -104,7 +114,10 @@ async fn get_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let client = jsonrpc::new_client();
+    let pools = pool_info::PoolInfoList::read_from_node(&client)
+        .await
+        .unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -114,12 +127,15 @@ async fn get_return(
     let pair = pool.get_pair(token_in.into(), token_out.into()).unwrap();
     let token_a = pair.token_in_id();
     let token_b = pair.token_out_id();
-    let amount_out = pair.get_return(amount_in).await.unwrap();
+    let amount_out = pair.get_return(&client, amount_in).await.unwrap();
     format!("Return: {token_a}({amount_in}) -> {token_b}({amount_out})")
 }
 
 async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let client = jsonrpc::new_client();
+    let pools = pool_info::PoolInfoList::read_from_node(&client)
+        .await
+        .unwrap();
     let tokens = ref_finance::path::all_tokens(pools);
     let mut tokens: Vec<_> = tokens.iter().map(|t| t.to_string()).collect();
     tokens.sort();
@@ -134,7 +150,10 @@ async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let client = jsonrpc::new_client();
+    let pools = pool_info::PoolInfoList::read_from_node(&client)
+        .await
+        .unwrap();
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
@@ -156,12 +175,16 @@ async fn pick_goals(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let client = jsonrpc::new_client();
+    let gas_price = client.get_gas_price(None).await.unwrap();
+    let pools = pool_info::PoolInfoList::read_from_node(&client)
+        .await
+        .unwrap();
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
     let goals =
-        crate::ref_finance::path::pick_goals(&graph, &start.into(), MilliNear::of(amount_in))
+        ref_finance::path::pick_goals(&graph, &start.into(), MilliNear::of(amount_in), gas_price)
             .await
             .unwrap();
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
@@ -183,14 +206,13 @@ async fn pick_goals(
 
 async fn run_swap(
     State(_): State<Arc<AppState>>,
-    Path((token_in_account, initial_value, token_out_account, min_out_ratio)): Path<(
-        String,
-        String,
-        String,
-        u128,
-    )>,
+    Path((token_in_account, initial_value, token_out_account)): Path<(String, String, String)>,
 ) -> String {
-    let pools = pool_info::PoolInfoList::read_from_node().await.unwrap();
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
+    let pools = pool_info::PoolInfoList::read_from_node(&client)
+        .await
+        .unwrap();
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start_token: TokenAccount = token_in_account.parse().unwrap();
@@ -201,23 +223,32 @@ async fn run_swap(
     let path = ref_finance::path::swap_path(&graph, start, goal)
         .await
         .unwrap();
-    let account = wallet::WALLET.account_id();
     let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
-    storage::check_and_deposit(account, &tokens).await.unwrap();
-    let ratio = min_out_ratio as f32 / 100.0;
+    ref_finance::storage::check_and_deposit(&client, &wallet, &tokens)
+        .await
+        .unwrap();
 
-    let res = ref_finance::swap::run_swap(&path, amount_in, ratio).await;
+    let arg = ref_finance::swap::SwapArg {
+        initial_in: amount_in,
+        min_out: amount_in + MilliNear::of(1).to_yocto(),
+    };
+    let res = ref_finance::swap::run_swap(&client, &wallet, &path, arg).await;
 
     match res {
-        Ok(value) => format!("Result: {value}"),
+        Ok((tx_hash, value)) => {
+            let outcome = tx_hash.wait_for_success().await.unwrap();
+            format!("Result: {value:?} ({outcome:?})")
+        }
         Err(e) => format!("Error: {e}"),
     }
 }
 
 async fn storage_deposit_min(State(_): State<Arc<AppState>>) -> String {
-    let bounds = crate::ref_finance::storage::check_bounds().await.unwrap();
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
+    let bounds = ref_finance::storage::check_bounds(&client).await.unwrap();
     let value = bounds.min.0;
-    let res = crate::ref_finance::storage::deposit(value, true).await;
+    let res = crate::ref_finance::storage::deposit(&client, &wallet, value, true).await;
     match res {
         Ok(_) => format!("Deposited: {value}"),
         Err(e) => format!("Error: {e}"),
@@ -225,8 +256,10 @@ async fn storage_deposit_min(State(_): State<Arc<AppState>>) -> String {
 }
 
 async fn storage_deposit(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
     let amount: u128 = amount.replace("_", "").parse().unwrap();
-    let res = crate::ref_finance::storage::deposit(amount, false).await;
+    let res = crate::ref_finance::storage::deposit(&client, &wallet, amount, false).await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
         Err(e) => format!("Error: {e}"),
@@ -237,8 +270,10 @@ async fn storage_unregister_token(
     State(_): State<Arc<AppState>>,
     Path(token_account): Path<String>,
 ) -> String {
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
     let token: TokenAccount = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::unregister_tokens(&[token]).await;
+    let res = ref_finance::deposit::unregister_tokens(&client, &wallet, &[token]).await;
     match res {
         Ok(_) => format!("Unregistered: {token_account}"),
         Err(e) => format!("Error: {e}"),
@@ -246,18 +281,21 @@ async fn storage_unregister_token(
 }
 
 async fn deposit_list(State(_): State<Arc<AppState>>) -> String {
-    let account = wallet::WALLET.account_id();
-    let res = crate::ref_finance::deposit::get_deposits(account).await;
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
+    let account = wallet.account_id();
+    let res = ref_finance::deposit::get_deposits(&client, account).await;
     match res {
         Err(e) => format!("Error: {e}"),
         Ok(deposits) => {
-            let mut results = String::new();
+            let mut lines = Vec::new();
             for (token, amount) in deposits.iter() {
                 let m = MicroNear::from_yocto(amount.0);
-                let line = format!("{token} -> {m:?}\n");
-                results.push_str(&line);
+                let line = format!("{token} -> {m:?}");
+                lines.push(line);
             }
-            results
+            lines.sort();
+            lines.join("\n")
         }
     }
 }
@@ -266,10 +304,12 @@ async fn deposit_token(
     State(_): State<Arc<AppState>>,
     Path((token_account, amount)): Path<(String, String)>,
 ) -> String {
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
     let token = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::deposit(&token, amount).await;
+    let res = ref_finance::deposit::deposit(&client, &wallet, &token, amount).await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
         Err(e) => format!("Error: {e}"),
@@ -280,10 +320,12 @@ async fn withdraw_token(
     State(_): State<Arc<AppState>>,
     Path((token_account, amount)): Path<(String, String)>,
 ) -> String {
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
     let token = token_account.parse().unwrap();
-    let res = crate::ref_finance::deposit::withdraw(&token, amount).await;
+    let res = ref_finance::deposit::withdraw(&client, &wallet, &token, amount).await;
     match res {
         Ok(_) => format!("Withdrawn: {amount}"),
         Err(e) => format!("Error: {e}"),
@@ -291,8 +333,10 @@ async fn withdraw_token(
 }
 
 async fn native_token_balance(State(_): State<Arc<AppState>>) -> String {
-    let account = wallet::WALLET.account_id();
-    let res = crate::jsonrpc::get_native_amount(account).await;
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
+    let account = wallet.account_id();
+    let res = client.get_native_amount(account).await;
     match res {
         Ok(balance) => {
             format!("Balance: {balance:?}\n")
@@ -310,8 +354,12 @@ async fn native_token_transfer(
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
     let receiver = receiver.parse().unwrap();
-    let signer = wallet::WALLET.signer();
-    let res = crate::jsonrpc::transfer_native_token(signer, &receiver, amount).await;
+    let wallet = wallet::new_wallet();
+    let signer = wallet.signer();
+    let client = jsonrpc::new_client();
+    let res = client
+        .transfer_native_token(signer, &receiver, amount)
+        .await;
     match res {
         Ok(_) => "OK".to_owned(),
         Err(err) => {
@@ -321,11 +369,53 @@ async fn native_token_transfer(
 }
 
 async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
     let amount = MicroNear::of(amount_micro).to_yocto();
-    let res = crate::ref_finance::deposit::wrap_near(amount).await;
-    match res {
-        Ok(token) => format!("Wrapped: {token} {amount}"),
-        Err(e) => format!("Error: {e}"),
+    let account = wallet.account_id();
+    let before = ref_finance::deposit::wnear::balance_of(&client, account)
+        .await
+        .unwrap();
+    let call = async {
+        ref_finance::deposit::wnear::wrap(&client, &wallet, amount)
+            .await?
+            .wait_for_success()
+            .await
+    };
+    match call.await {
+        Ok(_) => {
+            let after = ref_finance::deposit::wnear::balance_of(&client, account)
+                .await
+                .unwrap();
+            format!("Wrapped: {amount}\n{before}\n{after}")
+        }
+        Err(err) => format!("Error: {err}"),
+    }
+}
+
+async fn unwrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<String>) -> String {
+    let client = jsonrpc::new_client();
+    let wallet = wallet::new_wallet();
+    let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
+    let amount = MicroNear::of(amount_micro).to_yocto();
+    let account = wallet.account_id();
+    let before = ref_finance::deposit::wnear::balance_of(&client, account)
+        .await
+        .unwrap();
+    let call = async {
+        ref_finance::deposit::wnear::unwrap(&client, &wallet, amount)
+            .await?
+            .wait_for_success()
+            .await
+    };
+    match call.await {
+        Ok(_) => {
+            let after = ref_finance::deposit::wnear::balance_of(&client, account)
+                .await
+                .unwrap();
+            format!("Unwrapped: {amount}\n{before}\n{after}")
+        }
+        Err(err) => format!("Error: {err}"),
     }
 }

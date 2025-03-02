@@ -1,20 +1,26 @@
-mod client;
+mod near_client;
+mod rpc;
+mod sent_tx;
 
 use crate::config;
+use crate::jsonrpc::near_client::StandardNearClient;
+use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
 use crate::Result;
 use near_crypto::InMemorySigner;
-use near_jsonrpc_client::methods;
-use near_jsonrpc_primitives::types::query::QueryResponseKind;
-use near_primitives::action::{Action, FunctionCallAction, TransferAction};
-use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
-use near_primitives::types::{Balance, BlockId, Finality};
-use near_primitives::views::{AccessKeyView, BlockView, CallResult, QueryRequest};
-use near_sdk::{AccountId, CryptoHash, Gas};
+use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
+use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
+use near_primitives::action::Action;
+use near_primitives::hash::CryptoHash;
+use near_primitives::types::{Balance, BlockId};
+use near_primitives::views::{
+    AccessKeyView, BlockView, CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
+    TxExecutionStatus,
+};
+use near_sdk::AccountId;
 use once_cell::sync::Lazy;
-
-use client::CLIENT;
+use std::sync::Arc;
 
 pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
     let str = config::get("USE_MAINNET").unwrap_or_default();
@@ -31,161 +37,99 @@ pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
     value
 });
 
-pub async fn get_recent_block() -> Result<BlockView> {
-    let req = methods::block::RpcBlockRequest {
-        block_reference: Finality::Final.into(),
-    };
-    let res = CLIENT.call(req).await?;
-    Ok(res)
-}
-
-pub async fn get_native_amount(account: &AccountId) -> Result<Balance> {
-    let req = methods::query::RpcQueryRequest {
-        block_reference: Finality::Final.into(),
-        request: QueryRequest::ViewAccount {
-            account_id: account.clone(),
-        },
-    };
-    let res = CLIENT.call(req).await?;
-    if let QueryResponseKind::ViewAccount(am) = res.kind {
-        Ok(am.amount)
+static JSONRPC_CLIENT: Lazy<Arc<JsonRpcClient>> = Lazy::new(|| {
+    let client = if *IS_MAINNET {
+        JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
     } else {
-        panic!("View account is not view account")
-    }
-}
-
-pub async fn get_gas_price(block: Option<BlockId>) -> Result<GasPrice> {
-    let req = methods::gas_price::RpcGasPriceRequest { block_id: block };
-    let res = CLIENT.call(req).await?;
-    Ok(GasPrice::from_balance(res.gas_price))
-}
-
-pub async fn get_access_key_info(signer: &InMemorySigner) -> Result<AccessKeyView> {
-    let req = methods::query::RpcQueryRequest {
-        block_reference: Finality::Final.into(),
-        request: QueryRequest::ViewAccessKey {
-            account_id: signer.account_id.clone(),
-            public_key: signer.public_key(),
-        },
+        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
     };
-    let res = CLIENT.call(req).await?;
-    match res.kind {
-        QueryResponseKind::AccessKey(access_key) => Ok(access_key),
-        _ => panic!("unexpected response"),
-    }
+    Arc::new(client)
+});
+
+pub fn new_client() -> StandardNearClient<StandardRpcClient> {
+    StandardNearClient::new(&Arc::new(StandardRpcClient::new(
+        Arc::clone(&JSONRPC_CLIENT),
+        128,
+        std::time::Duration::from_secs(60),
+        0.1,
+    )))
 }
 
-pub async fn view_contract<T>(
-    receiver: &AccountId,
-    method_name: &str,
-    args: &T,
-) -> Result<CallResult>
-where
-    T: ?Sized + serde::Serialize,
-{
-    let req = methods::query::RpcQueryRequest {
-        block_reference: Finality::Final.into(),
-        request: QueryRequest::CallFunction {
-            account_id: receiver.clone(),
-            method_name: method_name.to_string(),
-            args: serde_json::to_vec(args)?.into(),
-        },
-    };
-    let res = CLIENT.call(req).await?;
-    match res.kind {
-        QueryResponseKind::CallResult(r) => Ok(r),
-        _ => panic!("unexpected response"),
-    }
+pub trait RpcClient {
+    fn server_addr(&self) -> &str;
+
+    async fn call<M: methods::RpcMethod>(
+        &self,
+        method: M,
+    ) -> MethodCallResult<M::Response, M::Error>;
 }
 
-pub async fn transfer_native_token(
-    signer: &InMemorySigner,
-    receiver: &AccountId,
-    amount: Balance,
-) -> Result<CryptoHash> {
-    let log = DEFAULT.new(o!(
-        "function" => "transfer_native_token",
-        "signer" => format!("{}", signer.account_id),
-        "receiver" => format!("{}", receiver),
-        "amount" => amount,
-    ));
-    info!(log, "transferring native token");
-    let action = Action::Transfer(TransferAction { deposit: amount });
-
-    send_tx(signer, receiver, &[action]).await
+pub trait BlockInfo {
+    async fn get_recent_block(&self) -> Result<BlockView>;
 }
 
-pub async fn exec_contract<T>(
-    signer: &InMemorySigner,
-    receiver: &AccountId,
-    method_name: &str,
-    args: &T,
-    deposit: Balance,
-) -> Result<CryptoHash>
-where
-    T: ?Sized + serde::Serialize,
-{
-    let log = DEFAULT.new(o!(
-        "function" => "exec_contract",
-        "signer" => format!("{}", signer.account_id),
-        "receiver" => format!("{}", receiver),
-        "method_name" => format!("{}", method_name),
-        "deposit" => deposit,
-    ));
-    info!(log, "executing contract");
-
-    let action = Action::FunctionCall(
-        FunctionCallAction {
-            method_name: method_name.to_string(),
-            args: serde_json::to_vec(&args)?,
-            gas: Gas::from_tgas(300).as_gas(),
-            deposit,
-        }
-        .into(),
-    );
-
-    send_tx(signer, receiver, &[action]).await
+pub trait GasInfo {
+    async fn get_gas_price(&self, block: Option<BlockId>) -> Result<GasPrice>;
 }
 
-async fn send_tx(
-    signer: &InMemorySigner,
-    receiver: &AccountId,
-    actions: &[Action],
-) -> Result<CryptoHash> {
-    let log = DEFAULT.new(o!(
-        "function" => "exec_contract",
-        "signer" => format!("{}", signer.account_id),
-        "receiver" => format!("{}", receiver),
-    ));
+pub trait AccountInfo {
+    async fn get_native_amount(&self, account: &AccountId) -> Result<Balance>;
+}
 
-    let access_key = get_access_key_info(signer).await?;
-    let block = get_recent_block().await?;
-    let nonce = access_key.nonce + 1;
-    let block_hash = block.header.hash;
+pub trait AccessKeyInfo {
+    async fn get_access_key_info(&self, signer: &InMemorySigner) -> Result<AccessKeyView>;
+}
 
-    let transaction = Transaction::V0(TransactionV0 {
-        signer_id: signer.account_id.clone(),
-        public_key: signer.public_key(),
-        nonce,
-        receiver_id: receiver.clone(),
-        block_hash,
-        actions: actions.to_vec(),
-    });
+pub trait TxInfo {
+    async fn wait_tx_result(
+        &self,
+        sender: &AccountId,
+        tx_hash: &CryptoHash,
+        wait_until: TxExecutionStatus,
+    ) -> Result<RpcTransactionResponse>;
+}
 
-    let (hash, _) = transaction.get_hash_and_size();
-    let signature = signer.sign(hash.as_bytes());
-    let signed_tx = SignedTransaction::new(signature, transaction);
+pub trait ViewContract {
+    async fn view_contract<T>(
+        &self,
+        receiver: &AccountId,
+        method_name: &str,
+        args: &T,
+    ) -> Result<CallResult>
+    where
+        T: ?Sized + serde::Serialize;
+}
 
-    let req = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
-        signed_transaction: signed_tx,
-    };
+pub trait SendTx {
+    type Output: SentTx;
 
-    let res = CLIENT.call(req).await?;
-    info!(log, "broadcasted";
-        "response" => format!("{:?}", res),
-        "nonce" => nonce,
-        "block_hash" => format!("{}", block_hash),
-        "public_key" => format!("{}", signer.public_key()),
-    );
-    Ok(res.0)
+    async fn transfer_native_token(
+        &self,
+        signer: &InMemorySigner,
+        receiver: &AccountId,
+        amount: Balance,
+    ) -> Result<Self::Output>;
+
+    async fn exec_contract<T>(
+        &self,
+        signer: &InMemorySigner,
+        receiver: &AccountId,
+        method_name: &str,
+        args: T,
+        deposit: Balance,
+    ) -> Result<Self::Output>
+    where
+        T: Sized + serde::Serialize;
+
+    async fn send_tx(
+        &self,
+        signer: &InMemorySigner,
+        receiver: &AccountId,
+        actions: Vec<Action>,
+    ) -> Result<Self::Output>;
+}
+
+pub trait SentTx {
+    async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum>;
+    async fn wait_for_success(&self) -> Result<ExecutionOutcomeView>;
 }

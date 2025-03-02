@@ -2,7 +2,7 @@ use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
-use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
+use crate::ref_finance::pool_info::{PoolInfoList, TokenPair, TokenPairLike};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::Result;
 use anyhow::anyhow;
