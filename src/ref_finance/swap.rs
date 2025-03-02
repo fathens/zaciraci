@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 /// Single swap action.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct SwapAction {
     /// Pool which should be used for swapping.
@@ -68,11 +68,7 @@ where
             };
 
             debug!(log, "created swap action";
-                "pool_id" => action.pool_id,
-                "token_in" => format!("{}", action.token_in),
-                "amount_in" => action.amount_in.map_or(0, |u| u.0),
-                "token_out" => format!("{}", action.token_out),
-                "min_amount_out" => action.min_amount_out.0,
+                "pool_id" => ?action,
                 "estimated_out" => next_out,
             );
 
