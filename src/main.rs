@@ -164,16 +164,8 @@ where
         "path.len" => format!("{}", path.len()),
     ));
 
-    let under_limit = calculate_under_limit(preview.output_value, preview.gain);
-
-    let swap_result = ref_finance::swap::run_swap(
-        client,
-        wallet,
-        &path,
-        preview.input_value.into(),
-        under_limit,
-    )
-    .await;
+    let swap_result =
+        ref_finance::swap::run_swap(client, wallet, &path, preview.input_value.into()).await;
 
     let (sent_tx, out) = match swap_result {
         Ok(result) => result,
@@ -189,44 +181,7 @@ where
     }
 
     info!(log, "swap done";
-        "estimated_output" => out.estimated,
-        "minimum_output" => out.minimum,
+        "estimated_output" => out,
     );
     Ok(())
-}
-
-// output_valueとgainからunder_limitを計算する関数
-fn calculate_under_limit(output_value: Balance, gain: Balance) -> f32 {
-    output_value as f32 - gain as f32 * 0.99
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-    use proptest::prop_oneof;
-    use proptest::strategy::Just;
-
-    proptest! {
-        // calculate_under_limitのプロパティテスト
-        #[test]
-        fn prop_under_limit_respects_gain_ratio(
-            output_value in 1_000_000_000_000_000_000_000_000..10_000_000_000_000_000_000_000_000u128,
-            gain in prop_oneof![Just(0u128), 1..1_000_000_000_000_000_000_000_000u128]
-        ) {
-            let under_limit = calculate_under_limit(output_value, gain);
-            let min_gain = (output_value as f32) - under_limit;
-
-            // 浮動小数点の精度の問題を考慮して、許容誤差を大きくする
-            let epsilon = (gain as f32) / 1000_f32; // 0.1%の許容誤差
-
-            // gainの99%に近いことを確認（許容誤差を考慮）
-            if gain > 0 {
-                prop_assert!((min_gain - (gain as f32) * 0.99).abs() <= epsilon);
-            } else {
-                // gainが0の場合、under_limitはoutput_valueと等しい
-                prop_assert_eq!(under_limit, output_value as f32);
-            }
-        }
-    }
 }

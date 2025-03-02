@@ -43,7 +43,7 @@ pub async fn run() {
         .route("/pools/pick_goals/:token_account/:amount", get(pick_goals))
         .with_state(state.clone())
         .route(
-            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account/:min_out_ratio",
+            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account",
             get(run_swap),
         )
         .with_state(state.clone())
@@ -206,12 +206,7 @@ async fn pick_goals(
 
 async fn run_swap(
     State(_): State<Arc<AppState>>,
-    Path((token_in_account, initial_value, token_out_account, min_out_ratio)): Path<(
-        String,
-        String,
-        String,
-        u128,
-    )>,
+    Path((token_in_account, initial_value, token_out_account)): Path<(String, String, String)>,
 ) -> String {
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
@@ -232,9 +227,8 @@ async fn run_swap(
     ref_finance::storage::check_and_deposit(&client, &wallet, &tokens)
         .await
         .unwrap();
-    let under_limit = (min_out_ratio as f32 / 100.0) * amount_in as f32;
 
-    let res = ref_finance::swap::run_swap(&client, &wallet, &path, amount_in, under_limit).await;
+    let res = ref_finance::swap::run_swap(&client, &wallet, &path, amount_in).await;
 
     match res {
         Ok((tx_hash, value)) => {
