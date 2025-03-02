@@ -164,8 +164,11 @@ where
         "path.len" => format!("{}", path.len()),
     ));
 
-    let swap_result =
-        ref_finance::swap::run_swap(client, wallet, &path, preview.input_value.into()).await;
+    let arg = ref_finance::swap::SwapArg {
+        initial_in: preview.input_value.into(),
+        min_out: preview.output_value - preview.gain,
+    };
+    let swap_result = ref_finance::swap::run_swap(client, wallet, &path, arg).await;
 
     let (sent_tx, out) = match swap_result {
         Ok(result) => result,

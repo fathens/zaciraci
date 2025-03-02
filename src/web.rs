@@ -228,7 +228,11 @@ async fn run_swap(
         .await
         .unwrap();
 
-    let res = ref_finance::swap::run_swap(&client, &wallet, &path, amount_in).await;
+    let arg = ref_finance::swap::SwapArg {
+        initial_in: amount_in,
+        min_out: amount_in + MilliNear::of(1).to_yocto(),
+    };
+    let res = ref_finance::swap::run_swap(&client, &wallet, &path, arg).await;
 
     match res {
         Ok((tx_hash, value)) => {

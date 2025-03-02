@@ -29,19 +29,26 @@ pub struct SwapAction {
 }
 const METHOD_NAME: &str = "swap";
 
+#[derive(Debug, Clone)]
+pub struct SwapArg {
+    pub initial_in: Balance,
+    pub min_out: Balance,
+}
+
 /// パスに沿って複数のスワップアクションを生成する関数
-fn build_swap_actions<T>(path: &[T], initial: Balance) -> Result<(Vec<SwapAction>, Balance)>
+fn build_swap_actions<T>(path: &[T], arg: SwapArg) -> Result<(Vec<SwapAction>, Balance)>
 where
     T: TokenPairLike,
 {
     let log = DEFAULT.new(o!(
         "function" => "build_swap_actions",
         "path.length" => format!("{}", path.len()),
-        "initial" => initial,
+        "initial" => arg.initial_in,
+        "min_out" => arg.min_out,
     ));
     info!(log, "building swap actions");
     if path.is_empty() {
-        return Ok((Vec::new(), initial));
+        return Ok((Vec::new(), arg.initial_in));
     }
 
     let first_id = path[0].pool_id();
@@ -50,10 +57,10 @@ where
     let mut actions = Vec::new();
     let out = path
         .iter()
-        .try_fold(initial, |prev_out, pair| -> Result<Balance> {
+        .try_fold(arg.initial_in, |prev_out, pair| -> Result<Balance> {
             let is_first = pair.pool_id() == first_id;
             let min_out = if pair.pool_id() == last_id {
-                initial + 1
+                arg.min_out
             } else {
                 0
             };
@@ -86,7 +93,7 @@ pub async fn run_swap<A, W>(
     client: &A,
     wallet: &W,
     path: &[TokenPair],
-    initial: Balance,
+    arg: SwapArg,
 ) -> Result<(A::Output, Balance)>
 where
     A: jsonrpc::SendTx,
@@ -95,11 +102,12 @@ where
     let log = DEFAULT.new(o!(
         "function" => "run_swap",
         "path.length" => format!("{}", path.len()),
-        "initial" => initial,
+        "initial" => arg.initial_in,
+        "min_out" => arg.min_out,
     ));
     info!(log, "entered");
 
-    let (actions, out) = build_swap_actions(path, initial)?;
+    let (actions, out) = build_swap_actions(path, arg)?;
 
     let args = json!({
         "actions": actions,
@@ -130,10 +138,9 @@ pub fn gather_token_accounts(pairs_list: &[&[TokenPair]]) -> Vec<TokenAccount> {
 
 #[cfg(test)]
 mod tests {
-    use near_sdk::require;
-
     use super::*;
     use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+    use near_sdk::require;
 
     struct MockTokenPair {
         pool_id: u64,
@@ -170,10 +177,12 @@ mod tests {
             token_out: "token_b".parse().unwrap(),
             rate: 0.9,
         };
+        let arg = SwapArg {
+            initial_in: 1000,
+            min_out: 1234,
+        };
 
-        let initial = 1000;
-
-        let (actions, output) = build_swap_actions(&[pair], initial).unwrap();
+        let (actions, output) = build_swap_actions(&[pair], arg).unwrap();
 
         // 検証
         assert_eq!(actions.len(), 1);
@@ -181,7 +190,7 @@ mod tests {
         assert_eq!(actions[0].token_in.to_string(), "token_a");
         assert_eq!(actions[0].token_out.to_string(), "token_b");
         assert_eq!(actions[0].amount_in, Some(U128(1000)));
-        assert_eq!(actions[0].min_amount_out.0, 1001);
+        assert_eq!(actions[0].min_amount_out.0, 1234);
 
         assert_eq!(output, 900); // 1000 * 0.9
     }
@@ -210,11 +219,13 @@ mod tests {
             rate: 0.98,
         };
 
-        let initial = 1000;
-
         let path = vec![pair1, pair2, pair3];
-        let (actions, output) = build_swap_actions(&path, initial).unwrap();
+        let arg = SwapArg {
+            initial_in: 1000,
+            min_out: 1234,
+        };
 
+        let (actions, output) = build_swap_actions(&path, arg).unwrap();
         // 検証
         assert_eq!(actions.len(), 3);
 
@@ -237,7 +248,7 @@ mod tests {
         assert_eq!(actions[2].token_in.to_string(), "token_c");
         assert_eq!(actions[2].token_out.to_string(), "token_d");
         assert_eq!(actions[2].amount_in, None);
-        assert_eq!(actions[2].min_amount_out.0, 1001);
+        assert_eq!(actions[2].min_amount_out.0, 1234);
 
         // 最終的な出力の検証
         // 1000 * 0.9 * 0.95 * 0.98 = 837.8999 ≈ 838
@@ -248,16 +259,21 @@ mod tests {
     #[test]
     fn test_build_swap_actions_empty_path() {
         // 空のパスでのテスト
-        let initial = 1000;
         let path: Vec<MockTokenPair> = vec![];
 
-        let result = build_swap_actions(&path, initial);
+        let result = build_swap_actions(
+            &path,
+            SwapArg {
+                initial_in: 1000,
+                min_out: 1234,
+            },
+        );
         require!(result.is_ok());
 
         // 期待される動作：空のアクションリストとinputと同じ値のoutputを返す
         let (actions, output) = result.unwrap();
         assert!(actions.is_empty());
-        assert_eq!(output, initial);
+        assert_eq!(output, 1000);
     }
 
     #[test]
@@ -269,15 +285,17 @@ mod tests {
             token_out: "token_b".parse().unwrap(),
             rate: 0.9,
         };
+        let arg = SwapArg {
+            initial_in: 1, // 最小の金額
+            min_out: 5,
+        };
 
-        let initial = 1; // 最小の金額
-
-        let (actions, output) = build_swap_actions(&[pair], initial).unwrap();
+        let (actions, output) = build_swap_actions(&[pair], arg).unwrap();
 
         // 検証
         assert_eq!(actions.len(), 1);
         assert_eq!(output, 0); // 1 * 0.9 = 0.9 → 0 (整数の切り捨て)
         assert_eq!(actions[0].amount_in, Some(U128(1)));
-        assert_eq!(actions[0].min_amount_out.0, 2);
+        assert_eq!(actions[0].min_amount_out.0, 5);
     }
 }
