@@ -14,7 +14,7 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::Add;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug)]
 pub struct TokenGraph {
@@ -159,7 +159,7 @@ struct CachedPath<I, O, N, E> {
     graph: petgraph::Graph<N, E>,
     nodes: HashMap<N, NodeIndex>,
 
-    cached_path: Arc<Mutex<HashMap<I, PathToOut<O, N>>>>,
+    cached_path: Arc<RwLock<HashMap<I, PathToOut<O, N>>>>,
 }
 
 impl<I, O, N, E> CachedPath<I, O, N, E>
@@ -173,7 +173,7 @@ where
         Self {
             graph,
             nodes,
-            cached_path: Arc::new(Mutex::new(HashMap::new())),
+            cached_path: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -221,7 +221,7 @@ where
             info!(log, "no path found");
         } else {
             self.cached_path
-                .lock()
+                .write()
                 .unwrap()
                 .insert(start.clone(), path_to_outs);
         }
@@ -249,7 +249,7 @@ where
     }
 
     fn get_path(&self, start: &I, goal: &O) -> Result<Vec<N>> {
-        let cached_path = self.cached_path.lock().unwrap();
+        let cached_path = self.cached_path.read().unwrap();
         let path = cached_path
             .get(start)
             .ok_or_else(|| anyhow!("start token not found: {:?} X-> {:?}", start, goal))?
