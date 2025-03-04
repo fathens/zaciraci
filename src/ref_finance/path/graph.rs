@@ -496,8 +496,50 @@ mod test {
         for goal in goals.into_iter() {
             let gs = cached_path.update_path(&goal, Some("A")).unwrap();
             assert!(gs.len() < 6);
+            assert!(gs.len() > 0);
         }
 
+        // A <-> B
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"B").unwrap()),
+            "[A 1-> B]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"B", &"A").unwrap()),
+            "[B 2-> A]"
+        );
+
+        // A <-> C
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"C").unwrap()),
+            "[A 3-> C]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"C", &"A").unwrap()),
+            "[C 2-> A]"
+        );
+
+        // A <-> D
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"D").unwrap()),
+            "[A 1-> B, B 4-> D]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"D", &"A").unwrap()),
+            "[D 3-> C, C 2-> A]"
+        );
+
+        // A <-> E
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"E").unwrap()),
+            "[A 3-> C, C 6-> E]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"E", &"A").unwrap()),
+            "[E 7-> C, C 2-> A]"
+        );
+
+        // A <-> F
         assert_eq!(
             format!("{:?}", cached_path.get_edges(&"A", &"F").unwrap()),
             "[A 1-> B, B 4-> D, D 8-> F]"
