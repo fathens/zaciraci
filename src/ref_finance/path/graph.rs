@@ -71,6 +71,10 @@ impl TokenGraph {
                 goals.push(goal.clone());
             }
         }
+        info!(log, "goals found";
+            "outs.count" => %outs.len(),
+            "goals.count" => %goals.len(),
+        );
         Ok(goals)
     }
 
