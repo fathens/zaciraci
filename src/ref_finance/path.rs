@@ -8,7 +8,6 @@ use graph::TokenGraph;
 use near_primitives::types::Balance;
 use num_integer::Roots;
 use num_traits::{one, zero, One, Zero};
-use rayon::prelude::*;
 use slog::info;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -206,25 +205,20 @@ where
     }
 
     let gain = |a| get_gain(a).into();
-    let mut cache = HashMap::new();
-    let mut join_calcs = |a, b, c| -> std::result::Result<(M, M, M), InnerError> {
-        let missings: Vec<_> = [a, b, c]
-            .into_iter()
-            .filter(|value| !cache.contains_key(value))
-            .collect();
-        for (v, r) in missings
-            .par_iter()
-            .map(|&v| (v, calc_res(v)))
-            .collect::<Vec<_>>()
-        {
-            cache.insert(v, r.map_err(|e| InnerError(Arc::new(e))));
+    let mut cache: HashMap<M, std::result::Result<Option<Arc<A>>, InnerError>> = HashMap::new();
+    
+    // キャッシュを利用した単一引数の評価関数
+    let mut evaluate = |input: M| -> std::result::Result<M, InnerError> {
+        if cache.contains_key(&input) {
+            return Ok(cache.get(&input).unwrap().clone()?.map(gain).unwrap_or(zero()));
         }
-
-        Ok((
-            cache.get(&a).unwrap().clone()?.map(gain).unwrap_or(zero()),
-            cache.get(&b).unwrap().clone()?.map(gain).unwrap_or(zero()),
-            cache.get(&c).unwrap().clone()?.map(gain).unwrap_or(zero()),
-        ))
+        
+        // 新しい値を計算
+        let result = calc_res(input).map_err(|e| InnerError(Arc::new(e)))?;
+        cache.insert(input, Ok(result.clone()));
+        let gain_value = result.clone().map(gain).unwrap_or(zero());
+        
+        Ok(gain_value)
     };
 
     let m2 = 2.into();
@@ -233,8 +227,12 @@ where
     let mut in_b = average;
     let mut in_c = max;
     while in_a < in_c {
-        let (a, b, c) = join_calcs(in_a, in_b, in_c).map_err(|ie| ie.unwrap())?;
-        debug!(log, "join_calced";
+        // 3点を評価
+        let a = evaluate(in_a).map_err(|e| e.unwrap())?;
+        let b = evaluate(in_b).map_err(|e| e.unwrap())?;
+        let c = evaluate(in_c).map_err(|e| e.unwrap())?;
+        
+        debug!(log, "evaluated points";
             "in_a" => format!("{:?}", in_a),
             "in_b" => format!("{:?}", in_b),
             "in_c" => format!("{:?}", in_c),
@@ -243,7 +241,7 @@ where
             "c" => format!("{:?}", c)
         );
 
-        if a == b && b == c && a == 0.into() {
+        if a == b && b == c && a == zero() {
             /* 全てゼロ
                a - b - c (== 0)
             */
@@ -314,6 +312,7 @@ where
         "b" => format!("{:?}", in_b),
         "c" => format!("{:?}", in_c)
     );
+
     cache
         .get(&in_a)
         .cloned()
@@ -324,7 +323,6 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::collections::HashMap;
 
     struct TestCalc {
         sorted_points: Vec<(u128, u128)>,
@@ -564,56 +562,6 @@ mod test {
             let result = search_best_path(1, 40, 100, calc, get_gain).unwrap();
             assert_eq!(result.map(result_pair), Some((30, 20)));
         }
-    }
-
-    #[test]
-    fn test_search_best_path_parallel() {
-        use std::sync::{Arc, Mutex};
-        let logs: Mutex<HashMap<u64, Vec<String>>> = Mutex::new(HashMap::new());
-        let started = std::time::Instant::now();
-        let log = |s: &str| {
-            let mut by_sec = logs.lock().unwrap();
-            let sec = started.elapsed().as_secs();
-            match by_sec.get_mut(&sec) {
-                Some(list) => {
-                    list.push(s.to_string());
-                }
-                None => {
-                    by_sec.insert(sec, vec![s.to_string()]);
-                }
-            }
-        };
-        let calc = |value: u128| {
-            log(&format!("start calc: {}", value));
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            log(&format!("end calc: {}", value));
-            Ok(Some(Arc::new(value)))
-        };
-        let get_gain = |a: Arc<u128>| *a;
-
-        let result = search_best_path(1, 2, 3, calc, get_gain).unwrap();
-        assert_eq!(result, Some(Arc::new(3)));
-        let guard = logs.lock().unwrap();
-        let mut list: Vec<_> = guard.iter().collect();
-        list.sort_by_key(|(a, _)| *a);
-        let actual: Vec<_> = list
-            .into_iter()
-            .map(|(n, v)| {
-                let mut v = v.clone();
-                v.sort();
-                (*n, v.join(", "))
-            })
-            .collect();
-        assert_eq!(
-            actual,
-            &[
-                (
-                    0_u64,
-                    "start calc: 1, start calc: 2, start calc: 3".to_string()
-                ),
-                (1_u64, "end calc: 1, end calc: 2, end calc: 3".to_string())
-            ]
-        );
     }
 
     #[test]
