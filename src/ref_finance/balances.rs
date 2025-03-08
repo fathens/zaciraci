@@ -191,12 +191,18 @@ where
     info!(log, "withdrawing";
         "token" => %token,
     );
-    deposit::withdraw(client, wallet, token, withdraw)
-        .await?
-        .wait_for_success()
-        .await?;
     let account = wallet.account_id();
-    let native_balance = client.get_native_amount(account).await?;
+    let before_withdraw = client.get_native_amount(account).await?;
+    let added = if before_withdraw < MINIMUM_NATIVE_BALANCE || is_time_to_harvest() {
+        deposit::withdraw(client, wallet, token, withdraw)
+            .await?
+            .wait_for_success()
+            .await?;
+        withdraw
+    } else {
+        0
+    };
+    let native_balance = before_withdraw + added;
     let upper = required << 7; // 128倍
     info!(log, "checking";
         "native_balance" => %native_balance,

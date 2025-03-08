@@ -14,7 +14,7 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::Add;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug)]
 pub struct TokenGraph {
@@ -71,6 +71,10 @@ impl TokenGraph {
                 goals.push(goal.clone());
             }
         }
+        info!(log, "goals found";
+            "outs.count" => %outs.len(),
+            "goals.count" => %goals.len(),
+        );
         Ok(goals)
     }
 
@@ -159,7 +163,7 @@ struct CachedPath<I, O, N, E> {
     graph: petgraph::Graph<N, E>,
     nodes: HashMap<N, NodeIndex>,
 
-    cached_path: Arc<Mutex<HashMap<I, PathToOut<O, N>>>>,
+    cached_path: Arc<RwLock<HashMap<I, PathToOut<O, N>>>>,
 }
 
 impl<I, O, N, E> CachedPath<I, O, N, E>
@@ -173,7 +177,7 @@ where
         Self {
             graph,
             nodes,
-            cached_path: Arc::new(Mutex::new(HashMap::new())),
+            cached_path: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -221,7 +225,7 @@ where
             info!(log, "no path found");
         } else {
             self.cached_path
-                .lock()
+                .write()
                 .unwrap()
                 .insert(start.clone(), path_to_outs);
         }
@@ -249,7 +253,7 @@ where
     }
 
     fn get_path(&self, start: &I, goal: &O) -> Result<Vec<N>> {
-        let cached_path = self.cached_path.lock().unwrap();
+        let cached_path = self.cached_path.read().unwrap();
         let path = cached_path
             .get(start)
             .ok_or_else(|| anyhow!("start token not found: {:?} X-> {:?}", start, goal))?
@@ -496,8 +500,50 @@ mod test {
         for goal in goals.into_iter() {
             let gs = cached_path.update_path(&goal, Some("A")).unwrap();
             assert!(gs.len() < 6);
+            assert!(gs.len() > 0);
         }
 
+        // A <-> B
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"B").unwrap()),
+            "[A 1-> B]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"B", &"A").unwrap()),
+            "[B 2-> A]"
+        );
+
+        // A <-> C
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"C").unwrap()),
+            "[A 3-> C]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"C", &"A").unwrap()),
+            "[C 2-> A]"
+        );
+
+        // A <-> D
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"D").unwrap()),
+            "[A 1-> B, B 4-> D]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"D", &"A").unwrap()),
+            "[D 3-> C, C 2-> A]"
+        );
+
+        // A <-> E
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"A", &"E").unwrap()),
+            "[A 3-> C, C 6-> E]"
+        );
+        assert_eq!(
+            format!("{:?}", cached_path.get_edges(&"E", &"A").unwrap()),
+            "[E 7-> C, C 2-> A]"
+        );
+
+        // A <-> F
         assert_eq!(
             format!("{:?}", cached_path.get_edges(&"A", &"F").unwrap()),
             "[A 1-> B, B 4-> D, D 8-> F]"
