@@ -1,262 +1,416 @@
-# フェーズ1: 有効範囲特定アルゴリズム
+# フェーズ1: 複数ピーク検出と有望区間特定
 
-## 複数の局所的な山を考慮した有効範囲特定
+## 目的と概要
 
-このアルゴリズムは、以下の特性を持つ関数の有効範囲（最大値が存在する範囲）を効率的に特定します：
-- 入力が小さすぎるとゼロ出力
-- その後単調増加するが、増加率は徐々に低下
-- 複数の局所的な山（局所最大値）が存在する可能性がある
-- 最大値を超えると突然ゼロに落ちる
-- 入力には最大値（上限）がある
+このフェーズでは、複数の局所的最大値（ピーク）が存在する可能性のある関数において、有望な探索区間を効率的に特定します。フェーズ2の改良型黄金分割探索に適切な入力を提供することが主目的です。
+
+### 対象とする関数の特性
+- 入力が小さすぎる場合は出力値がゼロ
+- その後、出力値が単調増加するが増加率は徐々に変化
+- 複数の局所的最大値（ピーク）が存在する可能性がある
+- 特定の入力値を超えると出力が急激に減少または突然ゼロになる
+- 入力には上限値が存在する
+
+### フェーズ1の役割
+- 高速かつ効率的に複数のピークを検出
+- 各ピーク周辺の有望区間を特定・評価
+- 複数の区間を必要に応じて統合・選別
+- フェーズ2に最適な探索区間情報を提供
 
 ## アルゴリズムの全体構造
 
+複数の局所的最大値を持つ関数に対応するため、探索プロセスを以下のフローで設計しています。
+
 ```mermaid
 graph TD
-    A(["開始"]) --> B["初期設定：開始点=min、増加率r=2"]
-    B --> C["初期評価: 開始点を評価"]
+    A(["開始"]) --> B["初期設定：<br/>・探索パラメータ<br/>・成長率設定<br/>・ピーク検出目標数"]
+    B --> C["初期評価：<br/>開始点の評価と記録"]
     
-    C --> D["指数的探索：現在値×r で新しい点を評価"]
-    D --> E{"評価値はゼロか"}
-    E -->|"はい"| F["上限閾値として記録"]
-    E -->|"いいえ(正の値)"| G{"入力上限到達"}
+    C --> D["指数的探索：<br/>ステップサイズを指数関数的に増加"]
     
-    F --> H["前回の高評価区間を記録"]
-    G -->|"はい"| I["上限値をmaxとして記録"]
-    G -->|"いいえ"| J{"前回より減少?"}
+    D --> E{"急激な変化検出：<br/>・ゼロ値出現<br/>・値の急激な変動"}
     
-    J -->|"はい"| K["局所的な山を記録<br/>（位置と高さ）"]
-    J -->|"いいえ"| L["高評価点として現在値を記録"]
+    E -->|"ゼロ値検出"| F["上限閾値として記録<br/>直前の有望区間を保存"]
+    E -->|"変化なし"| G{"評価値の変化：<br/>増加/減少?"}
     
-    K --> M["探索継続判断"]
-    L --> D
-    I --> N["記録された全区間を分析"]
-    H --> N
+    G -->|"減少検出"| H["局所的ピーク検出：<br/>位置・値・境界を記録"]
+    G -->|"増加継続"| I["高評価点として記録<br/>探索を継続"]
     
-    M -->|"探索継続"| D
-    M -->|"十分な山を検出"| N
+    H --> J{"検出ピーク数<br/>十分か?"}
+    F --> J
     
-    N --> O["最良の区間または<br/>複数区間の統合"]
-    O --> P["有効範囲確定:<br/>(lower_bound, upper_bound)"]
+    J -->|"不十分"| K["探索パラメータ調整<br/>・ステップ幅縮小<br/>・探索方向変更"]
+    K --> D
+    I --> D
     
-    P --> Q{"有効な範囲発見?"}
-    Q -->|"はい"| R(["フェーズ2へ"])
-    Q -->|"いいえ"| S["結果はnull"]
+    J -->|"十分"| L["ピーク情報分析：<br/>・信頼度評価<br/>・境界推定"]
+    
+    L --> M["有望区間生成：<br/>各ピークから区間を生成"]
+    
+    M --> N["区間管理：<br/>・重複区間の統合<br/>・近接区間の統合<br/>・区間の優先度計算"]
+    
+    N --> O["区間選別：<br/>・高品質区間の選択<br/>・有望区間のラッピング"]
+    
+    O --> P{"有望区間<br/>発見?"}
+    
+    P -->|"はい"| Q["PromisingInterval構造体生成：<br/>・区間情報<br/>・推定ピーク位置<br/>・評価値・傾き情報"]
+    
+    Q --> R(["フェーズ2へ：<br/>改良型黄金分割探索へ<br/>複数区間情報を引き渡し"])
+    
+    P -->|"いいえ"| S["代替戦略適用：<br/>・範囲の均等分割<br/>・広域探索"]
+    
     S --> T(["終了"])
 ```
 
+### アルゴリズムの主要ステップ
+
+1. **探索準備と初期化**
+   - 探索パラメータ（成長率、検出目標ピーク数、信頼度閾値）の設定
+   - データ構造の初期化（ピーク情報、探索状態管理）
+
+2. **複数ピーク検出プロセス**
+   - 指数的ステップサイズによる広域探索
+   - 評価値変化の監視による局所的ピークと急激変化点の検出
+   - 上限閾値（評価値ゼロ）の検出と記録
+   - 複数ピークの位置・評価値・範囲の記録
+
+3. **有望区間管理システム**
+   - 各ピークに基づく有望区間の生成
+   - 重複または近接する区間の統合処理
+   - 区間品質評価（ピーク値、範囲幅、傾斜情報に基づく）
+   - 上位区間の選別または複数区間情報の生成
+
+4. **フェーズ2への橋渡し**
+   - 複数の局所的最大値に対応するための区間情報構築
+   - 各区間の特性（予測ピーク位置、境界情報、傾き）の詳細化
+   - 探索リソース配分のための区間優先度付け
+
 ## 詳細なアルゴリズム設計
 
-### 1. 探索の初期化とパラメータ設定
+### 1. 探索の初期化とデータ構造
 
-```rust
-// 探索パラメータの設定
-struct ExplorationParams<M> {
-    growth_factor: M,      // 指数的成長率（通常は2）
-    min_peaks_to_find: usize, // 検出する最小ピーク数（例：3）
-    max_peaks_to_find: usize, // 検出する最大ピーク数（例：5）
-    min_peak_distance: M,  // ピーク間の最小距離
-}
+フェーズ1では、複数の局所的最大値を効率的に検出し、その情報を管理するためのデータ構造と探索パラメータを設計します。
 
-// 山（ピーク）情報の記録
-struct Peak<M> {
-    position: M,           // ピークの位置
-    value: M,              // ピークの評価値
-    left_bound: M,         // 左側の境界
-    right_bound: M,        // 右側の境界
-}
+#### 主要なデータ構造
 
-// 探索状態の追跡
-struct ExplorationState<M> {
-    current_position: M,   // 現在の探索位置
-    previous_value: M,     // 前回の評価値
-    peaks: Vec<Peak<M>>,   // 検出したピークのリスト
-    upper_thresholds: Vec<M>, // 検出した上限閾値（ゼロに変わる位置）
-    best_value_seen: M,    // これまでの最高評価値
-}
-```
-
-### 2. 複数の山を検出する指数的探索
-
-指数的な探索を継続し、複数の山（局所的な最大値）を検出します。
-
-```rust
-fn find_valid_range<A, M, C>(
-    cache_eval: &CachedEvaluate<A, M, C>,
-    min: M,
-    initial_guess: M,
-    max: M,
-    params: ExplorationParams<M>
-) -> Result<Vec<(M, M)>, InnerError>
-where
-    // ... 型パラメータの制約 ...
-{
-    let mut state = ExplorationState {
-        current_position: initial_guess,
-        previous_value: M::zero(),
-        peaks: Vec::new(),
-        upper_thresholds: Vec::new(),
-        best_value_seen: M::zero(),
-    };
-    
-    // 前回のピーク検出からの距離追跡
-    let mut distance_from_last_peak = M::max_value();
-    
-    while state.current_position <= max {
-        // 現在の点を評価
-        let current_value = evaluate_point(cache_eval, state.current_position)?;
-        
-        // ゼロ値の検出（上限閾値）
-        if current_value == M::zero() && state.previous_value > M::zero() {
-            state.upper_thresholds.push(state.current_position);
-            
-            // 前のピークから十分な数を検出済みかチェック
-            if state.peaks.len() >= params.min_peaks_to_find {
-                break; // 十分なピークを検出済み
-            }
-            
-            // 上限閾値後の探索継続（より小さいステップで）
-            state.current_position = step_back_and_reduce(state.current_position, params.growth_factor);
-            continue;
-        }
-        
-        // ピーク（局所的な山）の検出
-        if current_value < state.previous_value && state.previous_value > M::zero() {
-            // 新しいピークの位置は前の点
-            let peak_position = previous_position(state.current_position, params.growth_factor);
-            
-            // ピーク情報の記録
-            let peak = Peak {
-                position: peak_position,
-                value: state.previous_value,
-                left_bound: estimate_left_bound(peak_position, params.growth_factor),
-                right_bound: state.current_position,
-            };
-            
-            state.peaks.push(peak);
-            distance_from_last_peak = M::zero();
-            
-            // 十分なピークを検出したか確認
-            if state.peaks.len() >= params.max_peaks_to_find {
-                break;
-            }
-        } else {
-            // 評価値の更新と次の探索点への移動
-            if current_value > state.best_value_seen {
-                state.best_value_seen = current_value;
-            }
-            
-            state.previous_value = current_value;
-            distance_from_last_peak = distance_from_last_peak + step_size(state.current_position, params.growth_factor);
-            state.current_position = state.current_position * params.growth_factor;
-        }
+```mermaid
+classDiagram
+    class Peak {
+        position: M
+        value: M
+        left_bound: M
+        right_bound: M
+        confidence: f64
     }
     
-    // 検出したピークと上限閾値に基づいて有効範囲を決定
-    determine_valid_ranges(state, min, max)
-}
+    class PromisingInterval {
+        lower_bound: M
+        upper_bound: M
+        estimated_peak_position: M
+        peak_value: M
+        left_slope: f64
+        right_slope: f64
+        evaluation_count: usize
+        priority_score: f64
+    }
+    
+    class ExplorationState {
+        current_position: M
+        previous_value: M
+        peaks: Vec~Peak~
+        upper_thresholds: Vec~M~
+        best_value_seen: M
+    }
+    
+    class ExplorationParams {
+        growth_factor: M
+        min_peaks_to_find: usize
+        max_peaks_to_find: usize
+        min_peak_distance: M
+        confidence_threshold: f64
+    }
+    
+    ExplorationState "1" -- "*" Peak: contains
+    ExplorationState "1" -- "1" ExplorationParams: uses
+    Peak "1" -- "1" PromisingInterval: generates
 ```
+
+#### 主要データ構造の説明
+
+1. **Peak（ピーク情報）**
+   - `position`: ピークの位置値
+   - `value`: その位置での評価値
+   - `left_bound`/`right_bound`: ピークの推定境界
+   - `confidence`: このピークの信頼度スコア（値の大きさや変化率に基づく）
+
+2. **PromisingInterval（有望区間）**
+   - `lower_bound`/`upper_bound`: 区間の下限と上限
+   - `estimated_peak_position`: 推定されるピークの位置
+   - `peak_value`: 検出された最高評価値
+   - `left_slope`/`right_slope`: 区間の左右の傾き情報
+   - `priority_score`: この区間の優先度スコア
+
+3. **ExplorationState（探索状態）**
+   - `current_position`: 現在の探索位置
+   - `previous_value`: 前回評価値・変化検出用
+   - `peaks`: 検出したピークのリスト
+   - `upper_thresholds`: 検出した上限閾値（ゼロになる点）
+
+4. **ExplorationParams（探索パラメータ）**
+   - `growth_factor`: 指数探索の成長率（通常は2）
+   - `min_peaks_to_find`/`max_peaks_to_find`: 検出するピーク数の間値
+   - `min_peak_distance`: ピーク間の最小距離（近すぎるピークを統合）
+   - `confidence_threshold`: ピークを有効と判断する信頼度閾値
+
+#### フェーズ2との連携ポイント
+
+フェーズ1では、フェーズ2の改良型黄金分割探索に適した形で有望区間情報を生成します。具体的には：
+
+- 複数の独立した`PromisingInterval`を生成し、各区間の特性情報を付与
+- 区間の優先度に基づき、フェーズ2での探索リソース配分を容易にする
+- 評価関数の呼び出し回数を最小化するための評価キャッシュを共有
+
+### 2. 複数ピーク検出の指数的探索アルゴリズム
+
+このセクションでは、フェーズ1の中核となる指数的探索による複数ピーク検出アルゴリズムについて説明します。このアルゴリズムは、広範囲を高速に探索しながら複数の局所的最大値（ピーク）を検出し、それらを記録します。
+
+#### 指数的探索の流れ
+
+ピーク検出のアルゴリズムは以下のフローで実行されます。
+
+```mermaid
+flowchart TD
+    A(["Start"]) --> B["current_position = initial_guess"];
+    B --> C["current_value = evaluate(current_position)"];
+    C --> D{"current_value == 0 &
+previous_value > 0"};
+    
+    D -->|"Yes: \n\u30bc\u30ed\u5024\u691c\u51fa"| E["upper_thresholdsに追加"];
+    E --> F{"peaks.len() \u2265\nmin_peaks_to_find"};
+    F -->|"Yes"| G(["End: 十分なピーク検出済み"]);
+    F -->|"No"| H["step_back_and_reduce\n小さいステップで探索継続"];
+    H --> C;
+    
+    D -->|"No"| I{"current_value <
+previous_value &
+previous_value > 0"};
+    
+    I -->|"Yes: \n\u30d4\u30fc\u30af\u691c\u51fa"| J["peak = create_peak()\npeaks.push(peak)"];
+    J --> K{"peaks.len() \u2265\nmax_peaks_to_find"};
+    K -->|"Yes"| G;
+    K -->|"No"| L["current_position = \ncurrent_position * growth_factor"];
+    
+    I -->|"No"| M["update_values()\n評価値を更新"];
+    M --> N["current_position = \ncurrent_position * growth_factor"];
+    
+    N --> O{"current_position \u2264 max"};
+    L --> O;
+    
+    O -->|"Yes"| C;
+    O -->|"No"| P(["End: 指定範囲の探索完了"]);
+```
+
+このフローチャートは、指数的探索による複数ピーク検出の基本的な流れを示しています。検出プロセスは開始位置から指数的に増加するステップサイズで探索を進め、評価値の変化に基づいてピークや上限閾値を検出します。
+
+#### 指数的ピーク検出の主要ステップ
+
+指数的探索アルゴリズムは以下のステップから構成されています：
+
+1. **初期化と探索開始**
+   - 開始位置と成長率（通常は2）を設定
+   - 開始位置の評価値を計算し初期ベースラインとして記録
+
+2. **指数的なステップでの探索**
+   - 現在位置から指数的に増加する距離で次の探索点を設定
+   - 各探索点での評価値を計算し記録
+   - 評価値の変化パターンを追跡し分析
+
+3. **ピーク検出と記録**
+   - 現在の評価値が前回より低下した場合、前回の位置を局所的ピークとして検出
+   - 各ピークの位置、評価値、推定される境界をPeak構造体として記録
+   - ピークの信頼度を評価値や変化率に基づいて計算
+
+4. **上限閾値の検出**
+   - 評価値がゼロになり、前回の評価値が正だった場合、上限閾値として検出
+   - 上限閾値の直前の区間を有望区間として記録
+   - 必要に応じて、上限閾値付近をより細かいステップで再探索
+
+5. **探索終了条件の確認**
+   - 指定された最小数のピークを検出した場合に探索終了
+   - 最大数のピークを検出した場合に探索終了
+   - 探索範囲の上限に達した場合に探索終了
+
+#### 指数的探索の特徴と利点
+
+指数的探索は以下の特徴と利点を持ちます：
+
+1. **広範囲の高速探索**
+   - ステップサイズを指数的に増加させることで、広い範囲を少ないステップ数で探索可能
+   - 評価関数の呼び出し回数を最小限に抑えることが可能
+
+2. **複数のピーク検出能力**
+   - 一次の探索で複数の局所的ピークを検出可能
+   - 各ピークの情報を記録し管理することで、後続の探索に活用
+
+3. **急変点検出機能**
+   - 関数値が突然ゼロになるような急変点を効率的に検出
+   - ゼロ値検出時には、より細かいステップサイズで再探索を行う適応性
+
+#### 特殊なケースの処理
+
+指数的探索アルゴリズムは、以下の特殊なケースにも対応します：
+
+1. **上限閾値検出時の縦小ステップ探索**
+   - ゼロ値・上限閾値を検出した場合、直前の点と閾値の中間点で再探索
+   - `step_back_and_reduce`関数を用いて、前の点からより小さいステップで探索を続行
+   - これにより上限閾値付近の最適値をより正確に検出
+
+2. **ピーク間距離の管理**
+   - ピーク間の距離を追跡し、近すぎるピークが検出された場合は統合を検討
+   - `min_peak_distance`パラメータを用いて最小ピーク間距離を設定
+   - 近接したピークの場合、信頼度や評価値に基づいて統合または選択
+
+#### 評価値の変化パターンと判断
+
+指数的探索は、探索中に見られる評価値の変化パターンに基づいて重要な判断を行います：
+
+1. **上昇パターン**
+   - 評価値が続けて上昇している場合
+   - 判断: `current_value > previous_value`
+   - 探索ステップを続行し、ピーク到達まで探索を続ける
+
+2. **ピークパターン**
+   - 評価値が上昇した後、減少するパターン
+   - 判断: `current_value < previous_value && previous_value > 0`
+   - 判断時の処理: 前回の位置をピークとして記録
+
+3. **上限閾値パターン**
+   - 評価値が正の値から突然ゼロになるパターン
+   - 判断: `current_value == 0 && previous_value > 0`
+   - 判断時の処理: 上限閾値として記録し、必要に応じてより細かいステップで再探索
+
+4. **活発度判定パターン**
+   - 連続した探索点間の評価値の変化率に基づく判断
+   - 判断: `(current_value - previous_value) / previous_value > threshold`
+   - 急上昇領域を検出した場合、より小さいステップでの探索を検討
+
+5. **探索完了判定**
+   - 以下の条件のいずれかが満たされた場合に探索を完了
+   - 最小数のピーク検出条件: `peaks.len() ≥ min_peaks_to_find`
+   - 最大数のピーク検出条件: `peaks.len() ≥ max_peaks_to_find`
+   - 探索範囲の上限到達条件: `current_position > max`
+
+#### アルゴリズムの実装と調整ポイント
+
+指数的探索アルゴリズムを実装する上で重要な調整ポイントは以下の通りです：
+
+1. **成長率の調整**
+   - `growth_factor` パラメータは探索の速度と精度のバランスに影響
+   - 大きな値（例: 4.0）: 高速な探索が可能だが精度は低下
+   - 小さな値（例: 1.5）: 探索は遅いがより精密
+   - 推奨値: 2.0～3.0 の間でバランスが良好
+
+2. **ピーク検出数の調整**
+   - `min_peaks_to_find`: 最低限必要なピーク検出数
+   - `max_peaks_to_find`: 検出する最大ピーク数
+   - 小さな値に設定すると探索が早期終了する場合がある
+   - 大きな値に設定すると探索に時間がかかるが、より多くの候補の中から最適解を試せる
+
+3. **最小ピーク間距離の設定**
+   - `min_peak_distance`: ピーク間の最小距離の設定
+   - 小さすぎると多くの類似ピークが検出され分析が複雑に
+   - 大きすぎると近接した重要なピークを見通してしまう可能性
+
+#### 実装上の工夫と注意点
+
+指数的探索アルゴリズムを実装する際の重要な工夫と注意点は以下の通りです：
+
+1. **評価結果のキャッシュ機構**
+   - 評価関数の呼び出しが高コストな場合、キャッシュ機構は必須
+   - 既に探索済みの位置を記録し、再評価を回避
+
+2. **増分探索から応用可能**
+   - 指数的探索と別に、拘束中の高級探索にも効果的
+   - 既に探索した領域の周囲で明種的な増分探索を行うことも可能
+
+3. **適応的ステップサイズの調整**
+   - 探索進行中に得られた情報に基づいてステップサイズを動的に調整
+   - 子細な変化をキャッチしたい領域では小さなステップサイズを使用
+   - 変化が究めて小さい領域では大きなステップサイズで素早く探索
 
 ### 3. 複数の有効範囲候補の統合と選択
 
-検出した複数のピークから、最も有望な範囲または複数の範囲を選択・統合します。
+#### 有望区間（PromisingInterval）の概念
 
-```rust
-fn determine_valid_ranges<M>(
-    state: ExplorationState<M>,
-    min: M,
-    max: M
-) -> Result<Vec<(M, M)>, InnerError> {
-    if state.peaks.is_empty() && state.upper_thresholds.is_empty() {
-        // 有効な範囲が見つからない場合
-        return Ok(vec![]);
-    }
-    
-    let mut valid_ranges = Vec::new();
-    
-    // 各ピークに基づく範囲の設定
-    for peak in &state.peaks {
-        let margin = calculate_margin(peak.value);
-        let lower = max(min, peak.position - margin);
-        let upper = min(max, peak.position + margin);
-        
-        valid_ranges.push((lower, upper));
-    }
-    
-    // 上限閾値に基づく範囲の設定
-    for &threshold in &state.upper_thresholds {
-        let margin = calculate_threshold_margin(threshold);
-        let lower = max(min, threshold - margin);
-        let upper = min(max, threshold);
-        
-        valid_ranges.push((lower, upper));
-    }
-    
-    // 範囲の統合（必要に応じて）
-    valid_ranges = merge_overlapping_ranges(valid_ranges);
-    
-    // 最も有望な範囲を選択
-    if !valid_ranges.is_empty() {
-        // 評価基準に基づいて並べ替え
-        valid_ranges.sort_by(|a, b| evaluate_range_quality(a, b));
-        
-        // 最良の範囲を返すか、複数の有望な範囲を返す
-        let best_ranges = select_best_ranges(valid_ranges);
-        return Ok(best_ranges);
-    }
-    
-    // バックアップ：最小から最大まで全範囲を返す
-    Ok(vec![(min, max)])
-}
-```
+フェーズ1の主要な出力は、最も効率的な探索が期待できる「有望区間（PromisingInterval）」です。この有望区間は以下の要素で特徴づけられます：
+
+- **下限値と上限値**: 探索すべき区間の境界
+- **推定ピーク位置**: 区間内で最高値が予測される位置
+- **ピーク値**: 検出されたピークの評価値
+- **左右の傾き**: 区間内での関数の変化率の特性
+- **信頼度**: 区間内に高い値が存在する確信度
+
+検出した複数のピークから、最も有望な範囲または複数の範囲を選択・統合します。このプロセスは以下のステップで進行されます：
+
+1. **各ピークからの有望区間の生成**
+   - 検出された各ピークの位置を中心に、評価値に基づいて適切なマージンを設定
+   - 各ピークの左右にマージンを適用し、有望な探索区間を生成
+
+2. **上限閾値に基づく区間の生成**
+   - 検出された上限閾値の直前を有望な区間として設定
+   - 上限閾値から適切な距離を差し引いた位置を区間の下限として設定
+
+3. **重複区間の統合**
+   - 複数の有望区間が重複している場合、それらを統合してより大きな単一の区間に統合
+   - **重複判定基準**: 一方の区間の上限値が他方の区間の下限値以上の場合（上限≥下限）、重複と判定
+   - **近接区間判定**: 区間間の距離が設定した閾値より小さい場合、近接していると判定し統合候補とする
+   - **統合プロセス**: 区間を下限値でソートし、連続した区間を順に統合判定
+   - 統合時には最小の下限と最大の上限を新しい区間の境界として使用
+
+4. **最適区間の選択**
+   - 生成された区間を複数の評価基準に基づいて評価
+   - **評価基準**:
+     - **ピーク値**: 区間内で検出された最高評価値（高いほど高評価）
+     - **区間幅**: 探索に必要なコスト（狭いほど高評価）
+     - **信頼度**: ピーク検出の確かさや評価点数に基づく信頼性
+     - **傾き情報**: 区間内の関数の変化率（急島型か積型か）
+   - **選択戦略**:
+     - **単一区間戦略**: 評価値が最も高い単一の区間のみを選択
+     - **複数区間戦略**: 評価値上位N個の区間を選択し、フェーズ2で并行探索
+     - **基準混合戦略**: 複数の評価基準を重み付けし統合スコアで選択
+
+5. **特殊ケースの処理**
+   - **ピーク検出失敗時**: 有望区間が見つからない場合の対応
+     - 探索全体を単一の広い区間として返すバックアップ戦略
+     - 程度を下げたピーク検出基準で再探索を試行
+   - **極端に狭い入力範囲**: 即座にフェーズ2に進行
+   - **極端に広い入力範囲**: 範囲を複数に分割して探索
+   - **多すぎるピーク検出時**: 信頼度スコアに基づきピークの選別を実施
+   - **上限閾値とピーク空間の重なり**: ピークの信頼度と閾値の明確さに基づいて優先度を判断
 
 ### 4. サブルーチンと補助関数
 
-```rust
-// ピークの左側境界を推定
-fn estimate_left_bound<M>(peak_position: M, growth_factor: M) -> M {
-    peak_position / growth_factor
-}
+フェーズ1の探索プロセスを効率的に実行するための重要な補助関数群を以下に説明します：
 
-// 前の探索点を計算
-fn previous_position<M>(current: M, growth_factor: M) -> M {
-    current / growth_factor
-}
+1. **ピークの境界推定**
+   - `estimate_left_bound`: ピーク位置と成長率から左側境界を推定
+   - `estimate_right_bound`: ピーク位置と次の探索点から右側境界を推定
 
-// 上限閾値検出後に戻るステップ
-fn step_back_and_reduce<M>(position: M, growth_factor: M) -> M {
-    let previous = position / growth_factor;
-    // 前の点と現在の点の間の中間点を計算
-    previous + (position - previous) / M::from(2u128)
-}
+2. **探索位置の計算**
+   - `previous_position`: 現在位置から成長率を用いて前の探索点を計算
+   - `next_position`: 現在位置から成長率を用いて次の探索点を計算
 
-// 重複する範囲の統合
-fn merge_overlapping_ranges<M>(ranges: Vec<(M, M)>) -> Vec<(M, M)> {
-    if ranges.is_empty() {
-        return ranges;
-    }
-    
-    let mut sorted_ranges = ranges.clone();
-    sorted_ranges.sort_by(|a, b| a.0.cmp(&b.0));
-    
-    let mut result = Vec::new();
-    let mut current = sorted_ranges[0];
-    
-    for i in 1..sorted_ranges.len() {
-        if sorted_ranges[i].0 <= current.1 {
-            // 範囲が重複
-            current.1 = max(current.1, sorted_ranges[i].1);
-        } else {
-            // 新しい非重複範囲
-            result.push(current);
-            current = sorted_ranges[i];
-        }
-    }
-    
-    result.push(current);
-    result
-}
-```
+3. **閾値検出後の適応探索**
+   - `step_back_and_reduce`: 上限閾値を検出した後、より細かいステップサイズで前の正常値領域に戻る
+   - 上限閾値付近の最適値を拘束ステップで探索
+
+4. **区間管理関数**
+   - `merge_overlapping_ranges`: 重複する区間を単一のより広い区間に統合
+   - `calculate_margin`: ピーク値に基づいて探索マージンを計算
+
+5. **評価関数**
+   - `evaluate_range_quality`: 区間の質を評価し、複数区間の優先順位を決定
+   - `select_best_ranges`: 最も有望な区間を選択し、フェーズ2に渡す準備を行う
 
 ## ピーク評価と範囲選択のヒューリスティック
 
