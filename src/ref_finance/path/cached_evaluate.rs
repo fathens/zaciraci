@@ -1,10 +1,11 @@
+#![allow(dead_code)]
+use anyhow;
+use num_traits::{One, Zero};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
-use num_traits::{Zero, One};
-use anyhow;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct InnerError(Arc<anyhow::Error>);
@@ -44,7 +45,9 @@ where
 
     pub fn evaluate(&self, input: M) -> Result<Option<Arc<A>>, InnerError> {
         if input == M::zero() {
-            return Err(InnerError::new(anyhow::anyhow!("Zero is an invalid input.")));
+            return Err(InnerError::new(anyhow::anyhow!(
+                "Zero is an invalid input."
+            )));
         }
         let mut cache = self.cache.lock().unwrap();
         if let Some(result) = cache.get(&input) {
