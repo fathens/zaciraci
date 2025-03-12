@@ -3,7 +3,7 @@ use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::wallet::Wallet;
-use crate::{Result};
+use crate::Result;
 use near_primitives::types::Balance;
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
@@ -15,7 +15,7 @@ pub mod wnear {
     use crate::logging::*;
     use crate::ref_finance::token_account::WNEAR_TOKEN;
     use crate::wallet::Wallet;
-    use crate::{Result};
+    use crate::Result;
     use near_primitives::types::Balance;
     use near_sdk::json_types::U128;
     use near_sdk::AccountId;
