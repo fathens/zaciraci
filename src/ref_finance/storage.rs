@@ -5,7 +5,7 @@ use crate::ref_finance::{deposit, CONTRACT_ADDRESS};
 use crate::wallet::Wallet;
 use crate::Result;
 use near_primitives::types::AccountId;
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{U128, U64};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,6 +33,36 @@ pub async fn check_bounds<C: ViewContract>(client: &C) -> Result<StorageBalanceB
     let bounds: StorageBalanceBounds = serde_json::from_slice(&result.result)?;
     info!(log, "bounds"; "min" => ?bounds.min, "max" => ?bounds.max);
     Ok(bounds)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct AccountBaseInfo {
+    pub near_amount: U128,
+    pub storage_used: U64,
+}
+
+pub async fn get_account_basic_info<C: ViewContract>(
+    client: &C,
+    account: &AccountId,
+) -> Result<Option<AccountBaseInfo>> {
+    let log = DEFAULT.new(o!(
+        "function" => "get_account_basic_info",
+        "account" => format!("{}", account),
+    ));
+    info!(log, "entered");
+
+    const METHOD_NAME: &str = "get_account_basic_info";
+    let args = json!({
+        "account_id": account,
+    });
+
+    let result = client
+        .view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args)
+        .await?;
+
+    let basic_info: Option<AccountBaseInfo> = serde_json::from_slice(&result.result)?;
+    Ok(basic_info)
 }
 
 pub async fn deposit<C: SendTx, W: Wallet>(

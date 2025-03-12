@@ -1,3 +1,6 @@
+Balances の処理
+
+```mermaid
 graph TD
     Start((START)) --> StatsHistory[履歴の集計]
     StatsHistory -->|"必要額 = 今までの最大値\n（履歴無しなら default を使う）"| WrappedAmount{Wrapped の残高}
@@ -25,3 +28,4 @@ graph TD
 
     補充 --> End
     収穫 --> End
+```

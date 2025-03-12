@@ -5,9 +5,11 @@ use crate::jsonrpc::{AccountInfo, SendTx, SentTx, ViewContract};
 use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
+use crate::ref_finance::storage;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::wallet::Wallet;
 use crate::Result;
+use anyhow::bail;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
@@ -63,22 +65,28 @@ where
         "required_balance" => %required_balance,
     );
 
-    let wrapped_balance = balance_of_start_token(client, wallet, token).await?;
-    info!(log, "comparing";
-        "wrapped_balance" => wrapped_balance,
+    let basic_info = get_storage_account_or_register(client, wallet).await?;
+    info!(log, "storage account";
+        "near_amount" => ?basic_info.near_amount,
+        "storage_used" => ?basic_info.storage_used,
     );
 
-    if wrapped_balance < required_balance {
-        refill(client, wallet, required_balance - wrapped_balance).await?;
-        Ok(wrapped_balance)
+    let deposited_wnear = balance_of_start_token(client, wallet, token).await?;
+    info!(log, "comparing";
+        "deposited_wnear" => deposited_wnear,
+    );
+
+    if deposited_wnear < required_balance {
+        refill(client, wallet, required_balance - deposited_wnear).await?;
+        Ok(deposited_wnear)
     } else {
         let upper = required_balance << 7; // 128倍
-        if upper < wrapped_balance {
+        if upper < deposited_wnear {
             match harvest(
                 client,
                 wallet,
                 &WNEAR_TOKEN,
-                wrapped_balance - upper,
+                deposited_wnear - upper,
                 required_balance,
             )
             .await
@@ -87,7 +95,30 @@ where
                 Err(err) => warn!(log, "failed to harvest: {}", err),
             }
         }
-        Ok(wrapped_balance)
+        Ok(deposited_wnear)
+    }
+}
+
+async fn get_storage_account_or_register<C, W>(
+    client: &C,
+    wallet: &W,
+) -> Result<storage::AccountBaseInfo>
+where
+    C: ViewContract + SendTx,
+    W: Wallet,
+{
+    let account = wallet.account_id();
+    if let Some(a) = storage::get_account_basic_info(client, account).await? {
+        return Ok(a);
+    }
+    storage::deposit(client, wallet, 0, false)
+        .await?
+        .wait_for_success()
+        .await?;
+    if let Some(a) = storage::get_account_basic_info(client, account).await? {
+        Ok(a)
+    } else {
+        bail!("Failed to get account basic info after deposit")
     }
 }
 
@@ -97,7 +128,7 @@ async fn balance_of_start_token<C, W>(
     token: &TokenAccount,
 ) -> Result<Balance>
 where
-    C: AccountInfo + ViewContract,
+    C: ViewContract,
     W: Wallet,
 {
     let account = wallet.account_id();
