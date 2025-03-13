@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
-const DEFAULT_DEPOSIT: Balance = MilliNear::from_near(100).to_yocto();
+const DEFAULT_DEPOSIT: Balance = MilliNear::of(100).to_yocto();
 const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);

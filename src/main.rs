@@ -129,7 +129,7 @@ where
         let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
 
         let res = ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
-        if res.is_some() {
+        if res.is_none() {
             bail!("no account to deposit");
         }
 
