@@ -7,6 +7,7 @@ use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::storage;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
+use crate::types::MilliNear;
 use crate::wallet::Wallet;
 use crate::Result;
 use anyhow::bail;
@@ -18,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
+const DEFAULT_DEPOSIT: Balance = MilliNear::from_near(100).to_yocto();
 const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
@@ -73,7 +75,8 @@ where
 
     let deposited_wnear = balance_of_start_token(client, wallet, token).await?;
     info!(log, "comparing";
-        "deposited_wnear" => deposited_wnear,
+        "deposited_wnear" => ?deposited_wnear,
+        "required_balance" => ?required_balance,
     );
 
     if deposited_wnear < required_balance {
@@ -109,9 +112,16 @@ where
 {
     let account = wallet.account_id();
     if let Some(a) = storage::get_account_basic_info(client, account).await? {
+        let need = DEFAULT_DEPOSIT - a.near_amount.0;
+        if need > 0 {
+            storage::deposit(client, wallet, need, false)
+                .await?
+                .wait_for_success()
+                .await?;
+        }
         return Ok(a);
     }
-    storage::deposit(client, wallet, 0, false)
+    storage::deposit(client, wallet, DEFAULT_DEPOSIT, false)
         .await?
         .wait_for_success()
         .await?;
