@@ -224,9 +224,12 @@ async fn run_swap(
         .await
         .unwrap();
     let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
-    ref_finance::storage::check_and_deposit(&client, &wallet, &tokens)
+    let res = ref_finance::storage::check_and_deposit(&client, &wallet, &tokens)
         .await
         .unwrap();
+    if res.is_some() {
+        return "no account to deposit".to_string();
+    }
 
     let arg = ref_finance::swap::SwapArg {
         initial_in: amount_in,

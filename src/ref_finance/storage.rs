@@ -5,7 +5,7 @@ use crate::ref_finance::{deposit, CONTRACT_ADDRESS};
 use crate::wallet::Wallet;
 use crate::Result;
 use near_primitives::types::AccountId;
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{U128, U64};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -16,7 +16,7 @@ pub struct StorageBalanceBounds {
     pub max: Option<U128>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub struct StorageBalance {
     pub total: U128,
     pub available: U128,
@@ -33,6 +33,36 @@ pub async fn check_bounds<C: ViewContract>(client: &C) -> Result<StorageBalanceB
     let bounds: StorageBalanceBounds = serde_json::from_slice(&result.result)?;
     info!(log, "bounds"; "min" => ?bounds.min, "max" => ?bounds.max);
     Ok(bounds)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct AccountBaseInfo {
+    pub near_amount: U128,
+    pub storage_used: U64,
+}
+
+pub async fn get_account_basic_info<C: ViewContract>(
+    client: &C,
+    account: &AccountId,
+) -> Result<Option<AccountBaseInfo>> {
+    let log = DEFAULT.new(o!(
+        "function" => "get_account_basic_info",
+        "account" => format!("{}", account),
+    ));
+    info!(log, "entered");
+
+    const METHOD_NAME: &str = "get_account_basic_info";
+    let args = json!({
+        "account_id": account,
+    });
+
+    let result = client
+        .view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args)
+        .await?;
+
+    let basic_info: Option<AccountBaseInfo> = serde_json::from_slice(&result.result)?;
+    Ok(basic_info)
 }
 
 pub async fn deposit<C: SendTx, W: Wallet>(
@@ -60,7 +90,7 @@ pub async fn deposit<C: SendTx, W: Wallet>(
 pub async fn balance_of<C: ViewContract>(
     client: &C,
     account: &AccountId,
-) -> Result<StorageBalance> {
+) -> Result<Option<StorageBalance>> {
     let log = DEFAULT.new(o!("function" => "storage::balance_of"));
     const METHOD_NAME: &str = "storage_balance_of";
     let args = json!({
@@ -70,11 +100,15 @@ pub async fn balance_of<C: ViewContract>(
         .view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args)
         .await?;
 
-    let balance: StorageBalance = serde_json::from_slice(&result.result)?;
-    info!(log, "balance";
-        "total" => ?balance.total,
-        "available" => ?balance.available,
-    );
+    let balance: Option<StorageBalance> = serde_json::from_slice(&result.result)?;
+    if let Some(b) = &balance {
+        info!(log, "balance";
+            "total" => ?b.total,
+            "available" => ?b.available,
+        );
+    } else {
+        info!(log, "no balance");
+    }
     Ok(balance)
 }
 
@@ -83,12 +117,19 @@ pub async fn check_deposits<C: ViewContract>(
     client: &C,
     account: &AccountId,
     tokens: &[TokenAccount],
-) -> Result<(Vec<TokenAccount>, u128)> {
+) -> Result<Option<(Vec<TokenAccount>, u128)>> {
     let log = DEFAULT.new(o!("function" => "storage::check_deposits"));
 
     let bounds = check_bounds(client).await?;
     let deposits = deposit::get_deposits(client, account).await?;
-    let balance = balance_of(client, account).await?;
+    if deposits.is_empty() {
+        return Ok(None);
+    }
+    let maybe_balance = balance_of(client, account).await?;
+    if maybe_balance.is_none() {
+        return Ok(None)
+    }
+    let balance = maybe_balance.unwrap();
 
     let total = balance.total.0;
     let available = balance.available.0;
@@ -109,7 +150,7 @@ pub async fn check_deposits<C: ViewContract>(
     let more_needed = mores.len() as u128 * per_token;
     info!(log, "missing token deposits"; "more_needed" => more_needed);
     if more_needed <= available {
-        return Ok((vec![], 0));
+        return Ok(Some((vec![], 0)));
     }
 
     let shortage = more_needed - available;
@@ -127,23 +168,27 @@ pub async fn check_deposits<C: ViewContract>(
         noneeds.drain(needing_count..);
     }
     if needing_count <= noneeds.len() {
-        return Ok((noneeds, 0));
+        return Ok(Some((noneeds, 0)));
     }
 
     let more_posts = needing_count - noneeds.len();
     let more = more_posts as u128 * per_token;
 
-    Ok((noneeds, more))
+    Ok(Some((noneeds, more)))
 }
 
-pub async fn check_and_deposit<C, W>(client: &C, wallet: &W, tokens: &[TokenAccount]) -> Result<()>
+pub async fn check_and_deposit<C, W>(client: &C, wallet: &W, tokens: &[TokenAccount]) -> Result<Option<()>>
 where
     C: SendTx + ViewContract,
     W: Wallet,
 {
     let log = DEFAULT.new(o!("function" => "storage::check_and_deposit"));
     let account = wallet.account_id();
-    let (deleting_tokens, more) = check_deposits(client, account, tokens).await?;
+    let maybe_res = check_deposits(client, account, tokens).await?;
+    if maybe_res.is_none() {
+        return Ok(None);
+    }
+    let (deleting_tokens, more) = maybe_res.unwrap();
     if !deleting_tokens.is_empty() {
         deposit::unregister_tokens(client, wallet, &deleting_tokens)
             .await?
@@ -157,7 +202,7 @@ where
             .wait_for_success()
             .await?;
     }
-    Ok(())
+    Ok(Some(()))
 }
 
 #[cfg(test)]

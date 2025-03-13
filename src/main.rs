@@ -17,6 +17,7 @@ use crate::ref_finance::pool_info::TokenPair;
 use crate::ref_finance::token_account::{TokenInAccount, WNEAR_TOKEN};
 use crate::types::MicroNear;
 use crate::wallet::Wallet;
+use anyhow::bail;
 use futures_util::future::join_all;
 use humantime::parse_duration;
 use near_primitives::types::Balance;
@@ -127,7 +128,10 @@ where
     if let Some(previews) = previews {
         let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
 
-        ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
+        let res = ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
+        if res.is_none() {
+            bail!("no account to deposit");
+        }
 
         let swaps = pre_path
             .into_iter()
