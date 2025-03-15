@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
 use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{U128, U64};
 use serde_json::json;
 use serial_test::serial;
 use std::cell::Cell;
@@ -201,6 +201,20 @@ impl ViewContract for MockClient {
             "ft_balance_of" => {
                 let balance = U128(self.wnear_amount.get());
                 serde_json::to_vec(&balance)?
+            }
+            "storage_balance_of" => {
+                let account_info = json!({
+                    "total": U128(DEFAULT_DEPOSIT),
+                    "available": U128(0),
+                });
+                serde_json::to_vec(&account_info)?
+            }
+            "get_account_basic_info" => {
+                let account_info = json!({
+                    "near_amount": U128(DEFAULT_DEPOSIT),
+                    "storage_used": U64(0),
+                });
+                serde_json::to_vec(&account_info)?
             }
             _ => {
                 let balance = U128(0);
