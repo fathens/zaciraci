@@ -17,6 +17,9 @@ num-bigint = "0.4"
 num-traits = "0.2"
 num-rational = "0.4"
 num-integer = "0.1"
+diesel = { version = "2.2.8", features = ["postgres", "numeric", "chrono"] }
+deadpool = { version = "0.12.2", features = ["rt_tokio_1"] }
+deadpool-diesel = { version = "0.6.1", features = ["postgres"] }
 slog = { version = "2.7", features = ["max_level_trace", "release_max_level_info"] }
 slog-async = "2.8"
 slog-term = "2.9"
