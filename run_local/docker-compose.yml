@@ -1,4 +1,15 @@
 services:
+  postgres:
+    image: postgres:15-bookworm
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - ./.data:/var/lib/postgresql/data
+      - ./init_pg:/docker-entrypoint-initdb.d
+
   zaciraci:
     build:
       context: ..
