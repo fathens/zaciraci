@@ -1,0 +1,7 @@
+graph TD
+    GetAllPools --> StatsHistory["履歴の集計\n（キャッシュされてる）"]
+    StatsHistory -->|標準額| ArrangeValue[前後の値を作る]
+    ArrangeValue --> FindWays[複数の値で探査]
+    FindWays --> CompareReturns[Best-N の増加分を比較]
+    CompareReturns -->|Center| PickBests[その入力の Best-N を使う]
+    CompareReturns -->|Less or Greater| ArrangeValue

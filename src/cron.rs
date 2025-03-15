@@ -1,26 +1,20 @@
-use crate::logging;
-use chrono::prelude::Utc;
-use cron::Schedule;
-use slog::*;
-use std::str::FromStr;
-use std::time::Duration;
-use tokio::spawn;
-use tokio::time::sleep;
+use crate::logging::*;
+use chrono::Utc as TZ;
+
+const CRON: &str = "0 0 * * * *";
 
 pub async fn run() {
-    let handle = spawn(async {
-        let schedule = Schedule::from_str("0 0 * * * *").unwrap();
-        let mut next_tick = schedule.upcoming(Utc).next().unwrap();
-        loop {
-            let now = Utc::now();
-            if now >= next_tick {
-                info!(logging::DEFAULT, "CRON"; "time" => %now);
-                next_tick = schedule.upcoming(Utc).next().unwrap();
-            }
-
-            sleep(Duration::from_secs((next_tick - now).num_seconds() as u64)).await;
+    let schedule: cron::Schedule = CRON.parse().unwrap();
+    for next in schedule.upcoming(TZ) {
+        if let Ok(wait) = (next - TZ::now()).to_std() {
+            tokio::time::sleep(wait).await;
+            job().await;
         }
-    });
+    }
+}
 
-    handle.await.unwrap();
+async fn job() {
+    let log = DEFAULT.new(o!("function" => "job"));
+
+    info!(log, "CRON");
 }
