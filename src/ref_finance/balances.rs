@@ -311,7 +311,7 @@ mod tests {
 
     fn initialize() {
         INIT.call_once(|| {
-            std::env::set_var("HARVEST_ACCOUNT_ID", "harvest.near");
+            config::set("HARVEST_ACCOUNT_ID", "harvest.near");
         });
     }
 
