@@ -64,7 +64,11 @@ impl StandardWallet {
             .map_err(|e| anyhow!("{}", e))?;
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&key.key);
         let seckey = ED25519SecretKey(signing_key.to_keypair_bytes());
-        let signer = InMemorySigner::from_secret_key(account_id.clone(), ED25519(seckey));
+        let signer_result = InMemorySigner::from_secret_key(account_id.clone(), ED25519(seckey));
+        let signer = match signer_result {
+            near_crypto::Signer::InMemory(signer) => signer,
+            _ => return Err(anyhow!("Expected InMemorySigner")),
+        };
         let wallet = StandardWallet {
             account_id,
             mnemonic,

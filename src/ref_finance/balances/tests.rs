@@ -19,11 +19,15 @@ struct MockWallet {
 impl MockWallet {
     fn new() -> Self {
         let account_id: AccountId = "test.near".parse().unwrap();
-        let signer = InMemorySigner::from_seed(
+        let signer_result = InMemorySigner::from_seed(
             account_id.clone(),
             near_crypto::KeyType::ED25519,
             "test.near",
         );
+        let signer = match signer_result {
+            near_crypto::Signer::InMemory(signer) => signer,
+            _ => panic!("Expected InMemorySigner"),
+        };
         Self { account_id, signer }
     }
 }

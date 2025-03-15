@@ -256,8 +256,8 @@ fn calc_retry_duration(upper: Duration, retry_limit: u16, fr: f32) -> impl Fn(u1
 fn fluctuate(y: f32, fr: f32) -> f32 {
     let r = y * fr;
     if r > 0.0 {
-        let mut rng = rand::thread_rng();
-        let v = rng.gen_range(0.0..(r * 2.0)) - r;
+        let mut rng = rand::rng();
+        let v = rng.random_range(0.0..(r * 2.0)) - r;
         y + v
     } else {
         y
