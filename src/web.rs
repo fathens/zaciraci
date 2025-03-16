@@ -20,55 +20,55 @@ pub async fn run() {
         .route("/native_token/balance", get(native_token_balance))
         .with_state(state.clone())
         .route(
-            "/native_token/transfer/:receiver/:amount",
+            "/native_token/transfer/{receiver}/{amount}",
             get(native_token_transfer),
         )
         .with_state(state.clone())
         .route("/pools/get_all", get(get_all_pools))
         .with_state(state.clone())
         .route(
-            "/pools/estimate_return/:pool_id/:amount",
+            "/pools/estimate_return/{pool_id}/{amount}",
             get(estimate_return),
         )
         .with_state(state.clone())
-        .route("/pools/get_return/:pool_id/:amount", get(get_return))
+        .route("/pools/get_return/{pool_id}/{amount}", get(get_return))
         .with_state(state.clone())
         .route("/pools/list_all_tokens", get(list_all_tokens))
         .with_state(state.clone())
         .route(
-            "/pools/list_returns/:token_account/:amount",
+            "/pools/list_returns/{token_account}/{amount}",
             get(list_returns),
         )
         .with_state(state.clone())
-        .route("/pools/pick_goals/:token_account/:amount", get(pick_goals))
+        .route("/pools/pick_goals/{token_account}/{amount}", get(pick_goals))
         .with_state(state.clone())
         .route(
-            "/pools/run_swap/:token_in_account/:initial_value/:token_out_account",
+            "/pools/run_swap/{token_in_account}/{initial_value}/{token_out_account}",
             get(run_swap),
         )
         .with_state(state.clone())
         .route("/storage/deposit_min", get(storage_deposit_min))
         .with_state(state.clone())
-        .route("/storage/deposit/:amount", get(storage_deposit))
+        .route("/storage/deposit/{amount}", get(storage_deposit))
         .with_state(state.clone())
         .route(
-            "/storage/unregister/:token_account",
+            "/storage/unregister/{token_account}",
             get(storage_unregister_token),
         )
         .with_state(state.clone())
         .route("/amounts/list", get(deposit_list))
         .with_state(state.clone())
-        .route("/amounts/wrap/:amount", get(wrap_native_token))
+        .route("/amounts/wrap/{amount}", get(wrap_native_token))
         .with_state(state.clone())
-        .route("/amounts/unwrap/:amount", get(unwrap_native_token))
+        .route("/amounts/unwrap/{amount}", get(unwrap_native_token))
         .with_state(state.clone())
         .route(
-            "/amounts/deposit/:token_account/:amount",
+            "/amounts/deposit/{token_account}/{amount}",
             get(deposit_token),
         )
         .with_state(state.clone())
         .route(
-            "/amounts/withdraw/:token_account/:amount",
+            "/amounts/withdraw/{token_account}/{amount}",
             get(withdraw_token),
         )
         .with_state(state.clone());
