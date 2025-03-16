@@ -2,17 +2,12 @@ mod connection_pool;
 
 use crate::Result;
 use diesel::connection::Connection;
-use once_cell::sync::Lazy;
 use std::sync::Arc;
 use anyhow;
 
-static DB_CLIENT: Lazy<Arc<DatabaseClient>> = Lazy::new(|| {
-    Arc::new(DatabaseClient::new())
-});
-
 /// JSONRPCのnew_client関数と同様に、データベースクライアントのインスタンスを取得します
 pub fn new_client() -> Arc<DatabaseClient> {
-    Arc::clone(&DB_CLIENT)
+    Arc::new(DatabaseClient::new())
 }
 
 #[derive(Clone, Debug)]
