@@ -4,8 +4,10 @@ pub use deadpool_diesel::postgres::Pool;
 use deadpool_diesel::{Manager, ManagerConfig, RecyclingMethod};
 use once_cell::sync::Lazy;
 
+#[allow(dead_code)]
 pub type Client = deadpool_diesel::postgres::Connection;
 
+#[allow(dead_code)]
 static POOL: Lazy<Pool> = Lazy::new(|| {
     let max_size: usize = config::get("PG_POOL_SIZE")
         .ok()
@@ -19,6 +21,7 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
     Pool::builder(mgr).max_size(max_size).build().unwrap()
 });
 
+#[allow(dead_code)]
 pub async fn get() -> Result<Client> {
     Ok(POOL.get().await?)
 }
