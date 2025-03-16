@@ -4,6 +4,7 @@ mod config;
 mod cron;
 mod jsonrpc;
 mod logging;
+mod persistence;
 mod ref_finance;
 mod types;
 mod wallet;
@@ -55,6 +56,9 @@ async fn main() {
     error!(log, "log level check");
     warn!(log, "log level check");
     crit!(log, "log level check");
+
+    let db_client = persistence::new_client();
+    info!(log, "Database client created"; "db_client" => ?db_client);
 
     let base = wallet::new_wallet().derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();
