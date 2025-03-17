@@ -229,6 +229,7 @@ impl TokenRate {
 mod tests {
     use super::*;
     use diesel::RunQueryDsl;
+    use serial_test::serial;
 
     // テーブルからすべてのレコードを削除する補助関数
     async fn clean_table() -> Result<()> {
@@ -245,6 +246,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_token_rate_single_insert() -> Result<()> {
         // 1. テーブルの全レコード削除
         clean_table().await?;
@@ -285,6 +287,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_token_rate_batch_insert_history() -> Result<()> {
         // 1. テーブルの全レコード削除
         clean_table().await?;
@@ -347,6 +350,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_token_rate_different_pairs() -> Result<()> {
         // 1. テーブルの全レコード削除
         clean_table().await?;
@@ -418,6 +422,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_token_rate_get_latests_by_quote() -> Result<()> {
         // 1. テーブルの全レコード削除
         clean_table().await?;
