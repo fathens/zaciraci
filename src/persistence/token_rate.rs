@@ -189,4 +189,38 @@ impl TokenRate {
             .map(TokenRate::from_db)
             .collect()
     }
+
+    // quoteトークンを指定して対応するすべてのbaseトークンとその最新時刻を取得
+    pub async fn get_latests_by_quote(quote: &TokenInAccount) -> Result<Vec<(TokenOutAccount, NaiveDateTime)>> {
+        use diesel::dsl::max;
+        use diesel::QueryDsl;
+
+        let quote_str = quote.to_string();
+        let conn = connection_pool::get().await?;
+
+        // 各base_tokenごとに最新のタイムスタンプを取得
+        let latest_timestamps = conn.interact(move |conn| {
+            token_rates::table
+                .filter(token_rates::quote_token.eq(&quote_str))
+                .group_by(token_rates::base_token)
+                .select((
+                    token_rates::base_token,
+                    max(token_rates::timestamp)
+                ))
+                .load::<(String, Option<NaiveDateTime>)>(conn)
+        }).await.map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        // 結果をトークンとタイムスタンプのペアに変換
+        let mut results = Vec::new();
+        for (base_token, timestamp_opt) in latest_timestamps {
+            if let Some(timestamp) = timestamp_opt {
+                match TokenAccount::from_str(&base_token) {
+                    Ok(token) => results.push((token.into(), timestamp)),
+                    Err(e) => return Err(anyhow!("Failed to parse token: {:?}", e)),
+                }
+            }
+        }
+
+        Ok(results)
+    }
 }
