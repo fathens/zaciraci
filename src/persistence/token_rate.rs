@@ -27,25 +27,48 @@ pub struct NewDbTokenRate {
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
+    pub timestamp: NaiveDateTime,
 }
 
 // アプリケーションロジック用モデル
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TokenRate {
-    pub base: TokenInAccount,
-    pub quote: TokenOutAccount,
+    pub base: TokenOutAccount,
+    pub quote: TokenInAccount,
     pub rate: BigDecimal,
+    pub timestamp: NaiveDateTime,
 }
 
 // 相互変換の実装
 #[allow(dead_code)]
 impl TokenRate {
+    // 新しいTokenRateインスタンスを現在時刻で作成
+    pub fn new(base: TokenOutAccount, quote: TokenInAccount, rate: BigDecimal) -> Self {
+        Self {
+            base,
+            quote,
+            rate,
+            timestamp: chrono::Utc::now().naive_utc(),
+        }
+    }
+
+    // 特定の時刻でTokenRateインスタンスを作成
+    pub fn with_timestamp(base: TokenOutAccount, quote: TokenInAccount, rate: BigDecimal, timestamp: NaiveDateTime) -> Self {
+        Self {
+            base,
+            quote,
+            rate,
+            timestamp,
+        }
+    }
+
     // DbTokenRate からの変換
     pub fn from_db(db_rate: DbTokenRate) -> Result<Self> {
         Ok(Self {
-            base: TokenInAccount::from(TokenAccount::from_str(&db_rate.base_token)?),
-            quote: TokenOutAccount::from(TokenAccount::from_str(&db_rate.quote_token)?),
+            base: TokenAccount::from_str(&db_rate.base_token)?.into(),
+            quote: TokenAccount::from_str(&db_rate.quote_token)?.into(),
             rate: db_rate.rate,
+            timestamp: db_rate.timestamp,
         })
     }
     
@@ -55,6 +78,7 @@ impl TokenRate {
             base_token: self.base.to_string(),
             quote_token: self.quote.to_string(),
             rate: self.rate.clone(),
+            timestamp: self.timestamp,
         }
     }
 }
