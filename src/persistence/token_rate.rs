@@ -55,7 +55,7 @@ impl TokenRate {
     }
 
     // 特定の時刻でTokenRateインスタンスを作成
-    pub fn with_timestamp(base: TokenOutAccount, quote: TokenInAccount, rate: BigDecimal, timestamp: NaiveDateTime) -> Self {
+    pub fn new_with_timestamp(base: TokenOutAccount, quote: TokenInAccount, rate: BigDecimal, timestamp: NaiveDateTime) -> Self {
         Self {
             base,
             quote,
@@ -222,5 +222,61 @@ impl TokenRate {
         }
 
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diesel::RunQueryDsl;
+
+    // テーブルからすべてのレコードを削除する補助関数
+    async fn clean_table() -> Result<()> {
+        let conn = connection_pool::get().await?;
+        conn.interact(|conn| {
+            diesel::delete(token_rates::table)
+                .execute(conn)
+        }).await.map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_token_rate_single_insert() -> Result<()> {
+        // 1. テーブルの全レコード削除
+        clean_table().await?;
+
+        // テスト用のトークンアカウント作成
+        let base = TokenAccount::from_str("eth.token")?.into();
+        let quote = TokenAccount::from_str("usdt.token")?.into();
+        
+        // 2. get_latest で None が返ることを確認
+        let result = TokenRate::get_latest(&base, &quote).await?;
+        assert!(result.is_none(), "Empty table should return None");
+
+        // 3. １つインサート
+        let rate = BigDecimal::from(1000);
+        let timestamp = chrono::Utc::now().naive_utc();
+        let token_rate = TokenRate::new_with_timestamp(
+            base.clone(),
+            quote.clone(),
+            rate.clone(),
+            timestamp,
+        );
+        token_rate.insert().await?;
+
+        // 4. get_latest でインサートしたレコードが返ることを確認
+        let result = TokenRate::get_latest(&base, &quote).await?;
+        assert!(result.is_some(), "Should return inserted record");
+        
+        let retrieved_rate = result.unwrap();
+        assert_eq!(retrieved_rate.base.to_string(), "eth.token", "Base token should match");
+        assert_eq!(retrieved_rate.quote.to_string(), "usdt.token", "Quote token should match");
+        assert_eq!(retrieved_rate.rate, rate, "Rate should match");
+        assert_eq!(retrieved_rate.timestamp, timestamp, "Timestamp should match");
+
+        // クリーンアップ
+        clean_table().await?;
+        
+        Ok(())
     }
 }
