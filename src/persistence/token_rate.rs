@@ -83,33 +83,29 @@ impl TokenRate {
             timestamp: self.timestamp,
         }
     }
-}
 
-// データベース操作
-#[allow(dead_code)]
-impl DbTokenRate {
-    // 単一レコードの挿入
-    pub async fn insert(token_rate: &TokenRate) -> Result<DbTokenRate> {
+    // データベースに挿入
+    pub async fn insert(&self) -> Result<()> {
         use diesel::RunQueryDsl;
 
-        let new_rate = token_rate.to_new_db();
+        let new_rate = self.to_new_db();
         let conn = connection_pool::get().await?;
         
-        let result = conn.interact(move |conn| {
+        conn.interact(move |conn| {
             diesel::insert_into(token_rates::table)
                 .values(&new_rate)
-                .get_result::<DbTokenRate>(conn)
+                .execute(conn)
         }).await.map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
         
-        Ok(result)
+        Ok(())
     }
 
-    // 複数レコードの一括挿入
-    pub async fn batch_insert(token_rates: &[TokenRate]) -> Result<Vec<DbTokenRate>> {
+    // 複数レコードを一括挿入
+    pub async fn batch_insert(token_rates: &[TokenRate]) -> Result<()> {
         use diesel::RunQueryDsl;
 
         if token_rates.is_empty() {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         let new_rates: Vec<NewDbTokenRate> = token_rates
@@ -119,16 +115,16 @@ impl DbTokenRate {
 
         let conn = connection_pool::get().await?;
 
-        let results = conn.interact(move |conn| {
+        conn.interact(move |conn| {
             diesel::insert_into(token_rates::table)
                 .values(&new_rates)
-                .get_results::<DbTokenRate>(conn)
+                .execute(conn)
         }).await.map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        Ok(results)
+        Ok(())
     }
 
-    // 最新のレコードを取得
+    // 最新のレートを取得
     pub async fn get_latest(base: &TokenOutAccount, quote: &TokenInAccount) -> Result<Option<TokenRate>> {
         use diesel::dsl::max;
         use diesel::QueryDsl;
@@ -162,8 +158,7 @@ impl DbTokenRate {
                     .first::<DbTokenRate>(conn)
             }).await.map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
             
-            let token_rate = TokenRate::from_db(result)?;
-            Ok(Some(token_rate))
+            Ok(Some(TokenRate::from_db(result)?))
         } else {
             Ok(None)
         }
@@ -186,11 +181,9 @@ impl DbTokenRate {
                 .load::<DbTokenRate>(conn)
         }).await.map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
             
-        let token_rates = results
+        results
             .into_iter()
             .map(TokenRate::from_db)
-            .collect::<Result<Vec<_>>>()?;
-            
-        Ok(token_rates)
+            .collect()
     }
 }
