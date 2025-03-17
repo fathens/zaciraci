@@ -416,4 +416,88 @@ mod tests {
         
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_token_rate_get_latests_by_quote() -> Result<()> {
+        // 1. テーブルの全レコード削除
+        clean_table().await?;
+
+        // テスト用のトークンアカウント作成
+        let base1: TokenOutAccount = TokenAccount::from_str("eth.token")?.into();
+        let base2: TokenOutAccount = TokenAccount::from_str("btc.token")?.into();
+        let base3: TokenOutAccount = TokenAccount::from_str("near.token")?.into();
+        let quote1: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
+        let quote2: TokenInAccount = TokenAccount::from_str("usdc.token")?.into();
+        
+        // 2. タイムスタンプを設定
+        let now = chrono::Utc::now().naive_utc();
+        let one_hour_ago = now - chrono::Duration::hours(1);
+        let two_hours_ago = now - chrono::Duration::hours(2);
+        
+        // 3. 複数のレコードを挿入（同じクォートトークンで異なるベーストークン）
+        let rates = vec![
+            // quote1用のレコード
+            TokenRate::new_with_timestamp(
+                base1.clone(),
+                quote1.clone(),
+                BigDecimal::from(1000),
+                two_hours_ago, // 古いレコード
+            ),
+            TokenRate::new_with_timestamp(
+                base1.clone(),
+                quote1.clone(),
+                BigDecimal::from(1100),
+                one_hour_ago, // 新しいレコード（base1用）
+            ),
+            TokenRate::new_with_timestamp(
+                base2.clone(),
+                quote1.clone(),
+                BigDecimal::from(20000),
+                now, // 最新レコード（base2用）
+            ),
+            
+            // 異なるクォートトークン（quote2）用のレコード - 結果に含まれないはず
+            TokenRate::new_with_timestamp(
+                base3.clone(),
+                quote2.clone(),
+                BigDecimal::from(5),
+                now,
+            ),
+        ];
+        
+        // 4. バッチ挿入
+        TokenRate::batch_insert(&rates).await?;
+        
+        // 5. get_latests_by_quoteでquote1のレコードを取得
+        let results = TokenRate::get_latests_by_quote(&quote1).await?;
+        
+        // 6. 結果の検証
+        // 2つのベーストークン（base1, base2）が取得されるはず
+        assert_eq!(results.len(), 2, "Should find 2 base tokens for quote1");
+        
+        // 結果を検証するために、トークン名でソート
+        let mut sorted_results = results.clone();
+        sorted_results.sort_by(|a, b| a.0.to_string().cmp(&b.0.to_string()));
+        
+        // 各ベーストークンとタイムスタンプのペアを検証
+        let (result_base1, result_time1) = &sorted_results[0]; // btc
+        let (result_base2, result_time2) = &sorted_results[1]; // eth
+        
+        assert_eq!(result_base1.to_string(), "btc.token", "First base token should be btc.token");
+        assert_eq!(result_base2.to_string(), "eth.token", "Second base token should be eth.token");
+        
+        // タイムスタンプは最新のものが取得されるはず
+        assert!((result_time1.and_utc().timestamp() - now.and_utc().timestamp()).abs() < 5, "btc should have latest timestamp");
+        assert!((result_time2.and_utc().timestamp() - one_hour_ago.and_utc().timestamp()).abs() < 5, "eth should have one_hour_ago timestamp");
+        
+        // quote2のレコードも確認（base3のみ存在するはず）
+        let results2 = TokenRate::get_latests_by_quote(&quote2).await?;
+        assert_eq!(results2.len(), 1, "Should find 1 base token for quote2");
+        assert_eq!(results2[0].0.to_string(), "near.token", "Base token for quote2 should be near.token");
+        
+        // クリーンアップ
+        clean_table().await?;
+        
+        Ok(())
+    }
 }
