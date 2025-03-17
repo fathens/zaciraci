@@ -1,6 +1,5 @@
 mod connection_pool;
-mod token_rate;
-pub mod models;
+pub mod token_rate;
 pub mod schema;
 
 use crate::Result;
