@@ -500,7 +500,7 @@ mod test {
         for goal in goals.into_iter() {
             let gs = cached_path.update_path(&goal, Some("A")).unwrap();
             assert!(gs.len() < 6);
-            assert!(gs.len() > 0);
+            assert!(!gs.is_empty());
         }
 
         // A <-> B

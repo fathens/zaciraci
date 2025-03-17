@@ -24,27 +24,32 @@ impl InnerError {
     }
 }
 
+// 型エイリアスを定義して複雑な型を分割
+type CacheResult<A> = Result<Option<Arc<A>>, InnerError>;
+type CacheMap<M, A> = HashMap<M, CacheResult<A>>;
+type ThreadSafeCache<M, A> = Arc<Mutex<CacheMap<M, A>>>;
+
 pub struct CachedEvaluate<A, M, C> {
-    cache: Arc<Mutex<HashMap<M, Result<Option<Arc<A>>, InnerError>>>>,
+    cache: ThreadSafeCache<M, A>,
     calc_res: C,
 }
 
 impl<A, M, C> CachedEvaluate<A, M, C>
 where
     A: Send + Sync,
-    C: Fn(M) -> Result<Option<Arc<A>>, InnerError>,
+    C: Fn(M) -> CacheResult<A>,
     M: Send + Sync + Copy + Hash + Debug + Eq + Ord + Zero + One,
     M: Add<Output = M> + Sub<Output = M> + Mul<Output = M> + Div<Output = M>,
     M: From<u128>,
 {
     pub fn new(calc_res: C) -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(CacheMap::new())),
             calc_res,
         }
     }
 
-    pub fn evaluate(&self, input: M) -> Result<Option<Arc<A>>, InnerError> {
+    pub fn evaluate(&self, input: M) -> CacheResult<A> {
         if input == M::zero() {
             return Err(InnerError::new(anyhow::anyhow!(
                 "Zero is an invalid input."
@@ -60,7 +65,7 @@ where
         result
     }
 
-    pub fn get_result(&self, input: M) -> Result<Option<Arc<A>>, InnerError> {
+    pub fn get_result(&self, input: M) -> CacheResult<A> {
         let cache = self.cache.lock().unwrap();
         cache.get(&input).cloned().unwrap_or(Ok(None))
     }
@@ -73,7 +78,7 @@ mod tests {
     #[test]
     fn test_cached_evaluate() {
         // テスト用の評価関数
-        let eval_fn = |x: u128| -> Result<Option<Arc<u128>>, InnerError> {
+        let eval_fn = |x: u128| -> CacheResult<u128> {
             if x > 10 {
                 Ok(Some(Arc::new(x)))
             } else if x == 0 {

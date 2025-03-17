@@ -5,7 +5,6 @@ pub mod schema;
 use crate::Result;
 use diesel::connection::Connection;
 use std::sync::Arc;
-use anyhow;
 
 /// JSONRPCのnew_client関数と同様に、データベースクライアントのインスタンスを取得します
 pub fn new_client() -> Arc<DatabaseClient> {
