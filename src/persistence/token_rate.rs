@@ -1,8 +1,8 @@
+use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use std::str::FromStr;
-use anyhow::anyhow;
 
 use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
@@ -13,7 +13,7 @@ use crate::Result;
 #[allow(dead_code)]
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = token_rates)]
-pub struct DbTokenRate {
+struct DbTokenRate {
     pub id: i32,
     pub base_token: String,
     pub quote_token: String,
@@ -25,7 +25,7 @@ pub struct DbTokenRate {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = token_rates)]
-pub struct NewDbTokenRate {
+struct NewDbTokenRate {
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
@@ -64,18 +64,21 @@ impl TokenRate {
         }
     }
 
-    // DbTokenRate からの変換
-    pub fn from_db(db_rate: DbTokenRate) -> Result<Self> {
+    // DBオブジェクトから変換
+    fn from_db(db_rate: DbTokenRate) -> Result<Self> {
+        let base = TokenAccount::from_str(&db_rate.base_token)?.into();
+        let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
+
         Ok(Self {
-            base: TokenAccount::from_str(&db_rate.base_token)?.into(),
-            quote: TokenAccount::from_str(&db_rate.quote_token)?.into(),
+            base,
+            quote,
             rate: db_rate.rate,
             timestamp: db_rate.timestamp,
         })
     }
-    
-    // DbTokenRateへの変換
-    pub fn to_new_db(&self) -> NewDbTokenRate {
+
+    // NewDbTokenRateに変換
+    fn to_new_db(&self) -> NewDbTokenRate {
         NewDbTokenRate {
             base_token: self.base.to_string(),
             quote_token: self.quote.to_string(),
