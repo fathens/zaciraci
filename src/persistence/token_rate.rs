@@ -237,6 +237,10 @@ mod tests {
             diesel::delete(token_rates::table)
                 .execute(conn)
         }).await.map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        
+        // トランザクションがDBに反映されるのを少し待つ
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        
         Ok(())
     }
 
@@ -246,8 +250,8 @@ mod tests {
         clean_table().await?;
 
         // テスト用のトークンアカウント作成
-        let base = TokenAccount::from_str("eth.token")?.into();
-        let quote = TokenAccount::from_str("usdt.token")?.into();
+        let base: TokenOutAccount = TokenAccount::from_str("eth.token")?.into();
+        let quote: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
         
         // 2. get_latest で None が返ることを確認
         let result = TokenRate::get_latest(&base, &quote).await?;
@@ -274,6 +278,139 @@ mod tests {
         assert_eq!(retrieved_rate.rate, rate, "Rate should match");
         assert_eq!(retrieved_rate.timestamp, timestamp, "Timestamp should match");
 
+        // クリーンアップ
+        clean_table().await?;
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_token_rate_batch_insert_history() -> Result<()> {
+        // 1. テーブルの全レコード削除
+        clean_table().await?;
+
+        // テスト用のトークンアカウント作成
+        let base: TokenOutAccount = TokenAccount::from_str("eth.token")?.into();
+        let quote: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
+        
+        // 2. 複数レコードを作成（異なるレートで）
+        let rates = vec![
+            TokenRate::new_with_timestamp(
+                base.clone(),
+                quote.clone(),
+                BigDecimal::from(1000),
+                chrono::Utc::now().naive_utc() - chrono::Duration::hours(2),
+            ),
+            TokenRate::new_with_timestamp(
+                base.clone(),
+                quote.clone(),
+                BigDecimal::from(1050),
+                chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),
+            ),
+            TokenRate::new_with_timestamp(
+                base.clone(),
+                quote.clone(),
+                BigDecimal::from(1100),
+                chrono::Utc::now().naive_utc(),
+            ),
+        ];
+        
+        // 3. バッチ挿入
+        TokenRate::batch_insert(&rates).await?;
+        
+        // 4. get_historyで履歴を取得（リミット無制限）
+        let history = TokenRate::get_history(&base, &quote, 10).await?;
+        
+        // 5. 結果の検証
+        assert_eq!(history.len(), 3, "Should return 3 records");
+        
+        // レコードがレートの大きさと時刻の順序で正しく並んでいることを確認
+        let expected_rates = [BigDecimal::from(1100), BigDecimal::from(1050), BigDecimal::from(1000)];
+        for (i, rate) in history.iter().enumerate() {
+            assert_eq!(rate.rate, expected_rates[i], "Record {} should have rate {}", i, expected_rates[i]);
+        }
+        
+        // タイムスタンプの順序も確認
+        assert!(history[0].timestamp > history[1].timestamp, "First record should have newer timestamp than second");
+        assert!(history[1].timestamp > history[2].timestamp, "Second record should have newer timestamp than third");
+        
+        // リミットが機能することを確認
+        let limited_history = TokenRate::get_history(&base, &quote, 2).await?;
+        assert_eq!(limited_history.len(), 2, "Should return only 2 records");
+        assert_eq!(limited_history[0].rate, BigDecimal::from(1100), "Newest record should be first");
+        assert_eq!(limited_history[1].rate, BigDecimal::from(1050), "Second newest should be second");
+        
+        // クリーンアップ
+        clean_table().await?;
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_token_rate_different_pairs() -> Result<()> {
+        // 1. テーブルの全レコード削除
+        clean_table().await?;
+
+        // テスト用のトークンアカウント作成 - 複数のペア
+        let base1: TokenOutAccount = TokenAccount::from_str("eth.token")?.into();
+        let base2: TokenOutAccount = TokenAccount::from_str("btc.token")?.into();
+        let quote1: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
+        let quote2: TokenInAccount = TokenAccount::from_str("near.token")?.into();
+        
+        // 2. 異なるトークンペアのレコードを挿入
+        let now = chrono::Utc::now().naive_utc();
+        let rate1 = TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(1000),
+            now,
+        );
+        let rate2 = TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote1.clone(),
+            BigDecimal::from(2000),
+            now,
+        );
+        let rate3 = TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote2.clone(),
+            BigDecimal::from(3000),
+            now,
+        );
+        
+        // 3. レコードを挿入
+        TokenRate::batch_insert(&[rate1, rate2, rate3]).await?;
+        
+        // 4. 特定のペアのみが取得されることを確認
+        let result1 = TokenRate::get_latest(&base1, &quote1).await?;
+        assert!(result1.is_some(), "base1-quote1 pair should be found");
+        assert_eq!(result1.unwrap().rate, BigDecimal::from(1000), "Rate should match for base1-quote1");
+        
+        let result2 = TokenRate::get_latest(&base2, &quote1).await?;
+        assert!(result2.is_some(), "base2-quote1 pair should be found");
+        assert_eq!(result2.unwrap().rate, BigDecimal::from(2000), "Rate should match for base2-quote1");
+        
+        let result3 = TokenRate::get_latest(&base1, &quote2).await?;
+        assert!(result3.is_some(), "base1-quote2 pair should be found");
+        assert_eq!(result3.unwrap().rate, BigDecimal::from(3000), "Rate should match for base1-quote2");
+        
+        // 5. 存在しないペアが None を返すことを確認
+        let result4 = TokenRate::get_latest(&base2, &quote2).await?;
+        assert!(result4.is_none(), "base2-quote2 pair should not be found");
+        
+        // 6. get_history でも特定のペアだけが取得されることを確認
+        let history1 = TokenRate::get_history(&base1, &quote1, 10).await?;
+        assert_eq!(history1.len(), 1, "Should find 1 record for base1-quote1");
+        assert_eq!(history1[0].rate, BigDecimal::from(1000), "Rate should match for base1-quote1 history");
+        
+        let history2 = TokenRate::get_history(&base2, &quote1, 10).await?;
+        assert_eq!(history2.len(), 1, "Should find 1 record for base2-quote1");
+        assert_eq!(history2[0].rate, BigDecimal::from(2000), "Rate should match for base2-quote1 history");
+        
+        // 7. 存在しないペアは空の配列を返すことを確認
+        let history3 = TokenRate::get_history(&base2, &quote2, 10).await?;
+        assert_eq!(history3.len(), 0, "Should find 0 records for base2-quote2");
+        
         // クリーンアップ
         clean_table().await?;
         
