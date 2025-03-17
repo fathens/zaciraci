@@ -230,6 +230,32 @@ mod tests {
     use super::*;
     use diesel::RunQueryDsl;
     use serial_test::serial;
+    use chrono::SubsecRound;
+
+    // TokenRateインスタンス比較用マクロ
+    macro_rules! assert_token_rate_eq {
+        ($left:expr, $right:expr, $message:expr) => {{
+            const PRECISION: u16 = 3; // ミリ秒精度
+            
+            // 各フィールドを個別に比較
+            assert_eq!($left.base, $right.base, "{} - ベーストークンが一致しません", $message);
+            assert_eq!($left.quote, $right.quote, "{} - クォートトークンが一致しません", $message);
+            assert_eq!($left.rate, $right.rate, "{} - レートが一致しません", $message);
+            
+            // タイムスタンプだけ精度調整して比較
+            let left_ts = $left.timestamp.trunc_subsecs(PRECISION);
+            let right_ts = $right.timestamp.trunc_subsecs(PRECISION);
+            assert_eq!(
+                left_ts, 
+                right_ts, 
+                "{} - タイムスタンプが一致しません ({}ミリ秒精度) - 元の値: {} vs {}", 
+                $message,
+                PRECISION,
+                $left.timestamp, 
+                $right.timestamp
+            );
+        }};
+    }
 
     // テーブルからすべてのレコードを削除する補助関数
     async fn clean_table() -> Result<()> {
@@ -275,10 +301,7 @@ mod tests {
         assert!(result.is_some(), "Should return inserted record");
         
         let retrieved_rate = result.unwrap();
-        assert_eq!(retrieved_rate.base.to_string(), "eth.token", "Base token should match");
-        assert_eq!(retrieved_rate.quote.to_string(), "usdt.token", "Quote token should match");
-        assert_eq!(retrieved_rate.rate, rate, "Rate should match");
-        assert_eq!(retrieved_rate.timestamp, timestamp, "Timestamp should match");
+        assert_token_rate_eq!(retrieved_rate, token_rate, "Token rate should match");
 
         // クリーンアップ
         clean_table().await?;
@@ -297,24 +320,28 @@ mod tests {
         let quote: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
         
         // 2. 複数レコードを作成（異なるレートで）
+        let earliest = chrono::Utc::now().naive_utc() - chrono::Duration::hours(2);
+        let middle = chrono::Utc::now().naive_utc() - chrono::Duration::hours(1);
+        let latest = chrono::Utc::now().naive_utc();
+        
         let rates = vec![
             TokenRate::new_with_timestamp(
                 base.clone(),
                 quote.clone(),
                 BigDecimal::from(1000),
-                chrono::Utc::now().naive_utc() - chrono::Duration::hours(2),
+                earliest,
             ),
             TokenRate::new_with_timestamp(
                 base.clone(),
                 quote.clone(),
                 BigDecimal::from(1050),
-                chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),
+                middle,
             ),
             TokenRate::new_with_timestamp(
                 base.clone(),
                 quote.clone(),
                 BigDecimal::from(1100),
-                chrono::Utc::now().naive_utc(),
+                latest,
             ),
         ];
         
@@ -333,9 +360,27 @@ mod tests {
             assert_eq!(rate.rate, expected_rates[i], "Record {} should have rate {}", i, expected_rates[i]);
         }
         
-        // タイムスタンプの順序も確認
+        // タイムスタンプの順序を確認（マクロの代わりに明示的に比較）
+        // この部分は全体の順序関係だけを確認しており、精密な値は比較していない
         assert!(history[0].timestamp > history[1].timestamp, "First record should have newer timestamp than second");
         assert!(history[1].timestamp > history[2].timestamp, "Second record should have newer timestamp than third");
+        
+        // 個別のTimestampを確認
+        assert_token_rate_eq!(
+            history[0], 
+            TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1100), latest),
+            "Latest record should match"
+        );
+        assert_token_rate_eq!(
+            history[1], 
+            TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1050), middle),
+            "Middle record should match"
+        );
+        assert_token_rate_eq!(
+            history[2], 
+            TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1000), earliest),
+            "Earliest record should match"
+        );
         
         // リミットが機能することを確認
         let limited_history = TokenRate::get_history(&base, &quote, 2).await?;
@@ -383,20 +428,23 @@ mod tests {
         );
         
         // 3. レコードを挿入
-        TokenRate::batch_insert(&[rate1, rate2, rate3]).await?;
+        TokenRate::batch_insert(&[rate1.clone(), rate2.clone(), rate3.clone()]).await?;
         
         // 4. 特定のペアのみが取得されることを確認
         let result1 = TokenRate::get_latest(&base1, &quote1).await?;
         assert!(result1.is_some(), "base1-quote1 pair should be found");
-        assert_eq!(result1.unwrap().rate, BigDecimal::from(1000), "Rate should match for base1-quote1");
+        let retrieved_rate1 = result1.unwrap();
+        assert_token_rate_eq!(retrieved_rate1, rate1, "base1-quote1 TokenRate should match");
         
         let result2 = TokenRate::get_latest(&base2, &quote1).await?;
         assert!(result2.is_some(), "base2-quote1 pair should be found");
-        assert_eq!(result2.unwrap().rate, BigDecimal::from(2000), "Rate should match for base2-quote1");
+        let retrieved_rate2 = result2.unwrap();
+        assert_token_rate_eq!(retrieved_rate2, rate2, "base2-quote1 TokenRate should match");
         
         let result3 = TokenRate::get_latest(&base1, &quote2).await?;
         assert!(result3.is_some(), "base1-quote2 pair should be found");
-        assert_eq!(result3.unwrap().rate, BigDecimal::from(3000), "Rate should match for base1-quote2");
+        let retrieved_rate3 = result3.unwrap();
+        assert_token_rate_eq!(retrieved_rate3, rate3, "base1-quote2 TokenRate should match");
         
         // 5. 存在しないペアが None を返すことを確認
         let result4 = TokenRate::get_latest(&base2, &quote2).await?;
@@ -405,11 +453,11 @@ mod tests {
         // 6. get_history でも特定のペアだけが取得されることを確認
         let history1 = TokenRate::get_history(&base1, &quote1, 10).await?;
         assert_eq!(history1.len(), 1, "Should find 1 record for base1-quote1");
-        assert_eq!(history1[0].rate, BigDecimal::from(1000), "Rate should match for base1-quote1 history");
+        assert_token_rate_eq!(history1[0], rate1, "base1-quote1 history TokenRate should match");
         
         let history2 = TokenRate::get_history(&base2, &quote1, 10).await?;
         assert_eq!(history2.len(), 1, "Should find 1 record for base2-quote1");
-        assert_eq!(history2[0].rate, BigDecimal::from(2000), "Rate should match for base2-quote1 history");
+        assert_token_rate_eq!(history2[0], rate2, "base2-quote1 history TokenRate should match");
         
         // 7. 存在しないペアは空の配列を返すことを確認
         let history3 = TokenRate::get_history(&base2, &quote2, 10).await?;
@@ -488,12 +536,44 @@ mod tests {
         let (result_base1, result_time1) = &sorted_results[0]; // btc
         let (result_base2, result_time2) = &sorted_results[1]; // eth
         
+        // ベーストークンを検証
         assert_eq!(result_base1.to_string(), "btc.token", "First base token should be btc.token");
         assert_eq!(result_base2.to_string(), "eth.token", "Second base token should be eth.token");
         
-        // タイムスタンプは最新のものが取得されるはず
-        assert!((result_time1.and_utc().timestamp() - now.and_utc().timestamp()).abs() < 5, "btc should have latest timestamp");
-        assert!((result_time2.and_utc().timestamp() - one_hour_ago.and_utc().timestamp()).abs() < 5, "eth should have one_hour_ago timestamp");
+        // タイムスタンプを精度を考慮して比較
+        {
+            // base2 (btc) のタイムスタンプがnowに近いことを確認
+            let expected_btc = TokenRate::new_with_timestamp(
+                base2.clone(), 
+                quote1.clone(),
+                BigDecimal::from(20000),
+                now
+            );
+            let actual_btc = TokenRate::new_with_timestamp(
+                result_base1.clone(), 
+                quote1.clone(),
+                BigDecimal::from(20000),
+                *result_time1
+            );
+            assert_token_rate_eq!(actual_btc, expected_btc, "BTCのタイムスタンプが正しくありません");
+        }
+        
+        {
+            // base1 (eth) のタイムスタンプがone_hour_agoに近いことを確認
+            let expected_eth = TokenRate::new_with_timestamp(
+                base1.clone(), 
+                quote1.clone(),
+                BigDecimal::from(1100),
+                one_hour_ago
+            );
+            let actual_eth = TokenRate::new_with_timestamp(
+                result_base2.clone(), 
+                quote1.clone(),
+                BigDecimal::from(1100),
+                *result_time2
+            );
+            assert_token_rate_eq!(actual_eth, expected_eth, "ETHのタイムスタンプが正しくありません");
+        }
         
         // quote2のレコードも確認（base3のみ存在するはず）
         let results2 = TokenRate::get_latests_by_quote(&quote2).await?;
