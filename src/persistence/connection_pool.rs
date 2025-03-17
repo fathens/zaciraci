@@ -13,7 +13,7 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(16);
-    let dsn = config::get("PG_DSN").unwrap_or_else(|_| "postgres://postgres:postgres@localhost/zaciraci".to_string());
+    let dsn = config::get("PG_DSN").unwrap_or_else(|_| "postgres://postgres:postgres@localhost/postgres".to_string());
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     };
