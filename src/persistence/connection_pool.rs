@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 pub type Client = deadpool_diesel::postgres::Connection;
 
 #[allow(dead_code)]
-static POOL: Lazy<Pool> = Lazy::new(|| {
+pub static POOL: Lazy<Pool> = Lazy::new(|| {
     let max_size: usize = config::get("PG_POOL_SIZE")
         .ok()
         .and_then(|s| s.parse().ok())
