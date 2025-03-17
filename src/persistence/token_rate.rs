@@ -93,9 +93,8 @@ impl DbTokenRate {
         use diesel::RunQueryDsl;
 
         let new_rate = token_rate.to_new_db();
-        let pool = connection_pool::POOL.clone();
+        let conn = connection_pool::get().await?;
         
-        let conn = pool.get().await?;
         let result = conn.interact(move |conn| {
             diesel::insert_into(token_rates::table)
                 .values(&new_rate)
@@ -118,8 +117,7 @@ impl DbTokenRate {
             .map(|rate| rate.to_new_db())
             .collect();
 
-        let pool = connection_pool::POOL.clone();
-        let conn = pool.get().await?;
+        let conn = connection_pool::get().await?;
 
         let results = conn.interact(move |conn| {
             diesel::insert_into(token_rates::table)
@@ -137,8 +135,7 @@ impl DbTokenRate {
 
         let base_str = base.to_string();
         let quote_str = quote.to_string();
-        let pool = connection_pool::POOL.clone();
-        let conn = pool.get().await?;
+        let conn = connection_pool::get().await?;
 
         // まず最新のタイムスタンプを検索
         let latest_timestamp = conn.interact(move |conn| {
@@ -155,8 +152,7 @@ impl DbTokenRate {
         if let Some(timestamp) = latest_timestamp {
             let base_str = base.to_string();
             let quote_str = quote.to_string();
-            let pool = connection_pool::POOL.clone();
-            let conn = pool.get().await?;
+            let conn = connection_pool::get().await?;
 
             let result = conn.interact(move |conn| {
                 token_rates::table
@@ -179,8 +175,7 @@ impl DbTokenRate {
 
         let base_str = base.to_string();
         let quote_str = quote.to_string();
-        let pool = connection_pool::POOL.clone();
-        let conn = pool.get().await?;
+        let conn = connection_pool::get().await?;
 
         let results = conn.interact(move |conn| {
             token_rates::table
