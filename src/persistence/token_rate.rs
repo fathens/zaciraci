@@ -22,7 +22,6 @@ struct DbTokenRate {
 }
 
 // データベース挿入用モデル
-#[allow(dead_code)]
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = token_rates)]
 struct NewDbTokenRate {

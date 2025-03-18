@@ -87,7 +87,6 @@ impl TokenGraph {
         self.list_estimated_values(initial, start, goals, true)
     }
 
-    #[allow(dead_code)]
     pub fn list_values(
         &self,
         initial: u128,
