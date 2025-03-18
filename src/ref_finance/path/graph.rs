@@ -84,52 +84,72 @@ impl TokenGraph {
         start: &TokenInAccount,
         goals: &[TokenOutAccount],
     ) -> Result<Vec<(TokenOutAccount, u128)>> {
+        self.list_estimated_values(initial, start, goals, true)
+    }
+
+    #[allow(dead_code)]
+    pub fn list_values(
+        &self,
+        initial: u128,
+        start: &TokenInAccount,
+        goals: &[TokenOutAccount],
+    ) -> Result<Vec<(TokenOutAccount, u128)>> {
+        self.list_estimated_values(initial, start, goals, false)
+    }
+
+    fn list_estimated_values(
+        &self,
+        initial: u128,
+        start: &TokenInAccount,
+        goals: &[TokenOutAccount],
+        with_return: bool,
+    ) -> Result<Vec<(TokenOutAccount, u128)>> {
         let log = DEFAULT.new(o!(
-            "function" => "TokenGraph::list_returns",
+            "function" => "TokenGraph::list_estimated_values",
             "initial" => initial,
             "start" => format!("{:?}", start),
         ));
-        info!(log, "start");
 
-        let mut returns = HashMap::new();
+        let mut values = HashMap::new();
         for goal in goals.iter() {
-            match self.estimate_return(initial, start, goal) {
+            let path = if with_return {
+                self.get_path_with_return(start, goal)
+            } else {
+                self.get_path(start, goal)
+            }?;
+
+            match Self::calc_value(initial, &path) {
                 Ok(value) => {
-                    returns.insert(goal.clone(), value);
+                    values.insert(goal.clone(), value);
                 }
                 Err(e) => {
-                    error!(log, "failed to estimate return";
+                    error!(log, "failed to estimate value";
                         "goal" => %goal,
                         "error" => %e,
                     );
                 }
             }
         }
-        let mut returns: Vec<_> = returns.into_iter().collect();
-        returns.sort_by_key(|(_, value)| *value);
-        returns.reverse();
-        Ok(returns)
+        let mut values: Vec<_> = values.into_iter().collect();
+        values.sort_by_key(|(_, value)| *value);
+        values.reverse();
+        Ok(values)
     }
 
-    pub fn estimate_return(
-        &self,
+    fn calc_value(
         initial: u128,
-        start: &TokenInAccount,
-        goal: &TokenOutAccount,
+        pairs: &[TokenPair],
     ) -> Result<u128> {
         if initial == 0 {
             return Ok(0);
         }
         let mut value = initial;
-
-        let pairs = self.get_path_with_return(start, goal)?;
         for pair in pairs.iter() {
             value = pair.estimate_return(value)?;
             if value == 0 {
                 return Ok(0);
             }
         }
-
         Ok(value)
     }
 
