@@ -61,9 +61,9 @@ async fn record_rates() -> Result<()> {
     let goals = graph.update_graph(quote_token)?;
     let values = graph.list_values(initial_value, quote_token, &goals)?;
 
-    let rates: Vec<_> = values.iter().map(|(base, value)| {
+    let rates: Vec<_> = values.into_iter().map(|(base, value)| {
         let rate = BigDecimal::from(value) / BigDecimal::from(initial_value);
-        TokenRate::new(base.clone(), quote_token.clone(), rate)
+        TokenRate::new(base, quote_token.clone(), rate)
     }).collect();
 
     TokenRate::batch_insert(&rates).await?;
