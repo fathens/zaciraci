@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::config;
 use crate::jsonrpc::{AccountInfo, SendTx, SentTx, ViewContract};
 use crate::logging::*;
