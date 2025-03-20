@@ -1,8 +1,8 @@
-use crate::persistence::token_rate::TokenRate;
 use crate::Result;
 use crate::config;
 use crate::jsonrpc;
 use crate::logging::*;
+use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance;
 use crate::ref_finance::token_account::TokenInAccount;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
@@ -10,25 +10,19 @@ use crate::types::MilliNear;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
 
-const CRON: &str = "0 0 * * * *";
+pub async fn run_record_rates() {
+    const CRON_CONF: &str = "0 0 * * * *";
 
-pub async fn run() {
-    let schedule: cron::Schedule = CRON.parse().unwrap();
+    let schedule: cron::Schedule = CRON_CONF.parse().unwrap();
     for next in schedule.upcoming(TZ) {
         if let Ok(wait) = (next - TZ::now()).to_std() {
             tokio::time::sleep(wait).await;
-            job().await;
+            let log = DEFAULT.new(o!("function" => "run_record_rates"));
+            match record_rates().await {
+                Ok(_) => info!(log, "success"),
+                Err(err) => error!(log, "failure"; "error" => ?err),
+            }
         }
-    }
-}
-
-async fn job() {
-    let log = DEFAULT.new(o!("function" => "job"));
-
-    info!(log, "CRON");
-    match record_rates().await {
-        Ok(_) => info!(log, "success"),
-        Err(err) => error!(log, "failure"; "error" => ?err),
     }
 }
 
@@ -37,7 +31,7 @@ fn get_quote_token() -> TokenInAccount {
 }
 
 fn get_initial_value() -> u128 {
-    let in_milli =config::get("CRON_RECORD_RATES_INITIAL_VALUE")
+    let in_milli = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
         .and_then(|v| Ok(v.parse()?))
         .unwrap_or(100);
     MilliNear::of(in_milli).to_yocto()
@@ -64,10 +58,13 @@ async fn record_rates() -> Result<()> {
     let values = graph.list_values(initial_value, quote_token, &goals)?;
 
     info!(log, "converting to rates");
-    let rates: Vec<_> = values.into_iter().map(|(base, value)| {
-        let rate = BigDecimal::from(value) / BigDecimal::from(initial_value);
-        TokenRate::new(base, quote_token.clone(), rate)
-    }).collect();
+    let rates: Vec<_> = values
+        .into_iter()
+        .map(|(base, value)| {
+            let rate = BigDecimal::from(value) / BigDecimal::from(initial_value);
+            TokenRate::new(base, quote_token.clone(), rate)
+        })
+        .collect();
 
     info!(log, "inserting rates");
     TokenRate::batch_insert(&rates).await?;

@@ -64,7 +64,7 @@ async fn main() {
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
-    tokio::spawn(cron::run());
+    tokio::spawn(cron::run_record_rates());
     tokio::spawn(web::run());
 
     match main_loop().await {
