@@ -1,10 +1,10 @@
+use crate::Result;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair, TokenPairLike};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
-use crate::Result;
 use anyhow::anyhow;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
@@ -111,18 +111,26 @@ impl TokenGraph {
 
         let mut values = HashMap::new();
         for goal in goals.iter() {
-            let path = if with_return {
+            let res_path = if with_return {
                 self.get_path_with_return(start, goal)
             } else {
                 self.get_path(start, goal)
-            }?;
-
-            match Self::calc_value(initial, &path) {
-                Ok(value) => {
-                    values.insert(goal.clone(), value);
-                }
+            };
+            match res_path {
+                Ok(path) => match Self::calc_value(initial, &path) {
+                    Ok(value) => {
+                        values.insert(goal.clone(), value);
+                    }
+                    Err(e) => {
+                        error!(log, "failed to estimate value";
+                            "goal" => %goal,
+                            "error" => %e,
+                        );
+                    }
+                },
                 Err(e) => {
-                    error!(log, "failed to estimate value";
+                    error!(log, "failed to get path";
+                        "start" => %start,
                         "goal" => %goal,
                         "error" => %e,
                     );
@@ -135,10 +143,7 @@ impl TokenGraph {
         Ok(values)
     }
 
-    fn calc_value(
-        initial: u128,
-        pairs: &[TokenPair],
-    ) -> Result<u128> {
+    fn calc_value(initial: u128, pairs: &[TokenPair]) -> Result<u128> {
         if initial == 0 {
             return Ok(0);
         }
@@ -385,9 +390,9 @@ mod test {
     use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
     use crate::ref_finance::pool_info::TokenPairId;
+    use petgraph::Graph;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
-    use petgraph::Graph;
     use std::collections::HashMap;
     use std::fmt::Debug;
     use std::ops::Add;
