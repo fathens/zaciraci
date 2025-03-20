@@ -56,17 +56,22 @@ async fn record_rates() -> Result<()> {
 
     let client = &jsonrpc::new_client();
 
+    info!(log, "loading pools");
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let goals = graph.update_graph(quote_token)?;
+    info!(log, "found targets"; "goals" => %goals.len());
     let values = graph.list_values(initial_value, quote_token, &goals)?;
 
+    info!(log, "converting to rates");
     let rates: Vec<_> = values.into_iter().map(|(base, value)| {
         let rate = BigDecimal::from(value) / BigDecimal::from(initial_value);
         TokenRate::new(base, quote_token.clone(), rate)
     }).collect();
 
+    info!(log, "inserting rates");
     TokenRate::batch_insert(&rates).await?;
 
+    info!(log, "success");
     Ok(())
 }
