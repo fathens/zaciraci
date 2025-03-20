@@ -1,7 +1,7 @@
 #![deny(warnings)]
 
 mod config;
-mod cron;
+mod trade;
 mod jsonrpc;
 mod logging;
 mod persistence;
@@ -64,8 +64,7 @@ async fn main() {
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
-    tokio::spawn(cron::run_record_rates());
-    tokio::spawn(cron::run_trade());
+    tokio::spawn(trade::run());
     tokio::spawn(web::run());
 
     match main_loop().await {

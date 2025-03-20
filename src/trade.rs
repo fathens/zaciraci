@@ -11,19 +11,22 @@ use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
 use std::future::Future;
 
-pub async fn run_record_rates() {
+pub async fn run() {
+    tokio::spawn(run_record_rates());
+    tokio::spawn(run_trade());
+}
+
+async fn run_record_rates() {
     const CRON_CONF: &str = "0 * * * * *";
-
-    run(CRON_CONF.parse().unwrap(), record_rates, "record_rates").await;
+    cronjob(CRON_CONF.parse().unwrap(), record_rates, "record_rates").await;
 }
 
-pub async fn run_trade() {
+async fn run_trade() {
     const CRON_CONF: &str = "0 0 * * * *";
-
-    run(CRON_CONF.parse().unwrap(), trade, "trade").await;
+    cronjob(CRON_CONF.parse().unwrap(), trade, "trade").await;
 }
 
-async fn run<F, Fut>(schedule: cron::Schedule, func: F, name: &str)
+async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<()>>,
