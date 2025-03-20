@@ -9,16 +9,30 @@ use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::types::MilliNear;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
+use std::future::Future;
 
 pub async fn run_record_rates() {
+    const CRON_CONF: &str = "0 * * * * *";
+
+    run(CRON_CONF.parse().unwrap(), record_rates, "record_rates").await;
+}
+
+pub async fn run_trade() {
     const CRON_CONF: &str = "0 0 * * * *";
 
-    let schedule: cron::Schedule = CRON_CONF.parse().unwrap();
+    run(CRON_CONF.parse().unwrap(), trade, "trade").await;
+}
+
+async fn run<F, Fut>(schedule: cron::Schedule, func: F, name: &str)
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
     for next in schedule.upcoming(TZ) {
         if let Ok(wait) = (next - TZ::now()).to_std() {
             tokio::time::sleep(wait).await;
-            let log = DEFAULT.new(o!("function" => "run_record_rates"));
-            match record_rates().await {
+            let log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
+            match func().await {
                 Ok(_) => info!(log, "success"),
                 Err(err) => error!(log, "failure"; "error" => ?err),
             }
@@ -68,6 +82,15 @@ async fn record_rates() -> Result<()> {
 
     info!(log, "inserting rates");
     TokenRate::batch_insert(&rates).await?;
+
+    info!(log, "success");
+    Ok(())
+}
+
+async fn trade() -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "trade"));
+
+    // TODO: 実装
 
     info!(log, "success");
     Ok(())
