@@ -4,6 +4,7 @@ mod config;
 mod trade;
 mod jsonrpc;
 mod logging;
+mod ollama;
 mod persistence;
 mod ref_finance;
 mod types;
