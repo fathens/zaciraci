@@ -3786,6 +3786,7 @@ dependencies = [
  "assertables",
  "async-once-cell",
  "axum",
+ "base64 0.22.1",
  "bigdecimal",
  "bip39",
  "bs58 0.5.1",

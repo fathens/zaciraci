@@ -7,6 +7,7 @@ use reqwest;
 use serde::{Deserialize, Serialize};
 
 mod chat;
+mod generate;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Models {
@@ -97,5 +98,12 @@ impl LLMClient {
         info!(log, "Chatting");
         let response = chat::chat(&self.client, self.base_url.clone(), self.model.clone(), messages).await?;
         Ok(response.message.content)
+    }
+
+    pub async fn generate(&self, prompt: String, images: Vec<generate::Image>) -> Result<String> {
+        let log = DEFAULT.new(o!("function" => "generate"));
+        info!(log, "Generating");
+        let response = generate::generate(&self.client, self.base_url.clone(), self.model.clone(), prompt, images).await?;
+        Ok(response.response)
     }
 }
