@@ -1,3 +1,5 @@
+mod trade;
+
 use crate::Result;
 use crate::config;
 use crate::jsonrpc;
@@ -17,13 +19,13 @@ pub async fn run() {
 }
 
 async fn run_record_rates() {
-    const CRON_CONF: &str = "0 * * * * *";
+    const CRON_CONF: &str = "0 * * * * *"; // 毎分
     cronjob(CRON_CONF.parse().unwrap(), record_rates, "record_rates").await;
 }
 
 async fn run_trade() {
-    const CRON_CONF: &str = "0 0 * * * *";
-    cronjob(CRON_CONF.parse().unwrap(), trade, "trade").await;
+    const CRON_CONF: &str = "0 0 0 * * *"; // 毎日0時
+    cronjob(CRON_CONF.parse().unwrap(), trade::start, "trade").await;
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)
@@ -74,6 +76,10 @@ async fn record_rates() -> Result<()> {
     info!(log, "found targets"; "goals" => %goals.len());
     let values = graph.list_values(initial_value, quote_token, &goals)?;
 
+    let log = log.new(o!(
+        "num_values" => values.len().to_string(),
+    ));
+
     info!(log, "converting to rates");
     let rates: Vec<_> = values
         .into_iter()
@@ -85,15 +91,6 @@ async fn record_rates() -> Result<()> {
 
     info!(log, "inserting rates");
     TokenRate::batch_insert(&rates).await?;
-
-    info!(log, "success");
-    Ok(())
-}
-
-async fn trade() -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "trade"));
-
-    // TODO: 実装
 
     info!(log, "success");
     Ok(())
