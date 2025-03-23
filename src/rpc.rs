@@ -1,18 +1,18 @@
 use crate::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx};
-use crate::ref_finance::pool_info::{self, TokenPairLike};
+use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::types::{MicroNear, MilliNear};
 use crate::wallet::Wallet;
 use crate::{jsonrpc, ref_finance, wallet};
+use futures_util::StreamExt;
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
-use std::sync::Arc;
 use tarpc::{
     client, context,
     server::{self, Channel},
     serde_transport::tcp,
-    tokio_serde::formats::Json,
 };
+use tokio_serde::formats::Json;
 
 // Tarpc サービスの定義
 #[tarpc::service]
@@ -76,7 +76,6 @@ pub trait ZaciraciService {
 #[derive(Clone)]
 struct ZaciraciServiceImpl;
 
-#[tarpc::server]
 impl ZaciraciService for ZaciraciServiceImpl {
     // サーバーの健全性チェック
     async fn healthcheck(self, _: context::Context) -> String {
@@ -121,7 +120,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
     // すべてのプールを取得
     async fn get_all_pools(self, _: context::Context) -> String {
         let client = jsonrpc::new_client();
-        let pools = pool_info::PoolInfoList::read_from_node(&client)
+        let pools = ref_finance::pool_info::PoolInfoList::read_from_node(&client)
             .await
             .unwrap();
         format!("Pools: {}", pools.len())
@@ -132,7 +131,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
         use crate::ref_finance::errors::Error;
 
         let client = jsonrpc::new_client();
-        let pools = pool_info::PoolInfoList::read_from_node(&client)
+        let pools = ref_finance::pool_info::PoolInfoList::read_from_node(&client)
             .await
             .unwrap();
         let pool = pools.get(pool_id).unwrap();
@@ -153,7 +152,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
         use crate::ref_finance::errors::Error;
 
         let client = jsonrpc::new_client();
-        let pools = pool_info::PoolInfoList::read_from_node(&client)
+        let pools = ref_finance::pool_info::PoolInfoList::read_from_node(&client)
             .await
             .unwrap();
         let pool = pools.get(pool_id).unwrap();
@@ -172,7 +171,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
     // すべてのトークンをリスト
     async fn list_all_tokens(self, _: context::Context) -> String {
         let client = jsonrpc::new_client();
-        let pools = pool_info::PoolInfoList::read_from_node(&client)
+        let pools = ref_finance::pool_info::PoolInfoList::read_from_node(&client)
             .await
             .unwrap();
         let tokens = ref_finance::path::all_tokens(pools);
@@ -188,7 +187,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
     // リターンをリスト
     async fn list_returns(self, _: context::Context, token_account: String, initial_value: String) -> String {
         let client = jsonrpc::new_client();
-        let pools = pool_info::PoolInfoList::read_from_node(&client)
+        let pools = ref_finance::pool_info::PoolInfoList::read_from_node(&client)
             .await
             .unwrap();
         let graph = ref_finance::path::graph::TokenGraph::new(pools);
@@ -212,7 +211,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
     async fn pick_goals(self, _: context::Context, token_account: String, initial_value: String) -> String {
         let client = jsonrpc::new_client();
         let gas_price = client.get_gas_price(None).await.unwrap();
-        let pools = pool_info::PoolInfoList::read_from_node(&client)
+        let pools = ref_finance::pool_info::PoolInfoList::read_from_node(&client)
             .await
             .unwrap();
         let graph = ref_finance::path::graph::TokenGraph::new(pools);
@@ -243,7 +242,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
     async fn run_swap(self, _: context::Context, token_in_account: String, initial_value: String, token_out_account: String) -> String {
         let client = jsonrpc::new_client();
         let wallet = wallet::new_wallet();
-        let pools = pool_info::PoolInfoList::read_from_node(&client)
+        let pools = ref_finance::pool_info::PoolInfoList::read_from_node(&client)
             .await
             .unwrap();
         let graph = ref_finance::path::graph::TokenGraph::new(pools);
@@ -285,7 +284,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
         let wallet = wallet::new_wallet();
         let bounds = ref_finance::storage::check_bounds(&client).await.unwrap();
         let value = bounds.min.0;
-        let res = crate::ref_finance::storage::deposit(&client, &wallet, value, true).await;
+        let res = ref_finance::storage::deposit(&client, &wallet, value, true).await;
         match res {
             Ok(_) => format!("Deposited: {value}"),
             Err(e) => format!("Error: {e}"),
@@ -297,7 +296,7 @@ impl ZaciraciService for ZaciraciServiceImpl {
         let client = jsonrpc::new_client();
         let wallet = wallet::new_wallet();
         let amount: u128 = amount.replace("_", "").parse().unwrap();
-        let res = crate::ref_finance::storage::deposit(&client, &wallet, amount, false).await;
+        let res = ref_finance::storage::deposit(&client, &wallet, amount, false).await;
         match res {
             Ok(_) => format!("Deposited: {amount}"),
             Err(e) => format!("Error: {e}"),
@@ -423,34 +422,42 @@ impl ZaciraciService for ZaciraciServiceImpl {
 // サーバーの起動関数
 pub async fn run() {
     // TCP リスナーの作成
-    let addr = "0.0.0.0:8080".parse().unwrap();
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let addr = "0.0.0.0:8080".parse::<std::net::SocketAddr>().unwrap();
     
-    // サーバーのログ設定
+    // サーバーインスタンスの作成
     let server = ZaciraciServiceImpl;
     
-    // クライアントからの接続を処理
-    loop {
-        let (stream, _) = listener.accept().await.unwrap();
-        let transport = tcp::Transport::from((stream, Json::default()));
-        let server = server.clone();
-        
-        // 各接続に対して新しいタスクを生成
-        tokio::spawn(async move {
-            let channel = tarpc::server::BaseChannel::with_defaults(transport);
-            channel.execute(server).await;
-        });
-    }
+    // トランスポートリスナーの設定
+    let mut listener = tcp::listen(addr, Json::default).await.unwrap();
+    
+    // 接続の受け入れとサービス実行
+    listener.config_mut().max_frame_length(usize::MAX);
+    
+    listener
+        .filter_map(|r| async move { r.ok() })
+        .map(server::BaseChannel::with_defaults)
+        .for_each(|channel| {
+            let server_clone = server.clone();
+            async move {
+                let server = channel.execute(server_clone.serve());
+                tokio::spawn(server.for_each(|response| async {
+                    tokio::spawn(response);
+                }));
+            }
+        })
+        .await;
 }
 
 // クライアント接続用のヘルパー関数
-pub async fn connect() -> client::Client<ZaciraciServiceClient> {
-    let addr = "127.0.0.1:8080".parse().unwrap();
-    let transport = tcp::connect(addr, Json::default()).await.unwrap();
+#[allow(dead_code)]
+pub async fn connect() -> ZaciraciServiceClient {
+    let addr = "127.0.0.1:8080".parse::<std::net::SocketAddr>().unwrap();
+    let transport = tcp::connect(addr, Json::default).await.unwrap();
     ZaciraciServiceClient::new(client::Config::default(), transport).spawn()
 }
 
 // クライアント使用例
+#[allow(dead_code)]
 pub async fn client_example() -> String {
     let client = connect().await;
     let ctx = context::current();
