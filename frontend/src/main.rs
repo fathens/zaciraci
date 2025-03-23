@@ -1,6 +1,9 @@
 use dioxus::prelude::*;
 use zaciraci_common::types::{Transaction, TransactionStatus};
+use zaciraci_common::rpc::ZaciraciServiceClient;
 use chrono;
+use tarpc::{ client, context, serde_transport::tcp };
+use tokio_serde::formats::Json;
 
 fn main() {
     // 正しいlaunch関数の呼び出し方法
@@ -49,4 +52,29 @@ fn App() -> Element {
             }
         }
     }
+}
+
+// クライアント接続用のヘルパー関数
+#[allow(dead_code)]
+pub async fn connect() -> ZaciraciServiceClient {
+    let addr = "127.0.0.1:8080".parse::<std::net::SocketAddr>().unwrap();
+    let transport = tcp::connect(addr, Json::default).await.unwrap();
+    ZaciraciServiceClient::new(client::Config::default(), transport).spawn()
+}
+
+// クライアント使用例
+#[allow(dead_code)]
+pub async fn client_example() -> String {
+    let client = connect().await;
+    let ctx = context::current();
+    
+    // 健全性チェック
+    let health = client.healthcheck(ctx).await.unwrap();
+    println!("ヘルスチェック結果: {}", health);
+    
+    // 残高チェック
+    let balance = client.native_token_balance(ctx).await.unwrap();
+    println!("残高: {}", balance);
+    
+    balance
 }
