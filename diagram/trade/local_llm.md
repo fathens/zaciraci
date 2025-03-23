@@ -1,8 +1,8 @@
 # Local LLM の検討
 
-ここでは Gemma 3 を対象として検討する。
+ここでは Gemma 3 と Phi 4 を対象として検討する。
 
-## モデルの比較
+## Gemma 3 のモデルの比較
 
 [公式サイト](https://ai.google.dev/gemma/docs/core?hl=ja#sizes)より
 
@@ -24,3 +24,9 @@ Q4_0 と INT4 はメモリがそんなに変わらないが Q4_0 の方が精度
 | ~~12B-INT4~~ | ~~8.2GB~~ |
 
 ollama pull でインストールすると Q4_K_M になる。[他の量子化も選べるようだが](https://ollama.com/library/gemma3/tags)これを使うことにする。
+
+## Phi 4 のモデルの比較
+
+これも ollama pull でインストールすると Q4_K_M になる。
+これを使うことにする。
+https://ollama.com/library/phi4/tags
