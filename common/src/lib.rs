@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 
 pub mod types;
 pub mod error;
+pub mod rpc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
