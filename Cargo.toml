@@ -44,6 +44,7 @@ rand = "0.9"
 humantime = "2.2"
 reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
+tarpc = { version = "0.36", features = ["tokio1", "tokio1-rustls"] }
 
 [dev-dependencies]
 assertables = "9.5"
