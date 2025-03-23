@@ -9,6 +9,7 @@ mod ref_finance;
 mod types;
 mod wallet;
 mod rpc;
+mod web;
 
 pub use zaciraci_common::config;
 use crate::jsonrpc::SentTx;
@@ -67,6 +68,7 @@ async fn main() {
 
     tokio::spawn(trade::run());
     tokio::spawn(rpc::run());
+    tokio::spawn(web::run());
 
     match main_loop().await {
         Ok(_) => info!(log, "shutting down"),
