@@ -9,7 +9,6 @@ mod persistence;
 mod ref_finance;
 mod types;
 mod wallet;
-mod web;
 mod rpc;
 
 use crate::jsonrpc::SentTx;
@@ -67,7 +66,6 @@ async fn main() {
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(trade::run());
-    tokio::spawn(web::run());
     tokio::spawn(rpc::run());
 
     match main_loop().await {
