@@ -10,6 +10,7 @@ mod ref_finance;
 mod types;
 mod wallet;
 mod web;
+mod web_grpc;
 
 use crate::jsonrpc::SentTx;
 use crate::logging::*;
@@ -66,7 +67,8 @@ async fn main() {
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(trade::run());
-    tokio::spawn(web::run());
+    // RESTサーバーからgRPCサーバーに切り替え
+    tokio::spawn(web_grpc::run());
 
     match main_loop().await {
         Ok(_) => info!(log, "shutting down"),
