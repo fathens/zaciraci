@@ -1,80 +1,47 @@
-use crate::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx};
-use crate::ref_finance::pool_info::{self, TokenPairLike};
-use crate::ref_finance::token_account::TokenAccount;
-use crate::types::{MicroNear, MilliNear};
-use crate::wallet::Wallet;
-use crate::{jsonrpc, ref_finance, wallet};
-use axum::extract::{Path, State};
-use axum::routing::get;
-use axum::Router;
-use num_rational::Ratio;
-use num_traits::ToPrimitive;
 use std::sync::Arc;
+use tonic::transport::Server;
 
-struct AppState {}
+use crate::services::{
+    health::HealthServiceImpl,
+    native_token::NativeTokenServiceImpl,
+    pools::PoolsServiceImpl,
+    storage::StorageServiceImpl,
+};
+
+use crate::rpc::{
+    health::{HealthServiceGrpc, HealthServiceServer},
+    native_token::{NativeTokenServiceGrpc, NativeTokenServiceServer},
+    pools::{PoolsServiceGrpc, PoolsServiceServer},
+    storage::{StorageServiceGrpc, StorageServiceServer},
+};
 
 pub async fn run() {
-    let state = Arc::new(AppState {});
-    let app = Router::new()
-        .route("/healthcheck", get(|| async { "OK" }))
-        .route("/native_token/balance", get(native_token_balance))
-        .with_state(state.clone())
-        .route(
-            "/native_token/transfer/{receiver}/{amount}",
-            get(native_token_transfer),
-        )
-        .with_state(state.clone())
-        .route("/pools/get_all", get(get_all_pools))
-        .with_state(state.clone())
-        .route(
-            "/pools/estimate_return/{pool_id}/{amount}",
-            get(estimate_return),
-        )
-        .with_state(state.clone())
-        .route("/pools/get_return/{pool_id}/{amount}", get(get_return))
-        .with_state(state.clone())
-        .route("/pools/list_all_tokens", get(list_all_tokens))
-        .with_state(state.clone())
-        .route(
-            "/pools/list_returns/{token_account}/{amount}",
-            get(list_returns),
-        )
-        .with_state(state.clone())
-        .route("/pools/pick_goals/{token_account}/{amount}", get(pick_goals))
-        .with_state(state.clone())
-        .route(
-            "/pools/run_swap/{token_in_account}/{initial_value}/{token_out_account}",
-            get(run_swap),
-        )
-        .with_state(state.clone())
-        .route("/storage/deposit_min", get(storage_deposit_min))
-        .with_state(state.clone())
-        .route("/storage/deposit/{amount}", get(storage_deposit))
-        .with_state(state.clone())
-        .route(
-            "/storage/unregister/{token_account}",
-            get(storage_unregister_token),
-        )
-        .with_state(state.clone())
-        .route("/amounts/list", get(deposit_list))
-        .with_state(state.clone())
-        .route("/amounts/wrap/{amount}", get(wrap_native_token))
-        .with_state(state.clone())
-        .route("/amounts/unwrap/{amount}", get(unwrap_native_token))
-        .with_state(state.clone())
-        .route(
-            "/amounts/deposit/{token_account}/{amount}",
-            get(deposit_token),
-        )
-        .with_state(state.clone())
-        .route(
-            "/amounts/withdraw/{token_account}/{amount}",
-            get(withdraw_token),
-        )
-        .with_state(state.clone());
+    // サーバーのアドレス設定
+    let addr = "[::1]:50051".parse().unwrap();
+    
+    // 各サービスの初期化
+    let health_service = Arc::new(HealthServiceImpl::default());
+    let native_token_service = Arc::new(NativeTokenServiceImpl::default());
+    let pools_service = Arc::new(PoolsServiceImpl::default());
+    let storage_service = Arc::new(StorageServiceImpl::default());
+    
+    // gRPCサービスの初期化
+    let health_grpc = HealthServiceGrpc::new(health_service);
+    let native_token_grpc = NativeTokenServiceGrpc::new(native_token_service);
+    let pools_grpc = PoolsServiceGrpc::new(pools_service);
+    let storage_grpc = StorageServiceGrpc::new(storage_service);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    println!("gRPCサーバーを開始します: {}", addr);
+
+    // サーバーを構築して実行
+    Server::builder()
+        .add_service(HealthServiceServer::new(health_grpc))
+        .add_service(NativeTokenServiceServer::new(native_token_grpc))
+        .add_service(PoolsServiceServer::new(pools_grpc))
+        .add_service(StorageServiceServer::new(storage_grpc))
+        .serve(addr)
+        .await
+        .unwrap();
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {

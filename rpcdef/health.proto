@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package zaciraci.health;
+
+import "common.proto";
+
+option go_package = "github.com/fathens/zaciraci/health";
+
+// ヘルスチェックサービス
+service HealthService {
+  // サーバーの状態確認
+  rpc Healthcheck(zaciraci.common.Empty) returns (HealthResponse);
+}
+
+// ヘルスチェックレスポンス
+message HealthResponse {
+  string status = 1; // "OK" など
+}

@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package zaciraci.pools;
+
+import "common.proto";
+
+option go_package = "github.com/fathens/zaciraci/pools";
+
+// プール関連サービス
+service PoolsService {
+  // 全プール取得
+  rpc GetAllPools(zaciraci.common.Empty) returns (GetAllPoolsResponse);
+  
+  // リターン見積もり
+  rpc EstimateReturn(EstimateReturnRequest) returns (EstimateReturnResponse);
+  
+  // リターン取得
+  rpc GetReturn(GetReturnRequest) returns (GetReturnResponse);
+  
+  // 全トークンリスト取得
+  rpc ListAllTokens(zaciraci.common.Empty) returns (ListAllTokensResponse);
+  
+  // 全リターンリスト取得
+  rpc ListReturns(ListReturnsRequest) returns (ListReturnsResponse);
+  
+  // 目標選択
+  rpc PickGoals(PickGoalsRequest) returns (PickGoalsResponse);
+  
+  // スワップ実行
+  rpc RunSwap(RunSwapRequest) returns (RunSwapResponse);
+}
+
+// 全プール取得レスポンス
+message GetAllPoolsResponse {
+  repeated Pool pools = 1;
+}
+
+// プール情報
+message Pool {
+  string id = 1;
+  repeated Token tokens = 2;
+}
+
+// トークン情報
+message Token {
+  string account_id = 1;
+  string symbol = 2;
+  string balance = 3;
+}
+
+// リターン見積もりリクエスト
+message EstimateReturnRequest {
+  string pool_id = 1;
+  string amount = 2;
+}
+
+// リターン見積もりレスポンス
+message EstimateReturnResponse {
+  string estimated_return = 1;
+}
+
+// リターン取得リクエスト
+message GetReturnRequest {
+  string pool_id = 1;
+  string amount = 2;
+}
+
+// リターン取得レスポンス
+message GetReturnResponse {
+  string return_amount = 1;
+}
+
+// 全トークンリスト取得レスポンス
+message ListAllTokensResponse {
+  repeated Token tokens = 1;
+}
+
+// 全リターンリスト取得リクエスト
+message ListReturnsRequest {
+  string token_account = 1;
+  string amount = 2;
+}
+
+// 全リターンリスト取得レスポンス
+message ListReturnsResponse {
+  repeated ReturnInfo returns = 1;
+}
+
+// リターン情報
+message ReturnInfo {
+  string token_account = 1;
+  string return_amount = 2;
+}
+
+// 目標選択リクエスト
+message PickGoalsRequest {
+  string token_account = 1;
+  string amount = 2;
+}
+
+// 目標選択レスポンス
+message PickGoalsResponse {
+  repeated GoalInfo goals = 1;
+}
+
+// 目標情報
+message GoalInfo {
+  string token_account = 1;
+  string expected_return = 2;
+}
+
+// スワップ実行リクエスト
+message RunSwapRequest {
+  string token_in_account = 1;
+  string initial_value = 2;
+  string token_out_account = 3;
+}
+
+// スワップ実行レスポンス
+message RunSwapResponse {
+  bool success = 1;
+  string transaction_hash = 2;
+  string result_amount = 3;
+}

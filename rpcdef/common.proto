@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package zaciraci.common;
+
+option go_package = "github.com/fathens/zaciraci/common";
+
+// 共通で使用される型の定義
+message Empty {}
+
+// 金額を表す型
+message Amount {
+  string value = 1;
+}
+
+// アカウントを表す型
+message Account {
+  string id = 1;
+}
+
+// トークンアカウントを表す型
+message TokenAccount {
+  string account_id = 1;
+}

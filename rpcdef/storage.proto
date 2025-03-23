@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package zaciraci.storage;
+
+import "common.proto";
+
+option go_package = "github.com/fathens/zaciraci/storage";
+
+// ストレージサービス
+service StorageService {
+  // 最小デポジット額取得
+  rpc GetDepositMin(zaciraci.common.Empty) returns (DepositMinResponse);
+  
+  // デポジット実行
+  rpc Deposit(DepositRequest) returns (DepositResponse);
+  
+  // 登録解除
+  rpc Unregister(UnregisterRequest) returns (UnregisterResponse);
+}
+
+// 最小デポジット額レスポンス
+message DepositMinResponse {
+  string min_amount = 1;
+}
+
+// デポジットリクエスト
+message DepositRequest {
+  string amount = 1;
+}
+
+// デポジットレスポンス
+message DepositResponse {
+  bool success = 1;
+  string transaction_hash = 2;
+}
+
+// 登録解除リクエスト
+message UnregisterRequest {
+  string token_account = 1;
+}
+
+// 登録解除レスポンス
+message UnregisterResponse {
+  bool success = 1;
+  string transaction_hash = 2;
+}
