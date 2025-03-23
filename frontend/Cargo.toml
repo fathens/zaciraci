@@ -18,7 +18,8 @@ web-sys = { version = "0.3", features = [
   "console"
 ]}
 js-sys = "0.3"
-yew = { version = "0.21", features = ["csr"] }
+dioxus = { version = "0.6", features = ["web"] }
+dioxus-web = "0.6"
 gloo = "0.11"
 gloo-net = "0.5"
 chrono = { version = "0.4", features = ["serde", "wasmbind"] }
