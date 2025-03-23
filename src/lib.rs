@@ -12,8 +12,5 @@ pub mod services;
 // RPC実装
 pub mod rpc;
 
-// webサーバー（REST API - 現在の実装）
+// webサーバー（gRPC実装）
 pub mod web;
-
-// gRPCサーバー（新しいConnect RPC実装）
-pub mod web_grpc;
