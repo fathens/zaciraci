@@ -1,9 +1,12 @@
-use dioxus::prelude::*;
-use zaciraci_common::types::{Transaction, TransactionStatus};
-use zaciraci_common::rpc::ZaciraciServiceClient;
 use chrono;
-use tarpc::{ client, context, serde_transport::tcp };
+use dioxus::prelude::*;
+use tarpc::{client, context, serde_transport::tcp};
 use tokio_serde::formats::Json;
+use zaciraci_common::rpc::ZaciraciServiceClient;
+use zaciraci_common::types::{Transaction, TransactionStatus};
+
+pub use zaciraci_common::config;
+type Result<T> = anyhow::Result<T>;
 
 fn main() {
     // 正しいlaunch関数の呼び出し方法
@@ -32,7 +35,7 @@ fn App() -> Element {
         div { class: "container",
             h1 { "Zaciraci Frontend" }
             p { "フロントエンド実装がここに表示されます" }
-            
+
             h2 { "取引一覧（サンプル）" }
             ul {
                 {transactions.into_iter().map(|tx| {
@@ -41,9 +44,9 @@ fn App() -> Element {
                         TransactionStatus::Pending => "処理中",
                         TransactionStatus::Failed => "失敗",
                     };
-                    
+
                     rsx! {
-                        li { 
+                        li {
                             key: "{tx.id}",
                             "ID: {tx.id}, 金額: {tx.amount}, 状態: {status_text}"
                         }
@@ -56,25 +59,26 @@ fn App() -> Element {
 
 // クライアント接続用のヘルパー関数
 #[allow(dead_code)]
-pub async fn connect() -> ZaciraciServiceClient {
-    let addr = "127.0.0.1:8080".parse::<std::net::SocketAddr>().unwrap();
-    let transport = tcp::connect(addr, Json::default).await.unwrap();
-    ZaciraciServiceClient::new(client::Config::default(), transport).spawn()
+pub async fn connect() -> Result<ZaciraciServiceClient> {
+    let host = config::get("ZACIRACI_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    let addr = host.parse::<std::net::SocketAddr>()?;
+    let transport = tcp::connect(addr, Json::default).await?;
+    Ok(ZaciraciServiceClient::new(client::Config::default(), transport).spawn())
 }
 
 // クライアント使用例
 #[allow(dead_code)]
-pub async fn client_example() -> String {
-    let client = connect().await;
+pub async fn client_example() -> Result<String> {
+    let client = connect().await?;
     let ctx = context::current();
-    
+
     // 健全性チェック
-    let health = client.healthcheck(ctx).await.unwrap();
+    let health = client.healthcheck(ctx).await?;
     println!("ヘルスチェック結果: {}", health);
-    
+
     // 残高チェック
-    let balance = client.native_token_balance(ctx).await.unwrap();
+    let balance = client.native_token_balance(ctx).await?;
     println!("残高: {}", balance);
-    
-    balance
+
+    Ok(balance)
 }
