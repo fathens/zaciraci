@@ -1,13 +1,10 @@
 use chrono;
 use dioxus::prelude::*;
 use dioxus_logger;
-use tarpc::{client, context, serde_transport::tcp};
-use tokio_serde::formats::Json;
-use zaciraci_common::rpc::ZaciraciServiceClient;
 use zaciraci_common::types::{Transaction, TransactionStatus};
+use reqwest;
 
 pub use zaciraci_common::config;
-type Result<T> = anyhow::Result<T>;
 
 fn main() {
     // ロガーを初期化
@@ -74,7 +71,7 @@ fn app() -> Element {
 }
 
 fn basic_view() -> Element {
-    let client = use_signal(|| None::<ZaciraciServiceClient>);
+    let client = use_signal(|| None::<reqwest::Client>);
     
     let healthcheck_result = use_signal(|| String::new());
     let balance_result = use_signal(|| String::new());
@@ -86,15 +83,9 @@ fn basic_view() -> Element {
         let mut client_clone = client.clone();
         
         wasm_bindgen_futures::spawn_local(async move {
-            match connect().await {
-                Ok(c) => {
-                    client_clone.set(Some(c));
-                    log::info!("Client connected successfully");
-                }
-                Err(e) => {
-                    log::error!("Failed to connect: {}", e);
-                }
-            }
+            let new_one =  reqwest::Client::new() ;
+            client_clone.set(Some(new_one));
+            log::info!("Client connected successfully");
         });
         
         // クリーンアップ関数
@@ -105,31 +96,13 @@ fn basic_view() -> Element {
     // データを取得
     use_effect(move || {
         let client_clone = client.clone();
-        let mut healthcheck_result_clone = healthcheck_result.clone();
-        let mut balance_result_clone = balance_result.clone();
-        let mut transfer_result_clone = transfer_result.clone();
+        let _healthcheck_result_clone = healthcheck_result.clone();
+        let _balance_result_clone = balance_result.clone();
+        let _transfer_result_clone = transfer_result.clone();
         
         wasm_bindgen_futures::spawn_local(async move {
-            if let Some(c) = &client_clone() {
-                let ctx = context::current();
-                
-                // Healthcheck
-                match c.healthcheck(ctx).await {
-                    Ok(result) => healthcheck_result_clone.set(result),
-                    Err(e) => healthcheck_result_clone.set(format!("Error: {}", e)),
-                }
-                
-                // Balance
-                match c.native_token_balance(ctx).await {
-                    Ok(result) => balance_result_clone.set(result),
-                    Err(e) => balance_result_clone.set(format!("Error: {}", e)),
-                }
-                
-                // Transfer (サンプル)
-                match c.native_token_transfer(ctx, "receiver_address".to_string(), "100".to_string()).await {
-                    Ok(result) => transfer_result_clone.set(result),
-                    Err(e) => transfer_result_clone.set(format!("Error: {}", e)),
-                }
+            if let Some(_) = &client_clone() {
+                log::info!("Fetching data...");
             }
         });
         
@@ -163,29 +136,4 @@ fn storage_view() -> Element {
             p { "ストレージの使用状況や詳細情報を表示します" }
         }
     }
-}
-
-// クライアント接続用のヘルパー関数
-pub async fn connect() -> Result<ZaciraciServiceClient> {
-    let host = config::get("ZACIRACI_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
-    let addr = host.parse::<std::net::SocketAddr>()?;
-    let transport = tcp::connect(addr, Json::default).await?;
-    Ok(ZaciraciServiceClient::new(client::Config::default(), transport).spawn())
-}
-
-// クライアント使用例
-#[allow(dead_code)]
-pub async fn client_example() -> Result<String> {
-    let client = connect().await?;
-    let ctx = context::current();
-
-    // 健全性チェック
-    let health = client.healthcheck(ctx).await?;
-    println!("ヘルスチェック結果: {}", health);
-
-    // ネイティブトークンの残高確認
-    let balance = client.native_token_balance(ctx).await?;
-    println!("ネイティブトークン残高: {}", balance);
-
-    Ok("処理が完了しました".to_string())
 }

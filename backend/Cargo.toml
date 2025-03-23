@@ -45,8 +45,6 @@ rand = { workspace = true }
 humantime = { workspace = true }
 reqwest = { workspace = true }
 base64 = { workspace = true }
-tarpc = { workspace = true }
-tokio-serde = { workspace = true }
 
 [dev-dependencies]
 assertables = "9.5"

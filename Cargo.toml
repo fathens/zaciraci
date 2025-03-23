@@ -36,7 +36,5 @@ rand = "0.9"
 humantime = "2.2"
 reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
-tarpc = { version = "0.35", features = ["tokio1", "serde-transport", "tcp"] }
-tokio-serde = { version = "0.9", features = ["json"] }
 
 # 開発依存関係はワークスペースレベルでは未対応のため削除

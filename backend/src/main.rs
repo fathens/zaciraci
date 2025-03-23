@@ -8,7 +8,6 @@ mod persistence;
 mod ref_finance;
 mod types;
 mod wallet;
-mod rpc;
 mod web;
 
 pub use zaciraci_common::config;
@@ -67,7 +66,6 @@ async fn main() {
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(trade::run());
-    tokio::spawn(rpc::run());
     tokio::spawn(web::run());
 
     match main_loop().await {
