@@ -10,3 +10,4 @@ chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tarpc = { workspace = true }
+once_cell = { workspace = true }

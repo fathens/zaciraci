@@ -1,6 +1,8 @@
 // Tarpc サービスの定義
 #[tarpc::service]
 pub trait ZaciraciService {
+    //// basic
+
     /// サーバーの健全性チェック
     async fn healthcheck() -> String;
     
@@ -9,6 +11,8 @@ pub trait ZaciraciService {
     
     /// ネイティブトークンを転送
     async fn native_token_transfer(receiver: String, amount: String) -> String;
+
+    //// pools
     
     /// すべてのプールを取得
     async fn get_all_pools() -> String;
@@ -30,6 +34,8 @@ pub trait ZaciraciService {
     
     /// スワップを実行
     async fn run_swap(token_in_account: String, initial_value: String, token_out_account: String) -> String;
+    
+    //// storage
     
     /// 最小ストレージ預金を取得
     async fn storage_deposit_min() -> String;
