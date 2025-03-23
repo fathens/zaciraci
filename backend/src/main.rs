@@ -1,6 +1,5 @@
 #![deny(warnings)]
 
-mod config;
 mod trade;
 mod jsonrpc;
 mod logging;
@@ -11,6 +10,7 @@ mod types;
 mod wallet;
 mod rpc;
 
+pub use zaciraci_common::config;
 use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;

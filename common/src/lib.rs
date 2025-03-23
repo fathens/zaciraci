@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
+pub mod config;
 pub mod types;
 pub mod error;
 pub mod rpc;
+
+type Result<T> = anyhow::Result<T>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {

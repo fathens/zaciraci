@@ -24,5 +24,6 @@ gloo = "0.11"
 gloo-net = "0.6"
 chrono = { workspace = true, features = ["serde", "wasmbind"] }
 futures = "0.3"
+once_cell = { workspace = true }
 tarpc = { workspace = true }
 tokio-serde = { workspace = true }
