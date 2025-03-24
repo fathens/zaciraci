@@ -1,8 +1,11 @@
+mod basic;
+mod server_api;
+
 use dioxus::prelude::*;
 use dioxus_logger;
-use reqwest;
 
 pub use zaciraci_common::config;
+pub use server_api::get_client;
 
 fn main() {
     // ロガーを初期化
@@ -40,94 +43,15 @@ fn app() -> Element {
             }
             main { class: "main",
                 {match current_view().as_str() {
-                    "basic" => rsx! { basic_view {} },
+                    "basic" => rsx! { basic::view {} },
                     "pools" => rsx! { pools_view {} },
                     "storage" => rsx! { storage_view {} },
-                    _ => rsx! { basic_view {} },
+                    _ => rsx! { basic::view {} },
                 }}
             }
             footer { class: "footer",
                 p { " 2025 Zaciraci" }
             }
-        }
-    }
-}
-
-#[component]
-fn basic_view() -> Element {
-    let client = use_signal(|| None::<reqwest::Client>);
-    
-    let healthcheck_result = use_signal(|| String::new());
-    let balance_result = use_signal(|| String::new());
-    let transfer_result = use_signal(|| String::new());
-    
-    // 健康チェックを実行する関数
-    let do_healthcheck = move |_| {
-        let client_clone = client.clone();
-        let healthcheck_result_clone = healthcheck_result.clone();
-        
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Some(client) = &client_clone() {
-                match client.get("http://localhost:3000/healthcheck").send().await {
-                    Ok(response) => {
-                        if let Ok(text) = response.text().await {
-                            healthcheck_result_clone.set(format!("Success: {}", text));
-                        } else {
-                            healthcheck_result_clone.set("Failed: Could not read response".to_string());
-                        }
-                    }
-                    Err(e) => {
-                        healthcheck_result_clone.set(format!("Failed: {}", e));
-                    }
-                }
-            }
-        });
-    };
-    
-    // 初期化時にクライアントを接続
-    use_effect(move || {
-        log::info!("Connecting to client...");
-        let mut client_clone = client.clone();
-        
-        wasm_bindgen_futures::spawn_local(async move {
-            let new_one =  reqwest::Client::new() ;
-            client_clone.set(Some(new_one));
-            log::info!("Client connected successfully");
-        });
-        
-        // クリーンアップ関数
-        // Dioxus 0.6では戻り値が()である必要がある
-        ()
-    });
-    
-    // データを取得
-    use_effect(move || {
-        let client_clone = client.clone();
-        let _healthcheck_result_clone = healthcheck_result.clone();
-        let _balance_result_clone = balance_result.clone();
-        let _transfer_result_clone = transfer_result.clone();
-        
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Some(_) = &client_clone() {
-                log::info!("Fetching data...");
-            }
-        });
-        
-        // クリーンアップ関数
-        ()
-    });
-
-    rsx! {
-        div { class: "basic-view",
-            h2 { "Basic Information" }
-            button {
-                onclick: do_healthcheck,
-                class: "button",
-                "Check Health"
-            }
-            p { class: "result", "Healthcheck: {healthcheck_result()}" }
-            p { class: "result", "Native Token Balance: {balance_result()}" }
-            p { class: "result", "Native Token Transfer: {transfer_result()}" }
         }
     }
 }
