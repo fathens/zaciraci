@@ -1,7 +1,5 @@
-use chrono;
 use dioxus::prelude::*;
 use dioxus_logger;
-use zaciraci_common::types::{Transaction, TransactionStatus};
 use reqwest;
 
 pub use zaciraci_common::config;
@@ -17,22 +15,6 @@ fn main() {
 #[component]
 fn app() -> Element {
     let mut current_view = use_signal(|| "basic".to_string());
-
-    // サンプルデータ（実際の実装ではAPIから取得）
-    let _transactions = vec![
-        Transaction {
-            id: "tx1".to_string(),
-            amount: "123.45".to_string(),
-            timestamp: chrono::Utc::now(),
-            status: TransactionStatus::Completed,
-        },
-        Transaction {
-            id: "tx2".to_string(),
-            amount: "67.89".to_string(),
-            timestamp: chrono::Utc::now(),
-            status: TransactionStatus::Pending,
-        },
-    ];
 
     rsx! {
         div { class: "container",
@@ -79,6 +61,29 @@ fn basic_view() -> Element {
     let balance_result = use_signal(|| String::new());
     let transfer_result = use_signal(|| String::new());
     
+    // 健康チェックを実行する関数
+    let do_healthcheck = move |_| {
+        let client_clone = client.clone();
+        let healthcheck_result_clone = healthcheck_result.clone();
+        
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Some(client) = &client_clone() {
+                match client.get("http://localhost:3000/healthcheck").send().await {
+                    Ok(response) => {
+                        if let Ok(text) = response.text().await {
+                            healthcheck_result_clone.set(format!("Success: {}", text));
+                        } else {
+                            healthcheck_result_clone.set("Failed: Could not read response".to_string());
+                        }
+                    }
+                    Err(e) => {
+                        healthcheck_result_clone.set(format!("Failed: {}", e));
+                    }
+                }
+            }
+        });
+    };
+    
     // 初期化時にクライアントを接続
     use_effect(move || {
         log::info!("Connecting to client...");
@@ -115,6 +120,11 @@ fn basic_view() -> Element {
     rsx! {
         div { class: "basic-view",
             h2 { "Basic Information" }
+            button {
+                onclick: do_healthcheck,
+                class: "button",
+                "Check Health"
+            }
             p { class: "result", "Healthcheck: {healthcheck_result()}" }
             p { class: "result", "Native Token Balance: {balance_result()}" }
             p { class: "result", "Native Token Transfer: {transfer_result()}" }
@@ -122,7 +132,6 @@ fn basic_view() -> Element {
     }
 }
 
-#[component]
 fn pools_view() -> Element {
     rsx! {
         div { class: "pools-view",
@@ -132,7 +141,6 @@ fn pools_view() -> Element {
     }
 }
 
-#[component]
 fn storage_view() -> Element {
     rsx! {
         div { class: "storage-view",
