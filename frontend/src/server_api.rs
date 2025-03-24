@@ -35,6 +35,8 @@ impl ApiClient {
         }
     }
 
+    //// basic
+
     pub async fn healthcheck(&self) -> String {
         self.get("/healthcheck").await
     }
@@ -45,5 +47,69 @@ impl ApiClient {
 
     pub async fn native_token_transfer(&self, receiver: &str, amount: &str) -> String {
         self.get(&format!("/native_token/transfer/{receiver}/{amount}")).await
+    }
+
+    //// pools
+
+    pub async fn get_all_pools(&self) -> String {
+        self.get("/pools/get_all").await
+    }
+
+    pub async fn estimate_return(&self, pool_id: &str, amount: &str) -> String {
+        self.get(&format!("/pools/estimate_return/{pool_id}/{amount}")).await
+    }
+
+    pub async fn get_return(&self, pool_id: &str, amount: &str) -> String {
+        self.get(&format!("/pools/get_return/{pool_id}/{amount}")).await
+    }
+
+    pub async fn list_all_tokens(&self) -> String {
+        self.get("/pools/list_all_tokens").await
+    }
+
+    pub async fn list_returns(&self, token_account: &str, amount: &str) -> String {
+        self.get(&format!("/pools/list_returns/{token_account}/{amount}")).await
+    }
+
+    pub async fn pick_goals(&self, token_account: &str, amount: &str) -> String {
+        self.get(&format!("/pools/pick_goals/{token_account}/{amount}")).await
+    }
+
+    pub async fn run_swap(&self, token_in_account: &str, initial_value: &str, token_out_account: &str) -> String {
+        self.get(&format!("/pools/run_swap/{token_in_account}/{initial_value}/{token_out_account}")).await
+    }
+
+    //// storage
+
+    pub async fn storage_deposit_min(&self) -> String {
+        self.get("/storage/deposit_min").await
+    }
+
+    pub async fn storage_deposit(&self, amount: &str) -> String {
+        self.get(&format!("/storage/deposit/{amount}")).await
+    }
+
+    pub async fn storage_unregister_token(&self, token_account: &str) -> String {
+        self.get(&format!("/storage/unregister/{token_account}")).await
+    }
+
+    pub async fn amounts_list(&self) -> String {
+        self.get("/amounts/list").await
+    }
+
+    pub async fn amounts_wrap(&self, amount: &str) -> String {
+        self.get(&format!("/amounts/wrap/{amount}")).await
+    }
+
+    pub async fn amounts_unwrap(&self, amount: &str) -> String {
+        self.get(&format!("/amounts/unwrap/{amount}")).await
+    }
+
+    pub async fn amounts_deposit(&self, token_account: &str, amount: &str) -> String {
+        self.get(&format!("/amounts/deposit/{token_account}/{amount}")).await
+    }
+
+    pub async fn amounts_withdraw(&self, token_account: &str, amount: &str) -> String {
+        self.get(&format!("/amounts/withdraw/{token_account}/{amount}")).await
     }
 }

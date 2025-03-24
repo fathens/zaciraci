@@ -1,4 +1,6 @@
 mod basic;
+mod pools;
+mod storage;
 mod server_api;
 
 use dioxus::prelude::*;
@@ -44,32 +46,14 @@ fn app() -> Element {
             main { class: "main",
                 {match current_view().as_str() {
                     "basic" => rsx! { basic::view {} },
-                    "pools" => rsx! { pools_view {} },
-                    "storage" => rsx! { storage_view {} },
+                    "pools" => rsx! { pools::view {} },
+                    "storage" => rsx! { storage::view {} },
                     _ => rsx! { basic::view {} },
                 }}
             }
             footer { class: "footer",
                 p { " 2025 Zaciraci" }
             }
-        }
-    }
-}
-
-fn pools_view() -> Element {
-    rsx! {
-        div { class: "pools-view",
-            h2 { "Pools Management" }
-            p { "プールの一覧と詳細情報を表示します" }
-        }
-    }
-}
-
-fn storage_view() -> Element {
-    rsx! {
-        div { class: "storage-view",
-            h2 { "Storage Management" }
-            p { "ストレージの使用状況や詳細情報を表示します" }
         }
     }
 }
