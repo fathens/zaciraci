@@ -37,4 +37,16 @@ humantime = "2.2"
 reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
 
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
+
 # 開発依存関係はワークスペースレベルでは未対応のため削除

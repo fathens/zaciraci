@@ -8,12 +8,13 @@ pub use zaciraci_common::config;
 
 fn main() {
     // ロガーを初期化
-    dioxus_logger::init(dioxus_logger::tracing::Level::INFO).expect("failed to init logger");
+    dioxus_logger::init(dioxus_logger::tracing::Level::DEBUG).expect("failed to init logger");
     
     // アプリを起動
     dioxus::launch(app);
 }
 
+#[component]
 fn app() -> Element {
     let mut current_view = use_signal(|| "basic".to_string());
 
@@ -70,6 +71,7 @@ fn app() -> Element {
     }
 }
 
+#[component]
 fn basic_view() -> Element {
     let client = use_signal(|| None::<reqwest::Client>);
     
@@ -120,6 +122,7 @@ fn basic_view() -> Element {
     }
 }
 
+#[component]
 fn pools_view() -> Element {
     rsx! {
         div { class: "pools-view",
@@ -129,6 +132,7 @@ fn pools_view() -> Element {
     }
 }
 
+#[component]
 fn storage_view() -> Element {
     rsx! {
         div { class: "storage-view",
