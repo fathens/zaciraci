@@ -1,10 +1,10 @@
+use crate::Result;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPair, TokenPairLike};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
-use crate::Result;
 use anyhow::anyhow;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
@@ -84,52 +84,76 @@ impl TokenGraph {
         start: &TokenInAccount,
         goals: &[TokenOutAccount],
     ) -> Result<Vec<(TokenOutAccount, u128)>> {
+        self.list_estimated_values(initial, start, goals, true)
+    }
+
+    pub fn list_values(
+        &self,
+        initial: u128,
+        start: &TokenInAccount,
+        goals: &[TokenOutAccount],
+    ) -> Result<Vec<(TokenOutAccount, u128)>> {
+        self.list_estimated_values(initial, start, goals, false)
+    }
+
+    fn list_estimated_values(
+        &self,
+        initial: u128,
+        start: &TokenInAccount,
+        goals: &[TokenOutAccount],
+        with_return: bool,
+    ) -> Result<Vec<(TokenOutAccount, u128)>> {
         let log = DEFAULT.new(o!(
-            "function" => "TokenGraph::list_returns",
+            "function" => "TokenGraph::list_estimated_values",
             "initial" => initial,
             "start" => format!("{:?}", start),
         ));
-        info!(log, "start");
 
-        let mut returns = HashMap::new();
+        let mut values = HashMap::new();
         for goal in goals.iter() {
-            match self.estimate_return(initial, start, goal) {
-                Ok(value) => {
-                    returns.insert(goal.clone(), value);
-                }
+            let res_path = if with_return {
+                self.get_path_with_return(start, goal)
+            } else {
+                self.get_path(start, goal)
+            };
+            match res_path {
+                Ok(path) => match Self::calc_value(initial, &path) {
+                    Ok(value) => {
+                        values.insert(goal.clone(), value);
+                    }
+                    Err(e) => {
+                        error!(log, "failed to estimate value";
+                            "goal" => %goal,
+                            "error" => %e,
+                        );
+                    }
+                },
                 Err(e) => {
-                    error!(log, "failed to estimate return";
+                    error!(log, "failed to get path";
+                        "start" => %start,
                         "goal" => %goal,
                         "error" => %e,
                     );
                 }
             }
         }
-        let mut returns: Vec<_> = returns.into_iter().collect();
-        returns.sort_by_key(|(_, value)| *value);
-        returns.reverse();
-        Ok(returns)
+        let mut values: Vec<_> = values.into_iter().collect();
+        values.sort_by_key(|(_, value)| *value);
+        values.reverse();
+        Ok(values)
     }
 
-    pub fn estimate_return(
-        &self,
-        initial: u128,
-        start: &TokenInAccount,
-        goal: &TokenOutAccount,
-    ) -> Result<u128> {
+    fn calc_value(initial: u128, pairs: &[TokenPair]) -> Result<u128> {
         if initial == 0 {
             return Ok(0);
         }
         let mut value = initial;
-
-        let pairs = self.get_path_with_return(start, goal)?;
         for pair in pairs.iter() {
             value = pair.estimate_return(value)?;
             if value == 0 {
                 return Ok(0);
             }
         }
-
         Ok(value)
     }
 
@@ -366,9 +390,9 @@ mod test {
     use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
     use crate::ref_finance::pool_info::TokenPairId;
+    use petgraph::Graph;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
-    use petgraph::Graph;
     use std::collections::HashMap;
     use std::fmt::Debug;
     use std::ops::Add;
@@ -500,7 +524,7 @@ mod test {
         for goal in goals.into_iter() {
             let gs = cached_path.update_path(&goal, Some("A")).unwrap();
             assert!(gs.len() < 6);
-            assert!(gs.len() > 0);
+            assert!(!gs.is_empty());
         }
 
         // A <-> B

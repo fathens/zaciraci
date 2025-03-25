@@ -10,11 +10,15 @@ use axum::Router;
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
+use tower_http::cors::{CorsLayer, Any};
 
 struct AppState {}
 
 pub async fn run() {
     let state = Arc::new(AppState {});
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any);
     let app = Router::new()
         .route("/healthcheck", get(|| async { "OK" }))
         .route("/native_token/balance", get(native_token_balance))
@@ -71,7 +75,8 @@ pub async fn run() {
             "/amounts/withdraw/{token_account}/{amount}",
             get(withdraw_token),
         )
-        .with_state(state.clone());
+        .with_state(state.clone())
+        .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();

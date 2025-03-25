@@ -1,14 +1,16 @@
 #![deny(warnings)]
 
-mod config;
-mod cron;
+mod trade;
 mod jsonrpc;
 mod logging;
+mod ollama;
+mod persistence;
 mod ref_finance;
 mod types;
 mod wallet;
 mod web;
 
+pub use zaciraci_common::config;
 use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
@@ -56,11 +58,14 @@ async fn main() {
     warn!(log, "log level check");
     crit!(log, "log level check");
 
+    let db_client = persistence::new_client();
+    info!(log, "Database client created"; "db_client" => ?db_client);
+
     let base = wallet::new_wallet().derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
-    tokio::spawn(cron::run());
+    tokio::spawn(trade::run());
     tokio::spawn(web::run());
 
     match main_loop().await {
