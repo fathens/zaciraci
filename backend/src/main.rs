@@ -66,14 +66,10 @@ async fn main() {
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(trade::run());
-    tokio::spawn(web::run());
-
-    match main_loop().await {
-        Ok(_) => info!(log, "shutting down"),
-        Err(err) => error!(log, "shutting down: {:?}", err),
-    }
+    web::run().await;
 }
 
+#[allow(unused)]
 async fn main_loop() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "main_loop"));
     let client = jsonrpc::new_client();
