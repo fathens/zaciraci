@@ -34,7 +34,7 @@ struct NewDbTokenRate {
 }
 
 // アプリケーションロジック用モデル
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TokenRate {
     pub base: TokenOutAccount,
     pub quote: TokenInAccount,
@@ -344,6 +344,7 @@ impl TokenRate {
                     .filter(token_rates::timestamp.le(end))
                     .filter(token_rates::base_token.eq(&base_str))
                     .filter(token_rates::quote_token.eq(&quote_str))
+                    .order_by(token_rates::timestamp)
                     .load::<DbTokenRate>(conn)
             })
             .await
