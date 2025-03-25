@@ -248,18 +248,21 @@ impl TokenRate {
     }
 
     // quote トークンとその個数を時間帯で区切って取り出す
-    pub async fn get_quotes_in_time_range(range: TimeRange) -> Result<Vec<(TokenInAccount, i64)>> {
+    pub async fn get_quotes_in_time_range(range: &TimeRange) -> Result<Vec<(TokenInAccount, i64)>> {
         use diesel::QueryDsl;
         use diesel::dsl::count;
 
         let log = DEFAULT.new(o!("function" => "get_quotes_in_time_range"));
         let conn = connection_pool::get().await?;
 
+        let start = range.start;
+        let end = range.end;
+
         let results = conn
             .interact(move |conn| {
                 token_rates::table
-                    .filter(token_rates::timestamp.gt(range.start))
-                    .filter(token_rates::timestamp.le(range.end))
+                    .filter(token_rates::timestamp.gt(start))
+                    .filter(token_rates::timestamp.le(end))
                     .group_by(token_rates::quote_token)
                     .select((token_rates::quote_token, count(token_rates::quote_token)))
                     .load::<(String, i64)>(conn)
@@ -283,8 +286,8 @@ impl TokenRate {
     }
 
     pub async fn get_bases_in_time_range(
-        range: TimeRange,
-        quote: TokenInAccount,
+        range: &TimeRange,
+        quote: &TokenInAccount,
     ) -> Result<Vec<(TokenOutAccount, i64)>> {
         use diesel::QueryDsl;
         use diesel::dsl::count;
@@ -292,12 +295,16 @@ impl TokenRate {
         let log = DEFAULT.new(o!("function" => "get_bases_in_time_range"));
         let conn = connection_pool::get().await?;
 
+        let start = range.start;
+        let end = range.end;
+        let quote_str = quote.to_string();
+
         let results = conn
             .interact(move |conn| {
                 token_rates::table
-                    .filter(token_rates::timestamp.gt(range.start))
-                    .filter(token_rates::timestamp.le(range.end))
-                    .filter(token_rates::quote_token.eq(&quote.to_string()))
+                    .filter(token_rates::timestamp.gt(start))
+                    .filter(token_rates::timestamp.le(end))
+                    .filter(token_rates::quote_token.eq(&quote_str))
                     .group_by(token_rates::base_token)
                     .select((token_rates::base_token, count(token_rates::base_token)))
                     .load::<(String, i64)>(conn)
@@ -320,18 +327,23 @@ impl TokenRate {
         Ok(bases)
     }
 
-    pub async fn get_rates_in_time_range(range: TimeRange, base: TokenInAccount, quote: TokenInAccount) -> Result<Vec<TokenRate>> {
+    pub async fn get_rates_in_time_range(range: &TimeRange, base: &TokenOutAccount, quote: &TokenInAccount) -> Result<Vec<TokenRate>> {
         use diesel::QueryDsl;
 
         let conn = connection_pool::get().await?;
 
+        let start = range.start;
+        let end = range.end;
+        let base_str = base.to_string();
+        let quote_str = quote.to_string();
+
         let results = conn
             .interact(move |conn| {
                 token_rates::table
-                    .filter(token_rates::timestamp.gt(range.start))
-                    .filter(token_rates::timestamp.le(range.end))
-                    .filter(token_rates::base_token.eq(&base.to_string()))
-                    .filter(token_rates::quote_token.eq(&quote.to_string()))
+                    .filter(token_rates::timestamp.gt(start))
+                    .filter(token_rates::timestamp.le(end))
+                    .filter(token_rates::base_token.eq(&base_str))
+                    .filter(token_rates::quote_token.eq(&quote_str))
                     .load::<DbTokenRate>(conn)
             })
             .await
