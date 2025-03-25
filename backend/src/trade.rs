@@ -19,12 +19,12 @@ pub async fn run() {
 }
 
 async fn run_record_rates() {
-    const CRON_CONF: &str = "0 * * * * *"; // 毎分
+    const CRON_CONF: &str = "*/5 * * * * *"; // 5秒間隔
     cronjob(CRON_CONF.parse().unwrap(), record_rates, "record_rates").await;
 }
 
 async fn run_trade() {
-    const CRON_CONF: &str = "0 0 0 * * *"; // 毎日0時
+    const CRON_CONF: &str = "0 0 * * * *"; // 毎時0分
     cronjob(CRON_CONF.parse().unwrap(), trade::start, "trade").await;
 }
 
