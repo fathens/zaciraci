@@ -58,9 +58,6 @@ async fn main() {
     warn!(log, "log level check");
     crit!(log, "log level check");
 
-    let db_client = persistence::new_client();
-    info!(log, "Database client created"; "db_client" => ?db_client);
-
     let base = wallet::new_wallet().derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
