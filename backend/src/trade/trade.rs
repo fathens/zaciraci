@@ -7,7 +7,6 @@ use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime};
 use futures_util::future::join_all;
 use num_traits::Zero;
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
@@ -26,6 +25,7 @@ pub struct StatsInPeriod<U> {
     pub max: U,
     pub min: U,
 }
+struct ListStatsInPeriod<U>(Vec<StatsInPeriod<U>>);
 
 pub async fn start() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "trade::start"));
@@ -120,7 +120,18 @@ impl SameBaseTokenRates {
         }
     }
 
-    async fn forcast(&self, _period: Duration, _target: NaiveDateTime) -> Result<BigDecimal> {
+    async fn forcast(&self, period: Duration, target: NaiveDateTime) -> Result<BigDecimal> {
+        let log = DEFAULT.new(o!(
+            "function" => "trade::SameBaseTokenRates::forcast",
+            "period" => format!("{}", period),
+            "target" => format!("{:?}", target),
+        ));
+        info!(log, "start");
+
+        let stats = self.stats(period);
+        let _descs = stats.describes();
+
+        info!(log, "success");
         unimplemented!()
     }
 
