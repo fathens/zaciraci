@@ -218,10 +218,7 @@ where
                         "increase"
                     };
                     let change = (diff / p.end.clone()) * 100_i64.into();
-                    format!(
-                        ", marking a {:0.0} % {} {}",
-                        change, dw, prev
-                    )
+                    format!(", marking a {:0.0} % {} {}", change, dw, prev)
                 })
                 .unwrap_or_default();
             let summary = format!(
@@ -249,7 +246,11 @@ mod tests {
     fn test_describes_increase() {
         let stats: ListStatsInPeriod<BigDecimal> = ListStatsInPeriod(vec![
             StatsInPeriod {
-                timestamp: NaiveDateTime::parse_from_str("2025-03-26 11:37:48.195977", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                timestamp: NaiveDateTime::parse_from_str(
+                    "2025-03-26 11:37:48.195977",
+                    "%Y-%m-%d %H:%M:%S%.f",
+                )
+                .unwrap(),
                 period: Duration::minutes(1),
                 start: BigDecimal::from(101),
                 end: BigDecimal::from(100),
@@ -258,7 +259,11 @@ mod tests {
                 average: BigDecimal::from(95),
             },
             StatsInPeriod {
-                timestamp: NaiveDateTime::parse_from_str("2025-03-27 11:37:48.196150", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                timestamp: NaiveDateTime::parse_from_str(
+                    "2025-03-27 11:37:48.196150",
+                    "%Y-%m-%d %H:%M:%S%.f",
+                )
+                .unwrap(),
                 period: Duration::minutes(1),
                 start: BigDecimal::from(100),
                 end: BigDecimal::from(150),
@@ -284,7 +289,11 @@ mod tests {
     fn test_describes_decrease() {
         let stats: ListStatsInPeriod<BigDecimal> = ListStatsInPeriod(vec![
             StatsInPeriod {
-                timestamp: NaiveDateTime::parse_from_str("2025-03-26 11:37:48.195977", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                timestamp: NaiveDateTime::parse_from_str(
+                    "2025-03-26 11:37:48.195977",
+                    "%Y-%m-%d %H:%M:%S%.f",
+                )
+                .unwrap(),
                 period: Duration::minutes(1),
                 start: BigDecimal::from(100),
                 end: BigDecimal::from(100),
@@ -293,7 +302,11 @@ mod tests {
                 average: BigDecimal::from(100),
             },
             StatsInPeriod {
-                timestamp: NaiveDateTime::parse_from_str("2025-03-27 11:37:48.196150", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                timestamp: NaiveDateTime::parse_from_str(
+                    "2025-03-27 11:37:48.196150",
+                    "%Y-%m-%d %H:%M:%S%.f",
+                )
+                .unwrap(),
                 period: Duration::minutes(1),
                 start: BigDecimal::from(100),
                 end: BigDecimal::from(50),
@@ -319,7 +332,11 @@ mod tests {
     fn test_describes_no_change() {
         let stats: ListStatsInPeriod<BigDecimal> = ListStatsInPeriod(vec![
             StatsInPeriod {
-                timestamp: NaiveDateTime::parse_from_str("2025-03-26 11:37:48.195977", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                timestamp: NaiveDateTime::parse_from_str(
+                    "2025-03-26 11:37:48.195977",
+                    "%Y-%m-%d %H:%M:%S%.f",
+                )
+                .unwrap(),
                 period: Duration::minutes(1),
                 start: BigDecimal::from(100),
                 end: BigDecimal::from(100),
@@ -328,7 +345,11 @@ mod tests {
                 average: BigDecimal::from(100),
             },
             StatsInPeriod {
-                timestamp: NaiveDateTime::parse_from_str("2025-03-27 11:37:48.196150", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                timestamp: NaiveDateTime::parse_from_str(
+                    "2025-03-27 11:37:48.196150",
+                    "%Y-%m-%d %H:%M:%S%.f",
+                )
+                .unwrap(),
                 period: Duration::minutes(1),
                 start: BigDecimal::from(100),
                 end: BigDecimal::from(100),
