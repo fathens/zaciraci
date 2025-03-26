@@ -5,12 +5,15 @@ use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime};
+use futures_util::future::join_all;
+use num_traits::Zero;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::{Arc, Mutex};
-use num_traits::Zero;
 
+#[derive(Clone)]
 struct SameBaseTokenRates(Vec<TokenRate>);
 
 pub struct StatsInPeriod<U> {
@@ -23,7 +26,6 @@ pub struct StatsInPeriod<U> {
     pub max: U,
     pub min: U,
 }
-struct ListStatsInPeriod<U>(Vec<StatsInPeriod<U>>);
 
 pub async fn start() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "trade::start"));
@@ -34,34 +36,33 @@ pub async fn start() -> Result<()> {
         end: now,
     };
     let period = Duration::minutes(1);
+    let target = now + Duration::hours(1);
 
-    let quote = get_top_quote_token(range).await?;
-    let bases = get_base_tokens(range, &quote).await?;
-    let rates_by_base = Arc::new(Mutex::new(HashMap::new()));
-    for base in bases.into_iter() {
-        match TokenRate::get_rates_in_time_range(range, &base, &quote).await {
-            Ok(rates) => {
-                let stats = SameBaseTokenRates(rates);
-                rates_by_base.lock().unwrap().insert(base, stats);
-            }
-            Err(e) => {
-                error!(log, "Failed to get rates"; "error" => ?e);
-            }
-        }
-    }
-    let stats_by_base: HashMap<TokenOutAccount, _> = rates_by_base
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(base, stats)| (base.clone(), stats.stats(period)))
-        .collect();
-    let _descs_by_base: HashMap<_, _> = stats_by_base
-        .iter()
-        .map(|(base, stats)| (base.clone(), stats.describes()))
-        .collect();
+    let _rates_by_base = forcast_rates(range, period, target).await?;
 
     info!(log, "success");
     Ok(())
+}
+
+async fn forcast_rates(
+    range: &TimeRange,
+    period: Duration,
+    target: NaiveDateTime,
+) -> Result<HashMap<TokenOutAccount, BigDecimal>> {
+    let log = DEFAULT.new(o!("function" => "trade::forcast_rates"));
+    info!(log, "start");
+    let quote = get_top_quote_token(range).await?;
+    let bases = get_base_tokens(range, &quote).await?;
+    let rates_by_base = Arc::new(Mutex::new(HashMap::new()));
+    let ps = bases.iter().map(|base| async  {
+        let rates = SameBaseTokenRates::load(&quote, base, range).await?;
+        let result = rates.forcast(period, target).await?;
+        rates_by_base.lock().unwrap().insert(base.clone(), result);
+        Ok::<(), anyhow::Error>(())
+    });
+    join_all(ps).await;
+    info!(log, "success");
+    Ok(rates_by_base.lock().unwrap().clone())
 }
 
 async fn get_top_quote_token(range: &TimeRange) -> Result<TokenInAccount> {
@@ -94,6 +95,35 @@ async fn get_base_tokens(
 }
 
 impl SameBaseTokenRates {
+    async fn load(
+        quote: &TokenInAccount,
+        base: &TokenOutAccount,
+        range: &TimeRange,
+    ) -> Result<Self> {
+        let log = DEFAULT.new(o!(
+            "function" => "trade::SameBaseTokenRates::load",
+            "base" => base.to_string(),
+            "quote" => quote.to_string(),
+            "start" => format!("{:?}", range.start),
+            "end" => format!("{:?}", range.end),
+        ));
+        info!(log, "start");
+        match TokenRate::get_rates_in_time_range(range, base, quote).await {
+            Ok(rates) => {
+                info!(log, "loaded rates"; "rates_count" => rates.len());
+                Ok(SameBaseTokenRates(rates))
+            }
+            Err(e) => {
+                error!(log, "Failed to get rates"; "error" => ?e);
+                Err(e)
+            }
+        }
+    }
+
+    async fn forcast(&self, _period: Duration, _target: NaiveDateTime) -> Result<BigDecimal> {
+        unimplemented!()
+    }
+
     fn stats(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
         let log = DEFAULT.new(o!(
             "function" => "trade::stats_rates",
@@ -170,13 +200,15 @@ where
                     if diff.is_zero() {
                         return format!("no change from the previous {:?}", stat.period);
                     }
-                    let dw = if diff < U::zero() { "decrease" } else { "increase" };
+                    let dw = if diff < U::zero() {
+                        "decrease"
+                    } else {
+                        "increase"
+                    };
                     let change = (diff / p.end.clone()) * 100_i64.into();
                     format!(
                         " marking a {:0.2} % {} from the previous {:?}",
-                        change,
-                        dw,
-                        stat.period
+                        change, dw, stat.period
                     )
                 })
                 .unwrap_or_default();
