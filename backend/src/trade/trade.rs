@@ -54,7 +54,7 @@ async fn forcast_rates(
     let quote = get_top_quote_token(range).await?;
     let bases = get_base_tokens(range, &quote).await?;
     let rates_by_base = Arc::new(Mutex::new(HashMap::new()));
-    let ps = bases.iter().map(|base| async  {
+    let ps = bases.iter().map(|base| async {
         let rates = SameBaseTokenRates::load(&quote, base, range).await?;
         let result = rates.forcast(period, target).await?;
         rates_by_base.lock().unwrap().insert(base.clone(), result);
@@ -101,7 +101,7 @@ impl SameBaseTokenRates {
         range: &TimeRange,
     ) -> Result<Self> {
         let log = DEFAULT.new(o!(
-            "function" => "trade::SameBaseTokenRates::load",
+            "function" => "SameBaseTokenRates::load",
             "base" => base.to_string(),
             "quote" => quote.to_string(),
             "start" => format!("{:?}", range.start),
@@ -122,7 +122,7 @@ impl SameBaseTokenRates {
 
     async fn forcast(&self, period: Duration, target: NaiveDateTime) -> Result<BigDecimal> {
         let log = DEFAULT.new(o!(
-            "function" => "trade::SameBaseTokenRates::forcast",
+            "function" => "SameBaseTokenRates::forcast",
             "period" => format!("{}", period),
             "target" => format!("{:?}", target),
         ));
@@ -137,7 +137,7 @@ impl SameBaseTokenRates {
 
     fn stats(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
         let log = DEFAULT.new(o!(
-            "function" => "trade::stats_rates",
+            "function" => "SameBaseTokenRates::stats",
             "rates_count" => self.0.len(),
             "period" => format!("{}", period),
         ));
@@ -207,9 +207,10 @@ where
             let date = format!("{}", stat.timestamp);
             let changes = prev
                 .map(|p: &StatsInPeriod<U>| {
+                    let prev = format!("from the previous {} minutes", stat.period.num_minutes());
                     let diff = stat.end.clone() - p.end.clone();
                     if diff.is_zero() {
-                        return format!("no change from the previous {:?}", stat.period);
+                        return format!(", no change {}", prev);
                     }
                     let dw = if diff < U::zero() {
                         "decrease"
@@ -218,18 +219,133 @@ where
                     };
                     let change = (diff / p.end.clone()) * 100_i64.into();
                     format!(
-                        " marking a {:0.2} % {} from the previous {:?}",
-                        change, dw, stat.period
+                        ", marking a {:0.0} % {} {}",
+                        change, dw, prev
                     )
                 })
                 .unwrap_or_default();
             let summary = format!(
-                "opened at {}, closed at {}, with a high of {}, a low of {}, and an average of {}",
+                "opened at {:0.0}, closed at {:0.0}, with a high of {:0.0}, a low of {:0.0}, and an average of {:0.0}",
                 stat.start, stat.end, stat.max, stat.min, stat.average
             );
             lines.push(format!("{}, {}{}", date, summary, changes));
             prev = Some(stat);
         }
         lines
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_describes() {
+        let stats: ListStatsInPeriod<BigDecimal> = ListStatsInPeriod(vec![]);
+        assert!(stats.describes().is_empty());
+    }
+
+    #[test]
+    fn test_describes_increase() {
+        let stats: ListStatsInPeriod<BigDecimal> = ListStatsInPeriod(vec![
+            StatsInPeriod {
+                timestamp: NaiveDateTime::parse_from_str("2025-03-26 11:37:48.195977", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                period: Duration::minutes(1),
+                start: BigDecimal::from(101),
+                end: BigDecimal::from(100),
+                max: BigDecimal::from(102),
+                min: BigDecimal::from(90),
+                average: BigDecimal::from(95),
+            },
+            StatsInPeriod {
+                timestamp: NaiveDateTime::parse_from_str("2025-03-27 11:37:48.196150", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                period: Duration::minutes(1),
+                start: BigDecimal::from(100),
+                end: BigDecimal::from(150),
+                max: BigDecimal::from(155),
+                min: BigDecimal::from(140),
+                average: BigDecimal::from(147),
+            },
+        ]);
+        let descriptions = stats.describes();
+        assert_eq!(descriptions.len(), 2);
+        assert!(descriptions[1].contains("increase"));
+        assert!(descriptions[1].contains("50 %"));
+        assert_eq!(
+            descriptions,
+            vec![
+                "2025-03-26 11:37:48.195977, opened at 101, closed at 100, with a high of 102, a low of 90, and an average of 95",
+                "2025-03-27 11:37:48.196150, opened at 100, closed at 150, with a high of 155, a low of 140, and an average of 147, marking a 50 % increase from the previous 1 minutes"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_describes_decrease() {
+        let stats: ListStatsInPeriod<BigDecimal> = ListStatsInPeriod(vec![
+            StatsInPeriod {
+                timestamp: NaiveDateTime::parse_from_str("2025-03-26 11:37:48.195977", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                period: Duration::minutes(1),
+                start: BigDecimal::from(100),
+                end: BigDecimal::from(100),
+                max: BigDecimal::from(100),
+                min: BigDecimal::from(100),
+                average: BigDecimal::from(100),
+            },
+            StatsInPeriod {
+                timestamp: NaiveDateTime::parse_from_str("2025-03-27 11:37:48.196150", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                period: Duration::minutes(1),
+                start: BigDecimal::from(100),
+                end: BigDecimal::from(50),
+                max: BigDecimal::from(50),
+                min: BigDecimal::from(50),
+                average: BigDecimal::from(50),
+            },
+        ]);
+        let descriptions = stats.describes();
+        assert_eq!(descriptions.len(), 2);
+        assert!(descriptions[1].contains("decrease"));
+        assert!(descriptions[1].contains("50 %"));
+        assert_eq!(
+            descriptions,
+            vec![
+                "2025-03-26 11:37:48.195977, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100",
+                "2025-03-27 11:37:48.196150, opened at 100, closed at 50, with a high of 50, a low of 50, and an average of 50, marking a -50 % decrease from the previous 1 minutes"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_describes_no_change() {
+        let stats: ListStatsInPeriod<BigDecimal> = ListStatsInPeriod(vec![
+            StatsInPeriod {
+                timestamp: NaiveDateTime::parse_from_str("2025-03-26 11:37:48.195977", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                period: Duration::minutes(1),
+                start: BigDecimal::from(100),
+                end: BigDecimal::from(100),
+                max: BigDecimal::from(100),
+                min: BigDecimal::from(100),
+                average: BigDecimal::from(100),
+            },
+            StatsInPeriod {
+                timestamp: NaiveDateTime::parse_from_str("2025-03-27 11:37:48.196150", "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+                period: Duration::minutes(1),
+                start: BigDecimal::from(100),
+                end: BigDecimal::from(100),
+                max: BigDecimal::from(100),
+                min: BigDecimal::from(100),
+                average: BigDecimal::from(100),
+            },
+        ]);
+        let descriptions = stats.describes();
+        assert_eq!(descriptions.len(), 2);
+        assert!(descriptions[1].contains("no change"));
+        assert_eq!(
+            descriptions,
+            vec![
+                "2025-03-26 11:37:48.195977, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100",
+                "2025-03-27 11:37:48.196150, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100, no change from the previous 1 minutes"
+            ]
+        );
     }
 }
