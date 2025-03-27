@@ -105,24 +105,24 @@ pub struct LLMClient {
 
 #[allow(dead_code)]
 impl LLMClient {
-    pub async fn new_by_name(name: String, base_url: String) -> Result<LLMClient> {
-        let model = find_model(name).await?;
-        Self::new(model.name, base_url)
-    }
-
-    pub fn new(model: ModelName, base_url: String) -> Result<LLMClient> {
+    fn new(model: ModelName, base_url: String) -> Self {
         let client = reqwest::Client::new();
-        Ok(LLMClient {
+        Self {
             model,
             base_url,
             client,
-        })
+        }
     }
 
-    pub async fn new_default() -> Result<LLMClient> {
+    pub async fn new_by_name(name: String, base_url: String) -> Result<Self> {
+        let model = find_model(name).await?;
+        Ok(Self::new(model.name, base_url))
+    }
+
+    pub async fn new_default() -> Result<Self> {
         let model = get_model().await?;
         let base_url = get_base_url();
-        LLMClient::new(model.name, base_url)
+        Ok(Self::new(model.name, base_url))
     }
 
     pub async fn chat(&self, messages: Vec<Message>) -> Result<String> {
