@@ -1,3 +1,6 @@
+mod chat;
+mod generate;
+
 use crate::Result;
 use crate::config;
 use crate::logging::*;
@@ -5,9 +8,10 @@ use anyhow::bail;
 use chrono::{DateTime, FixedOffset};
 use reqwest;
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 
-mod chat;
-mod generate;
+pub use chat::Message;
+pub use generate::Image;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Models {
@@ -41,6 +45,18 @@ pub struct ModelDetails {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelName(String);
 
+impl ModelName {
+    pub fn new(name: String) -> ModelName {
+        ModelName(name)
+    }
+}
+
+impl Display for ModelName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 fn get_base_url() -> String {
     config::get("LLM_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/api".to_string())
 }
@@ -61,7 +77,7 @@ async fn get_model() -> Result<ModelName> {
     Ok(name)
 }
 
-async fn list_models() -> Result<Models> {
+pub async fn list_models() -> Result<Models> {
     let log = DEFAULT.new(o!("function" => "list_models"));
     info!(log, "Listing models");
     let url = get_base_url() + "/tags";
@@ -93,14 +109,14 @@ impl LLMClient {
         LLMClient::new(model, base_url)
     }
 
-    pub async fn chat(&self, messages: Vec<chat::Message>) -> Result<String> {
+    pub async fn chat(&self, messages: Vec<Message>) -> Result<String> {
         let log = DEFAULT.new(o!("function" => "chat"));
         info!(log, "Chatting");
         let response = chat::chat(&self.client, self.base_url.clone(), self.model.clone(), messages).await?;
         Ok(response.message.content)
     }
 
-    pub async fn generate(&self, prompt: String, images: Vec<generate::Image>) -> Result<String> {
+    pub async fn generate(&self, prompt: String, images: Vec<Image>) -> Result<String> {
         let log = DEFAULT.new(o!("function" => "generate"));
         info!(log, "Generating");
         let response = generate::generate(&self.client, self.base_url.clone(), self.model.clone(), prompt, images).await?;

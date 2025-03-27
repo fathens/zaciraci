@@ -1,23 +1,27 @@
-use axum::Router;
-use axum::extract::{Path, State};
-use axum::routing::get;
-use std::sync::Arc;
 use super::AppState;
 use crate::jsonrpc::SentTx;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::types::MicroNear;
 use crate::wallet::Wallet;
 use crate::{jsonrpc, ref_finance, wallet};
+use axum::{
+    Router,
+    extract::{Path, State},
+    routing::get,
+};
+use std::sync::Arc;
 
 fn path(sub: &str) -> String {
     format!("/storage/{sub}")
 }
 
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    app
-        .route(&path("deposit_min"), get(storage_deposit_min))
+    app.route(&path("deposit_min"), get(storage_deposit_min))
         .route(&path("deposit/{amount}"), get(storage_deposit))
-        .route(&path("unregister/{token_account}"), get(storage_unregister_token))
+        .route(
+            &path("unregister/{token_account}"),
+            get(storage_unregister_token),
+        )
         .route(&path("amounts/list"), get(deposit_list))
         .route(&path("amounts/wrap/{amount}"), get(wrap_native_token))
         .route(&path("amounts/unwrap/{amount}"), get(unwrap_native_token))

@@ -1,24 +1,25 @@
-use axum::Router;
-use axum::routing::get;
-use num_rational::Ratio;
-use num_traits::ToPrimitive;
-use crate::jsonrpc::{GasInfo , SentTx};
+use super::AppState;
+use crate::jsonrpc::{GasInfo, SentTx};
+use crate::ref_finance::pool_info;
+use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::types::{MicroNear, MilliNear};
 use crate::{jsonrpc, ref_finance, wallet};
-use crate::ref_finance::pool_info::TokenPairLike;
-use crate::ref_finance::pool_info;
+use axum::{
+    Router,
+    extract::{Path, State},
+    routing::get,
+};
+use num_rational::Ratio;
+use num_traits::ToPrimitive;
 use std::sync::Arc;
-use axum::extract::{Path, State};
-use super::AppState;
 
 fn path(sub: &str) -> String {
     format!("/pools/{sub}")
 }
 
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    app
-        .route(&path("get_all"), get(get_all_pools))
+    app.route(&path("get_all"), get(get_all_pools))
         .route(
             &path("estimate_return/{pool_id}/{amount}"),
             get(estimate_return),

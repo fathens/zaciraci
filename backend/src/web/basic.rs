@@ -1,13 +1,15 @@
-use axum::Router;
-use axum::routing::get;
-use crate::jsonrpc;
-use crate::wallet;
-use crate::types::MicroNear;
-use crate::jsonrpc::{AccountInfo, SendTx};
-use crate::wallet::Wallet;
-use std::sync::Arc;
-use axum::extract::{Path, State};
 use super::AppState;
+use crate::jsonrpc;
+use crate::jsonrpc::{AccountInfo, SendTx};
+use crate::types::MicroNear;
+use crate::wallet;
+use crate::wallet::Wallet;
+use axum::{
+    Router,
+    extract::{Path, State},
+    routing::get,
+};
+use std::sync::Arc;
 
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
     app.route("/healthcheck", get(|| async { "OK" }))

@@ -1,4 +1,5 @@
 mod basic;
+mod ollama;
 mod pools;
 mod storage;
 
@@ -15,7 +16,12 @@ pub async fn run() {
 
     let app = add_routes(
         Router::new(),
-        &[storage::add_route, pools::add_route, basic::add_route],
+        &[
+            basic::add_route,
+            pools::add_route,
+            storage::add_route,
+            ollama::add_route,
+        ],
     )
     .with_state(state)
     .layer(cors);
