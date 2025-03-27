@@ -60,18 +60,13 @@ async fn chat(
     ));
     info!(log, "start");
 
-    let model_name = match ollama::find_model(request.model_name).await {
-        Ok(model_name) => model_name,
+    let client = match ollama::LLMClient::new_by_name(request.model_name, mk_url(port)).await {
+        Ok(client) => client,
         Err(err) => {
-            info!(log, "Failed to find model"; "error" => ?err);
+            info!(log, "Failed to create client"; "error" => ?err);
             return err.to_string();
         }
     };
-    let client = ollama::LLMClient::new(
-        model_name,
-        mk_url(port),
-    )
-    .unwrap();
 
     let message = Message {
         role: request.role,
@@ -99,21 +94,16 @@ async fn generate(
     ));
     info!(log, "start");
 
-    let model_name = match ollama::find_model(request.model_name).await {
-        Ok(model_name) => model_name,
-        Err(err) => {
-            info!(log, "Failed to find model"; "error" => ?err);
-            return err.to_string();
-        }
-    };
     let prompt = request.prompt;
     let images = request.images;
 
-    let client = ollama::LLMClient::new(
-        model_name,
-        mk_url(port),
-    )
-    .unwrap();
+    let client = match ollama::LLMClient::new_by_name(request.model_name, mk_url(port)).await {
+        Ok(client) => client,
+        Err(err) => {
+            info!(log, "Failed to create client"; "error" => ?err);
+            return err.to_string();
+        }
+    };
 
     match client.generate(prompt, images).await {
         Ok(response) => response,

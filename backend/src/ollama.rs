@@ -61,29 +61,28 @@ fn get_base_url() -> String {
     config::get("LLM_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/api".to_string())
 }
 
-async fn get_model() -> Result<ModelName> {
+async fn get_model() -> Result<Model> {
     let log = DEFAULT.new(o!("function" => "get_model"));
-    let name = match config::get("LLM_MODEL") {
-        Ok(name) => ModelName(name),
+    match config::get("LLM_MODEL") {
+        Ok(name) => find_model(name).await,
         Err(err) => {
             info!(log, "LLM_MODEL not set, using default"; "error" => %err);
             let models = list_models().await?.models;
             if models.is_empty() {
                 bail!("No models found");
             }
-            models[0].name.clone()
+            Ok(models[0].clone())
         }
-    };
-    Ok(name)
+    }
 }
 
-pub async fn find_model(name: String) -> Result<ModelName> {
+pub async fn find_model(name: String) -> Result<Model> {
     let log = DEFAULT.new(o!("function" => "find_model"));
     info!(log, "Finding model");
     let models = list_models().await?;
     for model in models.models {
         if model.name.0 == name {
-            return Ok(model.name);
+            return Ok(model);
         }
     }
     bail!("Model not found");
@@ -106,6 +105,11 @@ pub struct LLMClient {
 
 #[allow(dead_code)]
 impl LLMClient {
+    pub async fn new_by_name(name: String, base_url: String) -> Result<LLMClient> {
+        let model = find_model(name).await?;
+        Self::new(model.name, base_url)
+    }
+
     pub fn new(model: ModelName, base_url: String) -> Result<LLMClient> {
         let client = reqwest::Client::new();
         Ok(LLMClient {
@@ -118,7 +122,7 @@ impl LLMClient {
     pub async fn new_default() -> Result<LLMClient> {
         let model = get_model().await?;
         let base_url = get_base_url();
-        LLMClient::new(model, base_url)
+        LLMClient::new(model.name, base_url)
     }
 
     pub async fn chat(&self, messages: Vec<Message>) -> Result<String> {
