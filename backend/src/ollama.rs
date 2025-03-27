@@ -77,6 +77,18 @@ async fn get_model() -> Result<ModelName> {
     Ok(name)
 }
 
+pub async fn find_model(name: String) -> Result<ModelName> {
+    let log = DEFAULT.new(o!("function" => "find_model"));
+    info!(log, "Finding model");
+    let models = list_models().await?;
+    for model in models.models {
+        if model.name.0 == name {
+            return Ok(model.name);
+        }
+    }
+    bail!("Model not found");
+}
+
 pub async fn list_models() -> Result<Models> {
     let log = DEFAULT.new(o!("function" => "list_models"));
     info!(log, "Listing models");
