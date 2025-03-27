@@ -1,6 +1,5 @@
-use crate::Result;
+use anyhow::Result;
 use once_cell::sync::Lazy;
-use serde_json::Value;
 use std::sync::Arc;
 use zaciraci_common::config;
 
@@ -37,14 +36,27 @@ impl ApiClient {
         }
     }
 
-    async fn post<T>(&self, path: &str, body: &T) -> String
+    async fn get_json<T>(&self, path: &str) -> Result<T>
     where
-        T: serde::Serialize,
+        T: serde::de::DeserializeOwned,
+    {
+        let url = format!("{}{}", self.base_url, path);
+        match self.client.get(&url).send().await {
+            Ok(res) => Ok(res.json().await?),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    #[allow(unused)]
+    async fn post<A, B>(&self, path: &str, body: &A) -> Result<B>
+    where
+        A: serde::Serialize,
+        B: serde::de::DeserializeOwned,
     {
         let url = format!("{}{}", self.base_url, path);
         match self.client.post(&url).json(body).send().await {
-            Ok(res) => res.text().await.unwrap_or_else(|e| format!("Error: {}", e)),
-            Err(e) => format!("Error: {}", e),
+            Ok(res) => Ok(res.json().await?),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -149,7 +161,6 @@ impl ApiClient {
     // ollama
 
     pub async fn ollama_list_models(&self, port: u16) -> Vec<String> {
-        let res = self.get(&format!("/ollama/model_names/{port}")).await;
-        serde_json::from_str(&res).unwrap_or_default()
+        self.get_json(&format!("/ollama/model_names/{port}")).await.unwrap_or_default()
     }
 }

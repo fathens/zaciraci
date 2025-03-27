@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use serde_json;
 
 #[component]
 pub fn view() -> Element {
