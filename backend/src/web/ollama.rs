@@ -28,7 +28,7 @@ fn path(sub: &str) -> String {
 }
 
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    app.route(&path("model_names"), get(list_model_names))
+    app.route(&path("model_names/{port}"), get(list_model_names))
         .route(&path("chat/{port}"), post(chat))
         .route(&path("generate/{port}"), post(generate))
 }
@@ -37,11 +37,12 @@ fn mk_url(port: u16) -> String {
     format!("http://localhost:{}/api", port)
 }
 
-async fn list_model_names() -> String {
+async fn list_model_names(Path(port): Path<u16>) -> String {
     let log = DEFAULT.new(o!(
-        "function" => "list_model_names"
+        "function" => "list_model_names",
+        "port" => format!("{}", port)
     ));
-    let models = match ollama::list_models().await {
+    let models = match ollama::list_models(&mk_url(port)).await {
         Ok(models) => models,
         Err(err) => {
             info!(log, "Failed to list models"; "error" => ?err);

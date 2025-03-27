@@ -1,4 +1,6 @@
+use crate::Result;
 use once_cell::sync::Lazy;
+use serde_json::Value;
 use std::sync::Arc;
 use zaciraci_common::config;
 
@@ -35,6 +37,17 @@ impl ApiClient {
         }
     }
 
+    async fn post<T>(&self, path: &str, body: &T) -> String
+    where
+        T: serde::Serialize,
+    {
+        let url = format!("{}{}", self.base_url, path);
+        match self.client.post(&url).json(body).send().await {
+            Ok(res) => res.text().await.unwrap_or_else(|e| format!("Error: {}", e)),
+            Err(e) => format!("Error: {}", e),
+        }
+    }
+
     //// basic
 
     pub async fn healthcheck(&self) -> String {
@@ -46,7 +59,8 @@ impl ApiClient {
     }
 
     pub async fn native_token_transfer(&self, receiver: &str, amount: &str) -> String {
-        self.get(&format!("/native_token/transfer/{receiver}/{amount}")).await
+        self.get(&format!("/native_token/transfer/{receiver}/{amount}"))
+            .await
     }
 
     //// pools
@@ -56,11 +70,13 @@ impl ApiClient {
     }
 
     pub async fn estimate_return(&self, pool_id: &str, amount: &str) -> String {
-        self.get(&format!("/pools/estimate_return/{pool_id}/{amount}")).await
+        self.get(&format!("/pools/estimate_return/{pool_id}/{amount}"))
+            .await
     }
 
     pub async fn get_return(&self, pool_id: &str, amount: &str) -> String {
-        self.get(&format!("/pools/get_return/{pool_id}/{amount}")).await
+        self.get(&format!("/pools/get_return/{pool_id}/{amount}"))
+            .await
     }
 
     pub async fn list_all_tokens(&self) -> String {
@@ -68,15 +84,25 @@ impl ApiClient {
     }
 
     pub async fn list_returns(&self, token_account: &str, amount: &str) -> String {
-        self.get(&format!("/pools/list_returns/{token_account}/{amount}")).await
+        self.get(&format!("/pools/list_returns/{token_account}/{amount}"))
+            .await
     }
 
     pub async fn pick_goals(&self, token_account: &str, amount: &str) -> String {
-        self.get(&format!("/pools/pick_goals/{token_account}/{amount}")).await
+        self.get(&format!("/pools/pick_goals/{token_account}/{amount}"))
+            .await
     }
 
-    pub async fn run_swap(&self, token_in_account: &str, initial_value: &str, token_out_account: &str) -> String {
-        self.get(&format!("/pools/run_swap/{token_in_account}/{initial_value}/{token_out_account}")).await
+    pub async fn run_swap(
+        &self,
+        token_in_account: &str,
+        initial_value: &str,
+        token_out_account: &str,
+    ) -> String {
+        self.get(&format!(
+            "/pools/run_swap/{token_in_account}/{initial_value}/{token_out_account}"
+        ))
+        .await
     }
 
     //// storage
@@ -90,26 +116,40 @@ impl ApiClient {
     }
 
     pub async fn storage_unregister_token(&self, token_account: &str) -> String {
-        self.get(&format!("/storage/unregister/{token_account}")).await
+        self.get(&format!("/storage/unregister/{token_account}"))
+            .await
     }
 
     pub async fn amounts_list(&self) -> String {
-        self.get("/amounts/list").await
+        self.get("/storage/amounts/list").await
     }
 
     pub async fn amounts_wrap(&self, amount: &str) -> String {
-        self.get(&format!("/amounts/wrap/{amount}")).await
+        self.get(&format!("/storage/amounts/wrap/{amount}")).await
     }
 
     pub async fn amounts_unwrap(&self, amount: &str) -> String {
-        self.get(&format!("/amounts/unwrap/{amount}")).await
+        self.get(&format!("/storage/amounts/unwrap/{amount}")).await
     }
 
     pub async fn amounts_deposit(&self, token_account: &str, amount: &str) -> String {
-        self.get(&format!("/amounts/deposit/{token_account}/{amount}")).await
+        self.get(&format!(
+            "/storage/amounts/deposit/{token_account}/{amount}"
+        ))
+        .await
     }
 
     pub async fn amounts_withdraw(&self, token_account: &str, amount: &str) -> String {
-        self.get(&format!("/amounts/withdraw/{token_account}/{amount}")).await
+        self.get(&format!(
+            "/storage/amounts/withdraw/{token_account}/{amount}"
+        ))
+        .await
+    }
+
+    // ollama
+
+    pub async fn ollama_list_models(&self, port: u16) -> Vec<String> {
+        let res = self.get(&format!("/ollama/model_names/{port}")).await;
+        serde_json::from_str(&res).unwrap_or_default()
     }
 }
