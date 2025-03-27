@@ -23,10 +23,14 @@ pub struct GenerateRequest {
     images: Vec<Image>,
 }
 
+fn path(sub: &str) -> String {
+    format!("/ollama/{sub}")
+}
+
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    app.route("/model_names", get(list_model_names))
-        .route("/chat/{port}", post(chat))
-        .route("/generate/{port}", post(generate))
+    app.route(&path("model_names"), get(list_model_names))
+        .route(&path("chat/{port}"), post(chat))
+        .route(&path("generate/{port}"), post(generate))
 }
 
 fn mk_url(port: u16) -> String {
