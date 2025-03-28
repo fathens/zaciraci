@@ -10,8 +10,8 @@ use reqwest;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
-pub use chat::Message;
-pub use generate::Image;
+pub use zaciraci_common::ollama::Message;
+pub use zaciraci_common::ollama::Image;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Models {
