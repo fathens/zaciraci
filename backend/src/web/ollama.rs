@@ -1,9 +1,10 @@
 use super::AppState;
 use crate::logging::*;
 use crate::ollama;
+use crate::ollama::get_base_url;
 use axum::{
     Router,
-    extract::{Json, Path, State},
+    extract::{Json, State},
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -14,21 +15,16 @@ fn path(sub: &str) -> String {
 }
 
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    app.route(&path("model_names/{port}"), get(list_model_names))
-        .route(&path("chat/{port}"), post(chat))
-        .route(&path("generate/{port}"), post(generate))
+    app.route(&path("model_names"), get(list_model_names))
+        .route(&path("chat"), post(chat))
+        .route(&path("generate"), post(generate))
 }
 
-fn mk_url(port: u16) -> String {
-    format!("http://localhost:{}/api", port)
-}
-
-async fn list_model_names(Path(port): Path<u16>) -> String {
+async fn list_model_names() -> String {
     let log = DEFAULT.new(o!(
-        "function" => "list_model_names",
-        "port" => format!("{}", port)
+        "function" => "list_model_names"
     ));
-    let models = match ollama::list_models(&mk_url(port)).await {
+    let models = match ollama::list_models(&get_base_url()).await {
         Ok(models) => models,
         Err(err) => {
             info!(log, "Failed to list models"; "error" => ?err);
@@ -41,17 +37,15 @@ async fn list_model_names(Path(port): Path<u16>) -> String {
 
 async fn chat(
     State(_): State<Arc<AppState>>,
-    Path(port): Path<u16>,
     Json(request): Json<ChatRequest>,
 ) -> String {
     let log = DEFAULT.new(o!(
         "function" => "chat",
-        "port" => format!("{}", port),
         "model_name" => format!("{}", request.model_name),
     ));
     info!(log, "start");
 
-    let client = match ollama::LLMClient::new_by_name(request.model_name, mk_url(port)).await {
+    let client = match ollama::Client::new_by_name(request.model_name, get_base_url()).await {
         Ok(client) => client,
         Err(err) => {
             info!(log, "Failed to create client"; "error" => ?err);
@@ -71,12 +65,10 @@ async fn chat(
 
 async fn generate(
     State(_): State<Arc<AppState>>,
-    Path(port): Path<u16>,
     Json(request): Json<GenerateRequest>,
 ) -> String {
     let log = DEFAULT.new(o!(
         "function" => "generate",
-        "port" => format!("{}", port),
         "model_name" => format!("{}", request.model_name),
     ));
     info!(log, "start");
@@ -84,7 +76,7 @@ async fn generate(
     let prompt = request.prompt;
     let images = request.images;
 
-    let client = match ollama::LLMClient::new_by_name(request.model_name, mk_url(port)).await {
+    let client = match ollama::Client::new_by_name(request.model_name, get_base_url()).await {
         Ok(client) => client,
         Err(err) => {
             info!(log, "Failed to create client"; "error" => ?err);

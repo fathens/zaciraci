@@ -51,16 +51,16 @@ impl Display for ModelName {
     }
 }
 
-fn get_base_url() -> String {
-    config::get("LLM_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/api".to_string())
+pub fn get_base_url() -> String {
+    config::get("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/api".to_string())
 }
 
 async fn get_model(base_url: &str) -> Result<Model> {
     let log = DEFAULT.new(o!("function" => "get_model"));
-    match config::get("LLM_MODEL") {
+    match config::get("OLLAMA_MODEL") {
         Ok(name) => find_model(base_url, name).await,
         Err(err) => {
-            info!(log, "LLM_MODEL not set, using default"; "error" => %err);
+            info!(log, "OLLAMA_MODEL not set, using default"; "error" => %err);
             let models = list_models(base_url).await?.models;
             if models.is_empty() {
                 bail!("No models found");
@@ -91,14 +91,14 @@ pub async fn list_models(base_url: &str) -> Result<Models> {
     Ok(models)
 }
 
-pub struct LLMClient {
+pub struct Client {
     model: ModelName,
     base_url: String,
     client: reqwest::Client,
 }
 
 #[allow(dead_code)]
-impl LLMClient {
+impl Client {
     fn new(model: ModelName, base_url: String) -> Self {
         let client = reqwest::Client::new();
         Self {

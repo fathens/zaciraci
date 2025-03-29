@@ -1,7 +1,10 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
-use zaciraci_common::{config, ollama::{ChatRequest, GenerateRequest}};
+use zaciraci_common::{
+    config,
+    ollama::{ChatRequest, GenerateRequest},
+};
 
 fn server_base_url() -> String {
     config::get("SERVER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
@@ -158,20 +161,16 @@ impl ApiClient {
 
     // ollama
 
-    pub async fn ollama_list_models(&self, port: u16) -> Vec<String> {
-        self.get(&format!("ollama/model_names/{port}"))
-            .await
-            .unwrap_or_default()
+    pub async fn ollama_list_models(&self) -> Vec<String> {
+        self.get("ollama/model_names").await.unwrap_or_default()
     }
 
-    pub async fn ollama_chat(&self, port: u16, request: &ChatRequest) -> String {
-        self.post(&format!("ollama/chat/{port}"), request)
-            .await
-            .unwrap_or_default()
+    pub async fn ollama_chat(&self, request: &ChatRequest) -> String {
+        self.post("ollama/chat", request).await.unwrap_or_default()
     }
 
-    pub async fn ollama_generate(&self, port: u16, request: &GenerateRequest) -> String {
-        self.post(&format!("ollama/generate/{port}"), request)
+    pub async fn ollama_generate(&self, request: &GenerateRequest) -> String {
+        self.post("ollama/generate", request)
             .await
             .unwrap_or_default()
     }
