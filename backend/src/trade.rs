@@ -1,4 +1,4 @@
-mod trade;
+pub mod trade;
 
 use crate::Result;
 use crate::config;

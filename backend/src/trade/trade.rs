@@ -13,7 +13,7 @@ use std::ops::{Add, Div, Mul, Sub};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
-struct SameBaseTokenRates {
+pub struct SameBaseTokenRates {
     #[allow(dead_code)]
     pub base: TokenOutAccount,
     #[allow(dead_code)]
@@ -22,7 +22,7 @@ struct SameBaseTokenRates {
 }
 
 #[derive(Clone)]
-struct Point {
+pub struct Point {
     rate: BigDecimal,
     timestamp: NaiveDateTime,
 }
@@ -37,7 +37,7 @@ pub struct StatsInPeriod<U> {
     pub max: U,
     pub min: U,
 }
-struct ListStatsInPeriod<U>(Vec<StatsInPeriod<U>>);
+pub struct ListStatsInPeriod<U>(Vec<StatsInPeriod<U>>);
 
 pub async fn start() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "trade::start"));
@@ -107,7 +107,7 @@ async fn get_base_tokens(
 }
 
 impl SameBaseTokenRates {
-    async fn load(
+    pub async fn load(
         quote: &TokenInAccount,
         base: &TokenOutAccount,
         range: &TimeRange,
@@ -158,7 +158,7 @@ impl SameBaseTokenRates {
         unimplemented!()
     }
 
-    fn stats(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
+    pub fn stats(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
         let log = DEFAULT.new(o!(
             "function" => "SameBaseTokenRates::stats",
             "rates_count" => self.points.len(),
