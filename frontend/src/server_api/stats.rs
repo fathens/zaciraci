@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use crate::server_api::Underlying;
+use super::Underlying;
 
 pub struct StatsApi {
     pub underlying: Arc<Underlying>,
