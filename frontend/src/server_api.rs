@@ -1,7 +1,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
-use zaciraci_common::config;
+use zaciraci_common::{config, ollama::Message};
 
 fn server_base_url() -> String {
     config::get("SERVER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
@@ -12,9 +12,7 @@ pub struct ApiClient {
     client: reqwest::Client,
 }
 
-static API_CLIENT: Lazy<Arc<ApiClient>> = Lazy::new(|| {
-    Arc::new(new_client(server_base_url()))
-});
+static API_CLIENT: Lazy<Arc<ApiClient>> = Lazy::new(|| Arc::new(new_client(server_base_url())));
 
 pub fn get_client() -> Arc<ApiClient> {
     API_CLIENT.clone()
@@ -26,7 +24,7 @@ fn new_client(base_url: String) -> ApiClient {
         client: reqwest::Client::new(),
     }
 }
-    
+
 impl ApiClient {
     async fn get_text(&self, path: &str) -> String {
         let url = format!("{}/{}", self.base_url, path);
@@ -137,18 +135,18 @@ impl ApiClient {
     }
 
     pub async fn amounts_wrap(&self, amount: &str) -> String {
-        self.get_text(&format!("storage/amounts/wrap/{amount}")).await
+        self.get_text(&format!("storage/amounts/wrap/{amount}"))
+            .await
     }
 
     pub async fn amounts_unwrap(&self, amount: &str) -> String {
-        self.get_text(&format!("storage/amounts/unwrap/{amount}")).await
+        self.get_text(&format!("storage/amounts/unwrap/{amount}"))
+            .await
     }
 
     pub async fn amounts_deposit(&self, token_account: &str, amount: &str) -> String {
-        self.get_text(&format!(
-            "storage/amounts/deposit/{token_account}/{amount}"
-        ))
-        .await
+        self.get_text(&format!("storage/amounts/deposit/{token_account}/{amount}"))
+            .await
     }
 
     pub async fn amounts_withdraw(&self, token_account: &str, amount: &str) -> String {
@@ -161,6 +159,14 @@ impl ApiClient {
     // ollama
 
     pub async fn ollama_list_models(&self, port: u16) -> Vec<String> {
-        self.get(&format!("ollama/model_names/{port}")).await.unwrap_or_default()
+        self.get(&format!("ollama/model_names/{port}"))
+            .await
+            .unwrap_or_default()
+    }
+
+    pub async fn ollama_chat(&self, port: u16, model: &str, messages: Vec<Message>) -> String {
+        self.post(&format!("ollama/chat/{port}/{model}"), &messages)
+            .await
+            .unwrap_or_default()
     }
 }
