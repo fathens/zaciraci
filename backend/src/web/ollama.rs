@@ -1,27 +1,13 @@
 use super::AppState;
 use crate::logging::*;
-use crate::ollama::{self, Image, Message};
+use crate::ollama;
 use axum::{
     Router,
     extract::{Json, Path, State},
     routing::{get, post},
 };
-use serde::Deserialize;
 use std::sync::Arc;
-
-#[derive(Deserialize)]
-pub struct ChatRequest {
-    model_name: String,
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-pub struct GenerateRequest {
-    model_name: String,
-    prompt: String,
-    images: Vec<Image>,
-}
+use zaciraci_common::ollama::{ChatRequest, GenerateRequest};
 
 fn path(sub: &str) -> String {
     format!("/ollama/{sub}")
@@ -73,18 +59,14 @@ async fn chat(
         }
     };
 
-    let message = Message {
-        role: request.role,
-        content: request.content,
-    };
-
-    match client.chat(vec![message]).await {
+    let res = match client.chat(request.messages).await {
         Ok(response) => response,
         Err(err) => {
             info!(log, "Failed to chat"; "error" => ?err);
             err.to_string()
         }
-    }
+    };
+    serde_json::to_string(&res).unwrap()
 }
 
 async fn generate(
@@ -110,11 +92,12 @@ async fn generate(
         }
     };
 
-    match client.generate(prompt, images).await {
+    let res = match client.generate(prompt, images).await {
         Ok(response) => response,
         Err(err) => {
             info!(log, "Failed to generate"; "error" => ?err);
             err.to_string()
         }
-    }
+    };
+    serde_json::to_string(&res).unwrap()
 }

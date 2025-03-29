@@ -20,3 +20,16 @@ impl Image {
         STANDARD.decode(&self.0).unwrap()
     }
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct ChatRequest {
+    pub model_name: String,
+    pub messages: Vec<Message>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GenerateRequest {
+    pub model_name: String,
+    pub prompt: String,
+    pub images: Vec<Image>,
+}
