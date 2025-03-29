@@ -8,7 +8,7 @@ pub fn view() -> Element {
     let mut get_all_pools_result = use_signal(|| "None".to_string());
     let on_get_all_pools = move |_| {
         spawn_local(async move {
-            let text = client().get_all_pools().await;
+            let text = client().pools.get_all_pools().await;
             get_all_pools_result.set(text);
         });
     };

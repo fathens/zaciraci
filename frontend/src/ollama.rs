@@ -25,7 +25,7 @@ pub fn view() -> Element {
                     class: "btn btn-primary",
                     onclick: move |_| {
                         spawn_local(async move {
-                            let model_names = client().ollama_list_models().await;
+                            let model_names = client().ollama.list_models().await;
                             models.set(model_names);
                         });
                     },
@@ -64,7 +64,7 @@ pub fn view() -> Element {
                         res_msg.set("generating...".to_string());
                         spawn_local(async move {
                             let start_time = Date::now();
-                            let response = client().ollama_chat(&ChatRequest {
+                            let response = client().ollama.chat(&ChatRequest {
                                 model_name: selected_model().clone(),
                                 messages: vec![
                                     Message {
@@ -100,7 +100,7 @@ pub fn view() -> Element {
                                 images.push(image);
                             }
                             let start_time = Date::now();
-                            let response = client().ollama_generate(&GenerateRequest {
+                            let response = client().ollama.generate(&GenerateRequest {
                                 model_name: selected_model().clone(),
                                 prompt: prompt().clone(),
                                 images: images,
