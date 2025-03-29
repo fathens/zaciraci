@@ -13,7 +13,13 @@ use std::ops::{Add, Div, Mul, Sub};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
-struct SameBaseTokenRates(Vec<TokenRate>);
+struct SameBaseTokenRates(Vec<Point>);
+
+#[derive(Clone)]
+struct Point {
+    rate: BigDecimal,
+    timestamp: NaiveDateTime,
+}
 
 pub struct StatsInPeriod<U> {
     pub timestamp: NaiveDateTime,
@@ -111,7 +117,14 @@ impl SameBaseTokenRates {
         match TokenRate::get_rates_in_time_range(range, base, quote).await {
             Ok(rates) => {
                 info!(log, "loaded rates"; "rates_count" => rates.len());
-                Ok(SameBaseTokenRates(rates))
+                let points = rates
+                    .iter()
+                    .map(|r| Point {
+                        rate: r.rate.clone(),
+                        timestamp: r.timestamp,
+                    })
+                    .collect();
+                Ok(SameBaseTokenRates(points))
             }
             Err(e) => {
                 error!(log, "Failed to get rates"; "error" => ?e);
@@ -157,7 +170,7 @@ impl SameBaseTokenRates {
 
         while current_start <= max_time {
             let current_end = current_start + period;
-            let rates_in_period: Vec<&TokenRate> = self
+            let rates_in_period: Vec<_> = self
                 .0
                 .iter()
                 .skip_while(|rate| rate.timestamp < current_start)
@@ -167,7 +180,7 @@ impl SameBaseTokenRates {
             if !rates_in_period.is_empty() {
                 let start = rates_in_period.first().unwrap().rate.clone();
                 let end = rates_in_period.last().unwrap().rate.clone();
-                let values: Vec<BigDecimal> =
+                let values: Vec<_> =
                     rates_in_period.iter().map(|tr| tr.rate.clone()).collect();
                 let sum: BigDecimal = values.iter().sum();
                 let count = BigDecimal::from(values.len() as i64);
