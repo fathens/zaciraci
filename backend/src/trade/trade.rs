@@ -13,7 +13,13 @@ use std::ops::{Add, Div, Mul, Sub};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
-struct SameBaseTokenRates(Vec<Point>);
+struct SameBaseTokenRates {
+    #[allow(dead_code)]
+    pub base: TokenOutAccount,
+    #[allow(dead_code)]
+    pub quote: TokenInAccount,
+    points: Vec<Point>,
+}
 
 #[derive(Clone)]
 struct Point {
@@ -124,7 +130,11 @@ impl SameBaseTokenRates {
                         timestamp: r.timestamp,
                     })
                     .collect();
-                Ok(SameBaseTokenRates(points))
+                Ok(SameBaseTokenRates {
+                    base: base.clone(),
+                    quote: quote.clone(),
+                    points,
+                })
             }
             Err(e) => {
                 error!(log, "Failed to get rates"; "error" => ?e);
@@ -151,18 +161,18 @@ impl SameBaseTokenRates {
     fn stats(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
         let log = DEFAULT.new(o!(
             "function" => "SameBaseTokenRates::stats",
-            "rates_count" => self.0.len(),
+            "rates_count" => self.points.len(),
             "period" => format!("{}", period),
         ));
         info!(log, "start");
 
-        if self.0.is_empty() {
+        if self.points.is_empty() {
             return ListStatsInPeriod(Vec::new());
         }
 
         // タイムスタンプの最小値と最大値を取得
-        let min_time = self.0.first().unwrap().timestamp;
-        let max_time = self.0.last().unwrap().timestamp;
+        let min_time = self.points.first().unwrap().timestamp;
+        let max_time = self.points.last().unwrap().timestamp;
 
         // 期間ごとに統計を計算
         let mut stats = Vec::new();
@@ -171,7 +181,7 @@ impl SameBaseTokenRates {
         while current_start <= max_time {
             let current_end = current_start + period;
             let rates_in_period: Vec<_> = self
-                .0
+                .points
                 .iter()
                 .skip_while(|rate| rate.timestamp < current_start)
                 .take_while(|rate| rate.timestamp < current_end)
