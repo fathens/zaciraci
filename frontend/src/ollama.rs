@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use zaciraci_common::ollama::{ChatRequest, GenerateRequest, Image, Message};
+use crate::image_upload::ImageUpload;
 
 #[component]
 pub fn view() -> Element {
@@ -7,10 +9,16 @@ pub fn view() -> Element {
     
     let mut models = use_signal(|| Vec::new());
     let mut selected_model = use_signal(|| "".to_string());
+    let mut prompt_role = use_signal(|| "user".to_string());
+    let mut prompt = use_signal(|| "".to_string());
+    let mut image_data = use_signal(|| None);
+    let mut res_msg = use_signal(|| "".to_string());
 
     rsx! {
         div { class: "ollama-view",
-            div { class: "input-group",
+            h2 { "Ollama Management" }
+            div { class: "models-container",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
                 button {
                     class: "btn btn-primary",
                     onclick: move |_| {
@@ -21,8 +29,6 @@ pub fn view() -> Element {
                     },
                     "Fetch models"
                 }
-            }
-            div { class: "input-group",
                 select {
                     class: "form-control",
                     value: "{selected_model}",
@@ -35,6 +41,78 @@ pub fn view() -> Element {
                         }
                     }
                 }
+            }
+            div { class: "chat-container",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                input {
+                    class: "form-control",
+                    type: "text",
+                    value: "{prompt_role}",
+                    oninput: move |e| prompt_role.set(e.value()),
+                }
+                input {
+                    class: "form-control",
+                    type: "text",
+                    value: "{prompt}",
+                    oninput: move |e| prompt.set(e.value()),
+                }
+                button {
+                    class: "btn btn-primary",
+                    onclick: move |_| {
+                        res_msg.set("generating...".to_string());
+                        spawn_local(async move {
+                            let response = client().ollama_chat(&ChatRequest {
+                                model_name: selected_model().clone(),
+                                messages: vec![
+                                    Message {
+                                        role: prompt_role().clone(),
+                                        content: prompt().clone(),
+                                    }
+                                ],
+                            }).await;
+                            res_msg.set(response);
+                        });
+                    },
+                    "Chat"
+                }
+            }
+            div { class: "generate-container",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                input {
+                    class: "form-control",
+                    type: "text",
+                    value: "{prompt}",
+                    oninput: move |e| prompt.set(e.value()),
+                }
+                ImageUpload {
+                    on_file_selected: move |data| {
+                        image_data.set(Some(data));
+                    }
+                }
+                button {
+                    class: "btn btn-primary",
+                    onclick: move |_| {
+                        res_msg.set("generating...".to_string());
+                        spawn_local(async move {
+                            let mut images = Vec::new();
+                            if let Some(image_data) = image_data() {
+                                let image = Image::from_bytes(&image_data);
+                                images.push(image);
+                            }
+                            let response = client().ollama_generate(&GenerateRequest {
+                                model_name: selected_model().clone(),
+                                prompt: prompt().clone(),
+                                images: images,
+                            }).await;
+                            res_msg.set(response);
+                        });
+                    },
+                    "Generate"
+                }
+            }
+            div { class: "response-container",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                "{res_msg}"
             }
         }
     }

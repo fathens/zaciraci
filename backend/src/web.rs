@@ -12,7 +12,10 @@ struct AppState {}
 pub async fn run() {
     let state = Arc::new(AppState {});
 
-    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any);
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
 
     let app = add_routes(
         Router::new(),

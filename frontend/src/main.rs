@@ -3,6 +3,7 @@ mod ollama;
 mod pools;
 mod storage;
 mod server_api;
+mod image_upload;
 
 use dioxus::prelude::*;
 use dioxus_logger;

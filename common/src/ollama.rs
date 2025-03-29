@@ -10,14 +10,9 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Image(String);
 
-#[allow(dead_code)]
 impl Image {
     pub fn from_bytes(bytes: &[u8]) -> Image {
         Image(STANDARD.encode(bytes))
-    }
-
-    pub fn to_bytes(&self) -> Vec<u8> {
-        STANDARD.decode(&self.0).unwrap()
     }
 }
 
