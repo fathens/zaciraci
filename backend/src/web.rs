@@ -2,6 +2,7 @@ mod basic;
 mod ollama;
 mod pools;
 mod storage;
+mod stats;
 
 use axum::Router;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ pub async fn run() {
             pools::add_route,
             storage::add_route,
             ollama::add_route,
+            stats::add_route,
         ],
     )
     .with_state(state)

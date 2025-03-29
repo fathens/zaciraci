@@ -2,6 +2,7 @@ mod basic;
 mod ollama;
 mod pools;
 mod storage;
+mod stats;
 
 use anyhow::Result;
 use once_cell::sync::Lazy;
@@ -17,6 +18,7 @@ pub struct ApiClient {
     pub pools: pools::PoolsApi,
     pub storage: storage::StorageApi,
     pub ollama: ollama::OllamaApi,
+    pub stats: stats::StatsApi,
 }
 
 pub struct Underlying {
@@ -46,6 +48,9 @@ fn new_client(base_url: String) -> ApiClient {
             underlying: Arc::clone(&underlying),
         },
         ollama: ollama::OllamaApi {
+            underlying: Arc::clone(&underlying),
+        },
+        stats: stats::StatsApi {
             underlying: Arc::clone(&underlying),
         },
     }
