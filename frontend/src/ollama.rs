@@ -45,16 +45,16 @@ pub fn view() -> Element {
                 }
             }
             div { class: "chat-container",
-                style: "display: flex; align-items: center; margin-bottom: 10px;",
-                input {
+                style: "display: flex; flex-direction: column; margin-bottom: 10px;",
+                textarea {
                     class: "form-control",
-                    type: "text",
+                    rows: "4",
                     value: "{prompt_role}",
                     oninput: move |e| prompt_role.set(e.value()),
                 }
-                input {
+                textarea {
                     class: "form-control",
-                    type: "text",
+                    rows: "8",
                     value: "{prompt}",
                     oninput: move |e| prompt.set(e.value()),
                 }
