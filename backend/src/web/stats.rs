@@ -10,6 +10,7 @@ use axum::{
 };
 use std::sync::Arc;
 use zaciraci_common::stats::DescribesRequest;
+use crate::logging::*;
 
 fn path(sub: &str) -> String {
     format!("/stats/{sub}")
@@ -23,16 +24,39 @@ async fn make_descs(
     State(_): State<Arc<AppState>>,
     Json(request): Json<DescribesRequest>,
 ) -> String {
-    let quote_token: TokenAccount = request.quote_token.parse().unwrap();
-    let base_token: TokenAccount = request.base_token.parse().unwrap();
+    let log = DEFAULT.new(o!(
+        "function" => "make_descs",
+        "quote_token" => format!("{}", request.quote_token),
+        "base_token" => format!("{}", request.base_token),
+        "start" => format!("{}", request.start),
+        "end" => format!("{}", request.end),
+        "period" => format!("{}", request.period),
+    ));
+    info!(log, "start");
+
+    let quote_token: TokenAccount = request.quote_token.parse().or_else(|e| {
+        info!(log, "Failed to parse quote token"; "error" => ?e);
+        Err(e)
+    }).unwrap();
+    let base_token: TokenAccount = request.base_token.parse().or_else(|e| {
+        info!(log, "Failed to parse base token"; "error" => ?e);
+        Err(e)
+    }).unwrap();
     let range = TimeRange {
         start: request.start,
         end: request.end,
     };
     let rates = SameBaseTokenRates::load(&quote_token.into(), &base_token.into(), &range)
         .await
-        .unwrap();
+        .or_else(|e| {
+            info!(log, "Failed to load rates"; "error" => ?e);
+            Err(e)
+        }).unwrap();
     let period = request.period;
     let descs = rates.stats(period).describes();
-    serde_json::to_string(&descs).unwrap()
+    info!(log, "success");
+    serde_json::to_string(&descs).or_else(|e| {
+        info!(log, "Failed to serialize describes"; "error" => ?e);
+        Err(e)
+    }).unwrap()
 }

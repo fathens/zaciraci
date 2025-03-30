@@ -4,6 +4,7 @@ mod pools;
 mod storage;
 mod server_api;
 mod image_upload;
+mod stats;
 
 use dioxus::prelude::*;
 use dioxus_logger;
@@ -48,6 +49,11 @@ fn app() -> Element {
                         class: if current_view() == "ollama" { "active" } else { "" },
                         "Ollama"
                     }
+                    button {
+                        onclick: move |_| current_view.set("stats".to_string()),
+                        class: if current_view() == "stats" { "active" } else { "" },
+                        "Stats"
+                    }
                 }
             }
             main { class: "main",
@@ -56,6 +62,7 @@ fn app() -> Element {
                     "pools" => rsx! { pools::view {} },
                     "storage" => rsx! { storage::view {} },
                     "ollama" => rsx! { ollama::view {} },
+                    "stats" => rsx! { stats::view {} },
                     _ => rsx! { basic::view {} },
                 }}
             }
