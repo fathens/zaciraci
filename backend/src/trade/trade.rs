@@ -190,8 +190,7 @@ impl SameBaseTokenRates {
             if !rates_in_period.is_empty() {
                 let start = rates_in_period.first().unwrap().rate.clone();
                 let end = rates_in_period.last().unwrap().rate.clone();
-                let values: Vec<_> =
-                    rates_in_period.iter().map(|tr| tr.rate.clone()).collect();
+                let values: Vec<_> = rates_in_period.iter().map(|tr| tr.rate.clone()).collect();
                 let sum: BigDecimal = values.iter().sum();
                 let count = BigDecimal::from(values.len() as i64);
                 let average = &sum / &count;
@@ -258,6 +257,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ref_finance::token_account::TokenAccount;
 
     #[test]
     fn test_describes() {
@@ -391,5 +391,221 @@ mod tests {
                 "2025-03-27 11:37:48.196150, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100, no change from the previous 1 minutes"
             ]
         );
+    }
+
+    #[test]
+    fn test_stats_empty() {
+        // 空のポイントリストを持つSameBaseTokenRatesを作成
+        let rates = SameBaseTokenRates {
+            points: Vec::new(),
+            base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
+            quote: "usdt.tether-token.near"
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into(),
+        };
+
+        // 1分間の期間で統計を計算
+        let stats = rates.stats(Duration::minutes(1));
+
+        // 結果が空のベクターであることを確認
+        assert!(stats.0.is_empty());
+    }
+
+    #[test]
+    fn test_stats_single_period() {
+        // 1つの期間内に複数のポイントを持つSameBaseTokenRatesを作成
+        let base_time =
+            NaiveDateTime::parse_from_str("2025-03-26 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let points = vec![
+            Point {
+                timestamp: base_time,
+                rate: BigDecimal::from(100),
+            },
+            Point {
+                timestamp: base_time + Duration::seconds(20),
+                rate: BigDecimal::from(110),
+            },
+            Point {
+                timestamp: base_time + Duration::seconds(40),
+                rate: BigDecimal::from(90),
+            },
+        ];
+
+        let rates = SameBaseTokenRates {
+            points,
+            base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
+            quote: "usdt.tether-token.near"
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into(),
+        };
+
+        // 1分間の期間で統計を計算
+        let stats = rates.stats(Duration::minutes(1));
+
+        // 結果を検証
+        assert_eq!(stats.0.len(), 1);
+        let stat = &stats.0[0];
+
+        assert_eq!(stat.timestamp, base_time);
+        assert_eq!(stat.period, Duration::minutes(1));
+        assert_eq!(stat.start, BigDecimal::from(100));
+        assert_eq!(stat.end, BigDecimal::from(90));
+        assert_eq!(stat.max, BigDecimal::from(110));
+        assert_eq!(stat.min, BigDecimal::from(90));
+
+        // 平均値の検証 (100 + 110 + 90) / 3 = 100
+        assert_eq!(stat.average, BigDecimal::from(100));
+    }
+
+    #[test]
+    fn test_stats_multiple_periods() {
+        // 複数の期間にまたがるポイントを持つSameBaseTokenRatesを作成
+        let base_time =
+            NaiveDateTime::parse_from_str("2025-03-26 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let points = vec![
+            // 最初の期間 (10:00:00 - 10:01:00)
+            Point {
+                timestamp: base_time,
+                rate: BigDecimal::from(100),
+            },
+            Point {
+                timestamp: base_time + Duration::seconds(30),
+                rate: BigDecimal::from(110),
+            },
+            // 2番目の期間 (10:01:00 - 10:02:00)
+            Point {
+                timestamp: base_time + Duration::minutes(1),
+                rate: BigDecimal::from(120),
+            },
+            Point {
+                timestamp: base_time + Duration::minutes(1) + Duration::seconds(30),
+                rate: BigDecimal::from(130),
+            },
+            // 3番目の期間 (10:02:00 - 10:03:00)
+            Point {
+                timestamp: base_time + Duration::minutes(2),
+                rate: BigDecimal::from(140),
+            },
+            Point {
+                timestamp: base_time + Duration::minutes(2) + Duration::seconds(30),
+                rate: BigDecimal::from(150),
+            },
+        ];
+
+        let rates = SameBaseTokenRates {
+            points,
+            base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
+            quote: "usdt.tether-token.near"
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into(),
+        };
+
+        // 1分間の期間で統計を計算
+        let stats = rates.stats(Duration::minutes(1));
+
+        // 結果を検証
+        assert_eq!(stats.0.len(), 3);
+
+        // 最初の期間の検証
+        {
+            let stat = &stats.0[0];
+            assert_eq!(stat.timestamp, base_time);
+            assert_eq!(stat.period, Duration::minutes(1));
+            assert_eq!(stat.start, BigDecimal::from(100));
+            assert_eq!(stat.end, BigDecimal::from(110));
+            assert_eq!(stat.max, BigDecimal::from(110));
+            assert_eq!(stat.min, BigDecimal::from(100));
+            assert_eq!(stat.average, BigDecimal::from(105)); // (100 + 110) / 2 = 105
+        }
+
+        // 2番目の期間の検証
+        {
+            let stat = &stats.0[1];
+            assert_eq!(stat.timestamp, base_time + Duration::minutes(1));
+            assert_eq!(stat.period, Duration::minutes(1));
+            assert_eq!(stat.start, BigDecimal::from(120));
+            assert_eq!(stat.end, BigDecimal::from(130));
+            assert_eq!(stat.max, BigDecimal::from(130));
+            assert_eq!(stat.min, BigDecimal::from(120));
+            assert_eq!(stat.average, BigDecimal::from(125)); // (120 + 130) / 2 = 125
+        }
+
+        // 3番目の期間の検証
+        {
+            let stat = &stats.0[2];
+            assert_eq!(stat.timestamp, base_time + Duration::minutes(2));
+            assert_eq!(stat.period, Duration::minutes(1));
+            assert_eq!(stat.start, BigDecimal::from(140));
+            assert_eq!(stat.end, BigDecimal::from(150));
+            assert_eq!(stat.max, BigDecimal::from(150));
+            assert_eq!(stat.min, BigDecimal::from(140));
+            assert_eq!(stat.average, BigDecimal::from(145)); // (140 + 150) / 2 = 145
+        }
+    }
+
+    #[test]
+    fn test_stats_period_boundary() {
+        // 期間の境界値をテストするためのポイントを持つSameBaseTokenRatesを作成
+        let base_time =
+            NaiveDateTime::parse_from_str("2025-03-26 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let points = vec![
+            // 最初の期間 (10:00:00 - 10:05:00)
+            Point {
+                timestamp: base_time,
+                rate: BigDecimal::from(100),
+            },
+            // 境界値ちょうど (10:05:00) - 次の期間に含まれる
+            Point {
+                timestamp: base_time + Duration::minutes(5),
+                rate: BigDecimal::from(200),
+            },
+            // 2番目の期間 (10:05:00 - 10:10:00)
+            Point {
+                timestamp: base_time + Duration::minutes(7),
+                rate: BigDecimal::from(300),
+            },
+        ];
+
+        let rates = SameBaseTokenRates {
+            points,
+            base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
+            quote: "usdt.tether-token.near"
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into(),
+        };
+
+        // 5分間の期間で統計を計算
+        let stats = rates.stats(Duration::minutes(5));
+
+        // 結果を検証
+        assert_eq!(stats.0.len(), 2);
+
+        // 最初の期間の検証
+        {
+            let stat = &stats.0[0];
+            assert_eq!(stat.timestamp, base_time);
+            assert_eq!(stat.period, Duration::minutes(5));
+            assert_eq!(stat.start, BigDecimal::from(100));
+            assert_eq!(stat.end, BigDecimal::from(100));
+            assert_eq!(stat.max, BigDecimal::from(100));
+            assert_eq!(stat.min, BigDecimal::from(100));
+            assert_eq!(stat.average, BigDecimal::from(100));
+        }
+
+        // 2番目の期間の検証 (境界値を含む)
+        {
+            let stat = &stats.0[1];
+            assert_eq!(stat.timestamp, base_time + Duration::minutes(5));
+            assert_eq!(stat.period, Duration::minutes(5));
+            assert_eq!(stat.start, BigDecimal::from(200));
+            assert_eq!(stat.end, BigDecimal::from(300));
+            assert_eq!(stat.max, BigDecimal::from(300));
+            assert_eq!(stat.min, BigDecimal::from(200));
+            assert_eq!(stat.average, BigDecimal::from(250)); // (200 + 300) / 2 = 250
+        }
     }
 }
