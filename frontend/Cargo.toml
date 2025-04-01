@@ -28,3 +28,4 @@ chrono = { workspace = true, features = ["serde", "wasmbind"] }
 futures = "0.3"
 once_cell = { workspace = true }
 reqwest = { workspace = true }
+dioxus-markdown = "0.0.1"
