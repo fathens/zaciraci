@@ -34,6 +34,7 @@ COPY common common
 COPY backend backend
 COPY frontend frontend
 
+RUN cargo clean
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo build ${CARGO_BUILD_ARGS} -p zaciraci-backend
