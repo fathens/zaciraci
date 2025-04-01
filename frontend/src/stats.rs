@@ -1,22 +1,23 @@
+use chrono::{Duration, Utc};
 use dioxus::prelude::*;
+use log::error;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::stats::DescribesRequest;
-use chrono::{Duration, Utc};
 
 #[component]
 pub fn view() -> Element {
     let client = use_signal(|| crate::server_api::get_client());
-    
+
     let mut quote = use_signal(|| "wrap.near".to_string());
     let mut base = use_signal(|| "usdt.tether-token.near".to_string());
     let now = Utc::now();
     let one_hour_ago = now - Duration::hours(1);
     let mut start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
     let mut end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
-    let mut period = use_signal(|| "10s".to_string());
-    
+    let mut period = use_signal(|| "1m".to_string());
+
     let mut result = use_signal(|| "".to_string());
-    
+
     rsx! {
         div { class: "stats-view",
             h2 { "Stats" }
@@ -73,8 +74,13 @@ pub fn view() -> Element {
                             end: end_date().parse().unwrap(),
                             period: parse_duration(&period()).unwrap(),
                         };
-                        let text = client().stats.describes(&request).await;
-                        result.set(text);
+                        match client().stats.describes(&request).await {
+                            Ok(text) => result.set(text),
+                            Err(e) => {
+                                error!("Failed to get describes: {}", e);
+                                result.set(format!("Error: {}", e));
+                            },
+                        }
                     });
                 },
                 "Get Describes"
@@ -87,7 +93,7 @@ pub fn view() -> Element {
 fn parse_duration(s: &str) -> anyhow::Result<Duration> {
     let (num_str, unit) = s.split_at(s.len() - 1);
     let num: i64 = num_str.parse()?;
-    
+
     match unit {
         "s" => Ok(Duration::seconds(num)),
         "m" => Ok(Duration::minutes(num)),

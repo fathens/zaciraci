@@ -54,9 +54,8 @@ async fn make_descs(
         }).unwrap();
     let period = request.period;
     let descs = rates.stats(period).describes();
-    info!(log, "success");
-    serde_json::to_string(&descs).or_else(|e| {
-        info!(log, "Failed to serialize describes"; "error" => ?e);
-        Err(e)
-    }).unwrap()
+    info!(log, "success"; 
+        "descs_count" => descs.len(),
+    );
+    serde_json::to_string(&descs).unwrap()
 }

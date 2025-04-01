@@ -70,10 +70,7 @@ impl Underlying {
         T: serde::de::DeserializeOwned,
     {
         let url = format!("{}/{}", self.base_url, path);
-        match self.client.get(&url).send().await {
-            Ok(res) => Ok(res.json().await?),
-            Err(e) => Err(e.into()),
-        }
+        Ok(self.client.get(&url).send().await?.json().await?)
     }
 
     async fn post<A, B>(&self, path: &str, body: &A) -> Result<B>
@@ -82,9 +79,6 @@ impl Underlying {
         B: serde::de::DeserializeOwned,
     {
         let url = format!("{}/{}", self.base_url, path);
-        match self.client.post(&url).json(body).send().await {
-            Ok(res) => Ok(res.json().await?),
-            Err(e) => Err(e.into()),
-        }
+        Ok(self.client.post(&url).json(body).send().await?.json().await?)
     }
 }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use anyhow::Result;
 use zaciraci_common::stats::DescribesRequest;
 
 use super::Underlying;
@@ -8,7 +9,8 @@ pub struct StatsApi {
 }
 
 impl StatsApi {
-    pub async fn describes(&self, request: &DescribesRequest) -> String {
-        self.underlying.post("stats/describes", request).await.unwrap_or_default()
+    pub async fn describes(&self, request: &DescribesRequest) -> Result<String> {
+        let lines: Vec<String> = self.underlying.post("stats/describes", request).await?;
+        Ok(lines.join("\n"))
     }
 }

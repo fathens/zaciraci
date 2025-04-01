@@ -223,6 +223,11 @@ where
     U: Zero + PartialOrd + From<i64>,
 {
     pub fn describes(&self) -> Vec<String> {
+        let log = DEFAULT.new(o!(
+            "function" => "ListStatsInPeriod::describes",
+            "stats_count" => self.0.len(),
+        ));
+        info!(log, "start");
         let mut lines = Vec::new();
         let mut prev = None;
         for stat in self.0.iter() {
@@ -247,9 +252,16 @@ where
                 "opened at {:0.0}, closed at {:0.0}, with a high of {:0.0}, a low of {:0.0}, and an average of {:0.0}",
                 stat.start, stat.end, stat.max, stat.min, stat.average
             );
-            lines.push(format!("{}, {}{}", date, summary, changes));
+            let line = format!("{}, {}{}", date, summary, changes);
+            debug!(log, "added line";
+                "line" => &line,
+            );
+            lines.push(line);
             prev = Some(stat);
         }
+        info!(log, "success";
+           "lines_count" => lines.len(),
+        );
         lines
     }
 }
