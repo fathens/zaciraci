@@ -9,7 +9,7 @@ pub fn view() -> Element {
     let client = use_signal(|| crate::server_api::get_client());
 
     let mut quote = use_signal(|| "wrap.near".to_string());
-    let mut base = use_signal(|| "usdt.tether-token.near".to_string());
+    let mut base = use_signal(|| "mark.gra-fun.near".to_string());
     let now = Utc::now();
     let one_hour_ago = now - Duration::hours(1);
     let mut start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
@@ -85,7 +85,16 @@ pub fn view() -> Element {
                 },
                 "Get Describes"
             }
-            p { class: "result", "{result}" }
+        }
+        div { class: "result-container",
+            style: "width: 100%;",
+            textarea {
+                class: "form-control",
+                style: "width: 100%;",
+                rows: "8",
+                value: "{result}",
+                oninput: move |e| result.set(e.value()),
+            }
         }
     }
 }
