@@ -132,11 +132,11 @@ pub const FEE_DIVISOR: u32 = 10_000;
 pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| u128::MAX.sqrt().sqrt());
 
 impl PoolInfo {
-    pub fn new(id: u32, bare: PoolInfoBared) -> Self {
+    pub fn new(id: u32, bare: PoolInfoBared, timestamp: chrono::NaiveDateTime) -> Self {
         PoolInfo {
             id,
             bare,
-            timestamp: chrono::Utc::now().naive_utc(),
+            timestamp,
         }
     }
 
@@ -337,7 +337,10 @@ impl PoolInfoList {
                 result.map(move |list| {
                     list.into_iter()
                         .enumerate()
-                        .map(move |(i, bare)| Arc::new(PoolInfo::new(i as u32 + index, bare)))
+                        .map(move |(i, bare)| {
+                            let timestamp = chrono::Utc::now().naive_utc();
+                            Arc::new(PoolInfo::new(i as u32 + index, bare, timestamp))
+                        })
                 })
             })
             .collect();
@@ -457,6 +460,7 @@ mod test {
                 shares_total_supply: 0_u128.into(),
                 amp: 0,
             },
+            chrono::Utc::now().naive_utc(),
         );
         let result = sample.estimate_return(0.into(), 100, 1.into());
         assert!(result.is_ok());

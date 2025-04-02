@@ -62,9 +62,7 @@ impl RefPoolInfo {
         };
         
         // RefPoolInfoを作成
-        let mut pool_info = RefPoolInfo::new(db_pool.pool_id as u32, bare);
-        // タイムスタンプを設定
-        pool_info.timestamp = db_pool.timestamp;
+        let pool_info = RefPoolInfo::new(db_pool.pool_id as u32, bare, db_pool.timestamp);
         
         // RefPoolInfoを返す
         Ok(pool_info)
@@ -226,7 +224,7 @@ mod tests {
             amp: 100,
         };
 
-        RefPoolInfo::new(123, bare)
+        RefPoolInfo::new(123, bare, chrono::Utc::now().naive_utc())
     }
 
     #[tokio::test]
@@ -295,7 +293,7 @@ mod tests {
         
         let mut updated_pool_info = pool_info.clone();
         updated_pool_info.bare.pool_kind = "WEIGHTED_SWAP".to_string();
-        updated_pool_info.timestamp = Utc::now().naive_utc();
+        updated_pool_info.timestamp = chrono::Utc::now().naive_utc();
         updated_pool_info.insert().await?;
         
         // 最新のデータを取得
