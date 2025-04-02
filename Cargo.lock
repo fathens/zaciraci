@@ -796,6 +796,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "pq-sys",
+ "serde_json",
 ]
 
 [[package]]
@@ -3022,11 +3023,10 @@ dependencies = [
 
 [[package]]
 name = "pq-sys"
-version = "0.7.0"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30b51d65ebe1cb1f40641b15abae017fed35ccdda46e3dab1ff8768f625a3222"
+checksum = "31c0052426df997c0cbd30789eb44ca097e3541717a7b8fa36b1c464ee7edebd"
 dependencies = [
- "libc",
  "vcpkg",
 ]
 

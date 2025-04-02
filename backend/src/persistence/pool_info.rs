@@ -1,14 +1,14 @@
 use crate::Result;
-use crate::logging::*;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::pool_info;
 use crate::ref_finance::pool_info::{PoolInfo as RefPoolInfo, PoolInfoBared};
+use crate::ref_finance::token_account::TokenAccount;
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use near_sdk::json_types::U128;
 use serde_json::Value as JsonValue;
-use std::sync::Arc;
+use std::str::FromStr;
 
 // データベース用モデル
 #[allow(dead_code)]
@@ -70,17 +70,17 @@ impl RefPoolInfo {
     // RefPoolInfoからNewDbPoolInfoへの変換
     fn to_new_db(&self) -> Result<NewDbPoolInfo> {
         Ok(NewDbPoolInfo {
-            pool_id: self.id() as i32,
-            pool_kind: self.bare().pool_kind.clone(),
+            pool_id: self.id as i32,
+            pool_kind: self.bare.pool_kind.clone(),
             // Vec<TokenAccount>をJSONに変換
-            token_account_ids: serde_json::to_value(&self.bare().token_account_ids)?,
+            token_account_ids: serde_json::to_value(&self.bare.token_account_ids)?,
             // Vec<U128>をJSONに変換
-            amounts: serde_json::to_value(&self.bare().amounts)?,
-            total_fee: self.bare().total_fee as i32,
+            amounts: serde_json::to_value(&self.bare.amounts)?,
+            total_fee: self.bare.total_fee as i32,
             // U128をJSONに変換
-            shares_total_supply: serde_json::to_value(&self.bare().shares_total_supply)?,
-            amp: self.bare().amp as i64,
-            updated_at: self.updated_at(),
+            shares_total_supply: serde_json::to_value(&self.bare.shares_total_supply)?,
+            amp: self.bare.amp as i64,
+            updated_at: self.updated_at,
         })
     }
 
@@ -133,6 +133,7 @@ impl RefPoolInfo {
     pub async fn get_latest(pool_id: u32) -> Result<Option<RefPoolInfo>> {
         use diesel::QueryDsl;
         use diesel::dsl::max;
+        use diesel::ExpressionMethods;
 
         let pool_id_i32 = pool_id as i32;
         let conn = connection_pool::get().await?;
@@ -141,7 +142,7 @@ impl RefPoolInfo {
         let latest_timestamp = conn
             .interact(move |conn| {
                 pool_info::table
-                    .filter(pool_info::pool_id.eq(pool_id_i32))
+                    .filter(pool_info::pool_id.eq(&pool_id_i32))
                     .select(max(pool_info::updated_at))
                     .first::<Option<NaiveDateTime>>(conn)
                     .optional()
@@ -158,8 +159,8 @@ impl RefPoolInfo {
             let result = conn
                 .interact(move |conn| {
                     pool_info::table
-                        .filter(pool_info::pool_id.eq(pool_id_i32))
-                        .filter(pool_info::updated_at.eq(timestamp))
+                        .filter(pool_info::pool_id.eq(&pool_id_i32))
+                        .filter(pool_info::updated_at.eq(&timestamp))
                         .first::<DbPoolInfo>(conn)
                         .optional()
                 })
@@ -177,15 +178,17 @@ impl RefPoolInfo {
     }
 
     // データベースIDによる取得
+    #[allow(dead_code)]
     pub async fn get(id: i32) -> Result<Option<RefPoolInfo>> {
         use diesel::QueryDsl;
+        use diesel::ExpressionMethods;
 
         let conn = connection_pool::get().await?;
 
         let result = conn
             .interact(move |conn| {
                 pool_info::table
-                    .filter(pool_info::id.eq(id))
+                    .filter(pool_info::id.eq(&id))
                     .first::<DbPoolInfo>(conn)
                     .optional()
             })
@@ -202,125 +205,101 @@ impl RefPoolInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ref_finance::token_account::TokenAccount;
-    use std::str::FromStr;
+    use chrono::Utc;
 
-    // テスト用のヘルパー関数 - テーブルをクリーンアップ
-    async fn clean_table() -> Result<()> {
-        use diesel::RunQueryDsl;
-        
-        let conn = connection_pool::get().await?;
-        
-        conn.interact(|conn| {
-            diesel::delete(pool_info::table).execute(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-        
-        Ok(())
-    }
-    
-    // テスト用のプールデータを作成
-    fn create_test_pool_info(id: u32) -> RefPoolInfo {
+    fn create_test_pool_info() -> RefPoolInfo {
+        // TokenAccountはタプル構造体なので、FromStrを使ってAccountIdから作成
         let token1 = TokenAccount::from_str("token1.near").unwrap();
         let token2 = TokenAccount::from_str("token2.near").unwrap();
-        
+
         let bare = PoolInfoBared {
-            pool_kind: "SIMPLE_POOL".to_string(),
+            pool_kind: "STABLE_SWAP".to_string(),
             token_account_ids: vec![token1, token2],
-            amounts: vec![U128(1000), U128(2000)],
+            amounts: vec![U128(1000000), U128(2000000)],
             total_fee: 30,
-            shares_total_supply: U128(500),
-            amp: 0,
+            shares_total_supply: U128(5000000),
+            amp: 100,
         };
-        
-        RefPoolInfo::new(id, bare)
+
+        RefPoolInfo::new(123, bare)
     }
-    
+
     #[tokio::test]
-    async fn test_pool_info_single_insert() -> Result<()> {
-        // テスト前にテーブルをクリーンアップ
-        clean_table().await?;
+    async fn test_pool_info_insert() -> Result<()> {
+        let pool_info = create_test_pool_info();
+        pool_info.insert().await?;
         
-        // テスト用データを作成
-        let pool = create_test_pool_info(1);
+        // データベースから取得して値を確認
+        let retrieved = RefPoolInfo::get_latest(123).await?;
+        assert!(retrieved.is_some());
         
-        // データベースに挿入
-        pool.insert().await?;
-        
-        // 挿入したデータを取得
-        let retrieved = RefPoolInfo::get_latest(1).await?.unwrap();
-        
-        // 元のデータと一致するか確認
-        assert_eq!(retrieved.id(), pool.id());
-        assert_eq!(retrieved.bare().pool_kind, pool.bare().pool_kind);
-        assert_eq!(retrieved.bare().token_account_ids, pool.bare().token_account_ids);
-        assert_eq!(retrieved.bare().total_fee, pool.bare().total_fee);
-        
-        // 後始末
-        clean_table().await?;
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.id, 123);
+        assert_eq!(retrieved.bare.pool_kind, "STABLE_SWAP");
+        assert_eq!(retrieved.bare.token_account_ids.len(), 2);
+        // TokenAccountはタプル構造体なのでDisplayを使って文字列比較
+        assert_eq!(retrieved.bare.token_account_ids[0].to_string(), "token1.near");
+        assert_eq!(retrieved.bare.amounts.len(), 2);
+        assert_eq!(retrieved.bare.amounts[0].0, 1000000);
+        assert_eq!(retrieved.bare.total_fee, 30);
+        assert_eq!(retrieved.bare.shares_total_supply.0, 5000000);
+        assert_eq!(retrieved.bare.amp, 100);
         
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_pool_info_batch_insert() -> Result<()> {
-        // テスト前にテーブルをクリーンアップ
-        clean_table().await?;
+        let mut pool_info1 = create_test_pool_info();
+        pool_info1.id = 124;
         
-        // テスト用データを作成
-        let pool1 = create_test_pool_info(1);
-        let pool2 = create_test_pool_info(2);
-        let pools = vec![pool1.clone(), pool2.clone()];
+        let mut pool_info2 = create_test_pool_info();
+        pool_info2.id = 125;
+        pool_info2.bare.pool_kind = "WEIGHTED_SWAP".to_string();
         
-        // 一括挿入
-        RefPoolInfo::batch_insert(&pools).await?;
+        RefPoolInfo::batch_insert(&[pool_info1, pool_info2]).await?;
         
-        // データを個別に取得して確認
-        let retrieved1 = RefPoolInfo::get_latest(1).await?.unwrap();
-        let retrieved2 = RefPoolInfo::get_latest(2).await?.unwrap();
+        // データベースから取得して値を確認
+        let retrieved1 = RefPoolInfo::get_latest(124).await?;
+        let retrieved2 = RefPoolInfo::get_latest(125).await?;
         
-        assert_eq!(retrieved1.id(), pool1.id());
-        assert_eq!(retrieved2.id(), pool2.id());
+        assert!(retrieved1.is_some());
+        assert!(retrieved2.is_some());
         
-        // 後始末
-        clean_table().await?;
+        let retrieved1 = retrieved1.unwrap();
+        let retrieved2 = retrieved2.unwrap();
+        
+        assert_eq!(retrieved1.id, 124);
+        assert_eq!(retrieved1.bare.pool_kind, "STABLE_SWAP");
+        
+        assert_eq!(retrieved2.id, 125);
+        assert_eq!(retrieved2.bare.pool_kind, "WEIGHTED_SWAP");
         
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_pool_info_latest() -> Result<()> {
-        // テスト前にテーブルをクリーンアップ
-        clean_table().await?;
+        let mut pool_info = create_test_pool_info();
+        pool_info.id = 126;
+        pool_info.bare.pool_kind = "STABLE_SWAP".to_string();
+        pool_info.insert().await?;
         
-        // テスト用データを作成（同じpool_idで異なるタイムスタンプ）
-        let mut pool1 = create_test_pool_info(1);
+        // 1秒待機して新しいタイムスタンプでデータを更新
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         
-        // 1つ目のレコードを挿入
-        pool1.insert().await?;
-        
-        // 少し待ってから2つ目のレコードを挿入（タイムスタンプを変える）
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
-        // 2つ目のレコード用に金額を変更
-        let mut pool2 = create_test_pool_info(1);
-        let mut bare = pool2.bare().clone();
-        bare.amounts = vec![U128(1500), U128(2500)];
-        let pool2 = RefPoolInfo::new(1, bare);
-        
-        pool2.insert().await?;
+        let mut updated_pool_info = pool_info.clone();
+        updated_pool_info.bare.pool_kind = "WEIGHTED_SWAP".to_string();
+        updated_pool_info.updated_at = Utc::now().naive_utc();
+        updated_pool_info.insert().await?;
         
         // 最新のデータを取得
-        let latest = RefPoolInfo::get_latest(1).await?.unwrap();
+        let retrieved = RefPoolInfo::get_latest(126).await?;
+        assert!(retrieved.is_some());
         
-        // 最新のデータが2つ目のレコードと一致するか確認
-        assert_eq!(latest.id(), pool2.id());
-        assert_eq!(latest.bare().amounts[0].0, 1500);
-        assert_eq!(latest.bare().amounts[1].0, 2500);
-        
-        // 後始末
-        clean_table().await?;
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.id, 126);
+        assert_eq!(retrieved.bare.pool_kind, "WEIGHTED_SWAP");
         
         Ok(())
     }

@@ -44,9 +44,9 @@ pub struct PoolInfoBared {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolInfo {
-    id: u32,
-    bare: PoolInfoBared,
-    updated_at: chrono::NaiveDateTime,
+    pub id: u32,
+    pub bare: PoolInfoBared,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
