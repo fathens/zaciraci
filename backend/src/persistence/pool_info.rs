@@ -6,6 +6,7 @@ use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 // データベース用モデル
 #[allow(dead_code)]
@@ -44,13 +45,13 @@ impl RefPoolInfo {
     fn from_db(db_pool: DbPoolInfo) -> Result<Self> {
         // token_account_idsをJSONからVec<TokenAccount>に変換
         let token_account_ids = serde_json::from_value(db_pool.token_account_ids)?;
-        
+
         // amountsをJSONからVec<U128>に変換
         let amounts = serde_json::from_value(db_pool.amounts)?;
-        
+
         // shares_total_supplyをJSONからU128に変換
         let shares_total_supply = serde_json::from_value(db_pool.shares_total_supply)?;
-        
+
         // PoolInfoBaredを構築
         let bare = PoolInfoBared {
             pool_kind: db_pool.pool_kind,
@@ -60,14 +61,14 @@ impl RefPoolInfo {
             shares_total_supply,
             amp: db_pool.amp as u64,
         };
-        
+
         // RefPoolInfoを作成
         let pool_info = RefPoolInfo::new(db_pool.pool_id as u32, bare, db_pool.timestamp);
-        
+
         // RefPoolInfoを返す
         Ok(pool_info)
     }
-    
+
     // RefPoolInfoからNewDbPoolInfoへの変換
     fn to_new_db(&self) -> Result<NewDbPoolInfo> {
         Ok(NewDbPoolInfo {
@@ -104,18 +105,16 @@ impl RefPoolInfo {
     }
 
     // 複数レコードを一括挿入
-    pub async fn batch_insert(pool_infos: &[RefPoolInfo]) -> Result<()> {
+    pub async fn batch_insert(pool_infos: &[Arc<RefPoolInfo>]) -> Result<()> {
         use diesel::RunQueryDsl;
 
         if pool_infos.is_empty() {
             return Ok(());
         }
 
-        let new_pools: Result<Vec<NewDbPoolInfo>> = pool_infos
-            .iter()
-            .map(|pool| pool.to_new_db())
-            .collect();
-        
+        let new_pools: Result<Vec<NewDbPoolInfo>> =
+            pool_infos.iter().map(|pool| pool.to_new_db()).collect();
+
         let new_pools = new_pools?;
         let conn = connection_pool::get().await?;
 
@@ -132,9 +131,9 @@ impl RefPoolInfo {
 
     // 特定のプールIDの最新情報を取得
     pub async fn get_latest(pool_id: u32) -> Result<Option<RefPoolInfo>> {
+        use diesel::ExpressionMethods;
         use diesel::QueryDsl;
         use diesel::dsl::max;
-        use diesel::ExpressionMethods;
 
         let pool_id_i32 = pool_id as i32;
         let conn = connection_pool::get().await?;
@@ -180,8 +179,8 @@ impl RefPoolInfo {
 
     // データベースIDによる取得
     pub async fn get(id: i32) -> Result<Option<RefPoolInfo>> {
-        use diesel::QueryDsl;
         use diesel::ExpressionMethods;
+        use diesel::QueryDsl;
 
         let conn = connection_pool::get().await?;
 
@@ -205,7 +204,6 @@ impl RefPoolInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::ref_finance::token_account::TokenAccount;
     use near_sdk::json_types::U128;
     use std::str::FromStr;
@@ -231,23 +229,26 @@ mod tests {
     async fn test_pool_info_insert() -> Result<()> {
         let pool_info = create_test_pool_info();
         pool_info.insert().await?;
-        
+
         // データベースから取得して値を確認
         let retrieved = RefPoolInfo::get_latest(123).await?;
         assert!(retrieved.is_some());
-        
+
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.id, 123);
         assert_eq!(retrieved.bare.pool_kind, "STABLE_SWAP");
         assert_eq!(retrieved.bare.token_account_ids.len(), 2);
         // TokenAccountはタプル構造体なのでDisplayを使って文字列比較
-        assert_eq!(retrieved.bare.token_account_ids[0].to_string(), "token1.near");
+        assert_eq!(
+            retrieved.bare.token_account_ids[0].to_string(),
+            "token1.near"
+        );
         assert_eq!(retrieved.bare.amounts.len(), 2);
         assert_eq!(retrieved.bare.amounts[0].0, 1000000);
         assert_eq!(retrieved.bare.total_fee, 30);
         assert_eq!(retrieved.bare.shares_total_supply.0, 5000000);
         assert_eq!(retrieved.bare.amp, 100);
-        
+
         Ok(())
     }
 
@@ -255,29 +256,29 @@ mod tests {
     async fn test_pool_info_batch_insert() -> Result<()> {
         let mut pool_info1 = create_test_pool_info();
         pool_info1.id = 124;
-        
+
         let mut pool_info2 = create_test_pool_info();
         pool_info2.id = 125;
         pool_info2.bare.pool_kind = "WEIGHTED_SWAP".to_string();
-        
-        RefPoolInfo::batch_insert(&[pool_info1, pool_info2]).await?;
-        
+
+        RefPoolInfo::batch_insert(&[Arc::new(pool_info1), Arc::new(pool_info2)]).await?;
+
         // データベースから取得して値を確認
         let retrieved1 = RefPoolInfo::get_latest(124).await?;
         let retrieved2 = RefPoolInfo::get_latest(125).await?;
-        
+
         assert!(retrieved1.is_some());
         assert!(retrieved2.is_some());
-        
+
         let retrieved1 = retrieved1.unwrap();
         let retrieved2 = retrieved2.unwrap();
-        
+
         assert_eq!(retrieved1.id, 124);
         assert_eq!(retrieved1.bare.pool_kind, "STABLE_SWAP");
-        
+
         assert_eq!(retrieved2.id, 125);
         assert_eq!(retrieved2.bare.pool_kind, "WEIGHTED_SWAP");
-        
+
         Ok(())
     }
 
@@ -287,23 +288,23 @@ mod tests {
         pool_info.id = 126;
         pool_info.bare.pool_kind = "STABLE_SWAP".to_string();
         pool_info.insert().await?;
-        
+
         // 1秒待機して新しいタイムスタンプでデータを更新
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        
+
         let mut updated_pool_info = pool_info.clone();
         updated_pool_info.bare.pool_kind = "WEIGHTED_SWAP".to_string();
         updated_pool_info.timestamp = chrono::Utc::now().naive_utc();
         updated_pool_info.insert().await?;
-        
+
         // 最新のデータを取得
         let retrieved = RefPoolInfo::get_latest(126).await?;
         assert!(retrieved.is_some());
-        
+
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.id, 126);
         assert_eq!(retrieved.bare.pool_kind, "WEIGHTED_SWAP");
-        
+
         Ok(())
     }
 
@@ -311,38 +312,40 @@ mod tests {
     async fn test_pool_info_get_by_id() -> Result<()> {
         // まず直接データベースにクエリを実行してテーブルをクリアする
         use diesel::RunQueryDsl;
-        
+
         let conn = connection_pool::get().await?;
-        conn.interact(|conn| {
-            diesel::delete(pool_info::table)
-                .execute(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-        
+        conn.interact(|conn| diesel::delete(pool_info::table).execute(conn))
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
         // テスト用のデータを作成して挿入
         let pool_info = create_test_pool_info();
         pool_info.insert().await?;
-        
+
         // IDを取得するため直接データベースに問い合わせる
         let conn = connection_pool::get().await?;
-        let result = conn.interact(|conn| {
-            use diesel::dsl::max;
-            pool_info::table
-                .select(max(pool_info::id))
-                .first::<Option<i32>>(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-        
+        let result = conn
+            .interact(|conn| {
+                use diesel::dsl::max;
+                pool_info::table
+                    .select(max(pool_info::id))
+                    .first::<Option<i32>>(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
         let db_id = result.unwrap();
-        
+
         // そのIDを使ってget関数でデータを取得
         let result = RefPoolInfo::get(db_id).await?;
-        assert!(result.is_some(), "ID {}のプールが見つかりませんでした", db_id);
-        
+        assert!(
+            result.is_some(),
+            "ID {}のプールが見つかりませんでした",
+            db_id
+        );
+
         let result = result.unwrap();
-        
+
         // 元のデータと一致することを確認
         assert_eq!(result.id, 123);
         assert_eq!(result.bare.pool_kind, "STABLE_SWAP");
@@ -353,7 +356,7 @@ mod tests {
         assert_eq!(result.bare.total_fee, 30);
         assert_eq!(result.bare.shares_total_supply.0, 5000000);
         assert_eq!(result.bare.amp, 100);
-        
+
         Ok(())
     }
 }
