@@ -10,7 +10,7 @@ diesel::table! {
         total_fee -> Int4,
         shares_total_supply -> Jsonb,
         amp -> Int8,
-        updated_at -> Timestamp,
+        timestamp -> Timestamp,
     }
 }
 

@@ -2,13 +2,10 @@ use crate::Result;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::pool_info;
 use crate::ref_finance::pool_info::{PoolInfo as RefPoolInfo, PoolInfoBared};
-use crate::ref_finance::token_account::TokenAccount;
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
-use near_sdk::json_types::U128;
 use serde_json::Value as JsonValue;
-use std::str::FromStr;
 
 // データベース用モデル
 #[allow(dead_code)]
@@ -23,7 +20,7 @@ struct DbPoolInfo {
     pub total_fee: i32,
     pub shares_total_supply: JsonValue,
     pub amp: i64,
-    pub updated_at: NaiveDateTime,
+    pub timestamp: NaiveDateTime,
 }
 
 // データベース挿入用モデル
@@ -37,10 +34,11 @@ struct NewDbPoolInfo {
     pub total_fee: i32,
     pub shares_total_supply: JsonValue,
     pub amp: i64,
-    pub updated_at: NaiveDateTime,
+    pub timestamp: NaiveDateTime,
 }
 
 // 変換ロジックの実装
+#[allow(dead_code)]
 impl RefPoolInfo {
     // DbPoolInfoからRefPoolInfoへの変換
     fn from_db(db_pool: DbPoolInfo) -> Result<Self> {
@@ -63,8 +61,13 @@ impl RefPoolInfo {
             amp: db_pool.amp as u64,
         };
         
+        // RefPoolInfoを作成
+        let mut pool_info = RefPoolInfo::new(db_pool.pool_id as u32, bare);
+        // タイムスタンプを設定
+        pool_info.timestamp = db_pool.timestamp;
+        
         // RefPoolInfoを返す
-        Ok(RefPoolInfo::new(db_pool.pool_id as u32, bare))
+        Ok(pool_info)
     }
     
     // RefPoolInfoからNewDbPoolInfoへの変換
@@ -80,7 +83,7 @@ impl RefPoolInfo {
             // U128をJSONに変換
             shares_total_supply: serde_json::to_value(&self.bare.shares_total_supply)?,
             amp: self.bare.amp as i64,
-            updated_at: self.updated_at,
+            timestamp: self.timestamp,
         })
     }
 
@@ -143,7 +146,7 @@ impl RefPoolInfo {
             .interact(move |conn| {
                 pool_info::table
                     .filter(pool_info::pool_id.eq(&pool_id_i32))
-                    .select(max(pool_info::updated_at))
+                    .select(max(pool_info::timestamp))
                     .first::<Option<NaiveDateTime>>(conn)
                     .optional()
             })
@@ -160,7 +163,7 @@ impl RefPoolInfo {
                 .interact(move |conn| {
                     pool_info::table
                         .filter(pool_info::pool_id.eq(&pool_id_i32))
-                        .filter(pool_info::updated_at.eq(&timestamp))
+                        .filter(pool_info::timestamp.eq(&timestamp))
                         .first::<DbPoolInfo>(conn)
                         .optional()
                 })
@@ -205,6 +208,9 @@ impl RefPoolInfo {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use crate::ref_finance::token_account::TokenAccount;
+    use near_sdk::json_types::U128;
+    use std::str::FromStr;
 
     fn create_test_pool_info() -> RefPoolInfo {
         // TokenAccountはタプル構造体なので、FromStrを使ってAccountIdから作成
@@ -289,7 +295,7 @@ mod tests {
         
         let mut updated_pool_info = pool_info.clone();
         updated_pool_info.bare.pool_kind = "WEIGHTED_SWAP".to_string();
-        updated_pool_info.updated_at = Utc::now().naive_utc();
+        updated_pool_info.timestamp = Utc::now().naive_utc();
         updated_pool_info.insert().await?;
         
         // 最新のデータを取得

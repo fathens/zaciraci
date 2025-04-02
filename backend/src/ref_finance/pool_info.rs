@@ -46,7 +46,7 @@ pub struct PoolInfoBared {
 pub struct PoolInfo {
     pub id: u32,
     pub bare: PoolInfoBared,
-    pub updated_at: chrono::NaiveDateTime,
+    pub timestamp: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +136,7 @@ impl PoolInfo {
         PoolInfo {
             id,
             bare,
-            updated_at: chrono::Utc::now().naive_utc(),
+            timestamp: chrono::Utc::now().naive_utc(),
         }
     }
 
