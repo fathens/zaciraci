@@ -8,11 +8,11 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres_test
+          POSTGRES_PASSWORD: postgres_test
+          POSTGRES_DB: postgres_test
         ports:
-          - 5432:5432
+          - 5433:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -39,7 +39,7 @@ jobs:
       - name: Run database migrations
         run: diesel migration run
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost/postgres
+          DATABASE_URL: postgres://postgres_test:postgres_test@localhost:5433/postgres_test
 
       - name: Check format
         continue-on-error: true
