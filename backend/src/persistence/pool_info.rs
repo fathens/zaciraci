@@ -8,6 +8,8 @@ use diesel::prelude::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
+use super::TimeRange;
+
 // データベース用モデル
 #[allow(dead_code)]
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -218,8 +220,7 @@ impl RefPoolInfo {
     }
 
     pub async fn get_all_unique_between(
-        start_timestamp: NaiveDateTime,
-        end_timestamp: NaiveDateTime,
+        range: TimeRange,
     ) -> Result<Vec<RefPoolInfo>> {
         use diesel::ExpressionMethods;
         use diesel::QueryDsl;
@@ -229,8 +230,8 @@ impl RefPoolInfo {
         let result = match conn
             .interact(move |conn| {
                 let distinct_pool_ids: Vec<i32> = pool_info::table
-                    .filter(pool_info::timestamp.ge(start_timestamp))
-                    .filter(pool_info::timestamp.le(end_timestamp))
+                    .filter(pool_info::timestamp.ge(range.start))
+                    .filter(pool_info::timestamp.le(range.end))
                     .select(pool_info::pool_id)
                     .distinct()
                     .load(conn)?;
@@ -239,8 +240,8 @@ impl RefPoolInfo {
                 for pool_id in distinct_pool_ids {
                     if let Some(pool_info) = pool_info::table
                         .filter(pool_info::pool_id.eq(pool_id))
-                        .filter(pool_info::timestamp.ge(start_timestamp))
-                        .filter(pool_info::timestamp.le(end_timestamp))
+                        .filter(pool_info::timestamp.ge(range.start))
+                        .filter(pool_info::timestamp.le(range.end))
                         .order_by(pool_info::timestamp.desc())
                         .first::<DbPoolInfo>(conn)
                         .optional()?
@@ -657,7 +658,7 @@ mod tests {
         };
 
         // テストケース1: timestamp1からtimestamp3までの期間のユニークなプール情報を取得
-        let results = RefPoolInfo::get_all_unique_between(timestamp1, timestamp3).await?;
+        let results = RefPoolInfo::get_all_unique_between(TimeRange { start: timestamp1, end: timestamp3 }).await?;
         
         // 期待値: プールID 1とプールID 2の情報が取得されるはず（2件）
         assert_eq!(results.len(), 2, "プールIDユニークなデータは2件あるはずです");
@@ -673,7 +674,7 @@ mod tests {
         assert!(!pool_ids.contains(&pool_id_3), "プールID 3が含まれているべきではありません");
         
         // 期間外のテストケース2: timestamp2からtimestamp4までの期間のユニークなプール情報を取得
-        let results2 = RefPoolInfo::get_all_unique_between(timestamp2, timestamp4).await?;
+        let results2 = RefPoolInfo::get_all_unique_between(TimeRange { start: timestamp2, end: timestamp4 }).await?;
         
         // 期待値: プールID 1, 2, 3の情報が取得されるはず（3件）
         assert_eq!(results2.len(), 3, "プールIDユニークなデータは3件あるはずです");
@@ -682,7 +683,7 @@ mod tests {
         let empty_start = NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
         let empty_end = NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap();
         
-        let empty_results = RefPoolInfo::get_all_unique_between(empty_start, empty_end).await?;
+        let empty_results = RefPoolInfo::get_all_unique_between(TimeRange { start: empty_start, end: empty_end }).await?;
         assert_eq!(empty_results.len(), 0, "データがない期間では空の配列が返されるべきです");
 
         Ok(())

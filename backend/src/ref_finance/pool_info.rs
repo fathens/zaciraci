@@ -1,10 +1,12 @@
 use crate::jsonrpc::ViewContract;
 use crate::logging::*;
+use crate::persistence::TimeRange;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
 use anyhow::{bail, Context, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
+use chrono::NaiveDateTime;
 use futures_util::future::join_all;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
@@ -350,6 +352,18 @@ impl PoolInfoList {
         info!(log, "finish"; "count" => pools.len());
         Ok(Arc::new(PoolInfoList::new(pools)))
     }
+
+    #[allow(dead_code)]
+    pub async fn read_from_db_at(timestamp: NaiveDateTime) -> Result<Arc<PoolInfoList>> {
+        if let Some(first) = PoolInfo::get_latest_before(0, timestamp).await? {
+            let all = PoolInfo::get_all_unique_between(TimeRange { start: first.timestamp, end: timestamp }).await?;
+            let all = all.into_iter().map(Arc::new).collect();
+            Ok(Arc::new(PoolInfoList::new(all)))
+        } else {
+            Ok(Arc::new(PoolInfoList::new(vec![])))
+        }
+    }
+        
 
     pub async fn write_to_db(&self) -> Result<()> {
         PoolInfo::batch_insert(&self.list).await
