@@ -351,7 +351,7 @@ impl PoolInfoList {
         Ok(Arc::new(PoolInfoList::new(pools)))
     }
 
-    pub async fn record_to_db(&self) -> Result<()> {
+    pub async fn write_to_db(&self) -> Result<()> {
         PoolInfo::batch_insert(&self.list).await
     }
 }

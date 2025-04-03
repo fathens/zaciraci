@@ -78,7 +78,7 @@ async fn record_rates() -> Result<()> {
     let values = graph.list_values(initial_value, quote_token, &goals)?;
 
     info!(log, "inserting pools");
-    pools.record_to_db().await?;
+    pools.write_to_db().await?;
 
     let log = log.new(o!(
         "num_values" => values.len().to_string(),
