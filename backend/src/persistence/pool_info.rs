@@ -167,67 +167,33 @@ impl RefPoolInfo {
         use diesel::QueryDsl;
 
         let pool_id_i32 = pool_id as i32;
-        println!("[get_latest_before] 検索条件: pool_id={}, timestamp={}", pool_id_i32, timestamp);
         let conn = connection_pool::get().await?;
 
-        let result = match conn
+        match conn
             .interact(move |conn| {
-                // デバッグのため、テーブル内の全データを取得して表示
-                let all_records = pool_info::table
-                    .load::<DbPoolInfo>(conn)
-                    .optional()?;
-                if let Some(records) = all_records {
-                    println!("[get_latest_before] データベース内のレコード数: {}", records.len());
-                    for (i, record) in records.iter().enumerate() {
-                        println!("  レコード[{}]: id={}, pool_id={}, timestamp={}", 
-                                 i, record.id, record.pool_id, record.timestamp);
-                    }
-                }
-
-                // 本来のクエリを実行
-                let result = pool_info::table
+                pool_info::table
                     .filter(pool_info::pool_id.eq(pool_id_i32))
                     .filter(pool_info::timestamp.lt(timestamp))
                     .order_by(pool_info::timestamp.desc())
                     .first::<DbPoolInfo>(conn)
-                    .optional()?;
-
-                println!("[get_latest_before] クエリ結果: {}", if result.is_some() { "データあり" } else { "データなし" });
-                Ok::<Option<DbPoolInfo>, diesel::result::Error>(result)
+                    .optional()
             })
             .await
         {
-            Ok(Ok(Some(db_pool))) => {
-                println!("[get_latest_before] 見つかったデータ: id={}, pool_id={}, timestamp={}", 
-                         db_pool.id, db_pool.pool_id, db_pool.timestamp);
-                RefPoolInfo::from_db(db_pool).map(Some)
-            },
-            Ok(Ok(None)) => {
-                println!("[get_latest_before] データが見つかりませんでした");
-                Ok(None)
-            },
-            Ok(Err(e)) => {
-                println!("[get_latest_before] クエリエラー: {}", e);
-                Ok(None)
-            },
-            Err(e) => {
-                println!("[get_latest_before] DBエラー: {}", e);
-                Ok(None)
-            },
-        };
-
-        result
+            Ok(Ok(Some(db_pool))) => RefPoolInfo::from_db(db_pool).map(Some),
+            Ok(Ok(None)) => Ok(None),
+            Ok(Err(e)) => Err(anyhow!("Query error: {}", e)),
+            Err(e) => Err(anyhow!("DB error: {}", e)),
+        }
     }
 
-    pub async fn get_all_unique_between(
-        range: TimeRange,
-    ) -> Result<Vec<RefPoolInfo>> {
+    pub async fn get_all_unique_between(range: TimeRange) -> Result<Vec<RefPoolInfo>> {
         use diesel::ExpressionMethods;
         use diesel::QueryDsl;
 
         let conn = connection_pool::get().await?;
 
-        let result = match conn
+        match conn
             .interact(move |conn| {
                 let distinct_pool_ids: Vec<i32> = pool_info::table
                     .filter(pool_info::timestamp.ge(range.start))
@@ -259,12 +225,10 @@ impl RefPoolInfo {
                     pool_infos.push(RefPoolInfo::from_db(db_pool)?);
                 }
                 Ok(pool_infos)
-            },
+            }
             Ok(Err(e)) => Err(anyhow!("Database query error: {}", e)),
             Err(e) => Err(anyhow!("Database connection error: {}", e)),
-        };
-
-        result
+        }
     }
 
     // データベースIDによる取得
@@ -294,9 +258,9 @@ impl RefPoolInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
     use crate::ref_finance::token_account::TokenAccount;
     use near_sdk::json_types::U128;
+    use serial_test::serial;
     use std::str::FromStr;
 
     fn create_test_pool_info() -> RefPoolInfo {
@@ -459,29 +423,33 @@ mod tests {
     #[serial(pool_info)]
     async fn test_pool_info_get_latest_before() -> Result<()> {
         use chrono::NaiveDateTime;
-        use diesel::prelude::*;
         use diesel::Connection;
+        use diesel::prelude::*;
 
         let conn = connection_pool::get().await?;
-        
+
         // 通常のトランザクションを開始
-        match conn.interact(|conn| {
-            conn.transaction(|conn| {
-                // データベーステーブルをクリーンアップ
-                diesel::delete(pool_info::table).execute(conn)?;
-                println!("[テスト] テーブルをクリアしました");
-                Ok::<(), diesel::result::Error>(())
+        match conn
+            .interact(|conn| {
+                conn.transaction(|conn| {
+                    // データベーステーブルをクリーンアップ
+                    diesel::delete(pool_info::table).execute(conn)
+                })
             })
-        }).await {
-            Ok(Ok(_)) => println!("[テスト] テーブルクリア成功"),
+            .await
+        {
+            Ok(Ok(_)) => {}
             Ok(Err(e)) => return Err(anyhow!("Failed to clear table: {}", e)),
             Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
         };
 
         // テストデータの作成
-        let timestamp1 = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp2 = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp3 = NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp1 =
+            NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp2 =
+            NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp3 =
+            NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
 
         // プールIDを設定
         let pool_id_1: u32 = 1;
@@ -489,16 +457,16 @@ mod tests {
 
         // テストデータを作成
         let test_pool_info = create_test_pool_info();
-        
+
         // プールID 1 のデータを3つ作成（異なるタイムスタンプで）
         let mut pool_info1 = test_pool_info.clone();
         pool_info1.id = pool_id_1; // プールID 1に設定
         pool_info1.timestamp = timestamp1;
-        
+
         let mut pool_info2 = test_pool_info.clone();
         pool_info2.id = pool_id_1; // プールID 1に設定
         pool_info2.timestamp = timestamp2;
-        
+
         let mut pool_info3 = test_pool_info.clone();
         pool_info3.id = pool_id_1; // プールID 1に設定
         pool_info3.timestamp = timestamp3;
@@ -519,48 +487,55 @@ mod tests {
         match conn
             .interact(move |conn| {
                 conn.transaction(|conn| {
-                    let result = diesel::insert_into(pool_info::table)
+                    diesel::insert_into(pool_info::table)
                         .values(&[new_db1, new_db2, new_db3, new_db4])
-                        .execute(conn)?;
-                    
-                    println!("[テスト] データ挿入完了: {} 件", result);
-                    
-                    // 挿入されたデータを確認
-                    let all_records = pool_info::table
-                        .load::<DbPoolInfo>(conn)?;
-                    println!("[テスト] データベース内のレコード数: {}", all_records.len());
-                    for (i, record) in all_records.iter().enumerate() {
-                        println!("  レコード[{}]: id={}, pool_id={}, timestamp={}", 
-                                i, record.id, record.pool_id, record.timestamp);
-                    }
-                    
-                    Ok::<usize, diesel::result::Error>(result)
+                        .execute(conn)
                 })
             })
             .await
         {
-            Ok(Ok(n)) => println!("[テスト] 挿入成功: {} 件のレコードを挿入", n),
+            Ok(Ok(_)) => {}
             Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
             Err(e) => return Err(anyhow!("DB error: {}", e)),
         };
 
         // テストケース1: プールID 1、timestamp2より前の最新データを取得（timestamp1が返されるはず）
         let result1 = RefPoolInfo::get_latest_before(pool_id_1, timestamp2).await?;
-        assert!(result1.is_some(), "timestamp2より前のデータが見つかりませんでした");
-        assert_eq!(result1.unwrap().timestamp, timestamp1, "timestamp1が返されるべきです");
+        assert!(
+            result1.is_some(),
+            "timestamp2より前のデータが見つかりませんでした"
+        );
+        assert_eq!(
+            result1.unwrap().timestamp,
+            timestamp1,
+            "timestamp1が返されるべきです"
+        );
 
         // テストケース2: プールID 1、timestamp3より前の最新データを取得（timestamp2が返されるはず）
         let result2 = RefPoolInfo::get_latest_before(pool_id_1, timestamp3).await?;
-        assert!(result2.is_some(), "timestamp3より前のデータが見つかりませんでした");
-        assert_eq!(result2.unwrap().timestamp, timestamp2, "timestamp2が返されるべきです");
+        assert!(
+            result2.is_some(),
+            "timestamp3より前のデータが見つかりませんでした"
+        );
+        assert_eq!(
+            result2.unwrap().timestamp,
+            timestamp2,
+            "timestamp2が返されるべきです"
+        );
 
         // テストケース3: プールID 1、timestamp1より前のデータを取得（存在しないのでNoneが返されるはず）
         let result3 = RefPoolInfo::get_latest_before(pool_id_1, timestamp1).await?;
-        assert!(result3.is_none(), "timestamp1より前のデータが存在するべきではありません");
+        assert!(
+            result3.is_none(),
+            "timestamp1より前のデータが存在するべきではありません"
+        );
 
         // テストケース4: 存在しないプールIDでデータを取得（Noneが返されるはず）
         let result4 = RefPoolInfo::get_latest_before(pool_id_2, timestamp2).await?;
-        assert!(result4.is_none(), "存在しないプールIDのデータが見つかりました");
+        assert!(
+            result4.is_none(),
+            "存在しないプールIDのデータが見つかりました"
+        );
 
         Ok(())
     }
@@ -569,30 +544,33 @@ mod tests {
     #[serial(pool_info)]
     async fn test_pool_info_get_all_unique_between() -> Result<()> {
         use chrono::NaiveDateTime;
-        use diesel::prelude::*;
         use diesel::Connection;
+        use diesel::prelude::*;
 
         // データベース接続を取得
         let conn = connection_pool::get().await?;
-        
+
         // 通常のトランザクションを開始してテーブルをクリーンアップ
-        match conn.interact(|conn| {
-            conn.transaction(|conn| {
-                diesel::delete(pool_info::table).execute(conn)?;
-                println!("[テスト] テーブルをクリアしました");
-                Ok::<(), diesel::result::Error>(())
+        match conn
+            .interact(|conn| {
+                conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn))
             })
-        }).await {
-            Ok(Ok(_)) => println!("[テスト] テーブルクリア成功"),
+            .await
+        {
+            Ok(Ok(_)) => {}
             Ok(Err(e)) => return Err(anyhow!("Failed to clear table: {}", e)),
             Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
         };
 
         // テストデータに使用するタイムスタンプを定義
-        let timestamp1 = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp2 = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp3 = NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp4 = NaiveDateTime::parse_from_str("2023-01-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp1 =
+            NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp2 =
+            NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp3 =
+            NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp4 =
+            NaiveDateTime::parse_from_str("2023-01-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
 
         // プールIDを設定
         let pool_id_1: u32 = 1;
@@ -601,27 +579,27 @@ mod tests {
 
         // テストデータのベースを作成
         let test_pool_info = create_test_pool_info();
-        
+
         // 異なるプールIDと異なるタイムスタンプでテストデータを作成
         let mut pool_infos = Vec::new();
-        
+
         // プールID 1のデータ (timestamp1, timestamp3)
         let mut pool_info1 = test_pool_info.clone();
         pool_info1.id = pool_id_1;
         pool_info1.timestamp = timestamp1;
         pool_infos.push(pool_info1.to_new_db()?);
-        
+
         let mut pool_info2 = test_pool_info.clone();
         pool_info2.id = pool_id_1;
         pool_info2.timestamp = timestamp3;
         pool_infos.push(pool_info2.to_new_db()?);
-        
+
         // プールID 2のデータ (timestamp2)
         let mut pool_info3 = test_pool_info.clone();
         pool_info3.id = pool_id_2;
         pool_info3.timestamp = timestamp2;
         pool_infos.push(pool_info3.to_new_db()?);
-        
+
         // プールID 3のデータ (timestamp4) - 指定期間外のデータ
         let mut pool_info4 = test_pool_info.clone();
         pool_info4.id = pool_id_3;
@@ -632,59 +610,81 @@ mod tests {
         match conn
             .interact(move |conn| {
                 conn.transaction(|conn| {
-                    let result = diesel::insert_into(pool_info::table)
+                    diesel::insert_into(pool_info::table)
                         .values(&pool_infos)
-                        .execute(conn)?;
-                    
-                    println!("[テスト] データ挿入完了: {} 件", result);
-                    
-                    // 挿入されたデータを確認
-                    let all_records = pool_info::table
-                        .load::<DbPoolInfo>(conn)?;
-                    println!("[テスト] データベース内のレコード数: {}", all_records.len());
-                    for (i, record) in all_records.iter().enumerate() {
-                        println!("  レコード[{}]: id={}, pool_id={}, timestamp={}", 
-                                i, record.id, record.pool_id, record.timestamp);
-                    }
-                    
-                    Ok::<usize, diesel::result::Error>(result)
+                        .execute(conn)
                 })
             })
             .await
         {
-            Ok(Ok(n)) => println!("[テスト] 挿入成功: {} 件のレコードを挿入", n),
+            Ok(Ok(_)) => {}
             Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
             Err(e) => return Err(anyhow!("DB error: {}", e)),
         };
 
         // テストケース1: timestamp1からtimestamp3までの期間のユニークなプール情報を取得
-        let results = RefPoolInfo::get_all_unique_between(TimeRange { start: timestamp1, end: timestamp3 }).await?;
-        
+        let results = RefPoolInfo::get_all_unique_between(TimeRange {
+            start: timestamp1,
+            end: timestamp3,
+        })
+        .await?;
+
         // 期待値: プールID 1とプールID 2の情報が取得されるはず（2件）
-        assert_eq!(results.len(), 2, "プールIDユニークなデータは2件あるはずです");
-        
+        assert_eq!(
+            results.len(),
+            2,
+            "プールIDユニークなデータは2件あるはずです"
+        );
+
         // 取得したデータのプールIDを配列に集める
         let pool_ids: Vec<u32> = results.iter().map(|p| p.id).collect();
-        
+
         // プールID 1と2が含まれていることを確認
-        assert!(pool_ids.contains(&pool_id_1), "プールID 1が含まれていません");
-        assert!(pool_ids.contains(&pool_id_2), "プールID 2が含まれていません");
-        
+        assert!(
+            pool_ids.contains(&pool_id_1),
+            "プールID 1が含まれていません"
+        );
+        assert!(
+            pool_ids.contains(&pool_id_2),
+            "プールID 2が含まれていません"
+        );
+
         // プールID 3が含まれていないことを確認（期間外のため）
-        assert!(!pool_ids.contains(&pool_id_3), "プールID 3が含まれているべきではありません");
-        
+        assert!(
+            !pool_ids.contains(&pool_id_3),
+            "プールID 3が含まれているべきではありません"
+        );
+
         // 期間外のテストケース2: timestamp2からtimestamp4までの期間のユニークなプール情報を取得
-        let results2 = RefPoolInfo::get_all_unique_between(TimeRange { start: timestamp2, end: timestamp4 }).await?;
-        
+        let results2 = RefPoolInfo::get_all_unique_between(TimeRange {
+            start: timestamp2,
+            end: timestamp4,
+        })
+        .await?;
+
         // 期待値: プールID 1, 2, 3の情報が取得されるはず（3件）
-        assert_eq!(results2.len(), 3, "プールIDユニークなデータは3件あるはずです");
-        
+        assert_eq!(
+            results2.len(),
+            3,
+            "プールIDユニークなデータは3件あるはずです"
+        );
+
         // テストケース3: 範囲内にデータがない場合
-        let empty_start = NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let empty_end = NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap();
-        
-        let empty_results = RefPoolInfo::get_all_unique_between(TimeRange { start: empty_start, end: empty_end }).await?;
-        assert_eq!(empty_results.len(), 0, "データがない期間では空の配列が返されるべきです");
+        let empty_start =
+            NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let empty_end =
+            NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap();
+
+        let empty_results = RefPoolInfo::get_all_unique_between(TimeRange {
+            start: empty_start,
+            end: empty_end,
+        })
+        .await?;
+        assert_eq!(
+            empty_results.len(),
+            0,
+            "データがない期間では空の配列が返されるべきです"
+        );
 
         Ok(())
     }
