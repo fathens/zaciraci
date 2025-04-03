@@ -133,45 +133,25 @@ impl RefPoolInfo {
     pub async fn get_latest(pool_id: u32) -> Result<Option<RefPoolInfo>> {
         use diesel::ExpressionMethods;
         use diesel::QueryDsl;
-        use diesel::dsl::max;
+        use diesel::prelude::*;
 
         let pool_id_i32 = pool_id as i32;
         let conn = connection_pool::get().await?;
 
-        // まず最新のタイムスタンプを検索
-        let latest_timestamp = conn
+        // 1回のクエリで最新のレコードを取得
+        let result = conn
             .interact(move |conn| {
                 pool_info::table
                     .filter(pool_info::pool_id.eq(&pool_id_i32))
-                    .select(max(pool_info::timestamp))
-                    .first::<Option<NaiveDateTime>>(conn)
+                    .order_by(pool_info::timestamp.desc())
+                    .first::<DbPoolInfo>(conn)
                     .optional()
             })
             .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
-            .flatten();
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        // タイムスタンプが存在する場合、そのレコードを取得
-        if let Some(timestamp) = latest_timestamp {
-            let pool_id_i32 = pool_id as i32;
-            let conn = connection_pool::get().await?;
-
-            let result = conn
-                .interact(move |conn| {
-                    pool_info::table
-                        .filter(pool_info::pool_id.eq(&pool_id_i32))
-                        .filter(pool_info::timestamp.eq(&timestamp))
-                        .first::<DbPoolInfo>(conn)
-                        .optional()
-                })
-                .await
-                .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-            if let Some(db_pool) = result {
-                Ok(Some(RefPoolInfo::from_db(db_pool)?))
-            } else {
-                Ok(None)
-            }
+        if let Some(db_pool) = result {
+            Ok(Some(RefPoolInfo::from_db(db_pool)?))
         } else {
             Ok(None)
         }
@@ -313,6 +293,7 @@ impl RefPoolInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use crate::ref_finance::token_account::TokenAccount;
     use near_sdk::json_types::U128;
     use std::str::FromStr;
@@ -335,6 +316,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(pool_info)]
     async fn test_pool_info_insert() -> Result<()> {
         let pool_info = create_test_pool_info();
         pool_info.insert().await?;
@@ -362,6 +344,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(pool_info)]
     async fn test_pool_info_batch_insert() -> Result<()> {
         let mut pool_info1 = create_test_pool_info();
         pool_info1.id = 124;
@@ -392,6 +375,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(pool_info)]
     async fn test_pool_info_latest() -> Result<()> {
         let mut pool_info = create_test_pool_info();
         pool_info.id = 126;
@@ -418,6 +402,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(pool_info)]
     async fn test_pool_info_get_by_id() -> Result<()> {
         // まず直接データベースにクエリを実行してテーブルをクリアする
         use diesel::RunQueryDsl;
@@ -470,6 +455,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(pool_info)]
     async fn test_pool_info_get_latest_before() -> Result<()> {
         use chrono::NaiveDateTime;
         use diesel::prelude::*;
@@ -579,6 +565,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(pool_info)]
     async fn test_pool_info_get_all_unique_between() -> Result<()> {
         use chrono::NaiveDateTime;
         use diesel::prelude::*;
