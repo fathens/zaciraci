@@ -516,10 +516,16 @@ mod tests {
         pool_info3.id = pool_id_1; // プールID 1に設定
         pool_info3.timestamp = timestamp3;
 
+        // プールID 2 のデータを1つ作成
+        let mut pool_info4 = test_pool_info.clone();
+        pool_info4.id = pool_id_2; // プールID 2に設定
+        pool_info4.timestamp = timestamp2;
+
         // データをデータベースに挿入
         let new_db1 = pool_info1.to_new_db()?;
         let new_db2 = pool_info2.to_new_db()?;
         let new_db3 = pool_info3.to_new_db()?;
+        let new_db4 = pool_info4.to_new_db()?;
 
         // データベースに挿入
         // トランザクション内で実行（テスト内でのみ有効）
@@ -527,7 +533,7 @@ mod tests {
             .interact(move |conn| {
                 conn.transaction(|conn| {
                     let result = diesel::insert_into(pool_info::table)
-                        .values(&[new_db1, new_db2, new_db3])
+                        .values(&[new_db1, new_db2, new_db3, new_db4])
                         .execute(conn)?;
                     
                     println!("[テスト] データ挿入完了: {} 件", result);
@@ -568,6 +574,129 @@ mod tests {
         // テストケース4: 存在しないプールIDでデータを取得（Noneが返されるはず）
         let result4 = RefPoolInfo::get_latest_before(pool_id_2, timestamp2).await?;
         assert!(result4.is_none(), "存在しないプールIDのデータが見つかりました");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pool_info_get_all_unique_between() -> Result<()> {
+        use chrono::NaiveDateTime;
+        use diesel::prelude::*;
+        use diesel::Connection;
+
+        // データベース接続を取得
+        let conn = connection_pool::get().await?;
+        
+        // 通常のトランザクションを開始してテーブルをクリーンアップ
+        match conn.interact(|conn| {
+            conn.transaction(|conn| {
+                diesel::delete(pool_info::table).execute(conn)?;
+                println!("[テスト] テーブルをクリアしました");
+                Ok::<(), diesel::result::Error>(())
+            })
+        }).await {
+            Ok(Ok(_)) => println!("[テスト] テーブルクリア成功"),
+            Ok(Err(e)) => return Err(anyhow!("Failed to clear table: {}", e)),
+            Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
+        };
+
+        // テストデータに使用するタイムスタンプを定義
+        let timestamp1 = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp2 = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp3 = NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp4 = NaiveDateTime::parse_from_str("2023-01-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+
+        // プールIDを設定
+        let pool_id_1: u32 = 1;
+        let pool_id_2: u32 = 2;
+        let pool_id_3: u32 = 3;
+
+        // テストデータのベースを作成
+        let test_pool_info = create_test_pool_info();
+        
+        // 異なるプールIDと異なるタイムスタンプでテストデータを作成
+        let mut pool_infos = Vec::new();
+        
+        // プールID 1のデータ (timestamp1, timestamp3)
+        let mut pool_info1 = test_pool_info.clone();
+        pool_info1.id = pool_id_1;
+        pool_info1.timestamp = timestamp1;
+        pool_infos.push(pool_info1.to_new_db()?);
+        
+        let mut pool_info2 = test_pool_info.clone();
+        pool_info2.id = pool_id_1;
+        pool_info2.timestamp = timestamp3;
+        pool_infos.push(pool_info2.to_new_db()?);
+        
+        // プールID 2のデータ (timestamp2)
+        let mut pool_info3 = test_pool_info.clone();
+        pool_info3.id = pool_id_2;
+        pool_info3.timestamp = timestamp2;
+        pool_infos.push(pool_info3.to_new_db()?);
+        
+        // プールID 3のデータ (timestamp4) - 指定期間外のデータ
+        let mut pool_info4 = test_pool_info.clone();
+        pool_info4.id = pool_id_3;
+        pool_info4.timestamp = timestamp4;
+        pool_infos.push(pool_info4.to_new_db()?);
+
+        // データベースに挿入
+        match conn
+            .interact(move |conn| {
+                conn.transaction(|conn| {
+                    let result = diesel::insert_into(pool_info::table)
+                        .values(&pool_infos)
+                        .execute(conn)?;
+                    
+                    println!("[テスト] データ挿入完了: {} 件", result);
+                    
+                    // 挿入されたデータを確認
+                    let all_records = pool_info::table
+                        .load::<DbPoolInfo>(conn)?;
+                    println!("[テスト] データベース内のレコード数: {}", all_records.len());
+                    for (i, record) in all_records.iter().enumerate() {
+                        println!("  レコード[{}]: id={}, pool_id={}, timestamp={}", 
+                                i, record.id, record.pool_id, record.timestamp);
+                    }
+                    
+                    Ok::<usize, diesel::result::Error>(result)
+                })
+            })
+            .await
+        {
+            Ok(Ok(n)) => println!("[テスト] 挿入成功: {} 件のレコードを挿入", n),
+            Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
+            Err(e) => return Err(anyhow!("DB error: {}", e)),
+        };
+
+        // テストケース1: timestamp1からtimestamp3までの期間のユニークなプール情報を取得
+        let results = RefPoolInfo::get_all_unique_between(timestamp1, timestamp3).await?;
+        
+        // 期待値: プールID 1とプールID 2の情報が取得されるはず（2件）
+        assert_eq!(results.len(), 2, "プールIDユニークなデータは2件あるはずです");
+        
+        // 取得したデータのプールIDを配列に集める
+        let pool_ids: Vec<u32> = results.iter().map(|p| p.id).collect();
+        
+        // プールID 1と2が含まれていることを確認
+        assert!(pool_ids.contains(&pool_id_1), "プールID 1が含まれていません");
+        assert!(pool_ids.contains(&pool_id_2), "プールID 2が含まれていません");
+        
+        // プールID 3が含まれていないことを確認（期間外のため）
+        assert!(!pool_ids.contains(&pool_id_3), "プールID 3が含まれているべきではありません");
+        
+        // 期間外のテストケース2: timestamp2からtimestamp4までの期間のユニークなプール情報を取得
+        let results2 = RefPoolInfo::get_all_unique_between(timestamp2, timestamp4).await?;
+        
+        // 期待値: プールID 1, 2, 3の情報が取得されるはず（3件）
+        assert_eq!(results2.len(), 3, "プールIDユニークなデータは3件あるはずです");
+        
+        // テストケース3: 範囲内にデータがない場合
+        let empty_start = NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let empty_end = NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap();
+        
+        let empty_results = RefPoolInfo::get_all_unique_between(empty_start, empty_end).await?;
+        assert_eq!(empty_results.len(), 0, "データがない期間では空の配列が返されるべきです");
 
         Ok(())
     }
