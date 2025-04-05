@@ -41,8 +41,7 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
-    let client = jsonrpc::new_client();
-    let pools = pool_info::PoolInfoList::read_from_node(&client)
+    let pools = pool_info::PoolInfoList::read_from_db(None)
         .await
         .unwrap();
     format!("Pools: {}", pools.len())
@@ -78,7 +77,7 @@ async fn get_return(
     use crate::ref_finance::errors::Error;
 
     let client = jsonrpc::new_client();
-    let pools = pool_info::PoolInfoList::read_from_node(&client)
+    let pools = pool_info::PoolInfoList::read_from_db(None)
         .await
         .unwrap();
     let pool = pools.get(pool_id).unwrap();
@@ -95,8 +94,7 @@ async fn get_return(
 }
 
 async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
-    let client = jsonrpc::new_client();
-    let pools = pool_info::PoolInfoList::read_from_node(&client)
+    let pools = pool_info::PoolInfoList::read_from_db(None)
         .await
         .unwrap();
     let tokens = ref_finance::path::all_tokens(pools);
@@ -113,8 +111,7 @@ async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let client = jsonrpc::new_client();
-    let pools = pool_info::PoolInfoList::read_from_node(&client)
+    let pools = pool_info::PoolInfoList::read_from_db(None)
         .await
         .unwrap();
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
@@ -138,9 +135,8 @@ async fn pick_goals(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let client = jsonrpc::new_client();
-    let gas_price = client.get_gas_price(None).await.unwrap();
-    let pools = pool_info::PoolInfoList::read_from_node(&client)
+    let gas_price = jsonrpc::new_client().get_gas_price(None).await.unwrap();
+    let pools = pool_info::PoolInfoList::read_from_db(None)
         .await
         .unwrap();
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
