@@ -4,6 +4,7 @@ use near_sdk::AccountId;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use zaciraci_common::types::TokenAccount as CommonTokenAccount;
 
 pub static WNEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
     let id = if *IS_MAINNET {
@@ -49,12 +50,24 @@ impl From<TokenAccount> for AccountId {
     }
 }
 
+impl From<CommonTokenAccount> for TokenAccount {
+    fn from(value: CommonTokenAccount) -> Self {
+        TokenAccount(value.to_string().parse().unwrap())
+    }
+}
+
+impl From<TokenAccount> for CommonTokenAccount {
+    fn from(value: TokenAccount) -> Self {
+        CommonTokenAccount(value.0.into())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct TokenInAccount(TokenAccount);
 
 impl TokenInAccount {
     pub fn as_id(&self) -> &AccountId {
-        &self.0 .0
+        &self.0.0
     }
 
     pub fn as_account(&self) -> &TokenAccount {
@@ -95,7 +108,7 @@ pub struct TokenOutAccount(TokenAccount);
 
 impl TokenOutAccount {
     pub fn as_id(&self) -> &AccountId {
-        &self.0 .0
+        &self.0.0
     }
 
     pub fn as_account(&self) -> &TokenAccount {
