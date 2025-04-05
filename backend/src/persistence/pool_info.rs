@@ -599,6 +599,7 @@ mod tests {
         pool_info3_4.timestamp = timestamp4;
         pool_infos.push(pool_info3_4.to_new_db()?);
 
+        pool_infos.reverse();
         // データベースに挿入
         match conn
             .interact(move |conn| {
