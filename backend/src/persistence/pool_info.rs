@@ -195,20 +195,12 @@ impl RefPoolInfo {
 
         match conn
             .interact(move |conn| {
-                // PostgreSQLの distinct_on 機能を使用して、各 pool_id ごとに最新のレコードを取得
-                // これにより、各プールIDごとに個別にクエリを発行する必要がなくなります
-                let results = pool_info::table
+                pool_info::table
                     .filter(pool_info::timestamp.ge(range.start))
                     .filter(pool_info::timestamp.le(range.end))
-                    // distinct_on は各 pool_id ごとに1つのレコードだけを返します
                     .distinct_on(pool_info::pool_id)
-                    // order_by の最初の条件は distinct_on と同じにする必要があります
-                    // 2番目の条件で各グループ内の順序を指定（この場合は timestamp の降順で最新のものが選ばれます）
                     .order_by((pool_info::pool_id, pool_info::timestamp.desc()))
-                    .load::<DbPoolInfo>(conn)?
-                ;
-                
-                Ok::<Vec<DbPoolInfo>, diesel::result::Error>(results)
+                    .load::<DbPoolInfo>(conn)
             })
             .await
         {
