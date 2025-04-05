@@ -3,8 +3,8 @@ use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
-use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
-use anyhow::{bail, Context, Result};
+use crate::ref_finance::{CONTRACT_ADDRESS, errors::Error};
+use anyhow::{Context, Result, bail, anyhow};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::NaiveDateTime;
 use futures_util::future::join_all;
@@ -337,12 +337,10 @@ impl PoolInfoList {
                 let count = result.as_ref().map(|v| v.len()).unwrap_or(0);
                 debug!(log, "result"; "count" => count);
                 result.map(move |list| {
-                    list.into_iter()
-                        .enumerate()
-                        .map(move |(i, bare)| {
-                            let timestamp = chrono::Utc::now().naive_utc();
-                            Arc::new(PoolInfo::new(i as u32 + index, bare, timestamp))
-                        })
+                    list.into_iter().enumerate().map(move |(i, bare)| {
+                        let timestamp = chrono::Utc::now().naive_utc();
+                        Arc::new(PoolInfo::new(i as u32 + index, bare, timestamp))
+                    })
                 })
             })
             .collect();
@@ -354,16 +352,23 @@ impl PoolInfoList {
     }
 
     #[allow(dead_code)]
-    pub async fn read_from_db_at(timestamp: NaiveDateTime) -> Result<Arc<PoolInfoList>> {
-        if let Some(first) = PoolInfo::get_latest_before(0, timestamp).await? {
-            let all = PoolInfo::get_all_unique_between(TimeRange { start: first.timestamp, end: timestamp }).await?;
-            let all = all.into_iter().map(Arc::new).collect();
-            Ok(Arc::new(PoolInfoList::new(all)))
+    pub async fn read_from_db(timestamp: Option<NaiveDateTime>) -> Result<Arc<PoolInfoList>> {
+        let first = if let Some(timestamp) = timestamp {
+            PoolInfo::get_latest_before(0, timestamp).await?
         } else {
-            Ok(Arc::new(PoolInfoList::new(vec![])))
+            PoolInfo::get_latest(0).await?
         }
+        .ok_or_else(|| anyhow!("no pool found"))?;
+
+        let range = TimeRange {
+            start: first.timestamp,
+            end: timestamp.unwrap_or(chrono::Utc::now().naive_utc()),
+        };
+        let all = PoolInfo::get_all_unique_between(range).await?;
+        Ok(Arc::new(PoolInfoList::new(
+            all.into_iter().map(Arc::new).collect(),
+        )))
     }
-        
 
     pub async fn write_to_db(&self) -> Result<()> {
         PoolInfo::batch_insert(&self.list).await
