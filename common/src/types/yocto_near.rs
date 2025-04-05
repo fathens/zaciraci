@@ -3,6 +3,7 @@ use bigdecimal::One;
 use bigdecimal::ToPrimitive;
 use bigdecimal::Zero;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use std::fmt;
 use std::ops::Add;
 use std::ops::Div;
 use std::ops::Mul;
@@ -125,6 +126,22 @@ impl<'de> Deserialize<'de> for YoctoNearToken {
         let s = String::deserialize(deserializer)?;
         let value = u128::from_str(&s)
             .map_err(|e| de::Error::custom(format!("Invalid YoctoNEAR value: {}", e)))?;
+        Ok(YoctoNearToken(value))
+    }
+}
+
+// Display と FromStr の実装（ToString と FromStr用）
+impl fmt::Display for YoctoNearToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for YoctoNearToken {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = u128::from_str(s)?;
         Ok(YoctoNearToken(value))
     }
 }
@@ -307,5 +324,40 @@ mod tests {
         // 負の値のテスト（u128 では負の値は表現できない）
         let result: Result<YoctoNearToken, _> = serde_json::from_str("\"-1\"");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_near_token_string_conversion() {
+        // ゼロ値のテスト
+        let token = YoctoNearToken::zero();
+        let s = token.to_string();
+        assert_eq!(s, "0");
+        let parsed = YoctoNearToken::from_str(&s).unwrap();
+        assert_eq!(parsed, token);
+
+        // 1 Yocto NEAR のテスト
+        let token = YoctoNearToken::one();
+        let s = token.to_string();
+        assert_eq!(s, "1");
+        let parsed = YoctoNearToken::from_str(&s).unwrap();
+        assert_eq!(parsed, token);
+
+        // 1 NEAR のテスト
+        let token = YoctoNearToken::from_near(BigDecimal::from(1));
+        let s = token.to_string();
+        assert_eq!(s, "1000000000000000000000000");
+        let parsed = YoctoNearToken::from_str(&s).unwrap();
+        assert_eq!(parsed, token);
+
+        // 大きな値のテスト
+        let token = YoctoNearToken::from_yocto(u128::MAX);
+        let s = token.to_string();
+        assert_eq!(s, "340282366920938463463374607431768211455");
+        let parsed = YoctoNearToken::from_str(&s).unwrap();
+        assert_eq!(parsed, token);
+
+        // パース失敗のテスト
+        assert!(YoctoNearToken::from_str("invalid").is_err());
+        assert!(YoctoNearToken::from_str("-1").is_err());
     }
 }
