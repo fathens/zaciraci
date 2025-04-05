@@ -169,7 +169,7 @@ impl RefPoolInfo {
         let pool_id_i32 = pool_id as i32;
         let conn = connection_pool::get().await?;
 
-        match conn
+        let result = conn
             .interact(move |conn| {
                 pool_info::table
                     .filter(pool_info::pool_id.eq(pool_id_i32))
@@ -179,11 +179,12 @@ impl RefPoolInfo {
                     .optional()
             })
             .await
-        {
-            Ok(Ok(Some(db_pool))) => RefPoolInfo::from_db(db_pool).map(Some),
-            Ok(Ok(None)) => Ok(None),
-            Ok(Err(e)) => Err(anyhow!("Query error: {}", e)),
-            Err(e) => Err(anyhow!("DB error: {}", e)),
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        if let Some(db_pool) = result {
+            Ok(Some(RefPoolInfo::from_db(db_pool)?))
+        } else {
+            Ok(None)
         }
     }
 
@@ -193,8 +194,7 @@ impl RefPoolInfo {
 
         let conn = connection_pool::get().await?;
 
-        match conn
-            .interact(move |conn| {
+        let result = conn.interact(move |conn| {
                 pool_info::table
                     .filter(pool_info::timestamp.ge(range.start))
                     .filter(pool_info::timestamp.le(range.end))
@@ -203,17 +203,13 @@ impl RefPoolInfo {
                     .load::<DbPoolInfo>(conn)
             })
             .await
-        {
-            Ok(Ok(result)) => {
-                let mut pool_infos = Vec::with_capacity(result.len());
-                for db_pool in result {
-                    pool_infos.push(RefPoolInfo::from_db(db_pool)?);
-                }
-                Ok(pool_infos)
-            }
-            Ok(Err(e)) => Err(anyhow!("Database query error: {}", e)),
-            Err(e) => Err(anyhow!("Database connection error: {}", e)),
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        let mut pool_infos = Vec::with_capacity(result.len());
+        for db_pool in result {
+            pool_infos.push(RefPoolInfo::from_db(db_pool)?);
         }
+        Ok(pool_infos)
     }
 
     // データベースIDによる取得
@@ -227,15 +223,16 @@ impl RefPoolInfo {
             .interact(move |conn| {
                 pool_info::table
                     .filter(pool_info::id.eq(&id))
-                    .first::<DbPoolInfo>(conn)
+                    .first(conn)
                     .optional()
             })
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        match result {
-            Some(db_pool) => Ok(Some(RefPoolInfo::from_db(db_pool)?)),
-            None => Ok(None),
+        if let Some(db_pool) = result {
+            Ok(Some(RefPoolInfo::from_db(db_pool)?))
+        } else {
+            Ok(None)
         }
     }
 }
