@@ -114,7 +114,7 @@ impl Serialize for YoctoNearToken {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&self.0.to_string())
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -124,13 +124,11 @@ impl<'de> Deserialize<'de> for YoctoNearToken {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let value = u128::from_str(&s)
-            .map_err(|e| de::Error::custom(format!("Invalid YoctoNEAR value: {}", e)))?;
-        Ok(YoctoNearToken(value))
+        s.parse()
+            .map_err(|e| de::Error::custom(format!("Invalid YoctoNEAR value: {}", e)))
     }
 }
 
-// Display と FromStr の実装（ToString と FromStr用）
 impl fmt::Display for YoctoNearToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -141,8 +139,7 @@ impl FromStr for YoctoNearToken {
     type Err = std::num::ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = u128::from_str(s)?;
-        Ok(YoctoNearToken(value))
+        Ok(YoctoNearToken(s.parse()?))
     }
 }
 
