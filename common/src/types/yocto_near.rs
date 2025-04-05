@@ -1,13 +1,13 @@
-
-use std::ops::Add;
-use std::ops::Div;
-use std::ops::Mul;
-use std::ops::Sub;
-
 use bigdecimal::BigDecimal;
 use bigdecimal::One;
 use bigdecimal::ToPrimitive;
 use bigdecimal::Zero;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use std::ops::Add;
+use std::ops::Div;
+use std::ops::Mul;
+use std::ops::Sub;
+use std::str::FromStr;
 
 // copy from near-token-0.3.0
 const ONE_NEAR: u128 = 10_u128.pow(24);
@@ -108,9 +108,31 @@ impl Div<YoctoNearToken> for YoctoNearToken {
     }
 }
 
+impl Serialize for YoctoNearToken {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for YoctoNearToken {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let value = u128::from_str(&s)
+            .map_err(|e| de::Error::custom(format!("Invalid YoctoNEAR value: {}", e)))?;
+        Ok(YoctoNearToken(value))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json;
 
     #[test]
     fn test_near_token_transform() {
@@ -141,7 +163,10 @@ mod tests {
         let one_milli = YoctoNearToken::from_millinear(BigDecimal::from(1));
         assert_eq!(one_milli, YoctoNearToken::from_yocto(ONE_MILLINEAR));
         assert_eq!(one_milli.as_yoctonear(), ONE_MILLINEAR);
-        assert_eq!(one_milli.as_near(), BigDecimal::from(1) / BigDecimal::from(1000));
+        assert_eq!(
+            one_milli.as_near(),
+            BigDecimal::from(1) / BigDecimal::from(1000)
+        );
         assert_eq!(one_milli.as_millinear(), BigDecimal::from(1));
         assert!(!one_milli.is_one());
         assert!(!one_milli.is_zero());
@@ -156,35 +181,131 @@ mod tests {
 
     #[test]
     fn test_near_token_add() {
-        assert_eq!(YoctoNearToken::zero() + YoctoNearToken::zero(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::zero() + YoctoNearToken::one(), YoctoNearToken::one());
-        assert_eq!(YoctoNearToken::one() + YoctoNearToken::zero(), YoctoNearToken::one());
-        assert_eq!(YoctoNearToken::one() + YoctoNearToken::one(), YoctoNearToken::from_yocto(2));
+        assert_eq!(
+            YoctoNearToken::zero() + YoctoNearToken::zero(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::zero() + YoctoNearToken::one(),
+            YoctoNearToken::one()
+        );
+        assert_eq!(
+            YoctoNearToken::one() + YoctoNearToken::zero(),
+            YoctoNearToken::one()
+        );
+        assert_eq!(
+            YoctoNearToken::one() + YoctoNearToken::one(),
+            YoctoNearToken::from_yocto(2)
+        );
     }
 
     #[test]
     fn test_near_token_sub() {
-        assert_eq!(YoctoNearToken::zero() - YoctoNearToken::zero(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::zero() - YoctoNearToken::one(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::one() - YoctoNearToken::zero(), YoctoNearToken::one());
-        assert_eq!(YoctoNearToken::one() - YoctoNearToken::one(), YoctoNearToken::zero());
+        assert_eq!(
+            YoctoNearToken::zero() - YoctoNearToken::zero(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::zero() - YoctoNearToken::one(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::one() - YoctoNearToken::zero(),
+            YoctoNearToken::one()
+        );
+        assert_eq!(
+            YoctoNearToken::one() - YoctoNearToken::one(),
+            YoctoNearToken::zero()
+        );
     }
 
     #[test]
     fn test_near_token_mul() {
-        assert_eq!(YoctoNearToken::zero() * YoctoNearToken::zero(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::zero() * YoctoNearToken::one(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::one() * YoctoNearToken::zero(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::one() * YoctoNearToken::one(), YoctoNearToken::one());
-        assert_eq!(YoctoNearToken::from(5) * YoctoNearToken::from(2), YoctoNearToken::from(10));
+        assert_eq!(
+            YoctoNearToken::zero() * YoctoNearToken::zero(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::zero() * YoctoNearToken::one(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::one() * YoctoNearToken::zero(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::one() * YoctoNearToken::one(),
+            YoctoNearToken::one()
+        );
+        assert_eq!(
+            YoctoNearToken::from(5) * YoctoNearToken::from(2),
+            YoctoNearToken::from(10)
+        );
     }
 
     #[test]
     fn test_near_token_div() {
-        assert_eq!(YoctoNearToken::zero() / YoctoNearToken::one(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::one() / YoctoNearToken::one(), YoctoNearToken::one());
-        assert_eq!(YoctoNearToken::one() / YoctoNearToken::zero(), YoctoNearToken::zero());
-        assert_eq!(YoctoNearToken::from(10) / YoctoNearToken::from(2), YoctoNearToken::from(5));
-        assert_eq!(YoctoNearToken::from(10) / YoctoNearToken::from(3), YoctoNearToken::from(3));
+        assert_eq!(
+            YoctoNearToken::zero() / YoctoNearToken::one(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::one() / YoctoNearToken::one(),
+            YoctoNearToken::one()
+        );
+        assert_eq!(
+            YoctoNearToken::one() / YoctoNearToken::zero(),
+            YoctoNearToken::zero()
+        );
+        assert_eq!(
+            YoctoNearToken::from(10) / YoctoNearToken::from(2),
+            YoctoNearToken::from(5)
+        );
+        assert_eq!(
+            YoctoNearToken::from(10) / YoctoNearToken::from(3),
+            YoctoNearToken::from(3)
+        );
+    }
+
+    #[test]
+    fn test_near_token_json_serialization() {
+        // ゼロ値のテスト
+        let token = YoctoNearToken::zero();
+        let json = serde_json::to_string(&token).unwrap();
+        assert_eq!(json, "\"0\"");
+        let deserialized: YoctoNearToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, token);
+
+        // 1 Yocto NEAR のテスト
+        let token = YoctoNearToken::one();
+        let json = serde_json::to_string(&token).unwrap();
+        assert_eq!(json, "\"1\"");
+        let deserialized: YoctoNearToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, token);
+
+        // 1 NEAR のテスト
+        let token = YoctoNearToken::from_near(BigDecimal::from(1));
+        let json = serde_json::to_string(&token).unwrap();
+        assert_eq!(json, "\"1000000000000000000000000\"");
+        let deserialized: YoctoNearToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, token);
+
+        // 大きな値のテスト
+        let token = YoctoNearToken::from_yocto(u128::MAX);
+        let json = serde_json::to_string(&token).unwrap();
+        assert_eq!(json, "\"340282366920938463463374607431768211455\"");
+        let deserialized: YoctoNearToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, token);
+    }
+
+    #[test]
+    fn test_near_token_json_deserialization_error() {
+        // 不正な入力値のテスト
+        let result: Result<YoctoNearToken, _> = serde_json::from_str("\"invalid\"");
+        assert!(result.is_err());
+
+        // 負の値のテスト（u128 では負の値は表現できない）
+        let result: Result<YoctoNearToken, _> = serde_json::from_str("\"-1\"");
+        assert!(result.is_err());
     }
 }
