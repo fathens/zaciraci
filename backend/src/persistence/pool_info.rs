@@ -224,6 +224,7 @@ impl RefPoolInfo {
                 for db_pool in result {
                     pool_infos.push(RefPoolInfo::from_db(db_pool)?);
                 }
+                pool_infos.sort_by_key(|pool| pool.id);
                 Ok(pool_infos)
             }
             Ok(Err(e)) => Err(anyhow!("Database query error: {}", e)),
@@ -584,27 +585,27 @@ mod tests {
         let mut pool_infos = Vec::new();
 
         // プールID 1のデータ (timestamp1, timestamp3)
-        let mut pool_info1 = test_pool_info.clone();
-        pool_info1.id = pool_id_1;
-        pool_info1.timestamp = timestamp1;
-        pool_infos.push(pool_info1.to_new_db()?);
+        let mut pool_info1_1 = test_pool_info.clone();
+        pool_info1_1.id = pool_id_1;
+        pool_info1_1.timestamp = timestamp1;
+        pool_infos.push(pool_info1_1.to_new_db()?);
 
-        let mut pool_info2 = test_pool_info.clone();
-        pool_info2.id = pool_id_1;
-        pool_info2.timestamp = timestamp3;
-        pool_infos.push(pool_info2.to_new_db()?);
+        let mut pool_info1_3 = test_pool_info.clone();
+        pool_info1_3.id = pool_id_1;
+        pool_info1_3.timestamp = timestamp3;
+        pool_infos.push(pool_info1_3.to_new_db()?);
 
         // プールID 2のデータ (timestamp2)
-        let mut pool_info3 = test_pool_info.clone();
-        pool_info3.id = pool_id_2;
-        pool_info3.timestamp = timestamp2;
-        pool_infos.push(pool_info3.to_new_db()?);
+        let mut pool_info2_2 = test_pool_info.clone();
+        pool_info2_2.id = pool_id_2;
+        pool_info2_2.timestamp = timestamp2;
+        pool_infos.push(pool_info2_2.to_new_db()?);
 
         // プールID 3のデータ (timestamp4) - 指定期間外のデータ
-        let mut pool_info4 = test_pool_info.clone();
-        pool_info4.id = pool_id_3;
-        pool_info4.timestamp = timestamp4;
-        pool_infos.push(pool_info4.to_new_db()?);
+        let mut pool_info3_4 = test_pool_info.clone();
+        pool_info3_4.id = pool_id_3;
+        pool_info3_4.timestamp = timestamp4;
+        pool_infos.push(pool_info3_4.to_new_db()?);
 
         // データベースに挿入
         match conn
@@ -629,30 +630,11 @@ mod tests {
         })
         .await?;
 
-        // 期待値: プールID 1とプールID 2の情報が取得されるはず（2件）
-        assert_eq!(
-            results.len(),
-            2,
-            "プールIDユニークなデータは2件あるはずです"
-        );
-
-        // 取得したデータのプールIDを配列に集める
-        let pool_ids: Vec<u32> = results.iter().map(|p| p.id).collect();
-
         // プールID 1と2が含まれていることを確認
-        assert!(
-            pool_ids.contains(&pool_id_1),
-            "プールID 1が含まれていません"
-        );
-        assert!(
-            pool_ids.contains(&pool_id_2),
-            "プールID 2が含まれていません"
-        );
-
-        // プールID 3が含まれていないことを確認（期間外のため）
-        assert!(
-            !pool_ids.contains(&pool_id_3),
-            "プールID 3が含まれているべきではありません"
+        assert_eq!(
+            results,
+            vec![pool_info1_3.clone(), pool_info2_2.clone()],
+            "プールID 1と2が含まれていません"
         );
 
         // 期間外のテストケース2: timestamp2からtimestamp4までの期間のユニークなプール情報を取得
@@ -662,10 +644,10 @@ mod tests {
         })
         .await?;
 
-        // 期待値: プールID 1, 2, 3の情報が取得されるはず（3件）
+        // プールID 1, 2, 3の情報が取得されるはず（3件）
         assert_eq!(
-            results2.len(),
-            3,
+            results2,
+            vec![pool_info1_3, pool_info2_2, pool_info3_4],
             "プールIDユニークなデータは3件あるはずです"
         );
 
@@ -680,9 +662,8 @@ mod tests {
             end: empty_end,
         })
         .await?;
-        assert_eq!(
-            empty_results.len(),
-            0,
+        assert!(
+            empty_results.is_empty(),
             "データがない期間では空の配列が返されるべきです"
         );
 
