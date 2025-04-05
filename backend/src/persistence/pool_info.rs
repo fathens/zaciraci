@@ -195,26 +195,19 @@ impl RefPoolInfo {
 
         match conn
             .interact(move |conn| {
-                let distinct_pool_ids: Vec<i32> = pool_info::table
+                // PostgreSQLの distinct_on 機能を使用して、各 pool_id ごとに最新のレコードを取得
+                // これにより、各プールIDごとに個別にクエリを発行する必要がなくなります
+                let results = pool_info::table
                     .filter(pool_info::timestamp.ge(range.start))
                     .filter(pool_info::timestamp.le(range.end))
-                    .select(pool_info::pool_id)
-                    .distinct()
-                    .load(conn)?;
-
-                let mut results = Vec::with_capacity(distinct_pool_ids.len());
-                for pool_id in distinct_pool_ids {
-                    if let Some(pool_info) = pool_info::table
-                        .filter(pool_info::pool_id.eq(pool_id))
-                        .filter(pool_info::timestamp.ge(range.start))
-                        .filter(pool_info::timestamp.le(range.end))
-                        .order_by(pool_info::timestamp.desc())
-                        .first::<DbPoolInfo>(conn)
-                        .optional()?
-                    {
-                        results.push(pool_info);
-                    }
-                }
+                    // distinct_on は各 pool_id ごとに1つのレコードだけを返します
+                    .distinct_on(pool_info::pool_id)
+                    // order_by の最初の条件は distinct_on と同じにする必要があります
+                    // 2番目の条件で各グループ内の順序を指定（この場合は timestamp の降順で最新のものが選ばれます）
+                    .order_by((pool_info::pool_id, pool_info::timestamp.desc()))
+                    .load::<DbPoolInfo>(conn)?
+                ;
+                
                 Ok::<Vec<DbPoolInfo>, diesel::result::Error>(results)
             })
             .await
@@ -224,7 +217,6 @@ impl RefPoolInfo {
                 for db_pool in result {
                     pool_infos.push(RefPoolInfo::from_db(db_pool)?);
                 }
-                pool_infos.sort_by_key(|pool| pool.id);
                 Ok(pool_infos)
             }
             Ok(Err(e)) => Err(anyhow!("Database query error: {}", e)),
