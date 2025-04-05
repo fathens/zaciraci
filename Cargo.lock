@@ -5187,6 +5187,7 @@ name = "zaciraci-frontend"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "bigdecimal",
  "chrono",
  "dioxus",
  "dioxus-logger",

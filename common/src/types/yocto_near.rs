@@ -143,6 +143,53 @@ impl FromStr for YoctoNearToken {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum NearUnit {
+    Near,
+    MilliNear,
+    YoctoNear,
+}
+
+impl std::fmt::Display for NearUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NearUnit::Near => write!(f, "NEAR"),
+            NearUnit::MilliNear => write!(f, "mNEAR"),
+            NearUnit::YoctoNear => write!(f, "yNEAR"),
+        }
+    }
+}
+
+impl std::str::FromStr for NearUnit {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "NEAR" => Ok(NearUnit::Near),
+            "mNEAR" => Ok(NearUnit::MilliNear),
+            "yNEAR" => Ok(NearUnit::YoctoNear),
+            _ => Err(anyhow::anyhow!("Invalid amount unit: {}", s)),
+        }
+    }
+}
+
+impl NearUnit {
+    pub fn to_yocto(&self, amount: BigDecimal) -> YoctoNearToken {
+        match self {
+            NearUnit::Near => YoctoNearToken::from_near(amount),
+            NearUnit::MilliNear => YoctoNearToken::from_millinear(amount),
+            NearUnit::YoctoNear => YoctoNearToken::from_yocto(amount.to_u128().unwrap()),
+        }
+    }
+
+    pub fn from_yocto(&self, amount: YoctoNearToken) -> BigDecimal {
+        match self {
+            NearUnit::Near => amount.as_near(),
+            NearUnit::MilliNear => amount.as_millinear(),
+            NearUnit::YoctoNear => BigDecimal::from(amount.as_yoctonear()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

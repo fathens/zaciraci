@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
+bigdecimal = { workspace = true }
 zaciraci-common = { path = "../common" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
