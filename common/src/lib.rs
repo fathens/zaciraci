@@ -1,5 +1,6 @@
 pub mod config;
 pub mod ollama;
+pub mod pools;
 pub mod stats;
 pub mod types;
 

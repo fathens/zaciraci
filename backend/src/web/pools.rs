@@ -5,14 +5,18 @@ use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::types::{MicroNear, MilliNear};
 use crate::{jsonrpc, ref_finance, wallet};
+use axum::Json;
 use axum::{
     Router,
     extract::{Path, State},
-    routing::get,
+    routing::{get, post},
 };
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
+use std::collections::HashMap;
 use std::sync::Arc;
+use zaciraci_common::pools::{TradeRequest, TradeResponse};
+use zaciraci_common::types::YoctoNearToken;
 
 fn path(sub: &str) -> String {
     format!("/pools/{sub}")
@@ -38,12 +42,11 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
             &path("run_swap/{token_in_account}/{initial_value}/{token_out_account}"),
             get(run_swap),
         )
+        .route(&path("estimate_trade"), post(estimate_trade))
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool_info::PoolInfoList::read_from_db(None)
-        .await
-        .unwrap();
+    let pools = pool_info::PoolInfoList::read_from_db(None).await.unwrap();
     format!("Pools: {}", pools.len())
 }
 
@@ -77,9 +80,7 @@ async fn get_return(
     use crate::ref_finance::errors::Error;
 
     let client = jsonrpc::new_client();
-    let pools = pool_info::PoolInfoList::read_from_db(None)
-        .await
-        .unwrap();
+    let pools = pool_info::PoolInfoList::read_from_db(None).await.unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -94,9 +95,7 @@ async fn get_return(
 }
 
 async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
-    let pools = pool_info::PoolInfoList::read_from_db(None)
-        .await
-        .unwrap();
+    let pools = pool_info::PoolInfoList::read_from_db(None).await.unwrap();
     let tokens = ref_finance::path::all_tokens(pools);
     let mut tokens: Vec<_> = tokens.iter().map(|t| t.to_string()).collect();
     tokens.sort();
@@ -111,9 +110,7 @@ async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
-    let pools = pool_info::PoolInfoList::read_from_db(None)
-        .await
-        .unwrap();
+    let pools = pool_info::PoolInfoList::read_from_db(None).await.unwrap();
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
     let start: TokenAccount = token_account.parse().unwrap();
@@ -136,9 +133,7 @@ async fn pick_goals(
     Path((token_account, initial_value)): Path<(String, String)>,
 ) -> String {
     let gas_price = jsonrpc::new_client().get_gas_price(None).await.unwrap();
-    let pools = pool_info::PoolInfoList::read_from_db(None)
-        .await
-        .unwrap();
+    let pools = pool_info::PoolInfoList::read_from_db(None).await.unwrap();
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
     let start: TokenAccount = token_account.parse().unwrap();
@@ -203,4 +198,37 @@ async fn run_swap(
         }
         Err(e) => format!("Error: {e}"),
     }
+}
+
+async fn estimate_trade(
+    State(_): State<Arc<AppState>>,
+    Json(request): Json<TradeRequest>,
+) -> Json<TradeResponse> {
+    let pools = pool_info::PoolInfoList::read_from_db(Some(request.timestamp))
+        .await
+        .unwrap();
+    let graph = ref_finance::path::graph::TokenGraph::new(pools);
+    let amount_in = request.amount_in.as_yoctonear();
+    let start_token: TokenAccount = request.token_in.into();
+    let goal_token: TokenAccount = request.token_out.into();
+    let start = &start_token.into();
+    let goal = &goal_token.into();
+
+    let goals = graph.update_graph(start).unwrap();
+    let is_goal = goals.contains(goal);
+    if !is_goal {
+        panic!("goal not found");
+    }
+    let values: HashMap<_, _> = graph
+        .list_values(amount_in, start, &[goal.clone()])
+        .unwrap()
+        .into_iter()
+        .collect();
+    let value = values.get(goal).expect("goal not found");
+
+    let result = TradeResponse {
+        amount_out: YoctoNearToken::from_yocto(*value),
+    };
+
+    Json(result)
 }
