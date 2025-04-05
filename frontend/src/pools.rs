@@ -10,30 +10,36 @@ pub fn view() -> Element {
     let mut timestamp_a = use_signal(|| now.clone());
     let mut timestamp_b = use_signal(|| now.clone());
     let mut timestamp_c = use_signal(|| now.clone());
+    let mut timestamp_d = use_signal(|| now.clone());
 
     let mut amount_unit_a = use_signal(|| NearUnit::Near.to_string());
     let mut amount_unit_b = use_signal(|| NearUnit::Near.to_string());
     let mut amount_unit_c = use_signal(|| NearUnit::Near.to_string());
+    let mut amount_unit_d = use_signal(|| NearUnit::Near.to_string());
 
     let mut amount_in_a = use_signal(|| "1".to_string());
     let mut amount_in_b = use_signal(|| "1".to_string());
     let mut amount_in_c = use_signal(|| "1".to_string());
+    let mut amount_in_d = use_signal(|| "1".to_string());
 
     let mut amount_out_a = use_signal(|| "0".to_string());
     let mut amount_out_b = use_signal(|| "0".to_string());
     let mut amount_out_c = use_signal(|| "0".to_string());
+    let mut amount_out_d = use_signal(|| "0".to_string());
 
     let mut token_in_a = use_signal(|| "wrap.near".to_string());
     let mut token_in_b = use_signal(|| "wrap.near".to_string());
     let mut token_in_c = use_signal(|| "wrap.near".to_string());
+    let mut token_in_d = use_signal(|| "wrap.near".to_string());
 
     let mut token_out_a = use_signal(|| "".to_string());
     let mut token_out_b = use_signal(|| "".to_string());
     let mut token_out_c = use_signal(|| "".to_string());
+    let mut token_out_d = use_signal(|| "".to_string());
 
     rsx! {
         div { class: "trade-estimates-container",
-            style: "display: flex; flex-direction: column; gap: 2rem;",
+            style: "display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;",
             // A
             div { class: "estimate_trade-container",
                 div { class: "timestamp",
@@ -199,6 +205,63 @@ pub fn view() -> Element {
 
                             let amount_out = unit.from_yocto(res.amount_out);
                             amount_out_c.set(amount_out.to_string());
+                        });
+                    },
+                    "Estimate"
+                }
+            }
+
+            // D
+            div { class: "estimate_trade-container",
+                div { class: "timestamp",
+                    input { type: "datetime-local", name: "timestamp_d", value: "{timestamp_d}",
+                        oninput: move |e| timestamp_d.set(e.value())
+                    }
+                }
+                div { class: "token_in",
+                    input { type: "text", name: "token_in_d", value: "{token_in_d}",
+                        oninput: move |e| token_in_d.set(e.value())
+                    }
+                }
+                div { class: "token_out",
+                    input { type: "text", name: "token_out_d", value: "{token_out_d}",
+                        oninput: move |e| token_out_d.set(e.value())
+                    }
+                }
+                div { class: "amount",
+                    div { class: "amount_in",
+                        input { type: "text", name: "amount_in_d", value: "{amount_in_d}",
+                            oninput: move |e| amount_in_d.set(e.value())
+                        }
+                        select { 
+                            name: "amount_unit_d",
+                            value: "{amount_unit_d.to_string()}",
+                            onchange: move |e| amount_unit_d.set(e.value()),
+                            option { value: "NEAR", "NEAR" }
+                            option { value: "mNEAR", "mNEAR" }
+                            option { value: "yNEAR", "yNEAR" }
+                        }
+                    }
+                    div { class: "amount_out",
+                        input { type: "text", name: "amount_out_d", value: "{amount_out_d}",
+                            oninput: move |e| amount_out_d.set(e.value())
+                        }
+                    }
+                }
+                button { class: "btn btn-primary",
+                    onclick: move |_| {
+                        spawn_local(async move {
+                            let unit: NearUnit = amount_unit_d().parse().unwrap();
+                            let amount_in = unit.to_yocto(amount_in_d().parse().unwrap());
+                            let res = client().pools.estimate_trade(TradeRequest {
+                                timestamp: timestamp_d().parse().unwrap(),
+                                token_in: token_in_d().parse().unwrap(),
+                                token_out: token_out_d().parse().unwrap(),
+                                amount_in,
+                            }).await.unwrap();
+
+                            let amount_out = unit.from_yocto(res.amount_out);
+                            amount_out_d.set(amount_out.to_string());
                         });
                     },
                     "Estimate"
