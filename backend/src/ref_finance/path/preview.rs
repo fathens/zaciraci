@@ -1,6 +1,6 @@
 use crate::ref_finance;
 use crate::ref_finance::path::graph::TokenGraph;
-use crate::ref_finance::pool_info::{TokenPair, TokenPairLike};
+use crate::ref_finance::pool_info::{TokenPairLike, TokenPath};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::gas_price::GasPrice;
 use crate::Result;
@@ -82,12 +82,12 @@ impl<M> PreviewList<M> {
         self,
         graph: &TokenGraph,
         start: &TokenInAccount,
-    ) -> Result<(Vec<(Preview<M>, Vec<TokenPair>)>, Vec<TokenAccount>)> {
+    ) -> Result<(Vec<(Preview<M>, TokenPath)>, Vec<TokenAccount>)> {
         let mut tokens = Vec::new();
         let mut pre_path = Vec::new();
         for p in self.list {
             let path = ref_finance::path::swap_path(graph, start, &p.token).await?;
-            for pair in path.iter() {
+            for pair in path.0.iter() {
                 tokens.push(pair.token_in_id().into());
                 tokens.push(pair.token_out_id().into());
             }

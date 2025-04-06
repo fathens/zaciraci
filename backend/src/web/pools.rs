@@ -175,7 +175,7 @@ async fn run_swap(
     let path = ref_finance::path::swap_path(&graph, start, goal)
         .await
         .unwrap();
-    let tokens = ref_finance::swap::gather_token_accounts(&[&path]);
+    let tokens = ref_finance::swap::gather_token_accounts(&[&path.0]);
     let res = ref_finance::storage::check_and_deposit(&client, &wallet, &tokens)
         .await
         .unwrap();
@@ -187,7 +187,7 @@ async fn run_swap(
         initial_in: amount_in,
         min_out: amount_in + MilliNear::of(1).to_yocto(),
     };
-    let res = ref_finance::swap::run_swap(&client, &wallet, &path, arg).await;
+    let res = ref_finance::swap::run_swap(&client, &wallet, &path.0, arg).await;
 
     match res {
         Ok((tx_hash, value)) => {
@@ -264,11 +264,13 @@ async fn estimate_trade(
         );
         if prev_out > 0 {
             let reversed_path = path.reversed();
-            let reversed_out = reversed_path.calc_value(prev_out).unwrap();
+            let reversed_prev_out = reversed_path.calc_value(prev_out).unwrap();
+            let reversed_amount_out = reversed_path.calc_value(amount_out).unwrap();
             info!(log, "reversed value calculated";
                 "prev_out" => %prev_out,
                 "amount_out" => %amount_out,
-                "reversed_out" => %reversed_out,
+                "reversed_prev_out" => %reversed_prev_out,
+                "reversed_amount_out" => %reversed_amount_out,
             );
         }
         amount_out

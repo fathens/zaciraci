@@ -141,6 +141,10 @@ impl TokenPair {
 pub struct TokenPath(pub Vec<TokenPair>);
 
 impl TokenPath {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn reversed(&self) -> Self {
         Self(self.0.iter().rev().map(|p| p.reversed()).collect())
     }

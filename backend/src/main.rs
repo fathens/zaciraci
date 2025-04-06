@@ -1,21 +1,20 @@
 #![deny(warnings)]
 
-mod trade;
 mod jsonrpc;
 mod logging;
 mod ollama;
 mod persistence;
 mod ref_finance;
+mod trade;
 mod types;
 mod wallet;
 mod web;
 
-pub use zaciraci_common::config;
 use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
-use crate::ref_finance::pool_info::TokenPair;
+use crate::ref_finance::pool_info::TokenPath;
 use crate::ref_finance::token_account::{TokenInAccount, WNEAR_TOKEN};
 use crate::types::MicroNear;
 use crate::wallet::Wallet;
@@ -25,6 +24,7 @@ use humantime::parse_duration;
 use near_primitives::types::Balance;
 use once_cell::sync::Lazy;
 use std::time::Duration;
+pub use zaciraci_common::config;
 
 type Result<T> = anyhow::Result<T>;
 
@@ -151,7 +151,7 @@ async fn swap_each<A, C, W>(
     client: &C,
     wallet: &W,
     preview: Preview<A>,
-    path: Vec<TokenPair>,
+    path: TokenPath,
 ) -> Result<()>
 where
     A: Into<Balance> + Copy,
@@ -170,7 +170,7 @@ where
         initial_in: preview.input_value.into(),
         min_out: preview.output_value - preview.gain,
     };
-    let swap_result = ref_finance::swap::run_swap(client, wallet, &path, arg).await;
+    let swap_result = ref_finance::swap::run_swap(client, wallet, &path.0, arg).await;
 
     let (sent_tx, out) = match swap_result {
         Ok(result) => result,
