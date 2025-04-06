@@ -629,24 +629,31 @@ mod tests {
         // プールID 1, 2, 3の情報が取得されるはず（3件）
         assert_eq!(
             results2,
-            vec![pool_info1_3, pool_info2_2, pool_info3_4],
+            vec![pool_info1_3.clone(), pool_info2_2.clone(), pool_info3_4.clone()],
             "プールIDユニークなデータは3件あるはずです"
         );
 
         // テストケース3: 範囲内にデータがない場合
-        let empty_start =
-            NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let empty_end =
-            NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap();
-
         let empty_results = RefPoolInfo::get_all_unique_between(TimeRange {
-            start: empty_start,
-            end: empty_end,
+            start: NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            end: NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap(),
         })
         .await?;
         assert!(
             empty_results.is_empty(),
             "データがない期間では空の配列が返されるべきです"
+        );
+
+        // テストケース4: 1-2 の範囲のユニークなプール情報を取得
+        let results4 = RefPoolInfo::get_all_unique_between(TimeRange {
+            start: timestamp1,
+            end: timestamp2,
+        })
+        .await?;
+        assert_eq!(
+            results4,
+            vec![pool_info1_1.clone(), pool_info2_2.clone()],
+            "プールIDユニークなデータは2件あります"
         );
 
         Ok(())

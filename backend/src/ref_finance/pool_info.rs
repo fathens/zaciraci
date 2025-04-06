@@ -351,7 +351,6 @@ impl PoolInfoList {
         Ok(Arc::new(PoolInfoList::new(pools)))
     }
 
-    #[allow(dead_code)]
     pub async fn read_from_db(timestamp: Option<NaiveDateTime>) -> Result<Arc<PoolInfoList>> {
         let first = if let Some(timestamp) = timestamp {
             PoolInfo::get_latest_before(0, timestamp).await?
