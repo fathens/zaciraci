@@ -3,7 +3,8 @@ use crate::logging::*;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
-use crate::ref_finance::pool_info::{PoolInfoList, TokenPair, TokenPairLike};
+use crate::ref_finance::pool_info::PoolInfoList;
+use crate::ref_finance::pool_info::TokenPath;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
 use petgraph::algo;
@@ -117,7 +118,7 @@ impl TokenGraph {
                 self.get_path(start, goal)
             };
             match res_path {
-                Ok(path) => match Self::calc_value(initial, &path) {
+                Ok(path) => match path.calc_value(initial) {
                     Ok(value) => {
                         values.insert(goal.clone(), value);
                     }
@@ -143,21 +144,7 @@ impl TokenGraph {
         Ok(values)
     }
 
-    fn calc_value(initial: u128, pairs: &[TokenPair]) -> Result<u128> {
-        if initial == 0 {
-            return Ok(0);
-        }
-        let mut value = initial;
-        for pair in pairs.iter() {
-            value = pair.estimate_return(value)?;
-            if value == 0 {
-                return Ok(0);
-            }
-        }
-        Ok(value)
-    }
-
-    fn get_path(&self, start: &TokenInAccount, goal: &TokenOutAccount) -> Result<Vec<TokenPair>> {
+    pub fn get_path(&self, start: &TokenInAccount, goal: &TokenOutAccount) -> Result<TokenPath> {
         let mut result = Vec::new();
         let edges = self.graph.get_edges(start, goal)?;
         for edge in edges.iter() {
@@ -165,7 +152,7 @@ impl TokenGraph {
             let pair = self.pools.get_pair(pair_id)?;
             result.push(pair);
         }
-        Ok(result)
+        Ok(TokenPath(result))
     }
 
     // 往路と復路のパスを TokenPair のリストで返す
@@ -173,9 +160,10 @@ impl TokenGraph {
         &self,
         start: &TokenInAccount,
         goal: &TokenOutAccount,
-    ) -> Result<Vec<TokenPair>> {
+    ) -> Result<TokenPath> {
         let mut path = self.get_path(start, goal)?;
-        path.extend(self.get_path(&goal.as_in(), &start.as_out())?);
+        path.0
+            .extend(self.get_path(&goal.as_in(), &start.as_out())?.0);
         Ok(path)
     }
 }

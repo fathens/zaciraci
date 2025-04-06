@@ -106,6 +106,14 @@ impl TokenPair {
         }
     }
 
+    pub fn reversed(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            token_in: self.token_out.as_index().into(),
+            token_out: self.token_in.as_index().into(),
+        }
+    }
+
     pub fn estimate_normal_return(&self) -> Result<(u128, u128)> {
         let balance_in = self.pool.amount(self.token_in.as_index())?;
         if balance_in == 0 {
@@ -127,6 +135,28 @@ impl TokenPair {
                 self.pool.token(self.token_out.as_index())?.into(),
             )
             .await
+    }
+}
+
+pub struct TokenPath(pub Vec<TokenPair>);
+
+impl TokenPath {
+    pub fn reversed(&self) -> Self {
+        Self(self.0.iter().rev().map(|p| p.reversed()).collect())
+    }
+
+    pub fn calc_value(&self, initial: u128) -> Result<u128> {
+        if initial == 0 {
+            return Ok(0);
+        }
+        let mut value = initial;
+        for pair in self.0.iter() {
+            value = pair.estimate_return(value)?;
+            if value == 0 {
+                return Ok(0);
+            }
+        }
+        Ok(value)
     }
 }
 
