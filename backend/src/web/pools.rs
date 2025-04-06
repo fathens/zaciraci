@@ -13,7 +13,6 @@ use axum::{
     extract::{Path, State},
     routing::{get, post},
 };
-use num_bigint::BigUint;
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
@@ -237,8 +236,7 @@ async fn estimate_trade(
             "goal_token" => format!("{goal}"),
         ));
         let graph = TokenGraph::new(pools);
-        let goals = graph.update_graph(start).unwrap();
-        if !goals.contains(goal) {
+        if !graph.update_single_path(start, goal).unwrap() {
             panic!("goal not found");
         }
 
@@ -275,15 +273,15 @@ async fn estimate_trade(
         }
         amount_out
     }
-    let mut amount_outs: Vec<BigUint> = vec![];
+    let mut amount_outs: Vec<u128> = vec![];
     for i in 0..10 {
-        let prev_out = if i > 0 { amount_outs[i - 1].to_u128().unwrap() } else { 0 };
+        let prev_out = if i > 0 { amount_outs[i - 1] } else { 0 };
         let v = out_amount(i, prev_out, pools.clone(), amount_in, &start, &goal);
-        amount_outs.push(BigUint::from(v));
+        amount_outs.push(v);
     }
-    let amount_out = amount_outs.iter().sum::<BigUint>() / BigUint::from(amount_outs.len());
+    let amount_out = amount_outs.iter().max().unwrap();
 
     Json(TradeResponse {
-        amount_out: YoctoNearToken::from_yocto(amount_out.to_u128().unwrap()),
+        amount_out: YoctoNearToken::from_yocto(*amount_out),
     })
 }

@@ -53,6 +53,18 @@ impl TokenGraph {
         CachedPath::new(graph, nodes)
     }
 
+    pub fn update_single_path(&self, start: &TokenInAccount, goal: &TokenOutAccount) -> Result<bool> {
+        let log = DEFAULT.new(o!(
+            "function" => "TokenGraph::update_single_path",
+            "start" => format!("{:?}", start),
+            "goal" => format!("{:?}", goal),
+        ));
+        info!(log, "start");
+
+        let out = self.graph.update_path(start, Some(goal.clone()))?;
+        Ok(out.contains(goal))
+    }
+
     pub fn update_graph(&self, start: &TokenInAccount) -> Result<Vec<TokenOutAccount>> {
         let log = DEFAULT.new(o!(
             "function" => "TokenGraph::update_graph",
