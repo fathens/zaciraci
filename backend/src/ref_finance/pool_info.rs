@@ -4,13 +4,12 @@ use crate::persistence::TimeRange;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
 use crate::ref_finance::{CONTRACT_ADDRESS, errors::Error};
-use anyhow::{Context, Result, bail, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::NaiveDateTime;
 use futures_util::future::join_all;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
-use num_integer::Roots;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 use std::collections::HashMap;
@@ -165,7 +164,9 @@ impl TokenPath {
 }
 
 pub const FEE_DIVISOR: u32 = 10_000;
-pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| u128::MAX.sqrt().sqrt());
+pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| {
+    zaciraci_common::types::YoctoNearToken::from_near(BigDecimal::from(1000)).as_yoctonear()
+});
 
 impl PoolInfo {
     pub fn new(id: u32, bare: PoolInfoBared, timestamp: chrono::NaiveDateTime) -> Self {
@@ -409,7 +410,7 @@ impl PoolInfoList {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]
@@ -521,5 +522,13 @@ mod test {
         let result = sample.estimate_return(0.into(), 100, 1.into());
         assert!(result.is_ok());
         assert_eq!(10756643_u128, result.unwrap());
+    }
+
+    #[test]
+    fn test_max_amount() {
+        let v = *MAX_AMOUNT;
+        assert!(v > 0);
+        assert!(v < u128::MAX);
+        assert!(v == 1000_000_000__000_000__000_000__000_000);
     }
 }
