@@ -60,18 +60,18 @@ pub fn view() -> Element {
                         }
                     }
                     div { class: "token_in",
-                        input { type: "text", name: "token_in_a", value: "{token_in_a}",
+                        input { type: "text", name: "token_in_a", value: "{token_in_a}", size: "30",
                             oninput: move |e| token_in_a.set(e.value())
                         }
                     }
                     div { class: "token_out",
-                        input { type: "text", name: "token_out_a", value: "{token_out_a}",
+                        input { type: "text", name: "token_out_a", value: "{token_out_a}", size: "30",
                             oninput: move |e| token_out_a.set(e.value())
                         }
                     }
                     div { class: "amount",
                         div { class: "amount_in",
-                            input { type: "text", name: "amount_in_a", value: "{amount_in_a}",
+                            input { type: "text", name: "amount_in_a", value: "{amount_in_a}", size: "30",
                                 oninput: move |e| amount_in_a.set(e.value())
                             }
                             select { 
@@ -84,7 +84,7 @@ pub fn view() -> Element {
                             }
                         }
                         div { class: "amount_out",
-                            input { type: "text", name: "amount_out_a", value: "{amount_out_a}",
+                            input { type: "text", name: "amount_out_a", value: "{amount_out_a}", size: "30",
                                 oninput: move |e| amount_out_a.set(e.value())
                             }
                         }
@@ -122,18 +122,18 @@ pub fn view() -> Element {
                         }
                     }
                     div { class: "token_in",
-                        input { type: "text", name: "token_in_b", value: "{token_in_b}",
+                        input { type: "text", name: "token_in_b", value: "{token_in_b}", size: "30",
                             oninput: move |e| token_in_b.set(e.value())
                         }
                     }
                     div { class: "token_out",
-                        input { type: "text", name: "token_out_b", value: "{token_out_b}",
+                        input { type: "text", name: "token_out_b", value: "{token_out_b}", size: "30",
                             oninput: move |e| token_out_b.set(e.value())
                         }
                     }
                     div { class: "amount",
                         div { class: "amount_in",
-                            input { type: "text", name: "amount_in_b", value: "{amount_in_b}",
+                            input { type: "text", name: "amount_in_b", value: "{amount_in_b}", size: "30",
                                 oninput: move |e| amount_in_b.set(e.value())
                             }
                             select { 
@@ -146,7 +146,7 @@ pub fn view() -> Element {
                             }
                         }
                         div { class: "amount_out",
-                            input { type: "text", name: "amount_out_b", value: "{amount_out_b}",
+                            input { type: "text", name: "amount_out_b", value: "{amount_out_b}", size: "30",
                                 oninput: move |e| amount_out_b.set(e.value())
                             }
                         }
@@ -184,18 +184,18 @@ pub fn view() -> Element {
                         }
                     }
                     div { class: "token_in",
-                        input { type: "text", name: "token_in_c", value: "{token_in_c}",
+                        input { type: "text", name: "token_in_c", value: "{token_in_c}", size: "30",
                             oninput: move |e| token_in_c.set(e.value())
                         }
                     }
                     div { class: "token_out",
-                        input { type: "text", name: "token_out_c", value: "{token_out_c}",
+                        input { type: "text", name: "token_out_c", value: "{token_out_c}", size: "30",
                             oninput: move |e| token_out_c.set(e.value())
                         }
                     }
                     div { class: "amount",
                         div { class: "amount_in",
-                            input { type: "text", name: "amount_in_c", value: "{amount_in_c}",
+                            input { type: "text", name: "amount_in_c", value: "{amount_in_c}", size: "30",
                                 oninput: move |e| amount_in_c.set(e.value())
                             }
                             select { 
@@ -208,7 +208,7 @@ pub fn view() -> Element {
                             }
                         }
                         div { class: "amount_out",
-                            input { type: "text", name: "amount_out_c", value: "{amount_out_c}",
+                            input { type: "text", name: "amount_out_c", value: "{amount_out_c}", size: "30",
                                 oninput: move |e| amount_out_c.set(e.value())
                             }
                         }
@@ -246,18 +246,18 @@ pub fn view() -> Element {
                         }
                     }
                     div { class: "token_in",
-                        input { type: "text", name: "token_in_d", value: "{token_in_d}",
+                        input { type: "text", name: "token_in_d", value: "{token_in_d}", size: "30",
                             oninput: move |e| token_in_d.set(e.value())
                         }
                     }
                     div { class: "token_out",
-                        input { type: "text", name: "token_out_d", value: "{token_out_d}",
+                        input { type: "text", name: "token_out_d", value: "{token_out_d}", size: "30",
                             oninput: move |e| token_out_d.set(e.value())
                         }
                     }
                     div { class: "amount",
                         div { class: "amount_in",
-                            input { type: "text", name: "amount_in_d", value: "{amount_in_d}",
+                            input { type: "text", name: "amount_in_d", value: "{amount_in_d}", size: "30",
                                 oninput: move |e| amount_in_d.set(e.value())
                             }
                             select { 
@@ -270,7 +270,7 @@ pub fn view() -> Element {
                             }
                         }
                         div { class: "amount_out",
-                            input { type: "text", name: "amount_out_d", value: "{amount_out_d}",
+                            input { type: "text", name: "amount_out_d", value: "{amount_out_d}", size: "30",
                                 oninput: move |e| amount_out_d.set(e.value())
                             }
                         }
