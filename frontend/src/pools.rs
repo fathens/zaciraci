@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{pools::TradeRequest, types::NearUnit};
@@ -36,6 +37,15 @@ pub fn view() -> Element {
     let mut token_out_b = use_signal(|| "".to_string());
     let mut token_out_c = use_signal(|| "".to_string());
     let mut token_out_d = use_signal(|| "".to_string());
+
+    let mut loading_a = use_signal(|| "".to_string());
+    let mut loading_b = use_signal(|| "".to_string());
+    let mut loading_c = use_signal(|| "".to_string());
+    let mut loading_d = use_signal(|| "".to_string());
+
+    fn format_amount(amount: BigDecimal) -> String {
+        format!("{:.24}", amount)
+    }
 
     rsx! {
         div { class: "pools-view",
@@ -79,23 +89,28 @@ pub fn view() -> Element {
                             }
                         }
                     }
-                    button { class: "btn btn-primary",
-                        onclick: move |_| {
-                            spawn_local(async move {
-                                let unit: NearUnit = amount_unit_a().parse().unwrap();
-                                let amount_in = unit.to_yocto(amount_in_a().parse().unwrap());
-                                let res = client().pools.estimate_trade(TradeRequest {
-                                    timestamp: timestamp_a().parse().unwrap(),
-                                    token_in: token_in_a().parse().unwrap(),
-                                    token_out: token_out_a().parse().unwrap(),
-                                    amount_in,
-                                }).await.unwrap();
-
-                                let amount_out = unit.from_yocto(res.amount_out);
-                                amount_out_a.set(amount_out.to_string());
-                            });
-                        },
-                        "Estimate"
+                    div { class: "button-with-loading",
+                        button { class: "btn btn-primary",
+                            onclick: move |_| {
+                                spawn_local(async move {
+                                    let unit: NearUnit = amount_unit_a().parse().unwrap();
+                                    let amount_in = unit.to_yocto(amount_in_a().parse().unwrap());
+                                    amount_out_a.set("".to_string());
+                                    loading_a.set("Loading...".to_string());
+                                    let res = client().pools.estimate_trade(TradeRequest {
+                                        timestamp: timestamp_a().parse().unwrap(),
+                                        token_in: token_in_a().parse().unwrap(),
+                                        token_out: token_out_a().parse().unwrap(),
+                                        amount_in,
+                                    }).await.unwrap();
+                                    loading_a.set("".to_string());
+                                    let amount_out = unit.from_yocto(res.amount_out);
+                                    amount_out_a.set(format_amount(amount_out));
+                                });
+                            },
+                            "Estimate"
+                        }
+                        span { class: "loading", "{loading_a}" }
                     }
                 }
 
@@ -136,23 +151,28 @@ pub fn view() -> Element {
                             }
                         }
                     }
-                    button { class: "btn btn-primary",
-                        onclick: move |_| {
-                            spawn_local(async move {
-                                let unit: NearUnit = amount_unit_b().parse().unwrap();
-                                let amount_in = unit.to_yocto(amount_in_b().parse().unwrap());
-                                let res = client().pools.estimate_trade(TradeRequest {
-                                    timestamp: timestamp_b().parse().unwrap(),
-                                    token_in: token_in_b().parse().unwrap(),
-                                    token_out: token_out_b().parse().unwrap(),
-                                    amount_in,
-                                }).await.unwrap();
-
-                                let amount_out = unit.from_yocto(res.amount_out);
-                                amount_out_b.set(amount_out.to_string());
-                            });
-                        },
-                        "Estimate"
+                    div { class: "button-with-loading",
+                        button { class: "btn btn-primary",
+                            onclick: move |_| {
+                                spawn_local(async move {
+                                    let unit: NearUnit = amount_unit_b().parse().unwrap();
+                                    let amount_in = unit.to_yocto(amount_in_b().parse().unwrap());
+                                    amount_out_b.set("".to_string());
+                                    loading_b.set("Loading...".to_string());
+                                    let res = client().pools.estimate_trade(TradeRequest {
+                                        timestamp: timestamp_b().parse().unwrap(),
+                                        token_in: token_in_b().parse().unwrap(),
+                                        token_out: token_out_b().parse().unwrap(),
+                                        amount_in,
+                                    }).await.unwrap();
+                                    loading_b.set("".to_string());
+                                    let amount_out = unit.from_yocto(res.amount_out);
+                                    amount_out_b.set(format_amount(amount_out));
+                                });
+                            },
+                            "Estimate"
+                        }
+                        span { class: "loading", "{loading_b}" }
                     }
                 }
 
@@ -193,23 +213,28 @@ pub fn view() -> Element {
                             }
                         }
                     }
-                    button { class: "btn btn-primary",
-                        onclick: move |_| {
-                            spawn_local(async move {
-                                let unit: NearUnit = amount_unit_c().parse().unwrap();
-                                let amount_in = unit.to_yocto(amount_in_c().parse().unwrap());
-                                let res = client().pools.estimate_trade(TradeRequest {
-                                    timestamp: timestamp_c().parse().unwrap(),
-                                    token_in: token_in_c().parse().unwrap(),
-                                    token_out: token_out_c().parse().unwrap(),
-                                    amount_in,
-                                }).await.unwrap();
-
-                                let amount_out = unit.from_yocto(res.amount_out);
-                                amount_out_c.set(amount_out.to_string());
-                            });
-                        },
-                        "Estimate"
+                    div { class: "button-with-loading",
+                        button { class: "btn btn-primary",
+                            onclick: move |_| {
+                                spawn_local(async move {
+                                    let unit: NearUnit = amount_unit_c().parse().unwrap();
+                                    let amount_in = unit.to_yocto(amount_in_c().parse().unwrap());
+                                    amount_out_c.set("".to_string());
+                                    loading_c.set("Loading...".to_string());
+                                    let res = client().pools.estimate_trade(TradeRequest {
+                                        timestamp: timestamp_c().parse().unwrap(),
+                                        token_in: token_in_c().parse().unwrap(),
+                                        token_out: token_out_c().parse().unwrap(),
+                                        amount_in,
+                                    }).await.unwrap();
+                                    loading_c.set("".to_string());
+                                    let amount_out = unit.from_yocto(res.amount_out);
+                                    amount_out_c.set(format_amount(amount_out));
+                                });
+                            },
+                            "Estimate"
+                        }
+                        span { class: "loading", "{loading_c}" }
                     }
                 }
 
@@ -250,23 +275,29 @@ pub fn view() -> Element {
                             }
                         }
                     }
-                    button { class: "btn btn-primary",
-                        onclick: move |_| {
-                            spawn_local(async move {
-                                let unit: NearUnit = amount_unit_d().parse().unwrap();
-                                let amount_in = unit.to_yocto(amount_in_d().parse().unwrap());
-                                let res = client().pools.estimate_trade(TradeRequest {
-                                    timestamp: timestamp_d().parse().unwrap(),
-                                    token_in: token_in_d().parse().unwrap(),
-                                    token_out: token_out_d().parse().unwrap(),
-                                    amount_in,
-                                }).await.unwrap();
+                    div { class: "button-with-loading",
+                        button { class: "btn btn-primary",
+                            onclick: move |_| {
+                                spawn_local(async move {
+                                    let unit: NearUnit = amount_unit_d().parse().unwrap();
+                                    let amount_in = unit.to_yocto(amount_in_d().parse().unwrap());
+                                    amount_out_d.set("".to_string());
+                                    loading_d.set("Loading...".to_string());
+                                    let res = client().pools.estimate_trade(TradeRequest {
+                                        timestamp: timestamp_d().parse().unwrap(),
+                                        token_in: token_in_d().parse().unwrap(),
+                                        token_out: token_out_d().parse().unwrap(),
+                                        amount_in,
+                                    }).await.unwrap();
+                                    loading_d.set("".to_string());
 
-                                let amount_out = unit.from_yocto(res.amount_out);
-                                amount_out_d.set(amount_out.to_string());
-                            });
-                        },
-                        "Estimate"
+                                    let amount_out = unit.from_yocto(res.amount_out);
+                                    amount_out_d.set(format_amount(amount_out));
+                                });
+                            },
+                            "Estimate"
+                        }
+                        span { class: "loading", "{loading_d}" }
                     }
                 }
             }
