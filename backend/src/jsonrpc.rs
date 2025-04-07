@@ -58,10 +58,14 @@ pub fn new_client() -> StandardNearClient<StandardRpcClient> {
 pub trait RpcClient {
     fn server_addr(&self) -> &str;
 
-    async fn call<M: methods::RpcMethod>(
+    fn call<M>(
         &self,
         method: M,
-    ) -> MethodCallResult<M::Response, M::Error>;
+    ) -> impl std::future::Future<Output = MethodCallResult<M::Response, M::Error>> + Send
+    where
+        M: methods::RpcMethod + std::marker::Send + std::marker::Sync,
+        <M as methods::RpcMethod>::Response: std::marker::Send,
+        <M as methods::RpcMethod>::Error: std::marker::Send;
 }
 
 pub trait BlockInfo {
@@ -90,14 +94,14 @@ pub trait TxInfo {
 }
 
 pub trait ViewContract {
-    async fn view_contract<T>(
+    fn view_contract<T>(
         &self,
         receiver: &AccountId,
         method_name: &str,
         args: &T,
-    ) -> Result<CallResult>
+    ) -> impl std::future::Future<Output = Result<CallResult>> + Send
     where
-        T: ?Sized + serde::Serialize;
+        T: ?Sized + serde::Serialize + std::marker::Sync;
 }
 
 pub trait SendTx {
