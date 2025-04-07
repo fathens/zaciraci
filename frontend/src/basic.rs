@@ -13,21 +13,21 @@ pub fn view() -> Element {
 
     let on_healthcheck = move |_| {
         spawn_local(async move {
-            let text = client().healthcheck().await;
+            let text = client().basic.healthcheck().await;
             healthcheck_result.set(text);
         });
     };
 
     let on_native_token_balance = move |_| {
         spawn_local(async move {
-            let text = client().native_token_balance().await;
+            let text = client().basic.native_token_balance().await;
             balance_result.set(text);
         });
     };
 
     let on_native_token_transfer = move |_| {
         spawn_local(async move {
-            let text = client().native_token_transfer(&receiver(), &amount()).await;
+            let text = client().basic.native_token_transfer(&receiver(), &amount()).await;
             transfer_result.set(text);
         });
     };

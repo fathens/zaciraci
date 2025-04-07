@@ -1,14 +1,8 @@
 use crate::Result;
 use crate::logging::*;
-use super::ModelName;
+use super::{Message, ModelName};
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub role: String,
-    pub content: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {

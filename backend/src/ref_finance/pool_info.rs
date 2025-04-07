@@ -1,14 +1,15 @@
 use crate::jsonrpc::ViewContract;
 use crate::logging::*;
+use crate::persistence::TimeRange;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
-use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
-use anyhow::{bail, Context, Result};
+use crate::ref_finance::{CONTRACT_ADDRESS, errors::Error};
+use anyhow::{Context, Result, anyhow, bail};
 use bigdecimal::{BigDecimal, ToPrimitive};
+use chrono::NaiveDateTime;
 use futures_util::future::join_all;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
-use num_integer::Roots;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 use std::collections::HashMap;
@@ -44,9 +45,9 @@ pub struct PoolInfoBared {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolInfo {
-    id: u32,
-    bare: PoolInfoBared,
-    updated_at: chrono::NaiveDateTime,
+    pub id: u32,
+    pub bare: PoolInfoBared,
+    pub timestamp: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +105,14 @@ impl TokenPair {
         }
     }
 
+    pub fn reversed(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            token_in: self.token_out.as_index().into(),
+            token_out: self.token_in.as_index().into(),
+        }
+    }
+
     pub fn estimate_normal_return(&self) -> Result<(u128, u128)> {
         let balance_in = self.pool.amount(self.token_in.as_index())?;
         if balance_in == 0 {
@@ -128,15 +137,43 @@ impl TokenPair {
     }
 }
 
+pub struct TokenPath(pub Vec<TokenPair>);
+
+impl TokenPath {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn reversed(&self) -> Self {
+        Self(self.0.iter().rev().map(|p| p.reversed()).collect())
+    }
+
+    pub fn calc_value(&self, initial: u128) -> Result<u128> {
+        if initial == 0 {
+            return Ok(0);
+        }
+        let mut value = initial;
+        for pair in self.0.iter() {
+            value = pair.estimate_return(value)?;
+            if value == 0 {
+                return Ok(0);
+            }
+        }
+        Ok(value)
+    }
+}
+
 pub const FEE_DIVISOR: u32 = 10_000;
-pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| u128::MAX.sqrt().sqrt());
+pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| {
+    zaciraci_common::types::YoctoNearToken::from_near(BigDecimal::from(1000)).as_yoctonear()
+});
 
 impl PoolInfo {
-    pub fn new(id: u32, bare: PoolInfoBared) -> Self {
+    pub fn new(id: u32, bare: PoolInfoBared, timestamp: chrono::NaiveDateTime) -> Self {
         PoolInfo {
             id,
             bare,
-            updated_at: chrono::Utc::now().naive_utc(),
+            timestamp,
         }
     }
 
@@ -335,9 +372,10 @@ impl PoolInfoList {
                 let count = result.as_ref().map(|v| v.len()).unwrap_or(0);
                 debug!(log, "result"; "count" => count);
                 result.map(move |list| {
-                    list.into_iter()
-                        .enumerate()
-                        .map(move |(i, bare)| Arc::new(PoolInfo::new(i as u32 + index, bare)))
+                    list.into_iter().enumerate().map(move |(i, bare)| {
+                        let timestamp = chrono::Utc::now().naive_utc();
+                        Arc::new(PoolInfo::new(i as u32 + index, bare, timestamp))
+                    })
                 })
             })
             .collect();
@@ -347,10 +385,32 @@ impl PoolInfoList {
         info!(log, "finish"; "count" => pools.len());
         Ok(Arc::new(PoolInfoList::new(pools)))
     }
+
+    pub async fn read_from_db(timestamp: Option<NaiveDateTime>) -> Result<Arc<PoolInfoList>> {
+        let first = if let Some(timestamp) = timestamp {
+            PoolInfo::get_latest_before(0, timestamp).await?
+        } else {
+            PoolInfo::get_latest(0).await?
+        }
+        .ok_or_else(|| anyhow!("no pool found"))?;
+
+        let range = TimeRange {
+            start: first.timestamp,
+            end: timestamp.unwrap_or(chrono::Utc::now().naive_utc()),
+        };
+        let all = PoolInfo::get_all_unique_between(range).await?;
+        Ok(Arc::new(PoolInfoList::new(
+            all.into_iter().map(Arc::new).collect(),
+        )))
+    }
+
+    pub async fn write_to_db(&self) -> Result<()> {
+        PoolInfo::batch_insert(&self.list).await
+    }
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]
@@ -457,9 +517,18 @@ mod test {
                 shares_total_supply: 0_u128.into(),
                 amp: 0,
             },
+            chrono::Utc::now().naive_utc(),
         );
         let result = sample.estimate_return(0.into(), 100, 1.into());
         assert!(result.is_ok());
         assert_eq!(10756643_u128, result.unwrap());
+    }
+
+    #[test]
+    fn test_max_amount() {
+        let v = *MAX_AMOUNT;
+        assert!(v > 0);
+        assert!(v < u128::MAX);
+        assert!(v == 1000_000_000__000_000__000_000__000_000);
     }
 }

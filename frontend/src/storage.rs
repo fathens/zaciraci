@@ -8,7 +8,7 @@ pub fn view() -> Element {
     let mut storage_deposit_min_result = use_signal(|| "None".to_string());
     let on_storage_deposit_min = move |_| {
         spawn_local(async move {
-            let text = client().storage_deposit_min().await;
+            let text = client().storage.deposit_min().await;
             storage_deposit_min_result.set(text);
         });
     };

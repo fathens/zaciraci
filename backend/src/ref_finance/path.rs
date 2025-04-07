@@ -1,6 +1,12 @@
+mod by_token;
+mod cached_evaluate;
+mod edge;
+pub mod graph;
+pub mod preview;
+
 use crate::logging::*;
 use crate::ref_finance::history;
-use crate::ref_finance::pool_info::{PoolInfoList, TokenPair};
+use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::{MicroNear, MilliNear};
 use crate::Result;
@@ -14,15 +20,10 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
-
-mod by_token;
-mod cached_evaluate;
-mod edge;
-pub mod graph;
-pub mod preview;
-
 use crate::types::gas_price::GasPrice;
 use preview::{Preview, PreviewList};
+use super::pool_info::TokenPath;
+
 
 pub fn all_tokens(pools: Arc<PoolInfoList>) -> Vec<TokenAccount> {
     let by_tokens = by_token::PoolsByToken::new(pools);
@@ -48,7 +49,7 @@ pub async fn swap_path(
     graph: &TokenGraph,
     start: &TokenInAccount,
     goal: &TokenOutAccount,
-) -> Result<Vec<TokenPair>> {
+) -> Result<TokenPath> {
     graph.get_path_with_return(start, goal)
 }
 

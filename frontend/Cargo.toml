@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
+bigdecimal = { workspace = true }
 zaciraci-common = { path = "../common" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -28,3 +29,4 @@ chrono = { workspace = true, features = ["serde", "wasmbind"] }
 futures = "0.3"
 once_cell = { workspace = true }
 reqwest = { workspace = true }
+dioxus-markdown = "0.0.1"

@@ -1,4 +1,4 @@
-mod trade;
+pub mod trade;
 
 use crate::Result;
 use crate::config;
@@ -12,6 +12,7 @@ use crate::types::MilliNear;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
 use std::future::Future;
+use std::sync::Arc;
 
 pub async fn run() {
     tokio::spawn(run_record_rates());
@@ -19,12 +20,12 @@ pub async fn run() {
 }
 
 async fn run_record_rates() {
-    const CRON_CONF: &str = "0 * * * * *"; // 毎分
+    const CRON_CONF: &str = "*/5 * * * * *"; // 5秒間隔
     cronjob(CRON_CONF.parse().unwrap(), record_rates, "record_rates").await;
 }
 
 async fn run_trade() {
-    const CRON_CONF: &str = "0 0 0 * * *"; // 毎日0時
+    const CRON_CONF: &str = "0 0 * * * *"; // 毎時0分
     cronjob(CRON_CONF.parse().unwrap(), trade::start, "trade").await;
 }
 
@@ -71,10 +72,13 @@ async fn record_rates() -> Result<()> {
 
     info!(log, "loading pools");
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
-    let graph = ref_finance::path::graph::TokenGraph::new(pools);
+    let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
     let goals = graph.update_graph(quote_token)?;
     info!(log, "found targets"; "goals" => %goals.len());
     let values = graph.list_values(initial_value, quote_token, &goals)?;
+
+    info!(log, "inserting pools");
+    pools.write_to_db().await?;
 
     let log = log.new(o!(
         "num_values" => values.len().to_string(),

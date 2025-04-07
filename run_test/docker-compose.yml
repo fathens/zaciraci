@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:15-bookworm
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=postgres_test
+      - POSTGRES_PASSWORD=postgres_test
+      - POSTGRES_DB=postgres_test
+    volumes:
+      - ./.data:/var/lib/postgresql/data
+      - ./init_pg:/docker-entrypoint-initdb.d
