@@ -53,6 +53,12 @@ impl From<u128> for YoctoNearToken {
     }
 }
 
+impl From<YoctoNearToken> for u128 {
+    fn from(token: YoctoNearToken) -> Self {
+        token.0
+    }
+}
+
 impl Zero for YoctoNearToken {
     fn zero() -> Self {
         YoctoNearToken(0)
