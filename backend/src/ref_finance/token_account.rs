@@ -50,9 +50,11 @@ impl From<TokenAccount> for AccountId {
     }
 }
 
-impl From<CommonTokenAccount> for TokenAccount {
-    fn from(value: CommonTokenAccount) -> Self {
-        TokenAccount(value.to_string().parse().unwrap())
+impl TryFrom<CommonTokenAccount> for TokenAccount {
+    type Error = ParseAccountError;
+
+    fn try_from(value: CommonTokenAccount) -> Result<Self, Self::Error> {
+        value.0.parse().map(TokenAccount)
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::server_api::Underlying;
 use anyhow::Result;
 use std::sync::Arc;
-use zaciraci_common::{pools::{TradeRequest, TradeResponse}, ApiResponse};
+use zaciraci_common::{pools::{PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse}, ApiResponse};
 
 pub struct PoolsApi {
     pub underlying: Arc<Underlying>,
@@ -55,5 +55,9 @@ impl PoolsApi {
 
     pub async fn estimate_trade(&self, request: TradeRequest) -> Result<ApiResponse<TradeResponse, String>> {
         self.underlying.post("pools/estimate_trade", &request).await
+    }
+
+    pub async fn get_pool_records(&self, request: PoolRecordsRequest) -> Result<ApiResponse<PoolRecordsResponse, String>> {
+        self.underlying.post("pools/get_pool_records", &request).await
     }
 }

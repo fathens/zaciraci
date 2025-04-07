@@ -329,6 +329,10 @@ pub fn view() -> Element {
                     }
                 }
             }
+            h2 { "Pool Records" }
+            div { class: "pool_records-container",
+                
+            }
         }
     }
 }

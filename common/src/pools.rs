@@ -17,6 +17,7 @@ pub struct TradeResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolRecordsRequest {
+    pub timestamp: NaiveDateTime,
     pub pool_ids: Vec<PoolId>,
 }
 
@@ -42,7 +43,7 @@ pub struct PoolBared {
     pub amp: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolId(pub u32);
 
 impl From<u32> for PoolId {

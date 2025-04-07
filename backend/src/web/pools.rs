@@ -2,7 +2,7 @@ use super::AppState;
 use crate::jsonrpc::{GasInfo, SentTx};
 use crate::logging::*;
 use crate::ref_finance::path::graph::TokenGraph;
-use crate::ref_finance::pool_info::PoolInfoList;
+use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::{MicroNear, MilliNear};
@@ -15,9 +15,11 @@ use axum::{
 };
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
-use zaciraci_common::ApiResponse;
 use std::sync::Arc;
-use zaciraci_common::pools::{TradeRequest, TradeResponse};
+use zaciraci_common::ApiResponse;
+use zaciraci_common::pools::{
+    PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse
+};
 use zaciraci_common::types::YoctoNearToken;
 
 fn path(sub: &str) -> String {
@@ -45,6 +47,7 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
             get(run_swap),
         )
         .route(&path("estimate_trade"), post(estimate_trade))
+        .route(&path("get_pool_records"), post(get_pool_records))
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
@@ -208,8 +211,8 @@ async fn estimate_trade(
 
     let timestamp = request.timestamp;
     let amount_in = request.amount_in.as_yoctonear();
-    let start_token: TokenAccount = request.token_in.into();
-    let goal_token: TokenAccount = request.token_out.into();
+    let start_token: TokenAccount = request.token_in.try_into().unwrap();
+    let goal_token: TokenAccount = request.token_out.try_into().unwrap();
     let start = &start_token.into();
     let goal = &goal_token.into();
     info!(log, "start";
@@ -285,4 +288,35 @@ async fn estimate_trade(
     Json(ApiResponse::Success(TradeResponse {
         amount_out: YoctoNearToken::from_yocto(*amount_out),
     }))
+}
+
+async fn get_pool_records(
+    State(_): State<Arc<AppState>>,
+    Json(request): Json<PoolRecordsRequest>,
+) -> Json<ApiResponse<PoolRecordsResponse, String>> {
+    let log = DEFAULT.new(o!(
+        "function" => "get_pool_records",
+        "timestamp" => format!("{}", request.timestamp),
+        "pool_ids_count" => request.pool_ids.len(),
+    ));
+    info!(log, "start");
+
+    let mut pools = vec![];
+    for pool_id in request.pool_ids {
+        let res = PoolInfo::get_latest_before(pool_id.into(), request.timestamp).await;
+        match res {
+            Ok(Some(pool)) => pools.push(pool.into()),
+            Ok(None) => {
+                info!(log, "pool not found"; "pool_id" => %pool_id.0);
+            }
+            Err(e) => {
+                error!(log, "failed to get pool";
+                    "pool_id" => %pool_id.0,
+                    "error" => ?e,
+                );
+                return Json(ApiResponse::Error(e.to_string()));
+            }
+        }
+    }
+    Json(ApiResponse::Success(PoolRecordsResponse { pools }))
 }
