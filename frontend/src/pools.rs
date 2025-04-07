@@ -1,7 +1,7 @@
 use bigdecimal::BigDecimal;
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use zaciraci_common::{pools::TradeRequest, types::NearUnit};
+use zaciraci_common::{pools::TradeRequest, types::NearUnit, ApiResponse};
 
 #[component]
 pub fn view() -> Element {
@@ -103,9 +103,16 @@ pub fn view() -> Element {
                                         token_out: token_out_a().parse().unwrap(),
                                         amount_in,
                                     }).await.unwrap();
-                                    loading_a.set("".to_string());
-                                    let amount_out = unit.from_yocto(res.amount_out);
-                                    amount_out_a.set(format_amount(amount_out));
+                                    match res {
+                                        ApiResponse::Success(res) => {
+                                            loading_a.set("".to_string());
+                                            let amount_out = unit.from_yocto(res.amount_out);
+                                            amount_out_a.set(format_amount(amount_out));
+                                        }
+                                        ApiResponse::Error(e) => {
+                                            loading_a.set(e.to_string());
+                                        }
+                                    }
                                 });
                             },
                             "Estimate"
@@ -166,8 +173,16 @@ pub fn view() -> Element {
                                         amount_in,
                                     }).await.unwrap();
                                     loading_b.set("".to_string());
-                                    let amount_out = unit.from_yocto(res.amount_out);
-                                    amount_out_b.set(format_amount(amount_out));
+                                    match res {
+                                        ApiResponse::Success(res) => {
+                                            loading_b.set("".to_string());
+                                            let amount_out = unit.from_yocto(res.amount_out);
+                                            amount_out_b.set(format_amount(amount_out));
+                                        }
+                                        ApiResponse::Error(e) => {
+                                            loading_b.set(e.to_string());
+                                        }
+                                    }
                                 });
                             },
                             "Estimate"
@@ -227,9 +242,16 @@ pub fn view() -> Element {
                                         token_out: token_out_c().parse().unwrap(),
                                         amount_in,
                                     }).await.unwrap();
-                                    loading_c.set("".to_string());
-                                    let amount_out = unit.from_yocto(res.amount_out);
-                                    amount_out_c.set(format_amount(amount_out));
+                                    match res {
+                                        ApiResponse::Success(res) => {
+                                            loading_c.set("".to_string());
+                                            let amount_out = unit.from_yocto(res.amount_out);
+                                            amount_out_c.set(format_amount(amount_out));
+                                        }
+                                        ApiResponse::Error(e) => {
+                                            loading_c.set(e.to_string());
+                                        }
+                                    }
                                 });
                             },
                             "Estimate"
@@ -289,10 +311,16 @@ pub fn view() -> Element {
                                         token_out: token_out_d().parse().unwrap(),
                                         amount_in,
                                     }).await.unwrap();
-                                    loading_d.set("".to_string());
-
-                                    let amount_out = unit.from_yocto(res.amount_out);
-                                    amount_out_d.set(format_amount(amount_out));
+                                    match res {
+                                        ApiResponse::Success(res) => {
+                                            loading_d.set("".to_string());
+                                            let amount_out = unit.from_yocto(res.amount_out);
+                                            amount_out_d.set(format_amount(amount_out));
+                                        }
+                                        ApiResponse::Error(e) => {
+                                            loading_d.set(e.to_string());
+                                        }
+                                    }
                                 });
                             },
                             "Estimate"

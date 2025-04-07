@@ -15,6 +15,7 @@ use axum::{
 };
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
+use zaciraci_common::ApiResponse;
 use std::sync::Arc;
 use zaciraci_common::pools::{TradeRequest, TradeResponse};
 use zaciraci_common::types::YoctoNearToken;
@@ -200,7 +201,7 @@ async fn run_swap(
 async fn estimate_trade(
     State(_): State<Arc<AppState>>,
     Json(request): Json<TradeRequest>,
-) -> Json<TradeResponse> {
+) -> Json<ApiResponse<TradeResponse, String>> {
     let log = DEFAULT.new(o!(
         "function" => "estimate_trade",
     ));
@@ -281,7 +282,7 @@ async fn estimate_trade(
     }
     let amount_out = amount_outs.iter().max().unwrap();
 
-    Json(TradeResponse {
+    Json(ApiResponse::Success(TradeResponse {
         amount_out: YoctoNearToken::from_yocto(*amount_out),
-    })
+    }))
 }
