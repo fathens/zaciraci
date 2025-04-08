@@ -322,5 +322,6 @@ async fn get_pool_records(
             }
         }
     }
+    info!(log, "finished");
     Json(ApiResponse::Success(PoolRecordsResponse { pools }))
 }

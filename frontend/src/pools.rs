@@ -1,7 +1,7 @@
 use bigdecimal::BigDecimal;
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use zaciraci_common::{pools::TradeRequest, types::NearUnit, ApiResponse};
+use zaciraci_common::{pools::{PoolId, PoolRecordsRequest, TradeRequest}, types::NearUnit, ApiResponse};
 
 #[component]
 pub fn view() -> Element {
@@ -46,6 +46,11 @@ pub fn view() -> Element {
     fn format_amount(amount: BigDecimal) -> String {
         format!("{:.24}", amount)
     }
+
+    let mut pools_timestamp = use_signal(|| chrono::Local::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string());
+    let mut pool_ids = use_signal(|| "".to_string());
+    let mut pools_loading = use_signal(|| "".to_string());
+    let mut pools = use_signal(|| "".to_string());
 
     rsx! {
         div { class: "pools-view",
@@ -331,7 +336,62 @@ pub fn view() -> Element {
             }
             h2 { "Pool Records" }
             div { class: "pool_records-container",
-                
+                div { class: "pool_records",
+                    div { class: "pool_records_input",
+                        textarea { name: "pool_ids", value: "{pool_ids}", rows: "10", cols: "10",
+                            oninput: move |e| pool_ids.set(e.value())
+                        }
+                    }
+                    div { class: "timestamp",
+                        input { type: "datetime-local", name: "pools_timestamp", value: "{pools_timestamp}",
+                            oninput: move |e| pools_timestamp.set(e.value())
+                        }
+                    }
+                    div { class: "button-with-loading",
+                        button { class: "btn btn-primary",
+                            onclick: move |_| {
+                                spawn_local(async move {
+                                    pools_loading.set("Loading...".to_string());
+                                    pools.set("".to_string());
+                                    let mut ids = vec![];
+                                    for s in pool_ids().split_whitespace().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                                        match s.parse::<u32>() {
+                                            Ok(id) => ids.push(PoolId(id)),
+                                            Err(e) => {
+                                                pools_loading.set(format!("Failed to parse pool ID '{}': {}", s, e));
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    if ids.is_empty() {
+                                        pools_loading.set("No valid pool IDs provided".to_string());
+                                        return;
+                                    }
+                                    ids.sort();
+                                    ids.dedup();
+                                    let res = client().pools.get_pool_records(PoolRecordsRequest {
+                                        timestamp: pools_timestamp().parse().unwrap(),
+                                        pool_ids: ids,
+                                    }).await.unwrap();
+                                    match res {
+                                        ApiResponse::Success(res) => {
+                                            pools_loading.set("".to_string());
+                                            pools.set(serde_json::to_string_pretty(&res.pools).unwrap());
+                                        }
+                                        ApiResponse::Error(e) => {
+                                            pools_loading.set(e.to_string());
+                                        }
+                                    }
+                                });
+                            },
+                            "Get"
+                        }
+                        span { class: "loading", "{pools_loading}" }
+                    }
+                    div { class: "pools",
+                        textarea { readonly: true, rows: "20", cols: "80", "{pools}" }
+                    }
+                }
             }
         }
     }
