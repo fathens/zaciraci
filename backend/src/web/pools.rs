@@ -302,7 +302,11 @@ async fn get_pool_records(
     info!(log, "start");
 
     let mut pools = vec![];
-    for pool_id in request.pool_ids {
+    // 重複を排除
+    let mut pool_ids = request.pool_ids;
+    pool_ids.sort();
+    pool_ids.dedup();
+    for pool_id in pool_ids {
         let res = PoolInfo::get_latest_before(pool_id.into(), request.timestamp).await;
         match res {
             Ok(Some(pool)) => pools.push(pool.into()),
