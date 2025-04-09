@@ -389,7 +389,7 @@ where
 mod test {
     use crate::ref_finance::path::edge::EdgeWeight;
     use crate::ref_finance::path::graph::CachedPath;
-    use crate::ref_finance::pool_info::TokenPairId;
+    use crate::ref_finance::pool_info::{PoolInfo, TokenPairId};
     use petgraph::Graph;
     use petgraph::algo::dijkstra;
     use petgraph::graph::NodeIndex;
@@ -692,5 +692,175 @@ mod test {
         results.sort();
 
         assert_eq!(results, vec![vec!["B"], vec!["C"]]);
+    }
+
+    #[test]
+    fn test_with_sample_pools() {
+        let json_str = r#"[
+  {
+    "id": 1230,
+    "timestamp": "2025-04-09T12:39:33.059132",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "nearpunk.tkn.near",
+        "nearkat.tkn.near"
+      ],
+      "amounts": [
+        "917901265701983007",
+        "32722705099615176853137739174"
+      ],
+      "total_fee": 30,
+      "shares_total_supply": "168559907784268610600",
+      "amp": 0
+    }
+  },
+  {
+    "id": 1233,
+    "timestamp": "2025-04-09T12:39:33.059132",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "neardog.tkn.near",
+        "nearkat.tkn.near"
+      ],
+      "amounts": [
+        "112549664748034977674143002",
+        "379117201618630649762"
+      ],
+      "total_fee": 30,
+      "shares_total_supply": "201313109557693733814",
+      "amp": 0
+    }
+  },
+  {
+    "id": 1236,
+    "timestamp": "2025-04-09T12:39:33.059133",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "hak.tkn.near",
+        "neardog.tkn.near"
+      ],
+      "amounts": [
+        "47979068235102569424584",
+        "2210084875460890521352625"
+      ],
+      "total_fee": 30,
+      "shares_total_supply": "1065484599128218",
+      "amp": 0
+    }
+  },
+  {
+    "id": 1238,
+    "timestamp": "2025-04-09T12:39:33.059133",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "hak.tkn.near",
+        "nearkat.tkn.near"
+      ],
+      "amounts": [
+        "6391367452222673233661824",
+        "10662016351996707616953347"
+      ],
+      "total_fee": 30,
+      "shares_total_supply": "25438534349775842",
+      "amp": 0
+    }
+  },
+  {
+    "id": 1302,
+    "timestamp": "2025-04-09T12:39:33.059139",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "meritocracy.tkn.near",
+        "hak.tkn.near"
+      ],
+      "amounts": [
+        "1852766544899218236739",
+        "56195909476386860720332"
+      ],
+      "total_fee": 30,
+      "shares_total_supply": "1003519598254699325699818",
+      "amp": 0
+    }
+  },
+  {
+    "id": 1903,
+    "timestamp": "2025-04-09T12:39:33.059198",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "meritocracy.tkn.near",
+        "meta-token.near"
+      ],
+      "amounts": [
+        "2752957070444978844861",
+        "1717994639306174656160"
+      ],
+      "total_fee": 60,
+      "shares_total_supply": "427714971472454349119456",
+      "amp": 0
+    }
+  },
+  {
+    "id": 3805,
+    "timestamp": "2025-04-09T12:39:33.059384",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "ftv2.nekotoken.near",
+        "meta-token.near"
+      ],
+      "amounts": [
+        "27204830623115822689561871518",
+        "103768683992951076017185176"
+      ],
+      "total_fee": 60,
+      "shares_total_supply": "130381242312197246928404",
+      "amp": 0
+    }
+  },
+  {
+    "id": 3820,
+    "timestamp": "2025-04-09T12:39:33.059386",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "ftv2.nekotoken.near",
+        "nexp.near"
+      ],
+      "amounts": [
+        "186392767880307151007148371",
+        "1850875"
+      ],
+      "total_fee": 60,
+      "shares_total_supply": "176335161076675344496556183",
+      "amp": 0
+    }
+  },
+  {
+    "id": 4421,
+    "timestamp": "2025-04-09T12:39:33.059445",
+    "bare": {
+      "pool_kind": "SIMPLE_POOL",
+      "token_account_ids": [
+        "wrap.near",
+        "nearpunk.tkn.near"
+      ],
+      "amounts": [
+        "32554286246618058848759",
+        "824746999920770719130193812211698363"
+      ],
+      "total_fee": 1900,
+      "shares_total_supply": "139296537538051832583095",
+      "amp": 0
+    }
+  }
+]"#;
+        let pools: Vec<PoolInfo> = serde_json::from_slice(json_str.as_bytes()).unwrap();
+        assert_eq!(pools.len(), 9);
     }
 }

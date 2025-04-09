@@ -44,7 +44,7 @@ pub struct PoolInfoBared {
     pub amp: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PoolInfo {
     pub id: u32,
     pub bare: PoolInfoBared,
