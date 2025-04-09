@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
 use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{U64, U128};
 use serde_json::json;
 use serial_test::serial;
 use std::cell::Cell;
@@ -72,6 +72,8 @@ struct MockClient {
     should_fail_near_deposit: Cell<bool>,
     should_fail_ft_transfer: Cell<bool>,
 }
+
+unsafe impl Sync for MockClient {}
 
 impl MockClient {
     fn new(native: Balance, wnear: Balance, deposited: Balance) -> Self {
@@ -185,51 +187,53 @@ impl SendTx for MockClient {
 }
 
 impl ViewContract for MockClient {
-    async fn view_contract<T>(
+    fn view_contract<T>(
         &self,
         _receiver: &AccountId,
         method_name: &str,
         _args: &T,
-    ) -> Result<CallResult>
+    ) -> impl std::future::Future<Output = Result<CallResult>> + Send
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + serde::Serialize + Sync,
     {
-        self.log_operation(&format!("view_contract: {method_name}"));
-        let result = match method_name {
-            "get_deposits" => {
-                let deposits = json!({
-                    WNEAR_TOKEN.to_string(): U128(self.wnear_deposited.get()),
-                });
-                serde_json::to_vec(&deposits)?
-            }
-            "ft_balance_of" => {
-                let balance = U128(self.wnear_amount.get());
-                serde_json::to_vec(&balance)?
-            }
-            "storage_balance_of" => {
-                let account_info = json!({
-                    "total": U128(DEFAULT_DEPOSIT),
-                    "available": U128(0),
-                });
-                serde_json::to_vec(&account_info)?
-            }
-            "get_account_basic_info" => {
-                let account_info = json!({
-                    "near_amount": U128(DEFAULT_DEPOSIT),
-                    "storage_used": U64(0),
-                });
-                serde_json::to_vec(&account_info)?
-            }
-            _ => {
-                let balance = U128(0);
-                serde_json::to_vec(&balance)?
-            }
-        };
+        async move {
+            self.log_operation(&format!("view_contract: {method_name}"));
+            let result = match method_name {
+                "get_deposits" => {
+                    let deposits = json!({
+                        WNEAR_TOKEN.to_string(): U128(self.wnear_deposited.get()),
+                    });
+                    serde_json::to_vec(&deposits)?
+                }
+                "ft_balance_of" => {
+                    let balance = U128(self.wnear_amount.get());
+                    serde_json::to_vec(&balance)?
+                }
+                "storage_balance_of" => {
+                    let account_info = json!({
+                        "total": U128(DEFAULT_DEPOSIT),
+                        "available": U128(0),
+                    });
+                    serde_json::to_vec(&account_info)?
+                }
+                "get_account_basic_info" => {
+                    let account_info = json!({
+                        "near_amount": U128(DEFAULT_DEPOSIT),
+                        "storage_used": U64(0),
+                    });
+                    serde_json::to_vec(&account_info)?
+                }
+                _ => {
+                    let balance = U128(0);
+                    serde_json::to_vec(&balance)?
+                }
+            };
 
-        Ok(CallResult {
-            result,
-            logs: vec![],
-        })
+            Ok(CallResult {
+                result,
+                logs: vec![],
+            })
+        }
     }
 }
 
