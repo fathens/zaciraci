@@ -342,7 +342,7 @@ impl PoolInfo {
 }
 
 impl PoolInfoList {
-    fn new(src_list: Vec<Arc<PoolInfo>>) -> Self {
+    pub fn new(src_list: Vec<Arc<PoolInfo>>) -> Self {
         let mut by_id = HashMap::new();
         for pool in src_list.iter() {
             by_id.insert(pool.id, Arc::clone(pool));
