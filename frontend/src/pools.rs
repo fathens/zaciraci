@@ -396,3 +396,17 @@ pub fn view() -> Element {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::NaiveDateTime;
+
+    #[test]
+    fn test_native_time() {
+        let now = chrono::Local::now();
+        let s = now.naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string();
+        let js = format!("\"{s}\"");
+        let nt: NaiveDateTime = serde_json::from_slice(js.as_bytes()).unwrap();
+        assert_eq!(s, nt.format("%Y-%m-%dT%H:%M:%S").to_string());
+    }
+}
