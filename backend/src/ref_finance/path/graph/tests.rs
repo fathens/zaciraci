@@ -1,9 +1,11 @@
+use super::*;
 use crate::ref_finance::path::edge::EdgeWeight;
-use crate::ref_finance::path::graph::CachedPath;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairId};
+use bigdecimal::BigDecimal;
 use petgraph::Graph;
 use petgraph::algo::dijkstra;
 use petgraph::graph::NodeIndex;
+use zaciraci_common::types::YoctoNearToken;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Add;
@@ -475,5 +477,24 @@ fn test_with_sample_pools() {
     let pools: Vec<PoolInfo> = serde_json::from_slice(json_str.as_bytes()).unwrap();
     assert_eq!(pools.len(), 9);
     let pools = pools.into_iter().map(Arc::new).collect();
-    let _pools_list = Arc::new(PoolInfoList::new(pools));
+    let pools_list = Arc::new(PoolInfoList::new(pools));
+    let graph = TokenGraph::new(pools_list);
+
+    let start = "wrap.near".parse::<TokenAccount>().unwrap().into();
+    let goal = "nexp.near".parse::<TokenAccount>().unwrap().into();
+
+    let res = graph.update_single_path(&start, &goal);
+    assert!(res.is_ok());
+    assert!(res.unwrap());
+
+    let path = graph.get_path(&start, &goal);
+    assert!(path.is_ok());
+    let path = path.unwrap();
+    assert_eq!(path.len(), 8);
+
+    let initial = YoctoNearToken::from_near(BigDecimal::from(1)).as_yoctonear();
+    let value = path.calc_value(initial);
+    assert!(value.is_ok());
+    let value = value.unwrap();
+    assert_eq!(value, 1030);
 }
