@@ -22,7 +22,7 @@ const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
 /// TokenPair の機能を抽象化するトレイト
 pub trait TokenPairLike {
     /// プールIDを返す
-    fn pool_id(&self) -> u64;
+    fn pool_id(&self) -> u32;
 
     /// 入力トークンIDを返す
     fn token_in_id(&self) -> TokenInAccount;
@@ -115,8 +115,8 @@ pub struct TokenPair {
 
 // TokenPairLike トレイトの実装
 impl TokenPairLike for TokenPair {
-    fn pool_id(&self) -> u64 {
-        self.pool.id as u64
+    fn pool_id(&self) -> u32 {
+        self.pool.id 
     }
 
     fn token_in_id(&self) -> TokenInAccount {

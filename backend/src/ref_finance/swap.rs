@@ -15,7 +15,7 @@ use serde_json::json;
 #[serde(crate = "near_sdk::serde")]
 pub struct SwapAction {
     /// Pool which should be used for swapping.
-    pub pool_id: u64,
+    pub pool_id: u32,
     /// Token to swap from.
     pub token_in: AccountId,
     /// Amount to exchange.
@@ -143,14 +143,14 @@ mod tests {
     use near_sdk::require;
 
     struct MockTokenPair {
-        pool_id: u64,
+        pool_id: u32,
         token_in: TokenAccount,
         token_out: TokenAccount,
         rate: f32,
     }
 
     impl TokenPairLike for MockTokenPair {
-        fn pool_id(&self) -> u64 {
+        fn pool_id(&self) -> u32 {
             self.pool_id
         }
 
