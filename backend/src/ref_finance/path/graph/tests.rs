@@ -310,7 +310,7 @@ fn test_find_all_path_looped() {
 
 #[test]
 fn test_with_sample_pools() {
-    let json_str_a = r#"[
+    let json_str = r#"[
   {
     "id": 1230,
     "timestamp": "2025-04-09T12:39:33.059132",
@@ -475,139 +475,11 @@ fn test_with_sample_pools() {
   }
 ]"#;
 
-    let json_str_b = r#"[
-  {
-    "id": 1230,
-    "timestamp": "2025-04-09T12:39:33.059132",
-    "bare": {
-      "pool_kind": "SIMPLE_POOL",
-      "token_account_ids": [
-        "nearpunk.tkn.near",
-        "nearkat.tkn.near"
-      ],
-      "amounts": [
-        "917901265701983007",
-        "32722705099615176853137739174"
-      ],
-      "total_fee": 30,
-      "shares_total_supply": "168559907784268610600",
-      "amp": 0
-    }
-  },
-  {
-    "id": 1238,
-    "timestamp": "2025-04-09T12:39:33.059133",
-    "bare": {
-      "pool_kind": "SIMPLE_POOL",
-      "token_account_ids": [
-        "hak.tkn.near",
-        "nearkat.tkn.near"
-      ],
-      "amounts": [
-        "6391367452222673233661824",
-        "10662016351996707616953347"
-      ],
-      "total_fee": 30,
-      "shares_total_supply": "25438534349775842",
-      "amp": 0
-    }
-  },
-  {
-    "id": 1302,
-    "timestamp": "2025-04-09T12:39:33.059139",
-    "bare": {
-      "pool_kind": "SIMPLE_POOL",
-      "token_account_ids": [
-        "meritocracy.tkn.near",
-        "hak.tkn.near"
-      ],
-      "amounts": [
-        "1852766544899218236739",
-        "56195909476386860720332"
-      ],
-      "total_fee": 30,
-      "shares_total_supply": "1003519598254699325699818",
-      "amp": 0
-    }
-  },
-  {
-    "id": 1903,
-    "timestamp": "2025-04-09T12:39:33.059198",
-    "bare": {
-      "pool_kind": "SIMPLE_POOL",
-      "token_account_ids": [
-        "meritocracy.tkn.near",
-        "meta-token.near"
-      ],
-      "amounts": [
-        "2752957070444978844861",
-        "1717994639306174656160"
-      ],
-      "total_fee": 60,
-      "shares_total_supply": "427714971472454349119456",
-      "amp": 0
-    }
-  },
-  {
-    "id": 3805,
-    "timestamp": "2025-04-09T12:39:33.059384",
-    "bare": {
-      "pool_kind": "SIMPLE_POOL",
-      "token_account_ids": [
-        "ftv2.nekotoken.near",
-        "meta-token.near"
-      ],
-      "amounts": [
-        "27204830623115822689561871518",
-        "103768683992951076017185176"
-      ],
-      "total_fee": 60,
-      "shares_total_supply": "130381242312197246928404",
-      "amp": 0
-    }
-  },
-  {
-    "id": 3820,
-    "timestamp": "2025-04-09T12:39:33.059386",
-    "bare": {
-      "pool_kind": "SIMPLE_POOL",
-      "token_account_ids": [
-        "ftv2.nekotoken.near",
-        "nexp.near"
-      ],
-      "amounts": [
-        "186392767880307151007148371",
-        "1850875"
-      ],
-      "total_fee": 60,
-      "shares_total_supply": "176335161076675344496556183",
-      "amp": 0
-    }
-  },
-  {
-    "id": 4421,
-    "timestamp": "2025-04-09T12:39:33.059445",
-    "bare": {
-      "pool_kind": "SIMPLE_POOL",
-      "token_account_ids": [
-        "wrap.near",
-        "nearpunk.tkn.near"
-      ],
-      "amounts": [
-        "32554286246618058848759",
-        "824746999920770719130193812211698363"
-      ],
-      "total_fee": 1900,
-      "shares_total_supply": "139296537538051832583095",
-      "amp": 0
-    }
-  }
-]"#;
+    let pools: Vec<PoolInfo> = serde_json::from_slice(json_str.as_bytes()).unwrap();
+    assert_eq!(pools.len(), 9);
 
-    fn parse_path(json_str: &str, count: usize) -> TokenPath {
-        let pools: Vec<PoolInfo> = serde_json::from_slice(json_str.as_bytes()).unwrap();
-        assert_eq!(pools.len(), count);
-        let pools = pools.into_iter().map(Arc::new).collect();
+    fn parse_path(pools: &[PoolInfo]) -> TokenPath {
+        let pools = pools.to_owned().into_iter().map(Arc::new).collect();
         let pools_list = Arc::new(PoolInfoList::new(pools));
         let graph = TokenGraph::new(pools_list);
 
@@ -625,7 +497,7 @@ fn test_with_sample_pools() {
 
     let initial = YoctoNearToken::from_near(BigDecimal::from(1)).as_yoctonear();
     {
-        let path = parse_path(json_str_a, 9);
+        let path = parse_path(&pools);
         assert_eq!(path.len(), 8);
         let pools: Vec<_> = path.0.iter().map(|p| p.pool_id()).collect();
         assert_eq!(pools, vec![4421, 1230, 1233, 1236, 1302, 1903, 3805, 3820]);
@@ -636,10 +508,12 @@ fn test_with_sample_pools() {
         assert_eq!(value, 1030);
     }
     {
-        let path = parse_path(json_str_b, 7);
+        let list = vec![4421, 1230, 1238, 1302, 1903, 3805, 3820];
+        let pools: Vec<_> = pools.into_iter().filter(|p| list.contains(&p.id)).collect();
+        let path = parse_path(&pools);
         assert_eq!(path.len(), 7);
         let pools: Vec<_> = path.0.iter().map(|p| p.pool_id()).collect();
-        assert_eq!(pools, vec![4421, 1230, 1238, 1302, 1903, 3805, 3820]);
+        assert_eq!(pools, list);
 
         let value = path.calc_value(initial);
         assert!(value.is_ok());
