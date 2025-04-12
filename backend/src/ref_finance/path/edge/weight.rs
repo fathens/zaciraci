@@ -14,7 +14,7 @@ impl EdgeWeight {
         if input_value == 0 {
             zero()
         } else {
-            estimated_return as f32 / input_value as f32
+            -(estimated_return as f32 / input_value as f32)
         }
     }
 
@@ -34,20 +34,13 @@ impl Eq for EdgeWeight {}
 
 impl Ord for EdgeWeight {
     fn cmp(&self, other: &Self) -> Ordering {
-        // レートが大きいほど望ましい -> Less
-        if self.estimated_rate < other.estimated_rate {
-            Ordering::Greater
-        } else if self.estimated_rate > other.estimated_rate {
-            Ordering::Less
-        } else {
-            Ordering::Equal
-        }
+        self.partial_cmp(other).unwrap_or(Ordering::Equal)
     }
 }
 
 impl PartialOrd for EdgeWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+        self.estimated_rate.partial_cmp(&other.estimated_rate)
     }
 }
 

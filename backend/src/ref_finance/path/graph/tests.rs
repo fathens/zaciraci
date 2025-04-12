@@ -1,7 +1,7 @@
 use super::*;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairId, TokenPairLike};
-use bigdecimal::BigDecimal;
+use num_traits::one;
 use petgraph::Graph;
 use petgraph::algo::dijkstra;
 use petgraph::graph::NodeIndex;
@@ -495,23 +495,22 @@ fn test_with_sample_pools() {
         path.unwrap()
     }
 
-    let initial = YoctoNearToken::from_near(BigDecimal::from(1)).as_yoctonear();
-    {
+    let initial = YoctoNearToken::from_near(one()).as_yoctonear();
+    let list = vec![4421, 1230, 1238, 1302, 1903, 3805, 3820];
+
+    { // A
         let path = parse_path(&pools);
-        assert_eq!(path.len(), 8);
         let pools: Vec<_> = path.0.iter().map(|p| p.pool_id()).collect();
-        assert_eq!(pools, vec![4421, 1230, 1233, 1236, 1302, 1903, 3805, 3820]);
+        assert_eq!(pools, list);
 
         let value = path.calc_value(initial);
         assert!(value.is_ok());
         let value = value.unwrap();
-        assert_eq!(value, 1030);
+        assert_eq!(value, 1760);
     }
-    {
-        let list = vec![4421, 1230, 1238, 1302, 1903, 3805, 3820];
+    { // B
         let pools: Vec<_> = pools.into_iter().filter(|p| list.contains(&p.id)).collect();
         let path = parse_path(&pools);
-        assert_eq!(path.len(), 7);
         let pools: Vec<_> = path.0.iter().map(|p| p.pool_id()).collect();
         assert_eq!(pools, list);
 
