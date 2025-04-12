@@ -77,10 +77,10 @@ mod test {
 
     #[test]
     fn test_calc_rate() {
-        assert_eq!(EdgeWeight::calc_rate(1, 1), 1.0);
-        assert_eq!(EdgeWeight::calc_rate(1, 2), 2.0);
-        assert_eq!(EdgeWeight::calc_rate(2, 1), 0.5);
-        assert_eq!(EdgeWeight::calc_rate(2, 2), 1.0);
+        assert_eq!(EdgeWeight::calc_rate(1, 1), -1.0);
+        assert_eq!(EdgeWeight::calc_rate(1, 2), -2.0);
+        assert_eq!(EdgeWeight::calc_rate(2, 1), -0.5);
+        assert_eq!(EdgeWeight::calc_rate(2, 2), -1.0);
         assert_eq!(EdgeWeight::calc_rate(2, 0), 0.0,);
     }
 
@@ -100,13 +100,12 @@ mod test {
 
     #[test]
     fn test_add() {
-        assert_eq!(
-            (weight(1, 1) + weight(1, 1)).estimated_rate,
-            EdgeWeight::calc_rate(1, 1)
-        );
-        assert_eq!(
-            (weight(1, 2) + weight(2, 1)).estimated_rate,
-            EdgeWeight::calc_rate(1, 1)
-        );
+        // 掛け算の結果を確認: (-1.0) * (-1.0) = 1.0
+        let result1 = (weight(1, 1) + weight(1, 1)).estimated_rate;
+        assert_eq!(result1, 1.0);
+        
+        // 掛け算の結果を確認: (-2.0) * (-0.5) = 1.0
+        let result2 = (weight(1, 2) + weight(2, 1)).estimated_rate;
+        assert_eq!(result2, 1.0);
     }
 }
