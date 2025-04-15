@@ -1,5 +1,6 @@
 pub mod stats;
 
+use crate::Result;
 use crate::config;
 use crate::jsonrpc;
 use crate::logging::*;
@@ -8,7 +9,6 @@ use crate::ref_finance;
 use crate::ref_finance::token_account::TokenInAccount;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::types::MilliNear;
-use crate::Result;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
 use std::future::Future;

@@ -1,7 +1,7 @@
+use crate::Result;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::pool_info;
 use crate::ref_finance::pool_info::{PoolInfo as RefPoolInfo, PoolInfoBared};
-use crate::Result;
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;

@@ -2,14 +2,14 @@ mod near_client;
 mod rpc;
 mod sent_tx;
 
+use crate::Result;
 use crate::config;
 use crate::jsonrpc::near_client::StandardNearClient;
 use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
-use crate::Result;
 use near_crypto::InMemorySigner;
-use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
+use near_jsonrpc_client::{JsonRpcClient, MethodCallResult, methods};
 use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
 use near_primitives::action::Action;
 use near_primitives::hash::CryptoHash;

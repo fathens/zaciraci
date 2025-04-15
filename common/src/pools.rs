@@ -1,6 +1,6 @@
+use crate::types::{TokenAccount, YoctoNearToken};
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use crate::types::{TokenAccount, YoctoNearToken};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct TradeRequest {

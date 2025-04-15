@@ -53,7 +53,11 @@ impl TokenGraph {
         CachedPath::new(graph, nodes)
     }
 
-    pub fn update_single_path(&self, start: &TokenInAccount, goal: &TokenOutAccount) -> Result<bool> {
+    pub fn update_single_path(
+        &self,
+        start: &TokenInAccount,
+        goal: &TokenOutAccount,
+    ) -> Result<bool> {
         let log = DEFAULT.new(o!(
             "function" => "TokenGraph::update_single_path",
             "start" => format!("{:?}", start),

@@ -24,7 +24,4 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(
-    pool_info,
-    token_rates,
-);
+diesel::allow_tables_to_appear_in_same_query!(pool_info, token_rates,);

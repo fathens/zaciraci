@@ -1,5 +1,5 @@
-use crate::config;
 use crate::Result;
+use crate::config;
 pub use deadpool_diesel::postgres::Pool;
 use deadpool_diesel::{Manager, ManagerConfig, RecyclingMethod};
 use once_cell::sync::Lazy;
@@ -11,7 +11,9 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(16);
-    let dsn = config::get("PG_DSN").unwrap_or_else(|_| "postgres://postgres_test:postgres_test@localhost:5433/postgres_test".to_string());
+    let dsn = config::get("PG_DSN").unwrap_or_else(|_| {
+        "postgres://postgres_test:postgres_test@localhost:5433/postgres_test".to_string()
+    });
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     };

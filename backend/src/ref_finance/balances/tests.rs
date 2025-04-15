@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
 use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{U64, U128};
 use serde_json::json;
 use serial_test::serial;
 use std::cell::Cell;

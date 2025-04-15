@@ -1,9 +1,9 @@
 mod chat;
 mod generate;
 
+use crate::Result;
 use crate::config;
 use crate::logging::*;
-use crate::Result;
 use anyhow::bail;
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};

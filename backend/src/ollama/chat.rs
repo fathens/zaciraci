@@ -1,6 +1,6 @@
+use super::{Message, ModelName};
 use crate::Result;
 use crate::logging::*;
-use super::{Message, ModelName};
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +59,9 @@ mod tests {
             role: "user".to_string(),
             content: "Hello, world!".to_string(),
         }];
-        let response = chat(&client, base_url.clone(), model, messages).await.unwrap();
+        let response = chat(&client, base_url.clone(), model, messages)
+            .await
+            .unwrap();
         println!("response = {response:#?}");
     }
 }

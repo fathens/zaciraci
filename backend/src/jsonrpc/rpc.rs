@@ -3,7 +3,7 @@ use near_jsonrpc_client::errors::{
     JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError, JsonRpcTransportRecvError,
     JsonRpcTransportSendError, RpcTransportError,
 };
-use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
+use near_jsonrpc_client::{JsonRpcClient, MethodCallResult, methods};
 use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;

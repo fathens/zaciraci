@@ -1,8 +1,8 @@
+use crate::Result;
 use crate::logging::*;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
-use crate::Result;
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;

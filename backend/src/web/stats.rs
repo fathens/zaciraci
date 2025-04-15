@@ -5,9 +5,9 @@ use crate::{
     trade::stats::SameBaseTokenRates,
 };
 use axum::{
+    Router,
     extract::{Json, State},
     routing::post,
-    Router,
 };
 use std::sync::Arc;
 use zaciraci_common::stats::DescribesRequest;

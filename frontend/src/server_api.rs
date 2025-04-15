@@ -1,8 +1,8 @@
 mod basic;
 mod ollama;
 mod pools;
-mod storage;
 mod stats;
+mod storage;
 
 use anyhow::Result;
 use once_cell::sync::Lazy;
@@ -79,6 +79,13 @@ impl Underlying {
         B: serde::de::DeserializeOwned,
     {
         let url = format!("{}/{}", self.base_url, path);
-        Ok(self.client.post(&url).json(body).send().await?.json().await?)
+        Ok(self
+            .client
+            .post(&url)
+            .json(body)
+            .send()
+            .await?
+            .json()
+            .await?)
     }
 }
