@@ -56,11 +56,11 @@ jobs:
               if [[ $line == "Diff in "* ]]; then
                 if [[ -n "$current_file" && -n "$diff_content" ]]; then
                   diff_escaped=$(echo "$diff_content" | sed ':a;N;$!ba;s/\n/%0A/g')
-                  echo "::warning file=$current_file::Formatting issues found:%0A$diff_escaped"
+                  echo "::warning file=$current_file::$diff_escaped"
                 fi
           
                 current_file=$(echo "$line" | sed -E 's/Diff in (.*?):.*/\1/')
-                diff_content="$line"
+                diff_content=" "
               elif [[ -n "$current_file" ]]; then
                 diff_content="$diff_content"$'\n'"$line"
               fi
@@ -68,7 +68,7 @@ jobs:
           
             if [[ -n "$current_file" && -n "$diff_content" ]]; then
               diff_escaped=$(echo "$diff_content" | sed ':a;N;$!ba;s/\n/%0A/g')
-              echo "::warning file=$current_file::Formatting issues found:%0A$diff_escaped"
+              echo "::warning file=$current_file::$diff_escaped"
             fi
           fi
 
