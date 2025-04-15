@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
 use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
-use near_sdk::json_types::{U64, U128};
+use near_sdk::json_types::{U128, U64};
 use serde_json::json;
 use serial_test::serial;
 use std::cell::Cell;
@@ -144,8 +144,8 @@ impl SendTx for MockClient {
             }
             "ft_transfer_call" => {
                 if !self.should_fail_ft_transfer.get() {
-                    let args_str = serde_json::to_string(&args).unwrap();
-                    let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
+                    let args_str = serde_json::to_string(&args)?;
+                    let args_value: serde_json::Value = serde_json::from_str(&args_str)?;
                     let amount: Balance = args_value["amount"]
                         .as_str()
                         .and_then(|s| s.parse().ok())
@@ -158,8 +158,8 @@ impl SendTx for MockClient {
                 self.should_fail_ft_transfer.get()
             }
             "withdraw" => {
-                let args_str = serde_json::to_string(&args).unwrap();
-                let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
+                let args_str = serde_json::to_string(&args)?;
+                let args_value: serde_json::Value = serde_json::from_str(&args_str)?;
                 let amount: Balance = args_value["amount"]
                     .as_str()
                     .and_then(|s| s.parse().ok())
@@ -187,53 +187,51 @@ impl SendTx for MockClient {
 }
 
 impl ViewContract for MockClient {
-    fn view_contract<T>(
+    async fn view_contract<T>(
         &self,
         _receiver: &AccountId,
         method_name: &str,
         _args: &T,
-    ) -> impl std::future::Future<Output = Result<CallResult>> + Send
+    ) -> Result<CallResult>
     where
         T: ?Sized + serde::Serialize + Sync,
     {
-        async move {
-            self.log_operation(&format!("view_contract: {method_name}"));
-            let result = match method_name {
-                "get_deposits" => {
-                    let deposits = json!({
-                        WNEAR_TOKEN.to_string(): U128(self.wnear_deposited.get()),
-                    });
-                    serde_json::to_vec(&deposits)?
-                }
-                "ft_balance_of" => {
-                    let balance = U128(self.wnear_amount.get());
-                    serde_json::to_vec(&balance)?
-                }
-                "storage_balance_of" => {
-                    let account_info = json!({
-                        "total": U128(DEFAULT_DEPOSIT),
-                        "available": U128(0),
-                    });
-                    serde_json::to_vec(&account_info)?
-                }
-                "get_account_basic_info" => {
-                    let account_info = json!({
-                        "near_amount": U128(DEFAULT_DEPOSIT),
-                        "storage_used": U64(0),
-                    });
-                    serde_json::to_vec(&account_info)?
-                }
-                _ => {
-                    let balance = U128(0);
-                    serde_json::to_vec(&balance)?
-                }
-            };
+        self.log_operation(&format!("view_contract: {method_name}"));
+        let result = match method_name {
+            "get_deposits" => {
+                let deposits = json!({
+                    WNEAR_TOKEN.to_string(): U128(self.wnear_deposited.get()),
+                });
+                serde_json::to_vec(&deposits)?
+            }
+            "ft_balance_of" => {
+                let balance = U128(self.wnear_amount.get());
+                serde_json::to_vec(&balance)?
+            }
+            "storage_balance_of" => {
+                let account_info = json!({
+                    "total": U128(DEFAULT_DEPOSIT),
+                    "available": U128(0),
+                });
+                serde_json::to_vec(&account_info)?
+            }
+            "get_account_basic_info" => {
+                let account_info = json!({
+                    "near_amount": U128(DEFAULT_DEPOSIT),
+                    "storage_used": U64(0),
+                });
+                serde_json::to_vec(&account_info)?
+            }
+            _ => {
+                let balance = U128(0);
+                serde_json::to_vec(&balance)?
+            }
+        };
 
-            Ok(CallResult {
-                result,
-                logs: vec![],
-            })
-        }
+        Ok(CallResult {
+            result,
+            logs: vec![],
+        })
     }
 }
 
@@ -255,7 +253,7 @@ impl SentTx for MockSentTx {
             receipt_ids: vec![],
             gas_burnt: 0,
             tokens_burnt: 0,
-            executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
+            executor_id: AccountId::try_from("test.near".to_string())?,
             status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
             metadata: near_primitives::views::ExecutionMetadataView {
                 version: 1,

@@ -1,8 +1,8 @@
-use crate::Result;
 use crate::logging::*;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::Result;
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
@@ -272,14 +272,13 @@ impl TokenRate {
 
         let quotes = results
             .into_iter()
-            .map(|(s, c)| match TokenAccount::from_str(&s) {
+            .filter_map(|(s, c)| match TokenAccount::from_str(&s) {
                 Ok(token) => Some((token.into(), c)),
                 Err(e) => {
                     error!(log, "Failed to parse token"; "token" => s, "error" => ?e);
                     None
                 }
             })
-            .filter_map(|v| v)
             .collect();
 
         Ok(quotes)
@@ -314,20 +313,23 @@ impl TokenRate {
 
         let bases = results
             .into_iter()
-            .map(|(s, c)| match TokenAccount::from_str(&s) {
+            .filter_map(|(s, c)| match TokenAccount::from_str(&s) {
                 Ok(token) => Some((token.into(), c)),
                 Err(e) => {
                     error!(log, "Failed to parse token"; "token" => s, "error" => ?e);
                     None
                 }
             })
-            .filter_map(|v| v)
             .collect();
 
         Ok(bases)
     }
 
-    pub async fn get_rates_in_time_range(range: &TimeRange, base: &TokenOutAccount, quote: &TokenInAccount) -> Result<Vec<TokenRate>> {
+    pub async fn get_rates_in_time_range(
+        range: &TimeRange,
+        base: &TokenOutAccount,
+        quote: &TokenInAccount,
+    ) -> Result<Vec<TokenRate>> {
         use diesel::QueryDsl;
 
         let conn = connection_pool::get().await?;

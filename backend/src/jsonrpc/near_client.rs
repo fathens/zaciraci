@@ -90,33 +90,31 @@ impl<A: RpcClient> AccessKeyInfo for StandardNearClient<A> {
     }
 }
 
-impl<A> ViewContract for StandardNearClient<A> 
+impl<A> ViewContract for StandardNearClient<A>
 where
-    A: RpcClient + std::marker::Sync + std::marker::Send,
+    A: RpcClient + Sync + Send,
 {
-    fn view_contract<T>(
+    async fn view_contract<T>(
         &self,
         receiver: &AccountId,
         method_name: &str,
         args: &T,
-    ) -> impl std::future::Future<Output = Result<CallResult>> + Send
+    ) -> Result<CallResult>
     where
-        T: ?Sized + serde::Serialize + std::marker::Sync,
+        T: ?Sized + serde::Serialize + Sync,
     {
-        async move {
-            let req = methods::query::RpcQueryRequest {
-                block_reference: Finality::Final.into(),
-                request: QueryRequest::CallFunction {
-                    account_id: receiver.clone(),
-                    method_name: method_name.to_string(),
-                    args: serde_json::to_vec(args)?.into(),
-                },
-            };
-            let res = self.rpc.call(req).await?;
-            match res.kind {
-                QueryResponseKind::CallResult(r) => Ok(r),
-                _ => panic!("unexpected response"),
-            }
+        let req = methods::query::RpcQueryRequest {
+            block_reference: Finality::Final.into(),
+            request: QueryRequest::CallFunction {
+                account_id: receiver.clone(),
+                method_name: method_name.to_string(),
+                args: serde_json::to_vec(args)?.into(),
+            },
+        };
+        let res = self.rpc.call(req).await?;
+        match res.kind {
+            QueryResponseKind::CallResult(r) => Ok(r),
+            _ => panic!("unexpected response"),
         }
     }
 }

@@ -32,16 +32,15 @@ impl StandardRpcClient {
         }
     }
 
-    fn call_maybe_retry<M>(
+    async fn call_maybe_retry<M>(
         &self,
         method: M,
-    ) -> impl std::future::Future<Output = MaybeRetry<MethodCallResult<M::Response, M::Error>, JsonRpcError<M::Error>>> + Send
+    ) -> MaybeRetry<MethodCallResult<M::Response, M::Error>, JsonRpcError<M::Error>>
     where
-        M: methods::RpcMethod + std::marker::Send + std::marker::Sync,
-        <M as methods::RpcMethod>::Response: std::marker::Send,
-        <M as methods::RpcMethod>::Error: std::marker::Send,
+        M: methods::RpcMethod + Send + Sync,
+        <M as methods::RpcMethod>::Response: Send,
+        <M as methods::RpcMethod>::Error: Send,
     {
-        async move {
         let log = DEFAULT.new(o!(
             "function" => "jsonrpc::Client::call_maybe_retry",
             "server" => self.underlying.server_addr().to_owned(),
@@ -183,7 +182,6 @@ impl StandardRpcClient {
             },
         }
     }
-    }
 }
 
 impl super::RpcClient for StandardRpcClient {
@@ -191,48 +189,46 @@ impl super::RpcClient for StandardRpcClient {
         self.underlying.server_addr()
     }
 
-    fn call<M>(&self, method: M) -> impl std::future::Future<Output = MethodCallResult<M::Response, M::Error>> + Send
+    async fn call<M>(&self, method: M) -> MethodCallResult<M::Response, M::Error>
     where
-        M: methods::RpcMethod + std::marker::Send + std::marker::Sync,
-        <M as methods::RpcMethod>::Response: std::marker::Send,
-        <M as methods::RpcMethod>::Error: std::marker::Send,
+        M: methods::RpcMethod + Send + Sync,
+        <M as methods::RpcMethod>::Response: Send,
+        <M as methods::RpcMethod>::Error: Send,
     {
-        async move {
-            let delay_limit = self.delay_limit;
-            let retry_limit = self.retry_limit;
-            let fluctuation = self.delay_fluctuation;
+        let delay_limit = self.delay_limit;
+        let retry_limit = self.retry_limit;
+        let fluctuation = self.delay_fluctuation;
 
-            let log = DEFAULT.new(o!(
-                "function" => "jsonrpc::Client::call",
-                "server" => self.server_addr().to_owned(),
-                "method" => method.method_name().to_owned(),
-                "retry_limit" => format!("{}", retry_limit),
+        let log = DEFAULT.new(o!(
+            "function" => "jsonrpc::Client::call",
+            "server" => self.server_addr().to_owned(),
+            "method" => method.method_name().to_owned(),
+            "retry_limit" => format!("{}", retry_limit),
+        ));
+        let calc_delay = calc_retry_duration(delay_limit, retry_limit, fluctuation);
+        let mut retry_count = 0;
+        loop {
+            let log = log.new(o!(
+                "retry_count" => format!("{}", retry_count),
             ));
-            let calc_delay = calc_retry_duration(delay_limit, retry_limit, fluctuation);
-            let mut retry_count = 0;
-            loop {
-                let log = log.new(o!(
-                    "retry_count" => format!("{}", retry_count),
-                ));
-                info!(log, "calling");
-                match self.call_maybe_retry(&method).await {
-                    MaybeRetry::Through(res) => return res,
-                    MaybeRetry::Retry { err, msg, min_dur } => {
-                        retry_count += 1;
-                        if retry_limit < retry_count {
-                            info!(log, "retry limit reached";
-                                "reason" => msg,
-                            );
-                            return Err(err);
-                        }
-
-                        let delay = calc_delay(retry_count).min(min_dur);
-                        info!(log, "retrying";
-                            "delay" => format!("{:?}", delay),
+            info!(log, "calling");
+            match self.call_maybe_retry(&method).await {
+                MaybeRetry::Through(res) => return res,
+                MaybeRetry::Retry { err, msg, min_dur } => {
+                    retry_count += 1;
+                    if retry_limit < retry_count {
+                        info!(log, "retry limit reached";
                             "reason" => msg,
                         );
-                        tokio::time::sleep(delay).await;
+                        return Err(err);
                     }
+
+                    let delay = calc_delay(retry_count).min(min_dur);
+                    info!(log, "retrying";
+                        "delay" => format!("{:?}", delay),
+                        "reason" => msg,
+                    );
+                    tokio::time::sleep(delay).await;
                 }
             }
         }

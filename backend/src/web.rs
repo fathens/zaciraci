@@ -1,8 +1,8 @@
 mod basic;
 mod ollama;
 mod pools;
-mod storage;
 mod stats;
+mod storage;
 
 use axum::Router;
 use std::sync::Arc;
@@ -35,7 +35,9 @@ pub async fn run() {
     axum::serve(listener, app).await.unwrap();
 }
 
-fn add_routes<T>(app: Router<T>, funcs: &[fn(Router<T>) -> Router<T>]) -> Router<T> {
+type RouteModifier<T> = fn(Router<T>) -> Router<T>;
+
+fn add_routes<T>(app: Router<T>, funcs: &[RouteModifier<T>]) -> Router<T> {
     let mut app = app;
     for func in funcs {
         app = func(app);

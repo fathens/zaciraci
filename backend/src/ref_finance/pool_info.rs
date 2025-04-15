@@ -3,8 +3,8 @@ use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::ref_finance::token_index::{TokenIn, TokenIndex, TokenOut};
-use crate::ref_finance::{CONTRACT_ADDRESS, errors::Error};
-use anyhow::{Context, Result, anyhow, bail};
+use crate::ref_finance::{errors::Error, CONTRACT_ADDRESS};
+use anyhow::{anyhow, bail, Context, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::NaiveDateTime;
 use futures_util::future::join_all;
@@ -48,7 +48,7 @@ pub struct PoolInfoBared {
 pub struct PoolInfo {
     pub id: u32,
     pub bare: PoolInfoBared,
-    pub timestamp: chrono::NaiveDateTime,
+    pub timestamp: NaiveDateTime,
 }
 
 impl TryFrom<zaciraci_common::pools::PoolRecord> for PoolInfo {
@@ -66,7 +66,12 @@ impl TryFrom<zaciraci_common::pools::PoolRecord> for PoolInfo {
             bare: PoolInfoBared {
                 pool_kind: record.bare.pool_kind,
                 token_account_ids,
-                amounts: record.bare.amounts.iter().map(|v| U128::from(v.as_yoctonear())).collect(),
+                amounts: record
+                    .bare
+                    .amounts
+                    .iter()
+                    .map(|v| U128::from(v.as_yoctonear()))
+                    .collect(),
                 total_fee: record.bare.total_fee,
                 shares_total_supply: U128::from(record.bare.shares_total_supply.as_yoctonear()),
                 amp: record.bare.amp,
@@ -82,7 +87,12 @@ impl From<PoolInfo> for zaciraci_common::pools::PoolRecord {
             id: pool_info.id.into(),
             bare: zaciraci_common::pools::PoolBared {
                 pool_kind: pool_info.bare.pool_kind,
-                token_account_ids: pool_info.bare.token_account_ids.iter().map(|v| v.clone().into()).collect(),
+                token_account_ids: pool_info
+                    .bare
+                    .token_account_ids
+                    .iter()
+                    .map(|v| v.clone().into())
+                    .collect(),
                 amounts: pool_info.bare.amounts.iter().map(|v| v.0.into()).collect(),
                 total_fee: pool_info.bare.total_fee,
                 shares_total_supply: pool_info.bare.shares_total_supply.0.into(),
@@ -116,7 +126,7 @@ pub struct TokenPair {
 // TokenPairLike トレイトの実装
 impl TokenPairLike for TokenPair {
     fn pool_id(&self) -> u32 {
-        self.pool.id 
+        self.pool.id
     }
 
     fn token_in_id(&self) -> TokenInAccount {
@@ -212,7 +222,7 @@ pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| {
 });
 
 impl PoolInfo {
-    pub fn new(id: u32, bare: PoolInfoBared, timestamp: chrono::NaiveDateTime) -> Self {
+    pub fn new(id: u32, bare: PoolInfoBared, timestamp: NaiveDateTime) -> Self {
         PoolInfo {
             id,
             bare,
@@ -572,6 +582,6 @@ mod tests {
         let v = *MAX_AMOUNT;
         assert!(v > 0);
         assert!(v < u128::MAX);
-        assert!(v == 1000_000_000__000_000__000_000__000_000);
+        assert_eq!(v, 1_000_000_000_000_000_000_000_000_000);
     }
 }

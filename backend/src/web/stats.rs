@@ -1,16 +1,16 @@
 use super::AppState;
+use crate::logging::*;
 use crate::{
     persistence::TimeRange, ref_finance::token_account::TokenAccount,
-    trade::trade::SameBaseTokenRates,
+    trade::stats::SameBaseTokenRates,
 };
 use axum::{
-    Router,
     extract::{Json, State},
     routing::post,
+    Router,
 };
 use std::sync::Arc;
 use zaciraci_common::stats::DescribesRequest;
-use crate::logging::*;
 
 fn path(sub: &str) -> String {
     format!("/stats/{sub}")
@@ -34,27 +34,36 @@ async fn make_descs(
     ));
     info!(log, "start");
 
-    let quote_token: TokenAccount = request.quote_token.parse().or_else(|e| {
-        info!(log, "Failed to parse quote token"; "error" => ?e);
-        Err(e)
-    }).unwrap();
-    let base_token: TokenAccount = request.base_token.parse().or_else(|e| {
-        info!(log, "Failed to parse base token"; "error" => ?e);
-        Err(e)
-    }).unwrap();
+    let quote_token: TokenAccount = request
+        .quote_token
+        .parse()
+        .map_err(|e| {
+            info!(log, "Failed to parse quote token"; "error" => ?e);
+            e
+        })
+        .unwrap();
+    let base_token: TokenAccount = request
+        .base_token
+        .parse()
+        .map_err(|e| {
+            info!(log, "Failed to parse base token"; "error" => ?e);
+            e
+        })
+        .unwrap();
     let range = TimeRange {
         start: request.start,
         end: request.end,
     };
     let rates = SameBaseTokenRates::load(&quote_token.into(), &base_token.into(), &range)
         .await
-        .or_else(|e| {
+        .map_err(|e| {
             info!(log, "Failed to load rates"; "error" => ?e);
-            Err(e)
-        }).unwrap();
+            e
+        })
+        .unwrap();
     let period = request.period;
     let descs = rates.stats(period).describes();
-    info!(log, "success"; 
+    info!(log, "success";
         "descs_count" => descs.len(),
     );
     serde_json::to_string(&descs).unwrap()

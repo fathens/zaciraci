@@ -1,6 +1,5 @@
-pub mod trade;
+pub mod stats;
 
-use crate::Result;
 use crate::config;
 use crate::jsonrpc;
 use crate::logging::*;
@@ -9,6 +8,7 @@ use crate::ref_finance;
 use crate::ref_finance::token_account::TokenInAccount;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::types::MilliNear;
+use crate::Result;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
 use std::future::Future;
@@ -26,7 +26,7 @@ async fn run_record_rates() {
 
 async fn run_trade() {
     const CRON_CONF: &str = "0 0 * * * *"; // 毎時0分
-    cronjob(CRON_CONF.parse().unwrap(), trade::start, "trade").await;
+    cronjob(CRON_CONF.parse().unwrap(), stats::start, "trade").await;
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)

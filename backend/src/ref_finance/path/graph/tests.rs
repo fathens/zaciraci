@@ -2,9 +2,9 @@ use super::*;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairId, TokenPairLike};
 use num_traits::one;
-use petgraph::Graph;
 use petgraph::algo::dijkstra;
 use petgraph::graph::NodeIndex;
+use petgraph::Graph;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Add;
@@ -242,7 +242,7 @@ fn test_find_all_path() {
     let goals = dijkstra(&graph, a, None, |e| *e.weight());
     assert_eq!(goals.len(), 10);
 
-    let finder = super::GraphPath {
+    let finder = GraphPath {
         graph: &graph,
         goals: &goals,
     };
@@ -297,7 +297,7 @@ fn test_find_all_path_looped() {
     let goals = dijkstra(&graph, a, None, |e| *e.weight());
     assert_eq!(goals.len(), 3);
 
-    let finder = super::GraphPath {
+    let finder = GraphPath {
         graph: &graph,
         goals: &goals,
     };
@@ -479,7 +479,7 @@ fn test_with_sample_pools() {
     assert_eq!(pools.len(), 9);
 
     fn parse_path(pools: &[PoolInfo]) -> TokenPath {
-        let pools = pools.to_owned().into_iter().map(Arc::new).collect();
+        let pools = pools.iter().cloned().map(Arc::new).collect();
         let pools_list = Arc::new(PoolInfoList::new(pools));
         let graph = TokenGraph::new(pools_list);
 
@@ -498,7 +498,8 @@ fn test_with_sample_pools() {
     let initial = YoctoNearToken::from_near(one()).as_yoctonear();
     let list = vec![4421, 1230, 1238, 1302, 1903, 3805, 3820];
 
-    { // A
+    {
+        // A
         let path = parse_path(&pools);
         let pools: Vec<_> = path.0.iter().map(|p| p.pool_id()).collect();
         assert_eq!(pools, list);
@@ -508,7 +509,8 @@ fn test_with_sample_pools() {
         let value = value.unwrap();
         assert_eq!(value, 1760);
     }
-    { // B
+    {
+        // B
         let pools: Vec<_> = pools.into_iter().filter(|p| list.contains(&p.id)).collect();
         let path = parse_path(&pools);
         let pools: Vec<_> = path.0.iter().map(|p| p.pool_id()).collect();

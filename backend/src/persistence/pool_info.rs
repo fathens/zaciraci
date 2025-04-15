@@ -1,7 +1,7 @@
-use crate::Result;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::pool_info;
 use crate::ref_finance::pool_info::{PoolInfo as RefPoolInfo, PoolInfoBared};
+use crate::Result;
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
@@ -82,7 +82,7 @@ impl RefPoolInfo {
             amounts: serde_json::to_value(&self.bare.amounts)?,
             total_fee: self.bare.total_fee as i32,
             // U128をJSONに変換
-            shares_total_supply: serde_json::to_value(&self.bare.shares_total_supply)?,
+            shares_total_supply: serde_json::to_value(self.bare.shares_total_supply)?,
             amp: self.bare.amp as i64,
             timestamp: self.timestamp,
         })
@@ -194,7 +194,8 @@ impl RefPoolInfo {
 
         let conn = connection_pool::get().await?;
 
-        let result = conn.interact(move |conn| {
+        let result = conn
+            .interact(move |conn| {
                 pool_info::table
                     .filter(pool_info::timestamp.ge(range.start))
                     .filter(pool_info::timestamp.le(range.end))
@@ -426,12 +427,9 @@ mod tests {
         };
 
         // テストデータの作成
-        let timestamp1 =
-            NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp2 =
-            NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp3 =
-            NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp1 = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+        let timestamp2 = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+        let timestamp3 = NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S")?;
 
         // プールIDを設定
         let pool_id_1: u32 = 1;
@@ -545,14 +543,10 @@ mod tests {
         };
 
         // テストデータに使用するタイムスタンプを定義
-        let timestamp1 =
-            NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp2 =
-            NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp3 =
-            NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        let timestamp4 =
-            NaiveDateTime::parse_from_str("2023-01-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let timestamp1 = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+        let timestamp2 = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+        let timestamp3 = NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+        let timestamp4 = NaiveDateTime::parse_from_str("2023-01-04 00:00:00", "%Y-%m-%d %H:%M:%S")?;
 
         // プールIDを設定
         let pool_id_1: u32 = 1;
@@ -629,13 +623,18 @@ mod tests {
         // プールID 1, 2, 3の情報が取得されるはず（3件）
         assert_eq!(
             results2,
-            vec![pool_info1_3.clone(), pool_info2_2.clone(), pool_info3_4.clone()],
+            vec![
+                pool_info1_3.clone(),
+                pool_info2_2.clone(),
+                pool_info3_4.clone()
+            ],
             "プールIDユニークなデータは3件あるはずです"
         );
 
         // テストケース3: 範囲内にデータがない場合
         let empty_results = RefPoolInfo::get_all_unique_between(TimeRange {
-            start: NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            start: NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap(),
             end: NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap(),
         })
         .await?;

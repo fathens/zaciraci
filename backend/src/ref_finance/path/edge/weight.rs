@@ -38,6 +38,7 @@ impl Ord for EdgeWeight {
     }
 }
 
+#[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd for EdgeWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.estimated_rate.partial_cmp(&other.estimated_rate)
@@ -103,7 +104,7 @@ mod test {
         // 掛け算の結果を確認: (-1.0) * (-1.0) = 1.0
         let result1 = (weight(1, 1) + weight(1, 1)).estimated_rate;
         assert_eq!(result1, 1.0);
-        
+
         // 掛け算の結果を確認: (-2.0) * (-0.5) = 1.0
         let result2 = (weight(1, 2) + weight(2, 1)).estimated_rate;
         assert_eq!(result2, 1.0);

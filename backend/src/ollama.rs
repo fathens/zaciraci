@@ -1,17 +1,16 @@
 mod chat;
 mod generate;
 
-use crate::Result;
 use crate::config;
 use crate::logging::*;
+use crate::Result;
 use anyhow::bail;
 use chrono::{DateTime, FixedOffset};
-use reqwest;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
-pub use zaciraci_common::ollama::Message;
 pub use zaciraci_common::ollama::Image;
+pub use zaciraci_common::ollama::Message;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Models {
@@ -122,14 +121,27 @@ impl Client {
     pub async fn chat(&self, messages: Vec<Message>) -> Result<String> {
         let log = DEFAULT.new(o!("function" => "chat"));
         info!(log, "Chatting");
-        let response = chat::chat(&self.client, self.base_url.clone(), self.model.clone(), messages).await?;
+        let response = chat::chat(
+            &self.client,
+            self.base_url.clone(),
+            self.model.clone(),
+            messages,
+        )
+        .await?;
         Ok(response.message.content)
     }
 
     pub async fn generate(&self, prompt: String, images: Vec<Image>) -> Result<String> {
         let log = DEFAULT.new(o!("function" => "generate"));
         info!(log, "Generating");
-        let response = generate::generate(&self.client, self.base_url.clone(), self.model.clone(), prompt, images).await?;
+        let response = generate::generate(
+            &self.client,
+            self.base_url.clone(),
+            self.model.clone(),
+            prompt,
+            images,
+        )
+        .await?;
         Ok(response.response)
     }
 }

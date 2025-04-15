@@ -2,25 +2,25 @@ use super::AppState;
 use crate::jsonrpc::{GasInfo, SentTx};
 use crate::logging::*;
 use crate::ref_finance::path::graph::TokenGraph;
-use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use crate::ref_finance::pool_info::TokenPairLike;
+use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::{MicroNear, MilliNear};
 use crate::{jsonrpc, ref_finance, wallet};
 use axum::Json;
 use axum::{
-    Router,
     extract::{Path, State},
     routing::{get, post},
+    Router,
 };
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
-use zaciraci_common::ApiResponse;
 use zaciraci_common::pools::{
-    PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse
+    PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse,
 };
 use zaciraci_common::types::YoctoNearToken;
+use zaciraci_common::ApiResponse;
 
 fn path(sub: &str) -> String {
     format!("/pools/{sub}")
@@ -280,7 +280,7 @@ async fn estimate_trade(
     let mut amount_outs: Vec<u128> = vec![];
     for i in 0..10 {
         let prev_out = if i > 0 { amount_outs[i - 1] } else { 0 };
-        let v = out_amount(i, prev_out, pools.clone(), amount_in, &start, &goal);
+        let v = out_amount(i, prev_out, pools.clone(), amount_in, start, goal);
         amount_outs.push(v);
     }
     let amount_out = amount_outs.iter().max().unwrap();
