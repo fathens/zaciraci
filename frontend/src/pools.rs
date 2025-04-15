@@ -1,13 +1,20 @@
 use bigdecimal::BigDecimal;
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use zaciraci_common::{pools::{PoolId, PoolRecordsRequest, TradeRequest}, types::NearUnit, ApiResponse};
+use zaciraci_common::{
+    pools::{PoolId, PoolRecordsRequest, TradeRequest},
+    types::NearUnit,
+    ApiResponse,
+};
 
 #[component]
 pub fn view() -> Element {
-    let client = use_signal(|| crate::server_api::get_client());
-    
-    let now = chrono::Local::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let client = use_signal(crate::server_api::get_client);
+
+    let now = chrono::Local::now()
+        .naive_utc()
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
     let mut timestamp_a = use_signal(|| now.clone());
     let mut timestamp_b = use_signal(|| now.clone());
     let mut timestamp_c = use_signal(|| now.clone());
@@ -47,7 +54,12 @@ pub fn view() -> Element {
         format!("{:.24}", amount)
     }
 
-    let mut pools_timestamp = use_signal(|| chrono::Local::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string());
+    let mut pools_timestamp = use_signal(|| {
+        chrono::Local::now()
+            .naive_utc()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    });
     let mut pool_ids = use_signal(|| "".to_string());
     let mut pools_loading = use_signal(|| "".to_string());
     let mut pools = use_signal(|| "".to_string());
@@ -79,7 +91,7 @@ pub fn view() -> Element {
                             input { type: "text", name: "amount_in_a", value: "{amount_in_a}", size: "30",
                                 oninput: move |e| amount_in_a.set(e.value())
                             }
-                            select { 
+                            select {
                                 name: "amount_unit_a",
                                 value: "{amount_unit_a.to_string()}",
                                 onchange: move |e| amount_unit_a.set(e.value()),
@@ -148,7 +160,7 @@ pub fn view() -> Element {
                             input { type: "text", name: "amount_in_b", value: "{amount_in_b}", size: "30",
                                 oninput: move |e| amount_in_b.set(e.value())
                             }
-                            select { 
+                            select {
                                 name: "amount_unit_b",
                                 value: "{amount_unit_b.to_string()}",
                                 onchange: move |e| amount_unit_b.set(e.value()),
@@ -218,7 +230,7 @@ pub fn view() -> Element {
                             input { type: "text", name: "amount_in_c", value: "{amount_in_c}", size: "30",
                                 oninput: move |e| amount_in_c.set(e.value())
                             }
-                            select { 
+                            select {
                                 name: "amount_unit_c",
                                 value: "{amount_unit_c.to_string()}",
                                 onchange: move |e| amount_unit_c.set(e.value()),
@@ -287,7 +299,7 @@ pub fn view() -> Element {
                             input { type: "text", name: "amount_in_d", value: "{amount_in_d}", size: "30",
                                 oninput: move |e| amount_in_d.set(e.value())
                             }
-                            select { 
+                            select {
                                 name: "amount_unit_d",
                                 value: "{amount_unit_d.to_string()}",
                                 onchange: move |e| amount_unit_d.set(e.value()),

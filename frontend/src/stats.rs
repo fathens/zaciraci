@@ -9,7 +9,7 @@ use zaciraci_common::{
 
 #[component]
 pub fn view() -> Element {
-    let client = use_signal(|| crate::server_api::get_client());
+    let client = use_signal(crate::server_api::get_client);
 
     let mut quote = use_signal(|| "wrap.near".to_string());
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
@@ -20,10 +20,11 @@ pub fn view() -> Element {
     let mut period = use_signal(|| "1m".to_string());
     let mut descs = use_signal(|| "".to_string());
 
-    let mut models = use_signal(|| Vec::new());
+    let mut models = use_signal(Vec::new);
     let mut selected_model = use_signal(|| "".to_string());
     let mut prompt_role = use_signal(|| "user".to_string());
-    let mut forecast_header = use_signal(|| "Forecast the price in two hours using this information.".to_string());
+    let mut forecast_header =
+        use_signal(|| "Forecast the price in two hours using this information.".to_string());
     let mut dur_in_sec = use_signal(|| "".to_string());
     let mut forecast_result = use_signal(|| "".to_string());
 

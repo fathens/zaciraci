@@ -1,14 +1,14 @@
 use crate::image_upload::ImageUpload;
 use dioxus::prelude::*;
+use js_sys::Date;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::ollama::{ChatRequest, GenerateRequest, Image, Message};
-use js_sys::Date;
 
 #[component]
 pub fn view() -> Element {
-    let client = use_signal(|| crate::server_api::get_client());
+    let client = use_signal(crate::server_api::get_client);
 
-    let mut models = use_signal(|| Vec::new());
+    let mut models = use_signal(Vec::new);
     let mut selected_model = use_signal(|| "".to_string());
     let mut prompt_role = use_signal(|| "user".to_string());
     let mut prompt = use_signal(|| "".to_string());
@@ -103,7 +103,7 @@ pub fn view() -> Element {
                             let response = client().ollama.generate(&GenerateRequest {
                                 model_name: selected_model().clone(),
                                 prompt: prompt().clone(),
-                                images: images,
+                                images,
                             }).await;
                             let end_time = Date::now();
                             let duration_ms = end_time - start_time;
