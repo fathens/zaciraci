@@ -222,7 +222,7 @@ where
     U: Add<Output = U> + Sub<Output = U> + Mul<Output = U> + Div<Output = U>,
     U: Zero + PartialOrd + From<i64>,
 {
-    fn format_decimal<V: Display>(value: V) -> String {
+    fn format_decimal(value: U) -> String {
         let s = value.to_string();
         if s.contains('.') {
             // 小数点以下の末尾の0を削除し、最大9桁まで表示
@@ -230,25 +230,25 @@ where
             if parts.len() == 2 {
                 let integer_part = parts[0];
                 let mut decimal_part = parts[1];
-                
+
                 // 小数点以下が全て0の場合は整数表示
                 if decimal_part.chars().all(|c| c == '0') {
                     return integer_part.to_string();
                 }
-                
+
                 // 末尾の0を削除
                 decimal_part = decimal_part.trim_end_matches('0');
-                
+
                 // 小数点以下が9桁を超える場合は9桁までに制限
                 if decimal_part.len() > 9 {
                     decimal_part = &decimal_part[..9];
                 }
-                
+
                 // 小数点以下が空になった場合は整数のみ返す
                 if decimal_part.is_empty() {
                     return integer_part.to_string();
                 }
-                
+
                 format!("{}.{}", integer_part, decimal_part)
             } else {
                 s
@@ -415,11 +415,11 @@ mod tests {
                 )
                 .unwrap(),
                 period: Duration::minutes(1),
-                start: BigDecimal::from(100),
-                end: BigDecimal::from(100),
-                max: BigDecimal::from(100),
-                min: BigDecimal::from(100),
-                average: BigDecimal::from(100),
+                start: BigDecimal::from_str("100.123456789").unwrap(),
+                end: BigDecimal::from_str("100.123456789").unwrap(),
+                max: BigDecimal::from_str("100.123456789").unwrap(),
+                min: BigDecimal::from_str("100.123456789").unwrap(),
+                average: BigDecimal::from_str("100.123456789").unwrap(),
             },
             StatsInPeriod {
                 timestamp: NaiveDateTime::parse_from_str(
@@ -428,11 +428,11 @@ mod tests {
                 )
                 .unwrap(),
                 period: Duration::minutes(1),
-                start: BigDecimal::from(100),
-                end: BigDecimal::from(100),
-                max: BigDecimal::from(100),
-                min: BigDecimal::from(100),
-                average: BigDecimal::from(100),
+                start: BigDecimal::from_str("100.123456789").unwrap(),
+                end: BigDecimal::from_str("100.123456789").unwrap(),
+                max: BigDecimal::from_str("100.123456789").unwrap(),
+                min: BigDecimal::from_str("100.123456789").unwrap(),
+                average: BigDecimal::from_str("100.123456789").unwrap(),
             },
         ]);
         let descriptions = stats.describes();
@@ -441,8 +441,8 @@ mod tests {
         assert_eq!(
             descriptions,
             vec![
-                "2025-03-26 11:37:48.195977, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100",
-                "2025-03-27 11:37:48.196150, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100, no change from the previous 1 minutes"
+                "2025-03-26 11:37:48.195977, opened at 100.123456789, closed at 100.123456789, with a high of 100.123456789, a low of 100.123456789, and an average of 100.123456789",
+                "2025-03-27 11:37:48.196150, opened at 100.123456789, closed at 100.123456789, with a high of 100.123456789, a low of 100.123456789, and an average of 100.123456789, no change from the previous 1 minutes"
             ]
         );
     }
@@ -667,84 +667,105 @@ mod tests {
     fn test_format_decimal_digits() {
         // 整数値のテスト
         assert_eq!(
-            "100", 
+            "100",
             ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from(100))
         );
-        
+
         // 小数点以下が全て0の値
         let with_zeros = BigDecimal::from(100) + BigDecimal::from_str("0.000000000").unwrap();
-        assert_eq!("100", ListStatsInPeriod::<BigDecimal>::format_decimal(with_zeros));
-        
+        assert_eq!(
+            "100",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(with_zeros)
+        );
+
         // 小数点以下が1桁の値
         assert_eq!(
-            "0.1", 
+            "0.1",
             ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1").unwrap())
         );
-        
-        // 小数点以下が2桁の値 
+
+        // 小数点以下が2桁の値
         assert_eq!(
-            "0.12", 
+            "0.12",
             ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12").unwrap())
         );
-        
+
         // 小数点以下が3桁の値
         assert_eq!(
-            "0.123", 
+            "0.123",
             ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123").unwrap())
         );
-        
+
         // 小数点以下が4桁の値
         assert_eq!(
-            "0.1234", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234").unwrap())
+            "0.1234",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.1234").unwrap()
+            )
         );
-        
+
         // 小数点以下が5桁の値
         assert_eq!(
-            "0.12345", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12345").unwrap())
+            "0.12345",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.12345").unwrap()
+            )
         );
-        
+
         // 小数点以下が6桁の値
         assert_eq!(
-            "0.123456", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123456").unwrap())
+            "0.123456",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.123456").unwrap()
+            )
         );
-        
+
         // 小数点以下が7桁の値
         assert_eq!(
-            "0.1234567", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234567").unwrap())
+            "0.1234567",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.1234567").unwrap()
+            )
         );
-        
+
         // 小数点以下が8桁の値
         assert_eq!(
-            "0.12345678", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12345678").unwrap())
+            "0.12345678",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.12345678").unwrap()
+            )
         );
-        
+
         // 小数点以下が9桁の値
         assert_eq!(
-            "0.123456789", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123456789").unwrap())
+            "0.123456789",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.123456789").unwrap()
+            )
         );
-        
+
         // 小数点以下が10桁の値（9桁までに制限される）
         assert_eq!(
-            "0.123456789", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234567891").unwrap())
+            "0.123456789",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.1234567891").unwrap()
+            )
         );
-        
+
         // 末尾に0がある場合（末尾の0は削除される）
         assert_eq!(
-            "0.12345", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12345000").unwrap())
+            "0.12345",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.12345000").unwrap()
+            )
         );
-        
+
         // 整数部分あり、小数点以下4桁の値
         assert_eq!(
-            "123.4567", 
-            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("123.4567").unwrap())
+            "123.4567",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("123.4567").unwrap()
+            )
         );
     }
 }
