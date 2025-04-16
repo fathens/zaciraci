@@ -151,16 +151,16 @@ impl SameBaseTokenRates {
         ));
         info!(log, "start");
 
-        let stats = self.stats(period);
+        let stats = self.aggregate(period);
         let _descs = stats.describes();
 
         info!(log, "success");
         unimplemented!()
     }
 
-    pub fn stats(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
+    pub fn aggregate(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
         let log = DEFAULT.new(o!(
-            "function" => "SameBaseTokenRates::stats",
+            "function" => "SameBaseTokenRates::aggregate",
             "rates_count" => self.points.len(),
             "period" => format!("{}", period),
         ));
@@ -267,13 +267,16 @@ where
         let mut lines = Vec::new();
         let mut prev = None;
         for stat in self.0.iter() {
-            let date = format!("{}", stat.timestamp);
+            let date = stat.timestamp.to_string();
             let changes = prev
                 .map(|p: &StatsInPeriod<U>| {
-                    let prev = format!("from the previous {} minutes", stat.period.num_minutes());
+                    let prev = format!(
+                        "from the previous {m} minutes",
+                        m = stat.period.num_minutes()
+                    );
                     let diff = stat.end.clone() - p.end.clone();
                     if diff.is_zero() {
-                        return format!(", no change {}", prev);
+                        return format!(", no change {prev}");
                     }
                     let dw = if diff < U::zero() {
                         "decrease"
@@ -282,18 +285,18 @@ where
                     };
                     let change = (diff / p.end.clone()) * 100_i64.into();
                     let change_str = Self::format_decimal(change);
-                    format!(", marking a {} % {} {}", change_str, dw, prev)
+                    format!(", marking a {change_str} % {dw} {prev}")
                 })
                 .unwrap_or_default();
             let summary = format!(
-                "opened at {}, closed at {}, with a high of {}, a low of {}, and an average of {}",
-                Self::format_decimal(stat.start.clone()),
-                Self::format_decimal(stat.end.clone()),
-                Self::format_decimal(stat.max.clone()),
-                Self::format_decimal(stat.min.clone()),
-                Self::format_decimal(stat.average.clone())
+                "opened at {start}, closed at {end}, with a high of {max}, a low of {min}, and an average of {ave}",
+                start = Self::format_decimal(stat.start.clone()),
+                end = Self::format_decimal(stat.end.clone()),
+                max = Self::format_decimal(stat.max.clone()),
+                min = Self::format_decimal(stat.min.clone()),
+                ave = Self::format_decimal(stat.average.clone()),
             );
-            let line = format!("{}, {}{}", date, summary, changes);
+            let line = format!("{date}, {summary}{changes}");
             debug!(log, "added line";
                 "line" => &line,
             );
@@ -460,7 +463,7 @@ mod tests {
         };
 
         // 1分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(1));
+        let stats = rates.aggregate(Duration::minutes(1));
 
         // 結果が空のベクターであることを確認
         assert!(stats.0.is_empty());
@@ -496,7 +499,7 @@ mod tests {
         };
 
         // 1分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(1));
+        let stats = rates.aggregate(Duration::minutes(1));
 
         // 結果を検証
         assert_eq!(stats.0.len(), 1);
@@ -558,7 +561,7 @@ mod tests {
         };
 
         // 1分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(1));
+        let stats = rates.aggregate(Duration::minutes(1));
 
         // 結果を検証
         assert_eq!(stats.0.len(), 3);
@@ -633,7 +636,7 @@ mod tests {
         };
 
         // 5分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(5));
+        let stats = rates.aggregate(Duration::minutes(5));
 
         // 結果を検証
         assert_eq!(stats.0.len(), 2);

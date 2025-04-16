@@ -62,7 +62,7 @@ async fn make_descs(
         })
         .unwrap();
     let period = request.period;
-    let descs = rates.stats(period).describes();
+    let descs = rates.aggregate(period).describes();
     info!(log, "success";
         "descs_count" => descs.len(),
     );
