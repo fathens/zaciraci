@@ -1,3 +1,5 @@
+mod arima;
+
 use crate::Result;
 use crate::logging::*;
 use crate::persistence::TimeRange;
@@ -154,8 +156,11 @@ impl SameBaseTokenRates {
         let stats = self.aggregate(period);
         let _descs = stats.describes();
 
-        info!(log, "success");
-        unimplemented!()
+        // arima モジュールの予測関数を使用して将来の値を予測
+        let result = arima::predict_future_rate(&self.points, target)?;
+
+        info!(log, "success"; "predicted_rate" => %result);
+        Ok(result)
     }
 
     pub fn aggregate(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
