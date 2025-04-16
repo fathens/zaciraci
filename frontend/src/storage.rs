@@ -3,8 +3,8 @@ use wasm_bindgen_futures::spawn_local;
 
 #[component]
 pub fn view() -> Element {
-    let client = use_signal(|| crate::server_api::get_client());
-    
+    let client = use_signal(crate::server_api::get_client);
+
     let mut storage_deposit_min_result = use_signal(|| "None".to_string());
     let on_storage_deposit_min = move |_| {
         spawn_local(async move {

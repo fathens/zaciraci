@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {

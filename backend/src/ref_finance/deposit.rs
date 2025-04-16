@@ -1,24 +1,24 @@
+use crate::Result;
 use crate::jsonrpc::{SendTx, ViewContract};
 use crate::logging::*;
-use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::CONTRACT_ADDRESS;
+use crate::ref_finance::token_account::TokenAccount;
 use crate::wallet::Wallet;
-use crate::Result;
 use near_primitives::types::Balance;
-use near_sdk::json_types::U128;
 use near_sdk::AccountId;
+use near_sdk::json_types::U128;
 use serde_json::json;
 use std::collections::HashMap;
 
 pub mod wnear {
+    use crate::Result;
     use crate::jsonrpc::{SendTx, ViewContract};
     use crate::logging::*;
     use crate::ref_finance::token_account::WNEAR_TOKEN;
     use crate::wallet::Wallet;
-    use crate::Result;
     use near_primitives::types::Balance;
-    use near_sdk::json_types::U128;
     use near_sdk::AccountId;
+    use near_sdk::json_types::U128;
     use serde_json::json;
 
     pub async fn balance_of<C: ViewContract>(client: &C, account: &AccountId) -> Result<Balance> {
@@ -40,7 +40,11 @@ pub mod wnear {
         Ok(balance.into())
     }
 
-    pub async fn wrap<C: SendTx, W: Wallet>(client: &C, wallet: &W, amount: Balance) -> Result<C::Output> {
+    pub async fn wrap<C: SendTx, W: Wallet>(
+        client: &C,
+        wallet: &W,
+        amount: Balance,
+    ) -> Result<C::Output> {
         let log = DEFAULT.new(o!(
             "function" => "wrap_near",
             "amount" => amount,
@@ -58,7 +62,11 @@ pub mod wnear {
             .await
     }
 
-    pub async fn unwrap<C: SendTx, W: Wallet>(client: &C, wallet: &W, amount: Balance) -> Result<C::Output> {
+    pub async fn unwrap<C: SendTx, W: Wallet>(
+        client: &C,
+        wallet: &W,
+        amount: Balance,
+    ) -> Result<C::Output> {
         let log = DEFAULT.new(o!(
             "function" => "unwrap_near",
             "amount" => amount,

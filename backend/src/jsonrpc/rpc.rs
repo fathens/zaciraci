@@ -3,7 +3,7 @@ use near_jsonrpc_client::errors::{
     JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError, JsonRpcTransportRecvError,
     JsonRpcTransportSendError, RpcTransportError,
 };
-use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
+use near_jsonrpc_client::{JsonRpcClient, MethodCallResult, methods};
 use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +37,9 @@ impl StandardRpcClient {
         method: M,
     ) -> MaybeRetry<MethodCallResult<M::Response, M::Error>, JsonRpcError<M::Error>>
     where
-        M: methods::RpcMethod,
+        M: methods::RpcMethod + Send + Sync,
+        <M as methods::RpcMethod>::Response: Send,
+        <M as methods::RpcMethod>::Error: Send,
     {
         let log = DEFAULT.new(o!(
             "function" => "jsonrpc::Client::call_maybe_retry",
@@ -189,7 +191,9 @@ impl super::RpcClient for StandardRpcClient {
 
     async fn call<M>(&self, method: M) -> MethodCallResult<M::Response, M::Error>
     where
-        M: methods::RpcMethod,
+        M: methods::RpcMethod + Send + Sync,
+        <M as methods::RpcMethod>::Response: Send,
+        <M as methods::RpcMethod>::Error: Send,
     {
         let delay_limit = self.delay_limit;
         let retry_limit = self.retry_limit;

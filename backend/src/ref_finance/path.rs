@@ -4,26 +4,25 @@ mod edge;
 pub mod graph;
 pub mod preview;
 
+use super::pool_info::TokenPath;
+use crate::Result;
 use crate::logging::*;
 use crate::ref_finance::history;
 use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::types::gas_price::GasPrice;
 use crate::types::{MicroNear, MilliNear};
-use crate::Result;
 use graph::TokenGraph;
 use near_primitives::types::Balance;
 use num_integer::Roots;
-use num_traits::{one, zero, One, Zero};
+use num_traits::{One, Zero, one, zero};
+use preview::{Preview, PreviewList};
 use slog::info;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
-use crate::types::gas_price::GasPrice;
-use preview::{Preview, PreviewList};
-use super::pool_info::TokenPath;
-
 
 pub fn all_tokens(pools: Arc<PoolInfoList>) -> Vec<TokenAccount> {
     let by_tokens = by_token::PoolsByToken::new(pools);
@@ -208,18 +207,23 @@ where
 
     let gain = |a| get_gain(a).into();
     let mut cache: HashMap<M, std::result::Result<Option<Arc<A>>, InnerError>> = HashMap::new();
-    
+
     // キャッシュを利用した単一引数の評価関数
     let mut evaluate = |input: M| -> std::result::Result<M, InnerError> {
         if cache.contains_key(&input) {
-            return Ok(cache.get(&input).unwrap().clone()?.map(gain).unwrap_or(zero()));
+            return Ok(cache
+                .get(&input)
+                .unwrap()
+                .clone()?
+                .map(gain)
+                .unwrap_or(zero()));
         }
-        
+
         // 新しい値を計算
         let result = calc_res(input).map_err(|e| InnerError(Arc::new(e)))?;
         cache.insert(input, Ok(result.clone()));
         let gain_value = result.clone().map(gain).unwrap_or(zero());
-        
+
         Ok(gain_value)
     };
 
@@ -233,7 +237,7 @@ where
         let a = evaluate(in_a).map_err(|e| e.unwrap())?;
         let b = evaluate(in_b).map_err(|e| e.unwrap())?;
         let c = evaluate(in_c).map_err(|e| e.unwrap())?;
-        
+
         debug!(log, "evaluated points";
             "in_a" => format!("{:?}", in_a),
             "in_b" => format!("{:?}", in_b),

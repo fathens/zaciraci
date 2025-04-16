@@ -1,8 +1,8 @@
 use super::{AccessKeyInfo, BlockInfo, RpcClient, SendTx, TxInfo, ViewContract};
+use crate::Result;
 use crate::jsonrpc::sent_tx::StandardSentTx;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
-use crate::Result;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
@@ -90,7 +90,10 @@ impl<A: RpcClient> AccessKeyInfo for StandardNearClient<A> {
     }
 }
 
-impl<A: RpcClient> ViewContract for StandardNearClient<A> {
+impl<A> ViewContract for StandardNearClient<A>
+where
+    A: RpcClient + Sync + Send,
+{
     async fn view_contract<T>(
         &self,
         receiver: &AccountId,
@@ -98,7 +101,7 @@ impl<A: RpcClient> ViewContract for StandardNearClient<A> {
         args: &T,
     ) -> Result<CallResult>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + serde::Serialize + Sync,
     {
         let req = methods::query::RpcQueryRequest {
             block_reference: Finality::Final.into(),

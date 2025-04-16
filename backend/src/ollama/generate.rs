@@ -1,7 +1,7 @@
-use super::{ModelName, Image};
+use super::{Image, ModelName};
 use crate::logging::*;
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, FixedOffset};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
@@ -34,7 +34,7 @@ pub async fn generate(
     prompt: String,
     images: Vec<Image>,
 ) -> crate::Result<Response> {
-    let log = crate::logging::DEFAULT.new(o!("function" => "generate"));
+    let log = DEFAULT.new(o!("function" => "generate"));
     info!(log, "Generating");
     let request = Request {
         model,
@@ -51,19 +51,20 @@ pub async fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest;
 
     #[tokio::test]
     #[ignore]
     async fn test_generate() {
-        let log = crate::logging::DEFAULT.new(o!("function" => "test_generate"));
+        let log = DEFAULT.new(o!("function" => "test_generate"));
         info!(log, "Testing generate");
         let client = reqwest::Client::new();
         let base_url = "http://localhost:11434/api".to_string();
         let model = ModelName("gemma3:12b".to_string());
         let prompt = "say something".to_string();
         let images = vec![];
-        let response = generate(&client, base_url, model, prompt, images).await.unwrap();
+        let response = generate(&client, base_url, model, prompt, images)
+            .await
+            .unwrap();
         println!("response = {response:#?}");
     }
 }

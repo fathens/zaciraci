@@ -98,8 +98,8 @@ impl Div<MilliNear> for MilliNear {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zaciraci_common::types::YoctoNearToken;
     use bigdecimal::BigDecimal;
+    use zaciraci_common::types::YoctoNearToken;
 
     #[test]
     fn test_by_yocto_near() {

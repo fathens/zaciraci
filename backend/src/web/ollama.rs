@@ -35,10 +35,7 @@ async fn list_model_names() -> String {
     serde_json::to_string(&names).unwrap()
 }
 
-async fn chat(
-    State(_): State<Arc<AppState>>,
-    Json(request): Json<ChatRequest>,
-) -> String {
+async fn chat(State(_): State<Arc<AppState>>, Json(request): Json<ChatRequest>) -> String {
     let log = DEFAULT.new(o!(
         "function" => "chat",
         "model_name" => format!("{}", request.model_name),
@@ -63,10 +60,7 @@ async fn chat(
     serde_json::to_string(&res).unwrap()
 }
 
-async fn generate(
-    State(_): State<Arc<AppState>>,
-    Json(request): Json<GenerateRequest>,
-) -> String {
+async fn generate(State(_): State<Arc<AppState>>, Json(request): Json<GenerateRequest>) -> String {
     let log = DEFAULT.new(o!(
         "function" => "generate",
         "model_name" => format!("{}", request.model_name),

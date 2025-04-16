@@ -1,4 +1,4 @@
-pub mod trade;
+pub mod stats;
 
 use crate::Result;
 use crate::config;
@@ -26,7 +26,7 @@ async fn run_record_rates() {
 
 async fn run_trade() {
     const CRON_CONF: &str = "0 0 * * * *"; // 毎時0分
-    cronjob(CRON_CONF.parse().unwrap(), trade::start, "trade").await;
+    cronjob(CRON_CONF.parse().unwrap(), stats::start, "trade").await;
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)

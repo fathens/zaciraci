@@ -1,21 +1,20 @@
 mod basic;
+mod image_upload;
 mod ollama;
 mod pools;
-mod storage;
 mod server_api;
-mod image_upload;
 mod stats;
+mod storage;
 
 use dioxus::prelude::*;
-use dioxus_logger;
 
-pub use zaciraci_common::config;
 pub use server_api::get_client;
+pub use zaciraci_common::config;
 
 fn main() {
     // ロガーを初期化
     dioxus_logger::init(dioxus_logger::tracing::Level::DEBUG).expect("failed to init logger");
-    
+
     // アプリを起動
     dioxus::launch(app);
 }

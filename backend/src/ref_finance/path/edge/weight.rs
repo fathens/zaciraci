@@ -14,7 +14,7 @@ impl EdgeWeight {
         if input_value == 0 {
             zero()
         } else {
-            estimated_return as f32 / input_value as f32
+            -(estimated_return as f32 / input_value as f32)
         }
     }
 
@@ -34,20 +34,14 @@ impl Eq for EdgeWeight {}
 
 impl Ord for EdgeWeight {
     fn cmp(&self, other: &Self) -> Ordering {
-        // レートが大きいほど望ましい -> Less
-        if self.estimated_rate < other.estimated_rate {
-            Ordering::Greater
-        } else if self.estimated_rate > other.estimated_rate {
-            Ordering::Less
-        } else {
-            Ordering::Equal
-        }
+        self.partial_cmp(other).unwrap_or(Ordering::Equal)
     }
 }
 
+#[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd for EdgeWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+        self.estimated_rate.partial_cmp(&other.estimated_rate)
     }
 }
 
@@ -84,10 +78,10 @@ mod test {
 
     #[test]
     fn test_calc_rate() {
-        assert_eq!(EdgeWeight::calc_rate(1, 1), 1.0);
-        assert_eq!(EdgeWeight::calc_rate(1, 2), 2.0);
-        assert_eq!(EdgeWeight::calc_rate(2, 1), 0.5);
-        assert_eq!(EdgeWeight::calc_rate(2, 2), 1.0);
+        assert_eq!(EdgeWeight::calc_rate(1, 1), -1.0);
+        assert_eq!(EdgeWeight::calc_rate(1, 2), -2.0);
+        assert_eq!(EdgeWeight::calc_rate(2, 1), -0.5);
+        assert_eq!(EdgeWeight::calc_rate(2, 2), -1.0);
         assert_eq!(EdgeWeight::calc_rate(2, 0), 0.0,);
     }
 
@@ -107,13 +101,12 @@ mod test {
 
     #[test]
     fn test_add() {
-        assert_eq!(
-            (weight(1, 1) + weight(1, 1)).estimated_rate,
-            EdgeWeight::calc_rate(1, 1)
-        );
-        assert_eq!(
-            (weight(1, 2) + weight(2, 1)).estimated_rate,
-            EdgeWeight::calc_rate(1, 1)
-        );
+        // 掛け算の結果を確認: (-1.0) * (-1.0) = 1.0
+        let result1 = (weight(1, 1) + weight(1, 1)).estimated_rate;
+        assert_eq!(result1, 1.0);
+
+        // 掛け算の結果を確認: (-2.0) * (-0.5) = 1.0
+        let result2 = (weight(1, 2) + weight(2, 1)).estimated_rate;
+        assert_eq!(result2, 1.0);
     }
 }

@@ -1,12 +1,12 @@
 use crate::logging::*;
+use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::ref_finance::pool_info::{TokenPair, TokenPairLike};
 use crate::ref_finance::token_account::TokenAccount;
-use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::wallet::Wallet;
-use crate::{jsonrpc, Result};
+use crate::{Result, jsonrpc};
 use near_primitives::types::Balance;
-use near_sdk::json_types::U128;
 use near_sdk::AccountId;
+use near_sdk::json_types::U128;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -15,7 +15,7 @@ use serde_json::json;
 #[serde(crate = "near_sdk::serde")]
 pub struct SwapAction {
     /// Pool which should be used for swapping.
-    pub pool_id: u64,
+    pub pool_id: u32,
     /// Token to swap from.
     pub token_in: AccountId,
     /// Amount to exchange.
@@ -143,14 +143,14 @@ mod tests {
     use near_sdk::require;
 
     struct MockTokenPair {
-        pool_id: u64,
+        pool_id: u32,
         token_in: TokenAccount,
         token_out: TokenAccount,
         rate: f32,
     }
 
     impl TokenPairLike for MockTokenPair {
-        fn pool_id(&self) -> u64 {
+        fn pool_id(&self) -> u32 {
             self.pool_id
         }
 

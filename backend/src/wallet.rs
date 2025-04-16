@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::config;
 use crate::logging::*;
-use crate::Result;
 use anyhow::anyhow;
 use near_crypto::SecretKey::ED25519;
 use near_crypto::{ED25519SecretKey, InMemorySigner};

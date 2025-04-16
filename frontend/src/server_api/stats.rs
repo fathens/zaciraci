@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use zaciraci_common::stats::DescribesRequest;
 
 use super::Underlying;

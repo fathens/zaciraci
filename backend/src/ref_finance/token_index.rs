@@ -7,11 +7,7 @@ impl TokenIndex {
     }
 
     pub fn max(self, other: Self) -> Self {
-        if self.0 > other.0 {
-            self
-        } else {
-            other
-        }
+        if self.0 > other.0 { self } else { other }
     }
 }
 

@@ -3,8 +3,8 @@ use wasm_bindgen_futures::spawn_local;
 
 #[component]
 pub fn view() -> Element {
-    let client = use_signal(|| crate::server_api::get_client());
-    
+    let client = use_signal(crate::server_api::get_client);
+
     let mut healthcheck_result = use_signal(|| "None".to_string());
     let mut balance_result = use_signal(|| "None".to_string());
     let mut transfer_result = use_signal(|| "None".to_string());
@@ -27,7 +27,10 @@ pub fn view() -> Element {
 
     let on_native_token_transfer = move |_| {
         spawn_local(async move {
-            let text = client().basic.native_token_transfer(&receiver(), &amount()).await;
+            let text = client()
+                .basic
+                .native_token_transfer(&receiver(), &amount())
+                .await;
             transfer_result.set(text);
         });
     };

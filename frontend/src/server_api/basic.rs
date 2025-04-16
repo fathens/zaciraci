@@ -1,6 +1,5 @@
-use std::sync::Arc;
 use super::Underlying;
-
+use std::sync::Arc;
 
 pub struct BasicApi {
     pub underlying: Arc<Underlying>,
@@ -16,7 +15,8 @@ impl BasicApi {
     }
 
     pub async fn native_token_transfer(&self, receiver: &str, amount: &str) -> String {
-        self.underlying.get_text(&format!("native_token/transfer/{receiver}/{amount}"))
+        self.underlying
+            .get_text(&format!("native_token/transfer/{receiver}/{amount}"))
             .await
     }
 }

@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
 use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{U64, U128};
 use serde_json::json;
 use serial_test::serial;
 use std::cell::Cell;
@@ -72,6 +72,8 @@ struct MockClient {
     should_fail_near_deposit: Cell<bool>,
     should_fail_ft_transfer: Cell<bool>,
 }
+
+unsafe impl Sync for MockClient {}
 
 impl MockClient {
     fn new(native: Balance, wnear: Balance, deposited: Balance) -> Self {
@@ -142,8 +144,8 @@ impl SendTx for MockClient {
             }
             "ft_transfer_call" => {
                 if !self.should_fail_ft_transfer.get() {
-                    let args_str = serde_json::to_string(&args).unwrap();
-                    let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
+                    let args_str = serde_json::to_string(&args)?;
+                    let args_value: serde_json::Value = serde_json::from_str(&args_str)?;
                     let amount: Balance = args_value["amount"]
                         .as_str()
                         .and_then(|s| s.parse().ok())
@@ -156,8 +158,8 @@ impl SendTx for MockClient {
                 self.should_fail_ft_transfer.get()
             }
             "withdraw" => {
-                let args_str = serde_json::to_string(&args).unwrap();
-                let args_value: serde_json::Value = serde_json::from_str(&args_str).unwrap();
+                let args_str = serde_json::to_string(&args)?;
+                let args_value: serde_json::Value = serde_json::from_str(&args_str)?;
                 let amount: Balance = args_value["amount"]
                     .as_str()
                     .and_then(|s| s.parse().ok())
@@ -192,7 +194,7 @@ impl ViewContract for MockClient {
         _args: &T,
     ) -> Result<CallResult>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + serde::Serialize + Sync,
     {
         self.log_operation(&format!("view_contract: {method_name}"));
         let result = match method_name {
@@ -251,7 +253,7 @@ impl SentTx for MockSentTx {
             receipt_ids: vec![],
             gas_burnt: 0,
             tokens_burnt: 0,
-            executor_id: AccountId::try_from("test.near".to_string()).unwrap(),
+            executor_id: AccountId::try_from("test.near".to_string())?,
             status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
             metadata: near_primitives::views::ExecutionMetadataView {
                 version: 1,

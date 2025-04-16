@@ -1,11 +1,11 @@
+use crate::Result;
 use crate::jsonrpc::{SendTx, SentTx, ViewContract};
 use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
-use crate::ref_finance::{deposit, CONTRACT_ADDRESS};
+use crate::ref_finance::{CONTRACT_ADDRESS, deposit};
 use crate::wallet::Wallet;
-use crate::Result;
 use near_primitives::types::AccountId;
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{U64, U128};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -127,7 +127,7 @@ pub async fn check_deposits<C: ViewContract>(
     }
     let maybe_balance = balance_of(client, account).await?;
     if maybe_balance.is_none() {
-        return Ok(None)
+        return Ok(None);
     }
     let balance = maybe_balance.unwrap();
 
@@ -177,7 +177,11 @@ pub async fn check_deposits<C: ViewContract>(
     Ok(Some((noneeds, more)))
 }
 
-pub async fn check_and_deposit<C, W>(client: &C, wallet: &W, tokens: &[TokenAccount]) -> Result<Option<()>>
+pub async fn check_and_deposit<C, W>(
+    client: &C,
+    wallet: &W,
+    tokens: &[TokenAccount],
+) -> Result<Option<()>>
 where
     C: SendTx + ViewContract,
     W: Wallet,

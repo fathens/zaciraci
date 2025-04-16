@@ -1,3 +1,4 @@
+use crate::Result;
 use crate::config;
 use crate::jsonrpc::{AccountInfo, SendTx, SentTx, ViewContract};
 use crate::logging::*;
@@ -7,7 +8,6 @@ use crate::ref_finance::storage;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::types::MilliNear;
 use crate::wallet::Wallet;
-use crate::Result;
 use anyhow::bail;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};

@@ -4,9 +4,8 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-static CONFIG_STORE: Lazy<Arc<Mutex<HashMap<String, String>>>> = Lazy::new(|| {
-    Arc::new(Mutex::new(HashMap::new()))
-});
+static CONFIG_STORE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub fn get(name: &str) -> Result<String> {
     // まずハッシュマップから値を取得しようとする
