@@ -222,6 +222,42 @@ where
     U: Add<Output = U> + Sub<Output = U> + Mul<Output = U> + Div<Output = U>,
     U: Zero + PartialOrd + From<i64>,
 {
+    fn format_decimal<V: Display>(value: V) -> String {
+        let s = value.to_string();
+        if s.contains('.') {
+            // 小数点以下の末尾の0を削除し、最大9桁まで表示
+            let parts: Vec<&str> = s.split('.').collect();
+            if parts.len() == 2 {
+                let integer_part = parts[0];
+                let mut decimal_part = parts[1];
+                
+                // 小数点以下が全て0の場合は整数表示
+                if decimal_part.chars().all(|c| c == '0') {
+                    return integer_part.to_string();
+                }
+                
+                // 末尾の0を削除
+                decimal_part = decimal_part.trim_end_matches('0');
+                
+                // 小数点以下が9桁を超える場合は9桁までに制限
+                if decimal_part.len() > 9 {
+                    decimal_part = &decimal_part[..9];
+                }
+                
+                // 小数点以下が空になった場合は整数のみ返す
+                if decimal_part.is_empty() {
+                    return integer_part.to_string();
+                }
+                
+                format!("{}.{}", integer_part, decimal_part)
+            } else {
+                s
+            }
+        } else {
+            s
+        }
+    }
+
     pub fn describes(&self) -> Vec<String> {
         let log = DEFAULT.new(o!(
             "function" => "ListStatsInPeriod::describes",
@@ -245,12 +281,17 @@ where
                         "increase"
                     };
                     let change = (diff / p.end.clone()) * 100_i64.into();
-                    format!(", marking a {:0.0} % {} {}", change, dw, prev)
+                    let change_str = Self::format_decimal(change);
+                    format!(", marking a {} % {} {}", change_str, dw, prev)
                 })
                 .unwrap_or_default();
             let summary = format!(
-                "opened at {:0.0}, closed at {:0.0}, with a high of {:0.0}, a low of {:0.0}, and an average of {:0.0}",
-                stat.start, stat.end, stat.max, stat.min, stat.average
+                "opened at {}, closed at {}, with a high of {}, a low of {}, and an average of {}",
+                Self::format_decimal(stat.start.clone()),
+                Self::format_decimal(stat.end.clone()),
+                Self::format_decimal(stat.max.clone()),
+                Self::format_decimal(stat.min.clone()),
+                Self::format_decimal(stat.average.clone())
             );
             let line = format!("{}, {}{}", date, summary, changes);
             debug!(log, "added line";
@@ -270,6 +311,7 @@ where
 mod tests {
     use super::*;
     use crate::ref_finance::token_account::TokenAccount;
+    use std::str::FromStr;
 
     #[test]
     fn test_describes() {
@@ -619,5 +661,90 @@ mod tests {
             assert_eq!(stat.min, BigDecimal::from(200));
             assert_eq!(stat.average, BigDecimal::from(250)); // (200 + 300) / 2 = 250
         }
+    }
+
+    #[test]
+    fn test_format_decimal_digits() {
+        // 整数値のテスト
+        assert_eq!(
+            "100", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from(100))
+        );
+        
+        // 小数点以下が全て0の値
+        let with_zeros = BigDecimal::from(100) + BigDecimal::from_str("0.000000000").unwrap();
+        assert_eq!("100", ListStatsInPeriod::<BigDecimal>::format_decimal(with_zeros));
+        
+        // 小数点以下が1桁の値
+        assert_eq!(
+            "0.1", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1").unwrap())
+        );
+        
+        // 小数点以下が2桁の値 
+        assert_eq!(
+            "0.12", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12").unwrap())
+        );
+        
+        // 小数点以下が3桁の値
+        assert_eq!(
+            "0.123", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123").unwrap())
+        );
+        
+        // 小数点以下が4桁の値
+        assert_eq!(
+            "0.1234", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234").unwrap())
+        );
+        
+        // 小数点以下が5桁の値
+        assert_eq!(
+            "0.12345", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12345").unwrap())
+        );
+        
+        // 小数点以下が6桁の値
+        assert_eq!(
+            "0.123456", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123456").unwrap())
+        );
+        
+        // 小数点以下が7桁の値
+        assert_eq!(
+            "0.1234567", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234567").unwrap())
+        );
+        
+        // 小数点以下が8桁の値
+        assert_eq!(
+            "0.12345678", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12345678").unwrap())
+        );
+        
+        // 小数点以下が9桁の値
+        assert_eq!(
+            "0.123456789", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123456789").unwrap())
+        );
+        
+        // 小数点以下が10桁の値（9桁までに制限される）
+        assert_eq!(
+            "0.123456789", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234567891").unwrap())
+        );
+        
+        // 末尾に0がある場合（末尾の0は削除される）
+        assert_eq!(
+            "0.12345", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12345000").unwrap())
+        );
+        
+        // 整数部分あり、小数点以下4桁の値
+        assert_eq!(
+            "123.4567", 
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("123.4567").unwrap())
+        );
     }
 }
