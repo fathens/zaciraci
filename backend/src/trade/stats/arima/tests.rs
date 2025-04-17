@@ -137,71 +137,231 @@ mod feature_generation_tests {
 
     #[test]
     fn test_create_lag_features_basic() {
-        // 10個のデータポイント、ラグ数 3
-        let points = create_test_points(10, 1.0, 1.0); // 1.0, 2.0, 3.0, ..., 10.0
+        // テストの目的: ラグ特徴量生成の基本機能が正しく動作することを確認する
+        // テストの内容:
+        // 1. 線形に増加する値を持つデータポイントを作成(1.0, 2.0, 3.0, ...)
+        // 2. ラグ数3で特徴量を生成
+        // 3. 特徴量の形状、値、およびターゲット値が期待通りであることを検証
+
+        // テストデータ: 10個のデータポイント、線形増加(1.0, 2.0, 3.0, ..., 10.0)
+        let points = create_test_points(10, 1.0, 1.0);
         let lag_count = 3;
 
+        // ラグ特徴量の生成を実行
         let result = create_lag_features(&points, lag_count);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "ラグ特徴量の生成に失敗しました");
 
         let (features, targets) = result.unwrap();
 
-        // 10個のデータポイントから、ラグ数3を使うと、7つのサンプルが生成される
-        assert_eq!(features.len(), 7);
-        assert_eq!(targets.len(), 7);
+        // 期待されるサンプル数の検証:
+        // N個のデータポイントとラグ数kから生成される特徴量の数は N - k 個になるはず
+        let expected_sample_count = points.len() - lag_count;
+        assert_eq!(
+            features.len(),
+            expected_sample_count,
+            "生成された特徴量の数が期待値と異なります。期待値: {}, 実際: {}",
+            expected_sample_count,
+            features.len()
+        );
+        assert_eq!(
+            targets.len(),
+            expected_sample_count,
+            "ターゲットの数が期待値と異なります。期待値: {}, 実際: {}",
+            expected_sample_count,
+            targets.len()
+        );
 
-        // 最初の特徴量は [1.0, 2.0, 3.0] で、ターゲットは 4.0
+        // 最初の特徴量とターゲットの検証
+        // 最初の特徴量は [1.0, 2.0, 3.0]、ターゲットは 4.0 になるはず
         let first_feature = &features[0];
-        assert_eq!(first_feature.len(), 3);
-        assert_eq!(first_feature[0], 1.0);
-        assert_eq!(first_feature[1], 2.0);
-        assert_eq!(first_feature[2], 3.0);
-        assert_eq!(targets[0], 4.0);
+        assert_eq!(first_feature.len(), lag_count, "特徴量の次元数が不正です");
 
-        // 最後の特徴量は [7.0, 8.0, 9.0] で、ターゲットは 10.0
-        let last_feature = &features[6];
-        assert_eq!(last_feature[0], 7.0);
-        assert_eq!(last_feature[1], 8.0);
-        assert_eq!(last_feature[2], 9.0);
-        assert_eq!(targets[6], 10.0);
-    }
+        for (i, &value) in first_feature.iter().enumerate() {
+            assert_eq!(
+                value,
+                (i + 1) as f64,
+                "最初の特徴量の第{}要素が期待値と異なります",
+                i
+            );
+        }
+        assert_eq!(
+            targets[0],
+            (lag_count + 1) as f64,
+            "最初のターゲットが期待値と異なります"
+        );
 
-    #[test]
-    fn test_create_lag_features_insufficient_data() {
-        // 3個のデータポイント、ラグ数 4 (データが不足)
-        let points = create_test_points(3, 1.0, 1.0);
-        let lag_count = 4;
+        // 最後の特徴量とターゲットの検証
+        // 最後の特徴量は [7.0, 8.0, 9.0]、ターゲットは 10.0 になるはず
+        let last_index = expected_sample_count - 1;
+        let last_feature = &features[last_index];
 
-        let result = create_lag_features(&points, lag_count);
-        assert!(result.is_err());
+        // 最後の特徴量の各要素を検証
+        assert_eq!(
+            last_feature[0], 7.0,
+            "最後の特徴量の第0要素が期待値と異なります"
+        );
+        assert_eq!(
+            last_feature[1], 8.0,
+            "最後の特徴量の第1要素が期待値と異なります"
+        );
+        assert_eq!(
+            last_feature[2], 9.0,
+            "最後の特徴量の第2要素が期待値と異なります"
+        );
+        assert_eq!(
+            targets[last_index], 10.0,
+            "最後のターゲットが期待値と異なります"
+        );
 
-        // エラーメッセージを確認
-        match result {
-            Err(e) => {
-                let error_string = e.to_string();
-                assert!(error_string.contains("insufficient data points"));
-            }
-            Ok(_) => panic!("Expected error for insufficient data"),
+        // 全ての特徴量の形状の検証
+        for (i, feature) in features.iter().enumerate() {
+            assert_eq!(
+                feature.len(),
+                lag_count,
+                "特徴量{}の次元数が不正です。期待値: {}, 実際: {}",
+                i,
+                lag_count,
+                feature.len()
+            );
         }
     }
 
     #[test]
+    fn test_create_lag_features_insufficient_data() {
+        // テストの目的: データポイント不足時のエラー処理が適切に機能することを確認する
+        // ラグ特徴量の生成には少なくともラグ数+1個のデータポイントが必要
+        // 十分なデータがない場合は適切なエラーメッセージを返すべき
+
+        // ケース1: 明らかに不足するデータ量（ラグ数 > データ数）
+        let points_few = create_test_points(3, 1.0, 1.0);
+        let lag_count = 4; // データポイント数より大きいラグ数
+
+        let result = create_lag_features(&points_few, lag_count);
+        assert!(result.is_err(), "データ不足時にエラーが発生すべき");
+
+        // エラーメッセージの詳細を検証
+        match result {
+            Err(e) => {
+                let error_string = e.to_string();
+                assert!(
+                    error_string.contains("insufficient data points"),
+                    "適切なエラーメッセージが含まれていません: {}",
+                    error_string
+                );
+                // エラーメッセージには最小必要データ数（lag_count+1）が含まれるはず
+                let min_required = (lag_count + 1).to_string();
+                assert!(
+                    error_string.contains(&min_required),
+                    "エラーメッセージに最小必要データ数が含まれていません: {}",
+                    error_string
+                );
+            }
+            Ok(_) => panic!("データ不足時にエラーが発生しませんでした"),
+        }
+
+        // ケース2: 境界値テスト - ちょうど必要最小限のデータ量
+        let points_exact = create_test_points(lag_count + 1, 1.0, 1.0);
+        let result_exact = create_lag_features(&points_exact, lag_count);
+        assert!(
+            result_exact.is_ok(),
+            "最小必要数のデータでも特徴量生成が成功すべき"
+        );
+
+        if let Ok((features, targets)) = result_exact {
+            assert_eq!(features.len(), 1, "生成される特徴量は1つだけのはず");
+            assert_eq!(targets.len(), 1, "生成されるターゲットは1つだけのはず");
+            assert_eq!(
+                features[0].len(),
+                lag_count,
+                "特徴量の次元数はラグ数と等しいはず"
+            );
+        }
+
+        // ケース3: 境界値テスト - 必要最小限より1つ少ないデータ量
+        let points_almost = create_test_points(lag_count, 1.0, 1.0);
+        let result_almost = create_lag_features(&points_almost, lag_count);
+        assert!(
+            result_almost.is_err(),
+            "最小必要数-1のデータ量ではエラーが発生すべき"
+        );
+    }
+
+    #[test]
     fn test_generate_future_features() {
-        // 10個のデータポイント、ラグ数 3
-        let points = create_test_points(10, 1.0, 1.0);
+        // テストの目的: 将来予測のための特徴量が正しく生成されることを確認する
+        // 将来予測では、直近のデータポイントからラグ数に基づいて特徴量を作成する
+        // 例えば、ラグ数3の場合、最新の3つの値が特徴量として使用される
+
+        // 基本ケース: 標準的なパラメータでのテスト
+        let points = create_test_points(10, 1.0, 1.0); // 1.0, 2.0, ..., 10.0
         let lag_count = 3;
         let steps_ahead = 2;
 
+        println!(
+            "基本ケース: ラグ数 {}, 予測ステップ {}",
+            lag_count, steps_ahead
+        );
+
         let result = generate_future_features(&points, lag_count, steps_ahead);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "将来特徴量の生成に失敗しました");
 
         let features = result.unwrap();
 
-        // 特徴量の数とデータを確認
-        assert_eq!(features.len(), 3);
-        assert_eq!(features[0], 8.0); // 最後から3つ目
-        assert_eq!(features[1], 9.0); // 最後から2つ目
-        assert_eq!(features[2], 10.0); // 最後のポイント
+        // 特徴量の次元数検証: ラグ数と一致するはず
+        assert_eq!(
+            features.len(),
+            lag_count,
+            "特徴量の次元数はラグ数と一致するはず。期待値: {}, 実際: {}",
+            lag_count,
+            features.len()
+        );
+
+        // 特徴量の値検証: データの最後から遡って最新のlag_count個の値が使われるはず
+        // steps_aheadは予測する未来の時点を示すが、特徴量自体には影響しない
+        for (i, &feature) in features.iter().enumerate() {
+            let expected_index = points.len() - lag_count + i;
+            let expected_value = (expected_index + 1) as f64; // テストデータは1から始まる連番
+
+            assert_eq!(
+                feature, expected_value,
+                "特徴量[{}]の値が期待と異なります。期待値: {}, 実際: {}",
+                i, expected_value, feature
+            );
+        }
+
+        // 追加ケース: 異なるステップ数での検証
+        let different_steps = [0, 1, 5];
+
+        for &step in &different_steps {
+            println!(
+                "異なるステップ数のケース: ラグ数 {}, 予測ステップ {}",
+                lag_count, step
+            );
+
+            let result = generate_future_features(&points, lag_count, step);
+            assert!(
+                result.is_ok(),
+                "将来特徴量の生成に失敗しました (ステップ数: {})",
+                step
+            );
+
+            let features = result.unwrap();
+
+            // 特徴量の次元数は常にラグ数と一致するはず（ステップ数に関わらず）
+            assert_eq!(
+                features.len(),
+                lag_count,
+                "特徴量の次元数はラグ数と一致するはず。期待値: {}, 実際: {}",
+                lag_count,
+                features.len()
+            );
+
+            // 特徴量の内容はステップ数に関わらず同じはず
+            // なぜならステップ数は予測対象の時点を指定するだけで、入力特徴量は変わらないため
+            assert_eq!(features[0], 8.0, "最初の特徴量が期待値と異なります");
+            assert_eq!(features[1], 9.0, "2番目の特徴量が期待値と異なります");
+            assert_eq!(features[2], 10.0, "3番目の特徴量が期待値と異なります");
+        }
     }
 }
 
@@ -214,17 +374,39 @@ mod prediction_tests {
         // 線形に増加するデータで予測をテスト
         let points = create_test_points(15, 100.0, 5.0); // 100, 105, 110, ...
         let last_time = points.last().unwrap().timestamp;
-        let target_time = last_time + Duration::hours(3); // 3時間後を予測
 
-        let result = predict_future_rate(&points, target_time);
-        assert!(result.is_ok());
+        // 複数の予測時間間隔でテストする
+        let time_intervals = [
+            Duration::hours(1),  // 短期予測
+            Duration::hours(3),  // 中期予測
+            Duration::hours(24), // 長期予測
+        ];
 
-        let predicted_value = result.unwrap();
-        let predicted_f64 = convert_to_f64(&predicted_value).unwrap();
+        for &interval in &time_intervals {
+            let target_time = last_time + interval;
+            let hours = interval.num_hours();
 
-        // 線形トレンドなので、予測値は 100 + (15+3)*5 = 190 に近い値になるはず
-        // ただし完全に一致するとは限らないので、許容範囲を設ける
-        assert!(predicted_f64 > 170.0 && predicted_f64 < 210.0);
+            let result = predict_future_rate(&points, target_time);
+            assert!(result.is_ok());
+
+            let predicted_value = result.unwrap();
+            let predicted_f64 = convert_to_f64(&predicted_value).unwrap();
+
+            // 線形トレンドなので、予測値は 100 + (15+hours)*5 に近い値になるはず
+            let expected_base = 100.0 + (15.0 + hours as f64) * 5.0;
+            let tolerance = 5.0 + (hours as f64 * 0.5); // 時間が長いほど許容誤差を増やす
+
+            assert!(
+                (predicted_f64 - expected_base).abs() < tolerance,
+                "時間間隔 {}時間の予測値が期待範囲外: 予測値={}, 期待値={} ± {}",
+                hours,
+                predicted_f64,
+                expected_base,
+                tolerance
+            );
+
+            println!("時間間隔 {}時間の予測: {}", hours, predicted_f64);
+        }
     }
 
     #[test]
@@ -262,32 +444,85 @@ mod prediction_tests {
     }
 
     #[test]
-    fn test_prediction_error_cases() {
-        // ケース1: データ不足
-        let few_points = create_test_points(3, 1.0, 1.0); // 最小必要数未満
+    fn test_prediction_error_insufficient_data() {
+        // テストケース: 最小必要数よりも少ないデータポイントでの予測
+        // ARIMAモデルには一定量以上のデータポイントが必要なため、
+        // データが不足している場合は適切なエラーを返すべき
+
+        // 少ないデータポイントを準備（最小必要数未満）
+        let few_points = create_test_points(3, 1.0, 1.0);
         let last_time = few_points.last().unwrap().timestamp;
         let target_time = last_time + Duration::hours(1);
 
+        // 予測を実行
         let result = predict_future_rate(&few_points, target_time);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("insufficient data points")
-        );
 
-        // ケース2: 過去の時間を予測しようとする
+        // エラーが返されることを検証
+        assert!(result.is_err(), "データポイント不足時にエラーが発生すべき");
+
+        // エラーメッセージの内容を検証
+        let error_message = result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("insufficient data points"),
+            "エラーメッセージがデータ不足を示すべき: {}",
+            error_message
+        );
+    }
+
+    #[test]
+    fn test_prediction_error_past_time() {
+        // テストケース: 過去の時間に対する予測
+        // 予測は未来の時間に対してのみ行うべきであり、
+        // 過去の時間に対する予測は意味がないためエラーを返すべき
+
+        // 通常の量のデータポイントを準備
         let points = create_test_points(10, 1.0, 1.0);
+
+        // 最初のデータポイントより過去の時間を指定
         let past_time = points.first().unwrap().timestamp - Duration::hours(1);
 
+        // 予測を実行
         let result = predict_future_rate(&points, past_time);
-        assert!(result.is_err());
+
+        // エラーが返されることを検証
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("must be in the future")
+            result.is_err(),
+            "過去の時間に対する予測でエラーが発生すべき"
+        );
+
+        // エラーメッセージの内容を検証
+        let error_message = result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("must be in the future"),
+            "エラーメッセージが過去時間の問題を示すべき: {}",
+            error_message
+        );
+    }
+
+    #[test]
+    fn test_prediction_error_empty_dataset() {
+        // テストケース: 空のデータセットに対する予測
+        // データポイントが存在しない場合は予測できないため、
+        // 適切なエラーを返すべき
+
+        // 空のデータセットを準備
+        let empty_points: Vec<Point> = Vec::new();
+
+        // 任意の予測時間を設定
+        let target_time = Utc.timestamp_opt(1_600_010_000, 0).unwrap().naive_utc();
+
+        // 予測を実行
+        let result = predict_future_rate(&empty_points, target_time);
+
+        // エラーが返されることを検証
+        assert!(result.is_err(), "空のデータセットでエラーが発生すべき");
+
+        // エラーメッセージの内容を検証
+        let error_message = result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("empty") || error_message.contains("insufficient"),
+            "エラーメッセージが空のデータセットの問題を示すべき: {}",
+            error_message
         );
     }
 }
