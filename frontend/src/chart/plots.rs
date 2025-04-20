@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
-use super::ValueAtTime;
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use plotters::coord::Shift;
 use plotters::prelude::*;
 use std::string::String;
+use zaciraci_common::stats::ValueAtTime;
 
 /// プロットオプションを定義する構造体
 #[derive(Debug, Clone)]

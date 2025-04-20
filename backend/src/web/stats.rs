@@ -9,8 +9,10 @@ use axum::{
     extract::{Json, State},
     routing::post,
 };
+use num_traits::ToPrimitive;
 use std::sync::Arc;
-use zaciraci_common::stats::DescribesRequest;
+use zaciraci_common::ApiResponse;
+use zaciraci_common::stats::{DescribesRequest, GetValuesRequest, GetValuesResponse, ValueAtTime};
 
 fn path(sub: &str) -> String {
     format!("/stats/{sub}")
@@ -18,6 +20,7 @@ fn path(sub: &str) -> String {
 
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
     app.route(&path("describes"), post(make_descs))
+        .route(&path("get_values"), post(get_values))
 }
 
 async fn make_descs(
@@ -67,4 +70,56 @@ async fn make_descs(
         "descs_count" => descs.len(),
     );
     serde_json::to_string(&descs).unwrap()
+}
+
+async fn get_values(
+    State(_): State<Arc<AppState>>,
+    Json(request): Json<GetValuesRequest>,
+) -> Json<ApiResponse<GetValuesResponse, String>> {
+    let log = DEFAULT.new(o!(
+        "function" => "get_values",
+        "quote_token" => format!("{}", request.quote_token),
+        "base_token" => format!("{}", request.base_token),
+        "start" => format!("{}", request.start),
+        "end" => format!("{}", request.end),
+    ));
+    info!(log, "start");
+    let quote_token: TokenAccount = match request.quote_token.try_into() {
+        Ok(token) => token,
+        Err(e) => {
+            error!(log, "Failed to parse quote token"; "error" => ?e);
+            return Json(ApiResponse::Error(e.to_string()));
+        }
+    };
+    let base_token: TokenAccount = match request.base_token.try_into() {
+        Ok(token) => token,
+        Err(e) => {
+            error!(log, "Failed to parse base token"; "error" => ?e);
+            return Json(ApiResponse::Error(e.to_string()));
+        }
+    };
+    let range = TimeRange {
+        start: request.start,
+        end: request.end,
+    };
+    let rates =
+        match SameBaseTokenRates::load(&quote_token.into(), &base_token.into(), &range).await {
+            Ok(rates) => rates,
+            Err(e) => {
+                error!(log, "Failed to load rates"; "error" => ?e);
+                return Json(ApiResponse::Error(e.to_string()));
+            }
+        };
+    let values: Vec<_> = rates
+        .points
+        .into_iter()
+        .map(|p| ValueAtTime {
+            time: p.timestamp,
+            value: p.rate.to_f64().unwrap(),
+        })
+        .collect();
+    info!(log, "success";
+        "values_count" => values.len(),
+    );
+    Json(ApiResponse::Success(GetValuesResponse { values }))
 }

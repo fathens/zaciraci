@@ -20,13 +20,13 @@ pub struct SameBaseTokenRates {
     pub base: TokenOutAccount,
     #[allow(dead_code)]
     pub quote: TokenInAccount,
-    points: Vec<Point>,
+    pub points: Vec<Point>,
 }
 
 #[derive(Clone)]
 pub struct Point {
-    rate: BigDecimal,
-    timestamp: NaiveDateTime,
+    pub rate: BigDecimal,
+    pub timestamp: NaiveDateTime,
 }
 
 pub struct StatsInPeriod<U> {
