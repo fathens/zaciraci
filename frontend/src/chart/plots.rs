@@ -3,8 +3,8 @@
 use super::ValueAtTime;
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use plotters::prelude::*;
 use plotters::coord::Shift;
+use plotters::prelude::*;
 use std::string::String;
 
 /// プロットオプションを定義する構造体
@@ -84,7 +84,8 @@ fn plot_values_at_time_internal(
         BackendType::Memory => {
             let mut buffer = vec![];
             {
-                let root = BitMapBackend::with_buffer(&mut buffer, options.image_size).into_drawing_area();
+                let root =
+                    BitMapBackend::with_buffer(&mut buffer, options.image_size).into_drawing_area();
                 draw_plot(values, root, options)?;
             }
             PlotResult::Memory(buffer)
@@ -92,7 +93,8 @@ fn plot_values_at_time_internal(
         BackendType::Svg => {
             let mut buffer = String::new();
             {
-                let root = SVGBackend::with_string(&mut buffer, options.image_size).into_drawing_area();
+                let root =
+                    SVGBackend::with_string(&mut buffer, options.image_size).into_drawing_area();
                 draw_plot(values, root, options)?;
             }
             PlotResult::Svg(buffer)
