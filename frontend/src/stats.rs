@@ -6,7 +6,7 @@ use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
     ApiResponse,
     ollama::{ChatRequest, Message},
-    stats::{DescribesRequest, GetValuesRequest, ValueAtTime},
+    stats::{DescribesRequest, GetValuesRequest},
     types::TokenAccount,
 };
 

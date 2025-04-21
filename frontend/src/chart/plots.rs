@@ -140,7 +140,7 @@ fn draw_plot<DB: DrawingBackend>(
     } else {
         value_range * 0.05 // 通常は範囲の5%
     };
-    
+
     let y_range = (min_value - value_margin)..(max_value + value_margin);
 
     // ChartBuilderの作成
@@ -179,7 +179,22 @@ fn draw_plot<DB: DrawingBackend>(
 
     let mesh_with_x_formatter =
         mesh_with_xy_desc.x_label_formatter(&|dt| dt.format("%Y-%m-%d %H:%M").to_string());
-    let mesh_with_formatters = mesh_with_x_formatter.y_label_formatter(&|y| format!("{:.2}", y));
+    let mesh_with_formatters = mesh_with_x_formatter.y_label_formatter(&|y| {
+        // 大きな数値やさまざまな桁数に対応するためのフォーマット
+        if y.abs() >= 1_000_000.0 {
+            // 100万以上なら「M」を使用
+            format!("{:.2}M", y / 1_000_000.0)
+        } else if y.abs() >= 1_000.0 {
+            // 1000以上なら「K」を使用
+            format!("{:.2}K", y / 1_000.0)
+        } else if y.abs() < 0.01 && y.abs() > 0.0 {
+            // 非常に小さい数値の場合は科学的表記法
+            format!("{:.2e}", y)
+        } else {
+            // 通常のケース
+            format!("{:.2}", y)
+        }
+    });
 
     mesh_with_formatters
         .draw()
