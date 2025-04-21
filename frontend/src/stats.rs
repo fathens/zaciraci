@@ -1,14 +1,170 @@
 use chrono::{Duration, Utc};
 use dioxus::prelude::*;
 use dioxus_markdown::Markdown;
+use std::str::FromStr;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
     ollama::{ChatRequest, Message},
-    stats::DescribesRequest,
+    stats::{DescribesRequest, GetValuesRequest, ValueAtTime},
+    types::TokenAccount,
 };
 
 #[component]
-pub fn view() -> Element {
+pub fn charts_view() -> Element {
+    let client = use_signal(crate::server_api::get_client);
+
+    let mut quote = use_signal(|| "wrap.near".to_string());
+    let mut base = use_signal(|| "mark.gra-fun.near".to_string());
+    let now = Utc::now();
+    let one_hour_ago = now - Duration::hours(1);
+    let mut start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let mut end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let mut period = use_signal(|| "1m".to_string());
+    let mut values = use_signal(|| None::<Vec<ValueAtTime>>);
+    let mut chart_svg = use_signal(|| None::<String>);
+    let mut loading = use_signal(|| false);
+    let mut error_message = use_signal(|| None::<String>);
+
+    rsx! {
+        div { class: "chart-view",
+            h2 { "価格チャート" }
+            div { class: "quote-container",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                label { class: "form-label", "Quote Token:" }
+                input {
+                    class: "form-control",
+                    value: "{quote}",
+                    oninput: move |e| quote.set(e.value()),
+                }
+            }
+            div { class: "base-container",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                label { class: "form-label", "Base Token:" }
+                input {
+                    class: "form-control",
+                    value: "{base}",
+                    oninput: move |e| base.set(e.value()),
+                }
+            }
+            div { class: "date-container",
+                style: "display: flex; gap: 10px; align-items: center; margin-bottom: 10px;",
+                div {
+                    label { class: "form-label", "Start Date:" }
+                    input {
+                        class: "form-control",
+                        type: "datetime-local",
+                        value: "{start_date}",
+                        oninput: move |e| start_date.set(e.value()),
+                    }
+                }
+                div {
+                    label { class: "form-label", "End Date:" }
+                    input {
+                        class: "form-control",
+                        type: "datetime-local",
+                        value: "{end_date}",
+                        oninput: move |e| end_date.set(e.value()),
+                    }
+                }
+            }
+            div { class: "period-container",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                label { class: "form-label", "Period:" }
+                input {
+                    class: "form-control",
+                    value: "{period}",
+                    oninput: move |e| period.set(e.value()),
+                }
+                span { class: "form-text", style: "margin-left: 5px;", "(例: 1m, 5m, 1h)" }
+            }
+            button {
+                class: "btn btn-primary",
+                disabled: "{loading}",
+                onclick: move |_| {
+                    loading.set(true);
+                    error_message.set(None);
+                    chart_svg.set(None);
+                    
+                    spawn_local(async move {
+                        let quote_token_account = TokenAccount::from_str(&quote().clone()).unwrap();
+                        let base_token_account = TokenAccount::from_str(&base().clone()).unwrap();
+                        let request = GetValuesRequest {
+                            quote_token: quote_token_account,
+                            base_token: base_token_account,
+                            start: match start_date().parse() {
+                                Ok(date) => date,
+                                Err(e) => {
+                                    error_message.set(Some(format!("開始日時のパースエラー: {}", e)));
+                                    loading.set(false);
+                                    return;
+                                }
+                            },
+                            end: match end_date().parse() {
+                                Ok(date) => date,
+                                Err(e) => {
+                                    error_message.set(Some(format!("終了日時のパースエラー: {}", e)));
+                                    loading.set(false);
+                                    return;
+                                }
+                            },
+                        };
+                        
+                        match client().stats.get_values(&request).await {
+                            Ok(response) => {
+                                values.set(Some(response.values));
+                                
+                                if let Some(values_data) = values() {
+                                    if values_data.is_empty() {
+                                        error_message.set(Some("データが見つかりませんでした".to_string()));
+                                    } else {
+                                        // チャートをプロット
+                                        let options = crate::chart::plots::PlotOptions {
+                                            image_size: (800, 400),
+                                            title: Some(format!("{} / {}", quote(), base())),
+                                            x_label: Some("時間".to_string()),
+                                            y_label: Some("価格".to_string()),
+                                            ..Default::default()
+                                        };
+                                        
+                                        match crate::chart::plots::plot_values_at_time_to_svg_with_options(
+                                            &values_data, options
+                                        ) {
+                                            Ok(svg) => chart_svg.set(Some(svg)),
+                                            Err(e) => error_message.set(Some(format!("チャート作成エラー: {}", e))),
+                                        }
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                error_message.set(Some(format!("データ取得エラー: {}", e)));
+                            },
+                        }
+                        
+                        loading.set(false);
+                    });
+                },
+                if loading() { "読み込み中..." } else { "チャート表示" }
+            }
+            
+            // エラーメッセージの表示
+            if let Some(error) = error_message() {
+                div { class: "alert alert-danger", "{error}" }
+            }
+            
+            // チャートの表示
+            if let Some(svg) = chart_svg() {
+                div { 
+                    class: "chart-container", 
+                    style: "margin-top: 20px; width: 100%; overflow-x: auto;",
+                    dangerous_inner_html: "{svg}"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn stats_analysis_view() -> Element {
     let client = use_signal(crate::server_api::get_client);
 
     let mut quote = use_signal(|| "wrap.near".to_string());
@@ -19,20 +175,13 @@ pub fn view() -> Element {
     let mut end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
     let mut period = use_signal(|| "1m".to_string());
     let mut descs = use_signal(|| "".to_string());
-
-    let mut models = use_signal(Vec::new);
-    let mut selected_model = use_signal(|| "".to_string());
-    let mut prompt_role = use_signal(|| "user".to_string());
-    let mut forecast_header =
-        use_signal(|| "Forecast the price in two hours using this information.".to_string());
-    let mut dur_in_sec = use_signal(|| "".to_string());
-    let mut forecast_result = use_signal(|| "".to_string());
-
+    
     rsx! {
-        div { class: "stats-view",
-            h2 { "Stats" }
+        div { class: "stats-analysis-view",
+            h2 { "統計分析" }
             div { class: "quote-container",
-                style: "display: flex; align-items: center;",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                label { class: "form-label", "Quote Token:" }
                 input {
                     class: "form-control",
                     value: "{quote}",
@@ -40,7 +189,8 @@ pub fn view() -> Element {
                 }
             }
             div { class: "base-container",
-                style: "display: flex; align-items: center;",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                label { class: "form-label", "Base Token:" }
                 input {
                     class: "form-control",
                     value: "{base}",
@@ -48,29 +198,35 @@ pub fn view() -> Element {
                 }
             }
             div { class: "date-container",
-                style: "display: flex; gap: 10px; align-items: center;",
-                "Start Date:"
-                input {
-                    class: "form-control",
-                    type: "datetime-local",
-                    value: "{start_date}",
-                    oninput: move |e| start_date.set(e.value()),
+                style: "display: flex; gap: 10px; align-items: center; margin-bottom: 10px;",
+                div {
+                    label { class: "form-label", "Start Date:" }
+                    input {
+                        class: "form-control",
+                        type: "datetime-local",
+                        value: "{start_date}",
+                        oninput: move |e| start_date.set(e.value()),
+                    }
                 }
-                "End Date:"
-                input {
-                    class: "form-control",
-                    type: "datetime-local",
-                    value: "{end_date}",
-                    oninput: move |e| end_date.set(e.value()),
+                div {
+                    label { class: "form-label", "End Date:" }
+                    input {
+                        class: "form-control",
+                        type: "datetime-local",
+                        value: "{end_date}",
+                        oninput: move |e| end_date.set(e.value()),
+                    }
                 }
             }
             div { class: "period-container",
-                style: "display: flex; align-items: center;",
+                style: "display: flex; align-items: center; margin-bottom: 10px;",
+                label { class: "form-label", "Period:" }
                 input {
                     class: "form-control",
                     value: "{period}",
                     oninput: move |e| period.set(e.value()),
                 }
+                span { class: "form-text", style: "margin-left: 5px;", "(例: 1m, 5m, 1h)" }
             }
             button {
                 class: "btn btn-primary",
@@ -94,7 +250,43 @@ pub fn view() -> Element {
                 },
                 "Get Describes"
             }
+            
+            div { class: "descs-container",
+                style: "width: 100%; margin-top: 20px;",
+                textarea {
+                    class: "form-control",
+                    style: "width: 100%;",
+                    rows: "8",
+                    value: "{descs}",
+                    oninput: move |e| descs.set(e.value()),
+                }
+            }
         }
+    }
+}
+
+#[component]
+pub fn forecast_view() -> Element {
+    let client = use_signal(crate::server_api::get_client);
+
+    let _quote = use_signal(|| "wrap.near".to_string());
+    let _base = use_signal(|| "mark.gra-fun.near".to_string());
+    let now = Utc::now();
+    let one_hour_ago = now - Duration::hours(1);
+    let _start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let _end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let _period = use_signal(|| "1m".to_string());
+    let mut descs = use_signal(|| "".to_string());
+
+    let mut models = use_signal(Vec::new);
+    let mut selected_model = use_signal(|| "".to_string());
+    let mut prompt_role = use_signal(|| "user".to_string());
+    let mut forecast_header =
+        use_signal(|| "Forecast the price in two hours using this information.".to_string());
+    let mut dur_in_sec = use_signal(|| "".to_string());
+    let mut forecast_result = use_signal(|| "".to_string());
+
+    rsx! {
         div { class: "forecast-container",
             style: "width: 100%;",
             textarea {
@@ -186,6 +378,32 @@ pub fn view() -> Element {
             style: "display: flex; align-items: center; margin-bottom: 10px;",
             Markdown {
                 src: forecast_result
+            }
+        }
+    }
+}
+
+#[component]
+pub fn view() -> Element {
+    let _client = use_signal(crate::server_api::get_client);
+
+    rsx! {
+        div { class: "stats-container",
+            style: "display: flex; flex-direction: column; width: 100%;",
+            
+            // チャート表示コンポーネント
+            div { class: "charts-section",
+                charts_view {}
+            }
+            
+            // 統計分析コンポーネント
+            div { class: "stats-analysis-section",
+                stats_analysis_view {}
+            }
+            
+            // 予測機能コンポーネント
+            div { class: "forecast-section",
+                forecast_view {}
             }
         }
     }
