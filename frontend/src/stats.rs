@@ -4,6 +4,7 @@ use dioxus_markdown::Markdown;
 use std::str::FromStr;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
+    ApiResponse,
     ollama::{ChatRequest, Message},
     stats::{DescribesRequest, GetValuesRequest, ValueAtTime},
     types::TokenAccount,
@@ -51,7 +52,6 @@ pub fn charts_view() -> Element {
     let one_hour_ago = now - Duration::hours(1);
     let start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
-    let mut period = use_signal(|| "1m".to_string());
     let mut values = use_signal(|| None::<Vec<ValueAtTime>>);
     let mut chart_svg = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
@@ -83,16 +83,6 @@ pub fn charts_view() -> Element {
                 end_date: end_date,
                 style: "margin-bottom: 10px;",
             }
-            div { class: "period-container",
-                style: "display: flex; align-items: center; margin-bottom: 10px;",
-                label { class: "form-label", "Period:" }
-                input {
-                    class: "form-control",
-                    value: "{period}",
-                    oninput: move |e| period.set(e.value()),
-                }
-                span { class: "form-text", style: "margin-left: 5px;", "(例: 1m, 5m, 1h)" }
-            }
             button {
                 class: "btn btn-primary",
                 disabled: "{loading}",
@@ -100,7 +90,7 @@ pub fn charts_view() -> Element {
                     loading.set(true);
                     error_message.set(None);
                     chart_svg.set(None);
-                    
+
                     spawn_local(async move {
                         let quote_token_account = TokenAccount::from_str(&quote().clone()).unwrap();
                         let base_token_account = TokenAccount::from_str(&base().clone()).unwrap();
@@ -124,11 +114,11 @@ pub fn charts_view() -> Element {
                                 }
                             },
                         };
-                        
+
                         match client().stats.get_values(&request).await {
-                            Ok(response) => {
+                            Ok(ApiResponse::Success(response)) => {
                                 values.set(Some(response.values));
-                                
+
                                 if let Some(values_data) = values() {
                                     if values_data.is_empty() {
                                         error_message.set(Some("データが見つかりませんでした".to_string()));
@@ -141,7 +131,7 @@ pub fn charts_view() -> Element {
                                             y_label: Some("価格".to_string()),
                                             ..Default::default()
                                         };
-                                        
+
                                         match crate::chart::plots::plot_values_at_time_to_svg_with_options(
                                             &values_data, options
                                         ) {
@@ -151,26 +141,29 @@ pub fn charts_view() -> Element {
                                     }
                                 }
                             },
+                            Ok(ApiResponse::Error(e)) => {
+                                error_message.set(Some(e));
+                            },
                             Err(e) => {
                                 error_message.set(Some(format!("データ取得エラー: {}", e)));
                             },
                         }
-                        
+
                         loading.set(false);
                     });
                 },
                 if loading() { "読み込み中..." } else { "チャート表示" }
             }
-            
+
             // エラーメッセージの表示
             if let Some(error) = error_message() {
                 div { class: "alert alert-danger", "{error}" }
             }
-            
+
             // チャートの表示
             if let Some(svg) = chart_svg() {
-                div { 
-                    class: "chart-container", 
+                div {
+                    class: "chart-container",
                     style: "margin-top: 20px; width: 100%; overflow-x: auto;",
                     dangerous_inner_html: "{svg}"
                 }
@@ -191,7 +184,7 @@ pub fn stats_analysis_view() -> Element {
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
     let mut period = use_signal(|| "1m".to_string());
     let mut descs = use_signal(|| "".to_string());
-    
+
     rsx! {
         div { class: "stats-analysis-view",
             h2 { "統計分析" }
@@ -250,7 +243,7 @@ pub fn stats_analysis_view() -> Element {
                 },
                 "Get Describes"
             }
-            
+
             div { class: "descs-container",
                 style: "width: 100%; margin-top: 20px;",
                 textarea {
@@ -390,17 +383,17 @@ pub fn view() -> Element {
     rsx! {
         div { class: "stats-container",
             style: "display: flex; flex-direction: column; width: 100%;",
-            
+
             // チャート表示コンポーネント
             div { class: "charts-section",
                 charts_view {}
             }
-            
+
             // 統計分析コンポーネント
             div { class: "stats-analysis-section",
                 stats_analysis_view {}
             }
-            
+
             // 予測機能コンポーネント
             div { class: "forecast-section",
                 forecast_view {}
