@@ -9,6 +9,38 @@ use zaciraci_common::{
     types::TokenAccount,
 };
 
+/// 日付範囲選択コンポーネント
+#[component]
+pub fn DateRangeSelector(
+    start_date: Signal<String>,
+    end_date: Signal<String>,
+    #[props(default = "")] style: &'static str,
+) -> Element {
+    rsx! {
+        div { class: "date-container",
+            style: "display: flex; gap: 10px; align-items: center; margin-bottom: 10px; {style}",
+            div {
+                label { class: "form-label", "Start Date:" }
+                input {
+                    class: "form-control",
+                    type: "datetime-local",
+                    value: "{start_date}",
+                    oninput: move |e| start_date.set(e.value()),
+                }
+            }
+            div {
+                label { class: "form-label", "End Date:" }
+                input {
+                    class: "form-control",
+                    type: "datetime-local",
+                    value: "{end_date}",
+                    oninput: move |e| end_date.set(e.value()),
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn charts_view() -> Element {
     let client = use_signal(crate::server_api::get_client);
@@ -17,8 +49,8 @@ pub fn charts_view() -> Element {
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
     let now = Utc::now();
     let one_hour_ago = now - Duration::hours(1);
-    let mut start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
-    let mut end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
     let mut period = use_signal(|| "1m".to_string());
     let mut values = use_signal(|| None::<Vec<ValueAtTime>>);
     let mut chart_svg = use_signal(|| None::<String>);
@@ -46,26 +78,10 @@ pub fn charts_view() -> Element {
                     oninput: move |e| base.set(e.value()),
                 }
             }
-            div { class: "date-container",
-                style: "display: flex; gap: 10px; align-items: center; margin-bottom: 10px;",
-                div {
-                    label { class: "form-label", "Start Date:" }
-                    input {
-                        class: "form-control",
-                        type: "datetime-local",
-                        value: "{start_date}",
-                        oninput: move |e| start_date.set(e.value()),
-                    }
-                }
-                div {
-                    label { class: "form-label", "End Date:" }
-                    input {
-                        class: "form-control",
-                        type: "datetime-local",
-                        value: "{end_date}",
-                        oninput: move |e| end_date.set(e.value()),
-                    }
-                }
+            DateRangeSelector {
+                start_date: start_date,
+                end_date: end_date,
+                style: "margin-bottom: 10px;",
             }
             div { class: "period-container",
                 style: "display: flex; align-items: center; margin-bottom: 10px;",
@@ -171,8 +187,8 @@ pub fn stats_analysis_view() -> Element {
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
     let now = Utc::now();
     let one_hour_ago = now - Duration::hours(1);
-    let mut start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
-    let mut end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
     let mut period = use_signal(|| "1m".to_string());
     let mut descs = use_signal(|| "".to_string());
     
@@ -197,26 +213,10 @@ pub fn stats_analysis_view() -> Element {
                     oninput: move |e| base.set(e.value()),
                 }
             }
-            div { class: "date-container",
-                style: "display: flex; gap: 10px; align-items: center; margin-bottom: 10px;",
-                div {
-                    label { class: "form-label", "Start Date:" }
-                    input {
-                        class: "form-control",
-                        type: "datetime-local",
-                        value: "{start_date}",
-                        oninput: move |e| start_date.set(e.value()),
-                    }
-                }
-                div {
-                    label { class: "form-label", "End Date:" }
-                    input {
-                        class: "form-control",
-                        type: "datetime-local",
-                        value: "{end_date}",
-                        oninput: move |e| end_date.set(e.value()),
-                    }
-                }
+            DateRangeSelector {
+                start_date: start_date,
+                end_date: end_date,
+                style: "margin-bottom: 10px;",
             }
             div { class: "period-container",
                 style: "display: flex; align-items: center; margin-bottom: 10px;",
