@@ -181,7 +181,13 @@ fn draw_plot<DB: DrawingBackend>(
         mesh_with_xy_desc.x_label_formatter(&|dt| dt.format("%Y-%m-%d %H:%M").to_string());
     let mesh_with_formatters = mesh_with_x_formatter.y_label_formatter(&|y| {
         // 大きな数値やさまざまな桁数に対応するためのフォーマット
-        if y.abs() >= 1_000_000.0 {
+        if y.abs() >= 1_000_000_000_000.0 {
+            // 1兆以上なら「T」を使用
+            format!("{:.2}T", y / 1_000_000_000_000.0)
+        } else if y.abs() >= 1_000_000_000.0 {
+            // 10億以上なら「G」を使用
+            format!("{:.2}G", y / 1_000_000_000.0)
+        } else if y.abs() >= 1_000_000.0 {
             // 100万以上なら「M」を使用
             format!("{:.2}M", y / 1_000_000.0)
         } else if y.abs() >= 1_000.0 {
