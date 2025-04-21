@@ -52,7 +52,6 @@ pub fn charts_view() -> Element {
     let one_hour_ago = now - Duration::hours(1);
     let start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
-    let mut values = use_signal(|| None::<Vec<ValueAtTime>>);
     let mut chart_svg = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
     let mut error_message = use_signal(|| None::<String>);
@@ -117,27 +116,24 @@ pub fn charts_view() -> Element {
 
                         match client().stats.get_values(&request).await {
                             Ok(ApiResponse::Success(response)) => {
-                                values.set(Some(response.values));
+                                let values_data = response.values;
+                                if values_data.is_empty() {
+                                    error_message.set(Some("データが見つかりませんでした".to_string()));
+                                } else {
+                                    // チャートをプロット
+                                    let options = crate::chart::plots::PlotOptions {
+                                        image_size: (800, 400),
+                                        title: Some(format!("{} / {}", base(), quote())),
+                                        x_label: Some("時間".to_string()),
+                                        y_label: Some("価格".to_string()),
+                                        ..Default::default()
+                                    };
 
-                                if let Some(values_data) = values() {
-                                    if values_data.is_empty() {
-                                        error_message.set(Some("データが見つかりませんでした".to_string()));
-                                    } else {
-                                        // チャートをプロット
-                                        let options = crate::chart::plots::PlotOptions {
-                                            image_size: (800, 400),
-                                            title: Some(format!("{} / {}", base(), quote())),
-                                            x_label: Some("時間".to_string()),
-                                            y_label: Some("価格".to_string()),
-                                            ..Default::default()
-                                        };
-
-                                        match crate::chart::plots::plot_values_at_time_to_svg_with_options(
-                                            &values_data, options
-                                        ) {
-                                            Ok(svg) => chart_svg.set(Some(svg)),
-                                            Err(e) => error_message.set(Some(format!("チャート作成エラー: {}", e))),
-                                        }
+                                    match crate::chart::plots::plot_values_at_time_to_svg_with_options(
+                                        &values_data, options
+                                    ) {
+                                        Ok(svg) => chart_svg.set(Some(svg)),
+                                        Err(e) => error_message.set(Some(format!("チャート作成エラー: {}", e))),
                                     }
                                 }
                             },
