@@ -49,7 +49,7 @@ pub fn charts_view() -> Element {
     let mut quote = use_signal(|| "wrap.near".to_string());
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
     let now = Utc::now();
-    let one_hour_ago = now - Duration::hours(1);
+    let one_hour_ago = now - Duration::hours(24);
     let start_date = use_signal(|| one_hour_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
     let mut chart_svg = use_signal(|| None::<String>);
