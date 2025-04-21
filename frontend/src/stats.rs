@@ -126,7 +126,7 @@ pub fn charts_view() -> Element {
                                         // チャートをプロット
                                         let options = crate::chart::plots::PlotOptions {
                                             image_size: (800, 400),
-                                            title: Some(format!("{} / {}", quote(), base())),
+                                            title: Some(format!("{} / {}", base(), quote())),
                                             x_label: Some("時間".to_string()),
                                             y_label: Some("価格".to_string()),
                                             ..Default::default()

@@ -132,7 +132,15 @@ fn draw_plot<DB: DrawingBackend>(
         .fold(f64::NEG_INFINITY, |a, b| a.max(b));
 
     // 値の範囲にマージンを追加
-    let value_margin = (max_value - min_value) * 0.1; // 10%のマージン
+    // 最小値と最大値が同じ場合や非常に近い場合のための対策
+    let value_range = max_value - min_value;
+    let value_margin = if value_range.abs() < 1e-10 {
+        // 値がほぼ一定の場合は絶対値の5%をマージンとして使用
+        max_value.abs() * 0.05 + 0.1 // 少なくとも0.1の余白を確保
+    } else {
+        value_range * 0.05 // 通常は範囲の5%
+    };
+    
     let y_range = (min_value - value_margin)..(max_value + value_margin);
 
     // ChartBuilderの作成
