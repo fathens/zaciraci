@@ -63,7 +63,8 @@ async fn main() {
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(trade::run());
-    web::run().await;
+    tokio::spawn(web::run());
+    main_loop().await.unwrap();
 }
 
 #[allow(unused)]
