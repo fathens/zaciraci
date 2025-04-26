@@ -41,7 +41,6 @@ struct NewDbPoolInfo {
 }
 
 // 変換ロジックの実装
-#[allow(dead_code)]
 impl RefPoolInfo {
     // DbPoolInfoからRefPoolInfoへの変換
     fn from_db(db_pool: DbPoolInfo) -> Result<Self> {
@@ -89,6 +88,7 @@ impl RefPoolInfo {
     }
 
     // データベースに挿入
+    #[allow(dead_code)]
     pub async fn insert(&self) -> Result<()> {
         use diesel::RunQueryDsl;
 
