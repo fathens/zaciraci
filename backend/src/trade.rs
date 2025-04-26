@@ -2,6 +2,7 @@ pub mod stats;
 
 use crate::Result;
 use crate::config;
+use crate::jsonrpc;
 use crate::logging::*;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance;
@@ -67,8 +68,13 @@ async fn record_rates() -> Result<()> {
         "initial_value" => %initial_value,
     );
 
+    let client = &jsonrpc::new_client();
+    
     info!(log, "loading pools");
-    let pools = ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
+    let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
+    pools.write_to_db().await?;
+
+    info!(log, "updating graph");
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
     let goals = graph.update_graph(quote_token)?;
     info!(log, "found targets"; "goals" => %goals.len());

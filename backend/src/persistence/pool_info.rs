@@ -7,7 +7,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-
+use crate::logging::*;
 use super::TimeRange;
 
 // データベース用モデル
@@ -108,6 +108,11 @@ impl RefPoolInfo {
 
     // 複数レコードを一括挿入
     pub async fn batch_insert(pool_infos: &[Arc<RefPoolInfo>]) -> Result<()> {
+        let log = DEFAULT.new(o!(
+            "function" => "batch_insert",
+            "pool_infos" => pool_infos.len(),
+        ));
+        info!(log, "start");
         use diesel::RunQueryDsl;
 
         if pool_infos.is_empty() {
@@ -128,6 +133,7 @@ impl RefPoolInfo {
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
+        info!(log, "finish");
         Ok(())
     }
 
