@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 type Result<T> = anyhow::Result<T>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ApiResponse<T, E>
 where
     T: std::fmt::Debug + Clone,

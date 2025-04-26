@@ -1,4 +1,5 @@
 mod basic;
+mod chart;
 mod image_upload;
 mod ollama;
 mod pools;

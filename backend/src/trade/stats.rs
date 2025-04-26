@@ -1,3 +1,5 @@
+mod arima;
+
 use crate::Result;
 use crate::logging::*;
 use crate::persistence::TimeRange;
@@ -18,13 +20,13 @@ pub struct SameBaseTokenRates {
     pub base: TokenOutAccount,
     #[allow(dead_code)]
     pub quote: TokenInAccount,
-    points: Vec<Point>,
+    pub points: Vec<Point>,
 }
 
 #[derive(Clone)]
 pub struct Point {
-    rate: BigDecimal,
-    timestamp: NaiveDateTime,
+    pub rate: BigDecimal,
+    pub timestamp: NaiveDateTime,
 }
 
 pub struct StatsInPeriod<U> {
@@ -151,16 +153,19 @@ impl SameBaseTokenRates {
         ));
         info!(log, "start");
 
-        let stats = self.stats(period);
+        let stats = self.aggregate(period);
         let _descs = stats.describes();
 
-        info!(log, "success");
-        unimplemented!()
+        // arima モジュールの予測関数を使用して将来の値を予測
+        let result = arima::predict_future_rate(&self.points, target)?;
+
+        info!(log, "success"; "predicted_rate" => %result);
+        Ok(result)
     }
 
-    pub fn stats(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
+    pub fn aggregate(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
         let log = DEFAULT.new(o!(
-            "function" => "SameBaseTokenRates::stats",
+            "function" => "SameBaseTokenRates::aggregate",
             "rates_count" => self.points.len(),
             "period" => format!("{}", period),
         ));
@@ -222,6 +227,42 @@ where
     U: Add<Output = U> + Sub<Output = U> + Mul<Output = U> + Div<Output = U>,
     U: Zero + PartialOrd + From<i64>,
 {
+    fn format_decimal(value: U) -> String {
+        let s = value.to_string();
+        if s.contains('.') {
+            // 小数点以下の末尾の0を削除し、最大9桁まで表示
+            let parts: Vec<&str> = s.split('.').collect();
+            if parts.len() == 2 {
+                let integer_part = parts[0];
+                let mut decimal_part = parts[1];
+
+                // 小数点以下が全て0の場合は整数表示
+                if decimal_part.chars().all(|c| c == '0') {
+                    return integer_part.to_string();
+                }
+
+                // 末尾の0を削除
+                decimal_part = decimal_part.trim_end_matches('0');
+
+                // 小数点以下が9桁を超える場合は9桁までに制限
+                if decimal_part.len() > 9 {
+                    decimal_part = &decimal_part[..9];
+                }
+
+                // 小数点以下が空になった場合は整数のみ返す
+                if decimal_part.is_empty() {
+                    return integer_part.to_string();
+                }
+
+                format!("{}.{}", integer_part, decimal_part)
+            } else {
+                s
+            }
+        } else {
+            s
+        }
+    }
+
     pub fn describes(&self) -> Vec<String> {
         let log = DEFAULT.new(o!(
             "function" => "ListStatsInPeriod::describes",
@@ -231,13 +272,16 @@ where
         let mut lines = Vec::new();
         let mut prev = None;
         for stat in self.0.iter() {
-            let date = format!("{}", stat.timestamp);
+            let date = stat.timestamp.to_string();
             let changes = prev
                 .map(|p: &StatsInPeriod<U>| {
-                    let prev = format!("from the previous {} minutes", stat.period.num_minutes());
+                    let prev = format!(
+                        "from the previous {m} minutes",
+                        m = stat.period.num_minutes()
+                    );
                     let diff = stat.end.clone() - p.end.clone();
                     if diff.is_zero() {
-                        return format!(", no change {}", prev);
+                        return format!(", no change {prev}");
                     }
                     let dw = if diff < U::zero() {
                         "decrease"
@@ -245,14 +289,19 @@ where
                         "increase"
                     };
                     let change = (diff / p.end.clone()) * 100_i64.into();
-                    format!(", marking a {:0.0} % {} {}", change, dw, prev)
+                    let change_str = Self::format_decimal(change);
+                    format!(", marking a {change_str} % {dw} {prev}")
                 })
                 .unwrap_or_default();
             let summary = format!(
-                "opened at {:0.0}, closed at {:0.0}, with a high of {:0.0}, a low of {:0.0}, and an average of {:0.0}",
-                stat.start, stat.end, stat.max, stat.min, stat.average
+                "opened at {start}, closed at {end}, with a high of {max}, a low of {min}, and an average of {ave}",
+                start = Self::format_decimal(stat.start.clone()),
+                end = Self::format_decimal(stat.end.clone()),
+                max = Self::format_decimal(stat.max.clone()),
+                min = Self::format_decimal(stat.min.clone()),
+                ave = Self::format_decimal(stat.average.clone()),
             );
-            let line = format!("{}, {}{}", date, summary, changes);
+            let line = format!("{date}, {summary}{changes}");
             debug!(log, "added line";
                 "line" => &line,
             );
@@ -270,6 +319,7 @@ where
 mod tests {
     use super::*;
     use crate::ref_finance::token_account::TokenAccount;
+    use std::str::FromStr;
 
     #[test]
     fn test_describes() {
@@ -373,11 +423,11 @@ mod tests {
                 )
                 .unwrap(),
                 period: Duration::minutes(1),
-                start: BigDecimal::from(100),
-                end: BigDecimal::from(100),
-                max: BigDecimal::from(100),
-                min: BigDecimal::from(100),
-                average: BigDecimal::from(100),
+                start: BigDecimal::from_str("100.123456789").unwrap(),
+                end: BigDecimal::from_str("100.123456789").unwrap(),
+                max: BigDecimal::from_str("100.123456789").unwrap(),
+                min: BigDecimal::from_str("100.123456789").unwrap(),
+                average: BigDecimal::from_str("100.123456789").unwrap(),
             },
             StatsInPeriod {
                 timestamp: NaiveDateTime::parse_from_str(
@@ -386,11 +436,11 @@ mod tests {
                 )
                 .unwrap(),
                 period: Duration::minutes(1),
-                start: BigDecimal::from(100),
-                end: BigDecimal::from(100),
-                max: BigDecimal::from(100),
-                min: BigDecimal::from(100),
-                average: BigDecimal::from(100),
+                start: BigDecimal::from_str("100.123456789").unwrap(),
+                end: BigDecimal::from_str("100.123456789").unwrap(),
+                max: BigDecimal::from_str("100.123456789").unwrap(),
+                min: BigDecimal::from_str("100.123456789").unwrap(),
+                average: BigDecimal::from_str("100.123456789").unwrap(),
             },
         ]);
         let descriptions = stats.describes();
@@ -399,8 +449,8 @@ mod tests {
         assert_eq!(
             descriptions,
             vec![
-                "2025-03-26 11:37:48.195977, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100",
-                "2025-03-27 11:37:48.196150, opened at 100, closed at 100, with a high of 100, a low of 100, and an average of 100, no change from the previous 1 minutes"
+                "2025-03-26 11:37:48.195977, opened at 100.123456789, closed at 100.123456789, with a high of 100.123456789, a low of 100.123456789, and an average of 100.123456789",
+                "2025-03-27 11:37:48.196150, opened at 100.123456789, closed at 100.123456789, with a high of 100.123456789, a low of 100.123456789, and an average of 100.123456789, no change from the previous 1 minutes"
             ]
         );
     }
@@ -418,7 +468,7 @@ mod tests {
         };
 
         // 1分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(1));
+        let stats = rates.aggregate(Duration::minutes(1));
 
         // 結果が空のベクターであることを確認
         assert!(stats.0.is_empty());
@@ -454,7 +504,7 @@ mod tests {
         };
 
         // 1分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(1));
+        let stats = rates.aggregate(Duration::minutes(1));
 
         // 結果を検証
         assert_eq!(stats.0.len(), 1);
@@ -516,7 +566,7 @@ mod tests {
         };
 
         // 1分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(1));
+        let stats = rates.aggregate(Duration::minutes(1));
 
         // 結果を検証
         assert_eq!(stats.0.len(), 3);
@@ -591,7 +641,7 @@ mod tests {
         };
 
         // 5分間の期間で統計を計算
-        let stats = rates.stats(Duration::minutes(5));
+        let stats = rates.aggregate(Duration::minutes(5));
 
         // 結果を検証
         assert_eq!(stats.0.len(), 2);
@@ -619,5 +669,111 @@ mod tests {
             assert_eq!(stat.min, BigDecimal::from(200));
             assert_eq!(stat.average, BigDecimal::from(250)); // (200 + 300) / 2 = 250
         }
+    }
+
+    #[test]
+    fn test_format_decimal_digits() {
+        // 整数値のテスト
+        assert_eq!(
+            "100",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from(100))
+        );
+
+        // 小数点以下が全て0の値
+        let with_zeros = BigDecimal::from(100) + BigDecimal::from_str("0.000000000").unwrap();
+        assert_eq!(
+            "100",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(with_zeros)
+        );
+
+        // 小数点以下が1桁の値
+        assert_eq!(
+            "0.1",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1").unwrap())
+        );
+
+        // 小数点以下が2桁の値
+        assert_eq!(
+            "0.12",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12").unwrap())
+        );
+
+        // 小数点以下が3桁の値
+        assert_eq!(
+            "0.123",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123").unwrap())
+        );
+
+        // 小数点以下が4桁の値
+        assert_eq!(
+            "0.1234",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.1234").unwrap()
+            )
+        );
+
+        // 小数点以下が5桁の値
+        assert_eq!(
+            "0.12345",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.12345").unwrap()
+            )
+        );
+
+        // 小数点以下が6桁の値
+        assert_eq!(
+            "0.123456",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.123456").unwrap()
+            )
+        );
+
+        // 小数点以下が7桁の値
+        assert_eq!(
+            "0.1234567",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.1234567").unwrap()
+            )
+        );
+
+        // 小数点以下が8桁の値
+        assert_eq!(
+            "0.12345678",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.12345678").unwrap()
+            )
+        );
+
+        // 小数点以下が9桁の値
+        assert_eq!(
+            "0.123456789",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.123456789").unwrap()
+            )
+        );
+
+        // 小数点以下が10桁の値（9桁までに制限される）
+        assert_eq!(
+            "0.123456789",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.1234567891").unwrap()
+            )
+        );
+
+        // 末尾に0がある場合（末尾の0は削除される）
+        assert_eq!(
+            "0.12345",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("0.12345000").unwrap()
+            )
+        );
+
+        // 整数部分あり、小数点以下4桁の値
+        assert_eq!(
+            "123.4567",
+            ListStatsInPeriod::<BigDecimal>::format_decimal(
+                BigDecimal::from_str("123.4567").unwrap()
+            )
+        );
     }
 }
