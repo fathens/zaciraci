@@ -120,6 +120,8 @@ where
     );
 
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
+    pools.write_to_db().await?;
+    
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let gas_price = client.get_gas_price(None).await?;
     let previews = ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
