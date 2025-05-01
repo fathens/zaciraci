@@ -6,6 +6,7 @@ mod pools;
 mod server_api;
 mod stats;
 mod storage;
+mod chronos_api;
 
 use dioxus::prelude::*;
 
