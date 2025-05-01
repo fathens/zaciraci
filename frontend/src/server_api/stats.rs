@@ -1,9 +1,8 @@
+use crate::api_underlying::Underlying;
 use anyhow::Result;
 use std::sync::Arc;
 use zaciraci_common::ApiResponse;
 use zaciraci_common::stats::{DescribesRequest, GetValuesRequest, GetValuesResponse};
-
-use super::Underlying;
 
 pub struct StatsApi {
     pub underlying: Arc<Underlying>,

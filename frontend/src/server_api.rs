@@ -4,10 +4,10 @@ mod pools;
 mod stats;
 mod storage;
 
-use anyhow::Result;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 use zaciraci_common::config;
+use crate::api_underlying::Underlying;
 
 fn server_base_url() -> String {
     config::get("SERVER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
@@ -21,11 +21,6 @@ pub struct ApiClient {
     pub stats: stats::StatsApi,
 }
 
-pub struct Underlying {
-    base_url: String,
-    client: reqwest::Client,
-}
-
 static API_CLIENT: Lazy<Arc<ApiClient>> = Lazy::new(|| Arc::new(new_client(server_base_url())));
 
 pub fn get_client() -> Arc<ApiClient> {
@@ -33,10 +28,7 @@ pub fn get_client() -> Arc<ApiClient> {
 }
 
 fn new_client(base_url: String) -> ApiClient {
-    let underlying = Arc::new(Underlying {
-        base_url,
-        client: reqwest::Client::new(),
-    });
+    let underlying = Underlying::new_shared(base_url);
     ApiClient {
         basic: basic::BasicApi {
             underlying: Arc::clone(&underlying),
@@ -53,39 +45,5 @@ fn new_client(base_url: String) -> ApiClient {
         stats: stats::StatsApi {
             underlying: Arc::clone(&underlying),
         },
-    }
-}
-
-impl Underlying {
-    async fn get_text(&self, path: &str) -> String {
-        let url = format!("{}/{}", self.base_url, path);
-        match self.client.get(&url).send().await {
-            Ok(res) => res.text().await.unwrap_or_else(|e| format!("Error: {}", e)),
-            Err(e) => format!("Error: {}", e),
-        }
-    }
-
-    async fn get<T>(&self, path: &str) -> Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        let url = format!("{}/{}", self.base_url, path);
-        Ok(self.client.get(&url).send().await?.json().await?)
-    }
-
-    async fn post<A, B>(&self, path: &str, body: &A) -> Result<B>
-    where
-        A: serde::Serialize,
-        B: serde::de::DeserializeOwned,
-    {
-        let url = format!("{}/{}", self.base_url, path);
-        Ok(self
-            .client
-            .post(&url)
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await?)
     }
 }

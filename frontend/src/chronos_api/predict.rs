@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use zaciraci_common::config;
+use crate::api_underlying::Underlying;
 
 fn chronos_base_url() -> String {
     config::get("CHRONOS_BASE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string())
@@ -81,48 +82,14 @@ impl ChronosApiClient {
     }
 }
 
-pub struct Underlying {
-    base_url: String,
-    client: reqwest::Client,
-}
-
 static CHRONOS_API_CLIENT: Lazy<Arc<ChronosApiClient>> = Lazy::new(|| {
     Arc::new(ChronosApiClient {
-        underlying: Arc::new(Underlying {
-            base_url: chronos_base_url(),
-            client: reqwest::Client::new(),
-        }),
+        underlying: Underlying::new_shared(chronos_base_url()),
     })
 });
 
 pub fn get_client() -> Arc<ChronosApiClient> {
     CHRONOS_API_CLIENT.clone()
-}
-
-impl Underlying {
-    async fn get<T>(&self, path: &str) -> Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        let url = format!("{}/{}", self.base_url, path);
-        Ok(self.client.get(&url).send().await?.json().await?)
-    }
-
-    async fn post<A, B>(&self, path: &str, body: &A) -> Result<B>
-    where
-        A: serde::Serialize,
-        B: serde::de::DeserializeOwned,
-    {
-        let url = format!("{}/{}", self.base_url, path);
-        Ok(self
-            .client
-            .post(&url)
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await?)
-    }
 }
 
 #[cfg(test)]

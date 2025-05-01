@@ -1,5 +1,6 @@
 mod basic;
 mod chart;
+mod api_underlying;
 mod image_upload;
 mod ollama;
 mod pools;
