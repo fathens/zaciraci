@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Utc, NaiveDateTime};
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
@@ -81,8 +81,8 @@ fn predict_zero_shot_view(
     let now = Utc::now();
     let two_days_ago = now - Duration::days(2);
     
-    let start_date = use_signal(|| two_days_ago.format("%Y-%m-%dT%H:%M:%S").to_string());
-    let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
+    let start_date = use_signal(|| two_days_ago.format("%Y-%m-%dT%H:%M").to_string());
+    let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M").to_string());
     
     let mut model_name = use_signal(|| "chronos_default".to_string());
     let mut chart_svg = use_signal(|| None::<String>);
@@ -173,8 +173,8 @@ fn predict_zero_shot_view(
                             }
                         };
                         
-                        let start_datetime: chrono::DateTime<Utc> = match start_val.parse() {
-                            Ok(date) => date,
+                        let start_datetime: chrono::DateTime<Utc> = match chrono::NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
+                            Ok(naive) => naive.and_utc(),
                             Err(e) => {
                                 error_message.set(Some(format!("開始日時のパースエラー: {}", e)));
                                 loading.set(false);
@@ -182,8 +182,8 @@ fn predict_zero_shot_view(
                             }
                         };
                         
-                        let end_datetime: chrono::DateTime<Utc> = match end_val.parse() {
-                            Ok(date) => date,
+                        let end_datetime: chrono::DateTime<Utc> = match chrono::NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
+                            Ok(naive) => naive.and_utc(),
                             Err(e) => {
                                 error_message.set(Some(format!("終了日時のパースエラー: {}", e)));
                                 loading.set(false);
