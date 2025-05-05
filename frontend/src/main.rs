@@ -8,6 +8,7 @@ mod server_api;
 mod stats;
 mod storage;
 mod chronos_api;
+mod predict;
 
 use dioxus::prelude::*;
 
@@ -56,6 +57,11 @@ fn app() -> Element {
                         class: if current_view() == "stats" { "active" } else { "" },
                         "Stats"
                     }
+                    button {
+                        onclick: move |_| current_view.set("predict".to_string()),
+                        class: if current_view() == "predict" { "active" } else { "" },
+                        "predict"
+                    }
                 }
             }
             main { class: "main",
@@ -65,6 +71,7 @@ fn app() -> Element {
                     "storage" => rsx! { storage::view {} },
                     "ollama" => rsx! { ollama::view {} },
                     "stats" => rsx! { stats::view {} },
+                    "predict" => rsx! { predict::view {} },
                     _ => rsx! { basic::view {} },
                 }}
             }
