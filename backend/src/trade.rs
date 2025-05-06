@@ -69,7 +69,7 @@ async fn record_rates() -> Result<()> {
     );
 
     let client = &jsonrpc::new_client();
-    
+
     info!(log, "loading pools");
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
     pools.write_to_db().await?;

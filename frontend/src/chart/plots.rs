@@ -115,15 +115,23 @@ pub(crate) fn to_datetime(ndt: NaiveDateTime) -> DateTime<Utc> {
 ///
 /// # Panics
 /// 空のデータセットが渡された場合にパニックします
-pub(crate) fn calculate_data_ranges(values: &[ValueAtTime]) -> (DateTime<Utc>, DateTime<Utc>, f64, f64) {
+pub(crate) fn calculate_data_ranges(
+    values: &[ValueAtTime],
+) -> (DateTime<Utc>, DateTime<Utc>, f64, f64) {
     if values.is_empty() {
         panic!("空のデータセットでは範囲計算ができません");
     }
 
     let min_time = values.iter().map(|v| to_datetime(v.time)).min().unwrap();
     let max_time = values.iter().map(|v| to_datetime(v.time)).max().unwrap();
-    let min_value = values.iter().map(|v| v.value).fold(f64::INFINITY, |a, b| a.min(b));
-    let max_value = values.iter().map(|v| v.value).fold(f64::NEG_INFINITY, |a, b| a.max(b));
+    let min_value = values
+        .iter()
+        .map(|v| v.value)
+        .fold(f64::INFINITY, |a, b| a.min(b));
+    let max_value = values
+        .iter()
+        .map(|v| v.value)
+        .fold(f64::NEG_INFINITY, |a, b| a.max(b));
 
     (min_time, max_time, min_value, max_value)
 }
@@ -357,15 +365,10 @@ fn draw_multi_plot<DB: DrawingBackend>(
 
         // 系列をプロット
         chart
-            .draw_series(LineSeries::new(
-                datetime_values,
-                series_data.color,
-            ))
+            .draw_series(LineSeries::new(datetime_values, series_data.color))
             .map_err(|e| anyhow::anyhow!("データのプロットに失敗しました: {}", e))?
             .label(&series_data.name)
-            .legend(move |(x, y)| {
-                PathElement::new(vec![(x, y), (x + 20, y)], series_data.color)
-            });
+            .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], series_data.color));
     }
 
     // 凡例の描画
@@ -502,7 +505,7 @@ pub fn plot_multi_values_at_time_to_memory_with_options(
 }
 
 /// 数値を適切な単位付きの文字列に変換する
-/// 
+///
 /// # 例
 /// ```
 /// assert_eq!(format_value(1500.0), "1.50K");
@@ -535,7 +538,7 @@ pub(crate) fn format_value(y: &f64) -> String {
 mod tests {
     use super::*;
     use chrono::{NaiveDate, NaiveTime};
-    
+
     #[test]
     fn test_format_value_trillion() {
         // 1兆以上の値
@@ -543,7 +546,7 @@ mod tests {
         assert_eq!(format_value(&1_000_000_000_000.0), "1.00T");
         assert_eq!(format_value(&-2_345_000_000_000.0), "-2.35T");
     }
-    
+
     #[test]
     fn test_format_value_billion() {
         // 10億以上の値
@@ -551,7 +554,7 @@ mod tests {
         assert_eq!(format_value(&1_000_000_000.0), "1.00G");
         assert_eq!(format_value(&-2_345_000_000.0), "-2.35G");
     }
-    
+
     #[test]
     fn test_format_value_million() {
         // 100万以上の値
@@ -559,7 +562,7 @@ mod tests {
         assert_eq!(format_value(&1_000_000.0), "1.00M");
         assert_eq!(format_value(&-2_345_000.0), "-2.35M");
     }
-    
+
     #[test]
     fn test_format_value_thousand() {
         // 1000以上の値
@@ -567,7 +570,7 @@ mod tests {
         assert_eq!(format_value(&1_000.0), "1.00K");
         assert_eq!(format_value(&-2_345.0), "-2.35K");
     }
-    
+
     #[test]
     fn test_format_value_small() {
         // 非常に小さい値（科学的表記法）
@@ -575,7 +578,7 @@ mod tests {
         assert_eq!(format_value(&-0.00012), "-1.20e-4");
         assert_eq!(format_value(&0.0000123), "1.23e-5");
     }
-    
+
     #[test]
     fn test_format_value_normal() {
         // 通常の値
@@ -584,123 +587,131 @@ mod tests {
         assert_eq!(format_value(&0.123), "0.12");
         assert_eq!(format_value(&0.0), "0.00");
     }
-    
+
     #[test]
     fn test_calculate_data_ranges_normal() {
         // 通常のデータセット
         let values = vec![
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 100.0,
             },
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 2).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 200.0,
             },
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 3).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 3)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 150.0,
             },
         ];
-        
+
         let (min_time, max_time, min_value, max_value) = calculate_data_ranges(&values);
-        
+
         // 時間の範囲検証
         assert_eq!(min_time, to_datetime(values[0].time));
         assert_eq!(max_time, to_datetime(values[2].time));
-        
+
         // 値の範囲検証
         assert_eq!(min_value, 100.0);
         assert_eq!(max_value, 200.0);
     }
-    
+
     #[test]
     fn test_calculate_data_ranges_single() {
         // 単一要素のデータセット
-        let values = vec![
-            ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
-                    .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
-                value: 100.0,
-            },
-        ];
-        
+        let values = vec![ValueAtTime {
+            time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                .unwrap()
+                .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+            value: 100.0,
+        }];
+
         let (min_time, max_time, min_value, max_value) = calculate_data_ranges(&values);
-        
+
         // 単一要素なので最小値と最大値は同じになる
         assert_eq!(min_time, to_datetime(values[0].time));
         assert_eq!(max_time, to_datetime(values[0].time));
         assert_eq!(min_value, 100.0);
         assert_eq!(max_value, 100.0);
     }
-    
+
     #[test]
     fn test_calculate_data_ranges_same_values() {
         // すべての値が同じデータセット
         let values = vec![
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 100.0,
             },
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 2).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 100.0,
             },
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 3).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 3)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 100.0,
             },
         ];
-        
+
         let (min_time, max_time, min_value, max_value) = calculate_data_ranges(&values);
-        
+
         // 時間の範囲検証
         assert_eq!(min_time, to_datetime(values[0].time));
         assert_eq!(max_time, to_datetime(values[2].time));
-        
+
         // すべての値が同じ
         assert_eq!(min_value, 100.0);
         assert_eq!(max_value, 100.0);
     }
-    
+
     #[test]
     fn test_calculate_data_ranges_extreme_values() {
         // 極端な値を含むデータセット
         let values = vec![
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: -1_000_000.0,
             },
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 2).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 0.0,
             },
             ValueAtTime {
-                time: NaiveDate::from_ymd_opt(2023, 1, 3).unwrap()
+                time: NaiveDate::from_ymd_opt(2023, 1, 3)
+                    .unwrap()
                     .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
                 value: 1_000_000.0,
             },
         ];
-        
+
         let (min_time, max_time, min_value, max_value) = calculate_data_ranges(&values);
-        
+
         // 時間の範囲検証
         assert_eq!(min_time, to_datetime(values[0].time));
         assert_eq!(max_time, to_datetime(values[2].time));
-        
+
         // 極端な値の検証
         assert_eq!(min_value, -1_000_000.0);
         assert_eq!(max_value, 1_000_000.0);
     }
-    
+
     #[test]
     #[should_panic(expected = "空のデータセットでは範囲計算ができません")]
     fn test_calculate_data_ranges_empty() {

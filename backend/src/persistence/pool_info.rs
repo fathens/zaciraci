@@ -1,4 +1,6 @@
+use super::TimeRange;
 use crate::Result;
+use crate::logging::*;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::pool_info;
 use crate::ref_finance::pool_info::{PoolInfo as RefPoolInfo, PoolInfoBared};
@@ -7,8 +9,6 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-use crate::logging::*;
-use super::TimeRange;
 
 // データベース用モデル
 #[allow(dead_code)]

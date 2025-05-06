@@ -1,14 +1,14 @@
+mod api_underlying;
 mod basic;
 mod chart;
-mod api_underlying;
+mod chronos_api;
 mod image_upload;
 mod ollama;
 mod pools;
+mod predict;
 mod server_api;
 mod stats;
 mod storage;
-mod chronos_api;
-mod predict;
 
 use dioxus::prelude::*;
 

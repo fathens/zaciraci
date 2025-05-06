@@ -4,10 +4,10 @@ mod pools;
 mod stats;
 mod storage;
 
+use crate::api_underlying::Underlying;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 use zaciraci_common::config;
-use crate::api_underlying::Underlying;
 
 fn server_base_url() -> String {
     config::get("SERVER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())

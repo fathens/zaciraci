@@ -1,11 +1,11 @@
 use anyhow::Result;
-use reqwest;
+use reqwest::Client;
 use std::sync::Arc;
 
 /// HTTP APIリクエストの基盤となる構造体
 pub struct Underlying {
     base_url: String,
-    client: reqwest::Client,
+    client: Client,
 }
 
 impl Underlying {
@@ -13,15 +13,15 @@ impl Underlying {
     pub fn new(base_url: String) -> Self {
         Self {
             base_url,
-            client: reqwest::Client::new(),
+            client: Client::new(),
         }
     }
-    
+
     /// 新しいUnderlying共有インスタンスを作成
     pub fn new_shared(base_url: String) -> Arc<Self> {
         Arc::new(Self::new(base_url))
     }
-    
+
     /// GETリクエストを送信してJSONレスポンスをデシリアライズ
     pub async fn get<T>(&self, path: &str) -> Result<T>
     where

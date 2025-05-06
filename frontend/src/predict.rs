@@ -1,19 +1,19 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use dioxus::prelude::*;
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::Arc;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
     ApiResponse,
-    types::TokenAccount,
     stats::{GetValuesRequest, ValueAtTime},
+    types::TokenAccount,
 };
-use std::str::FromStr;
-use std::collections::HashMap;
-use std::sync::Arc;
 
+use crate::chart::plots::MultiPlotSeries;
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use crate::stats::DateRangeSelector;
-use crate::chart::plots::MultiPlotSeries;
-use plotters::prelude::{RED, BLUE};
+use plotters::prelude::{BLUE, RED};
 
 /// 予測ビューのメインコンポーネント
 #[component]
@@ -25,7 +25,7 @@ pub fn view() -> Element {
         div { class: "predict-container",
             style: "display: flex; flex-direction: column; width: 100%;",
             h1 { "価格予測 (Zero-Shot)" }
-            
+
             // 予測インターフェース
             div { class: "predict-section",
                 predict_zero_shot_view {
@@ -55,7 +55,7 @@ fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f64> 
         let error = actual[i] - predicted[i];
         squared_errors_sum += error * error;
         absolute_errors_sum += error.abs();
-        
+
         // 分母がゼロに近い場合はパーセント誤差を計算しない
         if actual[i].abs() > 1e-10 {
             absolute_percent_errors_sum += (error.abs() / actual[i].abs()) * 100.0;
@@ -78,14 +78,14 @@ fn predict_zero_shot_view(
 ) -> Element {
     let mut quote = use_signal(|| "wrap.near".to_string());
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
-    
+
     // デフォルトで2日間の日付範囲を設定
     let now = Utc::now();
     let two_days_ago = now - Duration::days(2);
-    
+
     let start_date = use_signal(|| two_days_ago.format("%Y-%m-%dT%H:%M").to_string());
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M").to_string());
-    
+
     let mut model_name = use_signal(|| "chronos_default".to_string());
     let mut chart_svg = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
@@ -97,7 +97,7 @@ fn predict_zero_shot_view(
         div { class: "predict-zero-shot-view",
             h2 { "ゼロショット予測" }
             p { "過去の価格データから将来の価格を予測します。前半1日分のデータを使って後半1日分を予測し、実際のデータと比較します。" }
-            
+
             // トークン選択
             div { class: "token-selection",
                 style: "display: flex; gap: 10px; margin-bottom: 10px;",
@@ -118,13 +118,13 @@ fn predict_zero_shot_view(
                     }
                 }
             }
-            
+
             // 日付範囲選択
             DateRangeSelector {
                 start_date: start_date,
                 end_date: end_date,
             }
-            
+
             // モデル設定
             div { class: "model-settings",
                 style: "margin-top: 10px; margin-bottom: 10px;",
@@ -138,7 +138,7 @@ fn predict_zero_shot_view(
                     option { value: "arima", "ARIMA" }
                 }
             }
-            
+
             // 予測実行ボタン
             button {
                 class: "btn btn-primary",
@@ -155,7 +155,7 @@ fn predict_zero_shot_view(
                     let start_val = start_date().clone();
                     let end_val = end_date().clone();
                     let model_val = model_name().clone();
-                    
+
                     // 非同期で予測処理を実行
                     spawn_local(async move {
                         // 入力値のバリデーション
@@ -167,7 +167,7 @@ fn predict_zero_shot_view(
                                 return;
                             }
                         };
-                        
+
                         let base_token = match TokenAccount::from_str(&base_val) {
                             Ok(token) => token,
                             Err(e) => {
@@ -176,7 +176,7 @@ fn predict_zero_shot_view(
                                 return;
                             }
                         };
-                        
+
                         let start_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
@@ -185,7 +185,7 @@ fn predict_zero_shot_view(
                                 return;
                             }
                         };
-                        
+
                         let end_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
@@ -194,7 +194,7 @@ fn predict_zero_shot_view(
                                 return;
                             }
                         };
-                        
+
                         // 期間の検証
                         let duration = end_datetime.signed_duration_since(start_datetime);
                         if duration.num_hours() < 24 {
@@ -202,7 +202,7 @@ fn predict_zero_shot_view(
                             loading.set(false);
                             return;
                         }
-                        
+
                         // データ取得リクエスト
                         let request = GetValuesRequest {
                             quote_token,
@@ -210,7 +210,7 @@ fn predict_zero_shot_view(
                             start: start_datetime.naive_utc(),
                             end: end_datetime.naive_utc(),
                         };
-                        
+
                         // 価格データを取得
                         match server_client().stats.get_values(&request).await {
                             Ok(ApiResponse::Success(response)) => {
@@ -220,7 +220,7 @@ fn predict_zero_shot_view(
                                     loading.set(false);
                                     return;
                                 }
-                                
+
                                 // データを前半と後半に分割
                                 let mid_point = values_data.len() / 2;
                                 if mid_point < 2 {
@@ -228,134 +228,134 @@ fn predict_zero_shot_view(
                                     loading.set(false);
                                     return;
                                 }
-                                
+
                                 let training_data = values_data[..mid_point].to_vec();
                                 let test_data = values_data[mid_point..].to_vec();
-                                
+
                                 if training_data.is_empty() || test_data.is_empty() {
                                     error_message.set(Some("データ分割後のデータが不足しています".to_string()));
                                     loading.set(false);
                                     return;
                                 }
-                                
+
                                 // 予測用のタイムスタンプと値を抽出
                                 let timestamps: Vec<DateTime<Utc>> = training_data.iter()
                                     .map(|v| DateTime::<Utc>::from_naive_utc_and_offset(v.time, Utc))
                                     .collect();
                                 let values: Vec<_> = training_data.iter().map(|v| v.value).collect();
-                                
+
                                 // 予測対象の終了時刻（テストデータの最後）
                                 let forecast_until = DateTime::<Utc>::from_naive_utc_and_offset(
-                                    test_data.last().unwrap().time, 
+                                    test_data.last().unwrap().time,
                                     Utc
                                 );
-                                
+
                                 // ZeroShotPredictionRequestを作成
                                 let prediction_request = ZeroShotPredictionRequest::new(
                                     timestamps,
                                     values,
                                     forecast_until
                                 ).with_model_name(model_val);
-                                
+
                                 // 予測実行
                                 match chronos_client().predict_zero_shot(&prediction_request).await {
                                     Ok(prediction_response) => {
                                         // 予測結果とテストデータの比較
                                         let actual_values: Vec<_> = test_data.iter().map(|v| v.value).collect();
                                         let forecast_values = prediction_response.forecast_values;
-                                        
+
                                         // 予測精度の計算
                                         let calculated_metrics = calculate_metrics(&actual_values, &forecast_values);
                                         metrics.set(calculated_metrics);
-                                        
+
                                         // 学習データをValueAtTime形式に変換
                                         let training_points: Vec<ValueAtTime> = training_data.to_vec();
-                                        
+
                                         // テストデータをValueAtTime形式に変換
                                         let _test_points: Vec<ValueAtTime> = test_data.to_vec();
-                                        
+
                                         // 予測データを変換
                                         let mut forecast_points: Vec<ValueAtTime> = Vec::new();
-                                        
+
                                         // 予測データがあり、テストデータもある場合
                                         if !prediction_response.forecast_timestamp.is_empty() && !forecast_values.is_empty() && !test_data.is_empty() {
                                             // テストデータと予測データを接続（連続性を確保）
-                                            
+
                                             // テストデータの最後のポイントを取得
                                             let last_test_point = test_data.last().unwrap();
-                                            
+
                                             web_sys::console::log_1(&format!(
-                                                "テストデータの最後のポイント: 時刻={}, 値={}", 
+                                                "テストデータの最後のポイント: 時刻={}, 値={}",
                                                 last_test_point.time, last_test_point.value
                                             ).into());
-                                            
+
                                             // 予測データの調整（スケーリングと連続性の確保）
-                                            
+
                                             // 予測APIから返された最初の予測値を取得
                                             let first_api_forecast_value = forecast_values[0];
-                                            
+
                                             // 予測データの時間範囲をデバッグ出力
                                             if !prediction_response.forecast_timestamp.is_empty() {
                                                 let first_timestamp = prediction_response.forecast_timestamp.first().unwrap();
                                                 let last_timestamp = prediction_response.forecast_timestamp.last().unwrap();
                                                 web_sys::console::log_1(&format!(
-                                                    "予測データの時間範囲: {} から {} ({}個のデータポイント)", 
+                                                    "予測データの時間範囲: {} から {} ({}個のデータポイント)",
                                                     first_timestamp, last_timestamp, prediction_response.forecast_timestamp.len()
                                                 ).into());
                                             }
-                                            
+
                                             web_sys::console::log_1(&format!(
-                                                "APIから返された最初の予測値: {}", 
+                                                "APIから返された最初の予測値: {}",
                                                 first_api_forecast_value
                                             ).into());
-                                            
+
                                             // 予測値と実際の値の差を計算（補正係数）
                                             let correction_factor = if first_api_forecast_value != 0.0 {
                                                 last_test_point.value / first_api_forecast_value
                                             } else {
                                                 1.0 // ゼロ除算を防ぐ
                                             };
-                                            
+
                                             web_sys::console::log_1(&format!(
-                                                "補正係数: {}", 
+                                                "補正係数: {}",
                                                 correction_factor
                                             ).into());
-                                            
+
                                             // テストデータの最後のポイントから滑らかに続けるために、
                                             // 最後のテストポイントを予測データの開始点として使用
                                             forecast_points.push(ValueAtTime {
                                                 time: last_test_point.time,
                                                 value: last_test_point.value,
                                             });
-                                            
+
                                             // 予測データを補正して追加
                                             for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
                                                 if i < forecast_values.len() {
                                                     // 予測値を実際のデータのスケールに合わせる
                                                     let adjusted_value = forecast_values[i] * correction_factor;
-                                                    
+
                                                     // デバッグ情報（最初と最後のポイントの情報を表示）
                                                     if i == 0 || i == forecast_values.len() - 1 {
                                                         web_sys::console::log_1(&format!(
-                                                            "予測ポイント[{}]: 時刻={}, 値={} (元の値={})", 
+                                                            "予測ポイント[{}]: 時刻={}, 値={} (元の値={})",
                                                             i, timestamp.naive_utc(), adjusted_value, forecast_values[i]
                                                         ).into());
                                                     }
-                                                    
+
                                                     forecast_points.push(ValueAtTime {
                                                         time: timestamp.naive_utc(),
                                                         value: adjusted_value,
                                                     });
                                                 }
                                             }
-                                            
+
                                             // デバッグ情報の出力
                                             web_sys::console::log_1(&format!("変換後の予測ポイント数: {}", forecast_points.len()).into());
-                                            
+
                                             // 最初と最後の予測ポイントの時間を表示
                                             if forecast_points.len() >= 2 {
                                                 web_sys::console::log_1(&format!(
-                                                    "最初の予測ポイント時刻: {}, 最後の予測ポイント時刻: {}", 
+                                                    "最初の予測ポイント時刻: {}, 最後の予測ポイント時刻: {}",
                                                     forecast_points.first().unwrap().time,
                                                     forecast_points.last().unwrap().time
                                                 ).into());
@@ -371,7 +371,7 @@ fn predict_zero_shot_view(
                                                 }
                                             }
                                         }
-                                        
+
                                         // 全データを結合（まず学習データ、次にテストデータ）
                                         let mut all_actual_data = Vec::new();
                                         all_actual_data.extend(training_points.clone());
@@ -380,34 +380,34 @@ fn predict_zero_shot_view(
                                         // 表示用のデータを準備（チャート描画前に行う）
                                         // 実際のデータと予測データを時間で整理
                                         let mut all_data_by_time: HashMap<NaiveDateTime, (Option<f64>, Option<f64>)> = HashMap::new();
-                                        
+
                                         // 実際のデータを追加（オプションの1番目の要素に入れる）
                                         for point in &all_actual_data {
                                             all_data_by_time.entry(point.time)
                                                 .and_modify(|entry| entry.0 = Some(point.value))
                                                 .or_insert((Some(point.value), None));
                                         }
-                                        
+
                                         // 予測データを追加（オプションの2番目の要素に入れる）
                                         for point in &forecast_points {
                                             all_data_by_time.entry(point.time)
                                                 .and_modify(|entry| entry.1 = Some(point.value))
                                                 .or_insert((None, Some(point.value)));
                                         }
-                                        
+
                                         // 時刻でソートしたデータを作成（予測データがある時間帯のみ）
                                         let mut sorted_data: Vec<(NaiveDateTime, Option<f64>, Option<f64>)> = all_data_by_time
                                             .into_iter()
                                             .filter(|(_, (_, forecast))| forecast.is_some()) // 予測データがある時間帯のみ
                                             .map(|(time, (actual, forecast))| (time, actual, forecast))
                                             .collect();
-                                        
+
                                         // 時刻でソート
                                         sorted_data.sort_by_key(|(time, _, _)| *time);
-                                        
+
                                         // デバッグ出力
                                         web_sys::console::log_1(&format!("表示用データ件数: {}", sorted_data.len()).into());
-                                        
+
                                         // 表示用データを設定
                                         let formatted_table_data = sorted_data.into_iter()
                                             .map(|(time, actual, forecast)| {
@@ -417,36 +417,36 @@ fn predict_zero_shot_view(
                                                 (time_str, actual_str, forecast_str)
                                             })
                                             .collect::<Vec<_>>();
-                                        
+
                                         // 系列を作成
                                         let mut plot_series = Vec::new();
-                                        
+
                                         // 実際のデータ系列
                                         plot_series.push(MultiPlotSeries {
                                             values: all_actual_data,
                                             name: "実際の価格".to_string(),
                                             color: BLUE,
                                         });
-                                        
+
                                         // 予測データ系列（空でなければ追加）
                                         if !forecast_points.is_empty() {
                                             // 予測データの時間範囲をログ出力
                                             if forecast_points.len() >= 2 {
                                                 web_sys::console::log_1(&format!(
-                                                    "描画前の予測データ: {} ポイント, 時間範囲: {} から {}", 
+                                                    "描画前の予測データ: {} ポイント, 時間範囲: {} から {}",
                                                     forecast_points.len(),
                                                     forecast_points.first().unwrap().time,
                                                     forecast_points.last().unwrap().time
                                                 ).into());
                                             }
-                                            
+
                                             plot_series.push(MultiPlotSeries {
                                                 values: forecast_points,
                                                 name: "予測価格".to_string(),
                                                 color: RED,
                                             });
                                         }
-                                        
+
                                         // 複数系列を同一チャートに描画するためのオプション設定
                                         let multi_options = crate::chart::plots::MultiPlotOptions {
                                             image_size: (800, 500),
@@ -454,7 +454,7 @@ fn predict_zero_shot_view(
                                             x_label: Some("時間".to_string()),
                                             y_label: Some("価格".to_string()),
                                         };
-                                        
+
                                         // 複数系列を同一チャートにプロット
                                         let combined_svg = match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
                                             &plot_series, multi_options
@@ -466,9 +466,9 @@ fn predict_zero_shot_view(
                                                 return;
                                             }
                                         };
-                                        
+
                                         chart_svg.set(Some(combined_svg));
-                                        
+
                                         prediction_table_data.set(formatted_table_data);
                                     },
                                     Err(e) => {
@@ -483,13 +483,13 @@ fn predict_zero_shot_view(
                                 error_message.set(Some(format!("データ取得エラー: {}", e)));
                             },
                         }
-                        
+
                         loading.set(false);
                     });
                 },
                 if loading() { "予測処理中..." } else { "予測実行" }
             }
-            
+
             // エラーメッセージの表示
             if let Some(error) = error_message() {
                 div {
@@ -498,7 +498,7 @@ fn predict_zero_shot_view(
                     "{error}"
                 }
             }
-            
+
             // 予測精度の表示
             if !metrics().is_empty() {
                 div {
@@ -524,7 +524,7 @@ fn predict_zero_shot_view(
                     }
                 }
             }
-            
+
             // チャートの表示
             if let Some(svg) = chart_svg() {
                 div {
