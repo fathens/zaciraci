@@ -214,28 +214,7 @@ fn draw_plot<DB: DrawingBackend>(
 
     let mesh_with_x_formatter =
         mesh_with_xy_desc.x_label_formatter(&|dt| dt.format("%Y-%m-%d %H:%M").to_string());
-    let mesh_with_formatters = mesh_with_x_formatter.y_label_formatter(&|y| {
-        // 大きな数値やさまざまな桁数に対応するためのフォーマット
-        if y.abs() >= 1_000_000_000_000.0 {
-            // 1兆以上なら「T」を使用
-            format!("{:.2}T", y / 1_000_000_000_000.0)
-        } else if y.abs() >= 1_000_000_000.0 {
-            // 10億以上なら「G」を使用
-            format!("{:.2}G", y / 1_000_000_000.0)
-        } else if y.abs() >= 1_000_000.0 {
-            // 100万以上なら「M」を使用
-            format!("{:.2}M", y / 1_000_000.0)
-        } else if y.abs() >= 1_000.0 {
-            // 1000以上なら「K」を使用
-            format!("{:.2}K", y / 1_000.0)
-        } else if y.abs() < 0.01 && y.abs() > 0.0 {
-            // 非常に小さい数値の場合は科学的表記法
-            format!("{:.2e}", y)
-        } else {
-            // 通常のケース
-            format!("{:.2}", y)
-        }
-    });
+    let mesh_with_formatters = mesh_with_x_formatter.y_label_formatter(&format_value);
 
     mesh_with_formatters
         .draw()
@@ -377,28 +356,7 @@ fn draw_multi_plot<DB: DrawingBackend>(
 
     let mesh_with_x_formatter =
         mesh_with_xy_desc.x_label_formatter(&|dt| dt.format("%Y-%m-%d %H:%M").to_string());
-    let mesh_with_formatters = mesh_with_x_formatter.y_label_formatter(&|y| {
-        // 大きな数値やさまざまな桁数に対応するためのフォーマット
-        if y.abs() >= 1_000_000_000_000.0 {
-            // 1兆以上なら「T」を使用
-            format!("{:.2}T", y / 1_000_000_000_000.0)
-        } else if y.abs() >= 1_000_000_000.0 {
-            // 10億以上なら「G」を使用
-            format!("{:.2}G", y / 1_000_000_000.0)
-        } else if y.abs() >= 1_000_000.0 {
-            // 100万以上なら「M」を使用
-            format!("{:.2}M", y / 1_000_000.0)
-        } else if y.abs() >= 1_000.0 {
-            // 1000以上なら「K」を使用
-            format!("{:.2}K", y / 1_000.0)
-        } else if y.abs() < 0.01 && y.abs() > 0.0 {
-            // 非常に小さい数値の場合は科学的表記法
-            format!("{:.2e}", y)
-        } else {
-            // 通常のケース
-            format!("{:.2}", y)
-        }
-    });
+    let mesh_with_formatters = mesh_with_x_formatter.y_label_formatter(&format_value);
 
     mesh_with_formatters
         .draw()
@@ -557,4 +515,88 @@ pub fn plot_multi_values_at_time_to_memory_with_options(
 ) -> Result<Vec<u8>> {
     let result = plot_multi_values_at_time_internal(series, BackendType::Memory, &options)?;
     Ok(result.into())
+}
+
+/// 数値を適切な単位付きの文字列に変換する
+/// 
+/// # 例
+/// ```
+/// assert_eq!(format_value(1500.0), "1.50K");
+/// assert_eq!(format_value(0.001), "1.00e-3");
+/// ```
+pub(crate) fn format_value(y: &f64) -> String {
+    // 大きな数値やさまざまな桁数に対応するためのフォーマット
+    if y.abs() >= 1_000_000_000_000.0 {
+        // 1兆以上なら「T」を使用
+        format!("{:.2}T", y / 1_000_000_000_000.0)
+    } else if y.abs() >= 1_000_000_000.0 {
+        // 10億以上なら「G」を使用
+        format!("{:.2}G", y / 1_000_000_000.0)
+    } else if y.abs() >= 1_000_000.0 {
+        // 100万以上なら「M」を使用
+        format!("{:.2}M", y / 1_000_000.0)
+    } else if y.abs() >= 1_000.0 {
+        // 1000以上なら「K」を使用
+        format!("{:.2}K", y / 1_000.0)
+    } else if y.abs() < 0.01 && y.abs() > 0.0 {
+        // 非常に小さい数値の場合は科学的表記法
+        format!("{:.2e}", y)
+    } else {
+        // 通常のケース
+        format!("{:.2}", y)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_format_value_trillion() {
+        // 1兆以上の値
+        assert_eq!(format_value(&1_500_000_000_000.0), "1.50T");
+        assert_eq!(format_value(&1_000_000_000_000.0), "1.00T");
+        assert_eq!(format_value(&-2_345_000_000_000.0), "-2.35T");
+    }
+    
+    #[test]
+    fn test_format_value_billion() {
+        // 10億以上の値
+        assert_eq!(format_value(&1_500_000_000.0), "1.50G");
+        assert_eq!(format_value(&1_000_000_000.0), "1.00G");
+        assert_eq!(format_value(&-2_345_000_000.0), "-2.35G");
+    }
+    
+    #[test]
+    fn test_format_value_million() {
+        // 100万以上の値
+        assert_eq!(format_value(&1_500_000.0), "1.50M");
+        assert_eq!(format_value(&1_000_000.0), "1.00M");
+        assert_eq!(format_value(&-2_345_000.0), "-2.35M");
+    }
+    
+    #[test]
+    fn test_format_value_thousand() {
+        // 1000以上の値
+        assert_eq!(format_value(&1_500.0), "1.50K");
+        assert_eq!(format_value(&1_000.0), "1.00K");
+        assert_eq!(format_value(&-2_345.0), "-2.35K");
+    }
+    
+    #[test]
+    fn test_format_value_small() {
+        // 非常に小さい値（科学的表記法）
+        assert_eq!(format_value(&0.001), "1.00e-3");
+        assert_eq!(format_value(&-0.00012), "-1.20e-4");
+        assert_eq!(format_value(&0.0000123), "1.23e-5");
+    }
+    
+    #[test]
+    fn test_format_value_normal() {
+        // 通常の値
+        assert_eq!(format_value(&123.456), "123.46");
+        assert_eq!(format_value(&-42.42), "-42.42");
+        assert_eq!(format_value(&0.123), "0.12");
+        assert_eq!(format_value(&0.0), "0.00");
+    }
 }
