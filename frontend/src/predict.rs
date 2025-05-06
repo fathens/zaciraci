@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc, NaiveDateTime};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use crate::stats::DateRangeSelector;
+use crate::chart::plots::MultiPlotSeries;
+use plotters::prelude::{RED, BLUE};
 
 /// 予測ビューのメインコンポーネント
 #[component]
@@ -88,7 +90,8 @@ fn predict_zero_shot_view(
     let mut chart_svg = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
     let mut error_message = use_signal(|| None::<String>);
-    let mut metrics = use_signal(|| HashMap::<String, f64>::new());
+    let mut metrics = use_signal(HashMap::<String, f64>::new);
+    let mut prediction_table_data = use_signal(Vec::<(String, String, String)>::new);
 
     rsx! {
         div { class: "predict-zero-shot-view",
@@ -145,6 +148,7 @@ fn predict_zero_shot_view(
                     error_message.set(None);
                     chart_svg.set(None);
                     metrics.set(HashMap::new());
+                    prediction_table_data.set(Vec::new());
 
                     let quote_val = quote().clone();
                     let base_val = base().clone();
@@ -173,7 +177,7 @@ fn predict_zero_shot_view(
                             }
                         };
                         
-                        let start_datetime: chrono::DateTime<Utc> = match chrono::NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
+                        let start_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
                                 error_message.set(Some(format!("開始日時のパースエラー: {}", e)));
@@ -182,7 +186,7 @@ fn predict_zero_shot_view(
                             }
                         };
                         
-                        let end_datetime: chrono::DateTime<Utc> = match chrono::NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
+                        let end_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
                                 error_message.set(Some(format!("終了日時のパースエラー: {}", e)));
@@ -265,80 +269,207 @@ fn predict_zero_shot_view(
                                         metrics.set(calculated_metrics);
                                         
                                         // 学習データをValueAtTime形式に変換
-                                        let training_points: Vec<ValueAtTime> = training_data.iter()
-                                            .map(|p| p.clone())
-                                            .collect();
+                                        let training_points: Vec<ValueAtTime> = training_data.to_vec();
                                         
                                         // テストデータをValueAtTime形式に変換
-                                        let test_points: Vec<ValueAtTime> = test_data.iter()
-                                            .map(|p| p.clone())
-                                            .collect();
+                                        let _test_points: Vec<ValueAtTime> = test_data.to_vec();
                                         
-                                        // 予測データをValueAtTime形式に変換
+                                        // 予測データを変換
                                         let mut forecast_points: Vec<ValueAtTime> = Vec::new();
-                                        for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
-                                            if i < forecast_values.len() {
-                                                forecast_points.push(ValueAtTime {
-                                                    time: timestamp.naive_utc(),
-                                                    value: forecast_values[i],
-                                                });
+                                        
+                                        // 予測データがあり、テストデータもある場合
+                                        if !prediction_response.forecast_timestamp.is_empty() && !forecast_values.is_empty() && !test_data.is_empty() {
+                                            // テストデータと予測データを接続（連続性を確保）
+                                            
+                                            // テストデータの最後のポイントを取得
+                                            let last_test_point = test_data.last().unwrap();
+                                            
+                                            web_sys::console::log_1(&format!(
+                                                "テストデータの最後のポイント: 時刻={}, 値={}", 
+                                                last_test_point.time, last_test_point.value
+                                            ).into());
+                                            
+                                            // 予測データの調整（スケーリングと連続性の確保）
+                                            
+                                            // 予測APIから返された最初の予測値を取得
+                                            let first_api_forecast_value = forecast_values[0];
+                                            
+                                            // 予測データの時間範囲をデバッグ出力
+                                            if !prediction_response.forecast_timestamp.is_empty() {
+                                                let first_timestamp = prediction_response.forecast_timestamp.first().unwrap();
+                                                let last_timestamp = prediction_response.forecast_timestamp.last().unwrap();
+                                                web_sys::console::log_1(&format!(
+                                                    "予測データの時間範囲: {} から {} ({}個のデータポイント)", 
+                                                    first_timestamp, last_timestamp, prediction_response.forecast_timestamp.len()
+                                                ).into());
+                                            }
+                                            
+                                            web_sys::console::log_1(&format!(
+                                                "APIから返された最初の予測値: {}", 
+                                                first_api_forecast_value
+                                            ).into());
+                                            
+                                            // 予測値と実際の値の差を計算（補正係数）
+                                            let correction_factor = if first_api_forecast_value != 0.0 {
+                                                last_test_point.value / first_api_forecast_value
+                                            } else {
+                                                1.0 // ゼロ除算を防ぐ
+                                            };
+                                            
+                                            web_sys::console::log_1(&format!(
+                                                "補正係数: {}", 
+                                                correction_factor
+                                            ).into());
+                                            
+                                            // テストデータの最後のポイントから滑らかに続けるために、
+                                            // 最後のテストポイントを予測データの開始点として使用
+                                            forecast_points.push(ValueAtTime {
+                                                time: last_test_point.time,
+                                                value: last_test_point.value,
+                                            });
+                                            
+                                            // 予測データを補正して追加
+                                            for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
+                                                if i < forecast_values.len() {
+                                                    // 予測値を実際のデータのスケールに合わせる
+                                                    let adjusted_value = forecast_values[i] * correction_factor;
+                                                    
+                                                    // デバッグ情報（最初と最後のポイントの情報を表示）
+                                                    if i == 0 || i == forecast_values.len() - 1 {
+                                                        web_sys::console::log_1(&format!(
+                                                            "予測ポイント[{}]: 時刻={}, 値={} (元の値={})", 
+                                                            i, timestamp.naive_utc(), adjusted_value, forecast_values[i]
+                                                        ).into());
+                                                    }
+                                                    
+                                                    forecast_points.push(ValueAtTime {
+                                                        time: timestamp.naive_utc(),
+                                                        value: adjusted_value,
+                                                    });
+                                                }
+                                            }
+                                            
+                                            // デバッグ情報の出力
+                                            web_sys::console::log_1(&format!("変換後の予測ポイント数: {}", forecast_points.len()).into());
+                                            
+                                            // 最初と最後の予測ポイントの時間を表示
+                                            if forecast_points.len() >= 2 {
+                                                web_sys::console::log_1(&format!(
+                                                    "最初の予測ポイント時刻: {}, 最後の予測ポイント時刻: {}", 
+                                                    forecast_points.first().unwrap().time,
+                                                    forecast_points.last().unwrap().time
+                                                ).into());
+                                            }
+                                        } else {
+                                            // テストデータがない場合や予測データがない場合は、そのまま変換
+                                            for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
+                                                if i < forecast_values.len() {
+                                                    forecast_points.push(ValueAtTime {
+                                                        time: timestamp.naive_utc(),
+                                                        value: forecast_values[i],
+                                                    });
+                                                }
                                             }
                                         }
                                         
                                         // 全データを結合（まず学習データ、次にテストデータ）
                                         let mut all_actual_data = Vec::new();
                                         all_actual_data.extend(training_points.clone());
-                                        all_actual_data.extend(test_points.clone());
+                                        all_actual_data.extend(test_data.clone());
+
+                                        // 表示用のデータを準備（チャート描画前に行う）
+                                        // 実際のデータと予測データを時間で整理
+                                        let mut all_data_by_time: HashMap<NaiveDateTime, (Option<f64>, Option<f64>)> = HashMap::new();
                                         
-                                        // チャートをプロット（実際のデータ）
-                                        let actual_options = crate::chart::plots::PlotOptions {
-                                            image_size: (800, 400),
-                                            title: Some(format!("{} / {} (実際の価格)", base_val, quote_val)),
+                                        // 実際のデータを追加（オプションの1番目の要素に入れる）
+                                        for point in &all_actual_data {
+                                            all_data_by_time.entry(point.time)
+                                                .and_modify(|entry| entry.0 = Some(point.value))
+                                                .or_insert((Some(point.value), None));
+                                        }
+                                        
+                                        // 予測データを追加（オプションの2番目の要素に入れる）
+                                        for point in &forecast_points {
+                                            all_data_by_time.entry(point.time)
+                                                .and_modify(|entry| entry.1 = Some(point.value))
+                                                .or_insert((None, Some(point.value)));
+                                        }
+                                        
+                                        // 時刻でソートしたデータを作成（予測データがある時間帯のみ）
+                                        let mut sorted_data: Vec<(NaiveDateTime, Option<f64>, Option<f64>)> = all_data_by_time
+                                            .into_iter()
+                                            .filter(|(_, (_, forecast))| forecast.is_some()) // 予測データがある時間帯のみ
+                                            .map(|(time, (actual, forecast))| (time, actual, forecast))
+                                            .collect();
+                                        
+                                        // 時刻でソート
+                                        sorted_data.sort_by_key(|(time, _, _)| *time);
+                                        
+                                        // デバッグ出力
+                                        web_sys::console::log_1(&format!("表示用データ件数: {}", sorted_data.len()).into());
+                                        
+                                        // 表示用データを設定
+                                        let formatted_table_data = sorted_data.into_iter()
+                                            .map(|(time, actual, forecast)| {
+                                                let time_str = time.format("%Y-%m-%d %H:%M").to_string();
+                                                let actual_str = actual.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "-".to_string());
+                                                let forecast_str = forecast.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "-".to_string());
+                                                (time_str, actual_str, forecast_str)
+                                            })
+                                            .collect::<Vec<_>>();
+                                        
+                                        // 系列を作成
+                                        let mut plot_series = Vec::new();
+                                        
+                                        // 実際のデータ系列
+                                        plot_series.push(MultiPlotSeries {
+                                            values: all_actual_data,
+                                            name: "実際の価格".to_string(),
+                                            color: BLUE,
+                                        });
+                                        
+                                        // 予測データ系列（空でなければ追加）
+                                        if !forecast_points.is_empty() {
+                                            // 予測データの時間範囲をログ出力
+                                            if forecast_points.len() >= 2 {
+                                                web_sys::console::log_1(&format!(
+                                                    "描画前の予測データ: {} ポイント, 時間範囲: {} から {}", 
+                                                    forecast_points.len(),
+                                                    forecast_points.first().unwrap().time,
+                                                    forecast_points.last().unwrap().time
+                                                ).into());
+                                            }
+                                            
+                                            plot_series.push(MultiPlotSeries {
+                                                values: forecast_points,
+                                                name: "予測価格".to_string(),
+                                                color: RED,
+                                            });
+                                        }
+                                        
+                                        // 複数系列を同一チャートに描画するためのオプション設定
+                                        let multi_options = crate::chart::plots::MultiPlotOptions {
+                                            image_size: (800, 500),
+                                            title: Some(format!("{} / {} (実際 vs 予測)", base_val, quote_val)),
                                             x_label: Some("時間".to_string()),
                                             y_label: Some("価格".to_string()),
-                                            line_color: plotters::style::RGBColor(0, 0, 255), // 青色
-                                            ..Default::default()
                                         };
                                         
-                                        let actual_svg = match crate::chart::plots::plot_values_at_time_to_svg_with_options(
-                                            &all_actual_data, actual_options
+                                        // 複数系列を同一チャートにプロット
+                                        let combined_svg = match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
+                                            &plot_series, multi_options
                                         ) {
                                             Ok(svg) => svg,
                                             Err(e) => {
-                                                error_message.set(Some(format!("実際データのチャート作成エラー: {}", e)));
+                                                error_message.set(Some(format!("チャート作成エラー: {}", e)));
                                                 loading.set(false);
                                                 return;
                                             }
                                         };
-                                        
-                                        // チャートをプロット（予測データ）
-                                        let forecast_options = crate::chart::plots::PlotOptions {
-                                            image_size: (800, 400),
-                                            title: Some(format!("{} / {} (予測価格)", base_val, quote_val)),
-                                            x_label: Some("時間".to_string()),
-                                            y_label: Some("価格".to_string()),
-                                            line_color: plotters::style::RGBColor(255, 0, 0), // 赤色
-                                            ..Default::default()
-                                        };
-                                        
-                                        let forecast_svg = match crate::chart::plots::plot_values_at_time_to_svg_with_options(
-                                            &forecast_points, forecast_options
-                                        ) {
-                                            Ok(svg) => svg,
-                                            Err(e) => {
-                                                error_message.set(Some(format!("予測データのチャート作成エラー: {}", e)));
-                                                loading.set(false);
-                                                return;
-                                            }
-                                        };
-                                        
-                                        // 両方のSVGを結合
-                                        let combined_svg = format!(
-                                            "<div style='display: flex; flex-direction: column; gap: 20px;'><div>{}</div><div>{}</div></div>",
-                                            actual_svg, forecast_svg
-                                        );
                                         
                                         chart_svg.set(Some(combined_svg));
+                                        
+                                        prediction_table_data.set(formatted_table_data);
                                     },
                                     Err(e) => {
                                         error_message.set(Some(format!("予測実行エラー: {}", e)));
