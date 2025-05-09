@@ -5684,7 +5684,6 @@ dependencies = [
  "bs58 0.5.1",
  "chrono",
  "cron",
- "deadpool",
  "deadpool-diesel",
  "diesel",
  "ed25519-dalek",
