@@ -63,7 +63,8 @@ async fn main() {
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 
     tokio::spawn(trade::run());
-    web::run().await;
+    tokio::spawn(web::run());
+    main_loop().await.unwrap();
 }
 
 #[allow(unused)]
@@ -118,7 +119,8 @@ where
         "start.balance_in_micro" => ?start_balance,
     );
 
-    let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
+    let pools = ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
+
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let gas_price = client.get_gas_price(None).await?;
     let previews = ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;

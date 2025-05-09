@@ -1,7 +1,6 @@
+use crate::api_underlying::Underlying;
 use std::sync::Arc;
 use zaciraci_common::ollama::{ChatRequest, GenerateRequest};
-
-use crate::server_api::Underlying;
 
 pub struct OllamaApi {
     pub underlying: Arc<Underlying>,

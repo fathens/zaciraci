@@ -72,13 +72,13 @@ async fn record_rates() -> Result<()> {
 
     info!(log, "loading pools");
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
+    pools.write_to_db().await?;
+
+    info!(log, "updating graph");
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
     let goals = graph.update_graph(quote_token)?;
     info!(log, "found targets"; "goals" => %goals.len());
     let values = graph.list_values(initial_value, quote_token, &goals)?;
-
-    info!(log, "inserting pools");
-    pools.write_to_db().await?;
 
     let log = log.new(o!(
         "num_values" => values.len().to_string(),

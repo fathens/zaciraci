@@ -1,4 +1,6 @@
+use super::TimeRange;
 use crate::Result;
+use crate::logging::*;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::pool_info;
 use crate::ref_finance::pool_info::{PoolInfo as RefPoolInfo, PoolInfoBared};
@@ -7,8 +9,6 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-
-use super::TimeRange;
 
 // データベース用モデル
 #[allow(dead_code)]
@@ -41,7 +41,6 @@ struct NewDbPoolInfo {
 }
 
 // 変換ロジックの実装
-#[allow(dead_code)]
 impl RefPoolInfo {
     // DbPoolInfoからRefPoolInfoへの変換
     fn from_db(db_pool: DbPoolInfo) -> Result<Self> {
@@ -89,6 +88,7 @@ impl RefPoolInfo {
     }
 
     // データベースに挿入
+    #[allow(dead_code)]
     pub async fn insert(&self) -> Result<()> {
         use diesel::RunQueryDsl;
 
@@ -108,6 +108,11 @@ impl RefPoolInfo {
 
     // 複数レコードを一括挿入
     pub async fn batch_insert(pool_infos: &[Arc<RefPoolInfo>]) -> Result<()> {
+        let log = DEFAULT.new(o!(
+            "function" => "batch_insert",
+            "pool_infos" => pool_infos.len(),
+        ));
+        info!(log, "start");
         use diesel::RunQueryDsl;
 
         if pool_infos.is_empty() {
@@ -128,6 +133,7 @@ impl RefPoolInfo {
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
+        info!(log, "finish");
         Ok(())
     }
 
