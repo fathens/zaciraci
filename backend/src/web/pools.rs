@@ -61,8 +61,7 @@ async fn estimate_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let client = jsonrpc::new_client();
-    let pools = PoolInfoList::read_from_node(&client).await.unwrap();
+    let pools = PoolInfoList::read_from_db(None).await.unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -167,7 +166,7 @@ async fn run_swap(
 ) -> String {
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
-    let pools = PoolInfoList::read_from_node(&client).await.unwrap();
+    let pools = PoolInfoList::read_from_db(None).await.unwrap();
     let graph = TokenGraph::new(pools);
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start_token: TokenAccount = token_in_account.parse().unwrap();
