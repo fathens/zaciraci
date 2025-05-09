@@ -1,3 +1,4 @@
+use crate::config;
 use crate::jsonrpc;
 use crate::jsonrpc::SentTx;
 use crate::logging::*;
@@ -14,7 +15,6 @@ use humantime::parse_duration;
 use near_primitives::types::Balance;
 use once_cell::sync::Lazy;
 use std::time::Duration;
-use zaciraci_common::config;
 
 static TOKEN_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("TOKEN_NOT_FOUND_WAIT")
