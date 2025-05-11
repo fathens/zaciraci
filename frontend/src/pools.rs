@@ -131,8 +131,6 @@ fn estimate_trade_view(
                             let token_out = token_out.read().clone();
                             let amount_in = amount_in.read().clone();
                             let amount_unit = amount_unit.read().clone();
-                            let mut amount_out = amount_out;
-                            let mut loading = loading;
                             let client = client.read().clone();
 
                             async move {
@@ -202,8 +200,6 @@ fn pool_records_view() -> Element {
                             spawn_local({
                                 let pools_timestamp = pools_timestamp.read().clone();
                                 let pool_ids = pool_ids.read().clone();
-                                let mut pools_loading = pools_loading;
-                                let mut pools = pools;
                                 let client = client.read().clone();
 
                                 async move {
