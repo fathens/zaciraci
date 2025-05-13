@@ -10,6 +10,11 @@ services:
     volumes:
       - ./.data:/var/lib/postgresql/data
       - ./init_pg:/docker-entrypoint-initdb.d
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
 
   zaciraci:
     build:
@@ -31,3 +36,8 @@ services:
       - HARVEST_ACCOUNT_ID=${HARVEST_ACCOUNT_ID}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
       - OLLAMA_MODEL=gemma3:12b
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
