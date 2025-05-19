@@ -57,3 +57,14 @@ impl From<PoolId> for u32 {
         id.0
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SortPoolsRequest {
+    pub timestamp: NaiveDateTime,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SortPoolsResponse {
+    pub pools: Vec<PoolRecord>,
+}

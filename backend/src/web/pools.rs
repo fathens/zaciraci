@@ -1,3 +1,5 @@
+mod sort;
+
 use super::AppState;
 use crate::jsonrpc::{GasInfo, SentTx};
 use crate::logging::*;
@@ -6,6 +8,7 @@ use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::{MicroNear, MilliNear};
+use crate::web::pools::sort::sort;
 use crate::{jsonrpc, ref_finance, wallet};
 use axum::Json;
 use axum::{
@@ -15,10 +18,12 @@ use axum::{
 };
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
+use std::ops::Deref;
 use std::sync::Arc;
 use zaciraci_common::ApiResponse;
 use zaciraci_common::pools::{
-    PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse,
+    PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest,
+    TradeResponse,
 };
 use zaciraci_common::types::YoctoNearToken;
 
@@ -48,6 +53,7 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         )
         .route(&path("estimate_trade"), post(estimate_trade))
         .route(&path("get_pool_records"), post(get_pool_records))
+        .route(&path("sort_pools"), post(sort_pools))
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
@@ -323,4 +329,28 @@ async fn get_pool_records(
     }
     info!(log, "finished");
     Json(ApiResponse::Success(PoolRecordsResponse { pools }))
+}
+
+async fn sort_pools(
+    State(_): State<Arc<AppState>>,
+    Json(request): Json<SortPoolsRequest>,
+) -> Json<ApiResponse<SortPoolsResponse, String>> {
+    let log = DEFAULT.new(o!(
+        "function" => "sort_pools",
+        "timestamp" => format!("{}", request.timestamp),
+        "limit" => request.limit,
+    ));
+    info!(log, "start");
+
+    let pools = PoolInfoList::read_from_db(Some(request.timestamp))
+        .await
+        .unwrap();
+    let sorted = sort(pools)
+        .iter()
+        .take(request.limit as usize)
+        .map(|src| src.deref().clone().into())
+        .collect();
+    let res = SortPoolsResponse { pools: sorted };
+    info!(log, "finished");
+    Json(ApiResponse::Success(res))
 }
