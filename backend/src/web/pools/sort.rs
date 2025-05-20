@@ -21,7 +21,9 @@ impl<T> PartialOrd for WithWight<T> {
 
 impl<T> Ord for WithWight<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.weight.partial_cmp(&other.weight).unwrap_or(Ordering::Equal)
+        self.weight
+            .partial_cmp(&other.weight)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -33,24 +35,27 @@ impl<T> PartialEq for WithWight<T> {
 
 impl<T> Eq for WithWight<T> {}
 
-fn make_rates(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, u128>> {
+fn make_rates(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
     const AMOUNT_IN: u128 = NearToken::from_near(1).as_yoctonear();
     let graph = TokenGraph::new(pools);
     let outs = graph.update_graph(&WNEAR_TOKEN.clone().into())?;
     let returns = graph.list_returns(AMOUNT_IN, &WNEAR_TOKEN.clone().into(), &outs)?;
     Ok(returns
         .into_iter()
-        .map(|(out, value)| (out.into(), value))
+        .map(|(out, value)| (out.into(), AMOUNT_IN as f64 / value as f64))
         .collect())
 }
 
-fn amount_value(rates: HashMap<TokenAccount, u128>, pool: &Arc<PoolInfo>) -> f64 {
+fn amount_value(rates: &HashMap<TokenAccount, f64>, pool: &Arc<PoolInfo>) -> f64 {
     let mut sum = 0_f64;
     let mut count = 0;
-    for token in pool.tokens() {
+    for (index, token) in pool.tokens().enumerate() {
         count += 1;
-        if let Some(&value) = rates.get(token) {
-            sum += value as f64;
+        if let Some(&rate) = rates.get(token) {
+            if let Ok(amount) = pool.amount(index.into()) {
+                let value = amount as f64 * rate;
+                sum += value;
+            }
         }
     }
     sum / count as f64
@@ -61,7 +66,7 @@ pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
     let mut ww: Vec<_> = pools
         .iter()
         .map(|src| {
-            let weight = amount_value(rates.clone(), src);
+            let weight = amount_value(&rates, src);
             WithWight {
                 value: Arc::clone(src),
                 weight,

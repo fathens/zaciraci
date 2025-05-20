@@ -275,7 +275,7 @@ impl PoolInfo {
             .ok_or_else(|| Error::OutOfIndexOfTokens(index).into())
     }
 
-    fn amount(&self, index: TokenIndex) -> Result<u128> {
+    pub fn amount(&self, index: TokenIndex) -> Result<u128> {
         self.bare
             .amounts
             .get(index.as_usize())
