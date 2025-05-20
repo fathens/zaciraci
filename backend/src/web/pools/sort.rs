@@ -38,8 +38,9 @@ impl<T> Eq for WithWight<T> {}
 fn make_rates(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
     const AMOUNT_IN: u128 = NearToken::from_near(1).as_yoctonear();
     let graph = TokenGraph::new(pools);
-    let outs = graph.update_graph(&WNEAR_TOKEN.clone().into())?;
-    let returns = graph.list_returns(AMOUNT_IN, &WNEAR_TOKEN.clone().into(), &outs)?;
+    let quote = WNEAR_TOKEN.clone().into();
+    let outs = graph.update_graph(&quote)?;
+    let returns = graph.list_returns(AMOUNT_IN, &quote, &outs)?;
     Ok(returns
         .into_iter()
         .map(|(out, value)| (out.into(), AMOUNT_IN as f64 / value as f64))
