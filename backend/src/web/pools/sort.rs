@@ -40,11 +40,12 @@ fn make_rates(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
     let graph = TokenGraph::new(pools);
     let quote = WNEAR_TOKEN.clone().into();
     let outs = graph.update_graph(&quote)?;
-    let returns = graph.list_returns(AMOUNT_IN, &quote, &outs)?;
-    Ok(returns
+    let values = graph.list_values(AMOUNT_IN, &quote, &outs)?;
+    let rates = values
         .into_iter()
         .map(|(out, value)| (out.into(), AMOUNT_IN as f64 / value as f64))
-        .collect())
+        .collect();
+    Ok(rates)
 }
 
 fn amount_value(rates: &HashMap<TokenAccount, f64>, pool: &Arc<PoolInfo>) -> f64 {
