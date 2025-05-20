@@ -345,11 +345,19 @@ async fn sort_pools(
     let pools = PoolInfoList::read_from_db(Some(request.timestamp))
         .await
         .unwrap();
-    let sorted = sort(pools)
-        .iter()
-        .take(request.limit as usize)
-        .map(|src| src.deref().clone().into())
-        .collect();
+    let sorted = match sort(pools) {
+        Ok(sorted) => sorted
+            .iter()
+            .take(request.limit as usize)
+            .map(|src| src.deref().clone().into())
+            .collect(),
+        Err(e) => {
+            error!(log, "failed to sort pools";
+                "error" => ?e,
+            );
+            return Json(ApiResponse::Error(e.to_string()));
+        }
+    };
     let res = SortPoolsResponse { pools: sorted };
     info!(log, "finished");
     Json(ApiResponse::Success(res))
