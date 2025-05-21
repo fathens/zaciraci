@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
     ApiResponse,
-    pools::{PoolId, PoolRecordsRequest, TradeRequest},
+    pools::{PoolId, PoolRecordsRequest, TradeRequest, SortPoolsRequest},
     types::NearUnit,
 };
 
@@ -14,6 +14,7 @@ pub fn view() -> Element {
         div { class: "pools-view",
             trade_estimates_view {}
             pool_records_view {}
+            sort_pools_view {}
         }
     }
 }
@@ -242,6 +243,114 @@ fn pool_records_view() -> Element {
                     span { class: "loading", "{pools_loading}" }
                 }
                 div { class: "pools",
+                    textarea { readonly: true, rows: "20", cols: "80", "{pools}" }
+                }
+            }
+        }
+    }
+}
+
+/// Sort Poolsセクションのコンポーネント
+#[component]
+fn sort_pools_view() -> Element {
+    let client = use_signal(crate::server_api::get_client);
+
+    // 現在時刻をデフォルト値として使用
+    let mut pools_timestamp = use_signal(|| {
+        chrono::Local::now()
+            .naive_utc()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    });
+    let mut limit = use_signal(|| "100".to_string());
+    let mut pools_loading = use_signal(|| "".to_string());
+    let mut pools = use_signal(|| "".to_string());
+
+    rsx! {
+        h2 { "Sort Pools" }
+        div { class: "sort_pools-container",
+            div { class: "sort_pools",
+                div { class: "sort_pools_input",
+                    div { class: "timestamp",
+                        label { "日時: " }
+                        input { type: "datetime-local", name: "pools_timestamp", value: "{pools_timestamp}",
+                            oninput: move |e| pools_timestamp.set(e.value())
+                        }
+                    }
+                    div { class: "limit",
+                        label { "表示件数: " }
+                        input { type: "number", name: "limit", value: "{limit}", min: "1", max: "1000",
+                            oninput: move |e| limit.set(e.value())
+                        }
+                    }
+                }
+                div { class: "button-with-loading",
+                    button { class: "btn btn-primary",
+                        onclick: move |_| {
+                            spawn_local({
+                                let pools_timestamp = pools_timestamp.read().clone();
+                                let limit = limit.read().clone();
+                                let client = client.read().clone();
+
+                                async move {
+                                    pools_loading.set("Loading...".to_string());
+                                    pools.set("".to_string());
+                                    
+                                    let limit_u32 = match limit.parse::<u32>() {
+                                        Ok(num) => num,
+                                        Err(e) => {
+                                            pools_loading.set(format!("表示件数の解析に失敗しました: {}", e));
+                                            return;
+                                        }
+                                    };
+
+                                    let timestamp = match pools_timestamp.parse() {
+                                        Ok(dt) => dt,
+                                        Err(e) => {
+                                            pools_loading.set(format!("日時の解析に失敗しました: {}", e));
+                                            return;
+                                        }
+                                    };
+
+                                    let res = match client.pools.sort_pools(SortPoolsRequest {
+                                        timestamp,
+                                        limit: limit_u32,
+                                    }).await {
+                                        Ok(res) => res,
+                                        Err(e) => {
+                                            pools_loading.set(format!("APIエラー: {}", e));
+                                            return;
+                                        }
+                                    };
+
+                                    match res {
+                                        ApiResponse::Success(res) => {
+                                            pools_loading.set("".to_string());
+                                            let formatted_pools = res.pools.into_iter()
+                                                .map(|pool| {
+                                                    let token_accounts = pool.bare.token_account_ids
+                                                        .into_iter()
+                                                        .map(|t| t.to_string())
+                                                        .collect::<Vec<_>>()
+                                                        .join(", ");
+                                                    format!("{}: {}", pool.id.0, token_accounts)
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            pools.set(formatted_pools);
+                                        }
+                                        ApiResponse::Error(e) => {
+                                            pools_loading.set(e.to_string());
+                                        }
+                                    }
+                                }
+                            });
+                        },
+                        "取得"
+                    }
+                    span { class: "loading", "{pools_loading}" }
+                }
+                div { class: "pools-result",
                     textarea { readonly: true, rows: "20", cols: "80", "{pools}" }
                 }
             }

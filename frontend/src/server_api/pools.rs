@@ -5,6 +5,7 @@ use zaciraci_common::{
     ApiResponse,
     pools::{PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse},
 };
+use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse};
 
 pub struct PoolsApi {
     pub underlying: Arc<Underlying>,
@@ -69,6 +70,15 @@ impl PoolsApi {
     ) -> Result<ApiResponse<PoolRecordsResponse, String>> {
         self.underlying
             .post("pools/get_pool_records", &request)
+            .await
+    }
+
+    pub async fn sort_pools(
+        &self,
+        request: SortPoolsRequest,
+    ) -> Result<ApiResponse<SortPoolsResponse, String>> {
+        self.underlying
+            .post("pools/sort_pools", &request)
             .await
     }
 }
