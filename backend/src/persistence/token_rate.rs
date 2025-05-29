@@ -2,14 +2,13 @@ use crate::Result;
 use crate::logging::*;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
+use crate::persistence::TimeRange;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use std::str::FromStr;
-
-use super::TimeRange;
 
 // データベース用モデル
 #[allow(dead_code)]
@@ -31,6 +30,23 @@ struct NewDbTokenRate {
     pub quote_token: String,
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
+}
+
+// ボラティリティ計算結果用の一時的な構造体
+#[allow(dead_code)]
+#[derive(Debug, Clone, QueryableByName)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct VolatilityResult {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub base_token: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Numeric>)]
+    pub rate_difference: Option<BigDecimal>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Numeric>)]
+    pub percentage_difference: Option<BigDecimal>,
+    #[diesel(sql_type = diesel::sql_types::Numeric)]
+    pub max_rate: BigDecimal,
+    #[diesel(sql_type = diesel::sql_types::Numeric)]
+    pub min_rate: BigDecimal,
 }
 
 // アプリケーションロジック用モデル
@@ -353,6 +369,50 @@ impl TokenRate {
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
         results.into_iter().map(TokenRate::from_db).collect()
+    }
+
+    // ボラティリティ（変動率）の高い順にトークンペアを取得
+    pub async fn get_by_volatility_in_time_range(
+        range: &TimeRange,
+        quote: &TokenInAccount,
+    ) -> Result<Vec<VolatilityResult>> {
+        let conn = connection_pool::get().await?;
+        let quote_str = quote.to_string();
+        let range_start = range.start;
+        let range_end = range.end;
+
+        // SQLクエリを実装してボラティリティを計算
+        let volatility_results: Vec<VolatilityResult> = conn.interact(move |conn| {
+            diesel::sql_query(
+                "
+                SELECT 
+                    base_token,
+                    (MAX(rate) - MIN(rate))::DECIMAL as rate_difference,
+                    CASE
+                        WHEN MAX(rate) = 0 AND MIN(rate) = 0 THEN 0::DECIMAL
+                        WHEN MIN(rate) = 0 THEN NULL
+                        ELSE ((MAX(rate) - MIN(rate)) / MIN(rate) * 100)::DECIMAL
+                    END as percentage_difference,
+                    MAX(rate) as max_rate,
+                    MIN(rate) as min_rate
+                FROM token_rates
+                WHERE 
+                    quote_token = $1 AND
+                    timestamp >= $2 AND
+                    timestamp <= $3
+                GROUP BY base_token
+                ORDER BY percentage_difference DESC NULLS LAST
+                "
+            )
+            .bind::<diesel::sql_types::Text, _>(&quote_str)
+            .bind::<diesel::sql_types::Timestamp, _>(range_start)
+            .bind::<diesel::sql_types::Timestamp, _>(range_end)
+            .load::<VolatilityResult>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(volatility_results)
     }
 }
 
