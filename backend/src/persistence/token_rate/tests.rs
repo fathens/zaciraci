@@ -610,7 +610,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         end: now,
     };
 
-    // ケース1: 境界値テスト - 時間範囲の境界値ぎりぎりのデータと範囲外データ
+    // ケース1: 境界値テスト - 時間範囲の境界値データ
     let boundary_test_data = vec![
         // 範囲内のデータ（境界値ぎりぎり）
         TokenRate::new_with_timestamp(
@@ -662,7 +662,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // クリーンアップ
     clean_table().await?;
 
-    // ケース2: 同一ボラティリティ値の処理 - 複数トークンが同じボラティリティを持つ場合
+    // ケース2: 同一ボラティリティ値の処理
     let same_volatility_data = vec![
         // base1 (eth) - 変動率 50%
         TokenRate::new_with_timestamp(
@@ -717,7 +717,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // クリーンアップ
     clean_table().await?;
 
-    // ケース3: 最大レートが0の場合とMAX(rate) = MIN(rate) = 0のケース
+    // ケース3: 最大レートが0の場合
     let zero_max_rate_data = vec![
         // 最大レートが0のケース
         TokenRate::new_with_timestamp(
@@ -850,7 +850,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             base1.clone(),
             quote2.clone(),
             BigDecimal::from(400),
-            one_hour_ago, // 変動率100%だが、quote1でフィルタリングされるため結果に含まれないはず
+            one_hour_ago, // 変動率100%だが、quote1でフィルタリングされる
         ),
     ];
 

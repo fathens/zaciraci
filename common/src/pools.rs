@@ -80,7 +80,7 @@ mod tests {
             timestamp: Utc::now().naive_utc(),
             limit: 50,
         };
-        
+
         assert_eq!(request.limit, 50);
         assert!(request.timestamp <= Utc::now().naive_utc());
     }
@@ -91,11 +91,11 @@ mod tests {
             timestamp: Utc::now().naive_utc(),
             limit: 100,
         };
-        
+
         // Test serialization round-trip
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: SortPoolsRequest = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(request, deserialized);
     }
 

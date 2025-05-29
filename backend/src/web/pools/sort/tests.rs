@@ -20,7 +20,7 @@ mod tests {
     ) -> Arc<PoolInfo> {
         let token1_acc = TokenAccount::from_str(token1).unwrap();
         let token2_acc = TokenAccount::from_str(token2).unwrap();
-        
+
         Arc::new(PoolInfo::new(
             pool_id,
             vec![token1_acc, token2_acc],
@@ -56,7 +56,7 @@ mod tests {
                 1_500_000_000_000_000_000_000_000, // 1.5 tokens
             ),
         ];
-        
+
         Arc::new(PoolInfoList::new(pools))
     }
 
@@ -83,7 +83,7 @@ mod tests {
         // Test sorting
         let mut weights = vec![w2, w1, w3];
         weights.sort();
-        
+
         assert_eq!(weights[0].weight, 1.0);
         assert_eq!(weights[1].weight, 1.0);
         assert_eq!(weights[2].weight, 2.0);
