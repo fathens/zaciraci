@@ -581,3 +581,351 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial]
+async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
+    // 1. テーブルの全レコード削除
+    clean_table().await?;
+
+    // テスト用のトークンアカウント作成
+    let base1: TokenOutAccount = TokenAccount::from_str("eth.token")?.into();
+    let base2: TokenOutAccount = TokenAccount::from_str("btc.token")?.into();
+    let _base3: TokenOutAccount = TokenAccount::from_str("near.token")?.into();
+    let _base4: TokenOutAccount = TokenAccount::from_str("sol.token")?.into();
+    let quote1: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
+    let quote2: TokenInAccount = TokenAccount::from_str("usdc.token")?.into();
+
+    // 2. タイムスタンプを設定
+    let now = chrono::Utc::now().naive_utc();
+    let one_hour_ago = now - chrono::Duration::hours(1);
+    let two_hours_ago = now - chrono::Duration::hours(2);
+    let three_hours_ago = now - chrono::Duration::hours(3);
+    let just_before_range = two_hours_ago + chrono::Duration::seconds(1); // 範囲開始直後
+    let just_after_range = now - chrono::Duration::seconds(1); // 範囲終了直前
+
+    // 3. 時間範囲を設定
+    let time_range = crate::persistence::TimeRange {
+        start: two_hours_ago,
+        end: now,
+    };
+
+    // ケース1: 境界値テスト - 時間範囲の境界値ぎりぎりのデータと範囲外データ
+    let boundary_test_data = vec![
+        // 範囲内のデータ（境界値ぎりぎり）
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(1000),
+            just_before_range,
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(1500),
+            just_after_range,
+        ),
+        // 範囲外のデータ（除外されるはず）
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(800),
+            two_hours_ago - chrono::Duration::seconds(1), // 範囲開始直前
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(2000),
+            now + chrono::Duration::seconds(1), // 範囲終了直後
+        ),
+    ];
+
+    TokenRate::batch_insert(&boundary_test_data).await?;
+
+    // 境界値テストの結果を検証
+    let boundary_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(boundary_results.len(), 1, "Should find only 1 token within range");
+    assert_eq!(boundary_results[0].base_token, "eth.token", "Token should be eth");
+
+    // 範囲内のデータだけが考慮されていることを確認（最大値1500、最小値1000）
+    assert_eq!(
+        boundary_results[0].max_rate,
+        BigDecimal::from(1500),
+        "Max rate should be 1500 (from data within range)"
+    );
+    assert_eq!(
+        boundary_results[0].min_rate,
+        BigDecimal::from(1000),
+        "Min rate should be 1000 (from data within range)"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // ケース2: 同一ボラティリティ値の処理 - 複数トークンが同じボラティリティを持つ場合
+    let same_volatility_data = vec![
+        // base1 (eth) - 変動率 50%
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(100),
+            two_hours_ago + chrono::Duration::minutes(1),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(150),
+            one_hour_ago,
+        ),
+
+        // base2 (btc) - 変動率 50%（同じ）
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote1.clone(),
+            BigDecimal::from(200),
+            two_hours_ago + chrono::Duration::minutes(1),
+        ),
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote1.clone(),
+            BigDecimal::from(300),
+            one_hour_ago,
+        ),
+    ];
+
+    TokenRate::batch_insert(&same_volatility_data).await?;
+
+    // 同一ボラティリティテストの結果を検証
+    let same_volatility_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(same_volatility_results.len(), 2, "Should find 2 tokens with same volatility");
+
+    // 両方のトークンが同じボラティリティ（50%）を持つことを確認
+    let eth_volatility = same_volatility_results[0].percentage_difference.as_ref().unwrap();
+    let btc_volatility = same_volatility_results[1].percentage_difference.as_ref().unwrap();
+
+    assert!(
+        (eth_volatility.clone() - BigDecimal::from(50)).abs() < BigDecimal::from_str("0.1").unwrap(),
+        "ETH volatility should be approximately 50%, got {}",
+        eth_volatility
+    );
+    assert!(
+        (btc_volatility.clone() - BigDecimal::from(50)).abs() < BigDecimal::from_str("0.1").unwrap(),
+        "BTC volatility should be approximately 50%, got {}",
+        btc_volatility
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // ケース3: 最大レートが0の場合とMAX(rate) = MIN(rate) = 0のケース
+    let zero_max_rate_data = vec![
+        // 最大レートが0のケース
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(-10),
+            two_hours_ago + chrono::Duration::minutes(1),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(0),
+            one_hour_ago,
+        ),
+
+        // MAX(rate) = MIN(rate) = 0のケース
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote1.clone(),
+            BigDecimal::from(0),
+            two_hours_ago + chrono::Duration::minutes(1),
+        ),
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote1.clone(),
+            BigDecimal::from(0),
+            one_hour_ago,
+        ),
+    ];
+
+    TokenRate::batch_insert(&zero_max_rate_data).await?;
+
+    // 最大レートが0のケースの結果を検証
+    let zero_max_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(zero_max_results.len(), 2, "Should find 2 tokens");
+
+    // 最大レートが0のケースを確認
+    let eth_result = zero_max_results.iter().find(|r| r.base_token == "eth.token").unwrap();
+    assert_eq!(
+        eth_result.max_rate,
+        BigDecimal::from(0),
+        "ETH max rate should be 0"
+    );
+    assert_eq!(
+        eth_result.min_rate,
+        BigDecimal::from(-10),
+        "ETH min rate should be -10"
+    );
+
+    // MAX(rate) = MIN(rate) = 0のケースを確認
+    let btc_result = zero_max_results.iter().find(|r| r.base_token == "btc.token").unwrap();
+    assert_eq!(
+        btc_result.max_rate,
+        BigDecimal::from(0),
+        "BTC max rate should be 0"
+    );
+    assert_eq!(
+        btc_result.min_rate,
+        BigDecimal::from(0),
+        "BTC min rate should be 0"
+    );
+    assert_eq!(
+        btc_result.percentage_difference.as_ref().unwrap().clone(),
+        BigDecimal::from(0),
+        "BTC volatility should be 0 when max=min=0"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // ケース4: 1つのレコードのみの場合（ボラティリティ = 0）
+    let single_record_data = vec![
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(100),
+            one_hour_ago,
+        ),
+    ];
+
+    TokenRate::batch_insert(&single_record_data).await?;
+
+    // 1つのレコードのみの場合の結果を検証
+    let single_record_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(single_record_results.len(), 1, "Should find 1 token");
+    assert_eq!(single_record_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(
+        single_record_results[0].max_rate,
+        BigDecimal::from(100),
+        "Max rate should be 100"
+    );
+    assert_eq!(
+        single_record_results[0].min_rate,
+        BigDecimal::from(100),
+        "Min rate should be 100"
+    );
+    assert_eq!(
+        single_record_results[0].percentage_difference.as_ref().unwrap().clone(),
+        BigDecimal::from(0),
+        "Volatility should be 0 for single record"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // ケース5: 異なる quote トークンのフィルタリング
+    let different_quote_data = vec![
+        // quote1用のデータ
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(100),
+            two_hours_ago + chrono::Duration::minutes(1),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(150),
+            one_hour_ago,
+        ),
+
+        // quote2用のデータ（フィルタリングされるはず）
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote2.clone(),
+            BigDecimal::from(200),
+            two_hours_ago + chrono::Duration::minutes(1),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote2.clone(),
+            BigDecimal::from(400),
+            one_hour_ago, // 変動率100%だが、quote1でフィルタリングされるため結果に含まれないはず
+        ),
+    ];
+
+    TokenRate::batch_insert(&different_quote_data).await?;
+
+    // 異なるquoteトークンのフィルタリングテストの結果を検証
+    let quote_filter_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(quote_filter_results.len(), 1, "Should find only 1 token for quote1");
+    assert_eq!(quote_filter_results[0].base_token, "eth.token", "Token should be eth");
+
+    // quote1のデータだけが考慮されていることを確認（最大値150、最小値100）
+    assert_eq!(
+        quote_filter_results[0].max_rate,
+        BigDecimal::from(150),
+        "Max rate should be 150 (from quote1 data)"
+    );
+    assert_eq!(
+        quote_filter_results[0].min_rate,
+        BigDecimal::from(100),
+        "Min rate should be 100 (from quote1 data)"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // ケース6: 負の値やゼロレートの混在
+    let mixed_rates_data = vec![
+        // 負の値とゼロと正の値が混在
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(-10),
+            three_hours_ago + chrono::Duration::minutes(30),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(0),
+            two_hours_ago + chrono::Duration::minutes(30),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(10),
+            one_hour_ago,
+        ),
+    ];
+
+    TokenRate::batch_insert(&mixed_rates_data).await?;
+
+    // 負の値やゼロレートの混在テストの結果を検証
+    let mixed_rates_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(mixed_rates_results.len(), 1, "Should find 1 token");
+    assert_eq!(mixed_rates_results[0].base_token, "eth.token", "Token should be eth");
+
+    // 範囲内のデータだけが考慮されていることを確認（最大値10、最小値0）
+    assert_eq!(
+        mixed_rates_results[0].max_rate,
+        BigDecimal::from(10),
+        "Max rate should be 10"
+    );
+    assert_eq!(
+        mixed_rates_results[0].min_rate,
+        BigDecimal::from(0),
+        "Min rate should be 0"
+    );
+
+    // 最小値が0なのでパーセンテージはNULLになるはず
+    assert!(
+        mixed_rates_results[0].percentage_difference.is_none(),
+        "Percentage difference should be NULL when min rate is 0"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    Ok(())
+}
