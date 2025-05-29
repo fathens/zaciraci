@@ -8,18 +8,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[allow(dead_code)]
-pub(super) struct WithWight<T> {
+pub(super) struct WithWeight<T> {
     pub value: T,
     pub weight: f64,
 }
 
-impl<T> PartialOrd for WithWight<T> {
+impl<T> PartialOrd for WithWeight<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T> Ord for WithWight<T> {
+impl<T> Ord for WithWeight<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.weight
             .partial_cmp(&other.weight)
@@ -27,13 +27,13 @@ impl<T> Ord for WithWight<T> {
     }
 }
 
-impl<T> PartialEq for WithWight<T> {
+impl<T> PartialEq for WithWeight<T> {
     fn eq(&self, other: &Self) -> bool {
         self.weight == other.weight
     }
 }
 
-impl<T> Eq for WithWight<T> {}
+impl<T> Eq for WithWeight<T> {}
 
 fn make_rates(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
     const AMOUNT_IN: u128 = NearToken::from_near(1).as_yoctonear();
@@ -69,7 +69,7 @@ pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
         .iter()
         .map(|src| {
             let weight = amount_value(&rates, src);
-            WithWight {
+            WithWeight {
                 value: Arc::clone(src),
                 weight,
             }

@@ -17,8 +17,18 @@ macro_rules! assert_token_rate_eq {
             const PRECISION: u16 = 3; // ミリ秒精度
 
             // 各フィールドを個別に比較
-            assert_eq!($left.base, $right.base, "{} - ベーストークンが一致しません", $message);
-            assert_eq!($left.quote, $right.quote, "{} - クォートトークンが一致しません", $message);
+            assert_eq!(
+                $left.base,
+                $right.base,
+                "{} - ベーストークンが一致しません",
+                $message
+            );
+            assert_eq!(
+                $left.quote,
+                $right.quote,
+                "{} - クォートトークンが一致しません",
+                $message
+            );
             assert_eq!($left.rate, $right.rate, "{} - レートが一致しません", $message);
 
             // タイムスタンプだけ精度調整して比較
@@ -27,7 +37,7 @@ macro_rules! assert_token_rate_eq {
             assert_eq!(
                 left_ts,
                 right_ts,
-                "{} - タイムスタンプが一致しません ({}ミリ秒精度) - 元の値: {} vs {}",
+                "{} - タイムスタンプが一致しません ({}ミリ秒精度) - 元: {} vs {}",
                 $message,
                 PRECISION,
                 $left.timestamp,

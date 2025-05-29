@@ -62,15 +62,15 @@ mod tests {
 
     #[test]
     fn test_with_weight_ordering() {
-        let w1 = WithWight {
+        let w1 = WithWeight {
             value: "test1",
             weight: 1.0,
         };
-        let w2 = WithWight {
+        let w2 = WithWeight {
             value: "test2",
             weight: 2.0,
         };
-        let w3 = WithWight {
+        let w3 = WithWeight {
             value: "test3",
             weight: 1.0,
         };
@@ -91,11 +91,11 @@ mod tests {
 
     #[test]
     fn test_with_weight_partial_cmp() {
-        let w1 = WithWight {
+        let w1 = WithWeight {
             value: "test1",
             weight: 1.0,
         };
-        let w2 = WithWight {
+        let w2 = WithWeight {
             value: "test2",
             weight: 2.0,
         };
@@ -107,15 +107,15 @@ mod tests {
 
     #[test]
     fn test_with_weight_equality() {
-        let w1 = WithWight {
+        let w1 = WithWeight {
             value: "test1",
             weight: 1.5,
         };
-        let w2 = WithWight {
+        let w2 = WithWeight {
             value: "test2",
             weight: 1.5,
         };
-        let w3 = WithWight {
+        let w3 = WithWeight {
             value: "test3",
             weight: 2.0,
         };
@@ -140,9 +140,14 @@ mod tests {
 
         let value = amount_value(&rates, &pool);
         
-        // Expected: (1e24 * 1.0 + 2e24 * 0.5) / 2 = (1e24 + 1e24) / 2 = 1e24
+        // Expected: (1e24 * 1.0 + 2e24 * 0.5) / 2 = 1e24
         let expected = 1e24;
-        assert!((value - expected).abs() < 1e20, "Expected approximately {}, got {}", expected, value);
+        assert!(
+            (value - expected).abs() < 1e20,
+            "Expected approximately {}, got {}",
+            expected,
+            value
+        );
     }
 
     #[test]
@@ -163,7 +168,12 @@ mod tests {
         
         // Expected: (1e24 * 1.0 + 0) / 2 = 0.5e24
         let expected = 0.5e24;
-        assert!((value - expected).abs() < 1e20, "Expected approximately {}, got {}", expected, value);
+        assert!(
+            (value - expected).abs() < 1e20,
+            "Expected approximately {}, got {}",
+            expected,
+            value
+        );
     }
 
     #[test]
