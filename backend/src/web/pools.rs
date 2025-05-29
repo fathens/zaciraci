@@ -362,3 +362,41 @@ async fn sort_pools(
     info!(log, "finished");
     Json(ApiResponse::Success(res))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Json;
+    use std::sync::Arc;
+    use chrono::Utc;
+    use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse};
+    use zaciraci_common::types::YoctoNearToken;
+
+    // Mock AppState for testing
+    fn create_mock_app_state() -> Arc<AppState> {
+        Arc::new(AppState {})
+    }
+
+    #[test]
+    fn test_sort_pools_request_structure() {
+        let request = SortPoolsRequest {
+            timestamp: Utc::now(),
+            limit: 10,
+        };
+        
+        assert_eq!(request.limit, 10);
+        assert!(request.timestamp <= Utc::now());
+    }
+
+    #[test]
+    fn test_sort_pools_response_structure() {
+        let response = SortPoolsResponse {
+            pools: vec![],
+        };
+        
+        assert!(response.pools.is_empty());
+    }
+
+    // Integration tests would require database setup, so we'll focus on unit tests
+    // The main sort_pools function is tested indirectly through the sort module tests
+}

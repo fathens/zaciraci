@@ -79,3 +79,6 @@ pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
     let sorted = ww.iter().rev().map(|w| Arc::clone(&w.value)).collect();
     Ok(sorted)
 }
+
+#[cfg(test)]
+mod tests;
