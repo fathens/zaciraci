@@ -39,8 +39,8 @@ struct NewDbTokenRate {
 pub struct VolatilityResult {
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub base_token: String,
-    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Numeric>)]
-    pub rate_difference: Option<BigDecimal>,
+    #[diesel(sql_type = diesel::sql_types::Numeric)]
+    pub rate_difference: BigDecimal,
     #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Numeric>)]
     pub percentage_difference: Option<BigDecimal>,
     #[diesel(sql_type = diesel::sql_types::Numeric)]

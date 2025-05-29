@@ -929,3 +929,126 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial]
+async fn test_rate_difference_calculation() -> Result<()> {
+    // 1. テーブルの全レコード削除
+    clean_table().await?;
+
+    // テスト用のトークンアカウント作成
+    let base1: TokenOutAccount = TokenAccount::from_str("eth.token")?.into();
+    let quote1: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
+
+    // 2. タイムスタンプを設定
+    let now = chrono::Utc::now().naive_utc();
+    let one_hour_ago = now - chrono::Duration::hours(1);
+    let two_hours_ago = now - chrono::Duration::hours(2);
+
+    // 3. 時間範囲を設定
+    let time_range = crate::persistence::TimeRange {
+        start: two_hours_ago,
+        end: now,
+    };
+
+    // ケース1: 通常の計算 - 正の値
+    let normal_data = vec![
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(1000),
+            two_hours_ago + chrono::Duration::minutes(30),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(1500),
+            one_hour_ago,
+        ),
+    ];
+
+    TokenRate::batch_insert(&normal_data).await?;
+
+    // 通常の計算結果を検証
+    let normal_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(normal_results.len(), 1, "Should find 1 token");
+    assert_eq!(normal_results[0].base_token, "eth.token", "Token should be eth");
+
+    // rate_difference = MAX(rate) - MIN(rate) = 1500 - 1000 = 500
+    assert_eq!(
+        normal_results[0].rate_difference,
+        BigDecimal::from(500),
+        "Rate difference should be 500"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // ケース2: 負の値を含む計算
+    let negative_data = vec![
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(-100),
+            two_hours_ago + chrono::Duration::minutes(30),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(100),
+            one_hour_ago,
+        ),
+    ];
+
+    TokenRate::batch_insert(&negative_data).await?;
+
+    // 負の値を含む計算結果を検証
+    let negative_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(negative_results.len(), 1, "Should find 1 token");
+    assert_eq!(negative_results[0].base_token, "eth.token", "Token should be eth");
+
+    // rate_difference = MAX(rate) - MIN(rate) = 100 - (-100) = 200
+    assert_eq!(
+        negative_results[0].rate_difference,
+        BigDecimal::from(200),
+        "Rate difference should be 200"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // ケース3: 同一値の計算
+    let same_value_data = vec![
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(100),
+            two_hours_ago + chrono::Duration::minutes(30),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote1.clone(),
+            BigDecimal::from(100),
+            one_hour_ago,
+        ),
+    ];
+
+    TokenRate::batch_insert(&same_value_data).await?;
+
+    // 同一値の計算結果を検証
+    let same_value_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(same_value_results.len(), 1, "Should find 1 token");
+    assert_eq!(same_value_results[0].base_token, "eth.token", "Token should be eth");
+
+    // rate_difference = MAX(rate) - MIN(rate) = 100 - 100 = 0
+    assert_eq!(
+        same_value_results[0].rate_difference,
+        BigDecimal::from(0),
+        "Rate difference should be 0"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    Ok(())
+}
