@@ -3,7 +3,9 @@ use crate::Result;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
 use crate::persistence::token_rate::TokenRate;
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{
+    TokenAccount, TokenInAccount, TokenOutAccount,
+};
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::SubsecRound;
@@ -115,8 +117,18 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
             BigDecimal::from(1000),
             earliest,
         ),
-        TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1050), middle),
-        TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1100), latest),
+        TokenRate::new_with_timestamp(
+            base.clone(),
+            quote.clone(),
+            BigDecimal::from(1050),
+            middle,
+        ),
+        TokenRate::new_with_timestamp(
+            base.clone(),
+            quote.clone(),
+            BigDecimal::from(1100),
+            latest,
+        ),
     ];
 
     // 3. バッチ挿入
@@ -511,7 +523,8 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // btc: (40000 - 20000) / 20000 * 100 = 100%
     let btc_volatility = results[0].percentage_difference.as_ref().unwrap();
     assert!(
-        (btc_volatility.clone() - BigDecimal::from(100)).abs() < BigDecimal::from_str("0.1").unwrap(),
+        (btc_volatility.clone() - BigDecimal::from(100)).abs()
+            < BigDecimal::from_str("0.1").unwrap(),
         "BTC volatility should be approximately 100%, got {}",
         btc_volatility
     );
@@ -519,7 +532,8 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // eth: (1500 - 1000) / 1000 * 100 = 50%
     let eth_volatility = results[1].percentage_difference.as_ref().unwrap();
     assert!(
-        (eth_volatility.clone() - BigDecimal::from(50)).abs() < BigDecimal::from_str("0.1").unwrap(),
+        (eth_volatility.clone() - BigDecimal::from(50)).abs()
+            < BigDecimal::from_str("0.1").unwrap(),
         "ETH volatility should be approximately 50%, got {}",
         eth_volatility
     );
@@ -527,7 +541,8 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // near: (5.5 - 5) / 5 * 100 = 10%
     let near_volatility = results[2].percentage_difference.as_ref().unwrap();
     assert!(
-        (near_volatility.clone() - BigDecimal::from(10)).abs() < BigDecimal::from_str("0.1").unwrap(),
+        (near_volatility.clone() - BigDecimal::from(10)).abs()
+            < BigDecimal::from_str("0.1").unwrap(),
         "NEAR volatility should be approximately 10%, got {}",
         near_volatility
     );
@@ -566,7 +581,8 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     TokenRate::batch_insert(&zero_rate_data).await?;
 
     // ボラティリティを取得
-    let zero_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote).await?;
+    let zero_results =
+        TokenRate::get_by_volatility_in_time_range(&time_range, &quote).await?;
 
     // 結果を検証
     assert_eq!(zero_results.len(), 1, "Should find 1 base token");
