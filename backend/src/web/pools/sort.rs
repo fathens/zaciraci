@@ -1,13 +1,12 @@
 use crate::Result;
 use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
-use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, WNEAR_TOKEN};
 use near_sdk::NearToken;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) struct WithWeight<T> {
     pub value: T,
@@ -36,12 +35,11 @@ impl<T> PartialEq for WithWeight<T> {
 
 impl<T> Eq for WithWeight<T> {}
 
-fn make_rates(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
+fn make_rates(quote: &TokenInAccount, pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
     const AMOUNT_IN: u128 = NearToken::from_near(1).as_yoctonear();
     let graph = TokenGraph::new(pools);
-    let quote = WNEAR_TOKEN.clone().into();
-    let outs = graph.update_graph(&quote)?;
-    let values = graph.list_values(AMOUNT_IN, &quote, &outs)?;
+    let outs = graph.update_graph(quote)?;
+    let values = graph.list_values(AMOUNT_IN, quote, &outs)?;
     let rates = values
         .into_iter()
         .map(|(out, value)| (out.into(), AMOUNT_IN as f64 / value as f64))
@@ -65,7 +63,8 @@ fn amount_value(rates: &HashMap<TokenAccount, f64>, pool: &Arc<PoolInfo>) -> f64
 }
 
 pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
-    let rates = make_rates(Arc::clone(&pools))?;
+    let quote = WNEAR_TOKEN.clone().into();
+    let rates = make_rates(&quote, Arc::clone(&pools))?;
     let mut ww: Vec<_> = pools
         .iter()
         .map(|src| {
