@@ -4,12 +4,11 @@ use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use std::str::FromStr;
 use std::sync::Arc;
 use bigdecimal::BigDecimal;
-use chrono::Utc;
-use zaciraci_common::types::YoctoNearToken;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     fn create_mock_pool_info(
         pool_id: u32,
@@ -18,17 +17,25 @@ mod tests {
         amount1: u128,
         amount2: u128,
     ) -> Arc<PoolInfo> {
+        use crate::ref_finance::pool_info::PoolInfoBared;
+        use near_sdk::json_types::U128;
+        
         let token1_acc = TokenAccount::from_str(token1).unwrap();
         let token2_acc = TokenAccount::from_str(token2).unwrap();
 
+        let bare = PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![token1_acc, token2_acc],
+            amounts: vec![U128::from(amount1), U128::from(amount2)],
+            total_fee: 25,
+            shares_total_supply: U128::from(amount1 + amount2),
+            amp: 0,
+        };
+
         Arc::new(PoolInfo::new(
             pool_id,
-            vec![token1_acc, token2_acc],
-            vec![
-                YoctoNearToken::from_yocto(amount1),
-                YoctoNearToken::from_yocto(amount2),
-            ],
-            Utc::now(),
+            bare,
+            Utc::now().naive_utc(),
         ))
     }
 

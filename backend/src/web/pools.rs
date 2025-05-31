@@ -380,12 +380,12 @@ mod tests {
     #[test]
     fn test_sort_pools_request_structure() {
         let request = SortPoolsRequest {
-            timestamp: Utc::now(),
+            timestamp: Utc::now().naive_utc(),
             limit: 10,
         };
         
         assert_eq!(request.limit, 10);
-        assert!(request.timestamp <= Utc::now());
+        assert!(request.timestamp <= Utc::now().naive_utc());
     }
 
     #[test]
