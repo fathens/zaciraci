@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(super) struct WithWeight<T> {
     pub value: T,
     pub weight: f64,

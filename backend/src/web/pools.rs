@@ -365,17 +365,8 @@ async fn sort_pools(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::Json;
-    use std::sync::Arc;
     use chrono::Utc;
     use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse};
-    use zaciraci_common::types::YoctoNearToken;
-
-    // Mock AppState for testing
-    fn create_mock_app_state() -> Arc<AppState> {
-        Arc::new(AppState {})
-    }
 
     #[test]
     fn test_sort_pools_request_structure() {
