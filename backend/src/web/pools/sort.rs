@@ -98,7 +98,7 @@ pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
 }
 
 #[allow(dead_code)]
-pub fn tokens_with_depth(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
+pub fn tokens_with_depth(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, BigDecimal>> {
     let quote = WNEAR_TOKEN.clone().into();
     let graph = TokenGraph::new(Arc::clone(&pools));
     let outs = graph.update_graph(&quote)?;
@@ -111,14 +111,18 @@ pub fn tokens_with_depth(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccoun
         })
         .collect();
 
-    let result = HashMap::new();
+    let mut result = HashMap::new();
     for out in &outs {
         let path = graph.get_path(&quote, out)?;
-        let _depths = path
+        let depth = path
             .0
             .iter()
             .filter_map(|pair| pools_depth.get(&pair.pool_id()))
             .min();
+        let token = out.clone().into();
+        if let Some(depth) = depth {
+            result.insert(token, depth.clone());
+        }
     }
 
     Ok(result)
