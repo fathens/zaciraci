@@ -43,7 +43,7 @@ pub struct PoolBared {
     pub amp: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct PoolId(pub u32);
 
 impl From<u32> for PoolId {

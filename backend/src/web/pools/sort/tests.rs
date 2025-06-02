@@ -1,6 +1,7 @@
 use super::*;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use crate::ref_finance::token_account::TokenAccount;
+use bigdecimal::BigDecimal;
 use chrono::Utc;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -95,7 +96,7 @@ fn test_with_weight_equality() {
 }
 
 #[test]
-fn test_amount_value_basic() {
+fn test_average_depth_basic() {
     let pool = create_mock_pool_info(
         1,
         "wrap.near",
@@ -105,15 +106,17 @@ fn test_amount_value_basic() {
     );
 
     let mut rates = HashMap::new();
-    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), 1.0);
-    rates.insert(TokenAccount::from_str("token1.near").unwrap(), 0.5);
+    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from(1));
+    rates.insert(TokenAccount::from_str("token1.near").unwrap(), BigDecimal::from_str("0.5").unwrap());
 
-    let value = amount_value(&rates, &pool);
+    let value = average_depth(&rates, &pool);
 
     // Expected: (1e24 * 1.0 + 2e24 * 0.5) / 2 = 1e24
-    let expected = 1e24;
+    let expected = BigDecimal::from_str("1000000000000000000000000").unwrap();
+    let diff = (&value - &expected).abs();
+    let threshold = BigDecimal::from_str("100000000000000000000").unwrap();
     assert!(
-        (value - expected).abs() < 1e20,
+        diff < threshold,
         "Expected approximately {}, got {}",
         expected,
         value
@@ -121,7 +124,7 @@ fn test_amount_value_basic() {
 }
 
 #[test]
-fn test_amount_value_missing_rate() {
+fn test_average_depth_missing_rate() {
     let pool = create_mock_pool_info(
         1,
         "wrap.near",
@@ -131,15 +134,17 @@ fn test_amount_value_missing_rate() {
     );
 
     let mut rates = HashMap::new();
-    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), 1.0);
+    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from(1));
     // No rate for unknown.near
 
-    let value = amount_value(&rates, &pool);
+    let value = average_depth(&rates, &pool);
 
     // Expected: (1e24 * 1.0 + 0) / 2 = 0.5e24
-    let expected = 0.5e24;
+    let expected = BigDecimal::from_str("500000000000000000000000").unwrap();
+    let diff = (&value - &expected).abs();
+    let threshold = BigDecimal::from_str("100000000000000000000").unwrap();
     assert!(
-        (value - expected).abs() < 1e20,
+        diff < threshold,
         "Expected approximately {}, got {}",
         expected,
         value
@@ -147,7 +152,7 @@ fn test_amount_value_missing_rate() {
 }
 
 #[test]
-fn test_amount_value_zero_tokens() {
+fn test_average_depth_zero_tokens() {
     let pool = create_mock_pool_info(
         1,
         "wrap.near",
@@ -157,13 +162,13 @@ fn test_amount_value_zero_tokens() {
     );
 
     let mut rates = HashMap::new();
-    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), 1.0);
-    rates.insert(TokenAccount::from_str("token1.near").unwrap(), 0.5);
+    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from(1));
+    rates.insert(TokenAccount::from_str("token1.near").unwrap(), BigDecimal::from_str("0.5").unwrap());
 
-    let value = amount_value(&rates, &pool);
+    let value = average_depth(&rates, &pool);
 
     // Expected: (0 * 1.0 + 0 * 0.5) / 2 = 0
-    assert_eq!(value, 0.0);
+    assert_eq!(value, BigDecimal::from(0));
 }
 
 // Note: The following tests require database setup and are complex integration tests

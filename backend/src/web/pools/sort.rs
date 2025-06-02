@@ -1,11 +1,17 @@
 use crate::Result;
 use crate::ref_finance::path::graph::TokenGraph;
-use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, WNEAR_TOKEN};
+use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairLike};
+use crate::ref_finance::token_account::{
+    TokenAccount, TokenInAccount, TokenOutAccount, WNEAR_TOKEN,
+};
+use bigdecimal::BigDecimal;
 use near_sdk::NearToken;
+use num_traits::{ToPrimitive, zero};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+const ONE_NEAR: u128 = NearToken::from_near(1).as_yoctonear();
 
 #[derive(Debug)]
 pub(super) struct WithWeight<T> {
@@ -35,49 +41,87 @@ impl<T> PartialEq for WithWeight<T> {
 
 impl<T> Eq for WithWeight<T> {}
 
-fn make_rates(quote: &TokenInAccount, pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
-    const AMOUNT_IN: u128 = NearToken::from_near(1).as_yoctonear();
-    let graph = TokenGraph::new(pools);
-    let outs = graph.update_graph(quote)?;
-    let values = graph.list_values(AMOUNT_IN, quote, &outs)?;
+fn make_rates(
+    quote: (&TokenInAccount, u128),
+    graph: &TokenGraph,
+    outs: &[TokenOutAccount],
+) -> Result<HashMap<TokenAccount, BigDecimal>> {
+    let values = graph.list_values(quote.1, quote.0, outs)?;
     let rates = values
         .into_iter()
-        .map(|(out, value)| (out.into(), AMOUNT_IN as f64 / value as f64))
+        .filter_map(|(out, value)| {
+            if value == 0 {
+                return None;
+            } else {
+                let base = BigDecimal::from(value);
+                let quote = BigDecimal::from(quote.1);
+                Some((out.into(), quote / base))
+            }
+        })
         .collect();
     Ok(rates)
 }
 
-fn amount_value(rates: &HashMap<TokenAccount, f64>, pool: &Arc<PoolInfo>) -> f64 {
-    let mut sum = 0_f64;
-    let mut count = 0;
+fn average_depth(rates: &HashMap<TokenAccount, BigDecimal>, pool: &Arc<PoolInfo>) -> BigDecimal {
+    let mut sum: BigDecimal = zero();
+    let mut count: BigDecimal = zero();
     for (index, token) in pool.tokens().enumerate() {
         count += 1;
-        if let Some(&rate) = rates.get(token) {
+        if let Some(rate) = rates.get(token) {
             if let Ok(amount) = pool.amount(index.into()) {
-                let value = amount as f64 * rate;
+                let value = BigDecimal::from(amount) * rate;
                 sum += value;
             }
         }
     }
-    sum / count as f64
+    sum / count
 }
 
 pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
     let quote = WNEAR_TOKEN.clone().into();
-    let rates = make_rates(&quote, Arc::clone(&pools))?;
+    let graph = TokenGraph::new(Arc::clone(&pools));
+    let outs = graph.update_graph(&quote)?;
+    let rates = make_rates((&quote, ONE_NEAR), &graph, &outs)?;
     let mut ww: Vec<_> = pools
         .iter()
         .map(|src| {
-            let weight = amount_value(&rates, src);
+            let weight = average_depth(&rates, src);
             WithWeight {
                 value: Arc::clone(src),
-                weight,
+                weight: weight.to_f64().unwrap(),
             }
         })
         .collect();
     ww.sort();
     let sorted = ww.iter().rev().map(|w| Arc::clone(&w.value)).collect();
     Ok(sorted)
+}
+
+#[allow(dead_code)]
+pub fn tokens_with_depth(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, f64>> {
+    let quote = WNEAR_TOKEN.clone().into();
+    let graph = TokenGraph::new(Arc::clone(&pools));
+    let outs = graph.update_graph(&quote)?;
+    let rates = make_rates((&quote, ONE_NEAR), &graph, &outs)?;
+    let pools_depth: HashMap<_, _> = pools
+        .iter()
+        .map(|pool| {
+            let depth = average_depth(&rates, pool);
+            (pool.id, depth)
+        })
+        .collect();
+
+    let result = HashMap::new();
+    for out in &outs {
+        let path = graph.get_path(&quote, out)?;
+        let _depths = path
+            .0
+            .iter()
+            .filter_map(|pair| pools_depth.get(&pair.pool_id()))
+            .min();
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
