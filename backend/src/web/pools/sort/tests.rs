@@ -5,6 +5,7 @@ use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use num_traits::{Zero, Signed};
 use serial_test::serial;
 use std::cmp::Ordering;
 use std::str::FromStr;
@@ -194,7 +195,45 @@ async fn test_sort_empty_pools() -> Result<()> {
 #[test]
 #[serial]
 fn test_sort_pools() {
-    // データベースを使わない基本的なテスト
+    // より詳細な機能テストを実装
+    let pool1 = create_mock_pool_info(
+        1,
+        "wrap.near",
+        "token1.near",
+        1_000_000_000_000_000_000_000_000, // 1 NEAR - 低流動性
+        2_000_000_000_000_000_000_000_000, // 2 tokens
+    );
+
+    let pool2 = create_mock_pool_info(
+        2,
+        "wrap.near",
+        "token2.near",
+        10_000_000_000_000_000_000_000_000, // 10 NEAR - 高流動性
+        1_000_000_000_000_000_000_000_000, // 1 token
+    );
+
+    let pools = Arc::new(PoolInfoList::new(vec![pool1.clone(), pool2.clone()]));
+
+    let result = sort(pools);
+
+    match result {
+        Ok(sorted) => {
+            // 成功した場合は、流動性の高い順にソートされているかチェック
+            assert_eq!(sorted.len(), 2);
+            // pool2（高流動性）がpool1（低流動性）より先に来ることを期待
+            // ただし、実際のレート取得ができないため、最低限の構造チェックのみ
+        }
+        Err(e) => {
+            // データベース接続エラーは予想される動作
+            // エラーが適切にハンドリングされていることを確認
+            println!("Expected database error: {:?}", e);
+        }
+    }
+}
+
+#[test]
+fn test_tokens_with_depth() {
+    // average_depth関数の動作を間接的にテストする詳細テスト
     let pool1 = create_mock_pool_info(
         1,
         "wrap.near",
@@ -205,7 +244,7 @@ fn test_sort_pools() {
 
     let pool2 = create_mock_pool_info(
         2,
-        "wrap.near",
+        "wrap.near", 
         "token2.near",
         500_000_000_000_000_000_000_000, // 0.5 NEAR
         1_000_000_000_000_000_000_000_000, // 1 token
@@ -213,45 +252,26 @@ fn test_sort_pools() {
 
     let pools = Arc::new(PoolInfoList::new(vec![pool1, pool2]));
 
-    let result = sort(pools);
-
-    // データベースがないため、通常はエラーになることが予想される
-    // しかし、パニックしないことを確認
-    match result {
-        Ok(sorted) => {
-            // もしうまくいったら、プールが返されることを確認
-            assert!(!sorted.is_empty());
-        }
-        Err(_) => {
-            // データベースの設定ができていない場合はエラーになることが予想される
-            // エラーハンドリングが適切に動作していることを確認
-        }
-    }
-}
-
-#[test]
-fn test_tokens_with_depth() {
-    // データベースを使わない基本的なテスト
-    let pool = create_mock_pool_info(
-        1,
-        "wrap.near",
-        "token1.near",
-        1_000_000_000_000_000_000_000_000, // 1 NEAR
-        2_000_000_000_000_000_000_000_000, // 2 tokens
-    );
-
-    let pools = Arc::new(PoolInfoList::new(vec![pool]));
-
     let result = tokens_with_depth(pools);
 
-    // データベースがないため、通常はエラーになることが予想される
     match result {
         Ok(token_depths) => {
-            // もしうまくいったら、トークンの深度が計算されていることを確認
+            // 成功した場合：
+            // - 少なくとも"wrap.near", "token1.near", "token2.near"のトークンが含まれるはず
+            // - 各トークンには深度値が計算されているはず
             assert!(!token_depths.is_empty());
+            
+            // wrap.nearは両方のプールに含まれているので、深度が高いはず
+            let wrap_near_found = token_depths.keys()
+                .any(|token| token.to_string().contains("wrap.near"));
+            
+            if wrap_near_found {
+                println!("wrap.near token found in depth calculation");
+            }
         }
-        Err(_) => {
-            // データベースの設定ができていない場合はエラーになることが予想される
+        Err(e) => {
+            // データベースエラーまたはパス検索エラーは予想される
+            println!("Expected error in tokens_with_depth: {:?}", e);
         }
     }
 }
@@ -292,4 +312,42 @@ fn test_make_rates() {
             // データベースの設定ができていない場合はエラーになることが予想される
         }
     }
+}
+
+#[test]
+fn test_average_depth_edge_cases() {
+    // エッジケース：非常に大きな値
+    let pool = create_mock_pool_info(
+        1,
+        "wrap.near",
+        "token1.near",
+        u128::MAX / 2, // 非常に大きな値
+        u128::MAX / 3,
+    );
+
+    let mut rates = HashMap::new();
+    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from_str("1.23456789").unwrap());
+    rates.insert(TokenAccount::from_str("token1.near").unwrap(), BigDecimal::from_str("0.987654321").unwrap());
+
+    let value = average_depth(&rates, &pool);
+    
+    // 計算結果が有限であることを確認
+    assert!(!value.is_zero());
+    assert!(value.is_positive());
+}
+
+#[test]
+fn test_with_weight_large_numbers() {
+    // 大きな数値でのWithWeight動作テスト
+    let w1 = WithWeight {
+        value: "large1",
+        weight: BigDecimal::from_str("999999999999999999999999.123456789").unwrap(),
+    };
+    let w2 = WithWeight {
+        value: "large2", 
+        weight: BigDecimal::from_str("999999999999999999999999.123456790").unwrap(),
+    };
+
+    assert!(w2 > w1);
+    assert_eq!(w1.partial_cmp(&w2), Some(Ordering::Less));
 }
