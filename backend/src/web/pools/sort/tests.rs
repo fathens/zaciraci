@@ -35,15 +35,15 @@ fn create_mock_pool_info(
 fn test_with_weight_ordering() {
     let w1 = WithWeight {
         value: "test1",
-        weight: 1.0,
+        weight: BigDecimal::from(1),
     };
     let w2 = WithWeight {
         value: "test2",
-        weight: 2.0,
+        weight: BigDecimal::from(2),
     };
     let w3 = WithWeight {
         value: "test3",
-        weight: 1.0,
+        weight: BigDecimal::from(1),
     };
 
     // Test comparison
@@ -55,20 +55,20 @@ fn test_with_weight_ordering() {
     let mut weights = vec![w2, w1, w3];
     weights.sort();
 
-    assert_eq!(weights[0].weight, 1.0);
-    assert_eq!(weights[1].weight, 1.0);
-    assert_eq!(weights[2].weight, 2.0);
+    assert_eq!(weights[0].weight, BigDecimal::from(1));
+    assert_eq!(weights[1].weight, BigDecimal::from(1));
+    assert_eq!(weights[2].weight, BigDecimal::from(2));
 }
 
 #[test]
 fn test_with_weight_partial_cmp() {
     let w1 = WithWeight {
         value: "test1",
-        weight: 1.0,
+        weight: BigDecimal::from(1),
     };
     let w2 = WithWeight {
         value: "test2",
-        weight: 2.0,
+        weight: BigDecimal::from(2),
     };
 
     assert_eq!(w1.partial_cmp(&w2), Some(Ordering::Less));
@@ -80,15 +80,15 @@ fn test_with_weight_partial_cmp() {
 fn test_with_weight_equality() {
     let w1 = WithWeight {
         value: "test1",
-        weight: 1.5,
+        weight: BigDecimal::from_str("1.5").unwrap(),
     };
     let w2 = WithWeight {
         value: "test2",
-        weight: 1.5,
+        weight: BigDecimal::from_str("1.5").unwrap(),
     };
     let w3 = WithWeight {
         value: "test3",
-        weight: 2.0,
+        weight: BigDecimal::from_str("2.0").unwrap(),
     };
 
     assert_eq!(w1, w2);

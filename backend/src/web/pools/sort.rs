@@ -6,7 +6,7 @@ use crate::ref_finance::token_account::{
 };
 use bigdecimal::BigDecimal;
 use near_sdk::NearToken;
-use num_traits::{ToPrimitive, zero};
+use num_traits::zero;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ const ONE_NEAR: u128 = NearToken::from_near(1).as_yoctonear();
 #[derive(Debug)]
 pub(super) struct WithWeight<T> {
     pub value: T,
-    pub weight: f64,
+    pub weight: BigDecimal,
 }
 
 impl<T> PartialOrd for WithWeight<T> {
@@ -88,7 +88,7 @@ pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
             let weight = average_depth(&rates, src);
             WithWeight {
                 value: Arc::clone(src),
-                weight: weight.to_f64().unwrap(),
+                weight,
             }
         })
         .collect();
