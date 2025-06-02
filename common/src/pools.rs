@@ -69,6 +69,15 @@ pub struct SortPoolsResponse {
     pub pools: Vec<PoolRecord>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VolatilityTokensRequest {
+    pub limit: u32
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VolatilityTokensResponse {
+    pub tokens: Vec<TokenAccount>
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,10 +21,7 @@ use num_traits::ToPrimitive;
 use std::ops::Deref;
 use std::sync::Arc;
 use zaciraci_common::ApiResponse;
-use zaciraci_common::pools::{
-    PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest,
-    TradeResponse,
-};
+use zaciraci_common::pools::{PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest, TradeResponse, VolatilityTokensRequest, VolatilityTokensResponse};
 use zaciraci_common::types::YoctoNearToken;
 
 fn path(sub: &str) -> String {
@@ -54,6 +51,7 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         .route(&path("estimate_trade"), post(estimate_trade))
         .route(&path("get_pool_records"), post(get_pool_records))
         .route(&path("sort_pools"), post(sort_pools))
+        .route(&path("get_volatility_tokens"), post(get_volatility_tokens))
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
@@ -361,6 +359,25 @@ async fn sort_pools(
     let res = SortPoolsResponse { pools: sorted };
     info!(log, "finished");
     Json(ApiResponse::Success(res))
+}
+
+async fn get_volatility_tokens(
+    State(_): State<Arc<AppState>>,
+    Json(request): Json<VolatilityTokensRequest>,
+) -> Json<ApiResponse<VolatilityTokensResponse, String>> {
+    let log = DEFAULT.new(o!(
+        "function" => "volatility_tokens",
+        "limit" => format!("{}", request.limit),
+    ));
+    info!(log, "start");
+    
+    let tokens = vec![]; // TODO implement
+    
+    let tokens = VolatilityTokensResponse {
+        tokens,
+    };
+    info!(log, "finished");
+    Json(ApiResponse::Success(tokens))
 }
 
 #[cfg(test)]
