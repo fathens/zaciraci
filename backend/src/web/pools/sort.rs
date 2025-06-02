@@ -51,7 +51,7 @@ fn make_rates(
         .into_iter()
         .filter_map(|(out, value)| {
             if value == 0 {
-                return None;
+                None
             } else {
                 let base = BigDecimal::from(value);
                 let quote = BigDecimal::from(quote.1);
