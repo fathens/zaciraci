@@ -504,17 +504,17 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // 2. eth (50%)
     // 3. near (10%)
     assert_eq!(
-        results[0].base_token, 
+        results[0].base.to_string(), 
         "btc.token", 
         "First token should be btc with highest volatility"
     );
     assert_eq!(
-        results[1].base_token, 
+        results[1].base.to_string(), 
         "eth.token", 
         "Second token should be eth with medium volatility"
     );
     assert_eq!(
-        results[2].base_token, 
+        results[2].base.to_string(), 
         "near.token", 
         "Third token should be near with lowest volatility"
     );
@@ -586,7 +586,7 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // 結果を検証
     assert_eq!(zero_results.len(), 1, "Should find 1 base token");
-    assert_eq!(zero_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(zero_results[0].base.to_string(), "eth.token", "Token should be eth");
     assert!(
         zero_results[0].percentage_difference.is_none(),
         "Percentage difference should be NULL when min rate is 0"
@@ -671,7 +671,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // 境界値テストの結果を検証
     let boundary_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(boundary_results.len(), 1, "Should find only 1 token within range");
-    assert_eq!(boundary_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(boundary_results[0].base.to_string(), "eth.token", "Token should be eth");
 
     // 範囲内のデータだけが考慮されていることを確認（最大値1500、最小値1000）
     assert_eq!(
@@ -781,7 +781,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     assert_eq!(zero_max_results.len(), 2, "Should find 2 tokens");
 
     // 最大レートが0のケースを確認
-    let eth_result = zero_max_results.iter().find(|r| r.base_token == "eth.token").unwrap();
+    let eth_result = zero_max_results.iter().find(|r| r.base.to_string() == "eth.token").unwrap();
     assert_eq!(
         eth_result.max_rate,
         BigDecimal::from(0),
@@ -794,7 +794,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // MAX(rate) = MIN(rate) = 0のケースを確認
-    let btc_result = zero_max_results.iter().find(|r| r.base_token == "btc.token").unwrap();
+    let btc_result = zero_max_results.iter().find(|r| r.base.to_string() == "btc.token").unwrap();
     assert_eq!(
         btc_result.max_rate,
         BigDecimal::from(0),
@@ -829,7 +829,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // 1つのレコードのみの場合の結果を検証
     let single_record_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(single_record_results.len(), 1, "Should find 1 token");
-    assert_eq!(single_record_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(single_record_results[0].base.to_string(), "eth.token", "Token should be eth");
     assert_eq!(
         single_record_results[0].max_rate,
         BigDecimal::from(100),
@@ -885,7 +885,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // 異なるquoteトークンのフィルタリングテストの結果を検証
     let quote_filter_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(quote_filter_results.len(), 1, "Should find only 1 token for quote1");
-    assert_eq!(quote_filter_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(quote_filter_results[0].base.to_string(), "eth.token", "Token should be eth");
 
     // quote1のデータだけが考慮されていることを確認（最大値150、最小値100）
     assert_eq!(
@@ -930,7 +930,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // 負の値やゼロレートの混在テストの結果を検証
     let mixed_rates_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(mixed_rates_results.len(), 1, "Should find 1 token");
-    assert_eq!(mixed_rates_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(mixed_rates_results[0].base.to_string(), "eth.token", "Token should be eth");
 
     // 範囲内のデータだけが考慮されていることを確認（最大値10、最小値0）
     assert_eq!(
@@ -998,7 +998,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
     // 通常の計算結果を検証
     let normal_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(normal_results.len(), 1, "Should find 1 token");
-    assert_eq!(normal_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(normal_results[0].base.to_string(), "eth.token", "Token should be eth");
 
     // rate_difference = MAX(rate) - MIN(rate) = 1500 - 1000 = 500
     assert_eq!(
@@ -1031,7 +1031,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
     // 負の値を含む計算結果を検証
     let negative_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(negative_results.len(), 1, "Should find 1 token");
-    assert_eq!(negative_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(negative_results[0].base.to_string(), "eth.token", "Token should be eth");
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - (-100) = 200
     assert_eq!(
@@ -1064,7 +1064,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
     // 同一値の計算結果を検証
     let same_value_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(same_value_results.len(), 1, "Should find 1 token");
-    assert_eq!(same_value_results[0].base_token, "eth.token", "Token should be eth");
+    assert_eq!(same_value_results[0].base.to_string(), "eth.token", "Token should be eth");
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - 100 = 0
     assert_eq!(

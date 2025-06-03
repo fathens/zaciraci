@@ -36,7 +36,7 @@ struct NewDbTokenRate {
 #[allow(dead_code)]
 #[derive(Debug, Clone, QueryableByName)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
-pub struct VolatilityResult {
+struct VolatilityResult {
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub base_token: String,
     #[diesel(sql_type = diesel::sql_types::Numeric)]
@@ -46,6 +46,15 @@ pub struct VolatilityResult {
     #[diesel(sql_type = diesel::sql_types::Numeric)]
     pub max_rate: BigDecimal,
     #[diesel(sql_type = diesel::sql_types::Numeric)]
+    pub min_rate: BigDecimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TokenVolatility {
+    pub base: TokenAccount,
+    pub rate_difference: BigDecimal,
+    pub percentage_difference: Option<BigDecimal>,
+    pub max_rate: BigDecimal,
     pub min_rate: BigDecimal,
 }
 
@@ -375,11 +384,19 @@ impl TokenRate {
     pub async fn get_by_volatility_in_time_range(
         range: &TimeRange,
         quote: &TokenInAccount,
-    ) -> Result<Vec<VolatilityResult>> {
-        let conn = connection_pool::get().await?;
+    ) -> Result<Vec<TokenVolatility>> {
         let quote_str = quote.to_string();
         let range_start = range.start;
         let range_end = range.end;
+        let log = DEFAULT.new(o!(
+            "function" => "get_by_volatility_in_time_range",
+            "quote" => quote.to_string(),
+            "range.start" => range_start.to_string(),
+            "range.end" => range_end.to_string(),
+        ));
+        info!(log, "start");
+
+        let conn = connection_pool::get().await?;
 
         // SQLクエリを実装してボラティリティを計算
         let volatility_results: Vec<VolatilityResult> = conn.interact(move |conn| {
@@ -411,6 +428,25 @@ impl TokenRate {
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        let volatility_results: Vec<TokenVolatility> = volatility_results
+            .into_iter()
+            .filter_map(|result| {
+                match TokenAccount::from_str(&result.base_token) {
+                    Ok(token) => Some(TokenVolatility {
+                        base: token,
+                        rate_difference: result.rate_difference,
+                        percentage_difference: result.percentage_difference,
+                        max_rate: result.max_rate,
+                        min_rate: result.min_rate,
+                    }),
+                    Err(e) => {
+                        error!(log, "Failed to parse token: {}, {e}", result.base_token);
+                        None
+                    }
+                }
+            })
+            .collect();
 
         Ok(volatility_results)
     }
