@@ -71,6 +71,8 @@ pub struct SortPoolsResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VolatilityTokensRequest {
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
     pub limit: u32
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

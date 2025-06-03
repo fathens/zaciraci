@@ -6,9 +6,9 @@ use crate::logging::*;
 use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount, WNEAR_TOKEN};
 use crate::types::{MicroNear, MilliNear};
-use crate::web::pools::sort::sort;
+use crate::web::pools::sort::{sort, tokens_with_depth};
 use crate::{jsonrpc, ref_finance, wallet};
 use axum::Json;
 use axum::{
@@ -23,6 +23,8 @@ use std::sync::Arc;
 use zaciraci_common::ApiResponse;
 use zaciraci_common::pools::{PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest, TradeResponse, VolatilityTokensRequest, VolatilityTokensResponse};
 use zaciraci_common::types::YoctoNearToken;
+use crate::persistence::TimeRange;
+use crate::persistence::token_rate::TokenRate;
 
 fn path(sub: &str) -> String {
     format!("/pools/{sub}")
@@ -370,9 +372,46 @@ async fn get_volatility_tokens(
         "limit" => format!("{}", request.limit),
     ));
     info!(log, "start");
-    
+
+    let deps = match PoolInfoList::read_from_db(Some(request.end)).await.and_then(|pools| {
+        tokens_with_depth(pools)
+    }) {
+        Ok(pools) => pools,
+        Err(e) => {
+            error!(log, "failed to get tokens with depth";
+                "error" => ?e,
+            );
+            return Json(ApiResponse::Error(e.to_string()));
+        }
+    };
+
+    let quote = WNEAR_TOKEN.clone().into();
+    let range = TimeRange {
+        start: request.start,
+        end: request.end,
+    };
+    let vols = match TokenRate::get_by_volatility_in_time_range(&range, &quote).await {
+        Ok(vols) => vols,
+        Err(e) => {
+            error!(log, "failed to get volatility";
+                "error" => ?e,
+            );
+            return Json(ApiResponse::Error(e.to_string()));
+        }
+    };
+
+    let _weights: Vec<_> = vols.into_iter().filter_map(|v| {
+        v.percentage_difference.iter().find_map(|p| {
+            let token = v.base;
+            deps.get(&token).map(|depth| {
+                let weight = p.abs() * depth; // TODO 適切な重みの計算を考える
+                (token, weight)
+            })
+        })
+    }).collect();
+
     let tokens = vec![]; // TODO implement
-    
+
     let tokens = VolatilityTokensResponse {
         tokens,
     };

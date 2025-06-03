@@ -97,7 +97,6 @@ pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
     Ok(sorted)
 }
 
-#[allow(dead_code)]
 pub fn tokens_with_depth(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, BigDecimal>> {
     let quote = WNEAR_TOKEN.clone().into();
     let graph = TokenGraph::new(Arc::clone(&pools));
