@@ -3,10 +3,14 @@ mod sort;
 use super::AppState;
 use crate::jsonrpc::{GasInfo, SentTx};
 use crate::logging::*;
+use crate::persistence::TimeRange;
+use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount, WNEAR_TOKEN};
+use crate::ref_finance::token_account::{
+    TokenAccount, TokenInAccount, TokenOutAccount, WNEAR_TOKEN,
+};
 use crate::types::{MicroNear, MilliNear};
 use crate::web::pools::sort::{sort, tokens_with_depth};
 use crate::{jsonrpc, ref_finance, wallet};
@@ -21,10 +25,11 @@ use num_traits::ToPrimitive;
 use std::ops::Deref;
 use std::sync::Arc;
 use zaciraci_common::ApiResponse;
-use zaciraci_common::pools::{PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest, TradeResponse, VolatilityTokensRequest, VolatilityTokensResponse};
+use zaciraci_common::pools::{
+    PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest,
+    TradeResponse, VolatilityTokensRequest, VolatilityTokensResponse,
+};
 use zaciraci_common::types::YoctoNearToken;
-use crate::persistence::TimeRange;
-use crate::persistence::token_rate::TokenRate;
 
 fn path(sub: &str) -> String {
     format!("/pools/{sub}")
@@ -369,54 +374,77 @@ async fn get_volatility_tokens(
 ) -> Json<ApiResponse<VolatilityTokensResponse, String>> {
     let log = DEFAULT.new(o!(
         "function" => "volatility_tokens",
+        "range.start" => format!("{}", request.start),
+        "range.end" => format!("{}", request.end),
         "limit" => format!("{}", request.limit),
     ));
     info!(log, "start");
 
-    let deps = match PoolInfoList::read_from_db(Some(request.end)).await.and_then(|pools| {
-        tokens_with_depth(pools)
-    }) {
-        Ok(pools) => pools,
-        Err(e) => {
-            error!(log, "failed to get tokens with depth";
-                "error" => ?e,
-            );
-            return Json(ApiResponse::Error(e.to_string()));
+    let vols = {
+        let quote = WNEAR_TOKEN.clone().into();
+        let range = TimeRange {
+            start: request.start,
+            end: request.end,
+        };
+        info!(log, "get tokens with depth";
+            "quote" => format!("{}", quote),
+        );
+        match TokenRate::get_by_volatility_in_time_range(&range, &quote).await {
+            Ok(vols) => vols,
+            Err(e) => {
+                error!(log, "failed to get volatility";
+                    "error" => ?e,
+                );
+                return Json(ApiResponse::Error(e.to_string()));
+            }
         }
     };
 
-    let quote = WNEAR_TOKEN.clone().into();
-    let range = TimeRange {
-        start: request.start,
-        end: request.end,
-    };
-    let vols = match TokenRate::get_by_volatility_in_time_range(&range, &quote).await {
-        Ok(vols) => vols,
-        Err(e) => {
-            error!(log, "failed to get volatility";
-                "error" => ?e,
-            );
-            return Json(ApiResponse::Error(e.to_string()));
+    let deps = {
+        info!(log, "get tokens with depth");
+        match PoolInfoList::read_from_db(Some(request.end))
+            .await
+            .and_then(|pools| tokens_with_depth(pools))
+        {
+            Ok(pools) => pools,
+            Err(e) => {
+                error!(log, "failed to get tokens with depth";
+                    "error" => ?e,
+                );
+                return Json(ApiResponse::Error(e.to_string()));
+            }
         }
     };
 
-    let _weights: Vec<_> = vols.into_iter().filter_map(|v| {
-        v.percentage_difference.iter().find_map(|p| {
-            let token = v.base;
-            deps.get(&token).map(|depth| {
-                let weight = p.abs() * depth; // TODO 適切な重みの計算を考える
-                (token, weight)
+    let tokens = {
+        info!(log, "sort tokens";
+            "count" => format!("{}", vols.len()),
+        );
+        let mut weights: Vec<_> = vols
+            .into_iter()
+            .filter_map(|v| {
+                let token = v.base;
+                v.percentage_difference.and_then(|p| {
+                    deps.get(&token).map(|depth| {
+                        let weight = p * depth; // TODO 適切な重みの計算を考える
+                        (token, weight)
+                    })
+                })
             })
-        })
-    }).collect();
+            .collect();
+        weights.sort_by_key(|(_, w)| w);
+        weights.reverse();
 
-    let tokens = vec![]; // TODO implement
-
-    let tokens = VolatilityTokensResponse {
-        tokens,
+        weights
+            .into_iter()
+            .take(request.limit as usize)
+            .map(|(token, _)| token.into())
+            .collect()
     };
+
+    let res = VolatilityTokensResponse { tokens };
     info!(log, "finished");
-    Json(ApiResponse::Success(tokens))
+    Json(ApiResponse::Success(res))
 }
 
 #[cfg(test)]
@@ -430,17 +458,15 @@ mod tests {
             timestamp: Utc::now().naive_utc(),
             limit: 10,
         };
-        
+
         assert_eq!(request.limit, 10);
         assert!(request.timestamp <= Utc::now().naive_utc());
     }
 
     #[test]
     fn test_sort_pools_response_structure() {
-        let response = SortPoolsResponse {
-            pools: vec![],
-        };
-        
+        let response = SortPoolsResponse { pools: vec![] };
+
         assert!(response.pools.is_empty());
     }
 
