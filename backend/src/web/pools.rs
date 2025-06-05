@@ -404,7 +404,7 @@ async fn get_volatility_tokens(
         info!(log, "get tokens with depth");
         match PoolInfoList::read_from_db(Some(request.end))
             .await
-            .and_then(|pools| tokens_with_depth(pools))
+            .and_then(tokens_with_depth)
         {
             Ok(pools) => pools,
             Err(e) => {
@@ -432,8 +432,7 @@ async fn get_volatility_tokens(
                 })
             })
             .collect();
-        weights.sort_by_key(|(_, w)| w);
-        weights.reverse();
+        weights.sort_by(|(_, aw), (_, bw)| bw.cmp(aw));
 
         weights
             .into_iter()
