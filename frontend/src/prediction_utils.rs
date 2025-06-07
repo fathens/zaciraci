@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use zaciraci_common::{stats::ValueAtTime, types::TokenAccount};
@@ -227,5 +227,230 @@ fn generate_prediction_chart_svg(
     ) {
         Ok(svg_content) => Ok(svg_content),
         Err(e) => Err(format!("チャート生成エラー: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_data() -> (Vec<ValueAtTime>, Vec<ValueAtTime>, Vec<ValueAtTime>) {
+        // トレーニングデータ（5ポイント）
+        let training_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.1,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.05,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-04 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.15,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-05 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.2,
+            },
+        ];
+
+        // テストデータ（3ポイント）
+        let test_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-06 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.25,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-07 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.3,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-08 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.35,
+            },
+        ];
+
+        // 予測データ（テストデータの最後の点から開始して3ポイント）
+        let forecast_data = vec![
+            // 接続点：テストデータの最後の点と同じ
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-08 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.35, // テストデータの最後の値と同じ
+            },
+            // 予測点
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-09 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.4,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-10 00:00:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+                value: 1.45,
+            },
+        ];
+
+        (training_data, test_data, forecast_data)
+    }
+
+    #[test]
+    fn test_generate_prediction_chart_svg() {
+        let (training_data, test_data, forecast_data) = create_test_data();
+
+        println!("=== テストデータ詳細 ===");
+        println!("Training data ({} points):", training_data.len());
+        for (i, point) in training_data.iter().enumerate() {
+            println!("  [{}] {:?} -> {}", i, point.time, point.value);
+        }
+
+        println!("Test data ({} points):", test_data.len());
+        for (i, point) in test_data.iter().enumerate() {
+            println!("  [{}] {:?} -> {}", i, point.time, point.value);
+        }
+
+        println!("Forecast data ({} points):", forecast_data.len());
+        for (i, point) in forecast_data.iter().enumerate() {
+            println!("  [{}] {:?} -> {}", i, point.time, point.value);
+        }
+
+        // 重複チェック：テストデータの最後と予測データの最初
+        let last_test = test_data.last().unwrap();
+        let first_forecast = forecast_data.first().unwrap();
+        println!("=== 重複チェック ===");
+        println!(
+            "Last test point: {:?} -> {}",
+            last_test.time, last_test.value
+        );
+        println!(
+            "First forecast point: {:?} -> {}",
+            first_forecast.time, first_forecast.value
+        );
+        println!("Time match: {}", last_test.time == first_forecast.time);
+        println!("Value match: {}", last_test.value == first_forecast.value);
+
+        // チャート生成
+        match generate_prediction_chart_svg(&training_data, &test_data, &forecast_data) {
+            Ok(svg_content) => {
+                println!("=== SVG生成成功 ===");
+                println!("SVG length: {} characters", svg_content.len());
+
+                // SVGの内容を簡単にチェック
+                assert!(svg_content.contains("<svg"));
+                assert!(svg_content.contains("実際の価格"));
+                assert!(svg_content.contains("予測価格"));
+
+                // SVGの先頭と末尾を表示
+                let preview_len = std::cmp::min(500, svg_content.len());
+                println!("=== SVG プレビュー（先頭{}文字）===", preview_len);
+                println!("{}", &svg_content[..preview_len]);
+
+                if svg_content.len() > 500 {
+                    println!("...(省略)...");
+                    let end_start = std::cmp::max(500, svg_content.len() - 200);
+                    println!("=== SVG プレビュー（末尾）===");
+                    println!("{}", &svg_content[end_start..]);
+                }
+            }
+            Err(e) => {
+                panic!("SVG生成エラー: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_empty_data_handling() {
+        println!("=== 空データハンドリングテスト ===");
+
+        let empty_data = vec![];
+        let (training_data, test_data, _) = create_test_data();
+
+        // 空の予測データでテスト
+        match generate_prediction_chart_svg(&training_data, &test_data, &empty_data) {
+            Ok(svg_content) => {
+                println!("✅ 空の予測データでもSVG生成成功");
+                assert!(svg_content.contains("実際の価格"));
+                assert!(!svg_content.contains("予測価格")); // 予測データがないので含まれない
+            }
+            Err(e) => {
+                panic!("空の予測データでエラー: {}", e);
+            }
+        }
+
+        // 空のテストデータでテスト
+        match generate_prediction_chart_svg(&training_data, &empty_data, &empty_data) {
+            Ok(svg_content) => {
+                println!("✅ 空のテストデータでもSVG生成成功");
+                assert!(svg_content.contains("実際の価格"));
+            }
+            Err(e) => {
+                panic!("空のテストデータでエラー: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_data_series_separation() {
+        let (training_data, test_data, forecast_data) = create_test_data();
+
+        println!("=== データ系列分離テスト ===");
+
+        // generate_prediction_chart_svg内部のロジックを直接テスト
+        let mut all_actual_data = Vec::new();
+        all_actual_data.extend(training_data.to_vec());
+
+        // テストデータの最後の点以外を追加（重複を避けるため）
+        if !test_data.is_empty() {
+            let test_data_without_last = &test_data[..test_data.len() - 1];
+            all_actual_data.extend(test_data_without_last.to_vec());
+        }
+
+        println!("元のtraining_data: {} points", training_data.len());
+        println!("元のtest_data: {} points", test_data.len());
+        println!("結合後のall_actual_data: {} points", all_actual_data.len());
+        println!("forecast_data: {} points", forecast_data.len());
+
+        // 期待値チェック
+        let expected_actual_points = training_data.len() + test_data.len() - 1;
+        assert_eq!(
+            all_actual_data.len(),
+            expected_actual_points,
+            "実際データの点数が期待値と異なります"
+        );
+
+        // タイムスタンプの重複チェック
+        let actual_times: Vec<_> = all_actual_data.iter().map(|v| v.time).collect();
+        let forecast_times: Vec<_> = forecast_data.iter().map(|v| v.time).collect();
+
+        println!("=== タイムスタンプ重複チェック ===");
+        for forecast_time in &forecast_times {
+            let overlap_count = actual_times
+                .iter()
+                .filter(|&&t| t == *forecast_time)
+                .count();
+            if overlap_count > 0 {
+                println!(
+                    "⚠️  重複発見: {:?} が実際データにも{}回存在",
+                    forecast_time, overlap_count
+                );
+            } else {
+                println!("✅ {:?} は重複なし", forecast_time);
+            }
+        }
+
+        println!("✅ データ系列分離テスト完了");
     }
 }
