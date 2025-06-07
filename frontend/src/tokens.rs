@@ -118,10 +118,10 @@ pub fn view() -> Element {
                                     return;
                                 }
 
-                                // TODO: 各トークンについて予測実行
+                                // 各トークンについて予測実行を準備
                                 let mut results = Vec::new();
 
-                                // 簡単なテスト結果を追加
+                                // 初期結果を設定（処理中表示用）
                                 for (index, token) in tokens.iter().enumerate() {
                                     results.push((
                                         (index + 1).to_string(),
@@ -133,7 +133,7 @@ pub fn view() -> Element {
 
                                 prediction_results.set(results);
 
-                                // 各トークンについてゼロショット予測を実行
+                                // 各トークンについて価格データを取得してチャートを生成
                                 for (index, token) in tokens.iter().enumerate() {
                                     let quote_token = match TokenAccount::from_str("wrap.near") {
                                         Ok(t) => t,
