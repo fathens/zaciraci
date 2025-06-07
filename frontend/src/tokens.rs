@@ -43,7 +43,7 @@ pub fn view() -> Element {
     rsx! {
         div { class: "tokens-view",
             h2 { "ボラティリティトークン予測" }
-            p { "ボラティリティの高いトークンを取得し、各トークンについてゼロショット予測を実行します。" }
+            p { "ボラティリティの高いトークンを取得し、各トークンについてゼロショット予測を実行します。指定した日付範囲のデータを使用して予測を行います。" }
 
             // 日付範囲選択
             DateRangeSelector {
@@ -136,14 +136,18 @@ pub fn view() -> Element {
                                 prediction_results.set(results);
 
                                 // 各トークンについて価格データを取得してチャートを生成
-                                for (index, token) in tokens.iter().enumerate() {
-                                    let quote_token = match TokenAccount::from_str("wrap.near") {
-                                        Ok(t) => t,
-                                        Err(_) => continue,
-                                    };
+                                let quote_token = match TokenAccount::from_str("wrap.near") {
+                                    Ok(t) => t,
+                                    Err(_) => {
+                                        error_message.set(Some("quote_tokenの設定に失敗しました".to_string()));
+                                        loading.set(false);
+                                        return;
+                                    }
+                                };
 
-                                    // 予測用データ取得期間（2日間）
-                                    let predict_start = end_datetime - Duration::days(2);
+                                for (index, token) in tokens.iter().enumerate() {
+                                    // 予測用データ取得期間（ユーザー指定の日付範囲を使用）
+                                    let predict_start = start_datetime;
                                     let predict_end = end_datetime;
 
                                     // データ取得リクエスト
@@ -164,12 +168,6 @@ pub fn view() -> Element {
 
                                             // 実際のゼロショット予測を実行
                                             let chronos_api_client = chronos_client();
-
-                                            // Quote tokenを設定
-                                            let quote_token = match TokenAccount::from_str("wrap.near") {
-                                                Ok(t) => t,
-                                                Err(_) => continue,
-                                            };
 
                                             let prediction_result = execute_zero_shot_prediction(
                                                 quote_token.clone(),
