@@ -9,6 +9,7 @@ use zaciraci_common::{
 };
 
 use crate::chart::plots::MultiPlotSeries;
+use crate::prediction_utils::execute_zero_shot_prediction;
 use crate::stats::DateRangeSelector;
 use plotters::prelude::BLUE;
 
@@ -24,6 +25,7 @@ struct TokenChartData {
 #[component]
 pub fn view() -> Element {
     let server_client = use_signal(crate::server_api::get_client);
+    let chronos_client = use_signal(crate::chronos_api::predict::get_client);
 
     // デフォルトで7日間の日付範囲を設定
     let now = Utc::now();
@@ -160,65 +162,114 @@ pub fn view() -> Element {
                                                 continue;
                                             }
 
-                                            // 簡単な予測値を設定（実際の予測処理は後で実装）
-                                            let mut current_results = prediction_results();
-                                            if index < current_results.len() {
-                                                current_results[index] = (
-                                                    (index + 1).to_string(),
-                                                    token.to_string(),
-                                                    format!("{:.6}", values_data.last().unwrap().value * 1.05), // 5%上昇と仮定
-                                                    "85.2%".to_string(), // 仮の精度
-                                                );
-                                                prediction_results.set(current_results);
-                                            }
+                                            // 実際のゼロショット予測を実行
+                                            let chronos_api_client = chronos_client();
 
-                                            // チャートデータを保存
-                                            let mut token_charts_vec = token_charts();
-                                            token_charts_vec.push(TokenChartData {
-                                                token: token.to_string(),
-                                                rank: index + 1,
-                                                predicted_price: format!("{:.6}", values_data.last().unwrap().value * 1.05),
-                                                accuracy: "85.2%".to_string(),
-                                                chart_svg: None,
-                                            });
-                                            token_charts.set(token_charts_vec);
-
-                                            // チャートSVGを生成
-                                            let quote_token_str = quote_token.to_string();
-                                            let base_token_str = token.to_string();
-
-                                            // 系列を作成
-                                            let mut plot_series = Vec::new();
-
-                                            // 実際のデータ系列
-                                            plot_series.push(MultiPlotSeries {
-                                                values: values_data.clone(),
-                                                name: "実際の価格".to_string(),
-                                                color: BLUE,
-                                            });
-
-                                            // 複数系列を同一チャートに描画するためのオプション設定
-                                            let multi_options = crate::chart::plots::MultiPlotOptions {
-                                                image_size: (600, 300),
-                                                title: Some(format!("{} / {}", base_token_str, quote_token_str)),
-                                                x_label: Some("時間".to_string()),
-                                                y_label: Some("価格".to_string()),
+                                            // Quote tokenを設定
+                                            let quote_token = match TokenAccount::from_str("wrap.near") {
+                                                Ok(t) => t,
+                                                Err(_) => continue,
                                             };
 
-                                            // チャートSVGを生成
-                                            match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
-                                                &plot_series, multi_options
-                                            ) {
-                                                Ok(svg) => {
-                                                    // チャートSVGを更新
-                                                    let mut current_charts = token_charts();
-                                                    if let Some(chart) = current_charts.get_mut(index) {
-                                                        chart.chart_svg = Some(svg);
+                                            let prediction_result = execute_zero_shot_prediction(
+                                                quote_token.clone(),
+                                                token.clone(),
+                                                values_data.clone(),
+                                                "amazon/chronos-t5-tiny".to_string(),
+                                                chronos_api_client.clone(),
+                                            ).await;
+
+                                            // 予測結果を処理
+                                            match prediction_result {
+                                                Ok(result) => {
+                                                    // 予測結果を更新
+                                                    let mut current_results = prediction_results();
+                                                    if index < current_results.len() {
+                                                        current_results[index] = (
+                                                            (index + 1).to_string(),
+                                                            token.to_string(),
+                                                            format!("{:.6}", result.predicted_price),
+                                                            format!("{:.2}%", result.accuracy),
+                                                        );
+                                                        prediction_results.set(current_results);
                                                     }
-                                                    token_charts.set(current_charts);
-                                                },
+
+                                                    // チャートデータを追加
+                                                    let mut token_charts_vec = token_charts();
+                                                    token_charts_vec.push(TokenChartData {
+                                                        token: token.to_string(),
+                                                        rank: index + 1,
+                                                        predicted_price: format!("{:.6}", result.predicted_price),
+                                                        accuracy: format!("{:.2}%", result.accuracy),
+                                                        chart_svg: result.chart_svg,
+                                                    });
+                                                    token_charts.set(token_charts_vec);
+                                                }
                                                 Err(e) => {
-                                                    web_sys::console::log_1(&format!("チャート生成エラー: {}", e).into());
+                                                    // エラーの場合は元の処理を維持
+                                                    web_sys::console::log_1(&format!("予測エラー: {}", e).into());
+
+                                                    // 簡易予測値を設定
+                                                    let mut current_results = prediction_results();
+                                                    if index < current_results.len() {
+                                                        current_results[index] = (
+                                                            (index + 1).to_string(),
+                                                            token.to_string(),
+                                                            format!("{:.6}", values_data.last().unwrap().value * 1.05),
+                                                            "予測失敗".to_string(),
+                                                        );
+                                                        prediction_results.set(current_results);
+                                                    }
+
+                                                    // チャートデータを追加（簡易版）
+                                                    let mut token_charts_vec = token_charts();
+                                                    token_charts_vec.push(TokenChartData {
+                                                        token: token.to_string(),
+                                                        rank: index + 1,
+                                                        predicted_price: format!("{:.6}", values_data.last().unwrap().value * 1.05),
+                                                        accuracy: "予測失敗".to_string(),
+                                                        chart_svg: None,
+                                                    });
+                                                    token_charts.set(token_charts_vec);
+
+                                                    // 簡易チャートを生成
+                                                    let quote_token_str = quote_token.to_string();
+                                                    let base_token_str = token.to_string();
+
+                                                    // 系列を作成
+                                                    let mut plot_series = Vec::new();
+
+                                                    // 実際のデータ系列
+                                                    plot_series.push(MultiPlotSeries {
+                                                        values: values_data.clone(),
+                                                        name: format!("{}/{}", base_token_str, quote_token_str),
+                                                        color: BLUE,
+                                                    });
+
+                                                    // 複数系列を同一チャートに描画するためのオプション設定
+                                                    let multi_options = crate::chart::plots::MultiPlotOptions {
+                                                        image_size: (600, 300),
+                                                        title: Some(format!("{}/{} 価格チャート", base_token_str, quote_token_str)),
+                                                        x_label: Some("時間".to_string()),
+                                                        y_label: Some("価格".to_string()),
+                                                    };
+
+                                                    // チャートSVGを生成
+                                                    match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
+                                                        &plot_series, multi_options
+                                                    ) {
+                                                        Ok(svg_content) => {
+                                                            // チャートSVGを設定
+                                                            let mut token_charts_vec = token_charts();
+                                                            if let Some(last_chart) = token_charts_vec.last_mut() {
+                                                                last_chart.chart_svg = Some(svg_content);
+                                                            }
+                                                            token_charts.set(token_charts_vec);
+                                                        }
+                                                        Err(e) => {
+                                                            web_sys::console::log_1(&format!("チャート生成エラー: {}", e).into());
+                                                        }
+                                                    }
                                                 }
                                             }
                                         },

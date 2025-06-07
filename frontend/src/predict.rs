@@ -1,19 +1,22 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use dioxus::core_macro::component;
+use dioxus::dioxus_core::Element;
 use dioxus::prelude::*;
+use plotters::prelude::{BLUE, RED};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
-    ApiResponse,
     stats::{GetValuesRequest, ValueAtTime},
     types::TokenAccount,
+    ApiResponse,
 };
 
-use crate::chart::plots::MultiPlotSeries;
+use crate::chart::plots::{plot_multi_values_at_time_to_svg_with_options, MultiPlotOptions, MultiPlotSeries};
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
+use crate::prediction_utils::calculate_metrics;
 use crate::stats::DateRangeSelector;
-use plotters::prelude::{BLUE, RED};
 
 /// 予測ビューのメインコンポーネント
 #[component]
@@ -35,39 +38,6 @@ pub fn view() -> Element {
             }
         }
     }
-}
-
-/// 予測精度の評価指標を計算する関数
-fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f64> {
-    let n = actual.len().min(predicted.len());
-    if n == 0 {
-        return HashMap::new();
-    }
-
-    // 二乗誤差和
-    let mut squared_errors_sum = 0.0;
-    // 絶対誤差和
-    let mut absolute_errors_sum = 0.0;
-    // 絶対パーセント誤差和
-    let mut absolute_percent_errors_sum = 0.0;
-
-    for i in 0..n {
-        let error = actual[i] - predicted[i];
-        squared_errors_sum += error * error;
-        absolute_errors_sum += error.abs();
-
-        // 分母がゼロに近い場合はパーセント誤差を計算しない
-        if actual[i].abs() > 1e-10 {
-            absolute_percent_errors_sum += (error.abs() / actual[i].abs()) * 100.0;
-        }
-    }
-
-    let mut metrics = HashMap::new();
-    metrics.insert("RMSE".to_string(), (squared_errors_sum / n as f64).sqrt());
-    metrics.insert("MAE".to_string(), absolute_errors_sum / n as f64);
-    metrics.insert("MAPE".to_string(), absolute_percent_errors_sum / n as f64);
-
-    metrics
 }
 
 /// ゼロショット予測ビューコンポーネント
@@ -212,7 +182,7 @@ fn predict_zero_shot_view(
                         };
 
                         // 価格データを取得
-                        match server_client().stats.get_values(&request).await {
+                        match server_client.read().stats.get_values(&request).await {
                             Ok(ApiResponse::Success(response)) => {
                                 let values_data = response.values;
                                 if values_data.is_empty() {
@@ -258,7 +228,7 @@ fn predict_zero_shot_view(
                                 ).with_model_name(model_val);
 
                                 // 予測実行
-                                match chronos_client().predict_zero_shot(&prediction_request).await {
+                                match chronos_client.read().predict_zero_shot(&prediction_request).await {
                                     Ok(prediction_response) => {
                                         // 予測結果とテストデータの比較
                                         let actual_values: Vec<_> = test_data.iter().map(|v| v.value).collect();
@@ -291,9 +261,6 @@ fn predict_zero_shot_view(
 
                                             // 予測データの調整（スケーリングと連続性の確保）
 
-                                            // 予測APIから返された最初の予測値を取得
-                                            let first_api_forecast_value = forecast_values[0];
-
                                             // 予測データの時間範囲をデバッグ出力
                                             if !prediction_response.forecast_timestamp.is_empty() {
                                                 let first_timestamp = prediction_response.forecast_timestamp.first().unwrap();
@@ -304,14 +271,9 @@ fn predict_zero_shot_view(
                                                 ).into());
                                             }
 
-                                            web_sys::console::log_1(&format!(
-                                                "APIから返された最初の予測値: {}",
-                                                first_api_forecast_value
-                                            ).into());
-
                                             // 予測値と実際の値の差を計算（補正係数）
-                                            let correction_factor = if first_api_forecast_value != 0.0 {
-                                                last_test_point.value / first_api_forecast_value
+                                            let correction_factor = if forecast_values[0] != 0.0 {
+                                                last_test_point.value / forecast_values[0]
                                             } else {
                                                 1.0 // ゼロ除算を防ぐ
                                             };
