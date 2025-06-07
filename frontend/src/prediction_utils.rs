@@ -1,16 +1,14 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
-use zaciraci_common::{
-    stats::ValueAtTime,
-    types::TokenAccount,
-};
+use zaciraci_common::{stats::ValueAtTime, types::TokenAccount};
 
 use crate::chart::plots::MultiPlotSeries;
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use plotters::prelude::{BLUE, RED};
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PredictionResult {
     pub predicted_price: f64,
     pub accuracy: f64,
@@ -47,23 +45,19 @@ pub async fn execute_zero_shot_prediction(
     }
 
     // 予測用のタイムスタンプと値を抽出
-    let timestamps: Vec<DateTime<Utc>> = training_data.iter()
+    let timestamps: Vec<DateTime<Utc>> = training_data
+        .iter()
         .map(|v| DateTime::<Utc>::from_naive_utc_and_offset(v.time, Utc))
         .collect();
     let values: Vec<_> = training_data.iter().map(|v| v.value).collect();
 
     // 予測対象の終了時刻（テストデータの最後）
-    let forecast_until = DateTime::<Utc>::from_naive_utc_and_offset(
-        test_data.last().unwrap().time,
-        Utc
-    );
+    let forecast_until =
+        DateTime::<Utc>::from_naive_utc_and_offset(test_data.last().unwrap().time, Utc);
 
     // ZeroShotPredictionRequestを作成
-    let prediction_request = ZeroShotPredictionRequest::new(
-        timestamps,
-        values,
-        forecast_until
-    ).with_model_name(model_name);
+    let prediction_request = ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+        .with_model_name(model_name);
 
     // 予測実行
     match chronos_client.predict_zero_shot(&prediction_request).await {
@@ -79,7 +73,10 @@ pub async fn execute_zero_shot_prediction(
             let mut forecast_points: Vec<ValueAtTime> = Vec::new();
 
             // 予測データがあり、テストデータもある場合
-            if !prediction_response.forecast_timestamp.is_empty() && !forecast_values.is_empty() && !test_data.is_empty() {
+            if !prediction_response.forecast_timestamp.is_empty()
+                && !forecast_values.is_empty()
+                && !test_data.is_empty()
+            {
                 // テストデータの最後のポイントを取得
                 let last_test_point = test_data.last().unwrap();
 
@@ -125,12 +122,11 @@ pub async fn execute_zero_shot_prediction(
             }
 
             // チャートSVGを生成
-            let chart_svg = generate_prediction_chart_svg(&training_data, &test_data, &forecast_points)?;
+            let chart_svg =
+                generate_prediction_chart_svg(&training_data, &test_data, &forecast_points)?;
 
             // 予測価格（最後の予測値）
-            let predicted_price = forecast_points.last()
-                .map(|p| p.value)
-                .unwrap_or(0.0);
+            let predicted_price = forecast_points.last().map(|p| p.value).unwrap_or(0.0);
 
             Ok(PredictionResult {
                 predicted_price,
@@ -142,7 +138,7 @@ pub async fn execute_zero_shot_prediction(
                 forecast_data: forecast_points,
             })
         }
-        Err(e) => Err(format!("予測実行エラー: {}", e))
+        Err(e) => Err(format!("予測実行エラー: {}", e)),
     }
 }
 
@@ -185,22 +181,29 @@ fn generate_prediction_chart_svg(
     test_data: &[ValueAtTime],
     forecast_data: &[ValueAtTime],
 ) -> Result<String, String> {
-    // 全データを結合（まず学習データ、次にテストデータ）
+    // 実際のデータを結合（ただし、テストデータの最後の点は予測データと重複するため除外）
     let mut all_actual_data = Vec::new();
     all_actual_data.extend(training_data.to_vec());
-    all_actual_data.extend(test_data.to_vec());
+
+    // テストデータの最後の点以外を追加（重複を避けるため）
+    if !test_data.is_empty() {
+        let test_data_without_last = &test_data[..test_data.len() - 1];
+        all_actual_data.extend(test_data_without_last.to_vec());
+    }
 
     // 系列を作成
     let mut plot_series = Vec::new();
 
-    // 実際のデータ系列
-    plot_series.push(MultiPlotSeries {
-        values: all_actual_data,
-        name: "実際の価格".to_string(),
-        color: BLUE,
-    });
+    // 実際のデータ系列（最後のテストポイントを除く）
+    if !all_actual_data.is_empty() {
+        plot_series.push(MultiPlotSeries {
+            values: all_actual_data,
+            name: "実際の価格".to_string(),
+            color: BLUE,
+        });
+    }
 
-    // 予測データ系列（空でなければ追加）
+    // 予測データ系列（空でなければ追加、接続点を含む）
     if !forecast_data.is_empty() {
         plot_series.push(MultiPlotSeries {
             values: forecast_data.to_vec(),
@@ -219,9 +222,10 @@ fn generate_prediction_chart_svg(
 
     // チャートSVGを生成
     match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
-        &plot_series, multi_options
+        &plot_series,
+        multi_options,
     ) {
         Ok(svg_content) => Ok(svg_content),
-        Err(e) => Err(format!("チャート生成エラー: {}", e))
+        Err(e) => Err(format!("チャート生成エラー: {}", e)),
     }
 }
