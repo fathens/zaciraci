@@ -73,11 +73,11 @@ pub struct SortPoolsResponse {
 pub struct VolatilityTokensRequest {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
-    pub limit: u32
+    pub limit: u32,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VolatilityTokensResponse {
-    pub tokens: Vec<TokenAccount>
+    pub tokens: Vec<TokenAccount>,
 }
 
 #[cfg(test)]
@@ -112,38 +112,34 @@ mod tests {
 
     #[test]
     fn test_sort_pools_response_creation() {
-        let response = SortPoolsResponse {
-            pools: vec![],
-        };
-        
+        let response = SortPoolsResponse { pools: vec![] };
+
         assert!(response.pools.is_empty());
     }
 
     #[test]
     fn test_sort_pools_response_serialization() {
-        let response = SortPoolsResponse {
-            pools: vec![],
-        };
-        
+        let response = SortPoolsResponse { pools: vec![] };
+
         // Test serialization round-trip
         let json = serde_json::to_string(&response).unwrap();
         let deserialized: SortPoolsResponse = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(response, deserialized);
     }
 
     #[test]
     fn test_sort_pools_request_with_different_limits() {
         let limits = [1, 10, 50, 100, 1000];
-        
+
         for limit in limits {
             let request = SortPoolsRequest {
                 timestamp: Utc::now().naive_utc(),
                 limit,
             };
-            
+
             assert_eq!(request.limit, limit);
-            
+
             // Test that it can be serialized/deserialized
             let json = serde_json::to_string(&request).unwrap();
             let deserialized: SortPoolsRequest = serde_json::from_str(&json).unwrap();

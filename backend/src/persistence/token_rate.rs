@@ -1,8 +1,8 @@
 use crate::Result;
 use crate::logging::*;
+use crate::persistence::TimeRange;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
-use crate::persistence::TimeRange;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
@@ -399,9 +399,10 @@ impl TokenRate {
         let conn = connection_pool::get().await?;
 
         // SQLクエリを実装してボラティリティを計算
-        let volatility_results: Vec<VolatilityResult> = conn.interact(move |conn| {
-            diesel::sql_query(
-                "
+        let volatility_results: Vec<VolatilityResult> = conn
+            .interact(move |conn| {
+                diesel::sql_query(
+                    "
                 SELECT 
                     base_token,
                     (MAX(rate) - MIN(rate))::DECIMAL as rate_difference,
@@ -419,31 +420,29 @@ impl TokenRate {
                     timestamp <= $3
                 GROUP BY base_token
                 ORDER BY percentage_difference DESC NULLS LAST
-                "
-            )
-            .bind::<diesel::sql_types::Text, _>(&quote_str)
-            .bind::<diesel::sql_types::Timestamp, _>(range_start)
-            .bind::<diesel::sql_types::Timestamp, _>(range_end)
-            .load::<VolatilityResult>(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+                ",
+                )
+                .bind::<diesel::sql_types::Text, _>(&quote_str)
+                .bind::<diesel::sql_types::Timestamp, _>(range_start)
+                .bind::<diesel::sql_types::Timestamp, _>(range_end)
+                .load::<VolatilityResult>(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
         let volatility_results: Vec<TokenVolatility> = volatility_results
             .into_iter()
-            .filter_map(|result| {
-                match TokenAccount::from_str(&result.base_token) {
-                    Ok(token) => Some(TokenVolatility {
-                        base: token,
-                        rate_difference: result.rate_difference,
-                        percentage_difference: result.percentage_difference,
-                        max_rate: result.max_rate,
-                        min_rate: result.min_rate,
-                    }),
-                    Err(e) => {
-                        error!(log, "Failed to parse token: {}, {e}", result.base_token);
-                        None
-                    }
+            .filter_map(|result| match TokenAccount::from_str(&result.base_token) {
+                Ok(token) => Some(TokenVolatility {
+                    base: token,
+                    rate_difference: result.rate_difference,
+                    percentage_difference: result.percentage_difference,
+                    max_rate: result.max_rate,
+                    min_rate: result.min_rate,
+                }),
+                Err(e) => {
+                    error!(log, "Failed to parse token: {}, {e}", result.base_token);
+                    None
                 }
             })
             .collect();

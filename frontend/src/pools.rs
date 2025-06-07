@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
     ApiResponse,
-    pools::{PoolId, PoolRecordsRequest, TradeRequest, SortPoolsRequest},
+    pools::{PoolId, PoolRecordsRequest, SortPoolsRequest, TradeRequest},
     types::NearUnit,
 };
 
@@ -295,7 +295,7 @@ fn sort_pools_view() -> Element {
                                 async move {
                                     pools_loading.set("Loading...".to_string());
                                     pools.set("".to_string());
-                                    
+
                                     let limit_u32 = match limit.parse::<u32>() {
                                         Ok(num) => num,
                                         Err(e) => {

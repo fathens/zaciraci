@@ -1,7 +1,9 @@
 use crate::api_underlying::Underlying;
 use anyhow::Result;
 use std::sync::Arc;
-use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse, VolatilityTokensRequest, VolatilityTokensResponse};
+use zaciraci_common::pools::{
+    SortPoolsRequest, SortPoolsResponse, VolatilityTokensRequest, VolatilityTokensResponse,
+};
 use zaciraci_common::{
     ApiResponse,
     pools::{PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse},

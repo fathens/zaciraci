@@ -1,11 +1,11 @@
 use super::*;
+use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use crate::ref_finance::token_account::TokenAccount;
-use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::Utc;
-use num_traits::{Zero, Signed};
+use num_traits::{Signed, Zero};
 use serial_test::serial;
 use std::cmp::Ordering;
 use std::str::FromStr;
@@ -111,8 +111,14 @@ fn test_average_depth_basic() {
     );
 
     let mut rates = HashMap::new();
-    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from(1));
-    rates.insert(TokenAccount::from_str("token1.near").unwrap(), BigDecimal::from_str("0.5").unwrap());
+    rates.insert(
+        TokenAccount::from_str("wrap.near").unwrap(),
+        BigDecimal::from(1),
+    );
+    rates.insert(
+        TokenAccount::from_str("token1.near").unwrap(),
+        BigDecimal::from_str("0.5").unwrap(),
+    );
 
     let value = average_depth(&rates, &pool);
 
@@ -139,7 +145,10 @@ fn test_average_depth_missing_rate() {
     );
 
     let mut rates = HashMap::new();
-    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from(1));
+    rates.insert(
+        TokenAccount::from_str("wrap.near").unwrap(),
+        BigDecimal::from(1),
+    );
     // No rate for unknown.near
 
     let value = average_depth(&rates, &pool);
@@ -167,8 +176,14 @@ fn test_average_depth_zero_tokens() {
     );
 
     let mut rates = HashMap::new();
-    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from(1));
-    rates.insert(TokenAccount::from_str("token1.near").unwrap(), BigDecimal::from_str("0.5").unwrap());
+    rates.insert(
+        TokenAccount::from_str("wrap.near").unwrap(),
+        BigDecimal::from(1),
+    );
+    rates.insert(
+        TokenAccount::from_str("token1.near").unwrap(),
+        BigDecimal::from_str("0.5").unwrap(),
+    );
 
     let value = average_depth(&rates, &pool);
 
@@ -209,7 +224,7 @@ fn test_sort_pools() {
         "wrap.near",
         "token2.near",
         10_000_000_000_000_000_000_000_000, // 10 NEAR - 高流動性
-        1_000_000_000_000_000_000_000_000, // 1 token
+        1_000_000_000_000_000_000_000_000,  // 1 token
     );
 
     let pools = Arc::new(PoolInfoList::new(vec![pool1.clone(), pool2.clone()]));
@@ -244,9 +259,9 @@ fn test_tokens_with_depth() {
 
     let pool2 = create_mock_pool_info(
         2,
-        "wrap.near", 
+        "wrap.near",
         "token2.near",
-        500_000_000_000_000_000_000_000, // 0.5 NEAR
+        500_000_000_000_000_000_000_000,   // 0.5 NEAR
         1_000_000_000_000_000_000_000_000, // 1 token
     );
 
@@ -260,11 +275,12 @@ fn test_tokens_with_depth() {
             // - 少なくとも"wrap.near", "token1.near", "token2.near"のトークンが含まれるはず
             // - 各トークンには深度値が計算されているはず
             assert!(!token_depths.is_empty());
-            
+
             // wrap.nearは両方のプールに含まれているので、深度が高いはず
-            let wrap_near_found = token_depths.keys()
+            let wrap_near_found = token_depths
+                .keys()
                 .any(|token| token.to_string().contains("wrap.near"));
-            
+
             if wrap_near_found {
                 println!("wrap.near token found in depth calculation");
             }
@@ -282,9 +298,9 @@ fn test_make_rates() {
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
     let base1: TokenOutAccount = TokenAccount::from_str("wrap.near").unwrap().into();
     let base2: TokenOutAccount = TokenAccount::from_str("token1.near").unwrap().into();
-    
+
     let quote_with_amount = (&quote, ONE_NEAR);
-    
+
     // プールを作成してTokenGraphを構築
     let pool = create_mock_pool_info(
         1,
@@ -296,11 +312,11 @@ fn test_make_rates() {
 
     let pools = Arc::new(PoolInfoList::new(vec![pool]));
     let graph = TokenGraph::new(pools);
-    
+
     let outs = vec![base1, base2];
-    
+
     let result = make_rates(quote_with_amount, &graph, &outs);
-    
+
     // データベースがないため、通常はエラーになることが予想される
     match result {
         Ok(_rates_map) => {
@@ -326,11 +342,17 @@ fn test_average_depth_edge_cases() {
     );
 
     let mut rates = HashMap::new();
-    rates.insert(TokenAccount::from_str("wrap.near").unwrap(), BigDecimal::from_str("1.23456789").unwrap());
-    rates.insert(TokenAccount::from_str("token1.near").unwrap(), BigDecimal::from_str("0.987654321").unwrap());
+    rates.insert(
+        TokenAccount::from_str("wrap.near").unwrap(),
+        BigDecimal::from_str("1.23456789").unwrap(),
+    );
+    rates.insert(
+        TokenAccount::from_str("token1.near").unwrap(),
+        BigDecimal::from_str("0.987654321").unwrap(),
+    );
 
     let value = average_depth(&rates, &pool);
-    
+
     // 計算結果が有限であることを確認
     assert!(!value.is_zero());
     assert!(value.is_positive());
@@ -344,7 +366,7 @@ fn test_with_weight_large_numbers() {
         weight: BigDecimal::from_str("999999999999999999999999.123456789").unwrap(),
     };
     let w2 = WithWeight {
-        value: "large2", 
+        value: "large2",
         weight: BigDecimal::from_str("999999999999999999999999.123456790").unwrap(),
     };
 

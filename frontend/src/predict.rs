@@ -8,12 +8,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use wasm_bindgen_futures::spawn_local;
 use zaciraci_common::{
+    ApiResponse,
     stats::{GetValuesRequest, ValueAtTime},
     types::TokenAccount,
-    ApiResponse,
 };
 
-use crate::chart::plots::{plot_multi_values_at_time_to_svg_with_options, MultiPlotOptions, MultiPlotSeries};
+use crate::chart::plots::{
+    MultiPlotOptions, MultiPlotSeries, plot_multi_values_at_time_to_svg_with_options,
+};
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use crate::prediction_utils::calculate_metrics;
 use crate::stats::DateRangeSelector;
@@ -410,7 +412,7 @@ fn predict_zero_shot_view(
                                         }
 
                                         // 複数系列を同一チャートに描画するためのオプション設定
-                                        let multi_options = crate::chart::plots::MultiPlotOptions {
+                                        let options = MultiPlotOptions {
                                             image_size: (800, 500),
                                             title: Some(format!("{} / {} (実際 vs 予測)", base_val, quote_val)),
                                             x_label: Some("時間".to_string()),
@@ -418,8 +420,8 @@ fn predict_zero_shot_view(
                                         };
 
                                         // 複数系列を同一チャートにプロット
-                                        let combined_svg = match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
-                                            &plot_series, multi_options
+                                        let combined_svg = match plot_multi_values_at_time_to_svg_with_options(
+                                            &plot_series, options
                                         ) {
                                             Ok(svg) => svg,
                                             Err(e) => {
