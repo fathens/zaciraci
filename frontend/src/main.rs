@@ -9,6 +9,7 @@ mod predict;
 mod server_api;
 mod stats;
 mod storage;
+mod tokens;
 
 use dioxus::prelude::*;
 
@@ -62,6 +63,11 @@ fn app() -> Element {
                         class: if current_view() == "predict" { "active" } else { "" },
                         "predict"
                     }
+                    button {
+                        onclick: move |_| current_view.set("tokens".to_string()),
+                        class: if current_view() == "tokens" { "active" } else { "" },
+                        "Tokens"
+                    }
                 }
             }
             main { class: "main",
@@ -72,6 +78,7 @@ fn app() -> Element {
                     "ollama" => rsx! { ollama::view {} },
                     "stats" => rsx! { stats::view {} },
                     "predict" => rsx! { predict::view {} },
+                    "tokens" => rsx! { tokens::view {} },
                     _ => rsx! { basic::view {} },
                 }}
             }

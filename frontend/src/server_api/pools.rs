@@ -1,11 +1,11 @@
 use crate::api_underlying::Underlying;
 use anyhow::Result;
 use std::sync::Arc;
+use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse, VolatilityTokensRequest, VolatilityTokensResponse};
 use zaciraci_common::{
     ApiResponse,
     pools::{PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse},
 };
-use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse};
 
 pub struct PoolsApi {
     pub underlying: Arc<Underlying>,
@@ -77,8 +77,15 @@ impl PoolsApi {
         &self,
         request: SortPoolsRequest,
     ) -> Result<ApiResponse<SortPoolsResponse, String>> {
+        self.underlying.post("pools/sort_pools", &request).await
+    }
+
+    pub async fn get_volatility_tokens(
+        &self,
+        request: VolatilityTokensRequest,
+    ) -> Result<ApiResponse<VolatilityTokensResponse, String>> {
         self.underlying
-            .post("pools/sort_pools", &request)
+            .post("pools/get_volatility_tokens", &request)
             .await
     }
 }
