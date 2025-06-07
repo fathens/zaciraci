@@ -6,6 +6,7 @@ use zaciraci_common::{stats::ValueAtTime, types::TokenAccount};
 use crate::chart::plots::MultiPlotSeries;
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use plotters::prelude::{BLUE, RED};
+use crate::errors::PredictionError;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -26,22 +27,22 @@ pub async fn execute_zero_shot_prediction(
     values_data: Vec<ValueAtTime>,
     model_name: String,
     chronos_client: Arc<ChronosApiClient>,
-) -> Result<PredictionResult, String> {
+) -> Result<PredictionResult, PredictionError> {
     if values_data.is_empty() {
-        return Err("データが見つかりませんでした".to_string());
+        return Err(PredictionError::DataNotFound);
     }
 
     // データを前半と後半に分割
     let mid_point = values_data.len() / 2;
     if mid_point < 2 {
-        return Err("予測用のデータが不足しています".to_string());
+        return Err(PredictionError::InsufficientData);
     }
 
     let training_data = values_data[..mid_point].to_vec();
     let test_data = values_data[mid_point..].to_vec();
 
     if training_data.is_empty() || test_data.is_empty() {
-        return Err("データ分割後のデータが不足しています".to_string());
+        return Err(PredictionError::InsufficientData);
     }
 
     // 予測用のタイムスタンプと値を抽出
@@ -138,7 +139,7 @@ pub async fn execute_zero_shot_prediction(
                 forecast_data: forecast_points,
             })
         }
-        Err(e) => Err(format!("予測実行エラー: {}", e)),
+        Err(e) => Err(PredictionError::PredictionFailed(format!("予測実行エラー: {}", e))),
     }
 }
 
@@ -176,11 +177,11 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
 }
 
 /// 予測チャートのSVGを生成
-fn generate_prediction_chart_svg(
+pub fn generate_prediction_chart_svg(
     training_data: &[ValueAtTime],
     test_data: &[ValueAtTime],
     forecast_data: &[ValueAtTime],
-) -> Result<String, String> {
+) -> Result<String, PredictionError> {
     // 実際のデータを結合（ただし、テストデータの最後の点は予測データと重複するため除外）
     let mut all_actual_data = Vec::new();
     all_actual_data.extend(training_data.to_vec());
@@ -226,7 +227,7 @@ fn generate_prediction_chart_svg(
         multi_options,
     ) {
         Ok(svg_content) => Ok(svg_content),
-        Err(e) => Err(format!("チャート生成エラー: {}", e)),
+        Err(e) => Err(PredictionError::ChartGenerationFailed(format!("チャート生成エラー: {}", e))),
     }
 }
 

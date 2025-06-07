@@ -8,10 +8,12 @@ use zaciraci_common::{
     ApiResponse, pools::VolatilityTokensRequest, stats::GetValuesRequest, types::TokenAccount,
 };
 
-use crate::chart::plots::MultiPlotSeries;
-use crate::prediction_utils::execute_zero_shot_prediction;
+use crate::errors::PredictionError;
+use crate::prediction_utils::{execute_zero_shot_prediction, generate_prediction_chart_svg};
 use crate::stats::DateRangeSelector;
-use plotters::prelude::BLUE;
+
+// 定数定義
+const FALLBACK_MULTIPLIER: f64 = 1.05;
 
 #[derive(Clone, Debug)]
 struct TokenChartData {
@@ -89,7 +91,7 @@ pub fn view() -> Element {
                         let start_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(format!("開始日時のパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::StartDateParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -98,7 +100,7 @@ pub fn view() -> Element {
                         let end_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(format!("終了日時のパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::EndDateParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -115,7 +117,7 @@ pub fn view() -> Element {
                             Ok(ApiResponse::Success(volatility_response)) => {
                                 let tokens = volatility_response.tokens;
                                 if tokens.is_empty() {
-                                    error_message.set(Some("ボラティリティトークンが見つかりませんでした".to_string()));
+                                    error_message.set(Some(PredictionError::VolatilityTokensNotFound.to_string()));
                                     loading.set(false);
                                     return;
                                 }
@@ -139,7 +141,7 @@ pub fn view() -> Element {
                                 let quote_token = match TokenAccount::from_str("wrap.near") {
                                     Ok(t) => t,
                                     Err(_) => {
-                                        error_message.set(Some("quote_tokenの設定に失敗しました".to_string()));
+                                        error_message.set(Some(PredictionError::QuoteTokenSetupError.to_string()));
                                         loading.set(false);
                                         return;
                                     }
@@ -213,7 +215,7 @@ pub fn view() -> Element {
                                                         current_results[index] = (
                                                             (index + 1).to_string(),
                                                             token.to_string(),
-                                                            format!("{:.6}", values_data.last().unwrap().value * 1.05),
+                                                            format!("{:.6}", values_data.last().map(|v| v.value * FALLBACK_MULTIPLIER).unwrap_or(0.0)),
                                                             "予測失敗".to_string(),
                                                         );
                                                         prediction_results.set(current_results);
@@ -224,37 +226,20 @@ pub fn view() -> Element {
                                                     token_charts_vec.push(TokenChartData {
                                                         token: token.to_string(),
                                                         rank: index + 1,
-                                                        predicted_price: format!("{:.6}", values_data.last().unwrap().value * 1.05),
+                                                        predicted_price: format!("{:.6}", values_data.last().map(|v| v.value * FALLBACK_MULTIPLIER).unwrap_or(0.0)),
                                                         accuracy: "予測失敗".to_string(),
                                                         chart_svg: None,
                                                     });
                                                     token_charts.set(token_charts_vec);
 
-                                                    // 簡易チャートを生成
+                                                    // 簡易チャートを生成（prediction_utils.rsの関数を使用）
                                                     let quote_token_str = quote_token.to_string();
                                                     let base_token_str = token.to_string();
-
-                                                    // 系列を作成
-                                                    let mut plot_series = Vec::new();
-
-                                                    // 実際のデータ系列
-                                                    plot_series.push(MultiPlotSeries {
-                                                        values: values_data.clone(),
-                                                        name: format!("{}/{}", base_token_str, quote_token_str),
-                                                        color: BLUE,
-                                                    });
-
-                                                    // 複数系列を同一チャートに描画するためのオプション設定
-                                                    let multi_options = crate::chart::plots::MultiPlotOptions {
-                                                        image_size: (600, 300),
-                                                        title: Some(format!("{}/{} 価格チャート", base_token_str, quote_token_str)),
-                                                        x_label: Some("時間".to_string()),
-                                                        y_label: Some("価格".to_string()),
-                                                    };
-
-                                                    // チャートSVGを生成
-                                                    match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
-                                                        &plot_series, multi_options
+                                                    
+                                                    match generate_prediction_chart_svg(
+                                                        &values_data, // training_data
+                                                        &[], // test_data (空)
+                                                        &[] // forecast_data (空)
                                                     ) {
                                                         Ok(svg_content) => {
                                                             // チャートSVGを設定
@@ -276,10 +261,10 @@ pub fn view() -> Element {
                                 }
                             },
                             Ok(ApiResponse::Error(e)) => {
-                                error_message.set(Some(format!("ボラティリティトークン取得エラー: {}", e)));
+                                error_message.set(Some(PredictionError::VolatilityTokensApiError(e).to_string()));
                             },
                             Err(e) => {
-                                error_message.set(Some(format!("リクエストエラー: {}", e)));
+                                error_message.set(Some(PredictionError::RequestError(e.to_string()).to_string()));
                             }
                         }
 

@@ -2,6 +2,7 @@ mod api_underlying;
 mod basic;
 mod chart;
 mod chronos_api;
+mod errors;
 mod image_upload;
 mod ollama;
 mod pools;

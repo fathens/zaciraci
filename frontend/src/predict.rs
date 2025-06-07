@@ -17,6 +17,7 @@ use crate::chart::plots::{
     MultiPlotOptions, MultiPlotSeries, plot_multi_values_at_time_to_svg_with_options,
 };
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
+use crate::errors::PredictionError;
 use crate::prediction_utils::calculate_metrics;
 use crate::stats::DateRangeSelector;
 
@@ -134,7 +135,7 @@ fn predict_zero_shot_view(
                         let quote_token = match TokenAccount::from_str(&quote_val) {
                             Ok(token) => token,
                             Err(e) => {
-                                error_message.set(Some(format!("Quote tokenのパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::QuoteTokenParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -143,7 +144,7 @@ fn predict_zero_shot_view(
                         let base_token = match TokenAccount::from_str(&base_val) {
                             Ok(token) => token,
                             Err(e) => {
-                                error_message.set(Some(format!("Base tokenのパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::BaseTokenParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -152,7 +153,7 @@ fn predict_zero_shot_view(
                         let start_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(format!("開始日時のパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::StartDateParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -161,7 +162,7 @@ fn predict_zero_shot_view(
                         let end_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(format!("終了日時のパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::EndDateParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -188,7 +189,7 @@ fn predict_zero_shot_view(
                             Ok(ApiResponse::Success(response)) => {
                                 let values_data = response.values;
                                 if values_data.is_empty() {
-                                    error_message.set(Some("データが見つかりませんでした".to_string()));
+                                    error_message.set(Some(PredictionError::DataNotFound.to_string()));
                                     loading.set(false);
                                     return;
                                 }
@@ -196,16 +197,15 @@ fn predict_zero_shot_view(
                                 // データを前半と後半に分割
                                 let mid_point = values_data.len() / 2;
                                 if mid_point < 2 {
-                                    error_message.set(Some("予測用のデータが不足しています".to_string()));
+                                    error_message.set(Some(PredictionError::InsufficientData.to_string()));
                                     loading.set(false);
                                     return;
                                 }
-
                                 let training_data = values_data[..mid_point].to_vec();
                                 let test_data = values_data[mid_point..].to_vec();
 
                                 if training_data.is_empty() || test_data.is_empty() {
-                                    error_message.set(Some("データ分割後のデータが不足しています".to_string()));
+                                    error_message.set(Some(PredictionError::InsufficientDataAfterSplit.to_string()));
                                     loading.set(false);
                                     return;
                                 }
