@@ -7,6 +7,7 @@ mod image_upload;
 mod ollama;
 mod pools;
 mod predict;
+mod prediction_config;
 mod prediction_utils;
 mod server_api;
 mod stats;

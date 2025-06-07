@@ -18,6 +18,7 @@ use crate::chart::plots::{
 };
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use crate::errors::PredictionError;
+use crate::prediction_config::get_config;
 use crate::prediction_utils::calculate_metrics;
 use crate::stats::DateRangeSelector;
 
@@ -49,7 +50,7 @@ fn predict_zero_shot_view(
     server_client: Signal<Arc<crate::server_api::ApiClient>>,
     chronos_client: Signal<Arc<ChronosApiClient>>,
 ) -> Element {
-    let mut quote = use_signal(|| "wrap.near".to_string());
+    let mut quote = use_signal(|| get_config().default_quote_token.clone());
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
 
     // デフォルトで2日間の日付範囲を設定

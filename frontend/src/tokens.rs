@@ -1,6 +1,4 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use dioxus::core_macro::component;
-use dioxus::dioxus_core::Element;
 use dioxus::prelude::*;
 use std::str::FromStr;
 use wasm_bindgen_futures::spawn_local;
@@ -9,18 +7,16 @@ use zaciraci_common::{
 };
 
 use crate::errors::PredictionError;
+use crate::prediction_config::get_config;
 use crate::prediction_utils::{execute_zero_shot_prediction, generate_prediction_chart_svg};
 use crate::stats::DateRangeSelector;
 
-// 定数定義
-const FALLBACK_MULTIPLIER: f64 = 1.05;
-
 #[derive(Clone, Debug)]
-struct TokenChartData {
+struct TokenVolatilityData {
     token: String,
     rank: usize,
-    predicted_price: String,
-    accuracy: String,
+    predicted_price: f64,
+    accuracy: f64,
     chart_svg: Option<String>,
 }
 
@@ -40,7 +36,7 @@ pub fn view() -> Element {
     let mut loading = use_signal(|| false);
     let mut error_message = use_signal(|| None::<String>);
     let mut prediction_results = use_signal(Vec::<(String, String, String, String)>::new);
-    let mut token_charts = use_signal(Vec::<TokenChartData>::new);
+    let mut token_charts = use_signal(Vec::<TokenVolatilityData>::new);
 
     rsx! {
         div { class: "tokens-view",
@@ -138,10 +134,14 @@ pub fn view() -> Element {
                                 prediction_results.set(results);
 
                                 // 各トークンについて価格データを取得してチャートを生成
-                                let quote_token = match TokenAccount::from_str("wrap.near") {
-                                    Ok(t) => t,
-                                    Err(_) => {
-                                        error_message.set(Some(PredictionError::QuoteTokenSetupError.to_string()));
+                                // Quote tokenの設定
+                                let quote_token = match TokenAccount::from_str(&get_config().default_quote_token) {
+                                    Ok(token) => {
+                                        web_sys::console::log_1(&format!("Quote token set: {}", token).into());
+                                        token
+                                    },
+                                    Err(e) => {
+                                        error_message.set(Some(PredictionError::QuoteTokenParseError(e.to_string()).to_string()));
                                         loading.set(false);
                                         return;
                                     }
@@ -196,11 +196,11 @@ pub fn view() -> Element {
 
                                                     // チャートデータを追加
                                                     let mut token_charts_vec = token_charts();
-                                                    token_charts_vec.push(TokenChartData {
+                                                    token_charts_vec.push(TokenVolatilityData {
                                                         token: token.to_string(),
                                                         rank: index + 1,
-                                                        predicted_price: format!("{:.6}", result.predicted_price),
-                                                        accuracy: format!("{:.2}%", result.accuracy),
+                                                        predicted_price: result.predicted_price,
+                                                        accuracy: result.accuracy,
                                                         chart_svg: result.chart_svg,
                                                     });
                                                     token_charts.set(token_charts_vec);
@@ -210,12 +210,13 @@ pub fn view() -> Element {
                                                     web_sys::console::log_1(&format!("予測エラー: {}", e).into());
 
                                                     // 簡易予測値を設定
+                                                    let fallback_multiplier = get_config().fallback_multiplier;
                                                     let mut current_results = prediction_results();
                                                     if index < current_results.len() {
                                                         current_results[index] = (
                                                             (index + 1).to_string(),
                                                             token.to_string(),
-                                                            format!("{:.6}", values_data.last().map(|v| v.value * FALLBACK_MULTIPLIER).unwrap_or(0.0)),
+                                                            format!("{:.6}", values_data.last().map(|v| v.value * fallback_multiplier).unwrap_or(0.0)),
                                                             "予測失敗".to_string(),
                                                         );
                                                         prediction_results.set(current_results);
@@ -223,11 +224,11 @@ pub fn view() -> Element {
 
                                                     // チャートデータを追加（簡易版）
                                                     let mut token_charts_vec = token_charts();
-                                                    token_charts_vec.push(TokenChartData {
+                                                    token_charts_vec.push(TokenVolatilityData {
                                                         token: token.to_string(),
                                                         rank: index + 1,
-                                                        predicted_price: format!("{:.6}", values_data.last().map(|v| v.value * FALLBACK_MULTIPLIER).unwrap_or(0.0)),
-                                                        accuracy: "予測失敗".to_string(),
+                                                        predicted_price: values_data.last().map(|v| v.value * fallback_multiplier).unwrap_or(0.0),
+                                                        accuracy: 0.0,
                                                         chart_svg: None,
                                                     });
                                                     token_charts.set(token_charts_vec);
@@ -334,7 +335,7 @@ pub fn view() -> Element {
                                     "予測価格: "
                                     span {
                                         style: "font-family: monospace; color: #2c5aa0;",
-                                        "{chart_data.predicted_price}"
+                                        "{chart_data.predicted_price:.6}"
                                     }
                                 }
                                 span {
@@ -342,7 +343,7 @@ pub fn view() -> Element {
                                     "精度: "
                                     span {
                                         style: "color: #28a745;",
-                                        "{chart_data.accuracy}"
+                                        "{chart_data.accuracy:.2}%"
                                     }
                                 }
                             }
