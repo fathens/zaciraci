@@ -25,9 +25,7 @@ pub struct PredictionResult {
 
 /// ゼロショット予測を実行する共通関数
 pub async fn execute_zero_shot_prediction(
-    _quote_token: TokenAccount,
-    _base_token: TokenAccount,
-    values_data: Vec<ValueAtTime>,
+    values_data: &[ValueAtTime],
     model_name: String,
     chronos_client: Arc<ChronosApiClient>,
 ) -> Result<PredictionResult, PredictionError> {

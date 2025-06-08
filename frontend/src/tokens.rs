@@ -128,15 +128,15 @@ pub fn view() -> Element {
 
                                 prediction_results.set(results);
 
-                                // 各トークンについて価格データを取得してチャートを生成
-                                for (index, token) in tokens.iter().enumerate() {
-                                    // 予測用データ取得期間（ユーザー指定の日付範囲を使用）
-                                    let predict_start = start_datetime;
-                                    let predict_end = end_datetime;
+                                // 予測用データ取得期間（ユーザー指定の日付範囲を使用）
+                                let predict_start = start_datetime;
+                                let predict_end = end_datetime;
 
-                                    // 予測結果を取得
-                                    let prediction_result = volatility_service().predict_token(token, predict_start, predict_end, config.default_quote_token.clone()).await;
+                                // 複数トークンの予測結果を一度に取得
+                                let prediction_results_vec = volatility_service().predict_tokens(&tokens, predict_start, predict_end, &config.quote_token).await;
 
+                                // 予測結果を処理
+                                for (index, prediction_result) in prediction_results_vec.into_iter().enumerate() {
                                     match prediction_result {
                                         Ok(result) => {
                                             // 予測結果を更新
@@ -144,7 +144,7 @@ pub fn view() -> Element {
                                             if index < current_results.len() {
                                                 current_results[index] = (
                                                     (index + 1).to_string(),
-                                                    token.to_string(),
+                                                    tokens[index].to_string(),
                                                     format!("{:.6}", result.predicted_price),
                                                     format!("{:.2}%", result.accuracy),
                                                 );
@@ -154,7 +154,7 @@ pub fn view() -> Element {
                                             // チャートデータを追加
                                             let mut token_charts_vec = token_charts();
                                             token_charts_vec.push(TokenVolatilityData {
-                                                token: token.to_string(),
+                                                token: tokens[index].to_string(),
                                                 rank: index + 1,
                                                 predicted_price: result.predicted_price,
                                                 accuracy: result.accuracy,

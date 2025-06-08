@@ -1,4 +1,5 @@
 use zaciraci_common::config;
+use zaciraci_common::types::TokenAccount;
 
 /// 予測機能の設定値
 #[derive(Debug, Clone)]
@@ -6,7 +7,7 @@ pub struct PredictionConfig {
     /// 代替価格計算の乗数（デフォルト: 1.05）
     pub fallback_multiplier: f64,
     /// デフォルトのquoteトークン（デフォルト: "wrap.near"）
-    pub default_quote_token: String,
+    pub quote_token: TokenAccount,
     /// チャートサイズ幅（デフォルト: 600）
     pub chart_width: u32,
     /// チャートサイズ高さ（デフォルト: 300）
@@ -19,7 +20,7 @@ impl Default for PredictionConfig {
     fn default() -> Self {
         Self {
             fallback_multiplier: 1.05,
-            default_quote_token: "wrap.near".to_string(),
+            quote_token: "wrap.near".parse().unwrap(),
             chart_width: 600,
             chart_height: 300,
             default_limit: 1000,
@@ -37,8 +38,10 @@ impl PredictionConfig {
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(default_config.fallback_multiplier);
 
-        let default_quote_token = config::get("PREDICTION_DEFAULT_QUOTE_TOKEN")
-            .unwrap_or(default_config.default_quote_token);
+        let quote_token = config::get("PREDICTION_DEFAULT_QUOTE_TOKEN")
+            .ok()
+            .and_then(|s| s.parse::<TokenAccount>().ok())
+            .unwrap_or(default_config.quote_token);
 
         let chart_width = config::get("PREDICTION_CHART_WIDTH")
             .ok()
@@ -57,7 +60,7 @@ impl PredictionConfig {
 
         Self {
             fallback_multiplier,
-            default_quote_token,
+            quote_token,
             chart_width,
             chart_height,
             default_limit,

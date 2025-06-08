@@ -50,7 +50,7 @@ fn predict_zero_shot_view(
     server_client: Signal<Arc<crate::server_api::ApiClient>>,
     chronos_client: Signal<Arc<ChronosApiClient>>,
 ) -> Element {
-    let mut quote = use_signal(|| get_config().default_quote_token.clone());
+    let mut quote = use_signal(|| get_config().quote_token.to_string());
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
 
     // デフォルトで2日間の日付範囲を設定

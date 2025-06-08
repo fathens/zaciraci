@@ -76,18 +76,13 @@ impl VolatilityPredictionService {
         token: &TokenAccount,
         start_datetime: DateTime<Utc>,
         end_datetime: DateTime<Utc>,
-        quote_token: String,
+        quote_token: &TokenAccount,
     ) -> Result<VolatilityPredictionResult, PredictionError> {
         let _config = get_config();
 
-        // StringをTokenAccountに変換
-        let quote_token_account: TokenAccount = quote_token
-            .parse()
-            .map_err(|_| PredictionError::ApiError("Invalid quote token".to_string()))?;
-
         // データ取得リクエスト作成
         let values_request = GetValuesRequest {
-            quote_token: quote_token_account.clone(),
+            quote_token: quote_token.clone(),
             base_token: token.clone(),
             start: start_datetime.naive_utc(),
             end: end_datetime.naive_utc(),
@@ -104,9 +99,7 @@ impl VolatilityPredictionService {
                 let values_data = values_response.values;
 
                 match execute_zero_shot_prediction(
-                    quote_token_account, // quote_token (TokenAccount)
-                    token.clone(),       // base_token (TokenAccount)
-                    values_data.clone(),
+                    &values_data,
                     "chronos-t5-small".to_string(), // model_name
                     self.chronos_client.clone(),
                 )
@@ -140,25 +133,22 @@ impl VolatilityPredictionService {
     }
 
     /// 複数のトークンに対して並列で予測を実行
-    #[allow(dead_code)]
     pub async fn predict_tokens(
         &self,
-        tokens: Vec<TokenAccount>,
+        tokens: &[TokenAccount],
         start_datetime: DateTime<Utc>,
         end_datetime: DateTime<Utc>,
-        quote_token: String,
+        quote_token: &TokenAccount,
     ) -> Vec<Result<VolatilityPredictionResult, PredictionError>> {
         use futures::future::join_all;
 
         let futures = tokens.into_iter().map(|token| {
-            let quote_token_clone = quote_token.clone();
-            let token_clone = token.clone();
             async move {
                 self.predict_token(
-                    &token_clone,
+                    token,
                     start_datetime,
                     end_datetime,
-                    quote_token_clone,
+                    quote_token,
                 )
                 .await
             }
