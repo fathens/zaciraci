@@ -119,11 +119,26 @@ pub(crate) fn calculate_data_ranges(
     values: &[ValueAtTime],
 ) -> (DateTime<Utc>, DateTime<Utc>, f64, f64) {
     if values.is_empty() {
-        panic!("空のデータセットでは範囲計算ができません");
+        // 空データの場合のデフォルト値を返す
+        let now =
+            DateTime::<Utc>::from_naive_utc_and_offset(chrono::Utc::now().naive_utc(), chrono::Utc);
+        return (now, now, 0.0, 1.0);
     }
 
-    let min_time = values.iter().map(|v| to_datetime(v.time)).min().unwrap();
-    let max_time = values.iter().map(|v| to_datetime(v.time)).max().unwrap();
+    let min_time = values
+        .iter()
+        .map(|v| to_datetime(v.time))
+        .min()
+        .unwrap_or_else(|| {
+            DateTime::<Utc>::from_naive_utc_and_offset(chrono::Utc::now().naive_utc(), chrono::Utc)
+        });
+    let max_time = values
+        .iter()
+        .map(|v| to_datetime(v.time))
+        .max()
+        .unwrap_or_else(|| {
+            DateTime::<Utc>::from_naive_utc_and_offset(chrono::Utc::now().naive_utc(), chrono::Utc)
+        });
     let min_value = values
         .iter()
         .map(|v| v.value)
@@ -713,10 +728,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "空のデータセットでは範囲計算ができません")]
     fn test_calculate_data_ranges_empty() {
-        // 空のデータセットはパニックするはず
+        // 空のデータセットはデフォルト値を返すはず
         let empty_values: Vec<ValueAtTime> = vec![];
-        calculate_data_ranges(&empty_values);
+        let (min_time, max_time, min_value, max_value) = calculate_data_ranges(&empty_values);
+
+        // デフォルト値の確認
+        assert_eq!(min_time, max_time); // 同じ時刻
+        assert_eq!(min_value, 0.0);
+        assert_eq!(max_value, 1.0);
     }
 }

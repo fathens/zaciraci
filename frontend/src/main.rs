@@ -2,13 +2,18 @@ mod api_underlying;
 mod basic;
 mod chart;
 mod chronos_api;
+mod errors;
 mod image_upload;
 mod ollama;
 mod pools;
 mod predict;
+mod prediction_config;
+mod prediction_utils;
 mod server_api;
+mod services;
 mod stats;
 mod storage;
+mod tokens;
 
 use dioxus::prelude::*;
 
@@ -62,6 +67,11 @@ fn app() -> Element {
                         class: if current_view() == "predict" { "active" } else { "" },
                         "predict"
                     }
+                    button {
+                        onclick: move |_| current_view.set("tokens".to_string()),
+                        class: if current_view() == "tokens" { "active" } else { "" },
+                        "Tokens"
+                    }
                 }
             }
             main { class: "main",
@@ -72,6 +82,7 @@ fn app() -> Element {
                     "ollama" => rsx! { ollama::view {} },
                     "stats" => rsx! { stats::view {} },
                     "predict" => rsx! { predict::view {} },
+                    "tokens" => rsx! { tokens::view {} },
                     _ => rsx! { basic::view {} },
                 }}
             }

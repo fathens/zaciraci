@@ -1,5 +1,8 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use dioxus::core_macro::component;
+use dioxus::dioxus_core::Element;
 use dioxus::prelude::*;
+use plotters::prelude::{BLUE, RED};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -10,10 +13,14 @@ use zaciraci_common::{
     types::TokenAccount,
 };
 
-use crate::chart::plots::MultiPlotSeries;
+use crate::chart::plots::{
+    MultiPlotOptions, MultiPlotSeries, plot_multi_values_at_time_to_svg_with_options,
+};
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
+use crate::errors::PredictionError;
+use crate::prediction_config::get_config;
+use crate::prediction_utils::calculate_metrics;
 use crate::stats::DateRangeSelector;
-use plotters::prelude::{BLUE, RED};
 
 /// 予測ビューのメインコンポーネント
 #[component]
@@ -37,46 +44,13 @@ pub fn view() -> Element {
     }
 }
 
-/// 予測精度の評価指標を計算する関数
-fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f64> {
-    let n = actual.len().min(predicted.len());
-    if n == 0 {
-        return HashMap::new();
-    }
-
-    // 二乗誤差和
-    let mut squared_errors_sum = 0.0;
-    // 絶対誤差和
-    let mut absolute_errors_sum = 0.0;
-    // 絶対パーセント誤差和
-    let mut absolute_percent_errors_sum = 0.0;
-
-    for i in 0..n {
-        let error = actual[i] - predicted[i];
-        squared_errors_sum += error * error;
-        absolute_errors_sum += error.abs();
-
-        // 分母がゼロに近い場合はパーセント誤差を計算しない
-        if actual[i].abs() > 1e-10 {
-            absolute_percent_errors_sum += (error.abs() / actual[i].abs()) * 100.0;
-        }
-    }
-
-    let mut metrics = HashMap::new();
-    metrics.insert("RMSE".to_string(), (squared_errors_sum / n as f64).sqrt());
-    metrics.insert("MAE".to_string(), absolute_errors_sum / n as f64);
-    metrics.insert("MAPE".to_string(), absolute_percent_errors_sum / n as f64);
-
-    metrics
-}
-
 /// ゼロショット予測ビューコンポーネント
 #[component]
 fn predict_zero_shot_view(
     server_client: Signal<Arc<crate::server_api::ApiClient>>,
     chronos_client: Signal<Arc<ChronosApiClient>>,
 ) -> Element {
-    let mut quote = use_signal(|| "wrap.near".to_string());
+    let mut quote = use_signal(|| get_config().default_quote_token.clone());
     let mut base = use_signal(|| "mark.gra-fun.near".to_string());
 
     // デフォルトで2日間の日付範囲を設定
@@ -162,7 +136,7 @@ fn predict_zero_shot_view(
                         let quote_token = match TokenAccount::from_str(&quote_val) {
                             Ok(token) => token,
                             Err(e) => {
-                                error_message.set(Some(format!("Quote tokenのパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::QuoteTokenParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -171,7 +145,7 @@ fn predict_zero_shot_view(
                         let base_token = match TokenAccount::from_str(&base_val) {
                             Ok(token) => token,
                             Err(e) => {
-                                error_message.set(Some(format!("Base tokenのパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::BaseTokenParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -180,7 +154,7 @@ fn predict_zero_shot_view(
                         let start_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(format!("開始日時のパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::StartDateParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -189,7 +163,7 @@ fn predict_zero_shot_view(
                         let end_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(format!("終了日時のパースエラー: {}", e)));
+                                error_message.set(Some(PredictionError::EndDateParseError(e.to_string()).to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -212,11 +186,11 @@ fn predict_zero_shot_view(
                         };
 
                         // 価格データを取得
-                        match server_client().stats.get_values(&request).await {
+                        match server_client.read().stats.get_values(&request).await {
                             Ok(ApiResponse::Success(response)) => {
                                 let values_data = response.values;
                                 if values_data.is_empty() {
-                                    error_message.set(Some("データが見つかりませんでした".to_string()));
+                                    error_message.set(Some(PredictionError::DataNotFound.to_string()));
                                     loading.set(false);
                                     return;
                                 }
@@ -224,16 +198,15 @@ fn predict_zero_shot_view(
                                 // データを前半と後半に分割
                                 let mid_point = values_data.len() / 2;
                                 if mid_point < 2 {
-                                    error_message.set(Some("予測用のデータが不足しています".to_string()));
+                                    error_message.set(Some(PredictionError::InsufficientData.to_string()));
                                     loading.set(false);
                                     return;
                                 }
-
                                 let training_data = values_data[..mid_point].to_vec();
                                 let test_data = values_data[mid_point..].to_vec();
 
                                 if training_data.is_empty() || test_data.is_empty() {
-                                    error_message.set(Some("データ分割後のデータが不足しています".to_string()));
+                                    error_message.set(Some(PredictionError::InsufficientDataAfterSplit.to_string()));
                                     loading.set(false);
                                     return;
                                 }
@@ -245,10 +218,17 @@ fn predict_zero_shot_view(
                                 let values: Vec<_> = training_data.iter().map(|v| v.value).collect();
 
                                 // 予測対象の終了時刻（テストデータの最後）
-                                let forecast_until = DateTime::<Utc>::from_naive_utc_and_offset(
-                                    test_data.last().unwrap().time,
-                                    Utc
-                                );
+                                let forecast_until = match test_data.last() {
+                                    Some(last_point) => DateTime::<Utc>::from_naive_utc_and_offset(
+                                        last_point.time,
+                                        Utc
+                                    ),
+                                    None => {
+                                        error_message.set(Some("テストデータが不足しています".to_string()));
+                                        loading.set(false);
+                                        return;
+                                    }
+                                };
 
                                 // ZeroShotPredictionRequestを作成
                                 let prediction_request = ZeroShotPredictionRequest::new(
@@ -258,7 +238,7 @@ fn predict_zero_shot_view(
                                 ).with_model_name(model_val);
 
                                 // 予測実行
-                                match chronos_client().predict_zero_shot(&prediction_request).await {
+                                match chronos_client.read().predict_zero_shot(&prediction_request).await {
                                     Ok(prediction_response) => {
                                         // 予測結果とテストデータの比較
                                         let actual_values: Vec<_> = test_data.iter().map(|v| v.value).collect();
@@ -282,7 +262,14 @@ fn predict_zero_shot_view(
                                             // テストデータと予測データを接続（連続性を確保）
 
                                             // テストデータの最後のポイントを取得
-                                            let last_test_point = test_data.last().unwrap();
+                                            let last_test_point = match test_data.last() {
+                                                Some(point) => point,
+                                                None => {
+                                                    error_message.set(Some("テストデータが不足しています".to_string()));
+                                                    loading.set(false);
+                                                    return;
+                                                }
+                                            };
 
                                             web_sys::console::log_1(&format!(
                                                 "テストデータの最後のポイント: 時刻={}, 値={}",
@@ -291,29 +278,23 @@ fn predict_zero_shot_view(
 
                                             // 予測データの調整（スケーリングと連続性の確保）
 
-                                            // 予測APIから返された最初の予測値を取得
-                                            let first_api_forecast_value = forecast_values[0];
-
                                             // 予測データの時間範囲をデバッグ出力
                                             if !prediction_response.forecast_timestamp.is_empty() {
-                                                let first_timestamp = prediction_response.forecast_timestamp.first().unwrap();
-                                                let last_timestamp = prediction_response.forecast_timestamp.last().unwrap();
-                                                web_sys::console::log_1(&format!(
-                                                    "予測データの時間範囲: {} から {} ({}個のデータポイント)",
-                                                    first_timestamp, last_timestamp, prediction_response.forecast_timestamp.len()
-                                                ).into());
+                                                if let (Some(first_timestamp), Some(last_timestamp)) =
+                                                    (prediction_response.forecast_timestamp.first(), prediction_response.forecast_timestamp.last()) {
+                                                    web_sys::console::log_1(&format!(
+                                                        "予測データの時間範囲: {} から {} ({}個のデータポイント)",
+                                                        first_timestamp, last_timestamp, prediction_response.forecast_timestamp.len()
+                                                    ).into());
+                                                }
                                             }
 
-                                            web_sys::console::log_1(&format!(
-                                                "APIから返された最初の予測値: {}",
-                                                first_api_forecast_value
-                                            ).into());
-
                                             // 予測値と実際の値の差を計算（補正係数）
-                                            let correction_factor = if first_api_forecast_value != 0.0 {
-                                                last_test_point.value / first_api_forecast_value
-                                            } else {
-                                                1.0 // ゼロ除算を防ぐ
+                                            let correction_factor = match forecast_values.first() {
+                                                Some(&first_value) if first_value != 0.0 => {
+                                                    last_test_point.value / first_value
+                                                }
+                                                _ => 1.0 // ゼロ除算や配列が空の場合を防ぐ
                                             };
 
                                             web_sys::console::log_1(&format!(
@@ -354,11 +335,12 @@ fn predict_zero_shot_view(
 
                                             // 最初と最後の予測ポイントの時間を表示
                                             if forecast_points.len() >= 2 {
-                                                web_sys::console::log_1(&format!(
-                                                    "最初の予測ポイント時刻: {}, 最後の予測ポイント時刻: {}",
-                                                    forecast_points.first().unwrap().time,
-                                                    forecast_points.last().unwrap().time
-                                                ).into());
+                                                if let (Some(first), Some(last)) = (forecast_points.first(), forecast_points.last()) {
+                                                    web_sys::console::log_1(&format!(
+                                                        "最初の予測ポイント時刻: {}, 最後の予測ポイント時刻: {}",
+                                                        first.time, last.time
+                                                    ).into());
+                                                }
                                             }
                                         } else {
                                             // テストデータがない場合や予測データがない場合は、そのまま変換
@@ -432,12 +414,13 @@ fn predict_zero_shot_view(
                                         if !forecast_points.is_empty() {
                                             // 予測データの時間範囲をログ出力
                                             if forecast_points.len() >= 2 {
-                                                web_sys::console::log_1(&format!(
-                                                    "描画前の予測データ: {} ポイント, 時間範囲: {} から {}",
-                                                    forecast_points.len(),
-                                                    forecast_points.first().unwrap().time,
-                                                    forecast_points.last().unwrap().time
-                                                ).into());
+                                                if let (Some(first), Some(last)) = (forecast_points.first(), forecast_points.last()) {
+                                                    web_sys::console::log_1(&format!(
+                                                        "描画前の予測データ: {} ポイント, 時間範囲: {} から {}",
+                                                        forecast_points.len(),
+                                                        first.time, last.time
+                                                    ).into());
+                                                }
                                             }
 
                                             plot_series.push(MultiPlotSeries {
@@ -448,7 +431,7 @@ fn predict_zero_shot_view(
                                         }
 
                                         // 複数系列を同一チャートに描画するためのオプション設定
-                                        let multi_options = crate::chart::plots::MultiPlotOptions {
+                                        let options = MultiPlotOptions {
                                             image_size: (800, 500),
                                             title: Some(format!("{} / {} (実際 vs 予測)", base_val, quote_val)),
                                             x_label: Some("時間".to_string()),
@@ -456,8 +439,8 @@ fn predict_zero_shot_view(
                                         };
 
                                         // 複数系列を同一チャートにプロット
-                                        let combined_svg = match crate::chart::plots::plot_multi_values_at_time_to_svg_with_options(
-                                            &plot_series, multi_options
+                                        let combined_svg = match plot_multi_values_at_time_to_svg_with_options(
+                                            &plot_series, options
                                         ) {
                                             Ok(svg) => svg,
                                             Err(e) => {

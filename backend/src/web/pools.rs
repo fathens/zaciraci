@@ -1,11 +1,18 @@
+mod sort;
+
 use super::AppState;
 use crate::jsonrpc::{GasInfo, SentTx};
 use crate::logging::*;
+use crate::persistence::TimeRange;
+use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::TokenPairLike;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{
+    TokenAccount, TokenInAccount, TokenOutAccount, WNEAR_TOKEN,
+};
 use crate::types::{MicroNear, MilliNear};
+use crate::web::pools::sort::{sort, tokens_with_depth};
 use crate::{jsonrpc, ref_finance, wallet};
 use axum::Json;
 use axum::{
@@ -15,10 +22,12 @@ use axum::{
 };
 use num_rational::Ratio;
 use num_traits::ToPrimitive;
+use std::ops::Deref;
 use std::sync::Arc;
 use zaciraci_common::ApiResponse;
 use zaciraci_common::pools::{
-    PoolRecordsRequest, PoolRecordsResponse, TradeRequest, TradeResponse,
+    PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest,
+    TradeResponse, VolatilityTokensRequest, VolatilityTokensResponse,
 };
 use zaciraci_common::types::YoctoNearToken;
 
@@ -48,6 +57,8 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         )
         .route(&path("estimate_trade"), post(estimate_trade))
         .route(&path("get_pool_records"), post(get_pool_records))
+        .route(&path("sort_pools"), post(sort_pools))
+        .route(&path("get_volatility_tokens"), post(get_volatility_tokens))
 }
 
 async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
@@ -61,8 +72,7 @@ async fn estimate_return(
 ) -> String {
     use crate::ref_finance::errors::Error;
 
-    let client = jsonrpc::new_client();
-    let pools = PoolInfoList::read_from_node(&client).await.unwrap();
+    let pools = PoolInfoList::read_from_db(None).await.unwrap();
     let pool = pools.get(pool_id).unwrap();
     let n = pool.len();
     assert!(n > 1, "{}", Error::InvalidPoolSize(n));
@@ -167,7 +177,7 @@ async fn run_swap(
 ) -> String {
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
-    let pools = PoolInfoList::read_from_node(&client).await.unwrap();
+    let pools = PoolInfoList::read_from_db(None).await.unwrap();
     let graph = TokenGraph::new(pools);
     let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
     let start_token: TokenAccount = token_in_account.parse().unwrap();
@@ -324,4 +334,141 @@ async fn get_pool_records(
     }
     info!(log, "finished");
     Json(ApiResponse::Success(PoolRecordsResponse { pools }))
+}
+
+async fn sort_pools(
+    State(_): State<Arc<AppState>>,
+    Json(request): Json<SortPoolsRequest>,
+) -> Json<ApiResponse<SortPoolsResponse, String>> {
+    let log = DEFAULT.new(o!(
+        "function" => "sort_pools",
+        "timestamp" => format!("{}", request.timestamp),
+        "limit" => request.limit,
+    ));
+    info!(log, "start");
+
+    let pools = PoolInfoList::read_from_db(Some(request.timestamp))
+        .await
+        .unwrap();
+    let sorted = match sort(pools) {
+        Ok(sorted) => sorted
+            .iter()
+            .take(request.limit as usize)
+            .map(|src| src.deref().clone().into())
+            .collect(),
+        Err(e) => {
+            error!(log, "failed to sort pools";
+                "error" => ?e,
+            );
+            return Json(ApiResponse::Error(e.to_string()));
+        }
+    };
+    let res = SortPoolsResponse { pools: sorted };
+    info!(log, "finished");
+    Json(ApiResponse::Success(res))
+}
+
+async fn get_volatility_tokens(
+    State(_): State<Arc<AppState>>,
+    Json(request): Json<VolatilityTokensRequest>,
+) -> Json<ApiResponse<VolatilityTokensResponse, String>> {
+    let log = DEFAULT.new(o!(
+        "function" => "volatility_tokens",
+        "range.start" => format!("{}", request.start),
+        "range.end" => format!("{}", request.end),
+        "limit" => format!("{}", request.limit),
+    ));
+    info!(log, "start");
+
+    let vols = {
+        let quote = WNEAR_TOKEN.clone().into();
+        let range = TimeRange {
+            start: request.start,
+            end: request.end,
+        };
+        info!(log, "get tokens with depth";
+            "quote" => format!("{}", quote),
+        );
+        match TokenRate::get_by_volatility_in_time_range(&range, &quote).await {
+            Ok(vols) => vols,
+            Err(e) => {
+                error!(log, "failed to get volatility";
+                    "error" => ?e,
+                );
+                return Json(ApiResponse::Error(e.to_string()));
+            }
+        }
+    };
+
+    let deps = {
+        info!(log, "get tokens with depth");
+        match PoolInfoList::read_from_db(Some(request.end))
+            .await
+            .and_then(tokens_with_depth)
+        {
+            Ok(pools) => pools,
+            Err(e) => {
+                error!(log, "failed to get tokens with depth";
+                    "error" => ?e,
+                );
+                return Json(ApiResponse::Error(e.to_string()));
+            }
+        }
+    };
+
+    let tokens = {
+        info!(log, "sort tokens";
+            "count" => format!("{}", vols.len()),
+        );
+        let mut weights: Vec<_> = vols
+            .into_iter()
+            .filter_map(|v| {
+                let token = v.base;
+                v.percentage_difference.and_then(|p| {
+                    deps.get(&token).map(|depth| {
+                        let weight = p * depth; // TODO 適切な重みの計算を考える
+                        (token, weight)
+                    })
+                })
+            })
+            .collect();
+        weights.sort_by(|(_, aw), (_, bw)| bw.cmp(aw));
+
+        weights
+            .into_iter()
+            .take(request.limit as usize)
+            .map(|(token, _)| token.into())
+            .collect()
+    };
+
+    let res = VolatilityTokensResponse { tokens };
+    info!(log, "finished");
+    Json(ApiResponse::Success(res))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse};
+
+    #[test]
+    fn test_sort_pools_request_structure() {
+        let request = SortPoolsRequest {
+            timestamp: Utc::now().naive_utc(),
+            limit: 10,
+        };
+
+        assert_eq!(request.limit, 10);
+        assert!(request.timestamp <= Utc::now().naive_utc());
+    }
+
+    #[test]
+    fn test_sort_pools_response_structure() {
+        let response = SortPoolsResponse { pools: vec![] };
+
+        assert!(response.pools.is_empty());
+    }
+
+    // Integration tests would require database setup, so we'll focus on unit tests
+    // The main sort_pools function is tested indirectly through the sort module tests
 }
