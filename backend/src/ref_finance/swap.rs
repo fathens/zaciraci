@@ -155,11 +155,11 @@ mod tests {
         }
 
         fn token_in_id(&self) -> TokenInAccount {
-            self.token_in.clone().into()
+            self.token_in.into()
         }
 
         fn token_out_id(&self) -> TokenOutAccount {
-            self.token_out.clone().into()
+            self.token_out.into()
         }
 
         fn estimate_return(&self, amount_in: u128) -> Result<u128> {

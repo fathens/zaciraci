@@ -1,7 +1,7 @@
 use super::*;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairId, TokenPairLike};
-use num_traits::one;
+use num_traits::One;
 use petgraph::Graph;
 use petgraph::algo::dijkstra;
 use petgraph::graph::NodeIndex;
@@ -495,7 +495,7 @@ fn test_with_sample_pools() {
         path.unwrap()
     }
 
-    let initial = YoctoNearToken::from_near(one()).as_yoctonear();
+    let initial = YoctoNearToken::from_near(One::one()).as_yoctonear();
     let list = vec![4421, 1230, 1238, 1302, 1903, 3805, 3820];
 
     {
