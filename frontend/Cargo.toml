@@ -31,3 +31,6 @@ once_cell = { workspace = true }
 reqwest = { workspace = true }
 dioxus-markdown = "0.0.1"
 plotters = "0.3"
+
+[lints]
+workspace = true

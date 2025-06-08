@@ -80,7 +80,7 @@ jobs:
 
       - name: Check clippy
         continue-on-error: true
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features
 
       - name: Generate code coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info

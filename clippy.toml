@@ -1,0 +1,14 @@
+# Clippy configuration for enhanced linting
+# https://doc.rust-lang.org/clippy/configuration.html
+
+# 最大複雑度（関数の複雑さを制限）
+cognitive-complexity-threshold = 25
+
+# 最大関数行数
+too-many-lines-threshold = 100
+
+# 型名の最大長
+type-complexity-threshold = 250
+
+# 避けるべきスタイル
+avoid-breaking-exported-api = false
