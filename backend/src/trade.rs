@@ -47,12 +47,13 @@ where
 }
 
 fn get_quote_token() -> TokenInAccount {
-    WNEAR_TOKEN.clone().into()
+    (*WNEAR_TOKEN).into()
 }
 
 fn get_initial_value() -> u128 {
     let in_milli = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
-        .and_then(|v| Ok(v.parse()?))
+        .map(|v| v.parse())
+        .and_then(Result::ok)
         .unwrap_or(100);
     MilliNear::of(in_milli).to_yocto()
 }

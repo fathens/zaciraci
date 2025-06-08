@@ -18,20 +18,23 @@ use std::time::Duration;
 
 static TOKEN_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("TOKEN_NOT_FOUND_WAIT")
-        .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(1)) // デフォルト: 1秒
+        .map(|v| parse_duration(&v))
+        .and_then(Result::ok)
+        .unwrap_or_else(|| Duration::from_secs(1)) // デフォルト: 1秒
 });
 
 static OTHER_ERROR_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("OTHER_ERROR_WAIT")
-        .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(30)) // デフォルト: 30秒
+        .map(|v| parse_duration(&v))
+        .and_then(Result::ok)
+        .unwrap_or_else(|| Duration::from_secs(30)) // デフォルト: 30秒
 });
 
 static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("PREVIEW_NOT_FOUND_WAIT")
-        .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(10)) // デフォルト: 10秒
+        .map(|v| parse_duration(&v))
+        .and_then(Result::ok)
+        .unwrap_or_else(|| Duration::from_secs(10)) // デフォルト: 10秒
 });
 
 pub async fn run() {
@@ -74,10 +77,10 @@ where
 {
     let log = DEFAULT.new(o!("function" => "single_loop"));
 
-    let token = WNEAR_TOKEN.clone();
+    let token = &*WNEAR_TOKEN;
 
-    let balance = ref_finance::balances::start(client, wallet, &token).await?;
-    let start: &TokenInAccount = &token.into();
+    let balance = ref_finance::balances::start(client, wallet, token).await?;
+    let start: TokenInAccount = token.into();
     let start_balance = MicroNear::from_yocto(balance);
     info!(log, "start";
         "start.token" => ?start,
@@ -89,10 +92,10 @@ where
 
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let gas_price = client.get_gas_price(None).await?;
-    let previews = ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
+    let previews = ref_finance::path::pick_previews(&graph, &start, start_balance, gas_price)?;
 
     if let Some(previews) = previews {
-        let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
+        let (pre_path, tokens) = previews.into_with_path(&graph, &start).await?;
 
         let res = ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
         if res.is_none() {

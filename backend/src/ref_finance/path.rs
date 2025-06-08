@@ -15,7 +15,7 @@ use crate::types::{MicroNear, MilliNear};
 use graph::TokenGraph;
 use near_primitives::types::Balance;
 use num_integer::Roots;
-use num_traits::{One, Zero, one, zero};
+use num_traits::{One, Zero};
 use preview::{Preview, PreviewList};
 use slog::info;
 use std::collections::HashMap;
@@ -36,12 +36,13 @@ pub async fn sorted_returns(
 ) -> Result<Vec<(TokenOutAccount, MilliNear, usize)>> {
     let goals = graph.update_graph(start)?;
     let returns = graph.list_returns(initial.to_yocto(), start, &goals)?;
-    let mut in_milli = vec![];
-    for (k, v) in returns.iter() {
-        let depth = graph.get_path_with_return(start, k)?.len();
-        in_milli.push((k.clone(), MilliNear::from_yocto(*v), depth));
-    }
-    Ok(in_milli)
+    returns
+        .iter()
+        .map(|(k, v)| {
+            let depth = graph.get_path_with_return(start, k)?.len();
+            Ok((k.clone(), MilliNear::from_yocto(*v), depth))
+        })
+        .collect()
 }
 
 pub async fn swap_path(
@@ -103,7 +104,7 @@ where
     ));
     info!(log, "start");
 
-    let min_input = one();
+    let min_input = One::one();
     let ave_input = {
         let ave = history::get_history().read().unwrap().inputs.average();
         if ave.is_zero() {
@@ -216,13 +217,13 @@ where
                 .unwrap()
                 .clone()?
                 .map(gain)
-                .unwrap_or(zero()));
+                .unwrap_or(Zero::zero()));
         }
 
         // 新しい値を計算
         let result = calc_res(input).map_err(|e| InnerError(Arc::new(e)))?;
         cache.insert(input, Ok(result.clone()));
-        let gain_value = result.clone().map(gain).unwrap_or(zero());
+        let gain_value = result.clone().map(gain).unwrap_or(Zero::zero());
 
         Ok(gain_value)
     };
@@ -247,7 +248,7 @@ where
             "c" => format!("{:?}", c)
         );
 
-        if a == b && b == c && a == zero() {
+        if a == b && b == c && a == Zero::zero() {
             /* 全てゼロ
                a - b - c (== 0)
             */
@@ -571,7 +572,7 @@ mod test {
     }
 
     #[test]
-    fn test_rate_averate() {
+    fn test_rate_average() {
         assert_eq!(rate_average(1_u128, 1), 1);
         assert_eq!(rate_average(1_u128, 100), 10);
         assert_eq!(rate_average(10_u128, 1000), 100);
