@@ -1,29 +1,23 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use dioxus::prelude::*;
-use std::str::FromStr;
+use std::sync::Arc;
 use wasm_bindgen_futures::spawn_local;
-use zaciraci_common::{
-    ApiResponse, pools::VolatilityTokensRequest, stats::GetValuesRequest, types::TokenAccount,
-};
 
-use crate::errors::PredictionError;
 use crate::prediction_config::get_config;
-use crate::prediction_utils::{execute_zero_shot_prediction, generate_prediction_chart_svg};
+use crate::services::VolatilityPredictionService;
 use crate::stats::DateRangeSelector;
-
-#[derive(Clone, Debug)]
-struct TokenVolatilityData {
-    token: String,
-    rank: usize,
-    predicted_price: f64,
-    accuracy: f64,
-    chart_svg: Option<String>,
-}
 
 #[component]
 pub fn view() -> Element {
     let server_client = use_signal(crate::server_api::get_client);
     let chronos_client = use_signal(crate::chronos_api::predict::get_client);
+
+    let volatility_service = use_signal(|| {
+        Arc::new(VolatilityPredictionService::new(
+            server_client(),
+            chronos_client(),
+        ))
+    });
 
     // デフォルトで7日間の日付範囲を設定
     let now = Utc::now();
@@ -79,7 +73,7 @@ pub fn view() -> Element {
 
                     let start_val = start_date().clone();
                     let end_val = end_date().clone();
-                    let limit_val = limit();
+                    let limit_value = limit();
 
                     // 非同期で処理を実行
                     spawn_local(async move {
@@ -87,7 +81,7 @@ pub fn view() -> Element {
                         let start_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&start_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(PredictionError::StartDateParseError(e.to_string()).to_string()));
+                                error_message.set(Some(e.to_string()));
                                 loading.set(false);
                                 return;
                             }
@@ -96,24 +90,25 @@ pub fn view() -> Element {
                         let end_datetime: DateTime<Utc> = match NaiveDateTime::parse_from_str(&end_val, "%Y-%m-%dT%H:%M") {
                             Ok(naive) => naive.and_utc(),
                             Err(e) => {
-                                error_message.set(Some(PredictionError::EndDateParseError(e.to_string()).to_string()));
+                                error_message.set(Some(e.to_string()));
                                 loading.set(false);
                                 return;
                             }
                         };
 
                         // ボラティリティトークンを取得
-                        let volatility_request = VolatilityTokensRequest {
-                            start: start_datetime.naive_utc(),
-                            end: end_datetime.naive_utc(),
-                            limit: limit_val,
-                        };
+                        let config = get_config();
+                        let volatility_result = volatility_service().get_volatility_tokens(
+                            start_datetime,
+                            end_datetime,
+                            limit_value,
+                        ).await;
 
-                        match server_client().pools.get_volatility_tokens(volatility_request).await {
-                            Ok(ApiResponse::Success(volatility_response)) => {
-                                let tokens = volatility_response.tokens;
+                        match volatility_result {
+                            Ok(volatility_tokens_result) => {
+                                let tokens = volatility_tokens_result.tokens;
                                 if tokens.is_empty() {
-                                    error_message.set(Some(PredictionError::VolatilityTokensNotFound.to_string()));
+                                    error_message.set(Some("ボラティリティトークンが見つかりません".to_string()));
                                     loading.set(false);
                                     return;
                                 }
@@ -134,138 +129,47 @@ pub fn view() -> Element {
                                 prediction_results.set(results);
 
                                 // 各トークンについて価格データを取得してチャートを生成
-                                // Quote tokenの設定
-                                let quote_token = match TokenAccount::from_str(&get_config().default_quote_token) {
-                                    Ok(token) => {
-                                        web_sys::console::log_1(&format!("Quote token set: {}", token).into());
-                                        token
-                                    },
-                                    Err(e) => {
-                                        error_message.set(Some(PredictionError::QuoteTokenParseError(e.to_string()).to_string()));
-                                        loading.set(false);
-                                        return;
-                                    }
-                                };
-
                                 for (index, token) in tokens.iter().enumerate() {
                                     // 予測用データ取得期間（ユーザー指定の日付範囲を使用）
                                     let predict_start = start_datetime;
                                     let predict_end = end_datetime;
 
-                                    // データ取得リクエスト
-                                    let data_request = GetValuesRequest {
-                                        quote_token: quote_token.clone(),
-                                        base_token: token.clone(),
-                                        start: predict_start.naive_utc(),
-                                        end: predict_end.naive_utc(),
-                                    };
+                                    // 予測結果を取得
+                                    let prediction_result = volatility_service().predict_token(token, predict_start, predict_end, config.default_quote_token.clone()).await;
 
-                                    // 価格データを取得
-                                    match server_client().stats.get_values(&data_request).await {
-                                        Ok(ApiResponse::Success(response)) => {
-                                            let values_data = response.values;
-                                            if values_data.len() < 4 {
-                                                continue;
+                                    match prediction_result {
+                                        Ok(result) => {
+                                            // 予測結果を更新
+                                            let mut current_results = prediction_results();
+                                            if index < current_results.len() {
+                                                current_results[index] = (
+                                                    (index + 1).to_string(),
+                                                    token.to_string(),
+                                                    format!("{:.6}", result.predicted_price),
+                                                    format!("{:.2}%", result.accuracy),
+                                                );
+                                                prediction_results.set(current_results);
                                             }
 
-                                            // 実際のゼロショット予測を実行
-                                            let chronos_api_client = chronos_client();
-
-                                            let prediction_result = execute_zero_shot_prediction(
-                                                quote_token.clone(),
-                                                token.clone(),
-                                                values_data.clone(),
-                                                "amazon/chronos-t5-tiny".to_string(),
-                                                chronos_api_client.clone(),
-                                            ).await;
-
-                                            // 予測結果を処理
-                                            match prediction_result {
-                                                Ok(result) => {
-                                                    // 予測結果を更新
-                                                    let mut current_results = prediction_results();
-                                                    if index < current_results.len() {
-                                                        current_results[index] = (
-                                                            (index + 1).to_string(),
-                                                            token.to_string(),
-                                                            format!("{:.6}", result.predicted_price),
-                                                            format!("{:.2}%", result.accuracy),
-                                                        );
-                                                        prediction_results.set(current_results);
-                                                    }
-
-                                                    // チャートデータを追加
-                                                    let mut token_charts_vec = token_charts();
-                                                    token_charts_vec.push(TokenVolatilityData {
-                                                        token: token.to_string(),
-                                                        rank: index + 1,
-                                                        predicted_price: result.predicted_price,
-                                                        accuracy: result.accuracy,
-                                                        chart_svg: result.chart_svg,
-                                                    });
-                                                    token_charts.set(token_charts_vec);
-                                                }
-                                                Err(e) => {
-                                                    // エラーの場合は元の処理を維持
-                                                    web_sys::console::log_1(&format!("予測エラー: {}", e).into());
-
-                                                    // 簡易予測値を設定
-                                                    let fallback_multiplier = get_config().fallback_multiplier;
-                                                    let mut current_results = prediction_results();
-                                                    if index < current_results.len() {
-                                                        current_results[index] = (
-                                                            (index + 1).to_string(),
-                                                            token.to_string(),
-                                                            format!("{:.6}", values_data.last().map(|v| v.value * fallback_multiplier).unwrap_or(0.0)),
-                                                            "予測失敗".to_string(),
-                                                        );
-                                                        prediction_results.set(current_results);
-                                                    }
-
-                                                    // チャートデータを追加（簡易版）
-                                                    let mut token_charts_vec = token_charts();
-                                                    token_charts_vec.push(TokenVolatilityData {
-                                                        token: token.to_string(),
-                                                        rank: index + 1,
-                                                        predicted_price: values_data.last().map(|v| v.value * fallback_multiplier).unwrap_or(0.0),
-                                                        accuracy: 0.0,
-                                                        chart_svg: None,
-                                                    });
-                                                    token_charts.set(token_charts_vec);
-
-                                                    // 簡易チャートを生成（prediction_utils.rsの関数を使用）
-                                                    let quote_token_str = quote_token.to_string();
-                                                    let base_token_str = token.to_string();
-                                                    
-                                                    match generate_prediction_chart_svg(
-                                                        &values_data, // training_data
-                                                        &[], // test_data (空)
-                                                        &[] // forecast_data (空)
-                                                    ) {
-                                                        Ok(svg_content) => {
-                                                            // チャートSVGを設定
-                                                            let mut token_charts_vec = token_charts();
-                                                            if let Some(last_chart) = token_charts_vec.last_mut() {
-                                                                last_chart.chart_svg = Some(svg_content);
-                                                            }
-                                                            token_charts.set(token_charts_vec);
-                                                        }
-                                                        Err(e) => {
-                                                            web_sys::console::log_1(&format!("チャート生成エラー: {}", e).into());
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        _ => continue,
+                                            // チャートデータを追加
+                                            let mut token_charts_vec = token_charts();
+                                            token_charts_vec.push(TokenVolatilityData {
+                                                token: token.to_string(),
+                                                rank: index + 1,
+                                                predicted_price: result.predicted_price,
+                                                accuracy: result.accuracy,
+                                                chart_svg: result.chart_svg,
+                                            });
+                                            token_charts.set(token_charts_vec);
+                                        }
+                                        Err(e) => {
+                                            error_message.set(Some(e.to_string()));
+                                        }
                                     }
                                 }
                             },
-                            Ok(ApiResponse::Error(e)) => {
-                                error_message.set(Some(PredictionError::VolatilityTokensApiError(e).to_string()));
-                            },
                             Err(e) => {
-                                error_message.set(Some(PredictionError::RequestError(e.to_string()).to_string()));
+                                error_message.set(Some(e.to_string()));
                             }
                         }
 
@@ -361,4 +265,13 @@ pub fn view() -> Element {
             }
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct TokenVolatilityData {
+    token: String,
+    rank: usize,
+    predicted_price: f64,
+    accuracy: f64,
+    chart_svg: Option<String>,
 }

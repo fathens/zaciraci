@@ -31,25 +31,25 @@ impl PredictionConfig {
     /// 環境変数から設定を読み込む
     pub fn from_env() -> Self {
         let default_config = Self::default();
-        
+
         let fallback_multiplier = config::get("PREDICTION_FALLBACK_MULTIPLIER")
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(default_config.fallback_multiplier);
-            
+
         let default_quote_token = config::get("PREDICTION_DEFAULT_QUOTE_TOKEN")
             .unwrap_or(default_config.default_quote_token);
-            
+
         let chart_width = config::get("PREDICTION_CHART_WIDTH")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(default_config.chart_width);
-            
+
         let chart_height = config::get("PREDICTION_CHART_HEIGHT")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(default_config.chart_height);
-            
+
         let default_limit = config::get("PREDICTION_DEFAULT_LIMIT")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
@@ -63,7 +63,7 @@ impl PredictionConfig {
             default_limit,
         }
     }
-    
+
     /// チャートサイズをタプルで取得
     pub fn chart_size(&self) -> (u32, u32) {
         (self.chart_width, self.chart_height)
@@ -75,5 +75,5 @@ static CONFIG: std::sync::OnceLock<PredictionConfig> = std::sync::OnceLock::new(
 
 /// グローバル設定を取得
 pub fn get_config() -> &'static PredictionConfig {
-    CONFIG.get_or_init(|| PredictionConfig::from_env())
+    CONFIG.get_or_init(PredictionConfig::from_env)
 }

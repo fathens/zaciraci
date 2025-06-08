@@ -10,6 +10,7 @@ mod predict;
 mod prediction_config;
 mod prediction_utils;
 mod server_api;
+mod services;
 mod stats;
 mod storage;
 mod tokens;

@@ -91,8 +91,22 @@ pub fn charts_view() -> Element {
                     chart_svg.set(None);
 
                     spawn_local(async move {
-                        let quote_token_account = TokenAccount::from_str(&quote().clone()).unwrap();
-                        let base_token_account = TokenAccount::from_str(&base().clone()).unwrap();
+                        let quote_token_account = match TokenAccount::from_str(&quote().clone()) {
+                            Ok(token) => token,
+                            Err(e) => {
+                                error_message.set(Some(format!("Quote tokenの解析エラー: {}", e)));
+                                loading.set(false);
+                                return;
+                            }
+                        };
+                        let base_token_account = match TokenAccount::from_str(&base().clone()) {
+                            Ok(token) => token,
+                            Err(e) => {
+                                error_message.set(Some(format!("Base tokenの解析エラー: {}", e)));
+                                loading.set(false);
+                                return;
+                            }
+                        };
                         let request = GetValuesRequest {
                             quote_token: quote_token_account,
                             base_token: base_token_account,
@@ -180,6 +194,7 @@ pub fn stats_analysis_view() -> Element {
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M:%S").to_string());
     let mut period = use_signal(|| "1m".to_string());
     let mut descs = use_signal(|| "".to_string());
+    let mut error_message = use_signal(|| "".to_string());
 
     rsx! {
         div { class: "stats-analysis-view",
@@ -221,23 +236,47 @@ pub fn stats_analysis_view() -> Element {
                 class: "btn btn-primary",
                 onclick: move |_| {
                     descs.set("Loading...".to_string());
+                    error_message.set("".to_string());
                     spawn_local(async move {
                         let request = DescribesRequest {
                             quote_token: quote().clone(),
                             base_token: base().clone(),
-                            start: start_date().parse().unwrap(),
-                            end: end_date().parse().unwrap(),
-                            period: parse_duration(&period()).unwrap(),
+                            start: match start_date().parse() {
+                                Ok(date) => date,
+                                Err(e) => {
+                                    error_message.set(format!("開始日付の解析エラー: {}", e));
+                                    return;
+                                }
+                            },
+                            end: match end_date().parse() {
+                                Ok(date) => date,
+                                Err(e) => {
+                                    error_message.set(format!("終了日付の解析エラー: {}", e));
+                                    return;
+                                }
+                            },
+                            period: match parse_duration(&period()) {
+                                Ok(duration) => duration,
+                                Err(e) => {
+                                    error_message.set(format!("期間の解析エラー: {}", e));
+                                    return;
+                                }
+                            },
                         };
                         match client().stats.describes(&request).await {
                             Ok(text) => descs.set(text),
                             Err(e) => {
-                                descs.set(format!("Error: {}", e));
+                                error_message.set(format!("Error: {}", e));
                             },
                         }
                     });
                 },
                 "Get Describes"
+            }
+
+            // エラーメッセージの表示
+            if !error_message().is_empty() {
+                div { class: "alert alert-danger", "{error_message}" }
             }
 
             div { class: "descs-container",

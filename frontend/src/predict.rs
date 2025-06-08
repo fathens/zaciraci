@@ -218,10 +218,17 @@ fn predict_zero_shot_view(
                                 let values: Vec<_> = training_data.iter().map(|v| v.value).collect();
 
                                 // 予測対象の終了時刻（テストデータの最後）
-                                let forecast_until = DateTime::<Utc>::from_naive_utc_and_offset(
-                                    test_data.last().unwrap().time,
-                                    Utc
-                                );
+                                let forecast_until = match test_data.last() {
+                                    Some(last_point) => DateTime::<Utc>::from_naive_utc_and_offset(
+                                        last_point.time,
+                                        Utc
+                                    ),
+                                    None => {
+                                        error_message.set(Some("テストデータが不足しています".to_string()));
+                                        loading.set(false);
+                                        return;
+                                    }
+                                };
 
                                 // ZeroShotPredictionRequestを作成
                                 let prediction_request = ZeroShotPredictionRequest::new(
@@ -255,7 +262,14 @@ fn predict_zero_shot_view(
                                             // テストデータと予測データを接続（連続性を確保）
 
                                             // テストデータの最後のポイントを取得
-                                            let last_test_point = test_data.last().unwrap();
+                                            let last_test_point = match test_data.last() {
+                                                Some(point) => point,
+                                                None => {
+                                                    error_message.set(Some("テストデータが不足しています".to_string()));
+                                                    loading.set(false);
+                                                    return;
+                                                }
+                                            };
 
                                             web_sys::console::log_1(&format!(
                                                 "テストデータの最後のポイント: 時刻={}, 値={}",
@@ -266,19 +280,21 @@ fn predict_zero_shot_view(
 
                                             // 予測データの時間範囲をデバッグ出力
                                             if !prediction_response.forecast_timestamp.is_empty() {
-                                                let first_timestamp = prediction_response.forecast_timestamp.first().unwrap();
-                                                let last_timestamp = prediction_response.forecast_timestamp.last().unwrap();
-                                                web_sys::console::log_1(&format!(
-                                                    "予測データの時間範囲: {} から {} ({}個のデータポイント)",
-                                                    first_timestamp, last_timestamp, prediction_response.forecast_timestamp.len()
-                                                ).into());
+                                                if let (Some(first_timestamp), Some(last_timestamp)) =
+                                                    (prediction_response.forecast_timestamp.first(), prediction_response.forecast_timestamp.last()) {
+                                                    web_sys::console::log_1(&format!(
+                                                        "予測データの時間範囲: {} から {} ({}個のデータポイント)",
+                                                        first_timestamp, last_timestamp, prediction_response.forecast_timestamp.len()
+                                                    ).into());
+                                                }
                                             }
 
                                             // 予測値と実際の値の差を計算（補正係数）
-                                            let correction_factor = if forecast_values[0] != 0.0 {
-                                                last_test_point.value / forecast_values[0]
-                                            } else {
-                                                1.0 // ゼロ除算を防ぐ
+                                            let correction_factor = match forecast_values.first() {
+                                                Some(&first_value) if first_value != 0.0 => {
+                                                    last_test_point.value / first_value
+                                                }
+                                                _ => 1.0 // ゼロ除算や配列が空の場合を防ぐ
                                             };
 
                                             web_sys::console::log_1(&format!(
@@ -319,11 +335,12 @@ fn predict_zero_shot_view(
 
                                             // 最初と最後の予測ポイントの時間を表示
                                             if forecast_points.len() >= 2 {
-                                                web_sys::console::log_1(&format!(
-                                                    "最初の予測ポイント時刻: {}, 最後の予測ポイント時刻: {}",
-                                                    forecast_points.first().unwrap().time,
-                                                    forecast_points.last().unwrap().time
-                                                ).into());
+                                                if let (Some(first), Some(last)) = (forecast_points.first(), forecast_points.last()) {
+                                                    web_sys::console::log_1(&format!(
+                                                        "最初の予測ポイント時刻: {}, 最後の予測ポイント時刻: {}",
+                                                        first.time, last.time
+                                                    ).into());
+                                                }
                                             }
                                         } else {
                                             // テストデータがない場合や予測データがない場合は、そのまま変換
@@ -397,12 +414,13 @@ fn predict_zero_shot_view(
                                         if !forecast_points.is_empty() {
                                             // 予測データの時間範囲をログ出力
                                             if forecast_points.len() >= 2 {
-                                                web_sys::console::log_1(&format!(
-                                                    "描画前の予測データ: {} ポイント, 時間範囲: {} から {}",
-                                                    forecast_points.len(),
-                                                    forecast_points.first().unwrap().time,
-                                                    forecast_points.last().unwrap().time
-                                                ).into());
+                                                if let (Some(first), Some(last)) = (forecast_points.first(), forecast_points.last()) {
+                                                    web_sys::console::log_1(&format!(
+                                                        "描画前の予測データ: {} ポイント, 時間範囲: {} から {}",
+                                                        forecast_points.len(),
+                                                        first.time, last.time
+                                                    ).into());
+                                                }
                                             }
 
                                             plot_series.push(MultiPlotSeries {
