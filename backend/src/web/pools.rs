@@ -24,6 +24,7 @@ use num_rational::Ratio;
 use num_traits::ToPrimitive;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::Instant;
 use zaciraci_common::ApiResponse;
 use zaciraci_common::pools::{
     PoolRecordsRequest, PoolRecordsResponse, SortPoolsRequest, SortPoolsResponse, TradeRequest,
@@ -381,6 +382,7 @@ async fn get_volatility_tokens(
     info!(log, "start");
 
     let vols = {
+        let start_time = Instant::now();
         let quote = WNEAR_TOKEN.clone().into();
         let range = TimeRange {
             start: request.start,
@@ -389,7 +391,7 @@ async fn get_volatility_tokens(
         info!(log, "get tokens with depth";
             "quote" => format!("{}", quote),
         );
-        match TokenRate::get_by_volatility_in_time_range(&range, &quote).await {
+        let result = match TokenRate::get_by_volatility_in_time_range(&range, &quote).await {
             Ok(vols) => vols,
             Err(e) => {
                 error!(log, "failed to get volatility";
@@ -397,12 +399,19 @@ async fn get_volatility_tokens(
                 );
                 return Json(ApiResponse::Error(e.to_string()));
             }
-        }
+        };
+        let elapsed = start_time.elapsed();
+        info!(log, "vols part completed"; 
+            "elapsed_ms" => elapsed.as_millis(),
+            "elapsed_secs" => elapsed.as_secs_f64(),
+        );
+        result
     };
 
     let deps = {
+        let start_time = Instant::now();
         info!(log, "get tokens with depth");
-        match PoolInfoList::read_from_db(Some(request.end))
+        let result = match PoolInfoList::read_from_db(Some(request.end))
             .await
             .and_then(tokens_with_depth)
         {
@@ -413,10 +422,17 @@ async fn get_volatility_tokens(
                 );
                 return Json(ApiResponse::Error(e.to_string()));
             }
-        }
+        };
+        let elapsed = start_time.elapsed();
+        info!(log, "deps part completed"; 
+            "elapsed_ms" => elapsed.as_millis(),
+            "elapsed_secs" => elapsed.as_secs_f64(),
+        );
+        result
     };
 
     let tokens = {
+        let start_time = Instant::now();
         info!(log, "sort tokens";
             "count" => format!("{}", vols.len()),
         );
@@ -434,11 +450,18 @@ async fn get_volatility_tokens(
             .collect();
         weights.sort_by(|(_, aw), (_, bw)| bw.cmp(aw));
 
-        weights
+        let result = weights
             .into_iter()
             .take(request.limit as usize)
             .map(|(token, _)| token.into())
-            .collect()
+            .collect();
+
+        let elapsed = start_time.elapsed();
+        info!(log, "tokens part completed"; 
+            "elapsed_ms" => elapsed.as_millis(),
+            "elapsed_secs" => elapsed.as_secs_f64(),
+        );
+        result
     };
 
     let res = VolatilityTokensResponse { tokens };
