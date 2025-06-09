@@ -78,6 +78,7 @@ enum BackendType {
 }
 
 /// プロットの結果を表す列挙型
+#[derive(Debug)]
 enum PlotResult {
     /// メモリ上のPNGの場合はVec<u8>
     Memory(Vec<u8>),
@@ -302,13 +303,15 @@ fn draw_multi_plot<DB: DrawingBackend>(
     }
 
     // 全データの範囲を計算
-    // NaiveDateTimeをUTC DateTimeに変換
-    let mut min_time = Utc::now();
-    let mut max_time = Utc::now();
-    let mut min_value = f64::INFINITY;
-    let mut max_value = f64::NEG_INFINITY;
+    // 最初の系列から初期値を取得
+    let first_series_range = calculate_data_ranges(&series[0].values);
+    let mut min_time = first_series_range.0;
+    let mut max_time = first_series_range.1;
+    let mut min_value = first_series_range.2;
+    let mut max_value = first_series_range.3;
 
-    for s in series {
+    // 残りの系列で範囲を更新
+    for s in &series[1..] {
         let (s_min_time, s_max_time, s_min_value, s_max_value) = calculate_data_ranges(&s.values);
         min_time = min_time.min(s_min_time);
         max_time = max_time.max(s_max_time);
@@ -737,5 +740,233 @@ mod tests {
         assert_eq!(min_time, max_time); // 同じ時刻
         assert_eq!(min_value, 0.0);
         assert_eq!(max_value, 1.0);
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_empty_series() {
+        // 空の系列配列
+        let empty_series: Vec<MultiPlotSeries> = vec![];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&empty_series, BackendType::Svg, &options);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("空のデータセット"));
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_empty_data_in_series() {
+        // 系列内のデータが空の場合
+        let series = vec![MultiPlotSeries {
+            values: vec![], // 空のデータ
+            name: "Empty Series".to_string(),
+            color: plotters::prelude::BLUE,
+        }];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("系列 0 のデータが空"));
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_single_series() {
+        // 単一系列の正常ケース
+        let series = vec![MultiPlotSeries {
+            values: vec![
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 100.0,
+                },
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 200.0,
+                },
+            ],
+            name: "Series 1".to_string(),
+            color: plotters::prelude::BLUE,
+        }];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
+        assert!(result.is_ok());
+        
+        // SVG出力の基本検証
+        if let Ok(PlotResult::Svg(svg_content)) = result {
+            assert!(svg_content.contains("<svg"));
+            assert!(svg_content.contains("</svg>"));
+            assert!(svg_content.contains("Series 1"));
+        }
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_multi_series() {
+        // 複数系列の正常ケース
+        let series = vec![
+            MultiPlotSeries {
+                values: vec![
+                    ValueAtTime {
+                        time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                            .unwrap()
+                            .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                        value: 100.0,
+                    },
+                    ValueAtTime {
+                        time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                            .unwrap()
+                            .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                        value: 200.0,
+                    },
+                ],
+                name: "Series 1".to_string(),
+                color: plotters::prelude::BLUE,
+            },
+            MultiPlotSeries {
+                values: vec![
+                    ValueAtTime {
+                        time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                            .unwrap()
+                            .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                        value: 150.0,
+                    },
+                    ValueAtTime {
+                        time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                            .unwrap()
+                            .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                        value: 250.0,
+                    },
+                ],
+                name: "Series 2".to_string(),
+                color: plotters::prelude::RED,
+            },
+        ];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
+        assert!(result.is_ok());
+        
+        // SVG出力の複数系列検証
+        if let Ok(PlotResult::Svg(svg_content)) = result {
+            assert!(svg_content.contains("<svg"));
+            assert!(svg_content.contains("</svg>"));
+            assert!(svg_content.contains("Series 1"));
+            assert!(svg_content.contains("Series 2"));
+        }
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_svg_backend() {
+        // SVGバックエンドの動作確認
+        let series = vec![MultiPlotSeries {
+            values: vec![
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 100.0,
+                },
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 200.0,
+                },
+            ],
+            name: "SVG Test".to_string(),
+            color: plotters::prelude::GREEN,
+        }];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
+        assert!(result.is_ok());
+        
+        // SVG出力の基本検証
+        if let Ok(PlotResult::Svg(svg_content)) = result {
+            assert!(svg_content.contains("<svg"));
+            assert!(svg_content.contains("</svg>"));
+            assert!(svg_content.contains("SVG Test"));
+        }
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_edge_cases() {
+        // エッジケース: 単一ポイント
+        let series = vec![MultiPlotSeries {
+            values: vec![ValueAtTime {
+                time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                    .unwrap()
+                    .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                value: 100.0,
+            }],
+            name: "Single Point".to_string(),
+            color: plotters::prelude::BLUE,
+        }];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_same_values() {
+        // エッジケース: 同じ値の系列
+        let series = vec![MultiPlotSeries {
+            values: vec![
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 100.0,
+                },
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 100.0,
+                },
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 3)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 100.0,
+                },
+            ],
+            name: "Constant Values".to_string(),
+            color: plotters::prelude::BLUE,
+        }];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_plot_multi_values_at_time_internal_extreme_values() {
+        // エッジケース: 極端な値
+        let series = vec![MultiPlotSeries {
+            values: vec![
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 1)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: -1_000_000.0,
+                },
+                ValueAtTime {
+                    time: NaiveDate::from_ymd_opt(2023, 1, 2)
+                        .unwrap()
+                        .and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+                    value: 1_000_000.0,
+                },
+            ],
+            name: "Extreme Values".to_string(),
+            color: plotters::prelude::BLUE,
+        }];
+        let options = MultiPlotOptions::default();
+        
+        let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
+        assert!(result.is_ok());
     }
 }
