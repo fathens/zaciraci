@@ -406,15 +406,12 @@ impl TokenRate {
                 SELECT 
                     base_token,
                     (MAX(rate) - MIN(rate))::DECIMAL as rate_difference,
-                    CASE
-                        WHEN MAX(rate) = 0 AND MIN(rate) = 0 THEN 0::DECIMAL
-                        WHEN MIN(rate) = 0 THEN NULL
-                        ELSE ((MAX(rate) - MIN(rate)) / MIN(rate) * 100)::DECIMAL
-                    END as percentage_difference,
+                    ((MAX(rate) - MIN(rate)) / MIN(rate) * 100)::DECIMAL as percentage_difference,
                     MAX(rate) as max_rate,
                     MIN(rate) as min_rate
                 FROM token_rates
-                WHERE 
+                WHERE
+                    rate != 0 AND
                     quote_token = $1 AND
                     timestamp >= $2 AND
                     timestamp <= $3
