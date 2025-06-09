@@ -19,21 +19,21 @@ use std::time::Duration;
 static TOKEN_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("TOKEN_NOT_FOUND_WAIT")
         .map(|v| parse_duration(&v))
-        .and_then(Result::ok)
+        .and_then(|v| v.ok())
         .unwrap_or_else(|| Duration::from_secs(1)) // デフォルト: 1秒
 });
 
 static OTHER_ERROR_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("OTHER_ERROR_WAIT")
         .map(|v| parse_duration(&v))
-        .and_then(Result::ok)
+        .and_then(|v| v.ok())
         .unwrap_or_else(|| Duration::from_secs(30)) // デフォルト: 30秒
 });
 
 static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
     config::get("PREVIEW_NOT_FOUND_WAIT")
         .map(|v| parse_duration(&v))
-        .and_then(Result::ok)
+        .and_then(|v| v.ok())
         .unwrap_or_else(|| Duration::from_secs(10)) // デフォルト: 10秒
 });
 

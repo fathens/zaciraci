@@ -53,7 +53,7 @@ fn get_quote_token() -> TokenInAccount {
 fn get_initial_value() -> u128 {
     let in_milli = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
         .map(|v| v.parse())
-        .and_then(Result::ok)
+        .and_then(|v| v.ok())
         .unwrap_or(100);
     MilliNear::of(in_milli).to_yocto()
 }
