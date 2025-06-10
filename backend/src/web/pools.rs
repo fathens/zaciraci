@@ -401,7 +401,7 @@ async fn get_volatility_tokens(
             }
         };
         let elapsed = start_time.elapsed();
-        info!(log, "vols part completed"; 
+        info!(log, "vols part completed";
             "elapsed_ms" => elapsed.as_millis(),
             "elapsed_secs" => elapsed.as_secs_f64(),
         );
@@ -424,7 +424,7 @@ async fn get_volatility_tokens(
             }
         };
         let elapsed = start_time.elapsed();
-        info!(log, "deps part completed"; 
+        info!(log, "deps part completed";
             "elapsed_ms" => elapsed.as_millis(),
             "elapsed_secs" => elapsed.as_secs_f64(),
         );
@@ -440,11 +440,9 @@ async fn get_volatility_tokens(
             .into_iter()
             .filter_map(|v| {
                 let token = v.base;
-                v.percentage_difference.and_then(|p| {
-                    deps.get(&token).map(|depth| {
-                        let weight = p * depth; // TODO 適切な重みの計算を考える
-                        (token, weight)
-                    })
+                deps.get(&token).map(|depth| {
+                    let weight = v.variance * depth; // TODO 適切な重みの計算を考える
+                    (token, weight)
                 })
             })
             .collect();
@@ -457,7 +455,7 @@ async fn get_volatility_tokens(
             .collect();
 
         let elapsed = start_time.elapsed();
-        info!(log, "tokens part completed"; 
+        info!(log, "tokens part completed";
             "elapsed_ms" => elapsed.as_millis(),
             "elapsed_secs" => elapsed.as_secs_f64(),
         );

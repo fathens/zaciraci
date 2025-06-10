@@ -40,22 +40,13 @@ struct VolatilityResult {
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub base_token: String,
     #[diesel(sql_type = diesel::sql_types::Numeric)]
-    pub rate_difference: BigDecimal,
-    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Numeric>)]
-    pub percentage_difference: Option<BigDecimal>,
-    #[diesel(sql_type = diesel::sql_types::Numeric)]
-    pub max_rate: BigDecimal,
-    #[diesel(sql_type = diesel::sql_types::Numeric)]
-    pub min_rate: BigDecimal,
+    pub variance: BigDecimal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TokenVolatility {
     pub base: TokenAccount,
-    pub rate_difference: BigDecimal,
-    pub percentage_difference: Option<BigDecimal>,
-    pub max_rate: BigDecimal,
-    pub min_rate: BigDecimal,
+    pub variance: BigDecimal,
 }
 
 // アプリケーションロジック用モデル
@@ -405,10 +396,7 @@ impl TokenRate {
                     "
                 SELECT 
                     base_token,
-                    (MAX(rate) - MIN(rate))::DECIMAL as rate_difference,
-                    ((MAX(rate) - MIN(rate)) / MIN(rate) * 100)::DECIMAL as percentage_difference,
-                    MAX(rate) as max_rate,
-                    MIN(rate) as min_rate
+                    var_pop(rate) as variance
                 FROM token_rates
                 WHERE
                     rate != 0 AND
@@ -416,7 +404,8 @@ impl TokenRate {
                     timestamp >= $2 AND
                     timestamp <= $3
                 GROUP BY base_token
-                ORDER BY percentage_difference DESC NULLS LAST
+                ORDER BY variance DESC
+                LIMIT 100
                 ",
                 )
                 .bind::<diesel::sql_types::Text, _>(&quote_str)
@@ -432,10 +421,7 @@ impl TokenRate {
             .filter_map(|result| match TokenAccount::from_str(&result.base_token) {
                 Ok(token) => Some(TokenVolatility {
                     base: token,
-                    rate_difference: result.rate_difference,
-                    percentage_difference: result.percentage_difference,
-                    max_rate: result.max_rate,
-                    min_rate: result.min_rate,
+                    variance: result.variance,
                 }),
                 Err(e) => {
                     error!(log, "Failed to parse token: {}, {e}", result.base_token);

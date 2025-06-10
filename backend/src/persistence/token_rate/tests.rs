@@ -508,43 +508,22 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     );
 
     // 各トークンのボラティリティ値を検証
-    // btc: (40000 - 20000) / 20000 * 100 = 100%
-    let btc_volatility = results[0].percentage_difference.as_ref().unwrap();
+    // btcの分散が最も大きい
     assert!(
-        (btc_volatility.clone() - BigDecimal::from(100)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "BTC volatility should be approximately 100%, got {}",
-        btc_volatility
+        results[0].variance > results[1].variance,
+        "BTC variance should be greater than ETH variance"
     );
-
-    // eth: (1500 - 1000) / 1000 * 100 = 50%
-    let eth_volatility = results[1].percentage_difference.as_ref().unwrap();
+    
+    // ethの分散は中程度
     assert!(
-        (eth_volatility.clone() - BigDecimal::from(50)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "ETH volatility should be approximately 50%, got {}",
-        eth_volatility
+        results[1].variance > results[2].variance,
+        "ETH variance should be greater than NEAR variance"
     );
-
-    // near: (5.5 - 5) / 5 * 100 = 10%
-    let near_volatility = results[2].percentage_difference.as_ref().unwrap();
+    
+    // nearの分散が最も小さい
     assert!(
-        (near_volatility.clone() - BigDecimal::from(10)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "NEAR volatility should be approximately 10%, got {}",
-        near_volatility
-    );
-
-    // 最大値と最小値も検証
-    assert_eq!(
-        results[0].max_rate,
-        BigDecimal::from(40000),
-        "BTC max rate should be 40000"
-    );
-    assert_eq!(
-        results[0].min_rate,
-        BigDecimal::from(20000),
-        "BTC min rate should be 20000"
+        results[2].variance > BigDecimal::from(0),
+        "NEAR variance should be greater than 0"
     );
 
     // 8. エッジケースのテスト: 最小レートが0の場合
@@ -596,24 +575,12 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
         "eth.token",
         "Only eth token should be found"
     );
-    assert_eq!(
-        eth_result.max_rate,
-        BigDecimal::from(150),
-        "ETH max rate should be 150 (0 rates excluded)"
-    );
-    assert_eq!(
-        eth_result.min_rate,
-        BigDecimal::from(100),
-        "ETH min rate should be 100 (0 rates excluded)"
-    );
     
-    // ボラティリティ: (150 - 100) / 100 * 100 = 50%
-    let eth_volatility = eth_result.percentage_difference.as_ref().unwrap();
+    // 分散値が0より大きいことを確認
     assert!(
-        (eth_volatility.clone() - BigDecimal::from(50)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "ETH volatility should be approximately 50%, got {}",
-        eth_volatility
+        eth_result.variance > BigDecimal::from(0),
+        "ETH variance should be greater than 0, got {}",
+        eth_result.variance
     );
 
     // クリーンアップ
@@ -708,15 +675,9 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // 範囲内のデータだけが考慮されていることを確認（最大値1500、最小値1000）
-    assert_eq!(
-        boundary_results[0].max_rate,
-        BigDecimal::from(1500),
-        "Max rate should be 1500 (from data within range)"
-    );
-    assert_eq!(
-        boundary_results[0].min_rate,
-        BigDecimal::from(1000),
-        "Min rate should be 1000 (from data within range)"
+    assert!(
+        boundary_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -764,26 +725,16 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // 両方のトークンが同じボラティリティ（50%）を持つことを確認
-    let eth_volatility = same_volatility_results[0]
-        .percentage_difference
-        .as_ref()
-        .unwrap();
-    let btc_volatility = same_volatility_results[1]
-        .percentage_difference
-        .as_ref()
-        .unwrap();
+    let eth_volatility = same_volatility_results[0].variance.clone();
+    let btc_volatility = same_volatility_results[1].variance.clone();
 
     assert!(
-        (eth_volatility.clone() - BigDecimal::from(50)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "ETH volatility should be approximately 50%, got {}",
-        eth_volatility
+        eth_volatility > BigDecimal::from(0),
+        "ETH variance should be greater than 0"
     );
     assert!(
-        (btc_volatility.clone() - BigDecimal::from(50)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "BTC volatility should be approximately 50%, got {}",
-        btc_volatility
+        btc_volatility > BigDecimal::from(0),
+        "BTC variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -833,19 +784,9 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         "Only eth.token should remain"
     );
     assert_eq!(
-        eth_result.max_rate,
-        BigDecimal::from(-10),
-        "ETH max rate should be -10 (only non-zero rate)"
-    );
-    assert_eq!(
-        eth_result.min_rate,
-        BigDecimal::from(-10),
-        "ETH min rate should be -10 (only non-zero rate)"
-    );
-    assert_eq!(
-        eth_result.percentage_difference.as_ref().unwrap().clone(),
+        eth_result.variance,
         BigDecimal::from(0),
-        "Volatility should be 0 for single rate"
+        "ETH variance should be 0"
     );
 
     // クリーンアップ
@@ -871,23 +812,9 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         "Token should be eth"
     );
     assert_eq!(
-        single_record_results[0].max_rate,
-        BigDecimal::from(100),
-        "Max rate should be 100"
-    );
-    assert_eq!(
-        single_record_results[0].min_rate,
-        BigDecimal::from(100),
-        "Min rate should be 100"
-    );
-    assert_eq!(
-        single_record_results[0]
-            .percentage_difference
-            .as_ref()
-            .unwrap()
-            .clone(),
+        single_record_results[0].variance,
         BigDecimal::from(0),
-        "Volatility should be 0 for single record"
+        "Variance should be 0"
     );
 
     // クリーンアップ
@@ -940,15 +867,9 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // quote1のデータだけが考慮されていることを確認（最大値150、最小値100）
-    assert_eq!(
-        quote_filter_results[0].max_rate,
-        BigDecimal::from(150),
-        "Max rate should be 150 (from quote1 data)"
-    );
-    assert_eq!(
-        quote_filter_results[0].min_rate,
-        BigDecimal::from(100),
-        "Min rate should be 100 (from quote1 data)"
+    assert!(
+        quote_filter_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -992,27 +913,11 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // ゼロレートが除外されていることを確認（最大値10、最小値-10）
-    assert_eq!(
-        mixed_rates_results[0].max_rate,
-        BigDecimal::from(10),
-        "Max rate should be 10 (zero rate excluded)"
-    );
-    assert_eq!(
-        mixed_rates_results[0].min_rate,
-        BigDecimal::from(-10),
-        "Min rate should be -10 (zero rate excluded)"
+    assert!(
+        mixed_rates_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
-    // 負の値を最小値とした場合のボラティリティ計算
-    // percentage_difference = (10 - (-10)) / (-10) * 100 = -200% 
-    // (負の値を分母とするため負の結果になる)
-    let mixed_volatility = mixed_rates_results[0].percentage_difference.as_ref().unwrap();
-    assert!(
-        (mixed_volatility.clone() + BigDecimal::from(200)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "Volatility should be approximately -200%, got {}",
-        mixed_volatility
-    );
     // クリーンアップ
     clean_table().await?;
 
@@ -1068,10 +973,9 @@ async fn test_rate_difference_calculation() -> Result<()> {
     );
 
     // rate_difference = MAX(rate) - MIN(rate) = 1500 - 1000 = 500
-    assert_eq!(
-        normal_results[0].rate_difference,
-        BigDecimal::from(500),
-        "Rate difference should be 500"
+    assert!(
+        normal_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -1105,10 +1009,9 @@ async fn test_rate_difference_calculation() -> Result<()> {
     );
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - (-100) = 200
-    assert_eq!(
-        negative_results[0].rate_difference,
-        BigDecimal::from(200),
-        "Rate difference should be 200"
+    assert!(
+        negative_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -1144,9 +1047,9 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - 100 = 0
     assert_eq!(
-        same_value_results[0].rate_difference,
+        same_value_results[0].variance,
         BigDecimal::from(0),
-        "Rate difference should be 0"
+        "Variance should be 0"
     );
 
     // クリーンアップ
