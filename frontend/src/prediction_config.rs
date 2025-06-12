@@ -22,9 +22,9 @@ pub struct PredictionConfig {
     pub max_change_ratio: f64,
     /// データ正規化を有効にするかどうか（デフォルト: true）
     pub enable_normalization: bool,
-    /// デフォルトの予測モデル名（デフォルト: "chronos-bolt-base"）
+    /// デフォルトの予測モデル名（デフォルト: "chronos_default"）
     pub default_model_name: String,
-    /// モデル指定を省略するかどうか（デフォルト: false）
+    /// モデル指定を省略するかどうか（デフォルト: true
     pub omit_model_name: bool,
 }
 
@@ -40,8 +40,8 @@ impl Default for PredictionConfig {
             outlier_threshold: 2.5,
             max_change_ratio: 0.5,
             enable_normalization: true,
-            default_model_name: "chronos-bolt-base".to_string(),
-            omit_model_name: false,
+            default_model_name: "chronos_default".to_string(),
+            omit_model_name: true,
         }
     }
 }
