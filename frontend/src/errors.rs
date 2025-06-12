@@ -9,6 +9,7 @@ pub enum PredictionError {
     VolatilityTokensNotFound,
     InsufficientData,
     InsufficientDataAfterSplit,
+    InvalidData(String),
 
     // パース関連
     QuoteTokenParseError(String),
@@ -49,6 +50,9 @@ impl Display for PredictionError {
             }
             PredictionError::InsufficientData => "予測用のデータが不足しています",
             PredictionError::InsufficientDataAfterSplit => "データ分割後のデータが不足しています",
+            PredictionError::InvalidData(detail) => {
+                return write!(f, "無効なデータ: {}", detail);
+            }
 
             // パース関連
             PredictionError::QuoteTokenParseError(detail) => {

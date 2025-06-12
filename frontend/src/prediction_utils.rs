@@ -29,8 +29,50 @@ pub async fn execute_zero_shot_prediction(
     model_name: String,
     chronos_client: Arc<ChronosApiClient>,
 ) -> Result<PredictionResult, PredictionError> {
+    // データの基本検証
     if values_data.is_empty() {
         return Err(PredictionError::DataNotFound);
+    }
+
+    if values_data.len() < 4 {
+        return Err(PredictionError::InsufficientData);
+    }
+
+    // 数値の妥当性検証と時系列チェック
+    let mut previous_time: Option<chrono::NaiveDateTime> = None;
+    for (i, point) in values_data.iter().enumerate() {
+        // 数値検証
+        if !point.value.is_finite() {
+            return Err(PredictionError::InvalidData(format!(
+                "Invalid value at index {}: {} (not finite)", i, point.value
+            )));
+        }
+        if point.value <= 0.0 {
+            return Err(PredictionError::InvalidData(format!(
+                "Invalid value at index {}: {} (not positive)", i, point.value
+            )));
+        }
+        
+        // 時系列の順序チェック
+        if let Some(prev_time) = previous_time {
+            if point.time <= prev_time {
+                return Err(PredictionError::InvalidData(format!(
+                    "Time series order error at index {}: {} <= {} (not strictly increasing)", 
+                    i, point.time, prev_time
+                )));
+            }
+        }
+        
+        // 重複時刻チェック（既に前のチェックで検出されるが明示的に）
+        if let Some(prev_time) = previous_time {
+            if point.time == prev_time {
+                return Err(PredictionError::InvalidData(format!(
+                    "Duplicate timestamp at index {}: {}", i, point.time
+                )));
+            }
+        }
+        
+        previous_time = Some(point.time);
     }
 
     // データを前半と後半に分割
