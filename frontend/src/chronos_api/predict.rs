@@ -177,6 +177,52 @@ mod tests {
     }
 
     #[test]
+    fn test_request_without_model_name() {
+        // モデル名を省略したリクエストのテスト
+        let timestamp_strs = vec![
+            "2023-01-01T00:00:00",
+            "2023-01-01T01:00:00",
+            "2023-01-01T02:00:00",
+        ];
+        let dts = parse_datetime_vec(&timestamp_strs).expect("タイムスタンプ配列のパースに失敗");
+
+        // モデル名なしでリクエストを作成
+        let request_without_model = ZeroShotPredictionRequest::new(
+            dts.clone(),
+            vec![10.5, 11.2, 10.8],
+            parse_datetime("2023-01-04T02:00:00").expect("forecast_untilのパースに失敗"),
+        );
+
+        // モデル名ありでリクエストを作成
+        let request_with_model = ZeroShotPredictionRequest::new(
+            dts,
+            vec![10.5, 11.2, 10.8],
+            parse_datetime("2023-01-04T02:00:00").expect("forecast_untilのパースに失敗"),
+        ).with_model_name("chronos-bolt-base");
+
+        // シリアライズして比較
+        let json_without_model = serde_json::to_string(&request_without_model).expect("シリアライズに失敗");
+        let json_with_model = serde_json::to_string(&request_with_model).expect("シリアライズに失敗");
+
+        println!("モデル名なし: {}", json_without_model);
+        println!("モデル名あり: {}", json_with_model);
+
+        // モデル名なしの場合、JSONに含まれないことを確認
+        assert!(!json_without_model.contains("model_name"));
+        assert!(json_with_model.contains("model_name"));
+        assert!(json_with_model.contains("chronos-bolt-base"));
+
+        // デシリアライズテスト
+        let deserialized_without: ZeroShotPredictionRequest =
+            serde_json::from_str(&json_without_model).expect("デシリアライズに失敗");
+        let deserialized_with: ZeroShotPredictionRequest =
+            serde_json::from_str(&json_with_model).expect("デシリアライズに失敗");
+
+        assert!(deserialized_without.model_name.is_none());
+        assert_eq!(deserialized_with.model_name, Some("chronos-bolt-base".to_string()));
+    }
+
+    #[test]
     fn test_request_json_compatibility() {
         // まず単一の日時文字列をパースしてみる
         let timestamp_str = "2023-01-01T00:00:00";

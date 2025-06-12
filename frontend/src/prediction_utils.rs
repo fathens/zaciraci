@@ -127,8 +127,17 @@ pub async fn execute_zero_shot_prediction(
     };
 
     // ZeroShotPredictionRequestを作成
-    let prediction_request = ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
-        .with_model_name(model_name);
+    let config = get_config();
+    let prediction_request = if config.omit_model_name {
+        // モデル名を省略（サーバーのデフォルトモデルを使用）
+        println!("モデル名を省略してリクエストを送信（サーバーデフォルトを使用）");
+        ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+    } else {
+        // モデル名を明示的に指定
+        println!("モデル名を指定してリクエストを送信: {}", model_name);
+        ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+            .with_model_name(model_name)
+    };
 
     // 予測実行
     match chronos_client.predict_zero_shot(&prediction_request).await {

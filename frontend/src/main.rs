@@ -4,6 +4,7 @@ mod chart;
 mod chronos_api;
 mod data_normalization;
 mod errors;
+mod model_registry;
 mod image_upload;
 mod ollama;
 mod pools;

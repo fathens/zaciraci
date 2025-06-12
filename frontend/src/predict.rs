@@ -18,6 +18,7 @@ use crate::chart::plots::{
 };
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use crate::errors::PredictionError;
+use crate::model_registry::{RECOMMENDED_MODELS, get_model_info};
 use crate::prediction_config::get_config;
 use crate::prediction_utils::calculate_metrics;
 use crate::stats::DateRangeSelector;
@@ -60,7 +61,8 @@ fn predict_zero_shot_view(
     let start_date = use_signal(|| two_days_ago.format("%Y-%m-%dT%H:%M").to_string());
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M").to_string());
 
-    let mut model_name = use_signal(|| "chronos_default".to_string());
+    let mut model_name = use_signal(|| get_config().default_model_name.clone());
+    let mut omit_model_name = use_signal(|| get_config().omit_model_name);
     let mut chart_svg = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
     let mut error_message = use_signal(|| None::<String>);
@@ -101,15 +103,135 @@ fn predict_zero_shot_view(
 
             // モデル設定
             div { class: "model-settings",
-                style: "margin-top: 10px; margin-bottom: 10px;",
-                label { class: "form-label", "予測モデル:" }
+                style: "margin-top: 10px; margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;",
+                
+                h4 { style: "margin-bottom: 10px; color: #333;", "予測モデル選択" }
+                
+                label { class: "form-label", style: "font-weight: bold;", "モデル:" }
                 select {
                     class: "form-select",
+                    style: "margin-bottom: 10px;",
                     value: "{model_name}",
                     onchange: move |e| model_name.set(e.value()),
-                    option { value: "chronos_default", "Chronos Default" }
-                    option { value: "prophet", "Prophet" }
-                    option { value: "arima", "ARIMA" }
+                    
+                    optgroup { label: "サーバー最適化",
+                        option { 
+                            value: "chronos_default",
+                            "Server Default (DeepAR) - 自動最適化, 高精度"
+                        }
+                    }
+                    
+                    optgroup { label: "推奨モデル (Chronos Bolt)",
+                        for model in RECOMMENDED_MODELS {
+                            option { 
+                                value: "{model.id}",
+                                "{model.name} ({model.parameters}M) - {model.speed.as_str()}, {model.accuracy.as_str()}"
+                            }
+                        }
+                    }
+                    
+                    optgroup { label: "レガシーモデル",
+                        option { value: "chronos-t5-small", "Chronos T5 Small (46M) - 中速, 中精度" }
+                        option { value: "chronos-t5-base", "Chronos T5 Base (200M) - 低速, 高精度" }
+                        option { value: "chronos-t5-tiny", "Chronos T5 Tiny (8M) - 中速, 低精度" }
+                    }
+                    
+                    optgroup { label: "統計モデル",
+                        option { value: "prophet", "Prophet - Facebook開発" }
+                        option { value: "arima", "ARIMA - 古典的時系列分析" }
+                    }
+                }
+                
+                // 選択されたモデルの詳細情報を表示
+                if let Some(selected_model) = get_model_info(&model_name()) {
+                    div { class: "model-info",
+                        style: "margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 3px;",
+                        
+                        p { style: "margin: 0 0 5px 0; font-size: 14px;",
+                            strong { "説明: " }
+                            "{selected_model.description}"
+                        }
+                        
+                        p { style: "margin: 0 0 5px 0; font-size: 14px;",
+                            strong { "推奨用途: " }
+                            "{selected_model.recommended_for}"
+                        }
+                        
+                        if selected_model.parameters > 0 {
+                            p { style: "margin: 0; font-size: 14px;",
+                                strong { "パラメータ数: " }
+                                "{selected_model.parameters}M"
+                            }
+                        }
+                    }
+                }
+
+                // モデル省略オプション
+                div { class: "model-omit-option",
+                    style: "margin-top: 15px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px;",
+                    
+                    h5 { style: "margin: 0 0 10px 0; color: #856404; font-size: 16px;",
+                        "🤖 サーバーデフォルトモデル設定"
+                    }
+                    
+                    label { class: "form-label",
+                        style: "display: flex; align-items: center; font-size: 14px; cursor: pointer; margin-bottom: 10px;",
+                        input {
+                            r#type: "checkbox",
+                            checked: omit_model_name(),
+                            onchange: move |e| omit_model_name.set(e.checked()),
+                            style: "margin-right: 8px;",
+                        }
+                        "モデル指定を省略（サーバーのデフォルトモデルを使用）"
+                    }
+                    
+                    if omit_model_name() {
+                        div { class: "server-default-info",
+                            style: "padding: 12px; background-color: #e8f4fd; border: 1px solid #bee5eb; border-radius: 4px; margin-top: 10px;",
+                            
+                            p { style: "margin: 0 0 8px 0; font-size: 13px; color: #0c5460; font-weight: bold;",
+                                "🔍 サーバーデフォルト動作の詳細:"
+                            }
+                            
+                            ul { style: "margin: 0; padding-left: 18px; font-size: 12px; color: #0c5460;",
+                                li { style: "margin-bottom: 4px;",
+                                    "表示名: ", strong { "\"chronos_default\"" }
+                                }
+                                li { style: "margin-bottom: 4px;",
+                                    "実際のモデル: ", strong { "AutoGluon TimeSeries DeepAR" }
+                                }
+                                li { style: "margin-bottom: 4px;",
+                                    "プリセット: ", strong { "medium_quality" }
+                                }
+                                li { style: "margin-bottom: 4px;",
+                                    "最適化: サーバー側で自動的に最適なハイパーパラメータを選択"
+                                }
+                            }
+                            
+                            div { style: "margin-top: 10px; padding: 8px; background-color: #d1ecf1; border-radius: 3px;",
+                                p { style: "margin: 0; font-size: 11px; color: #0c5460;",
+                                    "💡 ", strong { "推奨事項:" }
+                                }
+                                p { style: "margin: 2px 0 0 0; font-size: 11px; color: #0c5460;",
+                                    "• ", strong { "開発・実験: " }, "省略して最新の最適化を利用"
+                                }
+                                p { style: "margin: 2px 0 0 0; font-size: 11px; color: #0c5460;",
+                                    "• ", strong { "本番環境: " }, "明示指定で一貫した結果を確保"
+                                }
+                            }
+                        }
+                    } else {
+                        div { class: "manual-selection-info",
+                            style: "padding: 10px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; margin-top: 10px;",
+                            
+                            p { style: "margin: 0; font-size: 12px; color: #495057;",
+                                "✅ 上記で選択されたモデルが明示的に使用されます。"
+                            }
+                            p { style: "margin: 4px 0 0 0; font-size: 11px; color: #6c757d;",
+                                "予測結果の再現性と一貫性が保証されます。"
+                            }
+                        }
+                    }
                 }
             }
 
@@ -129,6 +251,7 @@ fn predict_zero_shot_view(
                     let start_val = start_date().clone();
                     let end_val = end_date().clone();
                     let model_val = model_name().clone();
+                    let omit_model_val = omit_model_name();
 
                     // 非同期で予測処理を実行
                     spawn_local(async move {
@@ -231,11 +354,14 @@ fn predict_zero_shot_view(
                                 };
 
                                 // ZeroShotPredictionRequestを作成
-                                let prediction_request = ZeroShotPredictionRequest::new(
-                                    timestamps,
-                                    values,
-                                    forecast_until
-                                ).with_model_name(model_val);
+                                let prediction_request = if omit_model_val {
+                                    // モデル名を省略（サーバーのデフォルトモデルを使用）
+                                    ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+                                } else {
+                                    // モデル名を明示的に指定
+                                    ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+                                        .with_model_name(model_val)
+                                };
 
                                 // 予測実行
                                 match chronos_client.read().predict_zero_shot(&prediction_request).await {
@@ -482,12 +608,50 @@ fn predict_zero_shot_view(
                 }
             }
 
-            // 予測精度の表示
+            // 使用されたモデル情報の表示
             if !metrics().is_empty() {
                 div {
+                    class: "model-info-container",
+                    style: "margin-top: 20px; border: 1px solid #e3f2fd; padding: 15px; border-radius: 5px; background-color: #f8f9fa;",
+                    
+                    h3 { style: "margin: 0 0 10px 0; color: #1976d2;", "📊 予測実行情報" }
+                    
+                    div { style: "display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px;",
+                        
+                        div { style: "flex: 1; min-width: 200px; padding: 10px; background-color: white; border-radius: 4px; border: 1px solid #e0e0e0;",
+                            p { style: "margin: 0 0 5px 0; font-weight: bold; color: #555;", "使用モデル:" }
+                            p { style: "margin: 0; font-size: 14px;",
+                                if omit_model_name() {
+                                    span { style: "color: #1976d2;", "chronos_default" }
+                                    span { style: "color: #666; font-size: 12px;", " (サーバー自動選択)" }
+                                } else {
+                                    span { style: "color: #1976d2;", "{model_name()}" }
+                                    span { style: "color: #666; font-size: 12px;", " (明示指定)" }
+                                }
+                            }
+                        }
+                        
+                        if omit_model_name() {
+                            div { style: "flex: 1; min-width: 200px; padding: 10px; background-color: #fff3e0; border-radius: 4px; border: 1px solid #ffcc02;",
+                                p { style: "margin: 0 0 5px 0; font-weight: bold; color: #ef6c00;", "実際の処理:" }
+                                p { style: "margin: 0; font-size: 13px; color: #ef6c00;", "AutoGluon TimeSeries" }
+                                p { style: "margin: 0; font-size: 12px; color: #ef6c00;", "DeepAR (medium_quality)" }
+                            }
+                        }
+                        
+                        div { style: "flex: 1; min-width: 200px; padding: 10px; background-color: white; border-radius: 4px; border: 1px solid #e0e0e0;",
+                            p { style: "margin: 0 0 5px 0; font-weight: bold; color: #555;", "データ正規化:" }
+                            p { style: "margin: 0; font-size: 14px; color: #4caf50;",
+                                if get_config().enable_normalization { "有効" } else { "無効" }
+                            }
+                        }
+                    }
+                }
+                
+                div {
                     class: "metrics-container",
-                    style: "margin-top: 20px; border: 1px solid #ddd; padding: 10px; border-radius: 5px;",
-                    h3 { "予測精度" }
+                    style: "margin-top: 15px; border: 1px solid #ddd; padding: 15px; border-radius: 5px;",
+                    h3 { style: "margin: 0 0 10px 0;", "📈 予測精度" }
                     table {
                         class: "table",
                         thead {

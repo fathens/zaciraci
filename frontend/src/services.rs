@@ -98,9 +98,17 @@ impl VolatilityPredictionService {
                 // ゼロショット予測実行
                 let values_data = values_response.values;
 
+                let config = get_config();
+                let model_name = if config.omit_model_name {
+                    // サーバーデフォルトモデル使用のため空文字列（実際には使用されない）
+                    String::new()
+                } else {
+                    config.default_model_name.clone()
+                };
+                
                 match execute_zero_shot_prediction(
                     &values_data,
-                    "chronos-t5-small".to_string(), // model_name
+                    model_name,
                     self.chronos_client.clone(),
                 )
                 .await

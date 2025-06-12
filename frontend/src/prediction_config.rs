@@ -22,6 +22,10 @@ pub struct PredictionConfig {
     pub max_change_ratio: f64,
     /// データ正規化を有効にするかどうか（デフォルト: true）
     pub enable_normalization: bool,
+    /// デフォルトの予測モデル名（デフォルト: "chronos-bolt-base"）
+    pub default_model_name: String,
+    /// モデル指定を省略するかどうか（デフォルト: false）
+    pub omit_model_name: bool,
 }
 
 impl Default for PredictionConfig {
@@ -36,6 +40,8 @@ impl Default for PredictionConfig {
             outlier_threshold: 2.5,
             max_change_ratio: 0.5,
             enable_normalization: true,
+            default_model_name: "chronos-bolt-base".to_string(),
+            omit_model_name: false,
         }
     }
 }
@@ -90,6 +96,15 @@ impl PredictionConfig {
             .and_then(|s| s.parse::<bool>().ok())
             .unwrap_or(default_config.enable_normalization);
 
+        let default_model_name = config::get("PREDICTION_DEFAULT_MODEL")
+            .ok()
+            .unwrap_or(default_config.default_model_name);
+
+        let omit_model_name = config::get("PREDICTION_OMIT_MODEL_NAME")
+            .ok()
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(default_config.omit_model_name);
+
         Self {
             fallback_multiplier,
             quote_token,
@@ -100,6 +115,8 @@ impl PredictionConfig {
             outlier_threshold,
             max_change_ratio,
             enable_normalization,
+            default_model_name,
+            omit_model_name,
         }
     }
 
