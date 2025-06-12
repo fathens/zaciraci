@@ -105,7 +105,7 @@ impl VolatilityPredictionService {
                 } else {
                     config.default_model_name.clone()
                 };
-                
+
                 match execute_zero_shot_prediction(
                     &values_data,
                     model_name,
@@ -138,30 +138,5 @@ impl VolatilityPredictionService {
             Ok(ApiResponse::Error(error_msg)) => Err(PredictionError::ApiError(error_msg)),
             Err(_) => Err(PredictionError::NetworkError),
         }
-    }
-
-    /// 複数のトークンに対して並列で予測を実行
-    pub async fn predict_tokens(
-        &self,
-        tokens: &[TokenAccount],
-        start_datetime: DateTime<Utc>,
-        end_datetime: DateTime<Utc>,
-        quote_token: &TokenAccount,
-    ) -> Vec<Result<VolatilityPredictionResult, PredictionError>> {
-        use futures::future::join_all;
-
-        let futures = tokens.into_iter().map(|token| {
-            async move {
-                self.predict_token(
-                    token,
-                    start_datetime,
-                    end_datetime,
-                    quote_token,
-                )
-                .await
-            }
-        });
-
-        join_all(futures).await
     }
 }
