@@ -132,40 +132,57 @@ pub fn view() -> Element {
                                 let predict_start = start_datetime;
                                 let predict_end = end_datetime;
 
-                                // 複数トークンの予測結果を一度に取得
-                                let prediction_results_vec = volatility_service().predict_tokens(&tokens, predict_start, predict_end, &config.quote_token).await;
+                                // 各トークンを個別に非同期で処理（完了次第表示）
+                                for (index, token) in tokens.iter().enumerate() {
+                                    let token = token.clone();
 
-                                // 予測結果を処理
-                                for (index, prediction_result) in prediction_results_vec.into_iter().enumerate() {
-                                    match prediction_result {
-                                        Ok(result) => {
-                                            // 予測結果を更新
-                                            let mut current_results = prediction_results();
-                                            if index < current_results.len() {
-                                                current_results[index] = (
-                                                    (index + 1).to_string(),
-                                                    tokens[index].to_string(),
-                                                    format!("{:.6}", result.predicted_price),
-                                                    format!("{:.2}%", result.accuracy),
-                                                );
-                                                prediction_results.set(current_results);
+                                    spawn_local(async move {
+                                        let service = volatility_service();
+                                        match service.predict_token(
+                                            &token,
+                                            predict_start,
+                                            predict_end,
+                                            &config.quote_token,
+                                        ).await {
+                                            Ok(result) => {
+                                                // 予測結果を更新
+                                                let mut current_results = prediction_results();
+                                                if index < current_results.len() {
+                                                    current_results[index] = (
+                                                        (index + 1).to_string(),
+                                                        token.to_string(),
+                                                        format!("{:.6}", result.predicted_price),
+                                                        format!("{:.2}%", result.accuracy),
+                                                    );
+                                                    prediction_results.set(current_results);
+                                                }
+
+                                                // チャートデータを追加
+                                                let mut token_charts_vec = token_charts();
+                                                token_charts_vec.push(TokenVolatilityData {
+                                                    token: token.to_string(),
+                                                    rank: index + 1,
+                                                    predicted_price: result.predicted_price,
+                                                    accuracy: result.accuracy,
+                                                    chart_svg: result.chart_svg,
+                                                });
+                                                token_charts.set(token_charts_vec);
                                             }
-
-                                            // チャートデータを追加
-                                            let mut token_charts_vec = token_charts();
-                                            token_charts_vec.push(TokenVolatilityData {
-                                                token: tokens[index].to_string(),
-                                                rank: index + 1,
-                                                predicted_price: result.predicted_price,
-                                                accuracy: result.accuracy,
-                                                chart_svg: result.chart_svg,
-                                            });
-                                            token_charts.set(token_charts_vec);
+                                            Err(e) => {
+                                                // 個別のエラーを処理中表示に変更
+                                                let mut current_results = prediction_results();
+                                                if index < current_results.len() {
+                                                    current_results[index] = (
+                                                        (index + 1).to_string(),
+                                                        token.to_string(),
+                                                        "エラー".to_string(),
+                                                        format!("{}%", e.to_string()),
+                                                    );
+                                                    prediction_results.set(current_results);
+                                                }
+                                            }
                                         }
-                                        Err(e) => {
-                                            error_message.set(Some(e.to_string()));
-                                        }
-                                    }
+                                    });
                                 }
                             },
                             Err(e) => {
