@@ -14,6 +14,14 @@ pub struct PredictionConfig {
     pub chart_height: u32,
     /// デフォルト制限数（デフォルト: 1000）
     pub default_limit: u32,
+    /// データ正規化：移動平均ウィンドウサイズ（デフォルト: 5）
+    pub normalization_window: usize,
+    /// データ正規化：異常値検出の閾値（デフォルト: 2.5）
+    pub outlier_threshold: f64,
+    /// データ正規化：最大変化率（デフォルト: 0.5）
+    pub max_change_ratio: f64,
+    /// データ正規化を有効にするかどうか（デフォルト: true）
+    pub enable_normalization: bool,
 }
 
 impl Default for PredictionConfig {
@@ -24,6 +32,10 @@ impl Default for PredictionConfig {
             chart_width: 600,
             chart_height: 300,
             default_limit: 1000,
+            normalization_window: 5,
+            outlier_threshold: 2.5,
+            max_change_ratio: 0.5,
+            enable_normalization: true,
         }
     }
 }
@@ -58,12 +70,36 @@ impl PredictionConfig {
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(default_config.default_limit);
 
+        let normalization_window = config::get("PREDICTION_NORMALIZATION_WINDOW")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(default_config.normalization_window);
+
+        let outlier_threshold = config::get("PREDICTION_OUTLIER_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(default_config.outlier_threshold);
+
+        let max_change_ratio = config::get("PREDICTION_MAX_CHANGE_RATIO")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(default_config.max_change_ratio);
+
+        let enable_normalization = config::get("PREDICTION_ENABLE_NORMALIZATION")
+            .ok()
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(default_config.enable_normalization);
+
         Self {
             fallback_multiplier,
             quote_token,
             chart_width,
             chart_height,
             default_limit,
+            normalization_window,
+            outlier_threshold,
+            max_change_ratio,
+            enable_normalization,
         }
     }
 

@@ -1,12 +1,13 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
-use zaciraci_common::{stats::ValueAtTime, types::TokenAccount};
+use zaciraci_common::stats::ValueAtTime;
 
 use crate::chart::plots::{
     MultiPlotOptions, MultiPlotSeries, plot_multi_values_at_time_to_svg_with_options,
 };
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
+use crate::data_normalization::DataNormalizer;
 use crate::errors::PredictionError;
 use crate::prediction_config::get_config;
 use plotters::prelude::{BLUE, RED};
@@ -74,6 +75,30 @@ pub async fn execute_zero_shot_prediction(
         
         previous_time = Some(point.time);
     }
+
+    // データ正規化処理を追加
+    let config = get_config();
+    let values_data = if config.enable_normalization {
+        let normalizer = DataNormalizer::new(
+            config.normalization_window,
+            config.outlier_threshold,
+            config.max_change_ratio,
+        );
+        
+        let normalized_values = normalizer.normalize_data(values_data)
+            .map_err(|e| PredictionError::InvalidData(format!("データ正規化エラー: {}", e)))?;
+        
+        // 品質指標を出力（デバッグ用）
+        let quality_metrics = normalizer.calculate_data_quality_metrics(values_data, &normalized_values);
+        println!("データ正規化完了:");
+        quality_metrics.print_summary();
+        
+        normalized_values
+    } else {
+        values_data.to_vec()
+    };
+    
+    let values_data = &values_data;
 
     // データを前半と後半に分割
     let mid_point = values_data.len() / 2;
