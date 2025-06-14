@@ -409,4 +409,111 @@ mod tests {
 
         println!("✅ データ系列分離テスト完了");
     }
+
+    #[test]
+    fn test_forecast_shape_preservation() {
+        println!("=== 予測データ形状保持テスト ===");
+        
+        // サンプルの予測データ（変動パターンを持つ）
+        let original_forecast_values = vec![100.0, 105.0, 95.0, 110.0, 90.0];
+        let last_test_value = 200.0; // テストデータの最後の値
+        let first_forecast_value = original_forecast_values[0]; // 100.0
+        
+        // 差分調整の計算（修正後の手法）
+        let offset = last_test_value - first_forecast_value; // 200.0 - 100.0 = 100.0
+        let adjusted_values: Vec<f64> = original_forecast_values
+            .iter()
+            .map(|&v| v + offset)
+            .collect();
+        
+        println!("元の予測値: {:?}", original_forecast_values);
+        println!("調整後の予測値: {:?}", adjusted_values);
+        println!("差分オフセット: {}", offset);
+        
+        // 形状保持の検証：隣接する値の差分が保持されているか
+        for i in 1..original_forecast_values.len() {
+            let original_diff = original_forecast_values[i] - original_forecast_values[i-1];
+            let adjusted_diff = adjusted_values[i] - adjusted_values[i-1];
+            
+            assert!(
+                (original_diff - adjusted_diff).abs() < 1e-10,
+                "形状が保持されていません: index {} で元の差分 {} vs 調整後の差分 {}",
+                i, original_diff, adjusted_diff
+            );
+        }
+        
+        // レベル調整の検証：最初の値が正しく調整されているか
+        assert!(
+            (adjusted_values[0] - last_test_value).abs() < 1e-10,
+            "レベル調整が正しくありません: 期待値 {} vs 実際値 {}",
+            last_test_value, adjusted_values[0]
+        );
+        
+        // 変動の検証：すべての値が同じでないことを確認（直線化していない）
+        let all_same = adjusted_values.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-10);
+        assert!(!all_same, "予測が直線化されています（すべての値が同じ）");
+        
+        println!("✅ 形状保持テスト完了");
+        println!("✅ レベル調整テスト完了");
+        println!("✅ 非直線化テスト完了");
+    }
+
+    #[test]
+    fn test_problematic_multiplication_approach() {
+        println!("=== 問題のある乗算手法のテスト ===");
+        
+        // サンプルの予測データ（変動パターンを持つ）
+        let original_forecast_values = vec![100.0, 105.0, 95.0, 110.0, 90.0];
+        let last_test_value = 200.0;
+        let first_forecast_value = original_forecast_values[0];
+        
+        // 乗算手法（修正前の問題のある手法）
+        let correction_factor = last_test_value / first_forecast_value; // 2.0
+        let multiplied_values: Vec<f64> = original_forecast_values
+            .iter()
+            .map(|&v| v * correction_factor)
+            .collect();
+        
+        // 差分手法（修正後の正しい手法）
+        let offset = last_test_value - first_forecast_value; // 100.0
+        let adjusted_values: Vec<f64> = original_forecast_values
+            .iter()
+            .map(|&v| v + offset)
+            .collect();
+        
+        println!("元の予測値: {:?}", original_forecast_values);
+        println!("乗算調整後: {:?}", multiplied_values);
+        println!("差分調整後: {:?}", adjusted_values);
+        
+        // 変動パターンの比較
+        for i in 1..original_forecast_values.len() {
+            let original_diff = original_forecast_values[i] - original_forecast_values[i-1];
+            let multiplied_diff = multiplied_values[i] - multiplied_values[i-1];
+            let adjusted_diff = adjusted_values[i] - adjusted_values[i-1];
+            
+            // 差分手法では形状が保持される
+            assert!(
+                (original_diff - adjusted_diff).abs() < 1e-10,
+                "差分手法で形状が保持されていません"
+            );
+            
+            // 乗算手法では形状が変わる（スケールされる）
+            let expected_multiplied_diff = original_diff * correction_factor;
+            assert!(
+                (multiplied_diff - expected_multiplied_diff).abs() < 1e-10,
+                "乗算手法の計算が正しくありません"
+            );
+            
+            // 乗算手法は元の形状を保持しない（スケールする）
+            if original_diff != 0.0 {
+                assert!(
+                    (original_diff - multiplied_diff).abs() > 1e-10,
+                    "乗算手法が意図せず形状を保持しています（テストデータに問題あり）"
+                );
+            }
+        }
+        
+        println!("✅ 乗算手法は形状をスケールすることを確認");
+        println!("✅ 差分手法は形状を保持することを確認");
+    }
 }
