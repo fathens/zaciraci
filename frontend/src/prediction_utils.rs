@@ -100,14 +100,14 @@ pub async fn execute_zero_shot_prediction(
     
     let values_data = &values_data;
 
-    // データを前半と後半に分割
-    let mid_point = values_data.len() / 2;
-    if mid_point < 2 {
+    // データを90:10に分割（90%を学習、10%をテスト）
+    let split_point = (values_data.len() as f64 * 0.9) as usize;
+    if split_point < 2 || (values_data.len() - split_point) < 1 {
         return Err(PredictionError::InsufficientData);
     }
 
-    let training_data = values_data[..mid_point].to_vec();
-    let test_data = values_data[mid_point..].to_vec();
+    let training_data = values_data[..split_point].to_vec();
+    let test_data = values_data[split_point..].to_vec();
 
     if training_data.is_empty() || test_data.is_empty() {
         return Err(PredictionError::InsufficientData);
