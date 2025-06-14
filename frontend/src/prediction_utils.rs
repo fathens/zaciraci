@@ -166,12 +166,8 @@ pub async fn execute_zero_shot_prediction(
                 // 予測APIから返された最初の予測値を取得
                 let first_api_forecast_value = forecast_values[0];
 
-                // 予測値と実際の値の差を計算（補正係数）
-                let correction_factor = if first_api_forecast_value != 0.0 {
-                    last_test_point.value / first_api_forecast_value
-                } else {
-                    1.0 // ゼロ除算を防ぐ
-                };
+                // 最初の予測値とテストデータの最後の値の差分を計算
+                let offset = last_test_point.value - first_api_forecast_value;
 
                 // テストデータの最後のポイントを予測データの開始点として使用
                 forecast_points.push(ValueAtTime {
@@ -179,11 +175,11 @@ pub async fn execute_zero_shot_prediction(
                     value: last_test_point.value,
                 });
 
-                // 予測データを補正して追加
+                // 予測データを差分調整して追加（形状を保持）
                 for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
                     if i < forecast_values.len() {
-                        // 予測値を実際のデータのスケールに合わせる
-                        let adjusted_value = forecast_values[i] * correction_factor;
+                        // 予測値に差分を加算（形状を保持しつつレベル調整）
+                        let adjusted_value = forecast_values[i] + offset;
 
                         forecast_points.push(ValueAtTime {
                             time: timestamp.naive_utc(),
