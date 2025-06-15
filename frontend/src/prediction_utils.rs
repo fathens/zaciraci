@@ -216,13 +216,43 @@ pub async fn execute_zero_shot_prediction(
 
             // チャートSVGを生成
             let config = get_config();
+            
+            // デバッグ出力：時間軸の重なりをチェック
+            println!("=== チャートデータの時間軸分析 ===");
+            
+            let actual_data: Vec<ValueAtTime> = training_data
+                .iter()
+                .chain(test_data.iter())
+                .cloned()
+                .collect();
+            
+            if let (Some(actual_first), Some(actual_last)) = (actual_data.first(), actual_data.last()) {
+                println!("実際データ時間範囲: {} ～ {}", actual_first.time, actual_last.time);
+                println!("実際データ点数: {}", actual_data.len());
+            }
+            
+            if let (Some(forecast_first), Some(forecast_last)) = (forecast_points.first(), forecast_points.last()) {
+                println!("予測データ時間範囲: {} ～ {}", forecast_first.time, forecast_last.time);
+                println!("予測データ点数: {}", forecast_points.len());
+                
+                // 重複チェック：実際データの最後と予測データの最初が重なっているか
+                if let Some(actual_last) = actual_data.last() {
+                    if actual_last.time == forecast_first.time {
+                        println!("✅ 時間軸の接続OK: {} で接続", actual_last.time);
+                    } else {
+                        println!("⚠️ 時間軸のギャップ: 実際データ終了 {} vs 予測データ開始 {}", 
+                                actual_last.time, forecast_first.time);
+                    }
+                }
+            }
+            
             let chart_svg = plot_multi_values_at_time_to_svg_with_options(
                 &[
                     MultiPlotSeries {
                         name: "実際の価格".to_string(),
                         values: training_data
                             .iter()
-                            .chain(test_data.iter().take(test_data.len() - 1))
+                            .chain(test_data.iter())
                             .cloned()
                             .collect(),
                         color: BLUE,
