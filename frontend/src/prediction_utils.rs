@@ -24,7 +24,13 @@ pub struct PredictionResult {
     pub forecast_data: Vec<ValueAtTime>,
 }
 
-/// ゼロショット予測を実行する共通関数
+/// ゼロショット予測を実行し、予測精度を検証する関数
+/// 
+/// この関数は未来予測ではなく、予測モデルの精度検証を目的としています：
+/// - データを90:10に分割（90%を学習、10%をテスト）
+/// - 学習データでモデルを訓練し、テストデータ期間の予測を実行
+/// - 予測結果と実際のテストデータを比較して精度を評価
+/// - チャートで予測と実際の差異を視覚的に確認
 pub async fn execute_zero_shot_prediction(
     values_data: &[ValueAtTime],
     model_name: String,
@@ -120,7 +126,7 @@ pub async fn execute_zero_shot_prediction(
         .collect();
     let values: Vec<_> = training_data.iter().map(|v| v.value).collect();
 
-    // 予測対象の終了日時
+    // 予測対象の終了日時（テストデータの最後まで）
     let forecast_until = match test_data.last() {
         Some(last_point) => DateTime::<Utc>::from_naive_utc_and_offset(last_point.time, Utc),
         None => return Err(PredictionError::InsufficientData),
@@ -163,11 +169,20 @@ pub async fn execute_zero_shot_prediction(
                     None => return Err(PredictionError::InsufficientData),
                 };
 
+                // デバッグ出力：予測データの詳細
+                println!("=== 予測データ解析 ===");
+                println!("APIから返された予測値: {:?}", &forecast_values[..forecast_values.len().min(5)]);
+                println!("予測タイムスタンプ数: {}", prediction_response.forecast_timestamp.len());
+                println!("予測値数: {}", forecast_values.len());
+                
                 // 予測APIから返された最初の予測値を取得
                 let first_api_forecast_value = forecast_values[0];
+                println!("最初の予測値: {}", first_api_forecast_value);
+                println!("テストデータ最後の値: {}", last_test_point.value);
 
                 // 最初の予測値とテストデータの最後の値の差分を計算
                 let offset = last_test_point.value - first_api_forecast_value;
+                println!("適用するオフセット: {}", offset);
 
                 // テストデータの最後のポイントを予測データの開始点として使用
                 forecast_points.push(ValueAtTime {
