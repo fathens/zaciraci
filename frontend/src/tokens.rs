@@ -19,11 +19,11 @@ pub fn view() -> Element {
         ))
     });
 
-    // デフォルトで7日間の日付範囲を設定
+    // デフォルトで10日間の日付範囲を設定
     let now = Utc::now();
-    let seven_days_ago = now - Duration::days(7);
+    let ten_days_ago = now - Duration::days(10);
 
-    let start_date = use_signal(|| seven_days_ago.format("%Y-%m-%dT%H:%M").to_string());
+    let start_date = use_signal(|| ten_days_ago.format("%Y-%m-%dT%H:%M").to_string());
     let end_date = use_signal(|| now.format("%Y-%m-%dT%H:%M").to_string());
     let mut limit = use_signal(|| 10_u32);
 
