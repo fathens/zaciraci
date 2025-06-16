@@ -36,114 +36,8 @@ pub async fn execute_zero_shot_prediction(
     model_name: String,
     chronos_client: Arc<ChronosApiClient>,
 ) -> Result<PredictionResult, PredictionError> {
-    // データの基本検証
-    if values_data.is_empty() {
-        return Err(PredictionError::DataNotFound);
-    }
-
-    if values_data.len() < 4 {
-        return Err(PredictionError::InsufficientData);
-    }
-
-    // 数値の妥当性検証と時系列チェック
-    let mut previous_time: Option<chrono::NaiveDateTime> = None;
-    for (i, point) in values_data.iter().enumerate() {
-        // 数値検証
-        if !point.value.is_finite() {
-            return Err(PredictionError::InvalidData(format!(
-                "Invalid value at index {}: {} (not finite)", i, point.value
-            )));
-        }
-        if point.value <= 0.0 {
-            return Err(PredictionError::InvalidData(format!(
-                "Invalid value at index {}: {} (not positive)", i, point.value
-            )));
-        }
-        
-        // 時系列の順序チェック
-        if let Some(prev_time) = previous_time {
-            if point.time <= prev_time {
-                return Err(PredictionError::InvalidData(format!(
-                    "Time series order error at index {}: {} <= {} (not strictly increasing)", 
-                    i, point.time, prev_time
-                )));
-            }
-        }
-        
-        // 重複時刻チェック（既に前のチェックで検出されるが明示的に）
-        if let Some(prev_time) = previous_time {
-            if point.time == prev_time {
-                return Err(PredictionError::InvalidData(format!(
-                    "Duplicate timestamp at index {}: {}", i, point.time
-                )));
-            }
-        }
-        
-        previous_time = Some(point.time);
-    }
-
-    // データ正規化処理を追加
-    let config = get_config();
-    let values_data = if config.enable_normalization {
-        let normalizer = DataNormalizer::new(
-            config.normalization_window,
-            config.outlier_threshold,
-            config.max_change_ratio,
-        );
-        
-        let normalized_values = normalizer.normalize_data(values_data)
-            .map_err(|e| PredictionError::InvalidData(format!("データ正規化エラー: {}", e)))?;
-        
-        // 品質指標を出力（デバッグ用）
-        let quality_metrics = normalizer.calculate_data_quality_metrics(values_data, &normalized_values);
-        println!("データ正規化完了:");
-        quality_metrics.print_summary();
-        
-        normalized_values
-    } else {
-        values_data.to_vec()
-    };
-    
-    let values_data = &values_data;
-
-    // データを90:10に分割（90%を学習、10%をテスト）
-    let split_point = (values_data.len() as f64 * 0.9) as usize;
-    if split_point < 2 || (values_data.len() - split_point) < 1 {
-        return Err(PredictionError::InsufficientData);
-    }
-
-    let training_data = values_data[..split_point].to_vec();
-    let test_data = values_data[split_point..].to_vec();
-
-    if training_data.is_empty() || test_data.is_empty() {
-        return Err(PredictionError::InsufficientData);
-    }
-
-    // 予測用のタイムスタンプと値を抽出
-    let timestamps: Vec<DateTime<Utc>> = training_data
-        .iter()
-        .map(|v| DateTime::<Utc>::from_naive_utc_and_offset(v.time, Utc))
-        .collect();
-    let values: Vec<_> = training_data.iter().map(|v| v.value).collect();
-
-    // 予測対象の終了日時（テストデータの最後まで）
-    let forecast_until = match test_data.last() {
-        Some(last_point) => DateTime::<Utc>::from_naive_utc_and_offset(last_point.time, Utc),
-        None => return Err(PredictionError::InsufficientData),
-    };
-
-    // ZeroShotPredictionRequestを作成
-    let config = get_config();
-    let prediction_request = if config.omit_model_name {
-        // モデル名を省略（サーバーのデフォルトモデルを使用）
-        println!("モデル名を省略してリクエストを送信（サーバーデフォルトを使用）");
-        ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
-    } else {
-        // モデル名を明示的に指定
-        println!("モデル名を指定してリクエストを送信: {}", model_name);
-        ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
-            .with_model_name(model_name)
-    };
+    // データの検証・前処理とZeroShotPredictionRequestの作成
+    let (prediction_request, training_data, test_data) = create_prediction_request(values_data, model_name)?;
 
     // 予測実行
     match chronos_client.predict_zero_shot(&prediction_request).await {
@@ -323,6 +217,138 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
     metrics.insert("MAPE".to_string(), absolute_percent_errors_sum / n as f64);
 
     metrics
+}
+
+/// データの検証・前処理を行い、ZeroShotPredictionRequestを作成する関数
+/// 
+/// この関数は以下の処理を行います：
+/// - データの基本検証（空データ、最小サイズチェック）
+/// - 数値の妥当性検証（有限値、正の値）
+/// - 時系列データの順序チェック
+/// - データ正規化処理（設定に応じて）
+/// - データの90:10分割（学習用:テスト用）
+/// - ZeroShotPredictionRequestの作成
+/// 
+/// # Arguments
+/// * `values_data` - 予測に使用する時系列データ
+/// * `model_name` - 使用するモデル名
+/// 
+/// # Returns
+/// `Result<(ZeroShotPredictionRequest, Vec<ValueAtTime>, Vec<ValueAtTime>), PredictionError>` 
+/// - 作成されたリクエスト、学習データ、テストデータまたはエラー
+pub fn create_prediction_request(
+    values_data: &[ValueAtTime],
+    model_name: String,
+) -> Result<(ZeroShotPredictionRequest, Vec<ValueAtTime>, Vec<ValueAtTime>), PredictionError> {
+    // データの基本検証
+    if values_data.is_empty() {
+        return Err(PredictionError::DataNotFound);
+    }
+
+    if values_data.len() < 4 {
+        return Err(PredictionError::InsufficientData);
+    }
+
+    // 数値の妥当性検証と時系列チェック
+    let mut previous_time: Option<chrono::NaiveDateTime> = None;
+    for (i, point) in values_data.iter().enumerate() {
+        // 数値検証
+        if !point.value.is_finite() {
+            return Err(PredictionError::InvalidData(format!(
+                "Invalid value at index {}: {} (not finite)", i, point.value
+            )));
+        }
+        if point.value <= 0.0 {
+            return Err(PredictionError::InvalidData(format!(
+                "Invalid value at index {}: {} (not positive)", i, point.value
+            )));
+        }
+        
+        // 時系列の順序チェック
+        if let Some(prev_time) = previous_time {
+            if point.time <= prev_time {
+                return Err(PredictionError::InvalidData(format!(
+                    "Time series order error at index {}: {} <= {} (not strictly increasing)", 
+                    i, point.time, prev_time
+                )));
+            }
+        }
+        
+        // 重複時刻チェック（既に前のチェックで検出されるが明示的に）
+        if let Some(prev_time) = previous_time {
+            if point.time == prev_time {
+                return Err(PredictionError::InvalidData(format!(
+                    "Duplicate timestamp at index {}: {}", i, point.time
+                )));
+            }
+        }
+        
+        previous_time = Some(point.time);
+    }
+
+    // データ正規化処理を追加
+    let config = get_config();
+    let values_data = if config.enable_normalization {
+        let normalizer = DataNormalizer::new(
+            config.normalization_window,
+            config.outlier_threshold,
+            config.max_change_ratio,
+        );
+        
+        let normalized_values = normalizer.normalize_data(values_data)
+            .map_err(|e| PredictionError::InvalidData(format!("データ正規化エラー: {}", e)))?;
+        
+        // 品質指標を出力（デバッグ用）
+        let quality_metrics = normalizer.calculate_data_quality_metrics(values_data, &normalized_values);
+        println!("データ正規化完了:");
+        quality_metrics.print_summary();
+        
+        normalized_values
+    } else {
+        values_data.to_vec()
+    };
+    
+    let values_data = &values_data;
+
+    // データを90:10に分割（90%を学習、10%をテスト）
+    let split_point = (values_data.len() as f64 * 0.9) as usize;
+    if split_point < 2 || (values_data.len() - split_point) < 1 {
+        return Err(PredictionError::InsufficientData);
+    }
+
+    let training_data = values_data[..split_point].to_vec();
+    let test_data = values_data[split_point..].to_vec();
+
+    if training_data.is_empty() || test_data.is_empty() {
+        return Err(PredictionError::InsufficientData);
+    }
+
+    // 予測用のタイムスタンプと値を抽出
+    let timestamps: Vec<DateTime<Utc>> = training_data
+        .iter()
+        .map(|v| DateTime::<Utc>::from_naive_utc_and_offset(v.time, Utc))
+        .collect();
+    let values: Vec<_> = training_data.iter().map(|v| v.value).collect();
+
+    // 予測対象の終了日時（テストデータの最後まで）
+    let forecast_until = match test_data.last() {
+        Some(last_point) => DateTime::<Utc>::from_naive_utc_and_offset(last_point.time, Utc),
+        None => return Err(PredictionError::InsufficientData),
+    };
+
+    // ZeroShotPredictionRequestを作成
+    let prediction_request = if config.omit_model_name {
+        // モデル名を省略（サーバーのデフォルトモデルを使用）
+        println!("モデル名を省略してリクエストを送信（サーバーデフォルトを使用）");
+        ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+    } else {
+        // モデル名を明示的に指定
+        println!("モデル名を指定してリクエストを送信: {}", model_name);
+        ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+            .with_model_name(model_name)
+    };
+    
+    Ok((prediction_request, training_data, test_data))
 }
 
 #[cfg(test)]
@@ -560,5 +586,211 @@ mod tests {
         
         println!("✅ 乗算手法は形状をスケールすることを確認");
         println!("✅ 差分手法は形状を保持することを確認");
+    }
+
+    #[test]
+    fn test_create_prediction_request_with_valid_data() {
+        println!("=== create_prediction_request テスト（有効データ） ===");
+        
+        // 10個のテストデータを作成（90:10分割に十分な量）
+        let mut test_data = Vec::new();
+        for i in 0..10 {
+            test_data.push(ValueAtTime {
+                time: NaiveDateTime::parse_from_str(
+                    &format!("2025-06-{:02} 00:00:00", i + 1), 
+                    "%Y-%m-%d %H:%M:%S"
+                ).unwrap(),
+                value: 100.0 + i as f64,
+            });
+        }
+        
+        let model_name = "test_model".to_string();
+        
+        // 関数の実行
+        let result = create_prediction_request(&test_data, model_name);
+        
+        // 結果の検証
+        assert!(result.is_ok(), "create_prediction_request should succeed with valid data");
+        let (prediction_request, training_data, test_data_result) = result.unwrap();
+        
+        // データ分割の検証（90:10）
+        let expected_training_size = (test_data.len() as f64 * 0.9) as usize; // 9
+        let expected_test_size = test_data.len() - expected_training_size; // 1
+        
+        assert_eq!(training_data.len(), expected_training_size);
+        assert_eq!(test_data_result.len(), expected_test_size);
+        
+        // リクエストデータの検証
+        assert_eq!(prediction_request.timestamp.len(), expected_training_size);
+        assert_eq!(prediction_request.values.len(), expected_training_size);
+        
+        println!("✅ 有効データのテスト完了");
+    }
+
+    #[test]
+    fn test_create_prediction_request_with_empty_data() {
+        println!("=== create_prediction_request テスト（空データ） ===");
+        
+        let empty_data = vec![];
+        let model_name = "test_model".to_string();
+        
+        // 関数の実行
+        let result = create_prediction_request(&empty_data, model_name);
+        
+        // 結果の検証（空データはエラーになるべき）
+        assert!(result.is_err(), "create_prediction_request should fail with empty data");
+        
+        if let Err(error) = result {
+            match error {
+                PredictionError::DataNotFound => {
+                    println!("✅ 期待通りDataNotFoundエラーが発生");
+                }
+                _ => {
+                    panic!("予期しないエラータイプ: {:?}", error);
+                }
+            }
+        }
+        
+        println!("✅ 空データのテスト完了");
+    }
+
+    #[test]
+    fn test_create_prediction_request_insufficient_data() {
+        println!("=== create_prediction_request テスト（データ不足） ===");
+        
+        // 3個のデータ（最小要件の4個未満）
+        let insufficient_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.1,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.2,
+            },
+        ];
+        let model_name = "test_model".to_string();
+        
+        // 関数の実行
+        let result = create_prediction_request(&insufficient_data, model_name);
+        
+        // 結果の検証（データ不足はエラーになるべき）
+        assert!(result.is_err(), "create_prediction_request should fail with insufficient data");
+        
+        if let Err(error) = result {
+            match error {
+                PredictionError::InsufficientData => {
+                    println!("✅ 期待通りInsufficientDataエラーが発生");
+                }
+                _ => {
+                    panic!("予期しないエラータイプ: {:?}", error);
+                }
+            }
+        }
+        
+        println!("✅ データ不足のテスト完了");
+    }
+
+    #[test]
+    fn test_create_prediction_request_invalid_values() {
+        println!("=== create_prediction_request テスト（無効な値） ===");
+        
+        // 無効な値を含むデータ（負の値、無限大、NaN）
+        let invalid_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: -1.0, // 負の値
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.2,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: f64::INFINITY, // 無限大
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-05 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.5,
+            },
+        ];
+        let model_name = "test_model".to_string();
+        
+        // 関数の実行
+        let result = create_prediction_request(&invalid_data, model_name);
+        
+        // 結果の検証（無効な値はエラーになるべき）
+        assert!(result.is_err(), "create_prediction_request should fail with invalid values");
+        
+        if let Err(error) = result {
+            match error {
+                PredictionError::InvalidData(_) => {
+                    println!("✅ 期待通りInvalidDataエラーが発生");
+                }
+                _ => {
+                    panic!("予期しないエラータイプ: {:?}", error);
+                }
+            }
+        }
+        
+        println!("✅ 無効な値のテスト完了");
+    }
+
+    #[test]
+    fn test_create_prediction_request_time_order_validation() {
+        println!("=== create_prediction_request テスト（時間順序検証） ===");
+        
+        // 時間順序が間違っているデータ
+        let unordered_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(), // 順序が逆
+                value: 1.1,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(), // 前より古い
+                value: 1.2,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.3,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-05 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.4,
+            },
+        ];
+        let model_name = "test_model".to_string();
+        
+        // 関数の実行
+        let result = create_prediction_request(&unordered_data, model_name);
+        
+        // 結果の検証（時間順序エラーになるべき）
+        assert!(result.is_err(), "create_prediction_request should fail with unordered timestamps");
+        
+        if let Err(error) = result {
+            match error {
+                PredictionError::InvalidData(msg) => {
+                    assert!(msg.contains("Time series order error"), "Error message should mention time series order");
+                    println!("✅ 期待通り時間順序エラーが発生: {}", msg);
+                }
+                _ => {
+                    panic!("予期しないエラータイプ: {:?}", error);
+                }
+            }
+        }
+        
+        println!("✅ 時間順序検証のテスト完了");
     }
 }
