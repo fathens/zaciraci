@@ -7,6 +7,40 @@
 - `cargo clippy --all-targets --all-features -- -D warnings` でlintをチェック（警告はエラーとして扱う）
 - `cargo test` ですべてのテストが通ることを確認
 
+### ログ出力の方針
+**重要**: `println!` マクロの使用は禁止です。適切なログマクロを使用してください。
+
+#### フロントエンド（frontend/）
+- `log` クレートを使用
+- インポート不要（グローバルに利用可能）
+- 使用例:
+  ```rust
+  log::debug!("デバッグ情報: {}", value);
+  log::info!("処理完了: データ正規化");
+  log::error!("エラー発生: {:?}", error);
+  ```
+
+#### バックエンド（backend/）
+- `slog` 構造化ログライブラリを使用
+- `use crate::logging::*;` でインポート
+- 各関数でloggerを作成してからログ出力
+- 使用例:
+  ```rust
+  use crate::logging::*;
+  
+  fn my_function() {
+      let log = DEFAULT.new(o!("function" => "my_function"));
+      debug!(log, "デバッグ情報"; "value" => %some_value);
+      info!(log, "処理開始");
+      error!(log, "エラー発生"; "error" => %error);
+  }
+  ```
+
+#### テストコードでのログ
+- テスト関数でも同様にloggerを作成
+- デバッグ情報は `debug!` レベルを使用
+- テスト結果の確認情報は適切なレベルを選択
+
 ### CI/CDチェック項目
 開発時は以下のコマンドでCIと同じチェックを実行可能:
 
