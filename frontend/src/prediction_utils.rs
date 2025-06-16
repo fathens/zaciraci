@@ -59,11 +59,10 @@ pub async fn execute_zero_shot_prediction(
             // 予測精度の計算
             let metrics = calculate_metrics(&actual_values, &forecast_values);
 
-            // 予測データを変換・調整
+            // 予測データを変換
             let forecast_data = transform_forecast_data(
                 &forecast_values,
                 &prediction_response.forecast_timestamp,
-                &test_data, // test_dataを参照渡しに変更
             )?;
 
             // チャートSVGを生成
@@ -119,24 +118,21 @@ pub fn validate_prediction_response(
     Ok(())
 }
 
-/// 予測データをValueAtTime形式に変換し、必要に応じてレベル調整を行う関数
+/// 予測データをValueAtTime形式に変換する関数
 /// 
 /// この関数は予測APIから返されたデータを処理して、以下の処理を行います：
 /// - 予測値とタイムスタンプをValueAtTime形式に変換
-/// - テストデータの最後の値に基づいてレベル調整（オフセット適用）
-/// - 予測データの形状を保持しつつ、実際のデータとの連続性を確保
+/// - 予測データの形状を保持
 /// 
 /// # Arguments
 /// * `forecast_values` - 予測値の配列
-/// * `forecast_timestamp` - 予測タイムスタンプの配列  
-/// * `test_data` - テストデータ（レベル調整の基準値として使用）
+/// * `forecast_timestamp` - 予測タイムスタンプの配列
 /// 
 /// # Returns
-/// `Result<Vec<ValueAtTime>, PredictionError>` - 変換・調整済みの予測データまたはエラー
+/// `Result<Vec<ValueAtTime>, PredictionError>` - 変換済みの予測データまたはエラー
 pub fn transform_forecast_data(
     forecast_values: &[f64],
     forecast_timestamp: &[DateTime<Utc>],
-    test_data: &[ValueAtTime],
 ) -> Result<Vec<ValueAtTime>, PredictionError> {
     // 前提条件のチェック
     if forecast_values.is_empty() {
@@ -159,11 +155,6 @@ pub fn transform_forecast_data(
         )));
     }
 
-    if test_data.is_empty() {
-        return Err(PredictionError::InvalidData(
-            "テストデータが空です".to_string(),
-        ));
-    }
 
     let mut forecast_points: Vec<ValueAtTime> = Vec::new();
     
@@ -182,7 +173,6 @@ pub fn transform_forecast_data(
 /// 
 /// この関数は実際のデータと予測データを使ってチャートを生成します：
 /// - 実際のデータと予測データを異なる色で表示
-/// - 時間軸の重なりをデバッグ出力で確認
 /// - カスタマイズ可能なチャートオプション
 /// 
 /// # Arguments

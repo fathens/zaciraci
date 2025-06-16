@@ -822,7 +822,7 @@ fn test_transform_forecast_data_with_test_data() {
         },
     ];
 
-    let result = transform_forecast_data(&forecast_values, &forecast_timestamp, &test_data)
+    let result = transform_forecast_data(&forecast_values, &forecast_timestamp)
         .expect("変換に失敗しました");
 
     // 結果の検証
@@ -845,8 +845,8 @@ fn test_transform_forecast_data_with_test_data() {
 }
 
 #[test]
-fn test_transform_forecast_data_without_test_data() {
-    log::debug!("=== transform_forecast_data テスト（テストデータなし） ===");
+fn test_transform_forecast_data_success() {
+    log::debug!("=== transform_forecast_data テスト（正常変換） ===");
 
     let forecast_values = vec![100.0, 105.0, 95.0];
     let forecast_timestamp = vec![
@@ -864,26 +864,20 @@ fn test_transform_forecast_data_without_test_data() {
         ),
     ];
 
-    let test_data = vec![]; // 空のテストデータ
+    let result = transform_forecast_data(&forecast_values, &forecast_timestamp);
 
-    let result = transform_forecast_data(&forecast_values, &forecast_timestamp, &test_data);
-
-    // 結果の検証（そのまま変換されるべき）
+    // 結果の検証（正常に変換されるべき）
     assert!(
-        result.is_err(),
-        "transform_forecast_data should fail with empty test data"
+        result.is_ok(),
+        "transform_forecast_data should succeed with valid data"
     );
-    if let Err(e) = result {
-        match e {
-            PredictionError::InvalidData(msg) => {
-                assert!(msg.contains("テストデータが空です"));
-                log::debug!("✅ 期待通りのエラーメッセージ: {}", msg);
-            }
-            _ => panic!("予期しないエラータイプ: {:?}", e),
-        }
-    }
+    let forecast_data = result.unwrap();
+    assert_eq!(forecast_data.len(), 3);
+    assert_eq!(forecast_data[0].value, 100.0);
+    assert_eq!(forecast_data[1].value, 105.0);
+    assert_eq!(forecast_data[2].value, 95.0);
 
-    log::debug!("✅ テストデータなしの変換テスト完了");
+    log::debug!("✅ 正常変換テスト完了");
 }
 
 #[test]
@@ -896,13 +890,8 @@ fn test_transform_forecast_data_empty_forecast_values() {
         Utc,
     )];
 
-    let test_data = vec![ValueAtTime {
-        time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
-        value: 1.0,
-    }];
-
     // 空の予測値なのでエラーが返されることを期待
-    let result = transform_forecast_data(&forecast_values, &forecast_timestamp, &test_data);
+    let result = transform_forecast_data(&forecast_values, &forecast_timestamp);
     match result {
         Ok(_) => panic!("空の予測値でエラーが発生しませんでした"),
         Err(e) => match e {
@@ -933,13 +922,8 @@ fn test_transform_forecast_data_length_mismatch() {
         ),
     ];
 
-    let test_data = vec![ValueAtTime {
-        time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
-        value: 1.0,
-    }];
-
     // 予測値とタイムスタンプの長さが一致しないのでエラーが返されることを期待
-    let result = transform_forecast_data(&forecast_values, &forecast_timestamp, &test_data);
+    let result = transform_forecast_data(&forecast_values, &forecast_timestamp);
     match result {
         Ok(_) => panic!("長さの不一致でエラーが発生しませんでした"),
         Err(e) => match e {
