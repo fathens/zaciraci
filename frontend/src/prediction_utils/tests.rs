@@ -826,25 +826,16 @@ fn test_transform_forecast_data_with_test_data() {
         .expect("変換に失敗しました");
 
     // 結果の検証
-    assert_eq!(result.len(), 4); // 接続点 + 3つの予測点
+    assert_eq!(result.len(), 3); // 予測点のみ（接続点なし）
 
-    // 接続点の検証（テストデータの最後の点）
-    if let Some(last_test_point) = test_data.last() {
-        assert_eq!(result[0].time, last_test_point.time);
-        assert_eq!(result[0].value, last_test_point.value);
-    } else {
-        panic!("テストデータが空です");
-    }
-
-    // レベル調整の検証（オフセット = 200.0 - 100.0 = 100.0）
-    let expected_offset = 200.0 - 100.0;
-    assert_eq!(result[1].value, 100.0 + expected_offset); // 200.0
-    assert_eq!(result[2].value, 105.0 + expected_offset); // 205.0
-    assert_eq!(result[3].value, 95.0 + expected_offset); // 195.0
+    // 修正後：オフセット調整なし、元の予測値がそのまま使用される
+    assert_eq!(result[0].value, 100.0); // 最初の予測値
+    assert_eq!(result[1].value, 105.0); // 2番目の予測値
+    assert_eq!(result[2].value, 95.0); // 3番目の予測値
 
     // 形状保持の検証
     let original_diff_1_2 = forecast_values[1] - forecast_values[0]; // 5.0
-    let adjusted_diff_1_2 = result[2].value - result[1].value;
+    let adjusted_diff_1_2 = result[1].value - result[0].value;
     assert!(
         (original_diff_1_2 - adjusted_diff_1_2).abs() < 1e-10,
         "形状が保持されていません"
@@ -988,7 +979,8 @@ fn test_create_prediction_result() {
     let chart_svg = "<svg>test chart</svg>".to_string();
 
     let mut metrics = HashMap::new();
-    metrics.insert("MAPE".to_string(), 15.0); // 15%のMAPE -> 85%の精度
+    metrics.insert("MAPE".to_string(), 15.0); // 従来のMAPE
+    metrics.insert("NORMALIZED_MAPE".to_string(), 15.0); // 15%の正規化MAPE -> 85%の精度
     metrics.insert("RMSE".to_string(), 2.5);
 
     let result =
@@ -1017,7 +1009,7 @@ fn test_create_prediction_result_empty_forecast() {
 
     // 空の場合の検証
     assert_eq!(result.predicted_price, 0.0); // デフォルト値
-    assert_eq!(result.accuracy, 100.0); // MAPEがない場合は100%
+    assert_eq!(result.accuracy, 100.0); // NORMALIZED_MAPEがない場合は100%
 
     log::debug!("✅ 空の予測データテスト完了");
 }
