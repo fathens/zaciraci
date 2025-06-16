@@ -46,6 +46,12 @@ pub async fn execute_zero_shot_prediction(
     // 予測実行
     match chronos_client.predict_zero_shot(&prediction_request).await {
         Ok(prediction_response) => {
+            // 予測レスポンスの基本検証
+            validate_prediction_response(
+                &prediction_response.forecast_values,
+                &prediction_response.forecast_timestamp,
+            )?;
+
             // 予測結果とテストデータの比較
             let actual_values: Vec<_> = test_data.iter().map(|v| v.value).collect();
             let forecast_values = prediction_response.forecast_values;
@@ -53,130 +59,235 @@ pub async fn execute_zero_shot_prediction(
             // 予測精度の計算
             let metrics = calculate_metrics(&actual_values, &forecast_values);
 
-            // 予測データを変換
-            let mut forecast_points: Vec<ValueAtTime> = Vec::new();
-
-            // 予測データがあり、テストデータもある場合
-            if !prediction_response.forecast_timestamp.is_empty()
-                && !forecast_values.is_empty()
-                && !test_data.is_empty()
-            {
-                // テストデータの最後のポイントを取得
-                let last_test_point = match test_data.last() {
-                    Some(point) => point,
-                    None => return Err(PredictionError::InsufficientData),
-                };
-
-                // デバッグ出力：予測データの詳細
-                log::debug!("=== 予測データ解析 ===");
-                log::debug!("APIから返された予測値: {:?}", &forecast_values[..forecast_values.len().min(5)]);
-                log::debug!("予測タイムスタンプ数: {}", prediction_response.forecast_timestamp.len());
-                log::debug!("予測値数: {}", forecast_values.len());
-                
-                // 予測APIから返された最初の予測値を取得
-                let first_api_forecast_value = forecast_values[0];
-                log::debug!("最初の予測値: {}", first_api_forecast_value);
-                log::debug!("テストデータ最後の値: {}", last_test_point.value);
-
-                // 最初の予測値とテストデータの最後の値の差分を計算
-                let offset = last_test_point.value - first_api_forecast_value;
-                log::debug!("適用するオフセット: {}", offset);
-
-                // テストデータの最後のポイントを予測データの開始点として使用
-                forecast_points.push(ValueAtTime {
-                    time: last_test_point.time,
-                    value: last_test_point.value,
-                });
-
-                // 予測データを差分調整して追加（形状を保持）
-                for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
-                    if i < forecast_values.len() {
-                        // 予測値に差分を加算（形状を保持しつつレベル調整）
-                        let adjusted_value = forecast_values[i] + offset;
-
-                        forecast_points.push(ValueAtTime {
-                            time: timestamp.naive_utc(),
-                            value: adjusted_value,
-                        });
-                    }
-                }
-            } else {
-                // テストデータがない場合や予測データがない場合は、そのまま変換
-                for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
-                    if i < forecast_values.len() {
-                        forecast_points.push(ValueAtTime {
-                            time: timestamp.naive_utc(),
-                            value: forecast_values[i],
-                        });
-                    }
-                }
-            }
+            // 予測データを変換・調整
+            let forecast_data = transform_forecast_data(
+                &forecast_values,
+                &prediction_response.forecast_timestamp,
+                test_data,
+            );
 
             // チャートSVGを生成
-            let config = get_config();
-            
-            // デバッグ出力：時間軸の重なりをチェック
-            log::debug!("=== チャートデータの時間軸分析 ===");
-            
-            let actual_data = &normalized_data;
-            
-            if let (Some(actual_first), Some(actual_last)) = (actual_data.first(), actual_data.last()) {
-                log::debug!("実際データ時間範囲: {} ～ {}", actual_first.time, actual_last.time);
-                log::debug!("実際データ点数: {}", actual_data.len());
-            }
-            
-            if let (Some(forecast_first), Some(forecast_last)) = (forecast_points.first(), forecast_points.last()) {
-                log::debug!("予測データ時間範囲: {} ～ {}", forecast_first.time, forecast_last.time);
-                log::debug!("予測データ点数: {}", forecast_points.len());
-                
-                // 重複チェック：実際データの最後と予測データの最初が重なっているか
-                if let Some(actual_last) = actual_data.last() {
-                    if actual_last.time == forecast_first.time {
-                        log::debug!("✅ 時間軸の接続OK: {} で接続", actual_last.time);
-                    } else {
-                        log::debug!("⚠️ 時間軸のギャップ: 実際データ終了 {} vs 予測データ開始 {}", 
-                                actual_last.time, forecast_first.time);
-                    }
-                }
-            }
-            
-            let chart_svg = plot_multi_values_at_time_to_svg_with_options(
-                &[
-                    MultiPlotSeries {
-                        name: "実際の価格".to_string(),
-                        values: normalized_data.clone(),
-                        color: BLUE,
-                    },
-                    MultiPlotSeries {
-                        name: "予測価格".to_string(),
-                        values: forecast_points.clone(),
-                        color: RED,
-                    },
-                ],
-                MultiPlotOptions {
-                    title: Some("価格予測".to_string()),
-                    image_size: config.chart_size(),
-                    x_label: Some("時間".to_string()),
-                    y_label: Some("価格".to_string()),
-                },
-            )
-            .map_err(|e| PredictionError::ChartGenerationFailed(e.to_string()))?;
+            let chart_svg = generate_prediction_chart_svg(&normalized_data, &forecast_data)?;
 
-            // 予測価格（最後の予測値）
-            let predicted_price = forecast_points.last().map(|p| p.value).unwrap_or(0.0);
-
-            Ok(PredictionResult {
-                predicted_price,
-                accuracy: 100.0 - metrics.get("MAPE").unwrap_or(&0.0), // MAPEから精度を計算
-                chart_svg: Some(chart_svg),
-                metrics,
-                forecast_data: forecast_points,
-            })
+            // PredictionResultを作成
+            Ok(create_prediction_result(forecast_data, chart_svg, metrics))
         }
         Err(e) => Err(PredictionError::PredictionFailed(format!(
             "予測実行エラー: {}",
             e
         ))),
+    }
+}
+
+/// 予測レスポンスの基本検証を行う関数
+/// 
+/// この関数は予測APIからのレスポンスに含まれるデータの基本的な検証を行います：
+/// - forecast_valuesが空でないこと
+/// - forecast_timestampが空でないこと
+/// - 両者の長さが一致していること
+/// 
+/// # Arguments
+/// * `forecast_values` - 予測値の配列
+/// * `forecast_timestamp` - 予測タイムスタンプの配列
+/// 
+/// # Returns
+/// `Result<(), PredictionError>` - 検証が成功した場合はOk(())、失敗した場合はエラー
+pub fn validate_prediction_response(
+    forecast_values: &[f64],
+    forecast_timestamp: &[DateTime<Utc>],
+) -> Result<(), PredictionError> {
+    if forecast_values.is_empty() {
+        return Err(PredictionError::InvalidData(
+            "Forecast values are empty".to_string(),
+        ));
+    }
+
+    if forecast_timestamp.is_empty() {
+        return Err(PredictionError::InvalidData(
+            "Forecast timestamps are empty".to_string(),
+        ));
+    }
+
+    if forecast_values.len() != forecast_timestamp.len() {
+        return Err(PredictionError::InvalidData(format!(
+            "Forecast values length ({}) does not match timestamps length ({})",
+            forecast_values.len(),
+            forecast_timestamp.len()
+        )));
+    }
+
+    Ok(())
+}
+
+/// 予測データをValueAtTime形式に変換し、必要に応じてレベル調整を行う関数
+/// 
+/// この関数は予測APIから返されたデータを処理して、以下の処理を行います：
+/// - 予測値とタイムスタンプをValueAtTime形式に変換
+/// - テストデータの最後の値に基づいてレベル調整（オフセット適用）
+/// - 予測データの形状を保持しつつ、実際のデータとの連続性を確保
+/// 
+/// # Arguments
+/// * `forecast_values` - 予測値の配列
+/// * `forecast_timestamp` - 予測タイムスタンプの配列  
+/// * `test_data` - テストデータ（レベル調整の基準値として使用）
+/// 
+/// # Returns
+/// `Vec<ValueAtTime>` - 変換・調整済みの予測データ
+pub fn transform_forecast_data(
+    forecast_values: &[f64],
+    forecast_timestamp: &[DateTime<Utc>],
+    test_data: &[ValueAtTime],
+) -> Vec<ValueAtTime> {
+    let mut forecast_points: Vec<ValueAtTime> = Vec::new();
+
+    // 予測データがあり、テストデータもある場合はレベル調整を行う
+    if !forecast_values.is_empty() && !forecast_timestamp.is_empty() && !test_data.is_empty() {
+        // テストデータの最後のポイントを取得
+        if let Some(last_test_point) = test_data.last() {
+            // デバッグ出力：予測データの詳細
+            log::debug!("=== 予測データ解析 ===");
+            log::debug!("APIから返された予測値: {:?}", &forecast_values[..forecast_values.len().min(5)]);
+            log::debug!("予測タイムスタンプ数: {}", forecast_timestamp.len());
+            log::debug!("予測値数: {}", forecast_values.len());
+            
+            // 予測APIから返された最初の予測値を取得
+            let first_api_forecast_value = forecast_values[0];
+            log::debug!("最初の予測値: {}", first_api_forecast_value);
+            log::debug!("テストデータ最後の値: {}", last_test_point.value);
+
+            // 最初の予測値とテストデータの最後の値の差分を計算
+            let offset = last_test_point.value - first_api_forecast_value;
+            log::debug!("適用するオフセット: {}", offset);
+
+            // テストデータの最後のポイントを予測データの開始点として使用
+            forecast_points.push(ValueAtTime {
+                time: last_test_point.time,
+                value: last_test_point.value,
+            });
+
+            // 予測データを差分調整して追加（形状を保持）
+            for (i, timestamp) in forecast_timestamp.iter().enumerate() {
+                if i < forecast_values.len() {
+                    // 予測値に差分を加算（形状を保持しつつレベル調整）
+                    let adjusted_value = forecast_values[i] + offset;
+
+                    forecast_points.push(ValueAtTime {
+                        time: timestamp.naive_utc(),
+                        value: adjusted_value,
+                    });
+                }
+            }
+        }
+    } else {
+        // テストデータがない場合や予測データがない場合は、そのまま変換
+        for (i, timestamp) in forecast_timestamp.iter().enumerate() {
+            if i < forecast_values.len() {
+                forecast_points.push(ValueAtTime {
+                    time: timestamp.naive_utc(),
+                    value: forecast_values[i],
+                });
+            }
+        }
+    }
+
+    forecast_points
+}
+
+/// チャートSVGを生成する関数
+/// 
+/// この関数は実際のデータと予測データを使ってチャートを生成します：
+/// - 実際のデータと予測データを異なる色で表示
+/// - 時間軸の重なりをデバッグ出力で確認
+/// - カスタマイズ可能なチャートオプション
+/// 
+/// # Arguments
+/// * `actual_data` - 実際のデータ（正規化済み）
+/// * `forecast_data` - 予測データ（変換済み）
+/// 
+/// # Returns
+/// `Result<String, PredictionError>` - 生成されたSVGチャートまたはエラー
+pub fn generate_prediction_chart_svg(
+    actual_data: &[ValueAtTime],
+    forecast_data: &[ValueAtTime],
+) -> Result<String, PredictionError> {
+    let config = get_config();
+    
+    // デバッグ出力：時間軸の重なりをチェック
+    log::debug!("=== チャートデータの時間軸分析 ===");
+    
+    if let (Some(actual_first), Some(actual_last)) = (actual_data.first(), actual_data.last()) {
+        log::debug!("実際データ時間範囲: {} ～ {}", actual_first.time, actual_last.time);
+        log::debug!("実際データ点数: {}", actual_data.len());
+    }
+    
+    if let (Some(forecast_first), Some(forecast_last)) = (forecast_data.first(), forecast_data.last()) {
+        log::debug!("予測データ時間範囲: {} ～ {}", forecast_first.time, forecast_last.time);
+        log::debug!("予測データ点数: {}", forecast_data.len());
+        
+        // 重複チェック：実際データの最後と予測データの最初が重なっているか
+        if let Some(actual_last) = actual_data.last() {
+            if actual_last.time == forecast_first.time {
+                log::debug!("✅ 時間軸の接続OK: {} で接続", actual_last.time);
+            } else {
+                log::debug!("⚠️ 時間軸のギャップ: 実際データ終了 {} vs 予測データ開始 {}", 
+                        actual_last.time, forecast_first.time);
+            }
+        }
+    }
+    
+    let chart_svg = plot_multi_values_at_time_to_svg_with_options(
+        &[
+            MultiPlotSeries {
+                name: "実際の価格".to_string(),
+                values: actual_data.to_vec(),
+                color: BLUE,
+            },
+            MultiPlotSeries {
+                name: "予測価格".to_string(),
+                values: forecast_data.to_vec(),
+                color: RED,
+            },
+        ],
+        MultiPlotOptions {
+            title: Some("価格予測".to_string()),
+            image_size: config.chart_size(),
+            x_label: Some("時間".to_string()),
+            y_label: Some("価格".to_string()),
+        },
+    )
+    .map_err(|e| PredictionError::ChartGenerationFailed(e.to_string()))?;
+
+    Ok(chart_svg)
+}
+
+/// PredictionResultを作成する関数
+/// 
+/// この関数は処理済みのデータから最終的なPredictionResultを構築します：
+/// - 予測価格の計算（最後の予測値）
+/// - 精度の計算（MAPEから導出）
+/// - 各種メトリクスの設定
+/// 
+/// # Arguments
+/// * `forecast_data` - 変換済みの予測データ
+/// * `chart_svg` - 生成済みのチャートSVG
+/// * `metrics` - 計算済みの評価メトリクス
+/// 
+/// # Returns
+/// `PredictionResult` - 完成した予測結果
+pub fn create_prediction_result(
+    forecast_data: Vec<ValueAtTime>,
+    chart_svg: String,
+    metrics: HashMap<String, f64>,
+) -> PredictionResult {
+    // 予測価格（最後の予測値）
+    let predicted_price = forecast_data.last().map(|p| p.value).unwrap_or(0.0);
+
+    PredictionResult {
+        predicted_price,
+        accuracy: 100.0 - metrics.get("MAPE").unwrap_or(&0.0), // MAPEから精度を計算
+        chart_svg: Some(chart_svg),
+        metrics,
+        forecast_data,
     }
 }
 
@@ -989,5 +1100,241 @@ mod tests {
         assert_eq!(test_data[0].value, 1.3);
         
         log::debug!("✅ 最小有効データのテスト完了");
+    }
+
+    #[test]
+    fn test_validate_prediction_response_valid_data() {
+        log::debug!("=== validate_prediction_response テスト（有効データ） ===");
+        
+        let forecast_values = vec![1.0, 1.1, 1.2];
+        let forecast_timestamp = vec![
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+        ];
+        
+        let result = validate_prediction_response(&forecast_values, &forecast_timestamp);
+        assert!(result.is_ok(), "Valid prediction response should pass validation");
+        
+        log::debug!("✅ 有効データの検証テスト完了");
+    }
+
+    #[test]
+    fn test_validate_prediction_response_empty_values() {
+        log::debug!("=== validate_prediction_response テスト（空の予測値） ===");
+        
+        let forecast_values = vec![];
+        let forecast_timestamp = vec![
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+        ];
+        
+        let result = validate_prediction_response(&forecast_values, &forecast_timestamp);
+        assert!(result.is_err(), "Empty forecast values should fail validation");
+        
+        if let Err(error) = result {
+            match error {
+                PredictionError::InvalidData(msg) => {
+                    assert!(msg.contains("empty"), "Error message should mention empty data");
+                    log::debug!("✅ 期待通りのエラーメッセージ: {}", msg);
+                }
+                _ => panic!("予期しないエラータイプ: {:?}", error),
+            }
+        }
+        
+        log::debug!("✅ 空の予測値テスト完了");
+    }
+
+    #[test]
+    fn test_validate_prediction_response_length_mismatch() {
+        log::debug!("=== validate_prediction_response テスト（長さ不一致） ===");
+        
+        let forecast_values = vec![1.0, 1.1];
+        let forecast_timestamp = vec![
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+        ];
+        
+        let result = validate_prediction_response(&forecast_values, &forecast_timestamp);
+        assert!(result.is_err(), "Mismatched lengths should fail validation");
+        
+        if let Err(error) = result {
+            match error {
+                PredictionError::InvalidData(msg) => {
+                    assert!(msg.contains("does not match"), "Error message should mention length mismatch");
+                    log::debug!("✅ 期待通りのエラーメッセージ: {}", msg);
+                }
+                _ => panic!("予期しないエラータイプ: {:?}", error),
+            }
+        }
+        
+        log::debug!("✅ 長さ不一致テスト完了");
+    }
+
+    #[test]
+    fn test_transform_forecast_data_with_test_data() {
+        log::debug!("=== transform_forecast_data テスト（テストデータあり） ===");
+        
+        let forecast_values = vec![100.0, 105.0, 95.0];
+        let forecast_timestamp = vec![
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-05 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-06 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+        ];
+        
+        let test_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.1,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 200.0, // テストデータの最後の値
+            },
+        ];
+        
+        let result = transform_forecast_data(&forecast_values, &forecast_timestamp, &test_data);
+        
+        // 結果の検証
+        assert_eq!(result.len(), 4); // 接続点 + 3つの予測点
+        
+        // 接続点の検証（テストデータの最後の点）
+        assert_eq!(result[0].time, test_data.last().unwrap().time);
+        assert_eq!(result[0].value, test_data.last().unwrap().value);
+        
+        // レベル調整の検証（オフセット = 200.0 - 100.0 = 100.0）
+        let expected_offset = 200.0 - 100.0;
+        assert_eq!(result[1].value, 100.0 + expected_offset); // 200.0
+        assert_eq!(result[2].value, 105.0 + expected_offset); // 205.0
+        assert_eq!(result[3].value, 95.0 + expected_offset);  // 195.0
+        
+        // 形状保持の検証
+        let original_diff_1_2 = forecast_values[1] - forecast_values[0]; // 5.0
+        let adjusted_diff_1_2 = result[2].value - result[1].value;
+        assert!((original_diff_1_2 - adjusted_diff_1_2).abs() < 1e-10, "形状が保持されていません");
+        
+        log::debug!("✅ テストデータありの変換テスト完了");
+    }
+
+    #[test]
+    fn test_transform_forecast_data_without_test_data() {
+        log::debug!("=== transform_forecast_data テスト（テストデータなし） ===");
+        
+        let forecast_values = vec![100.0, 105.0, 95.0];
+        let forecast_timestamp = vec![
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+            DateTime::<Utc>::from_naive_utc_and_offset(
+                NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                Utc,
+            ),
+        ];
+        
+        let test_data = vec![]; // 空のテストデータ
+        
+        let result = transform_forecast_data(&forecast_values, &forecast_timestamp, &test_data);
+        
+        // 結果の検証（そのまま変換されるべき）
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].value, 100.0);
+        assert_eq!(result[1].value, 105.0);
+        assert_eq!(result[2].value, 95.0);
+        
+        log::debug!("✅ テストデータなしの変換テスト完了");
+    }
+
+    #[test]
+    fn test_create_prediction_result() {
+        log::debug!("=== create_prediction_result テスト ===");
+        
+        let forecast_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 105.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 110.0, // 最後の値（predicted_priceになる）
+            },
+        ];
+        
+        let chart_svg = "<svg>test chart</svg>".to_string();
+        
+        let mut metrics = HashMap::new();
+        metrics.insert("MAPE".to_string(), 15.0); // 15%のMAPE -> 85%の精度
+        metrics.insert("RMSE".to_string(), 2.5);
+        
+        let result = create_prediction_result(forecast_data.clone(), chart_svg.clone(), metrics.clone());
+        
+        // 結果の検証
+        assert_eq!(result.predicted_price, 110.0); // 最後の予測値
+        assert_eq!(result.accuracy, 85.0); // 100 - 15 = 85%
+        assert_eq!(result.chart_svg.unwrap(), chart_svg);
+        assert_eq!(result.metrics.get("MAPE").unwrap(), &15.0);
+        assert_eq!(result.metrics.get("RMSE").unwrap(), &2.5);
+        assert_eq!(result.forecast_data.len(), 3);
+        
+        log::debug!("✅ PredictionResult作成テスト完了");
+    }
+
+    #[test]
+    fn test_create_prediction_result_empty_forecast() {
+        log::debug!("=== create_prediction_result テスト（空の予測データ） ===");
+        
+        let forecast_data = vec![]; // 空の予測データ
+        let chart_svg = "<svg>test chart</svg>".to_string();
+        let metrics = HashMap::new();
+        
+        let result = create_prediction_result(forecast_data, chart_svg, metrics);
+        
+        // 空の場合の検証
+        assert_eq!(result.predicted_price, 0.0); // デフォルト値
+        assert_eq!(result.accuracy, 100.0); // MAPEがない場合は100%
+        
+        log::debug!("✅ 空の予測データテスト完了");
     }
 }
