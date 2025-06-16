@@ -68,19 +68,19 @@ pub async fn execute_zero_shot_prediction(
                 };
 
                 // デバッグ出力：予測データの詳細
-                println!("=== 予測データ解析 ===");
-                println!("APIから返された予測値: {:?}", &forecast_values[..forecast_values.len().min(5)]);
-                println!("予測タイムスタンプ数: {}", prediction_response.forecast_timestamp.len());
-                println!("予測値数: {}", forecast_values.len());
+                log::debug!("=== 予測データ解析 ===");
+                log::debug!("APIから返された予測値: {:?}", &forecast_values[..forecast_values.len().min(5)]);
+                log::debug!("予測タイムスタンプ数: {}", prediction_response.forecast_timestamp.len());
+                log::debug!("予測値数: {}", forecast_values.len());
                 
                 // 予測APIから返された最初の予測値を取得
                 let first_api_forecast_value = forecast_values[0];
-                println!("最初の予測値: {}", first_api_forecast_value);
-                println!("テストデータ最後の値: {}", last_test_point.value);
+                log::debug!("最初の予測値: {}", first_api_forecast_value);
+                log::debug!("テストデータ最後の値: {}", last_test_point.value);
 
                 // 最初の予測値とテストデータの最後の値の差分を計算
                 let offset = last_test_point.value - first_api_forecast_value;
-                println!("適用するオフセット: {}", offset);
+                log::debug!("適用するオフセット: {}", offset);
 
                 // テストデータの最後のポイントを予測データの開始点として使用
                 forecast_points.push(ValueAtTime {
@@ -116,25 +116,25 @@ pub async fn execute_zero_shot_prediction(
             let config = get_config();
             
             // デバッグ出力：時間軸の重なりをチェック
-            println!("=== チャートデータの時間軸分析 ===");
+            log::debug!("=== チャートデータの時間軸分析 ===");
             
             let actual_data = &normalized_data;
             
             if let (Some(actual_first), Some(actual_last)) = (actual_data.first(), actual_data.last()) {
-                println!("実際データ時間範囲: {} ～ {}", actual_first.time, actual_last.time);
-                println!("実際データ点数: {}", actual_data.len());
+                log::debug!("実際データ時間範囲: {} ～ {}", actual_first.time, actual_last.time);
+                log::debug!("実際データ点数: {}", actual_data.len());
             }
             
             if let (Some(forecast_first), Some(forecast_last)) = (forecast_points.first(), forecast_points.last()) {
-                println!("予測データ時間範囲: {} ～ {}", forecast_first.time, forecast_last.time);
-                println!("予測データ点数: {}", forecast_points.len());
+                log::debug!("予測データ時間範囲: {} ～ {}", forecast_first.time, forecast_last.time);
+                log::debug!("予測データ点数: {}", forecast_points.len());
                 
                 // 重複チェック：実際データの最後と予測データの最初が重なっているか
                 if let Some(actual_last) = actual_data.last() {
                     if actual_last.time == forecast_first.time {
-                        println!("✅ 時間軸の接続OK: {} で接続", actual_last.time);
+                        log::debug!("✅ 時間軸の接続OK: {} で接続", actual_last.time);
                     } else {
-                        println!("⚠️ 時間軸のギャップ: 実際データ終了 {} vs 予測データ開始 {}", 
+                        log::debug!("⚠️ 時間軸のギャップ: 実際データ終了 {} vs 予測データ開始 {}", 
                                 actual_last.time, forecast_first.time);
                     }
                 }
@@ -289,7 +289,7 @@ pub fn validate_and_normalize_data(
         
         // 品質指標を出力（デバッグ用）
         let quality_metrics = normalizer.calculate_data_quality_metrics(values_data, &normalized_values);
-        println!("データ正規化完了:");
+        log::info!("データ正規化完了:");
         quality_metrics.print_summary();
         
         normalized_values
@@ -360,11 +360,11 @@ pub fn create_prediction_request(
     let config = get_config();
     let prediction_request = if config.omit_model_name {
         // モデル名を省略（サーバーのデフォルトモデルを使用）
-        println!("モデル名を省略してリクエストを送信（サーバーデフォルトを使用）");
+        log::debug!("モデル名を省略してリクエストを送信（サーバーデフォルトを使用）");
         ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
     } else {
         // モデル名を明示的に指定
-        println!("モデル名を指定してリクエストを送信: {}", model_name);
+        log::debug!("モデル名を指定してリクエストを送信: {}", model_name);
         ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
             .with_model_name(model_name)
     };
@@ -454,7 +454,7 @@ mod tests {
     fn test_data_series_separation() {
         let (training_data, test_data, forecast_data) = create_test_data();
 
-        println!("=== データ系列分離テスト ===");
+        log::debug!("=== データ系列分離テスト ===");
 
         // generate_prediction_chart_svg内部のロジックを直接テスト
         let mut all_actual_data = Vec::new();
@@ -466,10 +466,10 @@ mod tests {
             all_actual_data.extend(test_data_without_last.to_vec());
         }
 
-        println!("元のtraining_data: {} points", training_data.len());
-        println!("元のtest_data: {} points", test_data.len());
-        println!("結合後のall_actual_data: {} points", all_actual_data.len());
-        println!("forecast_data: {} points", forecast_data.len());
+        log::debug!("元のtraining_data: {} points", training_data.len());
+        log::debug!("元のtest_data: {} points", test_data.len());
+        log::debug!("結合後のall_actual_data: {} points", all_actual_data.len());
+        log::debug!("forecast_data: {} points", forecast_data.len());
 
         // 期待値チェック
         let expected_actual_points = training_data.len() + test_data.len() - 1;
@@ -483,28 +483,28 @@ mod tests {
         let actual_times: Vec<_> = all_actual_data.iter().map(|v| v.time).collect();
         let forecast_times: Vec<_> = forecast_data.iter().map(|v| v.time).collect();
 
-        println!("=== タイムスタンプ重複チェック ===");
+        log::debug!("=== タイムスタンプ重複チェック ===");
         for forecast_time in &forecast_times {
             let overlap_count = actual_times
                 .iter()
                 .filter(|&&t| t == *forecast_time)
                 .count();
             if overlap_count > 0 {
-                println!(
+                log::debug!(
                     "⚠️  重複発見: {:?} が実際データにも{}回存在",
                     forecast_time, overlap_count
                 );
             } else {
-                println!("✅ {:?} は重複なし", forecast_time);
+                log::debug!("✅ {:?} は重複なし", forecast_time);
             }
         }
 
-        println!("✅ データ系列分離テスト完了");
+        log::debug!("✅ データ系列分離テスト完了");
     }
 
     #[test]
     fn test_forecast_shape_preservation() {
-        println!("=== 予測データ形状保持テスト ===");
+        log::debug!("=== 予測データ形状保持テスト ===");
         
         // サンプルの予測データ（変動パターンを持つ）
         let original_forecast_values = vec![100.0, 105.0, 95.0, 110.0, 90.0];
@@ -518,9 +518,9 @@ mod tests {
             .map(|&v| v + offset)
             .collect();
         
-        println!("元の予測値: {:?}", original_forecast_values);
-        println!("調整後の予測値: {:?}", adjusted_values);
-        println!("差分オフセット: {}", offset);
+        log::debug!("元の予測値: {:?}", original_forecast_values);
+        log::debug!("調整後の予測値: {:?}", adjusted_values);
+        log::debug!("差分オフセット: {}", offset);
         
         // 形状保持の検証：隣接する値の差分が保持されているか
         for i in 1..original_forecast_values.len() {
@@ -545,14 +545,14 @@ mod tests {
         let all_same = adjusted_values.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-10);
         assert!(!all_same, "予測が直線化されています（すべての値が同じ）");
         
-        println!("✅ 形状保持テスト完了");
-        println!("✅ レベル調整テスト完了");
-        println!("✅ 非直線化テスト完了");
+        log::debug!("✅ 形状保持テスト完了");
+        log::debug!("✅ レベル調整テスト完了");
+        log::debug!("✅ 非直線化テスト完了");
     }
 
     #[test]
     fn test_problematic_multiplication_approach() {
-        println!("=== 問題のある乗算手法のテスト ===");
+        log::debug!("=== 問題のある乗算手法のテスト ===");
         
         // サンプルの予測データ（変動パターンを持つ）
         let original_forecast_values = vec![100.0, 105.0, 95.0, 110.0, 90.0];
@@ -573,9 +573,9 @@ mod tests {
             .map(|&v| v + offset)
             .collect();
         
-        println!("元の予測値: {:?}", original_forecast_values);
-        println!("乗算調整後: {:?}", multiplied_values);
-        println!("差分調整後: {:?}", adjusted_values);
+        log::debug!("元の予測値: {:?}", original_forecast_values);
+        log::debug!("乗算調整後: {:?}", multiplied_values);
+        log::debug!("差分調整後: {:?}", adjusted_values);
         
         // 変動パターンの比較
         for i in 1..original_forecast_values.len() {
@@ -605,13 +605,13 @@ mod tests {
             }
         }
         
-        println!("✅ 乗算手法は形状をスケールすることを確認");
-        println!("✅ 差分手法は形状を保持することを確認");
+        log::debug!("✅ 乗算手法は形状をスケールすることを確認");
+        log::debug!("✅ 差分手法は形状を保持することを確認");
     }
 
     #[test]
     fn test_validate_and_normalize_data_with_valid_data() {
-        println!("=== validate_and_normalize_data テスト（有効データ） ===");
+        log::debug!("=== validate_and_normalize_data テスト（有効データ） ===");
         
         // 10個のテストデータを作成
         let mut test_data = Vec::new();
@@ -635,12 +635,12 @@ mod tests {
         // データ数が保持されていることを確認
         assert_eq!(normalized_data.len(), test_data.len());
         
-        println!("✅ 有効データのテスト完了");
+        log::debug!("✅ 有効データのテスト完了");
     }
 
     #[test]
     fn test_validate_and_normalize_data_with_empty_data() {
-        println!("=== validate_and_normalize_data テスト（空データ） ===");
+        log::debug!("=== validate_and_normalize_data テスト（空データ） ===");
         
         let empty_data = vec![];
         
@@ -653,7 +653,7 @@ mod tests {
         if let Err(error) = result {
             match error {
                 PredictionError::DataNotFound => {
-                    println!("✅ 期待通りDataNotFoundエラーが発生");
+                    log::debug!("✅ 期待通りDataNotFoundエラーが発生");
                 }
                 _ => {
                     panic!("予期しないエラータイプ: {:?}", error);
@@ -661,12 +661,12 @@ mod tests {
             }
         }
         
-        println!("✅ 空データのテスト完了");
+        log::debug!("✅ 空データのテスト完了");
     }
 
     #[test]
     fn test_validate_and_normalize_data_insufficient_data() {
-        println!("=== validate_and_normalize_data テスト（データ不足） ===");
+        log::debug!("=== validate_and_normalize_data テスト（データ不足） ===");
         
         // 3個のデータ（最小要件の4個未満）
         let insufficient_data = vec![
@@ -693,7 +693,7 @@ mod tests {
         if let Err(error) = result {
             match error {
                 PredictionError::InsufficientData => {
-                    println!("✅ 期待通りInsufficientDataエラーが発生");
+                    log::debug!("✅ 期待通りInsufficientDataエラーが発生");
                 }
                 _ => {
                     panic!("予期しないエラータイプ: {:?}", error);
@@ -701,12 +701,12 @@ mod tests {
             }
         }
         
-        println!("✅ データ不足のテスト完了");
+        log::debug!("✅ データ不足のテスト完了");
     }
 
     #[test]
     fn test_validate_and_normalize_data_invalid_values() {
-        println!("=== validate_and_normalize_data テスト（無効な値） ===");
+        log::debug!("=== validate_and_normalize_data テスト（無効な値） ===");
         
         // 無効な値を含むデータ（負の値、無限大、NaN）
         let invalid_data = vec![
@@ -741,7 +741,7 @@ mod tests {
         if let Err(error) = result {
             match error {
                 PredictionError::InvalidData(_) => {
-                    println!("✅ 期待通りInvalidDataエラーが発生");
+                    log::debug!("✅ 期待通りInvalidDataエラーが発生");
                 }
                 _ => {
                     panic!("予期しないエラータイプ: {:?}", error);
@@ -749,12 +749,12 @@ mod tests {
             }
         }
         
-        println!("✅ 無効な値のテスト完了");
+        log::debug!("✅ 無効な値のテスト完了");
     }
 
     #[test]
     fn test_validate_and_normalize_data_time_order_validation() {
-        println!("=== validate_and_normalize_data テスト（時間順序検証） ===");
+        log::debug!("=== validate_and_normalize_data テスト（時間順序検証） ===");
         
         // 時間順序が間違っているデータ
         let unordered_data = vec![
@@ -790,7 +790,7 @@ mod tests {
             match error {
                 PredictionError::InvalidData(msg) => {
                     assert!(msg.contains("Time series order error"), "Error message should mention time series order");
-                    println!("✅ 期待通り時間順序エラーが発生: {}", msg);
+                    log::debug!("✅ 期待通り時間順序エラーが発生: {}", msg);
                 }
                 _ => {
                     panic!("予期しないエラータイプ: {:?}", error);
@@ -798,12 +798,12 @@ mod tests {
             }
         }
         
-        println!("✅ 時間順序検証のテスト完了");
+        log::debug!("✅ 時間順序検証のテスト完了");
     }
 
     #[test]
     fn test_create_prediction_request_with_split_data() {
-        println!("=== create_prediction_request テスト（分割済みデータ） ===");
+        log::debug!("=== create_prediction_request テスト（分割済みデータ） ===");
         
         // 10個のテストデータを作成
         let mut normalized_data = Vec::new();
@@ -832,12 +832,12 @@ mod tests {
         assert_eq!(prediction_request.timestamp.len(), training_data.len());
         assert_eq!(prediction_request.values.len(), training_data.len());
         
-        println!("✅ 分割済みデータのテスト完了");
+        log::debug!("✅ 分割済みデータのテスト完了");
     }
 
     #[test]
     fn test_split_data_for_prediction_with_valid_data() {
-        println!("=== split_data_for_prediction テスト（有効データ） ===");
+        log::debug!("=== split_data_for_prediction テスト（有効データ） ===");
         
         // 10個のテストデータを作成（90:10分割に十分な量）
         let mut test_data = Vec::new();
@@ -869,12 +869,12 @@ mod tests {
         assert_eq!(training_data[training_data.len()-1].time.format("%Y-%m-%d").to_string(), "2025-06-09");
         assert_eq!(test_data_slice[0].time.format("%Y-%m-%d").to_string(), "2025-06-10");
         
-        println!("✅ 有効データの分割テスト完了");
+        log::debug!("✅ 有効データの分割テスト完了");
     }
 
     #[test]
     fn test_split_data_for_prediction_insufficient_data() {
-        println!("=== split_data_for_prediction テスト（データ不足） ===");
+        log::debug!("=== split_data_for_prediction テスト（データ不足） ===");
         
         // 2個のデータ（分割後のtraining_dataが2個未満になる: split_point = 1）
         let insufficient_data = vec![
@@ -897,7 +897,7 @@ mod tests {
         if let Err(error) = result {
             match error {
                 PredictionError::InsufficientData => {
-                    println!("✅ 期待通りInsufficientDataエラーが発生");
+                    log::debug!("✅ 期待通りInsufficientDataエラーが発生");
                 }
                 _ => {
                     panic!("予期しないエラータイプ: {:?}", error);
@@ -905,12 +905,12 @@ mod tests {
             }
         }
         
-        println!("✅ データ不足のテスト完了");
+        log::debug!("✅ データ不足のテスト完了");
     }
 
     #[test]
     fn test_split_data_for_prediction_three_items_valid() {
-        println!("=== split_data_for_prediction テスト（3個データ有効） ===");
+        log::debug!("=== split_data_for_prediction テスト（3個データ有効） ===");
         
         // 3個のデータ（90:10分割で2:1になる）
         let three_data = vec![
@@ -944,12 +944,12 @@ mod tests {
         assert_eq!(training_data[1].value, 1.1);
         assert_eq!(test_data[0].value, 1.2);
         
-        println!("✅ 3個データ有効のテスト完了");
+        log::debug!("✅ 3個データ有効のテスト完了");
     }
 
     #[test]
     fn test_split_data_for_prediction_minimum_valid_data() {
-        println!("=== split_data_for_prediction テスト（最小有効データ） ===");
+        log::debug!("=== split_data_for_prediction テスト（最小有効データ） ===");
         
         // 4個のデータ（90:10分割で3:1になる）
         let minimum_data = vec![
@@ -988,6 +988,6 @@ mod tests {
         assert_eq!(training_data[2].value, 1.2);
         assert_eq!(test_data[0].value, 1.3);
         
-        println!("✅ 最小有効データのテスト完了");
+        log::debug!("✅ 最小有効データのテスト完了");
     }
 }

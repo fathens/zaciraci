@@ -224,12 +224,12 @@ pub struct DataQualityMetrics {
 
 impl DataQualityMetrics {
     pub fn print_summary(&self) {
-        println!("=== データ品質改善サマリー ===");
-        println!("データポイント数: {}", self.data_points);
-        println!("検出された異常値: {}", self.outlier_count);
-        println!("元の分散: {:.6}", self.original_variance);
-        println!("正規化後の分散: {:.6}", self.normalized_variance);
-        println!("滑らかさの改善: {:.2}%", self.smoothness_improvement * 100.0);
+        log::debug!("=== データ品質改善サマリー ===");
+        log::debug!("データポイント数: {}", self.data_points);
+        log::debug!("検出された異常値: {}", self.outlier_count);
+        log::debug!("元の分散: {:.6}", self.original_variance);
+        log::debug!("正規化後の分散: {:.6}", self.normalized_variance);
+        log::debug!("滑らかさの改善: {:.2}%", self.smoothness_improvement * 100.0);
     }
 }
 
@@ -303,6 +303,6 @@ mod tests {
         
         // より厳しい閾値でテスト
         assert!(outlier_count >= 1);
-        println!("検出された異常値数: {}", outlier_count);
+        log::debug!("検出された異常値数: {}", outlier_count);
     }
 }

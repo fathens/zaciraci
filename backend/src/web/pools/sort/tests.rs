@@ -1,4 +1,5 @@
 use super::*;
+use crate::logging::*;
 use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList};
 use crate::ref_finance::token_account::TokenAccount;
@@ -210,6 +211,8 @@ async fn test_sort_empty_pools() -> Result<()> {
 #[test]
 #[serial]
 fn test_sort_pools() {
+    let log = DEFAULT.new(o!("function" => "test_sort_pools"));
+    
     // より詳細な機能テストを実装
     let pool1 = create_mock_pool_info(
         1,
@@ -241,13 +244,15 @@ fn test_sort_pools() {
         Err(e) => {
             // データベース接続エラーは予想される動作
             // エラーが適切にハンドリングされていることを確認
-            println!("Expected database error: {:?}", e);
+            debug!(log, "Expected database error: {:?}", e);
         }
     }
 }
 
 #[test]
 fn test_tokens_with_depth() {
+    let log = DEFAULT.new(o!("function" => "test_tokens_with_depth"));
+    
     // average_depth関数の動作を間接的にテストする詳細テスト
     let pool1 = create_mock_pool_info(
         1,
@@ -282,12 +287,12 @@ fn test_tokens_with_depth() {
                 .any(|token| token.to_string().contains("wrap.near"));
 
             if wrap_near_found {
-                println!("wrap.near token found in depth calculation");
+                debug!(log, "wrap.near token found in depth calculation");
             }
         }
         Err(e) => {
             // データベースエラーまたはパス検索エラーは予想される
-            println!("Expected error in tokens_with_depth: {:?}", e);
+            debug!(log, "Expected error in tokens_with_depth: {:?}", e);
         }
     }
 }

@@ -1,5 +1,6 @@
 use crate::trade::stats::Point;
 use crate::trade::stats::arima::*;
+use crate::logging::*;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, TimeZone, Utc};
 use rand::rngs::SmallRng;
@@ -288,6 +289,8 @@ mod feature_generation_tests {
 
     #[test]
     fn test_generate_future_features() {
+        let log = DEFAULT.new(o!("function" => "test_generate_future_features"));
+        
         // テストの目的: 将来予測のための特徴量が正しく生成されることを確認する
         // 将来予測では、直近のデータポイントからラグ数に基づいて特徴量を作成する
         // 例えば、ラグ数3の場合、最新の3つの値が特徴量として使用される
@@ -297,10 +300,7 @@ mod feature_generation_tests {
         let lag_count = 3;
         let steps_ahead = 2;
 
-        println!(
-            "基本ケース: ラグ数 {}, 予測ステップ {}",
-            lag_count, steps_ahead
-        );
+        debug!(log, "基本ケース: ラグ数 {}, 予測ステップ {}", lag_count, steps_ahead);
 
         let result = generate_future_features(&points, lag_count, steps_ahead);
         assert!(result.is_ok(), "将来特徴量の生成に失敗しました");
@@ -333,10 +333,7 @@ mod feature_generation_tests {
         let different_steps = [0, 1, 5];
 
         for &step in &different_steps {
-            println!(
-                "異なるステップ数のケース: ラグ数 {}, 予測ステップ {}",
-                lag_count, step
-            );
+            debug!(log, "異なるステップ数のケース: ラグ数 {}, 予測ステップ {}", lag_count, step);
 
             let result = generate_future_features(&points, lag_count, step);
             assert!(
@@ -405,7 +402,7 @@ mod prediction_tests {
                 tolerance
             );
 
-            println!("時間間隔 {}時間の予測: {}", hours, predicted_f64);
+            debug!(log, "時間間隔 {}時間の予測: {}", hours, predicted_f64);
         }
     }
 
@@ -533,6 +530,7 @@ mod integration_tests {
 
     #[test]
     fn test_end_to_end_prediction() {
+        let log = DEFAULT.new(o!("function" => "test_end_to_end_prediction"));
         // 実際のシナリオを模擬したエンドツーエンドテスト
 
         // 1. 過去30ポイントのデータを生成（トレンド + サイクル + ノイズ）
@@ -569,14 +567,12 @@ mod integration_tests {
         assert!(predicted_f64 > 150.0 && predicted_f64 < 190.0);
 
         // 4. ログなどの出力（テスト情報）
-        println!("End-to-end prediction test:");
-        println!(
-            "  - Last data point: {:?} at {:?}",
+        debug!(log, "End-to-end prediction test:");
+        debug!(log, "  - Last data point: {:?} at {:?}",
             convert_to_f64(&points.last().unwrap().rate).unwrap(),
             points.last().unwrap().timestamp
         );
-        println!(
-            "  - Predicted value: {} at {:?}",
+        debug!(log, "  - Predicted value: {} at {:?}",
             predicted_value, target_time
         );
     }
@@ -589,6 +585,8 @@ mod performance_tests {
 
     #[test]
     fn test_prediction_performance() {
+        let log = DEFAULT.new(o!("function" => "test_prediction_performance"));
+        
         // 大量のデータポイントで予測パフォーマンスをテスト
 
         // 1000ポイントのデータを生成
@@ -601,7 +599,7 @@ mod performance_tests {
         let duration = start.elapsed();
 
         assert!(result.is_ok());
-        println!("Performance test with 1000 points: {:?}", duration);
+        debug!(log, "Performance test with 1000 points: {:?}", duration);
 
         // 性能要件: 1000ポイントのデータで1秒未満
         assert!(duration.as_secs() < 1);
@@ -609,6 +607,8 @@ mod performance_tests {
 
     #[test]
     fn test_training_scaling() {
+        let log = DEFAULT.new(o!("function" => "test_training_scaling"));
+        
         // データサイズの増加に対するトレーニング時間のスケーリングをテスト
 
         let sizes = [100, 200, 500, 1000];
@@ -624,7 +624,7 @@ mod performance_tests {
             let duration = start.elapsed();
 
             times.push((size, duration));
-            println!("Training with {} points took: {:?}", size, duration);
+            debug!(log, "Training with {} points took: {:?}", size, duration);
         }
 
         // 理想的には線形または準線形のスケーリング（O(n)またはO(n log n)）

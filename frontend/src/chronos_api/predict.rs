@@ -173,7 +173,7 @@ mod tests {
             "2023-01-04 02:00:00"
         );
 
-        println!("routes.pyのサンプル日時文字列のパースに成功しました");
+        log::debug!("routes.pyのサンプル日時文字列のパースに成功しました");
     }
 
     #[test]
@@ -204,8 +204,8 @@ mod tests {
         let json_without_model = serde_json::to_string(&request_without_model).expect("シリアライズに失敗");
         let json_with_model = serde_json::to_string(&request_with_model).expect("シリアライズに失敗");
 
-        println!("モデル名なし: {}", json_without_model);
-        println!("モデル名あり: {}", json_with_model);
+        log::debug!("モデル名なし: {}", json_without_model);
+        log::debug!("モデル名あり: {}", json_with_model);
 
         // モデル名なしの場合、JSONに含まれないことを確認
         assert!(!json_without_model.contains("model_name"));
@@ -227,7 +227,7 @@ mod tests {
         // まず単一の日時文字列をパースしてみる
         let timestamp_str = "2023-01-01T00:00:00";
         let dt = parse_datetime(timestamp_str).expect("日時文字列のパースに失敗");
-        println!("パースした日時: {}", dt);
+        log::debug!("パースした日時: {}", dt);
 
         // 次に日時文字列の配列をパースする
         let timestamp_strs = vec![
@@ -236,7 +236,7 @@ mod tests {
             "2023-01-01T02:00:00",
         ];
         let dts = parse_datetime_vec(&timestamp_strs).expect("タイムスタンプ配列のパースに失敗");
-        println!("パースした日時配列の長さ: {}", dts.len());
+        log::debug!("パースした日時配列の長さ: {}", dts.len());
 
         // 手動でオブジェクトを構築
         let request = ZeroShotPredictionRequest {
@@ -257,7 +257,7 @@ mod tests {
 
         // シリアライズ・デシリアライズのテスト
         let serialized = serde_json::to_string(&request).expect("シリアライズに失敗");
-        println!("シリアライズされたJSON: {}", serialized);
+        log::debug!("シリアライズされたJSON: {}", serialized);
 
         let deserialized: ZeroShotPredictionRequest =
             serde_json::from_str(&serialized).expect("デシリアライズに失敗");
@@ -266,6 +266,6 @@ mod tests {
         assert_eq!(deserialized.timestamp.len(), request.timestamp.len());
         assert_eq!(deserialized.values, request.values);
 
-        println!("シリアライズ・デシリアライズのテストに成功しました");
+        log::debug!("シリアライズ・デシリアライズのテストに成功しました");
     }
 }

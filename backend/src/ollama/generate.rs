@@ -65,6 +65,6 @@ mod tests {
         let response = generate(&client, base_url, model, prompt, images)
             .await
             .unwrap();
-        println!("response = {response:#?}");
+        debug!(log, "response = {response:#?}");
     }
 }
