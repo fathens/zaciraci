@@ -167,37 +167,11 @@ pub fn transform_forecast_data(
 
     let mut forecast_points: Vec<ValueAtTime> = Vec::new();
     
-    // テストデータの最後のポイントを取得（事前チェック済みなのでunwrapは安全）
-    let last_test_point = test_data.last().unwrap();
-    
-    // デバッグ出力：予測データの詳細
-    log::debug!("=== 予測データ解析 ===");
-    log::debug!("予測タイムスタンプ数: {}", forecast_timestamp.len());
-    log::debug!("予測値数: {}", forecast_values.len());
-    
-    // 予測APIから返された最初の予測値を取得
-    let first_api_forecast_value = forecast_values[0];
-    log::debug!("最初の予測値: {}", first_api_forecast_value);
-    log::debug!("テストデータ最後の値: {}", last_test_point.value);
-
-    // 最初の予測値とテストデータの最後の値の差分を計算
-    let offset = last_test_point.value - first_api_forecast_value;
-    log::debug!("適用するオフセット: {}", offset);
-
-    // テストデータの最後のポイントを予測データの開始点として使用
-    forecast_points.push(ValueAtTime {
-        time: last_test_point.time,
-        value: last_test_point.value,
-    });
-
-    // 予測データを差分調整して追加（形状を保持）
+    // 予測データを変換
     for (i, timestamp) in forecast_timestamp.iter().enumerate() {
-        // 予測値に差分を加算（形状を保持しつつレベル調整）
-        let adjusted_value = forecast_values[i] + offset;
-
         forecast_points.push(ValueAtTime {
             time: timestamp.naive_utc(),
-            value: adjusted_value,
+            value: forecast_values[i],
         });
     }
 
