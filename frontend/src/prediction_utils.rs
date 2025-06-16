@@ -226,7 +226,7 @@ pub fn generate_prediction_chart_svg(
 /// 
 /// この関数は処理済みのデータから最終的なPredictionResultを構築します：
 /// - 予測価格の計算（最後の予測値）
-/// - 精度の計算（MAPEから導出）
+/// - 精度の計算（正規化MAPEから導出）
 /// - 各種メトリクスの設定
 /// 
 /// # Arguments
@@ -246,7 +246,7 @@ pub fn create_prediction_result(
 
     PredictionResult {
         predicted_price,
-        accuracy: 100.0 - metrics.get("MAPE").unwrap_or(&0.0), // MAPEから精度を計算
+        accuracy: 100.0 - metrics.get("NORMALIZED_MAPE").unwrap_or(&0.0), // 正規化MAPEから精度を計算
         chart_svg: Some(chart_svg),
         metrics,
         forecast_data,
@@ -266,6 +266,8 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
     let mut absolute_errors_sum = 0.0;
     // 絶対パーセント誤差和
     let mut absolute_percent_errors_sum = 0.0;
+    // 個別のパーセント誤差を記録（正規化用）
+    let mut percent_errors = Vec::new();
 
     for i in 0..n {
         let error = actual[i] - predicted[i];
@@ -274,7 +276,9 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
 
         // 分母がゼロに近い場合はパーセント誤差を計算しない
         if actual[i].abs() > 1e-10 {
-            absolute_percent_errors_sum += (error.abs() / actual[i].abs()) * 100.0;
+            let percent_error = (error.abs() / actual[i].abs()) * 100.0;
+            absolute_percent_errors_sum += percent_error;
+            percent_errors.push(percent_error);
         }
     }
 
@@ -282,6 +286,23 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
     metrics.insert("RMSE".to_string(), (squared_errors_sum / n as f64).sqrt());
     metrics.insert("MAE".to_string(), absolute_errors_sum / n as f64);
     metrics.insert("MAPE".to_string(), absolute_percent_errors_sum / n as f64);
+    
+    // 正規化MAPEを計算（最大パーセント誤差を100とするスケーリング）
+    if !percent_errors.is_empty() {
+        if let Some(&max_error) = percent_errors.iter().max_by(|a, b| a.partial_cmp(b).unwrap()) {
+            if max_error > 0.0 {
+                let scaled_errors: Vec<f64> = percent_errors.iter()
+                    .map(|&e| (e / max_error) * 100.0)
+                    .collect();
+                let normalized_mape = scaled_errors.iter().sum::<f64>() / scaled_errors.len() as f64;
+                metrics.insert("NORMALIZED_MAPE".to_string(), normalized_mape);
+            } else {
+                metrics.insert("NORMALIZED_MAPE".to_string(), 0.0);
+            }
+        }
+    } else {
+        metrics.insert("NORMALIZED_MAPE".to_string(), 0.0);
+    }
 
     metrics
 }
