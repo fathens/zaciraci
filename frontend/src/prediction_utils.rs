@@ -19,8 +19,6 @@ pub struct PredictionResult {
     pub accuracy: f64,
     pub chart_svg: Option<String>,
     pub metrics: HashMap<String, f64>,
-    pub training_data: Vec<ValueAtTime>,
-    pub test_data: Vec<ValueAtTime>,
     pub forecast_data: Vec<ValueAtTime>,
 }
 
@@ -36,8 +34,14 @@ pub async fn execute_zero_shot_prediction(
     model_name: String,
     chronos_client: Arc<ChronosApiClient>,
 ) -> Result<PredictionResult, PredictionError> {
-    // データの検証・前処理とZeroShotPredictionRequestの作成
-    let (prediction_request, training_data, test_data) = create_prediction_request(values_data, model_name)?;
+    // データの検証・正規化処理
+    let normalized_data = validate_and_normalize_data(values_data)?;
+    
+    // データを90:10に分割
+    let (training_data, test_data) = split_data_for_prediction(&normalized_data)?;
+    
+    // ZeroShotPredictionRequestの作成
+    let prediction_request = create_prediction_request(training_data, test_data, model_name)?;
 
     // 予測実行
     match chronos_client.predict_zero_shot(&prediction_request).await {
@@ -114,11 +118,7 @@ pub async fn execute_zero_shot_prediction(
             // デバッグ出力：時間軸の重なりをチェック
             println!("=== チャートデータの時間軸分析 ===");
             
-            let actual_data: Vec<ValueAtTime> = training_data
-                .iter()
-                .chain(test_data.iter())
-                .cloned()
-                .collect();
+            let actual_data = &normalized_data;
             
             if let (Some(actual_first), Some(actual_last)) = (actual_data.first(), actual_data.last()) {
                 println!("実際データ時間範囲: {} ～ {}", actual_first.time, actual_last.time);
@@ -144,11 +144,7 @@ pub async fn execute_zero_shot_prediction(
                 &[
                     MultiPlotSeries {
                         name: "実際の価格".to_string(),
-                        values: training_data
-                            .iter()
-                            .chain(test_data.iter())
-                            .cloned()
-                            .collect(),
+                        values: normalized_data.clone(),
                         color: BLUE,
                     },
                     MultiPlotSeries {
@@ -174,8 +170,6 @@ pub async fn execute_zero_shot_prediction(
                 accuracy: 100.0 - metrics.get("MAPE").unwrap_or(&0.0), // MAPEから精度を計算
                 chart_svg: Some(chart_svg),
                 metrics,
-                training_data,
-                test_data,
                 forecast_data: forecast_points,
             })
         }
@@ -219,27 +213,22 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
     metrics
 }
 
-/// データの検証・前処理を行い、ZeroShotPredictionRequestを作成する関数
+/// データの基本検証と正規化処理を行う関数
 /// 
 /// この関数は以下の処理を行います：
 /// - データの基本検証（空データ、最小サイズチェック）
 /// - 数値の妥当性検証（有限値、正の値）
 /// - 時系列データの順序チェック
 /// - データ正規化処理（設定に応じて）
-/// - データの90:10分割（学習用:テスト用）
-/// - ZeroShotPredictionRequestの作成
 /// 
 /// # Arguments
-/// * `values_data` - 予測に使用する時系列データ
-/// * `model_name` - 使用するモデル名
+/// * `values_data` - 検証・正規化する時系列データ
 /// 
 /// # Returns
-/// `Result<(ZeroShotPredictionRequest, Vec<ValueAtTime>, Vec<ValueAtTime>), PredictionError>` 
-/// - 作成されたリクエスト、学習データ、テストデータまたはエラー
-pub fn create_prediction_request(
+/// `Result<Vec<ValueAtTime>, PredictionError>` - 検証・正規化されたデータまたはエラー
+pub fn validate_and_normalize_data(
     values_data: &[ValueAtTime],
-    model_name: String,
-) -> Result<(ZeroShotPredictionRequest, Vec<ValueAtTime>, Vec<ValueAtTime>), PredictionError> {
+) -> Result<Vec<ValueAtTime>, PredictionError> {
     // データの基本検証
     if values_data.is_empty() {
         return Err(PredictionError::DataNotFound);
@@ -288,7 +277,7 @@ pub fn create_prediction_request(
 
     // データ正規化処理を追加
     let config = get_config();
-    let values_data = if config.enable_normalization {
+    let normalized_data = if config.enable_normalization {
         let normalizer = DataNormalizer::new(
             config.normalization_window,
             config.outlier_threshold,
@@ -308,20 +297,51 @@ pub fn create_prediction_request(
         values_data.to_vec()
     };
     
-    let values_data = &values_data;
+    Ok(normalized_data)
+}
 
+/// データを90:10に分割する関数（90%を学習、10%をテスト）
+/// 
+/// # Arguments
+/// * `normalized_data` - 検証・正規化済みの時系列データ
+/// 
+/// # Returns
+/// `Result<(&[ValueAtTime], &[ValueAtTime]), PredictionError>` - (学習データ, テストデータ)のタプルまたはエラー
+pub fn split_data_for_prediction(
+    normalized_data: &[ValueAtTime],
+) -> Result<(&[ValueAtTime], &[ValueAtTime]), PredictionError> {
     // データを90:10に分割（90%を学習、10%をテスト）
-    let split_point = (values_data.len() as f64 * 0.9) as usize;
-    if split_point < 2 || (values_data.len() - split_point) < 1 {
+    let split_point = (normalized_data.len() as f64 * 0.9) as usize;
+    if split_point < 2 || (normalized_data.len() - split_point) < 1 {
         return Err(PredictionError::InsufficientData);
     }
 
-    let training_data = values_data[..split_point].to_vec();
-    let test_data = values_data[split_point..].to_vec();
+    let training_data = &normalized_data[..split_point];
+    let test_data = &normalized_data[split_point..];
 
     if training_data.is_empty() || test_data.is_empty() {
         return Err(PredictionError::InsufficientData);
     }
+
+    Ok((training_data, test_data))
+}
+
+/// ZeroShotPredictionRequestを作成する関数
+/// 
+/// この関数は分割済みのデータからZeroShotPredictionRequestを作成します。
+/// 
+/// # Arguments
+/// * `training_data` - 学習用データ（既に分割済み）
+/// * `test_data` - テスト用データ（既に分割済み）
+/// * `model_name` - 使用するモデル名
+/// 
+/// # Returns
+/// `Result<ZeroShotPredictionRequest, PredictionError>` - 作成されたリクエストまたはエラー
+pub fn create_prediction_request(
+    training_data: &[ValueAtTime],
+    test_data: &[ValueAtTime],
+    model_name: String,
+) -> Result<ZeroShotPredictionRequest, PredictionError> {
 
     // 予測用のタイムスタンプと値を抽出
     let timestamps: Vec<DateTime<Utc>> = training_data
@@ -337,6 +357,7 @@ pub fn create_prediction_request(
     };
 
     // ZeroShotPredictionRequestを作成
+    let config = get_config();
     let prediction_request = if config.omit_model_name {
         // モデル名を省略（サーバーのデフォルトモデルを使用）
         println!("モデル名を省略してリクエストを送信（サーバーデフォルトを使用）");
@@ -348,7 +369,7 @@ pub fn create_prediction_request(
             .with_model_name(model_name)
     };
     
-    Ok((prediction_request, training_data, test_data))
+    Ok(prediction_request)
 }
 
 #[cfg(test)]
@@ -589,10 +610,10 @@ mod tests {
     }
 
     #[test]
-    fn test_create_prediction_request_with_valid_data() {
-        println!("=== create_prediction_request テスト（有効データ） ===");
+    fn test_validate_and_normalize_data_with_valid_data() {
+        println!("=== validate_and_normalize_data テスト（有効データ） ===");
         
-        // 10個のテストデータを作成（90:10分割に十分な量）
+        // 10個のテストデータを作成
         let mut test_data = Vec::new();
         for i in 0..10 {
             test_data.push(ValueAtTime {
@@ -604,41 +625,30 @@ mod tests {
             });
         }
         
-        let model_name = "test_model".to_string();
-        
         // 関数の実行
-        let result = create_prediction_request(&test_data, model_name);
+        let result = validate_and_normalize_data(&test_data);
         
         // 結果の検証
-        assert!(result.is_ok(), "create_prediction_request should succeed with valid data");
-        let (prediction_request, training_data, test_data_result) = result.unwrap();
+        assert!(result.is_ok(), "validate_and_normalize_data should succeed with valid data");
+        let normalized_data = result.unwrap();
         
-        // データ分割の検証（90:10）
-        let expected_training_size = (test_data.len() as f64 * 0.9) as usize; // 9
-        let expected_test_size = test_data.len() - expected_training_size; // 1
-        
-        assert_eq!(training_data.len(), expected_training_size);
-        assert_eq!(test_data_result.len(), expected_test_size);
-        
-        // リクエストデータの検証
-        assert_eq!(prediction_request.timestamp.len(), expected_training_size);
-        assert_eq!(prediction_request.values.len(), expected_training_size);
+        // データ数が保持されていることを確認
+        assert_eq!(normalized_data.len(), test_data.len());
         
         println!("✅ 有効データのテスト完了");
     }
 
     #[test]
-    fn test_create_prediction_request_with_empty_data() {
-        println!("=== create_prediction_request テスト（空データ） ===");
+    fn test_validate_and_normalize_data_with_empty_data() {
+        println!("=== validate_and_normalize_data テスト（空データ） ===");
         
         let empty_data = vec![];
-        let model_name = "test_model".to_string();
         
         // 関数の実行
-        let result = create_prediction_request(&empty_data, model_name);
+        let result = validate_and_normalize_data(&empty_data);
         
         // 結果の検証（空データはエラーになるべき）
-        assert!(result.is_err(), "create_prediction_request should fail with empty data");
+        assert!(result.is_err(), "validate_and_normalize_data should fail with empty data");
         
         if let Err(error) = result {
             match error {
@@ -655,8 +665,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_prediction_request_insufficient_data() {
-        println!("=== create_prediction_request テスト（データ不足） ===");
+    fn test_validate_and_normalize_data_insufficient_data() {
+        println!("=== validate_and_normalize_data テスト（データ不足） ===");
         
         // 3個のデータ（最小要件の4個未満）
         let insufficient_data = vec![
@@ -673,13 +683,12 @@ mod tests {
                 value: 1.2,
             },
         ];
-        let model_name = "test_model".to_string();
         
         // 関数の実行
-        let result = create_prediction_request(&insufficient_data, model_name);
+        let result = validate_and_normalize_data(&insufficient_data);
         
         // 結果の検証（データ不足はエラーになるべき）
-        assert!(result.is_err(), "create_prediction_request should fail with insufficient data");
+        assert!(result.is_err(), "validate_and_normalize_data should fail with insufficient data");
         
         if let Err(error) = result {
             match error {
@@ -696,8 +705,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_prediction_request_invalid_values() {
-        println!("=== create_prediction_request テスト（無効な値） ===");
+    fn test_validate_and_normalize_data_invalid_values() {
+        println!("=== validate_and_normalize_data テスト（無効な値） ===");
         
         // 無効な値を含むデータ（負の値、無限大、NaN）
         let invalid_data = vec![
@@ -722,13 +731,12 @@ mod tests {
                 value: 1.5,
             },
         ];
-        let model_name = "test_model".to_string();
         
         // 関数の実行
-        let result = create_prediction_request(&invalid_data, model_name);
+        let result = validate_and_normalize_data(&invalid_data);
         
         // 結果の検証（無効な値はエラーになるべき）
-        assert!(result.is_err(), "create_prediction_request should fail with invalid values");
+        assert!(result.is_err(), "validate_and_normalize_data should fail with invalid values");
         
         if let Err(error) = result {
             match error {
@@ -745,8 +753,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_prediction_request_time_order_validation() {
-        println!("=== create_prediction_request テスト（時間順序検証） ===");
+    fn test_validate_and_normalize_data_time_order_validation() {
+        println!("=== validate_and_normalize_data テスト（時間順序検証） ===");
         
         // 時間順序が間違っているデータ
         let unordered_data = vec![
@@ -771,13 +779,12 @@ mod tests {
                 value: 1.4,
             },
         ];
-        let model_name = "test_model".to_string();
         
         // 関数の実行
-        let result = create_prediction_request(&unordered_data, model_name);
+        let result = validate_and_normalize_data(&unordered_data);
         
         // 結果の検証（時間順序エラーになるべき）
-        assert!(result.is_err(), "create_prediction_request should fail with unordered timestamps");
+        assert!(result.is_err(), "validate_and_normalize_data should fail with unordered timestamps");
         
         if let Err(error) = result {
             match error {
@@ -792,5 +799,195 @@ mod tests {
         }
         
         println!("✅ 時間順序検証のテスト完了");
+    }
+
+    #[test]
+    fn test_create_prediction_request_with_split_data() {
+        println!("=== create_prediction_request テスト（分割済みデータ） ===");
+        
+        // 10個のテストデータを作成
+        let mut normalized_data = Vec::new();
+        for i in 0..10 {
+            normalized_data.push(ValueAtTime {
+                time: NaiveDateTime::parse_from_str(
+                    &format!("2025-06-{:02} 00:00:00", i + 1), 
+                    "%Y-%m-%d %H:%M:%S"
+                ).unwrap(),
+                value: 100.0 + i as f64,
+            });
+        }
+        
+        // データを分割
+        let (training_data, test_data) = split_data_for_prediction(&normalized_data).unwrap();
+        let model_name = "test_model".to_string();
+        
+        // 関数の実行
+        let result = create_prediction_request(training_data, test_data, model_name);
+        
+        // 結果の検証
+        assert!(result.is_ok(), "create_prediction_request should succeed with split data");
+        let prediction_request = result.unwrap();
+        
+        // リクエストデータの検証
+        assert_eq!(prediction_request.timestamp.len(), training_data.len());
+        assert_eq!(prediction_request.values.len(), training_data.len());
+        
+        println!("✅ 分割済みデータのテスト完了");
+    }
+
+    #[test]
+    fn test_split_data_for_prediction_with_valid_data() {
+        println!("=== split_data_for_prediction テスト（有効データ） ===");
+        
+        // 10個のテストデータを作成（90:10分割に十分な量）
+        let mut test_data = Vec::new();
+        for i in 0..10 {
+            test_data.push(ValueAtTime {
+                time: NaiveDateTime::parse_from_str(
+                    &format!("2025-06-{:02} 00:00:00", i + 1), 
+                    "%Y-%m-%d %H:%M:%S"
+                ).unwrap(),
+                value: 100.0 + i as f64,
+            });
+        }
+        
+        // 関数の実行
+        let result = split_data_for_prediction(&test_data);
+        
+        // 結果の検証
+        assert!(result.is_ok(), "split_data_for_prediction should succeed with valid data");
+        let (training_data, test_data_slice) = result.unwrap();
+        
+        // データ分割の検証（90:10）
+        let expected_training_size = (test_data.len() as f64 * 0.9) as usize; // 9
+        let expected_test_size = test_data.len() - expected_training_size; // 1
+        
+        assert_eq!(training_data.len(), expected_training_size);
+        assert_eq!(test_data_slice.len(), expected_test_size);
+        
+        // データの連続性の確認
+        assert_eq!(training_data[training_data.len()-1].time.format("%Y-%m-%d").to_string(), "2025-06-09");
+        assert_eq!(test_data_slice[0].time.format("%Y-%m-%d").to_string(), "2025-06-10");
+        
+        println!("✅ 有効データの分割テスト完了");
+    }
+
+    #[test]
+    fn test_split_data_for_prediction_insufficient_data() {
+        println!("=== split_data_for_prediction テスト（データ不足） ===");
+        
+        // 2個のデータ（分割後のtraining_dataが2個未満になる: split_point = 1）
+        let insufficient_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.1,
+            },
+        ];
+        
+        // 関数の実行
+        let result = split_data_for_prediction(&insufficient_data);
+        
+        // 結果の検証（データ不足はエラーになるべき）
+        assert!(result.is_err(), "split_data_for_prediction should fail with insufficient data");
+        
+        if let Err(error) = result {
+            match error {
+                PredictionError::InsufficientData => {
+                    println!("✅ 期待通りInsufficientDataエラーが発生");
+                }
+                _ => {
+                    panic!("予期しないエラータイプ: {:?}", error);
+                }
+            }
+        }
+        
+        println!("✅ データ不足のテスト完了");
+    }
+
+    #[test]
+    fn test_split_data_for_prediction_three_items_valid() {
+        println!("=== split_data_for_prediction テスト（3個データ有効） ===");
+        
+        // 3個のデータ（90:10分割で2:1になる）
+        let three_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.1,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.2,
+            },
+        ];
+        
+        // 関数の実行
+        let result = split_data_for_prediction(&three_data);
+        
+        // 結果の検証
+        assert!(result.is_ok(), "split_data_for_prediction should succeed with 3 items");
+        let (training_data, test_data) = result.unwrap();
+        
+        // データ分割の検証
+        assert_eq!(training_data.len(), 2); // 90% = 2.7 -> 2
+        assert_eq!(test_data.len(), 1);     // 残り = 1
+        
+        // 値の確認
+        assert_eq!(training_data[0].value, 1.0);
+        assert_eq!(training_data[1].value, 1.1);
+        assert_eq!(test_data[0].value, 1.2);
+        
+        println!("✅ 3個データ有効のテスト完了");
+    }
+
+    #[test]
+    fn test_split_data_for_prediction_minimum_valid_data() {
+        println!("=== split_data_for_prediction テスト（最小有効データ） ===");
+        
+        // 4個のデータ（90:10分割で3:1になる）
+        let minimum_data = vec![
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.0,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.1,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.2,
+            },
+            ValueAtTime {
+                time: NaiveDateTime::parse_from_str("2025-06-04 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+                value: 1.3,
+            },
+        ];
+        
+        // 関数の実行
+        let result = split_data_for_prediction(&minimum_data);
+        
+        // 結果の検証
+        assert!(result.is_ok(), "split_data_for_prediction should succeed with minimum valid data");
+        let (training_data, test_data) = result.unwrap();
+        
+        // データ分割の検証
+        assert_eq!(training_data.len(), 3); // 90% = 3.6 -> 3
+        assert_eq!(test_data.len(), 1);     // 残り = 1
+        
+        // 値の確認
+        assert_eq!(training_data[0].value, 1.0);
+        assert_eq!(training_data[1].value, 1.1);
+        assert_eq!(training_data[2].value, 1.2);
+        assert_eq!(test_data[0].value, 1.3);
+        
+        println!("✅ 最小有効データのテスト完了");
     }
 }
