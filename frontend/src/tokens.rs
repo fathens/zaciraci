@@ -176,7 +176,7 @@ pub fn view() -> Element {
                                                         (index + 1).to_string(),
                                                         token.to_string(),
                                                         "エラー".to_string(),
-                                                        format!("{}%", e.to_string()),
+                                                        format!("{}%", e),
                                                     );
                                                     prediction_results.set(current_results);
                                                 }

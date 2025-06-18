@@ -121,6 +121,7 @@ impl PredictionConfig {
     }
 
     /// チャートサイズをタプルで取得
+    #[allow(dead_code)]
     pub fn chart_size(&self) -> (u32, u32) {
         (self.chart_width, self.chart_height)
     }

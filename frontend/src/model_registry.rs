@@ -39,7 +39,7 @@ impl ModelAccuracy {
     pub fn as_str(&self) -> &'static str {
         match self {
             ModelAccuracy::High => "高精度",
-            ModelAccuracy::Medium => "中精度", 
+            ModelAccuracy::Medium => "中精度",
             ModelAccuracy::Low => "低精度",
         }
     }
@@ -153,29 +153,23 @@ pub const SERVER_DEFAULT: ModelInfo = ModelInfo {
 pub const ALL_MODELS: &[ModelInfo] = &[
     // サーバーデフォルト
     SERVER_DEFAULT,
-    
     // 推奨Chronos-Boltモデル
     CHRONOS_BOLT_BASE,
     CHRONOS_BOLT_SMALL,
     CHRONOS_BOLT_MINI,
     CHRONOS_BOLT_TINY,
-    
     // レガシーChronos-T5モデル
     CHRONOS_T5_BASE,
     CHRONOS_T5_SMALL,
     CHRONOS_T5_TINY,
-    
     // 統計モデル
     PROPHET,
     ARIMA,
 ];
 
 /// 推奨モデル（パフォーマンスとコスト効率のバランス）
-pub const RECOMMENDED_MODELS: &[ModelInfo] = &[
-    CHRONOS_BOLT_BASE,
-    CHRONOS_BOLT_SMALL,
-    CHRONOS_BOLT_MINI,
-];
+pub const RECOMMENDED_MODELS: &[ModelInfo] =
+    &[CHRONOS_BOLT_BASE, CHRONOS_BOLT_SMALL, CHRONOS_BOLT_MINI];
 
 /// モデルIDから情報を取得
 pub fn get_model_info(model_id: &str) -> Option<&ModelInfo> {
@@ -183,24 +177,26 @@ pub fn get_model_info(model_id: &str) -> Option<&ModelInfo> {
 }
 
 /// 使用ケース別の推奨モデル
+#[allow(dead_code)]
 pub struct ModelRecommendations;
 
+#[allow(dead_code)]
 impl ModelRecommendations {
     /// リアルタイム取引向け
     pub fn for_realtime_trading() -> &'static ModelInfo {
         &CHRONOS_BOLT_TINY
     }
-    
+
     /// 一般的な価格分析向け
     pub fn for_general_analysis() -> &'static ModelInfo {
         &CHRONOS_BOLT_SMALL
     }
-    
+
     /// 高精度分析向け
     pub fn for_high_accuracy() -> &'static ModelInfo {
         &CHRONOS_BOLT_BASE
     }
-    
+
     /// 互換性重視
     pub fn for_compatibility() -> &'static ModelInfo {
         &CHRONOS_T5_SMALL
@@ -221,7 +217,7 @@ mod tests {
     fn test_recommendations() {
         let realtime = ModelRecommendations::for_realtime_trading();
         assert_eq!(realtime.id, "chronos-bolt-tiny");
-        
+
         let general = ModelRecommendations::for_general_analysis();
         assert_eq!(general.id, "chronos-bolt-small");
     }
