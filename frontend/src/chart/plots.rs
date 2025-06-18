@@ -44,6 +44,8 @@ pub struct MultiPlotOptions {
     pub x_label: Option<String>,
     /// Y軸ラベル
     pub y_label: Option<String>,
+    /// 凡例を左側に表示するかどうか
+    pub legend_on_left: Option<bool>,
 }
 
 impl Default for MultiPlotOptions {
@@ -53,6 +55,7 @@ impl Default for MultiPlotOptions {
             title: None,
             x_label: None,
             y_label: None,
+            legend_on_left: None,
         }
     }
 }
@@ -390,12 +393,25 @@ fn draw_multi_plot<DB: DrawingBackend>(
     }
 
     // 凡例の描画
-    chart
-        .configure_series_labels()
-        .background_style(WHITE.mix(0.8))
-        .border_style(BLACK)
-        .draw()
-        .map_err(|e| anyhow::anyhow!("凡例の描画に失敗しました: {}", e))?;
+    if options.legend_on_left.unwrap_or(false) {
+        // 左側に凡例を配置
+        chart
+            .configure_series_labels()
+            .position(plotters::chart::SeriesLabelPosition::UpperLeft)
+            .background_style(WHITE.mix(0.8))
+            .border_style(BLACK)
+            .draw()
+            .map_err(|e| anyhow::anyhow!("凡例の描画に失敗しました: {}", e))?;
+    } else {
+        // デフォルトは右側
+        chart
+            .configure_series_labels()
+            .position(plotters::chart::SeriesLabelPosition::UpperRight)
+            .background_style(WHITE.mix(0.8))
+            .border_style(BLACK)
+            .draw()
+            .map_err(|e| anyhow::anyhow!("凡例の描画に失敗しました: {}", e))?;
+    }
 
     // ドローイングエリアの最終処理
     root.present()

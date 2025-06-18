@@ -562,6 +562,7 @@ fn predict_zero_shot_view(
                                             title: Some(format!("{} / {} (実際 vs 予測)", base_val, quote_val)),
                                             x_label: Some("時間".to_string()),
                                             y_label: Some("価格".to_string()),
+                                            legend_on_left: None, // デフォルト位置を使用
                                         };
 
                                         // 複数系列を同一チャートにプロット

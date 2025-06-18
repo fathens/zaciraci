@@ -3,14 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use zaciraci_common::stats::ValueAtTime;
 
-use crate::chart::plots::{
-    MultiPlotOptions, MultiPlotSeries, plot_multi_values_at_time_to_svg_with_options,
-};
 use crate::chronos_api::predict::{ChronosApiClient, ZeroShotPredictionRequest};
 use crate::data_normalization::DataNormalizer;
 use crate::errors::PredictionError;
 use crate::prediction_config::get_config;
-use plotters::prelude::{BLUE, RED};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -169,10 +165,11 @@ pub fn transform_forecast_data(
     Ok(forecast_points)
 }
 
-/// チャートSVGを生成する関数
+/// チャートSVGを生成する関数（改良版）
 /// 
 /// この関数は実際のデータと予測データを使ってチャートを生成します：
 /// - 実際のデータと予測データを異なる色で表示
+/// - より見やすい改良されたデザイン
 /// - カスタマイズ可能なチャートオプション
 /// 
 /// # Arguments
@@ -185,32 +182,36 @@ pub fn generate_prediction_chart_svg(
     actual_data: &[ValueAtTime],
     forecast_data: &[ValueAtTime],
 ) -> Result<String, PredictionError> {
-    let config = get_config();
+    // 改良版を使用（後方互換性を保持）
+    use crate::chart::plots::{MultiPlotSeries, MultiPlotOptions, plot_multi_values_at_time_to_svg_with_options};
+    use plotters::prelude::{GREEN, MAGENTA};
     
     let chart_svg = plot_multi_values_at_time_to_svg_with_options(
         &[
             MultiPlotSeries {
-                name: "実際の価格".to_string(),
+                name: "📊 実際の価格".to_string(), // アイコン付きで分かりやすく
                 values: actual_data.to_vec(),
-                color: BLUE,
+                color: GREEN, // より見やすい色に変更
             },
             MultiPlotSeries {
-                name: "予測価格".to_string(),
+                name: "🔮 予測価格".to_string(), // アイコン付きで分かりやすく
                 values: forecast_data.to_vec(),
-                color: RED,
+                color: MAGENTA, // より見やすい色に変更
             },
         ],
         MultiPlotOptions {
-            title: Some("価格予測".to_string()),
-            image_size: config.chart_size(),
+            title: Some("💹 価格予測分析".to_string()),
+            image_size: (800, 600), // より大きなサイズに変更
             x_label: Some("時間".to_string()),
             y_label: Some("価格".to_string()),
+            legend_on_left: Some(true), // 凡例を左側に表示
         },
     )
     .map_err(|e| PredictionError::ChartGenerationFailed(e.to_string()))?;
 
     Ok(chart_svg)
 }
+
 
 /// PredictionResultを作成する関数
 /// 
@@ -458,3 +459,8 @@ pub fn create_prediction_request(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod visual_tests;
+
+
