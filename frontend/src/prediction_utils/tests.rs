@@ -1,6 +1,5 @@
 use super::*;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use log;
 use std::collections::HashMap;
 use zaciraci_common::stats::ValueAtTime;
 
@@ -803,8 +802,8 @@ fn test_transform_forecast_data_with_test_data() {
         ),
     ];
 
-    let result = transform_forecast_data(&forecast_values, &forecast_timestamp)
-        .expect("変換に失敗しました");
+    let result =
+        transform_forecast_data(&forecast_values, &forecast_timestamp).expect("変換に失敗しました");
 
     // 結果の検証
     assert_eq!(result.len(), 3); // 予測点のみ（接続点なし）
@@ -982,89 +981,92 @@ fn test_create_prediction_result_empty_forecast() {
 #[test]
 fn test_generate_prediction_chart_svg_basic() {
     log::debug!("=== generate_prediction_chart_svg 基本テスト ===");
-    
+
     let (training_data, test_data, forecast_data) = create_test_data();
-    
+
     // 実際データ（training + test）
     let mut actual_data = training_data.clone();
     actual_data.extend(test_data);
-    
+
     let result = generate_prediction_chart_svg(&actual_data, &forecast_data);
-    
+
     assert!(result.is_ok(), "SVG生成は成功するべき");
     let svg = result.unwrap();
-    
+
     // SVGの基本構造を検証
     assert!(svg.contains("<svg"), "SVG開始タグが含まれるべき");
     assert!(svg.contains("</svg>"), "SVG終了タグが含まれるべき");
-    assert!(svg.contains("実際の価格"), "実際データの系列名が含まれるべき");
+    assert!(
+        svg.contains("実際の価格"),
+        "実際データの系列名が含まれるべき"
+    );
     assert!(svg.contains("予測価格"), "予測データの系列名が含まれるべき");
     assert!(svg.contains("価格予測"), "チャートタイトルが含まれるべき");
-    
+
     log::debug!("✅ 基本SVG生成テスト完了");
 }
 
 #[test]
 fn test_generate_prediction_chart_svg_empty_actual_data() {
     log::debug!("=== generate_prediction_chart_svg 空の実際データテスト ===");
-    
+
     let (_, _, forecast_data) = create_test_data();
     let empty_actual_data = vec![];
-    
+
     let result = generate_prediction_chart_svg(&empty_actual_data, &forecast_data);
-    
+
     assert!(result.is_err(), "空の実際データはエラーになるべき");
-    
+
     log::debug!("✅ 空の実際データテスト完了");
 }
 
 #[test]
 fn test_generate_prediction_chart_svg_empty_forecast_data() {
     log::debug!("=== generate_prediction_chart_svg 空の予測データテスト ===");
-    
+
     let (training_data, test_data, _) = create_test_data();
     let mut actual_data = training_data.clone();
     actual_data.extend(test_data);
     let empty_forecast_data = vec![];
-    
+
     let result = generate_prediction_chart_svg(&actual_data, &empty_forecast_data);
-    
+
     assert!(result.is_err(), "空の予測データはエラーになるべき");
-    
+
     log::debug!("✅ 空の予測データテスト完了");
 }
 
 #[test]
 fn test_generate_prediction_chart_svg_single_point() {
     log::debug!("=== generate_prediction_chart_svg 単一ポイントテスト ===");
-    
+
     let actual_data = vec![ValueAtTime {
         time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S")
             .expect("有効な日付形式"),
         value: 100.0,
     }];
-    
+
     let forecast_data = vec![ValueAtTime {
         time: NaiveDateTime::parse_from_str("2025-06-02 00:00:00", "%Y-%m-%d %H:%M:%S")
             .expect("有効な日付形式"),
         value: 110.0,
     }];
-    
+
     let result = generate_prediction_chart_svg(&actual_data, &forecast_data);
-    
+
     assert!(result.is_ok(), "単一ポイントでもSVG生成は成功するべき");
     let svg = result.unwrap();
-    
+
     assert!(svg.contains("<svg"), "SVG開始タグが含まれるべき");
     assert!(svg.contains("</svg>"), "SVG終了タグが含まれるべき");
-    
+
     log::debug!("✅ 単一ポイントテスト完了");
 }
 
 #[test]
 fn test_generate_prediction_chart_svg_extreme_values() {
     log::debug!("=== generate_prediction_chart_svg 極端な値テスト ===");
-    
+
     let actual_data = vec![
         ValueAtTime {
             time: NaiveDateTime::parse_from_str("2025-06-01 00:00:00", "%Y-%m-%d %H:%M:%S")
@@ -1077,20 +1079,20 @@ fn test_generate_prediction_chart_svg_extreme_values() {
             value: 1_000_000.0,
         },
     ];
-    
+
     let forecast_data = vec![ValueAtTime {
         time: NaiveDateTime::parse_from_str("2025-06-03 00:00:00", "%Y-%m-%d %H:%M:%S")
             .expect("有効な日付形式"),
         value: 500_000.0,
     }];
-    
+
     let result = generate_prediction_chart_svg(&actual_data, &forecast_data);
-    
+
     assert!(result.is_ok(), "極端な値でもSVG生成は成功するべき");
     let svg = result.unwrap();
-    
+
     assert!(svg.contains("<svg"), "SVG開始タグが含まれるべき");
     assert!(svg.contains("</svg>"), "SVG終了タグが含まれるべき");
-    
+
     log::debug!("✅ 極端な値テスト完了");
 }

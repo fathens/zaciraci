@@ -194,7 +194,7 @@ fn test_average_depth_zero_tokens() {
 
 #[tokio::test]
 #[serial]
-async fn test_sort_empty_pools() -> Result<()> {
+async fn test_sort_empty_pools() -> anyhow::Result<()> {
     let empty_pools = Arc::new(PoolInfoList::new(vec![]));
     let result = sort(empty_pools);
 
@@ -212,7 +212,7 @@ async fn test_sort_empty_pools() -> Result<()> {
 #[serial]
 fn test_sort_pools() {
     let log = DEFAULT.new(o!("function" => "test_sort_pools"));
-    
+
     // より詳細な機能テストを実装
     let pool1 = create_mock_pool_info(
         1,
@@ -252,7 +252,7 @@ fn test_sort_pools() {
 #[test]
 fn test_tokens_with_depth() {
     let log = DEFAULT.new(o!("function" => "test_tokens_with_depth"));
-    
+
     // average_depth関数の動作を間接的にテストする詳細テスト
     let pool1 = create_mock_pool_info(
         1,
