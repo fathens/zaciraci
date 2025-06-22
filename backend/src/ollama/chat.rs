@@ -53,7 +53,7 @@ mod tests {
     #[ignore]
     async fn test_chat() {
         let log = DEFAULT.new(o!("function" => "test_chat"));
-        
+
         let client = reqwest::Client::new();
         let base_url = "http://localhost:11434/api".to_string();
         let model = ModelName("gemma3:12b".to_string());

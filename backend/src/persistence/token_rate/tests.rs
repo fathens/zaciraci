@@ -513,13 +513,13 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
         results[0].variance > results[1].variance,
         "BTC variance should be greater than ETH variance"
     );
-    
+
     // ethの分散は中程度
     assert!(
         results[1].variance > results[2].variance,
         "ETH variance should be greater than NEAR variance"
     );
-    
+
     // nearの分散が最も小さい
     assert!(
         results[2].variance > BigDecimal::from(0),
@@ -535,13 +535,13 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(0),  // 除外される
+            BigDecimal::from(0), // 除外される
             two_hours_ago + chrono::Duration::minutes(1),
         ),
         TokenRate::new_with_timestamp(
             base2.clone(),
             quote.clone(),
-            BigDecimal::from(0),  // 除外される
+            BigDecimal::from(0), // 除外される
             one_hour_ago,
         ),
         // 非ゼロレートは含まれる
@@ -566,7 +566,11 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // 結果を検証: rate != 0の条件により、レート0のレコードは除外され、
     // 単一のレコードのみ存在するため、ボラティリティ計算ができない
-    assert_eq!(zero_results.len(), 1, "Should find 1 token (base2 excluded due to 0 rates)");
+    assert_eq!(
+        zero_results.len(),
+        1,
+        "Should find 1 token (base2 excluded due to 0 rates)"
+    );
 
     // base1のみが結果に含まれることを確認（非ゼロレートのみ考慮）
     let eth_result = &zero_results[0];
@@ -575,7 +579,7 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
         "eth.token",
         "Only eth token should be found"
     );
-    
+
     // 分散値が0より大きいことを確認
     assert!(
         eth_result.variance > BigDecimal::from(0),
@@ -752,20 +756,20 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(0),  // 除外される
+            BigDecimal::from(0), // 除外される
             one_hour_ago,
         ),
         // base2: 全て0のレコード → 全て除外される
         TokenRate::new_with_timestamp(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(0),  // 除外される
+            BigDecimal::from(0), // 除外される
             two_hours_ago + chrono::Duration::minutes(1),
         ),
         TokenRate::new_with_timestamp(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(0),  // 除外される
+            BigDecimal::from(0), // 除外される
             one_hour_ago,
         ),
     ];
@@ -774,7 +778,11 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // 0レートが除外されるケースの結果を検証
     let zero_max_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
-    assert_eq!(zero_max_results.len(), 1, "Should find 1 token (base2 excluded due to all zero rates)");
+    assert_eq!(
+        zero_max_results.len(),
+        1,
+        "Should find 1 token (base2 excluded due to all zero rates)"
+    );
 
     // base1のみが残り、負の値1つだけになるため、ボラティリティは0
     let eth_result = &zero_max_results[0];
@@ -888,7 +896,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(0),  // 除外される
+            BigDecimal::from(0),                           // 除外される
             two_hours_ago + chrono::Duration::minutes(20), // 確実に範囲内
         ),
         // 正の値は含まれる

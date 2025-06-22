@@ -198,11 +198,14 @@ mod tests {
             dts,
             vec![10.5, 11.2, 10.8],
             parse_datetime("2023-01-04T02:00:00").expect("forecast_untilのパースに失敗"),
-        ).with_model_name("chronos-bolt-base");
+        )
+        .with_model_name("chronos-bolt-base");
 
         // シリアライズして比較
-        let json_without_model = serde_json::to_string(&request_without_model).expect("シリアライズに失敗");
-        let json_with_model = serde_json::to_string(&request_with_model).expect("シリアライズに失敗");
+        let json_without_model =
+            serde_json::to_string(&request_without_model).expect("シリアライズに失敗");
+        let json_with_model =
+            serde_json::to_string(&request_with_model).expect("シリアライズに失敗");
 
         log::debug!("モデル名なし: {}", json_without_model);
         log::debug!("モデル名あり: {}", json_with_model);
@@ -219,7 +222,10 @@ mod tests {
             serde_json::from_str(&json_with_model).expect("デシリアライズに失敗");
 
         assert!(deserialized_without.model_name.is_none());
-        assert_eq!(deserialized_with.model_name, Some("chronos-bolt-base".to_string()));
+        assert_eq!(
+            deserialized_with.model_name,
+            Some("chronos-bolt-base".to_string())
+        );
     }
 
     #[test]

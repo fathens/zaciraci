@@ -19,7 +19,7 @@ pub struct PredictionResult {
 }
 
 /// ゼロショット予測を実行し、予測精度を検証する関数
-/// 
+///
 /// この関数は未来予測ではなく、予測モデルの精度検証を目的としています：
 /// - データを90:10に分割（90%を学習、10%をテスト）
 /// - 学習データでモデルを訓練し、テストデータ期間の予測を実行
@@ -32,10 +32,10 @@ pub async fn execute_zero_shot_prediction(
 ) -> Result<PredictionResult, PredictionError> {
     // データの検証・正規化処理
     let normalized_data = validate_and_normalize_data(values_data)?;
-    
+
     // データを90:10に分割
     let (training_data, test_data) = split_data_for_prediction(&normalized_data)?;
-    
+
     // ZeroShotPredictionRequestの作成
     let prediction_request = create_prediction_request(training_data, test_data, model_name)?;
 
@@ -56,10 +56,8 @@ pub async fn execute_zero_shot_prediction(
             let metrics = calculate_metrics(&actual_values, &forecast_values);
 
             // 予測データを変換
-            let forecast_data = transform_forecast_data(
-                &forecast_values,
-                &prediction_response.forecast_timestamp,
-            )?;
+            let forecast_data =
+                transform_forecast_data(&forecast_values, &prediction_response.forecast_timestamp)?;
 
             // チャートSVGを生成
             let chart_svg = generate_prediction_chart_svg(&normalized_data, &forecast_data)?;
@@ -75,16 +73,16 @@ pub async fn execute_zero_shot_prediction(
 }
 
 /// 予測レスポンスの基本検証を行う関数
-/// 
+///
 /// この関数は予測APIからのレスポンスに含まれるデータの基本的な検証を行います：
 /// - forecast_valuesが空でないこと
 /// - forecast_timestampが空でないこと
 /// - 両者の長さが一致していること
-/// 
+///
 /// # Arguments
 /// * `forecast_values` - 予測値の配列
 /// * `forecast_timestamp` - 予測タイムスタンプの配列
-/// 
+///
 /// # Returns
 /// `Result<(), PredictionError>` - 検証が成功した場合はOk(())、失敗した場合はエラー
 pub fn validate_prediction_response(
@@ -115,15 +113,15 @@ pub fn validate_prediction_response(
 }
 
 /// 予測データをValueAtTime形式に変換する関数
-/// 
+///
 /// この関数は予測APIから返されたデータを処理して、以下の処理を行います：
 /// - 予測値とタイムスタンプをValueAtTime形式に変換
 /// - 予測データの形状を保持
-/// 
+///
 /// # Arguments
 /// * `forecast_values` - 予測値の配列
 /// * `forecast_timestamp` - 予測タイムスタンプの配列
-/// 
+///
 /// # Returns
 /// `Result<Vec<ValueAtTime>, PredictionError>` - 変換済みの予測データまたはエラー
 pub fn transform_forecast_data(
@@ -132,9 +130,7 @@ pub fn transform_forecast_data(
 ) -> Result<Vec<ValueAtTime>, PredictionError> {
     // 前提条件のチェック
     if forecast_values.is_empty() {
-        return Err(PredictionError::InvalidData(
-            "予測値が空です".to_string(),
-        ));
+        return Err(PredictionError::InvalidData("予測値が空です".to_string()));
     }
 
     if forecast_timestamp.is_empty() {
@@ -151,9 +147,8 @@ pub fn transform_forecast_data(
         )));
     }
 
-
     let mut forecast_points: Vec<ValueAtTime> = Vec::new();
-    
+
     // 予測データを変換
     for (i, timestamp) in forecast_timestamp.iter().enumerate() {
         forecast_points.push(ValueAtTime {
@@ -166,16 +161,16 @@ pub fn transform_forecast_data(
 }
 
 /// チャートSVGを生成する関数（改良版）
-/// 
+///
 /// この関数は実際のデータと予測データを使ってチャートを生成します：
 /// - 実際のデータと予測データを異なる色で表示
 /// - より見やすい改良されたデザイン
 /// - カスタマイズ可能なチャートオプション
-/// 
+///
 /// # Arguments
 /// * `actual_data` - 実際のデータ（正規化済み）
 /// * `forecast_data` - 予測データ（変換済み）
-/// 
+///
 /// # Returns
 /// `Result<String, PredictionError>` - 生成されたSVGチャートまたはエラー
 pub fn generate_prediction_chart_svg(
@@ -183,9 +178,11 @@ pub fn generate_prediction_chart_svg(
     forecast_data: &[ValueAtTime],
 ) -> Result<String, PredictionError> {
     // 改良版を使用（後方互換性を保持）
-    use crate::chart::plots::{MultiPlotSeries, MultiPlotOptions, plot_multi_values_at_time_to_svg_with_options};
+    use crate::chart::plots::{
+        MultiPlotOptions, MultiPlotSeries, plot_multi_values_at_time_to_svg_with_options,
+    };
     use plotters::prelude::{GREEN, MAGENTA};
-    
+
     let chart_svg = plot_multi_values_at_time_to_svg_with_options(
         &[
             MultiPlotSeries {
@@ -212,19 +209,18 @@ pub fn generate_prediction_chart_svg(
     Ok(chart_svg)
 }
 
-
 /// PredictionResultを作成する関数
-/// 
+///
 /// この関数は処理済みのデータから最終的なPredictionResultを構築します：
 /// - 予測価格の計算（最後の予測値）
 /// - 精度の計算（正規化MAPEから導出）
 /// - 各種メトリクスの設定
-/// 
+///
 /// # Arguments
 /// * `forecast_data` - 変換済みの予測データ
 /// * `chart_svg` - 生成済みのチャートSVG
 /// * `metrics` - 計算済みの評価メトリクス
-/// 
+///
 /// # Returns
 /// `PredictionResult` - 完成した予測結果
 pub fn create_prediction_result(
@@ -277,15 +273,20 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
     metrics.insert("RMSE".to_string(), (squared_errors_sum / n as f64).sqrt());
     metrics.insert("MAE".to_string(), absolute_errors_sum / n as f64);
     metrics.insert("MAPE".to_string(), absolute_percent_errors_sum / n as f64);
-    
+
     // 正規化MAPEを計算（最大パーセント誤差を100とするスケーリング）
     if !percent_errors.is_empty() {
-        if let Some(&max_error) = percent_errors.iter().max_by(|a, b| a.partial_cmp(b).unwrap()) {
+        if let Some(&max_error) = percent_errors
+            .iter()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+        {
             if max_error > 0.0 {
-                let scaled_errors: Vec<f64> = percent_errors.iter()
+                let scaled_errors: Vec<f64> = percent_errors
+                    .iter()
                     .map(|&e| (e / max_error) * 100.0)
                     .collect();
-                let normalized_mape = scaled_errors.iter().sum::<f64>() / scaled_errors.len() as f64;
+                let normalized_mape =
+                    scaled_errors.iter().sum::<f64>() / scaled_errors.len() as f64;
                 metrics.insert("NORMALIZED_MAPE".to_string(), normalized_mape);
             } else {
                 metrics.insert("NORMALIZED_MAPE".to_string(), 0.0);
@@ -299,16 +300,16 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
 }
 
 /// データの基本検証と正規化処理を行う関数
-/// 
+///
 /// この関数は以下の処理を行います：
 /// - データの基本検証（空データ、最小サイズチェック）
 /// - 数値の妥当性検証（有限値、正の値）
 /// - 時系列データの順序チェック
 /// - データ正規化処理（設定に応じて）
-/// 
+///
 /// # Arguments
 /// * `values_data` - 検証・正規化する時系列データ
-/// 
+///
 /// # Returns
 /// `Result<Vec<ValueAtTime>, PredictionError>` - 検証・正規化されたデータまたはエラー
 pub fn validate_and_normalize_data(
@@ -329,34 +330,37 @@ pub fn validate_and_normalize_data(
         // 数値検証
         if !point.value.is_finite() {
             return Err(PredictionError::InvalidData(format!(
-                "Invalid value at index {}: {} (not finite)", i, point.value
+                "Invalid value at index {}: {} (not finite)",
+                i, point.value
             )));
         }
         if point.value <= 0.0 {
             return Err(PredictionError::InvalidData(format!(
-                "Invalid value at index {}: {} (not positive)", i, point.value
+                "Invalid value at index {}: {} (not positive)",
+                i, point.value
             )));
         }
-        
+
         // 時系列の順序チェック
         if let Some(prev_time) = previous_time {
             if point.time <= prev_time {
                 return Err(PredictionError::InvalidData(format!(
-                    "Time series order error at index {}: {} <= {} (not strictly increasing)", 
+                    "Time series order error at index {}: {} <= {} (not strictly increasing)",
                     i, point.time, prev_time
                 )));
             }
         }
-        
+
         // 重複時刻チェック（既に前のチェックで検出されるが明示的に）
         if let Some(prev_time) = previous_time {
             if point.time == prev_time {
                 return Err(PredictionError::InvalidData(format!(
-                    "Duplicate timestamp at index {}: {}", i, point.time
+                    "Duplicate timestamp at index {}: {}",
+                    i, point.time
                 )));
             }
         }
-        
+
         previous_time = Some(point.time);
     }
 
@@ -368,28 +372,30 @@ pub fn validate_and_normalize_data(
             config.outlier_threshold,
             config.max_change_ratio,
         );
-        
-        let normalized_values = normalizer.normalize_data(values_data)
+
+        let normalized_values = normalizer
+            .normalize_data(values_data)
             .map_err(|e| PredictionError::InvalidData(format!("データ正規化エラー: {}", e)))?;
-        
+
         // 品質指標を出力（デバッグ用）
-        let quality_metrics = normalizer.calculate_data_quality_metrics(values_data, &normalized_values);
+        let quality_metrics =
+            normalizer.calculate_data_quality_metrics(values_data, &normalized_values);
         log::info!("データ正規化完了:");
         quality_metrics.print_summary();
-        
+
         normalized_values
     } else {
         values_data.to_vec()
     };
-    
+
     Ok(normalized_data)
 }
 
 /// データを90:10に分割する関数（90%を学習、10%をテスト）
-/// 
+///
 /// # Arguments
 /// * `normalized_data` - 検証・正規化済みの時系列データ
-/// 
+///
 /// # Returns
 /// `Result<(&[ValueAtTime], &[ValueAtTime]), PredictionError>` - (学習データ, テストデータ)のタプルまたはエラー
 pub fn split_data_for_prediction(
@@ -412,14 +418,14 @@ pub fn split_data_for_prediction(
 }
 
 /// ZeroShotPredictionRequestを作成する関数
-/// 
+///
 /// この関数は分割済みのデータからZeroShotPredictionRequestを作成します。
-/// 
+///
 /// # Arguments
 /// * `training_data` - 学習用データ（既に分割済み）
 /// * `test_data` - テスト用データ（既に分割済み）
 /// * `model_name` - 使用するモデル名
-/// 
+///
 /// # Returns
 /// `Result<ZeroShotPredictionRequest, PredictionError>` - 作成されたリクエストまたはエラー
 pub fn create_prediction_request(
@@ -427,7 +433,6 @@ pub fn create_prediction_request(
     test_data: &[ValueAtTime],
     model_name: String,
 ) -> Result<ZeroShotPredictionRequest, PredictionError> {
-
     // 予測用のタイムスタンプと値を抽出
     let timestamps: Vec<DateTime<Utc>> = training_data
         .iter()
@@ -453,7 +458,7 @@ pub fn create_prediction_request(
         ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
             .with_model_name(model_name)
     };
-    
+
     Ok(prediction_request)
 }
 
@@ -462,5 +467,3 @@ mod tests;
 
 #[cfg(test)]
 mod visual_tests;
-
-

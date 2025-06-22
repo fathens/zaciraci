@@ -763,7 +763,7 @@ mod tests {
         // 空の系列配列
         let empty_series: Vec<MultiPlotSeries> = vec![];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&empty_series, BackendType::Svg, &options);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("空のデータセット"));
@@ -778,10 +778,15 @@ mod tests {
             color: plotters::prelude::BLUE,
         }];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("系列 0 のデータが空"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("系列 0 のデータが空")
+        );
     }
 
     #[test]
@@ -806,10 +811,10 @@ mod tests {
             color: plotters::prelude::BLUE,
         }];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
         assert!(result.is_ok());
-        
+
         // SVG出力の基本検証
         if let Ok(PlotResult::Svg(svg_content)) = result {
             assert!(svg_content.contains("<svg"));
@@ -860,10 +865,10 @@ mod tests {
             },
         ];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
         assert!(result.is_ok());
-        
+
         // SVG出力の複数系列検証
         if let Ok(PlotResult::Svg(svg_content)) = result {
             assert!(svg_content.contains("<svg"));
@@ -895,10 +900,10 @@ mod tests {
             color: plotters::prelude::GREEN,
         }];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
         assert!(result.is_ok());
-        
+
         // SVG出力の基本検証
         if let Ok(PlotResult::Svg(svg_content)) = result {
             assert!(svg_content.contains("<svg"));
@@ -921,7 +926,7 @@ mod tests {
             color: plotters::prelude::BLUE,
         }];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
         assert!(result.is_ok());
     }
@@ -954,7 +959,7 @@ mod tests {
             color: plotters::prelude::BLUE,
         }];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
         assert!(result.is_ok());
     }
@@ -981,7 +986,7 @@ mod tests {
             color: plotters::prelude::BLUE,
         }];
         let options = MultiPlotOptions::default();
-        
+
         let result = plot_multi_values_at_time_internal(&series, BackendType::Svg, &options);
         assert!(result.is_ok());
     }
