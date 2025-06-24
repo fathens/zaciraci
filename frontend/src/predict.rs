@@ -72,7 +72,7 @@ fn predict_zero_shot_view(
     rsx! {
         div { class: "predict-zero-shot-view",
             h2 { "ゼロショット予測" }
-            p { "過去の価格データから将来の価格を予測します。前半1日分のデータを使って後半1日分を予測し、実際のデータと比較します。" }
+            p { "過去の価格データから将来の価格を予測します。90%のデータを使って残り10%の期間を予測し、実際のデータと比較します。" }
 
             // トークン選択
             div { class: "token-selection",
@@ -318,8 +318,8 @@ fn predict_zero_shot_view(
                                     return;
                                 }
 
-                                // データを前半と後半に分割
-                                let mid_point = values_data.len() / 2;
+                                // データを9:1に分割（90%を学習用、10%をテスト用）
+                                let mid_point = (values_data.len() as f64 * 0.9) as usize;
                                 if mid_point < 2 {
                                     error_message.set(Some(PredictionError::InsufficientData.to_string()));
                                     loading.set(false);
