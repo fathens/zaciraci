@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo chef prepare --recipe-path recipe.json
 
-FROM base as builder
+FROM base AS builder
 ARG CARGO_BUILD_ARGS
 
 WORKDIR /app
