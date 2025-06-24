@@ -155,8 +155,15 @@ PG_DSN=postgres://postgres_test:postgres_test@localhost:5433/postgres_test cargo
 フロントエンドはDioxusを使用したWebAssemblyアプリケーション:
 ```bash
 cd frontend
-trunk serve  # 通常は http://localhost:8080 で起動
+
+# 開発サーバー起動（ホットリロード有効）
+dx serve --package zaciraci-frontend --port 8088 --platform web
+
+# ビルド（リリース用）
+dx build --release
 ```
+
+**注意**: このプロジェクトでは `dx` コマンドを使用します。`trunk` ではありません。
 
 ### データベースマイグレーション
 - データベーススキーマ変更にはDieselを使用
