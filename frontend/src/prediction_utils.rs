@@ -41,7 +41,10 @@ pub async fn execute_zero_shot_prediction(
     let prediction_request = create_prediction_request(training_data, test_data, model_name)?;
 
     // 非同期予測実行（ポーリング）
-    match chronos_client.predict_with_polling(&prediction_request, progress_callback).await {
+    match chronos_client
+        .predict_with_polling(&prediction_request, progress_callback)
+        .await
+    {
         Ok(prediction_response) => {
             // 予測レスポンスの基本検証
             validate_prediction_response(

@@ -115,7 +115,6 @@ pub struct ChronosApiClient {
 }
 
 impl ChronosApiClient {
-
     // 非同期ゼロショット予測を開始
     pub async fn predict_zero_shot_async(
         &self,
@@ -128,7 +127,7 @@ impl ChronosApiClient {
             model_name: request.model_name.clone(),
             model_params: request.model_params.clone(),
         };
-        
+
         self.underlying
             .post("api/v1/predict_zero_shot_async", &async_request)
             .await
@@ -151,19 +150,30 @@ impl ChronosApiClient {
         let async_response = self.predict_zero_shot_async(request).await?;
 
         if let Some(callback) = &progress_callback {
-            callback(0.0, format!("予測タスクを開始しました: {}", async_response.task_id));
+            callback(
+                0.0,
+                format!("予測タスクを開始しました: {}", async_response.task_id),
+            );
         }
 
         // ポーリングループ
-        for attempt in 0..1800 { // 30分間ポーリング
+        for attempt in 0..1800 {
+            // 30分間ポーリング
             TimeoutFuture::new(1000).await; // 1秒待機
-            
+
             match self.get_prediction_status(&async_response.task_id).await {
                 Ok(status) => {
                     if let Some(callback) = &progress_callback {
-                        callback(status.progress, format!("ステータス: {} ({:.1}%)", status.status, status.progress * 100.0));
+                        callback(
+                            status.progress,
+                            format!(
+                                "ステータス: {} ({:.1}%)",
+                                status.status,
+                                status.progress * 100.0
+                            ),
+                        );
                     }
-                    
+
                     match status.status.as_str() {
                         "COMPLETED" => {
                             if let Some(result) = status.result {
@@ -174,20 +184,25 @@ impl ChronosApiClient {
                             } else {
                                 return Err(anyhow::anyhow!("予測結果がありません"));
                             }
-                        },
+                        }
                         "FAILED" => {
-                            let error_msg = status.error.unwrap_or_else(|| "予測が失敗しました".to_string());
+                            let error_msg = status
+                                .error
+                                .unwrap_or_else(|| "予測が失敗しました".to_string());
                             return Err(anyhow::anyhow!("予測失敗: {}", error_msg));
-                        },
+                        }
                         _ => {
                             // PENDING または RUNNING の場合は継続
                             continue;
                         }
                     }
-                },
+                }
                 Err(e) => {
-                    web_sys::console::log_1(&format!("ポーリングエラー (attempt {}): {}", attempt, e).into());
-                    if attempt < 5 { // 最初の5回は再試行
+                    web_sys::console::log_1(
+                        &format!("ポーリングエラー (attempt {}): {}", attempt, e).into(),
+                    );
+                    if attempt < 5 {
+                        // 最初の5回は再試行
                         continue;
                     } else {
                         // ポーリングに失敗した場合はエラーとして扱う
@@ -196,7 +211,7 @@ impl ChronosApiClient {
                 }
             }
         }
-        
+
         // タイムアウトした場合はエラーとして扱う
         Err(anyhow::anyhow!("ポーリングタイムアウト: 30分を超えました"))
     }

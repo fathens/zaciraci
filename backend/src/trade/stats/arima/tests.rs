@@ -375,7 +375,7 @@ mod prediction_tests {
     #[test]
     fn test_predict_linear_trend() {
         let log = DEFAULT.new(o!("function" => "test_predict_linear_trend"));
-        
+
         // 線形に増加するデータで予測をテスト
         let points = create_test_points(15, 100.0, 5.0); // 100, 105, 110, ...
         let last_time = points.last().unwrap().timestamp;
