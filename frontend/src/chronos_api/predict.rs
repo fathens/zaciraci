@@ -174,7 +174,7 @@ impl ChronosApiClient {
                         );
                     }
 
-                    match status.status.as_str() {
+                    match status.status.to_uppercase().as_str() {
                         "COMPLETED" => {
                             if let Some(result) = status.result {
                                 if let Some(callback) = &progress_callback {
