@@ -25,6 +25,7 @@ dioxus-logger = "0.6"
 log = "0.4"
 gloo = "0.11"
 gloo-net = "0.6"
+gloo-timers = { version = "0.3", features = ["futures"] }
 chrono = { workspace = true, features = ["serde", "wasmbind"] }
 futures = "0.3"
 once_cell = { workspace = true }

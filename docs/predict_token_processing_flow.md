@@ -81,8 +81,9 @@ let prediction_request = if config.omit_model_name {
 ```
 
 #### 3.5 機械学習モデル実行
-- `chronos_client.predict_zero_shot()`を呼び出し
-- Chronos APIサーバーの`api/v1/predict_zero_shot`エンドポイントにPOSTリクエスト
+- `chronos_client.predict_with_polling()`を呼び出し
+- 内部で`predict_zero_shot_async`を使用して非同期予測を開始
+- ポーリングによって予測完了まで待機し、プログレス表示も可能
 
 #### 3.6 予測結果の調整
 データの連続性を保つためのオフセット調整を実行：
@@ -242,7 +243,7 @@ flowchart TD
     
     SplitData --> PrepareRequest[予測リクエスト準備<br/>- タイムスタンプ<br/>- 価格データ<br/>- 予測期間]
     
-    PrepareRequest --> CallAPI[Chronos API呼び出し<br/>POST /api/v1/predict_zero_shot]
+    PrepareRequest --> CallAPI[Chronos API呼び出し<br/>predict_with_polling<br/>（非同期 + ポーリング）]
     
     CallAPI --> APISuccess{API成功？}
     APISuccess -->|失敗| APIError[APIエラーを返す]

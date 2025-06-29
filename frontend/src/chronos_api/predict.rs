@@ -1,10 +1,12 @@
 use crate::api_underlying::Underlying;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use gloo_timers::future::TimeoutFuture;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use web_sys;
 use zaciraci_common::config;
 
 fn chronos_base_url() -> String {
@@ -77,19 +79,126 @@ pub struct PredictionResponse {
     pub metrics: Option<HashMap<String, f64>>,
 }
 
+// 非同期予測リクエスト
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AsyncPredictionRequest {
+    pub timestamp: Vec<DateTime<Utc>>,
+    pub values: Vec<f64>,
+    pub forecast_until: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_params: Option<HashMap<String, serde_json::Value>>,
+}
+
+// 非同期予測レスポンス
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AsyncPredictionResponse {
+    pub task_id: String,
+    pub status: String,
+}
+
+// 予測ステータス
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PredictionStatus {
+    pub task_id: String,
+    pub status: String,
+    pub progress: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<PredictionResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 pub struct ChronosApiClient {
     pub underlying: Arc<Underlying>,
 }
 
 impl ChronosApiClient {
-    // ゼロショット予測APIを呼び出す
-    pub async fn predict_zero_shot(
+
+    // 非同期ゼロショット予測を開始
+    pub async fn predict_zero_shot_async(
         &self,
         request: &ZeroShotPredictionRequest,
-    ) -> Result<PredictionResponse> {
+    ) -> Result<AsyncPredictionResponse> {
+        let async_request = AsyncPredictionRequest {
+            timestamp: request.timestamp.clone(),
+            values: request.values.clone(),
+            forecast_until: request.forecast_until,
+            model_name: request.model_name.clone(),
+            model_params: request.model_params.clone(),
+        };
+        
         self.underlying
-            .post("api/v1/predict_zero_shot", request)
+            .post("api/v1/predict_zero_shot_async", &async_request)
             .await
+    }
+
+    // 予測ステータスを取得
+    pub async fn get_prediction_status(&self, task_id: &str) -> Result<PredictionStatus> {
+        self.underlying
+            .get(&format!("api/v1/prediction_status/{}", task_id))
+            .await
+    }
+
+    // ポーリングによる予測実行（共通化された処理）
+    pub async fn predict_with_polling(
+        &self,
+        request: &ZeroShotPredictionRequest,
+        progress_callback: Option<Box<dyn Fn(f64, String)>>,
+    ) -> Result<PredictionResponse> {
+        // 非同期予測を開始
+        let async_response = self.predict_zero_shot_async(request).await?;
+
+        if let Some(callback) = &progress_callback {
+            callback(0.0, format!("予測タスクを開始しました: {}", async_response.task_id));
+        }
+
+        // ポーリングループ
+        for attempt in 0..1800 { // 30分間ポーリング
+            gloo_timers::future::TimeoutFuture::new(1000).await; // 1秒待機
+            
+            match self.get_prediction_status(&async_response.task_id).await {
+                Ok(status) => {
+                    if let Some(callback) = &progress_callback {
+                        callback(status.progress, format!("ステータス: {} ({:.1}%)", status.status, status.progress * 100.0));
+                    }
+                    
+                    match status.status.as_str() {
+                        "COMPLETED" => {
+                            if let Some(result) = status.result {
+                                if let Some(callback) = &progress_callback {
+                                    callback(1.0, "予測が完了しました".to_string());
+                                }
+                                return Ok(result);
+                            } else {
+                                return Err(anyhow::anyhow!("予測結果がありません"));
+                            }
+                        },
+                        "FAILED" => {
+                            let error_msg = status.error.unwrap_or_else(|| "予測が失敗しました".to_string());
+                            return Err(anyhow::anyhow!("予測失敗: {}", error_msg));
+                        },
+                        _ => {
+                            // PENDING または RUNNING の場合は継続
+                            continue;
+                        }
+                    }
+                },
+                Err(e) => {
+                    web_sys::console::log_1(&format!("ポーリングエラー (attempt {}): {}", attempt, e).into());
+                    if attempt < 5 { // 最初の5回は再試行
+                        continue;
+                    } else {
+                        // ポーリングに失敗した場合はエラーとして扱う
+                        return Err(anyhow::anyhow!("ポーリングエラー: {}", e));
+                    }
+                }
+            }
+        }
+        
+        // タイムアウトした場合はエラーとして扱う
+        Err(anyhow::anyhow!("ポーリングタイムアウト: 30分を超えました"))
     }
 }
 

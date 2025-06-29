@@ -363,8 +363,13 @@ fn predict_zero_shot_view(
                                         .with_model_name(model_val)
                                 };
 
-                                // 予測実行
-                                match chronos_client.read().predict_zero_shot(&prediction_request).await {
+                                // 非同期予測実行（ポーリングでプログレス表示）
+                                match chronos_client.read().predict_with_polling(
+                                    &prediction_request,
+                                    Some(Box::new(|progress, message| {
+                                        web_sys::console::log_1(&format!("予測進捗: {:.1}% - {}", progress * 100.0, message).into());
+                                    }))
+                                ).await {
                                     Ok(prediction_response) => {
                                         // 予測結果とテストデータの比較
                                         let actual_values: Vec<_> = test_data.iter().map(|v| v.value).collect();
