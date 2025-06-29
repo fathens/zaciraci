@@ -156,7 +156,7 @@ impl ChronosApiClient {
 
         // ポーリングループ
         for attempt in 0..1800 { // 30分間ポーリング
-            gloo_timers::future::TimeoutFuture::new(1000).await; // 1秒待機
+            TimeoutFuture::new(1000).await; // 1秒待機
             
             match self.get_prediction_status(&async_response.task_id).await {
                 Ok(status) => {

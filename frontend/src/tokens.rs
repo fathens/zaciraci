@@ -138,11 +138,19 @@ pub fn view() -> Element {
 
                                     spawn_local(async move {
                                         let service = volatility_service();
+                                        
+                                        // プログレスコールバックを作成（コンソールログのみ）
+                                        let token_clone = token.clone();
+                                        let progress_callback = Some(Box::new(move |progress: f64, message: String| {
+                                            web_sys::console::log_1(&format!("{}: {:.1}% - {}", token_clone, progress * 100.0, message).into());
+                                        }) as Box<dyn Fn(f64, String)>);
+                                        
                                         match service.predict_token(
                                             &token,
                                             predict_start,
                                             predict_end,
                                             &config.quote_token,
+                                            progress_callback,
                                         ).await {
                                             Ok(result) => {
                                                 // 予測結果を更新
@@ -204,6 +212,7 @@ pub fn view() -> Element {
                     "{error}"
                 }
             }
+
 
             // 予測結果の表示
             if !prediction_results().is_empty() {

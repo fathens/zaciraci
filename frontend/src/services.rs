@@ -77,6 +77,7 @@ impl VolatilityPredictionService {
         start_datetime: DateTime<Utc>,
         end_datetime: DateTime<Utc>,
         quote_token: &TokenAccount,
+        progress_callback: Option<Box<dyn Fn(f64, String)>>,
     ) -> Result<VolatilityPredictionResult, PredictionError> {
         let _config = get_config();
 
@@ -110,6 +111,7 @@ impl VolatilityPredictionService {
                     &values_data,
                     model_name,
                     self.chronos_client.clone(),
+                    progress_callback,
                 )
                 .await
                 {

@@ -29,6 +29,7 @@ pub async fn execute_zero_shot_prediction(
     values_data: &[ValueAtTime],
     model_name: String,
     chronos_client: Arc<ChronosApiClient>,
+    progress_callback: Option<Box<dyn Fn(f64, String)>>,
 ) -> Result<PredictionResult, PredictionError> {
     // データの検証・正規化処理
     let normalized_data = validate_and_normalize_data(values_data)?;
@@ -40,7 +41,7 @@ pub async fn execute_zero_shot_prediction(
     let prediction_request = create_prediction_request(training_data, test_data, model_name)?;
 
     // 非同期予測実行（ポーリング）
-    match chronos_client.predict_with_polling(&prediction_request, None).await {
+    match chronos_client.predict_with_polling(&prediction_request, progress_callback).await {
         Ok(prediction_response) => {
             // 予測レスポンスの基本検証
             validate_prediction_response(
