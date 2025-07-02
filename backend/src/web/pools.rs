@@ -381,54 +381,78 @@ async fn get_volatility_tokens(
     ));
     info!(log, "start");
 
-    let vols = {
+    // 並行処理でボラティリティ計算と深度計算を同時実行
+    let (vols, deps) = {
         let start_time = Instant::now();
-        let quote = WNEAR_TOKEN.clone().into();
-        let range = TimeRange {
-            start: request.start,
-            end: request.end,
-        };
-        info!(log, "get tokens with depth";
-            "quote" => format!("{}", quote),
-        );
-        let result = match TokenRate::get_by_volatility_in_time_range(&range, &quote).await {
-            Ok(vols) => vols,
-            Err(e) => {
-                error!(log, "failed to get volatility";
-                    "error" => ?e,
-                );
-                return Json(ApiResponse::Error(e.to_string()));
-            }
-        };
-        let elapsed = start_time.elapsed();
-        info!(log, "vols part completed";
-            "elapsed_ms" => elapsed.as_millis(),
-            "elapsed_secs" => elapsed.as_secs_f64(),
-        );
-        result
-    };
 
-    let deps = {
-        let start_time = Instant::now();
-        info!(log, "get tokens with depth");
-        let result = match PoolInfoList::read_from_db(Some(request.end))
-            .await
-            .and_then(tokens_with_depth)
-        {
-            Ok(pools) => pools,
-            Err(e) => {
-                error!(log, "failed to get tokens with depth";
-                    "error" => ?e,
+        // ボラティリティ計算タスク
+        let vol_task = {
+            let quote = WNEAR_TOKEN.clone().into();
+            let range = TimeRange {
+                start: request.start,
+                end: request.end,
+            };
+            let log = log.clone();
+            tokio::spawn(async move {
+                info!(log, "start volatility calculation";
+                    "quote" => format!("{}", quote),
                 );
+                let result = TokenRate::get_by_volatility_in_time_range(&range, &quote).await;
+                info!(log, "volatility calculation completed");
+                result
+            })
+        };
+
+        // 深度計算タスク
+        let depth_task = {
+            let timestamp = request.end;
+            let log = log.clone();
+            tokio::spawn(async move {
+                info!(log, "start depth calculation");
+                let result = PoolInfoList::read_from_db(Some(timestamp))
+                    .await
+                    .and_then(tokens_with_depth);
+                info!(log, "depth calculation completed");
+                result
+            })
+        };
+
+        // 両方の結果を待機
+        let (vol_result, depth_result) = tokio::join!(vol_task, depth_task);
+
+        let vols = match vol_result {
+            Ok(Ok(vols)) => vols,
+            Ok(Err(e)) => {
+                error!(log, "failed to get volatility"; "error" => ?e);
                 return Json(ApiResponse::Error(e.to_string()));
             }
+            Err(e) => {
+                error!(log, "volatility task panicked"; "error" => ?e);
+                return Json(ApiResponse::Error(
+                    "Volatility calculation failed".to_string(),
+                ));
+            }
         };
+
+        let deps = match depth_result {
+            Ok(Ok(deps)) => deps,
+            Ok(Err(e)) => {
+                error!(log, "failed to get tokens with depth"; "error" => ?e);
+                return Json(ApiResponse::Error(e.to_string()));
+            }
+            Err(e) => {
+                error!(log, "depth task panicked"; "error" => ?e);
+                return Json(ApiResponse::Error("Depth calculation failed".to_string()));
+            }
+        };
+
         let elapsed = start_time.elapsed();
-        info!(log, "deps part completed";
+        info!(log, "parallel computation completed";
             "elapsed_ms" => elapsed.as_millis(),
             "elapsed_secs" => elapsed.as_secs_f64(),
         );
-        result
+
+        (vols, deps)
     };
 
     let tokens = {
