@@ -7,6 +7,53 @@
 - `cargo clippy --all-targets --all-features -- -D warnings` でlintをチェック（警告はエラーとして扱う）
 - `cargo test` ですべてのテストが通ることを確認
 
+#### モジュール構成
+**モダンなRustコードスタイル**: `mod.rs`ファイルの使用を避け、ディレクトリ同名のファイルを使用する
+
+```rust
+// 推奨されるモダンな構成
+src/
+├── lib.rs または main.rs
+├── utils.rs          // utils/ ディレクトリ内の pub mod を定義
+├── utils/
+│   ├── config.rs     // pub mod config;
+│   ├── file.rs       // pub mod file;
+│   └── validation.rs // pub mod validation;
+├── api.rs            // api/ ディレクトリ内の pub mod を定義
+└── api/
+    ├── handlers.rs   // pub mod handlers;
+    ├── routes.rs     // pub mod routes;
+    └── middleware.rs // pub mod middleware;
+
+// utils.rs の内容例
+pub mod config;
+pub mod file;
+pub mod validation;
+
+// api.rs の内容例
+pub mod handlers;
+pub mod routes;
+pub mod middleware;
+```
+
+```rust
+// 避けるべき従来の構成
+src/
+├── lib.rs または main.rs
+├── utils/
+│   ├── mod.rs        // ← 避けるべき
+│   ├── config.rs
+│   ├── file.rs
+│   └── validation.rs
+└── api/
+    ├── mod.rs        // ← 避けるべき
+    ├── handlers.rs
+    ├── routes.rs
+    └── middleware.rs
+```
+
+この構成により、モジュールの構造がより明確になり、ファイルの役割が理解しやすくなります。
+
 ### ログ出力の方針
 **重要**: `println!` マクロの使用は禁止です。適切なログマクロを使用してください。
 
