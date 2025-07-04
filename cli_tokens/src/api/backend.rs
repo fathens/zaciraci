@@ -2,7 +2,11 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde_json::Value;
-use zaciraci_common::{pools::VolatilityTokensRequest, types::TokenAccount, ApiResponse};
+use zaciraci_common::{
+    pools::{VolatilityTokensRequest, VolatilityTokensResponse},
+    types::TokenAccount,
+    ApiResponse,
+};
 
 pub struct BackendApiClient {
     client: Client,
@@ -29,13 +33,13 @@ impl BackendApiClient {
             limit,
         };
 
-        let url = format!("{}/api/volatility-tokens", self.base_url);
+        let url = format!("{}/pools/get_volatility_tokens", self.base_url);
         let response = self.client.post(&url).json(&request).send().await?;
 
-        let api_response: ApiResponse<Vec<TokenAccount>, String> = response.json().await?;
+        let api_response: ApiResponse<VolatilityTokensResponse, String> = response.json().await?;
 
         match api_response {
-            ApiResponse::Success(data) => Ok(data),
+            ApiResponse::Success(data) => Ok(data.tokens),
             ApiResponse::Error(message) => Err(anyhow::anyhow!("API Error: {}", message)),
         }
     }
