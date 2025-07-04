@@ -3,6 +3,9 @@ pub mod commands;
 pub mod models;
 pub mod utils;
 
+#[cfg(test)]
+mod tests;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 

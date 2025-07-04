@@ -25,7 +25,7 @@ pub fn sanitize_filename(input: &str) -> String {
     input
         .chars()
         .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ' ' => '_',
             _ => c,
         })
         .collect()
