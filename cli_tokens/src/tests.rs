@@ -188,6 +188,7 @@ mod api_tests {
     };
     use chrono::Utc;
     use serde_json::json;
+    use zaciraci_common::pools::VolatilityTokensResponse;
     use zaciraci_common::types::TokenAccount;
     use zaciraci_common::ApiResponse;
 
@@ -198,11 +199,14 @@ mod api_tests {
             TokenAccount("wrap.near".to_string().into()),
             TokenAccount("usdc.near".to_string().into()),
         ];
-        let api_response: ApiResponse<Vec<TokenAccount>, String> =
-            ApiResponse::Success(mock_tokens.clone());
+        let volatility_response = VolatilityTokensResponse {
+            tokens: mock_tokens.clone(),
+        };
+        let api_response: ApiResponse<VolatilityTokensResponse, String> =
+            ApiResponse::Success(volatility_response);
 
         let _mock = server
-            .mock("POST", "/api/volatility-tokens")
+            .mock("POST", "/pools/get_volatility_tokens")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(serde_json::to_string(&api_response).unwrap())
@@ -226,11 +230,11 @@ mod api_tests {
     #[tokio::test]
     async fn test_backend_api_get_volatility_tokens_error() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let api_response: ApiResponse<Vec<TokenAccount>, String> =
+        let api_response: ApiResponse<VolatilityTokensResponse, String> =
             ApiResponse::Error("Database connection failed".to_string());
 
         let _mock = server
-            .mock("POST", "/api/volatility-tokens")
+            .mock("POST", "/pools/get_volatility_tokens")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(serde_json::to_string(&api_response).unwrap())
