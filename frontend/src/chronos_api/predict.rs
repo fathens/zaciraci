@@ -10,7 +10,26 @@ use web_sys;
 use zaciraci_common::config;
 
 fn chronos_base_url() -> String {
-    config::get("CHRONOS_BASE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string())
+    let url =
+        config::get("CHRONOS_BASE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+
+    // 初回接続時にURL情報をログ出力
+    web_sys::console::log_1(
+        &format!(
+            "=== Chronos API 接続設定 ===\n\
+         URL: {}\n\
+         環境変数CHRONOS_BASE_URLの設定状況: {}",
+            url,
+            if config::get("CHRONOS_BASE_URL").is_ok() {
+                "設定済み"
+            } else {
+                "未設定（デフォルト使用）"
+            }
+        )
+        .into(),
+    );
+
+    url
 }
 
 // ゼロショット予測リクエスト
@@ -128,9 +147,60 @@ impl ChronosApiClient {
             model_params: request.model_params.clone(),
         };
 
-        self.underlying
+        // リクエスト詳細をログ出力
+        web_sys::console::log_1(
+            &format!(
+                "=== Chronos API リクエスト詳細 ===\n\
+             URL: {}/api/v1/predict_zero_shot_async\n\
+             タイムスタンプ数: {}\n\
+             値の数: {}\n\
+             予測終了時刻: {}\n\
+             モデル名: {:?}\n\
+             値のサンプル（先頭5個）: {:?}\n\
+             タイムスタンプサンプル（先頭3個）: {:?}",
+                chronos_base_url(),
+                async_request.timestamp.len(),
+                async_request.values.len(),
+                async_request.forecast_until,
+                async_request.model_name,
+                async_request.values.iter().take(5).collect::<Vec<_>>(),
+                async_request.timestamp.iter().take(3).collect::<Vec<_>>()
+            )
+            .into(),
+        );
+
+        let result: Result<AsyncPredictionResponse> = self
+            .underlying
             .post("api/v1/predict_zero_shot_async", &async_request)
-            .await
+            .await;
+
+        match &result {
+            Ok(response) => {
+                web_sys::console::log_1(
+                    &format!(
+                        "【成功】Chronos API リクエスト開始: task_id={}, status={}",
+                        response.task_id, response.status
+                    )
+                    .into(),
+                );
+            }
+            Err(e) => {
+                web_sys::console::error_1(
+                    &format!("【エラー】Chronos API リクエスト失敗: {}", e).into(),
+                );
+
+                // ネットワークエラーの詳細を出力
+                web_sys::console::error_1(
+                    &format!(
+                        "接続先URL: {}/api/v1/predict_zero_shot_async",
+                        chronos_base_url()
+                    )
+                    .into(),
+                );
+            }
+        }
+
+        result
     }
 
     // 予測ステータスを取得
@@ -156,9 +226,9 @@ impl ChronosApiClient {
             );
         }
 
-        // ポーリングループ
-        for attempt in 0..1800 {
-            // 30分間ポーリング
+        // ポーリングループ（高品質予測のため65分に延長）
+        for attempt in 0..3900 {
+            // 65分間ポーリング（1時間学習＋5分余裕）
             TimeoutFuture::new(1000).await; // 1秒待機
 
             match self.get_prediction_status(&async_response.task_id).await {
@@ -180,6 +250,96 @@ impl ChronosApiClient {
                                 if let Some(callback) = &progress_callback {
                                     callback(1.0, "予測が完了しました".to_string());
                                 }
+
+                                // APIレスポンスの詳細ログを出力
+                                web_sys::console::log_1(
+                                    &format!(
+                                        "=== Chronos API レスポンス詳細 ===\n\
+                                     モデル名: {}\n\
+                                     予測タイムスタンプ数: {}\n\
+                                     予測値数: {}",
+                                        result.model_name,
+                                        result.forecast_timestamp.len(),
+                                        result.forecast_values.len()
+                                    )
+                                    .into(),
+                                );
+
+                                // 予測値の raw data をログ出力（先頭10個と末尾10個）
+                                if !result.forecast_values.is_empty() {
+                                    let head_count = result.forecast_values.len().min(10);
+                                    let tail_count = result.forecast_values.len().min(10);
+
+                                    web_sys::console::log_1(
+                                        &format!(
+                                            "RAW予測値サンプル（先頭{}個）: {:?}",
+                                            head_count,
+                                            &result.forecast_values[..head_count]
+                                        )
+                                        .into(),
+                                    );
+
+                                    if result.forecast_values.len() > 10 {
+                                        web_sys::console::log_1(
+                                            &format!(
+                                                "RAW予測値サンプル（末尾{}個）: {:?}",
+                                                tail_count,
+                                                &result.forecast_values
+                                                    [result.forecast_values.len() - tail_count..]
+                                            )
+                                            .into(),
+                                        );
+                                    }
+
+                                    // 統計情報
+                                    let min_val = result
+                                        .forecast_values
+                                        .iter()
+                                        .fold(f64::INFINITY, |a, &b| a.min(b));
+                                    let max_val = result
+                                        .forecast_values
+                                        .iter()
+                                        .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                                    let mean_val = result.forecast_values.iter().sum::<f64>()
+                                        / result.forecast_values.len() as f64;
+
+                                    // 同一値問題の検出
+                                    let unique_values: std::collections::HashSet<_> = result
+                                        .forecast_values
+                                        .iter()
+                                        .map(|&x| (x * 1000000.0) as i64)
+                                        .collect();
+                                    let is_same_values = unique_values.len() == 1;
+
+                                    web_sys::console::log_1(
+                                        &format!(
+                                            "RAW予測値統計:\n\
+                                         - 最小値: {}\n\
+                                         - 最大値: {}\n\
+                                         - 平均値: {}\n\
+                                         - ユニークな値の数: {}\n\
+                                         - 【問題】全て同じ値か?: {}",
+                                            min_val,
+                                            max_val,
+                                            mean_val,
+                                            unique_values.len(),
+                                            is_same_values
+                                        )
+                                        .into(),
+                                    );
+
+                                    if is_same_values {
+                                        web_sys::console::error_1(&format!(
+                                            "【重大な問題】予測値が全て同一です！\n\
+                                             値: {}\n\
+                                             データ数: {}\n\
+                                             これはAutoGluonが適切に予測を生成していないことを示しています。",
+                                            result.forecast_values[0],
+                                            result.forecast_values.len()
+                                        ).into());
+                                    }
+                                }
+
                                 return Ok(result);
                             } else {
                                 return Err(anyhow::anyhow!("予測結果がありません"));
@@ -213,7 +373,9 @@ impl ChronosApiClient {
         }
 
         // タイムアウトした場合はエラーとして扱う
-        Err(anyhow::anyhow!("ポーリングタイムアウト: 30分を超えました"))
+        Err(anyhow::anyhow!(
+            "ポーリングタイムアウト: 65分を超えました（高品質予測には時間がかかります）"
+        ))
     }
 }
 

@@ -121,19 +121,15 @@ impl VolatilityPredictionService {
                         accuracy: result.accuracy,
                         chart_svg: result.chart_svg,
                     }),
-                    Err(_) => {
-                        // 予測失敗時はフォールバック値を使用
-                        let fallback_price = values_data
-                            .last()
-                            .map(|v| v.value * _config.fallback_multiplier)
-                            .unwrap_or(0.0);
+                    Err(e) => {
+                        // 予測失敗時のエラー詳細をログ出力
+                        web_sys::console::error_1(
+                            &format!("【Chronos API失敗】トークン: {}, エラー: {:?}", token, e)
+                                .into(),
+                        );
 
-                        Ok(VolatilityPredictionResult {
-                            token: token.to_string(),
-                            predicted_price: fallback_price,
-                            accuracy: 0.0,
-                            chart_svg: None,
-                        })
+                        // フォールバック処理を使わずにエラーを返す
+                        Err(e)
                     }
                 }
             }

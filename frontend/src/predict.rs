@@ -318,15 +318,39 @@ fn predict_zero_shot_view(
                                     return;
                                 }
 
-                                // データを9:1に分割（90%を学習用、10%をテスト用）
-                                let mid_point = (values_data.len() as f64 * 0.9) as usize;
-                                if mid_point < 2 {
-                                    error_message.set(Some(PredictionError::InsufficientData.to_string()));
+                                // AutoGluonの最小要件（5点）を満たすようにデータを分割
+                                // 全データが少ない場合は学習データを優先し、テストデータを最小限に
+                                let total_points = values_data.len();
+                                let min_training_points = 6; // AutoGluonの要件（5点）＋余裕（1点）
+                                let min_test_points = 1; // テストには最低1点
+
+                                let (training_data, test_data) = if total_points < min_training_points + min_test_points {
+                                    // データが非常に少ない場合はエラー
+                                    error_message.set(Some(format!(
+                                        "データポイントが不足しています。最低{}点必要ですが、{}点しかありません。",
+                                        min_training_points + min_test_points, total_points
+                                    )));
                                     loading.set(false);
                                     return;
-                                }
-                                let training_data = values_data[..mid_point].to_vec();
-                                let test_data = values_data[mid_point..].to_vec();
+                                } else if total_points <= 10 {
+                                    // 少ないデータの場合：学習データを最低6点確保、残りをテスト
+                                    let training_size = std::cmp::max(min_training_points, total_points - min_test_points);
+                                    (values_data[..training_size].to_vec(), values_data[training_size..].to_vec())
+                                } else {
+                                    // 十分なデータがある場合：従来通り9:1分割
+                                    let mid_point = (total_points as f64 * 0.9) as usize;
+                                    let training_size = std::cmp::max(min_training_points, mid_point);
+                                    (values_data[..training_size].to_vec(), values_data[training_size..].to_vec())
+                                };
+
+                                // データ分割の詳細をログ出力
+                                web_sys::console::log_1(&format!(
+                                    "=== データ分割詳細 ===\n\
+                                     全データ数: {}\n\
+                                     学習データ数: {}\n\
+                                     テストデータ数: {}",
+                                    total_points, training_data.len(), test_data.len()
+                                ).into());
 
                                 if training_data.is_empty() || test_data.is_empty() {
                                     error_message.set(Some(PredictionError::InsufficientDataAfterSplit.to_string()));
@@ -356,12 +380,25 @@ fn predict_zero_shot_view(
                                 // ZeroShotPredictionRequestを作成
                                 let prediction_request = if omit_model_val {
                                     // モデル名を省略（サーバーのデフォルトモデルを使用）
-                                    ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
+                                    ZeroShotPredictionRequest::new(timestamps.clone(), values.clone(), forecast_until)
                                 } else {
                                     // モデル名を明示的に指定
-                                    ZeroShotPredictionRequest::new(timestamps, values, forecast_until)
-                                        .with_model_name(model_val)
+                                    ZeroShotPredictionRequest::new(timestamps.clone(), values.clone(), forecast_until)
+                                        .with_model_name(model_val.clone())
                                 };
+
+                                // リクエスト情報をログ出力
+                                web_sys::console::log_1(&format!(
+                                    "=== Chronos API リクエスト情報 ===\n\
+                                     学習データ数: {}\n\
+                                     予測終了時刻: {}\n\
+                                     モデル名: {}\n\
+                                     学習データ値のサンプル: {:?}",
+                                    values.len(),
+                                    forecast_until,
+                                    if omit_model_val { "サーバーデフォルト".to_string() } else { model_val.clone() },
+                                    values.iter().take(5).cloned().collect::<Vec<_>>()
+                                ).into());
 
                                 // 非同期予測実行（ポーリングでプログレス表示）
                                 match chronos_client.read().predict_with_polling(
@@ -374,6 +411,33 @@ fn predict_zero_shot_view(
                                         // 予測結果とテストデータの比較
                                         let actual_values: Vec<_> = test_data.iter().map(|v| v.value).collect();
                                         let forecast_values = prediction_response.forecast_values;
+
+                                        // 実際のデータの統計情報をログ出力
+                                        web_sys::console::log_1(&format!(
+                                            "=== 実際のデータ（テストデータ）統計 ===\n\
+                                             データ数: {}\n\
+                                             最小値: {}\n\
+                                             最大値: {}\n\
+                                             平均値: {}",
+                                            actual_values.len(),
+                                            actual_values.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+                                            actual_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
+                                            actual_values.iter().sum::<f64>() / actual_values.len() as f64
+                                        ).into());
+
+                                        // 学習データの統計情報もログ出力
+                                        let training_values: Vec<_> = training_data.iter().map(|v| v.value).collect();
+                                        web_sys::console::log_1(&format!(
+                                            "=== 学習データ統計 ===\n\
+                                             データ数: {}\n\
+                                             最小値: {}\n\
+                                             最大値: {}\n\
+                                             平均値: {}",
+                                            training_values.len(),
+                                            training_values.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+                                            training_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
+                                            training_values.iter().sum::<f64>() / training_values.len() as f64
+                                        ).into());
 
                                         // 予測精度の計算
                                         let calculated_metrics = calculate_metrics(&actual_values, &forecast_values);
@@ -420,37 +484,120 @@ fn predict_zero_shot_view(
                                                 }
                                             }
 
-                                            // 予測値と実際の値の差を計算（補正係数）
-                                            let correction_factor = match forecast_values.first() {
-                                                Some(&first_value) if first_value != 0.0 => {
-                                                    last_test_point.value / first_value
+                                            // 詳細なAPIレスポンス情報をログ出力
+                                            web_sys::console::log_1(&format!(
+                                                "=== 予測データ詳細分析 ===\n\
+                                                 予測値の数: {}\n\
+                                                 予測タイムスタンプの数: {}\n\
+                                                 最後のテストポイント値: {}",
+                                                forecast_values.len(),
+                                                prediction_response.forecast_timestamp.len(),
+                                                last_test_point.value
+                                            ).into());
+
+                                            // 予測値の統計情報を出力
+                                            if !forecast_values.is_empty() {
+                                                let min_forecast = forecast_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                                                let max_forecast = forecast_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                                                let mean_forecast = forecast_values.iter().sum::<f64>() / forecast_values.len() as f64;
+
+                                                web_sys::console::log_1(&format!(
+                                                    "予測値の統計:\n\
+                                                     - 最小値: {}\n\
+                                                     - 最大値: {}\n\
+                                                     - 平均値: {}\n\
+                                                     - 最初の値: {}\n\
+                                                     - 最後の値: {}",
+                                                    min_forecast,
+                                                    max_forecast,
+                                                    mean_forecast,
+                                                    forecast_values[0],
+                                                    forecast_values[forecast_values.len() - 1]
+                                                ).into());
+
+                                                // 先頭10個と末尾10個の予測値を出力
+                                                let head_values: Vec<_> = forecast_values.iter().take(10).cloned().collect();
+                                                let tail_values: Vec<_> = forecast_values.iter().rev().take(10).cloned().collect();
+                                                web_sys::console::log_1(&format!(
+                                                    "予測値サンプル（先頭10個）: {:?}",
+                                                    head_values
+                                                ).into());
+                                                web_sys::console::log_1(&format!(
+                                                    "予測値サンプル（末尾10個）: {:?}",
+                                                    tail_values
+                                                ).into());
+                                            }
+
+                                            // 予測値の補正係数を計算（大きな値での精度問題を回避）
+                                            let correction_factor = if forecast_values.is_empty() {
+                                                1.0
+                                            } else {
+                                                let first_forecast = forecast_values[0];
+                                                let forecast_mean = forecast_values.iter().sum::<f64>() / forecast_values.len() as f64;
+
+                                                web_sys::console::log_1(&format!(
+                                                    "補正係数計算前の値:\n\
+                                                     - 最後のテストポイント値: {}\n\
+                                                     - 最初の予測値: {}\n\
+                                                     - 予測値の平均: {}",
+                                                    last_test_point.value,
+                                                    first_forecast,
+                                                    forecast_mean
+                                                ).into());
+
+                                                if first_forecast != 0.0 && forecast_mean != 0.0 {
+                                                    // 比率計算で異常な値を防ぐため上限と下限を設定
+                                                    let base_ratio = (last_test_point.value / first_forecast).clamp(0.1, 10.0);
+                                                    let mean_ratio = (last_test_point.value / forecast_mean).clamp(0.1, 10.0);
+
+                                                    web_sys::console::log_1(&format!(
+                                                        "比率計算:\n\
+                                                         - base_ratio: {} / {} = {}\n\
+                                                         - mean_ratio: {} / {} = {}",
+                                                        last_test_point.value, first_forecast, base_ratio,
+                                                        last_test_point.value, forecast_mean, mean_ratio
+                                                    ).into());
+
+                                                    // 加重平均を計算し、さらに全体の上限も設定
+                                                    let weighted_ratio = 0.7 * base_ratio + 0.3 * mean_ratio;
+                                                    let final_ratio = weighted_ratio.clamp(0.2, 5.0); // 最終的な上限：5倍、下限：0.2倍
+
+                                                    web_sys::console::log_1(&format!(
+                                                        "最終補正係数計算:\n\
+                                                         - weighted_ratio: {}\n\
+                                                         - final_ratio (制限後): {}",
+                                                        weighted_ratio,
+                                                        final_ratio
+                                                    ).into());
+
+                                                    final_ratio
+                                                } else {
+                                                    web_sys::console::log_1(&"補正係数をデフォルト値 1.0 に設定（0除算回避）".into());
+                                                    1.0
                                                 }
-                                                _ => 1.0 // ゼロ除算や配列が空の場合を防ぐ
                                             };
 
                                             web_sys::console::log_1(&format!(
-                                                "補正係数: {}",
+                                                "最終補正係数: {}",
                                                 correction_factor
                                             ).into());
 
-                                            // テストデータの最後のポイントから滑らかに続けるために、
-                                            // 最後のテストポイントを予測データの開始点として使用
-                                            forecast_points.push(ValueAtTime {
-                                                time: last_test_point.time,
-                                                value: last_test_point.value,
-                                            });
+                                            // 予測データは実データから独立して表示する
+                                            // （実データとの連続性よりも予測の独立性を重視）
 
                                             // 予測データを補正して追加
+                                            web_sys::console::log_1(&"=== 予測値の補正適用 ===".into());
                                             for (i, timestamp) in prediction_response.forecast_timestamp.iter().enumerate() {
                                                 if i < forecast_values.len() {
                                                     // 予測値を実際のデータのスケールに合わせる
-                                                    let adjusted_value = forecast_values[i] * correction_factor;
+                                                    let original_value = forecast_values[i];
+                                                    let adjusted_value = original_value * correction_factor;
 
-                                                    // デバッグ情報（最初と最後のポイントの情報を表示）
-                                                    if i == 0 || i == forecast_values.len() - 1 {
+                                                    // 最初の5個、最後の5個、または大きな値の変化があった場合の詳細ログ
+                                                    if i < 5 || i >= forecast_values.len() - 5 || (original_value - adjusted_value).abs() > 1000.0 {
                                                         web_sys::console::log_1(&format!(
-                                                            "予測ポイント[{}]: 時刻={}, 値={} (元の値={})",
-                                                            i, timestamp.naive_utc(), adjusted_value, forecast_values[i]
+                                                            "予測ポイント[{}]: 時刻={}, 元の値={}, 補正後の値={}, 変化量={}",
+                                                            i, timestamp.naive_utc(), original_value, adjusted_value, adjusted_value - original_value
                                                         ).into());
                                                     }
 
@@ -459,6 +606,24 @@ fn predict_zero_shot_view(
                                                         value: adjusted_value,
                                                     });
                                                 }
+                                            }
+
+                                            // 補正後の統計情報
+                                            if !forecast_points.is_empty() {
+                                                let adjusted_values: Vec<f64> = forecast_points.iter().map(|p| p.value).collect();
+                                                let min_adjusted = adjusted_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                                                let max_adjusted = adjusted_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                                                let mean_adjusted = adjusted_values.iter().sum::<f64>() / adjusted_values.len() as f64;
+
+                                                web_sys::console::log_1(&format!(
+                                                    "補正後の予測値統計:\n\
+                                                     - 最小値: {}\n\
+                                                     - 最大値: {}\n\
+                                                     - 平均値: {}",
+                                                    min_adjusted,
+                                                    max_adjusted,
+                                                    mean_adjusted
+                                                ).into());
                                             }
 
                                             // デバッグ情報の出力
@@ -587,7 +752,56 @@ fn predict_zero_shot_view(
                                         prediction_table_data.set(formatted_table_data);
                                     },
                                     Err(e) => {
+                                        // 予測エラーが発生しても実際のデータは表示する
                                         error_message.set(Some(format!("予測実行エラー: {}", e)));
+
+                                        // 学習データとテストデータを結合して実際のデータを表示
+                                        let mut all_actual_data = Vec::new();
+                                        all_actual_data.extend(training_data.clone());
+                                        all_actual_data.extend(test_data.clone());
+
+                                        // 実際のデータのみでチャートを作成
+                                        let plot_series = vec![MultiPlotSeries {
+                                            values: all_actual_data.clone(),
+                                            name: "実際の価格".to_string(),
+                                            color: BLUE,
+                                        }];
+
+                                        // 複数系列を同一チャートに描画するためのオプション設定
+                                        let options = MultiPlotOptions {
+                                            image_size: (800, 500),
+                                            title: Some(format!("{} / {} (実際のデータのみ - 予測失敗)", base_val, quote_val)),
+                                            x_label: Some("時間".to_string()),
+                                            y_label: Some("価格".to_string()),
+                                            legend_on_left: None,
+                                        };
+
+                                        // 実際のデータのみでチャートを描画
+                                        let error_svg = match plot_multi_values_at_time_to_svg_with_options(
+                                            &plot_series, options
+                                        ) {
+                                            Ok(svg) => svg,
+                                            Err(chart_error) => {
+                                                error_message.set(Some(format!("予測実行エラー: {} / チャート作成エラー: {}", e, chart_error)));
+                                                String::new()
+                                            }
+                                        };
+
+                                        if !error_svg.is_empty() {
+                                            chart_svg.set(Some(error_svg));
+                                        }
+
+                                        // テーブル用データを作成（予測失敗を示す）
+                                        let error_table_data = test_data.iter()
+                                            .map(|point| {
+                                                let time_str = point.time.format("%Y-%m-%d %H:%M").to_string();
+                                                let actual_str = format!("{:.4}", point.value);
+                                                let forecast_str = "予測失敗".to_string();
+                                                (time_str, actual_str, forecast_str)
+                                            })
+                                            .collect::<Vec<_>>();
+
+                                        prediction_table_data.set(error_table_data);
                                     }
                                 }
                             },
@@ -614,8 +828,8 @@ fn predict_zero_shot_view(
                 }
             }
 
-            // 使用されたモデル情報の表示
-            if !metrics().is_empty() {
+            // 使用されたモデル情報の表示（エラー時でも表示）
+            if !metrics().is_empty() || error_message().is_some() && (!prediction_table_data().is_empty() || chart_svg().is_some()) {
                 div {
                     class: "model-info-container",
                     style: "margin-top: 20px; border: 1px solid #e3f2fd; padding: 15px; border-radius: 5px; background-color: #f8f9fa;",
@@ -658,21 +872,31 @@ fn predict_zero_shot_view(
                     class: "metrics-container",
                     style: "margin-top: 15px; border: 1px solid #ddd; padding: 15px; border-radius: 5px;",
                     h3 { style: "margin: 0 0 10px 0;", "📈 予測精度" }
-                    table {
-                        class: "table",
-                        thead {
-                            tr {
-                                th { "指標" }
-                                th { "値" }
-                            }
-                        }
-                        tbody {
-                            for (metric, value) in metrics().iter() {
+
+                    if !metrics().is_empty() {
+                        table {
+                            class: "table",
+                            thead {
                                 tr {
-                                    td { "{metric}" }
-                                    td { "{value:.4}" }
+                                    th { "指標" }
+                                    th { "値" }
                                 }
                             }
+                            tbody {
+                                for (metric, value) in metrics().iter() {
+                                    tr {
+                                        td { "{metric}" }
+                                        td { "{value:.4}" }
+                                    }
+                                }
+                            }
+                        }
+                    } else if error_message().is_some() {
+                        div {
+                            style: "padding: 20px; text-align: center; color: #dc3545; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px;",
+                            h4 { style: "margin: 0 0 10px 0;", "⚠️ 予測処理失敗" }
+                            p { style: "margin: 0; font-size: 14px;", "予測精度の計算ができませんでした" }
+                            p { style: "margin: 5px 0 0 0; font-size: 12px; color: #721c24;", "実際のデータは表示されています" }
                         }
                     }
                 }
@@ -684,6 +908,64 @@ fn predict_zero_shot_view(
                     class: "chart-container",
                     style: "margin-top: 20px; width: 100%; overflow-x: auto;",
                     dangerous_inner_html: "{svg}"
+                }
+            }
+
+            // 予測結果テーブルの表示
+            if !prediction_table_data().is_empty() {
+                div {
+                    class: "prediction-table-container",
+                    style: "margin-top: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 5px;",
+
+                    h3 { style: "margin: 0 0 15px 0;", "📋 予測結果詳細" }
+
+                    div {
+                        style: "max-height: 400px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 4px;",
+                        table {
+                            class: "table table-striped",
+                            style: "margin-bottom: 0; font-size: 14px;",
+                            thead {
+                                style: "position: sticky; top: 0; background-color: #f8f9fa; z-index: 10;",
+                                tr {
+                                    th { style: "border-bottom: 2px solid #dee2e6; padding: 12px 8px; text-align: center;", "時刻" }
+                                    th { style: "border-bottom: 2px solid #dee2e6; padding: 12px 8px; text-align: center; color: #0066cc;", "実際の価格" }
+                                    th { style: "border-bottom: 2px solid #dee2e6; padding: 12px 8px; text-align: center; color: #cc0000;", "予測価格" }
+                                }
+                            }
+                            tbody {
+                                for (i, (time_str, actual_str, forecast_str)) in prediction_table_data().iter().enumerate() {
+                                    tr {
+                                        style: if i % 2 == 0 { "background-color: #f9f9f9;" } else { "" },
+                                        td {
+                                            style: "padding: 8px; border-bottom: 1px solid #e0e0e0; font-family: monospace; font-size: 12px;",
+                                            "{time_str}"
+                                        }
+                                        td {
+                                            style: "padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right; font-family: monospace;",
+                                            "{actual_str}"
+                                        }
+                                        td {
+                                            style: format!("padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right; font-family: monospace; color: {};",
+                                                if forecast_str == "予測失敗" { "#dc3545" } else { "#000" }
+                                            ),
+                                            if forecast_str == "予測失敗" {
+                                                span { style: "font-weight: bold;", "{forecast_str}" }
+                                            } else {
+                                                "{forecast_str}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    div {
+                        style: "margin-top: 10px; font-size: 12px; color: #666;",
+                        p { style: "margin: 2px 0;", "• 青色: 実際の価格データ" }
+                        p { style: "margin: 2px 0;", "• 黒色: 正常な予測価格" }
+                        p { style: "margin: 2px 0;", "• 赤色: 予測失敗" }
+                    }
                 }
             }
         }

@@ -237,7 +237,10 @@ pub fn create_prediction_result(
 
     PredictionResult {
         predicted_price,
-        accuracy: 100.0 - metrics.get("NORMALIZED_MAPE").unwrap_or(&0.0), // 正規化MAPEから精度を計算
+        accuracy: {
+            let mape = metrics.get("MAPE").unwrap_or(&100.0);
+            if *mape > 100.0 { 0.0 } else { 100.0 - mape }
+        }, // MAPEから精度を計算（100% - MAPE%）
         chart_svg: Some(chart_svg),
         metrics,
         forecast_data,
@@ -278,26 +281,20 @@ pub fn calculate_metrics(actual: &[f64], predicted: &[f64]) -> HashMap<String, f
     metrics.insert("MAE".to_string(), absolute_errors_sum / n as f64);
     metrics.insert("MAPE".to_string(), absolute_percent_errors_sum / n as f64);
 
-    // 正規化MAPEを計算（最大パーセント誤差を100とするスケーリング）
-    if !percent_errors.is_empty() {
-        if let Some(&max_error) = percent_errors
-            .iter()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-        {
-            if max_error > 0.0 {
-                let scaled_errors: Vec<f64> = percent_errors
-                    .iter()
-                    .map(|&e| (e / max_error) * 100.0)
-                    .collect();
-                let normalized_mape =
-                    scaled_errors.iter().sum::<f64>() / scaled_errors.len() as f64;
-                metrics.insert("NORMALIZED_MAPE".to_string(), normalized_mape);
-            } else {
-                metrics.insert("NORMALIZED_MAPE".to_string(), 0.0);
-            }
-        }
+    // R²（決定係数）を計算
+    if n > 1 {
+        let actual_mean = actual.iter().sum::<f64>() / n as f64;
+        let ss_tot: f64 = actual.iter().map(|&x| (x - actual_mean).powi(2)).sum();
+        let ss_res: f64 = squared_errors_sum;
+
+        let r_squared = if ss_tot > 0.0 {
+            1.0 - (ss_res / ss_tot)
+        } else {
+            0.0
+        };
+        metrics.insert("R_SQUARED".to_string(), r_squared.max(0.0));
     } else {
-        metrics.insert("NORMALIZED_MAPE".to_string(), 0.0);
+        metrics.insert("R_SQUARED".to_string(), 0.0);
     }
 
     metrics
