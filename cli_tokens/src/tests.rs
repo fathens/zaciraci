@@ -184,7 +184,7 @@ mod api_tests {
     use crate::api::backend::BackendApiClient;
     use crate::api::chronos::ChronosApiClient;
     use crate::models::prediction::{
-        PredictionPoint, PredictionResponse, ZeroShotPredictionRequest,
+        AsyncPredictionResponse, PredictionResult, ZeroShotPredictionRequest,
     };
     use chrono::Utc;
     use serde_json::json;
@@ -287,8 +287,8 @@ mod api_tests {
         }
         assert!(result.is_ok());
         let history = result.unwrap();
-        // Currently returns empty vec due to TODO implementation
-        assert_eq!(history.len(), 0);
+        // Now returns mock data with 180 points
+        assert_eq!(history.len(), 180);
 
         Ok(())
     }
@@ -296,15 +296,14 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_predict_zero_shot_success() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let mock_response = PredictionResponse {
-            id: "pred_123".to_string(),
+        let mock_response = AsyncPredictionResponse {
+            task_id: "pred_123".to_string(),
             status: "pending".to_string(),
-            forecast: None,
-            created_at: Utc::now(),
+            message: "Task started".to_string(),
         };
 
         let _mock = server
-            .mock("POST", "/predict/zero-shot")
+            .mock("POST", "/api/v1/predict_zero_shot_async")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(serde_json::to_string(&mock_response).unwrap())
@@ -326,6 +325,7 @@ mod api_tests {
         let response = result.unwrap();
         assert_eq!(response.task_id, "pred_123");
         assert_eq!(response.status, "pending");
+        assert_eq!(response.message, "Task started");
 
         Ok(())
     }
@@ -335,7 +335,7 @@ mod api_tests {
         let mut server = mockito::Server::new_async().await;
 
         let _mock = server
-            .mock("POST", "/predict/zero-shot")
+            .mock("POST", "/api/v1/predict_zero_shot_async")
             .with_status(500)
             .with_header("content-type", "application/json")
             .with_body("Internal Server Error")
@@ -365,19 +365,19 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_get_prediction_status() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let mock_response = PredictionResponse {
-            id: "pred_123".to_string(),
+        let mock_response = PredictionResult {
+            task_id: "pred_123".to_string(),
             status: "completed".to_string(),
-            forecast: Some(vec![PredictionPoint {
-                timestamp: Utc::now(),
-                value: 1.5,
-                confidence_interval: None,
-            }]),
+            progress: Some(100.0),
+            message: Some("Prediction completed".to_string()),
+            result: None,
+            error: None,
             created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
 
         let _mock = server
-            .mock("GET", "/predict/status/pred_123")
+            .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(serde_json::to_string(&mock_response).unwrap())
@@ -391,7 +391,7 @@ mod api_tests {
         let response = result.unwrap();
         assert_eq!(response.task_id, "pred_123");
         assert_eq!(response.status, "completed");
-        assert!(response.result.is_some());
+        assert!(response.progress.is_some());
 
         Ok(())
     }
@@ -399,19 +399,19 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_poll_prediction_until_complete() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let completed_response = PredictionResponse {
-            id: "pred_123".to_string(),
+        let completed_response = PredictionResult {
+            task_id: "pred_123".to_string(),
             status: "completed".to_string(),
-            forecast: Some(vec![PredictionPoint {
-                timestamp: Utc::now(),
-                value: 1.5,
-                confidence_interval: None,
-            }]),
+            progress: Some(100.0),
+            message: Some("Prediction completed".to_string()),
+            result: None,
+            error: None,
             created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
 
         let _mock = server
-            .mock("GET", "/predict/status/pred_123")
+            .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(serde_json::to_string(&completed_response).unwrap())
@@ -431,15 +431,19 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_poll_prediction_failed() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let failed_response = PredictionResponse {
-            id: "pred_123".to_string(),
+        let failed_response = PredictionResult {
+            task_id: "pred_123".to_string(),
             status: "failed".to_string(),
-            forecast: None,
+            progress: Some(0.0),
+            message: Some("Prediction failed".to_string()),
+            result: None,
+            error: Some("Model training failed".to_string()),
             created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
 
         let _mock = server
-            .mock("GET", "/predict/status/pred_123")
+            .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(serde_json::to_string(&failed_response).unwrap())
