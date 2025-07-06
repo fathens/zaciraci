@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
@@ -7,7 +7,9 @@ use tokio::fs;
 
 use crate::api::{backend::BackendApiClient, chronos::ChronosApiClient};
 use crate::models::{
-    prediction::{AccuracyMetrics, PredictionResult, ZeroShotPredictionRequest},
+    prediction::{
+        AccuracyMetrics, PredictionPoint, TokenPredictionResult, ZeroShotPredictionRequest,
+    },
     token::TokenFileData,
 };
 use crate::utils::{
@@ -82,10 +84,15 @@ pub async fn run(args: PredictArgs) -> Result<()> {
 
     // Get historical data for prediction
     pb.set_message("Fetching historical token data...");
-    let start_date =
-        DateTime::parse_from_str(&token_data.metadata.start_date, "%Y-%m-%d")?.with_timezone(&Utc);
-    let end_date =
-        DateTime::parse_from_str(&token_data.metadata.end_date, "%Y-%m-%d")?.with_timezone(&Utc);
+    let start_date = NaiveDate::parse_from_str(&token_data.metadata.start_date, "%Y-%m-%d")?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow::anyhow!("Invalid start date"))?;
+    let start_date = Utc.from_utc_datetime(&start_date);
+
+    let end_date = NaiveDate::parse_from_str(&token_data.metadata.end_date, "%Y-%m-%d")?
+        .and_hms_opt(23, 59, 59)
+        .ok_or_else(|| anyhow::anyhow!("Invalid end date"))?;
+    let end_date = Utc.from_utc_datetime(&end_date);
 
     let history = backend_client
         .get_token_history(&token_data.token_data.token, start_date, end_date)
@@ -99,8 +106,14 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     }
 
     // Prepare prediction request
-    let forecast_until = end_date + Duration::days(7); // Predict 7 days ahead
     let (timestamps, values): (Vec<DateTime<Utc>>, Vec<f64>) = history.into_iter().unzip();
+
+    // Find the latest timestamp in the data and predict from there
+    let latest_timestamp = timestamps
+        .iter()
+        .max()
+        .ok_or_else(|| anyhow::anyhow!("No timestamps found"))?;
+    let forecast_until = *latest_timestamp + Duration::hours(12); // Predict 12 hours ahead for faster processing
 
     let prediction_request = ZeroShotPredictionRequest {
         timestamp: timestamps,
@@ -121,17 +134,29 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     // Poll for completion
     pb.set_message("Waiting for prediction to complete...");
     let completed_prediction = chronos_client
-        .poll_prediction_until_complete(&prediction_response.id, 150) // 5 minute timeout
+        .poll_prediction_until_complete(&prediction_response.task_id, 5) // 5 polls for quick test
         .await?;
 
-    let forecast = completed_prediction
-        .forecast
-        .ok_or_else(|| anyhow::anyhow!("No forecast data in completed prediction"))?;
+    let prediction_result = completed_prediction
+        .result
+        .ok_or_else(|| anyhow::anyhow!("No prediction result data"))?;
+
+    // Convert ChronosPredictionResponse to Vec<PredictionPoint>
+    let forecast: Vec<PredictionPoint> = prediction_result
+        .forecast_timestamp
+        .into_iter()
+        .zip(prediction_result.forecast_values.into_iter())
+        .map(|(timestamp, value)| PredictionPoint {
+            timestamp,
+            value,
+            confidence_interval: None, // TODO: Add confidence intervals if available
+        })
+        .collect();
 
     // Create prediction result
-    let prediction_result = PredictionResult {
+    let prediction_result = TokenPredictionResult {
         token: token_data.token_data.token.clone(),
-        prediction_id: completed_prediction.id,
+        prediction_id: completed_prediction.task_id,
         predicted_values: forecast,
         accuracy_metrics: Some(AccuracyMetrics {
             mae: 0.0, // TODO: Calculate actual metrics

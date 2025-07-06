@@ -324,7 +324,7 @@ mod api_tests {
 
         assert!(result.is_ok());
         let response = result.unwrap();
-        assert_eq!(response.id, "pred_123");
+        assert_eq!(response.task_id, "pred_123");
         assert_eq!(response.status, "pending");
 
         Ok(())
@@ -389,9 +389,9 @@ mod api_tests {
 
         assert!(result.is_ok());
         let response = result.unwrap();
-        assert_eq!(response.id, "pred_123");
+        assert_eq!(response.task_id, "pred_123");
         assert_eq!(response.status, "completed");
-        assert!(response.forecast.is_some());
+        assert!(response.result.is_some());
 
         Ok(())
     }

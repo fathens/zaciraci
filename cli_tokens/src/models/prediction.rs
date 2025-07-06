@@ -23,6 +23,34 @@ pub struct PredictionResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AsyncPredictionResponse {
+    pub task_id: String,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PredictionResult {
+    pub task_id: String,
+    pub status: String,
+    pub progress: Option<f64>,
+    pub message: Option<String>,
+    pub result: Option<ChronosPredictionResponse>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChronosPredictionResponse {
+    pub forecast_timestamp: Vec<DateTime<Utc>>,
+    pub forecast_values: Vec<f64>,
+    pub model_name: String,
+    pub confidence_intervals: Option<HashMap<String, Vec<f64>>>,
+    pub metrics: Option<HashMap<String, f64>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PredictionPoint {
     pub timestamp: DateTime<Utc>,
     pub value: f64,
@@ -36,7 +64,7 @@ pub struct ConfidenceInterval {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PredictionResult {
+pub struct TokenPredictionResult {
     pub token: String,
     pub prediction_id: String,
     pub predicted_values: Vec<PredictionPoint>,

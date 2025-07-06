@@ -1,4 +1,6 @@
-use crate::models::prediction::{PredictionResponse, ZeroShotPredictionRequest};
+use crate::models::prediction::{
+    AsyncPredictionResponse, PredictionResult, ZeroShotPredictionRequest,
+};
 use anyhow::Result;
 use reqwest::Client;
 
@@ -18,25 +20,37 @@ impl ChronosApiClient {
     pub async fn predict_zero_shot(
         &self,
         request: ZeroShotPredictionRequest,
-    ) -> Result<PredictionResponse> {
-        let url = format!("{}/predict/zero-shot", self.base_url);
+    ) -> Result<AsyncPredictionResponse> {
+        let url = format!("{}/api/v1/predict_zero_shot_async", self.base_url);
+
+        println!("Sending request to: {}", url);
+        println!(
+            "Request body: {}",
+            serde_json::to_string_pretty(&request).unwrap_or_default()
+        );
 
         let response = self.client.post(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            println!("API Error: {} - {}", status, error_text);
             return Err(anyhow::anyhow!(
                 "Chronos API error: {} - {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
+                status,
+                error_text
             ));
         }
 
-        let prediction_response: PredictionResponse = response.json().await?;
+        let prediction_response: AsyncPredictionResponse = response.json().await?;
         Ok(prediction_response)
     }
 
-    pub async fn get_prediction_status(&self, prediction_id: &str) -> Result<PredictionResponse> {
-        let url = format!("{}/predict/status/{}", self.base_url, prediction_id);
+    pub async fn get_prediction_status(&self, prediction_id: &str) -> Result<PredictionResult> {
+        let url = format!(
+            "{}/api/v1/prediction_status/{}",
+            self.base_url, prediction_id
+        );
 
         let response = self.client.get(&url).send().await?;
 
@@ -47,7 +61,7 @@ impl ChronosApiClient {
             ));
         }
 
-        let prediction_response: PredictionResponse = response.json().await?;
+        let prediction_response: PredictionResult = response.json().await?;
         Ok(prediction_response)
     }
 
@@ -55,13 +69,31 @@ impl ChronosApiClient {
         &self,
         prediction_id: &str,
         max_retries: u32,
-    ) -> Result<PredictionResponse> {
-        for _i in 0..max_retries {
+    ) -> Result<PredictionResult> {
+        for i in 0..max_retries {
             let response = self.get_prediction_status(prediction_id).await?;
 
+            println!(
+                "Poll attempt {}/{}: Status = {}, Progress = {:?}",
+                i + 1,
+                max_retries,
+                response.status,
+                response.progress
+            );
+
+            if let Some(message) = &response.message {
+                println!("Message: {}", message);
+            }
+
             match response.status.as_str() {
-                "completed" => return Ok(response),
-                "failed" => return Err(anyhow::anyhow!("Prediction failed")),
+                "completed" => {
+                    println!("Prediction completed successfully!");
+                    return Ok(response);
+                }
+                "failed" => {
+                    let error_msg = response.error.unwrap_or("Unknown error".to_string());
+                    return Err(anyhow::anyhow!("Prediction failed: {}", error_msg));
+                }
                 "running" | "pending" => {
                     // Wait before next poll
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
