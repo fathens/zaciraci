@@ -19,6 +19,8 @@ mod unit_tests {
             output: PathBuf::from("predictions"),
             model: "server_default".to_string(),
             force: false,
+            start_pct: 0.0,
+            end_pct: 100.0,
         };
 
         assert_eq!(args.token_file, PathBuf::from("tokens/wrap.near.json"));

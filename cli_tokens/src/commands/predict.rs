@@ -7,9 +7,7 @@ use tokio::fs;
 
 use crate::api::{backend::BackendApiClient, chronos::ChronosApiClient};
 use crate::models::{
-    prediction::{
-        AccuracyMetrics, PredictionPoint, TokenPredictionResult, ZeroShotPredictionRequest,
-    },
+    prediction::{PredictionPoint, TokenPredictionResult, ZeroShotPredictionRequest},
     token::TokenFileData,
 };
 use crate::utils::{
@@ -36,9 +34,44 @@ pub struct PredictArgs {
 
     #[clap(long, help = "Force overwrite existing prediction results")]
     pub force: bool,
+
+    #[clap(
+        long,
+        default_value = "0.0",
+        help = "Start percentage of data range (0.0-100.0)"
+    )]
+    pub start_pct: f64,
+
+    #[clap(
+        long,
+        default_value = "100.0",
+        help = "End percentage of data range (0.0-100.0)"
+    )]
+    pub end_pct: f64,
 }
 
 pub async fn run(args: PredictArgs) -> Result<()> {
+    // Validate percentage range
+    if args.start_pct < 0.0 || args.start_pct > 100.0 {
+        return Err(anyhow::anyhow!(
+            "Invalid start percentage: {:.1}% (must be 0.0-100.0)",
+            args.start_pct
+        ));
+    }
+    if args.end_pct < 0.0 || args.end_pct > 100.0 {
+        return Err(anyhow::anyhow!(
+            "Invalid end percentage: {:.1}% (must be 0.0-100.0)",
+            args.end_pct
+        ));
+    }
+    if args.start_pct >= args.end_pct {
+        return Err(anyhow::anyhow!(
+            "Start percentage ({:.1}%) must be less than end percentage ({:.1}%)",
+            args.start_pct,
+            args.end_pct
+        ));
+    }
+
     let config = Config::from_env();
     let backend_client = BackendApiClient::new(config.backend_url);
     let chronos_client = ChronosApiClient::new(config.chronos_url);
@@ -64,7 +97,6 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     ensure_directory_exists(&token_output_dir)?;
 
     let prediction_file = token_output_dir.join("prediction.json");
-    let metrics_file = token_output_dir.join("metrics.json");
 
     // Check if prediction already exists
     if !args.force && file_exists(&prediction_file).await {
@@ -106,7 +138,39 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     }
 
     // Prepare prediction request
-    let (timestamps, values): (Vec<DateTime<Utc>>, Vec<f64>) = history.into_iter().unzip();
+    let (mut timestamps, mut values): (Vec<DateTime<Utc>>, Vec<f64>) = history.into_iter().unzip();
+
+    // Apply percentage range filtering
+    let total_len = timestamps.len();
+    if args.start_pct != 0.0 || args.end_pct != 100.0 {
+        let start_idx = ((total_len as f64) * (args.start_pct / 100.0)).round() as usize;
+        let end_idx = ((total_len as f64) * (args.end_pct / 100.0)).round() as usize;
+
+        let start_idx = start_idx.min(total_len);
+        let end_idx = end_idx.min(total_len).max(start_idx);
+
+        timestamps = timestamps[start_idx..end_idx].to_vec();
+        values = values[start_idx..end_idx].to_vec();
+
+        pb.set_message(format!(
+            "📊 Using {:.1}%-{:.1}% range ({} of {} data points)",
+            args.start_pct,
+            args.end_pct,
+            timestamps.len(),
+            total_len
+        ));
+    } else {
+        pb.set_message(format!("📊 Using all {} data points", total_len));
+    }
+
+    // Check if we have enough data after filtering
+    if timestamps.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No data points available after filtering {:.1}%-{:.1}% range",
+            args.start_pct,
+            args.end_pct
+        ));
+    }
 
     // Find the latest timestamp in the data and predict from there
     let latest_timestamp = timestamps
@@ -158,21 +222,13 @@ pub async fn run(args: PredictArgs) -> Result<()> {
         token: token_data.token_data.token.clone(),
         prediction_id: completed_prediction.task_id,
         predicted_values: forecast,
-        accuracy_metrics: Some(AccuracyMetrics {
-            mae: 0.0, // TODO: Calculate actual metrics
-            rmse: 0.0,
-            mape: 0.0,
-        }),
-        chart_svg: None, // TODO: Generate chart
+        accuracy_metrics: None,
+        chart_svg: None,
     };
 
     // Save results
     pb.set_message("Saving prediction results...");
     write_json_file(&prediction_file, &prediction_result).await?;
-
-    if let Some(metrics) = &prediction_result.accuracy_metrics {
-        write_json_file(&metrics_file, metrics).await?;
-    }
 
     pb.finish_with_message(format!(
         "Prediction completed for token: {} (saved to {:?})",

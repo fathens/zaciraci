@@ -19,7 +19,8 @@ cli_tokens/
 │   ├── commands/
 │   │   ├── mod.rs
 │   │   ├── top.rs           # topコマンドの実装
-│   │   └── predict.rs       # predictコマンドの実装
+│   │   ├── predict.rs       # predictコマンドの実装
+│   │   └── verify.rs        # verifyコマンドの実装
 │   ├── api/
 │   │   ├── mod.rs
 │   │   ├── backend.rs       # バックエンドAPIクライアント
@@ -27,15 +28,18 @@ cli_tokens/
 │   ├── models/
 │   │   ├── mod.rs
 │   │   ├── token.rs         # トークン関連のデータ構造
-│   │   └── prediction.rs    # 予測関連のデータ構造
+│   │   ├── prediction.rs    # 予測関連のデータ構造
+│   │   └── verification.rs  # 検証関連のデータ構造
 │   └── utils/
 │       ├── mod.rs
 │       ├── file.rs          # ファイル入出力
-│       └── config.rs        # 設定管理
+│       ├── config.rs        # 設定管理
+│       └── metrics.rs       # 精度メトリクス計算
 └── tests/
     └── integration/
         ├── top_test.rs
-        └── predict_test.rs
+        ├── predict_test.rs
+        └── verify_test.rs
 ```
 
 ## コマンド仕様
@@ -103,7 +107,27 @@ OPTIONS:
     -m, --model <MODEL>    予測モデル [デフォルト: server_default]
                           選択肢: chronos_bolt, autogluon, statistical, server_default
     --force                既存の予測結果を強制上書き
+    --start-pct <PCT>      データ範囲の開始パーセンテージ (0.0-100.0) [デフォルト: 0.0]
+    --end-pct <PCT>        データ範囲の終了パーセンテージ (0.0-100.0) [デフォルト: 100.0]
     -h, --help            ヘルプを表示
+```
+
+#### データ範囲指定オプション
+
+`--start-pct`と`--end-pct`オプションにより、予測に使用する履歴データの範囲を柔軟に指定できます：
+
+```bash
+# 全データを使用（デフォルト）
+cli_tokens predict tokens/wrap.near.json
+
+# 最初の30%のデータのみ使用（バックテスト用）
+cli_tokens predict tokens/wrap.near.json --end-pct 30.0
+
+# 中間期間（20%-80%）の分析
+cli_tokens predict tokens/wrap.near.json --start-pct 20.0 --end-pct 80.0
+
+# 最新30%のデータのみ（最近のトレンド分析）
+cli_tokens predict tokens/wrap.near.json --start-pct 70.0
 ```
 
 #### 出力ファイル構造
@@ -111,9 +135,71 @@ OPTIONS:
 ```
 predictions/
 ├── wrap.near/
-│   ├── prediction.json   # 予測結果
-│   ├── chart.svg        # 予測チャート
-│   └── metrics.json     # 詳細メトリクス
+│   └── prediction.json   # 予測結果
+```
+
+### verifyコマンド
+
+予測結果の精度を実際のデータと比較して検証します。
+
+```bash
+cli_tokens verify [OPTIONS] <PREDICTION_FILE>
+
+ARGUMENTS:
+    <PREDICTION_FILE>      予測ファイルパス (例: predictions/wrap.near/prediction.json)
+
+OPTIONS:
+    --actual-data-file <FILE>  実データファイルパス（省略時はAPIから取得）
+    -o, --output <DIR>         出力ディレクトリ [デフォルト: verification/]
+    --start-date <DATE>        検証開始日 (YYYY-MM-DD) [省略時は予測開始日]
+    --end-date <DATE>          検証終了日 (YYYY-MM-DD) [省略時は予測終了日]
+    --chart                    比較チャートを生成
+    --force                    既存の検証結果を強制上書き
+    -h, --help                 ヘルプを表示
+```
+
+#### 検証プロセス
+
+1. **データ照合**: 予測期間に対応する実データを取得し、タイムスタンプベースで照合
+2. **精度計算**: MAE、RMSE、MAPE、方向精度などの評価指標を算出
+3. **レポート生成**: JSON形式の詳細レポートと、オプションで視覚的な比較チャート
+
+#### 出力ファイル構造
+
+```
+verification/
+├── wrap.near/
+│   ├── verification_report.json  # 詳細な検証結果
+│   ├── metrics.json             # 精度メトリクスのサマリー
+│   └── comparison_chart.svg     # 予測vs実データの比較チャート
+```
+
+#### 検証レポート形式
+
+```json
+{
+  "token": "wrap.near",
+  "prediction_id": "task_12345",
+  "verification_date": "2025-07-06T12:00:00Z",
+  "period": {
+    "start": "2025-07-01T00:00:00Z",
+    "end": "2025-07-05T23:59:59Z",
+    "data_points_count": 60
+  },
+  "metrics": {
+    "mae": 0.0234,
+    "rmse": 0.0456,
+    "mape": 2.34,
+    "direction_accuracy": 0.85,
+    "correlation": 0.92
+  },
+  "summary": {
+    "overall_accuracy": "Good",
+    "strengths": ["短期トレンドの予測精度が高い"],
+    "weaknesses": ["急激な価格変動時の追従が遅れる"],
+    "recommendations": ["ボラティリティが高い期間は予測間隔を短くすることを推奨"]
+  }
+}
 ```
 
 ## 実装詳細
@@ -178,6 +264,38 @@ pub struct FileMetadata {
     pub start_date: String,
     pub end_date: String,
     pub token: String,
+}
+```
+
+#### 検証関連のモデル (`models/verification.rs`)
+```rust
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VerificationReport {
+    pub token: String,
+    pub prediction_id: String,
+    pub verification_date: DateTime<Utc>,
+    pub period: VerificationPeriod,
+    pub metrics: VerificationMetrics,
+    pub data_points: Vec<ComparisonPoint>,
+    pub summary: VerificationSummary,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VerificationMetrics {
+    pub mae: f64,              // Mean Absolute Error
+    pub rmse: f64,             // Root Mean Square Error
+    pub mape: f64,             // Mean Absolute Percentage Error
+    pub direction_accuracy: f64, // 上昇/下降の予測精度
+    pub correlation: f64,       // 相関係数
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ComparisonPoint {
+    pub timestamp: DateTime<Utc>,
+    pub predicted_value: f64,
+    pub actual_value: f64,
+    pub error: f64,
+    pub percentage_error: f64,
 }
 ```
 
@@ -264,6 +382,9 @@ prediction_model = "server_default"
    
    # 特定のトークンに対して予測を実行
    cargo run -- predict tokens/wrap.near.json -o predictions/
+   
+   # 予測結果を検証
+   cargo run -- verify predictions/wrap.near/prediction.json --chart
    ```
 
 ## パフォーマンス考慮事項
