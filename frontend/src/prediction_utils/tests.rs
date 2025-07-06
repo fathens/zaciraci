@@ -973,7 +973,7 @@ fn test_create_prediction_result_empty_forecast() {
 
     // 空の場合の検証
     assert_eq!(result.predicted_price, 0.0); // デフォルト値
-    assert_eq!(result.accuracy, 100.0); // NORMALIZED_MAPEがない場合は100%
+    assert_eq!(result.accuracy, 0.0); // MAPEがない場合は100.0、精度は100.0-100.0=0.0
 
     log::debug!("✅ 空の予測データテスト完了");
 }
