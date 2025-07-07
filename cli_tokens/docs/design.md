@@ -51,13 +51,13 @@ cli_tokens/
 cli_tokens top -l 5
 
 # 2. 価格履歴を取得
-cli_tokens history tokens/wrap.near.json
+cli_tokens history tokens/usdc.tether-token.near.json
 
 # 3. 実データを使用して予測実行
-cli_tokens predict tokens/wrap.near.json
+cli_tokens predict tokens/usdc.tether-token.near.json
 
 # 4. 予測結果を検証
-cli_tokens verify predictions/wrap.near.json
+cli_tokens verify predictions/usdc.tether-token.near.json
 ```
 
 各コマンドは独立して実行可能ですが、上記の順序で実行することで完全な分析パイプラインを構築できます。
@@ -149,11 +149,11 @@ OPTIONS:
 
 ```
 history/
-├── wrap.near.json        # 価格履歴データ
-└── usdc.near.json
+├── usdc.tether-token.near.json        # 価格履歴データ
+└── some.token.near.json
 ```
 
-#### 価格履歴ファイル形式 (例: history/wrap.near.json)
+#### 価格履歴ファイル形式 (例: history/usdc.tether-token.near.json)
 
 ```json
 {
@@ -161,7 +161,7 @@ history/
     "generated_at": "2025-07-07T12:00:00Z",
     "start_date": "2025-07-06",
     "end_date": "2025-07-07",
-    "token": "wrap.near",
+    "token": "usdc.tether-token.near",
     "base_token": "wrap.near"
   },
   "price_history": {
@@ -182,17 +182,17 @@ history/
 #### 使用例
 
 ```bash
-# 基本的な履歴取得
-cli_tokens history tokens/wrap.near.json
+# 基本的な履歴取得（USDCトークンの価格履歴を取得）
+cli_tokens history tokens/usdc.tether-token.near.json
 
 # 異なる基準トークンを指定
-cli_tokens history tokens/usdc.near.json --base-token wrap.near
+cli_tokens history tokens/some.token.near.json --base-token usdc.tether-token.near
 
 # 出力ディレクトリを指定
-cli_tokens history tokens/wrap.near.json -o custom_history/
+cli_tokens history tokens/usdc.tether-token.near.json -o custom_history/
 
 # 既存データを上書き
-cli_tokens history tokens/wrap.near.json --force
+cli_tokens history tokens/usdc.tether-token.near.json --force
 ```
 
 
