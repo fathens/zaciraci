@@ -173,8 +173,8 @@ cli_tokens predict tokens/wrap.near.json --forecast-ratio 100.0
 
 ```
 predictions/
-├── wrap.near/
-│   └── prediction.json   # 予測結果
+├── wrap.near.json        # 予測結果
+└── usdc.near.json
 ```
 
 ### verifyコマンド
@@ -185,32 +185,35 @@ predictions/
 cli_tokens verify [OPTIONS] <PREDICTION_FILE>
 
 ARGUMENTS:
-    <PREDICTION_FILE>      予測ファイルパス (例: predictions/wrap.near/prediction.json)
+    <PREDICTION_FILE>      予測ファイルパス (例: predictions/wrap.near.json)
 
 OPTIONS:
-    --actual-data-file <FILE>  実データファイルパス（省略時はAPIから取得）
+    --actual-data-file <FILE>  実データファイルパス (省略時は自動推定: tokens/{token}.json)
     -o, --output <DIR>         出力ディレクトリ [デフォルト: verification/]
-    --start-date <DATE>        検証開始日 (YYYY-MM-DD) [省略時は予測開始日]
-    --end-date <DATE>          検証終了日 (YYYY-MM-DD) [省略時は予測終了日]
-    --chart                    比較チャートを生成
     --force                    既存の検証結果を強制上書き
     -h, --help                 ヘルプを表示
 ```
 
 #### 検証プロセス
 
-1. **データ照合**: 予測期間に対応する実データを取得し、タイムスタンプベースで照合
-2. **精度計算**: MAE、RMSE、MAPE、方向精度などの評価指標を算出
-3. **レポート生成**: JSON形式の詳細レポートと、オプションで視覚的な比較チャート
+1. **予測ファイル解析**: predictions/wrap.near.json から検証に必要な情報を自動抽出
+   - 対象トークン名
+   - 予測期間（開始〜終了タイムスタンプ）
+   - 予測値リスト
+2. **実データファイル自動推定**: トークン名から対応ファイルを自動特定
+   - `predictions/wrap.near.json` → `tokens/wrap.near.json`
+   - ファイル存在確認とトークン名の一致確認
+3. **実データ取得**: 実データファイルのメタデータを基にAPIから予測期間の実データを取得
+4. **データ照合**: タイムスタンプベースで予測値と実データを照合
+5. **精度計算**: MAE、RMSE、MAPE、方向精度などの評価指標を算出
+6. **レポート生成**: JSON形式の詳細レポートを自動生成
 
 #### 出力ファイル構造
 
 ```
 verification/
 ├── wrap.near/
-│   ├── verification_report.json  # 詳細な検証結果
-│   ├── metrics.json             # 精度メトリクスのサマリー
-│   └── comparison_chart.svg     # 予測vs実データの比較チャート
+│   └── verification_report.json  # 詳細な検証結果（メトリクス含む）
 ```
 
 #### 検証レポート形式
@@ -223,7 +226,9 @@ verification/
   "period": {
     "start": "2025-07-01T00:00:00Z",
     "end": "2025-07-05T23:59:59Z",
-    "data_points_count": 60
+    "predicted_points_count": 60,
+    "actual_points_count": 58,
+    "matched_points_count": 58
   },
   "metrics": {
     "mae": 0.0234,
@@ -232,14 +237,51 @@ verification/
     "direction_accuracy": 0.85,
     "correlation": 0.92
   },
-  "summary": {
-    "overall_accuracy": "Good",
-    "strengths": ["短期トレンドの予測精度が高い"],
-    "weaknesses": ["急激な価格変動時の追従が遅れる"],
-    "recommendations": ["ボラティリティが高い期間は予測間隔を短くすることを推奨"]
-  }
+  "data_points": [
+    {
+      "timestamp": "2025-07-01T00:00:00Z",
+      "predicted_value": 5.23,
+      "actual_value": 5.18,
+      "error": 0.05,
+      "percentage_error": 0.96
+    }
+  ]
 }
 ```
+
+#### 使用例
+
+```bash
+# 基本的な検証（実データファイルは自動推定）
+cli_tokens verify predictions/wrap.near.json
+
+# 実データファイルを明示的に指定
+cli_tokens verify predictions/wrap.near.json --actual-data-file tokens/wrap.near.json
+
+# 出力ディレクトリを指定
+cli_tokens verify predictions/wrap.near.json -o custom_verification/
+
+# 既存結果を上書き
+cli_tokens verify predictions/wrap.near.json --force
+```
+
+#### 検証データの流れ（自動推定）
+
+1. **予測ファイル (predictions/wrap.near.json)** から：
+   - トークン名 `wrap.near` を抽出
+   - 予測期間と予測値を取得
+2. **実データファイル自動特定**: `tokens/wrap.near.json` を自動推定
+   - トークン名とデータ期間を取得
+   - 予測ファイルとの整合性確認
+3. **API取得**: 予測期間に対応する実データを取得
+4. **検証**: 予測値と実データを比較して精度を算出
+
+#### 自動推定の利点
+
+- **最小限の入力**: 予測ファイルのパスのみで完全な検証が可能
+- **規約ベース**: ファイル名規約に従った自動化
+- **エラー回避**: パス指定ミスの削減
+- **柔軟性**: 必要に応じて明示的な指定も可能
 
 ## 実装詳細
 
