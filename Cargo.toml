@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "backend",
-    "frontend",
     "common",
     "cli_tokens",
 ]

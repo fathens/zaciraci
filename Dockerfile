@@ -12,7 +12,6 @@ COPY Cargo.toml .
 COPY Cargo.lock .
 COPY common common
 COPY backend backend
-COPY frontend frontend
 COPY cli_tokens cli_tokens
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -33,7 +32,6 @@ COPY Cargo.toml .
 COPY Cargo.lock .
 COPY common common
 COPY backend backend
-COPY frontend frontend
 COPY cli_tokens cli_tokens
 
 RUN cargo clean
