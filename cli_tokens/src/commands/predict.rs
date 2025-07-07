@@ -48,6 +48,13 @@ pub struct PredictArgs {
         help = "End percentage of data range (0.0-100.0)"
     )]
     pub end_pct: f64,
+
+    #[clap(
+        long,
+        default_value = "10.0",
+        help = "Forecast duration as percentage of input data period (0.0-500.0)"
+    )]
+    pub forecast_ratio: f64,
 }
 
 pub async fn run(args: PredictArgs) -> Result<()> {
@@ -69,6 +76,14 @@ pub async fn run(args: PredictArgs) -> Result<()> {
             "Start percentage ({:.1}%) must be less than end percentage ({:.1}%)",
             args.start_pct,
             args.end_pct
+        ));
+    }
+
+    // Validate forecast ratio
+    if args.forecast_ratio <= 0.0 || args.forecast_ratio > 500.0 {
+        return Err(anyhow::anyhow!(
+            "Invalid forecast ratio: {:.1}% (must be 0.0-500.0)",
+            args.forecast_ratio
         ));
     }
 
@@ -177,7 +192,19 @@ pub async fn run(args: PredictArgs) -> Result<()> {
         .iter()
         .max()
         .ok_or_else(|| anyhow::anyhow!("No timestamps found"))?;
-    let forecast_until = *latest_timestamp + Duration::hours(12); // Predict 12 hours ahead for faster processing
+
+    // Calculate forecast duration based on input data period and ratio
+    let input_duration = end_date.signed_duration_since(start_date);
+    let forecast_duration_ms =
+        (input_duration.num_milliseconds() as f64 * (args.forecast_ratio / 100.0)) as i64;
+    let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
+
+    pb.set_message(format!(
+        "📊 Input period: {} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
+        input_duration.num_days(),
+        args.forecast_ratio,
+        Duration::milliseconds(forecast_duration_ms).num_hours() as f64
+    ));
 
     let prediction_request = ZeroShotPredictionRequest {
         timestamp: timestamps,

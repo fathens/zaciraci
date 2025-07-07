@@ -109,6 +109,7 @@ OPTIONS:
     --force                既存の予測結果を強制上書き
     --start-pct <PCT>      データ範囲の開始パーセンテージ (0.0-100.0) [デフォルト: 0.0]
     --end-pct <PCT>        データ範囲の終了パーセンテージ (0.0-100.0) [デフォルト: 100.0]
+    --forecast-ratio <PCT> 予測期間の比率（入力データ期間に対する%）(0.0-500.0) [デフォルト: 10.0]
     -h, --help            ヘルプを表示
 ```
 
@@ -129,6 +130,44 @@ cli_tokens predict tokens/wrap.near.json --start-pct 20.0 --end-pct 80.0
 # 最新30%のデータのみ（最近のトレンド分析）
 cli_tokens predict tokens/wrap.near.json --start-pct 70.0
 ```
+
+#### 予測期間指定オプション
+
+`--forecast-ratio`オプションにより、入力データ期間に対する相対的な予測期間を指定できます：
+
+```bash
+# デフォルト（入力データ期間の10%）
+cli_tokens predict tokens/wrap.near.json
+
+# 短期予測（入力データ期間の5%）
+cli_tokens predict tokens/wrap.near.json --forecast-ratio 5.0
+
+# 中期予測（入力データ期間の25%）
+cli_tokens predict tokens/wrap.near.json --forecast-ratio 25.0
+
+# 長期予測（入力データ期間と同じ期間）
+cli_tokens predict tokens/wrap.near.json --forecast-ratio 100.0
+```
+
+##### 予測期間の計算例
+
+```
+入力データ期間: 30日間
+--forecast-ratio 10.0 (デフォルト) → 予測期間: 3日間
+--forecast-ratio 25.0 → 予測期間: 7.5日間
+--forecast-ratio 100.0 → 予測期間: 30日間
+
+入力データ期間: 7日間
+--forecast-ratio 10.0 (デフォルト) → 予測期間: 16.8時間
+--forecast-ratio 50.0 → 予測期間: 3.5日間
+```
+
+##### 設計の利点
+
+1. **データ適応的**: 入力データの期間に応じて予測期間が自動調整される
+2. **一貫性**: 異なるデータセットでも一貫した比率での予測が可能
+3. **直感的**: 「入力データの10%の期間で予測」のような理解しやすい指定
+4. **ML的妥当性**: 訓練データ期間に対する適切な予測期間の比率設定
 
 #### 出力ファイル構造
 

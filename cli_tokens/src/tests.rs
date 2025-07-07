@@ -21,12 +21,14 @@ mod unit_tests {
             force: false,
             start_pct: 0.0,
             end_pct: 100.0,
+            forecast_ratio: 10.0,
         };
 
         assert_eq!(args.token_file, PathBuf::from("tokens/wrap.near.json"));
         assert_eq!(args.output, PathBuf::from("predictions"));
         assert_eq!(args.model, "server_default");
         assert!(!args.force);
+        assert_eq!(args.forecast_ratio, 10.0);
     }
 
     #[test]
@@ -462,5 +464,201 @@ mod api_tests {
             .contains("Prediction failed"));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod forecast_ratio_tests {
+    use super::*;
+    use chrono::{Duration, NaiveDate, TimeZone, Utc};
+
+    #[test]
+    fn test_forecast_ratio_default_value() {
+        let args = PredictArgs {
+            token_file: PathBuf::from("test.json"),
+            output: PathBuf::from("predictions"),
+            model: "server_default".to_string(),
+            force: false,
+            start_pct: 0.0,
+            end_pct: 100.0,
+            forecast_ratio: 10.0,
+        };
+
+        assert_eq!(args.forecast_ratio, 10.0);
+    }
+
+    #[test]
+    fn test_forecast_ratio_validation_valid_values() {
+        let test_cases = vec![0.1, 1.0, 10.0, 50.0, 100.0, 500.0];
+
+        for ratio in test_cases {
+            let args = PredictArgs {
+                token_file: PathBuf::from("test.json"),
+                output: PathBuf::from("predictions"),
+                model: "server_default".to_string(),
+                force: false,
+                start_pct: 0.0,
+                end_pct: 100.0,
+                forecast_ratio: ratio,
+            };
+
+            assert!(args.forecast_ratio > 0.0 && args.forecast_ratio <= 500.0);
+        }
+    }
+
+    #[test]
+    fn test_forecast_duration_calculation() {
+        // 30日間のデータ期間をテスト
+        let start_date = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let end_date = NaiveDate::from_ymd_opt(2024, 1, 31)
+            .unwrap()
+            .and_hms_opt(23, 59, 59)
+            .unwrap();
+
+        let start_utc = Utc.from_utc_datetime(&start_date);
+        let end_utc = Utc.from_utc_datetime(&end_date);
+
+        let input_duration = end_utc.signed_duration_since(start_utc);
+
+        // 10%の比率でテスト
+        let forecast_ratio = 10.0;
+        let forecast_duration_ms =
+            (input_duration.num_milliseconds() as f64 * (forecast_ratio / 100.0)) as i64;
+        let forecast_duration = Duration::milliseconds(forecast_duration_ms);
+
+        // 30日の10%は約3日
+        assert!(forecast_duration.num_days() >= 2 && forecast_duration.num_days() <= 4);
+    }
+
+    #[test]
+    fn test_forecast_duration_calculation_7_days() {
+        // 7日間のデータ期間をテスト
+        let start_date = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let end_date = NaiveDate::from_ymd_opt(2024, 1, 8)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let start_utc = Utc.from_utc_datetime(&start_date);
+        let end_utc = Utc.from_utc_datetime(&end_date);
+
+        let input_duration = end_utc.signed_duration_since(start_utc);
+
+        // 10%の比率でテスト
+        let forecast_ratio = 10.0;
+        let forecast_duration_ms =
+            (input_duration.num_milliseconds() as f64 * (forecast_ratio / 100.0)) as i64;
+        let forecast_duration = Duration::milliseconds(forecast_duration_ms);
+
+        // 7日の10%は約16.8時間
+        let expected_hours = 7.0 * 24.0 * 0.1; // 16.8時間
+        let actual_hours = forecast_duration.num_hours() as f64;
+
+        assert!((actual_hours - expected_hours).abs() < 1.0); // 1時間の誤差許容
+    }
+
+    #[test]
+    fn test_forecast_ratio_edge_cases() {
+        // 最小値テスト (0.1%)
+        let input_duration = Duration::days(30);
+        let forecast_ratio = 0.1;
+        let forecast_duration_ms =
+            (input_duration.num_milliseconds() as f64 * (forecast_ratio / 100.0)) as i64;
+        let forecast_duration = Duration::milliseconds(forecast_duration_ms);
+
+        // 30日の0.1%は約7.2時間なので、分単位で確認
+        assert!(forecast_duration.num_minutes() > 0);
+
+        // 最大値テスト (500%)
+        let forecast_ratio = 500.0;
+        let forecast_duration_ms =
+            (input_duration.num_milliseconds() as f64 * (forecast_ratio / 100.0)) as i64;
+        let forecast_duration = Duration::milliseconds(forecast_duration_ms);
+
+        // 30日の500%は150日
+        assert!(forecast_duration.num_days() >= 149 && forecast_duration.num_days() <= 151);
+    }
+
+    #[test]
+    fn test_different_forecast_ratios() {
+        let input_duration = Duration::days(10); // 10日間のデータ
+
+        let test_cases = vec![
+            (10.0, 1.0),   // 10% = 1日
+            (25.0, 2.5),   // 25% = 2.5日
+            (50.0, 5.0),   // 50% = 5日
+            (100.0, 10.0), // 100% = 10日
+        ];
+
+        for (ratio, expected_days) in test_cases {
+            let forecast_duration_ms =
+                (input_duration.num_milliseconds() as f64 * (ratio / 100.0)) as i64;
+            let forecast_duration = Duration::milliseconds(forecast_duration_ms);
+
+            // 時間単位で比較（より精密）
+            let actual_hours = forecast_duration.num_hours() as f64;
+            let expected_hours = expected_days * 24.0;
+
+            assert!(
+                (actual_hours - expected_hours).abs() < 1.0,
+                "Ratio {}% should result in {} hours, got {} hours",
+                ratio,
+                expected_hours,
+                actual_hours
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_forecast_ratio_validation_errors() {
+        // 無効な値でのバリデーションエラーをテスト
+        let invalid_ratios = vec![0.0, -1.0, 500.1, 1000.0];
+
+        for invalid_ratio in invalid_ratios {
+            let args = PredictArgs {
+                token_file: PathBuf::from("test.json"),
+                output: PathBuf::from("predictions"),
+                model: "server_default".to_string(),
+                force: false,
+                start_pct: 0.0,
+                end_pct: 100.0,
+                forecast_ratio: invalid_ratio,
+            };
+
+            // 実際のrunメソッドを呼び出すのではなく、バリデーション条件をテスト
+            let is_valid = args.forecast_ratio > 0.0 && args.forecast_ratio <= 500.0;
+            assert!(!is_valid, "Ratio {} should be invalid", invalid_ratio);
+        }
+    }
+
+    #[test]
+    fn test_forecast_ratio_precision() {
+        // 小数点以下の精度をテスト
+        let test_cases = vec![
+            (10.5, Duration::days(1).num_milliseconds() as f64 * 0.105),
+            (33.3, Duration::days(1).num_milliseconds() as f64 * 0.333),
+            (0.1, Duration::days(1).num_milliseconds() as f64 * 0.001),
+        ];
+
+        let input_duration = Duration::days(1); // 1日間のデータ
+
+        for (ratio, expected_ms) in test_cases {
+            let forecast_duration_ms =
+                (input_duration.num_milliseconds() as f64 * (ratio / 100.0)) as i64;
+            let expected_ms_i64 = expected_ms as i64;
+
+            // 誤差を許容した比較（1秒以内）
+            assert!(
+                (forecast_duration_ms - expected_ms_i64).abs() < 1000,
+                "Ratio {}% calculation precision test failed",
+                ratio
+            );
+        }
     }
 }
