@@ -12,7 +12,7 @@ use crate::models::{
 };
 use crate::utils::{
     config::Config,
-    file::{ensure_directory_exists, file_exists, write_json_file},
+    file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
 };
 
 #[derive(Parser)]
@@ -107,11 +107,12 @@ pub async fn run(args: PredictArgs) -> Result<()> {
         token_data.token_data.token
     );
 
-    // Create output directory structure
-    let token_output_dir = args.output.join(&token_data.token_data.token);
-    ensure_directory_exists(&token_output_dir)?;
+    // Ensure output directory exists
+    ensure_directory_exists(&args.output)?;
 
-    let prediction_file = token_output_dir.join("prediction.json");
+    // Create prediction file path directly
+    let filename = format!("{}.json", sanitize_filename(&token_data.token_data.token));
+    let prediction_file = args.output.join(filename);
 
     // Check if prediction already exists
     if !args.force && file_exists(&prediction_file).await {
@@ -259,7 +260,7 @@ pub async fn run(args: PredictArgs) -> Result<()> {
 
     pb.finish_with_message(format!(
         "Prediction completed for token: {} (saved to {:?})",
-        token_data.token_data.token, token_output_dir
+        token_data.token_data.token, prediction_file
     ));
 
     Ok(())

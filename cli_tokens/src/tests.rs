@@ -917,4 +917,32 @@ mod predict_args_tests {
             );
         }
     }
+
+    #[test]
+    fn test_predict_output_file_structure() {
+        // 新しいファイルベース構造のテスト
+        use crate::utils::file::sanitize_filename;
+        use std::path::PathBuf;
+
+        let test_cases = vec![
+            ("wrap.near", "wrap.near.json"),
+            ("usdc.near", "usdc.near.json"),
+            ("token-with-dash", "token-with-dash.json"),
+            ("token/with/slash", "token_with_slash.json"),
+        ];
+
+        let output_dir = PathBuf::from("predictions");
+
+        for (token_name, expected_filename) in test_cases {
+            let sanitized_name = sanitize_filename(token_name);
+            let filename = format!("{}.json", sanitized_name);
+            let prediction_file = output_dir.join(&filename);
+
+            assert_eq!(filename, expected_filename);
+            assert_eq!(
+                prediction_file,
+                PathBuf::from(format!("predictions/{}", expected_filename))
+            );
+        }
+    }
 }
