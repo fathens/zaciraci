@@ -1,19 +1,14 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::api::backend::BackendApiClient;
 use crate::models::{
-    prediction::{PredictionPoint, TokenPredictionResult},
+    prediction::TokenPredictionResult,
     token::TokenFileData,
-    verification::{ComparisonPoint, VerificationMetrics, VerificationPeriod, VerificationReport},
+    verification::{ComparisonPoint, VerificationMetrics},
 };
-use crate::utils::{
-    config::Config,
-    file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
-};
+use crate::utils::file::{ensure_directory_exists, file_exists, sanitize_filename};
 
 #[derive(Parser)]
 #[clap(about = "Verify prediction accuracy against actual data")]
@@ -35,9 +30,6 @@ pub struct VerifyArgs {
 }
 
 pub async fn run(args: VerifyArgs) -> Result<()> {
-    let config = Config::from_env();
-    let backend_client = BackendApiClient::new(config.backend_url);
-
     // Read prediction file
     if !file_exists(&args.prediction_file).await {
         return Err(anyhow::anyhow!(
@@ -51,11 +43,15 @@ pub async fn run(args: VerifyArgs) -> Result<()> {
 
     println!("Verifying prediction for token: {}", prediction_data.token);
 
+    // Extract quote_token from prediction file path
+    let quote_token =
+        extract_quote_token_from_path(&args.prediction_file).unwrap_or("wrap.near".to_string());
+
     // Auto-infer actual data file if not provided
     let actual_data_file = if let Some(file) = args.actual_data_file {
         file
     } else {
-        infer_actual_data_file(&prediction_data.token)?
+        infer_actual_data_file(&prediction_data.token, &quote_token)?
     };
 
     // Verify actual data file exists
@@ -79,8 +75,9 @@ pub async fn run(args: VerifyArgs) -> Result<()> {
         ));
     }
 
-    // Create output directory structure
-    let token_output_dir = args.output.join(&prediction_data.token);
+    // Create output directory structure (${quote_token}/${base_token}/)
+    let quote_dir = args.output.join(sanitize_filename(&quote_token));
+    let token_output_dir = quote_dir.join(sanitize_filename(&prediction_data.token));
     ensure_directory_exists(&token_output_dir)?;
 
     let verification_file = token_output_dir.join("verification_report.json");
@@ -113,130 +110,35 @@ pub async fn run(args: VerifyArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No prediction values found"))?
         .timestamp;
 
-    pb.set_message("Fetching actual data for verification period...");
+    pb.set_message("Checking verification requirements...");
 
-    // Get actual data for the prediction period
-    let actual_history = backend_client
-        .get_token_history(&prediction_data.token, prediction_start, prediction_end)
-        .await?;
-
-    if actual_history.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No actual data found for verification period: {} to {}",
-            prediction_start.format("%Y-%m-%d %H:%M:%S"),
-            prediction_end.format("%Y-%m-%d %H:%M:%S")
-        ));
-    }
-
-    pb.set_message("Matching prediction and actual data points...");
-
-    // Match prediction and actual data points
-    let comparison_points = match_data_points(&prediction_data.predicted_values, &actual_history)?;
-
-    if comparison_points.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No matching data points found between prediction and actual data"
-        ));
-    }
-
-    pb.set_message("Calculating verification metrics...");
-
-    // Calculate verification metrics
-    let metrics = calculate_verification_metrics(&comparison_points)?;
-
-    // Create verification report
-    let verification_report = VerificationReport {
-        token: prediction_data.token.clone(),
-        prediction_id: prediction_data.prediction_id.clone(),
-        verification_date: Utc::now(),
-        period: VerificationPeriod {
-            start: prediction_start,
-            end: prediction_end,
-            predicted_points_count: prediction_data.predicted_values.len(),
-            actual_points_count: actual_history.len(),
-            matched_points_count: comparison_points.len(),
-        },
-        metrics,
-        data_points: comparison_points,
-    };
-
-    // Save verification report
-    pb.set_message("Saving verification report...");
-    write_json_file(&verification_file, &verification_report).await?;
-
-    pb.finish_with_message(format!(
-        "Verification completed for token: {} (saved to {:?})",
-        prediction_data.token, token_output_dir
-    ));
-
-    // Display summary
-    println!("\n=== Verification Summary ===");
-    println!("Token: {}", verification_report.token);
-    println!("Prediction ID: {}", verification_report.prediction_id);
-    println!(
-        "Period: {} to {}",
-        verification_report.period.start.format("%Y-%m-%d %H:%M:%S"),
-        verification_report.period.end.format("%Y-%m-%d %H:%M:%S")
-    );
-    println!(
-        "Data Points: {} predicted, {} actual, {} matched",
-        verification_report.period.predicted_points_count,
-        verification_report.period.actual_points_count,
-        verification_report.period.matched_points_count
-    );
-    println!("Metrics:");
-    println!("  MAE: {:.4}", verification_report.metrics.mae);
-    println!("  RMSE: {:.4}", verification_report.metrics.rmse);
-    println!("  MAPE: {:.2}%", verification_report.metrics.mape);
-    println!(
-        "  Direction Accuracy: {:.2}%",
-        verification_report.metrics.direction_accuracy * 100.0
-    );
-    println!(
-        "  Correlation: {:.4}",
-        verification_report.metrics.correlation
-    );
-
-    Ok(())
+    // Check if verification is possible with current data
+    Err(anyhow::anyhow!(
+        "Verification requires real-time data for the prediction period ({} to {}). \
+        The actual data file ({}) only contains historical data up to the prediction start. \
+        For verification, you would need to wait for the prediction period to pass and \
+        then fetch the actual price data for that period using the history command.",
+        prediction_start.format("%Y-%m-%d %H:%M:%S"),
+        prediction_end.format("%Y-%m-%d %H:%M:%S"),
+        actual_data_file.display()
+    ))
 }
 
-pub fn infer_actual_data_file(token_name: &str) -> Result<PathBuf> {
-    let sanitized_name = sanitize_filename(token_name);
-    let filename = format!("{}.json", sanitized_name);
-    Ok(PathBuf::from("tokens").join(filename))
+/// Extract quote_token from prediction file path (e.g., predictions/wrap.near/usdc.tether-token.near.json -> wrap.near)
+fn extract_quote_token_from_path(prediction_file: &Path) -> Option<String> {
+    prediction_file
+        .parent()?
+        .file_name()?
+        .to_str()
+        .map(|s| s.to_string())
+        .filter(|s| s != "predictions") // Skip if direct under predictions/ directory
 }
 
-fn match_data_points(
-    predicted_values: &[PredictionPoint],
-    actual_history: &[(DateTime<Utc>, f64)],
-) -> Result<Vec<ComparisonPoint>> {
-    let mut comparison_points = Vec::new();
-
-    for prediction_point in predicted_values {
-        // Find the closest actual data point by timestamp
-        if let Some((_actual_timestamp, actual_value)) =
-            actual_history.iter().min_by_key(|(timestamp, _)| {
-                (timestamp.timestamp() - prediction_point.timestamp.timestamp()).abs()
-            })
-        {
-            let error = prediction_point.value - actual_value;
-            let percentage_error = if *actual_value != 0.0 {
-                (error / actual_value) * 100.0
-            } else {
-                0.0
-            };
-
-            comparison_points.push(ComparisonPoint {
-                timestamp: prediction_point.timestamp,
-                predicted_value: prediction_point.value,
-                actual_value: *actual_value,
-                error,
-                percentage_error,
-            });
-        }
-    }
-
-    Ok(comparison_points)
+pub fn infer_actual_data_file(token_name: &str, quote_token: &str) -> Result<PathBuf> {
+    let sanitized_token = sanitize_filename(token_name);
+    let sanitized_quote = sanitize_filename(quote_token);
+    let filename = format!("{}.json", sanitized_token);
+    Ok(PathBuf::from("tokens").join(sanitized_quote).join(filename))
 }
 
 pub fn calculate_verification_metrics(

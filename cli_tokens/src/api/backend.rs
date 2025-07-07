@@ -1,19 +1,33 @@
-use anyhow::Result;
-use chrono::{DateTime, Utc};
+use anyhow::{Context, Result};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use reqwest::Client;
 use zaciraci_common::{
     pools::{VolatilityTokensRequest, VolatilityTokensResponse},
+    stats::{GetValuesRequest, GetValuesResponse, ValueAtTime},
     types::TokenAccount,
     ApiResponse,
 };
 
-pub struct BackendApiClient {
+pub struct BackendClient {
     client: Client,
     base_url: String,
 }
 
-impl BackendApiClient {
-    pub fn new(base_url: String) -> Self {
+impl Default for BackendClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BackendClient {
+    pub fn new() -> Self {
+        Self {
+            client: Client::new(),
+            base_url: "http://localhost:8080".to_string(),
+        }
+    }
+
+    pub fn new_with_url(base_url: String) -> Self {
         Self {
             client: Client::new(),
             base_url,
@@ -25,11 +39,13 @@ impl BackendApiClient {
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
         limit: u32,
+        quote_token: Option<String>,
     ) -> Result<Vec<TokenAccount>> {
         let request = VolatilityTokensRequest {
             start: start_date.naive_utc(),
             end: end_date.naive_utc(),
             limit,
+            quote_token,
         };
 
         let url = format!("{}/pools/get_volatility_tokens", self.base_url);
@@ -43,49 +59,46 @@ impl BackendApiClient {
         }
     }
 
-    pub async fn get_token_history(
+    pub async fn get_price_history(
         &self,
-        token: &str,
-        start_date: DateTime<Utc>,
-        end_date: DateTime<Utc>,
-    ) -> Result<Vec<(DateTime<Utc>, f64)>> {
-        // For testing purposes, skip actual API call and generate mock data directly
-        println!("Generating mock token history for: {}", token);
-        println!(
-            "Token: {}, Start: {}, End: {}",
-            token,
-            start_date.format("%Y-%m-%d"),
-            end_date.format("%Y-%m-%d")
-        );
+        quote_token: &str,
+        base_token: &str,
+        start_date: NaiveDateTime,
+        end_date: NaiveDateTime,
+    ) -> Result<Vec<ValueAtTime>> {
+        let request = GetValuesRequest {
+            quote_token: quote_token.parse()?,
+            base_token: base_token.parse()?,
+            start: start_date,
+            end: end_date,
+        };
 
-        // TODO: Parse actual response format
-        // For testing purposes, return mock time series data
-        let mut test_data = Vec::new();
-        let mut current_time = start_date;
-        let time_step = chrono::Duration::hours(2); // 2-hour intervals for more data points
-        let mut price: f64 = 1.0;
+        let url = format!("{}/stats/get_values", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context(format!("Failed to send request to {}", url))?;
 
-        while current_time <= end_date {
-            // Generate realistic price movement (random walk with drift)
-            price += (rand::random::<f64>() - 0.5) * 0.1 + 0.001; // Small upward drift
-            price = price.max(0.1); // Ensure price stays positive
-            test_data.push((current_time, price));
-            current_time += time_step;
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error body".to_string());
+            return Err(anyhow::anyhow!("HTTP Error {}: {}", status, error_text));
         }
 
-        // Ensure we have at least 180 data points for AutoGluon prediction
-        if test_data.len() < 180 {
-            let mut additional_time = end_date;
-            while test_data.len() < 180 {
-                additional_time += time_step;
-                price += (rand::random::<f64>() - 0.5) * 0.1 + 0.001;
-                price = price.max(0.1);
-                test_data.push((additional_time, price));
-            }
+        let api_response: ApiResponse<GetValuesResponse, String> = response
+            .json()
+            .await
+            .context("Failed to parse JSON response")?;
+
+        match api_response {
+            ApiResponse::Success(data) => Ok(data.values),
+            ApiResponse::Error(message) => Err(anyhow::anyhow!("API Error: {}", message)),
         }
-
-        println!("Generated {} data points for prediction", test_data.len());
-
-        Ok(test_data)
     }
 }

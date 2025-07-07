@@ -54,6 +54,7 @@ impl VolatilityPredictionService {
             start: start_date.naive_utc(),
             end: end_date.naive_utc(),
             limit,
+            quote_token: None,
         };
 
         match self

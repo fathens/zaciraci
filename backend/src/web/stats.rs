@@ -114,7 +114,7 @@ async fn get_values(
         .points
         .into_iter()
         .filter_map(|p| match p.rate.to_f64() {
-            Some(value) if value.is_finite() && value > 0.0 => Some(ValueAtTime {
+            Some(value) if value.is_finite() && value >= 0.0 => Some(ValueAtTime {
                 time: p.timestamp,
                 value,
             }),
@@ -134,18 +134,6 @@ async fn get_values(
             }
         })
         .collect();
-
-    // データ数の検証
-    if values.len() < 4 {
-        error!(log, "Insufficient data points for prediction";
-            "values_count" => values.len(),
-            "min_required" => 4,
-        );
-        return Json(ApiResponse::Error(format!(
-            "Insufficient data points: {} (minimum 4 required for prediction)",
-            values.len()
-        )));
-    }
 
     info!(log, "success";
         "values_count" => values.len(),

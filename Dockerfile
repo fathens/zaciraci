@@ -13,6 +13,7 @@ COPY Cargo.lock .
 COPY common common
 COPY backend backend
 COPY frontend frontend
+COPY cli_tokens cli_tokens
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
@@ -33,6 +34,7 @@ COPY Cargo.lock .
 COPY common common
 COPY backend backend
 COPY frontend frontend
+COPY cli_tokens cli_tokens
 
 RUN cargo clean
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

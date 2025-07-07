@@ -387,7 +387,14 @@ async fn get_volatility_tokens(
 
         // ボラティリティ計算タスク
         let vol_task = {
-            let quote = WNEAR_TOKEN.clone().into();
+            let quote = if let Some(quote_token_str) = &request.quote_token {
+                match quote_token_str.parse::<TokenAccount>() {
+                    Ok(token) => token.into(),
+                    Err(_) => WNEAR_TOKEN.clone().into(),
+                }
+            } else {
+                WNEAR_TOKEN.clone().into()
+            };
             let range = TimeRange {
                 start: request.start,
                 end: request.end,

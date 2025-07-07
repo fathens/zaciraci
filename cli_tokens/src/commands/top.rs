@@ -4,7 +4,7 @@ use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 
-use crate::api::backend::BackendApiClient;
+use crate::api::backend::BackendClient;
 use crate::models::token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData};
 use crate::utils::{
     config::Config,
@@ -28,11 +28,17 @@ pub struct TopArgs {
 
     #[clap(short, long, default_value = "json", help = "Output format (json|csv)")]
     pub format: String,
+
+    #[clap(
+        long,
+        help = "Quote token for volatility calculation [default: wrap.near]"
+    )]
+    pub quote_token: Option<String>,
 }
 
 pub async fn run(args: TopArgs) -> Result<()> {
     let config = Config::from_env();
-    let backend_client = BackendApiClient::new(config.backend_url);
+    let backend_client = BackendClient::new_with_url(config.backend_url);
 
     // Parse dates
     let end_date = if let Some(end_str) = args.end {
@@ -68,10 +74,11 @@ pub async fn run(args: TopArgs) -> Result<()> {
     // Fetch tokens
     pb.set_message("Fetching volatility tokens...");
     let tokens = backend_client
-        .get_volatility_tokens(start_date, end_date, args.limit)
+        .get_volatility_tokens(start_date, end_date, args.limit, args.quote_token.clone())
         .await?;
 
     // Save each token to individual file
+    let quote_token = args.quote_token.as_deref().unwrap_or("wrap.near");
     for (i, token) in tokens.iter().enumerate() {
         pb.set_position((i + 1) as u64);
         pb.set_message(format!("Saving {}", token.0));
@@ -94,8 +101,12 @@ pub async fn run(args: TopArgs) -> Result<()> {
             },
         };
 
+        // Create quote_token subdirectory
+        let quote_dir = args.output.join(sanitize_filename(quote_token));
+        ensure_directory_exists(&quote_dir)?;
+
         let filename = format!("{}.json", sanitize_filename(&token.0));
-        let file_path = args.output.join(filename);
+        let file_path = quote_dir.join(filename);
 
         write_json_file(&file_path, &file_data).await?;
     }

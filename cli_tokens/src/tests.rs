@@ -3,7 +3,9 @@ use chrono::Utc;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-use crate::commands::{predict::PredictArgs, top::TopArgs, verify::VerifyArgs};
+use crate::commands::{
+    history::HistoryArgs, predict::PredictArgs, top::TopArgs, verify::VerifyArgs,
+};
 use crate::models::{
     token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData},
     verification::ComparisonPoint,
@@ -43,6 +45,7 @@ mod unit_tests {
             limit: 10,
             output: PathBuf::from("tokens"),
             format: "json".to_string(),
+            quote_token: None,
         };
 
         assert_eq!(args.limit, 10);
@@ -141,6 +144,53 @@ mod unit_tests {
         let formatted = date.format("%Y-%m-%d").to_string();
         assert_eq!(formatted, date_str);
     }
+
+    #[test]
+    fn test_history_args_parsing() {
+        // Test parsing of HistoryArgs
+        let args = HistoryArgs {
+            token_file: PathBuf::from("tokens/wrap.near.json"),
+            quote_token: "wrap.near".to_string(),
+            output: PathBuf::from("history"),
+            force: false,
+        };
+
+        assert_eq!(args.token_file, PathBuf::from("tokens/wrap.near.json"));
+        assert_eq!(args.quote_token, "wrap.near");
+        assert_eq!(args.output, PathBuf::from("history"));
+        assert!(!args.force);
+    }
+
+    #[test]
+    fn test_history_args_default_values() {
+        // Test default values for HistoryArgs
+        let args = HistoryArgs {
+            token_file: PathBuf::from("tokens/test.json"),
+            quote_token: "wrap.near".to_string(),
+            output: PathBuf::from("history"),
+            force: false,
+        };
+
+        assert_eq!(args.quote_token, "wrap.near");
+        assert_eq!(args.output, PathBuf::from("history"));
+        assert!(!args.force);
+    }
+
+    #[test]
+    fn test_history_args_custom_values() {
+        // Test custom values for HistoryArgs
+        let args = HistoryArgs {
+            token_file: PathBuf::from("custom/token.json"),
+            quote_token: "usdc.near".to_string(),
+            output: PathBuf::from("custom_history"),
+            force: true,
+        };
+
+        assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
+        assert_eq!(args.quote_token, "usdc.near");
+        assert_eq!(args.output, PathBuf::from("custom_history"));
+        assert!(args.force);
+    }
 }
 
 #[cfg(test)]
@@ -188,14 +238,14 @@ mod integration_tests {
 #[cfg(test)]
 mod api_tests {
     use super::*;
-    use crate::api::backend::BackendApiClient;
+    use crate::api::backend::BackendClient;
     use crate::api::chronos::ChronosApiClient;
     use crate::models::prediction::{
         AsyncPredictionResponse, PredictionResult, ZeroShotPredictionRequest,
     };
     use chrono::Utc;
-    use serde_json::json;
     use zaciraci_common::pools::VolatilityTokensResponse;
+    use zaciraci_common::stats::{GetValuesResponse, ValueAtTime};
     use zaciraci_common::types::TokenAccount;
     use zaciraci_common::ApiResponse;
 
@@ -220,10 +270,12 @@ mod api_tests {
             .create_async()
             .await;
 
-        let client = BackendApiClient::new(server.url());
+        let client = BackendClient::new_with_url(server.url());
         let start_date = Utc::now();
         let end_date = Utc::now();
-        let result = client.get_volatility_tokens(start_date, end_date, 10).await;
+        let result = client
+            .get_volatility_tokens(start_date, end_date, 10, None)
+            .await;
 
         assert!(result.is_ok());
         let tokens = result.unwrap();
@@ -248,54 +300,18 @@ mod api_tests {
             .create_async()
             .await;
 
-        let client = BackendApiClient::new(server.url());
+        let client = BackendClient::new_with_url(server.url());
         let start_date = Utc::now();
         let end_date = Utc::now();
-        let result = client.get_volatility_tokens(start_date, end_date, 10).await;
+        let result = client
+            .get_volatility_tokens(start_date, end_date, 10, None)
+            .await;
 
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("Database connection failed"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_backend_api_get_token_history() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock_data = json!({
-            "data": [
-                {"timestamp": "2023-01-01T00:00:00Z", "price": 1.23},
-                {"timestamp": "2023-01-02T00:00:00Z", "price": 1.25}
-            ]
-        });
-
-        let _mock = server
-            .mock("GET", "/api/token-history/wrap.near")
-            .match_query(mockito::Matcher::Any)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(mock_data.to_string())
-            .create_async()
-            .await;
-
-        let client = BackendApiClient::new(server.url());
-        let start_date = Utc::now();
-        let end_date = Utc::now();
-        let result = client
-            .get_token_history("wrap.near", start_date, end_date)
-            .await;
-
-        // Debug the actual error if test fails
-        if let Err(ref e) = result {
-            println!("Error: {:?}", e);
-        }
-        assert!(result.is_ok());
-        let history = result.unwrap();
-        // Now returns mock data with 180 points
-        assert_eq!(history.len(), 180);
 
         Ok(())
     }
@@ -465,6 +481,99 @@ mod api_tests {
             .unwrap_err()
             .to_string()
             .contains("Prediction failed"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_backend_api_get_price_history_success() -> Result<()> {
+        let mut server = mockito::Server::new_async().await;
+        let mock_values = vec![
+            ValueAtTime {
+                time: chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+                value: 5.23,
+            },
+            ValueAtTime {
+                time: chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
+                    .unwrap()
+                    .and_hms_opt(1, 0, 0)
+                    .unwrap(),
+                value: 5.25,
+            },
+        ];
+        let price_response = GetValuesResponse {
+            values: mock_values.clone(),
+        };
+        let api_response: ApiResponse<GetValuesResponse, String> =
+            ApiResponse::Success(price_response);
+
+        let _mock = server
+            .mock("POST", "/stats/get_values")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::to_string(&api_response).unwrap())
+            .create_async()
+            .await;
+
+        let client = BackendClient::new_with_url(server.url());
+        let start_date = chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let end_date = chrono::NaiveDate::from_ymd_opt(2025, 7, 7)
+            .unwrap()
+            .and_hms_opt(23, 59, 59)
+            .unwrap();
+
+        let result = client
+            .get_price_history("wrap.near", "wrap.near", start_date, end_date)
+            .await;
+
+        assert!(result.is_ok());
+        let values = result.unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0].value, 5.23);
+        assert_eq!(values[1].value, 5.25);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_backend_api_get_price_history_error() -> Result<()> {
+        let mut server = mockito::Server::new_async().await;
+        let api_response: ApiResponse<GetValuesResponse, String> =
+            ApiResponse::Error("Insufficient data points".to_string());
+
+        let _mock = server
+            .mock("POST", "/stats/get_values")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::to_string(&api_response).unwrap())
+            .create_async()
+            .await;
+
+        let client = BackendClient::new_with_url(server.url());
+        let start_date = chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let end_date = chrono::NaiveDate::from_ymd_opt(2025, 7, 7)
+            .unwrap()
+            .and_hms_opt(23, 59, 59)
+            .unwrap();
+
+        let result = client
+            .get_price_history("wrap.near", "wrap.near", start_date, end_date)
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Insufficient data points"));
 
         Ok(())
     }
@@ -997,14 +1106,22 @@ mod verify_tests {
         use crate::commands::verify::infer_actual_data_file;
 
         let test_cases = vec![
-            ("wrap.near", "tokens/wrap.near.json"),
-            ("usdc.near", "tokens/usdc.near.json"),
-            ("token/with/slash", "tokens/token_with_slash.json"),
-            ("token:with:colons", "tokens/token_with_colons.json"),
+            ("wrap.near", "wrap.near", "tokens/wrap.near/wrap.near.json"),
+            ("usdc.near", "wrap.near", "tokens/wrap.near/usdc.near.json"),
+            (
+                "token/with/slash",
+                "usdc.tether-token.near",
+                "tokens/usdc.tether-token.near/token_with_slash.json",
+            ),
+            (
+                "token:with:colons",
+                "wrap.near",
+                "tokens/wrap.near/token_with_colons.json",
+            ),
         ];
 
-        for (token_name, expected_path) in test_cases {
-            let result = infer_actual_data_file(token_name).unwrap();
+        for (token_name, quote_token, expected_path) in test_cases {
+            let result = infer_actual_data_file(token_name, quote_token).unwrap();
             assert_eq!(result, PathBuf::from(expected_path));
         }
     }

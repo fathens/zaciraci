@@ -1,12 +1,13 @@
 use anyhow::Result;
-use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::api::{backend::BackendApiClient, chronos::ChronosApiClient};
+use crate::api::chronos::ChronosApiClient;
 use crate::models::{
+    history::HistoryFileData,
     prediction::{PredictionPoint, TokenPredictionResult, ZeroShotPredictionRequest},
     token::TokenFileData,
 };
@@ -88,7 +89,6 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     }
 
     let config = Config::from_env();
-    let backend_client = BackendApiClient::new(config.backend_url);
     let chronos_client = ChronosApiClient::new(config.chronos_url);
 
     // Read token file
@@ -110,9 +110,17 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     // Ensure output directory exists
     ensure_directory_exists(&args.output)?;
 
-    // Create prediction file path directly
+    // Extract quote_token from token file path or use default
+    let quote_token =
+        extract_quote_token_from_path(&args.token_file).unwrap_or("wrap.near".to_string());
+
+    // Create quote_token subdirectory
+    let quote_dir = args.output.join(sanitize_filename(&quote_token));
+    ensure_directory_exists(&quote_dir)?;
+
+    // Create prediction file path (${quote_token}/${base_token}.json)
     let filename = format!("{}.json", sanitize_filename(&token_data.token_data.token));
-    let prediction_file = args.output.join(filename);
+    let prediction_file = quote_dir.join(filename);
 
     // Check if prediction already exists
     if !args.force && file_exists(&prediction_file).await {
@@ -131,30 +139,26 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     );
 
     // Get historical data for prediction
-    pb.set_message("Fetching historical token data...");
-    let start_date = NaiveDate::parse_from_str(&token_data.metadata.start_date, "%Y-%m-%d")?
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| anyhow::anyhow!("Invalid start date"))?;
-    let start_date = Utc.from_utc_datetime(&start_date);
+    pb.set_message("Loading historical token data...");
 
-    let end_date = NaiveDate::parse_from_str(&token_data.metadata.end_date, "%Y-%m-%d")?
-        .and_hms_opt(23, 59, 59)
-        .ok_or_else(|| anyhow::anyhow!("Invalid end date"))?;
-    let end_date = Utc.from_utc_datetime(&end_date);
-
-    let history = backend_client
-        .get_token_history(&token_data.token_data.token, start_date, end_date)
-        .await?;
-
-    if history.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No historical data found for token: {}",
-            token_data.token_data.token
+    // Try to load from history file first (${quote_token}/${base_token}.json)
+    let history_file = PathBuf::from("history")
+        .join(sanitize_filename(&quote_token))
+        .join(format!(
+            "{}.json",
+            sanitize_filename(&token_data.token_data.token)
         ));
-    }
-
-    // Prepare prediction request
-    let (mut timestamps, mut values): (Vec<DateTime<Utc>>, Vec<f64>) = history.into_iter().unzip();
+    let (mut timestamps, mut values) = if history_file.exists() {
+        pb.set_message("Loading data from history file...");
+        load_history_data(&history_file).await?
+    } else {
+        // Fallback: return error instead of generating mock data
+        return Err(anyhow::anyhow!(
+            "No history data found for token: {}. Please run 'cli_tokens history {}' first to fetch price data",
+            token_data.token_data.token,
+            args.token_file.display()
+        ));
+    };
 
     // Apply percentage range filtering
     let total_len = timestamps.len();
@@ -194,15 +198,19 @@ pub async fn run(args: PredictArgs) -> Result<()> {
         .max()
         .ok_or_else(|| anyhow::anyhow!("No timestamps found"))?;
 
-    // Calculate forecast duration based on input data period and ratio
-    let input_duration = end_date.signed_duration_since(start_date);
+    // Calculate forecast duration based on actual data period and ratio
+    let earliest_timestamp = timestamps
+        .iter()
+        .min()
+        .ok_or_else(|| anyhow::anyhow!("No timestamps found"))?;
+    let input_duration = latest_timestamp.signed_duration_since(*earliest_timestamp);
     let forecast_duration_ms =
         (input_duration.num_milliseconds() as f64 * (args.forecast_ratio / 100.0)) as i64;
     let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
 
     pb.set_message(format!(
-        "📊 Input period: {} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
-        input_duration.num_days(),
+        "📊 Input period: {:.1} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
+        input_duration.num_hours() as f64 / 24.0,
         args.forecast_ratio,
         Duration::milliseconds(forecast_duration_ms).num_hours() as f64
     ));
@@ -264,4 +272,33 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     ));
 
     Ok(())
+}
+
+/// Extract quote_token from token file path (e.g., tokens/wrap.near/usdc.tether-token.near.json -> wrap.near)
+fn extract_quote_token_from_path(token_file: &Path) -> Option<String> {
+    token_file
+        .parent()?
+        .file_name()?
+        .to_str()
+        .map(|s| s.to_string())
+        .filter(|s| s != "tokens") // Skip if direct under tokens/ directory
+}
+
+async fn load_history_data(history_file: &PathBuf) -> Result<(Vec<DateTime<Utc>>, Vec<f64>)> {
+    let content = fs::read_to_string(history_file).await?;
+    let history_data: HistoryFileData = serde_json::from_str(&content)?;
+
+    if history_data.price_history.values.is_empty() {
+        return Err(anyhow::anyhow!("No price data found in history file"));
+    }
+
+    let mut timestamps = Vec::new();
+    let mut values = Vec::new();
+
+    for value_at_time in history_data.price_history.values {
+        timestamps.push(value_at_time.time.and_utc());
+        values.push(value_at_time.value);
+    }
+
+    Ok((timestamps, values))
 }
