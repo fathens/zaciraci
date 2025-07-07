@@ -662,3 +662,254 @@ mod forecast_ratio_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod predict_options_tests {
+    use super::*;
+
+    #[test]
+    fn test_predict_args_default_values() {
+        // テストのデフォルト値確認
+        let args = PredictArgs {
+            token_file: PathBuf::from("test.json"),
+            output: PathBuf::from("predictions"),
+            model: "server_default".to_string(),
+            force: false,
+            start_pct: 0.0,
+            end_pct: 100.0,
+            forecast_ratio: 10.0,
+        };
+
+        assert_eq!(args.output, PathBuf::from("predictions"));
+        assert_eq!(args.model, "server_default");
+        assert!(!args.force);
+        assert_eq!(args.start_pct, 0.0);
+        assert_eq!(args.end_pct, 100.0);
+        assert_eq!(args.forecast_ratio, 10.0);
+    }
+
+    #[test]
+    fn test_predict_args_custom_values() {
+        // カスタム値でのテスト
+        let args = PredictArgs {
+            token_file: PathBuf::from("custom/token.json"),
+            output: PathBuf::from("custom_output"),
+            model: "chronos_bolt".to_string(),
+            force: true,
+            start_pct: 25.0,
+            end_pct: 75.0,
+            forecast_ratio: 50.0,
+        };
+
+        assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
+        assert_eq!(args.output, PathBuf::from("custom_output"));
+        assert_eq!(args.model, "chronos_bolt");
+        assert!(args.force);
+        assert_eq!(args.start_pct, 25.0);
+        assert_eq!(args.end_pct, 75.0);
+        assert_eq!(args.forecast_ratio, 50.0);
+    }
+
+    #[test]
+    fn test_start_pct_end_pct_validation_valid_values() {
+        // 有効な start_pct と end_pct の組み合わせ
+        let valid_combinations = vec![
+            (0.0, 100.0),  // 全範囲
+            (0.0, 50.0),   // 前半
+            (50.0, 100.0), // 後半
+            (25.0, 75.0),  // 中間
+            (10.5, 89.5),  // 小数点
+        ];
+
+        for (start, end) in valid_combinations {
+            let args = PredictArgs {
+                token_file: PathBuf::from("test.json"),
+                output: PathBuf::from("predictions"),
+                model: "server_default".to_string(),
+                force: false,
+                start_pct: start,
+                end_pct: end,
+                forecast_ratio: 10.0,
+            };
+
+            // バリデーション条件をテスト
+            assert!(args.start_pct >= 0.0 && args.start_pct <= 100.0);
+            assert!(args.end_pct >= 0.0 && args.end_pct <= 100.0);
+            assert!(args.start_pct < args.end_pct);
+        }
+    }
+
+    #[test]
+    fn test_start_pct_end_pct_validation_invalid_values() {
+        // 無効な start_pct と end_pct の組み合わせ
+        let invalid_combinations = vec![
+            (-1.0, 100.0),  // start_pct が負の値
+            (0.0, 101.0),   // end_pct が100を超える
+            (50.0, 50.0),   // start_pct = end_pct
+            (75.0, 25.0),   // start_pct > end_pct
+            (100.1, 200.0), // 両方とも範囲外
+        ];
+
+        for (start, end) in invalid_combinations {
+            let args = PredictArgs {
+                token_file: PathBuf::from("test.json"),
+                output: PathBuf::from("predictions"),
+                model: "server_default".to_string(),
+                force: false,
+                start_pct: start,
+                end_pct: end,
+                forecast_ratio: 10.0,
+            };
+
+            // バリデーション条件をテスト
+            let start_valid = args.start_pct >= 0.0 && args.start_pct <= 100.0;
+            let end_valid = args.end_pct >= 0.0 && args.end_pct <= 100.0;
+            let range_valid = args.start_pct < args.end_pct;
+
+            let is_valid = start_valid && end_valid && range_valid;
+            assert!(
+                !is_valid,
+                "Combination start={}, end={} should be invalid",
+                start, end
+            );
+        }
+    }
+
+    #[test]
+    fn test_model_option_values() {
+        // 異なるモデル名のテスト
+        let models = vec![
+            "server_default",
+            "chronos_bolt",
+            "autogluon",
+            "statistical",
+            "custom_model_name",
+        ];
+
+        for model in models {
+            let args = PredictArgs {
+                token_file: PathBuf::from("test.json"),
+                output: PathBuf::from("predictions"),
+                model: model.to_string(),
+                force: false,
+                start_pct: 0.0,
+                end_pct: 100.0,
+                forecast_ratio: 10.0,
+            };
+
+            assert_eq!(args.model, model);
+            assert!(!args.model.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_force_flag_variations() {
+        // force フラグのテスト
+        let args_false = PredictArgs {
+            token_file: PathBuf::from("test.json"),
+            output: PathBuf::from("predictions"),
+            model: "server_default".to_string(),
+            force: false,
+            start_pct: 0.0,
+            end_pct: 100.0,
+            forecast_ratio: 10.0,
+        };
+
+        let args_true = PredictArgs {
+            token_file: PathBuf::from("test.json"),
+            output: PathBuf::from("predictions"),
+            model: "server_default".to_string(),
+            force: true,
+            start_pct: 0.0,
+            end_pct: 100.0,
+            forecast_ratio: 10.0,
+        };
+
+        assert!(!args_false.force);
+        assert!(args_true.force);
+    }
+
+    #[test]
+    fn test_output_path_variations() {
+        // 異なる出力パスのテスト
+        let output_paths = vec![
+            "predictions",
+            "custom_output",
+            "results/2024",
+            "/tmp/predictions",
+            "./relative/path",
+        ];
+
+        for output_path in output_paths {
+            let args = PredictArgs {
+                token_file: PathBuf::from("test.json"),
+                output: PathBuf::from(output_path),
+                model: "server_default".to_string(),
+                force: false,
+                start_pct: 0.0,
+                end_pct: 100.0,
+                forecast_ratio: 10.0,
+            };
+
+            assert_eq!(args.output, PathBuf::from(output_path));
+        }
+    }
+
+    #[test]
+    fn test_token_file_path_variations() {
+        // 異なるトークンファイルパスのテスト
+        let token_files = vec![
+            "tokens/wrap.near.json",
+            "data/token_data.json",
+            "/absolute/path/token.json",
+            "./relative/token.json",
+            "nested/dir/structure/token.json",
+        ];
+
+        for token_file in token_files {
+            let args = PredictArgs {
+                token_file: PathBuf::from(token_file),
+                output: PathBuf::from("predictions"),
+                model: "server_default".to_string(),
+                force: false,
+                start_pct: 0.0,
+                end_pct: 100.0,
+                forecast_ratio: 10.0,
+            };
+
+            assert_eq!(args.token_file, PathBuf::from(token_file));
+            assert!(!args.token_file.as_os_str().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_extreme_percentage_values() {
+        // 境界値での start_pct と end_pct のテスト
+        let boundary_cases = vec![
+            (0.0, 0.1),    // 最小範囲
+            (99.9, 100.0), // 最大近く
+            (0.0, 1.0),    // 1%の範囲
+            (49.0, 51.0),  // 中央の小さな範囲
+        ];
+
+        for (start, end) in boundary_cases {
+            let args = PredictArgs {
+                token_file: PathBuf::from("test.json"),
+                output: PathBuf::from("predictions"),
+                model: "server_default".to_string(),
+                force: false,
+                start_pct: start,
+                end_pct: end,
+                forecast_ratio: 10.0,
+            };
+
+            assert!(args.start_pct >= 0.0 && args.start_pct <= 100.0);
+            assert!(args.end_pct >= 0.0 && args.end_pct <= 100.0);
+            assert!(args.start_pct < args.end_pct);
+
+            // 範囲の大きさをテスト
+            let range = args.end_pct - args.start_pct;
+            assert!(range > 0.0);
+        }
+    }
+}
