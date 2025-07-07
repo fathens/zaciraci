@@ -42,6 +42,26 @@ cli_tokens/
         └── verify_test.rs
 ```
 
+## ワークフロー統合
+
+`cli_tokens`は高ボラティリティトークンの分析から予測、検証まで一連のワークフローを提供します：
+
+```bash
+# 1. 高ボラティリティトークンを取得
+cli_tokens top -l 5
+
+# 2. 価格履歴を取得
+cli_tokens history tokens/wrap.near.json
+
+# 3. 実データを使用して予測実行
+cli_tokens predict tokens/wrap.near.json
+
+# 4. 予測結果を検証
+cli_tokens verify predictions/wrap.near.json
+```
+
+各コマンドは独立して実行可能ですが、上記の順序で実行することで完全な分析パイプラインを構築できます。
+
 ## コマンド仕様
 
 ### topコマンド
@@ -89,6 +109,80 @@ tokens/
     }
   }
 }
+```
+
+
+### historyコマンド
+
+指定されたトークンファイルから価格履歴データを取得して保存します。predictコマンドでモックデータではなく実際のデータを使用するために必要です。
+
+```bash
+cli_tokens history [OPTIONS] <TOKEN_FILE>
+
+ARGUMENTS:
+    <TOKEN_FILE>           トークンファイルパス (例: tokens/wrap.near.json)
+
+OPTIONS:
+    --base-token <TOKEN>   基準トークン [デフォルト: wrap.near]
+    -o, --output <DIR>     出力ディレクトリ [デフォルト: history/]
+    --force                既存の履歴データを強制上書き
+    -h, --help             ヘルプを表示
+```
+
+#### 動作仕様
+
+1. **期間の自動検出**: トークンファイルのメタデータから`start_date`と`end_date`を自動抽出
+2. **API呼び出し**: バックエンドの`/stats/get_values`エンドポイントを使用して価格履歴を取得
+3. **データ保存**: 取得した価格履歴を`history/`ディレクトリに保存
+
+#### 出力ファイル構造
+
+```
+history/
+├── wrap.near.json        # 価格履歴データ
+└── usdc.near.json
+```
+
+#### 価格履歴ファイル形式 (例: history/wrap.near.json)
+
+```json
+{
+  "metadata": {
+    "generated_at": "2025-07-07T12:00:00Z",
+    "start_date": "2025-07-06",
+    "end_date": "2025-07-07",
+    "token": "wrap.near",
+    "base_token": "wrap.near"
+  },
+  "price_history": {
+    "values": [
+      {
+        "time": "2025-07-06T00:00:00",
+        "value": 5.23
+      },
+      {
+        "time": "2025-07-06T01:00:00", 
+        "value": 5.25
+      }
+    ]
+  }
+}
+```
+
+#### 使用例
+
+```bash
+# 基本的な履歴取得
+cli_tokens history tokens/wrap.near.json
+
+# 異なる基準トークンを指定
+cli_tokens history tokens/usdc.near.json --base-token wrap.near
+
+# 出力ディレクトリを指定
+cli_tokens history tokens/wrap.near.json -o custom_history/
+
+# 既存データを上書き
+cli_tokens history tokens/wrap.near.json --force
 ```
 
 
