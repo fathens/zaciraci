@@ -3,8 +3,11 @@ use chrono::Utc;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-use crate::commands::{predict::PredictArgs, top::TopArgs};
-use crate::models::token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData};
+use crate::commands::{predict::PredictArgs, top::TopArgs, verify::VerifyArgs};
+use crate::models::{
+    token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData},
+    verification::ComparisonPoint,
+};
 use crate::utils::file::{ensure_directory_exists, write_json_file};
 
 #[cfg(test)]
@@ -943,6 +946,194 @@ mod predict_args_tests {
                 prediction_file,
                 PathBuf::from(format!("predictions/{}", expected_filename))
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn test_verify_args_parsing() {
+        // Test parsing of VerifyArgs
+        let args = VerifyArgs {
+            prediction_file: PathBuf::from("predictions/wrap.near.json"),
+            actual_data_file: Some(PathBuf::from("tokens/wrap.near.json")),
+            output: PathBuf::from("verification"),
+            force: false,
+        };
+
+        assert_eq!(
+            args.prediction_file,
+            PathBuf::from("predictions/wrap.near.json")
+        );
+        assert_eq!(
+            args.actual_data_file,
+            Some(PathBuf::from("tokens/wrap.near.json"))
+        );
+        assert_eq!(args.output, PathBuf::from("verification"));
+        assert!(!args.force);
+    }
+
+    #[test]
+    fn test_verify_args_default_values() {
+        // Test default values for VerifyArgs
+        let args = VerifyArgs {
+            prediction_file: PathBuf::from("predictions/test.json"),
+            actual_data_file: None,
+            output: PathBuf::from("verification"),
+            force: false,
+        };
+
+        assert_eq!(args.output, PathBuf::from("verification"));
+        assert!(!args.force);
+        assert!(args.actual_data_file.is_none());
+    }
+
+    #[test]
+    fn test_infer_actual_data_file() {
+        use crate::commands::verify::infer_actual_data_file;
+
+        let test_cases = vec![
+            ("wrap.near", "tokens/wrap.near.json"),
+            ("usdc.near", "tokens/usdc.near.json"),
+            ("token/with/slash", "tokens/token_with_slash.json"),
+            ("token:with:colons", "tokens/token_with_colons.json"),
+        ];
+
+        for (token_name, expected_path) in test_cases {
+            let result = infer_actual_data_file(token_name).unwrap();
+            assert_eq!(result, PathBuf::from(expected_path));
+        }
+    }
+
+    #[test]
+    fn test_verification_metrics_calculation() {
+        use crate::commands::verify::calculate_verification_metrics;
+
+        // Create test comparison points
+        let comparison_points = vec![
+            ComparisonPoint {
+                timestamp: Utc::now(),
+                predicted_value: 100.0,
+                actual_value: 98.0,
+                error: 2.0,
+                percentage_error: 2.04,
+            },
+            ComparisonPoint {
+                timestamp: Utc::now(),
+                predicted_value: 105.0,
+                actual_value: 107.0,
+                error: -2.0,
+                percentage_error: -1.87,
+            },
+            ComparisonPoint {
+                timestamp: Utc::now(),
+                predicted_value: 110.0,
+                actual_value: 109.0,
+                error: 1.0,
+                percentage_error: 0.92,
+            },
+        ];
+
+        let metrics = calculate_verification_metrics(&comparison_points).unwrap();
+
+        // Check MAE (Mean Absolute Error): (2.0 + 2.0 + 1.0) / 3 = 1.67
+        assert!((metrics.mae - 1.666666666666667).abs() < 0.01);
+
+        // Check RMSE: sqrt((4 + 4 + 1) / 3) = sqrt(3) ≈ 1.732
+        assert!((metrics.rmse - 1.7320508075688772).abs() < 0.01);
+
+        // Check MAPE: (2.04 + 1.87 + 0.92) / 3 ≈ 1.61
+        assert!((metrics.mape - 1.61).abs() < 0.01);
+
+        // Check correlation is calculated (should not be NaN)
+        assert!(!metrics.correlation.is_nan());
+    }
+
+    #[test]
+    fn test_verification_metrics_empty_data() {
+        use crate::commands::verify::calculate_verification_metrics;
+
+        let empty_points: Vec<ComparisonPoint> = vec![];
+        let result = calculate_verification_metrics(&empty_points);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No comparison points"));
+    }
+
+    #[test]
+    fn test_verification_metrics_single_point() {
+        use crate::commands::verify::calculate_verification_metrics;
+
+        let single_point = vec![ComparisonPoint {
+            timestamp: Utc::now(),
+            predicted_value: 100.0,
+            actual_value: 95.0,
+            error: 5.0,
+            percentage_error: 5.26,
+        }];
+
+        let metrics = calculate_verification_metrics(&single_point).unwrap();
+
+        // With single point: MAE = RMSE = 5.0
+        assert_eq!(metrics.mae, 5.0);
+        assert_eq!(metrics.rmse, 5.0);
+        assert_eq!(metrics.mape, 5.26);
+
+        // Direction accuracy is 0 for single point
+        assert_eq!(metrics.direction_accuracy, 0.0);
+
+        // Correlation is 0 for single point (no variance)
+        assert_eq!(metrics.correlation, 0.0);
+    }
+
+    #[test]
+    fn test_verify_force_flag_variations() {
+        // force フラグのテスト
+        let args_false = VerifyArgs {
+            prediction_file: PathBuf::from("predictions/test.json"),
+            actual_data_file: None,
+            output: PathBuf::from("verification"),
+            force: false,
+        };
+
+        let args_true = VerifyArgs {
+            prediction_file: PathBuf::from("predictions/test.json"),
+            actual_data_file: None,
+            output: PathBuf::from("verification"),
+            force: true,
+        };
+
+        assert!(!args_false.force);
+        assert!(args_true.force);
+    }
+
+    #[test]
+    fn test_verify_output_path_variations() {
+        // 異なる出力パスのテスト
+        let output_paths = vec![
+            "verification",
+            "custom_verification",
+            "results/2024",
+            "/tmp/verification",
+            "./relative/path",
+        ];
+
+        for output_path in output_paths {
+            let args = VerifyArgs {
+                prediction_file: PathBuf::from("predictions/test.json"),
+                actual_data_file: None,
+                output: PathBuf::from(output_path),
+                force: false,
+            };
+
+            assert_eq!(args.output, PathBuf::from(output_path));
         }
     }
 }

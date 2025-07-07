@@ -22,11 +22,13 @@ pub struct Cli {
 pub enum Commands {
     Top(commands::top::TopArgs),
     Predict(commands::predict::PredictArgs),
+    Verify(commands::verify::VerifyArgs),
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Top(args) => commands::top::run(args).await,
         Commands::Predict(args) => commands::predict::run(args).await,
+        Commands::Verify(args) => commands::verify::run(args).await,
     }
 }
