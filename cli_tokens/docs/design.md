@@ -51,13 +51,13 @@ cli_tokens/
 cli_tokens top -l 5
 
 # 2. 価格履歴を取得
-cli_tokens history tokens/usdc.tether-token.near.json
+cli_tokens history tokens/sample.token.near.json
 
 # 3. 実データを使用して予測実行
-cli_tokens predict tokens/usdc.tether-token.near.json
+cli_tokens predict tokens/sample.token.near.json
 
 # 4. 予測結果を検証
-cli_tokens verify predictions/usdc.tether-token.near.json
+cli_tokens verify predictions/sample.token.near.json
 ```
 
 各コマンドは独立して実行可能ですが、上記の順序で実行することで完全な分析パイプラインを構築できます。
@@ -86,12 +86,12 @@ OPTIONS:
 
 ```
 tokens/
-├── wrap.near.json        # 各トークンの詳細データ
-├── token2.near.json
-└── token3.near.json
+├── sample.token.near.json        # 各トークンの詳細データ
+├── another.token.near.json
+└── third.token.near.json
 ```
 
-#### 個別トークンファイル形式 (例: wrap.near.json)
+#### 個別トークンファイル形式 (例: sample.token.near.json)
 
 ```json
 {
@@ -99,10 +99,10 @@ tokens/
     "generated_at": "2025-01-03T12:00:00Z",
     "start_date": "2024-12-04",
     "end_date": "2025-01-03",
-    "token": "wrap.near"
+    "token": "sample.token.near"
   },
   "token_data": {
-    "token": "wrap.near",
+    "token": "sample.token.near",
     "volatility_score": 0.85,
     "price_data": {
       "current_price": 5.23,
@@ -118,7 +118,7 @@ tokens/
 
 指定されたトークンファイルから価格履歴データを取得して保存します。predictコマンドでモックデータではなく実際のデータを使用するために必要です。
 
-> **⚠️ 注意**: historyコマンドはバックエンドAPI (`http://localhost:8080`) が動作している必要があります。バックエンドがNear RPCのレート制限により応答が遅い場合があります。
+> **⚠️ 注意**: historyコマンドはバックエンドAPI (`http://localhost:8080`) が動作している必要があります。
 
 ```bash
 cli_tokens history [OPTIONS] <TOKEN_FILE>
@@ -149,11 +149,11 @@ OPTIONS:
 
 ```
 history/
-├── usdc.tether-token.near.json        # 価格履歴データ
-└── some.token.near.json
+├── sample.token.near.json        # 価格履歴データ
+└── another.token.near.json
 ```
 
-#### 価格履歴ファイル形式 (例: history/usdc.tether-token.near.json)
+#### 価格履歴ファイル形式 (例: history/sample.token.near.json)
 
 ```json
 {
@@ -161,7 +161,7 @@ history/
     "generated_at": "2025-07-07T12:00:00Z",
     "start_date": "2025-07-06",
     "end_date": "2025-07-07",
-    "token": "usdc.tether-token.near",
+    "token": "sample.token.near",
     "base_token": "wrap.near"
   },
   "price_history": {
@@ -182,17 +182,17 @@ history/
 #### 使用例
 
 ```bash
-# 基本的な履歴取得（USDCトークンの価格履歴を取得）
-cli_tokens history tokens/usdc.tether-token.near.json
+# 基本的な履歴取得
+cli_tokens history tokens/sample.token.near.json
 
 # 異なる基準トークンを指定
-cli_tokens history tokens/some.token.near.json --base-token usdc.tether-token.near
+cli_tokens history tokens/sample.token.near.json --base-token usdc.tether-token.near
 
 # 出力ディレクトリを指定
-cli_tokens history tokens/usdc.tether-token.near.json -o custom_history/
+cli_tokens history tokens/sample.token.near.json -o custom_history/
 
 # 既存データを上書き
-cli_tokens history tokens/usdc.tether-token.near.json --force
+cli_tokens history tokens/sample.token.near.json --force
 ```
 
 
@@ -204,7 +204,7 @@ cli_tokens history tokens/usdc.tether-token.near.json --force
 cli_tokens predict [OPTIONS] <TOKEN_FILE>
 
 ARGUMENTS:
-    <TOKEN_FILE>           トークンファイルパス (例: tokens/wrap.near.json)
+    <TOKEN_FILE>           トークンファイルパス (例: tokens/sample.token.near.json)
 
 OPTIONS:
     -o, --output <DIR>     出力ディレクトリ [デフォルト: predictions/]
@@ -223,16 +223,16 @@ OPTIONS:
 
 ```bash
 # 全データを使用（デフォルト）
-cli_tokens predict tokens/wrap.near.json
+cli_tokens predict tokens/sample.token.near.json
 
 # 最初の30%のデータのみ使用（バックテスト用）
-cli_tokens predict tokens/wrap.near.json --end-pct 30.0
+cli_tokens predict tokens/sample.token.near.json --end-pct 30.0
 
 # 中間期間（20%-80%）の分析
-cli_tokens predict tokens/wrap.near.json --start-pct 20.0 --end-pct 80.0
+cli_tokens predict tokens/sample.token.near.json --start-pct 20.0 --end-pct 80.0
 
 # 最新30%のデータのみ（最近のトレンド分析）
-cli_tokens predict tokens/wrap.near.json --start-pct 70.0
+cli_tokens predict tokens/sample.token.near.json --start-pct 70.0
 ```
 
 #### 予測期間指定オプション
@@ -241,16 +241,16 @@ cli_tokens predict tokens/wrap.near.json --start-pct 70.0
 
 ```bash
 # デフォルト（入力データ期間の10%）
-cli_tokens predict tokens/wrap.near.json
+cli_tokens predict tokens/sample.token.near.json
 
 # 短期予測（入力データ期間の5%）
-cli_tokens predict tokens/wrap.near.json --forecast-ratio 5.0
+cli_tokens predict tokens/sample.token.near.json --forecast-ratio 5.0
 
 # 中期予測（入力データ期間の25%）
-cli_tokens predict tokens/wrap.near.json --forecast-ratio 25.0
+cli_tokens predict tokens/sample.token.near.json --forecast-ratio 25.0
 
 # 長期予測（入力データ期間と同じ期間）
-cli_tokens predict tokens/wrap.near.json --forecast-ratio 100.0
+cli_tokens predict tokens/sample.token.near.json --forecast-ratio 100.0
 ```
 
 ##### 予測期間の計算例
@@ -277,8 +277,8 @@ cli_tokens predict tokens/wrap.near.json --forecast-ratio 100.0
 
 ```
 predictions/
-├── wrap.near.json        # 予測結果
-└── usdc.near.json
+├── sample.token.near.json        # 予測結果
+└── another.token.near.json
 ```
 
 ### verifyコマンド
@@ -289,7 +289,7 @@ predictions/
 cli_tokens verify [OPTIONS] <PREDICTION_FILE>
 
 ARGUMENTS:
-    <PREDICTION_FILE>      予測ファイルパス (例: predictions/wrap.near.json)
+    <PREDICTION_FILE>      予測ファイルパス (例: predictions/sample.token.near.json)
 
 OPTIONS:
     --actual-data-file <FILE>  実データファイルパス (省略時は自動推定: tokens/{token}.json)
@@ -316,7 +316,7 @@ OPTIONS:
 
 ```
 verification/
-├── wrap.near/
+├── sample.token.near/
 │   └── verification_report.json  # 詳細な検証結果（メトリクス含む）
 ```
 
@@ -324,7 +324,7 @@ verification/
 
 ```json
 {
-  "token": "wrap.near",
+  "token": "sample.token.near",
   "prediction_id": "task_12345",
   "verification_date": "2025-07-06T12:00:00Z",
   "period": {
@@ -357,24 +357,24 @@ verification/
 
 ```bash
 # 基本的な検証（実データファイルは自動推定）
-cli_tokens verify predictions/wrap.near.json
+cli_tokens verify predictions/sample.token.near.json
 
 # 実データファイルを明示的に指定
-cli_tokens verify predictions/wrap.near.json --actual-data-file tokens/wrap.near.json
+cli_tokens verify predictions/sample.token.near.json --actual-data-file tokens/sample.token.near.json
 
 # 出力ディレクトリを指定
-cli_tokens verify predictions/wrap.near.json -o custom_verification/
+cli_tokens verify predictions/sample.token.near.json -o custom_verification/
 
 # 既存結果を上書き
-cli_tokens verify predictions/wrap.near.json --force
+cli_tokens verify predictions/sample.token.near.json --force
 ```
 
 #### 検証データの流れ（自動推定）
 
-1. **予測ファイル (predictions/wrap.near.json)** から：
-   - トークン名 `wrap.near` を抽出
+1. **予測ファイル (predictions/sample.token.near.json)** から：
+   - トークン名 `sample.token.near` を抽出
    - 予測期間と予測値を取得
-2. **実データファイル自動特定**: `tokens/wrap.near.json` を自動推定
+2. **実データファイル自動特定**: `tokens/sample.token.near.json` を自動推定
    - トークン名とデータ期間を取得
    - 予測ファイルとの整合性確認
 3. **API取得**: 予測期間に対応する実データを取得
