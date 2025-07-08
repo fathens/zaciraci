@@ -68,17 +68,15 @@ impl ChronosApiClient {
     pub async fn poll_prediction_until_complete(
         &self,
         prediction_id: &str,
-        max_retries: u32,
     ) -> Result<PredictionResult> {
-        for i in 0..max_retries {
+        let mut poll_count = 0u32;
+        loop {
+            poll_count += 1;
             let response = self.get_prediction_status(prediction_id).await?;
 
             println!(
-                "Poll attempt {}/{}: Status = {}, Progress = {:?}",
-                i + 1,
-                max_retries,
-                response.status,
-                response.progress
+                "Poll attempt {}: Status = {}, Progress = {:?}",
+                poll_count, response.status, response.progress
             );
 
             if let Some(message) = &response.message {
@@ -106,10 +104,5 @@ impl ChronosApiClient {
                 }
             }
         }
-
-        Err(anyhow::anyhow!(
-            "Prediction timed out after {} retries",
-            max_retries
-        ))
     }
 }

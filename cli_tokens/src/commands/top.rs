@@ -59,8 +59,12 @@ pub async fn run(args: TopArgs) -> Result<()> {
         end_date.format("%Y-%m-%d")
     );
 
+    // Get base directory from environment variable
+    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+    let output_dir = PathBuf::from(&base_dir).join(&args.output);
+
     // Ensure output directory exists
-    ensure_directory_exists(&args.output)?;
+    ensure_directory_exists(&output_dir)?;
 
     // Show progress
     let pb = ProgressBar::new(args.limit as u64);
@@ -102,7 +106,7 @@ pub async fn run(args: TopArgs) -> Result<()> {
         };
 
         // Create quote_token subdirectory
-        let quote_dir = args.output.join(sanitize_filename(quote_token));
+        let quote_dir = output_dir.join(sanitize_filename(quote_token));
         ensure_directory_exists(&quote_dir)?;
 
         let filename = format!("{}.json", sanitize_filename(&token.0));
@@ -114,7 +118,7 @@ pub async fn run(args: TopArgs) -> Result<()> {
     pb.finish_with_message(format!(
         "Successfully saved {} tokens to {:?}",
         tokens.len(),
-        args.output
+        output_dir
     ));
     Ok(())
 }

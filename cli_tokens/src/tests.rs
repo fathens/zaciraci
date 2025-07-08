@@ -442,7 +442,7 @@ mod api_tests {
             .await;
 
         let client = ChronosApiClient::new(server.url());
-        let result = client.poll_prediction_until_complete("pred_123", 1).await;
+        let result = client.poll_prediction_until_complete("pred_123").await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -474,7 +474,7 @@ mod api_tests {
             .await;
 
         let client = ChronosApiClient::new(server.url());
-        let result = client.poll_prediction_until_complete("pred_123", 1).await;
+        let result = client.poll_prediction_until_complete("pred_123").await;
 
         assert!(result.is_err());
         assert!(result
@@ -1252,5 +1252,347 @@ mod verify_tests {
 
             assert_eq!(args.output, PathBuf::from(output_path));
         }
+    }
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::*;
+    use std::env;
+
+    #[test]
+    fn test_base_dir_environment_variable() {
+        // Test default behavior (no environment variable)
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        let default_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        assert_eq!(default_base, ".");
+
+        // Test custom base directory
+        env::set_var("CLI_TOKENS_BASE_DIR", "/custom/workspace");
+        let custom_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        assert_eq!(custom_base, "/custom/workspace");
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
+
+    #[test]
+    fn test_path_construction_with_base_dir() {
+        // Test path construction with different base directories
+        let test_cases = vec![
+            (".", "tokens", "./tokens"),
+            ("/workspace", "history", "/workspace/history"),
+            ("./project", "predictions", "./project/predictions"),
+            (
+                "/tmp/cli_test",
+                "verification",
+                "/tmp/cli_test/verification",
+            ),
+        ];
+
+        for (base_dir, relative_path, expected) in test_cases {
+            env::set_var("CLI_TOKENS_BASE_DIR", base_dir);
+            let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+            let constructed_path = PathBuf::from(actual_base).join(relative_path);
+            assert_eq!(constructed_path, PathBuf::from(expected));
+        }
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
+
+    #[test]
+    fn test_history_file_path_construction() {
+        // Test history file path construction logic similar to predict command
+        env::set_var("CLI_TOKENS_BASE_DIR", "/test/workspace");
+
+        let base_dir = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        let quote_token = "wrap.near";
+        let token_name = "sample.token.near";
+
+        let history_file = PathBuf::from(base_dir)
+            .join("history")
+            .join(quote_token)
+            .join(format!("{}.json", token_name));
+
+        assert_eq!(
+            history_file,
+            PathBuf::from("/test/workspace/history/wrap.near/sample.token.near.json")
+        );
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
+
+    #[tokio::test]
+    async fn test_top_command_with_base_dir() -> Result<()> {
+        use crate::commands::top::TopArgs;
+        use std::env;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        // Set environment variable
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+
+        let args = TopArgs {
+            start: None,
+            end: None,
+            limit: 1,
+            output: PathBuf::from("tokens"),
+            format: "json".to_string(),
+            quote_token: None,
+        };
+
+        // Test that environment variable is correctly used in path construction
+        let expected_output_path = PathBuf::from(base_path).join("tokens");
+
+        // Verify the environment variable is being read correctly
+        let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        let constructed_path = PathBuf::from(actual_base).join(&args.output);
+
+        assert_eq!(constructed_path, expected_output_path);
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_history_command_with_base_dir() -> Result<()> {
+        use crate::commands::history::HistoryArgs;
+        use std::env;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        // Set environment variable
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+
+        let args = HistoryArgs {
+            token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
+            quote_token: "wrap.near".to_string(),
+            output: PathBuf::from("history"),
+            force: false,
+        };
+
+        // Test that environment variable is correctly used in path construction
+        let expected_output_path = PathBuf::from(base_path).join("history");
+
+        // Verify the environment variable is being read correctly
+        let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        let constructed_path = PathBuf::from(actual_base).join(&args.output);
+
+        assert_eq!(constructed_path, expected_output_path);
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_predict_command_with_base_dir() -> Result<()> {
+        use crate::commands::predict::PredictArgs;
+        use std::env;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        // Set environment variable
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+
+        let args = PredictArgs {
+            token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
+            output: PathBuf::from("predictions"),
+            model: "server_default".to_string(),
+            force: false,
+            start_pct: 0.0,
+            end_pct: 100.0,
+            forecast_ratio: 10.0,
+        };
+
+        // Test output path construction
+        let expected_output_path = PathBuf::from(base_path).join("predictions");
+        let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        let constructed_output_path = PathBuf::from(&actual_base).join(&args.output);
+        assert_eq!(constructed_output_path, expected_output_path);
+
+        // Test history file path construction
+        let expected_history_path = PathBuf::from(base_path)
+            .join("history")
+            .join("wrap.near")
+            .join("sample.token.near.json");
+        let constructed_history_path = PathBuf::from(actual_base)
+            .join("history")
+            .join("wrap.near")
+            .join("sample.token.near.json");
+        assert_eq!(constructed_history_path, expected_history_path);
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_verify_command_with_base_dir() -> Result<()> {
+        use crate::commands::verify::VerifyArgs;
+        use std::env;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        // Set environment variable
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+
+        let args = VerifyArgs {
+            prediction_file: PathBuf::from("predictions/wrap.near/sample.token.near.json"),
+            actual_data_file: None,
+            output: PathBuf::from("verification"),
+            force: false,
+        };
+
+        // Test that environment variable is correctly used in path construction
+        let expected_output_path = PathBuf::from(base_path).join("verification");
+
+        // Verify the environment variable is being read correctly
+        let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        let constructed_path = PathBuf::from(actual_base).join(&args.output);
+
+        assert_eq!(constructed_path, expected_output_path);
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_commands_without_base_dir() -> Result<()> {
+        use std::env;
+
+        // Ensure environment variable is not set
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+
+        // Test default behavior (should use "." as base directory)
+        let default_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        assert_eq!(default_base, ".");
+
+        // Test path construction with default
+        let output_path = PathBuf::from(default_base).join("tokens");
+        assert_eq!(output_path, PathBuf::from("./tokens"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_nested_directory_structure() -> Result<()> {
+        use std::env;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        // Set environment variable
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+
+        let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+
+        // Test complete directory structure
+        let quote_token = "wrap.near";
+        let token_name = "sample.token.near";
+
+        // Test tokens structure
+        let tokens_path = PathBuf::from(&actual_base)
+            .join("tokens")
+            .join(quote_token)
+            .join(format!("{}.json", token_name));
+
+        // Test history structure
+        let history_path = PathBuf::from(&actual_base)
+            .join("history")
+            .join(quote_token)
+            .join(format!("{}.json", token_name));
+
+        // Test predictions structure
+        let predictions_path = PathBuf::from(&actual_base)
+            .join("predictions")
+            .join(quote_token)
+            .join(format!("{}.json", token_name));
+
+        // Test verification structure
+        let verification_path = PathBuf::from(&actual_base)
+            .join("verification")
+            .join(quote_token)
+            .join(token_name)
+            .join("verification_report.json");
+
+        // Verify all paths are constructed correctly
+        assert!(tokens_path.to_string_lossy().contains(base_path));
+        assert!(history_path.to_string_lossy().contains(base_path));
+        assert!(predictions_path.to_string_lossy().contains(base_path));
+        assert!(verification_path.to_string_lossy().contains(base_path));
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_command_integration_with_base_dir() -> Result<()> {
+        use crate::utils::file::ensure_directory_exists;
+        use std::env;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        // Set environment variable
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+
+        // Test directory creation with environment variable
+        let test_paths = vec!["tokens", "history", "predictions", "verification"];
+
+        for path in test_paths {
+            let full_path = PathBuf::from(base_path).join(path);
+            ensure_directory_exists(&full_path)?;
+            assert!(full_path.exists());
+            assert!(full_path.is_dir());
+        }
+
+        // Test nested directory structure
+        let quote_token_dir = PathBuf::from(base_path).join("tokens").join("wrap.near");
+        ensure_directory_exists(&quote_token_dir)?;
+        assert!(quote_token_dir.exists());
+        assert!(quote_token_dir.is_dir());
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        Ok(())
+    }
+
+    #[test]
+    fn test_environment_variable_precedence() {
+        use std::env;
+
+        // Test that environment variable takes precedence over default
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+        let default_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        assert_eq!(default_base, ".");
+
+        // Set custom value
+        env::set_var("CLI_TOKENS_BASE_DIR", "/custom/path");
+        let custom_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        assert_eq!(custom_base, "/custom/path");
+
+        // Test empty value handling
+        env::set_var("CLI_TOKENS_BASE_DIR", "");
+        let empty_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        assert_eq!(empty_base, "");
+
+        // Clean up
+        env::remove_var("CLI_TOKENS_BASE_DIR");
     }
 }

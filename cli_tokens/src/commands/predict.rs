@@ -107,15 +107,19 @@ pub async fn run(args: PredictArgs) -> Result<()> {
         token_data.token_data.token
     );
 
+    // Get base directory from environment variable
+    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+    let output_dir = PathBuf::from(&base_dir).join(&args.output);
+
     // Ensure output directory exists
-    ensure_directory_exists(&args.output)?;
+    ensure_directory_exists(&output_dir)?;
 
     // Extract quote_token from token file path or use default
     let quote_token =
         extract_quote_token_from_path(&args.token_file).unwrap_or("wrap.near".to_string());
 
     // Create quote_token subdirectory
-    let quote_dir = args.output.join(sanitize_filename(&quote_token));
+    let quote_dir = output_dir.join(sanitize_filename(&quote_token));
     ensure_directory_exists(&quote_dir)?;
 
     // Create prediction file path (${quote_token}/${base_token}.json)
@@ -142,7 +146,9 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     pb.set_message("Loading historical token data...");
 
     // Try to load from history file first (${quote_token}/${base_token}.json)
-    let history_file = PathBuf::from("history")
+    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+    let history_file = PathBuf::from(base_dir)
+        .join("history")
         .join(sanitize_filename(&quote_token))
         .join(format!(
             "{}.json",
@@ -234,7 +240,7 @@ pub async fn run(args: PredictArgs) -> Result<()> {
     // Poll for completion
     pb.set_message("Waiting for prediction to complete...");
     let completed_prediction = chronos_client
-        .poll_prediction_until_complete(&prediction_response.task_id, 5) // 5 polls for quick test
+        .poll_prediction_until_complete(&prediction_response.task_id)
         .await?;
 
     let prediction_result = completed_prediction

@@ -30,13 +30,17 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
     // トークンファイルを読み込み
     let token_data = load_token_file(&args.token_file).await?;
 
+    // Get base directory from environment variable
+    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+    let output_dir = std::path::PathBuf::from(&base_dir).join(&args.output);
+
     // 出力ディレクトリを作成
-    fs::create_dir_all(&args.output)
+    fs::create_dir_all(&output_dir)
         .await
         .context("Failed to create output directory")?;
 
     // quote_token サブディレクトリを作成
-    let quote_dir = args.output.join(sanitize_filename(&args.quote_token));
+    let quote_dir = output_dir.join(sanitize_filename(&args.quote_token));
     fs::create_dir_all(&quote_dir)
         .await
         .context("Failed to create quote token subdirectory")?;

@@ -47,17 +47,20 @@ cli_tokens/
 `cli_tokens`は高ボラティリティトークンの分析から予測、検証まで一連のワークフローを提供します：
 
 ```bash
+# 作業ディレクトリを設定
+export CLI_TOKENS_BASE_DIR="./workspace"
+
 # 1. 高ボラティリティトークンを取得
-cli_tokens top -l 5
+cli_tokens top -l 5 --output tokens
 
 # 2. 価格履歴を取得
-cli_tokens history tokens/wrap.near/sample.token.near.json
+cli_tokens history tokens/wrap.near/sample.token.near.json --output history
 
 # 3. 実データを使用して予測実行
-cli_tokens predict tokens/wrap.near/sample.token.near.json
+cli_tokens predict tokens/wrap.near/sample.token.near.json --output predictions
 
 # 4. 予測結果を検証
-cli_tokens verify predictions/wrap.near/sample.token.near.json
+cli_tokens verify predictions/wrap.near/sample.token.near.json --output verification
 ```
 
 各コマンドは独立して実行可能ですが、上記の順序で実行することで完全な分析パイプラインを構築できます。
@@ -79,14 +82,17 @@ cli_tokens verify predictions/wrap.near/sample.token.near.json
 #### 使用例
 
 ```bash
+# 環境変数を設定して作業ディレクトリを統一
+export CLI_TOKENS_BASE_DIR="./workspace"
+
 # 基本的な使用（wrap.nearベース）
-cli_tokens top -l 5
+cli_tokens top -l 5 --output tokens
 
 # 異なるquote tokenを使用
-cli_tokens top -l 5 --quote-token usdc.tether-token.near
+cli_tokens top -l 5 --quote-token usdc.tether-token.near --output tokens
 
 # 特定期間でのボラティリティ分析
-cli_tokens top -s 2025-06-01 -e 2025-07-01 -l 10 --quote-token wrap.near
+cli_tokens top -s 2025-06-01 -e 2025-07-01 -l 10 --quote-token wrap.near --output tokens
 ```
 
 #### コマンド仕様
@@ -98,7 +104,7 @@ OPTIONS:
     -s, --start <DATE>         開始日 (YYYY-MM-DD形式) [デフォルト: 30日前]
     -e, --end <DATE>           終了日 (YYYY-MM-DD形式) [デフォルト: 現在]
     -l, --limit <NUMBER>       取得するトークン数 [デフォルト: 10]
-    -o, --output <DIR>         出力ディレクトリ [デフォルト: tokens/]
+    -o, --output <DIR>         出力ディレクトリ [デフォルト: tokens/] ※CLI_TOKENS_BASE_DIRからの相対パス
     -f, --format <FORMAT>      出力形式 (json|csv) [デフォルト: json]
     --quote-token <TOKEN>      ボラティリティ計算の基準トークン [デフォルト: wrap.near]
     -h, --help                 ヘルプを表示
@@ -106,15 +112,18 @@ OPTIONS:
 
 #### 出力ファイル構造
 
+環境変数`CLI_TOKENS_BASE_DIR`で指定したディレクトリ配下に以下の構造で保存されます：
+
 ```
-tokens/
-├── wrap.near/                     # Quote tokenディレクトリ
-│   ├── sample.token.near.json     # 各トークンの詳細データ
-│   ├── another.token.near.json
-│   └── third.token.near.json
-└── usdc.tether-token.near/        # 異なるquote tokenの例
-    ├── sample.token.near.json
-    └── another.token.near.json
+${CLI_TOKENS_BASE_DIR}/
+└── tokens/
+    ├── wrap.near/                     # Quote tokenディレクトリ
+    │   ├── sample.token.near.json     # 各トークンの詳細データ
+    │   ├── another.token.near.json
+    │   └── third.token.near.json
+    └── usdc.tether-token.near/        # 異なるquote tokenの例
+        ├── sample.token.near.json
+        └── another.token.near.json
 ```
 
 #### 個別トークンファイル形式 (例: tokens/wrap.near/sample.token.near.json)
@@ -150,13 +159,26 @@ tokens/
 cli_tokens history [OPTIONS] <TOKEN_FILE>
 
 ARGUMENTS:
-    <TOKEN_FILE>           トークンファイルパス (例: tokens/wrap.near.json)
+    <TOKEN_FILE>           トークンファイルパス (例: tokens/wrap.near/sample.token.near.json)
 
 OPTIONS:
     --quote-token <TOKEN>  見積りトークン（価格表示の基準） [デフォルト: wrap.near]
-    -o, --output <DIR>     出力ディレクトリ [デフォルト: history/]
+    -o, --output <DIR>     出力ディレクトリ [デフォルト: history/] ※CLI_TOKENS_BASE_DIRからの相対パス
     --force                既存の履歴データを強制上書き
     -h, --help             ヘルプを表示
+```
+
+#### 使用例
+
+```bash
+# 環境変数を設定
+export CLI_TOKENS_BASE_DIR="./workspace"
+
+# 基本的な使用（トークンファイルから履歴を取得）
+cli_tokens history tokens/wrap.near/sample.token.near.json --output history
+
+# 異なるquote tokenで履歴を取得
+cli_tokens history tokens/wrap.near/sample.token.near.json --quote-token usdc.tether-token.near --output history
 ```
 
 #### 動作仕様
@@ -181,12 +203,13 @@ OPTIONS:
 #### 出力ファイル構造
 
 ```
-history/
-├── wrap.near/                            # Quote tokenディレクトリ
-│   ├── sample.token.near.json           # Base tokenファイル
-│   └── another.token.near.json
-└── usdc.tether-token.near/              # 異なるquote tokenの例
-    └── sample.token.near.json
+${CLI_TOKENS_BASE_DIR}/
+└── history/
+    ├── wrap.near/                            # Quote tokenディレクトリ
+    │   ├── sample.token.near.json           # Base tokenファイル
+    │   └── another.token.near.json
+    └── usdc.tether-token.near/              # 異なるquote tokenの例
+        └── sample.token.near.json
 ```
 
 #### 価格履歴ファイル形式 (例: history/wrap.near/sample.token.near.json)
@@ -236,14 +259,21 @@ cli_tokens history tokens/wrap.near/sample.token.near.json --force
 
 指定されたトークンファイルに対してzeroshot予測を実行します。
 
+> **⚠️ 注意**: predictコマンドは機械学習モデルの訓練を含むため、実行時間が非常に長くなります（通常30分〜2時間程度）。Chronos API (`http://localhost:8000`) が動作している必要があります。
+> 
+> **実行時の注意事項**:
+> - ポーリングは無制限に継続されます（タイムアウトなし）
+> - バックグラウンド実行を推奨: `nohup cli_tokens predict ... > predict.log 2>&1 &`
+> - 進捗状況は Chronos API のログで確認できます: `docker logs -f zcrc-chronos`
+
 ```bash
 cli_tokens predict [OPTIONS] <TOKEN_FILE>
 
 ARGUMENTS:
-    <TOKEN_FILE>           トークンファイルパス (例: tokens/sample.token.near.json)
+    <TOKEN_FILE>           トークンファイルパス (例: tokens/wrap.near/sample.token.near.json)
 
 OPTIONS:
-    -o, --output <DIR>     出力ディレクトリ [デフォルト: predictions/]
+    -o, --output <DIR>     出力ディレクトリ [デフォルト: predictions/] ※CLI_TOKENS_BASE_DIRからの相対パス
     -m, --model <MODEL>    予測モデル [デフォルト: server_default]
                           選択肢: chronos_bolt, autogluon, statistical, server_default
     --force                既存の予測結果を強制上書き
@@ -251,6 +281,22 @@ OPTIONS:
     --end-pct <PCT>        データ範囲の終了パーセンテージ (0.0-100.0) [デフォルト: 100.0]
     --forecast-ratio <PCT> 予測期間の比率（入力データ期間に対する%）(0.0-500.0) [デフォルト: 10.0]
     -h, --help            ヘルプを表示
+```
+
+#### 使用例
+
+```bash
+# 環境変数を設定
+export CLI_TOKENS_BASE_DIR="./workspace"
+
+# 基本的な予測実行（自動的にhistory/wrap.near/sample.token.near.jsonを参照）
+cli_tokens predict tokens/wrap.near/sample.token.near.json --output predictions
+
+# カスタムモデルでの予測
+cli_tokens predict tokens/wrap.near/sample.token.near.json --model chronos_bolt --output predictions
+
+# データ範囲を限定した予測（70-100%のデータを使用）
+cli_tokens predict tokens/wrap.near/sample.token.near.json --start-pct 70.0 --end-pct 100.0 --output predictions
 ```
 
 #### データ範囲指定オプション
@@ -312,12 +358,13 @@ cli_tokens predict tokens/wrap.near/sample.token.near.json --forecast-ratio 100.
 #### 出力ファイル構造
 
 ```
-predictions/
-├── wrap.near/                     # Quote tokenディレクトリ
-│   ├── sample.token.near.json    # 予測結果
-│   └── another.token.near.json
-└── usdc.tether-token.near/       # 異なるquote tokenの例
-    └── sample.token.near.json
+${CLI_TOKENS_BASE_DIR}/
+└── predictions/
+    ├── wrap.near/                     # Quote tokenディレクトリ
+    │   ├── sample.token.near.json    # 予測結果
+    │   └── another.token.near.json
+    └── usdc.tether-token.near/       # 異なるquote tokenの例
+        └── sample.token.near.json
 ```
 
 ### verifyコマンド
@@ -328,13 +375,31 @@ predictions/
 cli_tokens verify [OPTIONS] <PREDICTION_FILE>
 
 ARGUMENTS:
-    <PREDICTION_FILE>      予測ファイルパス (例: predictions/sample.token.near.json)
+    <PREDICTION_FILE>      予測ファイルパス (例: predictions/wrap.near/sample.token.near.json)
 
 OPTIONS:
-    --actual-data-file <FILE>  実データファイルパス (省略時は自動推定: tokens/{token}.json)
-    -o, --output <DIR>         出力ディレクトリ [デフォルト: verification/]
+    --actual-data-file <FILE>  実データファイルパス (省略時は自動推定: tokens/{quote_token}/{token}.json)
+    -o, --output <DIR>         出力ディレクトリ [デフォルト: verification/] ※CLI_TOKENS_BASE_DIRからの相対パス
     --force                    既存の検証結果を強制上書き
     -h, --help                 ヘルプを表示
+```
+
+#### 使用例
+
+```bash
+# 環境変数を設定
+export CLI_TOKENS_BASE_DIR="./workspace"
+
+# 基本的な検証（実データファイルを自動推定）
+cli_tokens verify predictions/wrap.near/sample.token.near.json --output verification
+
+# 実データファイルを明示的に指定
+cli_tokens verify predictions/wrap.near/sample.token.near.json \
+  --actual-data-file tokens/wrap.near/sample.token.near.json \
+  --output verification
+
+# 検証結果を強制上書き
+cli_tokens verify predictions/wrap.near/sample.token.near.json --force --output verification
 ```
 
 #### 検証プロセス
@@ -354,13 +419,14 @@ OPTIONS:
 #### 出力ファイル構造
 
 ```
-verification/
-├── wrap.near/                     # Quote tokenディレクトリ
-│   └── sample.token.near/         # Base tokenディレクトリ
-│       └── verification_report.json  # 詳細な検証結果（メトリクス含む）
-└── usdc.tether-token.near/       # 異なるquote tokenの例
-    └── sample.token.near/
-        └── verification_report.json
+${CLI_TOKENS_BASE_DIR}/
+└── verification/
+    ├── wrap.near/                     # Quote tokenディレクトリ
+    │   └── sample.token.near/         # Base tokenディレクトリ
+    │       └── verification_report.json  # 詳細な検証結果（メトリクス含む）
+    └── usdc.tether-token.near/       # 異なるquote tokenの例
+        └── sample.token.near/
+            └── verification_report.json
 ```
 
 #### 検証レポート形式
@@ -554,7 +620,27 @@ pub enum CliTokensError {
 
 ### 5. 設定管理
 
-環境変数および設定ファイルによる設定：
+#### 環境変数
+
+`CLI_TOKENS_BASE_DIR`: 作業ディレクトリのベースパスを指定します。
+
+```bash
+# 基本的な使用例
+export CLI_TOKENS_BASE_DIR="/path/to/workspace"
+cli_tokens top --output tokens
+# → ファイルは /path/to/workspace/tokens/ に保存される
+
+# 設定しない場合は現在のディレクトリが使用される
+cli_tokens top --output tokens
+# → ファイルは ./tokens/ に保存される
+```
+
+この環境変数により：
+- すべてのコマンドの出力先ディレクトリが統一される
+- predictコマンドが適切なhistoryファイルを自動発見できる
+- 複数のプロジェクトでの作業ディレクトリ分離が可能
+
+#### 設定ファイル
 
 ```toml
 # ~/.config/cli_tokens/config.toml

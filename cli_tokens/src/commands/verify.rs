@@ -75,8 +75,12 @@ pub async fn run(args: VerifyArgs) -> Result<()> {
         ));
     }
 
+    // Get base directory from environment variable
+    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+    let output_dir = PathBuf::from(&base_dir).join(&args.output);
+
     // Create output directory structure (${quote_token}/${base_token}/)
-    let quote_dir = args.output.join(sanitize_filename(&quote_token));
+    let quote_dir = output_dir.join(sanitize_filename(&quote_token));
     let token_output_dir = quote_dir.join(sanitize_filename(&prediction_data.token));
     ensure_directory_exists(&token_output_dir)?;
 
