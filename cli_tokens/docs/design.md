@@ -301,19 +301,31 @@ cli_tokens predict tokens/wrap.near/sample.token.near.json --start-pct 70.0 --en
 
 #### データ範囲指定オプション
 
-`--start-pct`と`--end-pct`オプションにより、予測に使用する履歴データの範囲を柔軟に指定できます：
+`--start-pct`と`--end-pct`オプションにより、予測に使用する履歴データの範囲を時刻ベースで柔軟に指定できます：
+
+##### 時刻ベースのパーセンテージ計算
+
+パーセンテージは、データの最初と最後のタイムスタンプ間の時間軸に基づいて計算されます：
+
+- 0%: 最初のデータポイントの時刻
+- 100%: 最後のデータポイントの時刻
+- 指定されたパーセンテージは、この時間範囲内の相対的な位置を表します
+
+例：データが2025-01-01 00:00から2025-01-11 00:00まで（10日間）の場合
+- --start-pct 20.0: 2025-01-03 00:00以降のデータ（開始から2日後）
+- --end-pct 80.0: 2025-01-09 00:00以前のデータ（開始から8日後）
 
 ```bash
 # 全データを使用（デフォルト）
 cli_tokens predict tokens/wrap.near/sample.token.near.json
 
-# 最初の30%のデータのみ使用（バックテスト用）
+# 最初の30%の期間のデータのみ使用（バックテスト用）
 cli_tokens predict tokens/wrap.near/sample.token.near.json --end-pct 30.0
 
 # 中間期間（20%-80%）の分析
 cli_tokens predict tokens/wrap.near/sample.token.near.json --start-pct 20.0 --end-pct 80.0
 
-# 最新30%のデータのみ（最近のトレンド分析）
+# 最新30%の期間のデータのみ（最近のトレンド分析）
 cli_tokens predict tokens/wrap.near/sample.token.near.json --start-pct 70.0
 ```
 

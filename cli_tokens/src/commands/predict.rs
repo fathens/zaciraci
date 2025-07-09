@@ -39,14 +39,14 @@ pub struct PredictArgs {
     #[clap(
         long,
         default_value = "0.0",
-        help = "Start percentage of data range (0.0-100.0)"
+        help = "Start percentage of time range (0.0-100.0)"
     )]
     pub start_pct: f64,
 
     #[clap(
         long,
         default_value = "100.0",
-        help = "End percentage of data range (0.0-100.0)"
+        help = "End percentage of time range (0.0-100.0)"
     )]
     pub end_pct: f64,
 
@@ -166,24 +166,55 @@ pub async fn run(args: PredictArgs) -> Result<()> {
         ));
     };
 
-    // Apply percentage range filtering
+    // Apply time-based percentage range filtering
     let total_len = timestamps.len();
     if args.start_pct != 0.0 || args.end_pct != 100.0 {
-        let start_idx = ((total_len as f64) * (args.start_pct / 100.0)).round() as usize;
-        let end_idx = ((total_len as f64) * (args.end_pct / 100.0)).round() as usize;
+        // Get the time range of the data
+        let earliest_time = timestamps
+            .iter()
+            .min()
+            .ok_or_else(|| anyhow::anyhow!("No timestamps found"))?;
+        let latest_time = timestamps
+            .iter()
+            .max()
+            .ok_or_else(|| anyhow::anyhow!("No timestamps found"))?;
 
-        let start_idx = start_idx.min(total_len);
-        let end_idx = end_idx.min(total_len).max(start_idx);
+        // Calculate the total duration
+        let total_duration = latest_time.signed_duration_since(*earliest_time);
 
-        timestamps = timestamps[start_idx..end_idx].to_vec();
-        values = values[start_idx..end_idx].to_vec();
+        // Calculate start and end times based on percentages
+        let start_offset = Duration::milliseconds(
+            (total_duration.num_milliseconds() as f64 * (args.start_pct / 100.0)) as i64,
+        );
+        let end_offset = Duration::milliseconds(
+            (total_duration.num_milliseconds() as f64 * (args.end_pct / 100.0)) as i64,
+        );
+
+        let start_time = *earliest_time + start_offset;
+        let end_time = *earliest_time + end_offset;
+
+        // Filter data points based on time range
+        let mut filtered_timestamps = Vec::new();
+        let mut filtered_values = Vec::new();
+
+        for (i, timestamp) in timestamps.iter().enumerate() {
+            if *timestamp >= start_time && *timestamp <= end_time {
+                filtered_timestamps.push(*timestamp);
+                filtered_values.push(values[i]);
+            }
+        }
+
+        timestamps = filtered_timestamps;
+        values = filtered_values;
 
         pb.set_message(format!(
-            "📊 Using {:.1}%-{:.1}% range ({} of {} data points)",
+            "📊 Using {:.1}%-{:.1}% time range ({} of {} data points, from {} to {})",
             args.start_pct,
             args.end_pct,
             timestamps.len(),
-            total_len
+            total_len,
+            start_time.format("%Y-%m-%d %H:%M"),
+            end_time.format("%Y-%m-%d %H:%M")
         ));
     } else {
         pb.set_message(format!("📊 Using all {} data points", total_len));
