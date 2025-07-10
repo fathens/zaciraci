@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use crate::commands::{
-    history::HistoryArgs, predict::PredictArgs, top::TopArgs, verify::VerifyArgs,
+    history::HistoryArgs, predict::kick::KickArgs, top::TopArgs, verify::VerifyArgs,
 };
 use crate::models::{
     token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData},
@@ -18,15 +18,15 @@ mod unit_tests {
 
     #[test]
     fn test_predict_args_parsing() {
-        // Test parsing of PredictArgs
-        let args = PredictArgs {
+        // Test parsing of KickArgs
+        let args = KickArgs {
             token_file: PathBuf::from("tokens/wrap.near.json"),
             output: PathBuf::from("predictions"),
             model: "server_default".to_string(),
-            force: false,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
+            force: false,
         };
 
         assert_eq!(args.token_file, PathBuf::from("tokens/wrap.near.json"));
@@ -61,6 +61,7 @@ mod unit_tests {
                 start_date: "2023-01-01".to_string(),
                 end_date: "2023-01-31".to_string(),
                 token: "wrap.near".to_string(),
+                quote_token: Some("wrap.near".to_string()),
             },
             token_data: TokenVolatilityData {
                 token: "wrap.near".to_string(),
@@ -108,6 +109,7 @@ mod unit_tests {
                 start_date: "2023-01-01".to_string(),
                 end_date: "2023-01-31".to_string(),
                 token: "test.token".to_string(),
+                quote_token: Some("wrap.near".to_string()),
             },
             token_data: TokenVolatilityData {
                 token: "test.token".to_string(),
@@ -589,14 +591,14 @@ mod predict_args_tests {
     #[test]
     fn test_default_values() {
         // テストのデフォルト値確認
-        let args = PredictArgs {
+        let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
             model: "server_default".to_string(),
-            force: false,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
+            force: false,
         };
 
         assert_eq!(args.output, PathBuf::from("predictions"));
@@ -610,14 +612,14 @@ mod predict_args_tests {
     #[test]
     fn test_custom_values() {
         // カスタム値でのテスト
-        let args = PredictArgs {
+        let args = KickArgs {
             token_file: PathBuf::from("custom/token.json"),
             output: PathBuf::from("custom_output"),
             model: "chronos_bolt".to_string(),
-            force: true,
             start_pct: 25.0,
             end_pct: 75.0,
             forecast_ratio: 50.0,
+            force: true,
         };
 
         assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
@@ -643,14 +645,14 @@ mod predict_args_tests {
         ];
 
         for (start, end) in valid_combinations {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
                 model: "server_default".to_string(),
-                force: false,
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
+                force: false,
             };
 
             // バリデーション条件をテスト
@@ -672,14 +674,14 @@ mod predict_args_tests {
         ];
 
         for (start, end) in invalid_combinations {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
                 model: "server_default".to_string(),
-                force: false,
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
+                force: false,
             };
 
             // バリデーション条件をテスト
@@ -710,14 +712,14 @@ mod predict_args_tests {
         ];
 
         for model in models {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
                 model: model.to_string(),
-                force: false,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
+                force: false,
             };
 
             assert_eq!(args.model, model);
@@ -728,24 +730,24 @@ mod predict_args_tests {
     #[test]
     fn test_force_flag_variations() {
         // force フラグのテスト
-        let args_false = PredictArgs {
+        let args_false = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
             model: "server_default".to_string(),
-            force: false,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
+            force: false,
         };
 
-        let args_true = PredictArgs {
+        let args_true = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
             model: "server_default".to_string(),
-            force: true,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
+            force: true,
         };
 
         assert!(!args_false.force);
@@ -764,14 +766,14 @@ mod predict_args_tests {
         ];
 
         for output_path in output_paths {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from(output_path),
                 model: "server_default".to_string(),
-                force: false,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
+                force: false,
             };
 
             assert_eq!(args.output, PathBuf::from(output_path));
@@ -790,14 +792,14 @@ mod predict_args_tests {
         ];
 
         for token_file in token_files {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from(token_file),
                 output: PathBuf::from("predictions"),
                 model: "server_default".to_string(),
-                force: false,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
+                force: false,
             };
 
             assert_eq!(args.token_file, PathBuf::from(token_file));
@@ -818,14 +820,14 @@ mod predict_args_tests {
         ];
 
         for (start, end) in boundary_cases {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
                 model: "server_default".to_string(),
-                force: false,
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
+                force: false,
             };
 
             assert!(args.start_pct >= 0.0 && args.start_pct <= 100.0);
@@ -842,14 +844,14 @@ mod predict_args_tests {
 
     #[test]
     fn test_forecast_ratio_default_value() {
-        let args = PredictArgs {
+        let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
             model: "server_default".to_string(),
-            force: false,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
+            force: false,
         };
 
         assert_eq!(args.forecast_ratio, 10.0);
@@ -860,14 +862,14 @@ mod predict_args_tests {
         let test_cases = vec![0.1, 1.0, 10.0, 50.0, 100.0, 500.0];
 
         for ratio in test_cases {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
                 model: "server_default".to_string(),
-                force: false,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: ratio,
+                force: false,
             };
 
             assert!(args.forecast_ratio > 0.0 && args.forecast_ratio <= 500.0);
@@ -989,14 +991,14 @@ mod predict_args_tests {
         let invalid_ratios = vec![0.0, -1.0, 500.1, 1000.0];
 
         for invalid_ratio in invalid_ratios {
-            let args = PredictArgs {
+            let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
                 model: "server_default".to_string(),
-                force: false,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: invalid_ratio,
+                force: false,
             };
 
             // 実際のrunメソッドを呼び出すのではなく、バリデーション条件をテスト
@@ -1394,7 +1396,7 @@ mod environment_tests {
 
     #[tokio::test]
     async fn test_predict_command_with_base_dir() -> Result<()> {
-        use crate::commands::predict::PredictArgs;
+        use crate::commands::predict::kick::KickArgs;
         use std::env;
         use tempfile::TempDir;
 
@@ -1404,14 +1406,14 @@ mod environment_tests {
         // Set environment variable
         env::set_var("CLI_TOKENS_BASE_DIR", base_path);
 
-        let args = PredictArgs {
+        let args = KickArgs {
             token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
             output: PathBuf::from("predictions"),
             model: "server_default".to_string(),
-            force: false,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
+            force: false,
         };
 
         // Test output path construction

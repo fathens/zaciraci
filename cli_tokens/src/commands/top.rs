@@ -93,6 +93,7 @@ pub async fn run(args: TopArgs) -> Result<()> {
                 start_date: start_date.format("%Y-%m-%d").to_string(),
                 end_date: end_date.format("%Y-%m-%d").to_string(),
                 token: token.0.to_string(),
+                quote_token: Some(quote_token.to_string()),
             },
             token_data: TokenVolatilityData {
                 token: token.0.to_string(),

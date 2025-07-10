@@ -22,7 +22,7 @@ pub struct Cli {
 pub enum Commands {
     Top(commands::top::TopArgs),
     History(commands::history::HistoryArgs),
-    Predict(commands::predict::PredictArgs),
+    Predict(commands::predict::PredictCommand),
     Verify(commands::verify::VerifyArgs),
 }
 
@@ -30,7 +30,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Top(args) => commands::top::run(args).await,
         Commands::History(args) => commands::history::run_history(args).await,
-        Commands::Predict(args) => commands::predict::run(args).await,
+        Commands::Predict(command) => commands::predict::run(command).await,
         Commands::Verify(args) => commands::verify::run(args).await,
     }
 }

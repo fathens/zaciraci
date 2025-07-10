@@ -16,6 +16,8 @@ pub struct FileMetadata {
     pub start_date: String,
     pub end_date: String,
     pub token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quote_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
