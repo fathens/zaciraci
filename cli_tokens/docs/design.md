@@ -257,17 +257,26 @@ cli_tokens history tokens/wrap.near/sample.token.near.json --force
 
 ### predictコマンド
 
-指定されたトークンファイルに対してzeroshot予測を実行します。
+predictコマンドは、指定されたトークンファイルに対してzeroshot予測を実行します。長時間実行される予測タスクを効率的に管理するため、`kick`と`pull`の2つのサブコマンドに分かれています。
 
 > **⚠️ 注意**: predictコマンドは機械学習モデルの訓練を含むため、実行時間が非常に長くなります（通常30分〜2時間程度）。Chronos API (`http://localhost:8000`) が動作している必要があります。
-> 
-> **実行時の注意事項**:
-> - ポーリングは無制限に継続されます（タイムアウトなし）
-> - バックグラウンド実行を推奨: `nohup cli_tokens predict ... > predict.log 2>&1 &`
-> - 進捗状況は Chronos API のログで確認できます: `docker logs -f zcrc-chronos`
+
+#### predictサブコマンドの構造
 
 ```bash
-cli_tokens predict [OPTIONS] <TOKEN_FILE>
+cli_tokens predict <SUBCOMMAND>
+
+SUBCOMMANDS:
+    kick    非同期予測タスクを開始
+    pull    予測タスクの結果を取得
+```
+
+#### kickサブコマンド
+
+非同期予測タスクをChronos APIに送信し、即座に終了します。
+
+```bash
+cli_tokens predict kick [OPTIONS] <TOKEN_FILE>
 
 ARGUMENTS:
     <TOKEN_FILE>           トークンファイルパス (例: tokens/wrap.near/sample.token.near.json)
@@ -276,12 +285,62 @@ OPTIONS:
     -o, --output <DIR>     出力ディレクトリ [デフォルト: predictions/] ※CLI_TOKENS_BASE_DIRからの相対パス
     -m, --model <MODEL>    予測モデル [デフォルト: server_default]
                           選択肢: chronos_bolt, autogluon, statistical, server_default
-    --force                既存の予測結果を強制上書き
     --start-pct <PCT>      データ範囲の開始パーセンテージ (0.0-100.0) [デフォルト: 0.0]
     --end-pct <PCT>        データ範囲の終了パーセンテージ (0.0-100.0) [デフォルト: 100.0]
     --forecast-ratio <PCT> 予測期間の比率（入力データ期間に対する%）(0.0-500.0) [デフォルト: 10.0]
     -h, --help            ヘルプを表示
 ```
+
+**動作**：
+1. トークンファイルと履歴データを読み込み
+2. 指定されたパラメータで予測リクエストを作成
+3. Chronos APIに非同期予測タスクを送信
+4. 返されたtask_idを含むタスク情報を`${output}/${quote_token}/${base_token}.task.json`に保存
+5. 即座に終了（ポーリングなし）
+
+**タスクファイルの形式**：
+```json
+{
+  "task_id": "550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "2024-01-01T10:00:00Z",
+  "token_file": "tokens/wrap.near/usdc.tether-token.near.json",
+  "model": "chronos-small",
+  "params": {
+    "start_pct": 0.0,
+    "end_pct": 100.0,
+    "forecast_ratio": 10.0
+  },
+  "last_status": "pending",
+  "last_checked_at": null,
+  "poll_count": 0
+}
+```
+
+#### pullサブコマンド
+
+保存されたタスク情報を読み込み、予測結果を取得します。
+
+```bash
+cli_tokens predict pull [OPTIONS] <TOKEN_FILE>
+
+ARGUMENTS:
+    <TOKEN_FILE>           トークンファイルパス (例: tokens/wrap.near/sample.token.near.json)
+
+OPTIONS:
+    -o, --output <DIR>     タスクファイルと結果の保存先 [デフォルト: predictions/]
+    --max-polls <NUM>      最大ポーリング回数 [デフォルト: 30]
+    --poll-interval <SEC>  ポーリング間隔（秒）[デフォルト: 2]
+    -h, --help            ヘルプを表示
+```
+
+**動作**：
+1. `${output}/${quote_token}/${base_token}.task.json`からタスク情報を読み込み
+2. task_idを使用してChronos APIに対してポーリング
+3. ステータスに応じた処理：
+   - `completed`: 結果を取得して`${output}/${quote_token}/${base_token}.json`に保存
+   - `running`/`pending`: 指定間隔で再ポーリング
+   - `failed`: エラーメッセージを表示
+4. 最大ポーリング回数に達した場合はタイムアウト
 
 #### 使用例
 
@@ -289,14 +348,39 @@ OPTIONS:
 # 環境変数を設定
 export CLI_TOKENS_BASE_DIR="./workspace"
 
-# 基本的な予測実行（自動的にhistory/wrap.near/sample.token.near.jsonを参照）
-cli_tokens predict tokens/wrap.near/sample.token.near.json --output predictions
+# 基本的な使用方法
+## 1. タスクを開始
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json
 
-# カスタムモデルでの予測
-cli_tokens predict tokens/wrap.near/sample.token.near.json --model chronos_bolt --output predictions
+## 2. 結果を取得（完了まで待機）
+cli_tokens predict pull tokens/wrap.near/sample.token.near.json
 
-# データ範囲を限定した予測（70-100%のデータを使用）
-cli_tokens predict tokens/wrap.near/sample.token.near.json --start-pct 70.0 --end-pct 100.0 --output predictions
+# 複数モデルでの並列実行
+## 異なるモデルで予測を開始
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json \
+  --model chronos-small --output predictions/small
+
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json \
+  --model chronos-large --output predictions/large
+
+## それぞれの結果を取得
+cli_tokens predict pull tokens/wrap.near/sample.token.near.json \
+  --output predictions/small
+
+cli_tokens predict pull tokens/wrap.near/sample.token.near.json \
+  --output predictions/large
+
+# 異なるパラメータでの実験
+## 時間範囲を変えて実験
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json \
+  --start-pct 0 --end-pct 50 --output predictions/first-half
+
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json \
+  --start-pct 50 --end-pct 100 --output predictions/second-half
+
+## 結果を取得
+cli_tokens predict pull tokens/wrap.near/sample.token.near.json \
+  --output predictions/first-half --max-polls 60
 ```
 
 #### データ範囲指定オプション
@@ -372,12 +456,22 @@ cli_tokens predict tokens/wrap.near/sample.token.near.json --forecast-ratio 100.
 ```
 ${CLI_TOKENS_BASE_DIR}/
 └── predictions/
-    ├── wrap.near/                     # Quote tokenディレクトリ
-    │   ├── sample.token.near.json    # 予測結果
+    ├── wrap.near/                            # Quote tokenディレクトリ
+    │   ├── sample.token.near.json           # 予測結果
+    │   ├── sample.token.near.task.json      # タスク情報（kick/pull用）
     │   └── another.token.near.json
-    └── usdc.tether-token.near/       # 異なるquote tokenの例
-        └── sample.token.near.json
+    └── usdc.tether-token.near/              # 異なるquote tokenの例
+        ├── sample.token.near.json
+        └── sample.token.near.task.json
 ```
+
+#### kick/pullサブコマンドの設計上の利点
+
+1. **非同期実行**: 長時間実行される予測タスクをバックグラウンドで処理
+2. **並列実験**: 異なるモデルやパラメータで同時に複数の予測を実行
+3. **柔軟な管理**: outputディレクトリごとに独立したタスク管理
+4. **競合状態の回避**: 各タスクが独立したファイルを使用
+5. **中断・再開可能**: pullコマンドでいつでも結果を取得可能
 
 ### verifyコマンド
 
