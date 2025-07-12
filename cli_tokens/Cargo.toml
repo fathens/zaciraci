@@ -27,6 +27,7 @@ tracing-subscriber = "0.3"
 indicatif = "0.17"
 reqwest = { workspace = true }
 rand = "0.8"
+plotters = "0.3"
 
 [dev-dependencies]
 mockito = "1.0"

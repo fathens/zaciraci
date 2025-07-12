@@ -602,6 +602,202 @@ cli_tokens verify predictions/wrap.near/sample.token.near.json --force
 - **エラー回避**: パス指定ミスの削減
 - **柔軟性**: 必要に応じて明示的な指定も可能
 
+### chartコマンド
+
+履歴データ（history）と予測データ（prediction）を組み合わせてPNGチャートを生成するコマンドです。自動検出方式を採用し、トークンファイルを起点として関連データファイルを自動で発見・統合してビジュアライゼーションを行います。
+
+#### 基本設計思想
+
+**自動検出方式**
+- トークンファイル（例: `tokens/wrap.near/usdc.tether-token.near.json`）を起点とする
+- `extract_quote_token_from_path` パターンを使用してquote_tokenを抽出
+- 既存のファイル構造に従って履歴・予測ファイルを自動検索
+- 見つかったデータに応じて最適なチャート形式を自動選択
+
+**ファイル検索パターン**
+```
+基点: tokens/{quote_token}/{base_token}.json
+履歴: history/{quote_token}/{base_token}.json  
+予測: predictions/{quote_token}/{base_token}.json
+```
+
+#### コマンド仕様
+
+```bash
+cli_tokens chart [OPTIONS] <TOKEN_FILE>
+
+ARGUMENTS:
+    <TOKEN_FILE>           トークンファイルパス（起点）
+
+OPTIONS:
+    -o, --output <DIR>         出力ディレクトリ [デフォルト: charts/] ※CLI_TOKENS_BASE_DIRからの相対パス
+    --base-dir <DIR>           ベースディレクトリ（CLI_TOKENS_BASE_DIRをオーバーライド）
+    --size <SIZE>              画像サイズ (WIDTHxHEIGHT) [デフォルト: 1200x800]
+    --chart-type <TYPE>        チャートタイプ [デフォルト: auto]
+                              選択肢: auto, history, prediction, combined
+    --history-only             予測データの検索と描画を無効化
+    --show-confidence          信頼区間を表示（予測データがある場合）
+    --output-name <NAME>       出力ファイル名を明示指定
+    --force                    既存ファイルを強制上書き
+    -v, --verbose              詳細ログ出力
+    -h, --help                 ヘルプを表示
+```
+
+#### チャートタイプ
+
+- **`auto`** (デフォルト): 自動検出（履歴+予測があれば両方、なければ履歴のみ）
+- **`history`**: 履歴データのみ
+- **`prediction`**: 予測データのみ（履歴は背景として薄く表示）
+- **`combined`**: 履歴と予測を重ねて表示
+
+#### 使用例
+
+```bash
+# 環境変数を設定
+export CLI_TOKENS_BASE_DIR="./workspace"
+
+# 基本的な使用（自動検出）
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json
+
+# 履歴データのみ
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json --chart-type history
+
+# 予測データのみ  
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json --chart-type prediction
+
+# 信頼区間付きで組み合わせ表示
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json --chart-type combined --show-confidence
+
+# カスタム出力名・サイズ
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json \
+  --output-name my_custom_chart \
+  --size 1920x1080
+
+# 詳細ログ付きで実行
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json --verbose
+
+# カスタムベースディレクトリを指定
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json \
+  --base-dir /custom/data/path
+
+# 履歴のみ強制（予測があっても無視）
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json \
+  --history-only
+
+# 既存ファイルを強制上書き
+cli_tokens chart tokens/wrap.near/usdc.tether-token.near.json \
+  --force
+```
+
+#### 自動検出ロジック
+
+```rust
+async fn detect_data_files(token_file: &Path, base_dir: Option<&Path>) -> Result<DetectedFiles> {
+    // 1. トークンファイルから情報を抽出
+    let token_data: TokenFileData = load_token_file(token_file).await?;
+    let quote_token = extract_quote_token_from_path(token_file)
+        .or_else(|| token_data.metadata.quote_token.clone())
+        .unwrap_or_else(|| "wrap.near".to_string());
+    
+    let base_dir = base_dir
+        .map(|p| p.to_path_buf())
+        .or_else(|| std::env::var("CLI_TOKENS_BASE_DIR").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let token_name = sanitize_filename(&token_data.token_data.token);
+    let quote_dir = sanitize_filename(&quote_token);
+
+    // 2. 履歴ファイルを検索
+    let history_file = base_dir
+        .join("history")
+        .join(&quote_dir)
+        .join(format!("{}.json", token_name));
+
+    // 3. 予測ファイルを検索
+    let prediction_file = base_dir
+        .join("predictions")  
+        .join(&quote_dir)
+        .join(format!("{}.json", token_name));
+
+    Ok(DetectedFiles {
+        history: if history_file.exists() { Some(history_file) } else { None },
+        prediction: if prediction_file.exists() { Some(prediction_file) } else { None },
+        token_name,
+        quote_token,
+    })
+}
+```
+
+#### 出力ファイル構造
+
+```
+${CLI_TOKENS_BASE_DIR}/
+└── charts/
+    ├── wrap.near/
+    │   ├── usdc.tether-token.near_history.png
+    │   ├── usdc.tether-token.near_prediction.png
+    │   ├── usdc.tether-token.near_combined.png
+    │   └── usdc.tether-token.near_combined_with_confidence.png
+    └── {other_quote_tokens}/
+        └── ...
+```
+
+#### 出力ファイル名パターン
+
+- `{token}_history.png`: 履歴データのみ
+- `{token}_prediction.png`: 予測データのみ
+- `{token}_prediction_with_confidence.png`: 信頼区間付き予測
+- `{token}_combined.png`: 履歴+予測の組み合わせ
+- `{token}_combined_with_confidence.png`: 信頼区間付き組み合わせ
+- カスタム名指定時: `{custom_name}.png`
+
+#### 技術仕様
+
+**使用ライブラリ**: Plotters (推奨)
+- Pure Rust実装
+- PNG出力サポート（`BitMapBackend`）
+- 軽量で依存関係が少ない
+- 既存プロジェクトとの整合性
+
+**チャート要素**:
+- **履歴データ**: 青色の実線
+- **予測データ**: 赤色の点線
+- **信頼区間**: グレーの塗りつぶし領域
+- **タイトル**: `{base_token} / {quote_token} Price Chart`
+- **軸ラベル**: 
+  - X軸: 時間 (YYYY-MM-DD)
+  - Y軸: 価格 ({quote_token})
+
+#### エラーハンドリング
+
+- **`NoDataFound`**: 履歴・予測データが見つからない場合
+- **`HistoryNotFound`**: 履歴ファイルが見つからない場合（chart-type: history指定時）
+- **`PredictionNotFound`**: 予測ファイルが見つからない場合（chart-type: prediction指定時）
+- **`InvalidTokenFile`**: トークンファイルが無効な場合
+- **`OutputError`**: チャート生成・保存エラー
+
+#### 実装段階
+
+**Phase 1**: 基礎実装
+- 基本的なコマンド構造とオプション解析
+- ファイル自動検出ロジック
+- 履歴データのみのチャート生成（Plotters使用）
+
+**Phase 2**: 予測データ統合
+- 予測データの読み込みと統合
+- 履歴+予測の組み合わせ表示
+- チャートタイプの完全実装
+
+**Phase 3**: 高度な機能
+- 信頼区間の表示
+- カスタマイズオプション（色、スタイル等）
+- エラーハンドリングの充実
+
+**Phase 4**: 最適化・拡張
+- パフォーマンス最適化
+- 追加のチャート形式サポート
+- バッチ処理モード
+
 ## 実装詳細
 
 ### 1. フロントエンドコードの再利用戦略

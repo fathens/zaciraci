@@ -24,6 +24,7 @@ pub enum Commands {
     History(commands::history::HistoryArgs),
     Predict(commands::predict::PredictCommand),
     Verify(commands::verify::VerifyArgs),
+    Chart(commands::chart::ChartArgs),
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -32,5 +33,6 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::History(args) => commands::history::run_history(args).await,
         Commands::Predict(command) => commands::predict::run(command).await,
         Commands::Verify(args) => commands::verify::run(args).await,
+        Commands::Chart(args) => commands::chart::run_chart(args).await,
     }
 }
