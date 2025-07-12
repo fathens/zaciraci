@@ -4,8 +4,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
 use crate::models::{
+    history::HistoryFileData,
     prediction::TokenPredictionResult,
-    token::TokenFileData,
     verification::{ComparisonPoint, VerificationMetrics},
 };
 use crate::utils::file::{ensure_directory_exists, file_exists, sanitize_filename};
@@ -18,7 +18,7 @@ pub struct VerifyArgs {
 
     #[clap(
         long,
-        help = "Actual data file path (defaults to auto-inferred: tokens/{token}.json)"
+        help = "Actual history data file path (defaults to auto-inferred: history/{quote_token}/{token}.json)"
     )]
     pub actual_data_file: Option<PathBuf>,
 
@@ -62,18 +62,25 @@ pub async fn run(args: VerifyArgs) -> Result<()> {
         ));
     }
 
-    // Read actual data file
+    // Read actual history data file
     let actual_content = tokio::fs::read_to_string(&actual_data_file).await?;
-    let actual_data: TokenFileData = serde_json::from_str(&actual_content)?;
+    let history_data: HistoryFileData = serde_json::from_str(&actual_content)
+        .map_err(|e| anyhow::anyhow!(
+            "Failed to parse history data file: {}. Error: {}. Expected HistoryFileData format.",
+            actual_data_file.display(),
+            e
+        ))?;
 
     // Verify token names match
-    if prediction_data.token != actual_data.token_data.token {
+    if prediction_data.token != history_data.metadata.base_token {
         return Err(anyhow::anyhow!(
-            "Token mismatch: prediction has '{}', actual data has '{}'",
+            "Token mismatch: prediction has '{}', history data has '{}'",
             prediction_data.token,
-            actual_data.token_data.token
+            history_data.metadata.base_token
         ));
     }
+
+    let actual_values = history_data.price_history.values;
 
     // Get base directory from environment variable
     let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
@@ -116,16 +123,94 @@ pub async fn run(args: VerifyArgs) -> Result<()> {
 
     pb.set_message("Checking verification requirements...");
 
-    // Check if verification is possible with current data
-    Err(anyhow::anyhow!(
-        "Verification requires real-time data for the prediction period ({} to {}). \
-        The actual data file ({}) only contains historical data up to the prediction start. \
-        For verification, you would need to wait for the prediction period to pass and \
-        then fetch the actual price data for that period using the history command.",
-        prediction_start.format("%Y-%m-%d %H:%M:%S"),
-        prediction_end.format("%Y-%m-%d %H:%M:%S"),
-        actual_data_file.display()
-    ))
+    // Find overlapping data points between prediction and actual data
+    pb.set_message("Finding overlapping data points...");
+    
+    let mut comparison_points = Vec::new();
+    
+    for predicted_value in &prediction_data.predicted_values {
+        // Find actual value closest in time to this prediction
+        if let Some(actual_value) = actual_values.iter()
+            .min_by(|a, b| {
+                let diff_a = (a.time.and_utc().timestamp() - predicted_value.timestamp.timestamp()).abs();
+                let diff_b = (b.time.and_utc().timestamp() - predicted_value.timestamp.timestamp()).abs();
+                diff_a.cmp(&diff_b)
+            })
+            .filter(|actual| {
+                // Only consider actual values within reasonable time window (e.g., 1 hour)
+                let time_diff = (actual.time.and_utc().timestamp() - predicted_value.timestamp.timestamp()).abs();
+                time_diff <= 3600 // 1 hour in seconds
+            })
+        {
+            let error = predicted_value.value - actual_value.value;
+            let percentage_error = if actual_value.value != 0.0 {
+                (error / actual_value.value) * 100.0
+            } else {
+                0.0
+            };
+            
+            comparison_points.push(ComparisonPoint {
+                timestamp: predicted_value.timestamp,
+                predicted_value: predicted_value.value,
+                actual_value: actual_value.value,
+                error,
+                percentage_error,
+            });
+        }
+    }
+    
+    pb.set_message("Calculating verification metrics...");
+    
+    if comparison_points.is_empty() {
+        pb.finish_with_message("No overlapping data points found");
+        return Err(anyhow::anyhow!(
+            "No overlapping data points found between prediction period ({} to {}) \
+            and actual data. Actual data contains {} points from {} to {}.",
+            prediction_start.format("%Y-%m-%d %H:%M:%S"),
+            prediction_end.format("%Y-%m-%d %H:%M:%S"),
+            actual_values.len(),
+            actual_values.first().map(|v| v.time.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "N/A".to_string()),
+            actual_values.last().map(|v| v.time.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "N/A".to_string())
+        ));
+    }
+    
+    // Calculate verification metrics
+    let metrics = calculate_verification_metrics(&comparison_points)?;
+    
+    // Create verification report
+    let verification_report = crate::models::verification::VerificationReport {
+        token: prediction_data.token.clone(),
+        prediction_id: prediction_data.prediction_id.clone(),
+        verification_date: chrono::Utc::now(),
+        period: crate::models::verification::VerificationPeriod {
+            start: prediction_start,
+            end: prediction_end,
+            predicted_points_count: prediction_data.predicted_values.len(),
+            actual_points_count: actual_values.len(),
+            matched_points_count: comparison_points.len(),
+        },
+        metrics,
+        data_points: comparison_points,
+    };
+    
+    // Save verification report
+    let report_json = serde_json::to_string_pretty(&verification_report)?;
+    tokio::fs::write(&verification_file, report_json).await?;
+    
+    pb.finish_with_message("Verification completed successfully");
+    
+    println!("Verification completed for token: {}", prediction_data.token);
+    println!("Matched data points: {}/{}", verification_report.period.matched_points_count, verification_report.period.predicted_points_count);
+    println!("Verification report saved to: {}", verification_file.display());
+    println!();
+    println!("Metrics:");
+    println!("  MAE (Mean Absolute Error): {:.6}", verification_report.metrics.mae);
+    println!("  RMSE (Root Mean Square Error): {:.6}", verification_report.metrics.rmse);
+    println!("  MAPE (Mean Absolute Percentage Error): {:.2}%", verification_report.metrics.mape);
+    println!("  Direction Accuracy: {:.2}%", verification_report.metrics.direction_accuracy * 100.0);
+    println!("  Correlation: {:.4}", verification_report.metrics.correlation);
+    
+    Ok(())
 }
 
 /// Extract quote_token from prediction file path (e.g., predictions/wrap.near/usdc.tether-token.near.json -> wrap.near)
@@ -142,7 +227,9 @@ pub fn infer_actual_data_file(token_name: &str, quote_token: &str) -> Result<Pat
     let sanitized_token = sanitize_filename(token_name);
     let sanitized_quote = sanitize_filename(quote_token);
     let filename = format!("{}.json", sanitized_token);
-    Ok(PathBuf::from("tokens").join(sanitized_quote).join(filename))
+    
+    // Return history file path: history/{quote_token}/{token}.json
+    Ok(PathBuf::from("history").join(sanitized_quote).join(filename))
 }
 
 pub fn calculate_verification_metrics(
