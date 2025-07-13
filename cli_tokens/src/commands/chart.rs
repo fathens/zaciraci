@@ -11,6 +11,10 @@ use crate::models::prediction::{PredictionPoint, TokenPredictionResult};
 use crate::models::token::TokenFileData;
 use crate::utils::file::sanitize_filename;
 
+#[cfg(test)]
+#[path = "chart/tests.rs"]
+mod tests;
+
 #[derive(Debug, Args)]
 pub struct ChartArgs {
     /// トークンファイルパス（起点）
