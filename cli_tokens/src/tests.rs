@@ -1108,17 +1108,17 @@ mod verify_tests {
         use crate::commands::verify::infer_actual_data_file;
 
         let test_cases = vec![
-            ("wrap.near", "wrap.near", "tokens/wrap.near/wrap.near.json"),
-            ("usdc.near", "wrap.near", "tokens/wrap.near/usdc.near.json"),
+            ("wrap.near", "wrap.near", "history/wrap.near/wrap.near.json"),
+            ("usdc.near", "wrap.near", "history/wrap.near/usdc.near.json"),
             (
                 "token/with/slash",
                 "usdc.tether-token.near",
-                "tokens/usdc.tether-token.near/token_with_slash.json",
+                "history/usdc.tether-token.near/token_with_slash.json",
             ),
             (
                 "token:with:colons",
                 "wrap.near",
-                "tokens/wrap.near/token_with_colons.json",
+                "history/wrap.near/token_with_colons.json",
             ),
         ];
 
