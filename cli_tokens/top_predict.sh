@@ -40,9 +40,18 @@ echo "Model: $MODEL_NAME"
 echo "Base directory: $CLI_TOKENS_BASE_DIR"
 echo ""
 
+# Clean up existing directories
+echo "Cleaning up existing directories..."
+rm -rf "$CLI_TOKENS_BASE_DIR/tokens"
+rm -rf "$CLI_TOKENS_BASE_DIR/history"
+rm -rf "$CLI_TOKENS_BASE_DIR/predictions"
+rm -rf "$CLI_TOKENS_BASE_DIR/charts"
+echo "✓ Cleanup completed"
+echo ""
+
 # 1. Get high volatility tokens
 echo "1. Fetching high volatility tokens..."
-$cmd top --output tokens
+$cmd top
 echo "✓ Token fetch completed"
 echo ""
 
@@ -61,7 +70,7 @@ echo ""
 echo "2. Fetching price history for all tokens..."
 for token_file in "${TOKEN_FILES[@]}"; do
     echo "  Processing history for: $(basename "$token_file")"
-    $cmd history "$token_file" --output history
+    $cmd history "$token_file"
 done
 echo "✓ All price history fetch completed"
 echo ""
@@ -70,7 +79,7 @@ echo ""
 echo "3. Starting prediction tasks for all tokens..."
 for token_file in "${TOKEN_FILES[@]}"; do
     echo "  Starting prediction for: $(basename "$token_file")"
-    $cmd predict kick "$token_file" --model "$MODEL_NAME" --output predictions
+    $cmd predict kick "$token_file" --model "$MODEL_NAME" --end-pct 90
 done
 echo "✓ All prediction tasks started"
 echo ""
@@ -81,7 +90,7 @@ pids=()
 for token_file in "${TOKEN_FILES[@]}"; do
     echo "  Starting pull for: $(basename "$token_file")"
     (
-        $cmd predict pull "$token_file" --output predictions --poll-interval 60 --max-polls 30
+        $cmd predict pull "$token_file" --poll-interval 60 --max-polls 30
         echo "  ✓ Pull completed for: $(basename "$token_file")"
     ) &
     pids+=($!)
@@ -99,7 +108,7 @@ echo ""
 echo "5. Generating charts for all tokens..."
 for token_file in "${TOKEN_FILES[@]}"; do
     echo "  Generating chart for: $(basename "$token_file")"
-    $cmd chart "$token_file" --output charts --chart-type combined --show-confidence
+    $cmd chart "$token_file" --chart-type combined --show-confidence
 done
 echo "✓ All charts generated"
 echo ""
