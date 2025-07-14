@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use clap::Parser;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 
 use crate::api::backend::BackendClient;
@@ -66,17 +65,8 @@ pub async fn run(args: TopArgs) -> Result<()> {
     // Ensure output directory exists
     ensure_directory_exists(&output_dir)?;
 
-    // Show progress
-    let pb = ProgressBar::new(args.limit as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-            .unwrap()
-            .progress_chars("#>-"),
-    );
-
     // Fetch tokens
-    pb.set_message("Fetching volatility tokens...");
+    println!("Fetching volatility tokens...");
     let tokens = backend_client
         .get_volatility_tokens(start_date, end_date, args.limit, args.quote_token.clone())
         .await?;
@@ -84,8 +74,7 @@ pub async fn run(args: TopArgs) -> Result<()> {
     // Save each token to individual file
     let quote_token = args.quote_token.as_deref().unwrap_or("wrap.near");
     for (i, token) in tokens.iter().enumerate() {
-        pb.set_position((i + 1) as u64);
-        pb.set_message(format!("Saving {}", token.0));
+        println!("Saving {} ({}/{})", token.0, i + 1, tokens.len());
 
         let file_data = TokenFileData {
             metadata: FileMetadata {
@@ -116,11 +105,11 @@ pub async fn run(args: TopArgs) -> Result<()> {
         write_json_file(&file_path, &file_data).await?;
     }
 
-    pb.finish_with_message(format!(
+    println!(
         "Successfully saved {} tokens to {:?}",
         tokens.len(),
         output_dir
-    ));
+    );
     Ok(())
 }
 
