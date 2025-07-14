@@ -399,11 +399,11 @@ impl TokenRate {
                     var_pop(rate) as variance
                 FROM token_rates
                 WHERE
-                    rate != 0 AND
                     quote_token = $1 AND
                     timestamp >= $2 AND
                     timestamp <= $3
                 GROUP BY base_token
+                HAVING MIN(rate) > 0
                 ORDER BY variance DESC
                 LIMIT 100
                 ",
