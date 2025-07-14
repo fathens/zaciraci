@@ -23,12 +23,6 @@ impl ChronosApiClient {
     ) -> Result<AsyncPredictionResponse> {
         let url = format!("{}/api/v1/predict_zero_shot_async", self.base_url);
 
-        println!("Sending request to: {}", url);
-        println!(
-            "Request body: {}",
-            serde_json::to_string_pretty(&request).unwrap_or_default()
-        );
-
         let response = self.client.post(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
