@@ -7,7 +7,7 @@ pub struct TaskInfo {
     pub task_id: String,
     pub created_at: DateTime<Utc>,
     pub token_file: PathBuf,
-    pub model: String,
+    pub model: Option<String>,
     pub params: PredictionParams,
 
     // Status tracking
@@ -27,7 +27,7 @@ impl TaskInfo {
     pub fn new(
         task_id: String,
         token_file: PathBuf,
-        model: String,
+        model: Option<String>,
         params: PredictionParams,
     ) -> Self {
         Self {

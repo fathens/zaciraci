@@ -283,8 +283,8 @@ ARGUMENTS:
 
 OPTIONS:
     -o, --output <DIR>     出力ディレクトリ [デフォルト: predictions/] ※CLI_TOKENS_BASE_DIRからの相対パス
-    -m, --model <MODEL>    予測モデル [デフォルト: server_default]
-                          選択肢: chronos_bolt, autogluon, statistical, server_default
+    -m, --model <MODEL>    予測モデル（指定しない場合はサーバー側のデフォルトモデルを使用）
+                          利用可能なモデルについては下記「指定可能なモデル一覧」を参照
     --start-pct <PCT>      データ範囲の開始パーセンテージ (0.0-100.0) [デフォルト: 0.0]
     --end-pct <PCT>        データ範囲の終了パーセンテージ (0.0-100.0) [デフォルト: 100.0]
     --forecast-ratio <PCT> 予測期間の比率（入力データ期間に対する%）(0.0-500.0) [デフォルト: 10.0]
@@ -314,6 +314,42 @@ OPTIONS:
   "last_checked_at": null,
   "poll_count": 0
 }
+```
+
+#### 指定可能なモデル一覧
+
+予測に使用できるモデルは以下の通りです。モデルの詳細情報は、Chronos APIの `/api/v1/models` エンドポイントから取得できます。
+
+**APIエンドポイント**:
+```bash
+curl http://localhost:8000/api/v1/models
+```
+
+**利用可能なモデル**:
+
+| モデル名 | 説明 | 処理時間 | 推奨用途 |
+|---------|------|----------|----------|
+| `chronos_default` | デフォルトの時系列予測モデル | 15分以内 | 一般的な予測 |
+| `fast_statistical` | 統計的手法中心・高速モデル | 5分以内 | 短期予測・リアルタイム処理 |
+| `balanced_ml` | 機械学習ベース・バランス型モデル | 15分以内 | 中期予測・バランス重視 |
+| `deep_learning` | 深層学習ベース・高精度モデル | 30分以内 | 長期予測・最高精度 |
+| `autoets_only` | AutoETSモデルのみ（統計的手法・高速） | 5分以内 | 短期予測・統計的手法 |
+| `npts_only` | NPTSモデルのみ（非パラメトリック時系列） | 10分以内 | 中期予測・非パラメトリック手法 |
+| `seasonal_naive_only` | SeasonalNaiveモデルのみ（季節性ベースライン） | 1分以内 | ベースライン予測・超高速処理 |
+| `recursive_tabular_only` | RecursiveTabularモデルのみ（勾配ブースティング） | 15分以内 | 中長期予測・勾配ブースティング |
+| `ets_only` | ETSモデルのみ（統計的手法・標準） | 5分以内 | 短期予測・統計的手法 |
+| `chronos_zero_shot` | Chronos事前訓練済みTransformer | 5分以内 | 即座予測・Zero Shot予測 |
+
+**使用例**:
+```bash
+# デフォルトモデルを使用
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json
+
+# 高速統計モデルを使用
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json --model fast_statistical
+
+# 深層学習モデルを使用（高精度だが時間がかかる）
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json --model deep_learning
 ```
 
 #### pullサブコマンド

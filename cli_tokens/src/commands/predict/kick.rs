@@ -29,10 +29,9 @@ pub struct KickArgs {
     #[clap(
         short,
         long,
-        default_value = "server_default",
-        help = "Prediction model"
+        help = "Prediction model (defaults to server's default model if not specified)"
     )]
-    pub model: String,
+    pub model: Option<String>,
 
     #[clap(
         long,
@@ -247,11 +246,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
         timestamp: timestamps,
         values,
         forecast_until,
-        model_name: if args.model == "server_default" {
-            None
-        } else {
-            Some(args.model.clone())
-        },
+        model_name: args.model.clone(),
         model_params: None,
     };
 

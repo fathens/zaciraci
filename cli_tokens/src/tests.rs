@@ -22,7 +22,7 @@ mod unit_tests {
         let args = KickArgs {
             token_file: PathBuf::from("tokens/wrap.near.json"),
             output: PathBuf::from("predictions"),
-            model: "server_default".to_string(),
+            model: None,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
@@ -31,7 +31,7 @@ mod unit_tests {
 
         assert_eq!(args.token_file, PathBuf::from("tokens/wrap.near.json"));
         assert_eq!(args.output, PathBuf::from("predictions"));
-        assert_eq!(args.model, "server_default");
+        assert_eq!(args.model, None);
         assert!(!args.force);
         assert_eq!(args.forecast_ratio, 10.0);
     }
@@ -594,7 +594,7 @@ mod predict_args_tests {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: "server_default".to_string(),
+            model: None,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
@@ -602,7 +602,7 @@ mod predict_args_tests {
         };
 
         assert_eq!(args.output, PathBuf::from("predictions"));
-        assert_eq!(args.model, "server_default");
+        assert_eq!(args.model, None);
         assert!(!args.force);
         assert_eq!(args.start_pct, 0.0);
         assert_eq!(args.end_pct, 100.0);
@@ -615,7 +615,7 @@ mod predict_args_tests {
         let args = KickArgs {
             token_file: PathBuf::from("custom/token.json"),
             output: PathBuf::from("custom_output"),
-            model: "chronos_bolt".to_string(),
+            model: Some("chronos_bolt".to_string()),
             start_pct: 25.0,
             end_pct: 75.0,
             forecast_ratio: 50.0,
@@ -624,7 +624,7 @@ mod predict_args_tests {
 
         assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
         assert_eq!(args.output, PathBuf::from("custom_output"));
-        assert_eq!(args.model, "chronos_bolt");
+        assert_eq!(args.model, Some("chronos_bolt".to_string()));
         assert!(args.force);
         assert_eq!(args.start_pct, 25.0);
         assert_eq!(args.end_pct, 75.0);
@@ -648,7 +648,7 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
-                model: "server_default".to_string(),
+                model: None,
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
@@ -677,7 +677,7 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
-                model: "server_default".to_string(),
+                model: None,
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
@@ -715,15 +715,15 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
-                model: model.to_string(),
+                model: Some(model.to_string()),
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
                 force: false,
             };
 
-            assert_eq!(args.model, model);
-            assert!(!args.model.is_empty());
+            assert_eq!(args.model, Some(model.to_string()));
+            assert!(args.model.is_some());
         }
     }
 
@@ -733,7 +733,7 @@ mod predict_args_tests {
         let args_false = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: "server_default".to_string(),
+            model: None,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
@@ -743,7 +743,7 @@ mod predict_args_tests {
         let args_true = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: "server_default".to_string(),
+            model: None,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
@@ -769,7 +769,7 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from(output_path),
-                model: "server_default".to_string(),
+                model: None,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
@@ -795,7 +795,7 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from(token_file),
                 output: PathBuf::from("predictions"),
-                model: "server_default".to_string(),
+                model: None,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
@@ -823,7 +823,7 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
-                model: "server_default".to_string(),
+                model: None,
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
@@ -847,7 +847,7 @@ mod predict_args_tests {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: "server_default".to_string(),
+            model: None,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
@@ -865,7 +865,7 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
-                model: "server_default".to_string(),
+                model: None,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: ratio,
@@ -994,7 +994,7 @@ mod predict_args_tests {
             let args = KickArgs {
                 token_file: PathBuf::from("test.json"),
                 output: PathBuf::from("predictions"),
-                model: "server_default".to_string(),
+                model: None,
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: invalid_ratio,
@@ -1409,7 +1409,7 @@ mod environment_tests {
         let args = KickArgs {
             token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
             output: PathBuf::from("predictions"),
-            model: "server_default".to_string(),
+            model: None,
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
