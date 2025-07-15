@@ -3,22 +3,50 @@
 # Error handling
 set -euo pipefail
 
+# Function to get available models from API
+get_available_models_with_descriptions() {
+    local api_url="${ZCRC_API_URL:-http://localhost:8000}/api/v1/models"
+    
+    # Try to fetch models from API
+    local models_json
+    if ! models_json=$(curl -s --connect-timeout 5 "$api_url" 2>/dev/null); then
+        echo "Warning: Could not fetch models from API ($api_url)" >&2
+        return 1
+    fi
+    
+    # Parse JSON and extract model names with descriptions
+    local models_info
+    if command -v jq >/dev/null 2>&1; then
+        # Use jq if available
+        models_info=$(echo "$models_json" | jq -r '.[] | "  \(.name) - \(.description)"' 2>/dev/null)
+    else
+        # Fallback to grep/sed if jq is not available
+        models_info=$(echo "$models_json" | grep -o '"name":"[^"]*","version":"[^"]*","description":"[^"]*"' | sed 's/"name":"\([^"]*\)","version":"[^"]*","description":"\([^"]*\)"/  \1 - \2/')
+    fi
+    
+    if [ -n "$models_info" ]; then
+        echo "$models_info"
+        return 0
+    else
+        return 1
+    fi
+}
+
 # Usage function
 usage() {
     echo "Usage: $0 <MODEL_NAME>"
     echo "Example: $0 chronos_default"
     echo ""
     echo "Available models:"
-    echo "  chronos_default"
-    echo "  fast_statistical"
-    echo "  balanced_ml"
-    echo "  deep_learning"
-    echo "  autoets_only"
-    echo "  npts_only"
-    echo "  seasonal_naive_only"
-    echo "  recursive_tabular_only"
-    echo "  ets_only"
-    echo "  chronos_zero_shot"
+    
+    local models_info
+    if models_info=$(get_available_models_with_descriptions); then
+        echo "$models_info"
+    else
+        echo "Error: Cannot retrieve models from API server. Please ensure the server is running."
+        exit 1
+    fi
+    
     exit 1
 }
 
