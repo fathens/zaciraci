@@ -374,11 +374,13 @@ async fn get_volatility_tokens(
     State(_): State<Arc<AppState>>,
     Json(request): Json<VolatilityTokensRequest>,
 ) -> Json<ApiResponse<VolatilityTokensResponse, String>> {
+    let min_depth = BigDecimal::from(request.min_depth.unwrap_or(1_000_000));
     let log = DEFAULT.new(o!(
         "function" => "volatility_tokens",
         "range.start" => format!("{}", request.start),
         "range.end" => format!("{}", request.end),
         "limit" => format!("{}", request.limit),
+        "min_depth" => format!("{}", min_depth),
     ));
     info!(log, "start");
 
@@ -472,11 +474,12 @@ async fn get_volatility_tokens(
             .into_iter()
             .filter_map(|v| {
                 let token = v.base;
-                deps.get(&token).map(|depth| {
-                    // ボラティリティスコアを計算
-                    let weight = calculate_volatility_weight(&v.variance, depth);
-                    (token, weight)
-                })
+                deps.get(&token)
+                    .filter(|depth| *depth >= &min_depth)
+                    .map(|depth| {
+                        let weight = calculate_volatility_weight(&v.variance, depth);
+                        (token, weight)
+                    })
             })
             .collect();
         weights.sort_by(|(_, aw), (_, bw)| bw.cmp(aw));

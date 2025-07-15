@@ -40,12 +40,14 @@ impl BackendClient {
         end_date: DateTime<Utc>,
         limit: u32,
         quote_token: Option<String>,
+        min_depth: Option<u64>,
     ) -> Result<Vec<TokenAccount>> {
         let request = VolatilityTokensRequest {
             start: start_date.naive_utc(),
             end: end_date.naive_utc(),
             limit,
             quote_token,
+            min_depth,
         };
 
         let url = format!("{}/pools/get_volatility_tokens", self.base_url);

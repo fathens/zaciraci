@@ -46,6 +46,7 @@ mod unit_tests {
             output: PathBuf::from("tokens"),
             format: "json".to_string(),
             quote_token: None,
+            min_depth: None,
         };
 
         assert_eq!(args.limit, 10);
@@ -276,7 +277,7 @@ mod api_tests {
         let start_date = Utc::now();
         let end_date = Utc::now();
         let result = client
-            .get_volatility_tokens(start_date, end_date, 10, None)
+            .get_volatility_tokens(start_date, end_date, 10, None, None)
             .await;
 
         assert!(result.is_ok());
@@ -306,7 +307,7 @@ mod api_tests {
         let start_date = Utc::now();
         let end_date = Utc::now();
         let result = client
-            .get_volatility_tokens(start_date, end_date, 10, None)
+            .get_volatility_tokens(start_date, end_date, 10, None, None)
             .await;
 
         assert!(result.is_err());
@@ -1345,6 +1346,7 @@ mod environment_tests {
             output: PathBuf::from("tokens"),
             format: "json".to_string(),
             quote_token: None,
+            min_depth: None,
         };
 
         // Test that environment variable is correctly used in path construction

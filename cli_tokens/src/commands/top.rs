@@ -38,6 +38,9 @@ pub struct TopArgs {
         help = "Quote token for volatility calculation [default: wrap.near]"
     )]
     pub quote_token: Option<String>,
+
+    #[clap(long, help = "Minimum depth for filtering tokens [default: 1000000]")]
+    pub min_depth: Option<u64>,
 }
 
 async fn start_timer(start_time: Instant, running: Arc<AtomicBool>) {
@@ -98,7 +101,13 @@ pub async fn run(args: TopArgs) -> Result<()> {
 
     // Fetch tokens
     let tokens = backend_client
-        .get_volatility_tokens(start_date, end_date, args.limit, args.quote_token.clone())
+        .get_volatility_tokens(
+            start_date,
+            end_date,
+            args.limit,
+            args.quote_token.clone(),
+            args.min_depth,
+        )
         .await?;
 
     // Save each token to individual file

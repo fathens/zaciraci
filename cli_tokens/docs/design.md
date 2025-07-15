@@ -78,6 +78,7 @@ cli_tokens verify predictions/wrap.near/sample.token.near.json --output verifica
 - **Quote Token**: デフォルトで`wrap.near`を使用（`--quote-token`で変更可能）
 - **価格ベース**: 各トークンの指定Quote Token建て価格の変動を分析
 - **期間**: 指定された期間内での価格変動率を計算
+- **深度フィルター**: 最小流動性深度を指定してフィルタリング（`--min-depth`で設定、デフォルト1,000,000）
 
 #### 使用例
 
@@ -93,6 +94,9 @@ cli_tokens top -l 5 --quote-token usdc.tether-token.near --output tokens
 
 # 特定期間でのボラティリティ分析
 cli_tokens top -s 2025-06-01 -e 2025-07-01 -l 10 --quote-token wrap.near --output tokens
+
+# 最小深度フィルターを指定
+cli_tokens top -l 5 --min-depth 500000 --output tokens
 ```
 
 #### コマンド仕様
@@ -107,6 +111,7 @@ OPTIONS:
     -o, --output <DIR>         出力ディレクトリ [デフォルト: tokens/] ※CLI_TOKENS_BASE_DIRからの相対パス
     -f, --format <FORMAT>      出力形式 (json|csv) [デフォルト: json]
     --quote-token <TOKEN>      ボラティリティ計算の基準トークン [デフォルト: wrap.near]
+    --min-depth <NUMBER>       最小深度フィルター [デフォルト: 1000000]
     -h, --help                 ヘルプを表示
 ```
 
