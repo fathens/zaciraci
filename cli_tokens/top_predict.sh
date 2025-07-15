@@ -66,22 +66,27 @@ fi
 echo "Number of tokens fetched: ${#TOKEN_FILES[@]}"
 echo ""
 
-# 2. Run history command for all tokens
-echo "2. Fetching price history for all tokens..."
+# 2. Run history and predict kick in parallel
+echo "2. Fetching price history and starting predictions as they complete..."
+pids=()
 for token_file in "${TOKEN_FILES[@]}"; do
     echo "  Processing history for: $(basename "$token_file")"
-    $cmd history "$token_file"
+    (
+        $cmd history "$token_file"
+        echo "  ✓ History completed for: $(basename "$token_file")"
+        echo "  Starting prediction for: $(basename "$token_file")"
+        $cmd predict kick "$token_file" --model "$MODEL_NAME" --end-pct 90
+        echo "  ✓ Prediction task started for: $(basename "$token_file")"
+    ) &
+    pids+=($!)
 done
-echo "✓ All price history fetch completed"
-echo ""
 
-# 3. Run predict kick for all tokens
-echo "3. Starting prediction tasks for all tokens..."
-for token_file in "${TOKEN_FILES[@]}"; do
-    echo "  Starting prediction for: $(basename "$token_file")"
-    $cmd predict kick "$token_file" --model "$MODEL_NAME" --end-pct 90
+# Wait for all history and predict kick processes to complete
+echo "Waiting for all history fetches and prediction kicks to complete..."
+for pid in "${pids[@]}"; do
+    wait $pid
 done
-echo "✓ All prediction tasks started"
+echo "✓ All price history fetch and prediction tasks completed"
 echo ""
 
 # 4. Run predict pull and chart generation in parallel
