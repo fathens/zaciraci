@@ -84,33 +84,27 @@ done
 echo "✓ All prediction tasks started"
 echo ""
 
-# 4. Run predict pull for all tokens in parallel
-echo "4. Fetching prediction results in parallel..."
+# 4. Run predict pull and chart generation in parallel
+echo "4. Fetching prediction results and generating charts as they complete..."
 pids=()
 for token_file in "${TOKEN_FILES[@]}"; do
     echo "  Starting pull for: $(basename "$token_file")"
     (
         $cmd predict pull "$token_file" --poll-interval 60 --max-polls 30
         echo "  ✓ Pull completed for: $(basename "$token_file")"
+        echo "  Generating chart for: $(basename "$token_file")"
+        $cmd chart "$token_file" --chart-type combined --show-confidence
+        echo "  ✓ Chart generated for: $(basename "$token_file")"
     ) &
     pids+=($!)
 done
 
-# Wait for all predict pull processes to complete
-echo "Waiting for all prediction pulls to complete..."
+# Wait for all predict pull and chart generation processes to complete
+echo "Waiting for all prediction pulls and chart generations to complete..."
 for pid in "${pids[@]}"; do
     wait $pid
 done
-echo "✓ All prediction results fetched"
-echo ""
-
-# 5. Run chart command for all tokens
-echo "5. Generating charts for all tokens..."
-for token_file in "${TOKEN_FILES[@]}"; do
-    echo "  Generating chart for: $(basename "$token_file")"
-    $cmd chart "$token_file" --chart-type combined --show-confidence
-done
-echo "✓ All charts generated"
+echo "✓ All prediction results fetched and charts generated"
 echo ""
 
 echo "=== Top Predict Script Completed ==="
