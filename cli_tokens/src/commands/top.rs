@@ -2,6 +2,11 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::time;
+use tokio::time::Duration as TokioDuration;
 
 use crate::api::backend::BackendClient;
 use crate::models::token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData};
@@ -35,7 +40,33 @@ pub struct TopArgs {
     pub quote_token: Option<String>,
 }
 
+async fn start_timer(start_time: Instant, running: Arc<AtomicBool>) {
+    let mut interval = time::interval(TokioDuration::from_secs(1));
+
+    // 最初の tick をスキップして即座に0秒を表示しないようにする
+    interval.tick().await;
+
+    while running.load(Ordering::Relaxed) {
+        interval.tick().await;
+        if running.load(Ordering::Relaxed) {
+            let elapsed = start_time.elapsed();
+            let elapsed_mins = elapsed.as_secs() / 60;
+            let elapsed_secs = elapsed.as_secs() % 60;
+            eprint!("\r経過時間: {}:{:02}", elapsed_mins, elapsed_secs);
+            use std::io::{self, Write};
+            io::stderr().flush().unwrap();
+        }
+    }
+}
+
 pub async fn run(args: TopArgs) -> Result<()> {
+    let start_time = Instant::now();
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+
+    // バックグラウンドでタイマーを開始
+    let timer_handle = tokio::spawn(start_timer(start_time, running_clone));
+
     let config = Config::from_env();
     let backend_client = BackendClient::new_with_url(config.backend_url);
 
@@ -66,7 +97,6 @@ pub async fn run(args: TopArgs) -> Result<()> {
     ensure_directory_exists(&output_dir)?;
 
     // Fetch tokens
-    println!("Fetching volatility tokens...");
     let tokens = backend_client
         .get_volatility_tokens(start_date, end_date, args.limit, args.quote_token.clone())
         .await?;
@@ -105,10 +135,22 @@ pub async fn run(args: TopArgs) -> Result<()> {
         write_json_file(&file_path, &file_data).await?;
     }
 
+    // タイマーを停止
+    running.store(false, Ordering::Relaxed);
+    timer_handle.abort();
+
+    // 最終的な経過時間を標準エラー出力に表示してから改行
+    let final_elapsed = start_time.elapsed();
+    let final_mins = final_elapsed.as_secs() / 60;
+    let final_secs = final_elapsed.as_secs() % 60;
+    eprintln!("\r経過時間: {}:{:02}", final_mins, final_secs);
+
     println!(
-        "Successfully saved {} tokens to {:?}",
+        "Successfully saved {} tokens to {:?} - 総経過時間: {}:{:02}",
         tokens.len(),
-        output_dir
+        output_dir,
+        final_mins,
+        final_secs
     );
     Ok(())
 }
