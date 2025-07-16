@@ -21,6 +21,7 @@ use axum::{
     routing::{get, post},
 };
 use bigdecimal::BigDecimal;
+use near_sdk::NearToken;
 use num_rational::Ratio;
 use num_traits::{ToPrimitive, Zero};
 use std::ops::Deref;
@@ -32,6 +33,8 @@ use zaciraci_common::pools::{
     TradeResponse, VolatilityTokensRequest, VolatilityTokensResponse,
 };
 use zaciraci_common::types::YoctoNearToken;
+
+const ONE_NEAR: u128 = NearToken::from_near(1).as_yoctonear();
 
 fn path(sub: &str) -> String {
     format!("/pools/{sub}")
@@ -384,28 +387,39 @@ async fn get_volatility_tokens(
     ));
     info!(log, "start");
 
+    let quote: TokenInAccount = if let Some(quote_token_str) = &request.quote_token {
+        match quote_token_str.parse::<TokenAccount>() {
+            Ok(token) => token.into(),
+            Err(e) => {
+                warn!(log, "failed to parse quote token";
+                    "token" => quote_token_str,
+                    "error" => ?e,
+                );
+                WNEAR_TOKEN.clone().into()
+            }
+        }
+    } else {
+        WNEAR_TOKEN.clone().into()
+    };
+    info!(log, "using quote token";
+        "token" => format!("{}", quote),
+    );
+
     // 並行処理でボラティリティ計算と深度計算を同時実行
     let (vols, deps) = {
         let start_time = Instant::now();
 
         // ボラティリティ計算タスク
         let vol_task = {
-            let quote = if let Some(quote_token_str) = &request.quote_token {
-                match quote_token_str.parse::<TokenAccount>() {
-                    Ok(token) => token.into(),
-                    Err(_) => WNEAR_TOKEN.clone().into(),
-                }
-            } else {
-                WNEAR_TOKEN.clone().into()
-            };
             let range = TimeRange {
                 start: request.start,
                 end: request.end,
             };
             let log = log.clone();
+            let quote = quote.clone();
             tokio::spawn(async move {
                 info!(log, "start volatility calculation";
-                    "quote" => format!("{}", quote),
+                    "quote" => format!("{}", &quote),
                 );
                 let result = TokenRate::get_by_volatility_in_time_range(&range, &quote).await;
                 info!(log, "volatility calculation completed");
@@ -421,7 +435,7 @@ async fn get_volatility_tokens(
                 info!(log, "start depth calculation");
                 let result = PoolInfoList::read_from_db(Some(timestamp))
                     .await
-                    .and_then(tokens_with_depth);
+                    .and_then(|pools| tokens_with_depth(pools, (&quote, ONE_NEAR)));
                 info!(log, "depth calculation completed");
                 result
             })

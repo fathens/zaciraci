@@ -1,3 +1,4 @@
+use super::ONE_NEAR;
 use crate::Result;
 use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairLike};
@@ -5,13 +6,10 @@ use crate::ref_finance::token_account::{
     TokenAccount, TokenInAccount, TokenOutAccount, WNEAR_TOKEN,
 };
 use bigdecimal::BigDecimal;
-use near_sdk::NearToken;
 use num_traits::zero;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-const ONE_NEAR: u128 = NearToken::from_near(1).as_yoctonear();
 
 #[derive(Debug)]
 pub(super) struct WithWeight<T> {
@@ -97,11 +95,13 @@ pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
     Ok(sorted)
 }
 
-pub fn tokens_with_depth(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccount, BigDecimal>> {
-    let quote = WNEAR_TOKEN.clone().into();
+pub fn tokens_with_depth(
+    pools: Arc<PoolInfoList>,
+    (quote, one): (&TokenInAccount, u128),
+) -> Result<HashMap<TokenAccount, BigDecimal>> {
     let graph = TokenGraph::new(Arc::clone(&pools));
-    let outs = graph.update_graph(&quote)?;
-    let rates = make_rates((&quote, ONE_NEAR), &graph, &outs)?;
+    let outs = graph.update_graph(quote)?;
+    let rates = make_rates((quote, one), &graph, &outs)?;
     let pools_depth: HashMap<_, _> = pools
         .iter()
         .map(|pool| {
@@ -112,7 +112,7 @@ pub fn tokens_with_depth(pools: Arc<PoolInfoList>) -> Result<HashMap<TokenAccoun
 
     let mut result = HashMap::new();
     for out in &outs {
-        let path = graph.get_path(&quote, out)?;
+        let path = graph.get_path(quote, out)?;
         let depth = path
             .0
             .iter()

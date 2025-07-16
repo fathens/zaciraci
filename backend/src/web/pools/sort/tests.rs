@@ -272,7 +272,7 @@ fn test_tokens_with_depth() {
 
     let pools = Arc::new(PoolInfoList::new(vec![pool1, pool2]));
 
-    let result = tokens_with_depth(pools);
+    let result = tokens_with_depth(pools, (&WNEAR_TOKEN.clone().into(), ONE_NEAR));
 
     match result {
         Ok(token_depths) => {
