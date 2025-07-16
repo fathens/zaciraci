@@ -123,7 +123,7 @@ pids=()
 for token_file in "${TOKEN_FILES[@]}"; do
     echo "  Starting pull for: $(basename "$token_file")"
     (
-        $cmd predict pull "$token_file" --poll-interval 60 --max-polls 30
+        $cmd predict pull "$token_file" --poll-interval 60 --max-polls 180
         echo "  ✓ Pull completed for: $(basename "$token_file")"
         echo "  Generating chart for: $(basename "$token_file")"
         $cmd chart "$token_file" --chart-type combined --show-confidence
