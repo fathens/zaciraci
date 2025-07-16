@@ -403,7 +403,9 @@ impl TokenRate {
                     timestamp >= $2 AND
                     timestamp <= $3
                 GROUP BY base_token
-                HAVING MIN(rate) > 0
+                HAVING
+                    MIN(rate) > 0 AND
+                    MAX(timestamp) > NOW() - INTERVAL '8 hour'
                 ORDER BY variance DESC
                 LIMIT 100
                 ",
