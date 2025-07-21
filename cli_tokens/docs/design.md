@@ -56,10 +56,13 @@ cli_tokens top -l 5 --output tokens
 # 2. 価格履歴を取得
 cli_tokens history tokens/wrap.near/sample.token.near.json --output history
 
-# 3. 実データを使用して予測実行
-cli_tokens predict tokens/wrap.near/sample.token.near.json --output predictions
+# 3. 価格予測タスクを開始（非同期実行）
+cli_tokens predict kick tokens/wrap.near/sample.token.near.json --output predictions
 
-# 4. 予測結果を検証
+# 4. 予測結果を取得（完了まで待機）
+cli_tokens predict pull tokens/wrap.near/sample.token.near.json --output predictions
+
+# 5. 予測結果を検証
 cli_tokens verify predictions/wrap.near/sample.token.near.json --output verification
 ```
 
