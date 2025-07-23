@@ -12,7 +12,6 @@ use num_traits::Zero;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
-use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -67,16 +66,14 @@ async fn forcast_rates(
     info!(log, "start");
     let quote = get_top_quote_token(range).await?;
     let bases = get_base_tokens(range, &quote).await?;
-    let rates_by_base = Arc::new(Mutex::new(HashMap::new()));
     let ps = bases.iter().map(|base| async {
         let rates = SameBaseTokenRates::load(&quote, base, range).await?;
         let result = rates.forcast(period, target).await?;
-        rates_by_base.lock().unwrap().insert(base.clone(), result);
-        Ok::<(), anyhow::Error>(())
+        Ok((base.clone(), result))
     });
-    join_all(ps).await;
+    let rates_by_base = join_all(ps).await;
     info!(log, "success");
-    Ok(rates_by_base.lock().unwrap().clone())
+    rates_by_base.into_iter().collect()
 }
 
 async fn get_top_quote_token(range: &TimeRange) -> Result<TokenInAccount> {
