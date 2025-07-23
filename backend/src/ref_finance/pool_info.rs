@@ -433,7 +433,8 @@ impl PoolInfoList {
             })
             .collect();
         let lists = join_all(results).await;
-        let pools: Vec<_> = lists.into_iter().flatten().flatten().collect();
+        let oks: Result<Vec<_>> = lists.into_iter().collect();
+        let pools: Vec<_> = oks?.into_iter().flatten().collect();
 
         info!(log, "finish"; "count" => pools.len());
         Ok(Arc::new(PoolInfoList::new(pools)))

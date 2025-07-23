@@ -1,8 +1,8 @@
 [workspace]
 members = [
     "backend",
-    "frontend",
     "common",
+    "cli_tokens",
 ]
 resolver = "3"
 

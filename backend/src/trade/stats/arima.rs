@@ -284,8 +284,29 @@ pub fn predict_future_rate(points: &[Point], target_time: NaiveDateTime) -> Resu
         let dataset_pred = Dataset::from(x_pred);
         let predictions = model.predict(dataset_pred);
 
-        // DatasetBaseからtargetsを取得し、その最初の要素を使用
-        predicted_value = predictions.targets().to_owned().into_raw_vec()[0];
+        // DatasetBaseからtargetsを取得し、予測値を抽出
+        let prediction_values = predictions.targets().to_owned().into_raw_vec();
+        predicted_value = if prediction_values.is_empty() {
+            // 予測が失敗した場合は最後の値を使用
+            current_features[current_features.len() - 1]
+        } else if prediction_values.len() == 1 {
+            // 単一の予測値の場合
+            prediction_values[0]
+        } else {
+            // 複数の予測値がある場合は加重平均を使用（新しい値により重みを付ける）
+            let mut weighted_sum = 0.0;
+            let mut weight_sum = 0.0;
+            for (idx, &value) in prediction_values.iter().enumerate() {
+                let weight = (idx + 1) as f64; // 後の値により高い重みを付ける
+                weighted_sum += value * weight;
+                weight_sum += weight;
+            }
+            if weight_sum > 0.0 {
+                weighted_sum / weight_sum
+            } else {
+                prediction_values[0]
+            }
+        };
 
         // 次のステップの特徴量を更新
         if i < steps_ahead - 1 {

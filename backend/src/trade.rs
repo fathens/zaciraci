@@ -20,7 +20,7 @@ pub async fn run() {
 }
 
 async fn run_record_rates() {
-    const CRON_CONF: &str = "*/5 * * * * *"; // 5秒間隔
+    const CRON_CONF: &str = "0 */5 * * * *"; // 5分間隔
     cronjob(CRON_CONF.parse().unwrap(), record_rates, "record_rates").await;
 }
 

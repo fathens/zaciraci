@@ -74,6 +74,8 @@ pub struct VolatilityTokensRequest {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
     pub limit: u32,
+    pub quote_token: Option<String>,
+    pub min_depth: Option<u64>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VolatilityTokensResponse {

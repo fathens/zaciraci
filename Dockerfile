@@ -12,13 +12,13 @@ COPY Cargo.toml .
 COPY Cargo.lock .
 COPY common common
 COPY backend backend
-COPY frontend frontend
+COPY cli_tokens cli_tokens
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo chef prepare --recipe-path recipe.json
 
-FROM base as builder
+FROM base AS builder
 ARG CARGO_BUILD_ARGS
 
 WORKDIR /app
@@ -32,7 +32,7 @@ COPY Cargo.toml .
 COPY Cargo.lock .
 COPY common common
 COPY backend backend
-COPY frontend frontend
+COPY cli_tokens cli_tokens
 
 RUN cargo clean
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

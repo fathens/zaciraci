@@ -113,11 +113,28 @@ async fn get_values(
     let values: Vec<_> = rates
         .points
         .into_iter()
-        .map(|p| ValueAtTime {
-            time: p.timestamp,
-            value: p.rate.to_f64().unwrap(),
+        .filter_map(|p| match p.rate.to_f64() {
+            Some(value) if value.is_finite() && value >= 0.0 => Some(ValueAtTime {
+                time: p.timestamp,
+                value,
+            }),
+            Some(value) => {
+                error!(log, "Invalid rate value filtered out";
+                    "value" => %value,
+                    "timestamp" => %p.timestamp
+                );
+                None
+            }
+            None => {
+                error!(log, "Failed to convert BigDecimal to f64";
+                    "rate" => %p.rate,
+                    "timestamp" => %p.timestamp
+                );
+                None
+            }
         })
         .collect();
+
     info!(log, "success";
         "values_count" => values.len(),
     );

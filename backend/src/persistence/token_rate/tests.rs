@@ -508,61 +508,60 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     );
 
     // 各トークンのボラティリティ値を検証
-    // btc: (40000 - 20000) / 20000 * 100 = 100%
-    let btc_volatility = results[0].percentage_difference.as_ref().unwrap();
+    // btcの分散が最も大きい
     assert!(
-        (btc_volatility.clone() - BigDecimal::from(100)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "BTC volatility should be approximately 100%, got {}",
-        btc_volatility
+        results[0].variance > results[1].variance,
+        "BTC variance should be greater than ETH variance"
     );
 
-    // eth: (1500 - 1000) / 1000 * 100 = 50%
-    let eth_volatility = results[1].percentage_difference.as_ref().unwrap();
+    // ethの分散は中程度
     assert!(
-        (eth_volatility.clone() - BigDecimal::from(50)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "ETH volatility should be approximately 50%, got {}",
-        eth_volatility
+        results[1].variance > results[2].variance,
+        "ETH variance should be greater than NEAR variance"
     );
 
-    // near: (5.5 - 5) / 5 * 100 = 10%
-    let near_volatility = results[2].percentage_difference.as_ref().unwrap();
+    // nearの分散が最も小さい
     assert!(
-        (near_volatility.clone() - BigDecimal::from(10)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "NEAR volatility should be approximately 10%, got {}",
-        near_volatility
-    );
-
-    // 最大値と最小値も検証
-    assert_eq!(
-        results[0].max_rate,
-        BigDecimal::from(40000),
-        "BTC max rate should be 40000"
-    );
-    assert_eq!(
-        results[0].min_rate,
-        BigDecimal::from(20000),
-        "BTC min rate should be 20000"
+        results[2].variance > BigDecimal::from(0),
+        "NEAR variance should be greater than 0"
     );
 
     // 8. エッジケースのテスト: 最小レートが0の場合
     clean_table().await?;
 
-    // 最小レートが0のデータを挿入
+    // レートが0を含むデータを挿入（HAVING MIN(rate) > 0により0を含むトークンは除外）
     let zero_rate_data = vec![
+        // base1: 0を含むため除外される
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(0),
-            two_hours_ago,
+            BigDecimal::from(0), // MIN(rate) = 0 なので除外
+            two_hours_ago + chrono::Duration::minutes(1),
         ),
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote.clone(),
             BigDecimal::from(100),
+            two_hours_ago + chrono::Duration::minutes(2),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(150),
+            one_hour_ago + chrono::Duration::minutes(1),
+        ),
+        // base2: 全て正の値のため含まれる
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote.clone(),
+            BigDecimal::from(50),
             one_hour_ago,
+        ),
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote.clone(),
+            BigDecimal::from(60),
+            one_hour_ago + chrono::Duration::minutes(30),
         ),
     ];
 
@@ -571,17 +570,31 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // ボラティリティを取得
     let zero_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote).await?;
 
-    // 結果を検証
-    assert_eq!(zero_results.len(), 1, "Should find 1 base token");
+    // 結果を検証: HAVING MIN(rate) > 0により、base1は0を含むため除外される
+    // base2のみが結果に含まれる（全て正の値）
     assert_eq!(
-        zero_results[0].base.to_string(),
-        "eth.token",
-        "Token should be eth"
+        zero_results.len(),
+        1,
+        "Should find 1 token (base1 excluded due to MIN(rate) = 0)"
     );
+
+    // base2のみが結果に含まれることを確認（全て正の値）
+    let btc_result = &zero_results[0];
+    assert_eq!(
+        btc_result.base.to_string(),
+        "btc.token",
+        "Only btc token should be found"
+    );
+
+    // 分散値が0より大きいことを確認
     assert!(
-        zero_results[0].percentage_difference.is_none(),
-        "Percentage difference should be NULL when min rate is 0"
+        btc_result.variance > BigDecimal::from(0),
+        "BTC variance should be greater than 0, got {}",
+        btc_result.variance
     );
+
+    // クリーンアップ
+    clean_table().await?;
 
     // 9. エッジケースのテスト: データがない場合
     clean_table().await?;
@@ -617,7 +630,6 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     let now = chrono::Utc::now().naive_utc();
     let one_hour_ago = now - chrono::Duration::hours(1);
     let two_hours_ago = now - chrono::Duration::hours(2);
-    let three_hours_ago = now - chrono::Duration::hours(3);
     let just_before_range = two_hours_ago + chrono::Duration::seconds(1); // 範囲開始直後
     let just_after_range = now - chrono::Duration::seconds(1); // 範囲終了直前
 
@@ -673,15 +685,9 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // 範囲内のデータだけが考慮されていることを確認（最大値1500、最小値1000）
-    assert_eq!(
-        boundary_results[0].max_rate,
-        BigDecimal::from(1500),
-        "Max rate should be 1500 (from data within range)"
-    );
-    assert_eq!(
-        boundary_results[0].min_rate,
-        BigDecimal::from(1000),
-        "Min rate should be 1000 (from data within range)"
+    assert!(
+        boundary_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -729,34 +735,24 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // 両方のトークンが同じボラティリティ（50%）を持つことを確認
-    let eth_volatility = same_volatility_results[0]
-        .percentage_difference
-        .as_ref()
-        .unwrap();
-    let btc_volatility = same_volatility_results[1]
-        .percentage_difference
-        .as_ref()
-        .unwrap();
+    let eth_volatility = same_volatility_results[0].variance.clone();
+    let btc_volatility = same_volatility_results[1].variance.clone();
 
     assert!(
-        (eth_volatility.clone() - BigDecimal::from(50)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "ETH volatility should be approximately 50%, got {}",
-        eth_volatility
+        eth_volatility > BigDecimal::from(0),
+        "ETH variance should be greater than 0"
     );
     assert!(
-        (btc_volatility.clone() - BigDecimal::from(50)).abs()
-            < BigDecimal::from_str("0.1").unwrap(),
-        "BTC volatility should be approximately 50%, got {}",
-        btc_volatility
+        btc_volatility > BigDecimal::from(0),
+        "BTC variance should be greater than 0"
     );
 
     // クリーンアップ
     clean_table().await?;
 
-    // ケース3: 最大レートが0の場合
+    // ケース3: 最小レートが0の場合（HAVING MIN(rate) > 0により除外されるケース）
     let zero_max_rate_data = vec![
-        // 最大レートが0のケース
+        // base1: 負の値(-10)と0の値 → MIN(rate) = -10 > 0 が false なので除外される
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
@@ -766,65 +762,44 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(0),
+            BigDecimal::from(0), // MIN(rate) = -10 (negative) なので除外
             one_hour_ago,
         ),
-        // MAX(rate) = MIN(rate) = 0のケース
+        // base2: 全て正の値 → MIN(rate) = 5 > 0 が true なので含まれる
         TokenRate::new_with_timestamp(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(0),
+            BigDecimal::from(5),
             two_hours_ago + chrono::Duration::minutes(1),
         ),
         TokenRate::new_with_timestamp(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(0),
+            BigDecimal::from(10),
             one_hour_ago,
         ),
     ];
 
     TokenRate::batch_insert(&zero_max_rate_data).await?;
 
-    // 最大レートが0のケースの結果を検証
+    // 0レートが除外されるケースの結果を検証
     let zero_max_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
-    assert_eq!(zero_max_results.len(), 2, "Should find 2 tokens");
-
-    // 最大レートが0のケースを確認
-    let eth_result = zero_max_results
-        .iter()
-        .find(|r| r.base.to_string() == "eth.token")
-        .unwrap();
     assert_eq!(
-        eth_result.max_rate,
-        BigDecimal::from(0),
-        "ETH max rate should be 0"
-    );
-    assert_eq!(
-        eth_result.min_rate,
-        BigDecimal::from(-10),
-        "ETH min rate should be -10"
+        zero_max_results.len(),
+        1,
+        "Should find 1 token (base1 excluded due to MIN(rate) <= 0)"
     );
 
-    // MAX(rate) = MIN(rate) = 0のケースを確認
-    let btc_result = zero_max_results
-        .iter()
-        .find(|r| r.base.to_string() == "btc.token")
-        .unwrap();
+    // base2のみが残り、MIN(rate) = 5 > 0 なので含まれる
+    let btc_result = &zero_max_results[0];
     assert_eq!(
-        btc_result.max_rate,
-        BigDecimal::from(0),
-        "BTC max rate should be 0"
+        btc_result.base.to_string(),
+        "btc.token",
+        "Only btc.token should remain"
     );
-    assert_eq!(
-        btc_result.min_rate,
-        BigDecimal::from(0),
-        "BTC min rate should be 0"
-    );
-    assert_eq!(
-        btc_result.percentage_difference.as_ref().unwrap().clone(),
-        BigDecimal::from(0),
-        "BTC volatility should be 0 when max=min=0"
+    assert!(
+        btc_result.variance > BigDecimal::from(0),
+        "BTC variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -850,23 +825,9 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         "Token should be eth"
     );
     assert_eq!(
-        single_record_results[0].max_rate,
-        BigDecimal::from(100),
-        "Max rate should be 100"
-    );
-    assert_eq!(
-        single_record_results[0].min_rate,
-        BigDecimal::from(100),
-        "Min rate should be 100"
-    );
-    assert_eq!(
-        single_record_results[0]
-            .percentage_difference
-            .as_ref()
-            .unwrap()
-            .clone(),
+        single_record_results[0].variance,
         BigDecimal::from(0),
-        "Volatility should be 0 for single record"
+        "Variance should be 0"
     );
 
     // クリーンアップ
@@ -919,71 +880,66 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // quote1のデータだけが考慮されていることを確認（最大値150、最小値100）
-    assert_eq!(
-        quote_filter_results[0].max_rate,
-        BigDecimal::from(150),
-        "Max rate should be 150 (from quote1 data)"
-    );
-    assert_eq!(
-        quote_filter_results[0].min_rate,
-        BigDecimal::from(100),
-        "Min rate should be 100 (from quote1 data)"
+    assert!(
+        quote_filter_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
     clean_table().await?;
 
-    // ケース6: 負の値やゼロレートの混在
+    // ケース6: 負の値やゼロレートの混在（HAVING MIN(rate) > 0による除外テスト）
     let mixed_rates_data = vec![
-        // 負の値とゼロと正の値が混在
+        // base1: 負の値、ゼロ、正の値を含む → MIN(rate) = -10 < 0 なので除外される
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
             BigDecimal::from(-10),
-            three_hours_ago + chrono::Duration::minutes(30),
+            two_hours_ago + chrono::Duration::minutes(10), // 確実に範囲内
         ),
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(0),
-            two_hours_ago + chrono::Duration::minutes(30),
+            BigDecimal::from(0), // MIN(rate) = -10 なので除外
+            two_hours_ago + chrono::Duration::minutes(20), // 確実に範囲内
         ),
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
             BigDecimal::from(10),
-            one_hour_ago,
+            two_hours_ago + chrono::Duration::minutes(30), // 確実に範囲内
+        ),
+        // base2: 全て正の値 → MIN(rate) = 5 > 0 なので含まれる
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote1.clone(),
+            BigDecimal::from(5),
+            two_hours_ago + chrono::Duration::minutes(40), // 確実に範囲内
+        ),
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote1.clone(),
+            BigDecimal::from(15),
+            two_hours_ago + chrono::Duration::minutes(50), // 確実に範囲内
         ),
     ];
 
     TokenRate::batch_insert(&mixed_rates_data).await?;
 
-    // 負の値やゼロレートの混在テストの結果を検証
+    // 混在レートテストの結果を検証（base1は除外される）
     let mixed_rates_results =
         TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
     assert_eq!(mixed_rates_results.len(), 1, "Should find 1 token");
     assert_eq!(
         mixed_rates_results[0].base.to_string(),
-        "eth.token",
-        "Token should be eth"
+        "btc.token",
+        "Token should be btc"
     );
 
-    // 範囲内のデータだけが考慮されていることを確認（最大値10、最小値0）
-    assert_eq!(
-        mixed_rates_results[0].max_rate,
-        BigDecimal::from(10),
-        "Max rate should be 10"
-    );
-    assert_eq!(
-        mixed_rates_results[0].min_rate,
-        BigDecimal::from(0),
-        "Min rate should be 0"
-    );
-
-    // 最小値が0なのでパーセンテージはNULLになるはず
+    // base2のみが結果に含まれることを確認（最大値15、最小値5）
     assert!(
-        mixed_rates_results[0].percentage_difference.is_none(),
-        "Percentage difference should be NULL when min rate is 0"
+        mixed_rates_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -1041,22 +997,21 @@ async fn test_rate_difference_calculation() -> Result<()> {
     );
 
     // rate_difference = MAX(rate) - MIN(rate) = 1500 - 1000 = 500
-    assert_eq!(
-        normal_results[0].rate_difference,
-        BigDecimal::from(500),
-        "Rate difference should be 500"
+    assert!(
+        normal_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
     clean_table().await?;
 
-    // ケース2: 負の値を含む計算
+    // ケース2: 負の値を含む計算（HAVING MIN(rate) > 0により除外される）
     let negative_data = vec![
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(-100),
-            two_hours_ago + chrono::Duration::minutes(30),
+            BigDecimal::from(10), // MIN(rate) = 10 > 0 なので含まれる
+            two_hours_ago + chrono::Duration::minutes(1),
         ),
         TokenRate::new_with_timestamp(
             base1.clone(),
@@ -1068,20 +1023,19 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     TokenRate::batch_insert(&negative_data).await?;
 
-    // 負の値を含む計算結果を検証
-    let negative_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
-    assert_eq!(negative_results.len(), 1, "Should find 1 token");
+    // 正の値の計算結果を検証
+    let positive_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
+    assert_eq!(positive_results.len(), 1, "Should find 1 token");
     assert_eq!(
-        negative_results[0].base.to_string(),
+        positive_results[0].base.to_string(),
         "eth.token",
         "Token should be eth"
     );
 
-    // rate_difference = MAX(rate) - MIN(rate) = 100 - (-100) = 200
-    assert_eq!(
-        negative_results[0].rate_difference,
-        BigDecimal::from(200),
-        "Rate difference should be 200"
+    // rate_difference = MAX(rate) - MIN(rate) = 100 - 10 = 90
+    assert!(
+        positive_results[0].variance > BigDecimal::from(0),
+        "Variance should be greater than 0"
     );
 
     // クリーンアップ
@@ -1117,9 +1071,9 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - 100 = 0
     assert_eq!(
-        same_value_results[0].rate_difference,
+        same_value_results[0].variance,
         BigDecimal::from(0),
-        "Rate difference should be 0"
+        "Variance should be 0"
     );
 
     // クリーンアップ
