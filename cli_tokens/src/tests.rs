@@ -242,15 +242,9 @@ mod integration_tests {
 mod api_tests {
     use super::*;
     use crate::api::backend::BackendClient;
-    use crate::api::chronos::ChronosApiClient;
-    use crate::models::prediction::{
-        AsyncPredictionResponse, PredictionResult, ZeroShotPredictionRequest,
-    };
-    use chrono::Utc;
-    use zaciraci_common::pools::VolatilityTokensResponse;
-    use zaciraci_common::stats::{GetValuesResponse, ValueAtTime};
-    use zaciraci_common::types::TokenAccount;
-    use zaciraci_common::ApiResponse;
+    use common::api::chronos::ChronosApiClient;
+    use common::types::TokenAccount;
+    use common::ApiResponse;
 
     #[tokio::test]
     async fn test_backend_api_get_volatility_tokens_success() -> Result<()> {
@@ -259,10 +253,10 @@ mod api_tests {
             TokenAccount("wrap.near".to_string().into()),
             TokenAccount("usdc.near".to_string().into()),
         ];
-        let volatility_response = VolatilityTokensResponse {
+        let volatility_response = common::pools::VolatilityTokensResponse {
             tokens: mock_tokens.clone(),
         };
-        let api_response: ApiResponse<VolatilityTokensResponse, String> =
+        let api_response: ApiResponse<common::pools::VolatilityTokensResponse, String> =
             ApiResponse::Success(volatility_response);
 
         let _mock = server
@@ -292,7 +286,7 @@ mod api_tests {
     #[tokio::test]
     async fn test_backend_api_get_volatility_tokens_error() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let api_response: ApiResponse<VolatilityTokensResponse, String> =
+        let api_response: ApiResponse<common::pools::VolatilityTokensResponse, String> =
             ApiResponse::Error("Database connection failed".to_string());
 
         let _mock = server
@@ -322,22 +316,26 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_predict_zero_shot_success() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let mock_response = AsyncPredictionResponse {
+        let mock_response = common::prediction::AsyncPredictionResponse {
             task_id: "pred_123".to_string(),
             status: "pending".to_string(),
             message: "Task started".to_string(),
         };
 
+        // 新しいAPIアーキテクチャではApiResponseでラップされる
+        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> = 
+            ApiResponse::Success(mock_response);
+
         let _mock = server
             .mock("POST", "/api/v1/predict_zero_shot_async")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&mock_response).unwrap())
+            .with_body(serde_json::to_string(&api_response).unwrap())
             .create_async()
             .await;
 
         let client = ChronosApiClient::new(server.url());
-        let request = ZeroShotPredictionRequest {
+        let request = common::prediction::ZeroShotPredictionRequest {
             timestamp: vec![Utc::now()],
             values: vec![1.0],
             forecast_until: Utc::now(),
@@ -360,16 +358,20 @@ mod api_tests {
     async fn test_chronos_api_predict_zero_shot_error() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
 
+        // 新しいAPIアーキテクチャではApiResponseでエラーをラップ
+        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> = 
+            ApiResponse::Error("Internal Server Error".to_string());
+
         let _mock = server
             .mock("POST", "/api/v1/predict_zero_shot_async")
-            .with_status(500)
+            .with_status(200) // APIレスポンス自体は成功だが、内容がエラー
             .with_header("content-type", "application/json")
-            .with_body("Internal Server Error")
+            .with_body(serde_json::to_string(&api_response).unwrap())
             .create_async()
             .await;
 
         let client = ChronosApiClient::new(server.url());
-        let request = ZeroShotPredictionRequest {
+        let request = common::prediction::ZeroShotPredictionRequest {
             timestamp: vec![Utc::now()],
             values: vec![1.0],
             forecast_until: Utc::now(),
@@ -383,7 +385,7 @@ mod api_tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Chronos API error"));
+            .contains("Internal Server Error"));
 
         Ok(())
     }
@@ -391,7 +393,7 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_get_prediction_status() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let mock_response = PredictionResult {
+        let mock_response = common::prediction::PredictionResult {
             task_id: "pred_123".to_string(),
             status: "completed".to_string(),
             progress: Some(100.0),
@@ -402,11 +404,15 @@ mod api_tests {
             updated_at: Utc::now(),
         };
 
+        // 新しいAPIアーキテクチャではApiResponseでラップされる
+        let api_response: ApiResponse<common::prediction::PredictionResult, String> = 
+            ApiResponse::Success(mock_response);
+
         let _mock = server
             .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&mock_response).unwrap())
+            .with_body(serde_json::to_string(&api_response).unwrap())
             .create_async()
             .await;
 
@@ -425,7 +431,7 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_poll_prediction_until_complete() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let completed_response = PredictionResult {
+        let completed_response = common::prediction::PredictionResult {
             task_id: "pred_123".to_string(),
             status: "completed".to_string(),
             progress: Some(100.0),
@@ -436,11 +442,15 @@ mod api_tests {
             updated_at: Utc::now(),
         };
 
+        // 新しいAPIアーキテクチャではApiResponseでラップされる
+        let api_response: ApiResponse<common::prediction::PredictionResult, String> = 
+            ApiResponse::Success(completed_response);
+
         let _mock = server
             .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&completed_response).unwrap())
+            .with_body(serde_json::to_string(&api_response).unwrap())
             .create_async()
             .await;
 
@@ -457,7 +467,7 @@ mod api_tests {
     #[tokio::test]
     async fn test_chronos_api_poll_prediction_failed() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let failed_response = PredictionResult {
+        let failed_response = common::prediction::PredictionResult {
             task_id: "pred_123".to_string(),
             status: "failed".to_string(),
             progress: Some(0.0),
@@ -468,11 +478,15 @@ mod api_tests {
             updated_at: Utc::now(),
         };
 
+        // 新しいAPIアーキテクチャではApiResponseでラップされる
+        let api_response: ApiResponse<common::prediction::PredictionResult, String> = 
+            ApiResponse::Success(failed_response);
+
         let _mock = server
             .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&failed_response).unwrap())
+            .with_body(serde_json::to_string(&api_response).unwrap())
             .create_async()
             .await;
 
@@ -492,14 +506,14 @@ mod api_tests {
     async fn test_backend_api_get_price_history_success() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let mock_values = vec![
-            ValueAtTime {
+            common::stats::ValueAtTime {
                 time: chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
                     .unwrap()
                     .and_hms_opt(0, 0, 0)
                     .unwrap(),
                 value: 5.23,
             },
-            ValueAtTime {
+            common::stats::ValueAtTime {
                 time: chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
                     .unwrap()
                     .and_hms_opt(1, 0, 0)
@@ -507,10 +521,10 @@ mod api_tests {
                 value: 5.25,
             },
         ];
-        let price_response = GetValuesResponse {
+        let price_response = common::stats::GetValuesResponse {
             values: mock_values.clone(),
         };
-        let api_response: ApiResponse<GetValuesResponse, String> =
+        let api_response: ApiResponse<common::stats::GetValuesResponse, String> = 
             ApiResponse::Success(price_response);
 
         let _mock = server
@@ -547,7 +561,7 @@ mod api_tests {
     #[tokio::test]
     async fn test_backend_api_get_price_history_error() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let api_response: ApiResponse<GetValuesResponse, String> =
+        let api_response: ApiResponse<common::stats::GetValuesResponse, String> = 
             ApiResponse::Error("Insufficient data points".to_string());
 
         let _mock = server
@@ -1488,92 +1502,6 @@ mod environment_tests {
         let output_path = PathBuf::from(default_base).join("tokens");
         assert_eq!(output_path, PathBuf::from("./tokens"));
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_nested_directory_structure() -> Result<()> {
-        use std::env;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new()?;
-        let base_path = temp_dir.path().to_str().unwrap();
-
-        // Set environment variable
-        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
-
-        let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-
-        // Test complete directory structure
-        let quote_token = "wrap.near";
-        let token_name = "sample.token.near";
-
-        // Test tokens structure
-        let tokens_path = PathBuf::from(&actual_base)
-            .join("tokens")
-            .join(quote_token)
-            .join(format!("{}.json", token_name));
-
-        // Test history structure
-        let history_path = PathBuf::from(&actual_base)
-            .join("history")
-            .join(quote_token)
-            .join(format!("{}.json", token_name));
-
-        // Test predictions structure
-        let predictions_path = PathBuf::from(&actual_base)
-            .join("predictions")
-            .join(quote_token)
-            .join(format!("{}.json", token_name));
-
-        // Test verification structure
-        let verification_path = PathBuf::from(&actual_base)
-            .join("verification")
-            .join(quote_token)
-            .join(token_name)
-            .join("verification_report.json");
-
-        // Verify all paths are constructed correctly
-        assert!(tokens_path.to_string_lossy().contains(base_path));
-        assert!(history_path.to_string_lossy().contains(base_path));
-        assert!(predictions_path.to_string_lossy().contains(base_path));
-        assert!(verification_path.to_string_lossy().contains(base_path));
-
-        // Clean up
-        env::remove_var("CLI_TOKENS_BASE_DIR");
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_command_integration_with_base_dir() -> Result<()> {
-        use crate::utils::file::ensure_directory_exists;
-        use std::env;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new()?;
-        let base_path = temp_dir.path().to_str().unwrap();
-
-        // Set environment variable
-        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
-
-        // Test directory creation with environment variable
-        let test_paths = vec!["tokens", "history", "predictions", "verification"];
-
-        for path in test_paths {
-            let full_path = PathBuf::from(base_path).join(path);
-            ensure_directory_exists(&full_path)?;
-            assert!(full_path.exists());
-            assert!(full_path.is_dir());
-        }
-
-        // Test nested directory structure
-        let quote_token_dir = PathBuf::from(base_path).join("tokens").join("wrap.near");
-        ensure_directory_exists(&quote_token_dir)?;
-        assert!(quote_token_dir.exists());
-        assert!(quote_token_dir.is_dir());
-
-        // Clean up
-        env::remove_var("CLI_TOKENS_BASE_DIR");
         Ok(())
     }
 

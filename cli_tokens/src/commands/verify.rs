@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use crate::models::{
     history::HistoryFileData,
-    prediction::TokenPredictionResult,
     verification::{ComparisonPoint, VerificationMetrics},
 };
+use common::prediction::TokenPredictionResult;
 use crate::utils::file::{ensure_directory_exists, file_exists, sanitize_filename};
 
 #[derive(Parser)]

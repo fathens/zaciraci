@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use reqwest::Client;
-use zaciraci_common::{
+use common::{
     pools::{VolatilityTokensRequest, VolatilityTokensResponse},
     stats::{GetValuesRequest, GetValuesResponse, ValueAtTime},
     types::TokenAccount,

@@ -2,7 +2,7 @@ use super::*;
 use chrono::Utc;
 use std::path::PathBuf;
 
-use crate::models::prediction::{ConfidenceInterval, PredictionPoint};
+use common::prediction::{ConfidenceInterval, PredictionPoint};
 
 // === parse_size テスト ===
 

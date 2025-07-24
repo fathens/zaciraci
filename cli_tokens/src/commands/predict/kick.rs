@@ -5,10 +5,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::api::chronos::ChronosApiClient;
+use common::api::chronos::ChronosApiClient;
+use common::prediction::ZeroShotPredictionRequest;
 use crate::models::{
     history::HistoryFileData,
-    prediction::ZeroShotPredictionRequest,
     task::{PredictionParams, TaskInfo},
     token::TokenFileData,
 };

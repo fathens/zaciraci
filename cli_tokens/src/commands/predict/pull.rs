@@ -4,9 +4,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::api::chronos::ChronosApiClient;
+use common::api::chronos::ChronosApiClient;
+use common::prediction::{PredictionPoint, TokenPredictionResult};
 use crate::models::{
-    prediction::{PredictionPoint, TokenPredictionResult},
     task::TaskInfo,
     token::TokenFileData,
 };
