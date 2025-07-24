@@ -7,8 +7,8 @@ use crate::models::{
     history::HistoryFileData,
     verification::{ComparisonPoint, VerificationMetrics},
 };
-use common::prediction::TokenPredictionResult;
 use crate::utils::file::{ensure_directory_exists, file_exists, sanitize_filename};
+use common::prediction::TokenPredictionResult;
 
 #[derive(Parser)]
 #[clap(about = "Verify prediction accuracy against actual data")]

@@ -5,8 +5,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use common::api::chronos::ChronosApiClient;
-use common::prediction::ZeroShotPredictionRequest;
 use crate::models::{
     history::HistoryFileData,
     task::{PredictionParams, TaskInfo},
@@ -16,6 +14,8 @@ use crate::utils::{
     config::Config,
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
 };
+use common::api::chronos::ChronosApiClient;
+use common::prediction::ZeroShotPredictionRequest;
 
 #[derive(Parser)]
 #[clap(about = "Start an async prediction task and exit")]

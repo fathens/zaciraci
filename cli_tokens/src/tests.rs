@@ -323,7 +323,7 @@ mod api_tests {
         };
 
         // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> = 
+        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> =
             ApiResponse::Success(mock_response);
 
         let _mock = server
@@ -359,7 +359,7 @@ mod api_tests {
         let mut server = mockito::Server::new_async().await;
 
         // 新しいAPIアーキテクチャではApiResponseでエラーをラップ
-        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> = 
+        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> =
             ApiResponse::Error("Internal Server Error".to_string());
 
         let _mock = server
@@ -405,7 +405,7 @@ mod api_tests {
         };
 
         // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::PredictionResult, String> = 
+        let api_response: ApiResponse<common::prediction::PredictionResult, String> =
             ApiResponse::Success(mock_response);
 
         let _mock = server
@@ -443,7 +443,7 @@ mod api_tests {
         };
 
         // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::PredictionResult, String> = 
+        let api_response: ApiResponse<common::prediction::PredictionResult, String> =
             ApiResponse::Success(completed_response);
 
         let _mock = server
@@ -479,7 +479,7 @@ mod api_tests {
         };
 
         // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::PredictionResult, String> = 
+        let api_response: ApiResponse<common::prediction::PredictionResult, String> =
             ApiResponse::Success(failed_response);
 
         let _mock = server
@@ -524,7 +524,7 @@ mod api_tests {
         let price_response = common::stats::GetValuesResponse {
             values: mock_values.clone(),
         };
-        let api_response: ApiResponse<common::stats::GetValuesResponse, String> = 
+        let api_response: ApiResponse<common::stats::GetValuesResponse, String> =
             ApiResponse::Success(price_response);
 
         let _mock = server
@@ -561,7 +561,7 @@ mod api_tests {
     #[tokio::test]
     async fn test_backend_api_get_price_history_error() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let api_response: ApiResponse<common::stats::GetValuesResponse, String> = 
+        let api_response: ApiResponse<common::stats::GetValuesResponse, String> =
             ApiResponse::Error("Insufficient data points".to_string());
 
         let _mock = server

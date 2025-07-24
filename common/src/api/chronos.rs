@@ -1,6 +1,9 @@
 use super::traits::{ApiClient, PredictionClient};
-use super::{ApiError, ApiClientConfig};
-use crate::{ApiResponse, prediction::{AsyncPredictionResponse, PredictionResult, ZeroShotPredictionRequest}};
+use super::{ApiClientConfig, ApiError};
+use crate::{
+    ApiResponse,
+    prediction::{AsyncPredictionResponse, PredictionResult, ZeroShotPredictionRequest},
+};
 use async_trait::async_trait;
 use reqwest::Client;
 
@@ -14,7 +17,7 @@ impl ChronosApiClient {
     pub fn new(base_url: String) -> Self {
         Self::new_with_config(ApiClientConfig::new(base_url))
     }
-    
+
     /// 設定を指定するコンストラクタ
     pub fn new_with_config(config: ApiClientConfig) -> Self {
         Self {
@@ -40,10 +43,11 @@ impl ChronosApiClient {
                     return Ok(result);
                 }
                 "failed" => {
-                    let error_msg = result
-                        .error
-                        .unwrap_or_else(|| "Unknown error".to_string());
-                    return Err(ApiError::Server(format!("Prediction failed: {}", error_msg)));
+                    let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
+                    return Err(ApiError::Server(format!(
+                        "Prediction failed: {}",
+                        error_msg
+                    )));
                 }
                 "running" | "pending" => {
                     if let Some(progress) = result.progress {
@@ -72,7 +76,10 @@ impl ChronosApiClient {
     }
 
     /// 予測ステータスを取得
-    pub async fn get_prediction_status(&self, prediction_id: &str) -> Result<PredictionResult, ApiError> {
+    pub async fn get_prediction_status(
+        &self,
+        prediction_id: &str,
+    ) -> Result<PredictionResult, ApiError> {
         let path = format!("/api/v1/prediction_status/{}", prediction_id);
         let response: ApiResponse<PredictionResult, String> = self
             .request(reqwest::Method::GET, &path, None::<()>)
@@ -124,8 +131,12 @@ impl ApiClient for ChronosApiClient {
         }
     }
 
-    async fn request<T, R>(&self, method: reqwest::Method, path: &str, body: Option<T>) 
-        -> Result<ApiResponse<R, String>, ApiError>
+    async fn request<T, R>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<T>,
+    ) -> Result<ApiResponse<R, String>, ApiError>
     where
         T: serde::Serialize + Send,
         R: serde::de::DeserializeOwned + Send + std::fmt::Debug + Clone,
@@ -166,10 +177,16 @@ impl PredictionClient for ChronosApiClient {
     type PredictionRequest = ZeroShotPredictionRequest;
     type PredictionResponse = AsyncPredictionResponse;
 
-    async fn predict(&self, request: Self::PredictionRequest) 
-        -> Result<Self::PredictionResponse, ApiError> {
+    async fn predict(
+        &self,
+        request: Self::PredictionRequest,
+    ) -> Result<Self::PredictionResponse, ApiError> {
         let response: ApiResponse<Self::PredictionResponse, String> = self
-            .request(reqwest::Method::POST, "/api/v1/predict_zero_shot_async", Some(request))
+            .request(
+                reqwest::Method::POST,
+                "/api/v1/predict_zero_shot_async",
+                Some(request),
+            )
             .await?;
 
         match response {

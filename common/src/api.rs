@@ -49,17 +49,17 @@ impl ApiClientConfig {
             ..Default::default()
         }
     }
-    
+
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = timeout;
         self
     }
-    
+
     pub fn with_retry_attempts(mut self, retry_attempts: u32) -> Self {
         self.retry_attempts = retry_attempts;
         self
     }
-    
+
     pub fn with_api_key(mut self, api_key: String) -> Self {
         self.api_key = Some(api_key);
         self

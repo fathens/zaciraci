@@ -4,16 +4,13 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use common::api::chronos::ChronosApiClient;
-use common::prediction::{PredictionPoint, TokenPredictionResult};
-use crate::models::{
-    task::TaskInfo,
-    token::TokenFileData,
-};
+use crate::models::{task::TaskInfo, token::TokenFileData};
 use crate::utils::{
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
 };
+use common::api::chronos::ChronosApiClient;
+use common::prediction::{PredictionPoint, TokenPredictionResult};
 
 #[derive(Parser)]
 #[clap(about = "Poll for prediction results")]
