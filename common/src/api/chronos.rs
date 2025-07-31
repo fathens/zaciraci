@@ -163,10 +163,23 @@ impl ApiClient for ChronosApiClient {
             )));
         }
 
-        let api_response: ApiResponse<R, String> = response
-            .json()
+        // Get the response body as text first for debugging
+        let response_text = response
+            .text()
             .await
-            .map_err(|e| ApiError::Parse(e.to_string()))?;
+            .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
+
+        // Log the response text for debugging
+        println!("Response text: {}", response_text);
+
+        // Try to parse the response text
+        let api_response: ApiResponse<R, String> =
+            serde_json::from_str(&response_text).map_err(|e| {
+                ApiError::Parse(format!(
+                    "Error decoding response body: {}. Response: {}",
+                    e, response_text
+                ))
+            })?;
 
         Ok(api_response)
     }
@@ -181,17 +194,41 @@ impl PredictionClient for ChronosApiClient {
         &self,
         request: Self::PredictionRequest,
     ) -> Result<Self::PredictionResponse, ApiError> {
-        let response: ApiResponse<Self::PredictionResponse, String> = self
-            .request(
-                reqwest::Method::POST,
-                "/api/v1/predict_zero_shot_async",
-                Some(request),
-            )
-            .await?;
+        // Create the request directly without using the generic request method
+        let url = format!("{}/api/v1/predict_zero_shot_async", self.base_url());
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .timeout(self.config.timeout)
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
 
-        match response {
-            ApiResponse::Success(data) => Ok(data),
-            ApiResponse::Error(message) => Err(ApiError::Server(message)),
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(ApiError::Server(format!(
+                "HTTP Error {}: {}",
+                status, error_text
+            )));
         }
+
+        // Get the response body as text first for debugging
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
+
+        // Try to parse the response text directly to AsyncPredictionResponse
+        let prediction_response: Self::PredictionResponse = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                ApiError::Parse(format!(
+                    "Error decoding response body: {}. Response: {}",
+                    e, response_text
+                ))
+            })?;
+
+        Ok(prediction_response)
     }
 }

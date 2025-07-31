@@ -61,7 +61,11 @@ MODEL_NAME="$1"
 cmd="$(dirname $0)/../target/release/cli_tokens"
 
 # Set base directory
-export CLI_TOKENS_BASE_DIR="${CLI_TOKENS_BASE_DIR:-$(pwd)}"
+# Always use cli_tokens/.work directory as base directory
+SCRIPT_DIR="$(dirname "$0")"
+export CLI_TOKENS_BASE_DIR="${CLI_TOKENS_BASE_DIR:-$SCRIPT_DIR/.work}"
+# Create .work directory if it doesn't exist
+mkdir -p "$CLI_TOKENS_BASE_DIR"
 
 echo "=== Top Predict Script Start ==="
 echo "Model: $MODEL_NAME"
