@@ -81,14 +81,43 @@ impl ChronosApiClient {
         prediction_id: &str,
     ) -> Result<PredictionResult, ApiError> {
         let path = format!("/api/v1/prediction_status/{}", prediction_id);
-        let response: ApiResponse<PredictionResult, String> = self
-            .request(reqwest::Method::GET, &path, None::<()>)
-            .await?;
+        let url = format!("{}{}", self.base_url(), path);
 
-        match response {
-            ApiResponse::Success(result) => Ok(result),
-            ApiResponse::Error(message) => Err(ApiError::Server(message)),
+        let response = self
+            .client
+            .get(&url)
+            .timeout(self.config.timeout)
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(ApiError::Server(format!(
+                "HTTP Error {}: {}",
+                status, error_text
+            )));
         }
+
+        // Get the response body as text first for debugging
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
+
+        // Log the response text for debugging
+        println!("Response text: {}", response_text);
+
+        // Parse the response text directly as PredictionResult
+        let result: PredictionResult = serde_json::from_str(&response_text).map_err(|e| {
+            ApiError::Parse(format!(
+                "Error decoding response body: {}. Response: {}",
+                e, response_text
+            ))
+        })?;
+
+        Ok(result)
     }
 
     /// 従来のAPIとの互換性のため
