@@ -302,7 +302,7 @@ OPTIONS:
 **動作**：
 1. トークンファイルと履歴データを読み込み
 2. 指定されたパラメータで予測リクエストを作成
-3. Chronos APIに非同期予測タスクを送信
+3. Chronos APIに非同期予測タスクを送信（**API Path: `POST /api/v1/predict_zero_shot_async`**）
 4. 返されたtask_idを含むタスク情報を`${output}/${quote_token}/${base_token}.task.json`に保存
 5. 即座に終了（ポーリングなし）
 
