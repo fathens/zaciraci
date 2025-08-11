@@ -21,6 +21,8 @@ pub struct PredictionParams {
     pub start_pct: f64,
     pub end_pct: f64,
     pub forecast_ratio: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale_factor: Option<f64>,
 }
 
 impl TaskInfo {

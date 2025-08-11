@@ -238,8 +238,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
     // Scale down values if they are too large to prevent numerical issues
     let max_value = values.iter().copied().fold(0.0, f64::max);
     let mut scaled_values = values.clone();
-
-    if max_value > 1_000_000.0 {
+    let scale_factor = if max_value > 1_000_000.0 {
         pb.set_message(format!(
             "⚠️ Scaling down large values (max: {:.2e}) for numerical stability",
             max_value
@@ -254,7 +253,11 @@ pub async fn run(args: KickArgs) -> Result<()> {
             "📊 Values scaled down by factor of {:.2e} for numerical stability",
             max_value
         ));
-    }
+
+        Some(max_value)
+    } else {
+        None
+    };
 
     pb.set_message(format!(
         "📊 Input period: {:.1} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
@@ -284,6 +287,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
             start_pct: args.start_pct,
             end_pct: args.end_pct,
             forecast_ratio: args.forecast_ratio,
+            scale_factor,
         },
     );
 
