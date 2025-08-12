@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # ワークスペース内の依存関係
-zaciraci-common = { path = "../common" }
+common = { path = "../common", package = "zaciraci-common" }
 
 # CLI固有の依存関係
 clap = { version = "4.0", features = ["derive"] }

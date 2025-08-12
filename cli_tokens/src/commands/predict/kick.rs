@@ -5,10 +5,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::api::chronos::ChronosApiClient;
 use crate::models::{
     history::HistoryFileData,
-    prediction::ZeroShotPredictionRequest,
     task::{PredictionParams, TaskInfo},
     token::TokenFileData,
 };
@@ -16,6 +14,8 @@ use crate::utils::{
     config::Config,
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
 };
+use common::api::chronos::ChronosApiClient;
+use common::prediction::ZeroShotPredictionRequest;
 
 #[derive(Parser)]
 #[clap(about = "Start an async prediction task and exit")]
@@ -235,6 +235,30 @@ pub async fn run(args: KickArgs) -> Result<()> {
         (input_duration.num_milliseconds() as f64 * (args.forecast_ratio / 100.0)) as i64;
     let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
 
+    // Scale down values if they are too large to prevent numerical issues
+    let max_value = values.iter().copied().fold(0.0, f64::max);
+    let mut scaled_values = values.clone();
+    let scale_factor = if max_value > 1_000_000.0 {
+        pb.set_message(format!(
+            "⚠️ Scaling down large values (max: {:.2e}) for numerical stability",
+            max_value
+        ));
+
+        // Scale values to be between 0 and 1
+        for value in &mut scaled_values {
+            *value /= max_value;
+        }
+
+        pb.set_message(format!(
+            "📊 Values scaled down by factor of {:.2e} for numerical stability",
+            max_value
+        ));
+
+        Some(max_value)
+    } else {
+        None
+    };
+
     pb.set_message(format!(
         "📊 Input period: {:.1} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
         input_duration.num_hours() as f64 / 24.0,
@@ -244,7 +268,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
 
     let prediction_request = ZeroShotPredictionRequest {
         timestamp: timestamps,
-        values,
+        values: scaled_values,
         forecast_until,
         model_name: args.model.clone(),
         model_params: None,
@@ -263,6 +287,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
             start_pct: args.start_pct,
             end_pct: args.end_pct,
             forecast_ratio: args.forecast_ratio,
+            scale_factor,
         },
     );
 

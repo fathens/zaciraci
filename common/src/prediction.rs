@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // フロントエンドの予測モデルを再利用
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZeroShotPredictionRequest {
     pub timestamp: Vec<DateTime<Utc>>,
     pub values: Vec<f64>,
@@ -14,7 +14,7 @@ pub struct ZeroShotPredictionRequest {
     pub model_params: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionResponse {
     pub id: String,
     pub status: String,
@@ -22,14 +22,14 @@ pub struct PredictionResponse {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsyncPredictionResponse {
     pub task_id: String,
     pub status: String,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionResult {
     pub task_id: String,
     pub status: String,
@@ -41,7 +41,7 @@ pub struct PredictionResult {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChronosPredictionResponse {
     pub forecast_timestamp: Vec<DateTime<Utc>>,
     pub forecast_values: Vec<f64>,
@@ -50,20 +50,20 @@ pub struct ChronosPredictionResponse {
     pub metrics: Option<HashMap<String, f64>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionPoint {
     pub timestamp: DateTime<Utc>,
     pub value: f64,
     pub confidence_interval: Option<ConfidenceInterval>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfidenceInterval {
     pub lower: f64,
     pub upper: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPredictionResult {
     pub token: String,
     pub prediction_id: String,
@@ -72,7 +72,7 @@ pub struct TokenPredictionResult {
     pub chart_svg: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccuracyMetrics {
     pub mae: f64,
     pub rmse: f64,

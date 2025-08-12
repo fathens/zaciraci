@@ -4,16 +4,13 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::api::chronos::ChronosApiClient;
-use crate::models::{
-    prediction::{PredictionPoint, TokenPredictionResult},
-    task::TaskInfo,
-    token::TokenFileData,
-};
+use crate::models::{task::TaskInfo, token::TokenFileData};
 use crate::utils::{
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
 };
+use common::api::chronos::ChronosApiClient;
+use common::prediction::{PredictionPoint, TokenPredictionResult};
 
 #[derive(Parser)]
 #[clap(about = "Poll for prediction results")]
@@ -149,7 +146,7 @@ pub async fn run(args: PullArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No prediction result data"))?;
 
     // Convert ChronosPredictionResponse to Vec<PredictionPoint>
-    let forecast: Vec<PredictionPoint> = prediction_result
+    let mut forecast: Vec<PredictionPoint> = prediction_result
         .forecast_timestamp
         .into_iter()
         .zip(prediction_result.forecast_values.into_iter())
@@ -159,6 +156,18 @@ pub async fn run(args: PullArgs) -> Result<()> {
             confidence_interval: None, // TODO: Add confidence intervals if available
         })
         .collect();
+
+    // Restore original scale if values were scaled down
+    if let Some(scale_factor) = task_info.params.scale_factor {
+        pb.set_message(format!(
+            "📊 Restoring values to original scale (factor: {:.2e})",
+            scale_factor
+        ));
+
+        for point in &mut forecast {
+            point.value *= scale_factor;
+        }
+    }
 
     // Create prediction result
     let prediction_result = TokenPredictionResult {

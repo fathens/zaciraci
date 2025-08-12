@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
+use common::stats::ValueAtTime;
 use serde::{Deserialize, Serialize};
-use zaciraci_common::stats::ValueAtTime;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HistoryFileData {

@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::models::history::HistoryFileData;
-use crate::models::prediction::{PredictionPoint, TokenPredictionResult};
 use crate::models::token::TokenFileData;
 use crate::utils::file::sanitize_filename;
+use common::prediction::{PredictionPoint, TokenPredictionResult};
 
 #[cfg(test)]
 #[path = "chart/tests.rs"]

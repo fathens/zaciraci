@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 // フロントエンドのモデルを再利用
-pub use zaciraci_common::types::TokenAccount;
+pub use common::types::TokenAccount;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenFileData {
