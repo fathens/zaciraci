@@ -109,20 +109,15 @@ impl ChronosApiClient {
         // Log the response text for debugging
         println!("Response text: {}", response_text);
 
-        // Parse the response as ApiResponse wrapper
-        let api_response: ApiResponse<PredictionResult, String> =
-            serde_json::from_str(&response_text).map_err(|e| {
-                ApiError::Parse(format!(
-                    "Error decoding response body: {}. Response: {}",
-                    e, response_text
-                ))
-            })?;
+        // Parse the response text directly as PredictionResult
+        let result: PredictionResult = serde_json::from_str(&response_text).map_err(|e| {
+            ApiError::Parse(format!(
+                "Error decoding response body: {}. Response: {}",
+                e, response_text
+            ))
+        })?;
 
-        // Extract the result from ApiResponse
-        match api_response {
-            ApiResponse::Success(result) => Ok(result),
-            ApiResponse::Error(error) => Err(ApiError::Server(error)),
-        }
+        Ok(result)
     }
 
     /// 従来のAPIとの互換性のため
@@ -254,19 +249,15 @@ impl PredictionClient for ChronosApiClient {
             .await
             .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
 
-        // Parse the response as ApiResponse wrapper
-        let api_response: ApiResponse<Self::PredictionResponse, String> =
-            serde_json::from_str(&response_text).map_err(|e| {
+        // Try to parse the response text directly to AsyncPredictionResponse
+        let prediction_response: Self::PredictionResponse = serde_json::from_str(&response_text)
+            .map_err(|e| {
                 ApiError::Parse(format!(
                     "Error decoding response body: {}. Response: {}",
                     e, response_text
                 ))
             })?;
 
-        // Extract the result from ApiResponse
-        match api_response {
-            ApiResponse::Success(result) => Ok(result),
-            ApiResponse::Error(error) => Err(ApiError::Server(error)),
-        }
+        Ok(prediction_response)
     }
 }

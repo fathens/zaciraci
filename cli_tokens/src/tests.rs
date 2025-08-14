@@ -322,15 +322,12 @@ mod api_tests {
             message: "Task started".to_string(),
         };
 
-        // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> =
-            ApiResponse::Success(mock_response);
-
+        // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
         let _mock = server
             .mock("POST", "/api/v1/predict_zero_shot_async")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&api_response).unwrap())
+            .with_body(serde_json::to_string(&mock_response).unwrap())
             .create_async()
             .await;
 
@@ -358,15 +355,12 @@ mod api_tests {
     async fn test_chronos_api_predict_zero_shot_error() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
 
-        // 新しいAPIアーキテクチャではApiResponseでエラーをラップ
-        let api_response: ApiResponse<common::prediction::AsyncPredictionResponse, String> =
-            ApiResponse::Error("Internal Server Error".to_string());
-
+        // エラーの場合はHTTPステータスコードでエラーを返す
         let _mock = server
             .mock("POST", "/api/v1/predict_zero_shot_async")
-            .with_status(200) // APIレスポンス自体は成功だが、内容がエラー
+            .with_status(500)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&api_response).unwrap())
+            .with_body("Internal Server Error")
             .create_async()
             .await;
 
@@ -382,10 +376,8 @@ mod api_tests {
         let result = client.predict_zero_shot(request).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal Server Error"));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("500") || error.contains("HTTP Error"));
 
         Ok(())
     }
@@ -404,15 +396,12 @@ mod api_tests {
             updated_at: Utc::now(),
         };
 
-        // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::PredictionResult, String> =
-            ApiResponse::Success(mock_response);
-
+        // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
         let _mock = server
             .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&api_response).unwrap())
+            .with_body(serde_json::to_string(&mock_response).unwrap())
             .create_async()
             .await;
 
@@ -442,15 +431,12 @@ mod api_tests {
             updated_at: Utc::now(),
         };
 
-        // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::PredictionResult, String> =
-            ApiResponse::Success(completed_response);
-
+        // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
         let _mock = server
             .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&api_response).unwrap())
+            .with_body(serde_json::to_string(&completed_response).unwrap())
             .create_async()
             .await;
 
@@ -478,15 +464,12 @@ mod api_tests {
             updated_at: Utc::now(),
         };
 
-        // 新しいAPIアーキテクチャではApiResponseでラップされる
-        let api_response: ApiResponse<common::prediction::PredictionResult, String> =
-            ApiResponse::Success(failed_response);
-
+        // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
         let _mock = server
             .mock("GET", "/api/v1/prediction_status/pred_123")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::to_string(&api_response).unwrap())
+            .with_body(serde_json::to_string(&failed_response).unwrap())
             .create_async()
             .await;
 
