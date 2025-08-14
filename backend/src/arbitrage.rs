@@ -44,15 +44,15 @@ pub async fn run() {
             Err(err) => {
                 warn!(log, "failure: {:?}", err);
                 // WNEAR_TOKENのエラーは特別扱い
-                if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>() {
-                    if WNEAR_TOKEN.to_string().eq(name) {
-                        info!(
-                            log,
-                            "token not found, retrying after {:?}", *TOKEN_NOT_FOUND_WAIT
-                        );
-                        tokio::time::sleep(*TOKEN_NOT_FOUND_WAIT).await;
-                        continue;
-                    }
+                if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>()
+                    && WNEAR_TOKEN.to_string().eq(name)
+                {
+                    info!(
+                        log,
+                        "token not found, retrying after {:?}", *TOKEN_NOT_FOUND_WAIT
+                    );
+                    tokio::time::sleep(*TOKEN_NOT_FOUND_WAIT).await;
+                    continue;
                 }
                 // その他のエラーは長めの待機
                 warn!(

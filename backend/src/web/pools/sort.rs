@@ -65,11 +65,11 @@ fn average_depth(rates: &HashMap<TokenAccount, BigDecimal>, pool: &Arc<PoolInfo>
     let mut count: BigDecimal = zero();
     for (index, token) in pool.tokens().enumerate() {
         count += 1;
-        if let Some(rate) = rates.get(token) {
-            if let Ok(amount) = pool.amount(index.into()) {
-                let value = BigDecimal::from(amount) * rate;
-                sum += value;
-            }
+        if let Some(rate) = rates.get(token)
+            && let Ok(amount) = pool.amount(index.into())
+        {
+            let value = BigDecimal::from(amount) * rate;
+            sum += value;
         }
     }
     sum / count

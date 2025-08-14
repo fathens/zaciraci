@@ -110,15 +110,15 @@ impl StandardRpcClient {
                                     _ => None,
                                 };
 
-                                if let Some(status) = status {
-                                    if status.is_server_error() {
-                                        let msg = format!("server error: {}", status);
-                                        return MaybeRetry::Retry {
-                                            err,
-                                            msg,
-                                            min_dur: Duration::from_secs_f32(0.5),
-                                        };
-                                    }
+                                if let Some(status) = status
+                                    && status.is_server_error()
+                                {
+                                    let msg = format!("server error: {}", status);
+                                    return MaybeRetry::Retry {
+                                        err,
+                                        msg,
+                                        min_dur: Duration::from_secs_f32(0.5),
+                                    };
                                 }
                                 MaybeRetry::Through(Err(err))
                             }
