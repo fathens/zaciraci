@@ -263,7 +263,7 @@ impl PoolInfo {
         })
     }
 
-    pub fn tokens(&self) -> Iter<TokenAccount> {
+    pub fn tokens(&self) -> Iter<'_, TokenAccount> {
         self.bare.token_account_ids.iter()
     }
 
@@ -366,7 +366,7 @@ impl PoolInfoList {
         self.list.len()
     }
 
-    pub fn iter(&self) -> Iter<Arc<PoolInfo>> {
+    pub fn iter(&self) -> Iter<'_, Arc<PoolInfo>> {
         self.list.iter()
     }
 
