@@ -54,3 +54,4 @@ assertables = "9.5"
 proptest = "1.6"
 serial_test = "3.2"
 tokio = { version = "1.0", features = ["full"] }
+mockito = "1.0"

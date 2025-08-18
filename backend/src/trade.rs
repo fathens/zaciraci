@@ -1,3 +1,4 @@
+pub mod predict;
 pub mod stats;
 
 use crate::Result;

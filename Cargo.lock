@@ -4769,6 +4769,7 @@ dependencies = [
  "humantime",
  "linfa",
  "linfa-linear",
+ "mockito",
  "ndarray",
  "near-crypto",
  "near-gas",
