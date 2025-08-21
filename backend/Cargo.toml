@@ -39,6 +39,7 @@ slipped10 = "0.4"
 bip39 = { version = "2.1", features = ["rand"] }
 bs58 = { workspace = true }
 ed25519-dalek = { version = "2", default-features = false }
+futures = { workspace = true }
 futures-util = { workspace = true }
 rayon = { workspace = true }
 rand = { workspace = true }

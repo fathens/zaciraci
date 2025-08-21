@@ -4765,6 +4765,7 @@ dependencies = [
  "deadpool-diesel",
  "diesel",
  "ed25519-dalek",
+ "futures",
  "futures-util",
  "humantime",
  "linfa",
