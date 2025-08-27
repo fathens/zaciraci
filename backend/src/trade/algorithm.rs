@@ -1,4 +1,5 @@
 pub mod momentum;
+pub mod trend_following;
 
 use crate::Result;
 use bigdecimal::BigDecimal;
