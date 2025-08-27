@@ -48,7 +48,7 @@ reqwest = { workspace = true }
 base64 = { workspace = true }
 linfa = "0.7"
 linfa-linear = "0.7"
-ndarray = "0.15"
+ndarray = { version = "0.15", features = ["serde"] }
 
 [dev-dependencies]
 assertables = "9.5"

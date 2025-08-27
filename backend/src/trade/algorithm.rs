@@ -1,4 +1,5 @@
 pub mod momentum;
+pub mod portfolio;
 pub mod trend_following;
 
 use crate::Result;
