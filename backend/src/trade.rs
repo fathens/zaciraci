@@ -1,3 +1,4 @@
+pub mod algorithm;
 pub mod predict;
 pub mod stats;
 

@@ -5,6 +5,8 @@ use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+use crate::trade::algorithm::momentum::{TokenHolding, execute_with_prediction_service};
+use crate::trade::predict::PredictionService;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime};
 use futures_util::future::join_all;
@@ -43,20 +45,70 @@ pub struct ListStatsInPeriod<U>(Vec<StatsInPeriod<U>>);
 pub async fn start() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "trade::start"));
 
-    let now = chrono::Utc::now().naive_utc();
-    let range = &TimeRange {
-        start: now - Duration::hours(1),
-        end: now,
-    };
-    let period = Duration::minutes(1);
-    let target = now + Duration::hours(1);
+    info!(log, "starting momentum-based trading strategy");
 
-    let _rates_by_base = forcast_rates(range, period, target).await?;
+    // 現在のポートフォリオの取得（仮の実装）
+    let current_holdings = get_current_holdings().await?;
+
+    if current_holdings.is_empty() {
+        info!(log, "no current holdings found, skipping trading");
+        return Ok(());
+    }
+
+    // PredictionServiceの初期化
+    let chronos_url =
+        std::env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+    let backend_url =
+        std::env::var("BACKEND_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+
+    let prediction_service = PredictionService::new(chronos_url, backend_url);
+
+    // モメンタム戦略の実行
+    match execute_with_prediction_service(
+        &prediction_service,
+        current_holdings.clone(),
+        "wrap.near", // quote token
+        7,           // 7日間の履歴を使用
+    )
+    .await
+    {
+        Ok(report) => {
+            info!(log, "momentum strategy executed successfully";
+                "total_actions" => report.actions.len(),
+                "expected_return" => ?report.expected_return
+            );
+
+            // 実際の取引実行は将来の実装で追加
+            for action in report.actions {
+                info!(log, "trading action"; "action" => ?action);
+            }
+        }
+        Err(e) => {
+            error!(log, "failed to execute momentum strategy"; "error" => ?e);
+        }
+    }
 
     info!(log, "success");
     Ok(())
 }
 
+/// 現在の保有トークンを取得（仮の実装）
+async fn get_current_holdings() -> Result<Vec<TokenHolding>> {
+    let log = DEFAULT.new(o!("function" => "get_current_holdings"));
+
+    // 実際の実装では、ウォレットAPIまたはDBから保有情報を取得
+    // ここでは仮のデータを返す
+    let holdings = vec![TokenHolding {
+        token: "wrap.near".to_string(),
+        amount: BigDecimal::from(100),
+        current_price: BigDecimal::from(1), // 1 NEAR = 1として仮定
+    }];
+
+    info!(log, "retrieved holdings"; "count" => holdings.len());
+    Ok(holdings)
+}
+
+#[allow(dead_code)]
 async fn forcast_rates(
     range: &TimeRange,
     period: Duration,
