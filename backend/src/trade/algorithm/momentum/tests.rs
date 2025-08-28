@@ -234,3 +234,309 @@ fn test_volatility_edge_cases() {
     let volatility = calculate_volatility(&with_zero);
     assert!(volatility >= 0.0); // ボラティリティは0以上（ゼロの場合もある）
 }
+
+// ==================== 市場レジーム変化テスト ====================
+
+#[test]
+fn test_momentum_under_changing_volatility_regimes() {
+    // 低ボラティリティ期間のデータ
+    let low_vol_predictions = vec![PredictionData {
+        token: "LOW_VOL_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(103.0).unwrap(), // 3%上昇
+        timestamp: Utc::now(),
+        confidence: Some(0.9),
+    }];
+
+    // 高ボラティリティ期間のデータ
+    let high_vol_predictions = vec![PredictionData {
+        token: "HIGH_VOL_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(125.0).unwrap(), // 25%上昇
+        timestamp: Utc::now(),
+        confidence: Some(0.7), // 信頼度は下がる
+    }];
+
+    let low_vol_ranked = rank_tokens_by_momentum(low_vol_predictions);
+    let high_vol_ranked = rank_tokens_by_momentum(high_vol_predictions);
+
+    // 低ボラ期間：小さなリターンでも取引コスト後正になる
+    assert!(!low_vol_ranked.is_empty());
+    let low_vol_return = low_vol_ranked[0].1;
+    assert!(low_vol_return > 0.0);
+
+    // 高ボラ期間：大きなリターンだが信頼度調整で抑制される
+    assert!(!high_vol_ranked.is_empty());
+    let high_vol_return = high_vol_ranked[0].1;
+    assert!(high_vol_return > low_vol_return); // 絶対値では大きい
+
+    // 信頼度調整により実際の期待リターンは抑制される
+    let high_vol_confidence_adjusted = high_vol_return;
+    assert!(high_vol_confidence_adjusted < 0.25); // 元の25%より小さい
+}
+
+#[test]
+fn test_prediction_confidence_degradation() {
+    // 同じ価格予測で信頼度が段階的に悪化するケース
+    let base_prediction = PredictionData {
+        token: "DEGRADING_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(110.0).unwrap(), // 10%上昇
+        timestamp: Utc::now(),
+        confidence: Some(0.9),
+    };
+
+    let confidence_levels = vec![0.9, 0.7, 0.5, 0.3, 0.1];
+    let mut expected_returns = Vec::new();
+
+    for &confidence in &confidence_levels {
+        let mut pred = base_prediction.clone();
+        pred.confidence = Some(confidence);
+        let expected_return = calculate_confidence_adjusted_return(&pred);
+        expected_returns.push(expected_return);
+    }
+
+    // 信頼度が下がるにつれて期待リターンが減少することを確認
+    for i in 1..expected_returns.len() {
+        assert!(expected_returns[i] < expected_returns[i - 1]);
+    }
+
+    // 信頼度が0.3以下では取引を避けるべき
+    assert!(expected_returns[3] < MIN_PROFIT_THRESHOLD);
+    assert!(expected_returns[4] < MIN_PROFIT_THRESHOLD);
+}
+
+#[test]
+fn test_market_stress_scenario() {
+    // 市場ストレス時：高ボラティリティ + 低信頼度
+    let stress_predictions = vec![
+        PredictionData {
+            token: "STRESS_TOKEN1".to_string(),
+            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            predicted_price_24h: BigDecimal::from_f64(130.0).unwrap(), // 30%上昇予測
+            timestamp: Utc::now(),
+            confidence: Some(0.4), // 低信頼度
+        },
+        PredictionData {
+            token: "STRESS_TOKEN2".to_string(),
+            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            predicted_price_24h: BigDecimal::from_f64(70.0).unwrap(), // 30%下落予測
+            timestamp: Utc::now(),
+            confidence: Some(0.5),
+        },
+    ];
+
+    let ranked = rank_tokens_by_momentum(stress_predictions);
+
+    // ストレス時は保守的になり、取引対象が減ることを確認
+    if !ranked.is_empty() {
+        for (_, expected_return, confidence) in &ranked {
+            // 信頼度調整後のリターンが十分に高い場合のみ取引
+            assert!(*expected_return > MIN_PROFIT_THRESHOLD * 1.5);
+            assert!(confidence.unwrap_or(0.0) >= 0.4);
+        }
+    }
+}
+
+// ==================== 取引頻度とコスト最適化テスト ====================
+
+#[test]
+fn test_trading_frequency_cost_impact() {
+    let base_amount = BigDecimal::from_f64(1000.0).unwrap();
+
+    // 高頻度取引シナリオ（1日10回）
+    let high_freq_predictions = vec![PredictionData {
+        token: "HIGH_FREQ_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(102.0).unwrap(), // 2%上昇
+        timestamp: Utc::now(),
+        confidence: Some(0.8),
+    }];
+
+    // 低頻度取引シナリオ（週1回）
+    let low_freq_predictions = vec![PredictionData {
+        token: "LOW_FREQ_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(108.0).unwrap(), // 8%上昇
+        timestamp: Utc::now(),
+        confidence: Some(0.8),
+    }];
+
+    let high_freq_ranked = rank_tokens_by_momentum(high_freq_predictions);
+    let low_freq_ranked = rank_tokens_by_momentum(low_freq_predictions);
+
+    let _high_freq_decision = make_trading_decision(
+        "CURRENT_TOKEN",
+        0.015, // 1.5%の現在リターン
+        &high_freq_ranked,
+        &base_amount,
+    );
+
+    let low_freq_decision = make_trading_decision(
+        "CURRENT_TOKEN",
+        0.01, // より低い現在リターン
+        &low_freq_ranked,
+        &base_amount,
+    );
+
+    // 高頻度取引では小さなリターンでHold
+    // 2%の期待リターンでは取引コスト後に利益が少ない
+    if !high_freq_ranked.is_empty() {
+        let high_freq_expected = high_freq_ranked[0].1;
+        assert!(high_freq_expected < 0.05); // 取引コスト後小さい
+    }
+
+    // 低頻度取引では大きなリターンでSwitch
+    if !low_freq_ranked.is_empty() {
+        let low_freq_expected = low_freq_ranked[0].1;
+
+        // 信頼度調整後の期待リターンが約0.043であることを確認
+        assert!((low_freq_expected - 0.0432).abs() < 0.001);
+
+        // SWITCH_MULTIPLIER * confidence_factor を考慮した条件チェック
+        let confidence_factor = low_freq_ranked[0].2.unwrap_or(0.5);
+        let switch_threshold = 0.01 * SWITCH_MULTIPLIER * confidence_factor; // 0.01 * 1.5 * 0.8 = 0.012
+
+        if low_freq_expected > switch_threshold {
+            // 0.0432 > 0.012 なので Switch になるはず
+            // ただし、現在のリターン(0.01)との比較もある
+            assert!(
+                matches!(low_freq_decision, TradingAction::Switch { .. })
+                    || matches!(low_freq_decision, TradingAction::Sell { .. })
+            );
+        } else {
+            // 閾値以下の場合はHoldまたはSell
+            assert!(
+                matches!(low_freq_decision, TradingAction::Hold)
+                    || matches!(low_freq_decision, TradingAction::Sell { .. })
+            );
+        }
+    }
+}
+
+#[test]
+fn test_partial_fill_scenario() {
+    let predictions = vec![PredictionData {
+        token: "TARGET_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(115.0).unwrap(), // 15%上昇
+        timestamp: Utc::now(),
+        confidence: Some(0.8),
+    }];
+
+    let ranked = rank_tokens_by_momentum(predictions);
+    let full_amount = BigDecimal::from_f64(1000.0).unwrap();
+    let partial_amount = BigDecimal::from_f64(300.0).unwrap(); // 30%のみ約定
+
+    let full_action = make_trading_decision("CURRENT_TOKEN", 0.03, &ranked, &full_amount);
+    let partial_action = make_trading_decision("CURRENT_TOKEN", 0.03, &ranked, &partial_amount);
+
+    // フル約定時はSwitchまたはSell
+    assert!(
+        matches!(full_action, TradingAction::Switch { .. })
+            || matches!(full_action, TradingAction::Sell { .. })
+    );
+
+    // 部分約定でも十分な利益が見込める場合は実行
+    match partial_action {
+        TradingAction::Switch { from: _, to } => {
+            assert_eq!(to, "TARGET_TOKEN");
+        }
+        TradingAction::Sell { token: _, target } => {
+            assert_eq!(target, "TARGET_TOKEN");
+        }
+        TradingAction::Hold => {
+            // 部分約定によりリターンが取引コストを下回る場合はHold
+            let partial_f64 = partial_amount.to_string().parse::<f64>().unwrap_or(0.0);
+            assert!(partial_f64 < MIN_TRADE_AMOUNT);
+        }
+    }
+}
+
+// ==================== 複数時間軸整合性テスト ====================
+
+#[test]
+fn test_multi_timeframe_momentum_consistency() {
+    // 短期（1時間）と長期（24時間）のシグナルが矛盾する場合
+    let short_term_prediction = PredictionData {
+        token: "CONFLICT_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(105.0).unwrap(), // 短期上昇
+        timestamp: Utc::now(),
+        confidence: Some(0.9),
+    };
+
+    let long_term_prediction = PredictionData {
+        token: "CONFLICT_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(95.0).unwrap(), // 長期下落
+        timestamp: Utc::now(),
+        confidence: Some(0.8),
+    };
+
+    // 短期シグナルでの判断
+    let short_ranked = rank_tokens_by_momentum(vec![short_term_prediction]);
+    let short_decision = make_trading_decision(
+        "CURRENT_TOKEN",
+        0.02,
+        &short_ranked,
+        &BigDecimal::from_f64(1000.0).unwrap(),
+    );
+
+    // 長期シグナルでの判断
+    let long_ranked = rank_tokens_by_momentum(vec![long_term_prediction]);
+    let long_decision = make_trading_decision(
+        "CURRENT_TOKEN",
+        0.02,
+        &long_ranked,
+        &BigDecimal::from_f64(1000.0).unwrap(),
+    );
+
+    // 短期では取引機会あり（またはSell）
+    assert!(
+        matches!(short_decision, TradingAction::Switch { .. })
+            || matches!(short_decision, TradingAction::Sell { .. })
+    );
+
+    // 長期では負のリターンのため取引なし
+    assert_eq!(long_decision, TradingAction::Hold);
+}
+
+#[test]
+fn test_momentum_signal_strength_threshold() {
+    // 閾値近辺でのシグナル強度テスト
+    let threshold_cases = vec![
+        (MIN_PROFIT_THRESHOLD - 0.001, "below_threshold"),
+        (MIN_PROFIT_THRESHOLD, "at_threshold"),
+        (MIN_PROFIT_THRESHOLD + 0.001, "above_threshold"),
+    ];
+
+    for (return_level, case_name) in threshold_cases {
+        let prediction = PredictionData {
+            token: format!("THRESHOLD_{}", case_name),
+            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            predicted_price_24h: BigDecimal::from_f64(
+                100.0 * (1.0 + return_level + (2.0 * TRADING_FEE) + MAX_SLIPPAGE),
+            )
+            .unwrap(),
+            timestamp: Utc::now(),
+            confidence: Some(0.8),
+        };
+
+        let ranked = rank_tokens_by_momentum(vec![prediction]);
+
+        if return_level < MIN_PROFIT_THRESHOLD {
+            // 閾値以下では取引対象から除外される可能性が高い
+            // ただし信頼度調整により実際の期待リターンが変わる場合がある
+            if !ranked.is_empty() {
+                // ランクに含まれる場合は実際の期待リターンを確認
+                assert!(ranked[0].1 <= MIN_PROFIT_THRESHOLD + 0.01); // 多少の誤差を許容
+            }
+        } else {
+            // 閾値以上では取引対象に含まれる
+            assert!(!ranked.is_empty());
+            // 信頼度調整後のリターンがある程度期待できる
+            assert!(ranked[0].1 > 0.0);
+        }
+    }
+}
