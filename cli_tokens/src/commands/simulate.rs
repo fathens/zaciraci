@@ -1215,3 +1215,6 @@ fn generate_mock_price_data(
 
     Ok(values)
 }
+
+#[cfg(test)]
+mod tests;
