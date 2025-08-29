@@ -62,6 +62,7 @@ OPTIONS:
     --gas-cost <AMOUNT>          ガス料金 (NEAR) [デフォルト: 0.01]
     --min-trade <AMOUNT>         最小取引額 (NEAR) [デフォルト: 1.0]
     --prediction-horizon <HOURS> 予測期間 (時間) [デフォルト: 24]
+    --historical-days <DAYS>     予測に使用する過去データ期間 (日数) [デフォルト: 30]
     --report-format <FORMAT>     レポート形式 [デフォルト: json]
                                 選択肢: json, csv, html
     --chart                      チャートを生成
@@ -114,6 +115,77 @@ cli_tokens simulate \
   --chart \
   --verbose
 ```
+
+## 日付処理とシミュレーションフロー
+
+### タイムステップシミュレーション
+
+シミュレーションは指定された期間内で、リバランス頻度に従って時系列で実行されます。各タイムステップで以下の処理を行います：
+
+#### 詳細な日付処理フロー
+
+```
+シミュレーション期間: start_date ～ end_date
+ヒストリカルデータ期間: historical_days (デフォルト: 30日)
+予測期間: prediction_horizon (デフォルト: 24時間)
+
+例: 2024-11-01 ～ 2024-11-30、historical_days=30、prediction_horizon=24時間
+
+Day 1 (2024-11-01 00:00:00):
+  1. ヒストリカルデータ取得
+     - 期間: 2024-10-02 00:00:00 ～ 2024-11-01 00:00:00 (30日分)
+     - 対象: 全target_tokens
+  
+  2. 価格予測
+     - 予測対象時刻: 2024-11-02 00:00:00 (24時間後)
+     - 各トークンの価格を予測
+  
+  3. 取引判断
+     - アルゴリズムに基づいて取引を決定
+     - 手数料・スリッページを考慮
+  
+  4. ポートフォリオ評価
+     - 実際の 2024-11-02 00:00:00 の価格で評価
+     - パフォーマンス記録
+
+Day 2 (2024-11-02 00:00:00):
+  1. ヒストリカルデータ取得
+     - 期間: 2024-10-03 00:00:00 ～ 2024-11-02 00:00:00 (30日分)
+     - データウィンドウが1日スライド
+  
+  2. 価格予測
+     - 予測対象時刻: 2024-11-03 00:00:00
+  
+  ... (以下、end_dateまで繰り返し)
+```
+
+#### リバランス頻度による制御
+
+```rust
+let time_step = match config.rebalance_frequency {
+    RebalanceFrequency::Hourly => Duration::hours(1),
+    RebalanceFrequency::Daily => Duration::days(1),
+    RebalanceFrequency::Weekly => Duration::days(7),
+};
+```
+
+- **Hourly**: 1時間ごとに予測・取引
+- **Daily**: 1日ごとに予測・取引（デフォルト）
+- **Weekly**: 週1回予測・取引
+
+#### データ要件
+
+シミュレーションを正しく実行するためには、以下のデータが必要です：
+
+1. **初期データ期間**: `start_date - historical_days` から `start_date` まで
+2. **シミュレーション期間データ**: `start_date` から `end_date + prediction_horizon` まで
+3. **合計必要期間**: `start_date - historical_days` から `end_date + prediction_horizon` まで
+
+例：
+- シミュレーション: 2024-11-01 ～ 2024-11-30
+- historical_days: 30日
+- prediction_horizon: 24時間
+- 必要データ期間: 2024-10-02 ～ 2024-12-01
 
 ## 実装詳細
 
@@ -361,9 +433,9 @@ pub struct BenchmarkComparison {
     "win_rate": 0.68,
     "total_trades": 23
   },
-  "trades": [...],
-  "portfolio_evolution": [...],
-  "benchmark_comparison": {...}
+  "trades": [],
+  "portfolio_evolution": [],
+  "benchmark_comparison": {}
 }
 ```
 
