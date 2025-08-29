@@ -25,6 +25,7 @@ pub enum Commands {
     Predict(commands::predict::PredictCommand),
     Verify(commands::verify::VerifyArgs),
     Chart(commands::chart::ChartArgs),
+    Simulate(commands::simulate::SimulateArgs),
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -34,5 +35,6 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Predict(command) => commands::predict::run(command).await,
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Chart(args) => commands::chart::run_chart(args).await,
+        Commands::Simulate(args) => commands::simulate::run(args).await,
     }
 }
