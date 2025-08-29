@@ -2,7 +2,7 @@ use crate::api::backend::BackendClient;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use bigdecimal::FromPrimitive;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use clap::Args;
 use common::stats::ValueAtTime;
 use serde::{Deserialize, Serialize};
@@ -104,6 +104,10 @@ pub struct SimulateArgs {
     #[clap(long)]
     pub chart: bool,
 
+    /// テスト用にモックデータを使用する（本番運用では使用禁止）
+    #[clap(long)]
+    pub use_mock_data: bool,
+
     /// 詳細ログ
     #[clap(short, long)]
     pub verbose: bool,
@@ -153,6 +157,25 @@ pub struct TradingCost {
     pub slippage: BigDecimal,
     pub gas_fee: BigDecimal,
     pub total: BigDecimal,
+}
+
+// Trading context struct to reduce function arguments
+#[derive(Debug)]
+pub struct TradingContext<'a> {
+    pub price_data: &'a HashMap<String, Vec<ValueAtTime>>,
+    pub current_date: DateTime<Utc>,
+    pub fee_model: &'a FeeModel,
+    pub slippage_rate: f64,
+    pub gas_cost: &'a BigDecimal,
+}
+
+// Portfolio state struct to manage mutable state
+#[derive(Debug)]
+pub struct PortfolioState<'a> {
+    pub holdings: &'a mut HashMap<String, BigDecimal>,
+    pub cash_balance: &'a mut BigDecimal,
+    pub total_cost: &'a mut BigDecimal,
+    pub trades: &'a mut Vec<TradeExecution>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +295,10 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         println!("  Output: {}", args.output);
     }
 
+    // report_formatとoutputを先に保存
+    let report_format = args.report_format.clone();
+    let output_dir = args.output.clone();
+
     // 1. 設定の検証と変換
     let config = validate_and_convert_args(args).await?;
 
@@ -286,11 +313,15 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
     );
     println!("🎯 Target tokens: {:?}", config.target_tokens);
 
-    // 2. 簡単なbuy-and-holdシミュレーション（Phase 1実装）
-    let result = run_buy_and_hold_simulation(&config).await?;
+    // 2. アルゴリズムに基づくシミュレーション実行
+    let result = match config.algorithm {
+        AlgorithmType::Momentum => run_momentum_simulation(&config).await?,
+        AlgorithmType::Portfolio => run_portfolio_simulation(&config).await?,
+        AlgorithmType::TrendFollowing => run_trend_following_simulation(&config).await?,
+    };
 
     // 3. 結果の保存
-    save_simulation_result(&result, &config).await?;
+    save_simulation_result(&result, &output_dir, &report_format)?;
 
     println!("✅ Simulation completed!");
     println!(
@@ -358,6 +389,7 @@ async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationConfi
     })
 }
 
+#[allow(dead_code)]
 async fn run_buy_and_hold_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
     println!(
         "💰 Running simulation for algorithm: {:?}",
@@ -383,9 +415,17 @@ async fn run_momentum_simulation(config: &SimulationConfig) -> Result<Simulation
     let price_data = fetch_price_data(&backend_client, config).await?;
 
     if price_data.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No price data available for simulation period"
-        ));
+        if std::env::var("CLI_TOKENS_ALLOW_MOCK").is_ok() {
+            println!("🧪 Using mock data for testing (CLI_TOKENS_ALLOW_MOCK is set)");
+            let mock_price_data =
+                generate_mock_price_data_for_tokens(&config.target_tokens, config).await?;
+            return run_momentum_timestep_simulation(config, &mock_price_data).await;
+        } else {
+            return Err(anyhow::anyhow!(
+                "No price data available for simulation period. Cannot proceed without real market data.\n\
+                 For testing purposes, set CLI_TOKENS_ALLOW_MOCK=1 environment variable to use mock data."
+            ));
+        }
     }
 
     // 2. Momentumアルゴリズムでシミュレーション実行
@@ -396,16 +436,66 @@ async fn run_momentum_simulation(config: &SimulationConfig) -> Result<Simulation
 
 async fn run_portfolio_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
     println!("📊 Running portfolio optimization simulation");
-    // TODO: Portfolio最適化アルゴリズムの実装
-    run_simple_simulation(config).await
+    println!(
+        "🔧 Optimizing portfolio for tokens: {:?}",
+        config.target_tokens
+    );
+
+    let backend_client = BackendClient::new();
+
+    // 1. 価格データを取得
+    let price_data = fetch_price_data(&backend_client, config).await?;
+
+    if price_data.is_empty() {
+        if std::env::var("CLI_TOKENS_ALLOW_MOCK").is_ok() {
+            println!("🧪 Using mock data for testing (CLI_TOKENS_ALLOW_MOCK is set)");
+            let mock_price_data =
+                generate_mock_price_data_for_tokens(&config.target_tokens, config).await?;
+            return run_portfolio_timestep_simulation(config, &mock_price_data).await;
+        } else {
+            return Err(anyhow::anyhow!(
+                "No price data available for simulation period. Cannot proceed without real market data.\n\
+                 For testing purposes, set CLI_TOKENS_ALLOW_MOCK=1 environment variable to use mock data."
+            ));
+        }
+    }
+
+    // 2. Portfolio最適化アルゴリズムでシミュレーション実行
+    let simulation_result = run_portfolio_timestep_simulation(config, &price_data).await?;
+
+    Ok(simulation_result)
 }
 
 async fn run_trend_following_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
     println!("📉 Running trend following simulation");
-    // TODO: Trend followingアルゴリズムの実装
-    run_simple_simulation(config).await
+    println!("📊 Following trends for tokens: {:?}", config.target_tokens);
+
+    let backend_client = BackendClient::new();
+
+    // 1. 価格データを取得
+    let price_data = fetch_price_data(&backend_client, config).await?;
+
+    if price_data.is_empty() {
+        if std::env::var("CLI_TOKENS_ALLOW_MOCK").is_ok() {
+            println!("🧪 Using mock data for testing (CLI_TOKENS_ALLOW_MOCK is set)");
+            let mock_price_data =
+                generate_mock_price_data_for_tokens(&config.target_tokens, config).await?;
+            return run_trend_following_timestep_simulation(config, &mock_price_data).await;
+        } else {
+            return Err(anyhow::anyhow!(
+                "No price data available for simulation period. Cannot proceed without real market data.\n\
+                 For testing purposes, set CLI_TOKENS_ALLOW_MOCK=1 environment variable to use mock data."
+            ));
+        }
+    }
+
+    // 2. TrendFollowingアルゴリズムでシミュレーション実行
+    let simulation_result = run_trend_following_timestep_simulation(config, &price_data).await?;
+
+    Ok(simulation_result)
 }
 
+#[allow(dead_code)]
 async fn run_simple_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
     let duration = config.end_date - config.start_date;
     let duration_days = duration.num_days();
@@ -468,32 +558,71 @@ async fn run_simple_simulation(config: &SimulationConfig) -> Result<SimulationRe
     })
 }
 
-async fn save_simulation_result(
+fn save_simulation_result(
     result: &SimulationResult,
-    config: &SimulationConfig,
+    _output_dir: &str,
+    report_format: &str,
 ) -> Result<()> {
     use crate::utils::file::ensure_directory_exists;
     use std::path::PathBuf;
 
     // 出力ディレクトリの作成
     let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-    let output_dir = PathBuf::from(&base_dir)
+    let start_date_str = result.config.start_date.format("%Y-%m-%d");
+    let end_date_str = result.config.end_date.format("%Y-%m-%d");
+    let algorithm_str = format!("{:?}", result.config.algorithm).to_lowercase();
+    let final_output_dir = PathBuf::from(&base_dir)
         .join("simulation_results")
         .join(format!(
             "{}_{}_{}",
-            format!("{:?}", config.algorithm).to_lowercase(),
-            config.start_date.format("%Y-%m-%d"),
-            config.end_date.format("%Y-%m-%d")
+            algorithm_str, start_date_str, end_date_str
         ));
 
-    ensure_directory_exists(&output_dir)?;
+    ensure_directory_exists(&final_output_dir)?;
 
-    // 結果をJSONファイルに保存
-    let result_file = output_dir.join("results.json");
-    let json_content = serde_json::to_string_pretty(result)?;
-    std::fs::write(&result_file, json_content)?;
+    match report_format {
+        "json" => {
+            // JSONファイルに保存
+            let result_file = final_output_dir.join("results.json");
+            let json_content = serde_json::to_string_pretty(result)?;
+            std::fs::write(&result_file, json_content)?;
+            println!("💾 Results saved to: {}", result_file.display());
+        }
+        "html" => {
+            // HTMLレポートを生成
+            let html_file = final_output_dir.join("report.html");
+            let html_content = generate_html_report(result)?;
+            std::fs::write(&html_file, html_content)?;
 
-    println!("💾 Results saved to: {}", result_file.display());
+            // JSONファイルも併せて保存（データの保管のため）
+            let result_file = final_output_dir.join("results.json");
+            let json_content = serde_json::to_string_pretty(result)?;
+            std::fs::write(&result_file, json_content)?;
+
+            println!("📊 HTML report saved to: {}", html_file.display());
+            println!("💾 JSON data saved to: {}", result_file.display());
+        }
+        "both" => {
+            // JSON と HTML 両方
+            let result_file = final_output_dir.join("results.json");
+            let html_file = final_output_dir.join("report.html");
+
+            let json_content = serde_json::to_string_pretty(result)?;
+            let html_content = generate_html_report(result)?;
+
+            std::fs::write(&result_file, json_content)?;
+            std::fs::write(&html_file, html_content)?;
+
+            println!("📊 HTML report saved to: {}", html_file.display());
+            println!("💾 JSON data saved to: {}", result_file.display());
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported report format: {}. Supported formats: json, html, both",
+                report_format
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -1214,6 +1343,1010 @@ fn generate_mock_price_data(
     }
 
     Ok(values)
+}
+
+/// 複数トークン用のモックデータを生成
+async fn generate_mock_price_data_for_tokens(
+    tokens: &[String],
+    config: &SimulationConfig,
+) -> Result<HashMap<String, Vec<ValueAtTime>>> {
+    let mut price_data = HashMap::new();
+    let data_start_date = config.start_date - chrono::Duration::days(config.historical_days);
+    let data_end_date = config.end_date + config.prediction_horizon;
+
+    for token in tokens {
+        let mock_data = generate_mock_price_data(data_start_date, data_end_date)?;
+        price_data.insert(token.clone(), mock_data);
+        println!(
+            "  📊 Generated {} mock data points for {}",
+            price_data.get(token).unwrap().len(),
+            token
+        );
+    }
+
+    Ok(price_data)
+}
+
+// Portfolio 最適化アルゴリズム実装
+
+/// Portfolio最適化のタイムステップシミュレーション
+async fn run_portfolio_timestep_simulation(
+    config: &SimulationConfig,
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+) -> Result<SimulationResult> {
+    let mut portfolio_values = Vec::new();
+    let mut trades = Vec::new();
+    let mut current_holdings: HashMap<String, BigDecimal> = HashMap::new();
+    let mut cash_balance = config.initial_capital.clone();
+    let mut total_cost = BigDecimal::from(0);
+
+    let simulation_start = config.start_date;
+    let simulation_end = config.end_date;
+
+    // 初期ポートフォリオを構築（均等分散）
+    let num_tokens = config.target_tokens.len() as f64;
+    let initial_allocation =
+        config.initial_capital.clone() / BigDecimal::from_f64(num_tokens).unwrap();
+
+    for token in &config.target_tokens {
+        if let Some(token_prices) = price_data.get(token) {
+            if let Some(initial_price) = token_prices.first() {
+                let token_amount =
+                    initial_allocation.clone() / BigDecimal::from_f64(initial_price.value).unwrap();
+                current_holdings.insert(token.clone(), token_amount);
+                cash_balance -= initial_allocation.clone();
+            }
+        }
+    }
+
+    // 日次リバランス
+    let mut current_date = simulation_start;
+    while current_date <= simulation_end {
+        // 現在のポートフォリオ価値を計算
+        let mut total_value = cash_balance.clone();
+        let mut holdings_values = HashMap::new();
+
+        for (token, amount) in &current_holdings {
+            if let Some(current_price) = get_price_at_time(price_data, token, current_date) {
+                let value = amount * BigDecimal::from_f64(current_price).unwrap();
+                holdings_values.insert(token.clone(), value.clone());
+                total_value += value;
+            }
+        }
+
+        let unrealized_pnl = total_value.clone() - config.initial_capital.clone();
+
+        // ポートフォリオスナップショットを記録
+        portfolio_values.push(PortfolioValue {
+            timestamp: current_date,
+            total_value: total_value.to_string().parse::<f64>().unwrap_or(0.0),
+            cash_balance: cash_balance.to_string().parse::<f64>().unwrap_or(0.0),
+            holdings: holdings_values
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_string().parse::<f64>().unwrap_or(0.0)))
+                .collect(),
+            unrealized_pnl: unrealized_pnl.to_string().parse::<f64>().unwrap_or(0.0),
+        });
+
+        // リバランス判定（週次）
+        if current_date.weekday().num_days_from_monday() == 0 {
+            let rebalance_trades = calculate_optimal_portfolio_weights(
+                &config.target_tokens,
+                price_data,
+                current_date,
+                config.historical_days,
+            )?;
+
+            // リバランス実行
+            let context = TradingContext {
+                price_data,
+                current_date,
+                fee_model: &config.fee_model,
+                slippage_rate: config.slippage_rate,
+                gas_cost: &config.gas_cost,
+            };
+            let mut portfolio = PortfolioState {
+                holdings: &mut current_holdings,
+                cash_balance: &mut cash_balance,
+                total_cost: &mut total_cost,
+                trades: &mut trades,
+            };
+            execute_portfolio_rebalance(&mut portfolio, &context, &rebalance_trades)?;
+        }
+
+        current_date += chrono::Duration::days(1);
+    }
+
+    // 最終パフォーマンス計算
+    let initial_value = config
+        .initial_capital
+        .to_string()
+        .parse::<f64>()
+        .unwrap_or(0.0);
+    let final_value = portfolio_values
+        .last()
+        .map(|pv| pv.total_value)
+        .unwrap_or(initial_value);
+
+    let performance = calculate_performance_metrics(
+        initial_value,
+        final_value,
+        &portfolio_values,
+        &trades,
+        (simulation_end - simulation_start).num_days(),
+    );
+
+    let simulation_config = SimulationSummary {
+        start_date: config.start_date,
+        end_date: config.end_date,
+        algorithm: config.algorithm.clone(),
+        initial_capital: initial_value,
+        final_value,
+        total_return: (final_value - initial_value) / initial_value * 100.0,
+        duration_days: (config.end_date - config.start_date).num_days(),
+    };
+
+    let total_trades = trades.len();
+    let total_cost_f64 = total_cost.to_string().parse::<f64>().unwrap_or(0.0);
+
+    Ok(SimulationResult {
+        config: simulation_config,
+        performance,
+        trades,
+        portfolio_values,
+        execution_summary: ExecutionSummary {
+            total_trades,
+            successful_trades: total_trades, // 簡略化
+            failed_trades: 0,
+            success_rate: 1.0,
+            total_cost: total_cost_f64,
+            avg_cost_per_trade: if total_trades == 0 {
+                0.0
+            } else {
+                total_cost_f64 / total_trades as f64
+            },
+        },
+    })
+}
+
+/// 最適ポートフォリオウェイトを計算（単純化された実装）
+fn calculate_optimal_portfolio_weights(
+    tokens: &[String],
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+    current_date: DateTime<Utc>,
+    historical_days: i64,
+) -> Result<HashMap<String, f64>> {
+    let mut weights = HashMap::new();
+
+    // 各トークンのリターンとボラティリティを計算
+    let mut returns = Vec::new();
+    let mut volatilities = Vec::new();
+
+    for token in tokens {
+        let historical_data =
+            get_historical_data(price_data, token, current_date, historical_days)?;
+
+        if historical_data.len() < 2 {
+            continue;
+        }
+
+        let prices: Vec<f64> = historical_data.iter().map(|v| v.value).collect();
+        let token_returns: Vec<f64> = prices.windows(2).map(|w| (w[1] - w[0]) / w[0]).collect();
+
+        let mean_return = token_returns.iter().sum::<f64>() / token_returns.len() as f64;
+        let volatility = calculate_simple_volatility(&prices);
+
+        returns.push(mean_return);
+        volatilities.push(volatility);
+    }
+
+    // シンプルなリスク調整リターンによる重み付け
+    let mut sharpe_ratios = Vec::new();
+    for i in 0..returns.len() {
+        let sharpe = if volatilities[i] > 0.0 {
+            returns[i] / volatilities[i]
+        } else {
+            0.0
+        };
+        sharpe_ratios.push(sharpe.max(0.0)); // 負のシャープレシオは0にする
+    }
+
+    let total_sharpe: f64 = sharpe_ratios.iter().sum();
+
+    // 重みを正規化
+    for (i, token) in tokens.iter().enumerate() {
+        let weight = if total_sharpe > 0.0 {
+            sharpe_ratios[i] / total_sharpe
+        } else {
+            1.0 / tokens.len() as f64 // 均等分散フォールバック
+        };
+        weights.insert(token.clone(), weight);
+    }
+
+    Ok(weights)
+}
+
+/// ポートフォリオのリバランスを実行
+fn execute_portfolio_rebalance(
+    portfolio: &mut PortfolioState,
+    context: &TradingContext,
+    target_weights: &HashMap<String, f64>,
+) -> Result<()> {
+    // 現在のポートフォリオ価値を計算
+    let mut total_portfolio_value = portfolio.cash_balance.clone();
+    for (token, amount) in portfolio.holdings.iter() {
+        if let Some(current_price) =
+            get_price_at_time(context.price_data, token, context.current_date)
+        {
+            total_portfolio_value += amount * BigDecimal::from_f64(current_price).unwrap();
+        }
+    }
+
+    // 各トークンの目標価値を計算
+    for (token, target_weight) in target_weights {
+        let target_value =
+            total_portfolio_value.clone() * BigDecimal::from_f64(*target_weight).unwrap();
+        let current_price =
+            get_price_at_time(context.price_data, token, context.current_date).unwrap_or(1.0);
+        let target_amount = target_value.clone() / BigDecimal::from_f64(current_price).unwrap();
+
+        let current_amount = portfolio
+            .holdings
+            .get(token)
+            .cloned()
+            .unwrap_or_else(|| BigDecimal::from(0));
+        let amount_diff = target_amount.clone() - current_amount.clone();
+
+        // 最小取引量チェック
+        if amount_diff.abs() * BigDecimal::from_f64(current_price).unwrap() > BigDecimal::from(1) {
+            let trade_value = amount_diff.abs() * BigDecimal::from_f64(current_price).unwrap();
+            let cost = BigDecimal::from_f64(calculate_trading_cost(
+                trade_value.to_string().parse::<f64>().unwrap_or(0.0),
+                context.fee_model,
+                context.slippage_rate,
+                context.gas_cost.to_string().parse::<f64>().unwrap_or(0.0),
+            ))
+            .unwrap();
+
+            // 取引実行
+            if amount_diff > BigDecimal::from(0) {
+                // 買い注文
+                *portfolio.cash_balance -= trade_value.clone() + cost.clone();
+                portfolio.holdings.insert(token.clone(), target_amount);
+            } else {
+                // 売り注文
+                *portfolio.cash_balance += trade_value.clone() - cost.clone();
+                portfolio.holdings.insert(token.clone(), target_amount);
+            }
+
+            *portfolio.total_cost += cost.clone();
+
+            portfolio.trades.push(TradeExecution {
+                timestamp: context.current_date,
+                from_token: if amount_diff > BigDecimal::from(0) {
+                    "wrap.near".to_string()
+                } else {
+                    token.clone()
+                },
+                to_token: if amount_diff > BigDecimal::from(0) {
+                    token.clone()
+                } else {
+                    "wrap.near".to_string()
+                },
+                amount: amount_diff.abs().to_string().parse::<f64>().unwrap_or(0.0),
+                executed_price: current_price,
+                cost: TradingCost {
+                    protocol_fee: cost.clone() * BigDecimal::from_f64(0.5).unwrap(),
+                    slippage: cost.clone() * BigDecimal::from_f64(0.4).unwrap(),
+                    gas_fee: cost.clone() * BigDecimal::from_f64(0.1).unwrap(),
+                    total: cost.clone(),
+                },
+                portfolio_value_before: total_portfolio_value
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.0),
+                portfolio_value_after: total_portfolio_value
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.0),
+                success: true,
+                reason: "Portfolio rebalance".to_string(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+// TrendFollowing アルゴリズム実装
+
+/// TrendFollowingのタイムステップシミュレーション
+async fn run_trend_following_timestep_simulation(
+    config: &SimulationConfig,
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+) -> Result<SimulationResult> {
+    let mut portfolio_values = Vec::new();
+    let mut trades = Vec::new();
+    let mut current_holdings: HashMap<String, BigDecimal> = HashMap::new();
+    let mut cash_balance = config.initial_capital.clone();
+    let mut total_cost = BigDecimal::from(0);
+    let mut current_position = String::new(); // 現在のポジション
+
+    let simulation_start = config.start_date;
+    let simulation_end = config.end_date;
+
+    let mut current_date = simulation_start;
+    while current_date <= simulation_end {
+        // 現在のポートフォリオ価値を計算
+        let mut total_value = cash_balance.clone();
+        let mut holdings_values = HashMap::new();
+
+        for (token, amount) in &current_holdings {
+            if let Some(current_price) = get_price_at_time(price_data, token, current_date) {
+                let value = amount * BigDecimal::from_f64(current_price).unwrap();
+                holdings_values.insert(token.clone(), value.clone());
+                total_value += value;
+            }
+        }
+
+        let unrealized_pnl = total_value.clone() - config.initial_capital.clone();
+
+        // ポートフォリオスナップショットを記録
+        portfolio_values.push(PortfolioValue {
+            timestamp: current_date,
+            total_value: total_value.to_string().parse::<f64>().unwrap_or(0.0),
+            cash_balance: cash_balance.to_string().parse::<f64>().unwrap_or(0.0),
+            holdings: holdings_values
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_string().parse::<f64>().unwrap_or(0.0)))
+                .collect(),
+            unrealized_pnl: unrealized_pnl.to_string().parse::<f64>().unwrap_or(0.0),
+        });
+
+        // トレンドフォローイング判定
+        let trend_signal = calculate_trend_signal(
+            &config.target_tokens,
+            price_data,
+            current_date,
+            config.historical_days,
+        )?;
+
+        if let Some(signal) = trend_signal {
+            let context = TradingContext {
+                price_data,
+                current_date,
+                fee_model: &config.fee_model,
+                slippage_rate: config.slippage_rate,
+                gas_cost: &config.gas_cost,
+            };
+            let mut portfolio = PortfolioState {
+                holdings: &mut current_holdings,
+                cash_balance: &mut cash_balance,
+                total_cost: &mut total_cost,
+                trades: &mut trades,
+            };
+            execute_trend_following_trade(
+                &mut portfolio,
+                &context,
+                &mut current_position,
+                &signal,
+            )?;
+        }
+
+        current_date += chrono::Duration::days(1);
+    }
+
+    // 最終パフォーマンス計算
+    let initial_value = config
+        .initial_capital
+        .to_string()
+        .parse::<f64>()
+        .unwrap_or(0.0);
+    let final_value = portfolio_values
+        .last()
+        .map(|pv| pv.total_value)
+        .unwrap_or(initial_value);
+
+    let performance = calculate_performance_metrics(
+        initial_value,
+        final_value,
+        &portfolio_values,
+        &trades,
+        (simulation_end - simulation_start).num_days(),
+    );
+
+    let simulation_config = SimulationSummary {
+        start_date: config.start_date,
+        end_date: config.end_date,
+        algorithm: config.algorithm.clone(),
+        initial_capital: initial_value,
+        final_value,
+        total_return: (final_value - initial_value) / initial_value * 100.0,
+        duration_days: (config.end_date - config.start_date).num_days(),
+    };
+
+    let total_trades = trades.len();
+    let total_cost_f64 = total_cost.to_string().parse::<f64>().unwrap_or(0.0);
+
+    Ok(SimulationResult {
+        config: simulation_config,
+        performance,
+        trades,
+        portfolio_values,
+        execution_summary: ExecutionSummary {
+            total_trades,
+            successful_trades: total_trades, // 簡略化
+            failed_trades: 0,
+            success_rate: 1.0,
+            total_cost: total_cost_f64,
+            avg_cost_per_trade: if total_trades == 0 {
+                0.0
+            } else {
+                total_cost_f64 / total_trades as f64
+            },
+        },
+    })
+}
+
+#[derive(Debug, Clone)]
+struct TrendSignal {
+    action: TrendAction,
+    token: String,
+    #[allow(dead_code)]
+    strength: f64, // シグナルの強さ (0.0-1.0)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum TrendAction {
+    Buy,
+    Sell,
+    #[allow(dead_code)]
+    Hold,
+}
+
+/// トレンドシグナルを計算
+fn calculate_trend_signal(
+    tokens: &[String],
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+    current_date: DateTime<Utc>,
+    lookback_days: i64,
+) -> Result<Option<TrendSignal>> {
+    let mut best_signal: Option<TrendSignal> = None;
+    let mut max_strength = 0.0;
+
+    for token in tokens {
+        let historical_data = get_historical_data(price_data, token, current_date, lookback_days)?;
+
+        if historical_data.len() < 20 {
+            continue;
+        }
+
+        // 移動平均によるトレンド分析
+        let short_ma = calculate_moving_average(&historical_data, 5)?;
+        let long_ma = calculate_moving_average(&historical_data, 20)?;
+
+        let trend_strength = (short_ma - long_ma).abs() / long_ma;
+
+        if trend_strength > max_strength && trend_strength > 0.02 {
+            // 2%以上の差
+            let action = if short_ma > long_ma {
+                TrendAction::Buy
+            } else {
+                TrendAction::Sell
+            };
+
+            best_signal = Some(TrendSignal {
+                action,
+                token: token.clone(),
+                strength: trend_strength,
+            });
+            max_strength = trend_strength;
+        }
+    }
+
+    Ok(best_signal)
+}
+
+/// 移動平均を計算
+fn calculate_moving_average(data: &[&ValueAtTime], window: usize) -> Result<f64> {
+    if data.len() < window {
+        return Ok(0.0);
+    }
+
+    let recent_data = &data[data.len() - window..];
+    let sum: f64 = recent_data.iter().map(|v| v.value).sum();
+    Ok(sum / window as f64)
+}
+
+/// トレンドフォローイング取引を実行
+fn execute_trend_following_trade(
+    portfolio: &mut PortfolioState,
+    context: &TradingContext,
+    current_position: &mut String,
+    signal: &TrendSignal,
+) -> Result<()> {
+    let current_price =
+        get_price_at_time(context.price_data, &signal.token, context.current_date).unwrap_or(1.0);
+
+    match signal.action {
+        TrendAction::Buy => {
+            // 現在のポジションを清算してから新しいポジションを取る
+            if !current_position.is_empty() && current_position != &signal.token {
+                execute_sell_position(portfolio, context, current_position)?;
+            }
+
+            // 新しいポジションを構築
+            let available_cash = portfolio.cash_balance.clone();
+            if available_cash > BigDecimal::from(10) {
+                // 最小取引額
+                let trade_amount = available_cash.clone() * BigDecimal::from_f64(0.95).unwrap(); // 95%投資
+                let token_amount =
+                    trade_amount.clone() / BigDecimal::from_f64(current_price).unwrap();
+
+                let cost = BigDecimal::from_f64(calculate_trading_cost(
+                    trade_amount.to_string().parse::<f64>().unwrap_or(0.0),
+                    context.fee_model,
+                    context.slippage_rate,
+                    context.gas_cost.to_string().parse::<f64>().unwrap_or(0.0),
+                ))
+                .unwrap();
+
+                *portfolio.cash_balance -= trade_amount.clone() + cost.clone();
+                portfolio
+                    .holdings
+                    .insert(signal.token.clone(), token_amount.clone());
+                *current_position = signal.token.clone();
+                *portfolio.total_cost += cost.clone();
+
+                portfolio.trades.push(TradeExecution {
+                    timestamp: context.current_date,
+                    from_token: "wrap.near".to_string(),
+                    to_token: signal.token.clone(),
+                    amount: token_amount.to_string().parse::<f64>().unwrap_or(0.0),
+                    executed_price: current_price,
+                    cost: TradingCost {
+                        protocol_fee: cost.clone() * BigDecimal::from_f64(0.5).unwrap(),
+                        slippage: cost.clone() * BigDecimal::from_f64(0.4).unwrap(),
+                        gas_fee: cost.clone() * BigDecimal::from_f64(0.1).unwrap(),
+                        total: cost.clone(),
+                    },
+                    portfolio_value_before: available_cash
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap_or(0.0),
+                    portfolio_value_after: 0.0, // 計算は簡略化
+                    success: true,
+                    reason: "Trend following buy".to_string(),
+                });
+            }
+        }
+        TrendAction::Sell => {
+            if current_position == &signal.token {
+                execute_sell_position(portfolio, context, &signal.token)?;
+                current_position.clear();
+            }
+        }
+        TrendAction::Hold => {
+            // 何もしない
+        }
+    }
+
+    Ok(())
+}
+
+/// ポジションを売却
+fn execute_sell_position(
+    portfolio: &mut PortfolioState,
+    context: &TradingContext,
+    token: &str,
+) -> Result<()> {
+    if let Some(amount) = portfolio.holdings.remove(token) {
+        let current_price =
+            get_price_at_time(context.price_data, token, context.current_date).unwrap_or(1.0);
+        let trade_value = amount.clone() * BigDecimal::from_f64(current_price).unwrap();
+
+        let cost = BigDecimal::from_f64(calculate_trading_cost(
+            trade_value.to_string().parse::<f64>().unwrap_or(0.0),
+            context.fee_model,
+            context.slippage_rate,
+            context.gas_cost.to_string().parse::<f64>().unwrap_or(0.0),
+        ))
+        .unwrap();
+
+        *portfolio.cash_balance += trade_value.clone() - cost.clone();
+        *portfolio.total_cost += cost.clone();
+
+        portfolio.trades.push(TradeExecution {
+            timestamp: context.current_date,
+            from_token: token.to_string(),
+            to_token: "wrap.near".to_string(),
+            amount: amount.to_string().parse::<f64>().unwrap_or(0.0),
+            executed_price: current_price,
+            cost: TradingCost {
+                protocol_fee: cost.clone() * BigDecimal::from_f64(0.5).unwrap(),
+                slippage: cost.clone() * BigDecimal::from_f64(0.4).unwrap(),
+                gas_fee: cost.clone() * BigDecimal::from_f64(0.1).unwrap(),
+                total: cost.clone(),
+            },
+            portfolio_value_before: trade_value.to_string().parse::<f64>().unwrap_or(0.0),
+            portfolio_value_after: 0.0, // 計算は簡略化
+            success: true,
+            reason: "Trend following sell".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// ヘルパー関数：指定日時の価格を取得
+fn get_price_at_time(
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+    token: &str,
+    target_date: DateTime<Utc>,
+) -> Option<f64> {
+    price_data
+        .get(token)?
+        .iter()
+        .find(|v| v.time.and_utc().date_naive() == target_date.date_naive())
+        .map(|v| v.value)
+}
+
+/// ヘルパー関数：過去データを取得
+fn get_historical_data<'a>(
+    price_data: &'a HashMap<String, Vec<ValueAtTime>>,
+    token: &str,
+    current_date: DateTime<Utc>,
+    lookback_days: i64,
+) -> Result<Vec<&'a ValueAtTime>> {
+    let start_date = current_date - chrono::Duration::days(lookback_days);
+
+    let historical_data: Vec<&ValueAtTime> = price_data
+        .get(token)
+        .ok_or_else(|| anyhow::anyhow!("No price data for token: {}", token))?
+        .iter()
+        .filter(|v| {
+            let value_date = v.time.and_utc();
+            value_date >= start_date && value_date <= current_date
+        })
+        .collect();
+
+    Ok(historical_data)
+}
+
+/// HTMLレポートを生成
+fn generate_html_report(result: &SimulationResult) -> Result<String> {
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    let start_date_str = result.config.start_date.format("%Y-%m-%d");
+    let end_date_str = result.config.end_date.format("%Y-%m-%d");
+    let algorithm_str = format!("{:?}", result.config.algorithm);
+    let html_content = format!(
+        r#"<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Simulation Report - {}</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }}
+        .header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }}
+        .header h1 {{
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }}
+        .header p {{
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }}
+        .content {{
+            padding: 30px;
+        }}
+        .metrics-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }}
+        .metric-card {{
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }}
+        .metric-value {{
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }}
+        .metric-label {{
+            color: #666;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        .positive {{ color: #4CAF50; }}
+        .negative {{ color: #f44336; }}
+        .neutral {{ color: #2196F3; }}
+        .section {{
+            margin-bottom: 30px;
+        }}
+        .section-title {{
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }}
+        .info-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }}
+        .info-table th, .info-table td {{
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }}
+        .info-table th {{
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }}
+        .info-table tr:nth-child(even) {{
+            background-color: #f8f9fa;
+        }}
+        .trades-section {{
+            margin-top: 30px;
+        }}
+        .portfolio-chart {{
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+        }}
+        .summary-stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }}
+        .stat-item {{
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }}
+        .stat-value {{
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #333;
+        }}
+        .stat-label {{
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }}
+        .footer {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Trading Simulation Report</h1>
+            <p>{} Algorithm | {} to {}</p>
+        </div>
+        
+        <div class="content">
+            <!-- Key Performance Metrics -->
+            <div class="section">
+                <h2 class="section-title">📊 Key Performance Metrics</h2>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value {}">
+                            {:.2}%
+                        </div>
+                        <div class="metric-label">Total Return</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value {}">
+                            {:.2}%
+                        </div>
+                        <div class="metric-label">Annualized Return</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value neutral">
+                            {:.2}%
+                        </div>
+                        <div class="metric-label">Volatility</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value {}">
+                            {:.2}
+                        </div>
+                        <div class="metric-label">Sharpe Ratio</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value negative">
+                            {:.2}%
+                        </div>
+                        <div class="metric-label">Max Drawdown</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value neutral">
+                            {}
+                        </div>
+                        <div class="metric-label">Total Trades</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Simulation Configuration -->
+            <div class="section">
+                <h2 class="section-title">⚙️ Simulation Configuration</h2>
+                <table class="info-table">
+                    <tr><th>Algorithm</th><td>{:?}</td></tr>
+                    <tr><th>Start Date</th><td>{}</td></tr>
+                    <tr><th>End Date</th><td>{}</td></tr>
+                    <tr><th>Initial Capital</th><td>{:.2} NEAR</td></tr>
+                    <tr><th>Final Value</th><td>{:.2} NEAR</td></tr>
+                    <tr><th>Duration</th><td>{} days</td></tr>
+                </table>
+            </div>
+
+            <!-- Trading Summary -->
+            <div class="section">
+                <h2 class="section-title">💼 Trading Summary</h2>
+                <div class="summary-stats">
+                    <div class="stat-item">
+                        <div class="stat-value">{}</div>
+                        <div class="stat-label">Total Trades</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{}</div>
+                        <div class="stat-label">Successful Trades</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{:.1}%</div>
+                        <div class="stat-label">Win Rate</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{:.2}</div>
+                        <div class="stat-label">Profit Factor</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{:.4}</div>
+                        <div class="stat-label">Total Costs</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{:.1}%</div>
+                        <div class="stat-label">Success Rate</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Portfolio Performance Chart Placeholder -->
+            <div class="section">
+                <h2 class="section-title">📈 Portfolio Performance</h2>
+                <div class="portfolio-chart">
+                    <h3>Portfolio Value Over Time</h3>
+                    <p>Chart visualization would be displayed here</p>
+                    <p><em>Portfolio data points: {} entries</em></p>
+                </div>
+            </div>
+
+            <!-- Detailed Statistics -->
+            <div class="section">
+                <h2 class="section-title">📋 Detailed Statistics</h2>
+                <table class="info-table">
+                    <tr><th>Metric</th><th>Value</th></tr>
+                    <tr><td>Total Return (%)</td><td>{:.4}%</td></tr>
+                    <tr><td>Annualized Return (%)</td><td>{:.4}%</td></tr>
+                    <tr><td>Volatility (%)</td><td>{:.4}%</td></tr>
+                    <tr><td>Sharpe Ratio</td><td>{:.4}</td></tr>
+                    <tr><td>Sortino Ratio</td><td>{:.4}</td></tr>
+                    <tr><td>Maximum Drawdown (%)</td><td>{:.4}%</td></tr>
+                    <tr><td>Winning Trades</td><td>{}</td></tr>
+                    <tr><td>Losing Trades</td><td>{}</td></tr>
+                    <tr><td>Average Cost per Trade</td><td>{:.6}</td></tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="footer">
+            Generated by CLI Tokens Trading Simulator | {}
+        </div>
+    </div>
+</body>
+</html>"#,
+        // Header values
+        algorithm_str,
+        algorithm_str,
+        start_date_str,
+        end_date_str,
+        // Key metrics
+        if result.performance.total_return_pct >= 0.0 {
+            "positive"
+        } else {
+            "negative"
+        },
+        result.performance.total_return_pct,
+        if result.performance.annualized_return >= 0.0 {
+            "positive"
+        } else {
+            "negative"
+        },
+        result.performance.annualized_return,
+        result.performance.volatility * 100.0,
+        if result.performance.sharpe_ratio >= 0.0 {
+            "positive"
+        } else {
+            "negative"
+        },
+        result.performance.sharpe_ratio,
+        result.performance.max_drawdown_pct,
+        result.performance.total_trades,
+        // Configuration table
+        result.config.algorithm,
+        start_date_str,
+        end_date_str,
+        result.config.initial_capital,
+        result.config.final_value,
+        result.config.duration_days,
+        // Trading summary
+        result.execution_summary.total_trades,
+        result.execution_summary.successful_trades,
+        result.performance.win_rate * 100.0,
+        result.performance.profit_factor,
+        result.execution_summary.total_cost,
+        result.execution_summary.success_rate * 100.0,
+        // Portfolio chart
+        result.portfolio_values.len(),
+        // Detailed statistics
+        result.performance.total_return_pct,
+        result.performance.annualized_return,
+        result.performance.volatility * 100.0,
+        result.performance.sharpe_ratio,
+        result.performance.sortino_ratio,
+        result.performance.max_drawdown_pct,
+        result.performance.winning_trades,
+        result.performance.losing_trades,
+        result.execution_summary.avg_cost_per_trade,
+        // Footer timestamp
+        timestamp
+    );
+
+    Ok(html_content)
 }
 
 #[cfg(test)]

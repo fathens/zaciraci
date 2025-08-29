@@ -31,6 +31,7 @@ mod unit_tests {
             historical_days: 30,
             report_format: "json".to_string(),
             chart: false,
+            use_mock_data: false,
             verbose: false,
         };
 
@@ -304,6 +305,7 @@ mod integration_tests {
             historical_days: 30,
             report_format: "json".to_string(),
             chart: false,
+            use_mock_data: false,
             verbose: false,
         };
 
