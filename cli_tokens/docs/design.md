@@ -646,6 +646,128 @@ cli_tokens verify predictions/wrap.near/sample.token.near.json --force
 - **エラー回避**: パス指定ミスの削減
 - **柔軟性**: 必要に応じて明示的な指定も可能
 
+### simulateコマンド
+
+実際の価格データを使用してトレーディングアルゴリズムのバックテストを実行し、パフォーマンス分析を行います。
+
+```bash
+cli_tokens simulate [OPTIONS]
+
+OPTIONS:
+    -s, --start <DATE>           シミュレーション開始日 (YYYY-MM-DD)
+    -e, --end <DATE>             シミュレーション終了日 (YYYY-MM-DD)  
+    -a, --algorithm <ALGORITHM>  使用するアルゴリズム [デフォルト: momentum]
+                                選択肢: momentum, portfolio, trend_following
+    -c, --capital <AMOUNT>       初期資金 (NEAR) [デフォルト: 1000.0]
+    -q, --quote-token <TOKEN>    ベース通貨 [デフォルト: wrap.near]
+    -t, --tokens <TOKENS>        対象トークンリスト (カンマ区切り)
+                                省略時は自動でtop volatility tokensを取得
+    -n, --num-tokens <NUMBER>    自動取得する際のトークン数 [デフォルト: 10]
+    --historical-days <DAYS>     予測に使用する過去データ期間 (日数) [デフォルト: 30]
+    --prediction-horizon <HOURS> 予測期間 (時間) [デフォルト: 24]
+    --fee-model <MODEL>          手数料モデル [デフォルト: realistic]
+                                選択肢: realistic, zero, custom
+    --report-format <FORMAT>     レポート形式 [デフォルト: json]
+                                選択肢: json, csv, html, both
+    -v, --verbose                詳細ログ出力
+    -h, --help                   ヘルプを表示
+```
+
+#### 使用例
+
+```bash
+# 環境変数を設定
+export CLI_TOKENS_BASE_DIR="./workspace"
+
+# 基本的なシミュレーション（1ヶ月間のモメンタム戦略）
+cli_tokens simulate --start 2024-12-01 --end 2024-12-31 --algorithm momentum
+
+# 特定トークンでのポートフォリオ最適化戦略
+cli_tokens simulate \
+  --start 2024-11-01 \
+  --end 2024-11-30 \
+  --algorithm portfolio \
+  --tokens "usdc.tether-token.near,blackdragon.tkn.near" \
+  --capital 5000 \
+  --fee-model zero
+
+# HTMLレポート生成付きトレンドフォロー戦略
+cli_tokens simulate \
+  --start 2024-08-01 \
+  --end 2024-08-05 \
+  --algorithm trend_following \
+  --tokens "usdc.tether-token.near" \
+  --capital 1000 \
+  --report-format html \
+  --verbose
+
+# 予測パラメータをカスタマイズしたシミュレーション
+cli_tokens simulate \
+  --start 2024-11-01 \
+  --end 2024-11-05 \
+  --historical-days 7 \
+  --prediction-horizon 12 \
+  --verbose
+```
+
+#### シミュレーションの動作フロー
+
+1. **初期化フェーズ**
+   - 指定期間の価格データ取得
+   - アルゴリズムパラメータ設定
+   - 初期ポートフォリオ構築
+
+2. **タイムステップシミュレーション**
+   - 各時点で価格予測実行（historical_daysのデータを使用）
+   - アルゴリズムによる取引判断
+   - 取引実行とコスト計算
+   - ポートフォリオ価値更新
+
+3. **結果分析フェーズ**
+   - パフォーマンス指標計算（リターン、シャープレシオ、最大ドローダウン等）
+   - ベンチマーク比較（Buy & Hold戦略との比較）
+   - レポート生成
+
+#### データ要件
+
+シミュレーション実行に必要なデータ期間：
+- **初期データ**: `start_date - historical_days` から `start_date`まで
+- **シミュレーション期間**: `start_date` から `end_date + prediction_horizon`まで
+
+例：
+- シミュレーション: 2024-11-01 ～ 2024-11-30
+- historical_days: 30日
+- prediction_horizon: 24時間
+- 必要データ期間: 2024-10-02 ～ 2024-12-01
+
+#### 出力ファイル構造
+
+```
+${CLI_TOKENS_BASE_DIR}/
+└── simulation_results/
+    └── {algorithm}_{start}_{end}/
+        ├── config.json             # シミュレーション設定
+        ├── results.json            # 詳細結果
+        ├── results.html            # HTMLレポート（format=html時）
+        ├── trades.csv              # 取引履歴
+        └── performance_metrics.json # パフォーマンス指標
+```
+
+#### パフォーマンス指標
+
+シミュレーション結果には以下の指標が含まれます：
+
+- **リターン指標**: 総収益率、年率換算収益率
+- **リスク指標**: ボラティリティ、シャープレシオ、最大ドローダウン
+- **取引指標**: 総取引回数、勝率、平均損益
+- **コスト指標**: 総取引コスト、コスト比率
+
+#### アルゴリズムの特徴
+
+- **momentum**: 価格モメンタムに基づく取引戦略
+- **portfolio**: ポートフォリオ最適化（シャープレシオ最大化）
+- **trend_following**: トレンド追従型戦略
+
 ### chartコマンド
 
 履歴データ（history）と予測データ（prediction）を組み合わせてPNGチャートを生成するコマンドです。自動検出方式を採用し、トークンファイルを起点として関連データファイルを自動で発見・統合してビジュアライゼーションを行います。
