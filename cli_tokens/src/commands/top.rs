@@ -115,6 +115,17 @@ pub async fn run(args: TopArgs) -> Result<()> {
     for (i, token) in tokens.iter().enumerate() {
         println!("Saving {} ({}/{})", token.0, i + 1, tokens.len());
 
+        // Get recent price data to calculate current price and 24h change
+        let (current_price, price_change_24h, volume_24h, volatility_score) =
+            get_current_price_data_with_volatility(
+                &backend_client,
+                &token.0,
+                quote_token,
+                start_date,
+                end_date,
+            )
+            .await;
+
         let file_data = TokenFileData {
             metadata: FileMetadata {
                 generated_at: Utc::now(),
@@ -125,11 +136,11 @@ pub async fn run(args: TopArgs) -> Result<()> {
             },
             token_data: TokenVolatilityData {
                 token: token.0.to_string(),
-                volatility_score: 0.85, // TODO: Calculate actual volatility
+                volatility_score,
                 price_data: PriceData {
-                    current_price: 0.0, // TODO: Get actual price data
-                    price_change_24h: 0.0,
-                    volume_24h: 0.0,
+                    current_price,
+                    price_change_24h,
+                    volume_24h,
                 },
             },
         };
@@ -167,4 +178,93 @@ pub async fn run(args: TopArgs) -> Result<()> {
 pub fn parse_date(date_str: &str) -> Result<DateTime<Utc>> {
     let naive_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")?;
     Ok(naive_date.and_hms_opt(0, 0, 0).unwrap().and_utc())
+}
+
+/// Get current price data for a token including 24h change calculation and volatility
+async fn get_current_price_data_with_volatility(
+    backend_client: &BackendClient,
+    token: &str,
+    quote_token: &str,
+    start_date: DateTime<Utc>,
+    end_date: DateTime<Utc>,
+) -> (f64, f64, f64, f64) {
+    match backend_client
+        .get_price_history(
+            token,
+            quote_token,
+            start_date.naive_utc(),
+            end_date.naive_utc(),
+        )
+        .await
+    {
+        Ok(values) if !values.is_empty() => {
+            let current_price = values.last().map(|v| v.value).unwrap_or(0.0);
+
+            // Calculate 24h price change
+            let price_24h_ago = if values.len() > 24 {
+                values[values.len() - 24].value
+            } else {
+                values.first().map(|v| v.value).unwrap_or(current_price)
+            };
+
+            let price_change_24h = if price_24h_ago > 0.0 {
+                ((current_price - price_24h_ago) / price_24h_ago) * 100.0
+            } else {
+                0.0
+            };
+
+            // Calculate volatility score from price data
+            let volatility_score = calculate_volatility_score(&values);
+
+            // Volume is not available from current API, set to 0
+            let volume_24h = 0.0;
+
+            (
+                current_price,
+                price_change_24h,
+                volume_24h,
+                volatility_score,
+            )
+        }
+        _ => {
+            // Fallback to defaults if no data available
+            (0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+/// Calculate volatility score from price data using standard deviation of returns
+fn calculate_volatility_score(values: &[common::stats::ValueAtTime]) -> f64 {
+    if values.len() < 2 {
+        return 0.0;
+    }
+
+    // Calculate returns (price changes)
+    let mut returns = Vec::new();
+    for i in 1..values.len() {
+        let prev_price = values[i - 1].value;
+        let curr_price = values[i].value;
+
+        if prev_price > 0.0 {
+            let return_pct = (curr_price - prev_price) / prev_price;
+            returns.push(return_pct);
+        }
+    }
+
+    if returns.is_empty() {
+        return 0.0;
+    }
+
+    // Calculate standard deviation of returns
+    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+
+    let std_dev = variance.sqrt();
+
+    // Convert to a 0-1 volatility score (annualized)
+    // Multiply by sqrt(365*24) to annualize (assuming hourly data)
+    let annualized_volatility = std_dev * (365.0_f64 * 24.0_f64).sqrt();
+
+    // Cap at 1.0 and ensure it's between 0 and 1
+    annualized_volatility.clamp(0.0, 1.0)
 }

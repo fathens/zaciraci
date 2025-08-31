@@ -150,10 +150,44 @@ pub async fn run(args: PullArgs) -> Result<()> {
         .forecast_timestamp
         .into_iter()
         .zip(prediction_result.forecast_values.into_iter())
-        .map(|(timestamp, value)| PredictionPoint {
-            timestamp,
-            value,
-            confidence_interval: None, // TODO: Add confidence intervals if available
+        .enumerate()
+        .map(|(i, (timestamp, value))| {
+            // Extract confidence intervals if available
+            let confidence_interval =
+                prediction_result
+                    .confidence_intervals
+                    .as_ref()
+                    .and_then(|intervals| {
+                        // Common patterns for confidence interval keys
+                        let lower_key = intervals
+                            .keys()
+                            .find(|k| k.contains("lower") || k.contains("0.025"));
+                        let upper_key = intervals
+                            .keys()
+                            .find(|k| k.contains("upper") || k.contains("0.975"));
+
+                        if let (Some(lower_key), Some(upper_key)) = (lower_key, upper_key) {
+                            let lower_values = intervals.get(lower_key)?;
+                            let upper_values = intervals.get(upper_key)?;
+
+                            if i < lower_values.len() && i < upper_values.len() {
+                                Some(common::prediction::ConfidenceInterval {
+                                    lower: lower_values[i],
+                                    upper: upper_values[i],
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    });
+
+            PredictionPoint {
+                timestamp,
+                value,
+                confidence_interval,
+            }
         })
         .collect();
 
@@ -166,6 +200,11 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
         for point in &mut forecast {
             point.value *= scale_factor;
+            // Also scale confidence intervals if present
+            if let Some(ref mut ci) = point.confidence_interval {
+                ci.lower *= scale_factor;
+                ci.upper *= scale_factor;
+            }
         }
     }
 

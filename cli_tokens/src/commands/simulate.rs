@@ -943,15 +943,36 @@ fn calculate_performance_metrics(
     }
 
     // 取引分析
-    let winning_trades = trades
-        .iter()
-        .filter(|t| t.portfolio_value_after > t.portfolio_value_before)
-        .count();
-    let losing_trades = trades.len() - winning_trades;
+    let mut total_profit = 0.0;
+    let mut total_loss = 0.0;
+    let mut winning_trades_count = 0;
+
+    for trade in trades {
+        let profit_loss = trade.portfolio_value_after - trade.portfolio_value_before;
+        if profit_loss > 0.0 {
+            total_profit += profit_loss;
+            winning_trades_count += 1;
+        } else if profit_loss < 0.0 {
+            total_loss += -profit_loss; // 損失は正の値として計算
+        }
+    }
+
+    let losing_trades = trades.len() - winning_trades_count;
     let win_rate = if trades.is_empty() {
         0.0
     } else {
-        winning_trades as f64 / trades.len() as f64
+        winning_trades_count as f64 / trades.len() as f64
+    };
+
+    // プロフィットファクター = 総利益 / 総損失
+    let profit_factor = if total_loss > 0.0 {
+        total_profit / total_loss
+    } else if total_profit > 0.0 {
+        // 損失がない場合は無限大を表す大きな値
+        f64::MAX
+    } else {
+        // 利益も損失もない場合
+        0.0
     };
 
     let total_costs = trades
@@ -982,10 +1003,10 @@ fn calculate_performance_metrics(
         sharpe_ratio,
         sortino_ratio: sharpe_ratio, // 暫定的にシャープレシオと同じ
         total_trades: trades.len(),
-        winning_trades,
+        winning_trades: winning_trades_count,
         losing_trades,
         win_rate,
-        profit_factor: 0.0, // TODO: 実装
+        profit_factor,
         total_costs,
         cost_ratio,
         simulation_days: duration_days,
