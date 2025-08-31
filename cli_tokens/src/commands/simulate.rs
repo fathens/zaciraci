@@ -1271,7 +1271,7 @@ fn execute_trading_action(
 }
 
 /// 取引コストを計算
-fn calculate_trading_cost(
+pub fn calculate_trading_cost(
     amount: f64,
     fee_model: &FeeModel,
     slippage_rate: f64,

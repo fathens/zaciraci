@@ -246,6 +246,129 @@ mod integration_tests {
         Ok(())
     }
 
+    // Helper function to create a test trade execution
+    fn create_test_trade(
+        portfolio_value_before: f64,
+        portfolio_value_after: f64,
+        cost: f64,
+    ) -> TradeExecution {
+        use std::str::FromStr;
+
+        TradeExecution {
+            timestamp: Utc::now(),
+            from_token: "token_a".to_string(),
+            to_token: "token_b".to_string(),
+            amount: 100.0,
+            executed_price: 1.0,
+            cost: TradingCost {
+                protocol_fee: BigDecimal::from_str("0.0").unwrap(),
+                slippage: BigDecimal::from_str("0.0").unwrap(),
+                gas_fee: BigDecimal::from_str("0.0").unwrap(),
+                total: BigDecimal::from_str(&cost.to_string()).unwrap(),
+            },
+            portfolio_value_before,
+            portfolio_value_after,
+            success: true,
+            reason: "Test trade".to_string(),
+        }
+    }
+
+    // Helper function to create a test portfolio value
+    fn create_portfolio_value(timestamp: DateTime<Utc>, total_value: f64) -> PortfolioValue {
+        PortfolioValue {
+            timestamp,
+            holdings: HashMap::new(),
+            total_value,
+            cash_balance: 0.0,
+            unrealized_pnl: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_profit_factor_calculation_only_profits() {
+        let trades = vec![
+            create_test_trade(1000.0, 1100.0, 5.0), // +100 profit
+            create_test_trade(1100.0, 1200.0, 5.0), // +100 profit
+            create_test_trade(1200.0, 1350.0, 5.0), // +150 profit
+        ];
+
+        let portfolio_values = vec![
+            create_portfolio_value(Utc::now(), 1000.0),
+            create_portfolio_value(Utc::now(), 1350.0),
+        ];
+
+        let metrics = calculate_performance_metrics(1000.0, 1350.0, &portfolio_values, &trades, 30);
+
+        // Total profit = 350, no losses, so profit factor should be very high (f64::MAX)
+        assert_eq!(metrics.profit_factor, f64::MAX);
+        assert_eq!(metrics.winning_trades, 3);
+        assert_eq!(metrics.losing_trades, 0);
+        assert_eq!(metrics.win_rate, 1.0);
+    }
+
+    #[test]
+    fn test_profit_factor_calculation_only_losses() {
+        let trades = vec![
+            create_test_trade(1000.0, 950.0, 5.0), // -50 loss
+            create_test_trade(950.0, 900.0, 5.0),  // -50 loss
+            create_test_trade(900.0, 800.0, 5.0),  // -100 loss
+        ];
+
+        let portfolio_values = vec![
+            create_portfolio_value(Utc::now(), 1000.0),
+            create_portfolio_value(Utc::now(), 800.0),
+        ];
+
+        let metrics = calculate_performance_metrics(1000.0, 800.0, &portfolio_values, &trades, 30);
+
+        // Total loss = 200, no profits, so profit factor should be 0
+        assert_eq!(metrics.profit_factor, 0.0);
+        assert_eq!(metrics.winning_trades, 0);
+        assert_eq!(metrics.losing_trades, 3);
+        assert_eq!(metrics.win_rate, 0.0);
+    }
+
+    #[test]
+    fn test_profit_factor_calculation_mixed_trades() {
+        let trades = vec![
+            create_test_trade(1000.0, 1200.0, 5.0), // +200 profit
+            create_test_trade(1200.0, 1000.0, 5.0), // -200 loss
+            create_test_trade(1000.0, 1150.0, 5.0), // +150 profit
+            create_test_trade(1150.0, 1100.0, 5.0), // -50 loss
+        ];
+
+        let portfolio_values = vec![
+            create_portfolio_value(Utc::now(), 1000.0),
+            create_portfolio_value(Utc::now(), 1100.0),
+        ];
+
+        let metrics = calculate_performance_metrics(1000.0, 1100.0, &portfolio_values, &trades, 30);
+
+        // Total profit = 350, Total loss = 250, Profit factor = 350/250 = 1.4
+        assert_eq!(metrics.profit_factor, 1.4);
+        assert_eq!(metrics.winning_trades, 2);
+        assert_eq!(metrics.losing_trades, 2);
+        assert_eq!(metrics.win_rate, 0.5);
+    }
+
+    #[test]
+    fn test_profit_factor_calculation_no_trades() {
+        let trades = vec![];
+        let portfolio_values = vec![
+            create_portfolio_value(Utc::now(), 1000.0),
+            create_portfolio_value(Utc::now(), 1000.0),
+        ];
+
+        let metrics = calculate_performance_metrics(1000.0, 1000.0, &portfolio_values, &trades, 30);
+
+        // No trades, so profit factor should be 0
+        assert_eq!(metrics.profit_factor, 0.0);
+        assert_eq!(metrics.winning_trades, 0);
+        assert_eq!(metrics.losing_trades, 0);
+        assert_eq!(metrics.win_rate, 0.0);
+        assert_eq!(metrics.total_trades, 0);
+    }
+
     #[test]
     fn test_performance_metrics_calculation() {
         let initial_value = 1000.0;

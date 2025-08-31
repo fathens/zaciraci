@@ -236,6 +236,165 @@ mod integration_tests {
         assert_eq!(sanitize_filename("token:with:colons"), "token_with_colons");
         assert_eq!(sanitize_filename("token with spaces"), "token_with_spaces");
     }
+
+    #[test]
+    fn test_simulate_args_integration() {
+        use crate::commands::simulate::SimulateArgs;
+
+        // Test integration of SimulateArgs with various configurations
+        let momentum_config = SimulateArgs {
+            start: Some("2024-08-01".to_string()),
+            end: Some("2024-08-10".to_string()),
+            algorithm: "momentum".to_string(),
+            capital: 10000.0,
+            quote_token: "wrap.near".to_string(),
+            tokens: Some("token1,token2,token3".to_string()),
+            num_tokens: 10,
+            output: "simulation_results".to_string(),
+            rebalance_freq: "daily".to_string(),
+            fee_model: "realistic".to_string(),
+            custom_fee: None,
+            slippage: 0.01,
+            gas_cost: 0.01,
+            min_trade: 1.0,
+            prediction_horizon: 24,
+            historical_days: 30,
+            report_format: "json".to_string(),
+            chart: false,
+            use_mock_data: false,
+            verbose: false,
+        };
+
+        // Test that configuration is parsed correctly
+        assert_eq!(momentum_config.algorithm, "momentum");
+        assert_eq!(momentum_config.capital, 10000.0);
+        assert_eq!(
+            momentum_config.tokens.as_ref().unwrap(),
+            "token1,token2,token3"
+        );
+        assert_eq!(momentum_config.fee_model, "realistic");
+        assert_eq!(momentum_config.slippage, 0.01);
+
+        // Test portfolio algorithm config
+        let portfolio_config = SimulateArgs {
+            start: Some("2024-08-01".to_string()),
+            end: Some("2024-08-10".to_string()),
+            algorithm: "portfolio".to_string(),
+            capital: 5000.0,
+            quote_token: "wrap.near".to_string(),
+            tokens: None, // Will use top volatility tokens
+            num_tokens: 5,
+            output: "portfolio_results".to_string(),
+            rebalance_freq: "hourly".to_string(),
+            fee_model: "zero".to_string(),
+            custom_fee: Some(0.002),
+            slippage: 0.005,
+            gas_cost: 0.005,
+            min_trade: 0.5,
+            prediction_horizon: 12,
+            historical_days: 14,
+            report_format: "html".to_string(),
+            chart: true,
+            use_mock_data: true,
+            verbose: true,
+        };
+
+        assert_eq!(portfolio_config.algorithm, "portfolio");
+        assert_eq!(portfolio_config.capital, 5000.0);
+        assert!(portfolio_config.tokens.is_none()); // Should fetch from top volatility
+        assert_eq!(portfolio_config.fee_model, "zero");
+        assert_eq!(portfolio_config.custom_fee.unwrap(), 0.002);
+        assert!(portfolio_config.use_mock_data);
+        assert!(portfolio_config.verbose);
+    }
+
+    #[test]
+    fn test_fee_model_integration() {
+        use crate::commands::simulate::{calculate_trading_cost, FeeModel};
+
+        let trade_amount = 1000.0;
+        let slippage = 0.01;
+        let gas_cost = 0.01;
+
+        // Test zero fee model (still includes slippage and gas costs)
+        let zero_cost = calculate_trading_cost(trade_amount, &FeeModel::Zero, slippage, gas_cost);
+        let expected_zero_cost = trade_amount * slippage + gas_cost; // Only slippage + gas, no protocol fee
+        assert!((zero_cost - expected_zero_cost).abs() < 0.01);
+
+        // Test realistic fee model
+        let realistic_cost =
+            calculate_trading_cost(trade_amount, &FeeModel::Realistic, slippage, gas_cost);
+        // Should include pool fee (0.3%) + slippage + gas
+        let expected_cost = trade_amount * 0.003 + trade_amount * slippage + gas_cost;
+        assert!((realistic_cost - expected_cost).abs() < 0.01);
+
+        // Test custom fee model
+        let custom_fee = 0.005; // 0.5%
+        let custom_cost = calculate_trading_cost(
+            trade_amount,
+            &FeeModel::Custom(custom_fee),
+            slippage,
+            gas_cost,
+        );
+        let expected_custom_cost = trade_amount * custom_fee + trade_amount * slippage + gas_cost;
+        assert!((custom_cost - expected_custom_cost).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_volatility_token_filtering() {
+        use crate::commands::top::calculate_volatility_score;
+        use chrono::Utc;
+        use common::stats::ValueAtTime;
+
+        // Test that high volatility tokens are correctly scored
+        let high_volatility_data = vec![
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 150.0,
+            }, // +50%
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 75.0,
+            }, // -50%
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 125.0,
+            }, // +67%
+        ];
+
+        let high_score = calculate_volatility_score(&high_volatility_data);
+
+        // Test that low volatility tokens get lower scores
+        let low_volatility_data = vec![
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 101.0,
+            }, // +1%
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 102.0,
+            }, // +1%
+            ValueAtTime {
+                time: Utc::now().naive_utc(),
+                value: 103.0,
+            }, // +1%
+        ];
+
+        let low_score = calculate_volatility_score(&low_volatility_data);
+
+        // High volatility should score higher than low volatility
+        assert!(high_score > low_score);
+        assert!(high_score <= 1.0);
+        assert!(low_score >= 0.0);
+    }
 }
 
 #[cfg(test)]

@@ -242,3 +242,6 @@ fn extract_quote_token_from_path(token_file: &Path) -> Option<String> {
         .map(|s| s.to_string())
         .filter(|s| s != "tokens") // Skip if direct under tokens/ directory
 }
+
+#[cfg(test)]
+mod tests;

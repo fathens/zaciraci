@@ -234,7 +234,7 @@ async fn get_current_price_data_with_volatility(
 }
 
 /// Calculate volatility score from price data using standard deviation of returns
-fn calculate_volatility_score(values: &[common::stats::ValueAtTime]) -> f64 {
+pub fn calculate_volatility_score(values: &[common::stats::ValueAtTime]) -> f64 {
     if values.len() < 2 {
         return 0.0;
     }
@@ -268,3 +268,6 @@ fn calculate_volatility_score(values: &[common::stats::ValueAtTime]) -> f64 {
     // Cap at 1.0 and ensure it's between 0 and 1
     annualized_volatility.clamp(0.0, 1.0)
 }
+
+#[cfg(test)]
+mod tests;
