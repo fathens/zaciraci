@@ -368,8 +368,40 @@ async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationConfi
             .map(|s| s.trim().to_string())
             .collect()
     } else {
-        // TODO: 自動でtop volatility tokensを取得
-        vec!["usdc.tether-token.near".to_string()] // 暫定的にUSDCを使用
+        // 自動でtop volatility tokensを取得
+        if args.verbose {
+            println!("🔍 Fetching top {} volatility tokens...", args.num_tokens);
+        }
+
+        use crate::utils::config::Config;
+        let config = Config::from_env();
+        let backend_client = BackendClient::new_with_url(config.backend_url);
+        let volatility_tokens = backend_client
+            .get_volatility_tokens(
+                start_date,
+                end_date,
+                args.num_tokens as u32,
+                None, // quote_token なしで試してみる
+                None, // min_depth はデフォルト値を使用
+            )
+            .await?;
+
+        if volatility_tokens.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No volatility tokens found for the specified period. Please specify tokens manually with --tokens option."
+            ));
+        }
+
+        let tokens: Vec<String> = volatility_tokens
+            .into_iter()
+            .map(|token_account| token_account.to_string())
+            .collect();
+
+        if args.verbose {
+            println!("✅ Found {} volatility tokens", tokens.len());
+        }
+
+        tokens
     };
 
     Ok(SimulationConfig {
