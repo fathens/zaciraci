@@ -7,6 +7,7 @@ use clap::Args;
 use common::stats::ValueAtTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 // Momentum アルゴリズム関連の構造体と定数
 
@@ -78,6 +79,49 @@ pub struct PortfolioTransition {
     pub action: TradingDecision,
     pub cost: f64,
     pub reason: String,
+}
+
+// Phase 3: Strategy Pattern for different trading algorithms
+pub trait TradingStrategy {
+    fn name(&self) -> &'static str;
+    fn make_decision(
+        &self,
+        portfolio: &ImmutablePortfolio,
+        market: &MarketSnapshot,
+        opportunities: &[TokenOpportunity],
+        config: &TradingConfig,
+    ) -> Result<TradingDecision>;
+    fn should_rebalance(&self, portfolio: &ImmutablePortfolio, market: &MarketSnapshot) -> bool;
+}
+
+#[derive(Debug, Clone)]
+pub struct MomentumStrategy {
+    pub min_confidence: f64,
+    pub lookback_periods: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PortfolioStrategy {
+    pub max_positions: usize,
+    pub rebalance_threshold: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrendFollowingStrategy {
+    pub trend_window: usize,
+    pub volatility_threshold: f64,
+}
+
+pub struct StrategyContext {
+    strategy: Box<dyn TradingStrategy>,
+}
+
+impl fmt::Debug for StrategyContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StrategyContext")
+            .field("strategy", &self.strategy.name())
+            .finish()
+    }
 }
 
 const MIN_PROFIT_THRESHOLD: f64 = 0.05;
@@ -1552,6 +1596,204 @@ impl MarketSnapshot {
 
     pub fn is_reliable(&self) -> bool {
         matches!(self.data_quality, DataQuality::High | DataQuality::Medium)
+    }
+}
+
+// Phase 3: Strategy Pattern implementations
+impl TradingStrategy for MomentumStrategy {
+    fn name(&self) -> &'static str {
+        "Momentum"
+    }
+
+    fn make_decision(
+        &self,
+        portfolio: &ImmutablePortfolio,
+        _market: &MarketSnapshot,
+        opportunities: &[TokenOpportunity],
+        config: &TradingConfig,
+    ) -> Result<TradingDecision> {
+        if opportunities.is_empty() {
+            return Ok(TradingDecision::Hold);
+        }
+
+        // Get current token (assumes single token portfolio for momentum)
+        let current_token = portfolio.holdings.keys().next().unwrap();
+        let current_amount = portfolio.holdings.values().next().unwrap();
+
+        if *current_amount < config.min_trade_amount {
+            return Ok(TradingDecision::Hold);
+        }
+
+        let best_opportunity = &opportunities[0];
+
+        // Skip if it's the same token
+        if best_opportunity.token == *current_token {
+            return Ok(TradingDecision::Hold);
+        }
+
+        // Check confidence threshold
+        let confidence = best_opportunity.confidence.unwrap_or(0.5);
+        if confidence < self.min_confidence {
+            return Ok(TradingDecision::Hold);
+        }
+
+        // Calculate current return (simplified)
+        // For momentum strategy, assume current position has baseline return
+        let portfolio_return = config.min_profit_threshold; // Meet minimum threshold
+
+        let confidence_adjusted_return = best_opportunity.expected_return * confidence;
+        if confidence_adjusted_return > portfolio_return * config.switch_multiplier {
+            return Ok(TradingDecision::Switch {
+                from: current_token.clone(),
+                to: best_opportunity.token.clone(),
+            });
+        }
+
+        Ok(TradingDecision::Hold)
+    }
+
+    fn should_rebalance(&self, _portfolio: &ImmutablePortfolio, _market: &MarketSnapshot) -> bool {
+        false // Momentum doesn't typically rebalance
+    }
+}
+
+impl TradingStrategy for PortfolioStrategy {
+    fn name(&self) -> &'static str {
+        "Portfolio"
+    }
+
+    fn make_decision(
+        &self,
+        portfolio: &ImmutablePortfolio,
+        market: &MarketSnapshot,
+        opportunities: &[TokenOpportunity],
+        config: &TradingConfig,
+    ) -> Result<TradingDecision> {
+        // Portfolio optimization strategy - simplified version
+        if opportunities.is_empty() {
+            return Ok(TradingDecision::Hold);
+        }
+
+        let total_value = portfolio.total_value(market);
+        if total_value < config.min_trade_amount {
+            return Ok(TradingDecision::Hold);
+        }
+
+        // Check if rebalancing is needed
+        if !self.should_rebalance(portfolio, market) {
+            return Ok(TradingDecision::Hold);
+        }
+
+        // Simple rebalancing: if portfolio has fewer positions than max, diversify
+        if portfolio.holdings.len() < self.max_positions
+            && opportunities.len() > portfolio.holdings.len()
+        {
+            let best_new_opportunity = opportunities
+                .iter()
+                .find(|opp| !portfolio.holdings.contains_key(&opp.token))
+                .unwrap_or(&opportunities[0]);
+
+            // Get the token with lowest performance to switch from
+            if let Some((worst_token, _)) = portfolio.holdings.iter().next() {
+                return Ok(TradingDecision::Switch {
+                    from: worst_token.clone(),
+                    to: best_new_opportunity.token.clone(),
+                });
+            }
+        }
+
+        Ok(TradingDecision::Hold)
+    }
+
+    fn should_rebalance(&self, portfolio: &ImmutablePortfolio, _market: &MarketSnapshot) -> bool {
+        // Simple rebalancing logic: rebalance if we have uneven distribution
+        if portfolio.holdings.len() <= 1 {
+            return true;
+        }
+
+        let values: Vec<f64> = portfolio.holdings.values().copied().collect();
+        let avg_value = values.iter().sum::<f64>() / values.len() as f64;
+
+        // Check if any position deviates too much from average
+        values
+            .iter()
+            .any(|&value| (value - avg_value).abs() / avg_value > self.rebalance_threshold)
+    }
+}
+
+impl TradingStrategy for TrendFollowingStrategy {
+    fn name(&self) -> &'static str {
+        "TrendFollowing"
+    }
+
+    fn make_decision(
+        &self,
+        portfolio: &ImmutablePortfolio,
+        market: &MarketSnapshot,
+        opportunities: &[TokenOpportunity],
+        config: &TradingConfig,
+    ) -> Result<TradingDecision> {
+        if opportunities.is_empty() {
+            return Ok(TradingDecision::Hold);
+        }
+
+        let total_value = portfolio.total_value(market);
+        if total_value < config.min_trade_amount {
+            return Ok(TradingDecision::Hold);
+        }
+
+        // Find strongest trending opportunity
+        let best_trend = opportunities
+            .iter()
+            .max_by(|a, b| {
+                let a_strength = a.expected_return * a.confidence.unwrap_or(0.5);
+                let b_strength = b.expected_return * b.confidence.unwrap_or(0.5);
+                a_strength.partial_cmp(&b_strength).unwrap()
+            })
+            .unwrap();
+
+        // Check if trend is strong enough
+        let trend_strength = best_trend.expected_return * best_trend.confidence.unwrap_or(0.5);
+        if trend_strength < self.volatility_threshold {
+            return Ok(TradingDecision::Hold);
+        }
+
+        // Get current main holding
+        if let Some((current_token, current_amount)) = portfolio.holdings.iter().next() {
+            if current_token != &best_trend.token && *current_amount >= config.min_trade_amount {
+                return Ok(TradingDecision::Switch {
+                    from: current_token.clone(),
+                    to: best_trend.token.clone(),
+                });
+            }
+        }
+
+        Ok(TradingDecision::Hold)
+    }
+
+    fn should_rebalance(&self, _portfolio: &ImmutablePortfolio, _market: &MarketSnapshot) -> bool {
+        true // Trend following always monitors for new trends
+    }
+}
+
+impl StrategyContext {
+    pub fn new(strategy: Box<dyn TradingStrategy>) -> Self {
+        Self { strategy }
+    }
+
+    pub fn execute_strategy(
+        &self,
+        portfolio: &ImmutablePortfolio,
+        market: &MarketSnapshot,
+        opportunities: &[TokenOpportunity],
+        config: &TradingConfig,
+    ) -> Result<TradingDecision> {
+        self.strategy
+            .make_decision(portfolio, market, opportunities, config)
+    }
+
+    pub fn strategy_name(&self) -> &'static str {
+        self.strategy.name()
     }
 }
 

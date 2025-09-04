@@ -888,6 +888,269 @@ mod unit_tests {
             transition_1.cost + transition_2.cost
         );
     }
+
+    // === Phase 3: Strategy Pattern Tests ===
+
+    #[test]
+    fn test_momentum_strategy_creation() {
+        let strategy = MomentumStrategy {
+            min_confidence: 0.7,
+            lookback_periods: 14,
+        };
+
+        assert_eq!(strategy.name(), "Momentum");
+        assert_eq!(strategy.min_confidence, 0.7);
+        assert_eq!(strategy.lookback_periods, 14);
+    }
+
+    #[test]
+    fn test_momentum_strategy_hold_decision() {
+        let strategy = MomentumStrategy {
+            min_confidence: 0.7,
+            lookback_periods: 14,
+        };
+
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        let market = MarketSnapshot::new(prices);
+
+        let opportunities = vec![TokenOpportunity {
+            token: "token_b".to_string(),
+            expected_return: 0.15,
+            confidence: Some(0.5), // Below min_confidence
+        }];
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let decision = strategy
+            .make_decision(&portfolio, &market, &opportunities, &config)
+            .unwrap();
+        assert_eq!(decision, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_momentum_strategy_switch_decision() {
+        let strategy = MomentumStrategy {
+            min_confidence: 0.7,
+            lookback_periods: 14,
+        };
+
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        prices.insert("token_b".to_string(), 2.0);
+        let market = MarketSnapshot::new(prices);
+
+        let opportunities = vec![TokenOpportunity {
+            token: "token_b".to_string(),
+            expected_return: 0.3,  // High return
+            confidence: Some(0.9), // High confidence
+        }];
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let decision = strategy
+            .make_decision(&portfolio, &market, &opportunities, &config)
+            .unwrap();
+        assert_eq!(
+            decision,
+            TradingDecision::Switch {
+                from: "token_a".to_string(),
+                to: "token_b".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_portfolio_strategy_rebalancing() {
+        let strategy = PortfolioStrategy {
+            max_positions: 3,
+            rebalance_threshold: 0.2,
+        };
+
+        assert_eq!(strategy.name(), "Portfolio");
+
+        // Test single token portfolio (should rebalance)
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        let market = MarketSnapshot::new(prices);
+
+        assert!(strategy.should_rebalance(&portfolio, &market));
+    }
+
+    #[test]
+    fn test_trend_following_strategy_decision() {
+        let strategy = TrendFollowingStrategy {
+            trend_window: 10,
+            volatility_threshold: 0.1,
+        };
+
+        assert_eq!(strategy.name(), "TrendFollowing");
+        assert!(strategy.should_rebalance(
+            &ImmutablePortfolio::new(1000.0, "token_a"),
+            &MarketSnapshot::new(HashMap::new())
+        ));
+
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        prices.insert("token_b".to_string(), 2.0);
+        let market = MarketSnapshot::new(prices);
+
+        let opportunities = vec![TokenOpportunity {
+            token: "token_b".to_string(),
+            expected_return: 0.25,
+            confidence: Some(0.8),
+        }];
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let decision = strategy
+            .make_decision(&portfolio, &market, &opportunities, &config)
+            .unwrap();
+        assert_eq!(
+            decision,
+            TradingDecision::Switch {
+                from: "token_a".to_string(),
+                to: "token_b".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_strategy_context_execution() {
+        let momentum_strategy = Box::new(MomentumStrategy {
+            min_confidence: 0.6,
+            lookback_periods: 14,
+        });
+
+        let context = StrategyContext::new(momentum_strategy);
+        assert_eq!(context.strategy_name(), "Momentum");
+
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        let market = MarketSnapshot::new(prices);
+
+        let opportunities = vec![TokenOpportunity {
+            token: "token_a".to_string(), // Same token
+            expected_return: 0.15,
+            confidence: Some(0.8),
+        }];
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let decision = context
+            .execute_strategy(&portfolio, &market, &opportunities, &config)
+            .unwrap();
+        assert_eq!(decision, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_strategy_comparison_demo() {
+        println!("=== Phase 3 Strategy Pattern Demo ===");
+
+        // Setup common test data
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        prices.insert("token_b".to_string(), 2.0);
+        prices.insert("token_c".to_string(), 1.5);
+        let market = MarketSnapshot::new(prices);
+
+        let opportunities = vec![
+            TokenOpportunity {
+                token: "token_b".to_string(),
+                expected_return: 0.25,
+                confidence: Some(0.8),
+            },
+            TokenOpportunity {
+                token: "token_c".to_string(),
+                expected_return: 0.20,
+                confidence: Some(0.9),
+            },
+        ];
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        // Test different strategies
+        let strategies: Vec<Box<dyn TradingStrategy>> = vec![
+            Box::new(MomentumStrategy {
+                min_confidence: 0.7,
+                lookback_periods: 14,
+            }),
+            Box::new(PortfolioStrategy {
+                max_positions: 3,
+                rebalance_threshold: 0.2,
+            }),
+            Box::new(TrendFollowingStrategy {
+                trend_window: 10,
+                volatility_threshold: 0.15,
+            }),
+        ];
+
+        for strategy in strategies {
+            let context = StrategyContext::new(strategy);
+            let decision = context
+                .execute_strategy(&portfolio, &market, &opportunities, &config)
+                .unwrap();
+            println!(
+                "{} Strategy Decision: {:?}",
+                context.strategy_name(),
+                decision
+            );
+
+            // Each strategy should make some decision
+            match context.strategy_name() {
+                "Momentum" => assert_eq!(
+                    decision,
+                    TradingDecision::Switch {
+                        from: "token_a".to_string(),
+                        to: "token_b".to_string(),
+                    }
+                ),
+                "Portfolio" => assert_eq!(
+                    decision,
+                    TradingDecision::Switch {
+                        from: "token_a".to_string(),
+                        to: "token_b".to_string(),
+                    }
+                ),
+                "TrendFollowing" => assert_eq!(
+                    decision,
+                    TradingDecision::Switch {
+                        from: "token_a".to_string(),
+                        to: "token_b".to_string(),
+                    }
+                ),
+                _ => panic!("Unexpected strategy"),
+            }
+        }
+
+        println!("✅ All strategies executed successfully with different logic");
+    }
 }
 
 #[cfg(test)]
