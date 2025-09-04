@@ -138,9 +138,9 @@ pub struct SimulateArgs {
     #[clap(short, long)]
     pub end: Option<String>,
 
-    /// 使用するアルゴリズム [デフォルト: momentum]
-    #[clap(short, long, default_value = "momentum")]
-    pub algorithm: String,
+    /// 使用するアルゴリズム (未指定の場合は全アルゴリズムを実行)
+    #[clap(short, long)]
+    pub algorithm: Option<String>,
 
     /// 初期資金 (NEAR) [デフォルト: 1000.0]
     #[clap(short, long, default_value = "1000.0")]
@@ -220,7 +220,7 @@ pub struct SimulationConfig {
     pub historical_days: i64, // 予測に使用する過去データ期間
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AlgorithmType {
     Momentum,
     Portfolio,
@@ -275,6 +275,31 @@ pub struct SimulationResult {
     pub trades: Vec<TradeExecution>,
     pub portfolio_values: Vec<PortfolioValue>,
     pub execution_summary: ExecutionSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiAlgorithmSimulationResult {
+    pub results: Vec<SimulationResult>,
+    pub comparison: AlgorithmComparison,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlgorithmComparison {
+    pub best_return: (AlgorithmType, f64),
+    pub best_sharpe: (AlgorithmType, f64),
+    pub lowest_drawdown: (AlgorithmType, f64),
+    pub summary_table: Vec<AlgorithmSummaryRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlgorithmSummaryRow {
+    pub algorithm: AlgorithmType,
+    pub total_return_pct: f64,
+    pub annualized_return: f64,
+    pub sharpe_ratio: f64,
+    pub max_drawdown_pct: f64,
+    pub total_trades: usize,
+    pub win_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -377,9 +402,15 @@ impl From<(&str, Option<f64>)> for FeeModel {
 pub async fn run(args: SimulateArgs) -> Result<()> {
     println!("🚀 Starting trading simulation...");
 
+    let run_all_algorithms = args.algorithm.is_none();
+
     if args.verbose {
         println!("📋 Configuration:");
-        println!("  Algorithm: {}", args.algorithm);
+        if run_all_algorithms {
+            println!("  Algorithm: All algorithms (Momentum, Portfolio, TrendFollowing)");
+        } else {
+            println!("  Algorithm: {:?}", args.algorithm);
+        }
         println!("  Capital: {} {}", args.capital, args.quote_token);
         println!("  Fee Model: {}", args.fee_model);
         println!("  Output: {}", args.output);
@@ -402,25 +433,63 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
     );
     println!("🎯 Target tokens: {:?}", config.target_tokens);
 
-    // 2. アルゴリズムに基づくシミュレーション実行
-    let result = match config.algorithm {
-        AlgorithmType::Momentum => run_momentum_simulation(&config).await?,
-        AlgorithmType::Portfolio => run_portfolio_simulation(&config).await?,
-        AlgorithmType::TrendFollowing => run_trend_following_simulation(&config).await?,
-    };
+    if run_all_algorithms {
+        // 全アルゴリズムを実行
+        println!("🔄 Running all algorithms...");
+        let mut results = Vec::new();
 
-    // 3. 結果の保存
-    save_simulation_result(&result, &output_dir)?;
+        let algorithms = vec![
+            AlgorithmType::Momentum,
+            AlgorithmType::Portfolio,
+            AlgorithmType::TrendFollowing,
+        ];
+
+        for algorithm in algorithms {
+            println!("📈 Running {:?} algorithm...", algorithm);
+            let mut algo_config = config.clone();
+            algo_config.algorithm = algorithm.clone();
+
+            let result = match algorithm {
+                AlgorithmType::Momentum => run_momentum_simulation(&algo_config).await?,
+                AlgorithmType::Portfolio => run_portfolio_simulation(&algo_config).await?,
+                AlgorithmType::TrendFollowing => {
+                    run_trend_following_simulation(&algo_config).await?
+                }
+            };
+
+            results.push(result);
+        }
+
+        // 比較データを作成
+        let comparison = create_algorithm_comparison(&results);
+        let multi_result = MultiAlgorithmSimulationResult {
+            results,
+            comparison,
+        };
+
+        // 複数アルゴリズムの結果を保存
+        save_multi_algorithm_result(&multi_result, &output_dir)?;
+    } else {
+        // 単一アルゴリズムを実行
+        let result = match config.algorithm {
+            AlgorithmType::Momentum => run_momentum_simulation(&config).await?,
+            AlgorithmType::Portfolio => run_portfolio_simulation(&config).await?,
+            AlgorithmType::TrendFollowing => run_trend_following_simulation(&config).await?,
+        };
+
+        // 単一アルゴリズムの結果を保存
+        save_simulation_result(&result, &output_dir)?;
+    }
 
     println!("✅ Simulation completed!");
-    println!(
-        "📈 Total Return: {:.2}%",
-        result.performance.total_return_pct
-    );
-    println!(
-        "📊 Final Value: {:.2} {}",
-        result.config.final_value, config.quote_token
-    );
+
+    if !run_all_algorithms {
+        // 単一アルゴリズムの場合のみサマリーを表示
+        println!(
+            "📊 For detailed results, check the output directory: {}",
+            output_dir
+        );
+    }
 
     Ok(())
 }
@@ -496,7 +565,11 @@ async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationConfi
     Ok(SimulationConfig {
         start_date,
         end_date,
-        algorithm: AlgorithmType::from(args.algorithm.as_str()),
+        algorithm: if let Some(algo) = &args.algorithm {
+            AlgorithmType::from(algo.as_str())
+        } else {
+            AlgorithmType::Momentum // 全アルゴリズム実行時の一時的な値
+        },
         initial_capital: BigDecimal::from_str(&args.capital.to_string())?,
         quote_token: args.quote_token,
         target_tokens,
@@ -2482,6 +2555,137 @@ fn get_historical_data<'a>(
         .collect();
 
     Ok(historical_data)
+}
+
+/// 複数アルゴリズムの結果を比較
+fn create_algorithm_comparison(results: &[SimulationResult]) -> AlgorithmComparison {
+    let mut best_return = (AlgorithmType::Momentum, f64::NEG_INFINITY);
+    let mut best_sharpe = (AlgorithmType::Momentum, f64::NEG_INFINITY);
+    let mut lowest_drawdown = (AlgorithmType::Momentum, f64::INFINITY);
+    let mut summary_table = Vec::new();
+
+    for result in results {
+        let total_return = result.performance.total_return_pct;
+        let sharpe_ratio = result.performance.sharpe_ratio;
+        let max_drawdown = result.performance.max_drawdown_pct;
+
+        // ベストパフォーマンスを追跡
+        if total_return > best_return.1 {
+            best_return = (result.config.algorithm.clone(), total_return);
+        }
+        if sharpe_ratio > best_sharpe.1 {
+            best_sharpe = (result.config.algorithm.clone(), sharpe_ratio);
+        }
+        if max_drawdown < lowest_drawdown.1 {
+            lowest_drawdown = (result.config.algorithm.clone(), max_drawdown);
+        }
+
+        // サマリーテーブル行を作成
+        summary_table.push(AlgorithmSummaryRow {
+            algorithm: result.config.algorithm.clone(),
+            total_return_pct: result.performance.total_return_pct,
+            annualized_return: result.performance.annualized_return,
+            sharpe_ratio: result.performance.sharpe_ratio,
+            max_drawdown_pct: result.performance.max_drawdown_pct,
+            total_trades: result.performance.total_trades,
+            win_rate: result.performance.win_rate,
+        });
+    }
+
+    AlgorithmComparison {
+        best_return,
+        best_sharpe,
+        lowest_drawdown,
+        summary_table,
+    }
+}
+
+/// 複数アルゴリズムの結果を保存
+fn save_multi_algorithm_result(
+    result: &MultiAlgorithmSimulationResult,
+    output_dir: &str,
+) -> Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    // 結果保存ディレクトリを作成
+    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+    let start_date = result.results.first().unwrap().config.start_date;
+    let end_date = result.results.first().unwrap().config.end_date;
+
+    let start_date_str = start_date.format("%Y-%m-%d");
+    let end_date_str = end_date.format("%Y-%m-%d");
+
+    let final_output_dir = PathBuf::from(&base_dir)
+        .join("simulation_results")
+        .join(format!(
+            "multi_algorithm_{}_{}",
+            start_date_str, end_date_str
+        ))
+        .join(output_dir);
+
+    fs::create_dir_all(&final_output_dir)?;
+
+    // 全体の結果を保存
+    let results_file = final_output_dir.join("multi_results.json");
+    let json_content = serde_json::to_string_pretty(result)?;
+    fs::write(&results_file, json_content)?;
+
+    // 各アルゴリズムの個別結果も保存
+    for individual_result in &result.results {
+        let algorithm_name = format!("{:?}", individual_result.config.algorithm).to_lowercase();
+        let algorithm_file = final_output_dir.join(format!("{}_results.json", algorithm_name));
+        let algorithm_json = serde_json::to_string_pretty(individual_result)?;
+        fs::write(&algorithm_file, algorithm_json)?;
+    }
+
+    println!(
+        "📄 Multi-algorithm results saved to: {}",
+        final_output_dir.display()
+    );
+
+    // 比較サマリーを出力
+    println!("\n🏆 Algorithm Comparison Summary:");
+    println!(
+        "Best Total Return: {:?} ({:.2}%)",
+        result.comparison.best_return.0, result.comparison.best_return.1
+    );
+    println!(
+        "Best Sharpe Ratio: {:?} ({:.4})",
+        result.comparison.best_sharpe.0, result.comparison.best_sharpe.1
+    );
+    println!(
+        "Lowest Drawdown: {:?} ({:.2}%)",
+        result.comparison.lowest_drawdown.0, result.comparison.lowest_drawdown.1
+    );
+
+    println!("\n📊 Algorithm Performance Table:");
+    println!(
+        "{:<15} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10}",
+        "Algorithm",
+        "Total Return%",
+        "Annual Return%",
+        "Sharpe Ratio",
+        "Max DD%",
+        "Trades",
+        "Win Rate%"
+    );
+    println!("{}", "-".repeat(100));
+
+    for row in &result.comparison.summary_table {
+        println!(
+            "{:<15} {:>11.2}% {:>11.2}% {:>12.4} {:>11.2}% {:>8} {:>9.1}%",
+            format!("{:?}", row.algorithm),
+            row.total_return_pct,
+            row.annualized_return * 100.0,
+            row.sharpe_ratio,
+            row.max_drawdown_pct,
+            row.total_trades,
+            row.win_rate * 100.0
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

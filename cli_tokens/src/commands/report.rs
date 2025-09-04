@@ -3,7 +3,9 @@ use chrono::{DateTime, Utc};
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::commands::simulate::{PortfolioValue, SimulationResult, TradeExecution};
+use crate::commands::simulate::{
+    MultiAlgorithmSimulationResult, PortfolioValue, SimulationResult, TradeExecution,
+};
 
 #[cfg(test)]
 mod tests;
@@ -487,11 +489,29 @@ pub fn run_report(args: ReportArgs) -> Result<()> {
     let json_content = std::fs::read_to_string(&args.input)
         .with_context(|| format!("Failed to read input file: {}", args.input.display()))?;
 
-    let simulation_result: SimulationResult = serde_json::from_str(&json_content)
-        .with_context(|| format!("Failed to parse JSON file: {}", args.input.display()))?;
+    // 複数アルゴリズムの結果かどうかを判定して処理
+    if let Ok(multi_result) = serde_json::from_str::<MultiAlgorithmSimulationResult>(&json_content)
+    {
+        // 複数アルゴリズムの場合
+        run_multi_algorithm_report(args, &multi_result)
+    } else if let Ok(simulation_result) = serde_json::from_str::<SimulationResult>(&json_content) {
+        // 単一アルゴリズムの場合
+        run_single_algorithm_report(args, &simulation_result)
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to parse JSON file: {}. Expected SimulationResult or MultiAlgorithmSimulationResult",
+            args.input.display()
+        ))
+    }
+}
 
+/// 単一アルゴリズムレポートを生成
+fn run_single_algorithm_report(
+    args: ReportArgs,
+    simulation_result: &SimulationResult,
+) -> Result<()> {
     // Phase 4.1: Use pure functions for data extraction and processing
-    let report_data = extract_report_data(&simulation_result);
+    let report_data = extract_report_data(simulation_result);
     let report_metrics = calculate_report_metrics(&report_data);
 
     // 出力先を決定
@@ -512,7 +532,34 @@ pub fn run_report(args: ReportArgs) -> Result<()> {
             ))
         }
     }
+    Ok(())
+}
 
+/// 複数アルゴリズム比較レポートを生成
+fn run_multi_algorithm_report(
+    args: ReportArgs,
+    multi_result: &MultiAlgorithmSimulationResult,
+) -> Result<()> {
+    // 出力先を決定
+    let output_path = determine_output_path(&args)?;
+
+    match args.format.as_str() {
+        "html" => {
+            let html_content = generate_multi_algorithm_html_report(multi_result)?;
+            std::fs::write(&output_path, html_content)
+                .with_context(|| format!("Failed to write HTML file: {}", output_path.display()))?;
+            println!(
+                "📊 Multi-algorithm comparison report saved to: {}",
+                output_path.display()
+            );
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported format: {}. Supported formats: html",
+                args.format
+            ))
+        }
+    }
     Ok(())
 }
 
@@ -931,4 +978,597 @@ fn get_default_css_style() -> String {
             font-size: 0.9em;
         }
     "#.to_string()
+}
+
+/// Generate HTML report for multiple algorithms comparison
+fn generate_multi_algorithm_html_report(
+    multi_result: &MultiAlgorithmSimulationResult,
+) -> Result<String> {
+    let start_date = multi_result.results.first().unwrap().config.start_date;
+    let end_date = multi_result.results.first().unwrap().config.end_date;
+
+    // 比較テーブルのHTML生成
+    let comparison_table = generate_comparison_table_html(&multi_result.comparison);
+
+    // 個別結果のHTML生成
+    let individual_reports = multi_result
+        .results
+        .iter()
+        .map(generate_individual_algorithm_section)
+        .collect::<Result<Vec<_>>>()?
+        .join("\n");
+
+    // Chart.jsスクリプトの生成
+    let individual_chart_scripts = multi_result
+        .results
+        .iter()
+        .map(generate_chart_script)
+        .collect::<Result<Vec<_>>>()?
+        .join("\n");
+
+    // 比較チャートスクリプトの生成
+    let comparison_chart_script = generate_comparison_chart_script(&multi_result.results)?;
+
+    let css = get_default_css_style();
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Algorithm Trading Simulation Report</title>
+    <style>
+        {}
+        .comparison-section {{
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }}
+        .algorithm-section {{
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+        }}
+        .comparison-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }}
+        .comparison-table th, .comparison-table td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }}
+        .comparison-table th {{
+            background-color: #e9ecef;
+            font-weight: 600;
+        }}
+        .best-performer {{
+            background-color: #d4edda !important;
+            font-weight: bold;
+        }}
+        .chart-container {{
+            margin: 20px 0;
+            height: 400px;
+        }}
+        .comparison-chart-section {{
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }}
+        .comparison-chart-section h2 {{
+            color: #495057;
+            margin-bottom: 20px;
+        }}
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔄 Multi-Algorithm Trading Simulation Report</h1>
+            <p>Comparison of trading algorithms performance</p>
+            <div class="period">
+                <strong>Period:</strong> {} to {}
+            </div>
+        </div>
+
+        <div class="comparison-section">
+            <h2>🏆 Algorithm Performance Comparison</h2>
+            <div class="highlights">
+                <div class="highlight">
+                    <h3>Best Total Return</h3>
+                    <p>{:?}: <strong>{:.2}%</strong></p>
+                </div>
+                <div class="highlight">
+                    <h3>Best Sharpe Ratio</h3>
+                    <p>{:?}: <strong>{:.4}</strong></p>
+                </div>
+                <div class="highlight">
+                    <h3>Lowest Drawdown</h3>
+                    <p>{:?}: <strong>{:.2}%</strong></p>
+                </div>
+            </div>
+            
+            <h3>📊 Performance Summary Table</h3>
+            {comparison_table}
+        </div>
+
+        <div class="comparison-chart-section">
+            <h2>📈 Algorithm Performance Comparison Chart</h2>
+            <div class="chart-container">
+                <canvas id="comparison_chart"></canvas>
+            </div>
+        </div>
+
+        <div class="individual-results">
+            <h2>📊 Individual Algorithm Details</h2>
+            {individual_reports}
+        </div>
+
+        <div class="footer">
+            <p>Generated on {timestamp} by CLI Tokens Multi-Algorithm Simulator</p>
+        </div>
+    </div>
+    
+    <script>
+        // Initialize charts for each algorithm
+        document.addEventListener('DOMContentLoaded', function() {{
+            // Comparison chart
+            {comparison_chart_script}
+            
+            // Individual algorithm charts
+            {individual_chart_scripts}
+        }});
+    </script>
+</body>
+</html>"#,
+        css,
+        start_date.format("%Y-%m-%d"),
+        end_date.format("%Y-%m-%d"),
+        multi_result.comparison.best_return.0,
+        multi_result.comparison.best_return.1,
+        multi_result.comparison.best_sharpe.0,
+        multi_result.comparison.best_sharpe.1,
+        multi_result.comparison.lowest_drawdown.0,
+        multi_result.comparison.lowest_drawdown.1,
+        comparison_table = comparison_table,
+        individual_reports = individual_reports,
+        comparison_chart_script = comparison_chart_script,
+        individual_chart_scripts = individual_chart_scripts,
+        timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    );
+
+    Ok(html)
+}
+
+/// Generate comparison table HTML
+fn generate_comparison_table_html(
+    comparison: &crate::commands::simulate::AlgorithmComparison,
+) -> String {
+    let mut table_rows = String::new();
+
+    for row in &comparison.summary_table {
+        let is_best_return =
+            (row.algorithm.clone(), row.total_return_pct) == comparison.best_return;
+        let is_best_sharpe = (row.algorithm.clone(), row.sharpe_ratio) == comparison.best_sharpe;
+        let is_best_drawdown =
+            (row.algorithm.clone(), row.max_drawdown_pct) == comparison.lowest_drawdown;
+
+        let row_class = if is_best_return || is_best_sharpe || is_best_drawdown {
+            "best-performer"
+        } else {
+            ""
+        };
+
+        table_rows.push_str(&format!(
+            r#"
+            <tr class="{}">
+                <td>{:?}</td>
+                <td>{:.2}%</td>
+                <td>{:.2}%</td>
+                <td>{:.4}</td>
+                <td>{:.2}%</td>
+                <td>{}</td>
+                <td>{:.1}%</td>
+            </tr>"#,
+            row_class,
+            row.algorithm,
+            row.total_return_pct,
+            row.annualized_return * 100.0,
+            row.sharpe_ratio,
+            row.max_drawdown_pct,
+            row.total_trades,
+            row.win_rate * 100.0
+        ));
+    }
+
+    format!(
+        r#"
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Algorithm</th>
+                    <th>Total Return</th>
+                    <th>Annual Return</th>
+                    <th>Sharpe Ratio</th>
+                    <th>Max Drawdown</th>
+                    <th>Total Trades</th>
+                    <th>Win Rate</th>
+                </tr>
+            </thead>
+            <tbody>
+                {table_rows}
+            </tbody>
+        </table>"#,
+        table_rows = table_rows
+    )
+}
+
+/// Generate individual algorithm section HTML
+fn generate_individual_algorithm_section(result: &SimulationResult) -> Result<String> {
+    let report_data = extract_report_data(result);
+    let report_metrics = calculate_report_metrics(&report_data);
+
+    Ok(format!(
+        r#"
+        <div class="algorithm-section">
+            <h3>📈 {:?} Algorithm</h3>
+            <div class="metrics-grid">
+                <div class="metric">
+                    <h4>Total Return</h4>
+                    <p class="{}">{:.2}%</p>
+                </div>
+                <div class="metric">
+                    <h4>Sharpe Ratio</h4>
+                    <p>{:.4}</p>
+                </div>
+                <div class="metric">
+                    <h4>Max Drawdown</h4>
+                    <p>{:.2}%</p>
+                </div>
+                <div class="metric">
+                    <h4>Total Trades</h4>
+                    <p>{}</p>
+                </div>
+                <div class="metric">
+                    <h4>Win Rate</h4>
+                    <p>{:.1}%</p>
+                </div>
+                <div class="metric">
+                    <h4>Final Value</h4>
+                    <p>{:.2} {}</p>
+                </div>
+            </div>
+            
+            <div class="chart-container">
+                <canvas id="chart_{}"></canvas>
+            </div>
+        </div>"#,
+        result.config.algorithm,
+        report_metrics.performance_class,
+        report_data.performance.total_return_pct,
+        report_data.performance.sharpe_ratio,
+        report_data.performance.max_drawdown_pct,
+        report_data.performance.total_trades,
+        report_data.performance.win_rate * 100.0,
+        result.config.final_value,
+        "wrap.near", // TODO: Make configurable
+        format!("{:?}", result.config.algorithm).to_lowercase()
+    ))
+}
+
+/// Generate Chart.js script for individual algorithm
+fn generate_chart_script(result: &SimulationResult) -> Result<String> {
+    let report_data = extract_report_data(result);
+    let report_metrics = calculate_report_metrics(&report_data);
+
+    let chart_data_json = serde_json::to_string(&report_metrics.chart_data.values)
+        .unwrap_or_else(|_| "[]".to_string());
+    let chart_labels_json = serde_json::to_string(&report_metrics.chart_data.labels)
+        .unwrap_or_else(|_| "[]".to_string());
+
+    let algorithm_name = format!("{:?}", result.config.algorithm).to_lowercase();
+
+    Ok(format!(
+        r#"
+            const ctx_{} = document.getElementById('chart_{}').getContext('2d');
+            new Chart(ctx_{}, {{
+                type: 'line',
+                data: {{
+                    labels: {},
+                    datasets: [{{
+                        label: 'Portfolio Value',
+                        data: {},
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        tension: 0.1,
+                        fill: true
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {{
+                        title: {{
+                            display: true,
+                            text: '{:?} Algorithm Performance'
+                        }}
+                    }},
+                    scales: {{
+                        y: {{
+                            beginAtZero: false,
+                            title: {{
+                                display: true,
+                                text: 'Portfolio Value (wrap.near)'
+                            }}
+                        }},
+                        x: {{
+                            title: {{
+                                display: true,
+                                text: 'Date'
+                            }}
+                        }}
+                    }}
+                }}
+            }});"#,
+        algorithm_name,
+        algorithm_name,
+        algorithm_name,
+        chart_labels_json,
+        chart_data_json,
+        result.config.algorithm
+    ))
+}
+
+/// Get algorithm color configuration for charts
+fn get_algorithm_colors() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        ("Momentum", "rgb(255, 99, 132)", "rgba(255, 99, 132, 0.1)"),
+        ("Portfolio", "rgb(54, 162, 235)", "rgba(54, 162, 235, 0.1)"),
+        (
+            "TrendFollowing",
+            "rgb(75, 192, 192)",
+            "rgba(75, 192, 192, 0.1)",
+        ),
+    ]
+}
+
+/// Create chart dataset for a single algorithm
+fn create_chart_dataset(
+    result: &SimulationResult,
+    algorithm_index: usize,
+    colors: &[(&str, &str, &str)],
+) -> Result<String> {
+    let report_data = extract_report_data(result);
+    let report_metrics = calculate_report_metrics(&report_data);
+
+    let algorithm_name = format!("{:?}", result.config.algorithm);
+    let (_, border_color, background_color) = colors.get(algorithm_index).unwrap_or(&(
+        "Unknown",
+        "rgb(128, 128, 128)",
+        "rgba(128, 128, 128, 0.1)",
+    ));
+
+    Ok(format!(
+        r#"{{
+        label: '{}',
+        data: {},
+        borderColor: '{}',
+        backgroundColor: '{}',
+        tension: 0.1,
+        fill: false
+    }}"#,
+        algorithm_name,
+        serde_json::to_string(&report_metrics.chart_data.values)
+            .unwrap_or_else(|_| "[]".to_string()),
+        border_color,
+        background_color
+    ))
+}
+
+/// Extract common labels from first simulation result
+fn extract_common_labels(results: &[SimulationResult]) -> Vec<String> {
+    if let Some(first_result) = results.first() {
+        let report_data = extract_report_data(first_result);
+        let report_metrics = calculate_report_metrics(&report_data);
+        report_metrics.chart_data.labels
+    } else {
+        Vec::new()
+    }
+}
+
+/// Generate Chart.js configuration for comparison chart
+fn create_comparison_chart_config(labels_json: String, datasets: Vec<String>) -> String {
+    format!(
+        r#"
+            const comparisonCtx = document.getElementById('comparison_chart').getContext('2d');
+            new Chart(comparisonCtx, {{
+                type: 'line',
+                data: {{
+                    labels: {},
+                    datasets: [{}]
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {{
+                        title: {{
+                            display: true,
+                            text: 'Algorithm Performance Comparison',
+                            font: {{
+                                size: 16
+                            }}
+                        }},
+                        legend: {{
+                            display: true,
+                            position: 'top'
+                        }}
+                    }},
+                    scales: {{
+                        y: {{
+                            beginAtZero: false,
+                            title: {{
+                                display: true,
+                                text: 'Portfolio Value (wrap.near)'
+                            }}
+                        }},
+                        x: {{
+                            title: {{
+                                display: true,
+                                text: 'Date'
+                            }}
+                        }}
+                    }},
+                    interaction: {{
+                        mode: 'index',
+                        intersect: false,
+                    }},
+                    hover: {{
+                        mode: 'nearest',
+                        intersect: true
+                    }}
+                }}
+            }});"#,
+        labels_json,
+        datasets.join(",\n                ")
+    )
+}
+
+/// Generate comparison chart script showing all algorithms overlaid
+fn generate_comparison_chart_script(results: &[SimulationResult]) -> Result<String> {
+    let colors = get_algorithm_colors();
+    let common_labels = extract_common_labels(results);
+    let labels_json = serde_json::to_string(&common_labels).unwrap_or_else(|_| "[]".to_string());
+
+    let datasets = results
+        .iter()
+        .enumerate()
+        .map(|(i, result)| create_chart_dataset(result, i, &colors))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(create_comparison_chart_config(labels_json, datasets))
+}
+
+#[cfg(test)]
+mod comparison_chart_tests {
+    use super::*;
+    use crate::commands::simulate::{
+        AlgorithmType, ExecutionSummary, PerformanceMetrics, PortfolioValue, SimulationResult,
+        SimulationSummary, TradeExecution,
+    };
+    use chrono::{DateTime, Utc};
+
+    fn create_test_simulation_result(
+        algorithm: AlgorithmType,
+        values: Vec<f64>,
+    ) -> SimulationResult {
+        let start_date = DateTime::from_naive_utc_and_offset(
+            chrono::NaiveDate::from_ymd_opt(2025, 8, 10)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            Utc,
+        );
+        let end_date = DateTime::from_naive_utc_and_offset(
+            chrono::NaiveDate::from_ymd_opt(2025, 8, 20)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            Utc,
+        );
+
+        let portfolio_values: Vec<PortfolioValue> = values
+            .iter()
+            .enumerate()
+            .map(|(i, &value)| PortfolioValue {
+                timestamp: start_date + chrono::Duration::days(i as i64),
+                total_value: value,
+                cash_balance: 0.0,
+                holdings: std::collections::HashMap::new(),
+                unrealized_pnl: value - 1000.0,
+            })
+            .collect();
+
+        SimulationResult {
+            config: SimulationSummary {
+                start_date,
+                end_date,
+                algorithm,
+                initial_capital: 1000.0,
+                final_value: values.last().copied().unwrap_or(1000.0),
+                total_return: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0 * 100.0,
+                duration_days: 10,
+            },
+            performance: PerformanceMetrics {
+                total_return: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0 * 100.0,
+                annualized_return: 0.1,
+                total_return_pct: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0
+                    * 100.0,
+                volatility: 0.2,
+                max_drawdown: -50.0,
+                max_drawdown_pct: -5.0,
+                sharpe_ratio: 1.5,
+                sortino_ratio: 2.0,
+                total_trades: 5,
+                winning_trades: 3,
+                losing_trades: 2,
+                win_rate: 0.6,
+                profit_factor: 1.2,
+                total_costs: 10.0,
+                cost_ratio: 0.01,
+                simulation_days: 10,
+                active_trading_days: 8,
+            },
+            trades: Vec::<TradeExecution>::new(),
+            portfolio_values,
+            execution_summary: ExecutionSummary {
+                total_trades: 5,
+                successful_trades: 5,
+                failed_trades: 0,
+                success_rate: 1.0,
+                total_cost: 10.0,
+                avg_cost_per_trade: 2.0,
+            },
+        }
+    }
+
+    #[test]
+    fn test_get_algorithm_colors() {
+        let colors = get_algorithm_colors();
+        assert_eq!(colors.len(), 3);
+        assert_eq!(colors[0].0, "Momentum");
+        assert_eq!(colors[1].0, "Portfolio");
+        assert_eq!(colors[2].0, "TrendFollowing");
+    }
+
+    #[test]
+    fn test_extract_common_labels() {
+        let results = vec![
+            create_test_simulation_result(AlgorithmType::Momentum, vec![1000.0, 1100.0, 1200.0]),
+            create_test_simulation_result(AlgorithmType::Portfolio, vec![1000.0, 1150.0, 1250.0]),
+        ];
+
+        let labels = extract_common_labels(&results);
+        assert!(!labels.is_empty());
+        // Labels should be date formatted strings
+        assert!(labels[0].contains("08/10"));
+    }
+
+    #[test]
+    fn test_create_chart_dataset() {
+        let colors = get_algorithm_colors();
+        let result =
+            create_test_simulation_result(AlgorithmType::Momentum, vec![1000.0, 1100.0, 1200.0]);
+
+        let dataset = create_chart_dataset(&result, 0, &colors).unwrap();
+        assert!(dataset.contains("Momentum"));
+        assert!(dataset.contains("rgb(255, 99, 132)")); // Momentum color
+        assert!(dataset.contains("1000"));
+        assert!(dataset.contains("1100"));
+        assert!(dataset.contains("1200"));
+    }
 }

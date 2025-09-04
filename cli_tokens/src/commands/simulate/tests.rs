@@ -14,7 +14,7 @@ mod unit_tests {
         let args = SimulateArgs {
             start: Some("2024-01-01".to_string()),
             end: Some("2024-01-10".to_string()),
-            algorithm: "momentum".to_string(),
+            algorithm: Some("momentum".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
             tokens: Some("usdc.tether-token.near,blackdragon.tkn.near".to_string()),
@@ -32,7 +32,7 @@ mod unit_tests {
             verbose: false,
         };
 
-        assert_eq!(args.algorithm, "momentum");
+        assert_eq!(args.algorithm, Some("momentum".to_string()));
         assert_eq!(args.capital, 1000.0);
         assert_eq!(args.quote_token, "wrap.near");
         assert_eq!(args.rebalance_freq, "daily");
@@ -1328,7 +1328,7 @@ mod integration_tests {
         let args = SimulateArgs {
             start: Some("2024-01-01".to_string()),
             end: Some("2024-01-31".to_string()),
-            algorithm: "momentum".to_string(),
+            algorithm: Some("momentum".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
             tokens: Some("token1,token2".to_string()),
@@ -1347,7 +1347,7 @@ mod integration_tests {
         };
 
         // Test that the args contain expected values
-        assert_eq!(args.algorithm, "momentum");
+        assert_eq!(args.algorithm, Some("momentum".to_string()));
         assert_eq!(args.capital, 1000.0);
         assert_eq!(args.tokens.unwrap(), "token1,token2");
         assert_eq!(args.historical_days, 30);

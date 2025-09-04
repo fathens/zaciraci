@@ -245,7 +245,7 @@ mod integration_tests {
         let momentum_config = SimulateArgs {
             start: Some("2024-08-01".to_string()),
             end: Some("2024-08-10".to_string()),
-            algorithm: "momentum".to_string(),
+            algorithm: Some("momentum".to_string()),
             capital: 10000.0,
             quote_token: "wrap.near".to_string(),
             tokens: Some("token1,token2,token3".to_string()),
@@ -264,7 +264,7 @@ mod integration_tests {
         };
 
         // Test that configuration is parsed correctly
-        assert_eq!(momentum_config.algorithm, "momentum");
+        assert_eq!(momentum_config.algorithm, Some("momentum".to_string()));
         assert_eq!(momentum_config.capital, 10000.0);
         assert_eq!(
             momentum_config.tokens.as_ref().unwrap(),
@@ -277,7 +277,7 @@ mod integration_tests {
         let portfolio_config = SimulateArgs {
             start: Some("2024-08-01".to_string()),
             end: Some("2024-08-10".to_string()),
-            algorithm: "portfolio".to_string(),
+            algorithm: Some("portfolio".to_string()),
             capital: 5000.0,
             quote_token: "wrap.near".to_string(),
             tokens: None, // Will use top volatility tokens
@@ -295,7 +295,7 @@ mod integration_tests {
             verbose: true,
         };
 
-        assert_eq!(portfolio_config.algorithm, "portfolio");
+        assert_eq!(portfolio_config.algorithm, Some("portfolio".to_string()));
         assert_eq!(portfolio_config.capital, 5000.0);
         assert!(portfolio_config.tokens.is_none()); // Should fetch from top volatility
         assert_eq!(portfolio_config.fee_model, "zero");
