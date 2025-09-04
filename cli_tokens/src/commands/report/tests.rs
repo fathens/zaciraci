@@ -458,7 +458,7 @@ mod integration_tests {
         let report_data = extract_report_data(&simulation_result);
         let metrics = calculate_report_metrics(&report_data);
 
-        let html = generate_html_report_v2(&report_data, &metrics).unwrap();
+        let html = generate_html_report_v3(&report_data, &metrics, None, None).unwrap();
 
         // Basic HTML structure
         assert!(html.contains("<!DOCTYPE html>"));
@@ -518,5 +518,178 @@ mod integration_tests {
         assert!(html_content.contains("Trading Simulation Report"));
         assert!(html_content.contains("Momentum"));
         assert!(html_content.len() > 1000, "HTML content seems too short");
+    }
+}
+
+// === Phase 4.3: Template System Tests ===
+
+#[cfg(test)]
+mod phase_4_3_tests {
+    use super::super::*;
+    use super::unit_tests::create_test_simulation_result;
+    use super::*;
+
+    #[test]
+    fn test_create_default_html_template() {
+        let template = create_default_html_template();
+
+        assert_eq!(template.template_name, "default");
+        assert_eq!(template.title, "Trading Simulation Report");
+        assert!(!template.css_style.is_empty());
+        assert!(template
+            .javascript_libs
+            .contains(&"https://cdn.jsdelivr.net/npm/chart.js".to_string()));
+    }
+
+    #[test]
+    fn test_create_template_context() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let extended_metrics = calculate_extended_metrics(&data);
+
+        let context = create_template_context(&data, &metrics, None, Some(extended_metrics));
+
+        assert_eq!(context.data.config.algorithm, "Momentum");
+        assert!(context.extended_metrics.is_some());
+        assert!(matches!(context.config.theme, ReportTheme::Default));
+    }
+
+    #[test]
+    fn test_render_header_section() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let context = create_template_context(&data, &metrics, None, None);
+
+        let header_html = render_header_section(&context);
+
+        assert!(header_html.contains("<div class=\"header\">"));
+        assert!(header_html.contains("Trading Report"));
+        assert!(header_html.contains("Momentum Algorithm"));
+    }
+
+    #[test]
+    fn test_render_performance_summary_section() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let context = create_template_context(&data, &metrics, None, None);
+
+        let performance_html = render_performance_summary_section(&context);
+
+        assert!(performance_html.contains("📈 Performance Summary"));
+        assert!(performance_html.contains("Initial Capital"));
+        assert!(performance_html.contains("Final Value"));
+        assert!(performance_html.contains("Total Return"));
+        assert!(performance_html.contains("Sharpe Ratio"));
+    }
+
+    #[test]
+    fn test_render_portfolio_chart_section() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let context = create_template_context(&data, &metrics, None, None);
+
+        let chart_html = render_portfolio_chart_section(&context);
+
+        assert!(chart_html.contains("📊 Portfolio Value Over Time"));
+        assert!(chart_html.contains("<canvas id=\"portfolioChart\"></canvas>"));
+    }
+
+    #[test]
+    fn test_render_trading_activity_section() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let context = create_template_context(&data, &metrics, None, None);
+
+        let activity_html = render_trading_activity_section(&context);
+
+        assert!(activity_html.contains("🔄 Trading Activity"));
+        assert!(activity_html.contains("Total Trades"));
+        assert!(activity_html.contains("Win Rate"));
+        assert!(activity_html.contains("Active Days"));
+    }
+
+    #[test]
+    fn test_render_risk_analysis_section_with_extended_metrics() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let extended_metrics = calculate_extended_metrics(&data);
+        let context = create_template_context(&data, &metrics, None, Some(extended_metrics));
+
+        let risk_html = render_risk_analysis_section(&context);
+
+        assert!(risk_html.contains("⚠️ Risk Analysis"));
+        assert!(risk_html.contains("Value at Risk"));
+        assert!(risk_html.contains("Expected Shortfall"));
+        assert!(risk_html.contains("Max Consecutive Losses"));
+    }
+
+    #[test]
+    fn test_render_risk_analysis_section_without_extended_metrics() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let context = create_template_context(&data, &metrics, None, None);
+
+        let risk_html = render_risk_analysis_section(&context);
+
+        assert!(
+            risk_html.is_empty(),
+            "Risk section should be empty without extended metrics"
+        );
+    }
+
+    #[test]
+    fn test_render_footer_section() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+        let context = create_template_context(&data, &metrics, None, None);
+
+        let footer_html = render_footer_section(&context);
+
+        assert!(footer_html.contains("<div class=\"footer\">"));
+        assert!(footer_html.contains("CLI Tokens Trading Simulator"));
+        assert!(footer_html.contains("Generated at"));
+    }
+
+    #[test]
+    fn test_generate_html_report_v3() {
+        let result = create_test_simulation_result();
+        let data = extract_report_data(&result);
+        let metrics = calculate_report_metrics(&data);
+
+        let html_result = generate_html_report_v3(&data, &metrics, None, None);
+
+        assert!(
+            html_result.is_ok(),
+            "HTML generation failed: {:?}",
+            html_result
+        );
+
+        let html_content = html_result.unwrap();
+        assert!(html_content.contains("<!DOCTYPE html>"));
+        assert!(html_content.contains("Trading Simulation Report"));
+        assert!(html_content.contains("📈 Performance Summary"));
+        assert!(html_content.contains("📊 Portfolio Value Over Time"));
+        assert!(html_content.contains("🔄 Trading Activity"));
+        assert!(html_content.contains("📝 Recent Trades"));
+        assert!(html_content.contains("CLI Tokens Trading Simulator"));
+    }
+
+    #[test]
+    fn test_get_default_css_style() {
+        let css = get_default_css_style();
+
+        assert!(!css.is_empty());
+        assert!(css.contains("body"));
+        assert!(css.contains(".container"));
+        assert!(css.contains(".header"));
+        assert!(css.contains(".metrics-grid"));
     }
 }

@@ -80,6 +80,35 @@ pub struct DisplayOptions {
     pub show_risk_metrics: bool,
 }
 
+// === Phase 4.3: Template System ===
+
+#[derive(Debug, Clone)]
+pub struct HtmlTemplate {
+    pub template_name: String,
+    pub title: String,
+    pub css_style: String,
+    pub javascript_libs: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TemplateContext {
+    pub config: ReportConfiguration,
+    pub data: ReportData,
+    pub metrics: ReportMetrics,
+    pub extended_metrics: Option<ExtendedMetrics>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TemplateSection {
+    Header,
+    PerformanceSummary,
+    PortfolioChart,
+    TradingActivity,
+    TradeHistory,
+    RiskAnalysis,
+    Footer,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExtendedMetrics {
     pub risk_metrics: RiskMetrics,
@@ -470,7 +499,8 @@ pub fn run_report(args: ReportArgs) -> Result<()> {
 
     match args.format.as_str() {
         "html" => {
-            let html_content = generate_html_report_v2(&report_data, &report_metrics)?;
+            // Use the new template system (Phase 4.3)
+            let html_content = generate_html_report_v3(&report_data, &report_metrics, None, None)?;
             std::fs::write(&output_path, html_content)
                 .with_context(|| format!("Failed to write HTML file: {}", output_path.display()))?;
             println!("📊 HTML report saved to: {}", output_path.display());
@@ -500,147 +530,141 @@ fn determine_output_path(args: &ReportArgs) -> Result<PathBuf> {
     }
 }
 
-/// Generate HTML report using new structured approach (Phase 4.1)
-fn generate_html_report_v2(data: &ReportData, metrics: &ReportMetrics) -> Result<String> {
+// === Phase 4.3: Template System Functions ===
+
+/// Create default HTML template configuration
+pub fn create_default_html_template() -> HtmlTemplate {
+    HtmlTemplate {
+        template_name: "default".to_string(),
+        title: "Trading Simulation Report".to_string(),
+        css_style: get_default_css_style(),
+        javascript_libs: vec!["https://cdn.jsdelivr.net/npm/chart.js".to_string()],
+    }
+}
+
+/// Create template context from report data
+pub fn create_template_context(
+    data: &ReportData,
+    metrics: &ReportMetrics,
+    config: Option<ReportConfiguration>,
+    extended_metrics: Option<ExtendedMetrics>,
+) -> TemplateContext {
+    TemplateContext {
+        config: config.unwrap_or_else(create_default_report_config),
+        data: data.clone(),
+        metrics: metrics.clone(),
+        extended_metrics,
+    }
+}
+
+/// Render HTML template section
+pub fn render_template_section(section: &TemplateSection, context: &TemplateContext) -> String {
+    match section {
+        TemplateSection::Header => render_header_section(context),
+        TemplateSection::PerformanceSummary => render_performance_summary_section(context),
+        TemplateSection::PortfolioChart => render_portfolio_chart_section(context),
+        TemplateSection::TradingActivity => render_trading_activity_section(context),
+        TemplateSection::TradeHistory => render_trade_history_section(context),
+        TemplateSection::RiskAnalysis => render_risk_analysis_section(context),
+        TemplateSection::Footer => render_footer_section(context),
+    }
+}
+
+/// Generate full HTML report using template system (Phase 4.3)
+pub fn generate_html_report_v3(
+    data: &ReportData,
+    metrics: &ReportMetrics,
+    template: Option<HtmlTemplate>,
+    config: Option<ReportConfiguration>,
+) -> Result<String> {
+    let template = template.unwrap_or_else(create_default_html_template);
+    let context = create_template_context(data, metrics, config, None);
+
+    let sections = [
+        TemplateSection::Header,
+        TemplateSection::PerformanceSummary,
+        TemplateSection::PortfolioChart,
+        TemplateSection::TradingActivity,
+        TemplateSection::TradeHistory,
+        TemplateSection::Footer,
+    ];
+
+    let content_sections: Vec<String> = sections
+        .iter()
+        .map(|section| render_template_section(section, &context))
+        .collect();
+
     let html_content = format!(
         r#"<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Simulation Report</title>
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
-        }}
-        .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 40px;
-            text-align: center;
-        }}
-        .header h1 {{
-            font-size: 2.5em;
-            margin-bottom: 10px;
-        }}
-        .header p {{
-            font-size: 1.1em;
-            opacity: 0.9;
-        }}
-        .content {{
-            padding: 40px;
-        }}
-        .section {{
-            margin-bottom: 40px;
-        }}
-        .section h2 {{
-            color: #667eea;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #f0f0f0;
-        }}
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }}
-        .metric-card {{
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
-        }}
-        .metric-label {{
-            color: #666;
-            font-size: 0.9em;
-            margin-bottom: 5px;
-        }}
-        .metric-value {{
-            font-size: 1.5em;
-            font-weight: bold;
-            color: #333;
-        }}
-        .positive {{
-            color: #28a745;
-        }}
-        .negative {{
-            color: #dc3545;
-        }}
-        .chart-container {{
-            margin-top: 20px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 10px;
-        }}
-        canvas {{
-            max-width: 100%;
-            height: auto;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }}
-        th, td {{
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-        }}
-        th {{
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #666;
-        }}
-        tr:hover {{
-            background: #f8f9fa;
-        }}
-        .footer {{
-            background: #f8f9fa;
-            padding: 20px;
-            text-align: center;
-            color: #666;
-            font-size: 0.9em;
-        }}
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>{}</title>
+    <style>{}</style>
+    {}
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>📊 Trading Simulation Report</h1>
+        {}
+    </div>
+    <script>
+        {}
+    </script>
+</body>
+</html>"#,
+        template.title,
+        template.css_style,
+        template
+            .javascript_libs
+            .iter()
+            .map(|lib| format!("<script src=\"{}\"></script>", lib))
+            .collect::<Vec<_>>()
+            .join("\n    "),
+        content_sections.join("\n\n        "),
+        generate_chart_data_js(&context.metrics.chart_data)
+    );
+
+    Ok(html_content)
+}
+
+// Legacy function removed in favor of generate_html_report_v3 (Phase 4.3 Template System)
+
+// === Phase 4.3: Template Section Renderers ===
+
+/// Render header section
+fn render_header_section(context: &TemplateContext) -> String {
+    format!(
+        r#"<div class="header">
+            <h1>📊 Trading Report</h1>
             <p>{} - {} | {} Algorithm</p>
-        </div>
-        
-        <div class="content">
+        </div>"#,
+        context.data.config.start_date.format("%Y-%m-%d"),
+        context.data.config.end_date.format("%Y-%m-%d"),
+        context.data.config.algorithm
+    )
+}
+
+/// Render performance summary section
+fn render_performance_summary_section(context: &TemplateContext) -> String {
+    let performance_class = if context.data.performance.total_return_pct >= 0.0 {
+        "positive"
+    } else {
+        "negative"
+    };
+
+    format!(
+        r#"<div class="content">
             <div class="section">
                 <h2>📈 Performance Summary</h2>
                 <div class="metrics-grid">
                     <div class="metric-card">
                         <div class="metric-label">Initial Capital</div>
-                        <div class="metric-value">{:.2} {}</div>
+                        <div class="metric-value">{}</div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">Final Value</div>
-                        <div class="metric-value">{:.2} {}</div>
+                        <div class="metric-value">{}</div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">Total Return</div>
@@ -659,16 +683,35 @@ fn generate_html_report_v2(data: &ReportData, metrics: &ReportMetrics) -> Result
                         <div class="metric-value">{:.2}%</div>
                     </div>
                 </div>
-            </div>
+            </div>"#,
+        format_currency_value(
+            context.data.config.initial_capital,
+            &context.config.currency
+        ),
+        format_currency_value(context.data.config.final_value, &context.config.currency),
+        performance_class,
+        context.data.performance.total_return_pct,
+        context.data.performance.max_drawdown_pct,
+        context.data.performance.sharpe_ratio,
+        context.data.performance.volatility * 100.0
+    )
+}
 
-            <div class="section">
+/// Render portfolio chart section
+fn render_portfolio_chart_section(_context: &TemplateContext) -> String {
+    r#"<div class="section">
                 <h2>📊 Portfolio Value Over Time</h2>
                 <div class="chart-container">
                     <canvas id="portfolioChart"></canvas>
                 </div>
-            </div>
+            </div>"#
+        .to_string()
+}
 
-            <div class="section">
+/// Render trading activity section
+fn render_trading_activity_section(context: &TemplateContext) -> String {
+    format!(
+        r#"<div class="section">
                 <h2>🔄 Trading Activity</h2>
                 <div class="metrics-grid">
                     <div class="metric-card">
@@ -685,12 +728,25 @@ fn generate_html_report_v2(data: &ReportData, metrics: &ReportMetrics) -> Result
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">Total Costs</div>
-                        <div class="metric-value">{:.2}</div>
+                        <div class="metric-value">{}</div>
                     </div>
                 </div>
-            </div>
+            </div>"#,
+        context.data.performance.total_trades,
+        context.data.performance.win_rate * 100.0,
+        context.data.performance.active_trading_days,
+        context.data.performance.simulation_days,
+        format_currency_value(
+            context.data.performance.total_costs,
+            &context.config.currency
+        )
+    )
+}
 
-            <div class="section">
+/// Render trade history section
+fn render_trade_history_section(context: &TemplateContext) -> String {
+    format!(
+        r#"<div class="section">
                 <h2>📝 Recent Trades</h2>
                 <table>
                     <thead>
@@ -708,77 +764,171 @@ fn generate_html_report_v2(data: &ReportData, metrics: &ReportMetrics) -> Result
                     </tbody>
                 </table>
             </div>
-        </div>
+        </div>"#,
+        context.metrics.trades_html
+    )
+}
 
-        <div class="footer">
+/// Render risk analysis section (optional, for extended metrics)
+fn render_risk_analysis_section(context: &TemplateContext) -> String {
+    if let Some(extended) = &context.extended_metrics {
+        format!(
+            r#"<div class="section">
+                <h2>⚠️ Risk Analysis</h2>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-label">Value at Risk (95%)</div>
+                        <div class="metric-value">{:.2}%</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Expected Shortfall</div>
+                        <div class="metric-value">{:.2}%</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Max Consecutive Losses</div>
+                        <div class="metric-value">{}</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Largest Win</div>
+                        <div class="metric-value">{}</div>
+                    </div>
+                </div>
+            </div>"#,
+            extended.risk_metrics.value_at_risk_95 * 100.0,
+            extended.risk_metrics.expected_shortfall * 100.0,
+            extended.trade_analysis.consecutive_losses,
+            format_currency_value(
+                extended.trade_analysis.largest_win,
+                &context.config.currency
+            )
+        )
+    } else {
+        String::new()
+    }
+}
+
+/// Render footer section
+fn render_footer_section(context: &TemplateContext) -> String {
+    format!(
+        r#"<div class="footer">
             <p>Generated at {} | CLI Tokens Trading Simulator</p>
-        </div>
-    </div>
+        </div>"#,
+        context.metrics.generation_timestamp
+    )
+}
 
-    <script>
-        const ctx = document.getElementById('portfolioChart').getContext('2d');
-        const portfolioData = {};
-        
-        new Chart(ctx, {{
-            type: 'line',
-            data: {{
-                labels: portfolioData.labels,
-                datasets: [{{
-                    label: 'Portfolio Value',
-                    data: portfolioData.values,
-                    borderColor: '#667eea',
-                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.4
-                }}]
-            }},
-            options: {{
-                responsive: true,
-                plugins: {{
-                    legend: {{
-                        display: false
-                    }},
-                    title: {{
-                        display: false
-                    }}
-                }},
-                scales: {{
-                    y: {{
-                        beginAtZero: false,
-                        ticks: {{
-                            callback: function(value) {{
-                                return value.toLocaleString();
-                            }}
-                        }}
-                    }}
-                }}
-            }}
-        }});
-    </script>
-</body>
-</html>"#,
-        data.config.start_date.format("%Y-%m-%d"),
-        data.config.end_date.format("%Y-%m-%d"),
-        data.config.algorithm,
-        data.config.initial_capital,
-        metrics.currency_symbol,
-        data.config.final_value,
-        metrics.currency_symbol,
-        metrics.performance_class,
-        data.performance.total_return_pct,
-        data.performance.max_drawdown_pct,
-        data.performance.sharpe_ratio,
-        data.performance.volatility * 100.0,
-        data.performance.total_trades,
-        data.performance.win_rate * 100.0,
-        data.performance.active_trading_days,
-        data.performance.simulation_days,
-        data.performance.total_costs,
-        metrics.trades_html,
-        metrics.generation_timestamp,
-        generate_chart_data_js(&metrics.chart_data),
-    );
-
-    Ok(html_content)
+/// Get default CSS style for HTML template
+fn get_default_css_style() -> String {
+    r#"
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 40px;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .metric-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .metric-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+        .metric-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #333;
+        }
+        .positive {
+            color: #28a745;
+        }
+        .negative {
+            color: #dc3545;
+        }
+        .chart-container {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #666;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }
+    "#.to_string()
 }
