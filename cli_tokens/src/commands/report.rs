@@ -18,6 +18,104 @@ pub struct ReportData {
     pub portfolio_values: Vec<PortfolioValue>,
 }
 
+// === Phase 4.2: Extended Data Structures ===
+
+#[derive(Debug, Clone)]
+pub struct ReportConfiguration {
+    pub theme: ReportTheme,
+    pub currency: CurrencyConfig,
+    pub chart_settings: ChartSettings,
+    pub display_options: DisplayOptions,
+}
+
+#[derive(Debug, Clone)]
+pub enum ReportTheme {
+    Default,
+    Dark,
+    Light,
+    Minimal,
+}
+
+#[derive(Debug, Clone)]
+pub struct CurrencyConfig {
+    pub symbol: String,
+    pub decimal_places: u8,
+    pub position: CurrencyPosition,
+}
+
+#[derive(Debug, Clone)]
+pub enum CurrencyPosition {
+    Before,
+    After,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChartSettings {
+    pub chart_type: ChartType,
+    pub show_volume: bool,
+    pub show_trades: bool,
+    pub color_scheme: ColorScheme,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChartType {
+    Line,
+    Area,
+    Candlestick,
+}
+
+#[derive(Debug, Clone)]
+pub struct ColorScheme {
+    pub primary: String,
+    pub secondary: String,
+    pub positive: String,
+    pub negative: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DisplayOptions {
+    pub show_detailed_trades: bool,
+    pub max_trades_displayed: usize,
+    pub include_performance_comparison: bool,
+    pub show_risk_metrics: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtendedMetrics {
+    pub risk_metrics: RiskMetrics,
+    pub performance_comparison: Option<PerformanceComparison>,
+    pub trade_analysis: TradeAnalysis,
+}
+
+#[derive(Debug, Clone)]
+pub struct RiskMetrics {
+    pub value_at_risk_95: f64,
+    pub value_at_risk_99: f64,
+    pub expected_shortfall: f64,
+    pub beta: f64,
+    pub alpha: f64,
+    pub information_ratio: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PerformanceComparison {
+    pub benchmark_return: f64,
+    pub excess_return: f64,
+    pub tracking_error: f64,
+    pub upside_capture: f64,
+    pub downside_capture: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TradeAnalysis {
+    pub average_trade_duration: f64, // in hours
+    pub largest_win: f64,
+    pub largest_loss: f64,
+    pub consecutive_wins: u32,
+    pub consecutive_losses: u32,
+    pub trade_frequency_per_day: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SimulationConfig {
     pub start_date: DateTime<Utc>,
@@ -160,6 +258,185 @@ pub fn generate_chart_data_js(chart_data: &ChartData) -> String {
             .collect::<Vec<_>>()
             .join(",")
     )
+}
+
+// === Phase 4.2: Extended Functions ===
+
+/// Create default report configuration
+pub fn create_default_report_config() -> ReportConfiguration {
+    ReportConfiguration {
+        theme: ReportTheme::Default,
+        currency: CurrencyConfig {
+            symbol: "wrap.near".to_string(),
+            decimal_places: 2,
+            position: CurrencyPosition::After,
+        },
+        chart_settings: ChartSettings {
+            chart_type: ChartType::Line,
+            show_volume: false,
+            show_trades: true,
+            color_scheme: ColorScheme {
+                primary: "#667eea".to_string(),
+                secondary: "#764ba2".to_string(),
+                positive: "#28a745".to_string(),
+                negative: "#dc3545".to_string(),
+            },
+        },
+        display_options: DisplayOptions {
+            show_detailed_trades: true,
+            max_trades_displayed: 10,
+            include_performance_comparison: false,
+            show_risk_metrics: true,
+        },
+    }
+}
+
+/// Calculate extended metrics for comprehensive analysis
+pub fn calculate_extended_metrics(data: &ReportData) -> ExtendedMetrics {
+    ExtendedMetrics {
+        risk_metrics: calculate_risk_metrics(data),
+        performance_comparison: None, // Would require benchmark data
+        trade_analysis: analyze_trades(&data.trades),
+    }
+}
+
+/// Calculate risk-related metrics
+pub fn calculate_risk_metrics(data: &ReportData) -> RiskMetrics {
+    let returns = calculate_daily_returns(&data.portfolio_values);
+
+    RiskMetrics {
+        value_at_risk_95: calculate_var(&returns, 0.95),
+        value_at_risk_99: calculate_var(&returns, 0.99),
+        expected_shortfall: calculate_expected_shortfall(&returns, 0.95),
+        beta: 1.0,  // Would require benchmark data for proper calculation
+        alpha: 0.0, // Would require benchmark data
+        information_ratio: calculate_information_ratio(
+            data.performance.total_return_pct,
+            data.performance.volatility,
+        ),
+    }
+}
+
+/// Analyze trading patterns and statistics
+pub fn analyze_trades(trades: &[TradeExecution]) -> TradeAnalysis {
+    if trades.is_empty() {
+        return TradeAnalysis {
+            average_trade_duration: 0.0,
+            largest_win: 0.0,
+            largest_loss: 0.0,
+            consecutive_wins: 0,
+            consecutive_losses: 0,
+            trade_frequency_per_day: 0.0,
+        };
+    }
+
+    let trade_pnls: Vec<f64> = trades
+        .iter()
+        .map(|t| t.portfolio_value_after - t.portfolio_value_before)
+        .collect();
+
+    TradeAnalysis {
+        average_trade_duration: 24.0, // Simplified: assume daily trades
+        largest_win: trade_pnls.iter().fold(0.0_f64, |acc, &x| acc.max(x)),
+        largest_loss: trade_pnls.iter().fold(0.0_f64, |acc, &x| acc.min(x)),
+        consecutive_wins: calculate_max_consecutive_wins(&trade_pnls),
+        consecutive_losses: calculate_max_consecutive_losses(&trade_pnls),
+        trade_frequency_per_day: trades.len() as f64 / 30.0, // Assume 30-day period
+    }
+}
+
+/// Format currency value according to configuration
+pub fn format_currency_value(value: f64, config: &CurrencyConfig) -> String {
+    let formatted_value = format!("{:.prec$}", value, prec = config.decimal_places as usize);
+
+    match config.position {
+        CurrencyPosition::Before => format!("{} {}", config.symbol, formatted_value),
+        CurrencyPosition::After => format!("{} {}", formatted_value, config.symbol),
+    }
+}
+
+// === Helper Functions ===
+
+fn calculate_daily_returns(portfolio_values: &[PortfolioValue]) -> Vec<f64> {
+    if portfolio_values.len() < 2 {
+        return vec![];
+    }
+
+    portfolio_values
+        .windows(2)
+        .map(|window| {
+            let prev_value = window[0].total_value;
+            let curr_value = window[1].total_value;
+            if prev_value != 0.0 {
+                (curr_value - prev_value) / prev_value
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+fn calculate_var(returns: &[f64], confidence_level: f64) -> f64 {
+    if returns.is_empty() {
+        return 0.0;
+    }
+
+    let mut sorted_returns = returns.to_vec();
+    sorted_returns.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let index = ((1.0 - confidence_level) * sorted_returns.len() as f64) as usize;
+    sorted_returns.get(index).copied().unwrap_or(0.0)
+}
+
+fn calculate_expected_shortfall(returns: &[f64], confidence_level: f64) -> f64 {
+    let var = calculate_var(returns, confidence_level);
+    let tail_returns: Vec<f64> = returns.iter().filter(|&&r| r <= var).copied().collect();
+
+    if tail_returns.is_empty() {
+        0.0
+    } else {
+        tail_returns.iter().sum::<f64>() / tail_returns.len() as f64
+    }
+}
+
+fn calculate_information_ratio(excess_return: f64, tracking_error: f64) -> f64 {
+    if tracking_error != 0.0 {
+        excess_return / tracking_error
+    } else {
+        0.0
+    }
+}
+
+fn calculate_max_consecutive_wins(trade_pnls: &[f64]) -> u32 {
+    let mut max_consecutive = 0;
+    let mut current_consecutive = 0;
+
+    for &pnl in trade_pnls {
+        if pnl > 0.0 {
+            current_consecutive += 1;
+            max_consecutive = max_consecutive.max(current_consecutive);
+        } else {
+            current_consecutive = 0;
+        }
+    }
+
+    max_consecutive
+}
+
+fn calculate_max_consecutive_losses(trade_pnls: &[f64]) -> u32 {
+    let mut max_consecutive = 0;
+    let mut current_consecutive = 0;
+
+    for &pnl in trade_pnls {
+        if pnl < 0.0 {
+            current_consecutive += 1;
+            max_consecutive = max_consecutive.max(current_consecutive);
+        } else {
+            current_consecutive = 0;
+        }
+    }
+
+    max_consecutive
 }
 
 #[derive(Debug, Args)]

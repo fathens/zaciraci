@@ -285,6 +285,168 @@ mod unit_tests {
 }
 
 #[cfg(test)]
+mod phase_4_2_tests {
+    use super::*;
+
+    #[test]
+    fn test_create_default_report_config() {
+        let config = create_default_report_config();
+
+        assert!(matches!(config.theme, ReportTheme::Default));
+        assert_eq!(config.currency.symbol, "wrap.near");
+        assert_eq!(config.currency.decimal_places, 2);
+        assert!(matches!(config.currency.position, CurrencyPosition::After));
+
+        assert!(matches!(config.chart_settings.chart_type, ChartType::Line));
+        assert!(!config.chart_settings.show_volume);
+        assert!(config.chart_settings.show_trades);
+
+        assert_eq!(config.display_options.max_trades_displayed, 10);
+        assert!(config.display_options.show_detailed_trades);
+        assert!(config.display_options.show_risk_metrics);
+    }
+
+    #[test]
+    fn test_calculate_extended_metrics() {
+        let simulation_result = unit_tests::create_test_simulation_result();
+        let report_data = extract_report_data(&simulation_result);
+        let extended_metrics = calculate_extended_metrics(&report_data);
+
+        // Risk metrics should be calculated (VaR can be positive for profitable portfolios)
+        assert!(extended_metrics.risk_metrics.value_at_risk_95.is_finite()); // VaR should be a valid number
+        assert!(
+            extended_metrics.risk_metrics.expected_shortfall
+                <= extended_metrics.risk_metrics.value_at_risk_95
+        );
+
+        // Trade analysis should process the trade
+        assert!(extended_metrics.trade_analysis.largest_win >= 0.0);
+        assert!(extended_metrics.trade_analysis.trade_frequency_per_day > 0.0);
+
+        // Performance comparison should be None (no benchmark)
+        assert!(extended_metrics.performance_comparison.is_none());
+    }
+
+    #[test]
+    fn test_analyze_trades_empty() {
+        let trades = vec![];
+        let analysis = analyze_trades(&trades);
+
+        assert_eq!(analysis.average_trade_duration, 0.0);
+        assert_eq!(analysis.largest_win, 0.0);
+        assert_eq!(analysis.largest_loss, 0.0);
+        assert_eq!(analysis.consecutive_wins, 0);
+        assert_eq!(analysis.consecutive_losses, 0);
+        assert_eq!(analysis.trade_frequency_per_day, 0.0);
+    }
+
+    #[test]
+    fn test_analyze_trades_with_data() {
+        let trades = vec![
+            TradeExecution {
+                timestamp: Utc::now(),
+                from_token: "token_a".to_string(),
+                to_token: "token_b".to_string(),
+                amount: 100.0,
+                executed_price: 1.5,
+                cost: TradingCost {
+                    protocol_fee: BigDecimal::from(3),
+                    slippage: BigDecimal::from(2),
+                    gas_fee: BigDecimal::from(1),
+                    total: BigDecimal::from(6),
+                },
+                portfolio_value_before: 1000.0,
+                portfolio_value_after: 1020.0, // +20 profit
+                success: true,
+                reason: "Profitable trade".to_string(),
+            },
+            TradeExecution {
+                timestamp: Utc::now(),
+                from_token: "token_b".to_string(),
+                to_token: "token_c".to_string(),
+                amount: 120.0,
+                executed_price: 0.8,
+                cost: TradingCost {
+                    protocol_fee: BigDecimal::from(4),
+                    slippage: BigDecimal::from(3),
+                    gas_fee: BigDecimal::from(1),
+                    total: BigDecimal::from(8),
+                },
+                portfolio_value_before: 1020.0,
+                portfolio_value_after: 990.0, // -30 loss
+                success: true,
+                reason: "Losing trade".to_string(),
+            },
+        ];
+
+        let analysis = analyze_trades(&trades);
+
+        assert_eq!(analysis.largest_win, 20.0);
+        assert_eq!(analysis.largest_loss, -30.0);
+        assert_eq!(analysis.consecutive_wins, 1);
+        assert_eq!(analysis.consecutive_losses, 1);
+        assert!(analysis.trade_frequency_per_day > 0.0);
+    }
+
+    #[test]
+    fn test_format_currency_value_before() {
+        let config = CurrencyConfig {
+            symbol: "USD".to_string(),
+            decimal_places: 2,
+            position: CurrencyPosition::Before,
+        };
+
+        let formatted = format_currency_value(1234.567, &config);
+        assert_eq!(formatted, "USD 1234.57");
+    }
+
+    #[test]
+    fn test_format_currency_value_after() {
+        let config = CurrencyConfig {
+            symbol: "EUR".to_string(),
+            decimal_places: 3,
+            position: CurrencyPosition::After,
+        };
+
+        let formatted = format_currency_value(1234.567, &config);
+        assert_eq!(formatted, "1234.567 EUR");
+    }
+
+    #[test]
+    fn test_calculate_var() {
+        let returns = vec![-0.1, -0.05, 0.0, 0.05, 0.1, 0.15];
+
+        let var_95 = calculate_var(&returns, 0.95);
+        assert!(var_95 <= -0.05); // Should be in the lower tail
+
+        let var_99 = calculate_var(&returns, 0.99);
+        assert!(var_99 <= var_95); // 99% VaR should be more extreme
+    }
+
+    #[test]
+    fn test_calculate_expected_shortfall() {
+        let returns = vec![-0.1, -0.05, 0.0, 0.05, 0.1];
+
+        let es = calculate_expected_shortfall(&returns, 0.8);
+        assert!(es <= 0.0); // Expected shortfall should be negative
+    }
+
+    #[test]
+    fn test_consecutive_wins_calculation() {
+        let trade_pnls = vec![10.0, 20.0, -5.0, 15.0, 25.0, 5.0, -10.0];
+        let consecutive_wins = calculate_max_consecutive_wins(&trade_pnls);
+        assert_eq!(consecutive_wins, 3); // trades at positions 3, 4, 5
+    }
+
+    #[test]
+    fn test_consecutive_losses_calculation() {
+        let trade_pnls = vec![10.0, -5.0, -10.0, -2.0, 15.0, -8.0];
+        let consecutive_losses = calculate_max_consecutive_losses(&trade_pnls);
+        assert_eq!(consecutive_losses, 3); // trades at positions 1, 2, 3
+    }
+}
+
+#[cfg(test)]
 mod integration_tests {
     use super::*;
     use std::fs;
