@@ -96,10 +96,6 @@ pub struct SimulateArgs {
     #[clap(long, default_value = "30")]
     pub historical_days: u64,
 
-    /// レポート形式 [デフォルト: json]
-    #[clap(long, default_value = "json")]
-    pub report_format: String,
-
     /// チャートを生成
     #[clap(long)]
     pub chart: bool,
@@ -295,8 +291,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         println!("  Output: {}", args.output);
     }
 
-    // report_formatとoutputを先に保存
-    let report_format = args.report_format.clone();
+    // outputを先に保存
     let output_dir = args.output.clone();
 
     // 1. 設定の検証と変換
@@ -321,7 +316,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
     };
 
     // 3. 結果の保存
-    save_simulation_result(&result, &output_dir, &report_format)?;
+    save_simulation_result(&result, &output_dir)?;
 
     println!("✅ Simulation completed!");
     println!(
@@ -590,11 +585,7 @@ async fn run_simple_simulation(config: &SimulationConfig) -> Result<SimulationRe
     })
 }
 
-fn save_simulation_result(
-    result: &SimulationResult,
-    _output_dir: &str,
-    report_format: &str,
-) -> Result<()> {
+fn save_simulation_result(result: &SimulationResult, _output_dir: &str) -> Result<()> {
     use crate::utils::file::ensure_directory_exists;
     use std::path::PathBuf;
 
@@ -612,49 +603,11 @@ fn save_simulation_result(
 
     ensure_directory_exists(&final_output_dir)?;
 
-    match report_format {
-        "json" => {
-            // JSONファイルに保存
-            let result_file = final_output_dir.join("results.json");
-            let json_content = serde_json::to_string_pretty(result)?;
-            std::fs::write(&result_file, json_content)?;
-            println!("💾 Results saved to: {}", result_file.display());
-        }
-        "html" => {
-            // HTMLレポートを生成
-            let html_file = final_output_dir.join("report.html");
-            let html_content = generate_html_report(result)?;
-            std::fs::write(&html_file, html_content)?;
-
-            // JSONファイルも併せて保存（データの保管のため）
-            let result_file = final_output_dir.join("results.json");
-            let json_content = serde_json::to_string_pretty(result)?;
-            std::fs::write(&result_file, json_content)?;
-
-            println!("📊 HTML report saved to: {}", html_file.display());
-            println!("💾 JSON data saved to: {}", result_file.display());
-        }
-        "both" => {
-            // JSON と HTML 両方
-            let result_file = final_output_dir.join("results.json");
-            let html_file = final_output_dir.join("report.html");
-
-            let json_content = serde_json::to_string_pretty(result)?;
-            let html_content = generate_html_report(result)?;
-
-            std::fs::write(&result_file, json_content)?;
-            std::fs::write(&html_file, html_content)?;
-
-            println!("📊 HTML report saved to: {}", html_file.display());
-            println!("💾 JSON data saved to: {}", result_file.display());
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Unsupported report format: {}. Supported formats: json, html, both",
-                report_format
-            ));
-        }
-    }
+    // JSONファイルに保存
+    let result_file = final_output_dir.join("results.json");
+    let json_content = serde_json::to_string_pretty(result)?;
+    std::fs::write(&result_file, json_content)?;
+    println!("💾 Results saved to: {}", result_file.display());
 
     Ok(())
 }
@@ -2064,343 +2017,3 @@ fn get_historical_data<'a>(
 
     Ok(historical_data)
 }
-
-/// HTMLレポートを生成
-fn generate_html_report(result: &SimulationResult) -> Result<String> {
-    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
-    let start_date_str = result.config.start_date.format("%Y-%m-%d");
-    let end_date_str = result.config.end_date.format("%Y-%m-%d");
-    let algorithm_str = format!("{:?}", result.config.algorithm);
-    let html_content = format!(
-        r#"<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Simulation Report - {}</title>
-    <style>
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f5f5f5;
-            color: #333;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background-color: white;
-            border-radius: 10px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }}
-        .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }}
-        .header h1 {{
-            margin: 0;
-            font-size: 2.5em;
-            font-weight: 300;
-        }}
-        .header p {{
-            margin: 10px 0 0 0;
-            opacity: 0.9;
-            font-size: 1.1em;
-        }}
-        .content {{
-            padding: 30px;
-        }}
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }}
-        .metric-card {{
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 20px;
-            text-align: center;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }}
-        .metric-card:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }}
-        .metric-value {{
-            font-size: 2em;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }}
-        .metric-label {{
-            color: #666;
-            font-size: 0.9em;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }}
-        .positive {{ color: #4CAF50; }}
-        .negative {{ color: #f44336; }}
-        .neutral {{ color: #2196F3; }}
-        .section {{
-            margin-bottom: 30px;
-        }}
-        .section-title {{
-            font-size: 1.8em;
-            margin-bottom: 20px;
-            color: #333;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 10px;
-        }}
-        .info-table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 20px;
-        }}
-        .info-table th, .info-table td {{
-            border: 1px solid #ddd;
-            padding: 12px;
-            text-align: left;
-        }}
-        .info-table th {{
-            background-color: #f8f9fa;
-            font-weight: 600;
-        }}
-        .info-table tr:nth-child(even) {{
-            background-color: #f8f9fa;
-        }}
-        .trades-section {{
-            margin-top: 30px;
-        }}
-        .portfolio-chart {{
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 20px 0;
-            text-align: center;
-        }}
-        .summary-stats {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
-        }}
-        .stat-item {{
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 6px;
-            text-align: center;
-        }}
-        .stat-value {{
-            font-size: 1.4em;
-            font-weight: bold;
-            color: #333;
-        }}
-        .stat-label {{
-            color: #666;
-            font-size: 0.9em;
-            margin-top: 5px;
-        }}
-        .footer {{
-            background-color: #f8f9fa;
-            padding: 20px;
-            text-align: center;
-            color: #666;
-            font-size: 0.9em;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Trading Simulation Report</h1>
-            <p>{} Algorithm | {} to {}</p>
-        </div>
-        
-        <div class="content">
-            <!-- Key Performance Metrics -->
-            <div class="section">
-                <h2 class="section-title">📊 Key Performance Metrics</h2>
-                <div class="metrics-grid">
-                    <div class="metric-card">
-                        <div class="metric-value {}">
-                            {:.2}%
-                        </div>
-                        <div class="metric-label">Total Return</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-value {}">
-                            {:.2}%
-                        </div>
-                        <div class="metric-label">Annualized Return</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-value neutral">
-                            {:.2}%
-                        </div>
-                        <div class="metric-label">Volatility</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-value {}">
-                            {:.2}
-                        </div>
-                        <div class="metric-label">Sharpe Ratio</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-value negative">
-                            {:.2}%
-                        </div>
-                        <div class="metric-label">Max Drawdown</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-value neutral">
-                            {}
-                        </div>
-                        <div class="metric-label">Total Trades</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Simulation Configuration -->
-            <div class="section">
-                <h2 class="section-title">⚙️ Simulation Configuration</h2>
-                <table class="info-table">
-                    <tr><th>Algorithm</th><td>{:?}</td></tr>
-                    <tr><th>Start Date</th><td>{}</td></tr>
-                    <tr><th>End Date</th><td>{}</td></tr>
-                    <tr><th>Initial Capital</th><td>{:.2} NEAR</td></tr>
-                    <tr><th>Final Value</th><td>{:.2} NEAR</td></tr>
-                    <tr><th>Duration</th><td>{} days</td></tr>
-                </table>
-            </div>
-
-            <!-- Trading Summary -->
-            <div class="section">
-                <h2 class="section-title">💼 Trading Summary</h2>
-                <div class="summary-stats">
-                    <div class="stat-item">
-                        <div class="stat-value">{}</div>
-                        <div class="stat-label">Total Trades</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">{}</div>
-                        <div class="stat-label">Successful Trades</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">{:.1}%</div>
-                        <div class="stat-label">Win Rate</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">{:.2}</div>
-                        <div class="stat-label">Profit Factor</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">{:.4}</div>
-                        <div class="stat-label">Total Costs</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">{:.1}%</div>
-                        <div class="stat-label">Success Rate</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Portfolio Performance Chart Placeholder -->
-            <div class="section">
-                <h2 class="section-title">📈 Portfolio Performance</h2>
-                <div class="portfolio-chart">
-                    <h3>Portfolio Value Over Time</h3>
-                    <p>Chart visualization would be displayed here</p>
-                    <p><em>Portfolio data points: {} entries</em></p>
-                </div>
-            </div>
-
-            <!-- Detailed Statistics -->
-            <div class="section">
-                <h2 class="section-title">📋 Detailed Statistics</h2>
-                <table class="info-table">
-                    <tr><th>Metric</th><th>Value</th></tr>
-                    <tr><td>Total Return (%)</td><td>{:.4}%</td></tr>
-                    <tr><td>Annualized Return (%)</td><td>{:.4}%</td></tr>
-                    <tr><td>Volatility (%)</td><td>{:.4}%</td></tr>
-                    <tr><td>Sharpe Ratio</td><td>{:.4}</td></tr>
-                    <tr><td>Sortino Ratio</td><td>{:.4}</td></tr>
-                    <tr><td>Maximum Drawdown (%)</td><td>{:.4}%</td></tr>
-                    <tr><td>Winning Trades</td><td>{}</td></tr>
-                    <tr><td>Losing Trades</td><td>{}</td></tr>
-                    <tr><td>Average Cost per Trade</td><td>{:.6}</td></tr>
-                </table>
-            </div>
-        </div>
-        
-        <div class="footer">
-            Generated by CLI Tokens Trading Simulator | {}
-        </div>
-    </div>
-</body>
-</html>"#,
-        // Header values
-        algorithm_str,
-        algorithm_str,
-        start_date_str,
-        end_date_str,
-        // Key metrics
-        if result.performance.total_return_pct >= 0.0 {
-            "positive"
-        } else {
-            "negative"
-        },
-        result.performance.total_return_pct,
-        if result.performance.annualized_return >= 0.0 {
-            "positive"
-        } else {
-            "negative"
-        },
-        result.performance.annualized_return,
-        result.performance.volatility * 100.0,
-        if result.performance.sharpe_ratio >= 0.0 {
-            "positive"
-        } else {
-            "negative"
-        },
-        result.performance.sharpe_ratio,
-        result.performance.max_drawdown_pct,
-        result.performance.total_trades,
-        // Configuration table
-        result.config.algorithm,
-        start_date_str,
-        end_date_str,
-        result.config.initial_capital,
-        result.config.final_value,
-        result.config.duration_days,
-        // Trading summary
-        result.execution_summary.total_trades,
-        result.execution_summary.successful_trades,
-        result.performance.win_rate * 100.0,
-        result.performance.profit_factor,
-        result.execution_summary.total_cost,
-        result.execution_summary.success_rate * 100.0,
-        // Portfolio chart
-        result.portfolio_values.len(),
-        // Detailed statistics
-        result.performance.total_return_pct,
-        result.performance.annualized_return,
-        result.performance.volatility * 100.0,
-        result.performance.sharpe_ratio,
-        result.performance.sortino_ratio,
-        result.performance.max_drawdown_pct,
-        result.performance.winning_trades,
-        result.performance.losing_trades,
-        result.execution_summary.avg_cost_per_trade,
-        // Footer timestamp
-        timestamp
-    );
-
-    Ok(html_content)
-}
-
-#[cfg(test)]
-mod tests;
