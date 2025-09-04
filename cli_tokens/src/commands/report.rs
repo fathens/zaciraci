@@ -1,9 +1,166 @@
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use clap::Args;
 use std::path::PathBuf;
 
 use crate::commands::simulate::{PortfolioValue, SimulationResult, TradeExecution};
+
+#[cfg(test)]
+mod tests;
+
+// === Phase 4.1: Pure Data Structures ===
+
+#[derive(Debug, Clone)]
+pub struct ReportData {
+    pub config: SimulationConfig,
+    pub performance: PerformanceMetrics,
+    pub trades: Vec<TradeExecution>,
+    pub portfolio_values: Vec<PortfolioValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SimulationConfig {
+    pub start_date: DateTime<Utc>,
+    pub end_date: DateTime<Utc>,
+    pub algorithm: String,
+    pub initial_capital: f64,
+    pub final_value: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PerformanceMetrics {
+    pub total_return_pct: f64,
+    pub max_drawdown_pct: f64,
+    pub sharpe_ratio: f64,
+    pub volatility: f64,
+    pub total_trades: usize,
+    pub win_rate: f64,
+    pub active_trading_days: usize,
+    pub simulation_days: usize,
+    pub total_costs: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChartData {
+    pub labels: Vec<String>,
+    pub values: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReportMetrics {
+    pub performance_class: String, // "positive" or "negative"
+    pub currency_symbol: String,
+    pub chart_data: ChartData,
+    pub trades_html: String,
+    pub generation_timestamp: String,
+}
+
+// === Phase 4.1: Pure Functions ===
+
+/// Convert SimulationResult to structured ReportData
+pub fn extract_report_data(result: &SimulationResult) -> ReportData {
+    ReportData {
+        config: SimulationConfig {
+            start_date: result.config.start_date,
+            end_date: result.config.end_date,
+            algorithm: format!("{:?}", result.config.algorithm),
+            initial_capital: result.config.initial_capital,
+            final_value: result.config.final_value,
+        },
+        performance: PerformanceMetrics {
+            total_return_pct: result.performance.total_return_pct,
+            max_drawdown_pct: result.performance.max_drawdown_pct,
+            sharpe_ratio: result.performance.sharpe_ratio,
+            volatility: result.performance.volatility,
+            total_trades: result.performance.total_trades,
+            win_rate: result.performance.win_rate,
+            active_trading_days: result.performance.active_trading_days as usize,
+            simulation_days: result.performance.simulation_days as usize,
+            total_costs: result.performance.total_costs,
+        },
+        trades: result.trades.clone(),
+        portfolio_values: result.portfolio_values.clone(),
+    }
+}
+
+/// Calculate derived metrics for report generation
+pub fn calculate_report_metrics(data: &ReportData) -> ReportMetrics {
+    let performance_class = if data.performance.total_return_pct >= 0.0 {
+        "positive".to_string()
+    } else {
+        "negative".to_string()
+    };
+
+    ReportMetrics {
+        performance_class,
+        currency_symbol: "wrap.near".to_string(), // TODO: Make configurable
+        chart_data: generate_portfolio_chart_data(&data.portfolio_values),
+        trades_html: generate_trades_table_html(&data.trades),
+        generation_timestamp: Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+    }
+}
+
+/// Generate chart data for portfolio value over time
+pub fn generate_portfolio_chart_data(values: &[PortfolioValue]) -> ChartData {
+    let labels: Vec<String> = values
+        .iter()
+        .map(|pv| format!("'{}'", pv.timestamp.format("%m/%d")))
+        .collect();
+
+    let chart_values: Vec<f64> = values.iter().map(|pv| pv.total_value).collect();
+
+    ChartData {
+        labels,
+        values: chart_values,
+    }
+}
+
+/// Generate HTML table for recent trades
+pub fn generate_trades_table_html(trades: &[TradeExecution]) -> String {
+    if trades.is_empty() {
+        return r#"<tr><td colspan="6" style="text-align: center; color: #999;">No trades executed</td></tr>"#.to_string();
+    }
+
+    trades
+        .iter()
+        .rev()
+        .take(10)
+        .map(|trade| {
+            format!(
+                r#"<tr>
+                    <td>{}</td>
+                    <td>{} → {}</td>
+                    <td>{:.4}</td>
+                    <td>{:.6}</td>
+                    <td>{:.4}</td>
+                    <td>{}</td>
+                </tr>"#,
+                trade.timestamp.format("%Y-%m-%d %H:%M"),
+                trade.from_token,
+                trade.to_token,
+                trade.amount,
+                trade.executed_price,
+                trade.cost.total,
+                trade.reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Generate JavaScript object for chart data
+pub fn generate_chart_data_js(chart_data: &ChartData) -> String {
+    format!(
+        "{{labels: [{}], values: [{}]}}",
+        chart_data.labels.join(","),
+        chart_data
+            .values
+            .iter()
+            .map(|v| format!("{:.2}", v))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
 
 #[derive(Debug, Args)]
 pub struct ReportArgs {
@@ -24,24 +181,19 @@ pub fn run_report(args: ReportArgs) -> Result<()> {
     let json_content = std::fs::read_to_string(&args.input)
         .with_context(|| format!("Failed to read input file: {}", args.input.display()))?;
 
-    let result: SimulationResult = serde_json::from_str(&json_content)
+    let simulation_result: SimulationResult = serde_json::from_str(&json_content)
         .with_context(|| format!("Failed to parse JSON file: {}", args.input.display()))?;
 
+    // Phase 4.1: Use pure functions for data extraction and processing
+    let report_data = extract_report_data(&simulation_result);
+    let report_metrics = calculate_report_metrics(&report_data);
+
     // 出力先を決定
-    let output_path = if let Some(output) = args.output {
-        output
-    } else {
-        // 入力ファイルと同じディレクトリにreport.htmlを作成
-        let parent = args
-            .input
-            .parent()
-            .context("Failed to get parent directory")?;
-        parent.join("report.html")
-    };
+    let output_path = determine_output_path(&args)?;
 
     match args.format.as_str() {
         "html" => {
-            let html_content = generate_html_report(&result)?;
+            let html_content = generate_html_report_v2(&report_data, &report_metrics)?;
             std::fs::write(&output_path, html_content)
                 .with_context(|| format!("Failed to write HTML file: {}", output_path.display()))?;
             println!("📊 HTML report saved to: {}", output_path.display());
@@ -57,12 +209,22 @@ pub fn run_report(args: ReportArgs) -> Result<()> {
     Ok(())
 }
 
-/// HTMLレポートを生成
-#[allow(clippy::format_in_format_args)]
-fn generate_html_report(result: &SimulationResult) -> Result<String> {
-    let config = &result.config;
-    let perf = &result.performance;
+/// Determine output file path based on args
+fn determine_output_path(args: &ReportArgs) -> Result<PathBuf> {
+    if let Some(output) = &args.output {
+        Ok(output.clone())
+    } else {
+        // 入力ファイルと同じディレクトリにreport.htmlを作成
+        let parent = args
+            .input
+            .parent()
+            .context("Failed to get parent directory")?;
+        Ok(parent.join("report.html"))
+    }
+}
 
+/// Generate HTML report using new structured approach (Phase 4.1)
+fn generate_html_report_v2(data: &ReportData, metrics: &ReportMetrics) -> Result<String> {
     let html_content = format!(
         r#"<!DOCTYPE html>
 <html lang="ja">
@@ -319,81 +481,27 @@ fn generate_html_report(result: &SimulationResult) -> Result<String> {
     </script>
 </body>
 </html>"#,
-        config.start_date.format("%Y-%m-%d"),
-        config.end_date.format("%Y-%m-%d"),
-        format!("{:?}", config.algorithm),
-        config.initial_capital,
-        "wrap.near",
-        config.final_value,
-        "wrap.near",
-        if perf.total_return_pct >= 0.0 {
-            "positive"
-        } else {
-            "negative"
-        },
-        perf.total_return_pct / 100.0,
-        perf.max_drawdown_pct,
-        perf.sharpe_ratio,
-        perf.volatility,
-        perf.total_trades,
-        perf.win_rate,
-        perf.active_trading_days,
-        perf.simulation_days,
-        perf.total_costs,
-        generate_trades_html(&result.trades),
-        Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
-        generate_portfolio_data_js(&result.portfolio_values),
+        data.config.start_date.format("%Y-%m-%d"),
+        data.config.end_date.format("%Y-%m-%d"),
+        data.config.algorithm,
+        data.config.initial_capital,
+        metrics.currency_symbol,
+        data.config.final_value,
+        metrics.currency_symbol,
+        metrics.performance_class,
+        data.performance.total_return_pct,
+        data.performance.max_drawdown_pct,
+        data.performance.sharpe_ratio,
+        data.performance.volatility * 100.0,
+        data.performance.total_trades,
+        data.performance.win_rate * 100.0,
+        data.performance.active_trading_days,
+        data.performance.simulation_days,
+        data.performance.total_costs,
+        metrics.trades_html,
+        metrics.generation_timestamp,
+        generate_chart_data_js(&metrics.chart_data),
     );
 
     Ok(html_content)
-}
-
-fn generate_trades_html(trades: &[TradeExecution]) -> String {
-    if trades.is_empty() {
-        return r#"<tr><td colspan="6" style="text-align: center; color: #999;">No trades executed</td></tr>"#.to_string();
-    }
-
-    trades
-        .iter()
-        .rev()
-        .take(10)
-        .map(|trade| {
-            format!(
-                r#"<tr>
-                    <td>{}</td>
-                    <td>{} → {}</td>
-                    <td>{:.4}</td>
-                    <td>{:.6}</td>
-                    <td>{:.4}</td>
-                    <td>{}</td>
-                </tr>"#,
-                trade.timestamp.format("%Y-%m-%d %H:%M"),
-                trade.from_token,
-                trade.to_token,
-                trade.amount,
-                trade.executed_price,
-                trade.cost.total,
-                trade.reason
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn generate_portfolio_data_js(values: &[PortfolioValue]) -> String {
-    let labels: Vec<String> = values
-        .iter()
-        .map(|pv| format!("'{}'", pv.timestamp.format("%m/%d")))
-        .collect();
-
-    let data: Vec<String> = values
-        .iter()
-        .map(|pv| format!("{:.2}", pv.total_value))
-        .collect();
-
-    format!(
-        "{{labels: [{}], values: [{}]}}",
-        labels.join(","),
-        data.join(",")
-    )
 }
