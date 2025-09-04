@@ -681,8 +681,8 @@ async fn fetch_price_data(
 
         let values = match backend_client
             .get_price_history(
-                token,
                 &config.quote_token,
+                token,
                 data_start_date.naive_utc(),
                 data_end_date.naive_utc(),
             )
