@@ -1,37 +1,16 @@
-# CLI Tokens - Simulate Command Design
+# CLI Tokens - Simulate Command
 
 ## 概要
 
 `simulate`コマンドは、実際の価格データを使用してトレーディングアルゴリズムのバックテストとパフォーマンス分析を行う機能です。期間を指定して、その期間内で予測・取引を実際に実行したシミュレーションを行い、資産の変動を確認できます。
 
-## 設計思想
+## 主な機能
 
-### バックテスト vs リアルタイムシミュレーション
-
-- **バックテスト方式**: 過去のデータを使用して戦略の有効性を検証
-- **実取引コスト**: Ref Financeの実際の手数料体系を反映
-- **アルゴリズム統合**: 既存のtradeモジュール（momentum、portfolio、trend_following）を活用
-- **実用性重視**: 実際のトレード戦略開発に直結する分析結果
-
-## アーキテクチャ
-
-### ディレクトリ構造
-```
-cli_tokens/
-└── src/
-    └── commands/
-        └── simulate.rs
-            ├── mod.rs           # メインコマンドロジック
-            ├── backtest.rs      # バックテストエンジン
-            ├── trading_sim.rs   # 取引シミュレーション
-            ├── cost_calc.rs     # 取引コスト計算
-            └── results.rs       # 結果分析・レポート
-```
-
-### データフロー
-```
-CLI Input → Price History → Algorithm Execution → Trading Simulation → Performance Analysis → Report Output
-```
+- **バックテスト実行**: 過去のデータを使用して戦略の有効性を検証
+- **実取引コスト計算**: Ref Financeの実際の手数料体系を反映
+- **複数アルゴリズム対応**: momentum、portfolio、trend_followingの3つの戦略
+- **自動データ取得**: 指定期間の価格データを自動取得
+- **パフォーマンス分析**: リターン、シャープレシオ、最大ドローダウンなどの指標を計算
 
 ## コマンド仕様
 
@@ -63,9 +42,7 @@ OPTIONS:
     --min-trade <AMOUNT>         最小取引額 (NEAR) [デフォルト: 1.0]
     --prediction-horizon <HOURS> 予測期間 (時間) [デフォルト: 24]
     --historical-days <DAYS>     予測に使用する過去データ期間 (日数) [デフォルト: 30]
-    --report-format <FORMAT>     レポート形式 [デフォルト: json]
-                                選択肢: json, csv, html
-    --chart                      チャートを生成
+    --chart                      チャートを生成 (未実装)
     --verbose                    詳細ログ
     -h, --help                   ヘルプを表示
 ```
@@ -106,86 +83,48 @@ cli_tokens simulate \
   --slippage 0.02 \
   --gas-cost 0.02
 
-# HTMLレポートとチャート生成
+# レポート生成（別コマンド）
 cli_tokens simulate \
   --start 2024-09-01 \
   --end 2024-12-01 \
   --algorithm momentum \
-  --report-format html \
-  --chart \
   --verbose
+
+# 結果からHTMLレポート生成  
+cli_tokens report simulation_results/momentum_2024-09-01_2024-12-01/results.json \
+  --format html
 ```
 
-## 日付処理とシミュレーションフロー
+## シミュレーションの動作
 
-### タイムステップシミュレーション
+### タイムステップ処理
 
-シミュレーションは指定された期間内で、リバランス頻度に従って時系列で実行されます。各タイムステップで以下の処理を行います：
+シミュレーションは指定された期間内で、リバランス頻度に従って時系列で実行されます：
 
-#### 詳細な日付処理フロー
+1. **価格データ取得**: 指定期間とヒストリカルデータ期間の価格を取得
+2. **初期ポートフォリオ構築**: 初期資金を指定トークンに配分
+3. **各タイムステップで実行**:
+   - 現在価格と過去データから予測を生成
+   - アルゴリズムによる取引判断
+   - 取引実行とコスト計算
+   - ポートフォリオ価値更新
+4. **パフォーマンス分析**: 全取引完了後に各種指標を計算
 
-```
-シミュレーション期間: start_date ～ end_date
-ヒストリカルデータ期間: historical_days (デフォルト: 30日)
-予測期間: prediction_horizon (デフォルト: 24時間)
+### リバランス頻度
 
-例: 2024-11-01 ～ 2024-11-30、historical_days=30、prediction_horizon=24時間
+- **hourly**: 1時間ごとに取引判断（高頻度取引）
+- **daily**: 1日ごとに取引判断（デフォルト）
+- **weekly**: 週1回取引判断（低頻度取引）
 
-Day 1 (2024-11-01 00:00:00):
-  1. ヒストリカルデータ取得
-     - 期間: 2024-10-02 00:00:00 ～ 2024-11-01 00:00:00 (30日分)
-     - 対象: 全target_tokens
-  
-  2. 価格予測
-     - 予測対象時刻: 2024-11-02 00:00:00 (24時間後)
-     - 各トークンの価格を予測
-  
-  3. 取引判断
-     - アルゴリズムに基づいて取引を決定
-     - 手数料・スリッページを考慮
-  
-  4. ポートフォリオ評価
-     - 実際の 2024-11-02 00:00:00 の価格で評価
-     - パフォーマンス記録
+### 必要データ期間
 
-Day 2 (2024-11-02 00:00:00):
-  1. ヒストリカルデータ取得
-     - 期間: 2024-10-03 00:00:00 ～ 2024-11-02 00:00:00 (30日分)
-     - データウィンドウが1日スライド
-  
-  2. 価格予測
-     - 予測対象時刻: 2024-11-03 00:00:00
-  
-  ... (以下、end_dateまで繰り返し)
-```
+シミュレーションには以下の期間のデータが必要です：
 
-#### リバランス頻度による制御
+- **開始**: `start_date - historical_days`
+- **終了**: `end_date + prediction_horizon`
 
-```rust
-let time_step = match config.rebalance_frequency {
-    RebalanceFrequency::Hourly => Duration::hours(1),
-    RebalanceFrequency::Daily => Duration::days(1),
-    RebalanceFrequency::Weekly => Duration::days(7),
-};
-```
-
-- **Hourly**: 1時間ごとに予測・取引
-- **Daily**: 1日ごとに予測・取引（デフォルト）
-- **Weekly**: 週1回予測・取引
-
-#### データ要件
-
-シミュレーションを正しく実行するためには、以下のデータが必要です：
-
-1. **初期データ期間**: `start_date - historical_days` から `start_date` まで
-2. **シミュレーション期間データ**: `start_date` から `end_date + prediction_horizon` まで
-3. **合計必要期間**: `start_date - historical_days` から `end_date + prediction_horizon` まで
-
-例：
-- シミュレーション: 2024-11-01 ～ 2024-11-30
-- historical_days: 30日
-- prediction_horizon: 24時間
-- 必要データ期間: 2024-10-02 ～ 2024-12-01
+例：2024-11-01～2024-11-30のシミュレーション（historical_days=30、prediction_horizon=24時間）
+→ 必要データ: 2024-10-02～2024-12-01
 
 ## 実装詳細
 
@@ -508,7 +447,7 @@ ${CLI_TOKENS_BASE_DIR}/
     ├── momentum_2024-12-01_2024-12-31/
     │   ├── config.json                    # シミュレーション設定
     │   ├── results.json                   # メイン結果（JSON形式）
-    │   ├── results.html                   # HTMLレポート（--report-format html）
+    │   ├── results.html                   # HTMLレポート（reportコマンドで生成）
     │   ├── trades.csv                     # 取引履歴（CSV形式）
     │   ├── portfolio_values.csv           # ポートフォリオ価値推移
     │   ├── performance_chart.png          # パフォーマンスチャート（--chart）
@@ -519,71 +458,37 @@ ${CLI_TOKENS_BASE_DIR}/
         └── ... (同様の構造)
 ```
 
-## 実装段階
 
-### Phase 1: 基本フレームワーク
-- [ ] `simulate.rs` のスケルトン作成
-- [ ] 基本的なコマンドライン引数処理
-- [ ] 価格データ取得機能
-- [ ] 簡単なbuy-and-holdシミュレーション
+## reportコマンド
 
-### Phase 2: アルゴリズム統合
-- [ ] Momentumアルゴリズムの統合
-- [ ] 取引コスト計算の実装
-- [ ] 基本的なパフォーマンス指標計算
+シミュレーション結果からHTMLレポートを生成する独立したコマンドです。
 
-### Phase 3: 高度な機能
-- [ ] PortfolioとTrend Following アルゴリズム統合
-- [ ] 予測機能の統合（Chronos API）
-- [ ] HTMLレポート生成機能
-
-### Phase 4: 最適化と拡張
-- [ ] チャート生成機能
-- [ ] ベンチマーク比較
-- [ ] 並列シミュレーション（複数パラメータでの比較）
-
-## 技術的考慮事項
-
-### パフォーマンス
-- 大量の価格データを効率的に処理
-- メモリ使用量の最適化
-- 非同期処理による高速化
-
-### エラーハンドリング
-- API接続エラー
-- データ不整合
-- 取引実行エラー
-- ファイルI/Oエラー
-
-### テスト戦略
-- 単体テスト: 各アルゴリズムの動作確認
-- 統合テスト: エンドツーエンドのシミュレーション
-- パフォーマンステスト: 大量データでの処理確認
-
-## 依存関係
-
-### 既存モジュール
-```toml
-[dependencies]
-# 既存のzaciraciワークスペース
-zaciraci-backend = { path = "../../backend" }
-zaciraci-common = { path = "../../common" }
-
-# シミュレーション固有
-plotters = "0.3"           # チャート生成
-tabled = "0.12"            # テーブル表示
-indicatif = "0.17"         # プログレスバー
+### 基本構文
+```bash
+cli_tokens report <INPUT_JSON> [OPTIONS]
 ```
 
-### 新規依存関係
-```toml
+### オプション
+```bash
+OPTIONS:
+    -f, --format <FORMAT>    出力形式 [デフォルト: html]
+                            現在は html のみサポート
+    -o, --output <PATH>     出力ファイルパス（オプション）
+    -h, --help              ヘルプを表示
+```
+
+### 使用例
+```bash
 # HTMLレポート生成
-tera = "1.15"              # テンプレートエンジン
-minify-html = "0.11"       # HTML最適化
+cli_tokens report simulation_results/momentum_2024-12-01_2024-12-31/results.json
 
-# 数値計算
-statrs = "0.16"            # 統計計算
-nalgebra = "0.32"          # 線形代数（オプション）
+# 出力先を指定
+cli_tokens report results.json --output custom_report.html
 ```
 
-このシミュレーション機能により、実際のトレード戦略開発において非常に有用なバックテスト環境を提供できます。
+## 注意事項
+
+- **データ可用性**: シミュレーション期間の価格データが存在することを確認してください
+- **バックエンドAPI**: `http://localhost:8080` でバックエンドAPIが動作している必要があります
+- **実行時間**: トークン数と期間により、シミュレーションに数分かかる場合があります
+- **メモリ使用**: 長期間のシミュレーションでは大量のメモリを使用する可能性があります
