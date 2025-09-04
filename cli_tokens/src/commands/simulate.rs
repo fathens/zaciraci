@@ -26,6 +26,28 @@ pub enum TradingAction {
     Switch { from: String, to: String },
 }
 
+// New refactored data structures for better testability
+#[derive(Debug, PartialEq)]
+pub enum TradingDecision {
+    Hold,
+    Sell { target_token: String },
+    Switch { from: String, to: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct TradingConfig {
+    pub min_profit_threshold: f64,
+    pub switch_multiplier: f64,
+    pub min_trade_amount: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenOpportunity {
+    pub token: String,
+    pub expected_return: f64,
+    pub confidence: Option<f64>,
+}
+
 const MIN_PROFIT_THRESHOLD: f64 = 0.05;
 const SWITCH_MULTIPLIER: f64 = 1.5;
 const TOP_N_TOKENS: usize = 3;
@@ -700,13 +722,23 @@ async fn run_momentum_timestep_simulation(
                 .map(calculate_confidence_adjusted_return)
                 .unwrap_or(0.0);
 
-            // 取引決定
-            let action = make_trading_decision(
+            // 取引決定 - リファクタリングされた関数を使用
+            let trading_config = TradingConfig {
+                min_profit_threshold: MIN_PROFIT_THRESHOLD,
+                switch_multiplier: SWITCH_MULTIPLIER,
+                min_trade_amount: 1.0, // config.min_trade_amount would be ideal
+            };
+
+            let opportunities = convert_ranked_tokens_to_opportunities(&ranked_tokens);
+            let decision = make_trading_decision(
                 &token,
                 current_return,
-                &ranked_tokens,
-                &BigDecimal::from(amount as i64),
+                &opportunities,
+                amount,
+                &trading_config,
             );
+
+            let action = convert_decision_to_action(decision, &token);
 
             // 取引実行
             let mut trade_ctx = TradeContext {
@@ -804,23 +836,46 @@ async fn run_momentum_timestep_simulation(
     })
 }
 
-/// 指定時刻での価格を取得
+/// 指定時刻での価格を取得（前後1時間以内のデータが必要）
 fn get_prices_at_time(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     target_time: DateTime<Utc>,
 ) -> Result<HashMap<String, f64>> {
     let mut prices = HashMap::new();
+    let one_hour = chrono::Duration::hours(1);
+    let time_window_start = target_time - one_hour;
+    let time_window_end = target_time + one_hour;
 
     for (token, values) in price_data {
-        // target_time に最も近い価格データを見つける
-        let closest_value = values.iter().min_by_key(|v| {
-            let value_time: DateTime<Utc> = DateTime::from_naive_utc_and_offset(v.time, Utc);
-            (value_time - target_time).num_seconds().abs()
-        });
+        // target_time の前後1時間以内のデータを検索
+        let nearby_values: Vec<&ValueAtTime> = values
+            .iter()
+            .filter(|v| {
+                let value_time: DateTime<Utc> = DateTime::from_naive_utc_and_offset(v.time, Utc);
+                value_time >= time_window_start && value_time <= time_window_end
+            })
+            .collect();
 
-        if let Some(value) = closest_value {
-            prices.insert(token.clone(), value.value);
+        if nearby_values.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No price data found for token '{}' within 1 hour of target time {}. \
+                 This indicates insufficient data quality for reliable simulation. \
+                 Please ensure continuous price data is available for the simulation period.",
+                token,
+                target_time.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
         }
+
+        // 最も近い価格データを選択
+        let closest_value = nearby_values
+            .iter()
+            .min_by_key(|v| {
+                let value_time: DateTime<Utc> = DateTime::from_naive_utc_and_offset(v.time, Utc);
+                (value_time - target_time).num_seconds().abs()
+            })
+            .unwrap();
+
+        prices.insert(token.clone(), closest_value.value);
     }
 
     Ok(prices)
@@ -1256,44 +1311,71 @@ fn rank_tokens_by_momentum(predictions: Vec<PredictionData>) -> Vec<(String, f64
     ranked
 }
 
-fn make_trading_decision(
+/// Pure function for trading decisions with better testability
+pub fn make_trading_decision(
     current_token: &str,
     current_return: f64,
-    ranked_tokens: &[(String, f64, Option<f64>)],
-    holding_amount: &BigDecimal,
-) -> TradingAction {
-    if ranked_tokens.is_empty() {
-        return TradingAction::Hold;
+    ranked_opportunities: &[TokenOpportunity],
+    holding_amount: f64,
+    config: &TradingConfig,
+) -> TradingDecision {
+    if ranked_opportunities.is_empty() {
+        return TradingDecision::Hold;
     }
 
-    let best_token = &ranked_tokens[0];
+    let best_opportunity = &ranked_opportunities[0];
 
-    if best_token.0 == current_token {
-        return TradingAction::Hold;
+    if best_opportunity.token == current_token {
+        return TradingDecision::Hold;
     }
 
-    let amount = holding_amount.to_string().parse::<f64>().unwrap_or(0.0);
-    if amount < 1.0 {
-        // MIN_TRADE_AMOUNT
-        return TradingAction::Hold;
+    if holding_amount < config.min_trade_amount {
+        return TradingDecision::Hold;
     }
 
-    if current_return < MIN_PROFIT_THRESHOLD {
-        return TradingAction::Sell {
-            token: current_token.to_string(),
-            target: best_token.0.clone(),
+    if current_return < config.min_profit_threshold {
+        return TradingDecision::Sell {
+            target_token: best_opportunity.token.clone(),
         };
     }
 
-    let confidence_factor = best_token.2.unwrap_or(0.5);
-    if best_token.1 > current_return * SWITCH_MULTIPLIER * confidence_factor {
-        return TradingAction::Switch {
+    let confidence_adjusted_return =
+        best_opportunity.expected_return * best_opportunity.confidence.unwrap_or(0.5);
+
+    if confidence_adjusted_return > current_return * config.switch_multiplier {
+        return TradingDecision::Switch {
             from: current_token.to_string(),
-            to: best_token.0.clone(),
+            to: best_opportunity.token.clone(),
         };
     }
 
-    TradingAction::Hold
+    TradingDecision::Hold
+}
+
+/// Helper function to convert old format to new format for gradual migration
+pub fn convert_ranked_tokens_to_opportunities(
+    ranked_tokens: &[(String, f64, Option<f64>)],
+) -> Vec<TokenOpportunity> {
+    ranked_tokens
+        .iter()
+        .map(|(token, expected_return, confidence)| TokenOpportunity {
+            token: token.clone(),
+            expected_return: *expected_return,
+            confidence: *confidence,
+        })
+        .collect()
+}
+
+/// Helper function to convert TradingDecision back to TradingAction for backward compatibility
+pub fn convert_decision_to_action(decision: TradingDecision, current_token: &str) -> TradingAction {
+    match decision {
+        TradingDecision::Hold => TradingAction::Hold,
+        TradingDecision::Sell { target_token } => TradingAction::Sell {
+            token: current_token.to_string(),
+            target: target_token,
+        },
+        TradingDecision::Switch { from, to } => TradingAction::Switch { from, to },
+    }
 }
 
 // Portfolio 最適化アルゴリズム実装
@@ -1336,10 +1418,15 @@ async fn run_portfolio_timestep_simulation(
         let mut holdings_values = HashMap::new();
 
         for (token, amount) in &current_holdings {
-            if let Some(current_price) = get_price_at_time(price_data, token, current_date) {
-                let value = amount * BigDecimal::from_f64(current_price).unwrap();
-                holdings_values.insert(token.clone(), value.clone());
-                total_value += value;
+            match get_price_at_time(price_data, token, current_date) {
+                Ok(current_price) => {
+                    let value = amount * BigDecimal::from_f64(current_price).unwrap();
+                    holdings_values.insert(token.clone(), value.clone());
+                    total_value += value;
+                }
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
 
@@ -1504,10 +1591,13 @@ fn execute_portfolio_rebalance(
     // 現在のポートフォリオ価値を計算
     let mut total_portfolio_value = portfolio.cash_balance.clone();
     for (token, amount) in portfolio.holdings.iter() {
-        if let Some(current_price) =
-            get_price_at_time(context.price_data, token, context.current_date)
-        {
-            total_portfolio_value += amount * BigDecimal::from_f64(current_price).unwrap();
+        match get_price_at_time(context.price_data, token, context.current_date) {
+            Ok(current_price) => {
+                total_portfolio_value += amount * BigDecimal::from_f64(current_price).unwrap();
+            }
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
 
@@ -1515,8 +1605,7 @@ fn execute_portfolio_rebalance(
     for (token, target_weight) in target_weights {
         let target_value =
             total_portfolio_value.clone() * BigDecimal::from_f64(*target_weight).unwrap();
-        let current_price =
-            get_price_at_time(context.price_data, token, context.current_date).unwrap_or(1.0);
+        let current_price = get_price_at_time(context.price_data, token, context.current_date)?;
         let target_amount = target_value.clone() / BigDecimal::from_f64(current_price).unwrap();
 
         let current_amount = portfolio
@@ -1611,10 +1700,15 @@ async fn run_trend_following_timestep_simulation(
         let mut holdings_values = HashMap::new();
 
         for (token, amount) in &current_holdings {
-            if let Some(current_price) = get_price_at_time(price_data, token, current_date) {
-                let value = amount * BigDecimal::from_f64(current_price).unwrap();
-                holdings_values.insert(token.clone(), value.clone());
-                total_value += value;
+            match get_price_at_time(price_data, token, current_date) {
+                Ok(current_price) => {
+                    let value = amount * BigDecimal::from_f64(current_price).unwrap();
+                    holdings_values.insert(token.clone(), value.clone());
+                    total_value += value;
+                }
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
 
@@ -1794,8 +1888,7 @@ fn execute_trend_following_trade(
     current_position: &mut String,
     signal: &TrendSignal,
 ) -> Result<()> {
-    let current_price =
-        get_price_at_time(context.price_data, &signal.token, context.current_date).unwrap_or(1.0);
+    let current_price = get_price_at_time(context.price_data, &signal.token, context.current_date)?;
 
     match signal.action {
         TrendAction::Buy => {
@@ -1870,8 +1963,7 @@ fn execute_sell_position(
     token: &str,
 ) -> Result<()> {
     if let Some(amount) = portfolio.holdings.remove(token) {
-        let current_price =
-            get_price_at_time(context.price_data, token, context.current_date).unwrap_or(1.0);
+        let current_price = get_price_at_time(context.price_data, token, context.current_date)?;
         let trade_value = amount.clone() * BigDecimal::from_f64(current_price).unwrap();
 
         let cost = BigDecimal::from_f64(calculate_trading_cost(
@@ -1906,17 +1998,49 @@ fn execute_sell_position(
     Ok(())
 }
 
-/// ヘルパー関数：指定日時の価格を取得
+/// ヘルパー関数：指定日時の価格を取得（前後1時間以内のデータが必要）
 fn get_price_at_time(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     token: &str,
     target_date: DateTime<Utc>,
-) -> Option<f64> {
-    price_data
-        .get(token)?
+) -> Result<f64> {
+    let token_data = price_data
+        .get(token)
+        .ok_or_else(|| anyhow::anyhow!("No price data found for token: {}", token))?;
+
+    let one_hour = chrono::Duration::hours(1);
+    let time_window_start = target_date - one_hour;
+    let time_window_end = target_date + one_hour;
+
+    // target_date の前後1時間以内のデータを検索
+    let nearby_values: Vec<&ValueAtTime> = token_data
         .iter()
-        .find(|v| v.time.and_utc().date_naive() == target_date.date_naive())
-        .map(|v| v.value)
+        .filter(|v| {
+            let value_time: DateTime<Utc> = DateTime::from_naive_utc_and_offset(v.time, Utc);
+            value_time >= time_window_start && value_time <= time_window_end
+        })
+        .collect();
+
+    if nearby_values.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No price data found for token '{}' within 1 hour of target time {}. \
+             This indicates insufficient data quality for reliable simulation. \
+             Please ensure continuous price data is available for the simulation period.",
+            token,
+            target_date.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+    }
+
+    // 最も近い価格データを選択
+    let closest_value = nearby_values
+        .iter()
+        .min_by_key(|v| {
+            let value_time: DateTime<Utc> = DateTime::from_naive_utc_and_offset(v.time, Utc);
+            (value_time - target_date).num_seconds().abs()
+        })
+        .unwrap();
+
+    Ok(closest_value.value)
 }
 
 /// ヘルパー関数：過去データを取得
@@ -1940,3 +2064,6 @@ fn get_historical_data<'a>(
 
     Ok(historical_data)
 }
+
+#[cfg(test)]
+mod tests;

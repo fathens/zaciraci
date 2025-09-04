@@ -1,4 +1,3 @@
-use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::stats::ValueAtTime;
@@ -29,9 +28,7 @@ mod unit_tests {
             min_trade: 1.0,
             prediction_horizon: 24,
             historical_days: 30,
-            report_format: "json".to_string(),
             chart: false,
-            use_mock_data: false,
             verbose: false,
         };
 
@@ -217,34 +214,416 @@ mod unit_tests {
             assert!(ranked[0].1 >= ranked[1].1); // first >= second
         }
     }
+
+    #[test]
+    fn test_get_prices_at_time_with_sufficient_data() {
+        let target_time = Utc::now();
+        let mut price_data = HashMap::new();
+
+        // 前後1時間以内にデータがある場合
+        let values = vec![
+            ValueAtTime {
+                time: (target_time - chrono::Duration::minutes(30)).naive_utc(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: target_time.naive_utc(),
+                value: 105.0,
+            },
+            ValueAtTime {
+                time: (target_time + chrono::Duration::minutes(30)).naive_utc(),
+                value: 110.0,
+            },
+        ];
+
+        price_data.insert("token1".to_string(), values);
+
+        let result = get_prices_at_time(&price_data, target_time).unwrap();
+        assert_eq!(result.get("token1"), Some(&105.0));
+    }
+
+    #[test]
+    fn test_get_prices_at_time_with_insufficient_data() {
+        let target_time = Utc::now();
+        let mut price_data = HashMap::new();
+
+        // 前後1時間以内にデータがない場合
+        let values = vec![
+            ValueAtTime {
+                time: (target_time - chrono::Duration::hours(2)).naive_utc(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: (target_time + chrono::Duration::hours(2)).naive_utc(),
+                value: 110.0,
+            },
+        ];
+
+        price_data.insert("token1".to_string(), values);
+
+        let result = get_prices_at_time(&price_data, target_time);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No price data found for token 'token1' within 1 hour"));
+    }
+
+    #[test]
+    fn test_get_prices_at_time_empty_data() {
+        let target_time = Utc::now();
+        let price_data = HashMap::new();
+
+        let result = get_prices_at_time(&price_data, target_time).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_prices_at_time_boundary_case() {
+        let target_time = Utc::now();
+        let mut price_data = HashMap::new();
+
+        // 境界値テスト: ちょうど1時間前のデータ
+        let values = vec![
+            ValueAtTime {
+                time: (target_time - chrono::Duration::hours(1)).naive_utc(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: (target_time + chrono::Duration::hours(1)).naive_utc(),
+                value: 110.0,
+            },
+        ];
+
+        price_data.insert("token1".to_string(), values);
+
+        let result = get_prices_at_time(&price_data, target_time).unwrap();
+        assert!(result.contains_key("token1"));
+    }
+
+    #[test]
+    fn test_get_price_at_time_with_sufficient_data() {
+        let target_time = Utc::now();
+        let mut price_data = HashMap::new();
+
+        let values = vec![
+            ValueAtTime {
+                time: (target_time - chrono::Duration::minutes(30)).naive_utc(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: target_time.naive_utc(),
+                value: 105.0,
+            },
+        ];
+
+        price_data.insert("token1".to_string(), values);
+
+        let result = get_price_at_time(&price_data, "token1", target_time).unwrap();
+        assert_eq!(result, 105.0);
+    }
+
+    #[test]
+    fn test_get_price_at_time_with_insufficient_data() {
+        let target_time = Utc::now();
+        let mut price_data = HashMap::new();
+
+        // 前後1時間以内にデータがない場合
+        let values = vec![ValueAtTime {
+            time: (target_time - chrono::Duration::hours(2)).naive_utc(),
+            value: 100.0,
+        }];
+
+        price_data.insert("token1".to_string(), values);
+
+        let result = get_price_at_time(&price_data, "token1", target_time);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No price data found for token 'token1' within 1 hour"));
+    }
+
+    #[test]
+    fn test_get_price_at_time_nonexistent_token() {
+        let target_time = Utc::now();
+        let price_data = HashMap::new();
+
+        let result = get_price_at_time(&price_data, "nonexistent_token", target_time);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No price data found for token: nonexistent_token"));
+    }
+
+    #[test]
+    fn test_get_price_at_time_closest_selection() {
+        let target_time = Utc::now();
+        let mut price_data = HashMap::new();
+
+        // 複数のデータポイントがある場合、最も近いものを選択
+        let values = vec![
+            ValueAtTime {
+                time: (target_time - chrono::Duration::minutes(45)).naive_utc(),
+                value: 100.0,
+            },
+            ValueAtTime {
+                time: (target_time - chrono::Duration::minutes(15)).naive_utc(),
+                value: 105.0, // これが最も近い
+            },
+            ValueAtTime {
+                time: (target_time + chrono::Duration::minutes(30)).naive_utc(),
+                value: 110.0,
+            },
+        ];
+
+        price_data.insert("token1".to_string(), values);
+
+        let result = get_price_at_time(&price_data, "token1", target_time).unwrap();
+        assert_eq!(result, 105.0);
+    }
+
+    // === New Refactored Function Tests ===
+
+    #[test]
+    fn test_make_trading_decision_hold_when_profitable() {
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let opportunities = vec![TokenOpportunity {
+            token: "other_token".to_string(),
+            expected_return: 0.08,
+            confidence: Some(0.8),
+        }];
+
+        let decision = make_trading_decision(
+            "current_token",
+            0.1, // 10% return - profitable
+            &opportunities,
+            100.0, // sufficient amount
+            &config,
+        );
+
+        // 0.08 * 0.8 = 0.064, 0.1 * 1.5 = 0.15
+        // 0.064 < 0.15 なので HOLD
+        assert_eq!(decision, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_make_trading_decision_switch_when_better_opportunity() {
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let opportunities = vec![TokenOpportunity {
+            token: "better_token".to_string(),
+            expected_return: 0.25,
+            confidence: Some(0.9),
+        }];
+
+        let decision = make_trading_decision(
+            "current_token",
+            0.1, // 10% return
+            &opportunities,
+            100.0,
+            &config,
+        );
+
+        // 0.25 * 0.9 = 0.225, 0.1 * 1.5 = 0.15
+        // 0.225 > 0.15 なので SWITCH
+        assert_eq!(
+            decision,
+            TradingDecision::Switch {
+                from: "current_token".to_string(),
+                to: "better_token".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_make_trading_decision_sell_when_unprofitable() {
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let opportunities = vec![TokenOpportunity {
+            token: "target_token".to_string(),
+            expected_return: 0.08,
+            confidence: Some(0.8),
+        }];
+
+        let decision = make_trading_decision(
+            "losing_token",
+            0.02, // 2% return - below threshold
+            &opportunities,
+            100.0,
+            &config,
+        );
+
+        assert_eq!(
+            decision,
+            TradingDecision::Sell {
+                target_token: "target_token".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_make_trading_decision_hold_when_insufficient_amount() {
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 10.0, // High minimum
+        };
+
+        let opportunities = vec![TokenOpportunity {
+            token: "better_token".to_string(),
+            expected_return: 0.25,
+            confidence: Some(0.9),
+        }];
+
+        let decision = make_trading_decision(
+            "current_token",
+            0.02, // Below threshold but insufficient amount
+            &opportunities,
+            5.0, // Below min_trade_amount
+            &config,
+        );
+
+        assert_eq!(decision, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_make_trading_decision_hold_when_empty_opportunities() {
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let opportunities = vec![];
+
+        let decision = make_trading_decision(
+            "current_token",
+            0.02, // Below threshold
+            &opportunities,
+            100.0,
+            &config,
+        );
+
+        assert_eq!(decision, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_make_trading_decision_hold_when_same_token() {
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let opportunities = vec![TokenOpportunity {
+            token: "current_token".to_string(), // Same as current
+            expected_return: 0.25,
+            confidence: Some(0.9),
+        }];
+
+        let decision = make_trading_decision("current_token", 0.1, &opportunities, 100.0, &config);
+
+        assert_eq!(decision, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_make_trading_decision_confidence_handling() {
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let opportunities = vec![TokenOpportunity {
+            token: "uncertain_token".to_string(),
+            expected_return: 0.20,
+            confidence: None, // No confidence = defaults to 0.5
+        }];
+
+        let decision = make_trading_decision("current_token", 0.1, &opportunities, 100.0, &config);
+
+        // 0.20 * 0.5 = 0.1, 0.1 * 1.5 = 0.15
+        // 0.1 < 0.15 なので HOLD
+        assert_eq!(decision, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_convert_ranked_tokens_to_opportunities() {
+        let ranked_tokens = vec![
+            ("token1".to_string(), 0.15, Some(0.8)),
+            ("token2".to_string(), 0.10, None),
+        ];
+
+        let opportunities = convert_ranked_tokens_to_opportunities(&ranked_tokens);
+
+        assert_eq!(opportunities.len(), 2);
+        assert_eq!(opportunities[0].token, "token1");
+        assert_eq!(opportunities[0].expected_return, 0.15);
+        assert_eq!(opportunities[0].confidence, Some(0.8));
+        assert_eq!(opportunities[1].token, "token2");
+        assert_eq!(opportunities[1].expected_return, 0.10);
+        assert_eq!(opportunities[1].confidence, None);
+    }
+
+    #[test]
+    fn test_convert_decision_to_action() {
+        // Test Hold conversion
+        let hold_decision = TradingDecision::Hold;
+        let hold_action = convert_decision_to_action(hold_decision, "current_token");
+        assert_eq!(hold_action, TradingAction::Hold);
+
+        // Test Sell conversion
+        let sell_decision = TradingDecision::Sell {
+            target_token: "target_token".to_string(),
+        };
+        let sell_action = convert_decision_to_action(sell_decision, "current_token");
+        assert_eq!(
+            sell_action,
+            TradingAction::Sell {
+                token: "current_token".to_string(),
+                target: "target_token".to_string(),
+            }
+        );
+
+        // Test Switch conversion
+        let switch_decision = TradingDecision::Switch {
+            from: "from_token".to_string(),
+            to: "to_token".to_string(),
+        };
+        let switch_action = convert_decision_to_action(switch_decision, "current_token");
+        assert_eq!(
+            switch_action,
+            TradingAction::Switch {
+                from: "from_token".to_string(),
+                to: "to_token".to_string(),
+            }
+        );
+    }
 }
 
 #[cfg(test)]
 mod integration_tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_generate_mock_price_data() -> Result<()> {
-        let start_date = Utc::now();
-        let end_date = start_date + chrono::Duration::days(1);
-
-        let mock_data = generate_mock_price_data(start_date, end_date)?;
-
-        assert!(!mock_data.is_empty());
-        assert!(mock_data.len() >= 24); // 1時間毎なので24以上
-
-        // 価格が正の値であることを確認
-        for value in &mock_data {
-            assert!(value.value > 0.0);
-        }
-
-        // 時系列順であることを確認
-        for i in 1..mock_data.len() {
-            assert!(mock_data[i].time >= mock_data[i - 1].time);
-        }
-
-        Ok(())
-    }
+    // Note: generate_mock_price_data function is not available in simulate module
+    // This test has been commented out as it depends on non-existent functionality
+    // #[tokio::test]
+    // async fn test_generate_mock_price_data() -> Result<()> { ... }
 
     // Helper function to create a test trade execution
     fn create_test_trade(
@@ -426,9 +805,7 @@ mod integration_tests {
             min_trade: 1.0,
             prediction_horizon: 24,
             historical_days: 30,
-            report_format: "json".to_string(),
             chart: false,
-            use_mock_data: false,
             verbose: false,
         };
 
