@@ -614,6 +614,280 @@ mod unit_tests {
             }
         );
     }
+
+    // === Phase 2: Immutable Data Structure Tests ===
+
+    #[test]
+    fn test_immutable_portfolio_creation() {
+        let portfolio = ImmutablePortfolio::new(1000.0, "wrap.near");
+
+        assert_eq!(portfolio.holdings.get("wrap.near"), Some(&1000.0));
+        assert_eq!(portfolio.cash_balance, 0.0);
+        assert!(portfolio.holdings.len() == 1);
+    }
+
+    #[test]
+    fn test_portfolio_total_value_calculation() {
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.5);
+        let market = MarketSnapshot::new(prices);
+
+        let total_value = portfolio.total_value(&market);
+        assert_eq!(total_value, 1500.0); // 1000 * 1.5
+    }
+
+    #[test]
+    fn test_portfolio_total_value_with_cash() {
+        let mut holdings = HashMap::new();
+        holdings.insert("token_a".to_string(), 500.0);
+
+        let portfolio = ImmutablePortfolio {
+            holdings,
+            cash_balance: 200.0,
+            timestamp: Utc::now(),
+        };
+
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 2.0);
+        let market = MarketSnapshot::new(prices);
+
+        let total_value = portfolio.total_value(&market);
+        assert_eq!(total_value, 1200.0); // 500 * 2.0 + 200
+    }
+
+    #[test]
+    fn test_market_snapshot_creation() {
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 100.0);
+        prices.insert("token_b".to_string(), 200.0);
+
+        let market = MarketSnapshot::new(prices.clone());
+
+        assert_eq!(market.prices, prices);
+        assert_eq!(market.data_quality, DataQuality::Medium);
+        assert!(market.is_reliable());
+    }
+
+    #[test]
+    fn test_data_quality_assessment() {
+        // Empty market
+        let empty_market = MarketSnapshot::new(HashMap::new());
+        assert_eq!(empty_market.data_quality, DataQuality::Poor);
+        assert!(!empty_market.is_reliable());
+
+        // Single token
+        let mut single_prices = HashMap::new();
+        single_prices.insert("token_a".to_string(), 100.0);
+        let single_market = MarketSnapshot::new(single_prices);
+        assert_eq!(single_market.data_quality, DataQuality::Low);
+        assert!(!single_market.is_reliable());
+
+        // Multiple tokens
+        let mut multi_prices = HashMap::new();
+        multi_prices.insert("token_a".to_string(), 100.0);
+        multi_prices.insert("token_b".to_string(), 200.0);
+        multi_prices.insert("token_c".to_string(), 300.0);
+        let multi_market = MarketSnapshot::new(multi_prices);
+        assert_eq!(multi_market.data_quality, DataQuality::Medium);
+        assert!(multi_market.is_reliable());
+
+        // High quality market (6+ tokens)
+        let mut high_prices = HashMap::new();
+        for i in 0..7 {
+            high_prices.insert(format!("token_{}", i), 100.0 + i as f64);
+        }
+        let high_market = MarketSnapshot::new(high_prices);
+        assert_eq!(high_market.data_quality, DataQuality::High);
+        assert!(high_market.is_reliable());
+    }
+
+    #[test]
+    fn test_portfolio_apply_hold_decision() {
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        let market = MarketSnapshot::new(prices);
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let decision = TradingDecision::Hold;
+        let transition = portfolio.apply_trade(&decision, &market, &config).unwrap();
+
+        assert_eq!(transition.from, portfolio);
+        assert_eq!(transition.to.holdings.get("token_a"), Some(&1000.0));
+        assert_eq!(transition.cost, 0.0);
+        assert_eq!(transition.action, TradingDecision::Hold);
+    }
+
+    #[test]
+    fn test_portfolio_apply_sell_decision() {
+        let portfolio = ImmutablePortfolio::new(1000.0, "token_a");
+
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        prices.insert("token_b".to_string(), 2.0);
+        let market = MarketSnapshot::new(prices);
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let decision = TradingDecision::Sell {
+            target_token: "token_b".to_string(),
+        };
+        let transition = portfolio.apply_trade(&decision, &market, &config).unwrap();
+
+        assert!(!transition.to.holdings.contains_key("token_a"));
+        assert!(transition.to.holdings.contains_key("token_b"));
+        assert!(transition.cost > 0.0); // Some transaction cost
+
+        // Should have converted 1000 token_a (worth 1000) to token_b (price 2.0)
+        // After fees: ~1000 * 0.994 / 2.0 = ~497
+        let token_b_amount = transition.to.holdings.get("token_b").unwrap();
+        assert!(*token_b_amount < 500.0 && *token_b_amount > 490.0);
+    }
+
+    #[test]
+    fn test_portfolio_apply_switch_decision() {
+        let mut holdings = HashMap::new();
+        holdings.insert("token_a".to_string(), 500.0);
+
+        let portfolio = ImmutablePortfolio {
+            holdings,
+            cash_balance: 0.0,
+            timestamp: Utc::now(),
+        };
+
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 2.0);
+        prices.insert("token_b".to_string(), 1.0);
+        let market = MarketSnapshot::new(prices);
+
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        let decision = TradingDecision::Switch {
+            from: "token_a".to_string(),
+            to: "token_b".to_string(),
+        };
+        let transition = portfolio.apply_trade(&decision, &market, &config).unwrap();
+
+        assert!(!transition.to.holdings.contains_key("token_a"));
+        assert!(transition.to.holdings.contains_key("token_b"));
+        assert!(transition.cost > 0.0);
+
+        // Should have converted 500 token_a (worth 1000) to token_b (price 1.0)
+        // After fees: ~1000 * 0.994 = ~994
+        let token_b_amount = transition.to.holdings.get("token_b").unwrap();
+        assert!(*token_b_amount < 1000.0 && *token_b_amount > 990.0);
+    }
+
+    #[test]
+    fn test_market_snapshot_from_price_data() {
+        let target_time = Utc::now();
+        let mut price_data = HashMap::new();
+
+        let values = vec![ValueAtTime {
+            time: target_time.naive_utc(),
+            value: 150.0,
+        }];
+        price_data.insert("token_a".to_string(), values);
+
+        let market = MarketSnapshot::from_price_data(&price_data, target_time).unwrap();
+
+        assert_eq!(market.get_price("token_a"), Some(150.0));
+        assert_eq!(market.timestamp, target_time);
+        assert_eq!(market.data_quality, DataQuality::Low);
+    }
+
+    #[test]
+    fn test_immutable_portfolio_demo_trading_sequence() {
+        // Phase 2 Demo: Complete trading sequence with immutable data structures
+
+        // Initial portfolio: 1000 units of token_a
+        let portfolio_v1 = ImmutablePortfolio::new(1000.0, "token_a");
+
+        // Market snapshot with multiple tokens
+        let mut prices = HashMap::new();
+        prices.insert("token_a".to_string(), 1.0);
+        prices.insert("token_b".to_string(), 2.0);
+        prices.insert("token_c".to_string(), 0.5);
+        let market = MarketSnapshot::new(prices);
+
+        // Trading config
+        let config = TradingConfig {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_amount: 1.0,
+        };
+
+        println!("=== Phase 2 Immutable Portfolio Demo ===");
+        println!(
+            "Initial portfolio value: {}",
+            portfolio_v1.total_value(&market)
+        );
+        println!("Market quality: {:?}", market.data_quality);
+
+        // Trade 1: Switch from token_a to token_b
+        let decision_1 = TradingDecision::Switch {
+            from: "token_a".to_string(),
+            to: "token_b".to_string(),
+        };
+        let transition_1 = portfolio_v1
+            .apply_trade(&decision_1, &market, &config)
+            .unwrap();
+        let portfolio_v2 = transition_1.to.clone();
+
+        println!(
+            "After switch to token_b: value={}, cost={}",
+            portfolio_v2.total_value(&market),
+            transition_1.cost
+        );
+
+        // Trade 2: Sell token_b for token_c
+        let decision_2 = TradingDecision::Sell {
+            target_token: "token_c".to_string(),
+        };
+        let transition_2 = portfolio_v2
+            .apply_trade(&decision_2, &market, &config)
+            .unwrap();
+        let portfolio_v3 = transition_2.to.clone();
+
+        println!(
+            "After sell to token_c: value={}, cost={}",
+            portfolio_v3.total_value(&market),
+            transition_2.cost
+        );
+
+        // Verify immutability: original portfolios are unchanged
+        assert_eq!(portfolio_v1.holdings.get("token_a"), Some(&1000.0));
+        assert!(portfolio_v2.holdings.contains_key("token_b"));
+        assert!(portfolio_v3.holdings.contains_key("token_c"));
+
+        // Each step created a new portfolio without modifying previous ones
+        assert_eq!(transition_1.from, portfolio_v1);
+        assert_eq!(transition_1.to, portfolio_v2);
+        assert_eq!(transition_2.from, portfolio_v2);
+        assert_eq!(transition_2.to, portfolio_v3);
+
+        println!("✅ Immutability verified: all previous portfolios remain unchanged");
+        println!(
+            "✅ Total cost of trades: {}",
+            transition_1.cost + transition_2.cost
+        );
+    }
 }
 
 #[cfg(test)]

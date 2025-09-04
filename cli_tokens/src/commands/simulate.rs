@@ -27,7 +27,7 @@ pub enum TradingAction {
 }
 
 // New refactored data structures for better testability
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TradingDecision {
     Hold,
     Sell { target_token: String },
@@ -46,6 +46,38 @@ pub struct TokenOpportunity {
     pub token: String,
     pub expected_return: f64,
     pub confidence: Option<f64>,
+}
+
+// Phase 2: Immutable data structures for better functional programming
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImmutablePortfolio {
+    pub holdings: HashMap<String, f64>,
+    pub cash_balance: f64,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MarketSnapshot {
+    pub prices: HashMap<String, f64>,
+    pub timestamp: DateTime<Utc>,
+    pub data_quality: DataQuality,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DataQuality {
+    High,   // All tokens have fresh data (< 1 hour)
+    Medium, // Most tokens have acceptable data
+    Low,    // Some tokens have stale data
+    Poor,   // Significant data quality issues
+}
+
+#[derive(Debug, Clone)]
+pub struct PortfolioTransition {
+    pub from: ImmutablePortfolio,
+    pub to: ImmutablePortfolio,
+    pub action: TradingDecision,
+    pub cost: f64,
+    pub reason: String,
 }
 
 const MIN_PROFIT_THRESHOLD: f64 = 0.05;
@@ -1375,6 +1407,151 @@ pub fn convert_decision_to_action(decision: TradingDecision, current_token: &str
             target: target_token,
         },
         TradingDecision::Switch { from, to } => TradingAction::Switch { from, to },
+    }
+}
+
+// Phase 2: Immutable data structure operations
+impl ImmutablePortfolio {
+    pub fn new(initial_capital: f64, initial_token: &str) -> Self {
+        let mut holdings = HashMap::new();
+        holdings.insert(initial_token.to_string(), initial_capital);
+
+        Self {
+            holdings,
+            cash_balance: 0.0,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn total_value(&self, market: &MarketSnapshot) -> f64 {
+        let mut total = self.cash_balance;
+
+        for (token, amount) in &self.holdings {
+            if let Some(&price) = market.prices.get(token) {
+                total += amount * price;
+            }
+        }
+
+        total
+    }
+
+    pub fn apply_trade(
+        &self,
+        decision: &TradingDecision,
+        market: &MarketSnapshot,
+        _config: &TradingConfig,
+    ) -> Result<PortfolioTransition> {
+        let mut new_holdings = self.holdings.clone();
+        let mut cost = 0.0;
+
+        let new_portfolio = match decision {
+            TradingDecision::Hold => ImmutablePortfolio {
+                holdings: new_holdings,
+                cash_balance: self.cash_balance,
+                timestamp: market.timestamp,
+            },
+            TradingDecision::Sell { target_token } => {
+                // Sell current holding to target token
+                if let Some((current_token, current_amount)) = new_holdings.iter().next() {
+                    let current_token = current_token.clone();
+                    let current_amount = *current_amount;
+
+                    new_holdings.remove(&current_token);
+
+                    if let Some(&target_price) = market.prices.get(target_token) {
+                        let target_amount = current_amount / target_price;
+                        cost = current_amount * 0.006; // Simple fee calculation
+                        let net_amount = target_amount - (cost / target_price);
+
+                        new_holdings.insert(target_token.clone(), net_amount);
+                    }
+                }
+
+                ImmutablePortfolio {
+                    holdings: new_holdings,
+                    cash_balance: self.cash_balance,
+                    timestamp: market.timestamp,
+                }
+            }
+            TradingDecision::Switch { from, to } => {
+                if let Some(&from_amount) = new_holdings.get(from) {
+                    new_holdings.remove(from);
+
+                    if let (Some(&from_price), Some(&to_price)) =
+                        (market.prices.get(from), market.prices.get(to))
+                    {
+                        let from_value = from_amount * from_price;
+                        cost = from_value * 0.006; // Simple fee calculation
+                        let net_value = from_value - cost;
+                        let to_amount = net_value / to_price;
+
+                        new_holdings.insert(to.clone(), to_amount);
+                    }
+                }
+
+                ImmutablePortfolio {
+                    holdings: new_holdings,
+                    cash_balance: self.cash_balance,
+                    timestamp: market.timestamp,
+                }
+            }
+        };
+
+        Ok(PortfolioTransition {
+            from: self.clone(),
+            to: new_portfolio,
+            action: decision.clone(),
+            cost,
+            reason: format!("Applied {:?}", decision),
+        })
+    }
+}
+
+impl MarketSnapshot {
+    pub fn new(prices: HashMap<String, f64>) -> Self {
+        let data_quality = Self::assess_data_quality(&prices);
+
+        Self {
+            prices,
+            timestamp: Utc::now(),
+            data_quality,
+        }
+    }
+
+    pub fn from_price_data(
+        price_data: &HashMap<String, Vec<ValueAtTime>>,
+        target_time: DateTime<Utc>,
+    ) -> Result<Self> {
+        let prices = get_prices_at_time(price_data, target_time)?;
+        let data_quality = Self::assess_data_quality(&prices);
+
+        Ok(Self {
+            prices,
+            timestamp: target_time,
+            data_quality,
+        })
+    }
+
+    fn assess_data_quality(prices: &HashMap<String, f64>) -> DataQuality {
+        if prices.is_empty() {
+            return DataQuality::Poor;
+        }
+
+        // Simple heuristic: more tokens = better quality
+        match prices.len() {
+            0 => DataQuality::Poor,
+            1 => DataQuality::Low,
+            2..=5 => DataQuality::Medium,
+            _ => DataQuality::High,
+        }
+    }
+
+    pub fn get_price(&self, token: &str) -> Option<f64> {
+        self.prices.get(token).copied()
+    }
+
+    pub fn is_reliable(&self) -> bool {
+        matches!(self.data_quality, DataQuality::High | DataQuality::Medium)
     }
 }
 
