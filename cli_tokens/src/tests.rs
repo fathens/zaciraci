@@ -260,7 +260,6 @@ mod integration_tests {
             prediction_horizon: 24,
             historical_days: 30,
             chart: false,
-            use_mock_data: false,
             verbose: false,
         };
 
@@ -293,7 +292,6 @@ mod integration_tests {
             prediction_horizon: 12,
             historical_days: 14,
             chart: true,
-            use_mock_data: true,
             verbose: true,
         };
 
@@ -302,7 +300,6 @@ mod integration_tests {
         assert!(portfolio_config.tokens.is_none()); // Should fetch from top volatility
         assert_eq!(portfolio_config.fee_model, "zero");
         assert_eq!(portfolio_config.custom_fee.unwrap(), 0.002);
-        assert!(portfolio_config.use_mock_data);
         assert!(portfolio_config.verbose);
     }
 

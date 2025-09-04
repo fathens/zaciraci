@@ -100,10 +100,6 @@ pub struct SimulateArgs {
     #[clap(long)]
     pub chart: bool,
 
-    /// テスト用にモックデータを使用する（本番運用では使用禁止）
-    #[clap(long)]
-    pub use_mock_data: bool,
-
     /// 詳細ログ
     #[clap(short, long)]
     pub verbose: bool,
@@ -442,17 +438,9 @@ async fn run_momentum_simulation(config: &SimulationConfig) -> Result<Simulation
     let price_data = fetch_price_data(&backend_client, config).await?;
 
     if price_data.is_empty() {
-        if std::env::var("CLI_TOKENS_ALLOW_MOCK").is_ok() {
-            println!("🧪 Using mock data for testing (CLI_TOKENS_ALLOW_MOCK is set)");
-            let mock_price_data =
-                generate_mock_price_data_for_tokens(&config.target_tokens, config).await?;
-            return run_momentum_timestep_simulation(config, &mock_price_data).await;
-        } else {
-            return Err(anyhow::anyhow!(
-                "No price data available for simulation period. Cannot proceed without real market data.\n\
-                 For testing purposes, set CLI_TOKENS_ALLOW_MOCK=1 environment variable to use mock data."
-            ));
-        }
+        return Err(anyhow::anyhow!(
+            "No price data available for simulation period. Please check your backend connection and ensure price data exists for the specified tokens and time period."
+        ));
     }
 
     // 2. Momentumアルゴリズムでシミュレーション実行
@@ -474,17 +462,9 @@ async fn run_portfolio_simulation(config: &SimulationConfig) -> Result<Simulatio
     let price_data = fetch_price_data(&backend_client, config).await?;
 
     if price_data.is_empty() {
-        if std::env::var("CLI_TOKENS_ALLOW_MOCK").is_ok() {
-            println!("🧪 Using mock data for testing (CLI_TOKENS_ALLOW_MOCK is set)");
-            let mock_price_data =
-                generate_mock_price_data_for_tokens(&config.target_tokens, config).await?;
-            return run_portfolio_timestep_simulation(config, &mock_price_data).await;
-        } else {
-            return Err(anyhow::anyhow!(
-                "No price data available for simulation period. Cannot proceed without real market data.\n\
-                 For testing purposes, set CLI_TOKENS_ALLOW_MOCK=1 environment variable to use mock data."
-            ));
-        }
+        return Err(anyhow::anyhow!(
+            "No price data available for simulation period. Please check your backend connection and ensure price data exists for the specified tokens and time period."
+        ));
     }
 
     // 2. Portfolio最適化アルゴリズムでシミュレーション実行
@@ -503,17 +483,9 @@ async fn run_trend_following_simulation(config: &SimulationConfig) -> Result<Sim
     let price_data = fetch_price_data(&backend_client, config).await?;
 
     if price_data.is_empty() {
-        if std::env::var("CLI_TOKENS_ALLOW_MOCK").is_ok() {
-            println!("🧪 Using mock data for testing (CLI_TOKENS_ALLOW_MOCK is set)");
-            let mock_price_data =
-                generate_mock_price_data_for_tokens(&config.target_tokens, config).await?;
-            return run_trend_following_timestep_simulation(config, &mock_price_data).await;
-        } else {
-            return Err(anyhow::anyhow!(
-                "No price data available for simulation period. Cannot proceed without real market data.\n\
-                 For testing purposes, set CLI_TOKENS_ALLOW_MOCK=1 environment variable to use mock data."
-            ));
-        }
+        return Err(anyhow::anyhow!(
+            "No price data available for simulation period. Please check your backend connection and ensure price data exists for the specified tokens and time period."
+        ));
     }
 
     // 2. TrendFollowingアルゴリズムでシミュレーション実行
@@ -632,22 +604,14 @@ async fn fetch_price_data(
     for token in &config.target_tokens {
         println!("  Getting data for {}", token);
 
-        let values = match backend_client
+        let values = backend_client
             .get_price_history(
                 &config.quote_token,
                 token,
                 data_start_date.naive_utc(),
                 data_end_date.naive_utc(),
             )
-            .await
-        {
-            Ok(values) => values,
-            Err(e) => {
-                println!("  ⚠️ Failed to fetch real data for {}: {}", token, e);
-                println!("  🔧 Generating mock data for testing");
-                generate_mock_price_data(data_start_date, data_end_date)?
-            }
-        };
+            .await?;
 
         if values.is_empty() {
             println!("  ⚠️ No price data found for {}", token);
@@ -689,8 +653,19 @@ async fn run_momentum_timestep_simulation(
     let tokens_count = config.target_tokens.len() as f64;
     let initial_per_token = initial_value / tokens_count;
 
+    // 初期価格データを取得
+    let initial_prices = get_prices_at_time(price_data, config.start_date)?;
+
     for token in &config.target_tokens {
-        current_holdings.insert(token.clone(), initial_per_token);
+        if let Some(&initial_price) = initial_prices.get(token) {
+            let token_amount = initial_per_token / initial_price; // 価格で割って数量を計算
+            current_holdings.insert(token.clone(), token_amount);
+        } else {
+            return Err(anyhow::anyhow!(
+                "No price data found for token: {} at start date",
+                token
+            ));
+        }
     }
 
     let mut step_count = 0;
@@ -1319,58 +1294,6 @@ fn make_trading_decision(
     }
 
     TradingAction::Hold
-}
-
-/// モック価格データを生成（テスト用）
-fn generate_mock_price_data(
-    start_date: DateTime<Utc>,
-    end_date: DateTime<Utc>,
-) -> Result<Vec<ValueAtTime>> {
-    use rand::Rng;
-
-    let mut rng = rand::thread_rng();
-    let mut values = Vec::new();
-    let mut current_time = start_date;
-    let mut current_price: f64 = 1.0; // 初期価格
-
-    while current_time <= end_date {
-        // ランダムウォーク（±2%の変動）
-        let change = rng.gen_range(-0.02..0.02);
-        current_price *= 1.0 + change;
-        current_price = current_price.max(0.1); // 最低価格0.1
-
-        values.push(ValueAtTime {
-            time: current_time.naive_utc(),
-            value: current_price,
-        });
-
-        // 1時間毎のデータを生成
-        current_time += chrono::Duration::hours(1);
-    }
-
-    Ok(values)
-}
-
-/// 複数トークン用のモックデータを生成
-async fn generate_mock_price_data_for_tokens(
-    tokens: &[String],
-    config: &SimulationConfig,
-) -> Result<HashMap<String, Vec<ValueAtTime>>> {
-    let mut price_data = HashMap::new();
-    let data_start_date = config.start_date - chrono::Duration::days(config.historical_days);
-    let data_end_date = config.end_date + config.prediction_horizon;
-
-    for token in tokens {
-        let mock_data = generate_mock_price_data(data_start_date, data_end_date)?;
-        price_data.insert(token.clone(), mock_data);
-        println!(
-            "  📊 Generated {} mock data points for {}",
-            price_data.get(token).unwrap().len(),
-            token
-        );
-    }
-
-    Ok(price_data)
 }
 
 // Portfolio 最適化アルゴリズム実装
