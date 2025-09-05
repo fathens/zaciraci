@@ -94,88 +94,10 @@ mod unit_tests {
         assert_eq!(calculate_simple_volatility(&single_price), 0.0);
     }
 
-    #[test]
-    fn test_predict_price_trend() {
-        let current_time = Utc::now();
-        let value1 = ValueAtTime {
-            time: current_time.naive_utc(),
-            value: 100.0,
-        };
-        let value2 = ValueAtTime {
-            time: current_time.naive_utc(),
-            value: 105.0,
-        };
-        let value3 = ValueAtTime {
-            time: current_time.naive_utc(),
-            value: 110.0,
-        };
-        let value4 = ValueAtTime {
-            time: current_time.naive_utc(),
-            value: 115.0,
-        };
-        let value5 = ValueAtTime {
-            time: current_time.naive_utc(),
-            value: 120.0,
-        };
-
-        let test_data = vec![&value1, &value2, &value3, &value4, &value5];
-
-        let target_time = Utc::now();
-        let predicted_price = predict_price_trend(&test_data, target_time).unwrap();
-
-        // 上昇トレンドなので現在価格より高い予測価格
-        assert!(predicted_price > 120.0);
-
-        // 空のデータ
-        let empty_data = vec![];
-        let empty_result = predict_price_trend(&empty_data, target_time).unwrap();
-        assert_eq!(empty_result, 0.0);
-
-        // 単一データ - predict_price_trend関数では単一データの場合、0.0が返される
-        let single_value = ValueAtTime {
-            time: Utc::now().naive_utc(),
-            value: 100.0,
-        };
-        let single_data = vec![&single_value];
-        let single_result = predict_price_trend(&single_data, target_time).unwrap();
-        // 実装では単一データ（2未満）の場合、0.0が返される
-        assert_eq!(single_result, 0.0);
-    }
-
-    #[test]
-    fn test_calculate_prediction_confidence() {
-        // 十分なデータ量
-        let value1 = ValueAtTime {
-            time: Utc::now().naive_utc(),
-            value: 100.0,
-        };
-        let value2 = ValueAtTime {
-            time: Utc::now().naive_utc(),
-            value: 101.0,
-        };
-        let value3 = ValueAtTime {
-            time: Utc::now().naive_utc(),
-            value: 102.0,
-        };
-        let sufficient_data = vec![&value1, &value2, &value3];
-        let confidence = calculate_prediction_confidence(&sufficient_data);
-        // 実装では少ないデータポイントでも低い信頼度で計算される
-        assert!((0.1..=1.0).contains(&confidence));
-
-        // データ不足
-        let value_single = ValueAtTime {
-            time: Utc::now().naive_utc(),
-            value: 100.0,
-        };
-        let insufficient_data = vec![&value_single];
-        let low_confidence = calculate_prediction_confidence(&insufficient_data);
-        assert_eq!(low_confidence, 0.1);
-
-        // 空のデータ
-        let empty_data = vec![];
-        let empty_confidence = calculate_prediction_confidence(&empty_data);
-        assert_eq!(empty_confidence, 0.1);
-    }
+    // 削除された関数のテストは、API統合テストに置き換えられました
+    // test_predict_price_trend と test_calculate_prediction_confidence は
+    // 新しいAPI統合による予測生成に置き換えられたため、削除しました。
+    // 新しいテストは api_integration_tests.rs を参照してください。
 
     #[test]
     fn test_rank_tokens_by_momentum() {

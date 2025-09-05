@@ -2,8 +2,11 @@ use crate::api::backend::BackendClient;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use bigdecimal::FromPrimitive;
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use clap::Args;
+use common::api::chronos::ChronosApiClient;
+use common::api::traits::PredictionClient;
+use common::prediction::ZeroShotPredictionRequest;
 use common::stats::ValueAtTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -848,14 +851,17 @@ async fn run_momentum_timestep_simulation(
         // 現在時点での価格を取得
         let current_prices = get_prices_at_time(price_data, current_time)?;
 
-        // 過去データから予測を生成
-        let predictions = generate_momentum_predictions(
-            price_data,
+        // API統合による予測を生成
+        let backend_client = BackendClient::new();
+        let predictions = generate_api_predictions(
+            &backend_client,
             &config.target_tokens,
+            &config.quote_token,
             current_time,
             config.historical_days,
             config.prediction_horizon,
-        )?;
+        )
+        .await?;
 
         // Momentumアルゴリズムで取引決定
         let ranked_tokens = rank_tokens_by_momentum(predictions.clone());
@@ -1146,126 +1152,149 @@ fn calculate_performance_metrics(
     }
 }
 
-/// Momentumアルゴリズム用の予測を生成
-fn generate_momentum_predictions(
-    price_data: &HashMap<String, Vec<ValueAtTime>>,
+/// API統合による予測生成（Chronos API使用）
+async fn generate_api_predictions(
+    backend_client: &BackendClient,
     target_tokens: &[String],
+    quote_token: &str,
     current_time: DateTime<Utc>,
     historical_days: i64,
-    prediction_horizon: chrono::Duration,
+    prediction_horizon: Duration,
 ) -> Result<Vec<PredictionData>> {
     let mut predictions = Vec::new();
 
-    let history_start = current_time - chrono::Duration::days(historical_days);
-    let prediction_target = current_time + prediction_horizon;
+    // Chronos APIクライアントを初期化
+    let chronos_url = std::env::var("CHRONOS_URL")
+        .or_else(|_| std::env::var("BACKEND_URL").map(|url| format!("{}/chronos", url)))
+        .unwrap_or_else(|_| "http://localhost:8000".to_string());
+
+    let chronos_client = ChronosApiClient::new(chronos_url);
+
+    let history_start = current_time - Duration::days(historical_days);
+    let _prediction_hours = prediction_horizon.num_hours() as usize;
 
     for token in target_tokens {
-        if let Some(token_data) = price_data.get(token) {
-            // 履歴データの取得
-            let historical_data: Vec<&ValueAtTime> = token_data
-                .iter()
-                .filter(|v| {
-                    let value_time: DateTime<Utc> =
-                        DateTime::from_naive_utc_and_offset(v.time, Utc);
-                    value_time >= history_start && value_time <= current_time
-                })
-                .collect();
+        // 価格履歴を取得
+        let price_history_result = backend_client
+            .get_price_history(
+                token,
+                quote_token,
+                history_start.naive_utc(),
+                current_time.naive_utc(),
+            )
+            .await;
 
-            if historical_data.len() < 2 {
+        let price_history = match price_history_result {
+            Ok(history) => history,
+            Err(e) => {
+                eprintln!("Warning: Failed to get price history for {}: {}", token, e);
                 continue;
             }
+        };
 
-            // 現在価格
-            let current_price = historical_data.last().map(|v| v.value).unwrap_or(0.0);
+        if price_history.len() < 10 {
+            eprintln!(
+                "Warning: Insufficient price history for {}: {} points",
+                token,
+                price_history.len()
+            );
+            continue;
+        }
 
-            // シンプルなトレンド予測（直線外挿）
-            let predicted_price = if historical_data.len() >= 5 {
-                predict_price_trend(&historical_data, prediction_target)?
-            } else {
-                current_price // データ不足の場合は現在価格のまま
-            };
+        // 価格履歴をChronos API用のフォーマットに変換
+        let timestamps: Vec<DateTime<Utc>> = price_history
+            .iter()
+            .map(|p| DateTime::from_naive_utc_and_offset(p.time, Utc))
+            .collect();
+        let values: Vec<f64> = price_history.iter().map(|p| p.value).collect();
 
-            // 信頼度計算（データ量と直近のボラティリティに基づく）
-            let confidence = calculate_prediction_confidence(&historical_data);
+        if values.is_empty() {
+            continue;
+        }
 
-            predictions.push(PredictionData {
-                token: token.clone(),
-                current_price: BigDecimal::from_f64(current_price).unwrap_or_default(),
-                predicted_price_24h: BigDecimal::from_f64(predicted_price).unwrap_or_default(),
-                timestamp: current_time,
-                confidence: Some(confidence),
-            });
+        let current_price = *values.last().unwrap();
+        let forecast_until = current_time + prediction_horizon;
+
+        // Chronos API予測リクエストを作成
+        let prediction_request = ZeroShotPredictionRequest {
+            timestamp: timestamps,
+            values,
+            forecast_until,
+            model_name: Some("chronos_default".to_string()),
+            model_params: None,
+        };
+
+        // 予測を実行
+        match chronos_client.predict(prediction_request).await {
+            Ok(async_response) => {
+                // 予測完了まで待機
+                match chronos_client
+                    .poll_prediction_until_complete(&async_response.task_id)
+                    .await
+                {
+                    Ok(result) => {
+                        if let Some(forecast_result) = result.result {
+                            // 24時間後の予測価格を取得（最初のデータポイント）
+                            let predicted_price_24h = forecast_result
+                                .forecast_values
+                                .first()
+                                .copied()
+                                .unwrap_or(current_price);
+
+                            // 信頼度計算（利用可能であればメトリクスから、そうでなければデフォルト）
+                            let confidence = forecast_result
+                                .metrics
+                                .as_ref()
+                                .and_then(|m| m.get("confidence"))
+                                .copied()
+                                .unwrap_or(0.7); // デフォルト信頼度
+
+                            predictions.push(PredictionData {
+                                token: token.clone(),
+                                current_price: BigDecimal::from_f64(current_price)
+                                    .unwrap_or_default(),
+                                predicted_price_24h: BigDecimal::from_f64(predicted_price_24h)
+                                    .unwrap_or_default(),
+                                timestamp: current_time,
+                                confidence: Some(confidence),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to get prediction result for {}: {}",
+                            token, e
+                        );
+                        // フォールバック：現在価格をそのまま使用
+                        predictions.push(PredictionData {
+                            token: token.clone(),
+                            current_price: BigDecimal::from_f64(current_price).unwrap_or_default(),
+                            predicted_price_24h: BigDecimal::from_f64(current_price)
+                                .unwrap_or_default(),
+                            timestamp: current_time,
+                            confidence: Some(0.1), // 低い信頼度
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to start prediction for {}: {}", token, e);
+                // フォールバック：現在価格をそのまま使用
+                predictions.push(PredictionData {
+                    token: token.clone(),
+                    current_price: BigDecimal::from_f64(current_price).unwrap_or_default(),
+                    predicted_price_24h: BigDecimal::from_f64(current_price).unwrap_or_default(),
+                    timestamp: current_time,
+                    confidence: Some(0.1), // 低い信頼度
+                });
+            }
         }
     }
 
     Ok(predictions)
 }
 
-/// 価格トレンドを予測
-fn predict_price_trend(
-    historical_data: &[&ValueAtTime],
-    _target_time: DateTime<Utc>,
-) -> Result<f64> {
-    if historical_data.len() < 2 {
-        return Ok(0.0);
-    }
-
-    // 直近5データポイントの平均変化率を使用
-    let recent_data = &historical_data[historical_data.len().saturating_sub(5)..];
-
-    if recent_data.len() < 2 {
-        return Ok(recent_data.last().unwrap().value);
-    }
-
-    let mut total_return = 0.0;
-    let mut count = 0;
-
-    for i in 1..recent_data.len() {
-        let prev = recent_data[i - 1].value;
-        let curr = recent_data[i].value;
-
-        if prev > 0.0 {
-            let return_rate = (curr - prev) / prev;
-            total_return += return_rate;
-            count += 1;
-        }
-    }
-
-    if count == 0 {
-        return Ok(recent_data.last().unwrap().value);
-    }
-
-    let avg_return = total_return / count as f64;
-    let current_price = recent_data.last().unwrap().value;
-
-    // 予測価格 = 現在価格 * (1 + 平均リターン)
-    Ok(current_price * (1.0 + avg_return))
-}
-
-/// 予測の信頼度を計算
-fn calculate_prediction_confidence(historical_data: &[&ValueAtTime]) -> f64 {
-    if historical_data.len() < 2 {
-        return 0.1;
-    }
-
-    // データ量に基づく基本信頼度
-    let data_confidence = (historical_data.len() as f64 / 30.0).min(1.0);
-
-    // ボラティリティに基づく調整
-    let prices: Vec<f64> = historical_data.iter().map(|v| v.value).collect();
-    let volatility = calculate_simple_volatility(&prices);
-
-    // 高ボラティリティは信頼度を下げる
-    let volatility_factor = if volatility > 0.5 {
-        0.5
-    } else {
-        1.0 - volatility
-    };
-
-    (data_confidence * volatility_factor).clamp(0.1, 0.9)
-}
-
-/// シンプルなボラティリティ計算
+/// シンプルなボラティリティ計算（残しておく必要があるため再実装）
 fn calculate_simple_volatility(prices: &[f64]) -> f64 {
     if prices.len() < 2 {
         return 0.0;
@@ -2690,3 +2719,6 @@ fn save_multi_algorithm_result(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod api_integration_tests;
