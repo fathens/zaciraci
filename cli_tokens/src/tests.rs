@@ -251,7 +251,7 @@ mod integration_tests {
             tokens: Some("token1,token2,token3".to_string()),
             num_tokens: 10,
             output: "simulation_results".to_string(),
-            rebalance_freq: "daily".to_string(),
+            rebalance_interval: "1d".to_string(),
             fee_model: "realistic".to_string(),
             custom_fee: None,
             slippage: 0.01,
@@ -283,7 +283,7 @@ mod integration_tests {
             tokens: None, // Will use top volatility tokens
             num_tokens: 5,
             output: "portfolio_results".to_string(),
-            rebalance_freq: "hourly".to_string(),
+            rebalance_interval: "1h".to_string(),
             fee_model: "zero".to_string(),
             custom_fee: Some(0.002),
             slippage: 0.005,

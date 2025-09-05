@@ -1,7 +1,7 @@
 use crate::api::backend::BackendClient;
 use crate::commands::simulate::{
     generate_api_predictions, run_momentum_timestep_simulation, AlgorithmType, FeeModel,
-    PredictionData, RebalanceFrequency, SimulationConfig,
+    PredictionData, RebalanceInterval, SimulationConfig,
 };
 use chrono::{Duration, Utc};
 use common::api::chronos::ChronosApiClient;
@@ -248,7 +248,7 @@ mod tests {
             initial_capital: BigDecimal::from_f64(1000.0).unwrap(),
             quote_token: "wrap.near".to_string(),
             target_tokens: vec!["test_token".to_string()],
-            rebalance_frequency: RebalanceFrequency::Daily,
+            rebalance_interval: RebalanceInterval::parse("1d").unwrap(),
             fee_model: FeeModel::Zero,
             slippage_rate: 0.01,
             gas_cost: BigDecimal::from_f64(0.01).unwrap(),
@@ -340,7 +340,7 @@ mod regression_tests {
             initial_capital: BigDecimal::from_f64(1000.0).unwrap(),
             quote_token: "wrap.near".to_string(),
             target_tokens: vec![],
-            rebalance_frequency: RebalanceFrequency::Daily,
+            rebalance_interval: RebalanceInterval::parse("1d").unwrap(),
             fee_model: FeeModel::Zero,
             slippage_rate: 0.01,
             gas_cost: BigDecimal::from_f64(0.01).unwrap(),

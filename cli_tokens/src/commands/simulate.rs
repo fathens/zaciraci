@@ -165,9 +165,9 @@ pub struct SimulateArgs {
     #[clap(short, long, default_value = "simulation_results")]
     pub output: String,
 
-    /// リバランス頻度 [デフォルト: daily]
-    #[clap(long, default_value = "daily")]
-    pub rebalance_freq: String,
+    /// リバランス間隔 (例: 2h, 90m, 1h30m, 4h) [デフォルト: 1d]
+    #[clap(long, default_value = "1d")]
+    pub rebalance_interval: String,
 
     /// 手数料モデル [デフォルト: realistic]
     #[clap(long, default_value = "realistic")]
@@ -214,7 +214,7 @@ pub struct SimulationConfig {
     pub initial_capital: BigDecimal,
     pub quote_token: String,
     pub target_tokens: Vec<String>,
-    pub rebalance_frequency: RebalanceFrequency,
+    pub rebalance_interval: RebalanceInterval,
     pub fee_model: FeeModel,
     pub slippage_rate: f64,
     pub gas_cost: BigDecimal,
@@ -231,10 +231,119 @@ pub enum AlgorithmType {
 }
 
 #[derive(Debug, Clone)]
-pub enum RebalanceFrequency {
-    Hourly,
-    Daily,
-    Weekly,
+pub struct RebalanceInterval {
+    duration: Duration,
+}
+
+impl RebalanceInterval {
+    pub fn parse(s: &str) -> Result<Self> {
+        let input = s.trim();
+        let mut total_seconds = 0i64;
+        let mut current_number = String::new();
+        let mut i = 0;
+        let chars: Vec<char> = input.chars().collect();
+
+        while i < chars.len() {
+            let ch = chars[i];
+            if ch.is_ascii_digit() {
+                current_number.push(ch);
+            } else if ch.is_ascii_alphabetic() {
+                if current_number.is_empty() {
+                    return Err(anyhow::anyhow!("Invalid interval format: {}", s));
+                }
+
+                let value: i64 = current_number.parse().map_err(|_| {
+                    anyhow::anyhow!("Invalid number in interval: {}", current_number)
+                })?;
+                current_number.clear();
+
+                // Read the unit (could be multiple chars like 'min')
+                let mut unit = String::new();
+                while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                    unit.push(chars[i]);
+                    i += 1;
+                }
+                i -= 1; // Adjust because the loop will increment again
+
+                let multiplier = match unit.as_str() {
+                    "s" | "sec" | "second" | "seconds" => 1,
+                    "m" | "min" | "minute" | "minutes" => 60,
+                    "h" | "hr" | "hour" | "hours" => 3600,
+                    "d" | "day" | "days" => 86400,
+                    "w" | "week" | "weeks" => 604800,
+                    _ => return Err(anyhow::anyhow!("Unknown time unit: {}", unit)),
+                };
+
+                total_seconds += value * multiplier;
+            } else if !ch.is_whitespace() {
+                return Err(anyhow::anyhow!("Invalid character in interval: {}", ch));
+            }
+            i += 1;
+        }
+
+        // Handle case where input ends with a number (invalid)
+        if !current_number.is_empty() {
+            return Err(anyhow::anyhow!("Interval must specify a unit: {}", s));
+        }
+
+        if total_seconds <= 0 {
+            return Err(anyhow::anyhow!("Interval must be positive: {}", s));
+        }
+
+        Ok(RebalanceInterval {
+            duration: Duration::seconds(total_seconds),
+        })
+    }
+
+    pub fn as_duration(&self) -> Duration {
+        self.duration
+    }
+}
+
+impl fmt::Display for RebalanceInterval {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut seconds = self.duration.num_seconds();
+        let mut parts = Vec::new();
+
+        // Weeks
+        if seconds >= 604800 {
+            parts.push(format!("{}w", seconds / 604800));
+            seconds %= 604800;
+        }
+
+        // Days
+        if seconds >= 86400 {
+            parts.push(format!("{}d", seconds / 86400));
+            seconds %= 86400;
+        }
+
+        // Hours
+        if seconds >= 3600 {
+            parts.push(format!("{}h", seconds / 3600));
+            seconds %= 3600;
+        }
+
+        // Minutes
+        if seconds >= 60 {
+            parts.push(format!("{}m", seconds / 60));
+            seconds %= 60;
+        }
+
+        // Seconds
+        if seconds > 0 {
+            parts.push(format!("{}s", seconds));
+        }
+
+        write!(f, "{}", parts.join(""))
+    }
+}
+
+impl std::str::FromStr for RebalanceInterval {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Self::parse(s)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -377,17 +486,6 @@ impl From<&str> for AlgorithmType {
             "portfolio" => AlgorithmType::Portfolio,
             "trend_following" | "trend-following" => AlgorithmType::TrendFollowing,
             _ => AlgorithmType::Momentum, // デフォルト
-        }
-    }
-}
-
-impl From<&str> for RebalanceFrequency {
-    fn from(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "hourly" => RebalanceFrequency::Hourly,
-            "daily" => RebalanceFrequency::Daily,
-            "weekly" => RebalanceFrequency::Weekly,
-            _ => RebalanceFrequency::Daily, // デフォルト
         }
     }
 }
@@ -576,7 +674,7 @@ async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationConfi
         initial_capital: BigDecimal::from_str(&args.capital.to_string())?,
         quote_token: args.quote_token,
         target_tokens,
-        rebalance_frequency: RebalanceFrequency::from(args.rebalance_freq.as_str()),
+        rebalance_interval: RebalanceInterval::parse(&args.rebalance_interval)?,
         fee_model: FeeModel::from((args.fee_model.as_str(), args.custom_fee)),
         slippage_rate: args.slippage,
         gas_cost: BigDecimal::from_str(&args.gas_cost.to_string())?,
@@ -812,11 +910,7 @@ async fn run_momentum_timestep_simulation(
         .unwrap_or(1000.0);
 
     // タイムステップ設定
-    let time_step = match config.rebalance_frequency {
-        RebalanceFrequency::Hourly => chrono::Duration::hours(1),
-        RebalanceFrequency::Daily => chrono::Duration::days(1),
-        RebalanceFrequency::Weekly => chrono::Duration::days(7),
-    };
+    let time_step = config.rebalance_interval.as_duration();
 
     let mut current_time = config.start_date;
     let mut portfolio_values = Vec::new();
@@ -1991,7 +2085,7 @@ async fn run_portfolio_timestep_simulation(
             execute_portfolio_rebalance(&mut portfolio, &context, &rebalance_trades)?;
         }
 
-        current_date += chrono::Duration::days(1);
+        current_date += config.rebalance_interval.as_duration();
     }
 
     // 最終パフォーマンス計算
@@ -2277,7 +2371,7 @@ async fn run_trend_following_timestep_simulation(
             )?;
         }
 
-        current_date += chrono::Duration::days(1);
+        current_date += config.rebalance_interval.as_duration();
     }
 
     // 最終パフォーマンス計算

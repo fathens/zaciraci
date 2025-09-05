@@ -20,7 +20,7 @@ mod unit_tests {
             tokens: Some("usdc.tether-token.near,blackdragon.tkn.near".to_string()),
             num_tokens: 10,
             output: "simulation_results".to_string(),
-            rebalance_freq: "daily".to_string(),
+            rebalance_interval: "1d".to_string(),
             fee_model: "realistic".to_string(),
             custom_fee: None,
             slippage: 0.01,
@@ -35,11 +35,81 @@ mod unit_tests {
         assert_eq!(args.algorithm, Some("momentum".to_string()));
         assert_eq!(args.capital, 1000.0);
         assert_eq!(args.quote_token, "wrap.near");
-        assert_eq!(args.rebalance_freq, "daily");
+        assert_eq!(args.rebalance_interval, "1d");
         assert_eq!(args.fee_model, "realistic");
         assert_eq!(args.slippage, 0.01);
         assert_eq!(args.historical_days, 30);
         assert!(!args.verbose);
+    }
+
+    #[test]
+    fn test_rebalance_interval_parsing() {
+        // Test basic formats
+        assert!(RebalanceInterval::parse("1h").is_ok());
+        assert!(RebalanceInterval::parse("2d").is_ok());
+        assert!(RebalanceInterval::parse("30m").is_ok());
+        assert!(RebalanceInterval::parse("1w").is_ok());
+
+        // Test compound formats
+        assert!(RebalanceInterval::parse("1h30m").is_ok());
+        assert!(RebalanceInterval::parse("2d12h").is_ok());
+
+        // Test various units
+        assert!(RebalanceInterval::parse("30s").is_ok());
+        assert!(RebalanceInterval::parse("5min").is_ok());
+        assert!(RebalanceInterval::parse("1hour").is_ok());
+        assert!(RebalanceInterval::parse("3days").is_ok());
+        assert!(RebalanceInterval::parse("2weeks").is_ok());
+
+        // Test invalid formats
+        assert!(RebalanceInterval::parse("invalid").is_err());
+        assert!(RebalanceInterval::parse("1").is_err()); // No unit
+        assert!(RebalanceInterval::parse("h1").is_err()); // Wrong order
+        assert!(RebalanceInterval::parse("0h").is_err()); // Zero duration
+        assert!(RebalanceInterval::parse("-1h").is_err()); // Negative duration
+    }
+
+    #[test]
+    fn test_rebalance_interval_duration_conversion() {
+        let interval_1h = RebalanceInterval::parse("1h").unwrap();
+        assert_eq!(interval_1h.as_duration().num_hours(), 1);
+
+        let interval_2d = RebalanceInterval::parse("2d").unwrap();
+        assert_eq!(interval_2d.as_duration().num_days(), 2);
+
+        let interval_90m = RebalanceInterval::parse("90m").unwrap();
+        assert_eq!(interval_90m.as_duration().num_minutes(), 90);
+
+        let interval_compound = RebalanceInterval::parse("1h30m").unwrap();
+        assert_eq!(interval_compound.as_duration().num_minutes(), 90);
+
+        let interval_week = RebalanceInterval::parse("1w").unwrap();
+        assert_eq!(interval_week.as_duration().num_days(), 7);
+    }
+
+    #[test]
+    fn test_rebalance_interval_display() {
+        let interval_1h = RebalanceInterval::parse("1h").unwrap();
+        assert_eq!(format!("{}", interval_1h), "1h");
+
+        let interval_1d = RebalanceInterval::parse("1d").unwrap();
+        assert_eq!(format!("{}", interval_1d), "1d");
+
+        let interval_90m = RebalanceInterval::parse("90m").unwrap();
+        assert_eq!(format!("{}", interval_90m), "1h30m"); // Should normalize
+
+        let interval_compound = RebalanceInterval::parse("1h30m").unwrap();
+        assert_eq!(format!("{}", interval_compound), "1h30m");
+    }
+
+    #[test]
+    fn test_rebalance_interval_from_str() {
+        use std::str::FromStr;
+
+        let interval = RebalanceInterval::from_str("2h").unwrap();
+        assert_eq!(interval.as_duration().num_hours(), 2);
+
+        assert!(RebalanceInterval::from_str("invalid").is_err());
     }
 
     #[test]
@@ -1256,7 +1326,7 @@ mod integration_tests {
             tokens: Some("token1,token2".to_string()),
             num_tokens: 10,
             output: "test_output".to_string(),
-            rebalance_freq: "daily".to_string(),
+            rebalance_interval: "1d".to_string(),
             fee_model: "zero".to_string(),
             custom_fee: None,
             slippage: 0.01,
