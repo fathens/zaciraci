@@ -5,7 +5,7 @@ use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
-use crate::trade::algorithm::momentum::{TokenHolding, execute_with_prediction_service};
+// use crate::trade::algorithm::momentum::{TokenHolding, execute_with_prediction_service};
 use crate::trade::predict::PredictionService;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime};
@@ -14,6 +14,7 @@ use num_traits::Zero;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
+use zaciraci_common::algorithm::momentum::TokenHolding;
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -61,9 +62,10 @@ pub async fn start() -> Result<()> {
     let backend_url =
         std::env::var("BACKEND_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
-    let prediction_service = PredictionService::new(chronos_url, backend_url);
+    let _prediction_service = PredictionService::new(chronos_url, backend_url);
 
-    // モメンタム戦略の実行
+    // TODO: モメンタム戦略の実行 (temporarily disabled during common migration)
+    /*
     match execute_with_prediction_service(
         &prediction_service,
         current_holdings.clone(),
@@ -87,6 +89,12 @@ pub async fn start() -> Result<()> {
             error!(log, "failed to execute momentum strategy"; "error" => ?e);
         }
     }
+    */
+
+    info!(
+        log,
+        "momentum strategy execution temporarily disabled during migration"
+    );
 
     info!(log, "success");
     Ok(())
@@ -128,6 +136,7 @@ async fn forcast_rates(
     rates_by_base.into_iter().collect()
 }
 
+#[allow(dead_code)]
 async fn get_top_quote_token(range: &TimeRange) -> Result<TokenInAccount> {
     let log = DEFAULT.new(o!("function" => "trade::get_top_quote_token"));
 
@@ -138,6 +147,7 @@ async fn get_top_quote_token(range: &TimeRange) -> Result<TokenInAccount> {
     Ok(quote.clone())
 }
 
+#[allow(dead_code)]
 async fn get_base_tokens(
     range: &TimeRange,
     quote: &TokenInAccount,
@@ -194,6 +204,7 @@ impl SameBaseTokenRates {
         }
     }
 
+    #[allow(dead_code)]
     async fn forcast(&self, period: Duration, target: NaiveDateTime) -> Result<BigDecimal> {
         let log = DEFAULT.new(o!(
             "function" => "SameBaseTokenRates::forcast",

@@ -510,6 +510,7 @@ pub fn make_trend_trading_decision(
 }
 
 /// マーケットデータの型エイリアス
+#[allow(dead_code)]
 pub type MarketDataTuple = (Vec<f64>, Vec<DateTime<Utc>>, Vec<f64>, Vec<f64>, Vec<f64>);
 
 /// トレンドフォロー戦略の実行

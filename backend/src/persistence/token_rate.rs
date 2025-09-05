@@ -11,10 +11,10 @@ use diesel::prelude::*;
 use std::str::FromStr;
 
 // データベース用モデル
-#[allow(dead_code)]
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = token_rates)]
 struct DbTokenRate {
+    #[allow(dead_code)]
     pub id: i32,
     pub base_token: String,
     pub quote_token: String,
@@ -33,7 +33,6 @@ struct NewDbTokenRate {
 }
 
 // ボラティリティ計算結果用の一時的な構造体
-#[allow(dead_code)]
 #[derive(Debug, Clone, QueryableByName)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 struct VolatilityResult {
@@ -59,7 +58,6 @@ pub struct TokenRate {
 }
 
 // 相互変換の実装
-#[allow(dead_code)]
 impl TokenRate {
     // 新しいTokenRateインスタンスを現在時刻で作成
     pub fn new(base: TokenOutAccount, quote: TokenInAccount, rate: BigDecimal) -> Self {
@@ -72,6 +70,7 @@ impl TokenRate {
     }
 
     // 特定の時刻でTokenRateインスタンスを作成
+    #[allow(dead_code)]
     pub fn new_with_timestamp(
         base: TokenOutAccount,
         quote: TokenInAccount,
@@ -110,6 +109,7 @@ impl TokenRate {
     }
 
     // データベースに挿入
+    #[allow(dead_code)]
     pub async fn insert(&self) -> Result<()> {
         use diesel::RunQueryDsl;
 
@@ -152,6 +152,7 @@ impl TokenRate {
     }
 
     // 最新のレートを取得
+    #[allow(dead_code)]
     pub async fn get_latest(
         base: &TokenOutAccount,
         quote: &TokenInAccount,
@@ -201,6 +202,7 @@ impl TokenRate {
     }
 
     // 履歴レコードを取得（新しい順）
+    #[allow(dead_code)]
     pub async fn get_history(
         base: &TokenOutAccount,
         quote: &TokenInAccount,
@@ -228,6 +230,7 @@ impl TokenRate {
     }
 
     // quoteトークンを指定して対応するすべてのbaseトークンとその最新時刻を取得
+    #[allow(dead_code)]
     pub async fn get_latests_by_quote(
         quote: &TokenInAccount,
     ) -> Result<Vec<(TokenOutAccount, NaiveDateTime)>> {

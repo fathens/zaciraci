@@ -4,6 +4,12 @@ use bigdecimal::BigDecimal;
 use bigdecimal::FromPrimitive;
 use chrono::{DateTime, Datelike, Duration, Utc};
 use clap::Args;
+use common::algorithm::momentum::{
+    calculate_confidence_adjusted_return, rank_tokens_by_momentum, PredictionData, TradingAction,
+};
+// Portfolio and trend_following algorithms are available but not yet used in cli_tokens
+// use common::algorithm::portfolio;
+// use common::algorithm::trend_following;
 use common::api::chronos::ChronosApiClient;
 use common::api::traits::PredictionClient;
 use common::prediction::ZeroShotPredictionRequest;
@@ -13,22 +19,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 // Momentum アルゴリズム関連の構造体と定数
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictionData {
-    pub token: String,
-    pub current_price: BigDecimal,
-    pub predicted_price_24h: BigDecimal,
-    pub timestamp: DateTime<Utc>,
-    pub confidence: Option<f64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum TradingAction {
-    Hold,
-    Sell { token: String, target: String },
-    Switch { from: String, to: String },
-}
+// PredictionData and TradingAction are now imported from common::algorithm::momentum
 
 // New refactored data structures for better testability
 #[derive(Debug, Clone, PartialEq)]
@@ -129,7 +120,6 @@ impl fmt::Debug for StrategyContext {
 
 const MIN_PROFIT_THRESHOLD: f64 = 0.05;
 const SWITCH_MULTIPLIER: f64 = 1.5;
-const TOP_N_TOKENS: usize = 3;
 
 #[derive(Args)]
 pub struct SimulateArgs {
@@ -1543,45 +1533,7 @@ pub fn calculate_trading_cost(
     protocol_fee + slippage_cost + gas_cost
 }
 
-// Momentum アルゴリズム関数
-
-fn calculate_confidence_adjusted_return(prediction: &PredictionData) -> f64 {
-    let current = prediction
-        .current_price
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(0.0);
-    let predicted = prediction
-        .predicted_price_24h
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(0.0);
-
-    if current == 0.0 {
-        return 0.0;
-    }
-
-    let raw_return = (predicted - current) / current;
-    let confidence = prediction.confidence.unwrap_or(0.5);
-
-    // 取引コストを考慮し、信頼度で調整
-    (raw_return - 0.006 - 0.02) * confidence // 0.6% fee + 2% slippage
-}
-
-fn rank_tokens_by_momentum(predictions: Vec<PredictionData>) -> Vec<(String, f64, Option<f64>)> {
-    let mut ranked: Vec<_> = predictions
-        .iter()
-        .map(|p| {
-            let return_val = calculate_confidence_adjusted_return(p);
-            (p.token.clone(), return_val, p.confidence)
-        })
-        .filter(|(_, return_val, _)| *return_val > 0.0)
-        .collect();
-
-    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    ranked.truncate(TOP_N_TOKENS);
-    ranked
-}
+// Momentum アルゴリズム関数はcommon::algorithm::momentumから使用
 
 /// Pure function for trading decisions with better testability
 pub fn make_trading_decision(

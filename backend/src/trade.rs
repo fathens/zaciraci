@@ -1,6 +1,9 @@
-pub mod algorithm;
+// pub mod algorithm; // Moved to common crate
 pub mod predict;
 pub mod stats;
+
+// Re-export algorithm from common crate for backward compatibility
+// pub use zaciraci_common::algorithm;
 
 use crate::Result;
 use crate::config;

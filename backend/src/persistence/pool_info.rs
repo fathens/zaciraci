@@ -11,10 +11,10 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 // データベース用モデル
-#[allow(dead_code)]
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = pool_info)]
 struct DbPoolInfo {
+    #[allow(dead_code)]
     pub id: i32,
     pub pool_id: i32,
     pub pool_kind: String,
@@ -88,7 +88,6 @@ impl RefPoolInfo {
     }
 
     // データベースに挿入
-    #[allow(dead_code)]
     pub async fn insert(&self) -> Result<()> {
         use diesel::RunQueryDsl;
 

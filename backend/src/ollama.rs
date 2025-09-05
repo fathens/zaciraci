@@ -54,6 +54,7 @@ pub fn get_base_url() -> String {
     config::get("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/api".to_string())
 }
 
+#[allow(dead_code)]
 async fn get_model(base_url: &str) -> Result<Model> {
     let log = DEFAULT.new(o!("function" => "get_model"));
     match config::get("OLLAMA_MODEL") {
@@ -96,7 +97,6 @@ pub struct Client {
     client: reqwest::Client,
 }
 
-#[allow(dead_code)]
 impl Client {
     fn new(model: ModelName, base_url: String) -> Self {
         let client = reqwest::Client::new();
@@ -112,6 +112,7 @@ impl Client {
         Ok(Self::new(model.name, base_url))
     }
 
+    #[allow(dead_code)]
     pub async fn new_default() -> Result<Self> {
         let base_url = get_base_url();
         let model = get_model(&base_url).await?;

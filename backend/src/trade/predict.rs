@@ -1,7 +1,12 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use zaciraci_common::algorithm::prediction::{
+    PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
+    PricePoint as CommonPricePoint, TokenPredictionResult, TopTokenInfo,
+};
 use zaciraci_common::api::chronos::ChronosApiClient;
 use zaciraci_common::api::traits::PredictionClient;
 use zaciraci_common::prediction::{PredictionResult, ZeroShotPredictionRequest};
@@ -49,12 +54,13 @@ pub struct TopToken {
 
 /// 価格予測サービス
 pub struct PredictionService {
+    #[allow(dead_code)]
     chronos_client: ChronosApiClient,
+    #[allow(dead_code)]
     backend_url: String,
 }
 
 impl PredictionService {
-    #[allow(dead_code)]
     pub fn new(chronos_url: String, backend_url: String) -> Self {
         Self {
             chronos_client: ChronosApiClient::new(chronos_url),
@@ -263,6 +269,7 @@ impl PredictionService {
     }
 
     /// 予測結果を変換
+    #[allow(dead_code)]
     fn convert_prediction_result(
         &self,
         result: &PredictionResult,
@@ -287,6 +294,129 @@ impl PredictionService {
             .collect();
 
         Ok(predicted_prices)
+    }
+}
+
+// PredictionProviderトレイトの実装
+#[async_trait]
+impl PredictionProvider for PredictionService {
+    async fn get_top_tokens(
+        &self,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+        limit: usize,
+        quote_token: &str,
+    ) -> Result<Vec<TopTokenInfo>> {
+        let tokens = self
+            .get_top_tokens(start_date, end_date, limit, quote_token)
+            .await?;
+        Ok(tokens
+            .into_iter()
+            .map(|t| TopTokenInfo {
+                token: t.token,
+                volatility: t.volatility,
+                volume_24h: t.volume_24h,
+                current_price: t.current_price,
+            })
+            .collect())
+    }
+
+    async fn get_price_history(
+        &self,
+        token: &str,
+        quote_token: &str,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+    ) -> Result<CommonPriceHistory> {
+        let history = self
+            .get_price_history(token, quote_token, start_date, end_date)
+            .await?;
+        Ok(CommonPriceHistory {
+            token: history.token,
+            quote_token: history.quote_token,
+            prices: history
+                .prices
+                .into_iter()
+                .map(|p| CommonPricePoint {
+                    timestamp: p.timestamp,
+                    price: p.price,
+                })
+                .collect(),
+        })
+    }
+
+    async fn predict_price(
+        &self,
+        history: &CommonPriceHistory,
+        prediction_horizon: usize,
+    ) -> Result<TokenPredictionResult> {
+        // CommonPriceHistoryをTokenPriceHistoryに変換
+        let backend_history = TokenPriceHistory {
+            token: history.token.clone(),
+            quote_token: history.quote_token.clone(),
+            prices: history
+                .prices
+                .iter()
+                .map(|p| PricePoint {
+                    timestamp: p.timestamp,
+                    price: p.price,
+                })
+                .collect(),
+        };
+
+        let prediction = self
+            .predict_price(&backend_history, prediction_horizon)
+            .await?;
+
+        Ok(TokenPredictionResult {
+            token: prediction.token,
+            quote_token: prediction.quote_token,
+            prediction_time: prediction.prediction_time,
+            predictions: prediction
+                .predictions
+                .into_iter()
+                .map(|p| CommonPredictedPrice {
+                    timestamp: p.timestamp,
+                    price: p.price,
+                    confidence: p.confidence,
+                })
+                .collect(),
+        })
+    }
+
+    async fn predict_multiple_tokens(
+        &self,
+        tokens: Vec<String>,
+        quote_token: &str,
+        history_days: i64,
+        prediction_horizon: usize,
+    ) -> Result<HashMap<String, TokenPredictionResult>> {
+        let predictions = self
+            .predict_multiple_tokens(tokens, quote_token, history_days, prediction_horizon)
+            .await?;
+
+        let mut result = HashMap::new();
+        for (token, prediction) in predictions {
+            result.insert(
+                token,
+                TokenPredictionResult {
+                    token: prediction.token,
+                    quote_token: prediction.quote_token,
+                    prediction_time: prediction.prediction_time,
+                    predictions: prediction
+                        .predictions
+                        .into_iter()
+                        .map(|p| CommonPredictedPrice {
+                            timestamp: p.timestamp,
+                            price: p.price,
+                            confidence: p.confidence,
+                        })
+                        .collect(),
+                },
+            );
+        }
+
+        Ok(result)
     }
 }
 

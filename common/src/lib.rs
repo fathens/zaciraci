@@ -1,3 +1,4 @@
+pub mod algorithm;
 pub mod api;
 pub mod config;
 

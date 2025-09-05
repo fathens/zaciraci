@@ -26,12 +26,12 @@ pub struct PriceHistory {
 }
 
 /// ポートフォリオデータ
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PortfolioData {
     pub tokens: Vec<TokenInfo>,
     pub predictions: HashMap<String, f64>,
     pub historical_prices: Vec<PriceHistory>,
-    #[allow(dead_code)]
     pub correlation_matrix: Option<Array2<f64>>,
 }
 
@@ -84,8 +84,8 @@ pub struct PortfolioMetrics {
 }
 
 /// ウォレット情報
-#[derive(Debug, Clone)]
 #[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct WalletInfo {
     pub holdings: HashMap<String, f64>,
     pub total_value: f64,
@@ -95,24 +95,31 @@ pub struct WalletInfo {
 // ==================== 定数 ====================
 
 /// リスクフリーレート（年率2%）
+#[allow(dead_code)]
 const RISK_FREE_RATE: f64 = 0.02;
 
 /// 単一トークンの最大保有比率
+#[allow(dead_code)]
 const MAX_POSITION_SIZE: f64 = 0.4;
 
 /// 最小保有比率
+#[allow(dead_code)]
 const MIN_POSITION_SIZE: f64 = 0.05;
 
 /// リバランス閾値（10%）
+#[allow(dead_code)]
 const REBALANCE_THRESHOLD: f64 = 0.1;
 
 /// 最大保有トークン数
+#[allow(dead_code)]
 const MAX_HOLDINGS: usize = 10;
 
 /// 最適化の最大反復回数
+#[allow(dead_code)]
 const MAX_OPTIMIZATION_ITERATIONS: usize = 100;
 
 /// 数値安定性のための正則化パラメータ
+#[allow(dead_code)]
 const REGULARIZATION_FACTOR: f64 = 1e-6;
 
 // ==================== コア計算関数 ====================
@@ -190,6 +197,7 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
 }
 
 /// 2つの系列間の共分散を計算
+#[allow(dead_code)]
 fn calculate_covariance(returns1: &[f64], returns2: &[f64]) -> f64 {
     if returns1.len() != returns2.len() || returns1.is_empty() {
         return 0.0;
@@ -310,6 +318,7 @@ pub fn calculate_efficient_frontier(
 }
 
 /// 最適化の1ステップ
+#[allow(dead_code)]
 fn optimize_weights_step(
     current_weights: &[f64],
     expected_returns: &[f64],
@@ -383,6 +392,7 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
 // ==================== 制約の適用 ====================
 
 /// 個別制約を適用
+#[allow(dead_code)]
 fn apply_individual_constraints(weights: &mut [f64]) {
     for w in weights.iter_mut() {
         *w = w.clamp(0.0, MAX_POSITION_SIZE);
@@ -631,6 +641,7 @@ pub async fn execute_portfolio_optimization(
 }
 
 /// 現在の重みを計算
+#[allow(dead_code)]
 fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
 
@@ -645,6 +656,7 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
 }
 
 /// リバランスアクションを生成
+#[allow(dead_code)]
 fn generate_rebalance_actions(
     tokens: &[TokenInfo],
     current_weights: &[f64],
