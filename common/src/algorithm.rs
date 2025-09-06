@@ -187,6 +187,57 @@ pub fn calculate_max_drawdown(cumulative_returns: &[f64]) -> f64 {
     max_drawdown
 }
 
+// ==================== ボラティリティ計算 ====================
+
+/// 価格リストからボラティリティ（標準偏差）を計算
+pub fn calculate_volatility_from_prices(prices: &[f64]) -> f64 {
+    if prices.len() < 2 {
+        return 0.0;
+    }
+
+    // リターンを計算
+    let mut returns = Vec::new();
+    for i in 1..prices.len() {
+        if prices[i - 1] != 0.0 {
+            let r = (prices[i] - prices[i - 1]) / prices[i - 1];
+            returns.push(r);
+        }
+    }
+
+    if returns.is_empty() {
+        return 0.0;
+    }
+
+    // 平均リターン
+    let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
+
+    // 標準偏差
+    let variance: f64 =
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+
+    variance.sqrt()
+}
+
+/// ValueAtTimeからボラティリティを計算
+pub fn calculate_volatility_from_value_at_time(values: &[crate::stats::ValueAtTime]) -> f64 {
+    let prices: Vec<f64> = values.iter().map(|v| v.value).collect();
+    calculate_volatility_from_prices(&prices)
+}
+
+/// ボラティリティスコア（0-1の範囲、年率化）を計算
+pub fn calculate_volatility_score(values: &[crate::stats::ValueAtTime], annualize: bool) -> f64 {
+    let volatility = calculate_volatility_from_value_at_time(values);
+
+    if annualize && volatility > 0.0 {
+        // 年率化（1日24時間、365日として）
+        let annualized_volatility = volatility * (365.0_f64 * 24.0_f64).sqrt();
+        // 0-1の範囲にクランプ
+        annualized_volatility.clamp(0.0, 1.0)
+    } else {
+        volatility
+    }
+}
+
 // ==================== パフォーマンス指標 ====================
 
 /// パフォーマンス指標

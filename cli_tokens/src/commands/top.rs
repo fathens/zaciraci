@@ -235,38 +235,7 @@ async fn get_current_price_data_with_volatility(
 
 /// Calculate volatility score from price data using standard deviation of returns
 pub fn calculate_volatility_score(values: &[common::stats::ValueAtTime]) -> f64 {
-    if values.len() < 2 {
-        return 0.0;
-    }
-
-    // Calculate returns (price changes)
-    let mut returns = Vec::new();
-    for i in 1..values.len() {
-        let prev_price = values[i - 1].value;
-        let curr_price = values[i].value;
-
-        if prev_price > 0.0 {
-            let return_pct = (curr_price - prev_price) / prev_price;
-            returns.push(return_pct);
-        }
-    }
-
-    if returns.is_empty() {
-        return 0.0;
-    }
-
-    // Calculate standard deviation of returns
-    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
-
-    let std_dev = variance.sqrt();
-
-    // Convert to a 0-1 volatility score (annualized)
-    // Multiply by sqrt(365*24) to annualize (assuming hourly data)
-    let annualized_volatility = std_dev * (365.0_f64 * 24.0_f64).sqrt();
-
-    // Cap at 1.0 and ensure it's between 0 and 1
-    annualized_volatility.clamp(0.0, 1.0)
+    common::algorithm::calculate_volatility_score(values, true)
 }
 
 #[cfg(test)]

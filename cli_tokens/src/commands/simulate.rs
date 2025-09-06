@@ -2086,23 +2086,7 @@ async fn run_portfolio_optimization_simulation(
 
 /// トークンのボラティリティを計算するヘルパー関数
 fn calculate_token_volatility(prices: &[ValueAtTime]) -> f64 {
-    if prices.len() < 2 {
-        return 0.0;
-    }
-
-    let returns: Vec<f64> = prices
-        .windows(2)
-        .map(|w| (w[1].value - w[0].value) / w[0].value)
-        .collect();
-
-    if returns.is_empty() {
-        return 0.0;
-    }
-
-    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
-
-    variance.sqrt()
+    common::algorithm::calculate_volatility_from_value_at_time(prices)
 }
 
 // TrendFollowing アルゴリズム実装（commonクレートを使用）
