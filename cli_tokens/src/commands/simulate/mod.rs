@@ -6,6 +6,9 @@ pub mod trading;
 pub mod types;
 pub mod utils;
 
+#[cfg(test)]
+pub mod algorithm_tests;
+
 // Re-export main functions for backward compatibility
 pub use algorithms::{
     run_momentum_simulation, run_portfolio_simulation, run_trend_following_simulation,
