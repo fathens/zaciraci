@@ -7,7 +7,7 @@ pub mod types;
 pub mod utils;
 
 #[cfg(test)]
-pub mod algorithm_tests;
+mod tests;
 
 // Re-export main functions for backward compatibility
 pub use algorithms::{

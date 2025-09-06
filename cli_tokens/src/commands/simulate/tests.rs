@@ -1,9 +1,18 @@
 use bigdecimal::BigDecimal;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use common::stats::ValueAtTime;
 use std::collections::HashMap;
 
+use super::data::get_prices_at_time;
+use super::metrics::calculate_performance_metrics;
+use super::utils::{
+    convert_decision_to_action, convert_ranked_tokens_to_opportunities, make_trading_decision,
+};
 use super::*;
+use common::algorithm::momentum::PredictionData;
+use common::algorithm::momentum::{
+    calculate_confidence_adjusted_return, rank_tokens_by_momentum, TradingAction,
+};
 
 #[cfg(test)]
 mod unit_tests {
@@ -1189,7 +1198,18 @@ mod integration_tests {
             create_portfolio_value(Utc::now(), 1350.0),
         ];
 
-        let metrics = calculate_performance_metrics(1000.0, 1350.0, &portfolio_values, &trades, 30);
+        let start_date = Utc::now() - chrono::Duration::days(30);
+        let end_date = Utc::now();
+        let metrics = calculate_performance_metrics(
+            1000.0,
+            1350.0,
+            &portfolio_values,
+            &trades,
+            50.0,
+            start_date,
+            end_date,
+        )
+        .unwrap();
 
         // Total profit = 350, no losses, so profit factor should be very high (f64::MAX)
         assert_eq!(metrics.profit_factor, f64::MAX);
@@ -1211,7 +1231,18 @@ mod integration_tests {
             create_portfolio_value(Utc::now(), 800.0),
         ];
 
-        let metrics = calculate_performance_metrics(1000.0, 800.0, &portfolio_values, &trades, 30);
+        let start_date = Utc::now() - chrono::Duration::days(30);
+        let end_date = Utc::now();
+        let metrics = calculate_performance_metrics(
+            1000.0,
+            800.0,
+            &portfolio_values,
+            &trades,
+            30.0,
+            start_date,
+            end_date,
+        )
+        .unwrap();
 
         // Total loss = 200, no profits, so profit factor should be 0
         assert_eq!(metrics.profit_factor, 0.0);
@@ -1234,7 +1265,18 @@ mod integration_tests {
             create_portfolio_value(Utc::now(), 1100.0),
         ];
 
-        let metrics = calculate_performance_metrics(1000.0, 1100.0, &portfolio_values, &trades, 30);
+        let start_date = Utc::now() - chrono::Duration::days(30);
+        let end_date = Utc::now();
+        let metrics = calculate_performance_metrics(
+            1000.0,
+            1100.0,
+            &portfolio_values,
+            &trades,
+            30.0,
+            start_date,
+            end_date,
+        )
+        .unwrap();
 
         // Total profit = 350, Total loss = 250, Profit factor = 350/250 = 1.4
         assert_eq!(metrics.profit_factor, 1.4);
@@ -1251,7 +1293,18 @@ mod integration_tests {
             create_portfolio_value(Utc::now(), 1000.0),
         ];
 
-        let metrics = calculate_performance_metrics(1000.0, 1000.0, &portfolio_values, &trades, 30);
+        let start_date = Utc::now() - chrono::Duration::days(30);
+        let end_date = Utc::now();
+        let metrics = calculate_performance_metrics(
+            1000.0,
+            1000.0,
+            &portfolio_values,
+            &trades,
+            0.0,
+            start_date,
+            end_date,
+        )
+        .unwrap();
 
         // No trades, so profit factor should be 0
         assert_eq!(metrics.profit_factor, 0.0);
@@ -1286,13 +1339,18 @@ mod integration_tests {
         let trades = vec![];
         let simulation_days = 30;
 
+        let start_date = Utc::now() - chrono::Duration::days(simulation_days);
+        let end_date = Utc::now();
         let performance = calculate_performance_metrics(
             initial_value,
             final_value,
             &portfolio_values,
             &trades,
-            simulation_days,
-        );
+            0.0,
+            start_date,
+            end_date,
+        )
+        .unwrap();
 
         assert_eq!(performance.total_return, 0.1); // 10% return
         assert_eq!(performance.total_trades, 0);

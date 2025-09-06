@@ -324,6 +324,66 @@ impl std::str::FromStr for RebalanceInterval {
     }
 }
 
+impl MarketSnapshot {
+    /// Create a new MarketSnapshot from price data
+    pub fn new(prices: HashMap<String, f64>) -> Self {
+        let data_quality = if prices.len() >= 2 {
+            DataQuality::High
+        } else if prices.len() == 1 {
+            DataQuality::Low
+        } else {
+            DataQuality::Poor
+        };
+
+        Self {
+            prices,
+            timestamp: Utc::now(),
+            data_quality,
+        }
+    }
+
+    /// Check if the market snapshot has reliable data
+    pub fn is_reliable(&self) -> bool {
+        matches!(self.data_quality, DataQuality::High | DataQuality::Medium)
+    }
+
+    /// Get price for a specific token
+    pub fn get_price(&self, token: &str) -> Option<f64> {
+        self.prices.get(token).copied()
+    }
+
+    /// Create MarketSnapshot from price data at a specific time
+    pub fn from_price_data(
+        price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
+        timestamp: DateTime<Utc>,
+    ) -> Result<Self> {
+        let mut prices = HashMap::new();
+
+        for (token, data_points) in price_data {
+            // Find the closest price point to the target timestamp
+            if let Some(closest_point) = data_points.iter().min_by_key(|point| {
+                (DateTime::<Utc>::from_naive_utc_and_offset(point.time, Utc) - timestamp).abs()
+            }) {
+                prices.insert(token.clone(), closest_point.value);
+            }
+        }
+
+        let data_quality = if prices.len() >= 2 {
+            DataQuality::High
+        } else if prices.len() == 1 {
+            DataQuality::Low
+        } else {
+            DataQuality::Poor
+        };
+
+        Ok(Self {
+            prices,
+            timestamp,
+            data_quality,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum FeeModel {
     Realistic,

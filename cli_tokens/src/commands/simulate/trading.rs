@@ -584,6 +584,11 @@ impl StrategyContext {
             .make_decision(portfolio, market, opportunities, config)
     }
 
+    /// Get the name of the current strategy
+    pub fn strategy_name(&self) -> &'static str {
+        self.strategy.name()
+    }
+
     /// Check if the strategy recommends rebalancing
     pub fn should_rebalance(
         &self,
