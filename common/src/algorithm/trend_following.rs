@@ -185,44 +185,10 @@ pub fn calculate_trend_strength(
     (slope, r_squared, direction, strength)
 }
 
-/// RSI計算（相対力指数）
+/// RSI計算（相対力指数） - 最新の値のみを返す
 pub fn calculate_rsi(prices: &[f64], period: usize) -> Option<f64> {
-    if prices.len() < period + 1 {
-        return None;
-    }
-
-    let mut gains = Vec::new();
-    let mut losses = Vec::new();
-
-    // 価格変化を計算
-    for i in 1..prices.len() {
-        let change = prices[i] - prices[i - 1];
-        if change > 0.0 {
-            gains.push(change);
-            losses.push(0.0);
-        } else {
-            gains.push(0.0);
-            losses.push(-change);
-        }
-    }
-
-    if gains.len() < period {
-        return None;
-    }
-
-    // 直近period分の平均を計算
-    let recent_gains: f64 = gains[gains.len() - period..].iter().sum();
-    let recent_losses: f64 = losses[losses.len() - period..].iter().sum();
-
-    let avg_gain = recent_gains / period as f64;
-    let avg_loss = recent_losses / period as f64;
-
-    if avg_loss == 0.0 {
-        return Some(100.0);
-    }
-
-    let rs = avg_gain / avg_loss;
-    Some(100.0 - (100.0 / (1.0 + rs)))
+    let rsi_values = crate::algorithm::calculate_rsi(prices, period);
+    rsi_values.last().copied()
 }
 
 /// MACD計算（移動平均収束拡散法）

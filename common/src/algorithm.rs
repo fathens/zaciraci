@@ -70,8 +70,8 @@ pub fn calculate_moving_average(prices: &[f64], period: usize) -> Vec<f64> {
     }
 
     let mut averages = Vec::new();
-    for i in period - 1..prices.len() {
-        let sum: f64 = prices[i - period + 1..=i].iter().sum();
+    for i in (period - 1)..prices.len() {
+        let sum: f64 = prices[(i + 1).saturating_sub(period)..=i].iter().sum();
         averages.push(sum / period as f64);
     }
 
@@ -248,4 +248,76 @@ pub struct PerformanceMetrics {
     pub max_drawdown: f64,
     pub win_rate: f64,
     pub total_trades: usize,
+}
+
+// ==================== テスト ====================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_moving_average() {
+        let prices = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let ma = calculate_moving_average(&prices, 3);
+
+        assert_eq!(ma.len(), 4);
+        assert_eq!(ma[0], 2.0); // (1+2+3)/3
+        assert_eq!(ma[1], 3.0); // (2+3+4)/3
+        assert_eq!(ma[2], 4.0); // (3+4+5)/3
+        assert_eq!(ma[3], 5.0); // (4+5+6)/3
+
+        // period が配列長より大きい場合
+        let ma = calculate_moving_average(&prices, 10);
+        assert!(ma.is_empty());
+
+        // period が 0 の場合
+        let ma = calculate_moving_average(&prices, 0);
+        assert!(ma.is_empty());
+
+        // 空配列の場合
+        let ma = calculate_moving_average(&[], 3);
+        assert!(ma.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_volatility_functions() {
+        let prices = vec![100.0, 105.0, 103.0, 108.0, 106.0];
+        let volatility = calculate_volatility_from_prices(&prices);
+        assert!(volatility > 0.0 && volatility < 0.05);
+
+        // ValueAtTime を使用
+        let values: Vec<crate::stats::ValueAtTime> = prices
+            .iter()
+            .enumerate()
+            .map(|(i, &price)| crate::stats::ValueAtTime {
+                time: chrono::Utc::now().naive_utc() + chrono::Duration::hours(i as i64),
+                value: price,
+            })
+            .collect();
+
+        let volatility2 = calculate_volatility_from_value_at_time(&values);
+        assert!((volatility - volatility2).abs() < 0.0001);
+
+        // ボラティリティスコア（年率化）
+        let score = calculate_volatility_score(&values, true);
+        assert!((0.0..=1.0).contains(&score));
+    }
+
+    #[test]
+    fn test_calculate_rsi() {
+        let prices = vec![
+            44.0, 44.25, 44.5, 43.75, 44.5, 44.75, 44.5, 44.25, 44.0, 44.25, 44.75, 45.0, 45.25,
+            45.5, 45.25,
+        ];
+        let rsi = calculate_rsi(&prices, 14);
+
+        // RSI should return some values
+        assert!(!rsi.is_empty());
+
+        // RSI values should be between 0 and 100
+        for value in rsi {
+            assert!((0.0..=100.0).contains(&value));
+        }
+    }
 }

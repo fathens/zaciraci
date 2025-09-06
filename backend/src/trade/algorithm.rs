@@ -67,91 +67,9 @@ pub struct MarketData {
 
 // ==================== 共通ユーティリティ関数 ====================
 
-/// 価格変化率を計算
-#[allow(dead_code)]
-pub fn calculate_price_change_percentage(old_price: &BigDecimal, new_price: &BigDecimal) -> f64 {
-    if old_price.is_zero() {
-        return 0.0;
-    }
-
-    let old = old_price.to_string().parse::<f64>().unwrap_or(0.0);
-    let new = new_price.to_string().parse::<f64>().unwrap_or(0.0);
-
-    ((new - old) / old) * 100.0
-}
-
-/// 移動平均を計算
-#[allow(dead_code)]
-pub fn calculate_moving_average(prices: &[f64], window: usize) -> Vec<f64> {
-    if prices.len() < window {
-        return Vec::new();
-    }
-
-    let mut averages = Vec::new();
-    for i in window..=prices.len() {
-        let sum: f64 = prices[i - window..i].iter().sum();
-        averages.push(sum / window as f64);
-    }
-    averages
-}
-
-/// RSI（相対力指数）を計算
-#[allow(dead_code)]
-pub fn calculate_rsi(prices: &[f64], period: usize) -> Vec<f64> {
-    if prices.len() < period + 1 {
-        return Vec::new();
-    }
-
-    let mut rsi_values = Vec::new();
-
-    // 価格変化を計算
-    let mut gains = Vec::new();
-    let mut losses = Vec::new();
-
-    for i in 1..prices.len() {
-        let change = prices[i] - prices[i - 1];
-        if change > 0.0 {
-            gains.push(change);
-            losses.push(0.0);
-        } else {
-            gains.push(0.0);
-            losses.push(-change);
-        }
-    }
-
-    // RSI計算
-    for i in period..gains.len() {
-        let avg_gain: f64 = gains[i - period + 1..=i].iter().sum::<f64>() / period as f64;
-        let avg_loss: f64 = losses[i - period + 1..=i].iter().sum::<f64>() / period as f64;
-
-        if avg_loss == 0.0 {
-            rsi_values.push(100.0);
-        } else {
-            let rs = avg_gain / avg_loss;
-            let rsi = 100.0 - (100.0 / (1.0 + rs));
-            rsi_values.push(rsi);
-        }
-    }
-
-    rsi_values
-}
-
-/// 取引コストを計算
-#[allow(dead_code)]
-pub fn calculate_trading_cost(
-    amount: &BigDecimal,
-    fee_rate: f64,
-    gas_cost: Option<BigDecimal>,
-) -> BigDecimal {
-    let amount_f64 = amount.to_string().parse::<f64>().unwrap_or(0.0);
-    let fee = BigDecimal::from_str(&(amount_f64 * fee_rate).to_string())
-        .unwrap_or_else(|_| BigDecimal::zero());
-
-    match gas_cost {
-        Some(gas) => fee + gas,
-        None => fee,
-    }
-}
+// 共通ユーティリティ関数はcommonクレートを使用
+// Use common crate functions for price calculations, moving averages, RSI, etc.
+// Re-export commonly used functions from common crate for convenience
 
 /// リスク調整リターンを計算（シャープレシオ）
 #[allow(dead_code)]
@@ -243,54 +161,8 @@ pub struct PerformanceMetrics {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_calculate_price_change_percentage() {
-        let old_price = BigDecimal::from(100);
-        let new_price = BigDecimal::from(110);
-
-        let change = calculate_price_change_percentage(&old_price, &new_price);
-        assert!((change - 10.0).abs() < 0.001);
-
-        // 下落のテスト
-        let new_price = BigDecimal::from(90);
-        let change = calculate_price_change_percentage(&old_price, &new_price);
-        assert!((change - (-10.0)).abs() < 0.001);
-
-        // ゼロ価格のテスト
-        let zero_price = BigDecimal::from(0);
-        let change = calculate_price_change_percentage(&zero_price, &new_price);
-        assert_eq!(change, 0.0);
-    }
-
-    #[test]
-    fn test_calculate_moving_average() {
-        let prices = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let ma = calculate_moving_average(&prices, 3);
-
-        assert_eq!(ma.len(), 4);
-        assert_eq!(ma[0], 2.0); // (1+2+3)/3
-        assert_eq!(ma[1], 3.0); // (2+3+4)/3
-        assert_eq!(ma[2], 4.0); // (3+4+5)/3
-        assert_eq!(ma[3], 5.0); // (4+5+6)/3
-
-        // ウィンドウサイズが配列長より大きい場合
-        let ma = calculate_moving_average(&prices, 10);
-        assert!(ma.is_empty());
-    }
-
-    #[test]
-    fn test_calculate_trading_cost() {
-        let amount = BigDecimal::from(1000);
-        let fee_rate = 0.003; // 0.3%
-
-        let cost = calculate_trading_cost(&amount, fee_rate, None);
-        assert_eq!(cost, BigDecimal::from(3)); // 1000 * 0.003
-
-        // ガス料金込み
-        let gas_cost = BigDecimal::from(1);
-        let cost = calculate_trading_cost(&amount, fee_rate, Some(gas_cost));
-        assert_eq!(cost, BigDecimal::from(4)); // 3 + 1
-    }
+    // Tests for deleted functions moved to common crate tests
+    // Use zaciraci-common for price calculations, moving averages, RSI, etc.
 
     #[test]
     fn test_calculate_max_drawdown() {
