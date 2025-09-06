@@ -195,7 +195,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_get_prices_at_time_with_sufficient_data() {
+    fn test_get_prices_at_time_multiple_tokens() {
         let target_time = Utc::now();
         let mut price_data = HashMap::new();
 
@@ -222,7 +222,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_get_prices_at_time_with_insufficient_data() {
+    fn test_get_prices_at_time_stale_data() {
         let target_time = Utc::now();
         let mut price_data = HashMap::new();
 
@@ -281,7 +281,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_get_price_at_time_with_sufficient_data() {
+    fn test_get_prices_at_time_with_sufficient_data() {
         let target_time = Utc::now();
         let mut price_data = HashMap::new();
 
@@ -303,7 +303,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_get_price_at_time_with_insufficient_data() {
+    fn test_get_prices_at_time_with_insufficient_data() {
         let target_time = Utc::now();
         let mut price_data = HashMap::new();
 
@@ -324,7 +324,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_get_price_at_time_nonexistent_token() {
+    fn test_get_prices_at_time_nonexistent_token() {
         let target_time = Utc::now();
         let price_data = HashMap::new();
 
@@ -334,7 +334,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_get_price_at_time_closest_selection() {
+    fn test_get_prices_at_time_closest_selection() {
         let target_time = Utc::now();
         let mut price_data = HashMap::new();
 
