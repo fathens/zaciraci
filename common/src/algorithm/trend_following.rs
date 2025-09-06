@@ -117,7 +117,6 @@ const KELLY_RISK_FACTOR: f64 = 0.25;
 // ==================== コアアルゴリズム ====================
 
 /// 線形回帰によるトレンド分析
-#[allow(dead_code)]
 pub fn calculate_trend_strength(
     prices: &[f64],
     timestamps: &[DateTime<Utc>],
@@ -187,7 +186,6 @@ pub fn calculate_trend_strength(
 }
 
 /// RSI計算（相対力指数）
-#[allow(dead_code)]
 pub fn calculate_rsi(prices: &[f64], period: usize) -> Option<f64> {
     if prices.len() < period + 1 {
         return None;
@@ -228,7 +226,6 @@ pub fn calculate_rsi(prices: &[f64], period: usize) -> Option<f64> {
 }
 
 /// MACD計算（移動平均収束拡散法）
-#[allow(dead_code)]
 pub fn calculate_macd(
     prices: &[f64],
     fast_period: usize,
@@ -276,7 +273,6 @@ pub fn calculate_macd(
 }
 
 /// ADX計算（平均方向性指数）
-#[allow(dead_code)]
 pub fn calculate_adx(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> Option<f64> {
     if highs.len() < period + 1 || highs.len() != lows.len() || highs.len() != closes.len() {
         return None;
@@ -331,7 +327,6 @@ pub fn calculate_adx(highs: &[f64], lows: &[f64], closes: &[f64], period: usize)
 }
 
 /// ボリュームトレンド分析
-#[allow(dead_code)]
 pub fn analyze_volume_trend(volumes: &[f64], prices: &[f64]) -> f64 {
     if volumes.len() != prices.len() || volumes.len() < 2 {
         return 0.0;
@@ -366,7 +361,6 @@ pub fn analyze_volume_trend(volumes: &[f64], prices: &[f64]) -> f64 {
 }
 
 /// ブレイクアウト検出
-#[allow(dead_code)]
 pub fn detect_breakout(
     current_price: f64,
     resistance: f64,
@@ -402,7 +396,6 @@ pub fn calculate_kelly_position_size(
 }
 
 /// 総合トレンド分析
-#[allow(dead_code)]
 pub fn analyze_trend(
     token: &str,
     prices: &[f64],
@@ -457,7 +450,6 @@ pub fn analyze_trend(
 }
 
 /// トレンドフォロー取引判断
-#[allow(dead_code)]
 pub fn make_trend_trading_decision(
     trend_analysis: &TrendAnalysis,
     current_positions: &[TrendPosition],
@@ -510,11 +502,9 @@ pub fn make_trend_trading_decision(
 }
 
 /// マーケットデータの型エイリアス
-#[allow(dead_code)]
 pub type MarketDataTuple = (Vec<f64>, Vec<DateTime<Utc>>, Vec<f64>, Vec<f64>, Vec<f64>);
 
 /// トレンドフォロー戦略の実行
-#[allow(dead_code)]
 pub async fn execute_trend_following_strategy(
     tokens: Vec<String>,
     current_positions: Vec<TrendPosition>,

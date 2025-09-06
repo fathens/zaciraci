@@ -125,7 +125,6 @@ const REGULARIZATION_FACTOR: f64 = 1e-6;
 // ==================== コア計算関数 ====================
 
 /// 期待リターンを計算
-#[allow(dead_code)]
 pub fn calculate_expected_returns(
     tokens: &[TokenInfo],
     predictions: &HashMap<String, f64>,
@@ -143,7 +142,6 @@ pub fn calculate_expected_returns(
 }
 
 /// 日次リターンを計算
-#[allow(dead_code)]
 pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f64>> {
     let mut token_prices: HashMap<String, Vec<(DateTime<Utc>, f64)>> = HashMap::new();
 
@@ -172,7 +170,6 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
 }
 
 /// 共分散行列を計算
-#[allow(dead_code)]
 pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     let n = daily_returns.len();
     if n == 0 {
@@ -217,7 +214,6 @@ fn calculate_covariance(returns1: &[f64], returns2: &[f64]) -> f64 {
 }
 
 /// ポートフォリオリターンを計算
-#[allow(dead_code)]
 pub fn calculate_portfolio_return(weights: &[f64], expected_returns: &[f64]) -> f64 {
     weights
         .iter()
@@ -227,7 +223,6 @@ pub fn calculate_portfolio_return(weights: &[f64], expected_returns: &[f64]) -> 
 }
 
 /// ポートフォリオの標準偏差を計算
-#[allow(dead_code)]
 pub fn calculate_portfolio_std(weights: &[f64], covariance_matrix: &Array2<f64>) -> f64 {
     let w = Array1::from(weights.to_vec());
     let portfolio_variance = w.dot(&covariance_matrix.dot(&w));
@@ -237,7 +232,6 @@ pub fn calculate_portfolio_std(weights: &[f64], covariance_matrix: &Array2<f64>)
 // ==================== 最適化アルゴリズム ====================
 
 /// シャープレシオを最大化する最適ポートフォリオを計算
-#[allow(dead_code)]
 pub fn maximize_sharpe_ratio(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
@@ -350,7 +344,6 @@ fn optimize_weights_step(
 }
 
 /// リスクパリティ調整
-#[allow(dead_code)]
 pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
     let n = weights.len();
     if n == 0 {
@@ -400,7 +393,6 @@ fn apply_individual_constraints(weights: &mut [f64]) {
 }
 
 /// 全体制約を適用
-#[allow(dead_code)]
 pub fn apply_constraints(weights: &mut [f64]) {
     // 反復的に制約を適用（収束まで）
     for _ in 0..10 {
@@ -472,7 +464,6 @@ pub fn apply_constraints(weights: &mut [f64]) {
 }
 
 /// リバランスが必要かチェック
-#[allow(dead_code)]
 pub fn needs_rebalancing(current_weights: &[f64], target_weights: &[f64]) -> bool {
     if current_weights.len() != target_weights.len() {
         return true;
@@ -542,7 +533,6 @@ pub fn calculate_max_drawdown(cumulative_returns: &[f64]) -> f64 {
 }
 
 /// ターンオーバー率を計算
-#[allow(dead_code)]
 pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 {
     if old_weights.len() != new_weights.len() {
         return 1.0; // 完全な入れ替え
@@ -559,7 +549,6 @@ pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 
 // ==================== ポートフォリオ実行 ====================
 
 /// ポートフォリオ最適化戦略を実行
-#[allow(dead_code)]
 pub async fn execute_portfolio_optimization(
     wallet: &WalletInfo,
     portfolio_data: PortfolioData,
@@ -641,7 +630,6 @@ pub async fn execute_portfolio_optimization(
 }
 
 /// 現在の重みを計算
-#[allow(dead_code)]
 fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
 
@@ -656,7 +644,6 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
 }
 
 /// リバランスアクションを生成
-#[allow(dead_code)]
 fn generate_rebalance_actions(
     tokens: &[TokenInfo],
     current_weights: &[f64],

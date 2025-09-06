@@ -148,21 +148,8 @@ mod unit_tests {
         assert!((adjusted_return - expected_return).abs() < 0.0001);
     }
 
-    #[test]
-    fn test_calculate_simple_volatility() {
-        // 標準的な価格データ
-        let prices = vec![100.0, 105.0, 95.0, 110.0, 90.0];
-        let volatility = calculate_simple_volatility(&prices);
-        assert!(volatility > 0.0);
-
-        // 一定の価格データ
-        let constant_prices = vec![100.0, 100.0, 100.0, 100.0];
-        assert_eq!(calculate_simple_volatility(&constant_prices), 0.0);
-
-        // 単一の価格
-        let single_price = vec![100.0];
-        assert_eq!(calculate_simple_volatility(&single_price), 0.0);
-    }
+    // calculate_simple_volatility function was removed as it's no longer used
+    // Volatility calculations are now handled by common crate implementations
 
     // 削除された関数のテストは、API統合テストに置き換えられました
     // test_predict_price_trend と test_calculate_prediction_confidence は
@@ -311,8 +298,8 @@ mod unit_tests {
 
         price_data.insert("token1".to_string(), values);
 
-        let result = get_price_at_time(&price_data, "token1", target_time).unwrap();
-        assert_eq!(result, 105.0);
+        let result = get_prices_at_time(&price_data, target_time).unwrap();
+        assert_eq!(result.get("token1").unwrap(), &105.0);
     }
 
     #[test]
@@ -328,7 +315,7 @@ mod unit_tests {
 
         price_data.insert("token1".to_string(), values);
 
-        let result = get_price_at_time(&price_data, "token1", target_time);
+        let result = get_prices_at_time(&price_data, target_time);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -341,12 +328,9 @@ mod unit_tests {
         let target_time = Utc::now();
         let price_data = HashMap::new();
 
-        let result = get_price_at_time(&price_data, "nonexistent_token", target_time);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No price data found for token: nonexistent_token"));
+        let result = get_prices_at_time(&price_data, target_time);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 
     #[test]
@@ -372,8 +356,8 @@ mod unit_tests {
 
         price_data.insert("token1".to_string(), values);
 
-        let result = get_price_at_time(&price_data, "token1", target_time).unwrap();
-        assert_eq!(result, 105.0);
+        let result = get_prices_at_time(&price_data, target_time).unwrap();
+        assert_eq!(result.get("token1").unwrap(), &105.0);
     }
 
     // === New Refactored Function Tests ===
