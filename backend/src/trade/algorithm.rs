@@ -72,7 +72,6 @@ pub struct MarketData {
 // Re-export commonly used functions from common crate for convenience
 
 /// リスク調整リターンを計算（シャープレシオ）
-#[allow(dead_code)]
 pub fn calculate_sharpe_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
     if returns.is_empty() {
         return 0.0;
@@ -97,7 +96,6 @@ pub fn calculate_sharpe_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
 }
 
 /// 最大ドローダウンを計算
-#[allow(dead_code)]
 pub fn calculate_max_drawdown(portfolio_values: &[f64]) -> f64 {
     if portfolio_values.len() < 2 {
         return 0.0;
@@ -123,7 +121,6 @@ pub fn calculate_max_drawdown(portfolio_values: &[f64]) -> f64 {
 // ==================== トレイト定義 ====================
 
 /// 取引アルゴリズムの共通インターフェース
-#[allow(dead_code)]
 pub trait TradingAlgorithm {
     type Config;
     type Signal;
