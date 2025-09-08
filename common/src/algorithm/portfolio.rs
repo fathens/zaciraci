@@ -413,58 +413,6 @@ pub fn needs_rebalancing(current_weights: &[f64], target_weights: &[f64]) -> boo
 
 // ==================== メトリクス計算 ====================
 
-/// ソルティノレシオを計算
-pub fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
-    if returns.is_empty() {
-        return 0.0;
-    }
-
-    let mean_return: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
-    let excess_return = mean_return - risk_free_rate;
-
-    // 下方偏差を計算
-    let downside_returns: Vec<f64> = returns
-        .iter()
-        .map(|&r| (r - risk_free_rate).min(0.0))
-        .collect();
-
-    let downside_deviation = if downside_returns.is_empty() {
-        0.0
-    } else {
-        let variance: f64 =
-            downside_returns.iter().map(|r| r.powi(2)).sum::<f64>() / downside_returns.len() as f64;
-        variance.sqrt()
-    };
-
-    if downside_deviation == 0.0 {
-        0.0
-    } else {
-        excess_return / downside_deviation
-    }
-}
-
-/// 最大ドローダウンを計算
-pub fn calculate_max_drawdown(cumulative_returns: &[f64]) -> f64 {
-    if cumulative_returns.len() < 2 {
-        return 0.0;
-    }
-
-    let mut max_drawdown = 0.0;
-    let mut peak = cumulative_returns[0];
-
-    for &value in cumulative_returns.iter().skip(1) {
-        if value > peak {
-            peak = value;
-        }
-
-        let drawdown = (peak - value) / peak;
-        if drawdown > max_drawdown {
-            max_drawdown = drawdown;
-        }
-    }
-
-    max_drawdown
-}
 
 /// ターンオーバー率を計算
 pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 {

@@ -147,98 +147,19 @@ pub fn calculate_macd(
     slow_period: usize,
     signal_period: usize,
 ) -> (Option<f64>, Option<f64>) {
-    if prices.len() < slow_period || prices.len() < signal_period {
-        return (None, None);
+    let macd_data = crate::algorithm::calculate_macd(prices, fast_period, slow_period, signal_period);
+    
+    if let Some((macd, signal, _histogram)) = macd_data.last() {
+        (Some(*macd), Some(*signal))
+    } else {
+        (None, None)
     }
-
-    // EMA計算のヘルパー関数
-    let calculate_ema = |data: &[f64], period: usize| -> Vec<f64> {
-        let alpha = 2.0 / (period as f64 + 1.0);
-        let mut ema = Vec::new();
-        ema.push(data[0]);
-
-        for i in 1..data.len() {
-            let new_ema = alpha * data[i] + (1.0 - alpha) * ema[i - 1];
-            ema.push(new_ema);
-        }
-        ema
-    };
-
-    let fast_ema = calculate_ema(prices, fast_period);
-    let slow_ema = calculate_ema(prices, slow_period);
-
-    if fast_ema.len() != slow_ema.len() {
-        return (None, None);
-    }
-
-    // MACD線を計算
-    let macd_line: Vec<f64> = fast_ema
-        .iter()
-        .zip(slow_ema.iter())
-        .map(|(fast, slow)| fast - slow)
-        .collect();
-
-    // シグナル線を計算
-    let signal_line = calculate_ema(&macd_line, signal_period);
-
-    let current_macd = macd_line.last().copied();
-    let current_signal = signal_line.last().copied();
-
-    (current_macd, current_signal)
 }
 
 /// ADX計算（平均方向性指数）
 pub fn calculate_adx(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> Option<f64> {
-    if highs.len() < period + 1 || highs.len() != lows.len() || highs.len() != closes.len() {
-        return None;
-    }
-
-    let mut true_ranges = Vec::new();
-    let mut plus_dms = Vec::new();
-    let mut minus_dms = Vec::new();
-
-    // True Range, +DM, -DMの計算
-    for i in 1..highs.len() {
-        let high_low = highs[i] - lows[i];
-        let high_close_prev = (highs[i] - closes[i - 1]).abs();
-        let low_close_prev = (lows[i] - closes[i - 1]).abs();
-        let true_range = high_low.max(high_close_prev).max(low_close_prev);
-        true_ranges.push(true_range);
-
-        let plus_dm =
-            if highs[i] - highs[i - 1] > lows[i - 1] - lows[i] && highs[i] - highs[i - 1] > 0.0 {
-                highs[i] - highs[i - 1]
-            } else {
-                0.0
-            };
-        plus_dms.push(plus_dm);
-
-        let minus_dm =
-            if lows[i - 1] - lows[i] > highs[i] - highs[i - 1] && lows[i - 1] - lows[i] > 0.0 {
-                lows[i - 1] - lows[i]
-            } else {
-                0.0
-            };
-        minus_dms.push(minus_dm);
-    }
-
-    if true_ranges.len() < period {
-        return None;
-    }
-
-    // 移動平均を計算
-    let atr = true_ranges[true_ranges.len() - period..]
-        .iter()
-        .sum::<f64>()
-        / period as f64;
-    let plus_di =
-        (plus_dms[plus_dms.len() - period..].iter().sum::<f64>() / period as f64) / atr * 100.0;
-    let minus_di =
-        (minus_dms[minus_dms.len() - period..].iter().sum::<f64>() / period as f64) / atr * 100.0;
-
-    // ADXの計算
-    let dx = ((plus_di - minus_di).abs() / (plus_di + minus_di)) * 100.0;
-    Some(dx)
+    let adx_values = crate::algorithm::calculate_adx(highs, lows, closes, period);
+    adx_values.last().copied()
 }
 
 /// ボリュームトレンド分析
