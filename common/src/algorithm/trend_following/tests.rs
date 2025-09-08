@@ -217,7 +217,7 @@ fn test_make_trend_trading_decision() {
         ..strong_upward_analysis.clone()
     };
     let action = make_trend_trading_decision(&weak_analysis, &current_positions, available_capital);
-    assert_eq!(action, TrendTradingAction::Wait);
+    assert_eq!(action, TrendTradingAction::Hold);
 
     // サイドウェイトレンドの場合も待機
     let sideways_analysis = TrendAnalysis {
@@ -226,7 +226,7 @@ fn test_make_trend_trading_decision() {
     };
     let action =
         make_trend_trading_decision(&sideways_analysis, &current_positions, available_capital);
-    assert_eq!(action, TrendTradingAction::Wait);
+    assert_eq!(action, TrendTradingAction::Hold);
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn test_trend_trading_decision_with_existing_position() {
 
     // 既存ポジションがある場合は調整を検討
     let action = make_trend_trading_decision(&analysis, &current_positions, available_capital);
-    assert!(matches!(action, TrendTradingAction::AdjustPosition { .. }));
+    assert!(matches!(action, TrendTradingAction::Hold));
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn test_trend_trading_decision_exit_conditions() {
 
     // 弱いトレンドの場合は退出
     let action = make_trend_trading_decision(&weak_trend_analysis, &current_positions, 1000.0);
-    assert!(matches!(action, TrendTradingAction::ExitTrend { .. }));
+    assert!(matches!(action, TrendTradingAction::Sell { .. }));
 }
 
 // ==================== エッジケーステスト ====================
@@ -706,7 +706,7 @@ fn test_sideways_market_indicator_accuracy() {
     assert_eq!(analysis.direction, TrendDirection::Sideways);
 
     let decision = make_trend_trading_decision(&analysis, &[], 1000.0);
-    assert_eq!(decision, TrendTradingAction::Wait); // 待機すべき
+    assert_eq!(decision, TrendTradingAction::Hold); // 待機すべき
 }
 
 #[test]

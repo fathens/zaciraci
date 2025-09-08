@@ -3,7 +3,7 @@ use super::utils::calculate_trading_cost;
 use anyhow::Result;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
-use common::algorithm::momentum::TradingAction;
+use common::algorithm::TradingAction;
 use std::collections::HashMap;
 
 /// Generate simple mock predictions (placeholder for now)
@@ -142,6 +142,20 @@ pub fn execute_trading_action(
                 success: true,
                 reason: "Momentum switch executed".to_string(),
             }))
+        }
+
+        // 新しいアクションタイプの処理（今回はプレースホルダーとして）
+        TradingAction::Rebalance { .. } => {
+            // ポートフォリオリバランスの処理（将来実装）
+            Ok(None)
+        }
+        TradingAction::AddPosition { .. } => {
+            // ポジション追加の処理（将来実装）
+            Ok(None)
+        }
+        TradingAction::ReducePosition { .. } => {
+            // ポジション削減の処理（将来実装）
+            Ok(None)
         }
     }
 }

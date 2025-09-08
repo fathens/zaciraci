@@ -1,82 +1,11 @@
 use crate::Result;
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::prediction::PredictionProvider;
-
-// ==================== 型定義 ====================
-
-/// 予測データを格納する構造体
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictionData {
-    pub token: String,
-    pub current_price: BigDecimal,
-    pub predicted_price_24h: BigDecimal,
-    pub timestamp: DateTime<Utc>,
-    pub confidence: Option<f64>,
-}
-
-// PredictionDataのfrom_token_predictionメソッドは prediction.rs に実装
-
-/// 取引アクション
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum TradingAction {
-    /// トークンを保持
-    Hold,
-    /// トークンを売却して別のトークンに切り替え
-    Sell { token: String, target: String },
-    /// あるトークンから別のトークンへ切り替え
-    Switch { from: String, to: String },
-}
-
-/// 実行レポート
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionReport {
-    pub actions: Vec<TradingAction>,
-    pub timestamp: DateTime<Utc>,
-    pub expected_return: Option<f64>,
-    pub total_trades: usize,
-    pub success_count: usize,
-    pub failed_count: usize,
-    pub skipped_count: usize,
-}
-
-impl ExecutionReport {
-    pub fn new(actions: Vec<TradingAction>) -> Self {
-        let total_trades = actions.len();
-        Self {
-            actions,
-            timestamp: Utc::now(),
-            expected_return: None,
-            total_trades,
-            success_count: 0,
-            failed_count: 0,
-            skipped_count: 0,
-        }
-    }
-
-    pub fn mark_success(&mut self) {
-        self.success_count += 1;
-    }
-
-    pub fn mark_failed(&mut self) {
-        self.failed_count += 1;
-    }
-
-    pub fn mark_skipped(&mut self) {
-        self.skipped_count += 1;
-    }
-}
-
-/// ウォレットの保有情報
-#[derive(Debug, Clone)]
-pub struct TokenHolding {
-    pub token: String,
-    pub amount: BigDecimal,
-    pub current_price: BigDecimal,
-}
+use super::types::*;
 
 // ==================== 定数 ====================
 
@@ -230,7 +159,7 @@ pub async fn execute_momentum_strategy(
         }
     }
 
-    let mut report = ExecutionReport::new(actions);
+    let mut report = ExecutionReport::new(actions, AlgorithmType::Momentum);
 
     // 期待リターンを計算（最良トークンのリターン）
     if !ranked.is_empty() {
@@ -371,10 +300,10 @@ mod tests;
 
 #[cfg(test)]
 mod integration_tests {
-    use super::*;
-    use crate::algorithm::prediction::*;
+    use crate::algorithm::types::*;
+    use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
     use async_trait::async_trait;
-    use bigdecimal::BigDecimal;
+    use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{Duration, Utc};
     use std::collections::HashMap;
 
@@ -397,7 +326,11 @@ mod integration_tests {
         ) -> Self {
             let price_points: Vec<PricePoint> = prices
                 .into_iter()
-                .map(|(timestamp, price)| PricePoint { timestamp, price })
+                .map(|(timestamp, price)| PricePoint { 
+                    timestamp, 
+                    price: BigDecimal::from_f64(price).unwrap_or_default(),
+                    volume: None,
+                })
                 .collect();
 
             self.price_histories.insert(

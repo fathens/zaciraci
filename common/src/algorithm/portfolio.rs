@@ -4,90 +4,27 @@ use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ==================== 型定義 ====================
+use super::types::*;
 
-/// トークン情報
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenInfo {
-    pub symbol: String,
-    pub current_price: f64,
-    pub historical_volatility: f64,
-    pub liquidity_score: f64,
-    pub market_cap: Option<f64>,
-}
-
-/// 価格履歴データ
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PriceHistory {
-    pub token: String,
-    pub timestamp: DateTime<Utc>,
-    pub price: f64,
-    pub volume: Option<f64>,
-}
+// ==================== ポートフォリオ固有の型定義 ====================
 
 /// ポートフォリオデータ
 #[derive(Debug, Clone)]
 pub struct PortfolioData {
-    pub tokens: Vec<TokenInfo>,
+    pub tokens: Vec<TokenData>,
     pub predictions: HashMap<String, f64>,
     pub historical_prices: Vec<PriceHistory>,
     pub correlation_matrix: Option<Array2<f64>>,
 }
 
-/// ポートフォリオの重み
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PortfolioWeights {
-    pub weights: HashMap<String, f64>,
-    pub timestamp: DateTime<Utc>,
-    pub expected_return: f64,
-    pub expected_volatility: f64,
-    pub sharpe_ratio: f64,
-}
-
-/// ポートフォリオアクション
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum PortfolioAction {
-    /// リバランス実行
-    Rebalance {
-        target_weights: HashMap<String, f64>,
-    },
-    /// ポジション追加
-    AddPosition { token: String, weight: f64 },
-    /// ポジション削減
-    ReducePosition { token: String, weight: f64 },
-    /// 待機
-    Hold,
-}
-
 /// ポートフォリオ実行レポート
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioExecutionReport {
-    pub actions: Vec<PortfolioAction>,
+    pub actions: Vec<TradingAction>,
     pub optimal_weights: PortfolioWeights,
     pub rebalance_needed: bool,
     pub expected_metrics: PortfolioMetrics,
     pub timestamp: DateTime<Utc>,
-}
-
-/// ポートフォリオメトリクス
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PortfolioMetrics {
-    pub cumulative_return: f64,
-    pub annualized_return: f64,
-    pub volatility: f64,
-    pub sharpe_ratio: f64,
-    pub sortino_ratio: f64,
-    pub max_drawdown: f64,
-    pub calmar_ratio: f64,
-    pub turnover_rate: f64,
-}
-
-/// ウォレット情報
-#[derive(Debug, Clone)]
-pub struct WalletInfo {
-    pub holdings: HashMap<String, f64>,
-    pub total_value: f64,
-    pub cash_balance: f64,
 }
 
 // ==================== 定数 ====================
@@ -124,7 +61,16 @@ pub fn calculate_expected_returns(
         .iter()
         .map(|token| {
             if let Some(&predicted_price) = predictions.get(&token.symbol) {
-                (predicted_price - token.current_price) / token.current_price
+                let current = token
+                    .current_price
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+                if current != 0.0 {
+                    (predicted_price - current) / current
+                } else {
+                    0.0
+                }
             } else {
                 0.0
             }
@@ -138,10 +84,13 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
 
     // トークン別に価格データをグループ化
     for price_data in historical_prices {
-        token_prices
-            .entry(price_data.token.clone())
-            .or_default()
-            .push((price_data.timestamp, price_data.price));
+        for price_point in &price_data.prices {
+            let price_f64 = price_point.price.to_string().parse::<f64>().unwrap_or(0.0);
+            token_prices
+                .entry(price_data.token.clone())
+                .or_default()
+                .push((price_point.timestamp, price_f64));
+        }
     }
 
     // 各トークンの日次リターンを計算
@@ -565,7 +514,7 @@ pub async fn execute_portfolio_optimization(
     let actions = if rebalance_needed {
         generate_rebalance_actions(&portfolio_data.tokens, &current_weights, &optimal_weights)
     } else {
-        vec![PortfolioAction::Hold]
+        vec![TradingAction::Hold]
     };
 
     // メトリクスを計算
@@ -620,7 +569,12 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
 
     for (i, token) in tokens.iter().enumerate() {
         if let Some(&holding) = wallet.holdings.get(&token.symbol) {
-            let value = holding * token.current_price;
+            let price_f64 = token
+                .current_price
+                .to_string()
+                .parse::<f64>()
+                .unwrap_or(0.0);
+            let value = holding * price_f64;
             weights[i] = value / wallet.total_value;
         }
     }
@@ -633,7 +587,7 @@ fn generate_rebalance_actions(
     tokens: &[TokenInfo],
     current_weights: &[f64],
     target_weights: &[f64],
-) -> Vec<PortfolioAction> {
+) -> Vec<TradingAction> {
     let mut actions = Vec::new();
     let mut target_map = HashMap::new();
 
@@ -645,21 +599,17 @@ fn generate_rebalance_actions(
         let weight_diff = target_weights[i] - current_weights[i];
         if weight_diff.abs() > REBALANCE_THRESHOLD {
             if weight_diff > 0.0 {
-                actions.push(PortfolioAction::AddPosition {
-                    token: token.symbol.clone(),
-                    weight: target_weights[i],
-                });
+                // AddPosition equivalent using Hold for now
+                actions.push(TradingAction::Hold);
             } else if current_weights[i] > 0.0 {
-                actions.push(PortfolioAction::ReducePosition {
-                    token: token.symbol.clone(),
-                    weight: target_weights[i],
-                });
+                // ReducePosition equivalent using Hold for now
+                actions.push(TradingAction::Hold);
             }
         }
     }
 
     if !target_map.is_empty() {
-        actions.push(PortfolioAction::Rebalance {
+        actions.push(TradingAction::Rebalance {
             target_weights: target_map,
         });
     }

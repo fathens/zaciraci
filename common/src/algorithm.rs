@@ -2,6 +2,10 @@ pub mod momentum;
 pub mod portfolio;
 pub mod prediction;
 pub mod trend_following;
+pub mod types;
+
+// Re-export common types for convenience
+pub use types::*;
 
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};

@@ -14,7 +14,7 @@ use num_traits::Zero;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
-use zaciraci_common::algorithm::momentum::TokenHolding;
+use zaciraci_common::algorithm::TokenHolding;
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {

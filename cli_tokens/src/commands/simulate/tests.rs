@@ -9,10 +9,8 @@ use super::utils::{
     convert_decision_to_action, convert_ranked_tokens_to_opportunities, make_trading_decision,
 };
 use super::*;
-use common::algorithm::momentum::PredictionData;
-use common::algorithm::momentum::{
-    calculate_confidence_adjusted_return, rank_tokens_by_momentum, TradingAction,
-};
+use common::algorithm::momentum::{calculate_confidence_adjusted_return, rank_tokens_by_momentum};
+use common::algorithm::{PredictionData, TradingAction};
 
 #[cfg(test)]
 mod unit_tests {

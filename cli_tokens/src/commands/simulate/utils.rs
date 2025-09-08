@@ -1,5 +1,5 @@
 use super::types::{FeeModel, TokenOpportunity, TradingConfig, TradingDecision};
-use common::algorithm::momentum::TradingAction;
+use common::algorithm::TradingAction;
 use common::stats::ValueAtTime;
 
 /// 取引コストを計算
