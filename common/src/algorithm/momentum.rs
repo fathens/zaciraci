@@ -300,8 +300,9 @@ mod tests;
 
 #[cfg(test)]
 mod integration_tests {
-    use crate::algorithm::types::*;
+    use super::execute_with_prediction_provider;
     use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
+    use crate::algorithm::types::*;
     use async_trait::async_trait;
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{Duration, Utc};
@@ -326,8 +327,8 @@ mod integration_tests {
         ) -> Self {
             let price_points: Vec<PricePoint> = prices
                 .into_iter()
-                .map(|(timestamp, price)| PricePoint { 
-                    timestamp, 
+                .map(|(timestamp, price)| PricePoint {
+                    timestamp,
                     price: BigDecimal::from_f64(price).unwrap_or_default(),
                     volume: None,
                 })
@@ -391,13 +392,17 @@ mod integration_tests {
             history: &PriceHistory,
             prediction_horizon: usize,
         ) -> crate::Result<TokenPredictionResult> {
-            let last_price = history.prices.last().map(|p| p.price).unwrap_or(100.0);
+            let last_price = history
+                .prices
+                .last()
+                .map(|p| p.price.to_string().parse::<f64>().unwrap_or(100.0))
+                .unwrap_or(100.0);
             let prediction_time = Utc::now();
             let mut predictions = Vec::new();
 
             for i in 1..=prediction_horizon {
                 let timestamp = prediction_time + Duration::hours(i as i64);
-                let price = last_price * (1.0 + (i as f64 * 0.01));
+                let price = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap();
                 predictions.push(PredictedPrice {
                     timestamp,
                     price,

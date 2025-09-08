@@ -450,9 +450,9 @@ fn test_partial_fill_scenario() {
             let partial_f64 = partial_amount.to_string().parse::<f64>().unwrap_or(0.0);
             assert!(partial_f64 < MIN_TRADE_AMOUNT);
         }
-        TradingAction::Rebalance { .. } | 
-        TradingAction::AddPosition { .. } | 
-        TradingAction::ReducePosition { .. } => {
+        TradingAction::Rebalance { .. }
+        | TradingAction::AddPosition { .. }
+        | TradingAction::ReducePosition { .. } => {
             // These actions are not expected in momentum algorithm tests
             panic!("Unexpected action type in momentum test");
         }

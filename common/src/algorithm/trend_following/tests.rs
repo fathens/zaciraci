@@ -209,7 +209,7 @@ fn test_make_trend_trading_decision() {
         &current_positions,
         available_capital,
     );
-    assert!(matches!(action, TrendTradingAction::EnterTrend { .. }));
+    assert!(matches!(action, TradingAction::Switch { .. }));
 
     // 弱いトレンドの場合は待機
     let weak_analysis = TrendAnalysis {

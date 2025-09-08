@@ -147,8 +147,9 @@ pub fn calculate_macd(
     slow_period: usize,
     signal_period: usize,
 ) -> (Option<f64>, Option<f64>) {
-    let macd_data = crate::algorithm::calculate_macd(prices, fast_period, slow_period, signal_period);
-    
+    let macd_data =
+        crate::algorithm::calculate_macd(prices, fast_period, slow_period, signal_period);
+
     if let Some((macd, signal, _histogram)) = macd_data.last() {
         (Some(*macd), Some(*signal))
     } else {

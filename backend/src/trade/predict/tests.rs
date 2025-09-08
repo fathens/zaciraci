@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use mockito::{self, Matcher};
 use zaciraci_common::prediction::{ChronosPredictionResponse, PredictionResult};
@@ -101,9 +102,9 @@ async fn test_get_price_history() {
     assert_eq!(history.token, "test.near");
     assert_eq!(history.quote_token, "wrap.near");
     assert_eq!(history.prices.len(), 6);
-    assert_eq!(history.prices[0].price, 1.0);
-    assert_eq!(history.prices[3].price, 1.15);
-    assert_eq!(history.prices[5].price, 1.18);
+    assert_eq!(history.prices[0].price, BigDecimal::from(1));
+    assert_eq!(history.prices[3].price, BigDecimal::from(1));
+    assert_eq!(history.prices[5].price, BigDecimal::from(1));
 }
 
 #[tokio::test]

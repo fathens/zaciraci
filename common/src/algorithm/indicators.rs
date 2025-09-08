@@ -121,6 +121,36 @@ pub fn calculate_sharpe_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
     }
 }
 
+/// ソルティノレシオを計算
+pub fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
+    if returns.is_empty() {
+        return 0.0;
+    }
+
+    let mean_return: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
+    let excess_return = mean_return - risk_free_rate;
+
+    // 下方偏差を計算
+    let downside_returns: Vec<f64> = returns
+        .iter()
+        .map(|&r| (r - risk_free_rate).min(0.0))
+        .collect();
+
+    let downside_deviation = if downside_returns.is_empty() {
+        0.0
+    } else {
+        let variance: f64 =
+            downside_returns.iter().map(|r| r.powi(2)).sum::<f64>() / downside_returns.len() as f64;
+        variance.sqrt()
+    };
+
+    if downside_deviation == 0.0 {
+        0.0
+    } else {
+        excess_return / downside_deviation
+    }
+}
+
 /// 最大ドローダウンを計算
 pub fn calculate_max_drawdown(cumulative_returns: &[f64]) -> f64 {
     if cumulative_returns.is_empty() {
@@ -214,7 +244,12 @@ pub fn calculate_momentum_score(prices: &[f64], period: usize) -> f64 {
 }
 
 /// MACD（移動平均収束拡散）を計算
-pub fn calculate_macd(prices: &[f64], fast_period: usize, slow_period: usize, signal_period: usize) -> Vec<(f64, f64, f64)> {
+pub fn calculate_macd(
+    prices: &[f64],
+    fast_period: usize,
+    slow_period: usize,
+    signal_period: usize,
+) -> Vec<(f64, f64, f64)> {
     if prices.len() < slow_period {
         return vec![];
     }
@@ -227,7 +262,8 @@ pub fn calculate_macd(prices: &[f64], fast_period: usize, slow_period: usize, si
     }
 
     // MACD線を計算
-    let macd_line: Vec<f64> = fast_ema.iter()
+    let macd_line: Vec<f64> = fast_ema
+        .iter()
         .zip(slow_ema.iter())
         .map(|(fast, slow)| fast - slow)
         .collect();
@@ -237,7 +273,8 @@ pub fn calculate_macd(prices: &[f64], fast_period: usize, slow_period: usize, si
 
     // ヒストグラムを計算
     let histogram: Vec<f64> = if macd_line.len() >= signal_line.len() {
-        macd_line.iter()
+        macd_line
+            .iter()
             .skip(macd_line.len() - signal_line.len())
             .zip(signal_line.iter())
             .map(|(macd, signal)| macd - signal)
@@ -247,7 +284,8 @@ pub fn calculate_macd(prices: &[f64], fast_period: usize, slow_period: usize, si
     };
 
     // 結果をタプルで返す (MACD, Signal, Histogram)
-    macd_line.iter()
+    macd_line
+        .iter()
         .skip(macd_line.len().saturating_sub(histogram.len()))
         .zip(signal_line.iter())
         .zip(histogram.iter())
@@ -281,9 +319,13 @@ pub fn calculate_exponential_moving_average(prices: &[f64], period: usize) -> Ve
 }
 
 /// ボリンジャーバンドを計算
-pub fn calculate_bollinger_bands(prices: &[f64], period: usize, std_dev_multiplier: f64) -> Vec<(f64, f64, f64)> {
+pub fn calculate_bollinger_bands(
+    prices: &[f64],
+    period: usize,
+    std_dev_multiplier: f64,
+) -> Vec<(f64, f64, f64)> {
     let moving_averages = calculate_moving_average(prices, period);
-    
+
     if moving_averages.is_empty() {
         return vec![];
     }
@@ -293,17 +335,19 @@ pub fn calculate_bollinger_bands(prices: &[f64], period: usize, std_dev_multipli
     for (i, &ma) in moving_averages.iter().enumerate() {
         let start_idx = i;
         let end_idx = i + period;
-        
+
         if end_idx <= prices.len() {
             let window = &prices[start_idx..end_idx];
-            let variance = window.iter()
+            let variance = window
+                .iter()
                 .map(|&price| (price - ma).powi(2))
-                .sum::<f64>() / period as f64;
+                .sum::<f64>()
+                / period as f64;
             let std_dev = variance.sqrt();
-            
+
             let upper_band = ma + (std_dev_multiplier * std_dev);
             let lower_band = ma - (std_dev_multiplier * std_dev);
-            
+
             bands.push((upper_band, ma, lower_band));
         }
     }
@@ -331,8 +375,16 @@ pub fn calculate_adx(high: &[f64], low: &[f64], close: &[f64], period: usize) ->
         let up_move = high[i] - high[i - 1];
         let down_move = low[i - 1] - low[i];
 
-        let plus_dm_val = if up_move > down_move && up_move > 0.0 { up_move } else { 0.0 };
-        let minus_dm_val = if down_move > up_move && down_move > 0.0 { down_move } else { 0.0 };
+        let plus_dm_val = if up_move > down_move && up_move > 0.0 {
+            up_move
+        } else {
+            0.0
+        };
+        let minus_dm_val = if down_move > up_move && down_move > 0.0 {
+            down_move
+        } else {
+            0.0
+        };
 
         plus_dm.push(plus_dm_val);
         minus_dm.push(minus_dm_val);
@@ -349,12 +401,14 @@ pub fn calculate_adx(high: &[f64], low: &[f64], close: &[f64], period: usize) ->
 
     // DI+ と DI- を計算
     let mut dx_values = Vec::new();
-    
-    for ((plus_avg, minus_avg), atr_val) in plus_di_raw.iter().zip(minus_di_raw.iter()).zip(atr.iter()) {
+
+    for ((plus_avg, minus_avg), atr_val) in
+        plus_di_raw.iter().zip(minus_di_raw.iter()).zip(atr.iter())
+    {
         if *atr_val != 0.0 {
             let plus_di = (plus_avg / atr_val) * 100.0;
             let minus_di = (minus_avg / atr_val) * 100.0;
-            
+
             let dx = if plus_di + minus_di != 0.0 {
                 ((plus_di - minus_di).abs() / (plus_di + minus_di)) * 100.0
             } else {
@@ -388,7 +442,7 @@ mod tests {
     fn test_calculate_momentum_score() {
         let prices = vec![100.0, 105.0, 110.0, 115.0, 120.0];
         let score = calculate_momentum_score(&prices, 2);
-        
+
         // (120 - 110) / 110 = 0.0909...
         assert!((score - 0.0909).abs() < 0.001);
     }

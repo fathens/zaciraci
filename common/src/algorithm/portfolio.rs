@@ -413,7 +413,6 @@ pub fn needs_rebalancing(current_weights: &[f64], target_weights: &[f64]) -> boo
 
 // ==================== メトリクス計算 ====================
 
-
 /// ターンオーバー率を計算
 pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 {
     if old_weights.len() != new_weights.len() {

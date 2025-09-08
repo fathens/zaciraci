@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::Duration;
 use ndarray::array;
 use std::collections::HashMap;
@@ -9,24 +10,27 @@ fn create_sample_tokens() -> Vec<TokenInfo> {
     vec![
         TokenInfo {
             symbol: "TOKEN_A".to_string(),
-            current_price: 100.0,
+            current_price: BigDecimal::from_f64(100.0).unwrap(),
             historical_volatility: 0.2,
-            liquidity_score: 0.8,
+            liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
+            decimals: Some(18),
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
-            current_price: 50.0,
+            current_price: BigDecimal::from_f64(50.0).unwrap(),
             historical_volatility: 0.3,
-            liquidity_score: 0.7,
+            liquidity_score: Some(0.7),
             market_cap: Some(500000.0),
+            decimals: Some(18),
         },
         TokenInfo {
             symbol: "TOKEN_C".to_string(),
-            current_price: 200.0,
+            current_price: BigDecimal::from_f64(200.0).unwrap(),
             historical_volatility: 0.1,
-            liquidity_score: 0.9,
+            liquidity_score: Some(0.9),
             market_cap: Some(2000000.0),
+            decimals: Some(18),
         },
     ]
 }
@@ -44,35 +48,50 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
     let mut history = Vec::new();
 
     // TOKEN_A: 上昇トレンド
+    let mut token_a_prices = Vec::new();
     for i in 0..30 {
-        history.push(PriceHistory {
-            token: "TOKEN_A".to_string(),
+        token_a_prices.push(PricePoint {
             timestamp: base_time + Duration::days(i),
-            price: 90.0 + i as f64 * 0.5, // 90から105まで上昇
-            volume: Some(1000.0),
+            price: BigDecimal::from_f64(90.0 + i as f64 * 0.5).unwrap(),
+            volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
         });
     }
+    history.push(PriceHistory {
+        token: "TOKEN_A".to_string(),
+        quote_token: "wrap.near".to_string(),
+        prices: token_a_prices,
+    });
 
     // TOKEN_B: 変動大
+    let mut token_b_prices = Vec::new();
     for i in 0..30 {
         let volatility = ((i as f64 * 0.2).sin() * 10.0) + 50.0;
-        history.push(PriceHistory {
-            token: "TOKEN_B".to_string(),
+        token_b_prices.push(PricePoint {
             timestamp: base_time + Duration::days(i),
-            price: volatility,
-            volume: Some(800.0),
+            price: BigDecimal::from_f64(volatility).unwrap(),
+            volume: Some(BigDecimal::from_f64(800.0).unwrap()),
         });
     }
+    history.push(PriceHistory {
+        token: "TOKEN_B".to_string(),
+        quote_token: "wrap.near".to_string(),
+        prices: token_b_prices,
+    });
 
     // TOKEN_C: 安定
+    let mut token_c_prices = Vec::new();
     for i in 0..30 {
-        history.push(PriceHistory {
-            token: "TOKEN_C".to_string(),
+        token_c_prices.push(PricePoint {
             timestamp: base_time + Duration::days(i),
-            price: 195.0 + (i as f64 * 0.2), // 安定した上昇
-            volume: Some(1200.0),
+            price: BigDecimal::from_f64(195.0 + (i as f64 * 0.2)).unwrap(),
+            volume: Some(BigDecimal::from_f64(1200.0).unwrap()),
         });
     }
+    history.push(PriceHistory {
+        token: "TOKEN_C".to_string(),
+        quote_token: "wrap.near".to_string(),
+        prices: token_c_prices,
+    });
 
     history
 }
@@ -308,35 +327,39 @@ fn test_calculate_sortino_ratio() {
     let returns = vec![0.05, -0.02, 0.08, -0.01, 0.03, 0.06, -0.03];
     let risk_free_rate = 0.02;
 
-    let sortino = calculate_sortino_ratio(&returns, risk_free_rate);
+    let sortino = crate::algorithm::calculate_sortino_ratio(&returns, risk_free_rate);
 
     // ソルティノレシオは有限の正の値
     assert!(sortino.is_finite());
     assert!(sortino > 0.0);
 
     // 空のリターンの場合
-    assert_eq!(calculate_sortino_ratio(&[], risk_free_rate), 0.0);
+    assert_eq!(
+        crate::algorithm::calculate_sortino_ratio(&[], risk_free_rate),
+        0.0
+    );
 
     // 全て正のリターンの場合（下方偏差が0）
     let positive_returns = vec![0.05, 0.03, 0.08, 0.06];
-    let sortino_positive = calculate_sortino_ratio(&positive_returns, risk_free_rate);
+    let sortino_positive =
+        crate::algorithm::calculate_sortino_ratio(&positive_returns, risk_free_rate);
     assert_eq!(sortino_positive, 0.0); // 下方偏差が0なのでソルティノレシオも0
 }
 
 #[test]
 fn test_calculate_max_drawdown() {
     let cumulative_returns = vec![100.0, 110.0, 90.0, 120.0, 80.0, 150.0];
-    let max_dd = calculate_max_drawdown(&cumulative_returns);
+    let max_dd = crate::algorithm::calculate_max_drawdown(&cumulative_returns);
 
     // 120から80への下落が最大: (120-80)/120 = 33.33%
     assert!((max_dd - 0.3333333333333333).abs() < 0.001);
 
     // 単調増加の場合
     let increasing = vec![100.0, 110.0, 120.0, 130.0];
-    assert_eq!(calculate_max_drawdown(&increasing), 0.0);
+    assert_eq!(crate::algorithm::calculate_max_drawdown(&increasing), 0.0);
 
     // 空配列の場合
-    assert_eq!(calculate_max_drawdown(&[]), 0.0);
+    assert_eq!(crate::algorithm::calculate_max_drawdown(&[]), 0.0);
 }
 
 #[test]
@@ -416,10 +439,11 @@ fn test_empty_inputs() {
 fn test_single_token_portfolio() {
     let tokens = vec![TokenInfo {
         symbol: "SINGLE_TOKEN".to_string(),
-        current_price: 100.0,
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
         historical_volatility: 0.2,
-        liquidity_score: 0.8,
+        liquidity_score: Some(0.8),
         market_cap: Some(1000000.0),
+        decimals: Some(18),
     }];
 
     let mut predictions = HashMap::new();
@@ -677,8 +701,10 @@ fn test_liquidity_impact_on_weights() {
     let tokens = create_sample_tokens();
 
     // 流動性スコアを重みとして使用（簡易版）
-    let liquidity_based_weights: Vec<f64> =
-        tokens.iter().map(|token| token.liquidity_score).collect();
+    let liquidity_based_weights: Vec<f64> = tokens
+        .iter()
+        .map(|token| token.liquidity_score.unwrap_or(0.0))
+        .collect();
 
     // 正規化して重みの合計を1にする
     let total_liquidity: f64 = liquidity_based_weights.iter().sum();
@@ -887,7 +913,7 @@ fn test_performance_metrics_with_existing_functions() {
         cumulative_returns.push(next_value);
     }
 
-    let max_drawdown = calculate_max_drawdown(&cumulative_returns);
+    let max_drawdown = crate::algorithm::calculate_max_drawdown(&cumulative_returns);
     assert!(max_drawdown >= 0.0);
 
     // カルマーレシオ（年化リターン / 最大ドローダウン）
@@ -900,7 +926,8 @@ fn test_performance_metrics_with_existing_functions() {
     assert!(calmar_ratio.is_finite() || calmar_ratio == f64::INFINITY);
 
     // ソルティノレシオ（既存関数使用）
-    let sortino_ratio = calculate_sortino_ratio(&portfolio_returns, RISK_FREE_RATE / 252.0);
+    let sortino_ratio =
+        crate::algorithm::calculate_sortino_ratio(&portfolio_returns, RISK_FREE_RATE / 252.0);
     assert!(sortino_ratio >= 0.0);
 
     // ポートフォリオの安定性指標

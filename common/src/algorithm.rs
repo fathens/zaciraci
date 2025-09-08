@@ -1,13 +1,13 @@
+pub mod indicators;
 pub mod momentum;
 pub mod portfolio;
 pub mod prediction;
 pub mod trend_following;
 pub mod types;
-pub mod indicators;
 
 // Re-export common types and indicators for convenience
-pub use types::*;
 pub use indicators::*;
+pub use types::*;
 
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};

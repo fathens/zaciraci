@@ -2,49 +2,12 @@ use crate::Result;
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// トークンの価格履歴
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PriceHistory {
-    pub token: String,
-    pub quote_token: String,
-    pub prices: Vec<PricePoint>,
-}
-
-/// 価格ポイント
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PricePoint {
-    pub timestamp: DateTime<Utc>,
-    pub price: f64,
-}
-
-/// 予測結果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenPredictionResult {
-    pub token: String,
-    pub quote_token: String,
-    pub prediction_time: DateTime<Utc>,
-    pub predictions: Vec<PredictedPrice>,
-}
-
-/// 予測価格
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictedPrice {
-    pub timestamp: DateTime<Utc>,
-    pub price: f64,
-    pub confidence: Option<f64>,
-}
-
-/// トップトークン情報
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TopTokenInfo {
-    pub token: String,
-    pub volatility: f64,
-    pub volume_24h: f64,
-    pub current_price: f64,
-}
+// Re-export shared types from types.rs
+pub use super::types::{
+    PredictedPrice, PriceHistory, PricePoint, TokenPredictionResult, TopTokenInfo,
+};
 
 /// 予測サービスのトレイト
 #[async_trait]
@@ -102,7 +65,7 @@ impl crate::algorithm::PredictionData {
         Some(Self {
             token: prediction.token.clone(),
             current_price,
-            predicted_price_24h: BigDecimal::from(predicted_24h.price as i64),
+            predicted_price_24h: predicted_24h.price.clone(),
             timestamp: prediction.prediction_time,
             confidence: predicted_24h.confidence,
         })

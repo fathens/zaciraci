@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,7 +24,8 @@ pub struct TokenPriceHistory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricePoint {
     pub timestamp: DateTime<Utc>,
-    pub price: f64,
+    pub price: BigDecimal,
+    pub volume: Option<BigDecimal>,
 }
 
 /// 予測結果
@@ -152,7 +154,8 @@ impl PredictionService {
             .into_iter()
             .map(|(timestamp, price)| PricePoint {
                 timestamp: DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now),
-                price,
+                price: BigDecimal::from(price as i64),
+                volume: None,
             })
             .collect();
 
@@ -170,7 +173,11 @@ impl PredictionService {
         prediction_horizon: usize,
     ) -> Result<TokenPrediction> {
         // 履歴データを予測用フォーマットに変換
-        let values: Vec<f64> = history.prices.iter().map(|p| p.price).collect();
+        let values: Vec<f64> = history
+            .prices
+            .iter()
+            .map(|p| p.price.to_string().parse::<f64>().unwrap_or(0.0))
+            .collect();
         let timestamps: Vec<DateTime<Utc>> = history.prices.iter().map(|p| p.timestamp).collect();
 
         if values.is_empty() {
@@ -333,7 +340,8 @@ impl PredictionProvider for PredictionService {
                 .into_iter()
                 .map(|p| CommonPricePoint {
                     timestamp: p.timestamp,
-                    price: p.price,
+                    price: p.price.clone(),
+                    volume: p.volume.clone(),
                 })
                 .collect(),
         })
@@ -353,7 +361,8 @@ impl PredictionProvider for PredictionService {
                 .iter()
                 .map(|p| PricePoint {
                     timestamp: p.timestamp,
-                    price: p.price,
+                    price: p.price.clone(),
+                    volume: p.volume.clone(),
                 })
                 .collect(),
         };
@@ -371,7 +380,7 @@ impl PredictionProvider for PredictionService {
                 .into_iter()
                 .map(|p| CommonPredictedPrice {
                     timestamp: p.timestamp,
-                    price: p.price,
+                    price: BigDecimal::from(p.price as i64),
                     confidence: p.confidence,
                 })
                 .collect(),
@@ -402,7 +411,7 @@ impl PredictionProvider for PredictionService {
                         .into_iter()
                         .map(|p| CommonPredictedPrice {
                             timestamp: p.timestamp,
-                            price: p.price,
+                            price: BigDecimal::from(p.price as i64),
                             confidence: p.confidence,
                         })
                         .collect(),
