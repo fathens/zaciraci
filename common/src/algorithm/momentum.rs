@@ -57,17 +57,14 @@ impl ExecutionReport {
         }
     }
 
-    #[allow(dead_code)]
     pub fn mark_success(&mut self) {
         self.success_count += 1;
     }
 
-    #[allow(dead_code)]
     pub fn mark_failed(&mut self) {
         self.failed_count += 1;
     }
 
-    #[allow(dead_code)]
     pub fn mark_skipped(&mut self) {
         self.skipped_count += 1;
     }
@@ -315,7 +312,6 @@ pub fn calculate_position_size(confidence_score: f64, expected_return: f64) -> f
 }
 
 /// ボラティリティによるフィルタリング
-#[allow(dead_code)]
 pub async fn filter_by_volatility(
     tokens: Vec<(String, f64, Option<f64>)>,
     max_volatility: f64,
@@ -356,7 +352,6 @@ pub struct BacktestMetrics {
 }
 
 /// バックテストの実行
-#[allow(dead_code)]
 pub async fn run_backtest(
     _historical_data: Vec<String>, // TokenRateは backend固有なのでStringに変更
     _initial_capital: BigDecimal,

@@ -26,7 +26,6 @@ pub struct PriceHistory {
 }
 
 /// ポートフォリオデータ
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PortfolioData {
     pub tokens: Vec<TokenInfo>,
@@ -84,7 +83,6 @@ pub struct PortfolioMetrics {
 }
 
 /// ウォレット情報
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WalletInfo {
     pub holdings: HashMap<String, f64>,
@@ -95,31 +93,24 @@ pub struct WalletInfo {
 // ==================== 定数 ====================
 
 /// リスクフリーレート（年率2%）
-#[allow(dead_code)]
 const RISK_FREE_RATE: f64 = 0.02;
 
 /// 単一トークンの最大保有比率
-#[allow(dead_code)]
 const MAX_POSITION_SIZE: f64 = 0.4;
 
 /// 最小保有比率
-#[allow(dead_code)]
 const MIN_POSITION_SIZE: f64 = 0.05;
 
 /// リバランス閾値（10%）
-#[allow(dead_code)]
 const REBALANCE_THRESHOLD: f64 = 0.1;
 
 /// 最大保有トークン数
-#[allow(dead_code)]
 const MAX_HOLDINGS: usize = 10;
 
 /// 最適化の最大反復回数
-#[allow(dead_code)]
 const MAX_OPTIMIZATION_ITERATIONS: usize = 100;
 
 /// 数値安定性のための正則化パラメータ
-#[allow(dead_code)]
 const REGULARIZATION_FACTOR: f64 = 1e-6;
 
 // ==================== コア計算関数 ====================
@@ -194,7 +185,6 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
 }
 
 /// 2つの系列間の共分散を計算
-#[allow(dead_code)]
 fn calculate_covariance(returns1: &[f64], returns2: &[f64]) -> f64 {
     if returns1.len() != returns2.len() || returns1.is_empty() {
         return 0.0;
@@ -277,7 +267,6 @@ pub fn maximize_sharpe_ratio(
 }
 
 /// 効率的フロンティア上の最適ポートフォリオを計算
-#[allow(dead_code)]
 pub fn calculate_efficient_frontier(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
@@ -312,7 +301,6 @@ pub fn calculate_efficient_frontier(
 }
 
 /// 最適化の1ステップ
-#[allow(dead_code)]
 fn optimize_weights_step(
     current_weights: &[f64],
     expected_returns: &[f64],
@@ -385,7 +373,6 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
 // ==================== 制約の適用 ====================
 
 /// 個別制約を適用
-#[allow(dead_code)]
 fn apply_individual_constraints(weights: &mut [f64]) {
     for w in weights.iter_mut() {
         *w = w.clamp(0.0, MAX_POSITION_SIZE);
@@ -478,7 +465,6 @@ pub fn needs_rebalancing(current_weights: &[f64], target_weights: &[f64]) -> boo
 // ==================== メトリクス計算 ====================
 
 /// ソルティノレシオを計算
-#[allow(dead_code)]
 pub fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
     if returns.is_empty() {
         return 0.0;
@@ -509,7 +495,6 @@ pub fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
 }
 
 /// 最大ドローダウンを計算
-#[allow(dead_code)]
 pub fn calculate_max_drawdown(cumulative_returns: &[f64]) -> f64 {
     if cumulative_returns.len() < 2 {
         return 0.0;

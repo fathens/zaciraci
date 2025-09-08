@@ -14,7 +14,6 @@ use num_traits::ToPrimitive;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-#[allow(dead_code)]
 pub enum TimeSeriesPredictionError {
     #[error("insufficient data points for prediction: need at least {required} but got {actual}")]
     InsufficientData { required: usize, actual: usize },
@@ -30,7 +29,6 @@ pub enum TimeSeriesPredictionError {
 }
 
 /// 時系列データのポイントをf64に変換する
-#[allow(dead_code)]
 fn convert_to_f64(decimal: &BigDecimal) -> Result<f64> {
     decimal.to_f64().ok_or_else(|| {
         anyhow!(TimeSeriesPredictionError::ConversionError(format!(
@@ -41,7 +39,6 @@ fn convert_to_f64(decimal: &BigDecimal) -> Result<f64> {
 }
 
 /// f64から時系列データのポイントに変換する
-#[allow(dead_code)]
 fn convert_from_f64(value: f64) -> Result<BigDecimal> {
     BigDecimal::try_from(value).map_err(|e| {
         anyhow!(TimeSeriesPredictionError::ConversionError(format!(
@@ -53,7 +50,6 @@ fn convert_from_f64(value: f64) -> Result<BigDecimal> {
 
 /// ラグ特徴量を生成する
 /// `lag_count`: 何期前までのデータを特徴量として使用するか
-#[allow(dead_code)]
 fn create_lag_features(points: &[Point], lag_count: usize) -> Result<(Vec<Vec<f64>>, Vec<f64>)> {
     let log = DEFAULT.new(o!(
         "function" => "arima::create_lag_features",
@@ -106,7 +102,6 @@ fn create_lag_features(points: &[Point], lag_count: usize) -> Result<(Vec<Vec<f6
 }
 
 /// Vecをndarray形式に変換する
-#[allow(dead_code)]
 fn vec_to_ndarray(
     features: Vec<Vec<f64>>,
     targets: Vec<f64>,
@@ -140,7 +135,6 @@ fn vec_to_ndarray(
 }
 
 /// 線形回帰モデルを訓練する
-#[allow(dead_code)]
 fn train_linear_model(
     features: Vec<Vec<f64>>,
     targets: Vec<f64>,
@@ -167,7 +161,6 @@ fn train_linear_model(
 }
 
 /// 将来の特徴量を生成する
-#[allow(dead_code)]
 fn generate_future_features(
     points: &[Point],
     lag_count: usize,
@@ -207,7 +200,6 @@ fn generate_future_features(
 }
 
 /// 将来の時点における予測値を計算する
-#[allow(dead_code)]
 pub fn predict_future_rate(points: &[Point], target_time: NaiveDateTime) -> Result<BigDecimal> {
     let log = DEFAULT.new(o!(
         "function" => "arima::predict_future_rate",

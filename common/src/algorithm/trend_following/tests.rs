@@ -4,13 +4,15 @@ use chrono::Duration;
 
 #[test]
 fn test_calculate_trend_strength() {
-    let prices = vec![100.0, 102.0, 105.0, 108.0, 112.0];
+    let prices = vec![100.0, 102.0, 105.0, 108.0, 112.0, 115.0, 118.0];
     let timestamps = vec![
         Utc::now(),
         Utc::now() + Duration::hours(1),
         Utc::now() + Duration::hours(2),
         Utc::now() + Duration::hours(3),
         Utc::now() + Duration::hours(4),
+        Utc::now() + Duration::hours(5),
+        Utc::now() + Duration::hours(6),
     ];
 
     let (slope, r_squared, direction, _strength) = calculate_trend_strength(&prices, &timestamps);
@@ -20,7 +22,7 @@ fn test_calculate_trend_strength() {
     assert_eq!(direction, TrendDirection::Upward);
 
     // 強いトレンドのテスト（R²が高い場合）
-    let strong_prices = vec![100.0, 105.0, 110.0, 115.0, 120.0];
+    let strong_prices = vec![100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 130.0];
     let (_, r_squared, _, strength) = calculate_trend_strength(&strong_prices, &timestamps);
     assert!(r_squared > 0.9);
     assert_eq!(strength, TrendStrength::Strong);
@@ -160,7 +162,7 @@ fn test_calculate_kelly_position_size() {
 #[test]
 fn test_analyze_trend() {
     let token = "TEST_TOKEN";
-    let prices = vec![100.0, 102.0, 105.0, 108.0, 112.0, 115.0];
+    let prices = vec![100.0, 102.0, 105.0, 108.0, 112.0, 115.0, 118.0];
     let timestamps = vec![
         Utc::now(),
         Utc::now() + Duration::hours(1),
@@ -168,10 +170,11 @@ fn test_analyze_trend() {
         Utc::now() + Duration::hours(3),
         Utc::now() + Duration::hours(4),
         Utc::now() + Duration::hours(5),
+        Utc::now() + Duration::hours(6),
     ];
-    let volumes = vec![1000.0, 1100.0, 1300.0, 1200.0, 1400.0, 1500.0];
-    let highs = vec![101.0, 103.0, 106.0, 109.0, 113.0, 116.0];
-    let lows = vec![99.0, 101.0, 104.0, 107.0, 111.0, 114.0];
+    let volumes = vec![1000.0, 1100.0, 1300.0, 1200.0, 1400.0, 1500.0, 1600.0];
+    let highs = vec![101.0, 103.0, 106.0, 109.0, 113.0, 116.0, 119.0];
+    let lows = vec![99.0, 101.0, 104.0, 107.0, 111.0, 114.0, 117.0];
 
     let analysis = analyze_trend(token, &prices, &timestamps, &volumes, &highs, &lows);
 
@@ -192,6 +195,8 @@ fn test_make_trend_trading_decision() {
         r_squared: 0.85,
         volume_trend: 0.7,
         breakout_signal: true,
+        rsi: Some(50.0), // 中立的なRSI
+        adx: Some(30.0), // 強いトレンド
         timestamp: Utc::now(),
     };
 
@@ -234,6 +239,8 @@ fn test_trend_trading_decision_with_existing_position() {
         r_squared: 0.85,
         volume_trend: 0.7,
         breakout_signal: true,
+        rsi: Some(50.0),
+        adx: Some(30.0),
         timestamp: Utc::now(),
     };
 
@@ -264,6 +271,8 @@ fn test_trend_trading_decision_exit_conditions() {
         r_squared: 0.2,
         volume_trend: 0.1,
         breakout_signal: false,
+        rsi: Some(50.0),
+        adx: Some(15.0), // 弱いトレンド
         timestamp: Utc::now(),
     };
 

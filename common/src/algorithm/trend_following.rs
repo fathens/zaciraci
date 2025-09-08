@@ -33,6 +33,8 @@ pub struct TrendAnalysis {
     pub r_squared: f64,
     pub volume_trend: f64,
     pub breakout_signal: bool,
+    pub rsi: Option<f64>,
+    pub adx: Option<f64>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -74,7 +76,6 @@ pub struct TrendExecutionReport {
 
 /// ポジション情報
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TrendPosition {
     pub token: String,
     pub size: f64,
@@ -87,15 +88,12 @@ pub struct TrendPosition {
 // ==================== 定数 ====================
 
 /// RSI上限閾値（買われすぎ）
-#[allow(dead_code)]
 const RSI_OVERBOUGHT: f64 = 70.0;
 
 /// RSI下限閾値（売られすぎ）
-#[allow(dead_code)]
 const RSI_OVERSOLD: f64 = 30.0;
 
 /// ADX強トレンド閾値
-#[allow(dead_code)]
 const ADX_STRONG_TREND: f64 = 25.0;
 
 /// 線形回帰のR²閾値（トレンド強度判定）
@@ -105,7 +103,6 @@ const R_SQUARED_THRESHOLD: f64 = 0.7;
 const VOLUME_BREAKOUT_MULTIPLIER: f64 = 1.5;
 
 /// 最小トレンド期間（時間）
-#[allow(dead_code)]
 const MIN_TREND_HOURS: i64 = 6;
 
 /// ポジションサイズの最大値（資金の30%）
@@ -123,6 +120,13 @@ pub fn calculate_trend_strength(
 ) -> (f64, f64, TrendDirection, TrendStrength) {
     if prices.len() < 3 || timestamps.len() != prices.len() {
         return (0.0, 0.0, TrendDirection::Sideways, TrendStrength::NoTrend);
+    }
+
+    // トレンド期間の確認
+    let duration = *timestamps.last().unwrap() - timestamps[0];
+    if duration.num_hours() < MIN_TREND_HOURS {
+        // トレンドが最小期間を満たしていない場合は弱いトレンドとする
+        return (0.0, 0.0, TrendDirection::Sideways, TrendStrength::Weak);
     }
 
     let n = prices.len() as f64;
@@ -341,7 +345,6 @@ pub fn detect_breakout(
 }
 
 /// Kelly Criterionによるポジションサイズ計算
-#[allow(dead_code)]
 pub fn calculate_kelly_position_size(
     win_rate: f64,
     avg_win: f64,
@@ -374,9 +377,9 @@ pub fn analyze_trend(
     let (slope, r_squared, direction, strength) = calculate_trend_strength(prices, timestamps);
 
     // テクニカル指標
-    let _rsi = calculate_rsi(prices, 14);
+    let rsi = calculate_rsi(prices, 14);
     let (_macd, _macd_signal) = calculate_macd(prices, 12, 26, 9);
-    let _adx = calculate_adx(highs, lows, prices, 14);
+    let adx = calculate_adx(highs, lows, prices, 14);
 
     // ボリューム分析
     let volume_trend = analyze_volume_trend(volumes, prices);
@@ -411,6 +414,8 @@ pub fn analyze_trend(
         r_squared,
         volume_trend,
         breakout_signal,
+        rsi,
+        adx,
         timestamp: Utc::now(),
     }
 }
@@ -425,9 +430,16 @@ pub fn make_trend_trading_decision(
         .iter()
         .find(|p| p.token == trend_analysis.token);
 
+    // RSIとADXのチェック
+    let rsi_overbought = trend_analysis.rsi.is_some_and(|rsi| rsi > RSI_OVERBOUGHT);
+    let rsi_oversold = trend_analysis.rsi.is_some_and(|rsi| rsi < RSI_OVERSOLD);
+    let strong_trend = trend_analysis.adx.is_some_and(|adx| adx > ADX_STRONG_TREND);
+
     match (&trend_analysis.strength, &trend_analysis.direction) {
         // 強いトレンドでブレイクアウトがある場合
-        (TrendStrength::Strong, TrendDirection::Upward) if trend_analysis.breakout_signal => {
+        (TrendStrength::Strong, TrendDirection::Upward)
+            if trend_analysis.breakout_signal && !rsi_overbought && strong_trend =>
+        {
             if current_position.is_none() && available_capital > 0.0 {
                 let position_size =
                     calculate_kelly_position_size(0.6, 0.15, 0.08, KELLY_RISK_FACTOR);
@@ -436,12 +448,16 @@ pub fn make_trend_trading_decision(
                     position_size: position_size.min(available_capital),
                 }
             } else if let Some(pos) = current_position {
-                // 既存ポジションのサイズ調整
-                let new_size = (pos.size * 1.2).min(MAX_POSITION_SIZE);
-                if new_size > pos.size {
-                    TrendTradingAction::AdjustPosition {
-                        token: trend_analysis.token.clone(),
-                        new_size,
+                // 既存ポジションのサイズ調整（RSIが買われすぎでない場合のみ）
+                if !rsi_overbought {
+                    let new_size = (pos.size * 1.2).min(MAX_POSITION_SIZE);
+                    if new_size > pos.size {
+                        TrendTradingAction::AdjustPosition {
+                            token: trend_analysis.token.clone(),
+                            new_size,
+                        }
+                    } else {
+                        TrendTradingAction::Wait
                     }
                 } else {
                     TrendTradingAction::Wait
@@ -451,8 +467,29 @@ pub fn make_trend_trading_decision(
             }
         }
 
+        // 下降トレンドでRSIが売られすぎの場合は逆張りのチャンス
+        (_, TrendDirection::Downward) if rsi_oversold && strong_trend => {
+            if current_position.is_none() && available_capital > 0.0 {
+                let position_size =
+                    calculate_kelly_position_size(0.5, 0.12, 0.10, KELLY_RISK_FACTOR * 0.8);
+                TrendTradingAction::EnterTrend {
+                    token: trend_analysis.token.clone(),
+                    position_size: position_size.min(available_capital * 0.5), // リスク制限
+                }
+            } else {
+                TrendTradingAction::Wait
+            }
+        }
+
+        // RSIが買われすぎの場合は退出シグナル
+        _ if rsi_overbought && current_position.is_some() => TrendTradingAction::ExitTrend {
+            token: trend_analysis.token.clone(),
+        },
+
         // 弱いトレンドまたはサイドウェイの場合は退出
-        (TrendStrength::Weak, _) | (TrendStrength::NoTrend, _) | (_, TrendDirection::Sideways) => {
+        (TrendStrength::Weak, _) | (TrendStrength::NoTrend, _) | (_, TrendDirection::Sideways)
+            if !strong_trend =>
+        {
             if current_position.is_some() {
                 TrendTradingAction::ExitTrend {
                     token: trend_analysis.token.clone(),

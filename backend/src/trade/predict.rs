@@ -54,9 +54,7 @@ pub struct TopToken {
 
 /// 価格予測サービス
 pub struct PredictionService {
-    #[allow(dead_code)]
     chronos_client: ChronosApiClient,
-    #[allow(dead_code)]
     backend_url: String,
 }
 
@@ -69,7 +67,6 @@ impl PredictionService {
     }
 
     /// 指定期間のトップトークンを取得
-    #[allow(dead_code)]
     pub async fn get_top_tokens(
         &self,
         start_date: DateTime<Utc>,
@@ -112,7 +109,6 @@ impl PredictionService {
     }
 
     /// 指定トークンの価格履歴を取得
-    #[allow(dead_code)]
     pub async fn get_price_history(
         &self,
         token: &str,
@@ -168,7 +164,6 @@ impl PredictionService {
     }
 
     /// 価格予測を実行
-    #[allow(dead_code)]
     pub async fn predict_price(
         &self,
         history: &TokenPriceHistory,
@@ -229,7 +224,6 @@ impl PredictionService {
     }
 
     /// 複数トークンの価格予測を実行（10個ずつのバッチで処理）
-    #[allow(dead_code)]
     pub async fn predict_multiple_tokens(
         &self,
         tokens: Vec<String>,
