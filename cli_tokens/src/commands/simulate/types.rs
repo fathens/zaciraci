@@ -111,6 +111,7 @@ pub const SWITCH_MULTIPLIER: f64 = 1.5;
 #[derive(Args)]
 pub struct SimulateArgs {
     /// シミュレーション開始日 (YYYY-MM-DD)
+    /// (注意: topコマンドで生成したトークンファイルが必要です)
     #[clap(short, long)]
     pub start: Option<String>,
 
@@ -127,12 +128,9 @@ pub struct SimulateArgs {
     pub capital: f64,
 
     /// ベース通貨 [デフォルト: wrap.near]
+    /// (注意: topコマンドで作成されたtokens/ディレクトリからトークンを読み取ります)
     #[clap(short, long, default_value = "wrap.near")]
     pub quote_token: String,
-
-    /// 自動取得するトップボラティリティトークン数 [デフォルト: 10]
-    #[clap(short, long, default_value = "10")]
-    pub tokens: u32,
 
     /// 出力ディレクトリ [デフォルト: simulation_results/]
     #[clap(short, long, default_value = "simulation_results")]

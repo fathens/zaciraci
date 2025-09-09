@@ -13,9 +13,12 @@ pub use utils::*;
 use algorithms::{
     run_momentum_simulation, run_portfolio_simulation, run_trend_following_simulation,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
+use serde_json;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Main entry point for simulation execution
 pub async fn run(args: SimulateArgs) -> Result<()> {
@@ -35,38 +38,29 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         println!("  Output: {}", args.output);
     }
 
-    // outputとtokensを先に保存
+    // outputを先に保存
     let output_dir = args.output.clone();
-    let num_tokens = args.tokens;
 
     // 1. 設定の検証と変換
     let config = validate_and_convert_args(args).await?;
 
-    // 自動的にtop volatility tokensを取得
+    // topコマンドの出力ディレクトリからトークンを読み取り
     let mut final_config = config;
-    println!("🔍 Fetching top {} volatility tokens...", num_tokens);
+    println!("🔍 Loading tokens from top command output directory...");
 
-    let backend_client = crate::api::backend::BackendClient::new();
-    let top_tokens = backend_client
-        .get_volatility_tokens(
-            final_config.start_date,
-            final_config.end_date,
-            num_tokens,
-            Some(final_config.quote_token.clone()),
-            None, // min_depth
-        )
-        .await?;
+    let tokens_dir = get_tokens_directory()?;
+    let token_names = load_tokens_from_directory(&tokens_dir, &final_config.quote_token)?;
 
-    if top_tokens.is_empty() {
+    if token_names.is_empty() {
         return Err(anyhow::anyhow!(
-            "No volatility tokens found for the specified period"
+            "No tokens found in directory: {}. Please run 'cli_tokens top' first to generate token files.",
+            tokens_dir.display()
         ));
     }
 
-    let token_names: Vec<String> = top_tokens.iter().map(|t| t.0.to_string()).collect();
     println!(
-        "📈 Selected top {} volatility tokens: {}",
-        num_tokens,
+        "📈 Found {} tokens: {}",
+        token_names.len(),
         token_names.join(", ")
     );
 
@@ -118,6 +112,58 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Get the tokens directory from environment or default location
+fn get_tokens_directory() -> Result<PathBuf> {
+    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
+    Ok(PathBuf::from(base_dir).join("tokens"))
+}
+
+/// Load token names from the tokens directory created by top command
+fn load_tokens_from_directory(tokens_dir: &Path, quote_token: &str) -> Result<Vec<String>> {
+    let quote_dir = tokens_dir.join(quote_token);
+
+    if !quote_dir.exists() {
+        return Err(anyhow::anyhow!(
+            "Quote token directory '{}' not found in tokens directory. Please run 'cli_tokens top --quote-token {}' first.",
+            quote_token,
+            quote_token
+        ));
+    }
+
+    let mut token_names = Vec::new();
+
+    for entry in fs::read_dir(&quote_dir)
+        .with_context(|| format!("Failed to read directory: {}", quote_dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+            if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
+                // Verify the file is a valid token file by checking its content
+                match fs::read_to_string(&path) {
+                    Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                        Ok(json) => {
+                            if json.get("token_data").is_some() && json.get("metadata").is_some() {
+                                token_names.push(file_stem.to_string());
+                            }
+                        }
+                        Err(_) => {
+                            eprintln!("Warning: Skipping invalid JSON file: {}", path.display());
+                        }
+                    },
+                    Err(_) => {
+                        eprintln!("Warning: Could not read file: {}", path.display());
+                    }
+                }
+            }
+        }
+    }
+
+    token_names.sort(); // Sort for consistent ordering
+    Ok(token_names)
 }
 
 /// Convert and validate simulation arguments
@@ -237,8 +283,30 @@ async fn run_single_algorithm(config: &SimulationConfig) -> Result<SimulationRes
 }
 
 /// Save simulation result to output directory
-pub fn save_simulation_result(result: &SimulationResult, _output_dir: &str) -> Result<()> {
-    // 結果の概要を表示（ファイル保存は将来の実装で追加）
+pub fn save_simulation_result(result: &SimulationResult, output_dir: &str) -> Result<()> {
+    use std::fs;
+    use std::path::Path;
+
+    // 出力ディレクトリを作成
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("Failed to create output directory: {}", output_dir))?;
+
+    // ファイル名を生成（アルゴリズム名 + タイムスタンプ）
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("{:?}_{}.json", result.config.algorithm, timestamp).to_lowercase();
+    let filepath = Path::new(output_dir).join(&filename);
+
+    // JSON形式でシミュレーション結果を保存
+    let json_content = serde_json::to_string_pretty(result)
+        .context("Failed to serialize simulation result to JSON")?;
+
+    fs::write(&filepath, json_content).with_context(|| {
+        format!(
+            "Failed to write simulation result to {}",
+            filepath.display()
+        )
+    })?;
+
     println!("💾 Simulation completed successfully!");
     println!("  Algorithm: {:?}", result.config.algorithm);
     println!("  Duration: {} days", result.config.duration_days);
@@ -254,14 +322,24 @@ pub fn save_simulation_result(result: &SimulationResult, _output_dir: &str) -> R
         println!("  Win Rate: {:.1}%", result.performance.win_rate);
     }
 
+    println!("📁 Results saved to: {}", filepath.display());
+    println!(
+        "💡 Generate HTML report with: cli_tokens report {}",
+        filepath.display()
+    );
+
     Ok(())
 }
 
 /// Save multi-algorithm simulation results
 pub fn save_simple_multi_algorithm_result(
     results: &[SimulationResult],
-    _output_dir: &str,
+    output_dir: &str,
 ) -> Result<()> {
+    use anyhow::Context;
+    use std::fs;
+    use std::path::Path;
+
     println!("\n🏆 Multi-Algorithm Comparison Results:");
     println!("┌─────────────────┬─────────────┬─────────────┬─────────────┬─────────────┐");
     println!("│ Algorithm       │ Return (%)  │ Sharpe      │ Drawdown(%) │ Trades      │");
@@ -311,10 +389,81 @@ pub fn save_simple_multi_algorithm_result(
         lowest_drawdown.0, lowest_drawdown.1
     );
 
-    let final_output_dir = std::path::Path::new(_output_dir).join("multi_algorithm_comparison");
+    // 出力ディレクトリを作成
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let final_output_dir = Path::new(output_dir)
+        .join("simulation_results")
+        .join(format!("multi_algorithm_{}", timestamp));
+
+    fs::create_dir_all(&final_output_dir).with_context(|| {
+        format!(
+            "Failed to create output directory: {}",
+            final_output_dir.display()
+        )
+    })?;
+
+    // 各アルゴリズムの結果を個別に保存
+    for result in results {
+        let filename = format!("{:?}_result.json", result.config.algorithm).to_lowercase();
+        let filepath = final_output_dir.join(&filename);
+
+        let json_content = serde_json::to_string_pretty(result)
+            .context("Failed to serialize simulation result to JSON")?;
+
+        fs::write(&filepath, json_content).with_context(|| {
+            format!(
+                "Failed to write simulation result to {}",
+                filepath.display()
+            )
+        })?;
+    }
+
+    // 比較サマリーをJSONとして保存
+    let summary = serde_json::json!({
+        "comparison_type": "multi_algorithm",
+        "algorithms": results.iter().map(|r| format!("{:?}", r.config.algorithm)).collect::<Vec<_>>(),
+        "best_performers": {
+            "highest_return": {
+                "algorithm": best_return.0,
+                "value": best_return.1
+            },
+            "best_sharpe": {
+                "algorithm": best_sharpe.0,
+                "value": best_sharpe.1
+            },
+            "lowest_drawdown": {
+                "algorithm": lowest_drawdown.0,
+                "value": lowest_drawdown.1
+            }
+        },
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "results": results
+    });
+
+    let summary_filepath = final_output_dir.join("multi_results.json");
+    let summary_json = serde_json::to_string_pretty(&summary)
+        .context("Failed to serialize comparison summary to JSON")?;
+
+    fs::write(&summary_filepath, summary_json).with_context(|| {
+        format!(
+            "Failed to write comparison summary to {}",
+            summary_filepath.display()
+        )
+    })?;
+
+    println!("💾 Multi-algorithm comparison completed successfully!");
+    println!("📁 Results saved to: {}", final_output_dir.display());
     println!(
-        "📄 Results would be saved to: {}",
-        final_output_dir.display()
+        "📄 Individual results: {:?}_result.json for each algorithm",
+        results
+            .iter()
+            .map(|r| format!("{:?}", r.config.algorithm))
+            .collect::<Vec<_>>()
+    );
+    println!("📊 Comparison summary: multi_results.json");
+    println!(
+        "💡 Generate HTML report with: cli_tokens report {}",
+        summary_filepath.display()
     );
 
     Ok(())

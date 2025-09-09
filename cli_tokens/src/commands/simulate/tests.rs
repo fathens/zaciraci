@@ -24,7 +24,6 @@ mod unit_tests {
             algorithm: Some("momentum".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
-            tokens: 5,
             output: "simulation_results".to_string(),
             rebalance_interval: "1d".to_string(),
             fee_model: "realistic".to_string(),
@@ -1350,7 +1349,6 @@ mod integration_tests {
             algorithm: Some("momentum".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
-            tokens: 2,
             output: "test_output".to_string(),
             rebalance_interval: "1d".to_string(),
             fee_model: "zero".to_string(),
@@ -1367,7 +1365,7 @@ mod integration_tests {
         // Test that the args contain expected values
         assert_eq!(args.algorithm, Some("momentum".to_string()));
         assert_eq!(args.capital, 1000.0);
-        assert_eq!(args.tokens, 2);
+        assert_eq!(args.quote_token, "wrap.near");
         assert_eq!(args.historical_days, 30);
     }
 }

@@ -248,7 +248,6 @@ mod integration_tests {
             algorithm: Some("momentum".to_string()),
             capital: 10000.0,
             quote_token: "wrap.near".to_string(),
-            tokens: 3,
             output: "simulation_results".to_string(),
             rebalance_interval: "1d".to_string(),
             fee_model: "realistic".to_string(),
@@ -265,7 +264,7 @@ mod integration_tests {
         // Test that configuration is parsed correctly
         assert_eq!(momentum_config.algorithm, Some("momentum".to_string()));
         assert_eq!(momentum_config.capital, 10000.0);
-        assert_eq!(momentum_config.tokens, 3);
+        assert_eq!(momentum_config.quote_token, "wrap.near");
         assert_eq!(momentum_config.fee_model, "realistic");
         assert_eq!(momentum_config.slippage, 0.01);
 
@@ -276,7 +275,6 @@ mod integration_tests {
             algorithm: Some("portfolio".to_string()),
             capital: 5000.0,
             quote_token: "wrap.near".to_string(),
-            tokens: 5, // Will use top 5 volatility tokens
             output: "portfolio_results".to_string(),
             rebalance_interval: "1h".to_string(),
             fee_model: "zero".to_string(),
@@ -292,7 +290,7 @@ mod integration_tests {
 
         assert_eq!(portfolio_config.algorithm, Some("portfolio".to_string()));
         assert_eq!(portfolio_config.capital, 5000.0);
-        assert_eq!(portfolio_config.tokens, 5); // Should fetch top 5 volatility tokens
+        assert_eq!(portfolio_config.quote_token, "wrap.near");
         assert_eq!(portfolio_config.fee_model, "zero");
         assert_eq!(portfolio_config.custom_fee.unwrap(), 0.002);
         assert!(portfolio_config.verbose);
