@@ -3,7 +3,7 @@ use super::utils::calculate_trading_cost;
 use anyhow::Result;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
-use common::algorithm::TradingAction;
+use common::algorithm::{PredictionData, TradingAction};
 use std::collections::HashMap;
 
 /// Generate simple mock predictions (placeholder for now)
@@ -611,16 +611,6 @@ impl StrategyContext {
     ) -> bool {
         self.strategy.should_rebalance(portfolio, market)
     }
-}
-
-/// Prediction data structure for API predictions
-#[derive(Debug, Clone)]
-pub struct PredictionData {
-    pub token: String,
-    pub current_price: BigDecimal,
-    pub predicted_price_24h: BigDecimal,
-    pub timestamp: DateTime<Utc>,
-    pub confidence: Option<f64>,
 }
 
 /// Convert PredictionData to TokenOpportunity for strategy use
