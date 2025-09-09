@@ -9,7 +9,7 @@
 - **バックテスト実行**: 過去のデータを使用して戦略の有効性を検証
 - **実取引コスト計算**: Ref Financeの実際の手数料体系を反映
 - **複数アルゴリズム対応**: momentum、portfolio、trend_followingの3つの戦略
-- **自動データ取得**: 指定期間の価格データを自動取得
+- **トークン読み込み**: topコマンド出力ディレクトリからトークンを自動読み込み
 - **パフォーマンス分析**: リターン、シャープレシオ、最大ドローダウンなどの指標を計算
 
 ## コマンド仕様
@@ -23,14 +23,13 @@ cli_tokens simulate [OPTIONS]
 ```bash
 OPTIONS:
     -s, --start <DATE>           シミュレーション開始日 (YYYY-MM-DD)
+                                (注意: topコマンドで生成したトークンファイルが必要です)
     -e, --end <DATE>             シミュレーション終了日 (YYYY-MM-DD)
     -a, --algorithm <ALGORITHM>  使用するアルゴリズム (未指定の場合は全アルゴリズムを実行)
                                 選択肢: momentum, portfolio, trend_following
     -c, --capital <AMOUNT>       初期資金 (NEAR) [デフォルト: 1000.0]
     -q, --quote-token <TOKEN>    ベース通貨 [デフォルト: wrap.near]
-    -t, --tokens <TOKENS>        対象トークンリスト (カンマ区切り)
-                                省略時は自動でtop volatility tokensを取得
-    -n, --num-tokens <NUMBER>    自動取得する際のトークン数 [デフォルト: 10]
+                                (注意: topコマンドで作成されたtokens/ディレクトリからトークンを読み取ります)
     -o, --output <DIR>           出力ディレクトリ [デフォルト: simulation_results]
     --rebalance-interval <INTERVAL> リバランス間隔 [デフォルト: 1d]
                                 例: 2h, 90m, 1h30m, 4h, 1d, 1w
@@ -48,49 +47,65 @@ OPTIONS:
 
 ### 使用例
 
-#### 基本的なシミュレーション
+#### 基本的なワークフロー
 ```bash
 export CLI_TOKENS_BASE_DIR="./workspace"
 
-# 1ヶ月間のモメンタム戦略シミュレーション
+# 1. まずトークンデータを取得
+cli_tokens top \
+  --start 2024-11-01 \
+  --end 2024-12-01 \
+  --limit 5 \
+  --quote-token wrap.near
+
+# 2. シミュレーション実行（topコマンドで生成されたトークンを使用）
 cli_tokens simulate \
   --start 2024-12-01 \
   --end 2024-12-31 \
   --algorithm momentum \
   --capital 1000 \
+  --quote-token wrap.near \
   --output simulation_results
 
-# 指定トークンでのポートフォリオ最適化
+# 複数アルゴリズムでの比較実行
 cli_tokens simulate \
   --start 2024-11-01 \
   --end 2024-12-01 \
-  --algorithm portfolio \
-  --tokens "usdc.tether-token.near,blackdragon.tkn.near,meow.token.near" \
   --capital 5000 \
+  --quote-token wrap.near \
   --rebalance-interval 1w
 ```
 
 #### 高度な設定
 ```bash
-# カスタム手数料でのシミュレーション
+# 1. 特定の期間と数のトークンを取得
+cli_tokens top \
+  --start 2024-09-01 \
+  --end 2024-10-01 \
+  --limit 10 \
+  --quote-token wrap.near
+
+# 2. カスタム手数料でのシミュレーション
 cli_tokens simulate \
   --start 2024-10-01 \
   --end 2024-11-01 \
   --algorithm trend_following \
+  --quote-token wrap.near \
   --fee-model custom \
   --custom-fee 0.005 \
   --slippage 0.02 \
   --gas-cost 0.02
 
-# 詳細ログ付きシミュレーション
+# 3. 詳細ログ付きシミュレーション
 cli_tokens simulate \
-  --start 2024-09-01 \
-  --end 2024-12-01 \
+  --start 2024-10-01 \
+  --end 2024-11-01 \
   --algorithm momentum \
+  --quote-token wrap.near \
   --verbose
 
-# 結果からHTMLレポート生成  
-cli_tokens report simulation_results/momentum_2024-09-01_2024-12-01/results.json \
+# 4. 結果からHTMLレポート生成  
+cli_tokens report simulation_results/momentum_*.json \
   --format html
 ```
 
@@ -100,14 +115,15 @@ cli_tokens report simulation_results/momentum_2024-09-01_2024-12-01/results.json
 
 シミュレーションは指定された期間内で、リバランス頻度に従って時系列で実行されます：
 
-1. **価格データ取得**: 指定期間とヒストリカルデータ期間の価格を取得
-2. **初期ポートフォリオ構築**: 初期資金を指定トークンに配分
-3. **各タイムステップで実行**:
+1. **トークン読み込み**: topコマンドが作成したtokens/ディレクトリからトークンファイルを読み取り
+2. **価格データ取得**: 指定期間とヒストリカルデータ期間の価格を取得
+3. **初期ポートフォリオ構築**: 初期資金を読み込まれたトークンに配分
+4. **各タイムステップで実行**:
    - 現在価格と過去データから予測を生成
    - アルゴリズムによる取引判断
    - 取引実行とコスト計算
    - ポートフォリオ価値更新
-4. **パフォーマンス分析**: 全取引完了後に各種指標を計算
+5. **パフォーマンス分析**: 全取引完了後に各種指標を計算
 
 ### リバランス間隔
 
@@ -491,6 +507,9 @@ cli_tokens report results.json --output custom_report.html
 
 ## 注意事項
 
+- **前提条件**: simulateコマンド実行前に、必ず`cli_tokens top`コマンドでトークンファイルを生成してください
+- **トークンディレクトリ**: tokens/ディレクトリに適切なトークンファイルが存在することを確認してください
+- **quote-token一致**: topコマンドとsimulateコマンドで同じ--quote-tokenを指定してください
 - **データ可用性**: シミュレーション期間の価格データが存在することを確認してください
 - **バックエンドAPI**: `http://localhost:8080` でバックエンドAPIが動作している必要があります
 - **実行時間**: トークン数と期間により、シミュレーションに数分かかる場合があります
