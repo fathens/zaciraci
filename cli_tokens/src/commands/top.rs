@@ -9,7 +9,7 @@ use tokio::time;
 use tokio::time::Duration as TokioDuration;
 
 use crate::api::backend::BackendClient;
-use crate::models::token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData};
+use crate::models::token::{FileMetadata, TokenFileData};
 use crate::utils::{
     config::Config,
     file::{ensure_directory_exists, sanitize_filename, write_json_file},
@@ -115,34 +115,14 @@ pub async fn run(args: TopArgs) -> Result<()> {
     for (i, token) in tokens.iter().enumerate() {
         println!("Saving {} ({}/{})", token.0, i + 1, tokens.len());
 
-        // Get recent price data to calculate current price and 24h change
-        let (current_price, price_change_24h, volume_24h, volatility_score) =
-            get_current_price_data_with_volatility(
-                &backend_client,
-                &token.0,
-                quote_token,
-                start_date,
-                end_date,
-            )
-            .await;
-
         let file_data = TokenFileData {
             metadata: FileMetadata {
                 generated_at: Utc::now(),
                 start_date: start_date.format("%Y-%m-%d").to_string(),
                 end_date: end_date.format("%Y-%m-%d").to_string(),
-                token: token.0.to_string(),
                 quote_token: Some(quote_token.to_string()),
             },
-            token_data: TokenVolatilityData {
-                token: token.0.to_string(),
-                volatility_score,
-                price_data: PriceData {
-                    current_price,
-                    price_change_24h,
-                    volume_24h,
-                },
-            },
+            token: token.0.to_string(),
         };
 
         // Create quote_token subdirectory
@@ -178,64 +158,6 @@ pub async fn run(args: TopArgs) -> Result<()> {
 pub fn parse_date(date_str: &str) -> Result<DateTime<Utc>> {
     let naive_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")?;
     Ok(naive_date.and_hms_opt(0, 0, 0).unwrap().and_utc())
-}
-
-/// Get current price data for a token including 24h change calculation and volatility
-async fn get_current_price_data_with_volatility(
-    backend_client: &BackendClient,
-    token: &str,
-    quote_token: &str,
-    start_date: DateTime<Utc>,
-    end_date: DateTime<Utc>,
-) -> (f64, f64, f64, f64) {
-    match backend_client
-        .get_price_history(
-            token,
-            quote_token,
-            start_date.naive_utc(),
-            end_date.naive_utc(),
-        )
-        .await
-    {
-        Ok(values) if !values.is_empty() => {
-            let current_price = values.last().map(|v| v.value).unwrap_or(0.0);
-
-            // Calculate 24h price change
-            let price_24h_ago = if values.len() > 24 {
-                values[values.len() - 24].value
-            } else {
-                values.first().map(|v| v.value).unwrap_or(current_price)
-            };
-
-            let price_change_24h = if price_24h_ago > 0.0 {
-                ((current_price - price_24h_ago) / price_24h_ago) * 100.0
-            } else {
-                0.0
-            };
-
-            // Calculate volatility score from price data
-            let volatility_score = calculate_volatility_score(&values);
-
-            // Volume is not available from current API, set to 0
-            let volume_24h = 0.0;
-
-            (
-                current_price,
-                price_change_24h,
-                volume_24h,
-                volatility_score,
-            )
-        }
-        _ => {
-            // Fallback to defaults if no data available
-            (0.0, 0.0, 0.0, 0.0)
-        }
-    }
-}
-
-/// Calculate volatility score from price data using standard deviation of returns
-pub fn calculate_volatility_score(values: &[common::stats::ValueAtTime]) -> f64 {
-    common::algorithm::calculate_volatility_score(values, true)
 }
 
 #[cfg(test)]

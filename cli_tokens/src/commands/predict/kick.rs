@@ -116,7 +116,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
 
     let task_file = output_dir.join(format!(
         "{}.task.json",
-        sanitize_filename(&token_data.token_data.token)
+        sanitize_filename(&token_data.token)
     ));
 
     // Check if task file already exists and force flag
@@ -142,17 +142,14 @@ pub async fn run(args: KickArgs) -> Result<()> {
     let history_file = PathBuf::from(&base_dir)
         .join("history")
         .join(sanitize_filename(&quote_token))
-        .join(format!(
-            "{}.json",
-            sanitize_filename(&token_data.token_data.token)
-        ));
+        .join(format!("{}.json", sanitize_filename(&token_data.token)));
     let (mut timestamps, mut values) = if history_file.exists() {
         pb.set_message("Loading data from history file...");
         load_history_data(&history_file).await?
     } else {
         return Err(anyhow::anyhow!(
             "No history data found for token: {}. Please run 'cli_tokens history {}' first to fetch price data",
-            token_data.token_data.token,
+            token_data.token,
             args.token_file.display()
         ));
     };
@@ -295,7 +292,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
 
     pb.finish_with_message(format!(
         "✅ Prediction task started for token: {} (task_id: {}, saved to {:?})",
-        token_data.token_data.token, prediction_response.task_id, task_file
+        token_data.token, prediction_response.task_id, task_file
     ));
 
     println!("\nTo retrieve results, run:");

@@ -46,7 +46,7 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
         .context("Failed to create quote token subdirectory")?;
 
     // 出力ファイルパスを生成 (${quote_token}/${base_token}.json)
-    let filename = format!("{}.json", sanitize_filename(&token_data.metadata.token));
+    let filename = format!("{}.json", sanitize_filename(&token_data.token));
     let output_file = quote_dir.join(filename);
 
     // 既存ファイルのチェック
@@ -73,17 +73,12 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
 
     println!(
         "Fetching price history for {} from {} to {}",
-        token_data.metadata.token, token_data.metadata.start_date, token_data.metadata.end_date
+        token_data.token, token_data.metadata.start_date, token_data.metadata.end_date
     );
 
     // 価格履歴を取得
     let values = match client
-        .get_price_history(
-            &args.quote_token,
-            &token_data.metadata.token,
-            start_date,
-            end_date,
-        )
+        .get_price_history(&args.quote_token, &token_data.token, start_date, end_date)
         .await
     {
         Ok(values) => values,
@@ -91,7 +86,7 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
             eprintln!("API Error details: {}", e);
             return Err(e.context(format!(
                 "Failed to fetch price history for {} (quote: {}) from {} to {}",
-                token_data.metadata.token, args.quote_token, start_date, end_date
+                token_data.token, args.quote_token, start_date, end_date
             )));
         }
     };
@@ -102,7 +97,7 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
             generated_at: Utc::now(),
             start_date: token_data.metadata.start_date.clone(),
             end_date: token_data.metadata.end_date.clone(),
-            base_token: token_data.metadata.token.clone(),
+            base_token: token_data.token.clone(),
             quote_token: args.quote_token.clone(),
         },
         price_history: PriceHistory { values },

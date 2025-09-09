@@ -56,13 +56,10 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
     let task_file = output_dir.join(format!(
         "{}.task.json",
-        sanitize_filename(&token_data.token_data.token)
+        sanitize_filename(&token_data.token)
     ));
 
-    let prediction_file = output_dir.join(format!(
-        "{}.json",
-        sanitize_filename(&token_data.token_data.token)
-    ));
+    let prediction_file = output_dir.join(format!("{}.json", sanitize_filename(&token_data.token)));
 
     // Read task info
     if !file_exists(&task_file).await {
@@ -210,7 +207,7 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
     // Create prediction result
     let prediction_result = TokenPredictionResult {
-        token: token_data.token_data.token.clone(),
+        token: token_data.token.clone(),
         prediction_id: completed_prediction.task_id,
         predicted_values: forecast,
         accuracy_metrics: None,
@@ -227,7 +224,7 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
     pb.finish_with_message(format!(
         "✅ Prediction completed for token: {} (saved to {:?})",
-        token_data.token_data.token, prediction_file
+        token_data.token, prediction_file
     ));
 
     Ok(())

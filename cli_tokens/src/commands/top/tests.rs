@@ -1,11 +1,12 @@
 use super::*;
 use chrono::{NaiveDateTime, Utc};
+use common::algorithm::calculate_volatility_score;
 use common::stats::ValueAtTime;
 
 #[test]
 fn test_calculate_volatility_score_empty_data() {
     let values = vec![];
-    let result = calculate_volatility_score(&values);
+    let result = calculate_volatility_score(&values, true);
     assert_eq!(result, 0.0);
 }
 
@@ -15,7 +16,7 @@ fn test_calculate_volatility_score_single_value() {
         time: Utc::now().naive_utc(),
         value: 100.0,
     }];
-    let result = calculate_volatility_score(&values);
+    let result = calculate_volatility_score(&values, true);
     assert_eq!(result, 0.0);
 }
 
@@ -37,7 +38,7 @@ fn test_calculate_volatility_score_stable_prices() {
             value: 100.0,
         },
     ];
-    let result = calculate_volatility_score(&values);
+    let result = calculate_volatility_score(&values, true);
     assert_eq!(result, 0.0); // No volatility for stable prices
 }
 
@@ -63,7 +64,7 @@ fn test_calculate_volatility_score_with_changes() {
             value: 105.0, // +16.67%
         },
     ];
-    let result = calculate_volatility_score(&values);
+    let result = calculate_volatility_score(&values, true);
     // Should have some volatility due to price changes
     assert!(result > 0.0);
     assert!(result <= 1.0);
@@ -83,7 +84,7 @@ fn test_calculate_volatility_score_with_zero_prices() {
             value: 100.0,
         },
     ];
-    let result = calculate_volatility_score(&values);
+    let result = calculate_volatility_score(&values, true);
     // Should handle zero prices gracefully
     assert_eq!(result, 0.0);
 }
@@ -110,7 +111,7 @@ fn test_calculate_volatility_score_high_volatility() {
             value: 150.0, // +200%
         },
     ];
-    let result = calculate_volatility_score(&values);
+    let result = calculate_volatility_score(&values, true);
     // Should be capped at 1.0 for very high volatility
     assert_eq!(result, 1.0);
 }
@@ -158,7 +159,7 @@ fn test_price_data_calculation_single_point() {
     } else {
         0.0
     };
-    let volatility_score = calculate_volatility_score(&values);
+    let volatility_score = calculate_volatility_score(&values, true);
 
     assert_eq!(current_price, 150.0);
     assert_eq!(price_change_24h, 0.0); // No change with single point

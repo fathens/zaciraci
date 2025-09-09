@@ -190,7 +190,7 @@ async fn detect_data_files(token_file: &Path, base_dir: Option<&Path>) -> Result
         .or_else(|| std::env::var("CLI_TOKENS_BASE_DIR").ok().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let token_name = sanitize_filename(&token_data.token_data.token);
+    let token_name = sanitize_filename(&token_data.token);
     let quote_dir = sanitize_filename(&quote_token);
 
     // Search for history file

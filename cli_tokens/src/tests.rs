@@ -7,7 +7,7 @@ use crate::commands::{
     history::HistoryArgs, predict::kick::KickArgs, top::TopArgs, verify::VerifyArgs,
 };
 use crate::models::{
-    token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData},
+    token::{FileMetadata, TokenFileData},
     verification::ComparisonPoint,
 };
 use crate::utils::file::{ensure_directory_exists, write_json_file};
@@ -61,29 +61,20 @@ mod unit_tests {
                 generated_at: Utc::now(),
                 start_date: "2023-01-01".to_string(),
                 end_date: "2023-01-31".to_string(),
-                token: "wrap.near".to_string(),
                 quote_token: Some("wrap.near".to_string()),
             },
-            token_data: TokenVolatilityData {
-                token: "wrap.near".to_string(),
-                volatility_score: 0.85,
-                price_data: PriceData {
-                    current_price: 1.23,
-                    price_change_24h: 0.05,
-                    volume_24h: 1000.0,
-                },
-            },
+            token: "wrap.near".to_string(),
         };
 
         // Test serialization
         let json = serde_json::to_string(&token_data).unwrap();
         assert!(json.contains("wrap.near"));
-        assert!(json.contains("0.85"));
+        assert!(json.contains("2023-01-01"));
 
         // Test deserialization
         let deserialized: TokenFileData = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.token_data.token, "wrap.near");
-        assert_eq!(deserialized.token_data.volatility_score, 0.85);
+        assert_eq!(deserialized.token, "wrap.near");
+        assert_eq!(deserialized.metadata.start_date, "2023-01-01");
     }
 
     #[tokio::test]
@@ -109,18 +100,9 @@ mod unit_tests {
                 generated_at: Utc::now(),
                 start_date: "2023-01-01".to_string(),
                 end_date: "2023-01-31".to_string(),
-                token: "test.token".to_string(),
                 quote_token: Some("wrap.near".to_string()),
             },
-            token_data: TokenVolatilityData {
-                token: "test.token".to_string(),
-                volatility_score: 0.95,
-                price_data: PriceData {
-                    current_price: 2.34,
-                    price_change_24h: -0.10,
-                    volume_24h: 500.0,
-                },
-            },
+            token: "test.token".to_string(),
         };
 
         // Write JSON file
@@ -130,8 +112,8 @@ mod unit_tests {
         // Read and verify content
         let content = tokio::fs::read_to_string(&test_file).await?;
         let parsed: TokenFileData = serde_json::from_str(&content)?;
-        assert_eq!(parsed.token_data.token, "test.token");
-        assert_eq!(parsed.token_data.volatility_score, 0.95);
+        assert_eq!(parsed.token, "test.token");
+        assert_eq!(parsed.metadata.start_date, "2023-01-01");
 
         Ok(())
     }
@@ -330,8 +312,8 @@ mod integration_tests {
 
     #[test]
     fn test_volatility_token_filtering() {
-        use crate::commands::top::calculate_volatility_score;
         use chrono::Utc;
+        use common::algorithm::calculate_volatility_score;
         use common::stats::ValueAtTime;
 
         // Test that high volatility tokens are correctly scored
@@ -354,7 +336,7 @@ mod integration_tests {
             }, // +67%
         ];
 
-        let high_score = calculate_volatility_score(&high_volatility_data);
+        let high_score = calculate_volatility_score(&high_volatility_data, true);
 
         // Test that low volatility tokens get lower scores
         let low_volatility_data = vec![
@@ -376,7 +358,7 @@ mod integration_tests {
             }, // +1%
         ];
 
-        let low_score = calculate_volatility_score(&low_volatility_data);
+        let low_score = calculate_volatility_score(&low_volatility_data, true);
 
         // High volatility should score higher than low volatility
         assert!(high_score > low_score);
