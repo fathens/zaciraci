@@ -130,13 +130,9 @@ pub struct SimulateArgs {
     #[clap(short, long, default_value = "wrap.near")]
     pub quote_token: String,
 
-    /// 対象トークンリスト (カンマ区切り)
-    #[clap(short, long)]
-    pub tokens: Option<String>,
-
-    /// 自動取得する際のトークン数 [デフォルト: 10]
+    /// 自動取得するトップボラティリティトークン数 [デフォルト: 10]
     #[clap(short, long, default_value = "10")]
-    pub num_tokens: usize,
+    pub tokens: u32,
 
     /// 出力ディレクトリ [デフォルト: simulation_results/]
     #[clap(short, long, default_value = "simulation_results")]

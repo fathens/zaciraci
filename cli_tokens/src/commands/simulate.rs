@@ -35,15 +35,42 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         println!("  Output: {}", args.output);
     }
 
-    // outputを先に保存
+    // outputとtokensを先に保存
     let output_dir = args.output.clone();
+    let num_tokens = args.tokens;
 
     // 1. 設定の検証と変換
     let config = validate_and_convert_args(args).await?;
 
-    if config.target_tokens.is_empty() {
-        return Err(anyhow::anyhow!("No target tokens specified"));
+    // 自動的にtop volatility tokensを取得
+    let mut final_config = config;
+    println!("🔍 Fetching top {} volatility tokens...", num_tokens);
+
+    let backend_client = crate::api::backend::BackendClient::new();
+    let top_tokens = backend_client
+        .get_volatility_tokens(
+            final_config.start_date,
+            final_config.end_date,
+            num_tokens,
+            Some(final_config.quote_token.clone()),
+            None, // min_depth
+        )
+        .await?;
+
+    if top_tokens.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No volatility tokens found for the specified period"
+        ));
     }
+
+    let token_names: Vec<String> = top_tokens.iter().map(|t| t.0.to_string()).collect();
+    println!(
+        "📈 Selected top {} volatility tokens: {}",
+        num_tokens,
+        token_names.join(", ")
+    );
+
+    final_config.target_tokens = token_names;
 
     if run_all_algorithms {
         // 全アルゴリズムを実行
@@ -57,7 +84,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         let mut results = Vec::new();
 
         for algorithm in &algorithms {
-            let mut config_copy = config.clone();
+            let mut config_copy = final_config.clone();
             config_copy.algorithm = algorithm.clone();
 
             println!("\n--- Running {:?} Algorithm ---", algorithm);
@@ -69,7 +96,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         save_simple_multi_algorithm_result(&results, &output_dir)?;
     } else {
         // 単一アルゴリズムを実行
-        let result = run_single_algorithm(&config).await?;
+        let result = run_single_algorithm(&final_config).await?;
 
         // 単一アルゴリズムの結果を保存
         save_simulation_result(&result, &output_dir)?;
@@ -167,17 +194,8 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
         AlgorithmType::Momentum // 全アルゴリズム実行時の一時的な値
     };
 
-    // トークンリストの決定
-    let target_tokens = if let Some(tokens_str) = args.tokens {
-        tokens_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    } else {
-        // デフォルト: 空のベクター（後で自動取得）
-        Vec::new()
-    };
+    // トークンリストは後で自動取得するため、ここでは空のベクターを設定
+    let target_tokens = Vec::new();
 
     // 各種設定の変換
     let initial_capital = BigDecimal::from_f64(args.capital)
