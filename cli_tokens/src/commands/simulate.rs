@@ -97,14 +97,48 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
 pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationConfig> {
     // 日付の解析と検証
     let start_date = if let Some(start_str) = args.start {
-        start_str.parse::<DateTime<Utc>>()?
+        // Try multiple date formats
+        if let Ok(date) = start_str.parse::<DateTime<Utc>>() {
+            date
+        } else {
+            // Try parsing as date only (YYYY-MM-DD) and add time
+            let date_str = if start_str.len() == 10 {
+                format!("{}T00:00:00Z", start_str)
+            } else {
+                start_str.clone()
+            };
+            date_str.parse::<DateTime<Utc>>().map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid start date format '{}': {}. Use YYYY-MM-DD or ISO 8601 format",
+                    start_str,
+                    e
+                )
+            })?
+        }
     } else {
         // デフォルト: 30日前から
         Utc::now() - Duration::days(30)
     };
 
     let end_date = if let Some(end_str) = args.end {
-        end_str.parse::<DateTime<Utc>>()?
+        // Try multiple date formats
+        if let Ok(date) = end_str.parse::<DateTime<Utc>>() {
+            date
+        } else {
+            // Try parsing as date only (YYYY-MM-DD) and add time
+            let date_str = if end_str.len() == 10 {
+                format!("{}T23:59:59Z", end_str)
+            } else {
+                end_str.clone()
+            };
+            date_str.parse::<DateTime<Utc>>().map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid end date format '{}': {}. Use YYYY-MM-DD or ISO 8601 format",
+                    end_str,
+                    e
+                )
+            })?
+        }
     } else {
         // デフォルト: 現在時刻
         Utc::now()

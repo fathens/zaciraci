@@ -93,10 +93,17 @@ impl BackendClient {
             return Err(anyhow::anyhow!("HTTP Error {}: {}", status, error_text));
         }
 
-        let api_response: ApiResponse<GetValuesResponse, String> = response
-            .json()
+        // Get response text first for debugging
+        let response_text = response
+            .text()
             .await
-            .context("Failed to parse JSON response")?;
+            .context("Failed to get response text")?;
+
+        println!("Backend API response: {}", response_text);
+
+        let api_response: ApiResponse<GetValuesResponse, String> =
+            serde_json::from_str(&response_text)
+                .context(format!("Failed to parse JSON response: {}", response_text))?;
 
         match api_response {
             ApiResponse::Success(data) => Ok(data.values),
