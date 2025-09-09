@@ -146,7 +146,7 @@ fn load_tokens_from_directory(tokens_dir: &Path, quote_token: &str) -> Result<Ve
                 match fs::read_to_string(&path) {
                     Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                         Ok(json) => {
-                            if json.get("token_data").is_some() && json.get("metadata").is_some() {
+                            if json.get("token").is_some() && json.get("metadata").is_some() {
                                 token_names.push(file_stem.to_string());
                             }
                         }
