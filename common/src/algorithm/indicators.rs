@@ -257,9 +257,15 @@ pub fn calculate_macd(
     let fast_ema = calculate_exponential_moving_average(prices, fast_period);
     let slow_ema = calculate_exponential_moving_average(prices, slow_period);
 
-    if fast_ema.len() != slow_ema.len() {
+    // 両方のEMAが空の場合は空のベクターを返す
+    if fast_ema.is_empty() || slow_ema.is_empty() {
         return vec![];
     }
+
+    // 長さが異なる場合は短い方に合わせる
+    let min_len = fast_ema.len().min(slow_ema.len());
+    let fast_ema = &fast_ema[fast_ema.len() - min_len..];
+    let slow_ema = &slow_ema[slow_ema.len() - min_len..];
 
     // MACD線を計算
     let macd_line: Vec<f64> = fast_ema
@@ -270,6 +276,11 @@ pub fn calculate_macd(
 
     // シグナル線を計算
     let signal_line = calculate_exponential_moving_average(&macd_line, signal_period);
+
+    // シグナル線が計算できない場合は空のベクターを返す
+    if signal_line.is_empty() {
+        return vec![];
+    }
 
     // ヒストグラムを計算
     let histogram: Vec<f64> = if macd_line.len() >= signal_line.len() {
@@ -286,7 +297,7 @@ pub fn calculate_macd(
     // 結果をタプルで返す (MACD, Signal, Histogram)
     macd_line
         .iter()
-        .skip(macd_line.len().saturating_sub(histogram.len()))
+        .skip(macd_line.len().saturating_sub(signal_line.len()))
         .zip(signal_line.iter())
         .zip(histogram.iter())
         .map(|((macd, signal), hist)| (*macd, *signal, *hist))
