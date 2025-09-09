@@ -24,16 +24,16 @@ cli_tokens simulate [OPTIONS]
 OPTIONS:
     -s, --start <DATE>           シミュレーション開始日 (YYYY-MM-DD)
     -e, --end <DATE>             シミュレーション終了日 (YYYY-MM-DD)
-    -a, --algorithm <ALGORITHM>  使用するアルゴリズム [デフォルト: momentum]
+    -a, --algorithm <ALGORITHM>  使用するアルゴリズム (未指定の場合は全アルゴリズムを実行)
                                 選択肢: momentum, portfolio, trend_following
     -c, --capital <AMOUNT>       初期資金 (NEAR) [デフォルト: 1000.0]
     -q, --quote-token <TOKEN>    ベース通貨 [デフォルト: wrap.near]
     -t, --tokens <TOKENS>        対象トークンリスト (カンマ区切り)
                                 省略時は自動でtop volatility tokensを取得
     -n, --num-tokens <NUMBER>    自動取得する際のトークン数 [デフォルト: 10]
-    -o, --output <DIR>           出力ディレクトリ [デフォルト: simulation_results/]
-    --rebalance-freq <FREQ>      リバランス頻度 [デフォルト: daily]
-                                選択肢: hourly, daily, weekly
+    -o, --output <DIR>           出力ディレクトリ [デフォルト: simulation_results]
+    --rebalance-interval <INTERVAL> リバランス間隔 [デフォルト: 1d]
+                                例: 2h, 90m, 1h30m, 4h, 1d, 1w
     --fee-model <MODEL>          手数料モデル [デフォルト: realistic]
                                 選択肢: realistic, zero, custom
     --custom-fee <RATE>          カスタム手数料率 (0.0-1.0)
@@ -42,8 +42,7 @@ OPTIONS:
     --min-trade <AMOUNT>         最小取引額 (NEAR) [デフォルト: 1.0]
     --prediction-horizon <HOURS> 予測期間 (時間) [デフォルト: 24]
     --historical-days <DAYS>     予測に使用する過去データ期間 (日数) [デフォルト: 30]
-    --chart                      チャートを生成 (未実装)
-    --verbose                    詳細ログ
+    -v, --verbose                詳細ログ
     -h, --help                   ヘルプを表示
 ```
 
@@ -68,7 +67,7 @@ cli_tokens simulate \
   --algorithm portfolio \
   --tokens "usdc.tether-token.near,blackdragon.tkn.near,meow.token.near" \
   --capital 5000 \
-  --rebalance-freq weekly
+  --rebalance-interval 1w
 ```
 
 #### 高度な設定
@@ -83,7 +82,7 @@ cli_tokens simulate \
   --slippage 0.02 \
   --gas-cost 0.02
 
-# レポート生成（別コマンド）
+# 詳細ログ付きシミュレーション
 cli_tokens simulate \
   --start 2024-09-01 \
   --end 2024-12-01 \
@@ -110,11 +109,14 @@ cli_tokens report simulation_results/momentum_2024-09-01_2024-12-01/results.json
    - ポートフォリオ価値更新
 4. **パフォーマンス分析**: 全取引完了後に各種指標を計算
 
-### リバランス頻度
+### リバランス間隔
 
-- **hourly**: 1時間ごとに取引判断（高頻度取引）
-- **daily**: 1日ごとに取引判断（デフォルト）
-- **weekly**: 週1回取引判断（低頻度取引）
+リバランス間隔は柔軟な形式で指定できます：
+- **時間単位**: `1h`, `2h`, `4h` など
+- **分単位**: `30m`, `90m` など
+- **日単位**: `1d`, `2d` など（デフォルト: `1d`）
+- **週単位**: `1w`, `2w` など
+- **複合形式**: `1h30m`, `2d12h` など
 
 ### 必要データ期間
 
@@ -190,12 +192,13 @@ pub struct SimulationConfig {
     pub initial_capital: BigDecimal,
     pub quote_token: String,
     pub target_tokens: Vec<String>,
-    pub rebalance_frequency: RebalanceFrequency,
+    pub rebalance_interval: RebalanceInterval,
     pub fee_model: FeeModel,
     pub slippage_rate: f64,
     pub gas_cost: BigDecimal,
     pub min_trade_amount: BigDecimal,
     pub prediction_horizon: Duration,
+    pub historical_days: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,11 +252,8 @@ pub async fn run_simulation(config: SimulationConfig) -> Result<SimulationResult
     let mut trades = Vec::new();
     let mut portfolio_values = Vec::new();
     
-    let time_step = match config.rebalance_frequency {
-        RebalanceFrequency::Hourly => Duration::hours(1),
-        RebalanceFrequency::Daily => Duration::days(1),
-        RebalanceFrequency::Weekly => Duration::days(7),
-    };
+    // rebalance_intervalからDurationを取得
+    let time_step = config.rebalance_interval.as_duration();
     
     let mut current_time = config.start_date;
     while current_time <= config.end_date {
@@ -441,16 +441,17 @@ pub async fn run_predictions(
 
 ## 出力ファイル構造
 
+**注意**: 現在の実装では、シミュレーション結果はコンソール出力のみで、ファイル保存機能は未実装です。
+
+将来的に実装予定の出力構造：
 ```
 ${CLI_TOKENS_BASE_DIR}/
 └── simulation_results/
     ├── momentum_2024-12-01_2024-12-31/
     │   ├── config.json                    # シミュレーション設定
     │   ├── results.json                   # メイン結果（JSON形式）
-    │   ├── results.html                   # HTMLレポート（reportコマンドで生成）
     │   ├── trades.csv                     # 取引履歴（CSV形式）
     │   ├── portfolio_values.csv           # ポートフォリオ価値推移
-    │   ├── performance_chart.png          # パフォーマンスチャート（--chart）
     │   └── logs/                          # 詳細ログ（--verbose）
     │       ├── execution.log
     │       └── predictions.log
@@ -471,16 +472,18 @@ cli_tokens report <INPUT_JSON> [OPTIONS]
 ### オプション
 ```bash
 OPTIONS:
+    <INPUT>              入力JSONファイルパス（シミュレーション結果）
     -f, --format <FORMAT>    出力形式 [デフォルト: html]
                             現在は html のみサポート
     -o, --output <PATH>     出力ファイルパス（オプション）
+                            省略時は入力ファイルと同じディレクトリにreport.htmlを生成
     -h, --help              ヘルプを表示
 ```
 
 ### 使用例
 ```bash
 # HTMLレポート生成
-cli_tokens report simulation_results/momentum_2024-12-01_2024-12-31/results.json
+cli_tokens report simulation_results/results.json
 
 # 出力先を指定
 cli_tokens report results.json --output custom_report.html
