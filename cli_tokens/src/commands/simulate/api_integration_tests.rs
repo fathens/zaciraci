@@ -82,16 +82,10 @@ mod tests {
         )
         .await;
 
-        // エラーが発生しても、関数自体は成功することを確認
-        assert!(result.is_ok());
-        let predictions = result.unwrap();
-
-        // フォールバック処理により、空の結果または低信頼度の予測が生成される
-        // （価格履歴が取得できない場合、予測データは生成されない可能性がある）
-        if !predictions.is_empty() {
-            assert_eq!(predictions[0].token, "test_token");
-            assert_eq!(predictions[0].confidence, Some(0.1)); // フォールバック時の低信頼度
-        }
+        // エラーが発生した場合、関数はエラーを返すことを確認
+        assert!(result.is_err());
+        let error_message = result.unwrap_err().to_string();
+        assert!(error_message.contains("Failed to get historical data for token test_token"));
     }
 
     /// API呼び出しが失敗した場合のフォールバック処理を確認
@@ -121,13 +115,9 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok());
-        let predictions = result.unwrap();
-
-        // フォールバックデータが生成される（信頼度が低い）
-        if !predictions.is_empty() {
-            assert_eq!(predictions[0].confidence, Some(0.1)); // 低い信頼度
-        }
+        assert!(result.is_err());
+        let error_message = result.unwrap_err().to_string();
+        assert!(error_message.contains("Failed to get historical data for token test_token"));
 
         // 環境変数をクリーンアップ
         std::env::remove_var("CHRONOS_URL");
@@ -166,11 +156,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok());
-        let predictions = result.unwrap();
-
-        // 各トークンに対して予測が生成される（エラーの場合はフォールバック）
-        assert!(predictions.len() <= target_tokens.len());
+        assert!(result.is_err());
+        let error_message = result.unwrap_err().to_string();
+        // モックサーバーは501エラーを返すので、履歴データ取得に失敗する
+        assert!(error_message.contains("Failed to get historical data"));
 
         std::env::remove_var("CHRONOS_URL");
         std::env::remove_var("BACKEND_URL");
@@ -220,7 +209,7 @@ mod tests {
             None,
         )
         .await;
-        assert!(result_default.is_ok());
+        assert!(result_default.is_err());
 
         // 特定のモデルを指定してテスト
         let result_chronos = generate_api_predictions(
@@ -233,7 +222,7 @@ mod tests {
             Some("chronos_default".to_string()),
         )
         .await;
-        assert!(result_chronos.is_ok());
+        assert!(result_chronos.is_err());
 
         // 別のモデルを指定してテスト
         let result_fast = generate_api_predictions(
@@ -246,7 +235,7 @@ mod tests {
             Some("fast_statistical".to_string()),
         )
         .await;
-        assert!(result_fast.is_ok());
+        assert!(result_fast.is_err());
     }
 
     /// モックされたChronos APIレスポンスの処理をテスト

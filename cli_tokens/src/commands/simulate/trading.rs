@@ -40,8 +40,11 @@ pub async fn generate_api_predictions(
                         token,
                         timestamps.len()
                     );
-                    predictions.push(create_mock_prediction(token, current_price, current_time));
-                    continue;
+                    return Err(anyhow::anyhow!(
+                        "Insufficient historical data for token {}: {} points (minimum 10 required)",
+                        token,
+                        timestamps.len()
+                    ));
                 }
 
                 // Prepare prediction request with historical data
@@ -94,47 +97,46 @@ pub async fn generate_api_predictions(
                                         );
                                     } else {
                                         println!("⚠️ No forecast values returned for {}", token);
-                                        predictions.push(create_mock_prediction(
-                                            token,
-                                            current_price,
-                                            current_time,
+                                        return Err(anyhow::anyhow!(
+                                            "No forecast values returned for token {}",
+                                            token
                                         ));
                                     }
                                 } else {
                                     println!("⚠️ No prediction result returned for {}", token);
-                                    predictions.push(create_mock_prediction(
-                                        token,
-                                        current_price,
-                                        current_time,
+                                    return Err(anyhow::anyhow!(
+                                        "No prediction result returned for token {}",
+                                        token
                                     ));
                                 }
                             }
                             Err(e) => {
                                 println!("❌ Prediction failed for {}: {}", token, e);
-                                predictions.push(create_mock_prediction(
+                                return Err(anyhow::anyhow!(
+                                    "Prediction failed for token {}: {}",
                                     token,
-                                    current_price,
-                                    current_time,
+                                    e
                                 ));
                             }
                         }
                     }
                     Err(e) => {
                         println!("❌ Failed to submit prediction for {}: {}", token, e);
-                        predictions.push(create_mock_prediction(
+                        return Err(anyhow::anyhow!(
+                            "Failed to submit prediction for token {}: {}",
                             token,
-                            current_price,
-                            current_time,
+                            e
                         ));
                     }
                 }
             }
             Err(e) => {
                 println!("⚠️ Failed to get historical data for {}: {}", token, e);
-                let current_price = get_current_token_price(backend_client, token, quote_token)
-                    .await
-                    .unwrap_or(1.0);
-                predictions.push(create_mock_prediction(token, current_price, current_time));
+                return Err(anyhow::anyhow!(
+                    "Failed to get historical data for token {}: {}",
+                    token,
+                    e
+                ));
             }
         }
     }
@@ -172,55 +174,6 @@ async fn get_historical_price_data(
     let current_price = prices.last().unwrap().value;
 
     Ok((timestamps, values, current_price))
-}
-
-/// Get current token price from backend
-async fn get_current_token_price(
-    backend_client: &crate::api::backend::BackendClient,
-    token: &str,
-    quote_token: &str,
-) -> Result<f64> {
-    let end_time = chrono::Utc::now().naive_utc();
-    let start_time = end_time - chrono::Duration::hours(1);
-
-    let prices = backend_client
-        .get_price_history(quote_token, token, start_time, end_time)
-        .await?;
-
-    if let Some(latest_price) = prices.last() {
-        Ok(latest_price.value)
-    } else {
-        Err(anyhow::anyhow!("No recent price data found for {}", token))
-    }
-}
-
-/// Create mock prediction data
-fn create_mock_prediction(
-    token: &str,
-    current_price: f64,
-    timestamp: DateTime<Utc>,
-) -> PredictionData {
-    // Generate realistic mock prediction based on token characteristics
-    let volatility_factor = if token.contains("dragon") || token.contains("meme") {
-        0.15 // Higher volatility for meme tokens
-    } else if token.contains("usdc") || token.contains("usdt") {
-        0.002 // Very low volatility for stablecoins
-    } else {
-        0.08 // Moderate volatility for regular tokens
-    };
-
-    // Random-like prediction based on token hash
-    let token_hash = token.chars().map(|c| c as u32).sum::<u32>();
-    let prediction_factor = 1.0 + (((token_hash % 200) as f64 - 100.0) / 100.0) * volatility_factor;
-    let predicted_price = current_price * prediction_factor;
-
-    PredictionData {
-        token: token.to_string(),
-        current_price: BigDecimal::from_f64(current_price).unwrap_or_default(),
-        predicted_price_24h: BigDecimal::from_f64(predicted_price).unwrap_or_default(),
-        timestamp,
-        confidence: Some(0.6), // Mock confidence
-    }
 }
 
 /// Trading context for managing mutable state during trade execution
