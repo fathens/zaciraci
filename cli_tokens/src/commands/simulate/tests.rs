@@ -46,6 +46,59 @@ mod unit_tests {
         assert_eq!(args.slippage, 0.01);
         assert_eq!(args.historical_days, 30);
         assert!(!args.verbose);
+        assert_eq!(args.model, None); // デフォルトはNone
+    }
+
+    #[test]
+    fn test_simulate_args_with_model() {
+        // モデルを指定した場合のテスト
+        let args_with_model = SimulateArgs {
+            start: Some("2024-01-01".to_string()),
+            end: Some("2024-01-10".to_string()),
+            algorithm: Some("momentum".to_string()),
+            capital: 1000.0,
+            quote_token: "wrap.near".to_string(),
+            output: "simulation_results".to_string(),
+            rebalance_interval: "1d".to_string(),
+            fee_model: "realistic".to_string(),
+            custom_fee: None,
+            slippage: 0.01,
+            gas_cost: 0.01,
+            min_trade: 1.0,
+            prediction_horizon: 24,
+            historical_days: 30,
+            chart: false,
+            verbose: false,
+            model: Some("chronos_default".to_string()),
+        };
+
+        assert_eq!(args_with_model.model, Some("chronos_default".to_string()));
+
+        // 別のモデルをテスト
+        let args_with_fast_model = SimulateArgs {
+            start: Some("2024-01-01".to_string()),
+            end: Some("2024-01-10".to_string()),
+            algorithm: Some("portfolio".to_string()),
+            capital: 1000.0,
+            quote_token: "wrap.near".to_string(),
+            output: "simulation_results".to_string(),
+            rebalance_interval: "1h".to_string(),
+            fee_model: "zero".to_string(),
+            custom_fee: None,
+            slippage: 0.005,
+            gas_cost: 0.005,
+            min_trade: 0.5,
+            prediction_horizon: 12,
+            historical_days: 14,
+            chart: false,
+            verbose: false,
+            model: Some("fast_statistical".to_string()),
+        };
+
+        assert_eq!(
+            args_with_fast_model.model,
+            Some("fast_statistical".to_string())
+        );
     }
 
     #[test]

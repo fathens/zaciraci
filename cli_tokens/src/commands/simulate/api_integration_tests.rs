@@ -1,9 +1,9 @@
 use crate::api::backend::BackendClient;
-use crate::commands::simulate::{
-    generate_api_predictions, run_momentum_timestep_simulation, AlgorithmType, FeeModel,
-    PredictionData, RebalanceInterval, SimulationConfig,
-};
+use crate::commands::simulate::algorithms::run_momentum_timestep_simulation;
+use crate::commands::simulate::trading::generate_api_predictions;
+use crate::commands::simulate::{AlgorithmType, FeeModel, RebalanceInterval, SimulationConfig};
 use chrono::{Duration, Utc};
+use common::algorithm::PredictionData;
 use common::api::chronos::ChronosApiClient;
 use common::prediction::{ChronosPredictionResponse, ZeroShotPredictionRequest};
 use common::stats::ValueAtTime;
@@ -79,7 +79,6 @@ mod tests {
             historical_days,
             prediction_horizon,
             None,
-            None,
         )
         .await;
 
@@ -118,7 +117,6 @@ mod tests {
             current_time,
             historical_days,
             prediction_horizon,
-            None,
             None,
         )
         .await;
@@ -165,7 +163,6 @@ mod tests {
             historical_days,
             prediction_horizon,
             None,
-            None,
         )
         .await;
 
@@ -200,6 +197,56 @@ mod tests {
             BigDecimal::from_f64(110.0).unwrap()
         );
         assert_eq!(prediction.confidence, Some(0.8));
+    }
+
+    /// 異なるモデルパラメータでの予測生成をテスト
+    #[tokio::test]
+    async fn test_generate_api_predictions_with_different_models() {
+        let backend_client = BackendClient::new_with_url("http://test-server:9999".to_string());
+        let target_tokens = vec!["test_token".to_string()];
+        let quote_token = "wrap.near";
+        let current_time = Utc::now();
+        let historical_days = 30;
+        let prediction_horizon = Duration::hours(24);
+
+        // デフォルトモデル（None）でテスト
+        let result_default = generate_api_predictions(
+            &backend_client,
+            &target_tokens,
+            quote_token,
+            current_time,
+            historical_days,
+            prediction_horizon,
+            None,
+        )
+        .await;
+        assert!(result_default.is_ok());
+
+        // 特定のモデルを指定してテスト
+        let result_chronos = generate_api_predictions(
+            &backend_client,
+            &target_tokens,
+            quote_token,
+            current_time,
+            historical_days,
+            prediction_horizon,
+            Some("chronos_default".to_string()),
+        )
+        .await;
+        assert!(result_chronos.is_ok());
+
+        // 別のモデルを指定してテスト
+        let result_fast = generate_api_predictions(
+            &backend_client,
+            &target_tokens,
+            quote_token,
+            current_time,
+            historical_days,
+            prediction_horizon,
+            Some("fast_statistical".to_string()),
+        )
+        .await;
+        assert!(result_fast.is_ok());
     }
 
     /// モックされたChronos APIレスポンスの処理をテスト
@@ -316,7 +363,6 @@ mod regression_tests {
             current_time,
             historical_days,
             prediction_horizon,
-            None,
             None,
         )
         .await;

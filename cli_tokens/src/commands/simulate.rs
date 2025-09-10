@@ -472,3 +472,9 @@ pub fn save_simple_multi_algorithm_result(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod api_integration_tests;
+
+#[cfg(test)]
+mod algorithm_tests;
