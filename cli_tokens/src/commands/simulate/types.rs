@@ -175,6 +175,10 @@ pub struct SimulateArgs {
     /// 詳細ログ
     #[clap(short, long)]
     pub verbose: bool,
+
+    /// 予測モデル (未指定の場合はサーバーのデフォルトモデルを使用)
+    #[clap(long)]
+    pub model: Option<String>,
 }
 
 // Configuration structures
@@ -192,7 +196,8 @@ pub struct SimulationConfig {
     pub gas_cost: BigDecimal,
     pub min_trade_amount: BigDecimal,
     pub prediction_horizon: chrono::Duration,
-    pub historical_days: i64, // 予測に使用する過去データ期間
+    pub historical_days: i64,  // 予測に使用する過去データ期間
+    pub model: Option<String>, // 予測モデル
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

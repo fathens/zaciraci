@@ -14,6 +14,7 @@ pub async fn generate_api_predictions(
     current_time: DateTime<Utc>,
     historical_days: i64,
     prediction_horizon: chrono::Duration,
+    model: Option<String>,
 ) -> Result<Vec<PredictionData>> {
     use common::api::chronos::ChronosApiClient;
     use common::prediction::ZeroShotPredictionRequest;
@@ -49,7 +50,7 @@ pub async fn generate_api_predictions(
                     timestamp: timestamps,
                     values,
                     forecast_until,
-                    model_name: Some("chronos_zero_shot".to_string()),
+                    model_name: model.clone(),
                     model_params: None,
                 };
 

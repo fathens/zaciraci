@@ -78,6 +78,8 @@ mod tests {
             current_time,
             historical_days,
             prediction_horizon,
+            None,
+            None,
         )
         .await;
 
@@ -116,6 +118,8 @@ mod tests {
             current_time,
             historical_days,
             prediction_horizon,
+            None,
+            None,
         )
         .await;
 
@@ -160,6 +164,8 @@ mod tests {
             current_time,
             historical_days,
             prediction_horizon,
+            None,
+            None,
         )
         .await;
 
@@ -255,6 +261,7 @@ mod tests {
             min_trade_amount: BigDecimal::from_f64(1.0).unwrap(),
             prediction_horizon: Duration::hours(24),
             historical_days: 30,
+            model: None,
         };
 
         // テスト用の価格データを作成
@@ -309,6 +316,8 @@ mod regression_tests {
             current_time,
             historical_days,
             prediction_horizon,
+            None,
+            None,
         )
         .await;
     }
@@ -347,6 +356,7 @@ mod regression_tests {
             min_trade_amount: BigDecimal::from_f64(1.0).unwrap(),
             prediction_horizon: Duration::hours(24),
             historical_days: 30,
+            model: None,
         };
 
         let price_data = HashMap::new();

@@ -270,6 +270,7 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
         min_trade_amount,
         prediction_horizon,
         historical_days: args.historical_days as i64,
+        model: args.model,
     })
 }
 

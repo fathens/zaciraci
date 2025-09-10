@@ -134,6 +134,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
             current_time,
             config.historical_days,
             config.prediction_horizon,
+            config.model.clone(),
         )
         .await?;
 
@@ -366,6 +367,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 current_time,
                 config.historical_days,
                 config.prediction_horizon,
+                config.model.clone(),
             )
             .await?;
 

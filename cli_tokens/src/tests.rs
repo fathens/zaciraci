@@ -241,6 +241,7 @@ mod integration_tests {
             historical_days: 30,
             chart: false,
             verbose: false,
+            model: None,
         };
 
         // Test that configuration is parsed correctly
@@ -268,6 +269,7 @@ mod integration_tests {
             historical_days: 14,
             chart: true,
             verbose: true,
+            model: None,
         };
 
         assert_eq!(portfolio_config.algorithm, Some("portfolio".to_string()));

@@ -35,6 +35,7 @@ mod unit_tests {
             historical_days: 30,
             chart: false,
             verbose: false,
+            model: None,
         };
 
         assert_eq!(args.algorithm, Some("momentum".to_string()));
@@ -1360,6 +1361,7 @@ mod integration_tests {
             historical_days: 30,
             chart: false,
             verbose: false,
+            model: None,
         };
 
         // Test that the args contain expected values
