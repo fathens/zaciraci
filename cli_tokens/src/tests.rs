@@ -9,6 +9,10 @@ use crate::utils::file::{ensure_directory_exists, write_json_file};
 
 #[cfg(test)]
 mod unit_tests {
+    //! 基本的な構造体や関数の単体テスト
+    //! - CLI引数のパース
+    //! - ファイル操作ユーティリティ
+    //! - データ構造のシリアライゼーション
     use super::*;
 
     #[test]
@@ -138,35 +142,34 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_history_args_default_values() {
+    fn test_history_args_variations() {
         // Test default values for HistoryArgs
-        let args = HistoryArgs {
+        let default_args = HistoryArgs {
             token_file: PathBuf::from("tokens/test.json"),
             quote_token: "wrap.near".to_string(),
             output: PathBuf::from("history"),
         };
+        assert_eq!(default_args.quote_token, "wrap.near");
+        assert_eq!(default_args.output, PathBuf::from("history"));
 
-        assert_eq!(args.quote_token, "wrap.near");
-        assert_eq!(args.output, PathBuf::from("history"));
-    }
-
-    #[test]
-    fn test_history_args_custom_values() {
         // Test custom values for HistoryArgs
-        let args = HistoryArgs {
+        let custom_args = HistoryArgs {
             token_file: PathBuf::from("custom/token.json"),
             quote_token: "usdc.near".to_string(),
             output: PathBuf::from("custom_history"),
         };
-
-        assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
-        assert_eq!(args.quote_token, "usdc.near");
-        assert_eq!(args.output, PathBuf::from("custom_history"));
+        assert_eq!(custom_args.token_file, PathBuf::from("custom/token.json"));
+        assert_eq!(custom_args.quote_token, "usdc.near");
+        assert_eq!(custom_args.output, PathBuf::from("custom_history"));
     }
 }
 
 #[cfg(test)]
 mod integration_tests {
+    //! コマンド間の連携や統合的な機能のテスト
+    //! - ファイル形式の互換性
+    //! - アルゴリズム統合
+    //! - API呼び出し
     use crate::commands::top::parse_date;
 
     #[test]
@@ -354,6 +357,10 @@ mod integration_tests {
 
 #[cfg(test)]
 mod api_tests {
+    //! 外部API（Backend、Chronos）との連携テスト
+    //! - モックサーバーを使用したAPIレスポンステスト
+    //! - エラーハンドリング
+    //! - データ形式の互換性
     use super::*;
     use crate::api::backend::BackendClient;
     use common::api::chronos::ChronosApiClient;
@@ -695,15 +702,19 @@ mod api_tests {
 
 #[cfg(test)]
 mod predict_args_tests {
+    //! predict コマンドの詳細なテスト
+    //! - パラメータ検証（start_pct、end_pct、forecast_ratio）
+    //! - 期間計算の精度
+    //! - ファイルパス構造
     use super::*;
     use chrono::{Duration, NaiveDate, TimeZone, Utc};
 
     // === 基本オプションテスト ===
 
     #[test]
-    fn test_default_values() {
+    fn test_kick_args_values() {
         // テストのデフォルト値確認
-        let args = KickArgs {
+        let default_args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
             model: None,
@@ -711,18 +722,14 @@ mod predict_args_tests {
             end_pct: 100.0,
             forecast_ratio: 10.0,
         };
+        assert_eq!(default_args.output, PathBuf::from("predictions"));
+        assert_eq!(default_args.model, None);
+        assert_eq!(default_args.start_pct, 0.0);
+        assert_eq!(default_args.end_pct, 100.0);
+        assert_eq!(default_args.forecast_ratio, 10.0);
 
-        assert_eq!(args.output, PathBuf::from("predictions"));
-        assert_eq!(args.model, None);
-        assert_eq!(args.start_pct, 0.0);
-        assert_eq!(args.end_pct, 100.0);
-        assert_eq!(args.forecast_ratio, 10.0);
-    }
-
-    #[test]
-    fn test_custom_values() {
         // カスタム値でのテスト
-        let args = KickArgs {
+        let custom_args = KickArgs {
             token_file: PathBuf::from("custom/token.json"),
             output: PathBuf::from("custom_output"),
             model: Some("chronos_bolt".to_string()),
@@ -730,13 +737,12 @@ mod predict_args_tests {
             end_pct: 75.0,
             forecast_ratio: 50.0,
         };
-
-        assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
-        assert_eq!(args.output, PathBuf::from("custom_output"));
-        assert_eq!(args.model, Some("chronos_bolt".to_string()));
-        assert_eq!(args.start_pct, 25.0);
-        assert_eq!(args.end_pct, 75.0);
-        assert_eq!(args.forecast_ratio, 50.0);
+        assert_eq!(custom_args.token_file, PathBuf::from("custom/token.json"));
+        assert_eq!(custom_args.output, PathBuf::from("custom_output"));
+        assert_eq!(custom_args.model, Some("chronos_bolt".to_string()));
+        assert_eq!(custom_args.start_pct, 25.0);
+        assert_eq!(custom_args.end_pct, 75.0);
+        assert_eq!(custom_args.forecast_ratio, 50.0);
     }
 
     // === パーセンテージ範囲オプションテスト ===
@@ -1007,29 +1013,7 @@ mod predict_args_tests {
     }
 
     #[test]
-    fn test_forecast_ratio_edge_cases() {
-        // 最小値テスト (0.1%)
-        let input_duration = Duration::days(30);
-        let forecast_ratio = 0.1;
-        let forecast_duration_ms =
-            (input_duration.num_milliseconds() as f64 * (forecast_ratio / 100.0)) as i64;
-        let forecast_duration = Duration::milliseconds(forecast_duration_ms);
-
-        // 30日の0.1%は約7.2時間なので、分単位で確認
-        assert!(forecast_duration.num_minutes() > 0);
-
-        // 最大値テスト (500%)
-        let forecast_ratio = 500.0;
-        let forecast_duration_ms =
-            (input_duration.num_milliseconds() as f64 * (forecast_ratio / 100.0)) as i64;
-        let forecast_duration = Duration::milliseconds(forecast_duration_ms);
-
-        // 30日の500%は150日
-        assert!(forecast_duration.num_days() >= 149 && forecast_duration.num_days() <= 151);
-    }
-
-    #[test]
-    fn test_different_forecast_ratios() {
+    fn test_forecast_ratio_calculations() {
         let input_duration = Duration::days(10); // 10日間のデータ
 
         let test_cases = vec![
@@ -1056,6 +1040,25 @@ mod predict_args_tests {
                 actual_hours
             );
         }
+
+        // エッジケースも同時にテスト
+        let edge_cases = vec![
+            (0.1, Duration::days(30).num_milliseconds() as f64 * 0.001), // 最小値
+            (500.0, Duration::days(30).num_milliseconds() as f64 * 5.0), // 最大値
+        ];
+
+        let base_duration = Duration::days(30);
+        for (ratio, expected_ms) in edge_cases {
+            let forecast_duration_ms =
+                (base_duration.num_milliseconds() as f64 * (ratio / 100.0)) as i64;
+            let expected_ms_i64 = expected_ms as i64;
+
+            assert!(
+                (forecast_duration_ms - expected_ms_i64).abs() < 1000,
+                "Ratio {}% calculation precision test failed",
+                ratio
+            );
+        }
     }
 
     #[tokio::test]
@@ -1076,31 +1079,6 @@ mod predict_args_tests {
             // 実際のrunメソッドを呼び出すのではなく、バリデーション条件をテスト
             let is_valid = args.forecast_ratio > 0.0 && args.forecast_ratio <= 500.0;
             assert!(!is_valid, "Ratio {} should be invalid", invalid_ratio);
-        }
-    }
-
-    #[test]
-    fn test_forecast_ratio_precision() {
-        // 小数点以下の精度をテスト
-        let test_cases = vec![
-            (10.5, Duration::days(1).num_milliseconds() as f64 * 0.105),
-            (33.3, Duration::days(1).num_milliseconds() as f64 * 0.333),
-            (0.1, Duration::days(1).num_milliseconds() as f64 * 0.001),
-        ];
-
-        let input_duration = Duration::days(1); // 1日間のデータ
-
-        for (ratio, expected_ms) in test_cases {
-            let forecast_duration_ms =
-                (input_duration.num_milliseconds() as f64 * (ratio / 100.0)) as i64;
-            let expected_ms_i64 = expected_ms as i64;
-
-            // 誤差を許容した比較（1秒以内）
-            assert!(
-                (forecast_duration_ms - expected_ms_i64).abs() < 1000,
-                "Ratio {}% calculation precision test failed",
-                ratio
-            );
         }
     }
 
@@ -1135,6 +1113,10 @@ mod predict_args_tests {
 
 #[cfg(test)]
 mod environment_tests {
+    //! 環境変数とワークスペース設定のテスト
+    //! - CLI_TOKENS_BASE_DIR の動作
+    //! - パス構築の動作
+    //! - コマンド間でのディレクトリ共有
     use super::*;
     use std::env;
 
