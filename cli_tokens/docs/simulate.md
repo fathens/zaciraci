@@ -351,19 +351,6 @@ pub struct PerformanceMetrics {
 }
 ```
 
-#### ベンチマーク比較
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BenchmarkComparison {
-    pub strategy_performance: PerformanceMetrics,
-    pub buy_and_hold: PerformanceMetrics,
-    pub market_index: Option<PerformanceMetrics>,
-    pub outperformance: f64,
-    pub alpha: f64,
-    pub beta: f64,
-    pub information_ratio: f64,
-}
-```
 
 ### 4. レポート生成
 
@@ -387,9 +374,7 @@ pub struct BenchmarkComparison {
     "win_rate": 0.68,
     "total_trades": 23
   },
-  "trades": [],
-  "portfolio_evolution": [],
-  "benchmark_comparison": {}
+  "trades": []
 }
 ```
 
@@ -461,14 +446,9 @@ pub async fn run_predictions(
 ```
 ${CLI_TOKENS_BASE_DIR}/
 └── simulation_results/
-    ├── momentum_2024-12-01_2024-12-31/
-    │   ├── config.json                    # シミュレーション設定
-    │   ├── results.json                   # シミュレーション結果
-    │   └── logs/                          # 詳細ログ（--verbose）
-    │       ├── execution.log
-    │       └── predictions.log
-    └── portfolio_2024-11-01_2024-12-01/
-        └── ... (同様の構造)
+    ├── momentum_20250910_051650.json     # Momentumアルゴリズムの結果
+    ├── portfolio_20250910_051650.json    # Portfolioアルゴリズムの結果  
+    └── trendfollowing_20250910_051650.json # TrendFollowingアルゴリズムの結果
 ```
 
 
