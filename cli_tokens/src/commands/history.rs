@@ -1,7 +1,6 @@
 use crate::api::backend::BackendClient;
-use crate::models::history::{HistoryFileData, HistoryMetadata, PriceHistory};
 use crate::models::token::TokenFileData;
-use crate::utils::file::sanitize_filename;
+use crate::utils::cache::fetch_price_history_with_cache;
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use clap::Args;
@@ -20,24 +19,11 @@ pub struct HistoryArgs {
     /// 出力ディレクトリ
     #[arg(short, long, default_value = "price_history")]
     pub output: PathBuf,
-
-    /// 既存の履歴データを強制上書き
-    #[arg(long)]
-    pub force: bool,
 }
 
 pub async fn run_history(args: HistoryArgs) -> Result<()> {
     // トークンファイルを読み込み
     let token_data = load_token_file(&args.token_file).await?;
-
-    // Get base directory from environment variable
-    let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-    let output_dir = std::path::PathBuf::from(&base_dir).join(&args.output);
-
-    // 出力ディレクトリを作成
-    fs::create_dir_all(&output_dir)
-        .await
-        .context("Failed to create output directory")?;
 
     // APIクライアントを作成
     let client = BackendClient::new();
@@ -53,74 +39,30 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
         .and_hms_opt(23, 59, 59)
         .context("Failed to create end datetime")?;
 
-    // quote_token/{base_token} サブディレクトリを作成
-    let quote_dir = output_dir.join(sanitize_filename(&args.quote_token));
-    let token_dir = quote_dir.join(sanitize_filename(&token_data.token));
-    fs::create_dir_all(&token_dir)
-        .await
-        .context("Failed to create token subdirectory")?;
-
-    // 期間情報を含むファイル名を生成
-    // history-{start_date}-{end_date}.json 形式
     let start_datetime = DateTime::<Utc>::from_naive_utc_and_offset(start_date, Utc);
     let end_datetime = DateTime::<Utc>::from_naive_utc_and_offset(end_date, Utc);
-    let filename = format!(
-        "history-{}-{}.json",
-        start_datetime.format("%Y%m%d_%H%M"),
-        end_datetime.format("%Y%m%d_%H%M")
-    );
-    let output_file = token_dir.join(filename);
-
-    // 既存ファイルのチェック
-    if output_file.exists() && !args.force {
-        return Err(anyhow::anyhow!(
-            "History file already exists: {}. Use --force to overwrite",
-            output_file.display()
-        ));
-    }
 
     println!(
         "Fetching price history for {} from {} to {}",
         token_data.token, token_data.metadata.start_date, token_data.metadata.end_date
     );
 
-    // 価格履歴を取得
-    let values = match client
-        .get_price_history(&args.quote_token, &token_data.token, start_date, end_date)
-        .await
-    {
-        Ok(values) => values,
-        Err(e) => {
-            eprintln!("API Error details: {}", e);
-            return Err(e.context(format!(
-                "Failed to fetch price history for {} (quote: {}) from {} to {}",
-                token_data.token, args.quote_token, start_date, end_date
-            )));
-        }
-    };
+    // キャッシュを使用して価格履歴を取得
+    let values = fetch_price_history_with_cache(
+        &client,
+        &args.quote_token,
+        &token_data.token,
+        start_datetime,
+        end_datetime,
+    )
+    .await
+    .context(format!(
+        "Failed to fetch price history for {} (quote: {})",
+        token_data.token, args.quote_token
+    ))?;
 
-    // 履歴データを作成
-    let history_data = HistoryFileData {
-        metadata: HistoryMetadata {
-            generated_at: Utc::now(),
-            start_date: token_data.metadata.start_date.clone(),
-            end_date: token_data.metadata.end_date.clone(),
-            base_token: token_data.token.clone(),
-            quote_token: args.quote_token.clone(),
-        },
-        price_history: PriceHistory { values },
-    };
-
-    // ファイルに保存
-    let json_content =
-        serde_json::to_string_pretty(&history_data).context("Failed to serialize history data")?;
-
-    fs::write(&output_file, json_content)
-        .await
-        .context("Failed to write history file")?;
-
-    println!("History saved to: {}", output_file.display());
-    println!("Data points: {}", history_data.price_history.values.len());
+    println!("History retrieved successfully!");
+    println!("Data points: {}", values.len());
 
     Ok(())
 }

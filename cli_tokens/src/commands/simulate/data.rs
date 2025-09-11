@@ -1,48 +1,29 @@
 use super::types::*;
 use crate::api::backend::BackendClient;
+use crate::utils::cache::fetch_multiple_price_history_with_cache;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use common::stats::ValueAtTime;
 use std::collections::HashMap;
 
-/// Fetch price data from backend
+/// Fetch price data from backend with cache support
 pub async fn fetch_price_data(
     backend_client: &BackendClient,
     config: &SimulationConfig,
 ) -> Result<HashMap<String, Vec<ValueAtTime>>> {
-    let mut price_data = HashMap::new();
-
     // 必要なデータ期間を計算
     let data_start_date = config.start_date - chrono::Duration::days(config.historical_days);
     let data_end_date = config.end_date + config.prediction_horizon;
 
-    println!(
-        "📈 Fetching price data from {} to {}",
-        data_start_date.format("%Y-%m-%d %H:%M"),
-        data_end_date.format("%Y-%m-%d %H:%M")
-    );
-
-    for token in &config.target_tokens {
-        println!("  Getting data for {}", token);
-
-        let values = backend_client
-            .get_price_history(
-                &config.quote_token,
-                token,
-                data_start_date.naive_utc(),
-                data_end_date.naive_utc(),
-            )
-            .await?;
-
-        if values.is_empty() {
-            println!("  ⚠️ No price data found for {}", token);
-        } else {
-            println!("  ✅ Found {} data points for {}", values.len(), token);
-            price_data.insert(token.clone(), values);
-        }
-    }
-
-    Ok(price_data)
+    // Use cache-enabled fetch function
+    fetch_multiple_price_history_with_cache(
+        backend_client,
+        &config.quote_token,
+        &config.target_tokens,
+        data_start_date,
+        data_end_date,
+    )
+    .await
 }
 
 /// Get prices at a specific time point

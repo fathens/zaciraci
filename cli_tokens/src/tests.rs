@@ -26,13 +26,11 @@ mod unit_tests {
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
-            force: false,
         };
 
         assert_eq!(args.token_file, PathBuf::from("tokens/wrap.near.json"));
         assert_eq!(args.output, PathBuf::from("predictions"));
         assert_eq!(args.model, None);
-        assert!(!args.force);
         assert_eq!(args.forecast_ratio, 10.0);
     }
 
@@ -137,13 +135,11 @@ mod unit_tests {
             token_file: PathBuf::from("tokens/wrap.near.json"),
             quote_token: "wrap.near".to_string(),
             output: PathBuf::from("history"),
-            force: false,
         };
 
         assert_eq!(args.token_file, PathBuf::from("tokens/wrap.near.json"));
         assert_eq!(args.quote_token, "wrap.near");
         assert_eq!(args.output, PathBuf::from("history"));
-        assert!(!args.force);
     }
 
     #[test]
@@ -153,12 +149,10 @@ mod unit_tests {
             token_file: PathBuf::from("tokens/test.json"),
             quote_token: "wrap.near".to_string(),
             output: PathBuf::from("history"),
-            force: false,
         };
 
         assert_eq!(args.quote_token, "wrap.near");
         assert_eq!(args.output, PathBuf::from("history"));
-        assert!(!args.force);
     }
 
     #[test]
@@ -168,13 +162,11 @@ mod unit_tests {
             token_file: PathBuf::from("custom/token.json"),
             quote_token: "usdc.near".to_string(),
             output: PathBuf::from("custom_history"),
-            force: true,
         };
 
         assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
         assert_eq!(args.quote_token, "usdc.near");
         assert_eq!(args.output, PathBuf::from("custom_history"));
-        assert!(args.force);
     }
 }
 
@@ -723,12 +715,10 @@ mod predict_args_tests {
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
-            force: false,
         };
 
         assert_eq!(args.output, PathBuf::from("predictions"));
         assert_eq!(args.model, None);
-        assert!(!args.force);
         assert_eq!(args.start_pct, 0.0);
         assert_eq!(args.end_pct, 100.0);
         assert_eq!(args.forecast_ratio, 10.0);
@@ -744,13 +734,11 @@ mod predict_args_tests {
             start_pct: 25.0,
             end_pct: 75.0,
             forecast_ratio: 50.0,
-            force: true,
         };
 
         assert_eq!(args.token_file, PathBuf::from("custom/token.json"));
         assert_eq!(args.output, PathBuf::from("custom_output"));
         assert_eq!(args.model, Some("chronos_bolt".to_string()));
-        assert!(args.force);
         assert_eq!(args.start_pct, 25.0);
         assert_eq!(args.end_pct, 75.0);
         assert_eq!(args.forecast_ratio, 50.0);
@@ -777,7 +765,6 @@ mod predict_args_tests {
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
-                force: false,
             };
 
             // バリデーション条件をテスト
@@ -806,7 +793,6 @@ mod predict_args_tests {
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
-                force: false,
             };
 
             // バリデーション条件をテスト
@@ -844,39 +830,11 @@ mod predict_args_tests {
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
-                force: false,
             };
 
             assert_eq!(args.model, Some(model.to_string()));
             assert!(args.model.is_some());
         }
-    }
-
-    #[test]
-    fn test_force_flag_variations() {
-        // force フラグのテスト
-        let args_false = KickArgs {
-            token_file: PathBuf::from("test.json"),
-            output: PathBuf::from("predictions"),
-            model: None,
-            start_pct: 0.0,
-            end_pct: 100.0,
-            forecast_ratio: 10.0,
-            force: false,
-        };
-
-        let args_true = KickArgs {
-            token_file: PathBuf::from("test.json"),
-            output: PathBuf::from("predictions"),
-            model: None,
-            start_pct: 0.0,
-            end_pct: 100.0,
-            forecast_ratio: 10.0,
-            force: true,
-        };
-
-        assert!(!args_false.force);
-        assert!(args_true.force);
     }
 
     #[test]
@@ -898,7 +856,6 @@ mod predict_args_tests {
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
-                force: false,
             };
 
             assert_eq!(args.output, PathBuf::from(output_path));
@@ -924,7 +881,6 @@ mod predict_args_tests {
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: 10.0,
-                force: false,
             };
 
             assert_eq!(args.token_file, PathBuf::from(token_file));
@@ -952,7 +908,6 @@ mod predict_args_tests {
                 start_pct: start,
                 end_pct: end,
                 forecast_ratio: 10.0,
-                force: false,
             };
 
             assert!(args.start_pct >= 0.0 && args.start_pct <= 100.0);
@@ -976,7 +931,6 @@ mod predict_args_tests {
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
-            force: false,
         };
 
         assert_eq!(args.forecast_ratio, 10.0);
@@ -994,7 +948,6 @@ mod predict_args_tests {
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: ratio,
-                force: false,
             };
 
             assert!(args.forecast_ratio > 0.0 && args.forecast_ratio <= 500.0);
@@ -1123,7 +1076,6 @@ mod predict_args_tests {
                 start_pct: 0.0,
                 end_pct: 100.0,
                 forecast_ratio: invalid_ratio,
-                force: false,
             };
 
             // 実際のrunメソッドを呼び出すのではなく、バリデーション条件をテスト
@@ -1210,7 +1162,6 @@ mod verify_tests {
             Some(PathBuf::from("tokens/wrap.near.json"))
         );
         assert_eq!(args.output, PathBuf::from("verification"));
-        assert!(!args.force);
     }
 
     #[test]
@@ -1224,7 +1175,6 @@ mod verify_tests {
         };
 
         assert_eq!(args.output, PathBuf::from("verification"));
-        assert!(!args.force);
         assert!(args.actual_data_file.is_none());
     }
 
@@ -1503,7 +1453,6 @@ mod environment_tests {
             token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
             quote_token: "wrap.near".to_string(),
             output: PathBuf::from("history"),
-            force: false,
         };
 
         // Test that environment variable is correctly used in path construction
@@ -1539,7 +1488,6 @@ mod environment_tests {
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
-            force: false,
         };
 
         // Test output path construction

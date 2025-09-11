@@ -11,6 +11,7 @@ use crate::models::{
     token::TokenFileData,
 };
 use crate::utils::{
+    cache::get_price_history_dir,
     config::Config,
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
 };
@@ -81,9 +82,6 @@ pub struct KickArgs {
         help = "Forecast duration as percentage of input data period (0.0-500.0)"
     )]
     pub forecast_ratio: f64,
-
-    #[clap(long, help = "Force overwrite existing task file")]
-    pub force: bool,
 }
 
 pub async fn run(args: KickArgs) -> Result<()> {
@@ -154,10 +152,10 @@ pub async fn run(args: KickArgs) -> Result<()> {
         sanitize_filename(&model_name)
     ));
 
-    // Check if task file already exists and force flag
-    if !args.force && file_exists(&task_file).await {
+    // Check if task file already exists
+    if file_exists(&task_file).await {
         return Err(anyhow::anyhow!(
-            "Task file already exists: {:?}. Use --force to overwrite",
+            "Task file already exists: {:?}. Please remove it first or use a different model name",
             task_file
         ));
     }
@@ -173,13 +171,8 @@ pub async fn run(args: KickArgs) -> Result<()> {
     // Get historical data for prediction
     pb.set_message("Loading historical token data...");
 
-    // Try to load from price_history directory
-    // Look for the latest history file in the new structure
-    let history_dir = PathBuf::from(&base_dir)
-        .join("price_history")
-        .join(sanitize_filename(&quote_token))
-        .join(sanitize_filename(&token_data.token));
-
+    // Try to load from price_history directory using cache utility
+    let history_dir = get_price_history_dir(&quote_token, &token_data.token);
     let history_file = find_latest_history_file(&history_dir).await?;
     let (mut timestamps, mut values) = if let Some(file_path) = history_file {
         pb.set_message("Loading data from history file...");

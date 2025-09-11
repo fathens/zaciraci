@@ -13,7 +13,7 @@ pub async fn run_momentum_simulation(config: &SimulationConfig) -> Result<Simula
 
     let backend_client = BackendClient::new();
 
-    // 1. 価格データを取得
+    // 1. 価格データを取得（キャッシュ対応）
     let price_data = fetch_price_data(&backend_client, config).await?;
 
     if price_data.is_empty() {
@@ -36,7 +36,7 @@ pub async fn run_portfolio_simulation(config: &SimulationConfig) -> Result<Simul
 
     let backend_client = BackendClient::new();
 
-    // 1. 価格データを取得
+    // 1. 価格データを取得（キャッシュ対応）
     let price_data = fetch_price_data(&backend_client, config).await?;
 
     if price_data.is_empty() {
@@ -56,7 +56,7 @@ pub async fn run_trend_following_simulation(config: &SimulationConfig) -> Result
 
     let backend_client = BackendClient::new();
 
-    // 1. 価格データを取得
+    // 1. 価格データを取得（キャッシュ対応）
     let price_data = fetch_price_data(&backend_client, config).await?;
 
     if price_data.is_empty() {
