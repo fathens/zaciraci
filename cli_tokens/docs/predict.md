@@ -655,7 +655,8 @@ cli_tokens verify predictions/wrap.near/sample.token.near.json --force
 詳細は[simulate.md](./simulate.md)を参照してください。
 
 ```bash
-# 基本的な使用例
+# 基本的な使用例（topコマンドでトークン情報を事前取得）
+cli_tokens top --start 2024-11-01 --end 2024-12-01 --limit 5
 cli_tokens simulate --start 2024-12-01 --end 2024-12-31 --algorithm momentum
 ```
 
