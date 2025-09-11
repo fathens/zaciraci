@@ -560,6 +560,15 @@ cli_tokens report simulation_results/multi_algorithm_20250910_051650/multi_resul
 cli_tokens report multi_results.json --output custom_report.html
 ```
 
+## データキャッシュ機能
+
+simulateコマンドは、`price_history/`および`predictions/`ディレクトリのデータを自動的に利用・保存します：
+
+- **価格履歴データ**: `price_history/{quote_token}/{base_token}/history-{start}-{end}.json`
+- **予測データ**: `predictions/{model_name}/{quote_token}/{base_token}/history-{hist_start}-{hist_end}/predict-{pred_start}-{pred_end}.json`
+
+詳細は[cache_design.md](./cache_design.md)を参照してください。
+
 ## 注意事項
 
 - **前提条件**: simulateコマンド実行前に、必ず`cli_tokens top`コマンドでトークン情報を生成してください
@@ -570,3 +579,4 @@ cli_tokens report multi_results.json --output custom_report.html
 - **Chronos API**: `CHRONOS_URL`環境変数または`http://localhost:8000`で予測APIが動作している必要があります
 - **実行時間**: トークン数と期間により、シミュレーションに数分かかる場合があります
 - **メモリ使用**: 長期間のシミュレーションでは大量のメモリを使用する可能性があります
+- **データキャッシュ**: 価格履歴と予測データは自動的にキャッシュされ、再利用されます

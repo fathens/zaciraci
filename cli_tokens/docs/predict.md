@@ -173,7 +173,7 @@ ARGUMENTS:
 
 OPTIONS:
     --quote-token <TOKEN>  見積りトークン（価格表示の基準） [デフォルト: wrap.near]
-    -o, --output <DIR>     出力ディレクトリ [デフォルト: history/] ※CLI_TOKENS_BASE_DIRからの相対パス
+    -o, --output <DIR>     出力ディレクトリ [デフォルト: price_history/] ※CLI_TOKENS_BASE_DIRからの相対パス
     --force                既存の履歴データを強制上書き
     -h, --help             ヘルプを表示
 ```
@@ -185,17 +185,17 @@ OPTIONS:
 export CLI_TOKENS_BASE_DIR="./workspace"
 
 # 基本的な使用（トークンファイルから履歴を取得）
-cli_tokens history tokens/wrap.near/sample.token.near.json --output history
+cli_tokens history tokens/wrap.near/sample.token.near.json --output price_history
 
 # 異なるquote tokenで履歴を取得
-cli_tokens history tokens/wrap.near/sample.token.near.json --quote-token usdc.tether-token.near --output history
+cli_tokens history tokens/wrap.near/sample.token.near.json --quote-token usdc.tether-token.near --output price_history
 ```
 
 #### 動作仕様
 
 1. **期間の自動検出**: トークンファイルのメタデータから`start_date`と`end_date`を自動抽出
 2. **API呼び出し**: バックエンドの`/stats/get_values`エンドポイントを使用して価格履歴を取得
-3. **データ保存**: 取得した価格履歴を`history/`ディレクトリに保存
+3. **データ保存**: 取得した価格履歴を`price_history/`ディレクトリに保存（期間情報を含むファイル名で）
 
 #### トークンペアの概念
 
@@ -214,15 +214,26 @@ cli_tokens history tokens/wrap.near/sample.token.near.json --quote-token usdc.te
 
 ```
 ${CLI_TOKENS_BASE_DIR}/
-└── history/
-    ├── wrap.near/                            # Quote tokenディレクトリ
-    │   ├── sample.token.near.json           # Base tokenファイル
-    │   └── another.token.near.json
-    └── usdc.tether-token.near/              # 異なるquote tokenの例
-        └── sample.token.near.json
+└── price_history/
+    └── {quote_token}/
+        └── {base_token}/
+            └── history-{start}-{end}.json    # 期間を含むファイル名
 ```
 
-#### 価格履歴ファイル形式 (例: history/wrap.near/sample.token.near.json)
+例：
+```
+${CLI_TOKENS_BASE_DIR}/
+└── price_history/
+    ├── wrap.near/
+    │   └── sample.token.near/
+    │       ├── history-20250801_0000-20250807_2359.json
+    │       └── history-20250815_1200-20250820_1200.json
+    └── usdc.tether-token.near/
+        └── sample.token.near/
+            └── history-20250801_0000-20250807_2359.json
+```
+
+#### 価格履歴ファイル形式 (例: price_history/wrap.near/sample.token.near/history-20250706_0000-20250707_2359.json)
 
 ```json
 {
@@ -258,7 +269,7 @@ cli_tokens history tokens/wrap.near/sample.token.near.json
 cli_tokens history tokens/usdc.tether-token.near/sample.token.near.json --quote-token usdc.tether-token.near
 
 # 出力ディレクトリを指定
-cli_tokens history tokens/wrap.near/sample.token.near.json -o custom_history/
+cli_tokens history tokens/wrap.near/sample.token.near.json -o price_history/
 
 # 既存データを上書き
 cli_tokens history tokens/wrap.near/sample.token.near.json --force
@@ -502,14 +513,31 @@ cli_tokens predict tokens/wrap.near/sample.token.near.json --forecast-ratio 100.
 ```
 ${CLI_TOKENS_BASE_DIR}/
 └── predictions/
-    ├── wrap.near/                            # Quote tokenディレクトリ
-    │   ├── sample.token.near.json           # 予測結果
-    │   ├── sample.token.near.task.json      # タスク情報（kick/pull用）
-    │   └── another.token.near.json
-    └── usdc.tether-token.near/              # 異なるquote tokenの例
-        ├── sample.token.near.json
-        └── sample.token.near.task.json
+    └── {model_name}[_{params_hash}]/
+        └── {quote_token}/
+            └── {base_token}/
+                └── history-{hist_start}-{hist_end}/
+                    └── predict-{pred_start}-{pred_end}.json
 ```
+
+例：
+```
+${CLI_TOKENS_BASE_DIR}/
+└── predictions/
+    ├── chronos_default/
+    │   └── wrap.near/
+    │       └── sample.token.near/
+    │           └── history-20250801_0000-20250807_2359/
+    │               ├── predict-20250808_0000-20250809_0000.json
+    │               └── predict-20250808_1200-20250809_1200.json
+    └── chronos_zero_shot/
+        └── wrap.near/
+            └── sample.token.near/
+                └── history-20250801_0000-20250807_2359/
+                    └── predict-20250808_0000-20250809_0000.json
+```
+
+注：タスク情報は一時ファイルとして別途管理されます。
 
 #### kick/pullサブコマンドの設計上の利点
 
@@ -686,8 +714,8 @@ cli_tokens report simulation_results/momentum_2024-12-01_2024-12-31/results.json
 **ファイル検索パターン**
 ```
 基点: tokens/{quote_token}/{base_token}.json
-履歴: history/{quote_token}/{base_token}.json  
-予測: predictions/{quote_token}/{base_token}.json
+履歴: price_history/{quote_token}/{base_token}/history-{start}-{end}.json  
+予測: predictions/{model_name}/{quote_token}/{base_token}/history-{hist_start}-{hist_end}/predict-{pred_start}-{pred_end}.json
 ```
 
 #### コマンド仕様
@@ -776,17 +804,28 @@ async fn detect_data_files(token_file: &Path, base_dir: Option<&Path>) -> Result
     let token_name = sanitize_filename(&token_data.token_data.token);
     let quote_dir = sanitize_filename(&quote_token);
 
-    // 2. 履歴ファイルを検索
-    let history_file = base_dir
-        .join("history")
+    // 2. 履歴ファイルを検索（最新のファイルを選択）
+    let history_dir = base_dir
+        .join("price_history")
         .join(&quote_dir)
-        .join(format!("{}.json", token_name));
+        .join(&token_name);
+    
+    // history-YYYYMMDD_HHMM-YYYYMMDD_HHMM.json 形式のファイルを検索
+    let history_file = fs::read_dir(&history_dir)
+        .ok()
+        .and_then(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension() == Some("json".as_ref()))
+                .filter(|e| e.file_name().to_string_lossy().starts_with("history-"))
+                .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+                .map(|e| e.path())
+        });
 
-    // 3. 予測ファイルを検索
-    let prediction_file = base_dir
-        .join("predictions")  
-        .join(&quote_dir)
-        .join(format!("{}.json", token_name));
+    // 3. 予測ファイルを検索（最新のファイルを選択）
+    // predictions/{model_name}/{quote_token}/{base_token}/history-*/predict-*.json
+    let predictions_root = base_dir.join("predictions");
+    let prediction_file = find_latest_prediction_file(&predictions_root, &quote_dir, &token_name)?;
 
     Ok(DetectedFiles {
         history: if history_file.exists() { Some(history_file) } else { None },
