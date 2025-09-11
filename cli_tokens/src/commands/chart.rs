@@ -8,7 +8,7 @@ use tokio::fs;
 
 use crate::models::history::HistoryFileData;
 use crate::models::token::TokenFileData;
-use crate::utils::file::sanitize_filename;
+use crate::utils::{cache::find_latest_history_file, file::sanitize_filename};
 use common::prediction::{PredictionPoint, TokenPredictionResult};
 
 #[cfg(test)]
@@ -47,10 +47,6 @@ pub struct ChartArgs {
     /// 出力ファイル名を明示指定
     #[arg(long)]
     pub output_name: Option<String>,
-
-    /// 既存ファイルを強制上書き
-    #[arg(long)]
-    pub force: bool,
 
     /// 詳細ログ出力
     #[arg(short, long)]
@@ -152,14 +148,7 @@ pub async fn run_chart(args: ChartArgs) -> Result<()> {
         println!("📤 Output path: {}", output_path.display());
     }
 
-    // Check if file exists and handle force flag
-    if output_path.exists() && !args.force {
-        return Err(ChartError::OutputError(format!(
-            "Chart file already exists: {}. Use --force to overwrite",
-            output_path.display()
-        ))
-        .into());
-    }
+    // Ensure output directory exists
 
     // Create output directory
     if let Some(parent) = output_path.parent() {
@@ -191,31 +180,24 @@ async fn detect_data_files(token_file: &Path, base_dir: Option<&Path>) -> Result
         .unwrap_or_else(|| PathBuf::from("."));
 
     let token_name = sanitize_filename(&token_data.token);
-    let quote_dir = sanitize_filename(&quote_token);
 
-    // Search for history file
-    let history_file = base_dir
-        .join("history")
-        .join(&quote_dir)
-        .join(format!("{}.json", token_name));
+    // Search for history file using new cache structure
+    let history_dir = base_dir
+        .join("price_history")
+        .join(sanitize_filename(&quote_token))
+        .join(&token_name);
 
-    // Search for prediction file
-    let prediction_file = base_dir
-        .join("predictions")
-        .join(&quote_dir)
-        .join(format!("{}.json", token_name));
+    let history_file = find_latest_history_file(&history_dir).await?;
+
+    // Search for prediction files in new cache structure
+    // Look in predictions/ directory for any model subdirectories
+    let predictions_dir = base_dir.join("predictions");
+    let prediction_file =
+        find_latest_prediction_file(&predictions_dir, &quote_token, &token_name).await?;
 
     Ok(DetectedFiles {
-        history: if history_file.exists() {
-            Some(history_file)
-        } else {
-            None
-        },
-        prediction: if prediction_file.exists() {
-            Some(prediction_file)
-        } else {
-            None
-        },
+        history: history_file,
+        prediction: prediction_file,
         token_name,
         quote_token,
     })
@@ -239,6 +221,67 @@ async fn load_token_file(path: &Path) -> Result<TokenFileData> {
         .with_context(|| format!("Failed to parse token file: {}", path.display()))?;
 
     Ok(token_data)
+}
+
+async fn find_latest_prediction_file(
+    predictions_dir: &Path,
+    quote_token: &str,
+    token_name: &str,
+) -> Result<Option<PathBuf>> {
+    if !predictions_dir.exists() {
+        return Ok(None);
+    }
+
+    let mut latest_file: Option<(PathBuf, std::time::SystemTime)> = None;
+
+    // Walk through model directories
+    let mut entries = fs::read_dir(predictions_dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let model_dir = entry.path();
+        if !model_dir.is_dir() {
+            continue;
+        }
+
+        // Check each model directory for token files
+        let token_dir = model_dir
+            .join(sanitize_filename(quote_token))
+            .join(token_name);
+
+        if !token_dir.exists() {
+            continue;
+        }
+
+        // Look for prediction files in history subdirectories
+        let mut history_entries = fs::read_dir(&token_dir).await?;
+        while let Some(history_entry) = history_entries.next_entry().await? {
+            let history_dir = history_entry.path();
+            if !history_dir.is_dir() {
+                continue;
+            }
+
+            // Look for prediction files in this history directory
+            let mut pred_entries = fs::read_dir(&history_dir).await?;
+            while let Some(pred_entry) = pred_entries.next_entry().await? {
+                let pred_path = pred_entry.path();
+                if pred_path.is_file()
+                    && pred_path.extension().and_then(|s| s.to_str()) == Some("json")
+                {
+                    if let Some(name) = pred_path.file_name().and_then(|s| s.to_str()) {
+                        if name.starts_with("predict-") {
+                            let metadata = pred_entry.metadata().await?;
+                            let modified = metadata.modified()?;
+
+                            if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
+                                latest_file = Some((pred_path, modified));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(latest_file.map(|(path, _)| path))
 }
 
 fn validate_chart_args(args: &ChartArgs, detected: &DetectedFiles) -> Result<()> {

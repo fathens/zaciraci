@@ -4,4 +4,3 @@ pub mod predict;
 pub mod report;
 pub mod simulate;
 pub mod top;
-pub mod verify;
