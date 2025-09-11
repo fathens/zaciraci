@@ -119,10 +119,6 @@ pub struct SimulateArgs {
     #[clap(short, long)]
     pub end: Option<String>,
 
-    /// 使用するアルゴリズム (未指定の場合は全アルゴリズムを実行)
-    #[clap(short, long)]
-    pub algorithm: Option<String>,
-
     /// 初期資金 (NEAR) [デフォルト: 1000.0]
     #[clap(short, long, default_value = "1000.0")]
     pub capital: f64,

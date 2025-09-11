@@ -21,7 +21,6 @@ mod unit_tests {
         let args = SimulateArgs {
             start: Some("2024-01-01".to_string()),
             end: Some("2024-01-10".to_string()),
-            algorithm: Some("momentum".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
             output: "simulation_results".to_string(),
@@ -38,7 +37,6 @@ mod unit_tests {
             model: None,
         };
 
-        assert_eq!(args.algorithm, Some("momentum".to_string()));
         assert_eq!(args.capital, 1000.0);
         assert_eq!(args.quote_token, "wrap.near");
         assert_eq!(args.rebalance_interval, "1d");
@@ -55,7 +53,6 @@ mod unit_tests {
         let args_with_model = SimulateArgs {
             start: Some("2024-01-01".to_string()),
             end: Some("2024-01-10".to_string()),
-            algorithm: Some("momentum".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
             output: "simulation_results".to_string(),
@@ -78,7 +75,6 @@ mod unit_tests {
         let args_with_fast_model = SimulateArgs {
             start: Some("2024-01-01".to_string()),
             end: Some("2024-01-10".to_string()),
-            algorithm: Some("portfolio".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
             output: "simulation_results".to_string(),
@@ -1400,7 +1396,6 @@ mod integration_tests {
         let args = SimulateArgs {
             start: Some("2024-01-01".to_string()),
             end: Some("2024-01-31".to_string()),
-            algorithm: Some("momentum".to_string()),
             capital: 1000.0,
             quote_token: "wrap.near".to_string(),
             output: "test_output".to_string(),
@@ -1418,7 +1413,6 @@ mod integration_tests {
         };
 
         // Test that the args contain expected values
-        assert_eq!(args.algorithm, Some("momentum".to_string()));
         assert_eq!(args.capital, 1000.0);
         assert_eq!(args.quote_token, "wrap.near");
         assert_eq!(args.historical_days, 30);

@@ -24,15 +24,9 @@ use std::path::{Path, PathBuf};
 pub async fn run(args: SimulateArgs) -> Result<()> {
     println!("🚀 Starting trading simulation...");
 
-    let run_all_algorithms = args.algorithm.is_none();
-
     if args.verbose {
         println!("📋 Configuration:");
-        if run_all_algorithms {
-            println!("  Algorithm: All algorithms (Momentum, Portfolio, TrendFollowing)");
-        } else {
-            println!("  Algorithm: {:?}", args.algorithm);
-        }
+        println!("  Algorithm: All algorithms (Momentum, Portfolio, TrendFollowing)");
         println!("  Capital: {} {}", args.capital, args.quote_token);
         println!("  Fee Model: {}", args.fee_model);
         println!("  Output: {}", args.output);
@@ -66,50 +60,27 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
 
     final_config.target_tokens = token_names;
 
-    if run_all_algorithms {
-        // 全アルゴリズムを実行
-        println!("\n🔄 Running all algorithms for comparison...");
+    // 全アルゴリズムを実行
+    println!("\n🔄 Running all algorithms for comparison...");
 
-        let algorithms = [
-            AlgorithmType::Momentum,
-            AlgorithmType::Portfolio,
-            AlgorithmType::TrendFollowing,
-        ];
-        let mut results = Vec::new();
+    let algorithms = [
+        AlgorithmType::Momentum,
+        AlgorithmType::Portfolio,
+        AlgorithmType::TrendFollowing,
+    ];
+    let mut results = Vec::new();
 
-        for algorithm in &algorithms {
-            let mut config_copy = final_config.clone();
-            config_copy.algorithm = algorithm.clone();
+    for algorithm in &algorithms {
+        let mut config_copy = final_config.clone();
+        config_copy.algorithm = algorithm.clone();
 
-            println!("\n--- Running {:?} Algorithm ---", algorithm);
-            let result = run_single_algorithm(&config_copy).await?;
-            results.push(result);
-        }
-
-        // 複数アルゴリズムの結果を保存
-        save_simple_multi_algorithm_result(&results, &output_dir)?;
-    } else {
-        // 単一アルゴリズムを実行
-        let result = run_single_algorithm(&final_config).await?;
-
-        // 単一アルゴリズムの結果を保存
-        save_simulation_result(&result, &output_dir)?;
-
-        // 単一アルゴリズムの場合のみサマリーを表示
-        println!("\n📊 Simulation Summary:");
-        println!(
-            "  Total Return: {:.2}%",
-            result.performance.total_return_pct
-        );
-        println!("  Sharpe Ratio: {:.3}", result.performance.sharpe_ratio);
-        println!(
-            "  Max Drawdown: {:.2}%",
-            result.performance.max_drawdown_pct
-        );
-        println!("  Total Trades: {}", result.performance.total_trades);
-        println!("  Win Rate: {:.1}%", result.performance.win_rate);
-        println!("  Final Value: ${:.2}", result.config.final_value);
+        println!("\n--- Running {:?} Algorithm ---", algorithm);
+        let result = run_single_algorithm(&config_copy).await?;
+        results.push(result);
     }
+
+    // 複数アルゴリズムの結果を保存
+    save_simple_multi_algorithm_result(&results, &output_dir)?;
 
     Ok(())
 }
@@ -233,12 +204,8 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
         ));
     }
 
-    // アルゴリズムタイプの決定
-    let algorithm = if let Some(algo_str) = args.algorithm {
-        AlgorithmType::from(algo_str.as_str())
-    } else {
-        AlgorithmType::Momentum // 全アルゴリズム実行時の一時的な値
-    };
+    // アルゴリズムタイプはデフォルト値（後で各アルゴリズムごとに設定される）
+    let algorithm = AlgorithmType::Momentum;
 
     // トークンリストは後で自動取得するため、ここでは空のベクターを設定
     let target_tokens = Vec::new();

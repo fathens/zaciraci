@@ -25,8 +25,6 @@ OPTIONS:
     -s, --start <DATE>           シミュレーション開始日 (YYYY-MM-DD)
                                 (注意: topコマンドで生成したトークン情報が必要です)
     -e, --end <DATE>             シミュレーション終了日 (YYYY-MM-DD)
-    -a, --algorithm <ALGORITHM>  使用するアルゴリズム (未指定の場合は全アルゴリズムを実行)
-                                選択肢: momentum, portfolio, trend_following
     -c, --capital <AMOUNT>       初期資金 (NEAR) [デフォルト: 1000.0]
     -q, --quote-token <TOKEN>    ベース通貨 [デフォルト: wrap.near]
                                 (注意: topコマンドで作成されたtokens/ディレクトリからトークン情報を読み取ります)
@@ -58,16 +56,15 @@ cli_tokens top \
   --limit 5 \
   --quote-token wrap.near
 
-# 2. シミュレーション実行（topコマンドで生成されたトークンを自動使用）
+# 2. シミュレーション実行（topコマンドで生成されたトークンを自動使用、全アルゴリズムで実行）
 cli_tokens simulate \
   --start 2024-12-01 \
   --end 2024-12-31 \
-  --algorithm momentum \
   --capital 1000 \
   --quote-token wrap.near \
   --output simulation_results
 
-# 複数アルゴリズムでの比較実行（アルゴリズム未指定で全実行）
+# リバランス間隔を変更して実行
 cli_tokens simulate \
   --start 2024-11-01 \
   --end 2024-12-01 \
@@ -89,7 +86,6 @@ cli_tokens top \
 cli_tokens simulate \
   --start 2024-10-01 \
   --end 2024-11-01 \
-  --algorithm trend_following \
   --quote-token wrap.near \
   --fee-model custom \
   --custom-fee 0.005 \
@@ -100,12 +96,11 @@ cli_tokens simulate \
 cli_tokens simulate \
   --start 2024-10-01 \
   --end 2024-11-01 \
-  --algorithm momentum \
   --quote-token wrap.near \
   --verbose
 
 # 4. 結果からHTMLレポート生成  
-cli_tokens report simulation_results/momentum_*.json
+cli_tokens report simulation_results/multi_algorithm_*/multi_results.json
 ```
 
 ## シミュレーションの動作
