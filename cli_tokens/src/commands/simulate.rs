@@ -368,22 +368,6 @@ pub fn save_simple_multi_algorithm_result(
         )
     })?;
 
-    // 各アルゴリズムの結果を個別に保存
-    for result in results {
-        let filename = format!("{:?}_result.json", result.config.algorithm).to_lowercase();
-        let filepath = final_output_dir.join(&filename);
-
-        let json_content = serde_json::to_string_pretty(result)
-            .context("Failed to serialize simulation result to JSON")?;
-
-        fs::write(&filepath, json_content).with_context(|| {
-            format!(
-                "Failed to write simulation result to {}",
-                filepath.display()
-            )
-        })?;
-    }
-
     // 比較サマリーをJSONとして保存
     let summary = serde_json::json!({
         "comparison_type": "multi_algorithm",
@@ -418,15 +402,7 @@ pub fn save_simple_multi_algorithm_result(
     })?;
 
     println!("💾 Multi-algorithm comparison completed successfully!");
-    println!("📁 Results saved to: {}", final_output_dir.display());
-    println!(
-        "📄 Individual results: {:?}_result.json for each algorithm",
-        results
-            .iter()
-            .map(|r| format!("{:?}", r.config.algorithm))
-            .collect::<Vec<_>>()
-    );
-    println!("📊 Comparison summary: multi_results.json");
+    println!("📁 Results saved to: {}", summary_filepath.display());
     println!(
         "💡 Generate HTML report with: cli_tokens report {}",
         summary_filepath.display()

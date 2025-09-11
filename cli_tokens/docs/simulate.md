@@ -441,10 +441,11 @@ pub async fn run_predictions(
 ```
 ${CLI_TOKENS_BASE_DIR}/
 └── simulation_results/
-    ├── momentum_20250910_051650.json     # Momentumアルゴリズムの結果
-    ├── portfolio_20250910_051650.json    # Portfolioアルゴリズムの結果  
-    └── trendfollowing_20250910_051650.json # TrendFollowingアルゴリズムの結果
+    └── multi_algorithm_20250910_051650/
+        └── multi_results.json           # 全アルゴリズム比較結果
 ```
+
+`multi_results.json`には全アルゴリズム（Momentum、Portfolio、TrendFollowing）の結果と比較サマリーが含まれています。
 
 
 ## reportコマンド
@@ -468,10 +469,10 @@ OPTIONS:
 ### 使用例
 ```bash
 # HTMLレポート生成
-cli_tokens report simulation_results/results.json
+cli_tokens report simulation_results/multi_algorithm_20250910_051650/multi_results.json
 
 # 出力先を指定
-cli_tokens report results.json --output custom_report.html
+cli_tokens report multi_results.json --output custom_report.html
 ```
 
 ## 注意事項
