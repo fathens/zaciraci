@@ -3,7 +3,7 @@ use crate::models::history::{HistoryFileData, HistoryMetadata, PriceHistory};
 use crate::models::token::TokenFileData;
 use crate::utils::file::sanitize_filename;
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use clap::Args;
 use std::path::PathBuf;
 use tokio::fs;
@@ -18,7 +18,7 @@ pub struct HistoryArgs {
     pub quote_token: String,
 
     /// 出力ディレクトリ
-    #[arg(short, long, default_value = "history")]
+    #[arg(short, long, default_value = "price_history")]
     pub output: PathBuf,
 
     /// 既存の履歴データを強制上書き
@@ -39,24 +39,6 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
         .await
         .context("Failed to create output directory")?;
 
-    // quote_token サブディレクトリを作成
-    let quote_dir = output_dir.join(sanitize_filename(&args.quote_token));
-    fs::create_dir_all(&quote_dir)
-        .await
-        .context("Failed to create quote token subdirectory")?;
-
-    // 出力ファイルパスを生成 (${quote_token}/${base_token}.json)
-    let filename = format!("{}.json", sanitize_filename(&token_data.token));
-    let output_file = quote_dir.join(filename);
-
-    // 既存ファイルのチェック
-    if output_file.exists() && !args.force {
-        return Err(anyhow::anyhow!(
-            "History file already exists: {}. Use --force to overwrite",
-            output_file.display()
-        ));
-    }
-
     // APIクライアントを作成
     let client = BackendClient::new();
 
@@ -70,6 +52,32 @@ pub async fn run_history(args: HistoryArgs) -> Result<()> {
         .context("Invalid end_date format")?
         .and_hms_opt(23, 59, 59)
         .context("Failed to create end datetime")?;
+
+    // quote_token/{base_token} サブディレクトリを作成
+    let quote_dir = output_dir.join(sanitize_filename(&args.quote_token));
+    let token_dir = quote_dir.join(sanitize_filename(&token_data.token));
+    fs::create_dir_all(&token_dir)
+        .await
+        .context("Failed to create token subdirectory")?;
+
+    // 期間情報を含むファイル名を生成
+    // history-{start_date}-{end_date}.json 形式
+    let start_datetime = DateTime::<Utc>::from_naive_utc_and_offset(start_date, Utc);
+    let end_datetime = DateTime::<Utc>::from_naive_utc_and_offset(end_date, Utc);
+    let filename = format!(
+        "history-{}-{}.json",
+        start_datetime.format("%Y%m%d_%H%M"),
+        end_datetime.format("%Y%m%d_%H%M")
+    );
+    let output_file = token_dir.join(filename);
+
+    // 既存ファイルのチェック
+    if output_file.exists() && !args.force {
+        return Err(anyhow::anyhow!(
+            "History file already exists: {}. Use --force to overwrite",
+            output_file.display()
+        ));
+    }
 
     println!(
         "Fetching price history for {} from {} to {}",
