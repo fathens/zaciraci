@@ -367,7 +367,7 @@ pub struct BenchmarkComparison {
 
 ### 4. レポート生成
 
-#### JSON形式
+#### シミュレーション結果
 ```json
 {
   "simulation_summary": {
@@ -393,7 +393,8 @@ pub struct BenchmarkComparison {
 }
 ```
 
-#### HTML形式
+#### HTMLレポート
+reportコマンドを使用してインタラクティブなHTMLレポートを生成できます：
 - インタラクティブチャート（Chart.js使用）
 - 詳細な取引履歴テーブル
 - パフォーマンス指標の視覚化
@@ -456,17 +457,13 @@ pub async fn run_predictions(
 
 ## 出力ファイル構造
 
-**注意**: 現在の実装では、シミュレーション結果はコンソール出力のみで、ファイル保存機能は未実装です。
-
-将来的に実装予定の出力構造：
+シミュレーション結果は以下の構造で保存されます：
 ```
 ${CLI_TOKENS_BASE_DIR}/
 └── simulation_results/
     ├── momentum_2024-12-01_2024-12-31/
     │   ├── config.json                    # シミュレーション設定
-    │   ├── results.json                   # メイン結果（JSON形式）
-    │   ├── trades.csv                     # 取引履歴（CSV形式）
-    │   ├── portfolio_values.csv           # ポートフォリオ価値推移
+    │   ├── results.json                   # シミュレーション結果
     │   └── logs/                          # 詳細ログ（--verbose）
     │       ├── execution.log
     │       └── predictions.log
@@ -489,13 +486,13 @@ cli_tokens report <INPUT_JSON> [OPTIONS]
 OPTIONS:
     <INPUT>              入力JSONファイルパス（シミュレーション結果）
     -o, --output <PATH>     出力ファイルパス（オプション）
-                            省略時は入力ファイルと同じディレクトリにreport.htmlを生成
+                            省略時は入力ファイルと同じディレクトリにHTMLレポートを生成
     -h, --help              ヘルプを表示
 ```
 
 ### 使用例
 ```bash
-# HTMLレポート生成（デフォルトでHTMLフォーマット）
+# HTMLレポート生成
 cli_tokens report simulation_results/results.json
 
 # 出力先を指定

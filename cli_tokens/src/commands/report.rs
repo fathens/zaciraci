@@ -475,10 +475,6 @@ pub struct ReportArgs {
     /// Input JSON file path (simulation result)
     pub input: PathBuf,
 
-    /// Output format
-    #[arg(short = 'f', long, default_value = "html")]
-    pub format: String,
-
     /// Output file path (optional, defaults to same directory as input)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
@@ -517,21 +513,11 @@ fn run_single_algorithm_report(
     // 出力先を決定
     let output_path = determine_output_path(&args)?;
 
-    match args.format.as_str() {
-        "html" => {
-            // Use the new template system (Phase 4.3)
-            let html_content = generate_html_report_v3(&report_data, &report_metrics, None, None)?;
-            std::fs::write(&output_path, html_content)
-                .with_context(|| format!("Failed to write HTML file: {}", output_path.display()))?;
-            println!("📊 HTML report saved to: {}", output_path.display());
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Unsupported format: {}. Supported formats: html",
-                args.format
-            ))
-        }
-    }
+    // Generate HTML report
+    let html_content = generate_html_report_v3(&report_data, &report_metrics, None, None)?;
+    std::fs::write(&output_path, html_content)
+        .with_context(|| format!("Failed to write HTML file: {}", output_path.display()))?;
+    println!("📊 HTML report saved to: {}", output_path.display());
     Ok(())
 }
 
@@ -543,23 +529,14 @@ fn run_multi_algorithm_report(
     // 出力先を決定
     let output_path = determine_output_path(&args)?;
 
-    match args.format.as_str() {
-        "html" => {
-            let html_content = generate_multi_algorithm_html_report(multi_result)?;
-            std::fs::write(&output_path, html_content)
-                .with_context(|| format!("Failed to write HTML file: {}", output_path.display()))?;
-            println!(
-                "📊 Multi-algorithm comparison report saved to: {}",
-                output_path.display()
-            );
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Unsupported format: {}. Supported formats: html",
-                args.format
-            ))
-        }
-    }
+    // Generate HTML report
+    let html_content = generate_multi_algorithm_html_report(multi_result)?;
+    std::fs::write(&output_path, html_content)
+        .with_context(|| format!("Failed to write HTML file: {}", output_path.display()))?;
+    println!(
+        "📊 Multi-algorithm comparison report saved to: {}",
+        output_path.display()
+    );
     Ok(())
 }
 
@@ -568,7 +545,7 @@ fn determine_output_path(args: &ReportArgs) -> Result<PathBuf> {
     if let Some(output) = &args.output {
         Ok(output.clone())
     } else {
-        // 入力ファイルと同じディレクトリにreport.htmlを作成
+        // 入力ファイルと同じディレクトリにHTMLレポートを作成
         let parent = args
             .input
             .parent()

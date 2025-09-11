@@ -263,7 +263,6 @@ mod unit_tests {
     fn test_determine_output_path_with_explicit_output() {
         let args = ReportArgs {
             input: PathBuf::from("/path/to/input.json"),
-            format: "html".to_string(),
             output: Some(PathBuf::from("/custom/output.html")),
         };
 
@@ -275,7 +274,6 @@ mod unit_tests {
     fn test_determine_output_path_default() {
         let args = ReportArgs {
             input: PathBuf::from("/path/to/input.json"),
-            format: "html".to_string(),
             output: None,
         };
 
@@ -502,7 +500,6 @@ mod integration_tests {
         // Create report args
         let args = ReportArgs {
             input: input_path,
-            format: "html".to_string(),
             output: Some(output_path.clone()),
         };
 
