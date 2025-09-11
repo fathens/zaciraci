@@ -12,6 +12,29 @@ use crate::utils::{
 use common::api::chronos::ChronosApiClient;
 use common::prediction::{PredictionPoint, TokenPredictionResult};
 
+/// Find the task file for a given token
+async fn find_task_file(dir: &Path, token_name: &str) -> Result<Option<PathBuf>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    let sanitized_token = sanitize_filename(token_name);
+    let mut entries = fs::read_dir(dir).await?;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if name.starts_with(&sanitized_token) && name.ends_with(".task.json") {
+                    return Ok(Some(path));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 #[derive(Parser)]
 #[clap(about = "Poll for prediction results")]
 pub struct PullArgs {
@@ -43,32 +66,30 @@ pub async fn run(args: PullArgs) -> Result<()> {
     let content = fs::read_to_string(&args.token_file).await?;
     let token_data: TokenFileData = serde_json::from_str(&content)?;
 
-    // Get or extract quote token
-    let quote_token = extract_quote_token_from_path(&args.token_file)
-        .or_else(|| token_data.metadata.quote_token.clone())
-        .unwrap_or_else(|| "wrap.near".to_string());
-
     // Prepare paths
     let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-    let output_dir = PathBuf::from(base_dir)
+
+    // Look for task file in the .tasks directory
+    let task_dir = PathBuf::from(&base_dir).join(".tasks").join(&args.output);
+
+    // Find the task file - it should have the token name in it
+    let task_file = find_task_file(&task_dir, &token_data.token).await?;
+
+    // We'll determine the actual output location from the task info
+    let prediction_file = PathBuf::from(&base_dir)
         .join(&args.output)
-        .join(sanitize_filename(&quote_token));
-
-    let task_file = output_dir.join(format!(
-        "{}.task.json",
-        sanitize_filename(&token_data.token)
-    ));
-
-    let prediction_file = output_dir.join(format!("{}.json", sanitize_filename(&token_data.token)));
+        .join("temp")
+        .join(format!("{}.json", sanitize_filename(&token_data.token)));
 
     // Read task info
-    if !file_exists(&task_file).await {
+    if task_file.is_none() {
         return Err(anyhow::anyhow!(
-            "Task file not found: {:?}. Please run 'cli_tokens predict kick' first",
-            task_file
+            "Task file not found for token: {}. Please run 'cli_tokens predict kick' first",
+            token_data.token
         ));
     }
 
+    let task_file = task_file.unwrap();
     let task_content = fs::read_to_string(&task_file).await?;
     let mut task_info: TaskInfo = serde_json::from_str(&task_content)?;
 
@@ -228,16 +249,6 @@ pub async fn run(args: PullArgs) -> Result<()> {
     ));
 
     Ok(())
-}
-
-/// Extract quote_token from token file path (e.g., tokens/wrap.near/usdc.tether-token.near.json -> wrap.near)
-fn extract_quote_token_from_path(token_file: &Path) -> Option<String> {
-    token_file
-        .parent()?
-        .file_name()?
-        .to_str()
-        .map(|s| s.to_string())
-        .filter(|s| s != "tokens") // Skip if direct under tokens/ directory
 }
 
 #[cfg(test)]
