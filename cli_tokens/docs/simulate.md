@@ -9,7 +9,7 @@
 - **バックテスト実行**: 過去のデータを使用して戦略の有効性を検証
 - **実取引コスト計算**: Ref Financeの実際の手数料体系を反映
 - **複数アルゴリズム対応**: momentum、portfolio、trend_followingの3つの戦略
-- **トークン読み込み**: topコマンド出力ディレクトリからトークン情報を自動読み込み
+- **自動トークン読み込み**: topコマンド出力ディレクトリからトークン情報を自動読み込み
 - **パフォーマンス分析**: リターン、シャープレシオ、最大ドローダウンなどの指標を計算
 
 ## コマンド仕様
@@ -51,14 +51,14 @@ OPTIONS:
 ```bash
 export CLI_TOKENS_BASE_DIR="./workspace"
 
-# 1. まずトークンデータを取得
+# 1. まずトークンデータを取得（取得するトークン数を指定）
 cli_tokens top \
   --start 2024-11-01 \
   --end 2024-12-01 \
   --limit 5 \
   --quote-token wrap.near
 
-# 2. シミュレーション実行（topコマンドで生成されたトークンを使用）
+# 2. シミュレーション実行（topコマンドで生成されたトークンを自動使用）
 cli_tokens simulate \
   --start 2024-12-01 \
   --end 2024-12-31 \
@@ -67,7 +67,7 @@ cli_tokens simulate \
   --quote-token wrap.near \
   --output simulation_results
 
-# 複数アルゴリズムでの比較実行
+# 複数アルゴリズムでの比較実行（アルゴリズム未指定で全実行）
 cli_tokens simulate \
   --start 2024-11-01 \
   --end 2024-12-01 \
@@ -78,7 +78,7 @@ cli_tokens simulate \
 
 #### 高度な設定
 ```bash
-# 1. 特定の期間と数のトークンを取得
+# 1. より多くのトークンを取得してシミュレーション
 cli_tokens top \
   --start 2024-09-01 \
   --end 2024-10-01 \
@@ -105,8 +105,7 @@ cli_tokens simulate \
   --verbose
 
 # 4. 結果からHTMLレポート生成  
-cli_tokens report simulation_results/momentum_*.json \
-  --format html
+cli_tokens report simulation_results/momentum_*.json
 ```
 
 ## シミュレーションの動作
@@ -115,8 +114,8 @@ cli_tokens report simulation_results/momentum_*.json \
 
 シミュレーションは指定された期間内で、リバランス頻度に従って時系列で実行されます：
 
-1. **トークン読み込み**: topコマンドが作成したtokens/ディレクトリからトークン情報を読み取り
-2. **価格データ取得**: 指定期間とヒストリカルデータ期間の価格を別途取得
+1. **トークン読み込み**: topコマンドが作成したtokens/<quote_token>/ディレクトリから全トークン情報を自動読み取り
+2. **価格データ取得**: 指定期間とヒストリカルデータ期間の価格を取得
 3. **初期ポートフォリオ構築**: 初期資金を読み込まれたトークンに配分
 4. **各タイムステップで実行**:
    - 現在価格と過去データから予測を生成
@@ -489,8 +488,6 @@ cli_tokens report <INPUT_JSON> [OPTIONS]
 ```bash
 OPTIONS:
     <INPUT>              入力JSONファイルパス（シミュレーション結果）
-    -f, --format <FORMAT>    出力形式 [デフォルト: html]
-                            現在は html のみサポート
     -o, --output <PATH>     出力ファイルパス（オプション）
                             省略時は入力ファイルと同じディレクトリにreport.htmlを生成
     -h, --help              ヘルプを表示
@@ -498,7 +495,7 @@ OPTIONS:
 
 ### 使用例
 ```bash
-# HTMLレポート生成
+# HTMLレポート生成（デフォルトでHTMLフォーマット）
 cli_tokens report simulation_results/results.json
 
 # 出力先を指定
@@ -508,9 +505,10 @@ cli_tokens report results.json --output custom_report.html
 ## 注意事項
 
 - **前提条件**: simulateコマンド実行前に、必ず`cli_tokens top`コマンドでトークン情報を生成してください
-- **トークンディレクトリ**: tokens/ディレクトリに適切なトークン情報ファイルが存在することを確認してください
-- **quote-token一致**: topコマンドとsimulateコマンドで同じ--quote-tokenを指定してください
+- **トークン選択**: simulateコマンドは`tokens/<quote_token>/`ディレクトリ内の全トークンを自動的に使用します。トークンの選択は`top`コマンドの`--limit`オプションで制御してください
+- **quote-token一致**: topコマンドとsimulateコマンドで同じ`--quote-token`を指定してください
 - **データ可用性**: シミュレーション期間の価格データが存在することを確認してください
-- **バックエンドAPI**: `http://localhost:8080` でバックエンドAPIが動作している必要があります
+- **バックエンドAPI**: `BACKEND_URL`環境変数または`http://localhost:8080`でバックエンドAPIが動作している必要があります
+- **Chronos API**: `CHRONOS_URL`環境変数または`http://localhost:8000`で予測APIが動作している必要があります
 - **実行時間**: トークン数と期間により、シミュレーションに数分かかる場合があります
 - **メモリ使用**: 長期間のシミュレーションでは大量のメモリを使用する可能性があります
