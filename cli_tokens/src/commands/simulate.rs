@@ -392,9 +392,7 @@ pub fn save_simple_multi_algorithm_result(
 
     // 出力ディレクトリを作成
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let final_output_dir = Path::new(output_dir)
-        .join("simulation_results")
-        .join(format!("multi_algorithm_{}", timestamp));
+    let final_output_dir = Path::new(output_dir).join(format!("multi_algorithm_{}", timestamp));
 
     fs::create_dir_all(&final_output_dir).with_context(|| {
         format!(
