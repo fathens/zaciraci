@@ -32,7 +32,15 @@ pub async fn generate_api_predictions(
 
     for token in target_tokens {
         // Get historical price data for prediction
-        match get_historical_price_data(backend_client, token, quote_token, historical_days).await {
+        match get_historical_price_data(
+            backend_client,
+            token,
+            quote_token,
+            historical_days,
+            current_time,
+        )
+        .await
+        {
             Ok((timestamps, values, current_price)) => {
                 if timestamps.len() < 10 {
                     println!(
@@ -150,8 +158,9 @@ async fn get_historical_price_data(
     token: &str,
     quote_token: &str,
     historical_days: i64,
+    current_simulation_time: DateTime<Utc>,
 ) -> Result<(Vec<DateTime<Utc>>, Vec<f64>, f64)> {
-    let end_time = chrono::Utc::now().naive_utc();
+    let end_time = current_simulation_time.naive_utc();
     let start_time = end_time - chrono::Duration::days(historical_days);
 
     let prices = backend_client
