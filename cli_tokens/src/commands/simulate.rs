@@ -313,9 +313,9 @@ pub fn save_simple_multi_algorithm_result(
     println!("│ Algorithm       │ Return (%)  │ Sharpe      │ Drawdown(%) │ Trades      │");
     println!("├─────────────────┼─────────────┼─────────────┼─────────────┼─────────────┤");
 
-    let mut best_return = ("None".to_string(), f64::NEG_INFINITY);
-    let mut best_sharpe = ("None".to_string(), f64::NEG_INFINITY);
-    let mut lowest_drawdown = ("None".to_string(), f64::INFINITY);
+    let mut best_return = (AlgorithmType::Momentum, f64::NEG_INFINITY);
+    let mut best_sharpe = (AlgorithmType::Momentum, f64::NEG_INFINITY);
+    let mut lowest_drawdown = (AlgorithmType::Momentum, f64::INFINITY);
 
     for result in results {
         let algo_name = format!("{:?}", result.config.algorithm);
@@ -331,13 +331,13 @@ pub fn save_simple_multi_algorithm_result(
 
         // ベスト指標の更新
         if return_pct > best_return.1 {
-            best_return = (algo_name.clone(), return_pct);
+            best_return = (result.config.algorithm.clone(), return_pct);
         }
         if sharpe > best_sharpe.1 {
-            best_sharpe = (algo_name.clone(), sharpe);
+            best_sharpe = (result.config.algorithm.clone(), sharpe);
         }
         if drawdown < lowest_drawdown.1 {
-            lowest_drawdown = (algo_name, drawdown);
+            lowest_drawdown = (result.config.algorithm.clone(), drawdown);
         }
     }
 
@@ -345,15 +345,15 @@ pub fn save_simple_multi_algorithm_result(
 
     println!("\n🥇 Best Performers:");
     println!(
-        "  Highest Return: {} ({:.2}%)",
+        "  Highest Return: {:?} ({:.2}%)",
         best_return.0, best_return.1
     );
     println!(
-        "  Best Sharpe Ratio: {} ({:.3})",
+        "  Best Sharpe Ratio: {:?} ({:.3})",
         best_sharpe.0, best_sharpe.1
     );
     println!(
-        "  Lowest Drawdown: {} ({:.2}%)",
+        "  Lowest Drawdown: {:?} ({:.2}%)",
         lowest_drawdown.0, lowest_drawdown.1
     );
 
@@ -368,35 +368,41 @@ pub fn save_simple_multi_algorithm_result(
         )
     })?;
 
-    // 比較サマリーをJSONとして保存
-    let summary = serde_json::json!({
-        "comparison_type": "multi_algorithm",
-        "algorithms": results.iter().map(|r| format!("{:?}", r.config.algorithm)).collect::<Vec<_>>(),
-        "best_performers": {
-            "highest_return": {
-                "algorithm": best_return.0,
-                "value": best_return.1
-            },
-            "best_sharpe": {
-                "algorithm": best_sharpe.0,
-                "value": best_sharpe.1
-            },
-            "lowest_drawdown": {
-                "algorithm": lowest_drawdown.0,
-                "value": lowest_drawdown.1
-            }
-        },
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "results": results
-    });
+    // MultiAlgorithmSimulationResult 構造体を作成
+    use crate::commands::simulate::{
+        AlgorithmComparison, AlgorithmSummaryRow, MultiAlgorithmSimulationResult,
+    };
+
+    let comparison = AlgorithmComparison {
+        best_return: (best_return.0, best_return.1),
+        best_sharpe: (best_sharpe.0, best_sharpe.1),
+        lowest_drawdown: (lowest_drawdown.0, lowest_drawdown.1),
+        summary_table: results
+            .iter()
+            .map(|r| AlgorithmSummaryRow {
+                algorithm: r.config.algorithm.clone(),
+                total_return_pct: r.performance.total_return_pct,
+                annualized_return: r.performance.annualized_return / 100.0,
+                sharpe_ratio: r.performance.sharpe_ratio,
+                max_drawdown_pct: r.performance.max_drawdown_pct,
+                total_trades: r.performance.total_trades,
+                win_rate: r.performance.win_rate,
+            })
+            .collect(),
+    };
+
+    let multi_result = MultiAlgorithmSimulationResult {
+        results: results.to_vec(),
+        comparison,
+    };
 
     let summary_filepath = final_output_dir.join("multi_results.json");
-    let summary_json = serde_json::to_string_pretty(&summary)
-        .context("Failed to serialize comparison summary to JSON")?;
+    let summary_json = serde_json::to_string_pretty(&multi_result)
+        .context("Failed to serialize multi-algorithm result to JSON")?;
 
     fs::write(&summary_filepath, summary_json).with_context(|| {
         format!(
-            "Failed to write comparison summary to {}",
+            "Failed to write multi-algorithm result to {}",
             summary_filepath.display()
         )
     })?;

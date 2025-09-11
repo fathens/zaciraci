@@ -349,29 +349,114 @@ pub struct PerformanceMetrics {
 
 ### 4. レポート生成
 
-#### シミュレーション結果
+#### 複数アルゴリズム比較結果JSON
+simulateコマンドは全アルゴリズム（Momentum、Portfolio、TrendFollowing）の結果を含むJSONファイルを出力します：
+
 ```json
 {
-  "simulation_summary": {
-    "start_date": "2024-12-01T00:00:00Z",
-    "end_date": "2024-12-31T23:59:59Z",
-    "algorithm": "momentum",
-    "initial_capital": 1000.0,
-    "final_value": 1125.45,
-    "total_return": 12.55,
-    "duration_days": 31
-  },
-  "performance_metrics": {
-    "total_return": 0.12545,
-    "annualized_return": 1.51,
-    "sharpe_ratio": 1.23,
-    "max_drawdown": -0.087,
-    "win_rate": 0.68,
-    "total_trades": 23
-  },
-  "trades": []
+  "results": [
+    {
+      "config": {
+        "start_date": "2024-12-01T00:00:00Z",
+        "end_date": "2024-12-31T23:59:59Z",
+        "algorithm": "Momentum",
+        "initial_capital": 1000.0,
+        "final_value": 1125.45,
+        "total_return": 12.545,
+        "duration_days": 31
+      },
+      "performance": {
+        "total_return": 0.12545,
+        "annualized_return": 151.0,
+        "total_return_pct": 12.545,
+        "volatility": 0.15,
+        "max_drawdown": -87.0,
+        "max_drawdown_pct": -8.7,
+        "sharpe_ratio": 1.23,
+        "sortino_ratio": 1.45,
+        "total_trades": 23,
+        "winning_trades": 16,
+        "losing_trades": 7,
+        "win_rate": 0.696,
+        "profit_factor": 1.8,
+        "total_costs": 15.2,
+        "cost_ratio": 0.012,
+        "simulation_days": 31,
+        "active_trading_days": 20
+      },
+      "trades": [
+        {
+          "timestamp": "2024-12-06T00:00:00Z",
+          "from_token": "wrap.near",
+          "to_token": "akaia.tkn.near",
+          "amount": 500.0,
+          "executed_price": 1.25,
+          "cost": {
+            "protocol_fee": "1.5",
+            "slippage": "2.0",
+            "gas_fee": "0.5",
+            "total": "4.0"
+          },
+          "portfolio_value_before": 1000.0,
+          "portfolio_value_after": 996.0,
+          "success": true,
+          "reason": "momentum signal"
+        }
+      ],
+      "portfolio_values": [
+        {
+          "timestamp": "2024-12-01T00:00:00Z",
+          "total_value": 1000.0,
+          "holdings": {},
+          "cash_balance": 1000.0,
+          "unrealized_pnl": 0.0
+        },
+        {
+          "timestamp": "2024-12-31T23:59:59Z",
+          "total_value": 1125.45,
+          "holdings": {
+            "akaia.tkn.near": 800.0
+          },
+          "cash_balance": 125.45,
+          "unrealized_pnl": 125.45
+        }
+      ],
+      "execution_summary": {
+        "total_trades": 23,
+        "successful_trades": 23,
+        "failed_trades": 0,
+        "success_rate": 1.0,
+        "total_cost": 15.2,
+        "avg_cost_per_trade": 0.66
+      }
+    }
+  ],
+  "comparison": {
+    "best_return": ["Momentum", 12.545],
+    "best_sharpe": ["Momentum", 1.23],
+    "lowest_drawdown": ["TrendFollowing", -12.0],
+    "summary_table": [
+      {
+        "algorithm": "Momentum",
+        "total_return_pct": 12.545,
+        "annualized_return": 1.51,
+        "sharpe_ratio": 1.23,
+        "max_drawdown_pct": -8.7,
+        "total_trades": 23,
+        "win_rate": 0.696
+      }
+    ]
+  }
 }
 ```
+
+**主要フィールドの説明**:
+- `results`: 各アルゴリズム（Momentum、Portfolio、TrendFollowing）の詳細な結果配列
+- `comparison`: アルゴリズム間の比較データ
+- `best_return`: 最高リターンを記録したアルゴリズム
+- `best_sharpe`: 最高シャープレシオを記録したアルゴリズム  
+- `lowest_drawdown`: 最小ドローダウンを記録したアルゴリズム
+- `summary_table`: 各アルゴリズムの要約指標
 
 #### HTMLレポート
 reportコマンドを使用してインタラクティブなHTMLレポートを生成できます：

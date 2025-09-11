@@ -6,6 +6,12 @@ pub mod utils;
 #[cfg(test)]
 mod tests;
 
+// Add integration tests module to verify simulate-report compatibility
+#[cfg(test)]
+mod integration_tests {
+    include!("commands/integration_tests.rs");
+}
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
