@@ -182,3 +182,8 @@ pub async fn check_prediction_cache(params: &PredictionCacheParams<'_>) -> Resul
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    include!("predictions/tests.rs");
+}
