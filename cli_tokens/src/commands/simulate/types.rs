@@ -194,6 +194,7 @@ pub struct SimulationConfig {
     pub prediction_horizon: chrono::Duration,
     pub historical_days: i64,  // 予測に使用する過去データ期間
     pub model: Option<String>, // 予測モデル
+    pub verbose: bool,         // 詳細出力フラグ
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

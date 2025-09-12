@@ -24,9 +24,7 @@ use std::path::{Path, PathBuf};
 pub async fn run(args: SimulateArgs) -> Result<()> {
     println!("🚀 Starting simulation...");
 
-    let verbose = args.verbose;
-
-    if verbose {
+    if args.verbose {
         println!("📋 Configuration:");
         println!("  Algorithm: All algorithms (Momentum, Portfolio, TrendFollowing)");
         println!("  Capital: {} {}", args.capital, args.quote_token);
@@ -43,7 +41,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
     // topコマンドの出力ディレクトリからトークンを読み取り
     let mut final_config = config;
 
-    if verbose {
+    if final_config.verbose {
         println!("🔍 Loading tokens from top command output directory...");
     }
 
@@ -58,7 +56,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
     }
 
     println!("📈 Found {} tokens", token_names.len());
-    if verbose {
+    if final_config.verbose {
         println!("  Tokens: {}", token_names.join(", "));
     }
 
@@ -79,7 +77,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         config_copy.algorithm = algorithm.clone();
 
         println!("Running {:?}...", algorithm);
-        let result = run_single_algorithm(&config_copy, verbose).await?;
+        let result = run_single_algorithm(&config_copy).await?;
         results.push(result);
     }
 
@@ -242,18 +240,16 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
         prediction_horizon,
         historical_days: args.historical_days as i64,
         model: args.model,
+        verbose: args.verbose,
     })
 }
 
 /// Run a single algorithm simulation
-async fn run_single_algorithm(
-    config: &SimulationConfig,
-    verbose: bool,
-) -> Result<SimulationResult> {
+async fn run_single_algorithm(config: &SimulationConfig) -> Result<SimulationResult> {
     match config.algorithm {
-        AlgorithmType::Momentum => run_momentum_simulation(config, verbose).await,
-        AlgorithmType::Portfolio => run_portfolio_simulation(config, verbose).await,
-        AlgorithmType::TrendFollowing => run_trend_following_simulation(config, verbose).await,
+        AlgorithmType::Momentum => run_momentum_simulation(config).await,
+        AlgorithmType::Portfolio => run_portfolio_simulation(config).await,
+        AlgorithmType::TrendFollowing => run_trend_following_simulation(config).await,
     }
 }
 

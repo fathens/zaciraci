@@ -304,6 +304,7 @@ mod tests {
             prediction_horizon: Duration::hours(24),
             historical_days: 30,
             model: None,
+            verbose: false,
         };
 
         // テスト用の価格データを作成
@@ -325,7 +326,7 @@ mod tests {
         price_data.insert("test_token".to_string(), values);
 
         // シミュレーションを実行（エラーが発生してもOK）
-        let result = run_momentum_timestep_simulation(&config, &price_data, false).await;
+        let result = run_momentum_timestep_simulation(&config, &price_data).await;
 
         // 関数がエラーなく実行されることを確認
         // 実際のAPI呼び出しは失敗するが、フォールバック処理で続行される
@@ -399,13 +400,10 @@ mod regression_tests {
             prediction_horizon: Duration::hours(24),
             historical_days: 30,
             model: None,
+            verbose: false,
         };
 
         let price_data = HashMap::new();
-        _assert_async_fn(run_momentum_timestep_simulation(
-            &config,
-            &price_data,
-            false,
-        ));
+        _assert_async_fn(run_momentum_timestep_simulation(&config, &price_data));
     }
 }
