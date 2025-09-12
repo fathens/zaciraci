@@ -6,6 +6,110 @@ use chrono::{DateTime, Utc};
 use common::algorithm::{PredictionData, TradingAction};
 use std::collections::HashMap;
 
+// Import cache-related modules
+use crate::models::prediction::{
+    PredictionFileData, PredictionMetadata, PredictionPoint as CachePredictionPoint,
+    PredictionResults,
+};
+use crate::utils::cache::{
+    check_prediction_cache, load_prediction_data, save_prediction_result, PredictionCacheParams,
+};
+
+/// Try to load prediction from cache
+async fn try_load_from_cache(
+    token: &str,
+    quote_token: &str,
+    model_name: &str,
+    hist_start: DateTime<Utc>,
+    hist_end: DateTime<Utc>,
+    pred_start: DateTime<Utc>,
+    pred_end: DateTime<Utc>,
+) -> Result<Option<PredictionData>> {
+    let cache_params = PredictionCacheParams {
+        model_name,
+        quote_token,
+        base_token: token,
+        hist_start,
+        hist_end,
+        pred_start,
+        pred_end,
+    };
+
+    if let Some(cache_path) = check_prediction_cache(&cache_params).await? {
+        println!("📂 Found cached prediction for {}: {:?}", token, cache_path);
+
+        let cached_data = load_prediction_data(&cache_path).await?;
+
+        // Convert cached prediction to PredictionData
+        if let Some(last_prediction) = cached_data.prediction_results.predictions.last() {
+            // Get current price from first prediction point (assuming it represents recent price)
+            let current_price = cached_data
+                .prediction_results
+                .predictions
+                .first()
+                .map(|p| p.price)
+                .unwrap_or(last_prediction.price);
+
+            return Ok(Some(PredictionData {
+                token: token.to_string(),
+                current_price: BigDecimal::from_f64(current_price).unwrap_or_default(),
+                predicted_price_24h: BigDecimal::from_f64(last_prediction.price)
+                    .unwrap_or_default(),
+                timestamp: pred_start,
+                confidence: last_prediction.confidence,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Save prediction result to cache
+async fn save_to_cache(
+    cache_params: &PredictionCacheParams<'_>,
+    forecast_data: &common::prediction::ChronosPredictionResponse,
+) -> Result<()> {
+    // Convert forecast data to cache format
+    let cache_predictions: Vec<CachePredictionPoint> = forecast_data
+        .forecast_timestamp
+        .iter()
+        .zip(forecast_data.forecast_values.iter())
+        .map(|(timestamp, price)| CachePredictionPoint {
+            timestamp: *timestamp,
+            price: *price,
+            confidence: None, // Could extract from confidence intervals if available
+        })
+        .collect();
+
+    let prediction_file_data = PredictionFileData {
+        metadata: PredictionMetadata {
+            generated_at: Utc::now(),
+            model_name: cache_params.model_name.to_string(),
+            base_token: cache_params.base_token.to_string(),
+            quote_token: cache_params.quote_token.to_string(),
+            history_start: cache_params.hist_start.format("%Y-%m-%d").to_string(),
+            history_end: cache_params.hist_end.format("%Y-%m-%d").to_string(),
+            prediction_start: cache_params.pred_start.format("%Y-%m-%d").to_string(),
+            prediction_end: cache_params.pred_end.format("%Y-%m-%d").to_string(),
+        },
+        prediction_results: PredictionResults {
+            predictions: cache_predictions,
+            model_metrics: forecast_data
+                .metrics
+                .as_ref()
+                .map(|metrics| serde_json::to_value(metrics).unwrap_or(serde_json::Value::Null)),
+        },
+    };
+
+    let saved_path = save_prediction_result(cache_params, &prediction_file_data).await?;
+    println!(
+        "💾 Cached prediction for {}: {:?}",
+        cache_params.base_token, saved_path
+    );
+
+    Ok(())
+}
+
 /// Generate predictions using Chronos API with fallback to mock data
 pub async fn generate_api_predictions(
     backend_client: &crate::api::backend::BackendClient,
@@ -31,6 +135,40 @@ pub async fn generate_api_predictions(
     let chronos_client = ChronosApiClient::new(chronos_url);
 
     for token in target_tokens {
+        // Calculate prediction window
+        let pred_start = current_time;
+        let pred_end = current_time + prediction_horizon;
+        let hist_start = current_time - chrono::Duration::days(historical_days);
+        let hist_end = current_time;
+
+        let model_name = model.as_deref().unwrap_or("chronos_default");
+
+        // Try to load from cache first
+        match try_load_from_cache(
+            token,
+            quote_token,
+            model_name,
+            hist_start,
+            hist_end,
+            pred_start,
+            pred_end,
+        )
+        .await
+        {
+            Ok(Some(cached_prediction)) => {
+                println!("🎯 Using cached prediction for {}", token);
+                predictions.push(cached_prediction);
+                continue; // Move to next token
+            }
+            Ok(None) => {
+                println!("🔍 No cache found for {}, fetching from API", token);
+            }
+            Err(e) => {
+                println!("⚠️ Failed to check cache for {}: {}", token, e);
+                // Continue with API fetch
+            }
+        }
+
         // Get historical price data for prediction
         match get_historical_price_data(
             backend_client,
@@ -84,6 +222,27 @@ pub async fn generate_api_predictions(
                                     if let Some(predicted_value) =
                                         chronos_result.forecast_values.last()
                                     {
+                                        // Save to cache before creating PredictionData
+                                        let cache_params = PredictionCacheParams {
+                                            model_name,
+                                            quote_token,
+                                            base_token: token,
+                                            hist_start,
+                                            hist_end,
+                                            pred_start,
+                                            pred_end,
+                                        };
+
+                                        if let Err(e) =
+                                            save_to_cache(&cache_params, chronos_result).await
+                                        {
+                                            println!(
+                                                "⚠️ Failed to save prediction to cache: {}",
+                                                e
+                                            );
+                                            // Continue anyway, don't fail the simulation
+                                        }
+
                                         predictions.push(PredictionData {
                                             token: token.clone(),
                                             current_price: BigDecimal::from_f64(current_price)
