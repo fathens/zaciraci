@@ -7,8 +7,12 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::models::history::HistoryFileData;
+use crate::models::prediction::PredictionFileData;
 use crate::models::token::TokenFileData;
-use crate::utils::{cache::find_latest_history_file, file::sanitize_filename};
+use crate::utils::{
+    cache::{find_latest_history_file, find_latest_prediction_file},
+    file::sanitize_filename,
+};
 use common::prediction::{PredictionPoint, TokenPredictionResult};
 
 #[cfg(test)]
@@ -192,8 +196,12 @@ async fn detect_data_files(token_file: &Path, base_dir: Option<&Path>) -> Result
     // Search for prediction files in new cache structure
     // Look in predictions/ directory for any model subdirectories
     let predictions_dir = base_dir.join("predictions");
-    let prediction_file =
-        find_latest_prediction_file(&predictions_dir, &quote_token, &token_name).await?;
+    let prediction_file = find_latest_prediction_file(
+        &predictions_dir,
+        &quote_token,
+        &sanitize_filename(&token_name),
+    )
+    .await?;
 
     Ok(DetectedFiles {
         history: history_file,
@@ -221,67 +229,6 @@ async fn load_token_file(path: &Path) -> Result<TokenFileData> {
         .with_context(|| format!("Failed to parse token file: {}", path.display()))?;
 
     Ok(token_data)
-}
-
-async fn find_latest_prediction_file(
-    predictions_dir: &Path,
-    quote_token: &str,
-    token_name: &str,
-) -> Result<Option<PathBuf>> {
-    if !predictions_dir.exists() {
-        return Ok(None);
-    }
-
-    let mut latest_file: Option<(PathBuf, std::time::SystemTime)> = None;
-
-    // Walk through model directories
-    let mut entries = fs::read_dir(predictions_dir).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let model_dir = entry.path();
-        if !model_dir.is_dir() {
-            continue;
-        }
-
-        // Check each model directory for token files
-        let token_dir = model_dir
-            .join(sanitize_filename(quote_token))
-            .join(token_name);
-
-        if !token_dir.exists() {
-            continue;
-        }
-
-        // Look for prediction files in history subdirectories
-        let mut history_entries = fs::read_dir(&token_dir).await?;
-        while let Some(history_entry) = history_entries.next_entry().await? {
-            let history_dir = history_entry.path();
-            if !history_dir.is_dir() {
-                continue;
-            }
-
-            // Look for prediction files in this history directory
-            let mut pred_entries = fs::read_dir(&history_dir).await?;
-            while let Some(pred_entry) = pred_entries.next_entry().await? {
-                let pred_path = pred_entry.path();
-                if pred_path.is_file()
-                    && pred_path.extension().and_then(|s| s.to_str()) == Some("json")
-                {
-                    if let Some(name) = pred_path.file_name().and_then(|s| s.to_str()) {
-                        if name.starts_with("predict-") {
-                            let metadata = pred_entry.metadata().await?;
-                            let modified = metadata.modified()?;
-
-                            if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
-                                latest_file = Some((pred_path, modified));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(latest_file.map(|(path, _)| path))
 }
 
 fn validate_chart_args(args: &ChartArgs, detected: &DetectedFiles) -> Result<()> {
@@ -392,17 +339,41 @@ async fn load_prediction_data(prediction_file: &Path) -> Result<Vec<PredictionPo
         )
     })?;
 
+    // First try to parse as new structured cache format
+    if let Ok(structured_data) = serde_json::from_str::<PredictionFileData>(&content) {
+        if structured_data.prediction_results.predictions.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No prediction data found in structured prediction file"
+            ));
+        }
+
+        // Convert cache predictions to common PredictionPoint format
+        let prediction_points: Vec<PredictionPoint> = structured_data
+            .prediction_results
+            .predictions
+            .into_iter()
+            .map(|cache_point| PredictionPoint {
+                timestamp: cache_point.timestamp,
+                value: cache_point.price,
+                confidence_interval: None, // Could be improved to convert confidence values
+            })
+            .collect();
+
+        return Ok(prediction_points);
+    }
+
+    // Fallback to legacy format
     let prediction_data: TokenPredictionResult =
         serde_json::from_str(&content).with_context(|| {
             format!(
-                "Failed to parse prediction file: {}",
+                "Failed to parse prediction file as both structured and legacy formats: {}",
                 prediction_file.display()
             )
         })?;
 
     if prediction_data.predicted_values.is_empty() {
         return Err(anyhow::anyhow!(
-            "No prediction data found in prediction file"
+            "No prediction data found in legacy prediction file"
         ));
     }
 
