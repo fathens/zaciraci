@@ -79,6 +79,7 @@ mod tests {
             historical_days,
             prediction_horizon,
             None,
+            false, // verbose
         )
         .await;
 
@@ -112,6 +113,7 @@ mod tests {
             historical_days,
             prediction_horizon,
             None,
+            false, // verbose
         )
         .await;
 
@@ -153,6 +155,7 @@ mod tests {
             historical_days,
             prediction_horizon,
             None,
+            false, // verbose
         )
         .await;
 
@@ -207,6 +210,7 @@ mod tests {
             historical_days,
             prediction_horizon,
             None,
+            false, // verbose
         )
         .await;
         assert!(result_default.is_err());
@@ -220,6 +224,7 @@ mod tests {
             historical_days,
             prediction_horizon,
             Some("chronos_default".to_string()),
+            false, // verbose
         )
         .await;
         assert!(result_chronos.is_err());
@@ -233,6 +238,7 @@ mod tests {
             historical_days,
             prediction_horizon,
             Some("fast_statistical".to_string()),
+            false, // verbose
         )
         .await;
         assert!(result_fast.is_err());
@@ -319,7 +325,7 @@ mod tests {
         price_data.insert("test_token".to_string(), values);
 
         // シミュレーションを実行（エラーが発生してもOK）
-        let result = run_momentum_timestep_simulation(&config, &price_data).await;
+        let result = run_momentum_timestep_simulation(&config, &price_data, false).await;
 
         // 関数がエラーなく実行されることを確認
         // 実際のAPI呼び出しは失敗するが、フォールバック処理で続行される
@@ -353,6 +359,7 @@ mod regression_tests {
             historical_days,
             prediction_horizon,
             None,
+            false, // verbose
         )
         .await;
     }
@@ -395,6 +402,10 @@ mod regression_tests {
         };
 
         let price_data = HashMap::new();
-        _assert_async_fn(run_momentum_timestep_simulation(&config, &price_data));
+        _assert_async_fn(run_momentum_timestep_simulation(
+            &config,
+            &price_data,
+            false,
+        ));
     }
 }

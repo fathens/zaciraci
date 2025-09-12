@@ -93,6 +93,7 @@ mod algorithm_integration_tests {
         let result = crate::commands::simulate::algorithms::run_momentum_timestep_simulation(
             &config,
             &price_data,
+            false, // verbose
         )
         .await;
 
@@ -133,6 +134,7 @@ mod algorithm_integration_tests {
         let result = crate::commands::simulate::algorithms::run_portfolio_optimization_simulation(
             &config,
             &price_data,
+            false, // verbose
         )
         .await;
 
@@ -168,6 +170,7 @@ mod algorithm_integration_tests {
             crate::commands::simulate::algorithms::run_trend_following_optimization_simulation(
                 &config,
                 &price_data,
+                false, // verbose
             )
             .await;
 

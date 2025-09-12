@@ -15,6 +15,7 @@ use crate::utils::cache::{
     check_prediction_cache, load_prediction_data, save_prediction_result, PredictionCacheParams,
 };
 
+#[allow(clippy::too_many_arguments)]
 /// Try to load prediction from cache
 async fn try_load_from_cache(
     token: &str,
@@ -24,6 +25,7 @@ async fn try_load_from_cache(
     hist_end: DateTime<Utc>,
     pred_start: DateTime<Utc>,
     pred_end: DateTime<Utc>,
+    verbose: bool,
 ) -> Result<Option<PredictionData>> {
     let cache_params = PredictionCacheParams {
         model_name,
@@ -36,7 +38,9 @@ async fn try_load_from_cache(
     };
 
     if let Some(cache_path) = check_prediction_cache(&cache_params).await? {
-        println!("📂 Found cached prediction for {}: {:?}", token, cache_path);
+        if verbose {
+            println!("📂 Found cached prediction for {}: {:?}", token, cache_path);
+        }
 
         let cached_data = load_prediction_data(&cache_path).await?;
 
@@ -68,6 +72,7 @@ async fn try_load_from_cache(
 async fn save_to_cache(
     cache_params: &PredictionCacheParams<'_>,
     forecast_data: &common::prediction::ChronosPredictionResponse,
+    verbose: bool,
 ) -> Result<()> {
     // Convert forecast data to cache format
     let cache_predictions: Vec<CachePredictionPoint> = forecast_data
@@ -102,14 +107,17 @@ async fn save_to_cache(
     };
 
     let saved_path = save_prediction_result(cache_params, &prediction_file_data).await?;
-    println!(
-        "💾 Cached prediction for {}: {:?}",
-        cache_params.base_token, saved_path
-    );
+    if verbose {
+        println!(
+            "💾 Cached prediction for {}: {:?}",
+            cache_params.base_token, saved_path
+        );
+    }
 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Generate predictions using Chronos API with fallback to mock data
 pub async fn generate_api_predictions(
     backend_client: &crate::api::backend::BackendClient,
@@ -119,6 +127,7 @@ pub async fn generate_api_predictions(
     historical_days: i64,
     prediction_horizon: chrono::Duration,
     model: Option<String>,
+    verbose: bool,
 ) -> Result<Vec<PredictionData>> {
     use common::api::chronos::ChronosApiClient;
     use common::prediction::ZeroShotPredictionRequest;
@@ -130,7 +139,9 @@ pub async fn generate_api_predictions(
     let chronos_url =
         env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
 
-    println!("🔮 Using Chronos prediction service at {}", chronos_url);
+    if verbose {
+        println!("🔮 Using Chronos prediction service at {}", chronos_url);
+    }
 
     let chronos_client = ChronosApiClient::new(chronos_url);
 
@@ -152,19 +163,26 @@ pub async fn generate_api_predictions(
             hist_end,
             pred_start,
             pred_end,
+            verbose,
         )
         .await
         {
             Ok(Some(cached_prediction)) => {
-                println!("🎯 Using cached prediction for {}", token);
+                if verbose {
+                    println!("🎯 Using cached prediction for {}", token);
+                }
                 predictions.push(cached_prediction);
                 continue; // Move to next token
             }
             Ok(None) => {
-                println!("🔍 No cache found for {}, fetching from API", token);
+                if verbose {
+                    println!("🔍 No cache found for {}, fetching from API", token);
+                }
             }
             Err(e) => {
-                println!("⚠️ Failed to check cache for {}: {}", token, e);
+                if verbose {
+                    println!("⚠️ Failed to check cache for {}: {}", token, e);
+                }
                 // Continue with API fetch
             }
         }
@@ -181,11 +199,13 @@ pub async fn generate_api_predictions(
         {
             Ok((timestamps, values, current_price)) => {
                 if timestamps.len() < 10 {
-                    println!(
-                        "⚠️ Insufficient historical data for {}: {} points",
-                        token,
-                        timestamps.len()
-                    );
+                    if verbose {
+                        println!(
+                            "⚠️ Insufficient historical data for {}: {} points",
+                            token,
+                            timestamps.len()
+                        );
+                    }
                     return Err(anyhow::anyhow!(
                         "Insufficient historical data for token {}: {} points (minimum 10 required)",
                         token,
@@ -206,10 +226,12 @@ pub async fn generate_api_predictions(
                 // Submit prediction and wait for completion
                 match chronos_client.predict_zero_shot(prediction_request).await {
                     Ok(async_response) => {
-                        println!(
-                            "📝 Submitted prediction for {}: {}",
-                            token, async_response.task_id
-                        );
+                        if verbose {
+                            println!(
+                                "📝 Submitted prediction for {}: {}",
+                                token, async_response.task_id
+                            );
+                        }
 
                         // Poll for completion
                         match chronos_client
@@ -234,12 +256,15 @@ pub async fn generate_api_predictions(
                                         };
 
                                         if let Err(e) =
-                                            save_to_cache(&cache_params, chronos_result).await
+                                            save_to_cache(&cache_params, chronos_result, verbose)
+                                                .await
                                         {
-                                            println!(
-                                                "⚠️ Failed to save prediction to cache: {}",
-                                                e
-                                            );
+                                            if verbose {
+                                                println!(
+                                                    "⚠️ Failed to save prediction to cache: {}",
+                                                    e
+                                                );
+                                            }
                                             // Continue anyway, don't fail the simulation
                                         }
 
@@ -258,19 +283,28 @@ pub async fn generate_api_predictions(
                                                 .and_then(|m| m.get("confidence"))
                                                 .copied(),
                                         });
-                                        println!(
-                                            "✅ Got prediction for {}: {:.4} -> {:.4}",
-                                            token, current_price, predicted_value
-                                        );
+                                        if verbose {
+                                            println!(
+                                                "✅ Got prediction for {}: {:.4} -> {:.4}",
+                                                token, current_price, predicted_value
+                                            );
+                                        }
                                     } else {
-                                        println!("⚠️ No forecast values returned for {}", token);
+                                        if verbose {
+                                            println!(
+                                                "⚠️ No forecast values returned for {}",
+                                                token
+                                            );
+                                        }
                                         return Err(anyhow::anyhow!(
                                             "No forecast values returned for token {}",
                                             token
                                         ));
                                     }
                                 } else {
-                                    println!("⚠️ No prediction result returned for {}", token);
+                                    if verbose {
+                                        println!("⚠️ No prediction result returned for {}", token);
+                                    }
                                     return Err(anyhow::anyhow!(
                                         "No prediction result returned for token {}",
                                         token
@@ -278,7 +312,9 @@ pub async fn generate_api_predictions(
                                 }
                             }
                             Err(e) => {
-                                println!("❌ Prediction failed for {}: {}", token, e);
+                                if verbose {
+                                    println!("❌ Prediction failed for {}: {}", token, e);
+                                }
                                 return Err(anyhow::anyhow!(
                                     "Prediction failed for token {}: {}",
                                     token,
@@ -288,7 +324,9 @@ pub async fn generate_api_predictions(
                         }
                     }
                     Err(e) => {
-                        println!("❌ Failed to submit prediction for {}: {}", token, e);
+                        if verbose {
+                            println!("❌ Failed to submit prediction for {}: {}", token, e);
+                        }
                         return Err(anyhow::anyhow!(
                             "Failed to submit prediction for token {}: {}",
                             token,
@@ -298,7 +336,9 @@ pub async fn generate_api_predictions(
                 }
             }
             Err(e) => {
-                println!("⚠️ Failed to get historical data for {}: {}", token, e);
+                if verbose {
+                    println!("⚠️ Failed to get historical data for {}: {}", token, e);
+                }
                 return Err(anyhow::anyhow!(
                     "Failed to get historical data for token {}: {}",
                     token,

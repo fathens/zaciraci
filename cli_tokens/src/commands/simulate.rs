@@ -22,9 +22,11 @@ use std::path::{Path, PathBuf};
 
 /// Main entry point for simulation execution
 pub async fn run(args: SimulateArgs) -> Result<()> {
-    println!("🚀 Starting trading simulation...");
+    println!("🚀 Starting simulation...");
 
-    if args.verbose {
+    let verbose = args.verbose;
+
+    if verbose {
         println!("📋 Configuration:");
         println!("  Algorithm: All algorithms (Momentum, Portfolio, TrendFollowing)");
         println!("  Capital: {} {}", args.capital, args.quote_token);
@@ -40,7 +42,10 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
 
     // topコマンドの出力ディレクトリからトークンを読み取り
     let mut final_config = config;
-    println!("🔍 Loading tokens from top command output directory...");
+
+    if verbose {
+        println!("🔍 Loading tokens from top command output directory...");
+    }
 
     let tokens_dir = get_tokens_directory()?;
     let token_names = load_tokens_from_directory(&tokens_dir, &final_config.quote_token)?;
@@ -52,16 +57,15 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         ));
     }
 
-    println!(
-        "📈 Found {} tokens: {}",
-        token_names.len(),
-        token_names.join(", ")
-    );
+    println!("📈 Found {} tokens", token_names.len());
+    if verbose {
+        println!("  Tokens: {}", token_names.join(", "));
+    }
 
     final_config.target_tokens = token_names;
 
     // 全アルゴリズムを実行
-    println!("\n🔄 Running all algorithms for comparison...");
+    println!("\n🔄 Running algorithms...");
 
     let algorithms = [
         AlgorithmType::Momentum,
@@ -74,8 +78,8 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         let mut config_copy = final_config.clone();
         config_copy.algorithm = algorithm.clone();
 
-        println!("\n--- Running {:?} Algorithm ---", algorithm);
-        let result = run_single_algorithm(&config_copy).await?;
+        println!("Running {:?}...", algorithm);
+        let result = run_single_algorithm(&config_copy, verbose).await?;
         results.push(result);
     }
 
@@ -242,11 +246,14 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
 }
 
 /// Run a single algorithm simulation
-async fn run_single_algorithm(config: &SimulationConfig) -> Result<SimulationResult> {
+async fn run_single_algorithm(
+    config: &SimulationConfig,
+    verbose: bool,
+) -> Result<SimulationResult> {
     match config.algorithm {
-        AlgorithmType::Momentum => run_momentum_simulation(config).await,
-        AlgorithmType::Portfolio => run_portfolio_simulation(config).await,
-        AlgorithmType::TrendFollowing => run_trend_following_simulation(config).await,
+        AlgorithmType::Momentum => run_momentum_simulation(config, verbose).await,
+        AlgorithmType::Portfolio => run_portfolio_simulation(config, verbose).await,
+        AlgorithmType::TrendFollowing => run_trend_following_simulation(config, verbose).await,
     }
 }
 

@@ -5,11 +5,16 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 /// Run momentum simulation
-pub async fn run_momentum_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
-    println!(
-        "📈 Running momentum simulation for tokens: {:?}",
-        config.target_tokens
-    );
+pub async fn run_momentum_simulation(
+    config: &SimulationConfig,
+    verbose: bool,
+) -> Result<SimulationResult> {
+    if verbose {
+        println!(
+            "📈 Running momentum simulation for tokens: {:?}",
+            config.target_tokens
+        );
+    }
 
     let backend_client = BackendClient::new();
 
@@ -23,16 +28,21 @@ pub async fn run_momentum_simulation(config: &SimulationConfig) -> Result<Simula
     }
 
     // 2. Momentumアルゴリズムでシミュレーション実行（commonクレート使用）
-    run_momentum_timestep_simulation(config, &price_data).await
+    run_momentum_timestep_simulation(config, &price_data, verbose).await
 }
 
 /// Run portfolio optimization simulation
-pub async fn run_portfolio_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
-    println!("📊 Running portfolio optimization simulation");
-    println!(
-        "🔧 Optimizing portfolio for tokens: {:?}",
-        config.target_tokens
-    );
+pub async fn run_portfolio_simulation(
+    config: &SimulationConfig,
+    verbose: bool,
+) -> Result<SimulationResult> {
+    if verbose {
+        println!("📊 Running portfolio optimization simulation");
+        println!(
+            "🔧 Optimizing portfolio for tokens: {:?}",
+            config.target_tokens
+        );
+    }
 
     let backend_client = BackendClient::new();
 
@@ -46,13 +56,18 @@ pub async fn run_portfolio_simulation(config: &SimulationConfig) -> Result<Simul
     }
 
     // 2. Portfolio最適化アルゴリズムでシミュレーション実行（commonクレート使用）
-    run_portfolio_optimization_simulation(config, &price_data).await
+    run_portfolio_optimization_simulation(config, &price_data, verbose).await
 }
 
 /// Run trend following simulation
-pub async fn run_trend_following_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
-    println!("📉 Running trend following simulation");
-    println!("📊 Following trends for tokens: {:?}", config.target_tokens);
+pub async fn run_trend_following_simulation(
+    config: &SimulationConfig,
+    verbose: bool,
+) -> Result<SimulationResult> {
+    if verbose {
+        println!("📉 Running trend following simulation");
+        println!("📊 Following trends for tokens: {:?}", config.target_tokens);
+    }
 
     let backend_client = BackendClient::new();
 
@@ -66,13 +81,14 @@ pub async fn run_trend_following_simulation(config: &SimulationConfig) -> Result
     }
 
     // 2. TrendFollowingアルゴリズムでシミュレーション実行（commonクレート使用）
-    run_trend_following_optimization_simulation(config, &price_data).await
+    run_trend_following_optimization_simulation(config, &price_data, verbose).await
 }
 
 /// Run momentum timestep simulation using common crate algorithm
 pub(crate) async fn run_momentum_timestep_simulation(
     config: &SimulationConfig,
     price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
+    verbose: bool,
 ) -> Result<SimulationResult> {
     use super::metrics::calculate_performance_metrics;
     use super::trading::{execute_trading_action, generate_api_predictions, TradeContext};
@@ -135,6 +151,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
             config.historical_days,
             config.prediction_horizon,
             config.model.clone(),
+            verbose,
         )
         .await?;
 
@@ -301,6 +318,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
 pub(crate) async fn run_portfolio_optimization_simulation(
     config: &SimulationConfig,
     price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
+    verbose: bool,
 ) -> Result<SimulationResult> {
     use super::metrics::calculate_performance_metrics;
     use super::trading::generate_api_predictions;
@@ -368,6 +386,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 config.historical_days,
                 config.prediction_horizon,
                 config.model.clone(),
+                verbose,
             )
             .await?;
 
@@ -604,6 +623,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 pub(crate) async fn run_trend_following_optimization_simulation(
     config: &SimulationConfig,
     price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
+    _verbose: bool,
 ) -> Result<SimulationResult> {
     use super::metrics::calculate_performance_metrics;
     use bigdecimal::{BigDecimal, FromPrimitive};
