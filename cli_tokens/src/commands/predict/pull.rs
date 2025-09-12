@@ -1,11 +1,20 @@
 use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::models::{task::TaskInfo, token::TokenFileData};
+use crate::models::{
+    prediction::{
+        PredictionFileData, PredictionMetadata, PredictionPoint as CachePredictionPoint,
+        PredictionResults,
+    },
+    task::TaskInfo,
+    token::TokenFileData,
+};
 use crate::utils::{
+    cache::{save_prediction_result, PredictionCacheParams},
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
 };
@@ -33,6 +42,48 @@ async fn find_task_file(dir: &Path, token_name: &str) -> Result<Option<PathBuf>>
     }
 
     Ok(None)
+}
+
+/// Calculate history period from token metadata and task parameters
+async fn calculate_history_period(
+    token_data: &TokenFileData,
+    task_info: &TaskInfo,
+) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    // Parse dates from metadata
+    let data_start = chrono::DateTime::parse_from_str(
+        &format!("{} 00:00:00 +0000", token_data.metadata.start_date),
+        "%Y-%m-%d %H:%M:%S %z",
+    )?
+    .with_timezone(&Utc);
+
+    let data_end = chrono::DateTime::parse_from_str(
+        &format!("{} 23:59:59 +0000", token_data.metadata.end_date),
+        "%Y-%m-%d %H:%M:%S %z",
+    )?
+    .with_timezone(&Utc);
+
+    // Calculate the actual period used based on start/end percentages
+    let total_duration = data_end - data_start;
+    let start_offset =
+        total_duration.num_milliseconds() as f64 * (task_info.params.start_pct / 100.0);
+    let end_offset = total_duration.num_milliseconds() as f64 * (task_info.params.end_pct / 100.0);
+
+    let hist_start = data_start + Duration::milliseconds(start_offset as i64);
+    let hist_end = data_start + Duration::milliseconds(end_offset as i64);
+
+    Ok((hist_start, hist_end))
+}
+
+/// Convert common PredictionPoint to cache PredictionPoint
+fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePredictionPoint {
+    CachePredictionPoint {
+        timestamp: point.timestamp,
+        price: point.value,
+        confidence: point.confidence_interval.as_ref().map(|ci| {
+            // Use average of lower and upper bounds as confidence score
+            (ci.upper - ci.lower) / 2.0 / point.value
+        }),
+    }
 }
 
 #[derive(Parser)]
@@ -226,7 +277,61 @@ pub async fn run(args: PullArgs) -> Result<()> {
         }
     }
 
-    // Create prediction result
+    // Calculate history period from token data and task parameters
+    let (hist_start, hist_end) = calculate_history_period(&token_data, &task_info).await?;
+
+    // Determine prediction period from forecast timestamps
+    let pred_start = forecast
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("No forecast data available"))?
+        .timestamp;
+    let pred_end = forecast
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("No forecast data available"))?
+        .timestamp;
+
+    // Convert to cache prediction points
+    let cache_predictions: Vec<CachePredictionPoint> = forecast
+        .iter()
+        .map(convert_to_cache_prediction_point)
+        .collect();
+
+    // Create structured prediction file data
+    let prediction_file_data = PredictionFileData {
+        metadata: PredictionMetadata {
+            generated_at: Utc::now(),
+            model_name: prediction_result.model_name.clone(),
+            base_token: token_data.token.clone(),
+            quote_token: "wrap.near".to_string(), // Default quote token
+            history_start: hist_start.format("%Y-%m-%d").to_string(),
+            history_end: hist_end.format("%Y-%m-%d").to_string(),
+            prediction_start: pred_start.format("%Y-%m-%d").to_string(),
+            prediction_end: pred_end.format("%Y-%m-%d").to_string(),
+        },
+        prediction_results: PredictionResults {
+            predictions: cache_predictions,
+            model_metrics: prediction_result
+                .metrics
+                .map(|metrics| serde_json::to_value(metrics).unwrap_or(serde_json::Value::Null)),
+        },
+    };
+
+    // Create cache parameters
+    let cache_params = PredictionCacheParams {
+        model_name: &prediction_result.model_name,
+        quote_token: "wrap.near", // Default quote token
+        base_token: &token_data.token,
+        hist_start,
+        hist_end,
+        pred_start,
+        pred_end,
+    };
+
+    // Save results using structured cache
+    pb.set_message("Saving prediction results to structured cache...");
+    let saved_path = save_prediction_result(&cache_params, &prediction_file_data).await?;
+
+    // Also save the original format for backward compatibility
     let prediction_result = TokenPredictionResult {
         token: token_data.token.clone(),
         prediction_id: completed_prediction.task_id,
@@ -234,9 +339,6 @@ pub async fn run(args: PullArgs) -> Result<()> {
         accuracy_metrics: None,
         chart_svg: None,
     };
-
-    // Save results
-    pb.set_message("Saving prediction results...");
     write_json_file(&prediction_file, &prediction_result).await?;
 
     // Update task info to completed
@@ -244,8 +346,8 @@ pub async fn run(args: PullArgs) -> Result<()> {
     write_json_file(&task_file, &task_info).await?;
 
     pb.finish_with_message(format!(
-        "✅ Prediction completed for token: {} (saved to {:?})",
-        token_data.token, prediction_file
+        "✅ Prediction completed for token: {}\n   📁 Structured cache: {:?}\n   📄 Legacy format: {:?}",
+        token_data.token, saved_path, prediction_file
     ));
 
     Ok(())
