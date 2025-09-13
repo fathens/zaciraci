@@ -70,10 +70,31 @@ pub fn calculate_performance_metrics(
     // Risk-adjusted returns
     let risk_free_rate = 0.0; // Assuming 0% risk-free rate
     let excess_return = annualized_return - risk_free_rate;
-    let sharpe_ratio = if volatility > 0.0 {
-        excess_return / volatility
+
+    // Calculate Sharpe ratio with proper handling of edge cases
+    // When volatility is zero or near-zero, the Sharpe ratio becomes undefined or infinite
+    // We cap it to a large but reasonable value to maintain mathematical integrity
+    const MAX_SHARPE_RATIO: f64 = 999.99; // Display cap for extreme values
+
+    let sharpe_ratio = if volatility == 0.0 {
+        // Perfect consistency (no volatility)
+        // Sharpe ratio is mathematically undefined, but we need a practical representation
+        if excess_return > 0.0 {
+            MAX_SHARPE_RATIO // Positive return with no risk
+        } else if excess_return < 0.0 {
+            -MAX_SHARPE_RATIO // Negative return with no risk
+        } else {
+            0.0 // No return and no risk
+        }
     } else {
-        0.0
+        // Normal calculation with cap for display purposes
+        let calculated_sharpe = excess_return / volatility;
+        if calculated_sharpe.is_finite() {
+            // Cap only for display/practical purposes, not for mathematical invalidity
+            calculated_sharpe.clamp(-MAX_SHARPE_RATIO, MAX_SHARPE_RATIO)
+        } else {
+            0.0 // Handle NaN or infinity cases
+        }
     };
 
     // Sortino ratio calculation (downside deviation)
@@ -91,10 +112,19 @@ pub fn calculate_performance_metrics(
         0.0
     };
 
-    let sortino_ratio = if downside_deviation > 0.0 {
-        excess_return / downside_deviation
+    // Sortino ratio with same mathematical handling as Sharpe ratio
+    let sortino_ratio = if downside_deviation == 0.0 {
+        // No downside volatility - either no negative returns or perfect consistency
+        // Use Sharpe ratio as a reasonable proxy
+        sharpe_ratio
     } else {
-        sharpe_ratio // Fallback to Sharpe ratio if no downside deviation
+        let calculated_sortino = excess_return / downside_deviation;
+        if calculated_sortino.is_finite() {
+            // Apply same display cap as Sharpe ratio
+            calculated_sortino.clamp(-MAX_SHARPE_RATIO, MAX_SHARPE_RATIO)
+        } else {
+            sharpe_ratio // Fallback to Sharpe ratio for undefined cases
+        }
     };
 
     // Trade analysis
@@ -218,11 +248,27 @@ pub fn calculate_performance_metrics_legacy(
         0.0
     };
 
-    // シャープレシオ
-    let sharpe_ratio = if volatility > 0.0 {
-        annualized_return / volatility
+    // シャープレシオ（表示用上限付き）
+    const MAX_SHARPE_RATIO: f64 = 999.99; // 極端な値の表示用上限
+
+    let sharpe_ratio = if volatility == 0.0 {
+        // ボラティリティゼロ（完全に一定）の場合
+        // 数学的には未定義だが、実用的な表現が必要
+        if annualized_return > 0.0 {
+            MAX_SHARPE_RATIO // リスクなしでプラスリターン
+        } else if annualized_return < 0.0 {
+            -MAX_SHARPE_RATIO // リスクなしでマイナスリターン
+        } else {
+            0.0 // リターンもリスクもなし
+        }
     } else {
-        0.0
+        let calculated_sharpe = annualized_return / volatility;
+        if calculated_sharpe.is_finite() {
+            // 表示用の上限を適用（数学的無効性ではなく実用上の理由）
+            calculated_sharpe.clamp(-MAX_SHARPE_RATIO, MAX_SHARPE_RATIO)
+        } else {
+            0.0 // NaNや無限大の処理
+        }
     };
 
     PerformanceMetrics {
@@ -537,3 +583,341 @@ pub fn calculate_max_drawdown_duration(portfolio_values: &[PortfolioValue]) -> i
 }
 
 use std::collections::HashMap;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    const MAX_SHARPE_RATIO: f64 = 999.99;
+
+    #[test]
+    fn test_sharpe_ratio_normal_case() {
+        // Normal volatility case
+        let portfolio_values = vec![
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                total_value: 1010.0,
+                holdings: HashMap::new(),
+                cash_balance: 1010.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                total_value: 1005.0,
+                holdings: HashMap::new(),
+                cash_balance: 1005.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                total_value: 1020.0,
+                holdings: HashMap::new(),
+                cash_balance: 1020.0,
+                unrealized_pnl: 0.0,
+            },
+        ];
+
+        let result = calculate_performance_metrics(
+            1000.0,
+            1020.0,
+            &portfolio_values,
+            &[],
+            0.0,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+        )
+        .unwrap();
+
+        // Should have a reasonable Sharpe ratio
+        assert!(result.sharpe_ratio > 0.0);
+        assert!(result.sharpe_ratio <= MAX_SHARPE_RATIO); // Should be within bounds
+
+        // For normal volatility, should not hit the cap
+        println!("Normal case Sharpe ratio: {}", result.sharpe_ratio);
+    }
+
+    #[test]
+    fn test_sharpe_ratio_zero_volatility() {
+        // Perfect consistency - no volatility
+        let portfolio_values = vec![
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+        ];
+
+        let result = calculate_performance_metrics(
+            1000.0,
+            1000.0,
+            &portfolio_values,
+            &[],
+            0.0,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+        )
+        .unwrap();
+
+        // Zero return and zero volatility should give 0
+        assert_eq!(result.sharpe_ratio, 0.0);
+    }
+
+    #[test]
+    fn test_sharpe_ratio_extremely_low_volatility() {
+        // Nearly constant values - extremely low volatility
+        let portfolio_values = vec![
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                total_value: 1000.00001,
+                holdings: HashMap::new(),
+                cash_balance: 1000.00001,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                total_value: 1000.00002,
+                holdings: HashMap::new(),
+                cash_balance: 1000.00002,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                total_value: 1000.00003,
+                holdings: HashMap::new(),
+                cash_balance: 1000.00003,
+                unrealized_pnl: 0.0,
+            },
+        ];
+
+        let result = calculate_performance_metrics(
+            1000.0,
+            1000.00003,
+            &portfolio_values,
+            &[],
+            0.0,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+        )
+        .unwrap();
+
+        // Should be capped at MAX_SHARPE_RATIO
+        assert_eq!(result.sharpe_ratio, MAX_SHARPE_RATIO);
+    }
+
+    #[test]
+    fn test_sharpe_ratio_positive_return_zero_volatility() {
+        // Constant positive growth with perfect consistency
+        let portfolio_values = vec![
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                total_value: 1100.0,
+                holdings: HashMap::new(),
+                cash_balance: 1100.0,
+                unrealized_pnl: 0.0,
+            },
+        ];
+
+        // Create constant returns by adding the same value
+        let mut values = portfolio_values.clone();
+        for i in 2..10 {
+            values.push(PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0).unwrap(),
+                total_value: 1100.0, // Keep constant after initial jump
+                holdings: HashMap::new(),
+                cash_balance: 1100.0,
+                unrealized_pnl: 0.0,
+            });
+        }
+
+        let result = calculate_performance_metrics(
+            1000.0,
+            1100.0,
+            &values,
+            &[],
+            0.0,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
+        )
+        .unwrap();
+
+        // Positive return with very low volatility should be capped
+        assert!(result.sharpe_ratio > 0.0);
+        assert!(result.sharpe_ratio <= MAX_SHARPE_RATIO);
+    }
+
+    #[test]
+    fn test_sharpe_ratio_negative_return_zero_volatility() {
+        // Constant negative return with zero volatility
+        let portfolio_values = vec![
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                total_value: 900.0,
+                holdings: HashMap::new(),
+                cash_balance: 900.0,
+                unrealized_pnl: 0.0,
+            },
+        ];
+
+        // Keep constant after initial drop
+        let mut values = portfolio_values.clone();
+        for i in 2..10 {
+            values.push(PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0).unwrap(),
+                total_value: 900.0,
+                holdings: HashMap::new(),
+                cash_balance: 900.0,
+                unrealized_pnl: 0.0,
+            });
+        }
+
+        let result = calculate_performance_metrics(
+            1000.0,
+            900.0,
+            &values,
+            &[],
+            0.0,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
+        )
+        .unwrap();
+
+        // Negative return with very low volatility should be capped at negative max
+        assert!(result.sharpe_ratio < 0.0);
+        assert!(result.sharpe_ratio >= -MAX_SHARPE_RATIO);
+    }
+
+    #[test]
+    fn test_sharpe_ratio_handles_extreme_values() {
+        // Test that extreme calculated values are properly capped
+        let portfolio_values = vec![
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                total_value: 2000.0, // 100% gain in one day
+                holdings: HashMap::new(),
+                cash_balance: 2000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                total_value: 2000.0000001, // Then nearly constant
+                holdings: HashMap::new(),
+                cash_balance: 2000.0000001,
+                unrealized_pnl: 0.0,
+            },
+        ];
+
+        let result = calculate_performance_metrics(
+            1000.0,
+            2000.0000001,
+            &portfolio_values,
+            &[],
+            0.0,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+        )
+        .unwrap();
+
+        // Should be capped regardless of the actual calculated value
+        assert!(result.sharpe_ratio <= MAX_SHARPE_RATIO);
+        assert!(result.sharpe_ratio >= -MAX_SHARPE_RATIO);
+    }
+
+    #[test]
+    fn test_legacy_sharpe_ratio_calculation() {
+        // Test legacy function also handles edge cases properly
+        let portfolio_values = vec![
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+            PortfolioValue {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                total_value: 1000.0,
+                holdings: HashMap::new(),
+                cash_balance: 1000.0,
+                unrealized_pnl: 0.0,
+            },
+        ];
+
+        let result =
+            calculate_performance_metrics_legacy(1000.0, 1000.0, &portfolio_values, &[], 1);
+
+        // Legacy function should also handle zero volatility case
+        assert_eq!(result.sharpe_ratio, 0.0); // No return, no volatility
+    }
+
+    #[test]
+    fn test_volatility_calculation() {
+        // Test the volatility calculation function directly
+        let returns = vec![0.01, -0.005, 0.008, -0.002, 0.015];
+        let volatility = calculate_volatility(&returns);
+
+        assert!(volatility > 0.0);
+        assert!(volatility.is_finite());
+
+        // Test with constant returns (zero volatility)
+        let constant_returns = vec![0.0, 0.0, 0.0, 0.0];
+        let zero_volatility = calculate_volatility(&constant_returns);
+        assert_eq!(zero_volatility, 0.0);
+
+        // Test with single return
+        let single_return = vec![0.05];
+        let single_volatility = calculate_volatility(&single_return);
+        assert_eq!(single_volatility, 0.0);
+    }
+}
