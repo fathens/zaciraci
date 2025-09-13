@@ -1,8 +1,10 @@
 pub mod algorithms;
 pub mod data;
 pub mod metrics;
+pub mod rebalance_threshold_tests;
 pub mod trading;
 pub mod types;
+pub mod unit_fix_tests;
 pub mod utils;
 
 // Re-export all types for backward compatibility

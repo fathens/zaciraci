@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::units::Units;
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
@@ -38,8 +39,8 @@ const MAX_POSITION_SIZE: f64 = 0.4;
 /// 最小保有比率
 const MIN_POSITION_SIZE: f64 = 0.05;
 
-/// リバランス閾値（10%）
-const REBALANCE_THRESHOLD: f64 = 0.1;
+/// リバランス閾値（5%）- 10%では感度が低すぎるため調整
+const REBALANCE_THRESHOLD: f64 = 0.05;
 
 /// 最大保有トークン数
 const MAX_HOLDINGS: usize = 10;
@@ -53,6 +54,7 @@ const REGULARIZATION_FACTOR: f64 = 1e-6;
 // ==================== コア計算関数 ====================
 
 /// 期待リターンを計算
+/// 注意: current_priceとpredicted_priceは両方ともyoctoNEAR単位で比較
 pub fn calculate_expected_returns(
     tokens: &[TokenInfo],
     predictions: &HashMap<String, f64>,
@@ -61,12 +63,14 @@ pub fn calculate_expected_returns(
         .iter()
         .map(|token| {
             if let Some(&predicted_price) = predictions.get(&token.symbol) {
+                // current_priceはBigDecimal(yoctoNEAR)、predicted_priceはf64(yoctoNEAR)
                 let current = token
                     .current_price
                     .to_string()
                     .parse::<f64>()
                     .unwrap_or(0.0);
                 if current != 0.0 {
+                    // 両方ともyoctoNEAR単位なので直接比較可能
                     (predicted_price - current) / current
                 } else {
                     0.0
@@ -79,12 +83,14 @@ pub fn calculate_expected_returns(
 }
 
 /// 日次リターンを計算
+/// 注意: 価格データはyoctoNEAR単位で保存されているため、リターン計算では単位変換不要
 pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f64>> {
     let mut token_prices: HashMap<String, Vec<(DateTime<Utc>, f64)>> = HashMap::new();
 
     // トークン別に価格データをグループ化
     for price_data in historical_prices {
         for price_point in &price_data.prices {
+            // 価格はyoctoNEAR単位のBigDecimalとして保存されている
             let price_f64 = price_point.price.to_string().parse::<f64>().unwrap_or(0.0);
             token_prices
                 .entry(price_data.token.clone())
@@ -493,7 +499,7 @@ pub async fn execute_portfolio_optimization(
     let expected_metrics = PortfolioMetrics {
         cumulative_return: portfolio_return,
         annualized_return: portfolio_return * 365.0,
-        volatility: portfolio_vol * (365.0_f64).sqrt(),
+        volatility: portfolio_vol * 365.0_f64.sqrt(),
         sharpe_ratio,
         sortino_ratio: sharpe_ratio, // 簡略化
         max_drawdown: 0.0,           // 将来実装
@@ -511,18 +517,23 @@ pub async fn execute_portfolio_optimization(
 }
 
 /// 現在の重みを計算
+/// 注意: price_f64はyoctoNEAR単位、holdingはトークン数量、total_valueは総NEAR単位の値
 fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
 
     for (i, token) in tokens.iter().enumerate() {
         if let Some(&holding) = wallet.holdings.get(&token.symbol) {
-            let price_f64 = token
+            // current_priceはyoctoNEAR単位のBigDecimal
+            let price_yocto = token
                 .current_price
                 .to_string()
                 .parse::<f64>()
                 .unwrap_or(0.0);
-            let value = holding * price_f64;
-            weights[i] = value / wallet.total_value;
+            // holdingはトークン数量、price_yoctoとの積はyoctoNEAR単位
+            let value_yocto = holding * price_yocto;
+            // total_valueを同じyoctoNEAR単位で割る
+            let total_value_yocto = Units::near_f64_to_yocto_f64(wallet.total_value);
+            weights[i] = value_yocto / total_value_yocto;
         }
     }
 

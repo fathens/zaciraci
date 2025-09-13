@@ -30,7 +30,9 @@ const MAX_SLIPPAGE: f64 = 0.02;
 // ==================== コアアルゴリズム ====================
 
 /// 予測リターンを計算（取引コスト考慮）
+/// 注意: current_priceとpredicted_price_24hは両方ともyoctoNEAR単位
 pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
+    // current_priceとpredicted_price_24hは両方ともyoctoNEAR単位のBigDecimal
     let current = prediction
         .current_price
         .to_string()
@@ -46,6 +48,7 @@ pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
         return 0.0;
     }
 
+    // 両方ともyoctoNEAR単位なので直接比較可能
     let raw_return = (predicted - current) / current;
 
     // 取引コストを考慮

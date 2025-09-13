@@ -111,8 +111,12 @@ pub(crate) async fn run_momentum_timestep_simulation(
     let initial_prices = get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
-        if let Some(&initial_price) = initial_prices.get(token) {
-            let token_amount = initial_per_token / initial_price;
+        if let Some(&initial_price_yocto) = initial_prices.get(token) {
+            // initial_per_tokenはNEAR単位、initial_price_yoctoはyoctoNEAR単位
+            // NEAR単位に変換してから計算
+            let initial_price_near =
+                common::units::Units::yocto_f64_to_near_f64(initial_price_yocto);
+            let token_amount = initial_per_token / initial_price_near;
             current_holdings.insert(token.clone(), token_amount);
         } else {
             return Err(anyhow::anyhow!(
@@ -232,8 +236,11 @@ pub(crate) async fn run_momentum_timestep_simulation(
         let mut holdings_value = HashMap::new();
 
         for (token, amount) in &current_holdings {
-            if let Some(&price) = current_prices.get(token) {
-                let value = amount * price;
+            if let Some(&price_yocto) = current_prices.get(token) {
+                // priceはyoctoNEAR単位、amountはトークン数量
+                // 計算結果をNEAR単位に変換
+                let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                let value = amount * price_near;
                 holdings_value.insert(token.clone(), value);
                 total_value += value;
             }
@@ -341,8 +348,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     let initial_prices = get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
-        if let Some(&initial_price) = initial_prices.get(token) {
-            let token_amount = initial_per_token / initial_price;
+        if let Some(&initial_price_yocto) = initial_prices.get(token) {
+            // initial_per_tokenはNEAR単位、initial_price_yoctoはyoctoNEAR単位
+            // NEAR単位に変換してから計算
+            let initial_price_near =
+                common::units::Units::yocto_f64_to_near_f64(initial_price_yocto);
+            let token_amount = initial_per_token / initial_price_near;
             current_holdings.insert(token.clone(), token_amount);
         } else {
             return Err(anyhow::anyhow!(
@@ -382,10 +393,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
             // TokenDataに変換
             let mut token_data = Vec::new();
             for token in &config.target_tokens {
-                if let Some(&current_price) = current_prices.get(token) {
+                if let Some(&current_price_yocto) = current_prices.get(token) {
+                    // current_priceはyoctoNEAR単位として保存
                     token_data.push(TokenData {
                         symbol: token.clone(),
-                        current_price: BigDecimal::from_f64(current_price).unwrap_or_default(),
+                        current_price: BigDecimal::from_f64(current_price_yocto)
+                            .unwrap_or_default(),
                         historical_volatility: 0.2, // デフォルト値
                         liquidity_score: Some(0.8),
                         market_cap: None,
@@ -418,6 +431,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                     point.time,
                                     chrono::Utc,
                                 ),
+                                // point.valueはyoctoNEAR単位で保存
                                 price: BigDecimal::from_f64(point.value).unwrap_or_default(),
                                 volume: None,
                             })
@@ -452,8 +466,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 total_value: current_holdings
                     .iter()
                     .map(|(token, amount)| {
-                        if let Some(&price) = current_prices.get(token) {
-                            amount * price
+                        if let Some(&price_yocto) = current_prices.get(token) {
+                            // 価格をNEAR単位に変換してから計算
+                            let price_near =
+                                common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                            amount * price_near
                         } else {
                             0.0
                         }
@@ -469,31 +486,42 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 // リバランスアクションを実行
                 for action in execution_report.actions {
                     if let TradingAction::Rebalance { target_weights } = action {
-                        // 現在の総価値を計算
+                        // 現在の総価値を計算（NEAR単位）
                         let mut total_portfolio_value = 0.0;
                         for (token, amount) in &current_holdings {
-                            if let Some(&price) = current_prices.get(token) {
-                                total_portfolio_value += amount * price;
+                            if let Some(&price_yocto) = current_prices.get(token) {
+                                let price_near =
+                                    common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                                total_portfolio_value += amount * price_near;
                             }
                         }
 
                         // 目標配分に基づいてリバランス
                         for (token, target_weight) in target_weights {
-                            if let Some(&current_price) = current_prices.get(&token) {
+                            if let Some(&current_price_yocto) = current_prices.get(&token) {
+                                let current_price_near =
+                                    common::units::Units::yocto_f64_to_near_f64(
+                                        current_price_yocto,
+                                    );
                                 let target_value = total_portfolio_value * target_weight;
-                                let target_amount = target_value / current_price;
+                                let target_amount = target_value / current_price_near;
 
                                 // 現在の保有量と目標量の差を計算
                                 let current_amount =
                                     current_holdings.get(&token).copied().unwrap_or(0.0);
                                 let diff = target_amount - current_amount;
 
-                                if diff.abs() > 0.01 {
-                                    // 1%以上の差がある場合のみリバランス
+                                // 相対的な閾値: 現在保有量の1%以上の差でリバランス
+                                let relative_threshold = current_amount * 0.01;
+                                let min_threshold = 0.001; // 最小絶対閾値
+                                let effective_threshold = relative_threshold.max(min_threshold);
+
+                                if diff.abs() > effective_threshold {
+                                    // 保有量の1%以上の差がある場合のみリバランス
                                     current_holdings.insert(token.clone(), target_amount);
 
-                                    // 簡易的な取引コスト計算
-                                    let trade_cost = diff.abs() * current_price * 0.003; // 0.3%手数料
+                                    // 簡易的な取引コスト計算（NEAR単位）
+                                    let trade_cost = diff.abs() * current_price_near * 0.003; // 0.3%手数料
                                     total_costs += trade_cost;
 
                                     // TradeExecutionを記録
@@ -502,7 +530,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                         from_token: config.quote_token.clone(),
                                         to_token: token.clone(),
                                         amount: diff.abs(),
-                                        executed_price: current_price,
+                                        executed_price: current_price_near,
                                         cost: TradingCost {
                                             protocol_fee: BigDecimal::from_f64(trade_cost * 0.7)
                                                 .unwrap_or_default(),
@@ -536,8 +564,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         let mut holdings_value = HashMap::new();
 
         for (token, amount) in &current_holdings {
-            if let Some(&price) = current_prices.get(token) {
-                let value = amount * price;
+            if let Some(&price_yocto) = current_prices.get(token) {
+                // priceはyoctoNEAR単位、amountはトークン数量
+                // 計算結果をNEAR単位に変換
+                let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                let value = amount * price_near;
                 holdings_value.insert(token.clone(), value);
                 total_value += value;
             }
@@ -747,9 +778,13 @@ pub(crate) async fn run_trend_following_optimization_simulation(
                 for action in execution_report.actions {
                     match action {
                         TradingAction::AddPosition { token, weight } => {
-                            if let Some(&current_price) = current_prices.get(&token) {
+                            if let Some(&current_price_yocto) = current_prices.get(&token) {
+                                let current_price_near =
+                                    common::units::Units::yocto_f64_to_near_f64(
+                                        current_price_yocto,
+                                    );
                                 let position_value = available_capital * weight;
-                                let position_size = position_value / current_price;
+                                let position_size = position_value / current_price_near;
 
                                 if position_value
                                     > config
@@ -775,7 +810,7 @@ pub(crate) async fn run_trend_following_optimization_simulation(
                                         from_token: config.quote_token.clone(),
                                         to_token: token.clone(),
                                         amount: position_size,
-                                        executed_price: current_price,
+                                        executed_price: current_price_near,
                                         cost: TradingCost {
                                             protocol_fee: BigDecimal::from_f64(trade_cost * 0.7)
                                                 .unwrap_or_default(),
@@ -800,11 +835,15 @@ pub(crate) async fn run_trend_following_optimization_simulation(
                             }
                         }
                         TradingAction::ReducePosition { token, weight } => {
-                            if let (Some(&current_amount), Some(&current_price)) =
+                            if let (Some(&current_amount), Some(&current_price_yocto)) =
                                 (current_holdings.get(&token), current_prices.get(&token))
                             {
+                                let current_price_near =
+                                    common::units::Units::yocto_f64_to_near_f64(
+                                        current_price_yocto,
+                                    );
                                 let reduction_size = current_amount * weight;
-                                let reduction_value = reduction_size * current_price;
+                                let reduction_value = reduction_size * current_price_near;
 
                                 if reduction_value > 1.0 {
                                     // 最小取引サイズ
@@ -823,7 +862,7 @@ pub(crate) async fn run_trend_following_optimization_simulation(
                                         from_token: token.clone(),
                                         to_token: config.quote_token.clone(),
                                         amount: reduction_size,
-                                        executed_price: current_price,
+                                        executed_price: current_price_near,
                                         cost: TradingCost {
                                             protocol_fee: BigDecimal::from_f64(trade_cost * 0.7)
                                                 .unwrap_or_default(),
@@ -857,8 +896,11 @@ pub(crate) async fn run_trend_following_optimization_simulation(
         let mut holdings_value = HashMap::new();
 
         for (token, amount) in &current_holdings {
-            if let Some(&price) = current_prices.get(token) {
-                let value = amount * price;
+            if let Some(&price_yocto) = current_prices.get(token) {
+                // priceはyoctoNEAR単位、amountはトークン数量
+                // 計算結果をNEAR単位に変換
+                let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                let value = amount * price_near;
                 holdings_value.insert(token.clone(), value);
                 total_value += value;
             }
