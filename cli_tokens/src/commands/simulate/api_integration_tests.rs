@@ -305,6 +305,7 @@ mod tests {
             historical_days: 30,
             model: None,
             verbose: false,
+            portfolio_rebalance_threshold: 0.05,
         };
 
         // テスト用の価格データを作成
@@ -401,6 +402,7 @@ mod regression_tests {
             historical_days: 30,
             model: None,
             verbose: false,
+            portfolio_rebalance_threshold: 0.05,
         };
 
         let price_data = HashMap::new();

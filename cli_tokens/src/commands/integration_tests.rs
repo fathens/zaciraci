@@ -273,6 +273,7 @@ mod tests {
             chart: false,
             verbose: false,
             model: Some("mock".to_string()),
+            portfolio_rebalance_threshold: 0.05,
         };
         
         // Step 4: Try to validate args (this tests the actual config creation)

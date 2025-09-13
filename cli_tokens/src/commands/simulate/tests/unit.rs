@@ -39,6 +39,7 @@ fn test_simulate_args_default_values() {
         chart: false,
         verbose: false,
         model: None,
+        portfolio_rebalance_threshold: 0.05,
     };
 
     assert_eq!(args.capital, 1000.0);
@@ -71,6 +72,7 @@ fn test_simulate_args_with_model() {
         chart: false,
         verbose: false,
         model: Some("chronos_default".to_string()),
+        portfolio_rebalance_threshold: 0.05,
     };
 
     assert_eq!(args_with_model.model, Some("chronos_default".to_string()));
@@ -93,6 +95,7 @@ fn test_simulate_args_with_model() {
         chart: false,
         verbose: false,
         model: Some("fast_statistical".to_string()),
+        portfolio_rebalance_threshold: 0.05,
     };
 
     assert_eq!(

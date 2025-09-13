@@ -39,9 +39,6 @@ const MAX_POSITION_SIZE: f64 = 0.4;
 /// 最小保有比率
 const MIN_POSITION_SIZE: f64 = 0.05;
 
-/// リバランス閾値（5%）- 10%では感度が低すぎるため調整
-const REBALANCE_THRESHOLD: f64 = 0.05;
-
 /// 最大保有トークン数
 const MAX_HOLDINGS: usize = 10;
 
@@ -406,7 +403,11 @@ pub fn apply_constraints(weights: &mut [f64]) {
 }
 
 /// リバランスが必要かチェック
-pub fn needs_rebalancing(current_weights: &[f64], target_weights: &[f64]) -> bool {
+pub fn needs_rebalancing(
+    current_weights: &[f64],
+    target_weights: &[f64],
+    rebalance_threshold: f64,
+) -> bool {
     if current_weights.len() != target_weights.len() {
         return true;
     }
@@ -414,7 +415,7 @@ pub fn needs_rebalancing(current_weights: &[f64], target_weights: &[f64]) -> boo
     current_weights
         .iter()
         .zip(target_weights.iter())
-        .any(|(&current, &target)| (current - target).abs() > REBALANCE_THRESHOLD)
+        .any(|(&current, &target)| (current - target).abs() > rebalance_threshold)
 }
 
 // ==================== メトリクス計算 ====================
@@ -439,6 +440,7 @@ pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 
 pub async fn execute_portfolio_optimization(
     wallet: &WalletInfo,
     portfolio_data: PortfolioData,
+    rebalance_threshold: f64,
 ) -> Result<PortfolioExecutionReport> {
     // 期待リターンを計算
     let expected_returns =
@@ -461,11 +463,17 @@ pub async fn execute_portfolio_optimization(
     let current_weights = calculate_current_weights(&portfolio_data.tokens, wallet);
 
     // リバランスが必要かチェック
-    let rebalance_needed = needs_rebalancing(&current_weights, &optimal_weights);
+    let rebalance_needed =
+        needs_rebalancing(&current_weights, &optimal_weights, rebalance_threshold);
 
     // アクションを生成
     let actions = if rebalance_needed {
-        generate_rebalance_actions(&portfolio_data.tokens, &current_weights, &optimal_weights)
+        generate_rebalance_actions(
+            &portfolio_data.tokens,
+            &current_weights,
+            &optimal_weights,
+            rebalance_threshold,
+        )
     } else {
         vec![TradingAction::Hold]
     };
@@ -545,6 +553,7 @@ fn generate_rebalance_actions(
     tokens: &[TokenInfo],
     current_weights: &[f64],
     target_weights: &[f64],
+    rebalance_threshold: f64,
 ) -> Vec<TradingAction> {
     let mut actions = Vec::new();
     let mut target_map = HashMap::new();
@@ -555,7 +564,7 @@ fn generate_rebalance_actions(
         }
 
         let weight_diff = target_weights[i] - current_weights[i];
-        if weight_diff.abs() > REBALANCE_THRESHOLD {
+        if weight_diff.abs() > rebalance_threshold {
             if weight_diff > 0.0 {
                 // AddPosition equivalent using Hold for now
                 actions.push(TradingAction::Hold);

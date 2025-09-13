@@ -66,6 +66,7 @@ mod algorithm_integration_tests {
             historical_days: 30,
             model: None,
             verbose: false,
+            portfolio_rebalance_threshold: 0.05,
         }
     }
 

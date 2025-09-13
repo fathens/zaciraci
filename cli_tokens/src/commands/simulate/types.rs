@@ -175,6 +175,10 @@ pub struct SimulateArgs {
     /// 予測モデル (未指定の場合はサーバーのデフォルトモデルを使用)
     #[clap(long)]
     pub model: Option<String>,
+
+    /// Portfolioアルゴリズムのリバランス閾値 (0.0-1.0) [デフォルト: 0.05]
+    #[clap(long, default_value = "0.05")]
+    pub portfolio_rebalance_threshold: f64,
 }
 
 // Configuration structures
@@ -192,9 +196,10 @@ pub struct SimulationConfig {
     pub gas_cost: BigDecimal,
     pub min_trade_amount: BigDecimal,
     pub prediction_horizon: chrono::Duration,
-    pub historical_days: i64,  // 予測に使用する過去データ期間
-    pub model: Option<String>, // 予測モデル
-    pub verbose: bool,         // 詳細出力フラグ
+    pub historical_days: i64,               // 予測に使用する過去データ期間
+    pub model: Option<String>,              // 予測モデル
+    pub verbose: bool,                      // 詳細出力フラグ
+    pub portfolio_rebalance_threshold: f64, // Portfolioアルゴリズムのリバランス閾値
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

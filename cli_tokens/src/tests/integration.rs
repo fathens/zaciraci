@@ -68,6 +68,7 @@ fn test_simulate_args_integration() {
         chart: false,
         verbose: false,
         model: None,
+        portfolio_rebalance_threshold: 0.05,
     };
 
     // Test that configuration is parsed correctly
@@ -94,6 +95,7 @@ fn test_simulate_args_integration() {
         chart: true,
         verbose: true,
         model: None,
+        portfolio_rebalance_threshold: 0.05,
     };
 
     assert_eq!(portfolio_config.capital, 5000.0);

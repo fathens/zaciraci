@@ -245,6 +245,7 @@ fn test_config_creation() {
         chart: false,
         verbose: false,
         model: None,
+        portfolio_rebalance_threshold: 0.05,
     };
 
     // Test that the args contain expected values

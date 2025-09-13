@@ -308,16 +308,18 @@ fn test_needs_rebalancing() {
 
     assert!(!needs_rebalancing(
         &current_weights,
-        &target_weights_no_rebalance
+        &target_weights_no_rebalance,
+        0.05
     ));
     assert!(needs_rebalancing(
         &current_weights,
-        &target_weights_rebalance
+        &target_weights_rebalance,
+        0.05
     ));
 
     // 長さが異なる場合
     let different_length = vec![0.5, 0.5];
-    assert!(needs_rebalancing(&current_weights, &different_length));
+    assert!(needs_rebalancing(&current_weights, &different_length, 0.05));
 }
 
 // ==================== メトリクステスト ====================
@@ -398,7 +400,7 @@ fn test_execute_portfolio_optimization() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result =
-        rt.block_on(async { execute_portfolio_optimization(&wallet, portfolio_data).await });
+        rt.block_on(async { execute_portfolio_optimization(&wallet, portfolio_data, 0.05).await });
 
     assert!(result.is_ok());
 
@@ -519,7 +521,7 @@ fn test_portfolio_action_generation() {
     let current_weights = vec![0.5, 0.3, 0.2];
     let target_weights = vec![0.3, 0.4, 0.3]; // 大きな変化
 
-    let actions = generate_rebalance_actions(&tokens, &current_weights, &target_weights);
+    let actions = generate_rebalance_actions(&tokens, &current_weights, &target_weights, 0.05);
 
     assert!(!actions.is_empty());
 
@@ -660,8 +662,16 @@ fn test_transaction_cost_aware_rebalancing() {
     assert!(turnover_large > 0.25); // 25%以上の変化（実際の計算に基づいて調整）
 
     // needs_rebalancing関数も使用してリバランス必要性を確認
-    assert!(!needs_rebalancing(&current_weights, &target_weights_small)); // 小変化は不要
-    assert!(needs_rebalancing(&current_weights, &target_weights_large)); // 大変化は必要
+    assert!(!needs_rebalancing(
+        &current_weights,
+        &target_weights_small,
+        0.05
+    )); // 小変化は不要
+    assert!(needs_rebalancing(
+        &current_weights,
+        &target_weights_large,
+        0.05
+    )); // 大変化は必要
 }
 
 #[test]
@@ -673,7 +683,7 @@ fn test_gradual_rebalancing_simulation() {
 
     // 段階的調整をシミュレート
     let mut step = 0;
-    while needs_rebalancing(&current_weights, &target_weights) && step < 5 {
+    while needs_rebalancing(&current_weights, &target_weights, 0.05) && step < 5 {
         // 部分的調整を手動計算
         for i in 0..current_weights.len() {
             let diff = target_weights[i] - current_weights[i];

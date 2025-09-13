@@ -480,8 +480,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
             };
 
             // ポートフォリオ最適化を実行
-            if let Ok(execution_report) =
-                execute_portfolio_optimization(&wallet_info, portfolio_data).await
+            if let Ok(execution_report) = execute_portfolio_optimization(
+                &wallet_info,
+                portfolio_data,
+                config.portfolio_rebalance_threshold,
+            )
+            .await
             {
                 // リバランスアクションを実行
                 for action in execution_report.actions {

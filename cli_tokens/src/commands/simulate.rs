@@ -241,6 +241,7 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
         historical_days: args.historical_days as i64,
         model: args.model,
         verbose: args.verbose,
+        portfolio_rebalance_threshold: args.portfolio_rebalance_threshold,
     })
 }
 
@@ -434,3 +435,6 @@ mod unit_fix_tests;
 
 #[cfg(test)]
 mod rebalance_threshold_tests;
+
+#[cfg(test)]
+mod portfolio_threshold_tests;

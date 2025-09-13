@@ -64,6 +64,9 @@ pub fn create_test_config(
         min_trade_amount: bigdecimal::BigDecimal::from(1),
         prediction_horizon: Duration::hours(24),
         historical_days: 30,
+        model: None,
+        verbose: false,
+        portfolio_rebalance_threshold: 0.05,
     }
 }
 

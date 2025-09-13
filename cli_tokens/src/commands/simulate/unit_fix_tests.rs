@@ -61,6 +61,7 @@ fn create_test_config() -> SimulationConfig {
         verbose: false,
         gas_cost: BigDecimal::from(0),
         min_trade_amount: BigDecimal::from(1),
+        portfolio_rebalance_threshold: 0.05,
     }
 }
 
