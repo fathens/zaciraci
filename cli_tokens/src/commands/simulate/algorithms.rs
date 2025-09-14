@@ -379,8 +379,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         // 現在時点での価格を取得
         let current_prices = get_prices_at_time(price_data, current_time)?;
 
-        // リバランスが必要かどうかチェック（週次リバランス）
-        let should_rebalance = (current_time - last_rebalance_time).num_days() >= 7;
+        // リバランスが必要かどうかチェック（設定された期間に基づく）
+        let portfolio_rebalance_duration = config.portfolio_rebalance_interval.as_duration();
+        let should_rebalance = current_time >= last_rebalance_time + portfolio_rebalance_duration;
 
         if should_rebalance && !current_holdings.is_empty() {
             // 予測データを生成
@@ -486,13 +487,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 cash_balance: 0.0,
             };
 
-            // Portfolio専用のリバランス期間チェック
-            let portfolio_rebalance_duration = config.portfolio_rebalance_interval.as_duration();
-            let should_rebalance =
-                current_time >= last_rebalance_time + portfolio_rebalance_duration;
-
-            // ポートフォリオ最適化を実行（リバランス期間チェックを通過した場合のみ）
-            if should_rebalance {
+            // ポートフォリオ最適化を実行
+            {
                 if let Ok(execution_report) = execute_portfolio_optimization(
                     &wallet_info,
                     portfolio_data,
