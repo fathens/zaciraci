@@ -2,7 +2,7 @@ use super::data::{fetch_price_data, get_prices_at_time};
 use super::types::*;
 use crate::api::backend::BackendClient;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Run momentum simulation
 pub async fn run_momentum_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
@@ -458,13 +458,13 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
             let portfolio_data = PortfolioData {
                 tokens: token_data,
-                predictions: predictions_map,
+                predictions: predictions_map.into_iter().collect(),
                 historical_prices,
                 correlation_matrix: None,
             };
 
             // 現在のホールディングをWalletInfoに変換
-            let mut holdings_for_wallet = HashMap::new();
+            let mut holdings_for_wallet = BTreeMap::new();
             for (token, amount) in &current_holdings {
                 holdings_for_wallet.insert(token.clone(), *amount);
             }

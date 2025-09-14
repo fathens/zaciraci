@@ -1,7 +1,7 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 // ==================== 取引関連型 ====================
 
@@ -118,7 +118,7 @@ pub enum TradingAction {
     Switch { from: String, to: String },
     /// ポートフォリオリバランス
     Rebalance {
-        target_weights: HashMap<String, f64>,
+        target_weights: BTreeMap<String, f64>,
     },
     /// ポジション追加
     AddPosition { token: String, weight: f64 },
@@ -198,7 +198,7 @@ impl ExecutionReport {
 /// ポートフォリオの重み
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioWeights {
-    pub weights: HashMap<String, f64>,
+    pub weights: BTreeMap<String, f64>,
     pub timestamp: DateTime<Utc>,
     pub expected_return: f64,
     pub expected_volatility: f64,
@@ -221,7 +221,7 @@ pub struct PortfolioMetrics {
 /// ウォレット情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletInfo {
-    pub holdings: HashMap<String, f64>,
+    pub holdings: BTreeMap<String, f64>,
     pub total_value: f64,
     pub cash_balance: f64,
 }

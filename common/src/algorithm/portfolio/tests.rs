@@ -2,7 +2,7 @@ use super::*;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::Duration;
 use ndarray::array;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 // ==================== テストヘルパー ====================
 
@@ -35,8 +35,8 @@ fn create_sample_tokens() -> Vec<TokenInfo> {
     ]
 }
 
-fn create_sample_predictions() -> HashMap<String, f64> {
-    let mut predictions = HashMap::new();
+fn create_sample_predictions() -> BTreeMap<String, f64> {
+    let mut predictions = BTreeMap::new();
     predictions.insert("TOKEN_A".to_string(), 110.0); // +10%
     predictions.insert("TOKEN_B".to_string(), 55.0); // +10%
     predictions.insert("TOKEN_C".to_string(), 210.0); // +5%
@@ -97,7 +97,7 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
 }
 
 fn create_sample_wallet() -> WalletInfo {
-    let mut holdings = HashMap::new();
+    let mut holdings = BTreeMap::new();
     holdings.insert("TOKEN_A".to_string(), 5.0); // 500 value
     holdings.insert("TOKEN_B".to_string(), 10.0); // 500 value
 
@@ -131,7 +131,7 @@ fn test_calculate_daily_returns() {
     assert_eq!(daily_returns.len(), 3); // 3つのトークン
 
     // TOKEN_A は上昇トレンドなので、少なくとも一つのトークンの平均リターンが正
-    // HashMapの順序は保証されないため、全体的な傾向を確認
+    // BTreeMapによる順序安定化により、決定的な結果を確認
     let all_avg_returns: Vec<f64> = daily_returns
         .iter()
         .map(|returns| returns.iter().sum::<f64>() / returns.len() as f64)
@@ -424,7 +424,7 @@ fn test_execute_portfolio_optimization() {
 #[test]
 fn test_empty_inputs() {
     let empty_tokens = vec![];
-    let empty_predictions = HashMap::new();
+    let empty_predictions = BTreeMap::new();
 
     let expected_returns = calculate_expected_returns(&empty_tokens, &empty_predictions);
     assert!(expected_returns.is_empty());
@@ -448,7 +448,7 @@ fn test_single_token_portfolio() {
         decimals: Some(18),
     }];
 
-    let mut predictions = HashMap::new();
+    let mut predictions = BTreeMap::new();
     predictions.insert("SINGLE_TOKEN".to_string(), 110.0);
 
     let expected_returns = calculate_expected_returns(&tokens, &predictions);
@@ -500,7 +500,7 @@ fn test_covariance_calculation_edge_cases() {
 #[test]
 fn test_extreme_predictions() {
     let tokens = create_sample_tokens();
-    let mut predictions = HashMap::new();
+    let mut predictions = BTreeMap::new();
 
     // 極端な予測値
     predictions.insert("TOKEN_A".to_string(), 1000.0); // 1000%上昇
@@ -538,7 +538,7 @@ fn test_portfolio_action_generation() {
 fn test_market_crash_scenario() {
     // マーケットクラッシュ（全資産が同時に大幅下落）シナリオ
     let tokens = create_sample_tokens();
-    let mut crash_predictions = HashMap::new();
+    let mut crash_predictions = BTreeMap::new();
 
     // 全てのトークンが大幅下落を予測
     crash_predictions.insert("TOKEN_A".to_string(), 50.0); // -50%

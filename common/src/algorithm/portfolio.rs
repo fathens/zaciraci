@@ -3,7 +3,7 @@ use crate::units::Units;
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use super::types::*;
 
@@ -13,7 +13,7 @@ use super::types::*;
 #[derive(Debug, Clone)]
 pub struct PortfolioData {
     pub tokens: Vec<TokenData>,
-    pub predictions: HashMap<String, f64>,
+    pub predictions: BTreeMap<String, f64>,
     pub historical_prices: Vec<PriceHistory>,
     pub correlation_matrix: Option<Array2<f64>>,
 }
@@ -54,7 +54,7 @@ const REGULARIZATION_FACTOR: f64 = 1e-6;
 /// 注意: current_priceとpredicted_priceは両方ともyoctoNEAR単位で比較
 pub fn calculate_expected_returns(
     tokens: &[TokenInfo],
-    predictions: &HashMap<String, f64>,
+    predictions: &BTreeMap<String, f64>,
 ) -> Vec<f64> {
     tokens
         .iter()
@@ -82,7 +82,7 @@ pub fn calculate_expected_returns(
 /// 日次リターンを計算
 /// 注意: 価格データはyoctoNEAR単位で保存されているため、リターン計算では単位変換不要
 pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f64>> {
-    let mut token_prices: HashMap<String, Vec<(DateTime<Utc>, f64)>> = HashMap::new();
+    let mut token_prices: BTreeMap<String, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
 
     // トークン別に価格データをグループ化
     for price_data in historical_prices {
@@ -487,8 +487,8 @@ pub async fn execute_portfolio_optimization(
         0.0
     };
 
-    // 重みをHashMapに変換
-    let weight_map: HashMap<String, f64> = portfolio_data
+    // 重みをBTreeMapに変換（順序安定化のため）
+    let weight_map: BTreeMap<String, f64> = portfolio_data
         .tokens
         .iter()
         .zip(optimal_weights.iter())
@@ -556,7 +556,7 @@ fn generate_rebalance_actions(
     rebalance_threshold: f64,
 ) -> Vec<TradingAction> {
     let mut actions = Vec::new();
-    let mut target_map = HashMap::new();
+    let mut target_map = BTreeMap::new();
 
     for (i, token) in tokens.iter().enumerate() {
         if target_weights[i] > 0.0 {

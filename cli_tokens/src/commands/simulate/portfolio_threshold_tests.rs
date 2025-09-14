@@ -5,7 +5,7 @@ use common::algorithm::portfolio::{
     execute_portfolio_optimization, needs_rebalancing, PortfolioData,
 };
 use common::algorithm::{PriceHistory, PricePoint, TokenData, WalletInfo};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 // テスト用のポートフォリオデータを作成
 fn create_test_portfolio_data() -> PortfolioData {
@@ -41,7 +41,7 @@ fn create_test_portfolio_data() -> PortfolioData {
 
     PortfolioData {
         tokens,
-        predictions,
+        predictions: predictions.into_iter().collect(),
         historical_prices,
         correlation_matrix: None,
     }
@@ -49,7 +49,7 @@ fn create_test_portfolio_data() -> PortfolioData {
 
 fn create_test_wallet_info() -> WalletInfo {
     WalletInfo {
-        holdings: HashMap::from([
+        holdings: BTreeMap::from([
             ("test.token".to_string(), 500000.0), // 500 tokens
         ]),
         total_value: 1000000.0, // 1000 NEAR in yoctoNEAR units
