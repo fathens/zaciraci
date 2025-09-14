@@ -99,14 +99,18 @@ impl BackendClient {
             .await
             .context("Failed to get response text")?;
 
-        println!("Backend API response: {}", response_text);
-
         let api_response: ApiResponse<GetValuesResponse, String> =
             serde_json::from_str(&response_text)
                 .context(format!("Failed to parse JSON response: {}", response_text))?;
 
         match api_response {
-            ApiResponse::Success(data) => Ok(data.values),
+            ApiResponse::Success(data) => {
+                println!(
+                    "  ✅ API call successful ({} data points)",
+                    data.values.len()
+                );
+                Ok(data.values)
+            }
             ApiResponse::Error(message) => Err(anyhow::anyhow!("API Error: {}", message)),
         }
     }

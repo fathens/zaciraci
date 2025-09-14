@@ -316,7 +316,7 @@ mod tests {
         let output_path = temp_dir.path().join("output");
         std::fs::create_dir_all(&output_path).unwrap();
         
-        save_simple_multi_algorithm_result(&test_results, output_path.to_str().unwrap())
+        save_simple_multi_algorithm_result(&test_results, output_path.to_str().unwrap(), false)
             .expect("Should save results successfully");
             
         // Find output file

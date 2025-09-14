@@ -55,15 +55,17 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         ));
     }
 
-    println!("📈 Found {} tokens", token_names.len());
     if final_config.verbose {
+        println!("📈 Found {} tokens", token_names.len());
         println!("  Tokens: {}", token_names.join(", "));
+    } else {
+        println!("Found {} tokens", token_names.len());
     }
 
     final_config.target_tokens = token_names;
 
     // 全アルゴリズムを実行
-    println!("\n🔄 Running algorithms...");
+    println!("Running simulations...");
 
     let algorithms = [
         AlgorithmType::Momentum,
@@ -76,13 +78,29 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
         let mut config_copy = final_config.clone();
         config_copy.algorithm = algorithm.clone();
 
-        println!("Running {:?}...", algorithm);
+        println!("  {:?}...", algorithm);
         let result = run_single_algorithm(&config_copy).await?;
+
+        // Show individual algorithm summary
+        if final_config.verbose {
+            println!("  {:?} completed:", algorithm);
+            println!("    Return: {:.2}%", result.performance.total_return_pct);
+            println!("    Sharpe: {:.3}", result.performance.sharpe_ratio);
+            if result.performance.total_trades > 0 {
+                println!("    Trades: {}", result.performance.total_trades);
+            }
+        } else {
+            println!(
+                "  {:?}: {:.2}%",
+                algorithm, result.performance.total_return_pct
+            );
+        }
+
         results.push(result);
     }
 
     // 複数アルゴリズムの結果を保存
-    save_simple_multi_algorithm_result(&results, &output_dir)?;
+    save_simple_multi_algorithm_result(&results, &output_dir, final_config.verbose)?;
 
     Ok(())
 }
@@ -264,65 +282,21 @@ async fn run_single_algorithm(config: &SimulationConfig) -> Result<SimulationRes
     }
 }
 
-/// Save simulation result to output directory
-pub fn save_simulation_result(result: &SimulationResult, output_dir: &str) -> Result<()> {
-    use std::fs;
-    use std::path::Path;
-
-    // 出力ディレクトリを作成
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("Failed to create output directory: {}", output_dir))?;
-
-    // ファイル名を生成（アルゴリズム名 + タイムスタンプ）
-    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let filename = format!("{:?}_{}.json", result.config.algorithm, timestamp).to_lowercase();
-    let filepath = Path::new(output_dir).join(&filename);
-
-    // JSON形式でシミュレーション結果を保存
-    let json_content = serde_json::to_string_pretty(result)
-        .context("Failed to serialize simulation result to JSON")?;
-
-    fs::write(&filepath, json_content).with_context(|| {
-        format!(
-            "Failed to write simulation result to {}",
-            filepath.display()
-        )
-    })?;
-
-    println!("💾 Simulation completed successfully!");
-    println!("  Algorithm: {:?}", result.config.algorithm);
-    println!("  Duration: {} days", result.config.duration_days);
-    println!("  Initial Capital: ${:.2}", result.config.initial_capital);
-    println!("  Final Value: ${:.2}", result.config.final_value);
-    println!(
-        "  Total Return: {:.2}%",
-        result.performance.total_return_pct
-    );
-
-    if result.performance.total_trades > 0 {
-        println!("  Trades: {}", result.performance.total_trades);
-        println!("  Win Rate: {:.1}%", result.performance.win_rate);
-    }
-
-    println!("📁 Results saved to: {}", filepath.display());
-    println!(
-        "💡 Generate HTML report with: cli_tokens report {}",
-        filepath.display()
-    );
-
-    Ok(())
-}
-
 /// Save multi-algorithm simulation results
 pub fn save_simple_multi_algorithm_result(
     results: &[SimulationResult],
     output_dir: &str,
+    verbose: bool,
 ) -> Result<()> {
     use anyhow::Context;
     use std::fs;
     use std::path::Path;
 
-    println!("\n🏆 Multi-Algorithm Comparison Results:");
+    if verbose {
+        println!("\n🏆 Multi-Algorithm Comparison Results:");
+    } else {
+        println!("\nResults:");
+    }
     println!("┌─────────────────┬─────────────┬─────────────┬─────────────┬─────────────┐");
     println!("│ Algorithm       │ Return (%)  │ Sharpe      │ Drawdown(%) │ Trades      │");
     println!("├─────────────────┼─────────────┼─────────────┼─────────────┼─────────────┤");
@@ -357,19 +331,26 @@ pub fn save_simple_multi_algorithm_result(
 
     println!("└─────────────────┴─────────────┴─────────────┴─────────────┴─────────────┘");
 
-    println!("\n🥇 Best Performers:");
-    println!(
-        "  Highest Return: {:?} ({:.2}%)",
-        best_return.0, best_return.1
-    );
-    println!(
-        "  Best Sharpe Ratio: {:?} ({:.3})",
-        best_sharpe.0, best_sharpe.1
-    );
-    println!(
-        "  Lowest Drawdown: {:?} ({:.2}%)",
-        lowest_drawdown.0, lowest_drawdown.1
-    );
+    if verbose {
+        println!("\n🥇 Best Performers:");
+        println!(
+            "  Highest Return: {:?} ({:.2}%)",
+            best_return.0, best_return.1
+        );
+        println!(
+            "  Best Sharpe Ratio: {:?} ({:.3})",
+            best_sharpe.0, best_sharpe.1
+        );
+        println!(
+            "  Lowest Drawdown: {:?} ({:.2}%)",
+            lowest_drawdown.0, lowest_drawdown.1
+        );
+    } else {
+        println!(
+            "Best performer: {:?} with {:.2}% return",
+            best_return.0, best_return.1
+        );
+    }
 
     // 出力ディレクトリを作成
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
@@ -421,12 +402,19 @@ pub fn save_simple_multi_algorithm_result(
         )
     })?;
 
-    println!("💾 Multi-algorithm comparison completed successfully!");
-    println!("📁 Results saved to: {}", summary_filepath.display());
-    println!(
-        "💡 Generate HTML report with: cli_tokens report {}",
-        summary_filepath.display()
-    );
+    if verbose {
+        println!("💾 Multi-algorithm comparison completed successfully!");
+        println!("📁 Results saved to: {}", summary_filepath.display());
+        println!(
+            "💡 Generate HTML report with: cli_tokens report {}",
+            summary_filepath.display()
+        );
+    } else {
+        println!(
+            "Simulation completed. Results saved to: {}",
+            summary_filepath.display()
+        );
+    }
 
     Ok(())
 }

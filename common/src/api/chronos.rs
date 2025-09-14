@@ -39,7 +39,7 @@ impl ChronosApiClient {
 
             match result.status.as_str() {
                 "completed" => {
-                    println!("✅ Prediction completed successfully");
+                    // Removed verbose output: "✅ Prediction completed successfully"
                     return Ok(result);
                 }
                 "failed" => {
@@ -50,14 +50,7 @@ impl ChronosApiClient {
                     )));
                 }
                 "running" | "pending" => {
-                    if let Some(progress) = result.progress {
-                        println!("⏳ Prediction in progress: {:.1}%", progress * 100.0);
-                    } else {
-                        println!(
-                            "⏳ Prediction in progress... (attempt {}/{})",
-                            attempt, max_attempts
-                        );
-                    }
+                    // Removed verbose progress output
                 }
                 status => {
                     println!("❓ Unknown status: {}", status);
@@ -106,8 +99,7 @@ impl ChronosApiClient {
             .await
             .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
 
-        // Log the response text for debugging
-        println!("Response text: {}", response_text);
+        // Log the response text for debugging (removed to reduce output noise)
 
         // Parse the response text directly as PredictionResult
         let result: PredictionResult = serde_json::from_str(&response_text).map_err(|e| {
@@ -198,8 +190,7 @@ impl ApiClient for ChronosApiClient {
             .await
             .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
 
-        // Log the response text for debugging
-        println!("Response text: {}", response_text);
+        // Log the response text for debugging (removed to reduce output noise)
 
         // Try to parse the response text
         let api_response: ApiResponse<R, String> =
