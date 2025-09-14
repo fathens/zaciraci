@@ -81,6 +81,9 @@ pub fn calculate_expected_returns(
 
 /// 日次リターンを計算
 /// 注意: 価格データはyoctoNEAR単位で保存されているため、リターン計算では単位変換不要
+///
+/// **重要**: この関数は入力されたhistorical_pricesの順序を保持します。
+/// BTreeMapを使用して決定的な処理を行いますが、結果の順序は入力順序に従います。
 pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f64>> {
     let mut token_prices: BTreeMap<String, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
 
@@ -96,17 +99,34 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
         }
     }
 
-    // 各トークンの日次リターンを計算
-    let mut returns = Vec::new();
-    for (_, mut prices) in token_prices {
-        prices.sort_by_key(|&(timestamp, _)| timestamp);
+    // 入力順序を保持: 元の配列から重複を除いたトークン順序を取得
+    let unique_tokens: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        historical_prices
+            .iter()
+            .filter_map(|p| {
+                if seen.insert(p.token.clone()) {
+                    Some(p.token.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
 
-        let mut token_returns = Vec::new();
-        for i in 1..prices.len() {
-            let return_rate = (prices[i].1 - prices[i - 1].1) / prices[i - 1].1;
-            token_returns.push(return_rate);
+    // 入力順序でリターンを計算
+    let mut returns = Vec::new();
+    for token in unique_tokens {
+        if let Some(mut prices) = token_prices.get(&token).cloned() {
+            prices.sort_by_key(|&(timestamp, _)| timestamp);
+
+            let mut token_returns = Vec::new();
+            for i in 1..prices.len() {
+                let return_rate = (prices[i].1 - prices[i - 1].1) / prices[i - 1].1;
+                token_returns.push(return_rate);
+            }
+            returns.push(token_returns);
         }
-        returns.push(token_returns);
     }
 
     returns

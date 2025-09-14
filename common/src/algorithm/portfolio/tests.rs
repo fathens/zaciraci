@@ -836,6 +836,364 @@ fn test_correlation_matrix_stability() {
     assert!((adjusted_covariance[[0, 2]] - adjusted_covariance[[2, 0]]).abs() < 1e-10);
 }
 
+// ==================== BTreeMap 順序影響テスト ====================
+
+#[test]
+fn test_token_ordering_impact_on_portfolio_optimization() {
+    // 異なる順序でトークンを提供して、BTreeMapによる辞書順での結果を確認
+
+    // ケース1: アルファベット順（BTreeMapの自然順序）
+    let tokens_alphabetical = vec![
+        TokenInfo {
+            symbol: "TOKEN_A".to_string(),
+            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            historical_volatility: 0.2,
+            liquidity_score: Some(0.8),
+            market_cap: Some(1000000.0),
+            decimals: Some(18),
+        },
+        TokenInfo {
+            symbol: "TOKEN_B".to_string(),
+            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.7),
+            market_cap: Some(500000.0),
+            decimals: Some(18),
+        },
+        TokenInfo {
+            symbol: "TOKEN_C".to_string(),
+            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.9),
+            market_cap: Some(2000000.0),
+            decimals: Some(18),
+        },
+    ];
+
+    // ケース2: 逆順（BTreeMapで自動的にアルファベット順に並び替えられる）
+    let tokens_reverse = vec![
+        TokenInfo {
+            symbol: "TOKEN_C".to_string(),
+            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.9),
+            market_cap: Some(2000000.0),
+            decimals: Some(18),
+        },
+        TokenInfo {
+            symbol: "TOKEN_B".to_string(),
+            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.7),
+            market_cap: Some(500000.0),
+            decimals: Some(18),
+        },
+        TokenInfo {
+            symbol: "TOKEN_A".to_string(),
+            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            historical_volatility: 0.2,
+            liquidity_score: Some(0.8),
+            market_cap: Some(1000000.0),
+            decimals: Some(18),
+        },
+    ];
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert("TOKEN_A".to_string(), 110.0); // +10%
+    predictions.insert("TOKEN_B".to_string(), 55.0); // +10%
+    predictions.insert("TOKEN_C".to_string(), 210.0); // +5%
+
+    // 両ケースで期待リターンを計算
+    let returns_alphabetical = calculate_expected_returns(&tokens_alphabetical, &predictions);
+    let returns_reverse = calculate_expected_returns(&tokens_reverse, &predictions);
+
+    println!("Returns (alphabetical order): {:?}", returns_alphabetical);
+    println!("Returns (reverse input order): {:?}", returns_reverse);
+
+    // BTreeMapにより両方とも同じ結果になることを確認
+    // （トークン順序がBTreeMapにより統一されるため）
+    assert_eq!(
+        returns_alphabetical, returns_reverse,
+        "BTreeMapによりトークン順序が統一され、入力順序に関係なく同じ結果になるべき"
+    );
+}
+
+#[test]
+fn test_daily_returns_ordering_consistency() {
+    // 異なる順序でPriceHistoryを提供し、BTreeMapの影響を確認
+    let base_time = Utc::now() - Duration::days(5);
+
+    // シナリオ1: TOKEN_A, TOKEN_B, TOKEN_C の順序
+    let price_history_scenario1 = vec![
+        PriceHistory {
+            token: "TOKEN_A".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: base_time,
+                    price: BigDecimal::from_f64(100.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
+                },
+                PricePoint {
+                    timestamp: base_time + Duration::days(1),
+                    price: BigDecimal::from_f64(105.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
+                },
+            ],
+        },
+        PriceHistory {
+            token: "TOKEN_B".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: base_time,
+                    price: BigDecimal::from_f64(50.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(800.0).unwrap()),
+                },
+                PricePoint {
+                    timestamp: base_time + Duration::days(1),
+                    price: BigDecimal::from_f64(48.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(800.0).unwrap()),
+                },
+            ],
+        },
+    ];
+
+    // シナリオ2: TOKEN_B, TOKEN_A の順序（逆順）
+    let price_history_scenario2 = vec![
+        PriceHistory {
+            token: "TOKEN_B".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: base_time,
+                    price: BigDecimal::from_f64(50.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(800.0).unwrap()),
+                },
+                PricePoint {
+                    timestamp: base_time + Duration::days(1),
+                    price: BigDecimal::from_f64(48.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(800.0).unwrap()),
+                },
+            ],
+        },
+        PriceHistory {
+            token: "TOKEN_A".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: base_time,
+                    price: BigDecimal::from_f64(100.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
+                },
+                PricePoint {
+                    timestamp: base_time + Duration::days(1),
+                    price: BigDecimal::from_f64(105.0).unwrap(),
+                    volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
+                },
+            ],
+        },
+    ];
+
+    let returns1 = calculate_daily_returns(&price_history_scenario1);
+    let returns2 = calculate_daily_returns(&price_history_scenario2);
+
+    println!("Daily returns scenario 1: {:?}", returns1);
+    println!("Daily returns scenario 2: {:?}", returns2);
+
+    // 修正後: 入力順序が保持されるため、異なる順序で異なる結果になることを確認
+    assert_ne!(
+        returns1, returns2,
+        "入力順序を保持するため、PriceHistoryの順序が異なれば結果も異なるべき"
+    );
+
+    // シナリオ1: TOKEN_A, TOKEN_B の順序で入力されているため
+    // TOKEN_A: (105-100)/100 = 0.05 = 5% が最初の要素
+    assert!(
+        (returns1[0][0] - 0.05).abs() < 0.0001,
+        "シナリオ1: TOKEN_Aのリターンが最初の要素であるべき"
+    );
+
+    // TOKEN_B: (48-50)/50 = -0.04 = -4% が2番目の要素
+    assert!(
+        (returns1[1][0] - (-0.04)).abs() < 0.0001,
+        "シナリオ1: TOKEN_Bのリターンが2番目の要素であるべき"
+    );
+
+    // シナリオ2: TOKEN_B, TOKEN_A の順序で入力されているため
+    // TOKEN_B: -4% が最初の要素、TOKEN_A: 5% が2番目の要素
+    assert!(
+        (returns2[0][0] - (-0.04)).abs() < 0.0001,
+        "シナリオ2: TOKEN_Bのリターンが最初の要素であるべき"
+    );
+    assert!(
+        (returns2[1][0] - 0.05).abs() < 0.0001,
+        "シナリオ2: TOKEN_Aのリターンが2番目の要素であるべき"
+    );
+}
+
+#[test]
+fn test_btreemap_vs_original_ordering_impact() {
+    // BTreeMapによる順序統一が最適化結果に与える実際の影響をテスト
+
+    // 実際のトークン名の例（辞書順と異なる順序で高性能トークンを配置）
+    let tokens = vec![
+        TokenInfo {
+            symbol: "zzz.high_return.near".to_string(), // 辞書順では最後だが高リターン
+            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            historical_volatility: 0.15, // 低リスク
+            liquidity_score: Some(0.9),
+            market_cap: Some(1000000.0),
+            decimals: Some(18),
+        },
+        TokenInfo {
+            symbol: "aaa.low_return.near".to_string(), // 辞書順では最初だが低リターン
+            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            historical_volatility: 0.4, // 高リスク
+            liquidity_score: Some(0.5),
+            market_cap: Some(500000.0),
+            decimals: Some(18),
+        },
+        TokenInfo {
+            symbol: "mmm.medium.near".to_string(), // 中程度
+            current_price: BigDecimal::from_f64(75.0).unwrap(),
+            historical_volatility: 0.25,
+            liquidity_score: Some(0.7),
+            market_cap: Some(750000.0),
+            decimals: Some(18),
+        },
+    ];
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert("zzz.high_return.near".to_string(), 120.0); // +20% 高リターン
+    predictions.insert("aaa.low_return.near".to_string(), 52.0); // +4% 低リターン
+    predictions.insert("mmm.medium.near".to_string(), 78.75); // +5% 中程度
+
+    let expected_returns = calculate_expected_returns(&tokens, &predictions);
+
+    println!("Expected returns: {:?}", expected_returns);
+    println!(
+        "Token order in input: {:?}",
+        tokens.iter().map(|t| &t.symbol).collect::<Vec<_>>()
+    );
+
+    // BTreeMapにより辞書順で処理される：
+    // 1. aaa.low_return.near (4%)
+    // 2. mmm.medium.near (5%)
+    // 3. zzz.high_return.near (20%)
+
+    // 期待リターンの順序確認
+    assert!(
+        (expected_returns[0] - 0.04).abs() < 0.0001,
+        "aaa.low_return.nearが最初"
+    );
+    assert!(
+        (expected_returns[1] - 0.05).abs() < 0.0001,
+        "mmm.mediumが2番目"
+    );
+    assert!(
+        (expected_returns[2] - 0.20).abs() < 0.0001,
+        "zzz.high_returnが最後"
+    );
+
+    // この順序で最適化すると、以前とは異なる結果になる可能性が高い
+    let covariance = array![[0.04, 0.01, 0.02], [0.01, 0.09, 0.01], [0.02, 0.01, 0.03]];
+    let optimal_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+
+    println!(
+        "Optimal weights with BTreeMap ordering: {:?}",
+        optimal_weights
+    );
+
+    // 最高リターンのトークン（zzz.high_return.near、インデックス2）が
+    // 最大の重みを持つことを確認
+    let max_weight_index = optimal_weights
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .map(|(i, _)| i)
+        .unwrap();
+
+    assert_eq!(
+        max_weight_index, 2,
+        "最高リターンのトークンが最大重みを持つべき"
+    );
+}
+
+#[test]
+fn test_demonstrate_ordering_performance_impact() {
+    // トークン順序の変更が実際のパフォーマンスにどう影響するかを実証
+
+    // シナリオ: 同じトークンを異なる順序で処理した場合の差を確認
+    let base_time = Utc::now() - Duration::days(10);
+
+    // 高性能トークンを異なる位置に配置
+    let create_price_history = |token_name: &str, start_price: f64, growth_rate: f64| {
+        let mut prices = Vec::new();
+        for i in 0..10 {
+            prices.push(PricePoint {
+                timestamp: base_time + Duration::days(i),
+                price: BigDecimal::from_f64(start_price * (1.0 + growth_rate).powi(i as i32))
+                    .unwrap(),
+                volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
+            });
+        }
+        PriceHistory {
+            token: token_name.to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices,
+        }
+    };
+
+    // 高成長トークン（辞書順では最後）、中成長、低成長（辞書順では最初）
+    let price_histories = vec![
+        create_price_history("zzz.highgrowth.near", 100.0, 0.02), // 2%/日成長
+        create_price_history("mmm.medium.near", 100.0, 0.01),     // 1%/日成長
+        create_price_history("aaa.lowgrowth.near", 100.0, 0.005), // 0.5%/日成長
+    ];
+
+    let daily_returns = calculate_daily_returns(&price_histories);
+
+    println!("Daily returns length: {}", daily_returns.len());
+    for (i, returns) in daily_returns.iter().enumerate() {
+        println!("Token {} daily returns: {:?}", i, returns);
+    }
+
+    // BTreeMapにより辞書順で処理されるため：
+    // インデックス0: aaa.lowgrowth.near (最低成長)
+    // インデックス1: mmm.medium.near (中成長)
+    // インデックス2: zzz.highgrowth.near (最高成長)
+
+    assert_eq!(
+        daily_returns.len(),
+        3,
+        "3つのトークンのリターンが計算される"
+    );
+
+    // 各トークンの平均リターンを確認
+    let avg_returns: Vec<f64> = daily_returns
+        .iter()
+        .map(|returns| returns.iter().sum::<f64>() / returns.len() as f64)
+        .collect();
+
+    println!("Average returns: {:?}", avg_returns);
+
+    // 辞書順での並び順を確認
+    assert!(avg_returns[0] < avg_returns[1], "aaa < mmm in returns");
+    assert!(avg_returns[1] < avg_returns[2], "mmm < zzz in returns");
+
+    // この順序で共分散行列を計算すると、以前とは異なる結果になる
+    let covariance = calculate_covariance_matrix(&daily_returns);
+    assert_eq!(covariance.shape(), [3, 3]);
+
+    // 最適化結果も変わる
+    let optimal_weights = maximize_sharpe_ratio(&avg_returns, &covariance);
+    println!(
+        "Optimal weights with ordered returns: {:?}",
+        optimal_weights
+    );
+}
+
 // ==================== 高度な制約・最適化テスト ====================
 
 #[test]
