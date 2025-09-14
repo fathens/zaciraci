@@ -205,17 +205,37 @@ pub async fn check_history_cache(
         return Ok(None);
     }
 
-    // Check if we have data covering the requested time range
+    // Check if we have reasonable data coverage for the requested time range
     let first_time: DateTime<Utc> =
         DateTime::from_naive_utc_and_offset(merged_data.first().unwrap().time, Utc);
     let last_time: DateTime<Utc> =
         DateTime::from_naive_utc_and_offset(merged_data.last().unwrap().time, Utc);
 
-    // We need data that starts before or at start_time and ends after or at end_time
-    if first_time <= start_time && last_time >= end_time {
-        Ok(Some(merged_data))
+    // Allow for some flexibility in coverage:
+    // - Data should start within 24 hours of the requested start
+    // - Data should end within 24 hours of the requested end
+    // This accounts for API data availability and real-world data gaps
+    let start_tolerance = chrono::Duration::hours(24);
+    let end_tolerance = chrono::Duration::hours(24);
+
+    let acceptable_start = first_time <= (start_time + start_tolerance);
+    let acceptable_end = last_time >= (end_time - end_tolerance);
+
+    if acceptable_start && acceptable_end {
+        // Additional check: make sure we have some data within the requested range
+        let has_data_in_range = merged_data.iter().any(|v| {
+            let value_time: DateTime<Utc> = DateTime::from_naive_utc_and_offset(v.time, Utc);
+            value_time >= start_time && value_time <= end_time
+        });
+
+        if has_data_in_range {
+            Ok(Some(merged_data))
+        } else {
+            // No data points actually fall within the requested range
+            Ok(None)
+        }
     } else {
-        // Partial data available, but not complete coverage
+        // Insufficient coverage
         Ok(None)
     }
 }
@@ -331,3 +351,6 @@ pub async fn fetch_multiple_price_history_with_cache(
     );
     Ok(price_data)
 }
+
+#[cfg(test)]
+mod tests;
