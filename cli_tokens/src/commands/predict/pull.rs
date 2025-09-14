@@ -19,6 +19,7 @@ use crate::utils::{
     file::{file_exists, sanitize_filename, write_json_file},
 };
 use common::api::chronos::ChronosApiClient;
+use common::cache::CacheOutput;
 use common::prediction::{PredictionPoint, TokenPredictionResult};
 
 /// Find the task file for a given token
@@ -329,7 +330,11 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
     // Save results using structured cache
     pb.set_message("Saving prediction results to structured cache...");
-    let saved_path = save_prediction_result(&cache_params, &prediction_file_data).await?;
+    save_prediction_result(&cache_params, &prediction_file_data).await?;
+    CacheOutput::prediction_cached(
+        &token_data.token,
+        prediction_file_data.prediction_results.predictions.len(),
+    );
 
     // Also save the original format for backward compatibility
     let prediction_result = TokenPredictionResult {
@@ -346,8 +351,8 @@ pub async fn run(args: PullArgs) -> Result<()> {
     write_json_file(&task_file, &task_info).await?;
 
     pb.finish_with_message(format!(
-        "✅ Prediction completed for token: {}\n   📁 Structured cache: {:?}\n   📄 Legacy format: {:?}",
-        token_data.token, saved_path, prediction_file
+        "✅ Prediction completed for token: {}\n   📄 Legacy format: {:?}",
+        token_data.token, prediction_file
     ));
 
     Ok(())

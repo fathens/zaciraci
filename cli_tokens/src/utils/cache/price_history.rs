@@ -6,6 +6,7 @@ use tokio::fs;
 use crate::api::backend::BackendClient;
 use crate::models::history::{HistoryFileData, HistoryMetadata, PriceHistory};
 use crate::utils::file::sanitize_filename;
+use common::cache::CacheOutput;
 use common::stats::ValueAtTime;
 
 // Import common utilities from parent module
@@ -253,16 +254,12 @@ pub async fn fetch_price_history_with_cache(
     if let Some(cached_data) =
         check_history_cache(quote_token, base_token, start_time, end_time).await?
     {
-        println!(
-            "  ✅ Using cached data for {} ({} data points)",
-            base_token,
-            cached_data.len()
-        );
+        CacheOutput::price_cache_hit(base_token, cached_data.len());
         return Ok(cached_data);
     }
 
     // Fetch from API
-    println!("  🌐 Fetching data from API for {}", base_token);
+    CacheOutput::price_cache_miss(base_token);
     let values = backend_client
         .get_price_history(
             quote_token,
@@ -287,11 +284,7 @@ pub async fn fetch_price_history_with_cache(
 
     // Save to cache
     save_history_data(quote_token, base_token, start_time, end_time, &values).await?;
-    println!(
-        "  💾 Cached data for {} ({} data points)",
-        base_token,
-        values.len()
-    );
+    CacheOutput::price_cached(base_token, values.len());
 
     Ok(values)
 }

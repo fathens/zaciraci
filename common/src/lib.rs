@@ -1,5 +1,6 @@
 pub mod algorithm;
 pub mod api;
+pub mod cache;
 pub mod config;
 
 pub mod ollama;

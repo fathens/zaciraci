@@ -14,6 +14,7 @@ use crate::models::prediction::{
 use crate::utils::cache::{
     check_prediction_cache, load_prediction_data, save_prediction_result, PredictionCacheParams,
 };
+use common::cache::CacheOutput;
 
 #[allow(clippy::too_many_arguments)]
 /// Try to load prediction from cache
@@ -25,7 +26,6 @@ async fn try_load_from_cache(
     hist_end: DateTime<Utc>,
     pred_start: DateTime<Utc>,
     pred_end: DateTime<Utc>,
-    verbose: bool,
 ) -> Result<Option<PredictionData>> {
     let cache_params = PredictionCacheParams {
         model_name,
@@ -38,10 +38,6 @@ async fn try_load_from_cache(
     };
 
     if let Some(cache_path) = check_prediction_cache(&cache_params).await? {
-        if verbose {
-            println!("📂 Found cached prediction for {}: {:?}", token, cache_path);
-        }
-
         let cached_data = load_prediction_data(&cache_path).await?;
 
         // Convert cached prediction to PredictionData
@@ -72,7 +68,6 @@ async fn try_load_from_cache(
 async fn save_to_cache(
     cache_params: &PredictionCacheParams<'_>,
     forecast_data: &common::prediction::ChronosPredictionResponse,
-    verbose: bool,
 ) -> Result<()> {
     // Convert forecast data to cache format
     let cache_predictions: Vec<CachePredictionPoint> = forecast_data
@@ -106,13 +101,11 @@ async fn save_to_cache(
         },
     };
 
-    let saved_path = save_prediction_result(cache_params, &prediction_file_data).await?;
-    if verbose {
-        println!(
-            "💾 Cached prediction for {}: {:?}",
-            cache_params.base_token, saved_path
-        );
-    }
+    save_prediction_result(cache_params, &prediction_file_data).await?;
+    CacheOutput::prediction_cached(
+        cache_params.base_token,
+        prediction_file_data.prediction_results.predictions.len(),
+    );
 
     Ok(())
 }
@@ -163,21 +156,16 @@ pub async fn generate_api_predictions(
             hist_end,
             pred_start,
             pred_end,
-            verbose,
         )
         .await
         {
             Ok(Some(cached_prediction)) => {
-                if verbose {
-                    println!("🎯 Using cached prediction for {}", token);
-                }
+                CacheOutput::prediction_cache_hit(token);
                 predictions.push(cached_prediction);
                 continue; // Move to next token
             }
             Ok(None) => {
-                if verbose {
-                    println!("🔍 No cache found for {}, fetching from API", token);
-                }
+                CacheOutput::prediction_cache_miss(token);
             }
             Err(e) => {
                 if verbose {
@@ -256,15 +244,12 @@ pub async fn generate_api_predictions(
                                         };
 
                                         if let Err(e) =
-                                            save_to_cache(&cache_params, chronos_result, verbose)
-                                                .await
+                                            save_to_cache(&cache_params, chronos_result).await
                                         {
-                                            if verbose {
-                                                println!(
-                                                    "⚠️ Failed to save prediction to cache: {}",
-                                                    e
-                                                );
-                                            }
+                                            println!(
+                                                "⚠️ Failed to save prediction to cache: {}",
+                                                e
+                                            );
                                             // Continue anyway, don't fail the simulation
                                         }
 
