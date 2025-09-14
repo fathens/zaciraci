@@ -169,17 +169,19 @@ pub async fn check_prediction_cache(params: &PredictionCacheParams<'_>) -> Resul
         params.hist_start,
         params.hist_end,
     );
-    if !prediction_dir.exists() {
+
+    // Use async fs::metadata to check directory existence more reliably
+    if fs::metadata(&prediction_dir).await.is_err() {
         return Ok(None);
     }
 
     let filename = create_prediction_filename(params.pred_start, params.pred_end);
     let file_path = prediction_dir.join(filename);
 
-    if file_path.exists() {
-        Ok(Some(file_path))
-    } else {
-        Ok(None)
+    // Use async fs::metadata to check file existence
+    match fs::metadata(&file_path).await {
+        Ok(_) => Ok(Some(file_path)),
+        Err(_) => Ok(None),
     }
 }
 
