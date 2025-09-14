@@ -217,6 +217,8 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
         .ok_or_else(|| anyhow::anyhow!("Invalid capital amount: {}", args.capital))?;
 
     let rebalance_interval = RebalanceInterval::parse(&args.rebalance_interval)?;
+    let portfolio_rebalance_interval =
+        RebalanceInterval::parse(&args.portfolio_rebalance_interval)?;
     let fee_model = FeeModel::from((args.fee_model.as_str(), args.custom_fee));
     let gas_cost = BigDecimal::from_f64(args.gas_cost)
         .ok_or_else(|| anyhow::anyhow!("Invalid gas cost: {}", args.gas_cost))?;
@@ -242,6 +244,14 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
         model: args.model,
         verbose: args.verbose,
         portfolio_rebalance_threshold: args.portfolio_rebalance_threshold,
+        portfolio_rebalance_interval,
+        momentum_min_profit_threshold: args.momentum_min_profit_threshold,
+        momentum_switch_multiplier: args.momentum_switch_multiplier,
+        momentum_min_trade_amount: args.momentum_min_trade_amount,
+        trend_rsi_overbought: args.trend_rsi_overbought,
+        trend_rsi_oversold: args.trend_rsi_oversold,
+        trend_adx_strong_threshold: args.trend_adx_strong_threshold,
+        trend_r_squared_threshold: args.trend_r_squared_threshold,
     })
 }
 

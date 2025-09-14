@@ -15,7 +15,8 @@ fn test_calculate_trend_strength() {
         Utc::now() + Duration::hours(6),
     ];
 
-    let (slope, r_squared, direction, _strength) = calculate_trend_strength(&prices, &timestamps);
+    let (slope, r_squared, direction, _strength) =
+        calculate_trend_strength(&prices, &timestamps, 0.7);
 
     assert!(slope > 0.0); // 上昇トレンド
     assert!(r_squared > 0.0); // 相関がある
@@ -23,7 +24,7 @@ fn test_calculate_trend_strength() {
 
     // 強いトレンドのテスト（R²が高い場合）
     let strong_prices = vec![100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 130.0];
-    let (_, r_squared, _, strength) = calculate_trend_strength(&strong_prices, &timestamps);
+    let (_, r_squared, _, strength) = calculate_trend_strength(&strong_prices, &timestamps, 0.7);
     assert!(r_squared > 0.9);
     assert_eq!(strength, TrendStrength::Strong);
 }
@@ -177,7 +178,7 @@ fn test_analyze_trend() {
     let highs = vec![101.0, 103.0, 106.0, 109.0, 113.0, 116.0, 119.0];
     let lows = vec![99.0, 101.0, 104.0, 107.0, 111.0, 114.0, 117.0];
 
-    let analysis = analyze_trend(token, &prices, &timestamps, &volumes, &highs, &lows);
+    let analysis = analyze_trend(token, &prices, &timestamps, &volumes, &highs, &lows, 0.7);
 
     assert_eq!(analysis.token, token);
     assert_eq!(analysis.direction, TrendDirection::Upward);
@@ -209,6 +210,9 @@ fn test_make_trend_trading_decision() {
         &strong_upward_analysis,
         &current_positions,
         available_capital,
+        70.0,
+        30.0,
+        25.0,
     );
     assert!(matches!(action, TradingAction::Switch { .. }));
 
@@ -217,17 +221,30 @@ fn test_make_trend_trading_decision() {
         strength: TrendStrength::Weak,
         ..strong_upward_analysis.clone()
     };
-    let action = make_trend_trading_decision(&weak_analysis, &current_positions, available_capital);
-    assert_eq!(action, TrendTradingAction::Hold);
+    let action = make_trend_trading_decision(
+        &weak_analysis,
+        &current_positions,
+        available_capital,
+        70.0,
+        30.0,
+        25.0,
+    );
+    assert_eq!(action, TradingAction::Hold);
 
     // サイドウェイトレンドの場合も待機
     let sideways_analysis = TrendAnalysis {
         direction: TrendDirection::Sideways,
         ..strong_upward_analysis
     };
-    let action =
-        make_trend_trading_decision(&sideways_analysis, &current_positions, available_capital);
-    assert_eq!(action, TrendTradingAction::Hold);
+    let action = make_trend_trading_decision(
+        &sideways_analysis,
+        &current_positions,
+        available_capital,
+        70.0,
+        30.0,
+        25.0,
+    );
+    assert_eq!(action, TradingAction::Hold);
 }
 
 #[test]
@@ -258,8 +275,15 @@ fn test_trend_trading_decision_with_existing_position() {
     let available_capital = 0.0;
 
     // 既存ポジションがある場合は調整を検討
-    let action = make_trend_trading_decision(&analysis, &current_positions, available_capital);
-    assert!(matches!(action, TrendTradingAction::Hold));
+    let action = make_trend_trading_decision(
+        &analysis,
+        &current_positions,
+        available_capital,
+        70.0,
+        30.0,
+        25.0,
+    );
+    assert!(matches!(action, TradingAction::Hold));
 }
 
 #[test]
@@ -289,8 +313,15 @@ fn test_trend_trading_decision_exit_conditions() {
     let current_positions = vec![existing_position];
 
     // 弱いトレンドの場合は退出
-    let action = make_trend_trading_decision(&weak_trend_analysis, &current_positions, 1000.0);
-    assert!(matches!(action, TrendTradingAction::Sell { .. }));
+    let action = make_trend_trading_decision(
+        &weak_trend_analysis,
+        &current_positions,
+        1000.0,
+        70.0,
+        30.0,
+        25.0,
+    );
+    assert!(matches!(action, TradingAction::Sell { .. }));
 }
 
 // ==================== エッジケーステスト ====================
@@ -301,7 +332,7 @@ fn test_calculate_trend_strength_edge_cases() {
     let empty_prices = vec![];
     let empty_timestamps = vec![];
     let (slope, r_squared, direction, strength) =
-        calculate_trend_strength(&empty_prices, &empty_timestamps);
+        calculate_trend_strength(&empty_prices, &empty_timestamps, 0.7);
     assert_eq!(slope, 0.0);
     assert_eq!(r_squared, 0.0);
     assert_eq!(direction, TrendDirection::Sideways);
@@ -310,7 +341,8 @@ fn test_calculate_trend_strength_edge_cases() {
     // 不整合データ
     let prices = vec![100.0, 101.0];
     let timestamps = vec![Utc::now()]; // 長さが違う
-    let (slope, _r_squared, _direction, strength) = calculate_trend_strength(&prices, &timestamps);
+    let (slope, _r_squared, _direction, strength) =
+        calculate_trend_strength(&prices, &timestamps, 0.7);
     assert_eq!(slope, 0.0);
     assert_eq!(strength, TrendStrength::NoTrend);
 
@@ -322,7 +354,7 @@ fn test_calculate_trend_strength_edge_cases() {
         Utc::now() + Duration::hours(2),
         Utc::now() + Duration::hours(3),
     ];
-    let (slope, _, direction, _strength) = calculate_trend_strength(&flat_prices, &timestamps);
+    let (slope, _, direction, _strength) = calculate_trend_strength(&flat_prices, &timestamps, 0.7);
     assert!(slope.abs() < 0.001);
     assert_eq!(direction, TrendDirection::Sideways);
 }
@@ -367,6 +399,12 @@ fn test_execute_trend_following_strategy() {
                 current_positions,
                 available_capital,
                 &market_data,
+                super::TrendFollowingParams {
+                    rsi_overbought: 70.0,
+                    rsi_oversold: 30.0,
+                    adx_strong_threshold: 25.0,
+                    r_squared_threshold: 0.7,
+                },
             )
             .await
         })
@@ -398,9 +436,9 @@ fn test_volume_trend_edge_cases() {
 #[test]
 fn test_trading_constants() {
     // 定数が利用可能であることを確認（コンパイル時チェック）
-    let _rsi_test = RSI_OVERBOUGHT - RSI_OVERSOLD; // 正の値になるはず
+    let _rsi_test = 70.0 - 30.0; // 正の値になるはず
     let _volume_test = VOLUME_BREAKOUT_MULTIPLIER - 1.0; // 正の値になるはず
-    let _r2_test = R_SQUARED_THRESHOLD * 100.0; // パーセンテージ変換
+    let _r2_test = 0.7 * 100.0; // パーセンテージ変換
     let _pos_test = MAX_POSITION_SIZE * 1000.0; // スケール変換
     let _kelly_test = KELLY_RISK_FACTOR * 4.0; // スケール変換
 
@@ -428,7 +466,7 @@ fn test_conflicting_technical_indicators() {
 
     let rsi_value = calculate_rsi(&oversold_rsi_prices, 14);
     assert!(rsi_value.is_some());
-    assert!(rsi_value.unwrap() < RSI_OVERSOLD); // 過売り状態を確認
+    assert!(rsi_value.unwrap() < 30.0); // 過売り状態を確認
 
     // 同時にMACDは下降トレンドを示す
     let (macd, macd_signal) = calculate_macd(&oversold_rsi_prices, 12, 26, 9);
@@ -518,7 +556,7 @@ fn test_multi_indicator_confirmation_logic() {
     let adx_val = adx.unwrap();
 
     // 強いトレンドではADXが25以上
-    if adx_val > ADX_STRONG_TREND {
+    if adx_val > 25.0 {
         // RSIが上昇トレンドを示し、MACDとシグナルが妥当な範囲にある
         assert!(rsi_val > 50.0);
         assert!((macd_val - signal_val).abs() < 5.0); // MACDとシグナルの差が合理的
@@ -590,7 +628,7 @@ fn test_noise_filtering_effectiveness() {
 
     // トレンド強度計算でノイズがフィルタされることを確認
     let (slope, r_squared, direction, strength) =
-        calculate_trend_strength(&noisy_prices, &timestamps);
+        calculate_trend_strength(&noisy_prices, &timestamps, 0.7);
 
     // ノイズの多いデータでは：
     // 1. R²値が低い（トレンドが不明確）
@@ -632,7 +670,7 @@ fn test_trend_reversal_early_detection() {
         let window_timestamps = &timestamps[0..window_end];
 
         let (slope, _r_squared, direction, _strength) =
-            calculate_trend_strength(window_prices, window_timestamps);
+            calculate_trend_strength(window_prices, window_timestamps, 0.7);
 
         // 転換開始の検出（R²の低下、スロープの変化）
         if window_end == 12 { // 転換点近辺
@@ -673,7 +711,7 @@ fn test_sideways_market_indicator_accuracy() {
 
     // レンジ相場での各指標の動作確認
     let (slope, r_squared, direction, strength) =
-        calculate_trend_strength(&sideways_prices, &timestamps);
+        calculate_trend_strength(&sideways_prices, &timestamps, 0.7);
 
     // 横ばい相場の特徴
     assert!(slope.abs() < 0.01); // 傾きがほぼゼロ
@@ -693,7 +731,7 @@ fn test_sideways_market_indicator_accuracy() {
     // ADXは低い値（トレンドレス）
     let adx = calculate_adx(&highs, &lows, &sideways_prices, 14);
     if let Some(adx_val) = adx {
-        assert!(adx_val < ADX_STRONG_TREND); // 25未満
+        assert!(adx_val < 25.0); // 25未満
     }
 
     // レンジ相場では取引を避けるべき
@@ -704,11 +742,12 @@ fn test_sideways_market_indicator_accuracy() {
         &volumes,
         &highs,
         &lows,
+        0.7,
     );
     assert_eq!(analysis.direction, TrendDirection::Sideways);
 
-    let decision = make_trend_trading_decision(&analysis, &[], 1000.0);
-    assert_eq!(decision, TrendTradingAction::Hold); // 待機すべき
+    let decision = make_trend_trading_decision(&analysis, &[], 1000.0, 70.0, 30.0, 25.0);
+    assert_eq!(decision, TradingAction::Hold); // 待機すべき
 }
 
 #[test]
@@ -730,7 +769,7 @@ fn test_high_volatility_trend_detection() {
 
     // 高ボラティリティでもトレンドが検出できることを確認
     let (slope, r_squared, direction, _strength) =
-        calculate_trend_strength(&high_vol_prices, &timestamps);
+        calculate_trend_strength(&high_vol_prices, &timestamps, 0.7);
 
     // 高ボラでもトレンドは検出される（ただし傾きは小さくなりがち）
     if direction == TrendDirection::Upward {

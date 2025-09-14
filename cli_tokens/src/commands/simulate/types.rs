@@ -179,6 +179,38 @@ pub struct SimulateArgs {
     /// Portfolioアルゴリズムのリバランス閾値 (0.0-1.0) [デフォルト: 0.05]
     #[clap(long, default_value = "0.05")]
     pub portfolio_rebalance_threshold: f64,
+
+    /// Portfolioアルゴリズムのリバランス間隔 (例: 2h, 90m, 1d) [デフォルト: 1d]
+    #[clap(long, default_value = "1d")]
+    pub portfolio_rebalance_interval: String,
+
+    /// Momentumアルゴリズムの最低利益率閾値 (0.0-1.0) [デフォルト: 0.01]
+    #[clap(long, default_value = "0.01")]
+    pub momentum_min_profit_threshold: f64,
+
+    /// Momentumアルゴリズムの切り替え倍率 [デフォルト: 1.2]
+    #[clap(long, default_value = "1.2")]
+    pub momentum_switch_multiplier: f64,
+
+    /// Momentumアルゴリズムの最小取引額 (NEAR) [デフォルト: 0.1]
+    #[clap(long, default_value = "0.1")]
+    pub momentum_min_trade_amount: f64,
+
+    /// TrendFollowingアルゴリズムのRSI買われすぎ閾値 [デフォルト: 80.0]
+    #[clap(long, default_value = "80.0")]
+    pub trend_rsi_overbought: f64,
+
+    /// TrendFollowingアルゴリズムのRSI売られすぎ閾値 [デフォルト: 20.0]
+    #[clap(long, default_value = "20.0")]
+    pub trend_rsi_oversold: f64,
+
+    /// TrendFollowingアルゴリズムのADX強トレンド閾値 [デフォルト: 20.0]
+    #[clap(long, default_value = "20.0")]
+    pub trend_adx_strong_threshold: f64,
+
+    /// TrendFollowingアルゴリズムのR²閾値 [デフォルト: 0.5]
+    #[clap(long, default_value = "0.5")]
+    pub trend_r_squared_threshold: f64,
 }
 
 // Configuration structures
@@ -200,6 +232,14 @@ pub struct SimulationConfig {
     pub model: Option<String>,              // 予測モデル
     pub verbose: bool,                      // 詳細出力フラグ
     pub portfolio_rebalance_threshold: f64, // Portfolioアルゴリズムのリバランス閾値
+    pub portfolio_rebalance_interval: RebalanceInterval, // Portfolioアルゴリズムのリバランス間隔
+    pub momentum_min_profit_threshold: f64, // Momentumアルゴリズムの最低利益率閾値
+    pub momentum_switch_multiplier: f64,    // Momentumアルゴリズムの切り替え倍率
+    pub momentum_min_trade_amount: f64,     // Momentumアルゴリズムの最小取引額
+    pub trend_rsi_overbought: f64,          // TrendFollowingアルゴリズムのRSI買われすぎ閾値
+    pub trend_rsi_oversold: f64,            // TrendFollowingアルゴリズムのRSI売られすぎ閾値
+    pub trend_adx_strong_threshold: f64,    // TrendFollowingアルゴリズムのADX強トレンド閾値
+    pub trend_r_squared_threshold: f64,     // TrendFollowingアルゴリズムのR²閾値
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

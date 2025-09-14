@@ -66,23 +66,60 @@ fn test_make_trading_decision() {
 
     let amount = BigDecimal::from_f64(10.0).unwrap();
 
+    // デフォルトパラメータ
+    let min_profit_threshold = 0.05;
+    let switch_multiplier = 1.5;
+    let min_trade_amount = 1.0;
+
     // Case 1: Hold when current token is best
-    let action = make_trading_decision("BEST_TOKEN", 0.2, &ranked, &amount);
+    let action = make_trading_decision(
+        "BEST_TOKEN",
+        0.2,
+        &ranked,
+        &amount,
+        min_profit_threshold,
+        switch_multiplier,
+        min_trade_amount,
+    );
     assert_eq!(action, TradingAction::Hold);
 
     // Case 2: Sell when return is below threshold (5%)
-    let action = make_trading_decision("BAD_TOKEN", 0.02, &ranked, &amount);
+    let action = make_trading_decision(
+        "BAD_TOKEN",
+        0.02,
+        &ranked,
+        &amount,
+        min_profit_threshold,
+        switch_multiplier,
+        min_trade_amount,
+    );
     assert!(matches!(action, TradingAction::Sell { .. }));
 
     // Case 3: Switch when better option exists
-    // 現在のリターン0.05、最良0.2、信頼度0.8、SWITCH_MULTIPLIER 1.5
+    // 現在のリターン0.05、最良0.2、信頼度0.8、1.5 1.5
     // 0.2 > 0.05 * 1.5 * 0.8 = 0.06 なので 0.2 > 0.06 でSwitch
-    let action = make_trading_decision("MEDIUM_TOKEN", 0.05, &ranked, &amount);
+    let action = make_trading_decision(
+        "MEDIUM_TOKEN",
+        0.05,
+        &ranked,
+        &amount,
+        min_profit_threshold,
+        switch_multiplier,
+        min_trade_amount,
+    );
     assert!(matches!(action, TradingAction::Switch { .. }));
 
     // Case 4: Hold when amount is too small
     let small_amount = BigDecimal::from_f64(0.5).unwrap();
-    let action = make_trading_decision("BAD_TOKEN", 0.02, &ranked, &small_amount);
+    let action = make_trading_decision(
+        "BAD_TOKEN",
+        0.02,
+        &ranked,
+        &small_amount,
+        min_profit_threshold,
+        switch_multiplier,
+        min_trade_amount,
+    );
     assert_eq!(action, TradingAction::Hold);
 }
 
@@ -302,8 +339,8 @@ fn test_prediction_confidence_degradation() {
     }
 
     // 信頼度が0.3以下では取引を避けるべき
-    assert!(expected_returns[3] < MIN_PROFIT_THRESHOLD);
-    assert!(expected_returns[4] < MIN_PROFIT_THRESHOLD);
+    assert!(expected_returns[3] < 0.05); // 元の0.05
+    assert!(expected_returns[4] < 0.05);
 }
 
 #[test]
@@ -332,7 +369,7 @@ fn test_market_stress_scenario() {
     if !ranked.is_empty() {
         for (_, expected_return, confidence) in &ranked {
             // 信頼度調整後のリターンが十分に高い場合のみ取引
-            assert!(*expected_return > MIN_PROFIT_THRESHOLD * 1.5);
+            assert!(*expected_return > 0.05 * 1.5);
             assert!(confidence.unwrap_or(0.0) >= 0.4);
         }
     }
@@ -370,6 +407,9 @@ fn test_trading_frequency_cost_impact() {
         0.015, // 1.5%の現在リターン
         &high_freq_ranked,
         &base_amount,
+        0.05,
+        1.5,
+        1.0,
     );
 
     let low_freq_decision = make_trading_decision(
@@ -377,6 +417,9 @@ fn test_trading_frequency_cost_impact() {
         0.01, // より低い現在リターン
         &low_freq_ranked,
         &base_amount,
+        0.05,
+        1.5,
+        1.0,
     );
 
     // 高頻度取引では小さなリターンでHold
@@ -393,9 +436,9 @@ fn test_trading_frequency_cost_impact() {
         // 信頼度調整後の期待リターンが約0.043であることを確認
         assert!((low_freq_expected - 0.0432).abs() < 0.001);
 
-        // SWITCH_MULTIPLIER * confidence_factor を考慮した条件チェック
+        // 1.5 * confidence_factor を考慮した条件チェック
         let confidence_factor = low_freq_ranked[0].2.unwrap_or(0.5);
-        let switch_threshold = 0.01 * SWITCH_MULTIPLIER * confidence_factor; // 0.01 * 1.5 * 0.8 = 0.012
+        let switch_threshold = 0.01 * 1.5 * confidence_factor; // 0.01 * 1.5 * 0.8 = 0.012
 
         if low_freq_expected > switch_threshold {
             // 0.0432 > 0.012 なので Switch になるはず
@@ -428,8 +471,17 @@ fn test_partial_fill_scenario() {
     let full_amount = BigDecimal::from_f64(1000.0).unwrap();
     let partial_amount = BigDecimal::from_f64(300.0).unwrap(); // 30%のみ約定
 
-    let full_action = make_trading_decision("CURRENT_TOKEN", 0.03, &ranked, &full_amount);
-    let partial_action = make_trading_decision("CURRENT_TOKEN", 0.03, &ranked, &partial_amount);
+    let full_action =
+        make_trading_decision("CURRENT_TOKEN", 0.03, &ranked, &full_amount, 0.05, 1.5, 1.0);
+    let partial_action = make_trading_decision(
+        "CURRENT_TOKEN",
+        0.03,
+        &ranked,
+        &partial_amount,
+        0.05,
+        1.5,
+        1.0,
+    );
 
     // フル約定時はSwitchまたはSell
     assert!(
@@ -448,7 +500,7 @@ fn test_partial_fill_scenario() {
         TradingAction::Hold => {
             // 部分約定によりリターンが取引コストを下回る場合はHold
             let partial_f64 = partial_amount.to_string().parse::<f64>().unwrap_or(0.0);
-            assert!(partial_f64 < MIN_TRADE_AMOUNT);
+            assert!(partial_f64 < 1.0);
         }
         TradingAction::Rebalance { .. }
         | TradingAction::AddPosition { .. }
@@ -487,6 +539,9 @@ fn test_multi_timeframe_momentum_consistency() {
         0.02,
         &short_ranked,
         &BigDecimal::from_f64(1000.0).unwrap(),
+        0.05,
+        1.5,
+        1.0,
     );
 
     // 長期シグナルでの判断
@@ -496,6 +551,9 @@ fn test_multi_timeframe_momentum_consistency() {
         0.02,
         &long_ranked,
         &BigDecimal::from_f64(1000.0).unwrap(),
+        0.05,
+        1.5,
+        1.0,
     );
 
     // 短期では取引機会あり（またはSell）
@@ -512,9 +570,9 @@ fn test_multi_timeframe_momentum_consistency() {
 fn test_momentum_signal_strength_threshold() {
     // 閾値近辺でのシグナル強度テスト
     let threshold_cases = vec![
-        (MIN_PROFIT_THRESHOLD - 0.001, "below_threshold"),
-        (MIN_PROFIT_THRESHOLD, "at_threshold"),
-        (MIN_PROFIT_THRESHOLD + 0.001, "above_threshold"),
+        (0.05 - 0.001, "below_threshold"),
+        (0.05, "at_threshold"),
+        (0.05 + 0.001, "above_threshold"),
     ];
 
     for (return_level, case_name) in threshold_cases {
@@ -531,12 +589,12 @@ fn test_momentum_signal_strength_threshold() {
 
         let ranked = rank_tokens_by_momentum(vec![prediction]);
 
-        if return_level < MIN_PROFIT_THRESHOLD {
+        if return_level < 0.05 {
             // 閾値以下では取引対象から除外される可能性が高い
             // ただし信頼度調整により実際の期待リターンが変わる場合がある
             if !ranked.is_empty() {
                 // ランクに含まれる場合は実際の期待リターンを確認
-                assert!(ranked[0].1 <= MIN_PROFIT_THRESHOLD + 0.01); // 多少の誤差を許容
+                assert!(ranked[0].1 <= 0.05 + 0.01); // 多少の誤差を許容
             }
         } else {
             // 閾値以上では取引対象に含まれる

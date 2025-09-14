@@ -163,7 +163,14 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
         // Momentum戦略を実行
         if !token_holdings.is_empty() && !predictions.is_empty() {
-            let execution_report = execute_momentum_strategy(token_holdings, predictions).await?;
+            let execution_report = execute_momentum_strategy(
+                token_holdings,
+                predictions,
+                config.momentum_min_profit_threshold,
+                config.momentum_switch_multiplier,
+                config.momentum_min_trade_amount,
+            )
+            .await?;
 
             // 取引アクションを実行
             for action in execution_report.actions {
@@ -479,87 +486,97 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 cash_balance: 0.0,
             };
 
-            // ポートフォリオ最適化を実行
-            if let Ok(execution_report) = execute_portfolio_optimization(
-                &wallet_info,
-                portfolio_data,
-                config.portfolio_rebalance_threshold,
-            )
-            .await
-            {
-                // リバランスアクションを実行
-                for action in execution_report.actions {
-                    if let TradingAction::Rebalance { target_weights } = action {
-                        // 現在の総価値を計算（NEAR単位）
-                        let mut total_portfolio_value = 0.0;
-                        for (token, amount) in &current_holdings {
-                            if let Some(&price_yocto) = current_prices.get(token) {
-                                let price_near =
-                                    common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                                total_portfolio_value += amount * price_near;
+            // Portfolio専用のリバランス期間チェック
+            let portfolio_rebalance_duration = config.portfolio_rebalance_interval.as_duration();
+            let should_rebalance =
+                current_time >= last_rebalance_time + portfolio_rebalance_duration;
+
+            // ポートフォリオ最適化を実行（リバランス期間チェックを通過した場合のみ）
+            if should_rebalance {
+                if let Ok(execution_report) = execute_portfolio_optimization(
+                    &wallet_info,
+                    portfolio_data,
+                    config.portfolio_rebalance_threshold,
+                )
+                .await
+                {
+                    // リバランスアクションを実行
+                    for action in execution_report.actions {
+                        if let TradingAction::Rebalance { target_weights } = action {
+                            // 現在の総価値を計算（NEAR単位）
+                            let mut total_portfolio_value = 0.0;
+                            for (token, amount) in &current_holdings {
+                                if let Some(&price_yocto) = current_prices.get(token) {
+                                    let price_near =
+                                        common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                                    total_portfolio_value += amount * price_near;
+                                }
                             }
-                        }
 
-                        // 目標配分に基づいてリバランス
-                        for (token, target_weight) in target_weights {
-                            if let Some(&current_price_yocto) = current_prices.get(&token) {
-                                let current_price_near =
-                                    common::units::Units::yocto_f64_to_near_f64(
-                                        current_price_yocto,
-                                    );
-                                let target_value = total_portfolio_value * target_weight;
-                                let target_amount = target_value / current_price_near;
+                            // 目標配分に基づいてリバランス
+                            for (token, target_weight) in target_weights {
+                                if let Some(&current_price_yocto) = current_prices.get(&token) {
+                                    let current_price_near =
+                                        common::units::Units::yocto_f64_to_near_f64(
+                                            current_price_yocto,
+                                        );
+                                    let target_value = total_portfolio_value * target_weight;
+                                    let target_amount = target_value / current_price_near;
 
-                                // 現在の保有量と目標量の差を計算
-                                let current_amount =
-                                    current_holdings.get(&token).copied().unwrap_or(0.0);
-                                let diff = target_amount - current_amount;
+                                    // 現在の保有量と目標量の差を計算
+                                    let current_amount =
+                                        current_holdings.get(&token).copied().unwrap_or(0.0);
+                                    let diff = target_amount - current_amount;
 
-                                // 相対的な閾値: 現在保有量の1%以上の差でリバランス
-                                let relative_threshold = current_amount * 0.01;
-                                let min_threshold = 0.001; // 最小絶対閾値
-                                let effective_threshold = relative_threshold.max(min_threshold);
+                                    // 相対的な閾値: 現在保有量の1%以上の差でリバランス
+                                    let relative_threshold = current_amount * 0.01;
+                                    let min_threshold = 0.001; // 最小絶対閾値
+                                    let effective_threshold = relative_threshold.max(min_threshold);
 
-                                if diff.abs() > effective_threshold {
-                                    // 保有量の1%以上の差がある場合のみリバランス
-                                    current_holdings.insert(token.clone(), target_amount);
+                                    if diff.abs() > effective_threshold {
+                                        // 保有量の1%以上の差がある場合のみリバランス
+                                        current_holdings.insert(token.clone(), target_amount);
 
-                                    // 簡易的な取引コスト計算（NEAR単位）
-                                    let trade_cost = diff.abs() * current_price_near * 0.003; // 0.3%手数料
-                                    total_costs += trade_cost;
+                                        // 簡易的な取引コスト計算（NEAR単位）
+                                        let trade_cost = diff.abs() * current_price_near * 0.003; // 0.3%手数料
+                                        total_costs += trade_cost;
 
-                                    // TradeExecutionを記録
-                                    trades.push(TradeExecution {
-                                        timestamp: current_time,
-                                        from_token: config.quote_token.clone(),
-                                        to_token: token.clone(),
-                                        amount: diff.abs(),
-                                        executed_price: current_price_near,
-                                        cost: TradingCost {
-                                            protocol_fee: BigDecimal::from_f64(trade_cost * 0.7)
+                                        // TradeExecutionを記録
+                                        trades.push(TradeExecution {
+                                            timestamp: current_time,
+                                            from_token: config.quote_token.clone(),
+                                            to_token: token.clone(),
+                                            amount: diff.abs(),
+                                            executed_price: current_price_near,
+                                            cost: TradingCost {
+                                                protocol_fee: BigDecimal::from_f64(
+                                                    trade_cost * 0.7,
+                                                )
                                                 .unwrap_or_default(),
-                                            slippage: BigDecimal::from_f64(trade_cost * 0.2)
-                                                .unwrap_or_default(),
-                                            gas_fee: config.gas_cost.clone(),
-                                            total: BigDecimal::from_f64(trade_cost)
-                                                .unwrap_or_default(),
-                                        },
-                                        portfolio_value_before: total_portfolio_value,
-                                        portfolio_value_after: total_portfolio_value - trade_cost,
-                                        success: true,
-                                        reason: format!(
-                                            "Portfolio rebalancing: {} -> {:.1}%",
-                                            token,
-                                            target_weight * 100.0
-                                        ),
-                                    });
+                                                slippage: BigDecimal::from_f64(trade_cost * 0.2)
+                                                    .unwrap_or_default(),
+                                                gas_fee: config.gas_cost.clone(),
+                                                total: BigDecimal::from_f64(trade_cost)
+                                                    .unwrap_or_default(),
+                                            },
+                                            portfolio_value_before: total_portfolio_value,
+                                            portfolio_value_after: total_portfolio_value
+                                                - trade_cost,
+                                            success: true,
+                                            reason: format!(
+                                                "Portfolio rebalancing: {} -> {:.1}%",
+                                                token,
+                                                target_weight * 100.0
+                                            ),
+                                        });
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                last_rebalance_time = current_time;
+                    last_rebalance_time = current_time;
+                }
             }
         }
 
@@ -650,7 +667,9 @@ pub(crate) async fn run_trend_following_optimization_simulation(
 ) -> Result<SimulationResult> {
     use super::metrics::calculate_performance_metrics;
     use bigdecimal::{BigDecimal, FromPrimitive};
-    use common::algorithm::trend_following::{execute_trend_following_strategy, TrendPosition};
+    use common::algorithm::trend_following::{
+        execute_trend_following_strategy, TrendFollowingParams, TrendPosition,
+    };
     use common::algorithm::TradingAction;
 
     let duration = config.end_date - config.start_date;
@@ -775,6 +794,12 @@ pub(crate) async fn run_trend_following_optimization_simulation(
                 current_positions.clone(),
                 available_capital,
                 &market_data,
+                TrendFollowingParams {
+                    rsi_overbought: config.trend_rsi_overbought,
+                    rsi_oversold: config.trend_rsi_oversold,
+                    adx_strong_threshold: config.trend_adx_strong_threshold,
+                    r_squared_threshold: config.trend_r_squared_threshold,
+                },
             )
             .await
             {

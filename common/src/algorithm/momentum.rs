@@ -9,20 +9,11 @@ use super::types::*;
 
 // ==================== 定数 ====================
 
-/// 最低利益率閾値（5%）
-const MIN_PROFIT_THRESHOLD: f64 = 0.05;
-
-/// 切り替え倍率（1.5倍以上の利益で切り替え）
-const SWITCH_MULTIPLIER: f64 = 1.5;
-
 /// 上位N個のトークンを考慮
 pub const TOP_N_TOKENS: usize = 3;
 
 /// 取引手数料（0.3%）
 const TRADING_FEE: f64 = 0.003;
-
-/// 最小取引額（NEAR）
-const MIN_TRADE_AMOUNT: f64 = 1.0;
 
 /// 最大スリッページ許容率（2%）
 const MAX_SLIPPAGE: f64 = 0.02;
@@ -90,6 +81,9 @@ pub fn make_trading_decision(
     current_return: f64,
     ranked_tokens: &[(String, f64, Option<f64>)],
     holding_amount: &BigDecimal,
+    min_profit_threshold: f64,
+    switch_multiplier: f64,
+    min_trade_amount: f64,
 ) -> TradingAction {
     // 空の場合はHold
     if ranked_tokens.is_empty() {
@@ -105,12 +99,12 @@ pub fn make_trading_decision(
 
     // 保有額が最小取引額以下の場合はHold
     let amount = holding_amount.to_string().parse::<f64>().unwrap_or(0.0);
-    if amount < MIN_TRADE_AMOUNT {
+    if amount < min_trade_amount {
         return TradingAction::Hold;
     }
 
     // 現在のトークンの期待リターンが閾値以下
-    if current_return < MIN_PROFIT_THRESHOLD {
+    if current_return < min_profit_threshold {
         return TradingAction::Sell {
             token: current_token.to_string(),
             target: best_token.0.clone(),
@@ -119,7 +113,7 @@ pub fn make_trading_decision(
 
     // より良いトークンが存在する場合（信頼度も考慮）
     let confidence_factor = best_token.2.unwrap_or(0.5);
-    if best_token.1 > current_return * SWITCH_MULTIPLIER * confidence_factor {
+    if best_token.1 > current_return * switch_multiplier * confidence_factor {
         return TradingAction::Switch {
             from: current_token.to_string(),
             to: best_token.0.clone(),
@@ -135,6 +129,9 @@ pub fn make_trading_decision(
 pub async fn execute_momentum_strategy(
     current_holdings: Vec<TokenHolding>,
     predictions: Vec<PredictionData>,
+    min_profit_threshold: f64,
+    switch_multiplier: f64,
+    min_trade_amount: f64,
 ) -> Result<ExecutionReport> {
     // トークンをランキング
     let ranked = rank_tokens_by_momentum(predictions.clone());
@@ -154,8 +151,15 @@ pub async fn execute_momentum_strategy(
             0.0
         };
 
-        let action =
-            make_trading_decision(&holding.token, current_return, &ranked, &holding.amount);
+        let action = make_trading_decision(
+            &holding.token,
+            current_return,
+            &ranked,
+            &holding.amount,
+            min_profit_threshold,
+            switch_multiplier,
+            min_trade_amount,
+        );
 
         if action != TradingAction::Hold {
             actions.push(action);
@@ -178,6 +182,9 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     current_holdings: Vec<TokenHolding>,
     quote_token: &str,
     history_days: i64,
+    min_profit_threshold: f64,
+    switch_multiplier: f64,
+    min_trade_amount: f64,
 ) -> Result<ExecutionReport> {
     // 保有トークンの予測を取得
     let tokens: Vec<String> = current_holdings.iter().map(|h| h.token.clone()).collect();
@@ -226,7 +233,14 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     }
 
     // 戦略を実行
-    execute_momentum_strategy(current_holdings, prediction_data).await
+    execute_momentum_strategy(
+        current_holdings,
+        prediction_data,
+        min_profit_threshold,
+        switch_multiplier,
+        min_trade_amount,
+    )
+    .await
 }
 
 // ==================== 改善機能 ====================
@@ -469,8 +483,16 @@ mod integration_tests {
             },
         ];
 
-        let result =
-            execute_with_prediction_provider(&provider, current_holdings, "wrap.near", 7).await;
+        let result = execute_with_prediction_provider(
+            &provider,
+            current_holdings,
+            "wrap.near",
+            7,
+            0.05, // min_profit_threshold
+            1.5,  // switch_multiplier
+            1.0,  // min_trade_amount
+        )
+        .await;
 
         match result {
             Ok(report) => {
@@ -493,8 +515,16 @@ mod integration_tests {
             .with_price_history("top_token2", vec![(current_time, 50.0)]);
         let current_holdings = vec![];
 
-        let result =
-            execute_with_prediction_provider(&provider, current_holdings, "wrap.near", 7).await;
+        let result = execute_with_prediction_provider(
+            &provider,
+            current_holdings,
+            "wrap.near",
+            7,
+            0.05, // min_profit_threshold
+            1.5,  // switch_multiplier
+            1.0,  // min_trade_amount
+        )
+        .await;
 
         match result {
             Ok(report) => {
@@ -521,8 +551,16 @@ mod integration_tests {
             current_price: BigDecimal::from(75),
         }];
 
-        let result =
-            execute_with_prediction_provider(&provider, current_holdings, "wrap.near", 7).await;
+        let result = execute_with_prediction_provider(
+            &provider,
+            current_holdings,
+            "wrap.near",
+            7,
+            0.05, // min_profit_threshold
+            1.5,  // switch_multiplier
+            1.0,  // min_trade_amount
+        )
+        .await;
 
         // トップトークンの情報も取得されることを確認
         assert!(result.is_ok());

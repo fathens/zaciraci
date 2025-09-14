@@ -306,6 +306,14 @@ mod tests {
             model: None,
             verbose: false,
             portfolio_rebalance_threshold: 0.05,
+            portfolio_rebalance_interval: RebalanceInterval::parse("1d").unwrap(),
+            momentum_min_profit_threshold: 0.01,
+            momentum_switch_multiplier: 1.2,
+            momentum_min_trade_amount: 0.1,
+            trend_rsi_overbought: 80.0,
+            trend_rsi_oversold: 20.0,
+            trend_adx_strong_threshold: 20.0,
+            trend_r_squared_threshold: 0.5,
         };
 
         // テスト用の価格データを作成
@@ -403,6 +411,14 @@ mod regression_tests {
             model: None,
             verbose: false,
             portfolio_rebalance_threshold: 0.05,
+            portfolio_rebalance_interval: RebalanceInterval::parse("1d").unwrap(),
+            momentum_min_profit_threshold: 0.01,
+            momentum_switch_multiplier: 1.2,
+            momentum_min_trade_amount: 0.1,
+            trend_rsi_overbought: 80.0,
+            trend_rsi_oversold: 20.0,
+            trend_adx_strong_threshold: 20.0,
+            trend_r_squared_threshold: 0.5,
         };
 
         let price_data = HashMap::new();

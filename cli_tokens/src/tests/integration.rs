@@ -69,6 +69,14 @@ fn test_simulate_args_integration() {
         verbose: false,
         model: None,
         portfolio_rebalance_threshold: 0.05,
+        portfolio_rebalance_interval: "1d".to_string(),
+        momentum_min_profit_threshold: 0.01,
+        momentum_switch_multiplier: 1.2,
+        momentum_min_trade_amount: 0.1,
+        trend_rsi_overbought: 80.0,
+        trend_rsi_oversold: 20.0,
+        trend_adx_strong_threshold: 20.0,
+        trend_r_squared_threshold: 0.5,
     };
 
     // Test that configuration is parsed correctly
@@ -96,6 +104,14 @@ fn test_simulate_args_integration() {
         verbose: true,
         model: None,
         portfolio_rebalance_threshold: 0.05,
+        portfolio_rebalance_interval: "1d".to_string(),
+        momentum_min_profit_threshold: 0.01,
+        momentum_switch_multiplier: 1.2,
+        momentum_min_trade_amount: 0.1,
+        trend_rsi_overbought: 80.0,
+        trend_rsi_oversold: 20.0,
+        trend_adx_strong_threshold: 20.0,
+        trend_r_squared_threshold: 0.5,
     };
 
     assert_eq!(portfolio_config.capital, 5000.0);

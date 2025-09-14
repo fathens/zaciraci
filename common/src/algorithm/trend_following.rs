@@ -32,18 +32,6 @@ pub struct TrendPosition {
 
 // ==================== 定数 ====================
 
-/// RSI上限閾値（買われすぎ）
-const RSI_OVERBOUGHT: f64 = 70.0;
-
-/// RSI下限閾値（売られすぎ）
-const RSI_OVERSOLD: f64 = 30.0;
-
-/// ADX強トレンド閾値
-const ADX_STRONG_TREND: f64 = 25.0;
-
-/// 線形回帰のR²閾値（トレンド強度判定）
-const R_SQUARED_THRESHOLD: f64 = 0.7;
-
 /// ブレイクアウトのボリューム倍率
 const VOLUME_BREAKOUT_MULTIPLIER: f64 = 1.5;
 
@@ -62,6 +50,7 @@ const KELLY_RISK_FACTOR: f64 = 0.25;
 pub fn calculate_trend_strength(
     prices: &[f64],
     timestamps: &[DateTime<Utc>],
+    r_squared_threshold: f64,
 ) -> (f64, f64, TrendDirection, TrendStrength) {
     if prices.len() < 3 || timestamps.len() != prices.len() {
         return (0.0, 0.0, TrendDirection::Sideways, TrendStrength::NoTrend);
@@ -120,12 +109,12 @@ pub fn calculate_trend_strength(
         TrendDirection::Downward
     };
 
-    // トレンド強度の判定
-    let strength = if r_squared > R_SQUARED_THRESHOLD && slope.abs() > 0.001 {
+    // トレンド強度の判定（パラメータ化）
+    let strength = if r_squared > r_squared_threshold && slope.abs() > 0.001 {
         TrendStrength::Strong
-    } else if r_squared > 0.4 && slope.abs() > 0.0005 {
+    } else if r_squared > (r_squared_threshold * 0.6) && slope.abs() > 0.0005 {
         TrendStrength::Moderate
-    } else if r_squared > 0.2 {
+    } else if r_squared > (r_squared_threshold * 0.3) {
         TrendStrength::Weak
     } else {
         TrendStrength::NoTrend
@@ -239,9 +228,11 @@ pub fn analyze_trend(
     volumes: &[f64],
     highs: &[f64],
     lows: &[f64],
+    r_squared_threshold: f64,
 ) -> TrendAnalysis {
     // 基本トレンド分析
-    let (slope, r_squared, direction, strength) = calculate_trend_strength(prices, timestamps);
+    let (slope, r_squared, direction, strength) =
+        calculate_trend_strength(prices, timestamps, r_squared_threshold);
 
     // テクニカル指標
     let rsi = calculate_rsi(prices, 14);
@@ -292,20 +283,25 @@ pub fn make_trend_trading_decision(
     trend_analysis: &TrendAnalysis,
     current_positions: &[TrendPosition],
     available_capital: f64,
+    rsi_overbought: f64,
+    rsi_oversold: f64,
+    adx_strong_threshold: f64,
 ) -> TradingAction {
     let current_position = current_positions
         .iter()
         .find(|p| p.token == trend_analysis.token);
 
-    // RSIとADXのチェック
-    let rsi_overbought = trend_analysis.rsi.is_some_and(|rsi| rsi > RSI_OVERBOUGHT);
-    let rsi_oversold = trend_analysis.rsi.is_some_and(|rsi| rsi < RSI_OVERSOLD);
-    let strong_trend = trend_analysis.adx.is_some_and(|adx| adx > ADX_STRONG_TREND);
+    // RSIとADXのチェック（パラメータ化）
+    let rsi_overbought_flag = trend_analysis.rsi.is_some_and(|rsi| rsi > rsi_overbought);
+    let rsi_oversold_flag = trend_analysis.rsi.is_some_and(|rsi| rsi < rsi_oversold);
+    let strong_trend = trend_analysis
+        .adx
+        .is_some_and(|adx| adx > adx_strong_threshold);
 
     match (&trend_analysis.strength, &trend_analysis.direction) {
         // 強いトレンドでブレイクアウトがある場合
         (TrendStrength::Strong, TrendDirection::Upward)
-            if trend_analysis.breakout_signal && !rsi_overbought && strong_trend =>
+            if trend_analysis.breakout_signal && !rsi_overbought_flag && strong_trend =>
         {
             if current_position.is_none() && available_capital > 0.0 {
                 let _position_size =
@@ -324,7 +320,7 @@ pub fn make_trend_trading_decision(
         }
 
         // 下降トレンドでRSIが売られすぎの場合は逆張りのチャンス
-        (_, TrendDirection::Downward) if rsi_oversold && strong_trend => {
+        (_, TrendDirection::Downward) if rsi_oversold_flag && strong_trend => {
             if current_position.is_none() && available_capital > 0.0 {
                 let _position_size =
                     calculate_kelly_position_size(0.5, 0.12, 0.10, KELLY_RISK_FACTOR * 0.8);
@@ -338,7 +334,7 @@ pub fn make_trend_trading_decision(
         }
 
         // RSIが買われすぎの場合は退出シグナル
-        _ if rsi_overbought && current_position.is_some() => TradingAction::Sell {
+        _ if rsi_overbought_flag && current_position.is_some() => TradingAction::Sell {
             token: trend_analysis.token.clone(),
             target: "cash".to_string(),
         },
@@ -365,22 +361,57 @@ pub fn make_trend_trading_decision(
 /// マーケットデータの型エイリアス
 pub type MarketDataTuple = (Vec<f64>, Vec<DateTime<Utc>>, Vec<f64>, Vec<f64>, Vec<f64>);
 
+/// TrendFollowing実行のパラメータ
+#[derive(Debug, Clone)]
+pub struct TrendFollowingParams {
+    pub rsi_overbought: f64,
+    pub rsi_oversold: f64,
+    pub adx_strong_threshold: f64,
+    pub r_squared_threshold: f64,
+}
+
+impl Default for TrendFollowingParams {
+    fn default() -> Self {
+        Self {
+            rsi_overbought: 80.0,
+            rsi_oversold: 20.0,
+            adx_strong_threshold: 20.0,
+            r_squared_threshold: 0.5,
+        }
+    }
+}
+
 /// トレンドフォロー戦略の実行
 pub async fn execute_trend_following_strategy(
     tokens: Vec<String>,
     current_positions: Vec<TrendPosition>,
     available_capital: f64,
     market_data: &HashMap<String, MarketDataTuple>,
+    params: TrendFollowingParams,
 ) -> Result<TrendExecutionReport> {
     let mut trend_analyses = Vec::new();
     let mut actions = Vec::new();
 
     for token in tokens {
         if let Some((prices, timestamps, volumes, highs, lows)) = market_data.get(&token) {
-            let analysis = analyze_trend(&token, prices, timestamps, volumes, highs, lows);
+            let analysis = analyze_trend(
+                &token,
+                prices,
+                timestamps,
+                volumes,
+                highs,
+                lows,
+                params.r_squared_threshold,
+            );
 
-            let action =
-                make_trend_trading_decision(&analysis, &current_positions, available_capital);
+            let action = make_trend_trading_decision(
+                &analysis,
+                &current_positions,
+                available_capital,
+                params.rsi_overbought,
+                params.rsi_oversold,
+                params.adx_strong_threshold,
+            );
 
             trend_analyses.push(analysis);
 

@@ -159,6 +159,14 @@ fn test_simulate_args_portfolio_rebalance_threshold() {
         verbose: false,
         model: None,
         portfolio_rebalance_threshold: 0.05, // デフォルト値
+        portfolio_rebalance_interval: "1d".to_string(),
+        momentum_min_profit_threshold: 0.01,
+        momentum_switch_multiplier: 1.2,
+        momentum_min_trade_amount: 0.1,
+        trend_rsi_overbought: 80.0,
+        trend_rsi_oversold: 20.0,
+        trend_adx_strong_threshold: 20.0,
+        trend_r_squared_threshold: 0.5,
     };
 
     assert_eq!(args_default.portfolio_rebalance_threshold, 0.05);
@@ -213,6 +221,14 @@ fn test_simulation_config_portfolio_rebalance_threshold() {
         gas_cost: BigDecimal::from(0),
         min_trade_amount: BigDecimal::from(1),
         portfolio_rebalance_threshold: 0.08, // カスタム値
+        portfolio_rebalance_interval: RebalanceInterval::parse("1d").unwrap(),
+        momentum_min_profit_threshold: 0.01,
+        momentum_switch_multiplier: 1.2,
+        momentum_min_trade_amount: 0.1,
+        trend_rsi_overbought: 80.0,
+        trend_rsi_oversold: 20.0,
+        trend_adx_strong_threshold: 20.0,
+        trend_r_squared_threshold: 0.5,
     };
 
     assert_eq!(config.portfolio_rebalance_threshold, 0.08);

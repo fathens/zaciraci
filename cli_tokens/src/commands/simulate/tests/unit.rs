@@ -40,6 +40,14 @@ fn test_simulate_args_default_values() {
         verbose: false,
         model: None,
         portfolio_rebalance_threshold: 0.05,
+        portfolio_rebalance_interval: "1d".to_string(),
+        momentum_min_profit_threshold: 0.01,
+        momentum_switch_multiplier: 1.2,
+        momentum_min_trade_amount: 0.1,
+        trend_rsi_overbought: 80.0,
+        trend_rsi_oversold: 20.0,
+        trend_adx_strong_threshold: 20.0,
+        trend_r_squared_threshold: 0.5,
     };
 
     assert_eq!(args.capital, 1000.0);
@@ -73,6 +81,14 @@ fn test_simulate_args_with_model() {
         verbose: false,
         model: Some("chronos_default".to_string()),
         portfolio_rebalance_threshold: 0.05,
+        portfolio_rebalance_interval: "1d".to_string(),
+        momentum_min_profit_threshold: 0.01,
+        momentum_switch_multiplier: 1.2,
+        momentum_min_trade_amount: 0.1,
+        trend_rsi_overbought: 80.0,
+        trend_rsi_oversold: 20.0,
+        trend_adx_strong_threshold: 20.0,
+        trend_r_squared_threshold: 0.5,
     };
 
     assert_eq!(args_with_model.model, Some("chronos_default".to_string()));
@@ -96,6 +112,14 @@ fn test_simulate_args_with_model() {
         verbose: false,
         model: Some("fast_statistical".to_string()),
         portfolio_rebalance_threshold: 0.05,
+        portfolio_rebalance_interval: "1d".to_string(),
+        momentum_min_profit_threshold: 0.01,
+        momentum_switch_multiplier: 1.2,
+        momentum_min_trade_amount: 0.1,
+        trend_rsi_overbought: 80.0,
+        trend_rsi_oversold: 20.0,
+        trend_adx_strong_threshold: 20.0,
+        trend_r_squared_threshold: 0.5,
     };
 
     assert_eq!(
