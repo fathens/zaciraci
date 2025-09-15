@@ -22,11 +22,18 @@ async fn test_real_cache_behavior() {
     let filename = create_history_filename(start_time, end_time);
     let file_path = history_dir.join(filename);
 
-    // Create some mock data
+    // Create some mock data with data in the requested range
     let mock_values = vec![
         ValueAtTime {
             time: start_time.naive_utc(),
             value: 1.0,
+        },
+        ValueAtTime {
+            time: Utc
+                .with_ymd_and_hms(2025, 8, 10, 12, 0, 0)
+                .unwrap()
+                .naive_utc(),
+            value: 1.5,
         },
         ValueAtTime {
             time: end_time.naive_utc(),
