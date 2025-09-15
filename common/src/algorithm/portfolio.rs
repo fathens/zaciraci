@@ -28,6 +28,17 @@ pub struct PortfolioExecutionReport {
     pub timestamp: DateTime<Utc>,
 }
 
+/// トークンスコア
+#[derive(Debug, Clone)]
+pub struct TokenScore {
+    pub token: String,
+    pub sharpe_ratio: f64,
+    pub liquidity_score: f64,
+    pub prediction_confidence: f64,
+    pub volatility_rank: f64,
+    pub composite_score: f64,
+}
+
 // ==================== 定数 ====================
 
 /// リスクフリーレート（年率2%）
@@ -47,6 +58,15 @@ const MAX_OPTIMIZATION_ITERATIONS: usize = 100;
 
 /// 数値安定性のための正則化パラメータ
 const REGULARIZATION_FACTOR: f64 = 1e-6;
+
+/// 最小流動性スコア
+const MIN_LIQUIDITY_SCORE: f64 = 0.1;
+
+/// 最小市場規模
+const MIN_MARKET_CAP: f64 = 10000.0;
+
+/// 最大相関閾値
+const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
 
 // ==================== コア計算関数 ====================
 
@@ -454,6 +474,254 @@ pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 
         / 2.0
 }
 
+// ==================== トークン選択 ====================
+
+/// 個別トークンのシャープレシオを計算
+fn calculate_individual_sharpe(
+    token: &TokenData,
+    historical_prices: &[PriceHistory],
+    expected_return: f64,
+) -> f64 {
+    // トークンの価格履歴を取得
+    let token_prices = historical_prices
+        .iter()
+        .find(|p| p.token == token.symbol)
+        .map(|p| &p.prices);
+
+    if let Some(prices) = token_prices
+        && prices.len() > 1
+    {
+        // 日次リターンを計算
+        let mut returns = Vec::new();
+        for i in 1..prices.len() {
+            let price_current = prices[i].price.to_string().parse::<f64>().unwrap_or(0.0);
+            let price_prev = prices[i - 1]
+                .price
+                .to_string()
+                .parse::<f64>()
+                .unwrap_or(1.0);
+            if price_prev > 0.0 {
+                returns.push((price_current - price_prev) / price_prev);
+            }
+        }
+
+        if !returns.is_empty() {
+            let volatility = calculate_std_dev(&returns);
+            if volatility > 0.0 {
+                return (expected_return - RISK_FREE_RATE / 365.0) / volatility;
+            }
+        }
+    }
+
+    0.0
+}
+
+/// 標準偏差を計算
+fn calculate_std_dev(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+
+    variance.sqrt()
+}
+
+/// トークンのスコアを計算
+fn calculate_token_score(
+    token: &TokenData,
+    prediction: Option<&f64>,
+    historical_prices: &[PriceHistory],
+    all_volatilities: &[f64],
+) -> TokenScore {
+    let expected_return = prediction.copied().unwrap_or(0.0);
+    let sharpe = calculate_individual_sharpe(token, historical_prices, expected_return);
+    let liquidity = token.liquidity_score.unwrap_or(0.0);
+    let confidence = 0.5; // デフォルト信頼度
+
+    // ボラティリティランクを計算（低いほど良い）
+    let vol_rank = if !all_volatilities.is_empty() {
+        let sorted_vols = {
+            let mut v = all_volatilities.to_vec();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v
+        };
+        let position = sorted_vols
+            .iter()
+            .position(|&v| v >= token.historical_volatility)
+            .unwrap_or(sorted_vols.len());
+        1.0 - (position as f64 / sorted_vols.len() as f64)
+    } else {
+        0.5
+    };
+
+    // 総合スコアを計算
+    let composite = sharpe.max(0.0) * 0.4 + liquidity * 0.2 + confidence * 0.2 + vol_rank * 0.2;
+
+    TokenScore {
+        token: token.symbol.clone(),
+        sharpe_ratio: sharpe,
+        liquidity_score: liquidity,
+        prediction_confidence: confidence,
+        volatility_rank: vol_rank,
+        composite_score: composite,
+    }
+}
+
+/// 最適なトークンを選択
+pub fn select_optimal_tokens(
+    tokens: &[TokenData],
+    predictions: &BTreeMap<String, f64>,
+    historical_prices: &[PriceHistory],
+    max_tokens: usize,
+) -> Vec<TokenData> {
+    // フィルタリング: 最小要件を満たすトークンのみ
+    let filtered_tokens: Vec<&TokenData> = tokens
+        .iter()
+        .filter(|t| {
+            // 実際のデータ構造に合わせたフィルタリング条件
+            // market_capがNoneの場合は流動性スコアのみでフィルタ
+            let liquidity_ok = t.liquidity_score.unwrap_or(0.0) >= MIN_LIQUIDITY_SCORE;
+            let market_cap_ok = match t.market_cap {
+                Some(cap) => cap >= MIN_MARKET_CAP,
+                None => true, // market_capがNoneの場合はスキップ
+            };
+            liquidity_ok && market_cap_ok
+        })
+        .collect();
+
+    if filtered_tokens.is_empty() {
+        // フィルタ条件が厳しすぎる場合は全トークンから選択
+        return tokens.iter().take(max_tokens).cloned().collect();
+    }
+
+    // 全トークンのボラティリティを収集
+    let all_volatilities: Vec<f64> = filtered_tokens
+        .iter()
+        .map(|t| t.historical_volatility)
+        .collect();
+
+    // スコアリング
+    let mut scored_tokens: Vec<(TokenScore, &TokenData)> = filtered_tokens
+        .iter()
+        .map(|&token| {
+            let prediction = predictions.get(&token.symbol);
+            let score =
+                calculate_token_score(token, prediction, historical_prices, &all_volatilities);
+            (score, token)
+        })
+        .collect();
+
+    // スコアでソート（決定的）
+    scored_tokens.sort_by(|a, b| {
+        b.0.composite_score
+            .partial_cmp(&a.0.composite_score)
+            .unwrap()
+    });
+
+    // 相関を考慮した選択
+    select_uncorrelated_tokens(scored_tokens, historical_prices, max_tokens)
+}
+
+/// 相関の低いトークンを選択
+fn select_uncorrelated_tokens(
+    scored_tokens: Vec<(TokenScore, &TokenData)>,
+    historical_prices: &[PriceHistory],
+    max_tokens: usize,
+) -> Vec<TokenData> {
+    if scored_tokens.is_empty() {
+        return Vec::new();
+    }
+
+    // 最高スコアのトークンを最初に選択
+    let mut selected = vec![scored_tokens[0].1.clone()];
+
+    for (_score, token) in scored_tokens.iter().skip(1) {
+        if selected.len() >= max_tokens {
+            break;
+        }
+
+        // 既存選択トークンとの平均相関を計算
+        let mut correlations = Vec::new();
+        for selected_token in &selected {
+            let correlation = calculate_token_correlation(
+                &token.symbol,
+                &selected_token.symbol,
+                historical_prices,
+            );
+            correlations.push(correlation.abs());
+        }
+
+        let avg_correlation = if !correlations.is_empty() {
+            correlations.iter().sum::<f64>() / correlations.len() as f64
+        } else {
+            0.0
+        };
+
+        // 相関が閾値以下なら追加
+        if avg_correlation < MAX_CORRELATION_THRESHOLD {
+            selected.push((*token).clone());
+        }
+    }
+
+    selected
+}
+
+/// 2つのトークン間の相関を計算
+fn calculate_token_correlation(
+    token1: &str,
+    token2: &str,
+    historical_prices: &[PriceHistory],
+) -> f64 {
+    // トークンの価格履歴を取得
+    let prices1 = historical_prices
+        .iter()
+        .find(|p| p.token == token1)
+        .map(|p| &p.prices);
+    let prices2 = historical_prices
+        .iter()
+        .find(|p| p.token == token2)
+        .map(|p| &p.prices);
+
+    if let (Some(p1), Some(p2)) = (prices1, prices2) {
+        // 日次リターンを計算
+        let returns1 = calculate_returns_from_prices(p1);
+        let returns2 = calculate_returns_from_prices(p2);
+
+        if returns1.len() == returns2.len() && !returns1.is_empty() {
+            let std1 = calculate_std_dev(&returns1);
+            let std2 = calculate_std_dev(&returns2);
+
+            // 標準偏差が0の場合は相関を0とする
+            if std1 > 0.0 && std2 > 0.0 {
+                let correlation = calculate_covariance(&returns1, &returns2) / (std1 * std2);
+                // 相関係数を-1から1の範囲にクリップ
+                return correlation.clamp(-1.0, 1.0);
+            }
+        }
+    }
+
+    0.0
+}
+
+/// 価格からリターンを計算
+fn calculate_returns_from_prices(prices: &[PricePoint]) -> Vec<f64> {
+    let mut returns = Vec::new();
+    for i in 1..prices.len() {
+        let price_current = prices[i].price.to_string().parse::<f64>().unwrap_or(0.0);
+        let price_prev = prices[i - 1]
+            .price
+            .to_string()
+            .parse::<f64>()
+            .unwrap_or(1.0);
+        if price_prev > 0.0 {
+            returns.push((price_current - price_prev) / price_prev);
+        }
+    }
+    returns
+}
+
 // ==================== ポートフォリオ実行 ====================
 
 /// ポートフォリオ最適化戦略を実行
@@ -462,12 +730,30 @@ pub async fn execute_portfolio_optimization(
     portfolio_data: PortfolioData,
     rebalance_threshold: f64,
 ) -> Result<PortfolioExecutionReport> {
+    // トークン選択を無効化（実際のデータではすべて同じ流動性のため効果なし）
+    let selected_tokens = portfolio_data.tokens.clone();
+
+    // 選択されたトークンのみでポートフォリオを構築
+    let selected_predictions: BTreeMap<String, f64> = portfolio_data
+        .predictions
+        .iter()
+        .filter(|(symbol, _)| selected_tokens.iter().any(|t| &t.symbol == *symbol))
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+
     // 期待リターンを計算
-    let expected_returns =
-        calculate_expected_returns(&portfolio_data.tokens, &portfolio_data.predictions);
+    let expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
+
+    // 選択されたトークンの価格履歴のみをフィルタ
+    let selected_price_histories: Vec<PriceHistory> = portfolio_data
+        .historical_prices
+        .iter()
+        .filter(|p| selected_tokens.iter().any(|t| t.symbol == p.token))
+        .cloned()
+        .collect();
 
     // 日次リターンと共分散行列を計算
-    let daily_returns = calculate_daily_returns(&portfolio_data.historical_prices);
+    let daily_returns = calculate_daily_returns(&selected_price_histories);
     let covariance = calculate_covariance_matrix(&daily_returns);
 
     // 最適ポートフォリオを計算
@@ -480,7 +766,7 @@ pub async fn execute_portfolio_optimization(
     apply_constraints(&mut optimal_weights);
 
     // 現在のポートフォリオ重みを計算
-    let current_weights = calculate_current_weights(&portfolio_data.tokens, wallet);
+    let current_weights = calculate_current_weights(&selected_tokens, wallet);
 
     // リバランスが必要かチェック
     let rebalance_needed =
@@ -489,7 +775,7 @@ pub async fn execute_portfolio_optimization(
     // アクションを生成
     let actions = if rebalance_needed {
         generate_rebalance_actions(
-            &portfolio_data.tokens,
+            &selected_tokens,
             &current_weights,
             &optimal_weights,
             rebalance_threshold,
@@ -508,8 +794,7 @@ pub async fn execute_portfolio_optimization(
     };
 
     // 重みをBTreeMapに変換（順序安定化のため）
-    let weight_map: BTreeMap<String, f64> = portfolio_data
-        .tokens
+    let weight_map: BTreeMap<String, f64> = selected_tokens
         .iter()
         .zip(optimal_weights.iter())
         .filter(|&(_, weight)| *weight > 0.0)
