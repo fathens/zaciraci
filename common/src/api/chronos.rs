@@ -31,7 +31,7 @@ impl ChronosApiClient {
         &self,
         prediction_id: &str,
     ) -> Result<PredictionResult, ApiError> {
-        let max_attempts = 60; // 最大60回試行 (約5分)
+        let max_attempts = 720; // 最大720回試行 (約1時間)
         let poll_interval = std::time::Duration::from_secs(5);
 
         for attempt in 1..=max_attempts {
