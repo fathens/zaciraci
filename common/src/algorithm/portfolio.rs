@@ -44,14 +44,14 @@ pub struct TokenScore {
 /// リスクフリーレート（年率2%）
 const RISK_FREE_RATE: f64 = 0.02;
 
-/// 単一トークンの最大保有比率
-const MAX_POSITION_SIZE: f64 = 0.4;
+/// 単一トークンの最大保有比率（積極的設定）
+const MAX_POSITION_SIZE: f64 = 0.6;
 
 /// 最小保有比率
 const MIN_POSITION_SIZE: f64 = 0.05;
 
-/// 最大保有トークン数
-const MAX_HOLDINGS: usize = 10;
+/// 最大保有トークン数（集中投資）
+const MAX_HOLDINGS: usize = 6;
 
 /// 最適化の最大反復回数
 const MAX_OPTIMIZATION_ITERATIONS: usize = 100;
@@ -64,6 +64,10 @@ const MIN_LIQUIDITY_SCORE: f64 = 0.1;
 
 /// 最小市場規模
 const MIN_MARKET_CAP: f64 = 10000.0;
+
+/// 動的リスク調整の閾値
+const HIGH_VOLATILITY_THRESHOLD: f64 = 0.3; // 30%
+const LOW_VOLATILITY_THRESHOLD: f64 = 0.1; // 10%
 
 /// 最大相関閾値
 const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
@@ -442,6 +446,44 @@ pub fn apply_constraints(weights: &mut [f64]) {
     }
 }
 
+/// 市場ボラティリティに基づく動的リスク調整
+fn calculate_dynamic_risk_adjustment(portfolio_data: &PortfolioData) -> f64 {
+    let daily_returns = calculate_daily_returns(&portfolio_data.historical_prices);
+
+    if daily_returns.is_empty() {
+        return 1.0; // デフォルト（調整なし）
+    }
+
+    // 全トークンの平均ボラティリティを計算
+    let avg_volatility = daily_returns
+        .iter()
+        .map(|returns| {
+            if returns.len() < 2 {
+                return 0.0;
+            }
+            let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+            let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
+                / (returns.len() - 1) as f64;
+            variance.sqrt() * (365.25_f64).sqrt() // 年率換算
+        })
+        .sum::<f64>()
+        / daily_returns.len() as f64;
+
+    // 動的調整係数を計算
+    if avg_volatility > HIGH_VOLATILITY_THRESHOLD {
+        // 高ボラティリティ：リスクを抑制
+        0.7
+    } else if avg_volatility < LOW_VOLATILITY_THRESHOLD {
+        // 低ボラティリティ：より積極的に
+        1.4
+    } else {
+        // 中程度：線形補間
+        let ratio = (avg_volatility - LOW_VOLATILITY_THRESHOLD)
+            / (HIGH_VOLATILITY_THRESHOLD - LOW_VOLATILITY_THRESHOLD);
+        1.4 - (1.4 - 0.7) * ratio
+    }
+}
+
 /// リバランスが必要かチェック
 pub fn needs_rebalancing(
     current_weights: &[f64],
@@ -756,8 +798,16 @@ pub async fn execute_portfolio_optimization(
     let daily_returns = calculate_daily_returns(&selected_price_histories);
     let covariance = calculate_covariance_matrix(&daily_returns);
 
+    // 動的リスク調整係数を計算
+    let risk_adjustment = calculate_dynamic_risk_adjustment(&portfolio_data);
+
     // 最適ポートフォリオを計算
     let mut optimal_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+
+    // 動的リスク調整を適用（積極的/保守的調整）
+    for weight in optimal_weights.iter_mut() {
+        *weight *= risk_adjustment;
+    }
 
     // リスクパリティ調整（オプション）
     apply_risk_parity(&mut optimal_weights, &covariance);
