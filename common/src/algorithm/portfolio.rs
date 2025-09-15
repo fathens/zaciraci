@@ -1,9 +1,10 @@
 use crate::Result;
-use crate::units::Units;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use super::types::*;
 
@@ -884,19 +885,58 @@ pub async fn execute_portfolio_optimization(
 fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
 
+    // BigDecimalで高精度計算を実行
+    let total_value_bd = BigDecimal::from_str(&wallet.total_value.to_string()).unwrap_or_default();
+    let yocto_per_near = BigDecimal::from_str("1000000000000000000000000").unwrap(); // 10^24
+
     for (i, token) in tokens.iter().enumerate() {
         if let Some(&holding) = wallet.holdings.get(&token.symbol) {
-            // current_priceはyoctoNEAR単位のBigDecimal
-            let price_yocto = token
-                .current_price
-                .to_string()
-                .parse::<f64>()
-                .unwrap_or(0.0);
-            // holdingはトークン数量、price_yoctoとの積はyoctoNEAR単位
-            let value_yocto = holding * price_yocto;
-            // total_valueを同じyoctoNEAR単位で割る
-            let total_value_yocto = Units::near_f64_to_yocto_f64(wallet.total_value);
-            weights[i] = value_yocto / total_value_yocto;
+            // f64のholdingを直接BigDecimalに変換（精度を保つため）
+            // 科学的記数法の値も正確に扱える
+            let holding_bd = BigDecimal::from_str(&holding.to_string()).unwrap_or_default();
+
+            // 価格も完全にBigDecimalで処理
+            let price_bd = &token.current_price; // yoctoNEAR単位
+
+            // 価値をyoctoNEAR単位で計算 (BigDecimal同士の乗算)
+            let value_yocto_bd = price_bd * &holding_bd;
+
+            // yoctoNEARからNEARに変換 (高精度)
+            let value_near_bd = &value_yocto_bd / &yocto_per_near;
+
+            // 重みを計算 (BigDecimal)
+            if total_value_bd > BigDecimal::from(0) {
+                let weight_bd = &value_near_bd / &total_value_bd;
+                // 最終的にf64に変換（必要最小限のみ）
+                weights[i] = weight_bd.to_string().parse::<f64>().unwrap_or(0.0);
+            }
+
+            // デバッグ用ログ (テスト時のみ)
+            #[cfg(test)]
+            {
+                let value_near_f64 = value_near_bd.to_string().parse::<f64>().unwrap_or(0.0);
+                println!(
+                    "Token {}: price={}, holding={}, value_near={:.6}, weight={:.6}%",
+                    token.symbol,
+                    price_bd,
+                    holding_bd,
+                    value_near_f64,
+                    weights[i] * 100.0
+                );
+
+                if value_near_f64 > 100.0 {
+                    // 100 NEAR以上の場合は警告
+                    println!(
+                        "WARNING: Token {} has unusually high value: {:.6} NEAR",
+                        token.symbol, value_near_f64
+                    );
+                    println!("  Price (BigDecimal): {}", price_bd);
+                    println!("  Holdings (BigDecimal): {}", holding_bd);
+                    println!("  Value (yocto): {}", value_yocto_bd);
+                    println!("  Value (NEAR): {}", value_near_bd);
+                    println!("  Weight: {:.6}%", weights[i] * 100.0);
+                }
+            }
         }
     }
 

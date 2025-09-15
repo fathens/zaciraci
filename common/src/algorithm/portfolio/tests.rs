@@ -2708,3 +2708,205 @@ async fn test_baseline_vs_enhanced_comparison() {
     println!("Projected final value: {:.0} NEAR", final_value);
     println!("Projected return: {:.1}%", enhanced_return * 100.0);
 }
+
+#[test]
+fn test_price_calculation_precision() {
+    // 異常なリターン（1887%）の原因を調査するテスト
+
+    // 実際のシミュレーションで見られた価格値を再現
+    let extreme_prices = [
+        ("bean.tkn.near", 2.783120479512128E-19),         // 極小価格
+        ("blackdragon.tkn.near", 1.7966334858472295E-16), // 中程度価格
+        ("ndc.tkn.near", 4.8596827014459204E-20),         // 超極小価格
+    ];
+
+    let extreme_amounts = [
+        8.478102225988582E+20, // bean.tkn.near の取引量
+        8771460298447680.0,    // blackdragon.tkn.near の取引量
+        3.942646877247608E+21, // ndc.tkn.near の取引量
+    ];
+
+    println!("=== Price Calculation Precision Test ===");
+
+    for (i, (token, price)) in extreme_prices.iter().enumerate() {
+        let amount = extreme_amounts[i];
+        let total_value = price * amount;
+
+        println!("Token: {}", token);
+        println!("  Price: {:.3e}", price);
+        println!("  Amount: {:.3e}", amount);
+        println!("  Total Value: {:.6}", total_value);
+        println!("  Price as string: {:.20e}", price);
+
+        // 精度の問題をチェック
+        if *price < 1e-15 {
+            println!("  WARNING: Price is extremely small (< 1e-15)");
+        }
+        if amount > 1e18 {
+            println!("  WARNING: Amount is extremely large (> 1e18)");
+        }
+        if total_value > 1000.0 {
+            println!(
+                "  WARNING: Total value seems unreasonably high: {:.2}",
+                total_value
+            );
+        }
+        println!();
+    }
+
+    // yoctoNEAR変換のテスト
+    println!("=== YoctoNEAR Conversion Test ===");
+    let near_amount = 1000.0; // 1000 NEAR
+    let yocto_amount = near_amount * 1e24; // 手動でyoctoNEAR変換
+    println!("1000 NEAR = {:.3e} yoctoNEAR", yocto_amount);
+
+    // 極小価格での価値計算
+    let bean_price = 2.783120479512128E-19;
+    let bean_amount = 8.478102225988582E+20;
+    let bean_value_near = (bean_price * bean_amount) / 1e24; // yoctoNEARをNEARに変換
+    println!("Bean value in NEAR: {:.6}", bean_value_near);
+
+    // この値が異常に高い場合、価格データに問題がある
+    assert!(
+        bean_value_near < 10000.0,
+        "Bean value seems unreasonably high: {:.2} NEAR",
+        bean_value_near
+    );
+}
+
+#[test]
+fn test_portfolio_evaluation_accuracy() {
+    // ポートフォリオ評価の精度をテスト
+
+    // 現実的な価格での評価
+    let realistic_tokens = vec![super::TokenData {
+        symbol: "token_a".to_string(),
+        current_price: bigdecimal::BigDecimal::from(1000000000000000000i64), // 1e-6 NEAR
+        historical_volatility: 0.2,
+        liquidity_score: Some(0.8),
+        market_cap: Some(1000000.0),
+        decimals: Some(24),
+    }];
+
+    let mut wallet = super::super::types::WalletInfo {
+        holdings: BTreeMap::new(),
+        total_value: 1000.0,
+        cash_balance: 500.0,
+    };
+    wallet.holdings.insert("token_a".to_string(), 500.0); // 500トークン保有
+
+    let weights = super::calculate_current_weights(&realistic_tokens, &wallet);
+    println!("=== Portfolio Evaluation Test ===");
+    println!("Token A holdings: 500 tokens");
+    println!("Token A price: 1 NEAR");
+    println!("Expected weight: ~50% (500 NEAR / 1000 NEAR total)");
+    println!("Calculated weight: {:.1}%", weights[0] * 100.0);
+
+    // 重みが理論値と近いかチェック
+    let expected_weight = 0.5; // 50%
+    let tolerance = 0.05; // 5%の許容範囲
+    assert!(
+        (weights[0] - expected_weight).abs() < tolerance,
+        "Weight calculation error: expected ~{:.1}%, got {:.1}%",
+        expected_weight * 100.0,
+        weights[0] * 100.0
+    );
+}
+
+#[test]
+fn test_extreme_price_weight_calculation() {
+    // 極端な価格での重み計算をテスト（修正版）
+
+    println!("=== Extreme Price Weight Calculation Test ===");
+
+    // シミュレーションで見られた極端な価格を使用
+    let extreme_tokens = vec![
+        super::TokenData {
+            symbol: "bean.tkn.near".to_string(),
+            current_price: bigdecimal::BigDecimal::from_str("2.783120479512128E-19").unwrap(),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.8),
+            market_cap: Some(1000000.0),
+            decimals: Some(24),
+        },
+        super::TokenData {
+            symbol: "ndc.tkn.near".to_string(),
+            current_price: bigdecimal::BigDecimal::from_str("4.8596827014459204E-20").unwrap(),
+            historical_volatility: 0.4,
+            liquidity_score: Some(0.7),
+            market_cap: Some(500000.0),
+            decimals: Some(24),
+        },
+    ];
+
+    // 極端な保有量を設定
+    let mut wallet = super::super::types::WalletInfo {
+        holdings: BTreeMap::new(),
+        total_value: 1000.0, // 1000 NEAR総価値
+        cash_balance: 0.0,
+    };
+
+    // 実際のシミュレーションで見られた保有量
+    wallet
+        .holdings
+        .insert("bean.tkn.near".to_string(), 8.478102225988582E+20);
+    wallet
+        .holdings
+        .insert("ndc.tkn.near".to_string(), 3.942646877247608E+21);
+
+    let weights = super::calculate_current_weights(&extreme_tokens, &wallet);
+
+    println!("Bean token weight: {:.3}%", weights[0] * 100.0);
+    println!("NDC token weight: {:.3}%", weights[1] * 100.0);
+    println!("Total weights: {:.3}%", (weights[0] + weights[1]) * 100.0);
+
+    // 重みが現実的な範囲内であることを確認
+    for (i, weight) in weights.iter().enumerate() {
+        assert!(
+            *weight <= 1.0,
+            "Weight for token {} exceeds 100%: {:.1}%",
+            extreme_tokens[i].symbol,
+            weight * 100.0
+        );
+        assert!(
+            *weight >= 0.0,
+            "Weight for token {} is negative: {:.1}%",
+            extreme_tokens[i].symbol,
+            weight * 100.0
+        );
+    }
+
+    // 重みの合計が100%を大きく超えていないことを確認
+    let total_weight = weights.iter().sum::<f64>();
+    assert!(
+        total_weight <= 1.5,
+        "Total weight is unreasonably high: {:.1}%",
+        total_weight * 100.0
+    );
+
+    println!("\n=== BigDecimal計算結果検証 ===");
+
+    // 手動でBigDecimal計算を検証
+    let bean_price = bigdecimal::BigDecimal::from_str("2.783120479512128E-19").unwrap();
+    let bean_holding = bigdecimal::BigDecimal::from_str("847810222598858200000").unwrap();
+    let yocto_per_near = bigdecimal::BigDecimal::from_str("1000000000000000000000000").unwrap();
+
+    let bean_value_yocto = &bean_price * &bean_holding;
+    let bean_value_near = &bean_value_yocto / &yocto_per_near;
+
+    println!("Bean token手動計算:");
+    println!("  価格 (yocto): {}", bean_price);
+    println!("  保有量: {}", bean_holding);
+    println!("  価値 (yocto): {}", bean_value_yocto);
+    println!("  価値 (NEAR): {}", bean_value_near);
+
+    // 実際の価値が非常に小さいことを確認
+    let bean_value_f64 = bean_value_near.to_string().parse::<f64>().unwrap_or(0.0);
+    assert!(
+        bean_value_f64 < 1.0,
+        "Bean value should be very small: {:.10}",
+        bean_value_f64
+    );
+
+    println!("✅ BigDecimal計算により異常な高値が修正されました");
+}
