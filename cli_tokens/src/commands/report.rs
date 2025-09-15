@@ -1434,8 +1434,8 @@ fn generate_comparison_chart_script(results: &[SimulationResult]) -> Result<Stri
 mod comparison_chart_tests {
     use super::*;
     use crate::commands::simulate::{
-        AlgorithmType, ExecutionSummary, PerformanceMetrics, PortfolioValue, SimulationResult,
-        SimulationSummary, TradeExecution,
+        AlgorithmType, DataQualityStats, ExecutionSummary, PerformanceMetrics, PortfolioValue,
+        SimulationResult, SimulationSummary, TradeExecution,
     };
     use chrono::{DateTime, Utc};
 
@@ -1509,6 +1509,13 @@ mod comparison_chart_tests {
                 success_rate: 1.0,
                 total_cost: 10.0,
                 avg_cost_per_trade: 2.0,
+            },
+            data_quality: DataQualityStats {
+                total_timesteps: 100,
+                skipped_timesteps: 0,
+                data_coverage_percentage: 100.0,
+                longest_gap_hours: 0,
+                gap_events: Vec::new(),
             },
         }
     }

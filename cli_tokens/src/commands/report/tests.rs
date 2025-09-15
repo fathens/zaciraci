@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::commands::simulate::{
-    AlgorithmType, ExecutionSummary, PerformanceMetrics as SimPerformanceMetrics, SimulationResult,
-    SimulationSummary, TradeExecution, TradingCost,
+    AlgorithmType, DataQualityStats, ExecutionSummary, PerformanceMetrics as SimPerformanceMetrics,
+    SimulationResult, SimulationSummary, TradeExecution, TradingCost,
 };
 use bigdecimal::BigDecimal;
 
@@ -86,6 +86,13 @@ mod unit_tests {
                 success_rate: 1.0,
                 total_cost: 6.0,
                 avg_cost_per_trade: 6.0,
+            },
+            data_quality: DataQualityStats {
+                total_timesteps: 10,
+                skipped_timesteps: 0,
+                data_coverage_percentage: 100.0,
+                longest_gap_hours: 0,
+                gap_events: Vec::new(),
             },
         }
     }

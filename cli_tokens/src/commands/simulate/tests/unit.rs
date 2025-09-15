@@ -1201,3 +1201,144 @@ fn test_strategy_comparison_demo() {
 
     println!("✅ All strategies executed successfully with different logic");
 }
+
+#[test]
+fn test_data_gap_handling_get_prices_at_time_optional() {
+    use super::super::data::get_prices_at_time_optional;
+    use chrono::{TimeZone, Utc};
+
+    // テスト用のprice_dataを作成（1時間ごとのデータ）
+    let mut price_data = HashMap::new();
+    let token = "test.token".to_string();
+
+    let start_time = Utc.with_ymd_and_hms(2024, 8, 1, 0, 0, 0).unwrap();
+    let mut data_points = Vec::new();
+
+    // 00:00, 01:00, 02:00, 05:00（3-4時間のギャップ）, 06:00のデータを作成
+    let times_and_prices = vec![
+        (0, 100.0), // 00:00
+        (1, 101.0), // 01:00
+        (2, 102.0), // 02:00
+        (5, 105.0), // 05:00 (3時間のギャップ)
+        (6, 106.0), // 06:00
+    ];
+
+    for (hour_offset, price) in times_and_prices {
+        let time = start_time + chrono::Duration::hours(hour_offset);
+        data_points.push(ValueAtTime {
+            time: time.naive_utc(),
+            value: price,
+        });
+    }
+
+    price_data.insert(token.clone(), data_points);
+
+    // テストケース1: データが存在する時刻（00:00）
+    let target_time_0 = start_time;
+    let result_0 = get_prices_at_time_optional(&price_data, target_time_0);
+    assert!(result_0.is_some(), "00:00のデータは取得できるはず");
+    assert_eq!(result_0.unwrap().get(&token), Some(&100.0));
+
+    // テストケース2: データが存在する時刻の近く（00:30 - 1時間以内）
+    let target_time_30min = start_time + chrono::Duration::minutes(30);
+    let result_30min = get_prices_at_time_optional(&price_data, target_time_30min);
+    assert!(
+        result_30min.is_some(),
+        "00:30は00:00から1時間以内なのでデータが取得できるはず"
+    );
+
+    // テストケース3: ギャップ内の時刻（03:30 - 02:00から1.5時間、05:00から1.5時間で範囲外）
+    let target_time_gap = start_time + chrono::Duration::hours(3) + chrono::Duration::minutes(30);
+    let result_gap = get_prices_at_time_optional(&price_data, target_time_gap);
+    assert!(
+        result_gap.is_none(),
+        "03:30はデータギャップなのでNoneが返るはず"
+    );
+
+    // テストケース4: ギャップ内だが近いデータがある時刻（04:00 - 1時間以内に05:00のデータあり）
+    let target_time_near_gap = start_time + chrono::Duration::hours(4);
+    let result_near_gap = get_prices_at_time_optional(&price_data, target_time_near_gap);
+    assert!(
+        result_near_gap.is_some(),
+        "04:00は05:00から1時間以内なのでデータが取得できるはず"
+    );
+
+    println!("✅ Data gap handling tests passed");
+}
+
+#[test]
+fn test_data_gap_event_creation() {
+    use super::super::data::{calculate_gap_impact, log_data_gap_event};
+    use super::super::types::{DataGapEvent, DataGapEventType};
+    use chrono::{TimeZone, Utc};
+
+    // テスト用のprice_dataを作成
+    let price_data = HashMap::new();
+    let token = "test.token".to_string();
+
+    let start_time = Utc.with_ymd_and_hms(2024, 8, 1, 0, 0, 0).unwrap();
+    let gap_time = start_time + chrono::Duration::hours(3);
+
+    // ギャップの影響を計算
+    let impact = calculate_gap_impact(
+        Some(start_time),
+        gap_time,
+        &price_data,
+        std::slice::from_ref(&token),
+    );
+
+    // DataGapEventを作成
+    let gap_event = DataGapEvent {
+        timestamp: gap_time,
+        event_type: DataGapEventType::TradingSkipped,
+        affected_tokens: vec![token.clone()],
+        reason: "Price data not available within 1 hour window".to_string(),
+        impact: impact.clone(),
+    };
+
+    // ログ出力をテスト（実際の出力は確認のみ）
+    println!("Testing gap event logging:");
+    log_data_gap_event(&gap_event);
+
+    // データ構造の妥当性を確認
+    assert_eq!(gap_event.event_type, DataGapEventType::TradingSkipped);
+    assert_eq!(gap_event.affected_tokens, vec![token]);
+    assert_eq!(impact.duration_hours, 3);
+
+    println!("✅ Data gap event creation test passed");
+}
+
+#[test]
+fn test_data_quality_stats_calculation() {
+    use super::super::types::DataQualityStats;
+
+    // シミュレーション統計のテスト
+    let total_timesteps = 100;
+    let skipped_timesteps = 15;
+    let longest_gap_hours = 6;
+
+    let data_coverage_percentage = if total_timesteps > 0 {
+        ((total_timesteps - skipped_timesteps) as f64 / total_timesteps as f64) * 100.0
+    } else {
+        100.0
+    };
+
+    let data_quality = DataQualityStats {
+        total_timesteps,
+        skipped_timesteps,
+        data_coverage_percentage,
+        longest_gap_hours,
+        gap_events: Vec::new(),
+    };
+
+    assert_eq!(data_quality.total_timesteps, 100);
+    assert_eq!(data_quality.skipped_timesteps, 15);
+    assert_eq!(data_quality.data_coverage_percentage, 85.0);
+    assert_eq!(data_quality.longest_gap_hours, 6);
+
+    println!(
+        "✅ Data coverage: {:.1}%",
+        data_quality.data_coverage_percentage
+    );
+    println!("✅ Data quality stats calculation test passed");
+}

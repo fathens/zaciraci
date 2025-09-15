@@ -1,9 +1,13 @@
-use super::data::{fetch_price_data, get_prices_at_time};
+use super::data::{
+    calculate_gap_impact, fetch_price_data, get_last_known_prices_for_evaluation,
+    get_prices_at_time, get_prices_at_time_optional, log_data_gap_event,
+};
 use super::types::*;
 use crate::api::backend::BackendClient;
 use anyhow::Result;
 #[allow(unused_imports)]
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
@@ -131,139 +135,214 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
     let mut step_count = 0;
     let max_steps = 1000;
+    let mut gap_events = Vec::new();
+    let mut total_timesteps = 0;
+    let mut skipped_timesteps = 0;
+    let mut last_successful_time: Option<DateTime<Utc>> = None;
 
     while current_time <= config.end_date && step_count < max_steps {
         step_count += 1;
+        total_timesteps += 1;
 
-        // 現在時点での価格を取得
-        let current_prices = get_prices_at_time(price_data, current_time)?;
+        // 価格データ取得を試行
+        match get_prices_at_time_optional(price_data, current_time) {
+            Some(current_prices) => {
+                // データがある場合：通常の取引処理
+                last_successful_time = Some(current_time);
 
-        // 予測データを生成（モックまたはAPI）
-        let backend_client = crate::api::backend::BackendClient::new();
-        let predictions = generate_api_predictions(
-            &backend_client,
-            &config.target_tokens,
-            &config.quote_token,
-            current_time,
-            config.historical_days,
-            config.prediction_horizon,
-            config.model.clone(),
-            config.verbose,
-        )
-        .await?;
+                // 予測データを生成（モックまたはAPI）
+                let backend_client = crate::api::backend::BackendClient::new();
+                let predictions = generate_api_predictions(
+                    &backend_client,
+                    &config.target_tokens,
+                    &config.quote_token,
+                    current_time,
+                    config.historical_days,
+                    config.prediction_horizon,
+                    config.model.clone(),
+                    config.verbose,
+                )
+                .await?;
 
-        // TokenHoldingに変換
-        let mut token_holdings = Vec::new();
-        for (token, amount) in &current_holdings {
-            if let Some(&price) = current_prices.get(token) {
-                token_holdings.push(TokenHolding {
-                    token: token.clone(),
-                    amount: BigDecimal::from_f64(*amount).unwrap_or_default(),
-                    current_price: BigDecimal::from_f64(price).unwrap_or_default(),
+                // TokenHoldingに変換
+                let mut token_holdings = Vec::new();
+                for (token, amount) in &current_holdings {
+                    if let Some(&price) = current_prices.get(token) {
+                        token_holdings.push(TokenHolding {
+                            token: token.clone(),
+                            amount: BigDecimal::from_f64(*amount).unwrap_or_default(),
+                            current_price: BigDecimal::from_f64(price).unwrap_or_default(),
+                        });
+                    }
+                }
+
+                // Momentum戦略を実行
+                if !token_holdings.is_empty() && !predictions.is_empty() {
+                    let execution_report = execute_momentum_strategy(
+                        token_holdings,
+                        predictions,
+                        config.momentum_min_profit_threshold,
+                        config.momentum_switch_multiplier,
+                        config.momentum_min_trade_amount,
+                    )
+                    .await?;
+
+                    // 取引アクションを実行
+                    for action in execution_report.actions {
+                        match action {
+                            TradingAction::Sell { token, target } => {
+                                if let (
+                                    Some(&current_amount),
+                                    Some(&current_price),
+                                    Some(&_target_price),
+                                ) = (
+                                    current_holdings.get(&token),
+                                    current_prices.get(&token),
+                                    current_prices.get(&target),
+                                ) {
+                                    let mut trade_ctx = TradeContext {
+                                        current_token: &token,
+                                        current_amount,
+                                        current_price,
+                                        all_prices: &current_prices,
+                                        holdings: &mut current_holdings,
+                                        timestamp: current_time,
+                                        config,
+                                    };
+
+                                    if let Ok(Some(trade)) = execute_trading_action(
+                                        TradingAction::Sell {
+                                            token: token.clone(),
+                                            target: target.clone(),
+                                        },
+                                        &mut trade_ctx,
+                                    ) {
+                                        total_costs += trade
+                                            .cost
+                                            .total
+                                            .to_string()
+                                            .parse::<f64>()
+                                            .unwrap_or(0.0);
+                                        trades.push(trade);
+                                    }
+                                }
+                            }
+                            TradingAction::Switch { from, to } => {
+                                if let (
+                                    Some(&current_amount),
+                                    Some(&from_price),
+                                    Some(&_to_price),
+                                ) = (
+                                    current_holdings.get(&from),
+                                    current_prices.get(&from),
+                                    current_prices.get(&to),
+                                ) {
+                                    let mut trade_ctx = TradeContext {
+                                        current_token: &from,
+                                        current_amount,
+                                        current_price: from_price,
+                                        all_prices: &current_prices,
+                                        holdings: &mut current_holdings,
+                                        timestamp: current_time,
+                                        config,
+                                    };
+
+                                    if let Ok(Some(trade)) = execute_trading_action(
+                                        TradingAction::Switch {
+                                            from: from.clone(),
+                                            to: to.clone(),
+                                        },
+                                        &mut trade_ctx,
+                                    ) {
+                                        total_costs += trade
+                                            .cost
+                                            .total
+                                            .to_string()
+                                            .parse::<f64>()
+                                            .unwrap_or(0.0);
+                                        trades.push(trade);
+                                    }
+                                }
+                            }
+                            _ => {} // Hold or other actions
+                        }
+                    }
+                }
+
+                // ポートフォリオ価値を計算
+                let mut total_value = 0.0;
+                let mut holdings_value = HashMap::new();
+
+                for (token, amount) in &current_holdings {
+                    if let Some(&price_yocto) = current_prices.get(token) {
+                        // priceはyoctoNEAR単位、amountはトークン数量
+                        // 計算結果をNEAR単位に変換
+                        let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                        let value = amount * price_near;
+                        holdings_value.insert(token.clone(), value);
+                        total_value += value;
+                    }
+                }
+
+                // ポートフォリオ記録
+                portfolio_values.push(PortfolioValue {
+                    timestamp: current_time,
+                    total_value,
+                    holdings: holdings_value.into_iter().collect(),
+                    cash_balance: 0.0,
+                    unrealized_pnl: total_value - initial_value,
                 });
             }
-        }
+            None => {
+                // データが不足している場合：スキップ
+                skipped_timesteps += 1;
 
-        // Momentum戦略を実行
-        if !token_holdings.is_empty() && !predictions.is_empty() {
-            let execution_report = execute_momentum_strategy(
-                token_holdings,
-                predictions,
-                config.momentum_min_profit_threshold,
-                config.momentum_switch_multiplier,
-                config.momentum_min_trade_amount,
-            )
-            .await?;
+                // スキップイベントを記録
+                let gap_event = DataGapEvent {
+                    timestamp: current_time,
+                    event_type: DataGapEventType::TradingSkipped,
+                    affected_tokens: config.target_tokens.clone(),
+                    reason: "No price data found within 1 hour of target time".to_string(),
+                    impact: calculate_gap_impact(
+                        last_successful_time,
+                        current_time,
+                        price_data,
+                        &config.target_tokens,
+                    ),
+                };
 
-            // 取引アクションを実行
-            for action in execution_report.actions {
-                match action {
-                    TradingAction::Sell { token, target } => {
-                        if let (Some(&current_amount), Some(&current_price), Some(&_target_price)) = (
-                            current_holdings.get(&token),
-                            current_prices.get(&token),
-                            current_prices.get(&target),
-                        ) {
-                            let mut trade_ctx = TradeContext {
-                                current_token: &token,
-                                current_amount,
-                                current_price,
-                                all_prices: &current_prices,
-                                holdings: &mut current_holdings,
-                                timestamp: current_time,
-                                config,
-                            };
+                // ログに即座に出力（verbose無関係）
+                log_data_gap_event(&gap_event);
+                gap_events.push(gap_event);
 
-                            if let Ok(Some(trade)) = execute_trading_action(
-                                TradingAction::Sell {
-                                    token: token.clone(),
-                                    target: target.clone(),
-                                },
-                                &mut trade_ctx,
-                            ) {
-                                total_costs +=
-                                    trade.cost.total.to_string().parse::<f64>().unwrap_or(0.0);
-                                trades.push(trade);
-                            }
+                // ポートフォリオ評価は最後に取得できた価格で継続
+                if let Some(evaluation_prices) =
+                    get_last_known_prices_for_evaluation(price_data, current_time)
+                {
+                    // 評価のみ実行（取引はしない）
+                    let mut total_value = 0.0;
+                    let mut holdings_value = HashMap::new();
+
+                    for (token, amount) in &current_holdings {
+                        if let Some(&price_yocto) = evaluation_prices.get(token) {
+                            let price_near =
+                                common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                            let value = amount * price_near;
+                            holdings_value.insert(token.clone(), value);
+                            total_value += value;
                         }
                     }
-                    TradingAction::Switch { from, to } => {
-                        if let (Some(&current_amount), Some(&from_price), Some(&_to_price)) = (
-                            current_holdings.get(&from),
-                            current_prices.get(&from),
-                            current_prices.get(&to),
-                        ) {
-                            let mut trade_ctx = TradeContext {
-                                current_token: &from,
-                                current_amount,
-                                current_price: from_price,
-                                all_prices: &current_prices,
-                                holdings: &mut current_holdings,
-                                timestamp: current_time,
-                                config,
-                            };
 
-                            if let Ok(Some(trade)) = execute_trading_action(
-                                TradingAction::Switch {
-                                    from: from.clone(),
-                                    to: to.clone(),
-                                },
-                                &mut trade_ctx,
-                            ) {
-                                total_costs +=
-                                    trade.cost.total.to_string().parse::<f64>().unwrap_or(0.0);
-                                trades.push(trade);
-                            }
-                        }
-                    }
-                    _ => {} // Hold or other actions
+                    portfolio_values.push(PortfolioValue {
+                        timestamp: current_time,
+                        total_value,
+                        holdings: holdings_value.into_iter().collect(),
+                        cash_balance: 0.0,
+                        unrealized_pnl: total_value - initial_value,
+                    });
                 }
             }
         }
-
-        // ポートフォリオ価値を計算
-        let mut total_value = 0.0;
-        let mut holdings_value = HashMap::new();
-
-        for (token, amount) in &current_holdings {
-            if let Some(&price_yocto) = current_prices.get(token) {
-                // priceはyoctoNEAR単位、amountはトークン数量
-                // 計算結果をNEAR単位に変換
-                let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                let value = amount * price_near;
-                holdings_value.insert(token.clone(), value);
-                total_value += value;
-            }
-        }
-
-        // ポートフォリオ記録
-        portfolio_values.push(PortfolioValue {
-            timestamp: current_time,
-            total_value,
-            holdings: holdings_value.into_iter().collect(),
-            cash_balance: 0.0,
-            unrealized_pnl: total_value - initial_value,
-        });
 
         // 次のステップへ
         current_time += time_step;
@@ -312,12 +391,34 @@ pub(crate) async fn run_momentum_timestep_simulation(
         },
     };
 
+    // データ品質統計を計算
+    let data_coverage_percentage = if total_timesteps > 0 {
+        ((total_timesteps - skipped_timesteps) as f64 / total_timesteps as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let longest_gap_hours = gap_events
+        .iter()
+        .map(|e| e.impact.duration_hours)
+        .max()
+        .unwrap_or(0);
+
+    let data_quality = DataQualityStats {
+        total_timesteps,
+        skipped_timesteps,
+        data_coverage_percentage,
+        longest_gap_hours,
+        gap_events,
+    };
+
     Ok(SimulationResult {
         config: config_summary,
         performance,
         trades,
         portfolio_values,
         execution_summary,
+        data_quality,
     })
 }
 
@@ -375,274 +476,352 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
     let mut step_count = 0;
     let max_steps = 1000;
+    let mut gap_events = Vec::new();
+    let mut total_timesteps = 0;
+    let mut skipped_timesteps = 0;
+    let mut last_successful_time: Option<DateTime<Utc>> = None;
 
     while current_time <= config.end_date && step_count < max_steps {
         step_count += 1;
+        total_timesteps += 1;
 
-        // 現在時点での価格を取得
-        let current_prices = get_prices_at_time(price_data, current_time)?;
+        // 価格データ取得を試行
+        match get_prices_at_time_optional(price_data, current_time) {
+            Some(current_prices) => {
+                // データがある場合：通常の処理
+                last_successful_time = Some(current_time);
 
-        // リバランスが必要かどうかチェック（設定された期間に基づく）
-        let portfolio_rebalance_duration = config.portfolio_rebalance_interval.as_duration();
-        let should_rebalance = current_time >= last_rebalance_time + portfolio_rebalance_duration;
+                // リバランスが必要かどうかチェック（設定された期間に基づく）
+                let portfolio_rebalance_duration =
+                    config.portfolio_rebalance_interval.as_duration();
+                let should_rebalance =
+                    current_time >= last_rebalance_time + portfolio_rebalance_duration;
 
-        if should_rebalance && !current_holdings.is_empty() {
-            // 予測データを生成
-            let backend_client = crate::api::backend::BackendClient::new();
-            let predictions = generate_api_predictions(
-                &backend_client,
-                &config.target_tokens,
-                &config.quote_token,
-                current_time,
-                config.historical_days,
-                config.prediction_horizon,
-                config.model.clone(),
-                config.verbose,
-            )
-            .await?;
+                if should_rebalance && !current_holdings.is_empty() {
+                    // 予測データを生成
+                    let backend_client = crate::api::backend::BackendClient::new();
+                    let predictions = generate_api_predictions(
+                        &backend_client,
+                        &config.target_tokens,
+                        &config.quote_token,
+                        current_time,
+                        config.historical_days,
+                        config.prediction_horizon,
+                        config.model.clone(),
+                        config.verbose,
+                    )
+                    .await?;
 
-            // TokenDataに変換
-            let mut token_data = Vec::new();
-            for token in &config.target_tokens {
-                if let Some(&current_price_yocto) = current_prices.get(token) {
-                    // current_priceはyoctoNEAR単位として保存
-                    token_data.push(TokenData {
-                        symbol: token.clone(),
-                        current_price: BigDecimal::from_f64(current_price_yocto)
-                            .unwrap_or_default(),
-                        historical_volatility: 0.2, // デフォルト値
-                        liquidity_score: Some(0.8),
-                        market_cap: None,
-                        decimals: Some(18),
-                    });
-                }
-            }
+                    // TokenDataに変換
+                    let mut token_data = Vec::new();
+                    for token in &config.target_tokens {
+                        if let Some(&current_price_yocto) = current_prices.get(token) {
+                            // current_priceはyoctoNEAR単位として保存
+                            token_data.push(TokenData {
+                                symbol: token.clone(),
+                                current_price: BigDecimal::from_f64(current_price_yocto)
+                                    .unwrap_or_default(),
+                                historical_volatility: 0.2, // デフォルト値
+                                liquidity_score: Some(0.8),
+                                market_cap: None,
+                                decimals: Some(18),
+                            });
+                        }
+                    }
 
-            // ポートフォリオデータを構築
-            let mut predictions_map = HashMap::new();
-            for pred in predictions {
-                let predicted_price = pred
-                    .predicted_price_24h
-                    .to_string()
-                    .parse::<f64>()
-                    .unwrap_or(0.0);
-                predictions_map.insert(pred.token, predicted_price);
-            }
+                    // ポートフォリオデータを構築
+                    let mut predictions_map = HashMap::new();
+                    for pred in predictions {
+                        let predicted_price = pred
+                            .predicted_price_24h
+                            .to_string()
+                            .parse::<f64>()
+                            .unwrap_or(0.0);
+                        predictions_map.insert(pred.token, predicted_price);
+                    }
 
-            // 履歴価格データを構築（簡略版）
-            let historical_prices: Vec<PriceHistory> = config
-                .target_tokens
-                .iter()
-                .map(|token| {
-                    let prices = if let Some(data) = price_data.get(token) {
-                        data.iter()
-                            .take(30)
-                            .map(|point| PricePoint {
-                                timestamp: chrono::DateTime::from_naive_utc_and_offset(
-                                    point.time,
-                                    chrono::Utc,
-                                ),
-                                // point.valueはyoctoNEAR単位で保存
-                                price: BigDecimal::from_f64(point.value).unwrap_or_default(),
-                                volume: None,
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
+                    // 履歴価格データを構築（簡略版）
+                    let historical_prices: Vec<PriceHistory> = config
+                        .target_tokens
+                        .iter()
+                        .map(|token| {
+                            let prices = if let Some(data) = price_data.get(token) {
+                                data.iter()
+                                    .take(30)
+                                    .map(|point| PricePoint {
+                                        timestamp: chrono::DateTime::from_naive_utc_and_offset(
+                                            point.time,
+                                            chrono::Utc,
+                                        ),
+                                        // point.valueはyoctoNEAR単位で保存
+                                        price: BigDecimal::from_f64(point.value)
+                                            .unwrap_or_default(),
+                                        volume: None,
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                            PriceHistory {
+                                token: token.clone(),
+                                quote_token: config.quote_token.clone(),
+                                prices,
+                            }
+                        })
+                        .collect();
+
+                    let portfolio_data = PortfolioData {
+                        tokens: token_data,
+                        predictions: predictions_map.into_iter().collect(),
+                        historical_prices,
+                        correlation_matrix: None,
                     };
 
-                    PriceHistory {
-                        token: token.clone(),
-                        quote_token: config.quote_token.clone(),
-                        prices,
+                    // 現在のホールディングをWalletInfoに変換
+                    let mut holdings_for_wallet = BTreeMap::new();
+                    for (token, amount) in &current_holdings {
+                        holdings_for_wallet.insert(token.clone(), *amount);
                     }
-                })
-                .collect();
 
-            let portfolio_data = PortfolioData {
-                tokens: token_data,
-                predictions: predictions_map.into_iter().collect(),
-                historical_prices,
-                correlation_matrix: None,
-            };
-
-            // 現在のホールディングをWalletInfoに変換
-            let mut holdings_for_wallet = BTreeMap::new();
-            for (token, amount) in &current_holdings {
-                holdings_for_wallet.insert(token.clone(), *amount);
-            }
-
-            let wallet_info = WalletInfo {
-                holdings: holdings_for_wallet,
-                total_value: current_holdings
-                    .iter()
-                    .map(|(token, amount)| {
-                        if let Some(&price_yocto) = current_prices.get(token) {
-                            // 価格をNEAR単位に変換してから計算
-                            let price_near =
-                                common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                            amount * price_near
-                        } else {
-                            0.0
-                        }
-                    })
-                    .sum(),
-                cash_balance: 0.0,
-            };
-
-            // ポートフォリオ最適化を実行
-            {
-                if let Ok(execution_report) = execute_portfolio_optimization(
-                    &wallet_info,
-                    portfolio_data,
-                    config.portfolio_rebalance_threshold,
-                )
-                .await
-                {
-                    // リバランスアクションを実行
-                    for action in execution_report.actions {
-                        if let TradingAction::Rebalance { target_weights } = action {
-                            // 現在の総価値を高精度で計算（NEAR単位）
-                            let mut total_portfolio_value_bd = BigDecimal::from(0);
-                            for (token, amount) in &current_holdings {
+                    let wallet_info = WalletInfo {
+                        holdings: holdings_for_wallet,
+                        total_value: current_holdings
+                            .iter()
+                            .map(|(token, amount)| {
                                 if let Some(&price_yocto) = current_prices.get(token) {
-                                    let price_yocto_bd =
-                                        BigDecimal::from_str(&price_yocto.to_string())
-                                            .unwrap_or_default();
-                                    let yocto_per_near =
-                                        BigDecimal::from_str("1000000000000000000000000").unwrap();
-                                    let price_near_bd = &price_yocto_bd / &yocto_per_near;
-                                    let amount_bd = BigDecimal::from_str(&amount.to_string())
-                                        .unwrap_or_default();
-                                    let value_bd = &price_near_bd * &amount_bd;
-
-                                    total_portfolio_value_bd += value_bd;
+                                    // 価格をNEAR単位に変換してから計算
+                                    let price_near =
+                                        common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                                    amount * price_near
+                                } else {
+                                    0.0
                                 }
-                            }
-                            let total_portfolio_value = total_portfolio_value_bd
-                                .to_string()
-                                .parse::<f64>()
-                                .unwrap_or(0.0);
+                            })
+                            .sum(),
+                        cash_balance: 0.0,
+                    };
 
-                            // 目標配分に基づいてリバランス（高精度計算で数量制限適用）
-                            for (token, target_weight) in target_weights {
-                                if let Some(&current_price_yocto) = current_prices.get(&token) {
-                                    // BigDecimalでの高精度計算
-                                    let price_yocto_bd =
-                                        BigDecimal::from_str(&current_price_yocto.to_string())
-                                            .unwrap_or_default();
-                                    let yocto_per_near =
-                                        BigDecimal::from_str("1000000000000000000000000").unwrap();
-                                    let price_near_bd = &price_yocto_bd / &yocto_per_near;
+                    // ポートフォリオ最適化を実行
+                    {
+                        if let Ok(execution_report) = execute_portfolio_optimization(
+                            &wallet_info,
+                            portfolio_data,
+                            config.portfolio_rebalance_threshold,
+                        )
+                        .await
+                        {
+                            // リバランスアクションを実行
+                            for action in execution_report.actions {
+                                if let TradingAction::Rebalance { target_weights } = action {
+                                    // 現在の総価値を高精度で計算（NEAR単位）
+                                    let mut total_portfolio_value_bd = BigDecimal::from(0);
+                                    for (token, amount) in &current_holdings {
+                                        if let Some(&price_yocto) = current_prices.get(token) {
+                                            let price_yocto_bd =
+                                                BigDecimal::from_str(&price_yocto.to_string())
+                                                    .unwrap_or_default();
+                                            let yocto_per_near =
+                                                BigDecimal::from_str("1000000000000000000000000")
+                                                    .unwrap();
+                                            let price_near_bd = &price_yocto_bd / &yocto_per_near;
+                                            let amount_bd =
+                                                BigDecimal::from_str(&amount.to_string())
+                                                    .unwrap_or_default();
+                                            let value_bd = &price_near_bd * &amount_bd;
 
-                                    let target_weight_bd =
-                                        BigDecimal::from_str(&target_weight.to_string())
-                                            .unwrap_or_default();
-                                    let target_value_bd =
-                                        &total_portfolio_value_bd * &target_weight_bd;
-                                    let target_amount_bd = if price_near_bd > BigDecimal::from(0) {
-                                        &target_value_bd / &price_near_bd
-                                    } else {
-                                        BigDecimal::from(0)
-                                    };
-
-                                    // 現実的な数量制限を適用
-                                    let max_reasonable_amount =
-                                        BigDecimal::from_str("1000000000000000000000").unwrap(); // 10^21
-                                    let target_amount_limited =
-                                        if target_amount_bd > max_reasonable_amount {
-                                            max_reasonable_amount.clone()
-                                        } else {
-                                            target_amount_bd.clone()
-                                        };
-
-                                    let target_amount = target_amount_limited
+                                            total_portfolio_value_bd += value_bd;
+                                        }
+                                    }
+                                    let total_portfolio_value = total_portfolio_value_bd
                                         .to_string()
                                         .parse::<f64>()
                                         .unwrap_or(0.0);
 
-                                    // 現在の保有量と目標量の差を計算
-                                    let current_amount =
-                                        current_holdings.get(&token).copied().unwrap_or(0.0);
-                                    let diff = target_amount - current_amount;
+                                    // 目標配分に基づいてリバランス（高精度計算で数量制限適用）
+                                    for (token, target_weight) in target_weights {
+                                        if let Some(&current_price_yocto) =
+                                            current_prices.get(&token)
+                                        {
+                                            // BigDecimalでの高精度計算
+                                            let price_yocto_bd = BigDecimal::from_str(
+                                                &current_price_yocto.to_string(),
+                                            )
+                                            .unwrap_or_default();
+                                            let yocto_per_near =
+                                                BigDecimal::from_str("1000000000000000000000000")
+                                                    .unwrap();
+                                            let price_near_bd = &price_yocto_bd / &yocto_per_near;
 
-                                    // 相対的な閾値: 現在保有量の1%以上の差でリバランス
-                                    let relative_threshold = current_amount * 0.01;
-                                    let min_threshold = 0.001; // 最小絶対閾値
-                                    let effective_threshold = relative_threshold.max(min_threshold);
+                                            let target_weight_bd =
+                                                BigDecimal::from_str(&target_weight.to_string())
+                                                    .unwrap_or_default();
+                                            let target_value_bd =
+                                                &total_portfolio_value_bd * &target_weight_bd;
+                                            let target_amount_bd =
+                                                if price_near_bd > BigDecimal::from(0) {
+                                                    &target_value_bd / &price_near_bd
+                                                } else {
+                                                    BigDecimal::from(0)
+                                                };
 
-                                    if diff.abs() > effective_threshold {
-                                        // 保有量の1%以上の差がある場合のみリバランス
-                                        current_holdings.insert(token.clone(), target_amount);
+                                            // 現実的な数量制限を適用
+                                            let max_reasonable_amount =
+                                                BigDecimal::from_str("1000000000000000000000")
+                                                    .unwrap(); // 10^21
+                                            let target_amount_limited =
+                                                if target_amount_bd > max_reasonable_amount {
+                                                    max_reasonable_amount.clone()
+                                                } else {
+                                                    target_amount_bd.clone()
+                                                };
 
-                                        // 簡易的な取引コスト計算（NEAR単位、高精度）
-                                        let price_near_f64 =
-                                            price_near_bd.to_string().parse::<f64>().unwrap_or(0.0);
-                                        let trade_cost = diff.abs() * price_near_f64 * 0.003; // 0.3%手数料
-                                        total_costs += trade_cost;
+                                            let target_amount = target_amount_limited
+                                                .to_string()
+                                                .parse::<f64>()
+                                                .unwrap_or(0.0);
 
-                                        // TradeExecutionを記録
-                                        trades.push(TradeExecution {
-                                            timestamp: current_time,
-                                            from_token: config.quote_token.clone(),
-                                            to_token: token.clone(),
-                                            amount: diff.abs(),
-                                            executed_price: price_near_f64,
-                                            cost: TradingCost {
-                                                protocol_fee: BigDecimal::from_f64(
-                                                    trade_cost * 0.7,
-                                                )
-                                                .unwrap_or_default(),
-                                                slippage: BigDecimal::from_f64(trade_cost * 0.2)
-                                                    .unwrap_or_default(),
-                                                gas_fee: config.gas_cost.clone(),
-                                                total: BigDecimal::from_f64(trade_cost)
-                                                    .unwrap_or_default(),
-                                            },
-                                            portfolio_value_before: total_portfolio_value,
-                                            portfolio_value_after: total_portfolio_value
-                                                - trade_cost,
-                                            success: true,
-                                            reason: format!(
-                                                "Portfolio rebalancing: {} -> {:.1}%",
-                                                token,
-                                                target_weight * 100.0
-                                            ),
-                                        });
+                                            // 現在の保有量と目標量の差を計算
+                                            let current_amount = current_holdings
+                                                .get(&token)
+                                                .copied()
+                                                .unwrap_or(0.0);
+                                            let diff = target_amount - current_amount;
+
+                                            // 相対的な閾値: 現在保有量の1%以上の差でリバランス
+                                            let relative_threshold = current_amount * 0.01;
+                                            let min_threshold = 0.001; // 最小絶対閾値
+                                            let effective_threshold =
+                                                relative_threshold.max(min_threshold);
+
+                                            if diff.abs() > effective_threshold {
+                                                // 保有量の1%以上の差がある場合のみリバランス
+                                                current_holdings
+                                                    .insert(token.clone(), target_amount);
+
+                                                // 簡易的な取引コスト計算（NEAR単位、高精度）
+                                                let price_near_f64 = price_near_bd
+                                                    .to_string()
+                                                    .parse::<f64>()
+                                                    .unwrap_or(0.0);
+                                                let trade_cost =
+                                                    diff.abs() * price_near_f64 * 0.003; // 0.3%手数料
+                                                total_costs += trade_cost;
+
+                                                // TradeExecutionを記録
+                                                trades.push(TradeExecution {
+                                                    timestamp: current_time,
+                                                    from_token: config.quote_token.clone(),
+                                                    to_token: token.clone(),
+                                                    amount: diff.abs(),
+                                                    executed_price: price_near_f64,
+                                                    cost: TradingCost {
+                                                        protocol_fee: BigDecimal::from_f64(
+                                                            trade_cost * 0.7,
+                                                        )
+                                                        .unwrap_or_default(),
+                                                        slippage: BigDecimal::from_f64(
+                                                            trade_cost * 0.2,
+                                                        )
+                                                        .unwrap_or_default(),
+                                                        gas_fee: config.gas_cost.clone(),
+                                                        total: BigDecimal::from_f64(trade_cost)
+                                                            .unwrap_or_default(),
+                                                    },
+                                                    portfolio_value_before: total_portfolio_value,
+                                                    portfolio_value_after: total_portfolio_value
+                                                        - trade_cost,
+                                                    success: true,
+                                                    reason: format!(
+                                                        "Portfolio rebalancing: {} -> {:.1}%",
+                                                        token,
+                                                        target_weight * 100.0
+                                                    ),
+                                                });
+                                            }
+                                        }
                                     }
                                 }
                             }
+
+                            last_rebalance_time = current_time;
+                        }
+                    }
+                }
+
+                // ポートフォリオ価値を計算
+                let mut total_value = 0.0;
+                let mut holdings_value = HashMap::new();
+
+                for (token, amount) in &current_holdings {
+                    if let Some(&price_yocto) = current_prices.get(token) {
+                        // priceはyoctoNEAR単位、amountはトークン数量
+                        // 計算結果をNEAR単位に変換
+                        let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                        let value = amount * price_near;
+                        holdings_value.insert(token.clone(), value);
+                        total_value += value;
+                    }
+                }
+
+                // ポートフォリオ記録
+                portfolio_values.push(PortfolioValue {
+                    timestamp: current_time,
+                    total_value,
+                    holdings: holdings_value.into_iter().collect(),
+                    cash_balance: 0.0,
+                    unrealized_pnl: total_value - initial_value,
+                });
+            }
+            None => {
+                // データが不足している場合：スキップ
+                skipped_timesteps += 1;
+
+                // スキップイベントを記録
+                let gap_event = DataGapEvent {
+                    timestamp: current_time,
+                    event_type: DataGapEventType::RebalanceSkipped,
+                    affected_tokens: config.target_tokens.clone(),
+                    reason: "No price data found within 1 hour of target time".to_string(),
+                    impact: calculate_gap_impact(
+                        last_successful_time,
+                        current_time,
+                        price_data,
+                        &config.target_tokens,
+                    ),
+                };
+
+                // ログに即座に出力
+                log_data_gap_event(&gap_event);
+                gap_events.push(gap_event);
+
+                // ポートフォリオ評価は最後に取得できた価格で継続
+                if let Some(evaluation_prices) =
+                    get_last_known_prices_for_evaluation(price_data, current_time)
+                {
+                    let mut total_value = 0.0;
+                    let mut holdings_value = HashMap::new();
+
+                    for (token, amount) in &current_holdings {
+                        if let Some(&price_yocto) = evaluation_prices.get(token) {
+                            let price_near =
+                                common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                            let value = amount * price_near;
+                            holdings_value.insert(token.clone(), value);
+                            total_value += value;
                         }
                     }
 
-                    last_rebalance_time = current_time;
+                    portfolio_values.push(PortfolioValue {
+                        timestamp: current_time,
+                        total_value,
+                        holdings: holdings_value.into_iter().collect(),
+                        cash_balance: 0.0,
+                        unrealized_pnl: total_value - initial_value,
+                    });
                 }
             }
         }
-
-        // ポートフォリオ価値を計算
-        let mut total_value = 0.0;
-        let mut holdings_value = HashMap::new();
-
-        for (token, amount) in &current_holdings {
-            if let Some(&price_yocto) = current_prices.get(token) {
-                // priceはyoctoNEAR単位、amountはトークン数量
-                // 計算結果をNEAR単位に変換
-                let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                let value = amount * price_near;
-                holdings_value.insert(token.clone(), value);
-                total_value += value;
-            }
-        }
-
-        // ポートフォリオ記録
-        portfolio_values.push(PortfolioValue {
-            timestamp: current_time,
-            total_value,
-            holdings: holdings_value.into_iter().collect(),
-            cash_balance: 0.0,
-            unrealized_pnl: total_value - initial_value,
-        });
 
         // 次のステップへ
         current_time += time_step;
@@ -691,12 +870,34 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         },
     };
 
+    // データ品質統計を計算
+    let data_coverage_percentage = if total_timesteps > 0 {
+        ((total_timesteps - skipped_timesteps) as f64 / total_timesteps as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let longest_gap_hours = gap_events
+        .iter()
+        .map(|e| e.impact.duration_hours)
+        .max()
+        .unwrap_or(0);
+
+    let data_quality = DataQualityStats {
+        total_timesteps,
+        skipped_timesteps,
+        data_coverage_percentage,
+        longest_gap_hours,
+        gap_events,
+    };
+
     Ok(SimulationResult {
         config: config_summary,
         performance,
         trades,
         portfolio_values,
         execution_summary,
+        data_quality,
     })
 }
 
@@ -735,7 +936,15 @@ pub(crate) async fn run_trend_following_optimization_simulation(
     let initial_per_token = initial_value / tokens_count;
 
     // 初期価格データを取得
-    let initial_prices = get_prices_at_time(price_data, config.start_date)?;
+    let initial_prices = match get_prices_at_time_optional(price_data, config.start_date) {
+        Some(prices) => prices,
+        None => {
+            return Err(anyhow::anyhow!(
+                "No price data found for initial time: {}. Cannot start simulation.",
+                config.start_date.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
+        }
+    };
 
     for token in &config.target_tokens {
         if let Some(&initial_price) = initial_prices.get(token) {
@@ -763,226 +972,311 @@ pub(crate) async fn run_trend_following_optimization_simulation(
     let max_steps = 1000;
     let mut available_capital = initial_value * 0.2; // 20%を新規投資用に確保
 
+    // データ品質統計を追跡
+    let mut total_timesteps = 0;
+    let mut skipped_timesteps = 0;
+    let mut gap_events = Vec::new();
+    let mut last_successful_time: Option<DateTime<Utc>> = Some(config.start_date);
+    let mut longest_gap_hours = 0;
+
     while current_time <= config.end_date && step_count < max_steps {
         step_count += 1;
+        total_timesteps += 1;
 
         // 現在時点での価格を取得
-        let current_prices = get_prices_at_time(price_data, current_time)?;
+        match get_prices_at_time_optional(price_data, current_time) {
+            Some(current_prices) => {
+                last_successful_time = Some(current_time);
 
-        // 市場データを構築（トレンドフォロー用）
-        let mut market_data = HashMap::new();
-        for token in &config.target_tokens {
-            if let Some(token_data) = price_data.get(token) {
-                // 過去30個のデータポイントを取得
-                let end_index = token_data
-                    .iter()
-                    .position(|point| {
-                        let point_time: chrono::DateTime<chrono::Utc> =
-                            chrono::DateTime::from_naive_utc_and_offset(point.time, chrono::Utc);
-                        point_time >= current_time
-                    })
-                    .unwrap_or(token_data.len());
-
-                let start_index = end_index.saturating_sub(30);
-                let recent_data: Vec<f64> = token_data[start_index..end_index]
-                    .iter()
-                    .map(|p| p.value)
-                    .collect();
-                let timestamps: Vec<chrono::DateTime<chrono::Utc>> = token_data
-                    [start_index..end_index]
-                    .iter()
-                    .map(|p| chrono::DateTime::from_naive_utc_and_offset(p.time, chrono::Utc))
-                    .collect();
-
-                if recent_data.len() >= 3 {
-                    let default_volume = vec![1000.0; timestamps.len()];
-                    // MarketDataTuple = (prices, timestamps, volumes, highs, lows)
-                    market_data.insert(
-                        token.clone(),
-                        (
-                            recent_data.clone(),
-                            timestamps.clone(),
-                            default_volume.clone(), // volumes
-                            recent_data.clone(),    // highs (using prices as approximation)
-                            recent_data,            // lows (using prices as approximation)
-                        ),
-                    );
-                }
-            }
-        }
-
-        // ポジションの現在価格を更新
-        for position in &mut current_positions {
-            if let Some(&current_price) = current_prices.get(&position.token) {
-                position.current_price = BigDecimal::from_f64(current_price).unwrap_or_default();
-                let entry_price_f64 = position
-                    .entry_price
-                    .to_string()
-                    .parse::<f64>()
-                    .unwrap_or(0.0);
-                if entry_price_f64 > 0.0 {
-                    position.unrealized_pnl =
-                        (current_price - entry_price_f64) / entry_price_f64 * 100.0;
-                }
-            }
-        }
-
-        // トレンドフォロー戦略を実行
-        if !market_data.is_empty() {
-            if let Ok(execution_report) = execute_trend_following_strategy(
-                config.target_tokens.clone(),
-                current_positions.clone(),
-                available_capital,
-                &market_data,
-                TrendFollowingParams {
-                    rsi_overbought: config.trend_rsi_overbought,
-                    rsi_oversold: config.trend_rsi_oversold,
-                    adx_strong_threshold: config.trend_adx_strong_threshold,
-                    r_squared_threshold: config.trend_r_squared_threshold,
-                },
-            )
-            .await
-            {
-                // トレンドフォローのアクションを実行
-                for action in execution_report.actions {
-                    match action {
-                        TradingAction::AddPosition { token, weight } => {
-                            if let Some(&current_price_yocto) = current_prices.get(&token) {
-                                let current_price_near =
-                                    common::units::Units::yocto_f64_to_near_f64(
-                                        current_price_yocto,
+                // 市場データを構築（トレンドフォロー用）
+                let mut market_data = HashMap::new();
+                for token in &config.target_tokens {
+                    if let Some(token_data) = price_data.get(token) {
+                        // 過去30個のデータポイントを取得
+                        let end_index = token_data
+                            .iter()
+                            .position(|point| {
+                                let point_time: chrono::DateTime<chrono::Utc> =
+                                    chrono::DateTime::from_naive_utc_and_offset(
+                                        point.time,
+                                        chrono::Utc,
                                     );
-                                let position_value = available_capital * weight;
-                                let position_size = position_value / current_price_near;
+                                point_time >= current_time
+                            })
+                            .unwrap_or(token_data.len());
 
-                                if position_value
-                                    > config
-                                        .min_trade_amount
-                                        .to_string()
-                                        .parse::<f64>()
-                                        .unwrap_or(1.0)
-                                {
-                                    // ホールディングを更新
-                                    let current_amount =
-                                        current_holdings.get(&token).copied().unwrap_or(0.0);
-                                    current_holdings
-                                        .insert(token.clone(), current_amount + position_size);
+                        let start_index = end_index.saturating_sub(30);
+                        let recent_data: Vec<f64> = token_data[start_index..end_index]
+                            .iter()
+                            .map(|p| p.value)
+                            .collect();
+                        let timestamps: Vec<chrono::DateTime<chrono::Utc>> = token_data
+                            [start_index..end_index]
+                            .iter()
+                            .map(|p| {
+                                chrono::DateTime::from_naive_utc_and_offset(p.time, chrono::Utc)
+                            })
+                            .collect();
 
-                                    // 取引コストを計算
-                                    let trade_cost = position_value * 0.003; // 0.3%手数料
-                                    total_costs += trade_cost;
-                                    available_capital -= position_value + trade_cost;
-
-                                    // TradeExecutionを記録
-                                    trades.push(TradeExecution {
-                                        timestamp: current_time,
-                                        from_token: config.quote_token.clone(),
-                                        to_token: token.clone(),
-                                        amount: position_size,
-                                        executed_price: current_price_near,
-                                        cost: TradingCost {
-                                            protocol_fee: BigDecimal::from_f64(trade_cost * 0.7)
-                                                .unwrap_or_default(),
-                                            slippage: BigDecimal::from_f64(trade_cost * 0.2)
-                                                .unwrap_or_default(),
-                                            gas_fee: config.gas_cost.clone(),
-                                            total: BigDecimal::from_f64(trade_cost)
-                                                .unwrap_or_default(),
-                                        },
-                                        portfolio_value_before: available_capital
-                                            + position_value
-                                            + trade_cost,
-                                        portfolio_value_after: available_capital,
-                                        success: true,
-                                        reason: format!(
-                                            "Trend following: Add position {} ({:.1}%)",
-                                            token,
-                                            weight * 100.0
-                                        ),
-                                    });
-                                }
-                            }
+                        if recent_data.len() >= 3 {
+                            let default_volume = vec![1000.0; timestamps.len()];
+                            // MarketDataTuple = (prices, timestamps, volumes, highs, lows)
+                            market_data.insert(
+                                token.clone(),
+                                (
+                                    recent_data.clone(),
+                                    timestamps.clone(),
+                                    default_volume.clone(), // volumes
+                                    recent_data.clone(),    // highs (using prices as approximation)
+                                    recent_data,            // lows (using prices as approximation)
+                                ),
+                            );
                         }
-                        TradingAction::ReducePosition { token, weight } => {
-                            if let (Some(&current_amount), Some(&current_price_yocto)) =
-                                (current_holdings.get(&token), current_prices.get(&token))
-                            {
-                                let current_price_near =
-                                    common::units::Units::yocto_f64_to_near_f64(
-                                        current_price_yocto,
-                                    );
-                                let reduction_size = current_amount * weight;
-                                let reduction_value = reduction_size * current_price_near;
-
-                                if reduction_value > 1.0 {
-                                    // 最小取引サイズ
-                                    // ホールディングを更新
-                                    current_holdings
-                                        .insert(token.clone(), current_amount - reduction_size);
-
-                                    // 取引コストを計算
-                                    let trade_cost = reduction_value * 0.003; // 0.3%手数料
-                                    total_costs += trade_cost;
-                                    available_capital += reduction_value - trade_cost;
-
-                                    // TradeExecutionを記録
-                                    trades.push(TradeExecution {
-                                        timestamp: current_time,
-                                        from_token: token.clone(),
-                                        to_token: config.quote_token.clone(),
-                                        amount: reduction_size,
-                                        executed_price: current_price_near,
-                                        cost: TradingCost {
-                                            protocol_fee: BigDecimal::from_f64(trade_cost * 0.7)
-                                                .unwrap_or_default(),
-                                            slippage: BigDecimal::from_f64(trade_cost * 0.2)
-                                                .unwrap_or_default(),
-                                            gas_fee: config.gas_cost.clone(),
-                                            total: BigDecimal::from_f64(trade_cost)
-                                                .unwrap_or_default(),
-                                        },
-                                        portfolio_value_before: available_capital - reduction_value
-                                            + trade_cost,
-                                        portfolio_value_after: available_capital,
-                                        success: true,
-                                        reason: format!(
-                                            "Trend following: Reduce position {} ({:.1}%)",
-                                            token,
-                                            weight * 100.0
-                                        ),
-                                    });
-                                }
-                            }
-                        }
-                        _ => {} // 他のアクションは無視
                     }
                 }
+
+                // ポジションの現在価格を更新
+                for position in &mut current_positions {
+                    if let Some(&current_price) = current_prices.get(&position.token) {
+                        position.current_price =
+                            BigDecimal::from_f64(current_price).unwrap_or_default();
+                        let entry_price_f64 = position
+                            .entry_price
+                            .to_string()
+                            .parse::<f64>()
+                            .unwrap_or(0.0);
+                        if entry_price_f64 > 0.0 {
+                            position.unrealized_pnl =
+                                (current_price - entry_price_f64) / entry_price_f64 * 100.0;
+                        }
+                    }
+                }
+
+                // トレンドフォロー戦略を実行
+                if !market_data.is_empty() {
+                    if let Ok(execution_report) = execute_trend_following_strategy(
+                        config.target_tokens.clone(),
+                        current_positions.clone(),
+                        available_capital,
+                        &market_data,
+                        TrendFollowingParams {
+                            rsi_overbought: config.trend_rsi_overbought,
+                            rsi_oversold: config.trend_rsi_oversold,
+                            adx_strong_threshold: config.trend_adx_strong_threshold,
+                            r_squared_threshold: config.trend_r_squared_threshold,
+                        },
+                    )
+                    .await
+                    {
+                        // トレンドフォローのアクションを実行
+                        for action in execution_report.actions {
+                            match action {
+                                TradingAction::AddPosition { token, weight } => {
+                                    if let Some(&current_price_yocto) = current_prices.get(&token) {
+                                        let current_price_near =
+                                            common::units::Units::yocto_f64_to_near_f64(
+                                                current_price_yocto,
+                                            );
+                                        let position_value = available_capital * weight;
+                                        let position_size = position_value / current_price_near;
+
+                                        if position_value
+                                            > config
+                                                .min_trade_amount
+                                                .to_string()
+                                                .parse::<f64>()
+                                                .unwrap_or(1.0)
+                                        {
+                                            // ホールディングを更新
+                                            let current_amount = current_holdings
+                                                .get(&token)
+                                                .copied()
+                                                .unwrap_or(0.0);
+                                            current_holdings.insert(
+                                                token.clone(),
+                                                current_amount + position_size,
+                                            );
+
+                                            // 取引コストを計算
+                                            let trade_cost = position_value * 0.003; // 0.3%手数料
+                                            total_costs += trade_cost;
+                                            available_capital -= position_value + trade_cost;
+
+                                            // TradeExecutionを記録
+                                            trades.push(TradeExecution {
+                                                timestamp: current_time,
+                                                from_token: config.quote_token.clone(),
+                                                to_token: token.clone(),
+                                                amount: position_size,
+                                                executed_price: current_price_near,
+                                                cost: TradingCost {
+                                                    protocol_fee: BigDecimal::from_f64(
+                                                        trade_cost * 0.7,
+                                                    )
+                                                    .unwrap_or_default(),
+                                                    slippage: BigDecimal::from_f64(
+                                                        trade_cost * 0.2,
+                                                    )
+                                                    .unwrap_or_default(),
+                                                    gas_fee: config.gas_cost.clone(),
+                                                    total: BigDecimal::from_f64(trade_cost)
+                                                        .unwrap_or_default(),
+                                                },
+                                                portfolio_value_before: available_capital
+                                                    + position_value
+                                                    + trade_cost,
+                                                portfolio_value_after: available_capital,
+                                                success: true,
+                                                reason: format!(
+                                                    "Trend following: Add position {} ({:.1}%)",
+                                                    token,
+                                                    weight * 100.0
+                                                ),
+                                            });
+                                        }
+                                    }
+                                }
+                                TradingAction::ReducePosition { token, weight } => {
+                                    if let (Some(&current_amount), Some(&current_price_yocto)) =
+                                        (current_holdings.get(&token), current_prices.get(&token))
+                                    {
+                                        let current_price_near =
+                                            common::units::Units::yocto_f64_to_near_f64(
+                                                current_price_yocto,
+                                            );
+                                        let reduction_size = current_amount * weight;
+                                        let reduction_value = reduction_size * current_price_near;
+
+                                        if reduction_value > 1.0 {
+                                            // 最小取引サイズ
+                                            // ホールディングを更新
+                                            current_holdings.insert(
+                                                token.clone(),
+                                                current_amount - reduction_size,
+                                            );
+
+                                            // 取引コストを計算
+                                            let trade_cost = reduction_value * 0.003; // 0.3%手数料
+                                            total_costs += trade_cost;
+                                            available_capital += reduction_value - trade_cost;
+
+                                            // TradeExecutionを記録
+                                            trades.push(TradeExecution {
+                                                timestamp: current_time,
+                                                from_token: token.clone(),
+                                                to_token: config.quote_token.clone(),
+                                                amount: reduction_size,
+                                                executed_price: current_price_near,
+                                                cost: TradingCost {
+                                                    protocol_fee: BigDecimal::from_f64(
+                                                        trade_cost * 0.7,
+                                                    )
+                                                    .unwrap_or_default(),
+                                                    slippage: BigDecimal::from_f64(
+                                                        trade_cost * 0.2,
+                                                    )
+                                                    .unwrap_or_default(),
+                                                    gas_fee: config.gas_cost.clone(),
+                                                    total: BigDecimal::from_f64(trade_cost)
+                                                        .unwrap_or_default(),
+                                                },
+                                                portfolio_value_before: available_capital
+                                                    - reduction_value
+                                                    + trade_cost,
+                                                portfolio_value_after: available_capital,
+                                                success: true,
+                                                reason: format!(
+                                                    "Trend following: Reduce position {} ({:.1}%)",
+                                                    token,
+                                                    weight * 100.0
+                                                ),
+                                            });
+                                        }
+                                    }
+                                }
+                                _ => {} // 他のアクションは無視
+                            }
+                        }
+                    }
+                }
+
+                // ポートフォリオ価値を計算
+                let mut total_value = available_capital;
+                let mut holdings_value = HashMap::new();
+
+                for (token, amount) in &current_holdings {
+                    if let Some(&price_yocto) = current_prices.get(token) {
+                        // priceはyoctoNEAR単位、amountはトークン数量
+                        // 計算結果をNEAR単位に変換
+                        let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                        let value = amount * price_near;
+                        holdings_value.insert(token.clone(), value);
+                        total_value += value;
+                    }
+                }
+
+                // ポートフォリオ記録
+                portfolio_values.push(PortfolioValue {
+                    timestamp: current_time,
+                    total_value,
+                    holdings: holdings_value.into_iter().collect(),
+                    cash_balance: available_capital,
+                    unrealized_pnl: total_value - initial_value,
+                });
+            }
+            None => {
+                // データ欠損時の処理
+                skipped_timesteps += 1;
+
+                let impact = calculate_gap_impact(
+                    last_successful_time,
+                    current_time,
+                    price_data,
+                    &config.target_tokens,
+                );
+
+                let gap_event = DataGapEvent {
+                    timestamp: current_time,
+                    event_type: DataGapEventType::TradingSkipped,
+                    affected_tokens: config.target_tokens.clone(),
+                    reason: "Price data not available within 1 hour window".to_string(),
+                    impact: impact.clone(),
+                };
+
+                log_data_gap_event(&gap_event);
+                gap_events.push(gap_event);
+
+                if impact.duration_hours > longest_gap_hours {
+                    longest_gap_hours = impact.duration_hours;
+                }
+
+                // ポートフォリオ評価用の価格を取得して記録を継続
+                if let Some(last_known_prices) =
+                    get_last_known_prices_for_evaluation(price_data, current_time)
+                {
+                    let mut total_value = available_capital;
+                    let mut holdings_value = HashMap::new();
+
+                    for (token, amount) in &current_holdings {
+                        if let Some(&price_yocto) = last_known_prices.get(token) {
+                            let price_near =
+                                common::units::Units::yocto_f64_to_near_f64(price_yocto);
+                            let value = amount * price_near;
+                            holdings_value.insert(token.clone(), value);
+                            total_value += value;
+                        }
+                    }
+
+                    portfolio_values.push(PortfolioValue {
+                        timestamp: current_time,
+                        total_value,
+                        holdings: holdings_value.into_iter().collect(),
+                        cash_balance: available_capital,
+                        unrealized_pnl: total_value - initial_value,
+                    });
+                }
             }
         }
-
-        // ポートフォリオ価値を計算
-        let mut total_value = available_capital;
-        let mut holdings_value = HashMap::new();
-
-        for (token, amount) in &current_holdings {
-            if let Some(&price_yocto) = current_prices.get(token) {
-                // priceはyoctoNEAR単位、amountはトークン数量
-                // 計算結果をNEAR単位に変換
-                let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                let value = amount * price_near;
-                holdings_value.insert(token.clone(), value);
-                total_value += value;
-            }
-        }
-
-        // ポートフォリオ記録
-        portfolio_values.push(PortfolioValue {
-            timestamp: current_time,
-            total_value,
-            holdings: holdings_value.into_iter().collect(),
-            cash_balance: available_capital,
-            unrealized_pnl: total_value - initial_value,
-        });
 
         // 次のステップへ
         current_time += time_step;
@@ -1031,12 +1325,28 @@ pub(crate) async fn run_trend_following_optimization_simulation(
         },
     };
 
+    // データ品質統計を計算
+    let data_coverage_percentage = if total_timesteps > 0 {
+        ((total_timesteps - skipped_timesteps) as f64 / total_timesteps as f64) * 100.0
+    } else {
+        100.0
+    };
+
+    let data_quality = DataQualityStats {
+        total_timesteps,
+        skipped_timesteps,
+        data_coverage_percentage,
+        longest_gap_hours,
+        gap_events,
+    };
+
     Ok(SimulationResult {
         config: config_summary,
         performance,
         trades,
         portfolio_values,
         execution_summary,
+        data_quality,
     })
 }
 

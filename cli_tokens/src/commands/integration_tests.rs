@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 
 use crate::commands::simulate::{
-    AlgorithmType, ExecutionSummary, MultiAlgorithmSimulationResult, PerformanceMetrics,
+    AlgorithmType, DataQualityStats, ExecutionSummary, MultiAlgorithmSimulationResult, PerformanceMetrics,
     PortfolioValue, SimulationResult, SimulationSummary, TradeExecution, TradingCost,
 };
 
@@ -114,6 +114,13 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             success_rate: 1.0,
             total_cost: 8.7,
             avg_cost_per_trade: 4.35,
+        },
+        data_quality: DataQualityStats {
+            total_timesteps: 10,
+            skipped_timesteps: 0,
+            data_coverage_percentage: 100.0,
+            longest_gap_hours: 0,
+            gap_events: Vec::new(),
         },
     }
 }

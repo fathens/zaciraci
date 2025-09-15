@@ -459,6 +459,40 @@ pub struct PortfolioState<'a> {
     pub trades: &'a mut Vec<TradeExecution>,
 }
 
+/// データ欠損によるスキップイベントの記録
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataGapEvent {
+    pub timestamp: DateTime<Utc>,
+    pub event_type: DataGapEventType,
+    pub affected_tokens: Vec<String>,
+    pub reason: String,
+    pub impact: DataGapImpact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DataGapEventType {
+    TradingSkipped,   // 取引をスキップ
+    RebalanceSkipped, // リバランスをスキップ
+    PriceDataMissing, // 価格データが見つからない
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataGapImpact {
+    pub duration_hours: i64,                         // データ欠損期間（時間）
+    pub last_known_timestamp: DateTime<Utc>,         // 最後に取得できた時刻
+    pub next_known_timestamp: Option<DateTime<Utc>>, // 次に取得できた時刻
+}
+
+/// データ品質に関する統計情報
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataQualityStats {
+    pub total_timesteps: usize,        // 総タイムステップ数
+    pub skipped_timesteps: usize,      // スキップしたタイムステップ数
+    pub data_coverage_percentage: f64, // データカバレッジ率
+    pub longest_gap_hours: i64,        // 最長データギャップ（時間）
+    pub gap_events: Vec<DataGapEvent>, // データギャップイベント一覧
+}
+
 // Result structures
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationResult {
@@ -467,6 +501,7 @@ pub struct SimulationResult {
     pub trades: Vec<TradeExecution>,
     pub portfolio_values: Vec<PortfolioValue>,
     pub execution_summary: ExecutionSummary,
+    pub data_quality: DataQualityStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

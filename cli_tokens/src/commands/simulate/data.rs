@@ -71,6 +71,14 @@ pub fn get_prices_at_time(
     Ok(prices)
 }
 
+/// Get prices at a specific time point, returning None if data is insufficient
+pub fn get_prices_at_time_optional(
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+    target_time: DateTime<Utc>,
+) -> Option<HashMap<String, f64>> {
+    get_prices_at_time(price_data, target_time).ok()
+}
+
 /// Calculate returns from a series of values
 pub fn calculate_returns(values: &[f64]) -> Vec<f64> {
     values
@@ -111,4 +119,121 @@ pub fn validate_data_quality(
     _config: &SimulationConfig,
 ) -> Result<DataQuality> {
     Ok(DataQuality::High)
+}
+
+/// 統一されたログ出力関数
+pub fn log_data_gap_event(event: &DataGapEvent) {
+    let duration_str = if event.impact.duration_hours >= 24 {
+        format!("{:.1} days", event.impact.duration_hours as f64 / 24.0)
+    } else {
+        format!("{} hours", event.impact.duration_hours)
+    };
+
+    println!(
+        "⚠️  {} at {} - Duration: {} - Tokens: [{}]",
+        match event.event_type {
+            DataGapEventType::TradingSkipped => "Trading skipped",
+            DataGapEventType::RebalanceSkipped => "Rebalance skipped",
+            DataGapEventType::PriceDataMissing => "Price data missing",
+        },
+        event.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
+        duration_str,
+        event.affected_tokens.join(", ")
+    );
+
+    if event.impact.duration_hours >= 24 {
+        println!("   📊 Long data gap detected - consider reviewing data quality");
+    }
+}
+
+/// ギャップの影響を計算
+pub fn calculate_gap_impact(
+    last_success: Option<DateTime<Utc>>,
+    current_time: DateTime<Utc>,
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+    tokens: &[String],
+) -> DataGapImpact {
+    let last_known_timestamp = last_success.unwrap_or(current_time);
+
+    // 次の有効データを探す
+    let next_known_timestamp = find_next_valid_data_time(price_data, current_time, tokens);
+
+    let duration_hours = if let Some(next_time) = next_known_timestamp {
+        (next_time - last_known_timestamp).num_hours()
+    } else {
+        (current_time - last_known_timestamp).num_hours()
+    };
+
+    DataGapImpact {
+        duration_hours,
+        last_known_timestamp,
+        next_known_timestamp,
+    }
+}
+
+/// 次の有効なデータ時刻を探す
+fn find_next_valid_data_time(
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+    current_time: DateTime<Utc>,
+    tokens: &[String],
+) -> Option<DateTime<Utc>> {
+    let mut earliest_next = None;
+
+    for token in tokens {
+        if let Some(values) = price_data.get(token) {
+            // current_time以降で最初に有効なデータを探す
+            for value in values {
+                let value_time = DateTime::from_naive_utc_and_offset(value.time, Utc);
+                if value_time > current_time {
+                    match earliest_next {
+                        None => earliest_next = Some(value_time),
+                        Some(earliest) if value_time < earliest => earliest_next = Some(value_time),
+                        _ => {}
+                    }
+                    break; // 昇順ソート済みと仮定
+                }
+            }
+        }
+    }
+
+    earliest_next
+}
+
+/// ポートフォリオ評価用：より柔軟な価格取得（最大7日前まで遡る）
+pub fn get_last_known_prices_for_evaluation(
+    price_data: &HashMap<String, Vec<ValueAtTime>>,
+    target_time: DateTime<Utc>,
+) -> Option<HashMap<String, f64>> {
+    let mut prices = HashMap::new();
+    let max_lookback = chrono::Duration::days(7); // 最大7日前まで遡る
+
+    for (token, values) in price_data {
+        if let Some(price) = find_price_within(values, target_time, max_lookback) {
+            prices.insert(token.clone(), price);
+        }
+    }
+
+    if prices.is_empty() {
+        None
+    } else {
+        Some(prices)
+    }
+}
+
+/// 指定期間内で最も近い価格を探す
+fn find_price_within(
+    values: &[ValueAtTime],
+    target_time: DateTime<Utc>,
+    max_lookback: chrono::Duration,
+) -> Option<f64> {
+    let earliest_allowed = target_time - max_lookback;
+
+    values
+        .iter()
+        .filter(|v| {
+            let value_time: DateTime<Utc> = DateTime::from_naive_utc_and_offset(v.time, Utc);
+            value_time <= target_time && value_time >= earliest_allowed
+        })
+        .max_by_key(|v| v.time)
+        .map(|v| v.value)
 }
