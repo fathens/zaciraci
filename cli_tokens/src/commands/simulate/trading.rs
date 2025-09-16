@@ -111,7 +111,7 @@ async fn save_to_cache(
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Generate predictions using Chronos API with fallback to mock data
+/// Generate predictions using Chronos API
 pub async fn generate_api_predictions(
     backend_client: &crate::api::backend::BackendClient,
     target_tokens: &[String],
