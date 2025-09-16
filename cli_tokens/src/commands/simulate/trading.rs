@@ -447,8 +447,8 @@ pub fn execute_trading_action(
                 timestamp: ctx.timestamp,
                 from_token: ctx.current_token.to_string(),
                 to_token: target,
-                amount: ctx.current_amount,
-                executed_price: target_price,
+                amount: new_amount,           // 購入するトークン数量
+                executed_price: target_price, // 購入トークンの価格
                 cost: TradingCost {
                     protocol_fee: &trade_cost_value_yocto_bd
                         * BigDecimal::from_f64(0.7).unwrap_or_default(),
@@ -523,8 +523,8 @@ pub fn execute_trading_action(
                 timestamp: ctx.timestamp,
                 from_token: ctx.current_token.to_string(),
                 to_token: to,
-                amount: ctx.current_amount,
-                executed_price: target_price,
+                amount: new_amount,           // 購入するトークン数量
+                executed_price: target_price, // 購入トークンの価格
                 cost: TradingCost {
                     protocol_fee: &trade_cost_value_yocto_bd
                         * BigDecimal::from_f64(0.7).unwrap_or_default(),
