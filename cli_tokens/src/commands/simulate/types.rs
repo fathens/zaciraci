@@ -246,7 +246,6 @@ pub struct SimulationConfig {
 pub enum AlgorithmType {
     Momentum,
     Portfolio,
-    TrendFollowing,
 }
 
 #[derive(Debug, Clone)]
@@ -600,8 +599,7 @@ impl From<&str> for AlgorithmType {
         match s.to_lowercase().as_str() {
             "momentum" => AlgorithmType::Momentum,
             "portfolio" => AlgorithmType::Portfolio,
-            "trend_following" | "trend-following" => AlgorithmType::TrendFollowing,
-            _ => AlgorithmType::Momentum, // デフォルト
+            _ => AlgorithmType::Portfolio, // デフォルト
         }
     }
 }

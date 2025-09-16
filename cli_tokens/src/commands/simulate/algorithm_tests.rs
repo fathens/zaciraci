@@ -156,7 +156,8 @@ mod algorithm_integration_tests {
     }
 
     #[tokio::test]
-    async fn test_trend_following_algorithm_with_downward_trend() {
+    #[ignore] // Portfolio requires API access, skip in unit tests
+    async fn test_portfolio_algorithm_with_downward_trend() {
         let start_date = DateTime::parse_from_rfc3339("2024-08-01T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -166,7 +167,7 @@ mod algorithm_integration_tests {
 
         let tokens = vec!["declining_token".to_string()];
         let config = create_test_config(
-            AlgorithmType::TrendFollowing,
+            AlgorithmType::Portfolio,
             start_date,
             end_date,
             tokens.clone(),
@@ -176,23 +177,19 @@ mod algorithm_integration_tests {
         let price_data =
             create_mock_price_data(&["declining_token"], start_date, end_date, 200.0, -0.15); // 15% decline
 
-        let result =
-            crate::commands::simulate::algorithms::run_trend_following_optimization_simulation(
-                &config,
-                &price_data,
-            )
-            .await;
+        let result = crate::commands::simulate::algorithms::run_portfolio_optimization_simulation(
+            &config,
+            &price_data,
+        )
+        .await;
 
-        assert!(result.is_ok(), "Trend following simulation should succeed");
+        assert!(result.is_ok(), "Portfolio simulation should succeed");
 
         let simulation_result = result.unwrap();
-        assert_eq!(
-            simulation_result.config.algorithm,
-            AlgorithmType::TrendFollowing
-        );
+        assert_eq!(simulation_result.config.algorithm, AlgorithmType::Portfolio);
         assert!(!simulation_result.portfolio_values.is_empty());
 
-        // Trend following should adapt to downward trend
+        // Portfolio optimization should handle downward trend
         assert!(simulation_result.performance.total_return_pct.is_finite());
     }
 

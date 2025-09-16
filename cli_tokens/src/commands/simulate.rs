@@ -10,9 +10,7 @@ pub use types::*;
 // Re-export utilities for backward compatibility
 pub use utils::*;
 
-use algorithms::{
-    run_momentum_simulation, run_portfolio_simulation, run_trend_following_simulation,
-};
+use algorithms::{run_momentum_simulation, run_portfolio_simulation};
 use anyhow::{Context, Result};
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
@@ -26,7 +24,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
 
     if args.verbose {
         println!("📋 Configuration:");
-        println!("  Algorithm: All algorithms (Momentum, Portfolio, TrendFollowing)");
+        println!("  Algorithm: All algorithms (Momentum, Portfolio)");
         println!("  Capital: {} {}", args.capital, args.quote_token);
         println!("  Fee Model: {}", args.fee_model);
         println!("  Output: {}", args.output);
@@ -67,11 +65,7 @@ pub async fn run(args: SimulateArgs) -> Result<()> {
     // 全アルゴリズムを実行
     println!("Running simulations...");
 
-    let algorithms = [
-        AlgorithmType::Momentum,
-        AlgorithmType::Portfolio,
-        AlgorithmType::TrendFollowing,
-    ];
+    let algorithms = [AlgorithmType::Momentum, AlgorithmType::Portfolio];
     let mut results = Vec::new();
 
     for algorithm in &algorithms {
@@ -225,7 +219,7 @@ pub async fn validate_and_convert_args(args: SimulateArgs) -> Result<SimulationC
     }
 
     // アルゴリズムタイプはデフォルト値（後で各アルゴリズムごとに設定される）
-    let algorithm = AlgorithmType::Momentum;
+    let algorithm = AlgorithmType::Portfolio;
 
     // トークンリストは後で自動取得するため、ここでは空のベクターを設定
     let target_tokens = Vec::new();
@@ -278,7 +272,6 @@ async fn run_single_algorithm(config: &SimulationConfig) -> Result<SimulationRes
     match config.algorithm {
         AlgorithmType::Momentum => run_momentum_simulation(config).await,
         AlgorithmType::Portfolio => run_portfolio_simulation(config).await,
-        AlgorithmType::TrendFollowing => run_trend_following_simulation(config).await,
     }
 }
 

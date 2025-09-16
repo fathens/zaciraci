@@ -135,7 +135,7 @@ mod tests {
         let results = vec![
             create_test_simulation_result(AlgorithmType::Momentum, 1150.0),
             create_test_simulation_result(AlgorithmType::Portfolio, 1120.0),
-            create_test_simulation_result(AlgorithmType::TrendFollowing, 1080.0),
+            create_test_simulation_result(AlgorithmType::Portfolio, 1080.0),
         ];
 
         // Create the same structure that simulate would create
@@ -145,7 +145,7 @@ mod tests {
         let comparison = AlgorithmComparison {
             best_return: (AlgorithmType::Momentum, 15.0),
             best_sharpe: (AlgorithmType::Momentum, 1.2),
-            lowest_drawdown: (AlgorithmType::TrendFollowing, -2.0),
+            lowest_drawdown: (AlgorithmType::Portfolio, -2.0),
             summary_table: results
                 .iter()
                 .map(|r| AlgorithmSummaryRow {
@@ -362,7 +362,7 @@ mod tests {
         vec![
             create_test_simulation_result(AlgorithmType::Momentum, 1050.0),
             create_test_simulation_result(AlgorithmType::Portfolio, 1030.0), 
-            create_test_simulation_result(AlgorithmType::TrendFollowing, 990.0),
+            create_test_simulation_result(AlgorithmType::Portfolio, 990.0),
         ]
     }
     
@@ -391,7 +391,6 @@ mod tests {
         let algorithms = vec![
             AlgorithmType::Momentum,
             AlgorithmType::Portfolio,
-            AlgorithmType::TrendFollowing,
         ];
 
         for algo in algorithms {
@@ -401,7 +400,6 @@ mod tests {
             match algo {
                 AlgorithmType::Momentum => assert_eq!(string_repr, "Momentum"),
                 AlgorithmType::Portfolio => assert_eq!(string_repr, "Portfolio"),
-                AlgorithmType::TrendFollowing => assert_eq!(string_repr, "TrendFollowing"),
             }
 
             // Test round-trip

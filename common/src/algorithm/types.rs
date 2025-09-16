@@ -133,7 +133,6 @@ pub enum TradingAction {
 pub enum AlgorithmType {
     Momentum,
     Portfolio,
-    TrendFollowing,
 }
 
 /// パフォーマンス指標
