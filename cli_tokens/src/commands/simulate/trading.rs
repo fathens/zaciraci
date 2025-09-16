@@ -1,5 +1,5 @@
 use super::types::*;
-use super::utils::calculate_trading_cost;
+use super::utils::calculate_trading_cost_by_value_yocto_bd;
 use anyhow::Result;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
@@ -394,17 +394,42 @@ pub fn execute_trading_action(
                 return Ok(None);
             }
 
-            // 取引コストを計算
-            let trade_cost = calculate_trading_cost(
-                ctx.current_amount,
+            // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
+            let current_amount_bd = BigDecimal::from_f64(ctx.current_amount).unwrap_or_default();
+            let current_price_bd = BigDecimal::from_f64(ctx.current_price).unwrap_or_default();
+            let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
+
+            // ガスコストをBigDecimalで計算
+            let gas_cost_near = ctx
+                .config
+                .gas_cost
+                .to_string()
+                .parse::<f64>()
+                .unwrap_or(0.01);
+            let gas_cost_yocto_f64 = common::units::Units::near_f64_to_yocto_f64(gas_cost_near);
+            let gas_cost_yocto_bd = BigDecimal::from_f64(gas_cost_yocto_f64).unwrap_or_default();
+
+            // スリッパレートをBigDecimalで計算
+            let slippage_rate_bd =
+                BigDecimal::from_f64(ctx.config.slippage_rate).unwrap_or_default();
+
+            // 取引コストをyoctoNEAR価値ベースで計算（BigDecimal精度）
+            let trade_cost_value_yocto_bd = calculate_trading_cost_by_value_yocto_bd(
+                &trade_value_yocto_bd,
                 &ctx.config.fee_model,
-                ctx.config.slippage_rate,
-                ctx.config
-                    .gas_cost
+                &slippage_rate_bd,
+                &gas_cost_yocto_bd,
+            );
+
+            // コストをトークン数量で表現（BigDecimal精度保持）
+            let trade_cost = if ctx.current_price > 0.0 {
+                (&trade_cost_value_yocto_bd / &current_price_bd)
                     .to_string()
                     .parse::<f64>()
-                    .unwrap_or(0.01),
-            );
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
 
             let net_amount = ctx.current_amount - trade_cost;
             let new_amount = net_amount * ctx.current_price / target_price;
@@ -423,10 +448,12 @@ pub fn execute_trading_action(
                 amount: ctx.current_amount,
                 executed_price: target_price,
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from_f64(trade_cost * 0.7).unwrap_or_default(),
-                    slippage: BigDecimal::from_f64(trade_cost * 0.2).unwrap_or_default(),
-                    gas_fee: ctx.config.gas_cost.clone(),
-                    total: BigDecimal::from_f64(trade_cost).unwrap_or_default(),
+                    protocol_fee: &trade_cost_value_yocto_bd
+                        * BigDecimal::from_f64(0.7).unwrap_or_default(),
+                    slippage: &trade_cost_value_yocto_bd
+                        * BigDecimal::from_f64(0.2).unwrap_or_default(),
+                    gas_fee: gas_cost_yocto_bd.clone(),
+                    total: trade_cost_value_yocto_bd.clone(),
                 },
                 portfolio_value_before: portfolio_before,
                 portfolio_value_after: portfolio_after,
@@ -441,17 +468,42 @@ pub fn execute_trading_action(
                 return Ok(None);
             }
 
-            // 取引コストを計算
-            let trade_cost = calculate_trading_cost(
-                ctx.current_amount,
+            // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
+            let current_amount_bd = BigDecimal::from_f64(ctx.current_amount).unwrap_or_default();
+            let current_price_bd = BigDecimal::from_f64(ctx.current_price).unwrap_or_default();
+            let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
+
+            // ガスコストをBigDecimalで計算
+            let gas_cost_near = ctx
+                .config
+                .gas_cost
+                .to_string()
+                .parse::<f64>()
+                .unwrap_or(0.01);
+            let gas_cost_yocto_f64 = common::units::Units::near_f64_to_yocto_f64(gas_cost_near);
+            let gas_cost_yocto_bd = BigDecimal::from_f64(gas_cost_yocto_f64).unwrap_or_default();
+
+            // スリッパレートをBigDecimalで計算
+            let slippage_rate_bd =
+                BigDecimal::from_f64(ctx.config.slippage_rate).unwrap_or_default();
+
+            // 取引コストをyoctoNEAR価値ベースで計算（BigDecimal精度）
+            let trade_cost_value_yocto_bd = calculate_trading_cost_by_value_yocto_bd(
+                &trade_value_yocto_bd,
                 &ctx.config.fee_model,
-                ctx.config.slippage_rate,
-                ctx.config
-                    .gas_cost
+                &slippage_rate_bd,
+                &gas_cost_yocto_bd,
+            );
+
+            // コストをトークン数量で表現（BigDecimal精度保持）
+            let trade_cost = if ctx.current_price > 0.0 {
+                (&trade_cost_value_yocto_bd / &current_price_bd)
                     .to_string()
                     .parse::<f64>()
-                    .unwrap_or(0.01),
-            );
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
 
             let net_amount = ctx.current_amount - trade_cost;
             let new_amount = net_amount * ctx.current_price / target_price;
@@ -470,10 +522,12 @@ pub fn execute_trading_action(
                 amount: ctx.current_amount,
                 executed_price: target_price,
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from_f64(trade_cost * 0.7).unwrap_or_default(),
-                    slippage: BigDecimal::from_f64(trade_cost * 0.2).unwrap_or_default(),
-                    gas_fee: ctx.config.gas_cost.clone(),
-                    total: BigDecimal::from_f64(trade_cost).unwrap_or_default(),
+                    protocol_fee: &trade_cost_value_yocto_bd
+                        * BigDecimal::from_f64(0.7).unwrap_or_default(),
+                    slippage: &trade_cost_value_yocto_bd
+                        * BigDecimal::from_f64(0.2).unwrap_or_default(),
+                    gas_fee: gas_cost_yocto_bd.clone(),
+                    total: trade_cost_value_yocto_bd.clone(),
                 },
                 portfolio_value_before: portfolio_before,
                 portfolio_value_after: portfolio_after,

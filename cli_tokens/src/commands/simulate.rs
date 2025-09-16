@@ -5,6 +5,12 @@ pub mod trading;
 pub mod types;
 pub mod utils;
 
+#[cfg(test)]
+mod unit_conversion_debug;
+
+#[cfg(test)]
+mod data_flow_debug;
+
 // Re-export all types for backward compatibility
 pub use types::*;
 // Re-export utilities for backward compatibility
@@ -429,3 +435,6 @@ mod rebalance_threshold_tests;
 
 #[cfg(test)]
 mod portfolio_threshold_tests;
+
+#[cfg(test)]
+mod cost_fix_test;

@@ -604,3 +604,96 @@ fn test_momentum_signal_strength_threshold() {
         }
     }
 }
+
+// ==================== 実際のAPI応答データでのテスト ====================
+
+#[test]
+fn test_real_api_prediction_data_confidence_issue() {
+    // 実際のAPI応答と類似した予測データ（confidenceがnull）
+    let api_prediction = PredictionData {
+        token: "akaia.tkn.near".to_string(),
+        current_price: BigDecimal::from_f64(33276625285048.96).unwrap(), // 実際の価格履歴データ
+        predicted_price_24h: BigDecimal::from_f64(41877657359838.57).unwrap(), // 実際の予測データ
+        timestamp: Utc::now(),
+        confidence: None, // ChronosAPIがnullを返すケース
+    };
+
+    // 期待リターンを計算
+    let base_return = calculate_expected_return(&api_prediction);
+    println!("Base return: {:.4}", base_return);
+
+    // 信頼度調整リターンを計算
+    let confidence_adjusted = calculate_confidence_adjusted_return(&api_prediction);
+    println!("Confidence adjusted return: {:.4}", confidence_adjusted);
+
+    // unwrap_or(0.5)が正しく動作することを確認
+    assert!((confidence_adjusted - base_return * 0.5).abs() < 0.001);
+
+    // ランキングテスト
+    let predictions = vec![api_prediction];
+    let ranked = rank_tokens_by_momentum(predictions);
+
+    println!("Ranked tokens: {:?}", ranked);
+
+    // 正のリターンがあれば1つのトークンがランクに残るはず
+    if base_return * 0.5 > 0.0 {
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].0, "akaia.tkn.near");
+    } else {
+        // 負のリターンの場合はランクが空になる
+        assert!(ranked.is_empty());
+    }
+}
+
+#[test]
+fn test_minimal_positive_return_filtering() {
+    // 取引コスト後に非常に小さな正のリターンになるケース
+    let marginal_prediction = PredictionData {
+        token: "MARGINAL_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(102.7).unwrap(), // ギリギリ正のリターン
+        timestamp: Utc::now(),
+        confidence: None, // デフォルト0.5が適用される
+    };
+
+    let base_return = calculate_expected_return(&marginal_prediction);
+    let confidence_adjusted = calculate_confidence_adjusted_return(&marginal_prediction);
+
+    println!("Marginal base return: {:.4}", base_return);
+    println!("Marginal confidence adjusted: {:.4}", confidence_adjusted);
+
+    // 2.7%のリターンから取引コスト（0.6% + 2%）を引くと0.1%
+    // 0.1% * 0.5 = 0.05%の期待リターン
+    assert!(confidence_adjusted > 0.0);
+    assert!(confidence_adjusted < 0.01); // 1%未満
+
+    // ランキングに含まれることを確認
+    let ranked = rank_tokens_by_momentum(vec![marginal_prediction]);
+    assert_eq!(ranked.len(), 1);
+}
+
+#[test]
+fn test_negative_return_filtering() {
+    // 取引コスト後に負のリターンになるケース
+    let negative_prediction = PredictionData {
+        token: "NEGATIVE_TOKEN".to_string(),
+        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        predicted_price_24h: BigDecimal::from_f64(101.0).unwrap(), // 1%上昇だが取引コストで負になる
+        timestamp: Utc::now(),
+        confidence: None,
+    };
+
+    let base_return = calculate_expected_return(&negative_prediction);
+    let confidence_adjusted = calculate_confidence_adjusted_return(&negative_prediction);
+
+    println!("Negative base return: {:.4}", base_return);
+    println!("Negative confidence adjusted: {:.4}", confidence_adjusted);
+
+    // 1%のリターンから取引コスト（0.6% + 2%）を引くと-1.6%
+    // -1.6% * 0.5 = -0.8%の期待リターン
+    assert!(confidence_adjusted < 0.0);
+
+    // ランキングから除外されることを確認
+    let ranked = rank_tokens_by_momentum(vec![negative_prediction]);
+    assert!(ranked.is_empty()); // 負のリターンは除外される
+}
