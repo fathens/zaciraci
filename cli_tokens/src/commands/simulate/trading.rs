@@ -431,8 +431,10 @@ pub fn execute_trading_action(
                 0.0
             };
 
-            let net_amount = ctx.current_amount - trade_cost;
-            let new_amount = net_amount * ctx.current_price / target_price;
+            // SELLアクション: 現在のトークンを売却してtarget（quote_token）を取得
+            let net_amount = ctx.current_amount - trade_cost; // 取引後に残るトークン数量
+            let sell_value_yocto = net_amount * ctx.current_price; // 売却価値（yoctoNEAR）
+            let new_amount = sell_value_yocto / target_price; // targetトークン数量を計算
 
             // ポートフォリオ更新
             ctx.holdings.remove(ctx.current_token);
@@ -505,8 +507,10 @@ pub fn execute_trading_action(
                 0.0
             };
 
-            let net_amount = ctx.current_amount - trade_cost;
-            let new_amount = net_amount * ctx.current_price / target_price;
+            // SWITCHアクション: fromトークンをtoトークンに交換
+            let net_amount = ctx.current_amount - trade_cost; // 取引後に残るトークン数量
+            let switch_value_yocto = net_amount * ctx.current_price; // 交換価値（yoctoNEAR）
+            let new_amount = switch_value_yocto / target_price; // toトークン数量を計算
 
             // ポートフォリオ更新
             ctx.holdings.remove(ctx.current_token);
