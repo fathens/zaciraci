@@ -3,6 +3,7 @@ use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::Duration;
 use ndarray::array;
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 // ==================== テストヘルパー ====================
 
@@ -2781,7 +2782,7 @@ fn test_portfolio_evaluation_accuracy() {
     // 現実的な価格での評価
     let realistic_tokens = vec![super::TokenData {
         symbol: "token_a".to_string(),
-        current_price: bigdecimal::BigDecimal::from(1000000000000000000i64), // 1e-6 NEAR
+        current_price: bigdecimal::BigDecimal::from_str("1000000000000000000000000").unwrap(), // 1 NEAR = 1e24 yoctoNEAR
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
         market_cap: Some(1000000.0),

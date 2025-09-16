@@ -443,6 +443,10 @@ pub fn apply_constraints(weights: &mut [f64]) {
     if sum > 0.0 {
         for w in weights.iter_mut() {
             *w /= sum;
+            // 正規化後も最大ポジションサイズを再チェック（浮動小数点誤差対策）
+            if *w > MAX_POSITION_SIZE {
+                *w = MAX_POSITION_SIZE;
+            }
         }
     }
 }
@@ -773,8 +777,13 @@ pub async fn execute_portfolio_optimization(
     portfolio_data: PortfolioData,
     rebalance_threshold: f64,
 ) -> Result<PortfolioExecutionReport> {
-    // トークン選択を無効化（実際のデータではすべて同じ流動性のため効果なし）
-    let selected_tokens = portfolio_data.tokens.clone();
+    // トークン選択を実施
+    let selected_tokens = select_optimal_tokens(
+        &portfolio_data.tokens,
+        &portfolio_data.predictions,
+        &portfolio_data.historical_prices,
+        10, // 最大10トークンまで
+    );
 
     // 選択されたトークンのみでポートフォリオを構築
     let selected_predictions: BTreeMap<String, f64> = portfolio_data
