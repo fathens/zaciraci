@@ -582,6 +582,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "bigdecimal",
  "chrono",
  "clap",
  "indicatif",
@@ -592,6 +593,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serial_test",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -2185,6 +2187,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "rawpointer",
+ "serde",
 ]
 
 [[package]]
@@ -4755,6 +4758,7 @@ dependencies = [
  "anyhow",
  "assertables",
  "async-once-cell",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "bigdecimal",
@@ -4765,10 +4769,12 @@ dependencies = [
  "deadpool-diesel",
  "diesel",
  "ed25519-dalek",
+ "futures",
  "futures-util",
  "humantime",
  "linfa",
  "linfa-linear",
+ "mockito",
  "ndarray",
  "near-crypto",
  "near-gas",
@@ -4810,6 +4816,8 @@ dependencies = [
  "base64 0.22.1",
  "bigdecimal",
  "chrono",
+ "ndarray",
+ "num-traits",
  "once_cell",
  "reqwest",
  "serde",

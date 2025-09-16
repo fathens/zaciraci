@@ -6,6 +6,12 @@ pub mod utils;
 #[cfg(test)]
 mod tests;
 
+// Add integration tests module to verify simulate-report compatibility
+#[cfg(test)]
+mod integration_tests {
+    include!("commands/integration_tests.rs");
+}
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -23,8 +29,9 @@ pub enum Commands {
     Top(commands::top::TopArgs),
     History(commands::history::HistoryArgs),
     Predict(commands::predict::PredictCommand),
-    Verify(commands::verify::VerifyArgs),
     Chart(commands::chart::ChartArgs),
+    Simulate(commands::simulate::SimulateArgs),
+    Report(commands::report::ReportArgs),
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -32,7 +39,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Top(args) => commands::top::run(args).await,
         Commands::History(args) => commands::history::run_history(args).await,
         Commands::Predict(command) => commands::predict::run(command).await,
-        Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Chart(args) => commands::chart::run_chart(args).await,
+        Commands::Simulate(args) => commands::simulate::run(args).await,
+        Commands::Report(args) => commands::report::run_report(args),
     }
 }

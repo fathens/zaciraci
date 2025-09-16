@@ -1,16 +1,91 @@
 use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::models::{task::TaskInfo, token::TokenFileData};
+use crate::models::{
+    prediction::{
+        PredictionFileData, PredictionMetadata, PredictionPoint as CachePredictionPoint,
+        PredictionResults,
+    },
+    task::TaskInfo,
+    token::TokenFileData,
+};
 use crate::utils::{
+    cache::{save_prediction_result, PredictionCacheParams},
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
 };
 use common::api::chronos::ChronosApiClient;
+use common::cache::CacheOutput;
 use common::prediction::{PredictionPoint, TokenPredictionResult};
+
+/// Find the task file for a given token
+async fn find_task_file(dir: &Path, token_name: &str) -> Result<Option<PathBuf>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    let sanitized_token = sanitize_filename(token_name);
+    let mut entries = fs::read_dir(dir).await?;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if name.starts_with(&sanitized_token) && name.ends_with(".task.json") {
+                    return Ok(Some(path));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Calculate history period from token metadata and task parameters
+async fn calculate_history_period(
+    token_data: &TokenFileData,
+    task_info: &TaskInfo,
+) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    // Parse dates from metadata
+    let data_start = chrono::DateTime::parse_from_str(
+        &format!("{} 00:00:00 +0000", token_data.metadata.start_date),
+        "%Y-%m-%d %H:%M:%S %z",
+    )?
+    .with_timezone(&Utc);
+
+    let data_end = chrono::DateTime::parse_from_str(
+        &format!("{} 23:59:59 +0000", token_data.metadata.end_date),
+        "%Y-%m-%d %H:%M:%S %z",
+    )?
+    .with_timezone(&Utc);
+
+    // Calculate the actual period used based on start/end percentages
+    let total_duration = data_end - data_start;
+    let start_offset =
+        total_duration.num_milliseconds() as f64 * (task_info.params.start_pct / 100.0);
+    let end_offset = total_duration.num_milliseconds() as f64 * (task_info.params.end_pct / 100.0);
+
+    let hist_start = data_start + Duration::milliseconds(start_offset as i64);
+    let hist_end = data_start + Duration::milliseconds(end_offset as i64);
+
+    Ok((hist_start, hist_end))
+}
+
+/// Convert common PredictionPoint to cache PredictionPoint
+fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePredictionPoint {
+    CachePredictionPoint {
+        timestamp: point.timestamp,
+        price: point.value,
+        confidence: point.confidence_interval.as_ref().map(|ci| {
+            // Use average of lower and upper bounds as confidence score
+            (ci.upper - ci.lower) / 2.0 / point.value
+        }),
+    }
+}
 
 #[derive(Parser)]
 #[clap(about = "Poll for prediction results")]
@@ -43,35 +118,30 @@ pub async fn run(args: PullArgs) -> Result<()> {
     let content = fs::read_to_string(&args.token_file).await?;
     let token_data: TokenFileData = serde_json::from_str(&content)?;
 
-    // Get or extract quote token
-    let quote_token = extract_quote_token_from_path(&args.token_file)
-        .or_else(|| token_data.metadata.quote_token.clone())
-        .unwrap_or_else(|| "wrap.near".to_string());
-
     // Prepare paths
     let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-    let output_dir = PathBuf::from(base_dir)
+
+    // Look for task file in the .tasks directory
+    let task_dir = PathBuf::from(&base_dir).join(".tasks").join(&args.output);
+
+    // Find the task file - it should have the token name in it
+    let task_file = find_task_file(&task_dir, &token_data.token).await?;
+
+    // We'll determine the actual output location from the task info
+    let prediction_file = PathBuf::from(&base_dir)
         .join(&args.output)
-        .join(sanitize_filename(&quote_token));
-
-    let task_file = output_dir.join(format!(
-        "{}.task.json",
-        sanitize_filename(&token_data.token_data.token)
-    ));
-
-    let prediction_file = output_dir.join(format!(
-        "{}.json",
-        sanitize_filename(&token_data.token_data.token)
-    ));
+        .join("temp")
+        .join(format!("{}.json", sanitize_filename(&token_data.token)));
 
     // Read task info
-    if !file_exists(&task_file).await {
+    if task_file.is_none() {
         return Err(anyhow::anyhow!(
-            "Task file not found: {:?}. Please run 'cli_tokens predict kick' first",
-            task_file
+            "Task file not found for token: {}. Please run 'cli_tokens predict kick' first",
+            token_data.token
         ));
     }
 
+    let task_file = task_file.unwrap();
     let task_content = fs::read_to_string(&task_file).await?;
     let mut task_info: TaskInfo = serde_json::from_str(&task_content)?;
 
@@ -150,10 +220,44 @@ pub async fn run(args: PullArgs) -> Result<()> {
         .forecast_timestamp
         .into_iter()
         .zip(prediction_result.forecast_values.into_iter())
-        .map(|(timestamp, value)| PredictionPoint {
-            timestamp,
-            value,
-            confidence_interval: None, // TODO: Add confidence intervals if available
+        .enumerate()
+        .map(|(i, (timestamp, value))| {
+            // Extract confidence intervals if available
+            let confidence_interval =
+                prediction_result
+                    .confidence_intervals
+                    .as_ref()
+                    .and_then(|intervals| {
+                        // Common patterns for confidence interval keys
+                        let lower_key = intervals
+                            .keys()
+                            .find(|k| k.contains("lower") || k.contains("0.025"));
+                        let upper_key = intervals
+                            .keys()
+                            .find(|k| k.contains("upper") || k.contains("0.975"));
+
+                        if let (Some(lower_key), Some(upper_key)) = (lower_key, upper_key) {
+                            let lower_values = intervals.get(lower_key)?;
+                            let upper_values = intervals.get(upper_key)?;
+
+                            if i < lower_values.len() && i < upper_values.len() {
+                                Some(common::prediction::ConfidenceInterval {
+                                    lower: lower_values[i],
+                                    upper: upper_values[i],
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    });
+
+            PredictionPoint {
+                timestamp,
+                value,
+                confidence_interval,
+            }
         })
         .collect();
 
@@ -166,20 +270,80 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
         for point in &mut forecast {
             point.value *= scale_factor;
+            // Also scale confidence intervals if present
+            if let Some(ref mut ci) = point.confidence_interval {
+                ci.lower *= scale_factor;
+                ci.upper *= scale_factor;
+            }
         }
     }
 
-    // Create prediction result
+    // Calculate history period from token data and task parameters
+    let (hist_start, hist_end) = calculate_history_period(&token_data, &task_info).await?;
+
+    // Determine prediction period from forecast timestamps
+    let pred_start = forecast
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("No forecast data available"))?
+        .timestamp;
+    let pred_end = forecast
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("No forecast data available"))?
+        .timestamp;
+
+    // Convert to cache prediction points
+    let cache_predictions: Vec<CachePredictionPoint> = forecast
+        .iter()
+        .map(convert_to_cache_prediction_point)
+        .collect();
+
+    // Create structured prediction file data
+    let prediction_file_data = PredictionFileData {
+        metadata: PredictionMetadata {
+            generated_at: Utc::now(),
+            model_name: prediction_result.model_name.clone(),
+            base_token: token_data.token.clone(),
+            quote_token: "wrap.near".to_string(), // Default quote token
+            history_start: hist_start.format("%Y-%m-%d").to_string(),
+            history_end: hist_end.format("%Y-%m-%d").to_string(),
+            prediction_start: pred_start.format("%Y-%m-%d").to_string(),
+            prediction_end: pred_end.format("%Y-%m-%d").to_string(),
+        },
+        prediction_results: PredictionResults {
+            predictions: cache_predictions,
+            model_metrics: prediction_result
+                .metrics
+                .map(|metrics| serde_json::to_value(metrics).unwrap_or(serde_json::Value::Null)),
+        },
+    };
+
+    // Create cache parameters
+    let cache_params = PredictionCacheParams {
+        model_name: &prediction_result.model_name,
+        quote_token: "wrap.near", // Default quote token
+        base_token: &token_data.token,
+        hist_start,
+        hist_end,
+        pred_start,
+        pred_end,
+    };
+
+    // Save results using structured cache
+    pb.set_message("Saving prediction results to structured cache...");
+    save_prediction_result(&cache_params, &prediction_file_data).await?;
+    CacheOutput::prediction_cached(
+        &token_data.token,
+        prediction_file_data.prediction_results.predictions.len(),
+    );
+
+    // Also save the original format for backward compatibility
     let prediction_result = TokenPredictionResult {
-        token: token_data.token_data.token.clone(),
+        token: token_data.token.clone(),
         prediction_id: completed_prediction.task_id,
         predicted_values: forecast,
         accuracy_metrics: None,
         chart_svg: None,
     };
-
-    // Save results
-    pb.set_message("Saving prediction results...");
     write_json_file(&prediction_file, &prediction_result).await?;
 
     // Update task info to completed
@@ -187,19 +351,12 @@ pub async fn run(args: PullArgs) -> Result<()> {
     write_json_file(&task_file, &task_info).await?;
 
     pb.finish_with_message(format!(
-        "✅ Prediction completed for token: {} (saved to {:?})",
-        token_data.token_data.token, prediction_file
+        "✅ Prediction completed for token: {}\n   📄 Legacy format: {:?}",
+        token_data.token, prediction_file
     ));
 
     Ok(())
 }
 
-/// Extract quote_token from token file path (e.g., tokens/wrap.near/usdc.tether-token.near.json -> wrap.near)
-fn extract_quote_token_from_path(token_file: &Path) -> Option<String> {
-    token_file
-        .parent()?
-        .file_name()?
-        .to_str()
-        .map(|s| s.to_string())
-        .filter(|s| s != "tokens") // Skip if direct under tokens/ directory
-}
+#[cfg(test)]
+mod tests;

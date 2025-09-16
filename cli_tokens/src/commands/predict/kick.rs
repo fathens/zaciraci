@@ -11,11 +11,40 @@ use crate::models::{
     token::TokenFileData,
 };
 use crate::utils::{
+    cache::get_price_history_dir,
     config::Config,
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
 };
 use common::api::chronos::ChronosApiClient;
 use common::prediction::ZeroShotPredictionRequest;
+
+/// Find the latest history file in the given directory
+async fn find_latest_history_file(dir: &Path) -> Result<Option<PathBuf>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    let mut entries = fs::read_dir(dir).await?;
+    let mut latest_file: Option<(PathBuf, std::time::SystemTime)> = None;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if name.starts_with("history-") {
+                    let metadata = entry.metadata().await?;
+                    let modified = metadata.modified()?;
+
+                    if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
+                        latest_file = Some((path, modified));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(latest_file.map(|(path, _)| path))
+}
 
 #[derive(Parser)]
 #[clap(about = "Start an async prediction task and exit")]
@@ -53,9 +82,6 @@ pub struct KickArgs {
         help = "Forecast duration as percentage of input data period (0.0-500.0)"
     )]
     pub forecast_ratio: f64,
-
-    #[clap(long, help = "Force overwrite existing task file")]
-    pub force: bool,
 }
 
 pub async fn run(args: KickArgs) -> Result<()> {
@@ -107,22 +133,29 @@ pub async fn run(args: KickArgs) -> Result<()> {
         .or_else(|| token_data.metadata.quote_token.clone())
         .unwrap_or_else(|| "wrap.near".to_string());
 
-    // Prepare output directory and task file
+    // Prepare output directory with model name
     let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-    let output_dir = PathBuf::from(&base_dir)
-        .join(&args.output)
-        .join(sanitize_filename(&quote_token));
-    ensure_directory_exists(&output_dir)?;
+    let model_name = args
+        .model
+        .as_ref()
+        .unwrap_or(&"chronos_default".to_string())
+        .clone();
 
-    let task_file = output_dir.join(format!(
-        "{}.task.json",
-        sanitize_filename(&token_data.token_data.token)
+    // For now, we'll save task files in a temporary location
+    // The actual prediction results will go to the structured directory
+    let task_dir = PathBuf::from(&base_dir).join(".tasks").join(&args.output);
+    ensure_directory_exists(&task_dir)?;
+
+    let task_file = task_dir.join(format!(
+        "{}_{}.task.json",
+        sanitize_filename(&token_data.token),
+        sanitize_filename(&model_name)
     ));
 
-    // Check if task file already exists and force flag
-    if !args.force && file_exists(&task_file).await {
+    // Check if task file already exists
+    if file_exists(&task_file).await {
         return Err(anyhow::anyhow!(
-            "Task file already exists: {:?}. Use --force to overwrite",
+            "Task file already exists: {:?}. Please remove it first or use a different model name",
             task_file
         ));
     }
@@ -138,21 +171,17 @@ pub async fn run(args: KickArgs) -> Result<()> {
     // Get historical data for prediction
     pb.set_message("Loading historical token data...");
 
-    // Try to load from history file first
-    let history_file = PathBuf::from(&base_dir)
-        .join("history")
-        .join(sanitize_filename(&quote_token))
-        .join(format!(
-            "{}.json",
-            sanitize_filename(&token_data.token_data.token)
-        ));
-    let (mut timestamps, mut values) = if history_file.exists() {
+    // Try to load from price_history directory using cache utility
+    let history_dir = get_price_history_dir(&quote_token, &token_data.token);
+    let history_file = find_latest_history_file(&history_dir).await?;
+    let (mut timestamps, mut values) = if let Some(file_path) = history_file {
         pb.set_message("Loading data from history file...");
-        load_history_data(&history_file).await?
+        load_history_data(&file_path).await?
     } else {
         return Err(anyhow::anyhow!(
-            "No history data found for token: {}. Please run 'cli_tokens history {}' first to fetch price data",
-            token_data.token_data.token,
+            "No history data found for token: {} in directory: {}. Please run 'cli_tokens history {}' first to fetch price data",
+            token_data.token,
+            history_dir.display(),
             args.token_file.display()
         ));
     };
@@ -295,7 +324,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
 
     pb.finish_with_message(format!(
         "✅ Prediction task started for token: {} (task_id: {}, saved to {:?})",
-        token_data.token_data.token, prediction_response.task_id, task_file
+        token_data.token, prediction_response.task_id, task_file
     ));
 
     println!("\nTo retrieve results, run:");

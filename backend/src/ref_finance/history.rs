@@ -1,10 +1,9 @@
-#![allow(dead_code)]
-
 use crate::ref_finance::history::statistics::Statistics;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use once_cell::sync::Lazy;
 use std::sync::{Arc, RwLock};
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct History {
     entries: Vec<HistoryEntry>,
@@ -14,6 +13,7 @@ pub struct History {
     pub gains: Statistics<u128>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct HistoryEntry {
     logs: Vec<SwapLog>,
@@ -23,6 +23,7 @@ pub struct HistoryEntry {
     gains: Statistics<u128>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct SwapLog {
     start: TokenInAccount,
@@ -47,6 +48,7 @@ pub fn get_history() -> Arc<RwLock<History>> {
 }
 
 impl HistoryEntry {
+    #[allow(dead_code)]
     pub fn new(logs: Vec<SwapLog>) -> Self {
         let inputs: Vec<_> = logs.iter().map(|entry| entry.input_value).collect();
         let outputs: Vec<_> = logs.iter().map(|entry| entry.output_value).collect();
@@ -67,6 +69,7 @@ impl HistoryEntry {
 }
 
 impl History {
+    #[allow(dead_code)]
     fn new(entries: Vec<HistoryEntry>) -> Self {
         let inputs: Vec<_> = entries
             .iter()
@@ -91,8 +94,10 @@ impl History {
         }
     }
 
+    #[allow(dead_code)]
     const LIMIT: usize = 100;
 
+    #[allow(dead_code)]
     pub fn add(&mut self, entry: HistoryEntry) {
         let mut entries = self.entries.clone();
         entries.push(entry);
@@ -114,6 +119,7 @@ pub mod statistics {
     #[derive(Debug, Clone)]
     pub struct Statistics<A> {
         max: A,
+        #[allow(dead_code)]
         min: A,
         average: A,
     }
@@ -133,6 +139,7 @@ pub mod statistics {
             self.max
         }
 
+        #[allow(dead_code)]
         pub fn min(&self) -> A {
             self.min
         }
@@ -150,6 +157,7 @@ pub mod statistics {
         A: Ord,
         A: From<u64>,
     {
+        #[allow(dead_code)]
         pub fn new(values: &[A]) -> Self {
             let mut max = A::zero();
             let mut min = A::zero();
@@ -167,6 +175,7 @@ pub mod statistics {
             Statistics { max, min, average }
         }
 
+        #[allow(dead_code)]
         pub fn gather(stats: &[(&Self, usize)]) -> Self {
             let mut max = A::zero();
             let mut min = A::zero();

@@ -1,5 +1,4 @@
 mod by_token;
-mod cached_evaluate;
 mod edge;
 pub mod graph;
 pub mod preview;

@@ -9,7 +9,7 @@ use tokio::time;
 use tokio::time::Duration as TokioDuration;
 
 use crate::api::backend::BackendClient;
-use crate::models::token::{FileMetadata, PriceData, TokenFileData, TokenVolatilityData};
+use crate::models::token::{FileMetadata, TokenFileData};
 use crate::utils::{
     config::Config,
     file::{ensure_directory_exists, sanitize_filename, write_json_file},
@@ -120,18 +120,9 @@ pub async fn run(args: TopArgs) -> Result<()> {
                 generated_at: Utc::now(),
                 start_date: start_date.format("%Y-%m-%d").to_string(),
                 end_date: end_date.format("%Y-%m-%d").to_string(),
-                token: token.0.to_string(),
                 quote_token: Some(quote_token.to_string()),
             },
-            token_data: TokenVolatilityData {
-                token: token.0.to_string(),
-                volatility_score: 0.85, // TODO: Calculate actual volatility
-                price_data: PriceData {
-                    current_price: 0.0, // TODO: Get actual price data
-                    price_change_24h: 0.0,
-                    volume_24h: 0.0,
-                },
-            },
+            token: token.0.to_string(),
         };
 
         // Create quote_token subdirectory
@@ -168,3 +159,6 @@ pub fn parse_date(date_str: &str) -> Result<DateTime<Utc>> {
     let naive_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")?;
     Ok(naive_date.and_hms_opt(0, 0, 0).unwrap().and_utc())
 }
+
+#[cfg(test)]
+mod tests;

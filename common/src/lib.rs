@@ -1,4 +1,6 @@
+pub mod algorithm;
 pub mod api;
+pub mod cache;
 pub mod config;
 
 pub mod ollama;
@@ -6,6 +8,7 @@ pub mod pools;
 pub mod prediction;
 pub mod stats;
 pub mod types;
+pub mod units;
 
 use serde::{Deserialize, Serialize};
 
