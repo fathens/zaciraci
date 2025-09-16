@@ -1,14 +1,29 @@
 use super::*;
 use chrono::{TimeZone, Utc};
+use serial_test::serial;
 use std::env;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
 use tokio::fs;
 
+static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Setup test environment with unique base directory
+fn setup_test_env() -> tempfile::TempDir {
+    let temp_dir = tempdir().unwrap();
+    // Use unique environment variable name to avoid race conditions
+    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let unique_var_name = format!("CLI_TOKENS_BASE_DIR_TEST_{}", test_id);
+    env::set_var(&unique_var_name, temp_dir.path());
+    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    temp_dir
+}
+
 #[tokio::test]
+#[serial]
 async fn test_real_cache_behavior() {
     // Set up temporary directory for testing
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     let quote_token = "wrap.near";
     let base_token = "akaia.tkn.near";
@@ -115,10 +130,10 @@ fn test_filename_parsing() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_find_overlapping_files_debug() {
     // Set up temporary directory with actual cache structure
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     let quote_token = "wrap.near";
     let base_token = "akaia.tkn.near";

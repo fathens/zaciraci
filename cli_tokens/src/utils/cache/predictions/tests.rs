@@ -3,6 +3,21 @@ use crate::models::prediction::{PredictionFileData, PredictionMetadata, Predicti
 use chrono::{DateTime, Utc};
 use std::env;
 use tempfile::tempdir;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use serial_test::serial;
+
+static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Setup test environment with unique base directory
+fn setup_test_env() -> tempfile::TempDir {
+    let temp_dir = tempdir().unwrap();
+    // Use unique environment variable name to avoid race conditions
+    let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let unique_var_name = format!("CLI_TOKENS_BASE_DIR_TEST_{}", test_id);
+    env::set_var(&unique_var_name, temp_dir.path());
+    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    temp_dir
+}
 
 /// Create sample prediction data for testing
 fn create_sample_prediction_data() -> PredictionFileData {
@@ -59,8 +74,7 @@ fn create_sample_params() -> PredictionCacheParams<'static> {
 
 #[test]
 fn test_get_prediction_dir() {
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let temp_dir = setup_test_env();
 
     let params = create_sample_params();
     let result = get_prediction_dir(
@@ -98,9 +112,9 @@ fn test_create_prediction_filename() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_save_and_load_prediction_result() {
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     let params = create_sample_params();
     let sample_data = create_sample_prediction_data();
@@ -137,9 +151,9 @@ async fn test_save_and_load_prediction_result() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_check_prediction_cache() {
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     let params = create_sample_params();
 
@@ -165,9 +179,9 @@ async fn test_check_prediction_cache() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_find_latest_prediction_file() {
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let temp_dir = setup_test_env();
 
     let predictions_dir = temp_dir.path().join("predictions");
     
@@ -253,9 +267,9 @@ fn test_prediction_cache_params_construction() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_error_handling_invalid_paths() {
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let temp_dir = setup_test_env();
 
     // Test load from non-existent file
     let non_existent = temp_dir.path().join("non-existent.json");
@@ -270,10 +284,10 @@ async fn test_error_handling_invalid_paths() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_simulation_cache_pattern() {
     // Test the cache pattern used in simulation trading
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     let current_time = Utc::now();
     let historical_days = 30i64;
@@ -383,10 +397,10 @@ async fn test_simulation_cache_pattern() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_cache_with_different_time_ranges() {
     // Test that cache correctly distinguishes between different time ranges
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     let base_time = Utc::now();
     let token = "test.token.near";
@@ -442,10 +456,10 @@ async fn test_cache_with_different_time_ranges() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_cache_directory_structure() {
     // Test that the cache directory structure is created correctly
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     let params = create_sample_params();
     let sample_data = create_sample_prediction_data();
@@ -479,10 +493,10 @@ async fn test_cache_directory_structure() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_real_cache_file_format() {
     // Test that we can read actual cache files (if they exist)
-    let temp_dir = tempdir().unwrap();
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    let _temp_dir = setup_test_env();
 
     // Create a cache file that matches the real format used in production
     let params = PredictionCacheParams {

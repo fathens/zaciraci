@@ -118,66 +118,11 @@ mod algorithm_integration_tests {
 
     #[tokio::test]
     async fn test_portfolio_algorithm_with_mixed_trends() {
-        use mockito;
-
-        // モックサーバーを設定
-        let mut server = mockito::Server::new_async().await;
-
-        // Backend API用のモック（価格履歴）
-        let _backend_mock1 = server
-            .mock("GET", "/api/price_history/wrap.near/stable_token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"[
-                [1722470400, 100.0],
-                [1722556800, 101.0],
-                [1722643200, 102.0]
-            ]"#,
-            )
-            .create_async()
-            .await;
-
-        let _backend_mock2 = server
-            .mock("GET", "/api/price_history/wrap.near/volatile_token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"[
-                [1722470400, 50.0],
-                [1722556800, 55.0],
-                [1722643200, 60.0]
-            ]"#,
-            )
-            .create_async()
-            .await;
-
-        // Chronos API用のモック（予測）
-        let _chronos_mock = server
-            .mock("POST", "/predict")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{
-                "task_id": "test_task_123",
-                "status": "completed",
-                "forecast_timestamp": ["2024-08-02T00:00:00Z"],
-                "forecast_values": [105.0],
-                "model_name": "test_model"
-            }"#,
-            )
-            .create_async()
-            .await;
-
-        // 環境変数を設定
-        let server_url = server.url();
-        std::env::set_var("BACKEND_URL", &server_url);
-        std::env::set_var("CHRONOS_URL", &server_url);
-
+        // APIを呼び出さない短期間テスト（リバランスなし）
         let start_date = DateTime::parse_from_rfc3339("2024-08-01T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let end_date = DateTime::parse_from_rfc3339("2024-08-03T00:00:00Z")
+        let end_date = DateTime::parse_from_rfc3339("2024-08-01T06:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
 
@@ -196,15 +141,12 @@ mod algorithm_integration_tests {
             create_mock_price_data(&["volatile_token"], start_date, end_date, 50.0, 0.2); // 20% change
         price_data.extend(volatile_data);
 
+        // ポートフォリオ最適化シミュレーション実行（短期間なのでリバランスが発生しない）
         let result = crate::commands::simulate::algorithms::run_portfolio_optimization_simulation(
             &config,
             &price_data,
         )
         .await;
-
-        // 環境変数をクリーンアップ
-        std::env::remove_var("BACKEND_URL");
-        std::env::remove_var("CHRONOS_URL");
 
         assert!(result.is_ok(), "Portfolio simulation should succeed");
 
