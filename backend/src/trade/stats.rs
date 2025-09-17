@@ -1,20 +1,26 @@
 mod arima;
 
 use crate::Result;
+use crate::config;
 use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
-// use crate::trade::algorithm::momentum::{TokenHolding, execute_with_prediction_service};
 use crate::trade::predict::PredictionService;
+use crate::types::MilliNear;
 use bigdecimal::BigDecimal;
-use chrono::{Duration, NaiveDateTime};
+use chrono::{Duration, NaiveDateTime, Utc};
 use futures_util::future::join_all;
+use near_sdk::AccountId;
 use num_traits::Zero;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
-use zaciraci_common::algorithm::TokenHolding;
+use zaciraci_common::algorithm::{
+    TokenHolding,
+    portfolio::{PortfolioData, execute_portfolio_optimization},
+    types::{PriceHistory, TokenData, TradingAction, WalletInfo},
+};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -46,61 +52,60 @@ pub struct ListStatsInPeriod<U>(Vec<StatsInPeriod<U>>);
 pub async fn start() -> Result<()> {
     let log = DEFAULT.new(o!("function" => "trade::start"));
 
-    info!(log, "starting momentum-based trading strategy");
+    info!(log, "starting portfolio-based trading strategy");
 
-    // 現在のポートフォリオの取得（仮の実装）
-    let current_holdings = get_current_holdings().await?;
+    // Step 1: 資金準備 (NEAR -> wrap.near)
+    let available_funds = prepare_funds().await?;
+    info!(log, "Prepared funds"; "available_funds" => available_funds);
 
-    if current_holdings.is_empty() {
-        info!(log, "no current holdings found, skipping trading");
+    if available_funds == 0 {
+        info!(log, "no funds available for trading");
         return Ok(());
     }
 
-    // PredictionServiceの初期化
+    // Step 2: トークン選定 (top volatility)
+    let selected_tokens = select_top_volatility_tokens().await?;
+    info!(log, "Selected tokens"; "count" => selected_tokens.len());
+
+    if selected_tokens.is_empty() {
+        info!(log, "no tokens selected for trading");
+        return Ok(());
+    }
+
+    // Step 3: PredictionServiceの初期化
     let chronos_url =
         std::env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
     let backend_url =
         std::env::var("BACKEND_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
-    let _prediction_service = PredictionService::new(chronos_url, backend_url);
+    let prediction_service = PredictionService::new(chronos_url, backend_url);
 
-    // TODO: モメンタム戦略の実行 (temporarily disabled during common migration)
-    /*
-    match execute_with_prediction_service(
-        &prediction_service,
-        current_holdings.clone(),
-        "wrap.near", // quote token
-        7,           // 7日間の履歴を使用
-    )
-    .await
-    {
+    // Step 4: ポートフォリオ最適化と実行
+    match execute_portfolio_strategy(&prediction_service, &selected_tokens, available_funds).await {
         Ok(report) => {
-            info!(log, "momentum strategy executed successfully";
-                "total_actions" => report.actions.len(),
-                "expected_return" => ?report.expected_return
+            info!(log, "portfolio strategy executed successfully";
+                "total_actions" => report.len()
             );
 
             // 実際の取引実行は将来の実装で追加
-            for action in report.actions {
+            for action in report {
                 info!(log, "trading action"; "action" => ?action);
             }
+
+            // Step 5: ハーベスト判定と実行
+            check_and_harvest(available_funds).await?;
         }
         Err(e) => {
-            error!(log, "failed to execute momentum strategy"; "error" => ?e);
+            error!(log, "failed to execute portfolio strategy"; "error" => ?e);
         }
     }
-    */
-
-    info!(
-        log,
-        "momentum strategy execution temporarily disabled during migration"
-    );
 
     info!(log, "success");
     Ok(())
 }
 
 /// 現在の保有トークンを取得（仮の実装）
+#[allow(dead_code)]
 async fn get_current_holdings() -> Result<Vec<TokenHolding>> {
     let log = DEFAULT.new(o!("function" => "get_current_holdings"));
 
@@ -114,6 +119,187 @@ async fn get_current_holdings() -> Result<Vec<TokenHolding>> {
 
     info!(log, "retrieved holdings"; "count" => holdings.len());
     Ok(holdings)
+}
+
+/// 資金準備 (NEAR -> wrap.near 変換)
+async fn prepare_funds() -> Result<u128> {
+    let log = DEFAULT.new(o!("function" => "prepare_funds"));
+
+    // TODO: 実際のNEAR残高の取得とwrap.near変換を実装
+    // 現在は仮の値を返す
+    let available_funds = config::get("TRADE_INITIAL_INVESTMENT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| MilliNear::of(v as u32).to_yocto())
+        .unwrap_or_else(|| MilliNear::of(100).to_yocto());
+
+    info!(log, "prepared funds"; "amount" => available_funds);
+    Ok(available_funds)
+}
+
+/// トップボラティリティトークンの選定
+async fn select_top_volatility_tokens() -> Result<Vec<AccountId>> {
+    let log = DEFAULT.new(o!("function" => "select_top_volatility_tokens"));
+
+    let limit = config::get("TRADE_TOP_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+
+    // 30日間のデータから高ボラティリティトークンを選択
+    let end_time = Utc::now().naive_utc();
+    let start_time = end_time - Duration::days(30);
+    let _time_range = TimeRange {
+        start: start_time,
+        end: end_time,
+    };
+
+    // TODO: 実際のボラティリティ計算とトークン選定を実装
+    // 現在は仮のトークンリストを返す
+    let tokens: Vec<AccountId> = vec![
+        "akaia.tkn.near".parse::<AccountId>()?,
+        "babyblackdragon.tkn.near".parse::<AccountId>()?,
+        "nearkat.tkn.near".parse::<AccountId>()?,
+    ]
+    .into_iter()
+    .take(limit)
+    .collect();
+
+    info!(log, "selected tokens"; "count" => tokens.len());
+    Ok(tokens)
+}
+
+/// ポートフォリオ戦略の実行
+async fn execute_portfolio_strategy(
+    _prediction_service: &PredictionService,
+    tokens: &[AccountId],
+    available_funds: u128,
+) -> Result<Vec<TradingAction>> {
+    let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
+
+    // ポートフォリオデータの準備
+    let mut token_data = Vec::new();
+    let mut predictions = BTreeMap::new();
+    let mut historical_prices = Vec::new();
+
+    for token in tokens {
+        // 現在価格の取得 (仮実装)
+        let current_price = get_token_current_price(token).await?;
+
+        // 予測の取得 (仮実装)
+        // TODO: PredictionServiceのget_predictionメソッドを実装
+        let prediction = get_prediction_placeholder(token).await?;
+        predictions.insert(token.to_string(), prediction);
+
+        // 履歴価格の取得
+        let history = get_token_price_history(token).await?;
+        historical_prices.push(history);
+
+        token_data.push(TokenData {
+            symbol: token.to_string(),
+            current_price: BigDecimal::from(current_price),
+            historical_volatility: 0.2, // 仮の値
+            liquidity_score: Some(0.5), // 仮の値
+            market_cap: Some(10000.0),  // 仮の値
+            decimals: Some(24),
+        });
+    }
+
+    let portfolio_data = PortfolioData {
+        tokens: token_data,
+        predictions,
+        historical_prices,
+        correlation_matrix: None,
+    };
+
+    let wallet_info = WalletInfo {
+        holdings: BTreeMap::new(),
+        total_value: available_funds as f64,
+        cash_balance: available_funds as f64,
+    };
+
+    // ポートフォリオ最適化の実行
+    let execution_report = execute_portfolio_optimization(
+        &wallet_info,
+        portfolio_data,
+        0.1, // rebalance threshold
+    )
+    .await?;
+
+    info!(log, "portfolio optimization completed";
+        "actions" => execution_report.actions.len()
+    );
+
+    Ok(execution_report.actions)
+}
+
+/// ハーベスト判定と実行
+async fn check_and_harvest(initial_amount: u128) -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "check_and_harvest"));
+
+    // TODO: 実際のポートフォリオ価値計算とハーベスト実行を実装
+    // 現在の値: 仮の値として初期投資額の150%とする
+    let current_value = (initial_amount as f64 * 1.5) as u128;
+    let threshold = (initial_amount as f64 * 2.0) as u128; // 200%
+
+    if current_value > threshold {
+        let excess = current_value - threshold;
+        let harvest_amount = (excess as f64 * 0.1) as u128; // 10%
+
+        let min_harvest = config::get("HARVEST_MIN_AMOUNT")
+            .ok()
+            .and_then(|v| v.parse::<u128>().ok())
+            .unwrap_or(10_000_000_000_000_000_000_000_000); // 10 NEAR
+
+        if harvest_amount >= min_harvest {
+            // TODO: 実際のハーベスト処理
+            info!(log, "harvest executed"; "amount" => harvest_amount);
+        } else {
+            info!(log, "harvest amount below minimum";
+                "amount" => harvest_amount,
+                "minimum" => min_harvest
+            );
+        }
+    } else {
+        info!(log, "harvest threshold not reached";
+            "current" => current_value,
+            "threshold" => threshold
+        );
+    }
+
+    Ok(())
+}
+
+/// トークンの現在価格を取得 (仮実装)
+async fn get_token_current_price(token: &AccountId) -> Result<u128> {
+    let log = DEFAULT.new(o!("function" => "get_token_current_price"));
+
+    // TODO: 実際の価格取得APIを実装
+    let price = 1_000_000_000_000_000_000_000_000; // 1 NEAR相当として仮設定
+
+    info!(log, "retrieved token price"; "token" => %token, "price" => price);
+    Ok(price)
+}
+
+/// トークンの価格履歴を取得 (仮実装)
+async fn get_token_price_history(token: &AccountId) -> Result<PriceHistory> {
+    let log = DEFAULT.new(o!("function" => "get_token_price_history"));
+
+    // TODO: 実際の価格履歴取得を実装
+    let history = PriceHistory {
+        token: token.to_string(),
+        quote_token: "wrap.near".to_string(),
+        prices: vec![], // 空のデータ
+    };
+
+    info!(log, "retrieved price history"; "token" => %token);
+    Ok(history)
+}
+
+/// 予測値を取得するためのプレースホルダー関数
+async fn get_prediction_placeholder(_token: &AccountId) -> Result<f64> {
+    // TODO: 実際のPredictionServiceのget_predictionメソッドを実装
+    Ok(0.1) // 仮の予測値（10%のリターン）
 }
 
 #[allow(dead_code)]

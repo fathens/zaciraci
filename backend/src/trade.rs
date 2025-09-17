@@ -1,4 +1,3 @@
-// pub mod algorithm; // Moved to common crate
 pub mod predict;
 pub mod stats;
 
@@ -31,7 +30,7 @@ async fn run_record_rates() {
 
 async fn run_trade() {
     const CRON_CONF: &str = "0 0 * * * *"; // 毎時0分
-    cronjob(CRON_CONF.parse().unwrap(), stats::start, "trade").await;
+    cronjob(CRON_CONF.parse().unwrap(), stats::start, "auto_trade").await;
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)

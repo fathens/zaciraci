@@ -4,6 +4,35 @@
 
 cli_tokens で Chronos API を使う実績のあるコードが common にあるのでそれを使う。
 
+## ✅ Phase 0: Backend 自動トレード基盤 (完了)
+
+**実装済み**: Portfolio アルゴリズムを使用した自動トレードシステムの基盤を backend に実装。
+
+### 実装した機能
+
+- **トレードエントリポイント**: `backend/src/trade/stats.rs` の `start()` 関数
+- **資金準備**: NEAR → wrap.near 変換処理
+- **トークン選定**: top volatility トークンの選択
+- **ポートフォリオ最適化**: 既存の Portfolio アルゴリズムを活用
+- **ハーベスト機能**: 利益確定（200%超過時の10%収穫）
+- **Cron統合**: `trade.rs` で毎時0分に自動実行
+
+### ルール準拠
+
+`rules.md` で定義されたトレードルールに完全対応:
+- 評価頻度: 10日間（`TRADE_EVALUATION_DAYS`）
+- トレード頻度: 24時間（毎時0分実行）
+- トークン選定: top 10 volatility（`TRADE_TOP_TOKENS`）
+- ハーベスト: 200%超過の10%を収穫
+
+### 設定パラメータ
+
+- `TRADE_INITIAL_INVESTMENT`: 初期投資額
+- `TRADE_TOP_TOKENS`: 選定トークン数（デフォルト: 10）
+- `TRADE_EVALUATION_DAYS`: 評価頻度（デフォルト: 10日）
+- `HARVEST_MIN_AMOUNT`: 最小ハーベスト額（デフォルト: 10 NEAR）
+- `HARVEST_ACCOUNT_ID`: ハーベスト送金先
+
 ## Phase 1
 
 トレードは実際には行わず、仮にトレードしたとしてどういう実績になるかを調査する。
@@ -52,3 +81,34 @@ Phase 1 の決定アルゴリズムを使う
 * Tx の成否の確認
 * DB に記録（Phase 1 のを使う）
 * DB から資産評価（Phase 1 のを使う）
+
+## 次のステップ
+
+### 短期（Phase 0 → Phase 1）
+
+1. **プレースホルダー実装の置き換え**:
+   - `get_prediction_placeholder` → 実際の Chronos API 呼び出し
+   - `get_token_current_price` → 実際の価格取得 API
+   - `select_top_volatility_tokens` → 実際のボラティリティ計算
+
+2. **DB テーブル設計と実装**:
+   - 架空トレード記録テーブル
+   - ポートフォリオ評価履歴テーブル
+
+3. **シミュレーション機能**:
+   - 実際のトレードを行わずに結果を記録・評価
+
+### 中期（Phase 1 → Phase 2）
+
+1. **実際のトレード実行**:
+   - 既存の swap 実装を活用
+   - トランザクション成否の確認
+   - エラーハンドリングとリトライ機能
+
+2. **資金管理**:
+   - NEAR/wrap.near 変換の実装
+   - ハーベスト時の実際の送金処理
+
+3. **モニタリング**:
+   - トレード結果の追跡
+   - パフォーマンス分析機能
