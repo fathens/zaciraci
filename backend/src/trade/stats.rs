@@ -8,6 +8,7 @@ use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::trade::predict::PredictionService;
 use crate::types::MilliNear;
+use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures_util::future::join_all;
@@ -17,7 +18,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
 use zaciraci_common::algorithm::{
-    TokenHolding,
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
@@ -63,22 +63,22 @@ pub async fn start() -> Result<()> {
         return Ok(());
     }
 
-    // Step 2: トークン選定 (top volatility)
-    let selected_tokens = select_top_volatility_tokens().await?;
-    info!(log, "Selected tokens"; "count" => selected_tokens.len());
-
-    if selected_tokens.is_empty() {
-        info!(log, "no tokens selected for trading");
-        return Ok(());
-    }
-
-    // Step 3: PredictionServiceの初期化
+    // Step 2: PredictionServiceの初期化
     let chronos_url =
         std::env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
     let backend_url =
         std::env::var("BACKEND_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     let prediction_service = PredictionService::new(chronos_url, backend_url);
+
+    // Step 3: トークン選定 (top volatility)
+    let selected_tokens = select_top_volatility_tokens(&prediction_service).await?;
+    info!(log, "Selected tokens"; "count" => selected_tokens.len());
+
+    if selected_tokens.is_empty() {
+        info!(log, "no tokens selected for trading");
+        return Ok(());
+    }
 
     // Step 4: ポートフォリオ最適化と実行
     match execute_portfolio_strategy(&prediction_service, &selected_tokens, available_funds).await {
@@ -104,41 +104,60 @@ pub async fn start() -> Result<()> {
     Ok(())
 }
 
-/// 現在の保有トークンを取得（仮の実装）
-#[allow(dead_code)]
-async fn get_current_holdings() -> Result<Vec<TokenHolding>> {
-    let log = DEFAULT.new(o!("function" => "get_current_holdings"));
-
-    // 実際の実装では、ウォレットAPIまたはDBから保有情報を取得
-    // ここでは仮のデータを返す
-    let holdings = vec![TokenHolding {
-        token: "wrap.near".to_string(),
-        amount: BigDecimal::from(100),
-        current_price: BigDecimal::from(1), // 1 NEAR = 1として仮定
-    }];
-
-    info!(log, "retrieved holdings"; "count" => holdings.len());
-    Ok(holdings)
-}
-
 /// 資金準備 (NEAR -> wrap.near 変換)
 async fn prepare_funds() -> Result<u128> {
     let log = DEFAULT.new(o!("function" => "prepare_funds"));
 
-    // TODO: 実際のNEAR残高の取得とwrap.near変換を実装
-    // 現在は仮の値を返す
-    let available_funds = config::get("TRADE_INITIAL_INVESTMENT")
+    // JSONRPCクライアントとウォレットを取得
+    let client = crate::jsonrpc::new_client();
+    let wallet = crate::wallet::new_wallet();
+
+    // NEAR残高を取得
+    let account_id = wallet.account_id();
+    let balance = crate::ref_finance::balances::start(
+        &client,
+        &wallet,
+        &crate::ref_finance::token_account::WNEAR_TOKEN.clone(),
+    )
+    .await?;
+
+    // 初期投資額の設定値を取得
+    let target_investment = config::get("TRADE_INITIAL_INVESTMENT")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .map(|v| MilliNear::of(v as u32).to_yocto())
         .unwrap_or_else(|| MilliNear::of(100).to_yocto());
 
-    info!(log, "prepared funds"; "amount" => available_funds);
+    // 保護する残高（最低10 NEAR）
+    let reserve_amount = MilliNear::of(10).to_yocto();
+
+    // 使用可能な金額を計算
+    let available_funds = if balance > reserve_amount {
+        let available = balance - reserve_amount;
+        // 設定された投資額と実際の残高の小さい方を使用
+        available.min(target_investment)
+    } else {
+        return Err(anyhow::anyhow!(
+            "Insufficient NEAR balance: {} yoctoNEAR (minimum required: {} yoctoNEAR)",
+            balance,
+            reserve_amount
+        ));
+    };
+
+    info!(log, "prepared funds";
+        "account" => %account_id,
+        "total_balance" => balance,
+        "available_funds" => available_funds,
+        "reserve_amount" => reserve_amount
+    );
+
     Ok(available_funds)
 }
 
-/// トップボラティリティトークンの選定
-async fn select_top_volatility_tokens() -> Result<Vec<AccountId>> {
+/// トップボラティリティトークンの選定 (PredictionServiceを使用)
+async fn select_top_volatility_tokens(
+    prediction_service: &PredictionService,
+) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "select_top_volatility_tokens"));
 
     let limit = config::get("TRADE_TOP_TOKENS")
@@ -146,32 +165,46 @@ async fn select_top_volatility_tokens() -> Result<Vec<AccountId>> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
 
-    // 30日間のデータから高ボラティリティトークンを選択
-    let end_time = Utc::now().naive_utc();
-    let start_time = end_time - Duration::days(30);
-    let _time_range = TimeRange {
-        start: start_time,
-        end: end_time,
-    };
+    // 過去7日間のボラティリティトークンを取得
+    let end_date = Utc::now();
+    let start_date = end_date - chrono::Duration::days(7);
 
-    // TODO: 実際のボラティリティ計算とトークン選定を実装
-    // 現在は仮のトークンリストを返す
-    let tokens: Vec<AccountId> = vec![
-        "akaia.tkn.near".parse::<AccountId>()?,
-        "babyblackdragon.tkn.near".parse::<AccountId>()?,
-        "nearkat.tkn.near".parse::<AccountId>()?,
-    ]
-    .into_iter()
-    .take(limit)
-    .collect();
+    match prediction_service
+        .get_top_tokens(start_date, end_date, limit, "wrap.near")
+        .await
+    {
+        Ok(top_tokens) => {
+            // TopToken を AccountId に変換
+            let tokens: anyhow::Result<Vec<AccountId>> = top_tokens
+                .into_iter()
+                .map(|token| {
+                    token
+                        .token
+                        .parse::<AccountId>()
+                        .map_err(|e| anyhow::anyhow!("Failed to parse account ID: {}", e))
+                })
+                .collect();
+            let tokens = tokens?;
 
-    info!(log, "selected tokens"; "count" => tokens.len());
-    Ok(tokens)
+            if tokens.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No volatility tokens returned from prediction service"
+                ));
+            }
+
+            info!(log, "selected tokens from prediction service"; "count" => tokens.len());
+            Ok(tokens)
+        }
+        Err(e) => {
+            error!(log, "failed to get tokens from prediction service"; "error" => ?e);
+            Err(anyhow::anyhow!("Failed to get volatility tokens: {}", e))
+        }
+    }
 }
 
 /// ポートフォリオ戦略の実行
 async fn execute_portfolio_strategy(
-    _prediction_service: &PredictionService,
+    prediction_service: &PredictionService,
     tokens: &[AccountId],
     available_funds: u128,
 ) -> Result<Vec<TradingAction>> {
@@ -183,24 +216,111 @@ async fn execute_portfolio_strategy(
     let mut historical_prices = Vec::new();
 
     for token in tokens {
-        // 現在価格の取得 (仮実装)
-        let current_price = get_token_current_price(token).await?;
+        let token_str = token.to_string();
 
-        // 予測の取得 (仮実装)
-        // TODO: PredictionServiceのget_predictionメソッドを実装
-        let prediction = get_prediction_placeholder(token).await?;
+        // PredictionServiceを使用して価格履歴と予測を取得
+        let end_date = Utc::now();
+        let start_date = end_date - chrono::Duration::days(30);
+
+        // 価格履歴の取得
+        let history = match prediction_service
+            .get_price_history(&token_str, "wrap.near", start_date, end_date)
+            .await
+        {
+            Ok(hist) => {
+                // PredictionServiceのTokenPriceHistoryをcommonのPriceHistoryに変換
+                zaciraci_common::algorithm::types::PriceHistory {
+                    token: hist.token,
+                    quote_token: hist.quote_token,
+                    prices: hist
+                        .prices
+                        .into_iter()
+                        .map(|p| zaciraci_common::algorithm::types::PricePoint {
+                            timestamp: p.timestamp,
+                            price: p.price,
+                            volume: p.volume,
+                        })
+                        .collect(),
+                }
+            }
+            Err(e) => {
+                error!(log, "failed to get price history for token"; "token" => %token, "error" => ?e);
+                return Err(anyhow::anyhow!(
+                    "Failed to get price history for token {}: {}",
+                    token,
+                    e
+                ));
+            }
+        };
+
+        // 現在価格を履歴から取得
+        let current_price = if let Some(latest_price) = history.prices.last() {
+            // BigDecimalをyoctoNEAR (u128)に変換
+            let yocto_multiplier = BigDecimal::from(10u128.pow(24));
+            let price_yocto = &latest_price.price * &yocto_multiplier;
+            price_yocto
+                .to_string()
+                .parse::<u128>()
+                .map_err(|e| anyhow::anyhow!("Failed to parse price for token {}: {}", token, e))?
+        } else {
+            error!(log, "no price data available for token"; "token" => %token);
+            return Err(anyhow::anyhow!(
+                "No price data available for token {}",
+                token
+            ));
+        };
+
+        // PredictionServiceの形式に合わせてhistoryを再構築
+        let predict_history = crate::trade::predict::TokenPriceHistory {
+            token: history.token.clone(),
+            quote_token: history.quote_token.clone(),
+            prices: history
+                .prices
+                .iter()
+                .map(|p| crate::trade::predict::PricePoint {
+                    timestamp: p.timestamp,
+                    price: p.price.clone(),
+                    volume: p.volume.clone(),
+                })
+                .collect(),
+        };
+
+        // 予測の取得
+        let prediction = match prediction_service.predict_price(&predict_history, 24).await {
+            Ok(pred) => {
+                // 最初の予測値を返却値として使用
+                pred.predictions.first().map(|p| p.price).ok_or_else(|| {
+                    anyhow::anyhow!("No prediction values returned for token {}", token)
+                })?
+            }
+            Err(e) => {
+                error!(log, "failed to get prediction for token"; "token" => %token, "error" => ?e);
+                return Err(anyhow::anyhow!(
+                    "Failed to get prediction for token {}: {}",
+                    token,
+                    e
+                ));
+            }
+        };
         predictions.insert(token.to_string(), prediction);
 
-        // 履歴価格の取得
-        let history = get_token_price_history(token).await?;
+        // ボラティリティの計算
+        let volatility = calculate_volatility_from_history(&history)?;
+
         historical_prices.push(history);
+
+        // BigDecimalをf64に変換（外部構造体の制約のため）
+        let volatility_f64 = volatility
+            .to_string()
+            .parse::<f64>()
+            .map_err(|e| anyhow::anyhow!("Failed to convert volatility to f64: {}", e))?;
 
         token_data.push(TokenData {
             symbol: token.to_string(),
             current_price: BigDecimal::from(current_price),
-            historical_volatility: 0.2, // 仮の値
-            liquidity_score: Some(0.5), // 仮の値
-            market_cap: Some(10000.0),  // 仮の値
+            historical_volatility: volatility_f64,
+            liquidity_score: Some(0.5), // TODO: 実際の流動性スコア計算
+            market_cap: Some(10000.0),  // TODO: 実際の市場規模取得
             decimals: Some(24),
         });
     }
@@ -212,10 +332,17 @@ async fn execute_portfolio_strategy(
         correlation_matrix: None,
     };
 
+    // BigDecimalで正確に計算してからf64に変換（外部構造体の制約のため）
+    let funds_bd = BigDecimal::from(available_funds);
+    let total_value_f64 = funds_bd
+        .to_string()
+        .parse::<f64>()
+        .map_err(|e| anyhow::anyhow!("Failed to convert total_value to f64: {}", e))?;
+
     let wallet_info = WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: available_funds as f64,
-        cash_balance: available_funds as f64,
+        total_value: total_value_f64,
+        cash_balance: total_value_f64,
     };
 
     // ポートフォリオ最適化の実行
@@ -234,72 +361,116 @@ async fn execute_portfolio_strategy(
 }
 
 /// ハーベスト判定と実行
-async fn check_and_harvest(initial_amount: u128) -> Result<()> {
+async fn check_and_harvest(_initial_amount: u128) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "check_and_harvest"));
 
     // TODO: 実際のポートフォリオ価値計算とハーベスト実行を実装
-    // 現在の値: 仮の値として初期投資額の150%とする
-    let current_value = (initial_amount as f64 * 1.5) as u128;
-    let threshold = (initial_amount as f64 * 2.0) as u128; // 200%
+    warn!(log, "Harvest functionality not yet implemented");
+    Err(anyhow::anyhow!("Harvest functionality not yet implemented"))
+}
 
-    if current_value > threshold {
-        let excess = current_value - threshold;
-        let harvest_amount = (excess as f64 * 0.1) as u128; // 10%
-
-        let min_harvest = config::get("HARVEST_MIN_AMOUNT")
-            .ok()
-            .and_then(|v| v.parse::<u128>().ok())
-            .unwrap_or(10_000_000_000_000_000_000_000_000); // 10 NEAR
-
-        if harvest_amount >= min_harvest {
-            // TODO: 実際のハーベスト処理
-            info!(log, "harvest executed"; "amount" => harvest_amount);
-        } else {
-            info!(log, "harvest amount below minimum";
-                "amount" => harvest_amount,
-                "minimum" => min_harvest
-            );
-        }
-    } else {
-        info!(log, "harvest threshold not reached";
-            "current" => current_value,
-            "threshold" => threshold
-        );
+/// 価格履歴からボラティリティを計算
+fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDecimal> {
+    if history.prices.len() < 2 {
+        return Err(anyhow::anyhow!(
+            "Insufficient price data for volatility calculation: {} points",
+            history.prices.len()
+        ));
     }
 
-    Ok(())
+    // 日次リターンを計算 (BigDecimalを使用)
+    let returns: Vec<BigDecimal> = history
+        .prices
+        .windows(2)
+        .filter_map(|window| {
+            let prev_price = &window[0].price;
+            let curr_price = &window[1].price;
+
+            if prev_price.is_zero() {
+                None
+            } else {
+                let return_rate = (curr_price - prev_price) / prev_price;
+                Some(return_rate)
+            }
+        })
+        .collect();
+
+    if returns.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No valid price returns for volatility calculation"
+        ));
+    }
+
+    // 平均リターンを計算
+    let sum: BigDecimal = returns.iter().sum();
+    let count = BigDecimal::from(returns.len() as u64);
+    let mean = &sum / &count;
+
+    // 分散を計算
+    let variance_sum: BigDecimal = returns
+        .iter()
+        .map(|r| {
+            let diff = r - &mean;
+            &diff * &diff
+        })
+        .sum();
+
+    let variance = &variance_sum / &count;
+
+    // BigDecimalで平方根を計算（Newton法による近似）
+    if variance.is_zero() {
+        return Ok(BigDecimal::from(0));
+    }
+
+    // 負の分散は無効
+    if variance < BigDecimal::from(0) {
+        return Err(anyhow::anyhow!("Invalid negative variance"));
+    }
+
+    // Newton法による平方根計算
+    let sqrt_variance = sqrt_bigdecimal(&variance)?;
+    Ok(sqrt_variance)
 }
 
-/// トークンの現在価格を取得 (仮実装)
-async fn get_token_current_price(token: &AccountId) -> Result<u128> {
-    let log = DEFAULT.new(o!("function" => "get_token_current_price"));
+/// BigDecimalで平方根を計算（Newton法による近似）
+fn sqrt_bigdecimal(value: &BigDecimal) -> Result<BigDecimal> {
+    if value.is_zero() {
+        return Ok(BigDecimal::from(0));
+    }
 
-    // TODO: 実際の価格取得APIを実装
-    let price = 1_000_000_000_000_000_000_000_000; // 1 NEAR相当として仮設定
+    if *value < BigDecimal::from(0) {
+        return Err(anyhow::anyhow!(
+            "Cannot calculate square root of negative number"
+        ));
+    }
 
-    info!(log, "retrieved token price"; "token" => %token, "price" => price);
-    Ok(price)
-}
+    // Newton法での近似計算
+    let two = BigDecimal::from(2);
+    // 精度を BigDecimal で直接設定 (1e-10 相当)
+    let precision = BigDecimal::from(1) / BigDecimal::from(10000000000u64); // 1e-10
 
-/// トークンの価格履歴を取得 (仮実装)
-async fn get_token_price_history(token: &AccountId) -> Result<PriceHistory> {
-    let log = DEFAULT.new(o!("function" => "get_token_price_history"));
+    // 初期推定値（入力値の半分）
+    let mut x = value / &two;
 
-    // TODO: 実際の価格履歴取得を実装
-    let history = PriceHistory {
-        token: token.to_string(),
-        quote_token: "wrap.near".to_string(),
-        prices: vec![], // 空のデータ
-    };
+    for _iteration in 0..50 {
+        // 最大50回の反復
+        let next_x = (&x + (value / &x)) / &two;
 
-    info!(log, "retrieved price history"; "token" => %token);
-    Ok(history)
-}
+        // 収束判定
+        let diff = if next_x > x {
+            &next_x - &x
+        } else {
+            &x - &next_x
+        };
+        if diff < precision {
+            return Ok(next_x);
+        }
 
-/// 予測値を取得するためのプレースホルダー関数
-async fn get_prediction_placeholder(_token: &AccountId) -> Result<f64> {
-    // TODO: 実際のPredictionServiceのget_predictionメソッドを実装
-    Ok(0.1) // 仮の予測値（10%のリターン）
+        x = next_x;
+    }
+
+    // 収束しなかった場合でも現在の近似値を返す
+    Ok(x)
 }
 
 #[allow(dead_code)]

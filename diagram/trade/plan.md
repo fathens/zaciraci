@@ -12,9 +12,10 @@ cli_tokens で Chronos API を使う実績のあるコードが common にある
 
 - **トレードエントリポイント**: `backend/src/trade/stats.rs` の `start()` 関数
 - **資金準備**: NEAR → wrap.near 変換処理
-- **トークン選定**: top volatility トークンの選択
+- **トークン選定**: top volatility トークンの選択（PredictionService使用）
 - **ポートフォリオ最適化**: 既存の Portfolio アルゴリズムを活用
-- **ハーベスト機能**: 利益確定（200%超過時の10%収穫）
+- **価格予測**: Chronos API を使用した価格予測（PredictionService経由）
+- **ボラティリティ計算**: BigDecimal を使用した高精度計算（Newton法平方根）
 - **Cron統合**: `trade.rs` で毎時0分に自動実行
 
 ### ルール準拠
@@ -32,6 +33,12 @@ cli_tokens で Chronos API を使う実績のあるコードが common にある
 - `TRADE_EVALUATION_DAYS`: 評価頻度（デフォルト: 10日）
 - `HARVEST_MIN_AMOUNT`: 最小ハーベスト額（デフォルト: 10 NEAR）
 - `HARVEST_ACCOUNT_ID`: ハーベスト送金先
+
+### 技術的実装詳細
+
+- **データ精度**: f64 からの脱却を目指し BigDecimal 中心の実装
+- **API統合**: 既存 PredictionService の活用でコード重複を排除
+- **エラーハンドリング**: プレースホルダー関数を排除し適切なエラー処理を実装
 
 ## Phase 1
 
@@ -82,21 +89,64 @@ Phase 1 の決定アルゴリズムを使う
 * DB に記録（Phase 1 のを使う）
 * DB から資産評価（Phase 1 のを使う）
 
+## 🚧 Phase 0 完了後の課題と改善点
+
+### 🔧 重要な修正項目 (High Priority)
+
+1. **f64 使用の完全排除**:
+   - `stats.rs:272-301`: Portfolio アルゴリズム用の f64 → BigDecimal 変換
+   - `predict.rs:44,179,414`: PredictedPrice の price, confidence フィールド
+   - 外部ライブラリ制約への対応（zaciraci_common の構造体）
+
+2. **実際のトークン交換実行**:
+   - `stats.rs:90-94`: ログ出力 → 実際の REF Finance API 呼び出し
+   - 既存 arbitrage.rs の swap 実装を活用
+   - トランザクション成否の確認とエラーハンドリング
+
+### 🛠 中優先度の実装項目 (Medium Priority)
+
+3. **ハーベスト機能の実装**:
+   - `stats.rs:320-326`: 200%利益時の自動利益確定機能
+   - wrap.near → NEAR 変換と送金処理
+   - ハーベスト条件判定の実装
+
+4. **ハードコード値の実装**:
+   - `stats.rs:280-281`: liquidity_score, market_cap の動的取得
+   - 実際の流動性スコア計算アルゴリズム
+   - 市場規模データの取得方法
+
+### 🔄 改善項目 (Low Priority)
+
+5. **エラーハンドリング強化**:
+   - PredictionService API 呼び出し失敗時の適切な処理
+   - Backend API 障害時のフォールバック戦略
+   - ネットワーク障害時のリトライ機能
+
+6. **設定管理の強化**:
+   - 環境変数による設定の外部化
+   - 設定値のバリデーション
+   - デフォルト値の適切な設定
+
+7. **ログ・モニタリング機能**:
+   - 取引実績の詳細記録
+   - ポートフォリオパフォーマンスの追跡
+   - アラート機能の実装
+
 ## 次のステップ
 
-### 短期（Phase 0 → Phase 1）
+### 短期（Phase 0 改善 → Phase 1）
 
-1. **プレースホルダー実装の置き換え**:
-   - `get_prediction_placeholder` → 実際の Chronos API 呼び出し
-   - `get_token_current_price` → 実際の価格取得 API
-   - `select_top_volatility_tokens` → 実際のボラティリティ計算
+1. **データ精度問題の解決**:
+   - BigDecimal の完全採用
+   - 外部ライブラリとの整合性確保
 
-2. **DB テーブル設計と実装**:
+2. **実際のトレード機能実装**:
+   - REF Finance 統合
+   - トランザクション処理
+
+3. **DB テーブル設計と実装**:
    - 架空トレード記録テーブル
    - ポートフォリオ評価履歴テーブル
-
-3. **シミュレーション機能**:
-   - 実際のトレードを行わずに結果を記録・評価
 
 ### 中期（Phase 1 → Phase 2）
 
