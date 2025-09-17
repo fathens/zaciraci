@@ -3,6 +3,8 @@
 //! - アルゴリズム統合
 //! - API呼び出し
 
+use bigdecimal::BigDecimal;
+use bigdecimal::ToPrimitive;
 use chrono::Utc;
 use common::algorithm::calculate_volatility_score;
 use common::stats::ValueAtTime;
@@ -123,32 +125,43 @@ fn test_simulate_args_integration() {
 
 #[test]
 fn test_fee_model_integration() {
-    let trade_amount = 1000.0;
-    let slippage = 0.01;
-    let gas_cost = 0.01;
+    let trade_amount = BigDecimal::from(1000);
+    let slippage = "0.01".parse::<BigDecimal>().unwrap();
+    let gas_cost = "0.01".parse::<BigDecimal>().unwrap();
 
     // Test zero fee model (still includes slippage and gas costs)
-    let zero_cost = calculate_trading_cost(trade_amount, &FeeModel::Zero, slippage, gas_cost);
-    let expected_zero_cost = trade_amount * slippage + gas_cost; // Only slippage + gas, no protocol fee
-    assert!((zero_cost - expected_zero_cost).abs() < 0.01);
+    let zero_cost = calculate_trading_cost(
+        trade_amount.to_f64().unwrap(),
+        &FeeModel::Zero,
+        slippage.to_f64().unwrap(),
+        gas_cost.to_f64().unwrap(),
+    );
+    let expected_zero_cost = &trade_amount * &slippage + &gas_cost; // Only slippage + gas, no protocol fee
+    assert!((zero_cost - expected_zero_cost.to_f64().unwrap()).abs() < 0.01);
 
     // Test realistic fee model
-    let realistic_cost =
-        calculate_trading_cost(trade_amount, &FeeModel::Realistic, slippage, gas_cost);
+    let realistic_cost = calculate_trading_cost(
+        trade_amount.to_f64().unwrap(),
+        &FeeModel::Realistic,
+        slippage.to_f64().unwrap(),
+        gas_cost.to_f64().unwrap(),
+    );
     // Should include pool fee (0.3%) + slippage + gas
-    let expected_cost = trade_amount * 0.003 + trade_amount * slippage + gas_cost;
-    assert!((realistic_cost - expected_cost).abs() < 0.01);
+    let expected_cost = &trade_amount * "0.003".parse::<BigDecimal>().unwrap()
+        + &trade_amount * &slippage
+        + &gas_cost;
+    assert!((realistic_cost - expected_cost.to_f64().unwrap()).abs() < 0.01);
 
     // Test custom fee model
-    let custom_fee = 0.005; // 0.5%
+    let custom_fee = "0.005".parse::<BigDecimal>().unwrap(); // 0.5%
     let custom_cost = calculate_trading_cost(
-        trade_amount,
-        &FeeModel::Custom(custom_fee),
-        slippage,
-        gas_cost,
+        trade_amount.to_f64().unwrap(),
+        &FeeModel::Custom(custom_fee.to_f64().unwrap()),
+        slippage.to_f64().unwrap(),
+        gas_cost.to_f64().unwrap(),
     );
-    let expected_custom_cost = trade_amount * custom_fee + trade_amount * slippage + gas_cost;
-    assert!((custom_cost - expected_custom_cost).abs() < 0.01);
+    let expected_custom_cost = &trade_amount * &custom_fee + &trade_amount * &slippage + &gas_cost;
+    assert!((custom_cost - expected_custom_cost.to_f64().unwrap()).abs() < 0.01);
 }
 
 #[test]
@@ -157,19 +170,19 @@ fn test_volatility_token_filtering() {
     let high_volatility_data = vec![
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 100.0,
+            value: BigDecimal::from(100),
         },
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 150.0,
+            value: BigDecimal::from(150),
         }, // +50%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 75.0,
+            value: BigDecimal::from(75),
         }, // -50%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 125.0,
+            value: BigDecimal::from(125),
         }, // +67%
     ];
 
@@ -179,19 +192,19 @@ fn test_volatility_token_filtering() {
     let low_volatility_data = vec![
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 100.0,
+            value: BigDecimal::from(100),
         },
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 101.0,
+            value: BigDecimal::from(101),
         }, // +1%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 102.0,
+            value: BigDecimal::from(102),
         }, // +1%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: 103.0,
+            value: BigDecimal::from(103),
         }, // +1%
     ];
 

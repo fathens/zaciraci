@@ -72,7 +72,7 @@ pub struct TokenHolding {
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
     pub price: BigDecimal,
-    pub confidence: Option<f64>,
+    pub confidence: Option<BigDecimal>,
 }
 
 /// 予測データを格納する構造体
@@ -82,7 +82,7 @@ pub struct PredictionData {
     pub current_price: BigDecimal,
     pub predicted_price_24h: BigDecimal,
     pub timestamp: DateTime<Utc>,
-    pub confidence: Option<f64>,
+    pub confidence: Option<BigDecimal>,
 }
 
 /// トークン予測結果

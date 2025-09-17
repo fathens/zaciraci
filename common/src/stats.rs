@@ -1,4 +1,5 @@
 use crate::types::TokenAccount;
+use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +27,6 @@ pub struct GetValuesResponse {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ValueAtTime {
-    pub value: f64,
+    pub value: BigDecimal,
     pub time: NaiveDateTime,
 }

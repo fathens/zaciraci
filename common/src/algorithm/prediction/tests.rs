@@ -104,7 +104,7 @@ impl PredictionProvider for MockPredictionProvider {
             predictions.push(PredictedPrice {
                 timestamp,
                 price,
-                confidence: Some(0.8),
+                confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
             });
         }
 
@@ -207,7 +207,7 @@ mod prediction_tests {
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
                 price: BigDecimal::from_f64(110.0).unwrap(),
-                confidence: Some(0.85),
+                confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
 
@@ -220,7 +220,7 @@ mod prediction_tests {
         assert_eq!(data.token, "test_token");
         assert_eq!(data.current_price, current_price);
         assert_eq!(data.predicted_price_24h, BigDecimal::from(110));
-        assert_eq!(data.confidence, Some(0.85));
+        assert_eq!(data.confidence, Some("0.85".parse::<BigDecimal>().unwrap()));
     }
 
     #[tokio::test]
@@ -258,7 +258,7 @@ mod prediction_tests {
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
                 price: BigDecimal::from_f64(110.0).unwrap(),
-                confidence: Some(0.85),
+                confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
 

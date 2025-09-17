@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +19,8 @@ pub struct PredictionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionPoint {
     pub timestamp: DateTime<Utc>,
-    pub price: f64,
-    pub confidence: Option<f64>,
+    pub price: BigDecimal,
+    pub confidence: Option<BigDecimal>,
 }
 
 /// Prediction results container

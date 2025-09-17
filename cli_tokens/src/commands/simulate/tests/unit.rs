@@ -224,7 +224,7 @@ fn test_calculate_confidence_adjusted_return() {
         current_price: BigDecimal::from(100),
         predicted_price_24h: BigDecimal::from(110), // 10% growth
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse().unwrap()),
     };
 
     let adjusted_return = calculate_confidence_adjusted_return(&prediction);
@@ -250,21 +250,21 @@ fn test_rank_tokens_by_momentum() {
             current_price: BigDecimal::from(100),
             predicted_price_24h: BigDecimal::from(105), // 5% growth
             timestamp: Utc::now(),
-            confidence: Some(0.8),
+            confidence: Some("0.8".parse().unwrap()),
         },
         PredictionData {
             token: "token2".to_string(),
             current_price: BigDecimal::from(100),
             predicted_price_24h: BigDecimal::from(110), // 10% growth
             timestamp: Utc::now(),
-            confidence: Some(0.6),
+            confidence: Some("0.6".parse().unwrap()),
         },
         PredictionData {
             token: "token3".to_string(),
             current_price: BigDecimal::from(100),
             predicted_price_24h: BigDecimal::from(95), // -5% decline
             timestamp: Utc::now(),
-            confidence: Some(0.9),
+            confidence: Some("0.9".parse().unwrap()),
         },
     ];
 
@@ -289,15 +289,15 @@ fn test_get_prices_at_time_multiple_tokens() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(30)).naive_utc(),
-            value: 100.0,
+            value: BigDecimal::from(100),
         },
         ValueAtTime {
             time: target_time.naive_utc(),
-            value: 105.0,
+            value: BigDecimal::from(105),
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::minutes(30)).naive_utc(),
-            value: 110.0,
+            value: BigDecimal::from(110),
         },
     ];
 
@@ -316,11 +316,11 @@ fn test_get_prices_at_time_stale_data() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::hours(2)).naive_utc(),
-            value: 100.0,
+            value: BigDecimal::from(100),
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::hours(2)).naive_utc(),
-            value: 110.0,
+            value: BigDecimal::from(110),
         },
     ];
 
@@ -352,11 +352,11 @@ fn test_get_prices_at_time_boundary_case() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::hours(1)).naive_utc(),
-            value: 100.0,
+            value: BigDecimal::from(100),
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::hours(1)).naive_utc(),
-            value: 110.0,
+            value: BigDecimal::from(110),
         },
     ];
 
@@ -374,11 +374,11 @@ fn test_get_prices_at_time_with_sufficient_data() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(30)).naive_utc(),
-            value: 100.0,
+            value: BigDecimal::from(100),
         },
         ValueAtTime {
             time: target_time.naive_utc(),
-            value: 105.0,
+            value: BigDecimal::from(105),
         },
     ];
 
@@ -396,7 +396,7 @@ fn test_get_prices_at_time_with_insufficient_data() {
     // 前後1時間以内にデータがない場合
     let values = vec![ValueAtTime {
         time: (target_time - chrono::Duration::hours(2)).naive_utc(),
-        value: 100.0,
+        value: BigDecimal::from(100),
     }];
 
     price_data.insert("token1".to_string(), values);
@@ -428,15 +428,15 @@ fn test_get_prices_at_time_closest_selection() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(45)).naive_utc(),
-            value: 100.0,
+            value: BigDecimal::from(100),
         },
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(15)).naive_utc(),
-            value: 105.0, // これが最も近い
+            value: BigDecimal::from(105), // これが最も近い
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::minutes(30)).naive_utc(),
-            value: 110.0,
+            value: BigDecimal::from(110),
         },
     ];
 
@@ -459,7 +459,7 @@ fn test_make_trading_decision_hold_when_profitable() {
     let opportunities = vec![TokenOpportunity {
         token: "other_token".to_string(),
         expected_return: 0.08,
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse().unwrap()),
     }];
 
     let decision = make_trading_decision(
@@ -486,7 +486,7 @@ fn test_make_trading_decision_switch_when_better_opportunity() {
     let opportunities = vec![TokenOpportunity {
         token: "better_token".to_string(),
         expected_return: 0.25,
-        confidence: Some(0.9),
+        confidence: Some("0.9".parse().unwrap()),
     }];
 
     let decision = make_trading_decision(
@@ -519,7 +519,7 @@ fn test_make_trading_decision_sell_when_unprofitable() {
     let opportunities = vec![TokenOpportunity {
         token: "target_token".to_string(),
         expected_return: 0.08,
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse().unwrap()),
     }];
 
     let decision = make_trading_decision(
@@ -549,7 +549,7 @@ fn test_make_trading_decision_hold_when_insufficient_amount() {
     let opportunities = vec![TokenOpportunity {
         token: "better_token".to_string(),
         expected_return: 0.25,
-        confidence: Some(0.9),
+        confidence: Some("0.9".parse().unwrap()),
     }];
 
     let decision = make_trading_decision(
@@ -595,7 +595,7 @@ fn test_make_trading_decision_hold_when_same_token() {
     let opportunities = vec![TokenOpportunity {
         token: "current_token".to_string(), // Same as current
         expected_return: 0.25,
-        confidence: Some(0.9),
+        confidence: Some("0.9".parse().unwrap()),
     }];
 
     let decision = make_trading_decision("current_token", 0.1, &opportunities, 100.0, &config);
@@ -863,7 +863,7 @@ fn test_market_snapshot_from_price_data() {
 
     let values = vec![ValueAtTime {
         time: target_time.naive_utc(),
-        value: 150.0,
+        value: BigDecimal::from(150),
     }];
     price_data.insert("token_a".to_string(), values);
 
@@ -980,7 +980,7 @@ fn test_momentum_strategy_hold_decision() {
     let opportunities = vec![TokenOpportunity {
         token: "token_b".to_string(),
         expected_return: 0.15,
-        confidence: Some(0.5), // Below min_confidence
+        confidence: Some("0.5".parse().unwrap()), // Below min_confidence
     }];
 
     let config = TradingConfig {
@@ -1010,8 +1010,8 @@ fn test_momentum_strategy_switch_decision() {
 
     let opportunities = vec![TokenOpportunity {
         token: "token_b".to_string(),
-        expected_return: 0.3,  // High return
-        confidence: Some(0.9), // High confidence
+        expected_return: 0.3,                     // High return
+        confidence: Some("0.9".parse().unwrap()), // High confidence
     }];
 
     let config = TradingConfig {
@@ -1067,7 +1067,7 @@ fn test_trend_following_strategy_decision() {
     let opportunities = vec![TokenOpportunity {
         token: "token_b".to_string(),
         expected_return: 0.25,
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse().unwrap()),
     }];
 
     let config = TradingConfig {
@@ -1106,7 +1106,7 @@ fn test_strategy_context_execution() {
     let opportunities = vec![TokenOpportunity {
         token: "token_a".to_string(), // Same token
         expected_return: 0.15,
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse().unwrap()),
     }];
 
     let config = TradingConfig {
@@ -1137,12 +1137,12 @@ fn test_strategy_comparison_demo() {
         TokenOpportunity {
             token: "token_b".to_string(),
             expected_return: 0.25,
-            confidence: Some(0.8),
+            confidence: Some("0.8".parse().unwrap()),
         },
         TokenOpportunity {
             token: "token_c".to_string(),
             expected_return: 0.20,
-            confidence: Some(0.9),
+            confidence: Some("0.9".parse().unwrap()),
         },
     ];
 
@@ -1227,7 +1227,7 @@ fn test_data_gap_handling_get_prices_at_time_optional() {
         let time = start_time + chrono::Duration::hours(hour_offset);
         data_points.push(ValueAtTime {
             time: time.naive_utc(),
-            value: price,
+            value: BigDecimal::from(price as i64),
         });
     }
 

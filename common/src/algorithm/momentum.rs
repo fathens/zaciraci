@@ -49,7 +49,11 @@ pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
 /// 信頼度で調整されたリターンを計算
 pub fn calculate_confidence_adjusted_return(prediction: &PredictionData) -> f64 {
     let base_return = calculate_expected_return(prediction);
-    let confidence = prediction.confidence.unwrap_or(0.5);
+    let confidence = prediction
+        .confidence
+        .as_ref()
+        .map(|c| c.to_string().parse::<f64>().unwrap_or(0.5))
+        .unwrap_or(0.5);
 
     // 信頼度で調整（信頼度が低い場合はリターンを減少）
     base_return * confidence
@@ -63,7 +67,11 @@ pub fn rank_tokens_by_momentum(
         .iter()
         .map(|p| {
             let return_val = calculate_confidence_adjusted_return(p);
-            (p.token.clone(), return_val, p.confidence)
+            let confidence_f64 = p
+                .confidence
+                .as_ref()
+                .map(|c| c.to_string().parse::<f64>().unwrap_or(0.5));
+            (p.token.clone(), return_val, confidence_f64)
         })
         .filter(|(_, return_val, _)| *return_val > 0.0) // 正のリターンのみ
         .collect();
@@ -423,7 +431,7 @@ mod integration_tests {
                 predictions.push(PredictedPrice {
                     timestamp,
                     price,
-                    confidence: Some(0.8),
+                    confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
                 });
             }
 

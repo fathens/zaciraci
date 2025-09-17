@@ -532,8 +532,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             chrono::Utc,
                                         ),
                                         // point.valueはyoctoNEAR単位で保存
-                                        price: BigDecimal::from_f64(point.value)
-                                            .unwrap_or_default(),
+                                        price: point.value.clone(),
                                         volume: None,
                                     })
                                     .collect()

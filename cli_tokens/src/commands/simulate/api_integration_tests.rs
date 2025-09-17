@@ -176,7 +176,7 @@ mod tests {
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(110.0).unwrap(),
             timestamp: Utc::now(),
-            confidence: Some(0.8),
+            confidence: Some("0.8".parse().unwrap()),
         };
 
         assert_eq!(prediction.token, "test_token");
@@ -188,7 +188,7 @@ mod tests {
             prediction.predicted_price_24h,
             BigDecimal::from_f64(110.0).unwrap()
         );
-        assert_eq!(prediction.confidence, Some(0.8));
+        assert_eq!(prediction.confidence, Some("0.8".parse().unwrap()));
     }
 
     /// 異なるモデルパラメータでの予測生成をテスト
@@ -253,12 +253,15 @@ mod tests {
                 Utc::now() + Duration::hours(1),
                 Utc::now() + Duration::hours(2),
             ],
-            forecast_values: vec![105.0, 110.0],
+            forecast_values: vec![BigDecimal::from(105), BigDecimal::from(110)],
             model_name: "chronos_default".to_string(),
             confidence_intervals: Some(HashMap::new()),
             metrics: Some({
                 let mut m = HashMap::new();
-                m.insert("confidence".to_string(), 0.85);
+                m.insert(
+                    "confidence".to_string(),
+                    "0.85".parse::<BigDecimal>().unwrap(),
+                );
                 m
             }),
         };
@@ -267,20 +270,20 @@ mod tests {
         let predicted_price_24h = chronos_response
             .forecast_values
             .first()
-            .copied()
-            .unwrap_or(100.0);
+            .cloned()
+            .unwrap_or(BigDecimal::from(100));
 
-        assert_eq!(predicted_price_24h, 105.0);
+        assert_eq!(predicted_price_24h, BigDecimal::from(105));
 
         // 信頼度を取得
         let confidence = chronos_response
             .metrics
             .as_ref()
             .and_then(|m| m.get("confidence"))
-            .copied()
-            .unwrap_or(0.7);
+            .cloned()
+            .unwrap_or("0.7".parse().unwrap());
 
-        assert_eq!(confidence, 0.85);
+        assert_eq!(confidence, "0.85".parse::<BigDecimal>().unwrap());
     }
 
     /// run_momentum_timestep_simulation関数がAPI予測を使用することを確認
@@ -321,15 +324,15 @@ mod tests {
         let values = vec![
             ValueAtTime {
                 time: (Utc::now() - Duration::hours(2)).naive_utc(),
-                value: 100.0,
+                value: BigDecimal::from(100),
             },
             ValueAtTime {
                 time: (Utc::now() - Duration::hours(1)).naive_utc(),
-                value: 105.0,
+                value: BigDecimal::from(105),
             },
             ValueAtTime {
                 time: Utc::now().naive_utc(),
-                value: 110.0,
+                value: BigDecimal::from(110),
             },
         ];
         price_data.insert("test_token".to_string(), values);

@@ -103,7 +103,7 @@ mod unit_conversion_debug {
             "akaia.tkn.near".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: 33276625285048.96, // yoctoNEAR
+                value: "33276625285048.96".parse().unwrap(), // yoctoNEAR
             }],
         );
 
@@ -112,14 +112,14 @@ mod unit_conversion_debug {
             "babyblackdragon.tkn.near".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: 50212780681.19036, // yoctoNEAR
+                value: "50212780681.19036".parse().unwrap(), // yoctoNEAR
             }],
         );
 
         // 初期ポートフォリオ計算を再現
-        let initial_value = config.initial_capital.to_string().parse::<f64>().unwrap();
-        let tokens_count = config.target_tokens.len() as f64;
-        let initial_per_token = initial_value / tokens_count;
+        let initial_value = config.initial_capital.clone();
+        let tokens_count = BigDecimal::from(config.target_tokens.len() as i64);
+        let initial_per_token = &initial_value / &tokens_count;
 
         println!("🧮 Initial Portfolio Calculation Debug:");
         println!("   initial_capital: {} NEAR", initial_value);
@@ -130,10 +130,9 @@ mod unit_conversion_debug {
 
         for token in &config.target_tokens {
             if let Some(price_point) = price_data.get(token).and_then(|data| data.first()) {
-                let initial_price_yocto = price_point.value;
-                let initial_price_near =
-                    common::units::Units::yocto_f64_to_near_f64(initial_price_yocto);
-                let token_amount = initial_per_token / initial_price_near;
+                let initial_price_yocto = &price_point.value;
+                let initial_price_near = common::units::Units::yocto_to_near(initial_price_yocto);
+                let token_amount = &initial_per_token / &initial_price_near;
 
                 println!("   Token: {}", token);
                 println!("     price_yocto: {:.2e}", initial_price_yocto);
@@ -141,29 +140,29 @@ mod unit_conversion_debug {
                 println!("     allocation: {} NEAR", initial_per_token);
                 println!("     calculated_amount: {:.2e} tokens", token_amount);
 
-                holdings.insert(token.clone(), token_amount);
+                holdings.insert(token.clone(), token_amount.clone());
 
                 // 値の妥当性チェック
-                let portfolio_value = token_amount * initial_price_near;
+                let portfolio_value = &token_amount * &initial_price_near;
                 println!("     portfolio_value_check: {:.6} NEAR", portfolio_value);
 
                 // 異常な値の検出
-                if token_amount > 1e20 {
-                    panic!("❌ Token amount is astronomical: {:.2e}", token_amount);
+                if token_amount > "1e20".parse::<BigDecimal>().unwrap() {
+                    panic!("❌ Token amount is astronomical: {}", token_amount);
                 }
-                if token_amount < 1e-10 {
-                    panic!("❌ Token amount is too small: {:.2e}", token_amount);
+                if token_amount < "1e-10".parse::<BigDecimal>().unwrap() {
+                    panic!("❌ Token amount is too small: {}", token_amount);
                 }
             }
         }
 
         // 総ポートフォリオ価値の検証
-        let mut total_portfolio_value = 0.0;
+        let mut total_portfolio_value = BigDecimal::from(0);
         for (token, amount) in &holdings {
             if let Some(price_point) = price_data.get(token).and_then(|data| data.first()) {
-                let price_near = common::units::Units::yocto_f64_to_near_f64(price_point.value);
-                let value = amount * price_near;
-                total_portfolio_value += value;
+                let price_near = common::units::Units::yocto_to_near(&price_point.value);
+                let value = amount * &price_near;
+                total_portfolio_value += &value;
                 println!("   {} value: {:.6} NEAR", token, value);
             }
         }
@@ -175,13 +174,13 @@ mod unit_conversion_debug {
         println!("   Expected value: {} NEAR", initial_value);
         println!(
             "   Difference: {:.6} NEAR",
-            (total_portfolio_value - initial_value).abs()
+            (&total_portfolio_value - &initial_value).abs()
         );
 
         // 許容誤差内であることを確認（1%以内）
-        let tolerance = initial_value * 0.01;
+        let tolerance = &initial_value * "0.01".parse::<BigDecimal>().unwrap();
         assert!(
-            (total_portfolio_value - initial_value).abs() < tolerance,
+            (&total_portfolio_value - &initial_value).abs() < tolerance,
             "Portfolio value mismatch: expected {}, got {}",
             initial_value,
             total_portfolio_value
@@ -230,7 +229,7 @@ mod unit_conversion_debug {
             "nearai.aidols.near".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: 166759.9203717577, // yoctoNEAR ≈ 1.67e-19 NEAR
+                value: "166759.9203717577".parse().unwrap(), // yoctoNEAR ≈ 1.67e-19 NEAR
             }],
         );
 
@@ -306,7 +305,7 @@ mod unit_conversion_debug {
             "good_token".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: 1e12, // yoctoNEAR = 1e-12 NEAR (合理的な範囲内)
+                value: BigDecimal::from(1000000000000i64), // yoctoNEAR = 1e-12 NEAR (合理的な範囲内)
             }],
         );
 
@@ -391,7 +390,7 @@ mod unit_conversion_debug {
             "extreme_token".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: 100.0, // yoctoNEAR = 1e-22 NEAR (制限1e-21未満)
+                value: BigDecimal::from(100), // yoctoNEAR = 1e-22 NEAR (制限1e-21未満)
             }],
         );
 

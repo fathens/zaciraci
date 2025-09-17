@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use crate::models::prediction::{PredictionFileData, PredictionMetadata, PredictionPoint, PredictionResults};
 use chrono::{DateTime, Utc};
 use std::env;
@@ -37,13 +38,13 @@ fn create_sample_prediction_data() -> PredictionFileData {
             predictions: vec![
                 PredictionPoint {
                     timestamp: now,
-                    price: 100.0,
-                    confidence: Some(0.8),
+                    price: BigDecimal::from(100),
+                    confidence: Some("0.8".parse().unwrap()),
                 },
                 PredictionPoint {
                     timestamp: now + chrono::Duration::hours(1),
-                    price: 105.0,
-                    confidence: Some(0.75),
+                    price: BigDecimal::from(105),
+                    confidence: Some("0.75".parse().unwrap()),
                 },
             ],
             model_metrics: None,
@@ -332,18 +333,18 @@ async fn test_simulation_cache_pattern() {
     sample_data.prediction_results.predictions = vec![
         PredictionPoint {
             timestamp: pred_start,
-            price: 1000.0,
-            confidence: Some(0.8),
+            price: BigDecimal::from(1000),
+            confidence: Some("0.8".parse().unwrap()),
         },
         PredictionPoint {
             timestamp: pred_start + chrono::Duration::hours(6),
-            price: 1050.0,
-            confidence: Some(0.75),
+            price: BigDecimal::from(1050),
+            confidence: Some("0.75".parse().unwrap()),
         },
         PredictionPoint {
             timestamp: pred_end,
-            price: 1100.0,
-            confidence: Some(0.7),
+            price: BigDecimal::from(1100),
+            confidence: Some("0.7".parse().unwrap()),
         },
     ];
 
@@ -392,7 +393,7 @@ async fn test_simulation_cache_pattern() {
     for prediction in &loaded_data.prediction_results.predictions {
         assert!(prediction.timestamp >= pred_start);
         assert!(prediction.timestamp <= pred_end);
-        assert!(prediction.price > 0.0);
+        assert!(prediction.price > BigDecimal::from(0));
     }
 }
 
@@ -533,18 +534,18 @@ async fn test_real_cache_file_format() {
             predictions: vec![
                 PredictionPoint {
                     timestamp: params.pred_start,
-                    price: 40362765115318.08,  // Real price format from actual cache
-                    confidence: Some(0.8),
+                    price: "40362765115318.08".parse().unwrap(),  // Real price format from actual cache
+                    confidence: Some("0.8".parse().unwrap()),
                 },
                 PredictionPoint {
                     timestamp: params.pred_start + chrono::Duration::hours(6),
-                    price: 40500000000000.0,
-                    confidence: Some(0.75),
+                    price: "40500000000000.0".parse().unwrap(),
+                    confidence: Some("0.75".parse().unwrap()),
                 },
                 PredictionPoint {
                     timestamp: params.pred_end,
-                    price: 40700000000000.0,
-                    confidence: Some(0.7),
+                    price: "40700000000000.0".parse().unwrap(),
+                    confidence: Some("0.7".parse().unwrap()),
                 },
             ],
             model_metrics: None,

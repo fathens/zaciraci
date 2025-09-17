@@ -173,12 +173,8 @@ impl PredictionService {
         prediction_horizon: usize,
     ) -> Result<TokenPrediction> {
         // 履歴データを予測用フォーマットに変換
-        // Chronos API は f64 を期待するため、ここでは BigDecimal から f64 に変換
-        let values: Vec<f64> = history
-            .prices
-            .iter()
-            .map(|p| p.price.to_string().parse::<f64>().unwrap_or(0.0))
-            .collect();
+        // BigDecimalを直接使用（ChronosAPIはJSON経由で数値を受け取るため）
+        let values: Vec<BigDecimal> = history.prices.iter().map(|p| p.price.clone()).collect();
         let timestamps: Vec<DateTime<Utc>> = history.prices.iter().map(|p| p.timestamp).collect();
 
         if values.is_empty() {
@@ -285,12 +281,12 @@ impl PredictionService {
             .iter()
             .take(horizon)
             .enumerate()
-            .map(|(i, &price)| {
+            .map(|(i, price)| {
                 let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
                 PredictedPrice {
                     timestamp,
-                    price: BigDecimal::from(price as i64), // f64 → BigDecimal 変換
-                    confidence: None,                      // 信頼度は将来実装
+                    price: price.clone(),
+                    confidence: None, // 信頼度は将来実装
                 }
             })
             .collect();
@@ -382,9 +378,7 @@ impl PredictionProvider for PredictionService {
                 .map(|p| CommonPredictedPrice {
                     timestamp: p.timestamp,
                     price: p.price,
-                    confidence: p
-                        .confidence
-                        .map(|c| c.to_string().parse::<f64>().unwrap_or(0.0)),
+                    confidence: p.confidence.clone(),
                 })
                 .collect(),
         })
@@ -415,9 +409,7 @@ impl PredictionProvider for PredictionService {
                         .map(|p| CommonPredictedPrice {
                             timestamp: p.timestamp,
                             price: p.price,
-                            confidence: p
-                                .confidence
-                                .map(|c| c.to_string().parse::<f64>().unwrap_or(0.0)),
+                            confidence: p.confidence.clone(),
                         })
                         .collect(),
                 },

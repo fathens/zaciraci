@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -6,7 +7,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZeroShotPredictionRequest {
     pub timestamp: Vec<DateTime<Utc>>,
-    pub values: Vec<f64>,
+    pub values: Vec<BigDecimal>,
     pub forecast_until: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_name: Option<String>,
@@ -33,7 +34,7 @@ pub struct AsyncPredictionResponse {
 pub struct PredictionResult {
     pub task_id: String,
     pub status: String,
-    pub progress: Option<f64>,
+    pub progress: Option<BigDecimal>,
     pub message: Option<String>,
     pub result: Option<ChronosPredictionResponse>,
     pub error: Option<String>,
@@ -44,23 +45,23 @@ pub struct PredictionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChronosPredictionResponse {
     pub forecast_timestamp: Vec<DateTime<Utc>>,
-    pub forecast_values: Vec<f64>,
+    pub forecast_values: Vec<BigDecimal>,
     pub model_name: String,
-    pub confidence_intervals: Option<HashMap<String, Vec<f64>>>,
-    pub metrics: Option<HashMap<String, f64>>,
+    pub confidence_intervals: Option<HashMap<String, Vec<BigDecimal>>>,
+    pub metrics: Option<HashMap<String, BigDecimal>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionPoint {
     pub timestamp: DateTime<Utc>,
-    pub value: f64,
+    pub value: BigDecimal,
     pub confidence_interval: Option<ConfidenceInterval>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfidenceInterval {
-    pub lower: f64,
-    pub upper: f64,
+    pub lower: BigDecimal,
+    pub upper: BigDecimal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,7 +75,7 @@ pub struct TokenPredictionResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccuracyMetrics {
-    pub mae: f64,
-    pub rmse: f64,
+    pub mae: BigDecimal,
+    pub rmse: BigDecimal,
     pub mape: f64,
 }

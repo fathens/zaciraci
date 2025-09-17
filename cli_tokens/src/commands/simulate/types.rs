@@ -404,7 +404,14 @@ impl MarketSnapshot {
             if let Some(closest_point) = data_points.iter().min_by_key(|point| {
                 (DateTime::<Utc>::from_naive_utc_and_offset(point.time, Utc) - timestamp).abs()
             }) {
-                prices.insert(token.clone(), closest_point.value);
+                prices.insert(
+                    token.clone(),
+                    closest_point
+                        .value
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap_or(0.0),
+                );
             }
         }
 

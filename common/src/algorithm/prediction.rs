@@ -67,7 +67,7 @@ impl crate::algorithm::PredictionData {
             current_price,
             predicted_price_24h: predicted_24h.price.clone(),
             timestamp: prediction.prediction_time,
-            confidence: predicted_24h.confidence,
+            confidence: predicted_24h.confidence.clone(),
         })
     }
 }

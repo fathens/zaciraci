@@ -4,6 +4,7 @@
 //! - データ形式の互換性
 
 use anyhow::Result;
+use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::api::chronos::ChronosApiClient;
 use common::types::TokenAccount;
@@ -99,7 +100,7 @@ async fn test_chronos_api_predict_zero_shot_success() -> Result<()> {
     let client = ChronosApiClient::new(server.url());
     let request = common::prediction::ZeroShotPredictionRequest {
         timestamp: vec![Utc::now()],
-        values: vec![1.0],
+        values: vec![BigDecimal::from(1)],
         forecast_until: Utc::now(),
         model_name: None,
         model_params: None,
@@ -132,7 +133,7 @@ async fn test_chronos_api_predict_zero_shot_error() -> Result<()> {
     let client = ChronosApiClient::new(server.url());
     let request = common::prediction::ZeroShotPredictionRequest {
         timestamp: vec![Utc::now()],
-        values: vec![1.0],
+        values: vec![BigDecimal::from(1)],
         forecast_until: Utc::now(),
         model_name: None,
         model_params: None,
@@ -153,7 +154,7 @@ async fn test_chronos_api_get_prediction_status() -> Result<()> {
     let mock_response = common::prediction::PredictionResult {
         task_id: "pred_123".to_string(),
         status: "completed".to_string(),
-        progress: Some(100.0),
+        progress: Some(BigDecimal::from(100)),
         message: Some("Prediction completed".to_string()),
         result: None,
         error: None,
@@ -188,7 +189,7 @@ async fn test_chronos_api_poll_prediction_until_complete() -> Result<()> {
     let completed_response = common::prediction::PredictionResult {
         task_id: "pred_123".to_string(),
         status: "completed".to_string(),
-        progress: Some(100.0),
+        progress: Some(BigDecimal::from(100)),
         message: Some("Prediction completed".to_string()),
         result: None,
         error: None,
@@ -221,7 +222,7 @@ async fn test_chronos_api_poll_prediction_failed() -> Result<()> {
     let failed_response = common::prediction::PredictionResult {
         task_id: "pred_123".to_string(),
         status: "failed".to_string(),
-        progress: Some(0.0),
+        progress: Some(BigDecimal::from(0)),
         message: Some("Prediction failed".to_string()),
         result: None,
         error: Some("Model training failed".to_string()),
@@ -259,14 +260,14 @@ async fn test_backend_api_get_price_history_success() -> Result<()> {
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
-            value: 5.23,
+            value: "5.23".parse().unwrap(),
         },
         common::stats::ValueAtTime {
             time: chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
                 .unwrap()
                 .and_hms_opt(1, 0, 0)
                 .unwrap(),
-            value: 5.25,
+            value: "5.25".parse().unwrap(),
         },
     ];
     let price_response = common::stats::GetValuesResponse {
@@ -300,8 +301,8 @@ async fn test_backend_api_get_price_history_success() -> Result<()> {
     assert!(result.is_ok());
     let values = result.unwrap();
     assert_eq!(values.len(), 2);
-    assert_eq!(values[0].value, 5.23);
-    assert_eq!(values[1].value, 5.25);
+    assert_eq!(values[0].value, "5.23".parse::<BigDecimal>().unwrap());
+    assert_eq!(values[1].value, "5.25".parse::<BigDecimal>().unwrap());
 
     Ok(())
 }

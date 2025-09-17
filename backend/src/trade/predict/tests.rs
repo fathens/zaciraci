@@ -118,11 +118,16 @@ async fn test_convert_prediction_result() {
     let result = PredictionResult {
         task_id: "test-id".to_string(),
         status: "completed".to_string(),
-        progress: Some(1.0),
+        progress: Some(BigDecimal::from(1)),
         message: None,
         result: Some(ChronosPredictionResponse {
             forecast_timestamp: vec![],
-            forecast_values: vec![1.2, 1.3, 1.4, 1.5],
+            forecast_values: vec![
+                "1.2".parse().unwrap(),
+                "1.3".parse().unwrap(),
+                "1.4".parse().unwrap(),
+                "1.5".parse().unwrap(),
+            ],
             model_name: "chronos-t5-large".to_string(),
             confidence_intervals: None,
             metrics: None,
@@ -270,11 +275,17 @@ async fn test_predict_multiple_tokens_batch_processing() {
         let mock_result = PredictionResult {
             task_id: task_id.clone(),
             status: "completed".to_string(),
-            progress: Some(100.0),
+            progress: Some(BigDecimal::from(100)),
             message: Some("Completed".to_string()),
             result: Some(ChronosPredictionResponse {
                 forecast_timestamp: forecast_timestamps,
-                forecast_values: vec![1.2, 1.3, 1.4, 1.5, 1.6],
+                forecast_values: vec![
+                    "1.2".parse().unwrap(),
+                    "1.3".parse().unwrap(),
+                    "1.4".parse().unwrap(),
+                    "1.5".parse().unwrap(),
+                    "1.6".parse().unwrap(),
+                ],
                 model_name: "chronos-small".to_string(),
                 confidence_intervals: None,
                 metrics: None,

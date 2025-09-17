@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -219,7 +220,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
         for (i, timestamp) in timestamps.iter().enumerate() {
             if *timestamp >= start_time && *timestamp <= end_time {
                 filtered_timestamps.push(*timestamp);
-                filtered_values.push(values[i]);
+                filtered_values.push(values[i].clone());
             }
         }
 
@@ -265,25 +266,27 @@ pub async fn run(args: KickArgs) -> Result<()> {
     let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
 
     // Scale down values if they are too large to prevent numerical issues
-    let max_value = values.iter().copied().fold(0.0, f64::max);
+    let max_value = values.iter().cloned().max().unwrap_or(BigDecimal::from(0));
     let mut scaled_values = values.clone();
-    let scale_factor = if max_value > 1_000_000.0 {
+    let one_million = BigDecimal::from(1_000_000);
+    let scale_factor = if max_value > one_million {
+        let max_value_f64: f64 = max_value.to_string().parse().unwrap_or(0.0);
         pb.set_message(format!(
             "⚠️ Scaling down large values (max: {:.2e}) for numerical stability",
-            max_value
+            max_value_f64
         ));
 
         // Scale values to be between 0 and 1
         for value in &mut scaled_values {
-            *value /= max_value;
+            *value = value.clone() / max_value.clone();
         }
 
         pb.set_message(format!(
             "📊 Values scaled down by factor of {:.2e} for numerical stability",
-            max_value
+            max_value_f64
         ));
 
-        Some(max_value)
+        Some(max_value_f64)
     } else {
         None
     };
@@ -347,7 +350,9 @@ fn extract_quote_token_from_path(token_file: &Path) -> Option<String> {
         .filter(|s| s != "tokens") // Skip if direct under tokens/ directory
 }
 
-async fn load_history_data(history_file: &PathBuf) -> Result<(Vec<DateTime<Utc>>, Vec<f64>)> {
+async fn load_history_data(
+    history_file: &PathBuf,
+) -> Result<(Vec<DateTime<Utc>>, Vec<BigDecimal>)> {
     let content = fs::read_to_string(history_file).await?;
     let history_data: HistoryFileData = serde_json::from_str(&content)?;
 
@@ -361,11 +366,11 @@ async fn load_history_data(history_file: &PathBuf) -> Result<(Vec<DateTime<Utc>>
         .iter()
         .map(|v| DateTime::from_naive_utc_and_offset(v.time, Utc))
         .collect();
-    let values: Vec<f64> = history_data
+    let values: Vec<BigDecimal> = history_data
         .price_history
         .values
         .iter()
-        .map(|v| v.value)
+        .map(|v| v.value.clone())
         .collect();
 
     if timestamps.len() != values.len() {
