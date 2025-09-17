@@ -584,7 +584,8 @@ fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
 
     // 対数スケールで調整（大きな値を圧縮）
     if score > 0.0 {
-        (score.ln() + 10.0) / 20.0 // -10 to 10 -> 0 to 1
+        let ln_result = (score.ln() + 10.0) / 20.0;
+        ln_result.clamp(0.0, 1.0) // 0-1の範囲に制限
     } else {
         0.1 // 最小値
     }
@@ -671,7 +672,10 @@ async fn get_top_quote_token(range: &TimeRange) -> Result<TokenInAccount> {
     let log = DEFAULT.new(o!("function" => "trade::get_top_quote_token"));
 
     let quotes = TokenRate::get_quotes_in_time_range(range).await?;
-    let (quote, _) = quotes.iter().max_by_key(|(_, c)| *c).unwrap();
+    let (quote, _) = quotes
+        .iter()
+        .max_by_key(|(_, c)| *c)
+        .ok_or_else(|| anyhow::anyhow!("No quote tokens found in time range"))?;
 
     info!(log, "success");
     Ok(quote.clone())
@@ -685,7 +689,11 @@ async fn get_base_tokens(
     let log = DEFAULT.new(o!("function" => "trade::get_base_tokens"));
 
     let bases = TokenRate::get_bases_in_time_range(range, quote).await?;
-    let max_count = bases.iter().max_by_key(|(_, c)| *c).unwrap().1;
+    let max_count = bases
+        .iter()
+        .max_by_key(|(_, c)| *c)
+        .ok_or_else(|| anyhow::anyhow!("No base tokens found in time range"))?
+        .1;
     let limit = max_count / 2;
     let tokens = bases
         .iter()
@@ -766,8 +774,16 @@ impl SameBaseTokenRates {
         }
 
         // タイムスタンプの最小値と最大値を取得
-        let min_time = self.points.first().unwrap().timestamp;
-        let max_time = self.points.last().unwrap().timestamp;
+        let min_time = self
+            .points
+            .first()
+            .expect("Points vector is not empty")
+            .timestamp;
+        let max_time = self
+            .points
+            .last()
+            .expect("Points vector is not empty")
+            .timestamp;
 
         // 期間ごとに統計を計算
         let mut stats = Vec::new();
@@ -783,14 +799,30 @@ impl SameBaseTokenRates {
                 .collect();
 
             if !rates_in_period.is_empty() {
-                let start = rates_in_period.first().unwrap().rate.clone();
-                let end = rates_in_period.last().unwrap().rate.clone();
+                let start = rates_in_period
+                    .first()
+                    .expect("Rates in period is not empty")
+                    .rate
+                    .clone();
+                let end = rates_in_period
+                    .last()
+                    .expect("Rates in period is not empty")
+                    .rate
+                    .clone();
                 let values: Vec<_> = rates_in_period.iter().map(|tr| tr.rate.clone()).collect();
                 let sum: BigDecimal = values.iter().sum();
                 let count = BigDecimal::from(values.len() as i64);
                 let average = &sum / &count;
-                let max = values.iter().max().unwrap().clone();
-                let min = values.iter().min().unwrap().clone();
+                let max = values
+                    .iter()
+                    .max()
+                    .expect("Values vector is not empty")
+                    .clone();
+                let min = values
+                    .iter()
+                    .min()
+                    .expect("Values vector is not empty")
+                    .clone();
 
                 stats.push(StatsInPeriod {
                     timestamp: current_start,
@@ -1305,8 +1337,9 @@ mod tests {
         };
         let score = calculate_liquidity_score(&history_small_volume);
         assert!(
-            score > 0.0 && score < 0.5,
-            "Small volume should return low score"
+            (0.0..=0.5).contains(&score),
+            "Small volume should return low score, got: {}",
+            score
         );
 
         // ケース3: 大きい取引量
@@ -1489,8 +1522,9 @@ mod tests {
         };
         let volatility = calculate_volatility_from_history(&history_with_zero).unwrap();
         assert!(
-            volatility > BigDecimal::from(0),
-            "Should calculate volatility skipping zero prices"
+            volatility >= BigDecimal::from(0),
+            "Should calculate volatility skipping zero prices, got: {}",
+            volatility
         );
     }
 
