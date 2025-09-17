@@ -89,60 +89,99 @@ Phase 1 の決定アルゴリズムを使う
 * DB に記録（Phase 1 のを使う）
 * DB から資産評価（Phase 1 のを使う）
 
-## 🚧 Phase 0 完了後の課題と改善点
+## ✅ Phase 0 完了済み項目 (2025-09-17 更新)
 
-### 🔧 重要な修正項目 (High Priority)
+### 完了した重要な修正
+1. **エラーハンドリング強化** ✅
+   - 危険な `unwrap()` 呼び出しを適切なエラーハンドリングに変更
+   - `get_top_quote_token()`, `get_base_tokens()` での適切なエラー処理
+   - テスト修正と全テスト成功 (trade::stats: 13件, trade::predict: 7件)
 
-1. **f64 使用の完全排除**:
-   - `stats.rs:272-301`: Portfolio アルゴリズム用の f64 → BigDecimal 変換
+2. **数値計算の修正** ✅
+   - `calculate_liquidity_score()` の対数変換バグ修正
+   - Newton法平方根計算でのBigDecimal精度確保
+   - CI/CDチェック通過 (cargo clippy, cargo fmt)
+
+## 🚧 次の優先実装項目
+
+### 🔧 高優先度 (High Priority) - 即座に実装
+
+1. **実際のトークン交換実行**:
+   - `stats.rs:429-435`: `execute_single_action()` でのTODO実装
+   - 既存 arbitrage.rs の swap 実装を活用してswap処理実装
+   - パス検索: token → wrap.near → target の経路最適化
+   - トランザクション成否の確認とエラーハンドリング
+   - **現在**: `warn!("swap execution not yet implemented")` 状態
+
+2. **f64 使用の完全排除** (残存部分):
+   - Portfolio アルゴリズム用の f64 → BigDecimal 変換
    - `predict.rs:44,179,414`: PredictedPrice の price, confidence フィールド
    - 外部ライブラリ制約への対応（zaciraci_common の構造体）
 
-2. **実際のトークン交換実行**:
-   - `stats.rs:90-94`: ログ出力 → 実際の REF Finance API 呼び出し
-   - 既存 arbitrage.rs の swap 実装を活用
-   - トランザクション成否の確認とエラーハンドリング
+### 🛠 中優先度 (Medium Priority)
 
-### 🛠 中優先度の実装項目 (Medium Priority)
-
-3. **ハーベスト機能の実装**:
+1. **ハーベスト機能の実装**:
    - `stats.rs:320-326`: 200%利益時の自動利益確定機能
    - wrap.near → NEAR 変換と送金処理
    - ハーベスト条件判定の実装
 
-4. **ハードコード値の実装**:
+2. **ハードコード値の実装**:
    - `stats.rs:280-281`: liquidity_score, market_cap の動的取得
    - 実際の流動性スコア計算アルゴリズム
    - 市場規模データの取得方法
 
 ### 🔄 改善項目 (Low Priority)
 
-5. **エラーハンドリング強化**:
-   - PredictionService API 呼び出し失敗時の適切な処理
-   - Backend API 障害時のフォールバック戦略
-   - ネットワーク障害時のリトライ機能
-
-6. **設定管理の強化**:
+1. **設定管理の強化**:
    - 環境変数による設定の外部化
    - 設定値のバリデーション
    - デフォルト値の適切な設定
 
-7. **ログ・モニタリング機能**:
+2. **ログ・モニタリング機能**:
    - 取引実績の詳細記録
    - ポートフォリオパフォーマンスの追跡
    - アラート機能の実装
+
+## 🎯 推奨する次のアクション
+
+### 即座に取り組むべきタスク
+
+**最優先: 実際のトークン交換実行の実装**
+
+1. **arbitrage.rs の分析** (Phase 1-A):
+   - 既存の swap 実装パターンを理解
+   - REF Finance API 呼び出し方法の把握
+   - パス検索アルゴリズムの理解
+
+2. **trade モジュールへの統合** (Phase 1-B):
+   - `execute_single_action()` 関数の実装
+   - arbitrage.rs のコードを trade 用途に適応
+   - token → wrap.near → target の経路実装
+
+3. **テストと検証** (Phase 1-C):
+   - swap 実行のテストケース作成
+   - トランザクション成否の確認機能
+   - エラーハンドリングの強化
+
+### 実装順序
+```
+Phase 1-A → Phase 1-B → Phase 1-C → 高優先度項目2 (f64排除)
+```
+
+これにより架空トレードから実際のトレードへの移行が完了し、Phase 1 (実際のトレード実行) に到達できます。
 
 ## 次のステップ
 
 ### 短期（Phase 0 改善 → Phase 1）
 
-1. **データ精度問題の解決**:
-   - BigDecimal の完全採用
-   - 外部ライブラリとの整合性確保
-
-2. **実際のトレード機能実装**:
+1. **実際のトレード機能実装** ⭐ 最優先:
    - REF Finance 統合
    - トランザクション処理
+   - arbitrage.rs との統合
+
+2. **データ精度問題の解決**:
+   - BigDecimal の完全採用
+   - 外部ライブラリとの整合性確保
 
 3. **DB テーブル設計と実装**:
    - 架空トレード記録テーブル
