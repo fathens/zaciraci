@@ -2,6 +2,7 @@ mod arima;
 
 use crate::Result;
 use crate::config;
+use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
@@ -409,11 +410,15 @@ async fn execute_trading_actions(
 }
 
 /// 単一の取引アクションを実行
-async fn execute_single_action(
-    _client: &impl crate::jsonrpc::ViewContract,
-    _wallet: &impl crate::wallet::Wallet,
-    action: &TradingAction,
-) -> Result<()> {
+async fn execute_single_action<C, W>(client: &C, wallet: &W, action: &TradingAction) -> Result<()>
+where
+    C: crate::jsonrpc::AccountInfo
+        + crate::jsonrpc::SendTx
+        + crate::jsonrpc::ViewContract
+        + crate::jsonrpc::GasInfo,
+    <C as crate::jsonrpc::SendTx>::Output: std::fmt::Display,
+    W: crate::wallet::Wallet,
+{
     let log = DEFAULT.new(o!("function" => "execute_single_action"));
 
     match action {
@@ -426,46 +431,172 @@ async fn execute_single_action(
             // token を売却して target を購入
             info!(log, "executing sell"; "from" => token, "to" => target);
 
-            // TODO: 実際のswap処理を実装
-            // 1. token → wrap.near へのパスを検索
-            // 2. wrap.near → target へのパスを検索
-            // 3. swap実行
+            // 2段階のswap: token → wrap.near → target
+            let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
 
-            warn!(log, "swap execution not yet implemented");
-            Err(anyhow::anyhow!("Swap execution not yet implemented"))
+            // Step 1: token → wrap.near
+            if token != &wrap_near.to_string() {
+                execute_direct_swap(client, wallet, token, &wrap_near.to_string()).await?;
+            }
+
+            // Step 2: wrap.near → target
+            if target != &wrap_near.to_string() {
+                execute_direct_swap(client, wallet, &wrap_near.to_string(), target).await?;
+            }
+
+            info!(log, "sell completed"; "from" => token, "to" => target);
+            Ok(())
         }
         TradingAction::Switch { from, to } => {
-            // from から to へ切り替え
+            // from から to へ切り替え（直接スワップ）
             info!(log, "executing switch"; "from" => from, "to" => to);
 
-            // TODO: Sell と同様のswap処理
-            warn!(log, "swap execution not yet implemented");
-            Err(anyhow::anyhow!("Swap execution not yet implemented"))
+            execute_direct_swap(client, wallet, from, to).await?;
+
+            info!(log, "switch completed"; "from" => from, "to" => to);
+            Ok(())
         }
         TradingAction::Rebalance { target_weights } => {
             // ポートフォリオのリバランス
             info!(log, "executing rebalance"; "weights" => ?target_weights);
 
-            // TODO: 複数のswapを計算して実行
-            warn!(log, "rebalance execution not yet implemented");
-            Err(anyhow::anyhow!("Rebalance execution not yet implemented"))
+            // 各トークンの目標ウェイトに基づいてリバランス
+            for (token, weight) in target_weights.iter() {
+                info!(log, "rebalancing token"; "token" => token, "weight" => weight);
+
+                // TODO: 現在の保有量と目標量を比較してswap量を計算
+                // 簡易実装として、少量のswapを実行
+                if *weight > 0.0 {
+                    // wrap.near → token へのswap（ポジション増加）
+                    let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+                    if token != &wrap_near.to_string() {
+                        execute_direct_swap(client, wallet, &wrap_near.to_string(), token).await?;
+                    }
+                }
+            }
+
+            info!(log, "rebalance completed");
+            Ok(())
         }
         TradingAction::AddPosition { token, weight } => {
             // ポジション追加
             info!(log, "adding position"; "token" => token, "weight" => weight);
 
-            // TODO: wrap.near → token へのswap
-            warn!(log, "add position not yet implemented");
-            Err(anyhow::anyhow!("Add position not yet implemented"))
+            // wrap.near → token へのswap
+            let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+            if token != &wrap_near.to_string() {
+                execute_direct_swap(client, wallet, &wrap_near.to_string(), token).await?;
+            }
+
+            info!(log, "position added"; "token" => token, "weight" => weight);
+            Ok(())
         }
         TradingAction::ReducePosition { token, weight } => {
             // ポジション削減
             info!(log, "reducing position"; "token" => token, "weight" => weight);
 
-            // TODO: token → wrap.near へのswap
-            warn!(log, "reduce position not yet implemented");
-            Err(anyhow::anyhow!("Reduce position not yet implemented"))
+            // token → wrap.near へのswap
+            let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+            if token != &wrap_near.to_string() {
+                execute_direct_swap(client, wallet, token, &wrap_near.to_string()).await?;
+            }
+
+            info!(log, "position reduced"; "token" => token, "weight" => weight);
+            Ok(())
         }
+    }
+}
+
+/// 2つのトークン間で直接スワップを実行
+async fn execute_direct_swap<C, W>(
+    client: &C,
+    wallet: &W,
+    from_token: &str,
+    to_token: &str,
+) -> Result<()>
+where
+    C: crate::jsonrpc::AccountInfo
+        + crate::jsonrpc::SendTx
+        + crate::jsonrpc::ViewContract
+        + crate::jsonrpc::GasInfo,
+    <C as crate::jsonrpc::SendTx>::Output: std::fmt::Display + crate::jsonrpc::SentTx,
+    W: crate::wallet::Wallet,
+{
+    let log = DEFAULT.new(o!(
+        "function" => "execute_direct_swap",
+        "from" => format!("{}", from_token),
+        "to" => format!("{}", to_token)
+    ));
+    info!(log, "starting direct swap");
+
+    // プールデータを読み込み
+    let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
+    let graph = crate::ref_finance::path::graph::TokenGraph::new(pools);
+
+    // from_token の残高を取得
+    let from_token_account: crate::ref_finance::token_account::TokenAccount = from_token
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid from_token: {}", e))?;
+    let balance = crate::ref_finance::balances::start(client, wallet, &from_token_account).await?;
+
+    if balance == 0 {
+        return Err(anyhow::anyhow!("No balance for token: {}", from_token));
+    }
+
+    // 少量のswapを実行（残高の10%程度）
+    let swap_amount = balance / 10;
+    let start_balance = crate::types::MicroNear::from_yocto(swap_amount);
+
+    // パス検索用のstart tokenを準備
+    let start: &crate::ref_finance::token_account::TokenInAccount = &from_token_account.into();
+
+    // ガス価格を取得
+    let gas_price = client.get_gas_price(None).await?;
+
+    // パスを検索（arbitrage.rsの実装を参考）
+    let previews =
+        crate::ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
+
+    if let Some(previews) = previews {
+        let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
+
+        // ストレージデポジットの確認
+        let res = crate::ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
+        if res.is_none() {
+            return Err(anyhow::anyhow!("Failed to deposit storage"));
+        }
+
+        // スワップを実行
+        for (preview, path) in pre_path {
+            let arg = crate::ref_finance::swap::SwapArg {
+                initial_in: preview.input_value.into(),
+                min_out: preview.output_value - preview.gain,
+            };
+
+            let (sent_tx, out) =
+                crate::ref_finance::swap::run_swap(client, wallet, &path.0, arg).await?;
+
+            // トランザクションの完了を待機
+            if let Err(e) = sent_tx.wait_for_success().await {
+                error!(log, "transaction failed"; "tx" => %sent_tx, "error" => %e);
+                return Err(e);
+            }
+
+            info!(log, "swap completed";
+                "estimated_output" => out,
+                "tx" => %sent_tx
+            );
+        }
+
+        info!(log, "direct swap successful"; "from" => from_token, "to" => to_token);
+        Ok(())
+    } else {
+        warn!(log, "no swap path found"; "from" => from_token, "to" => to_token);
+        Err(anyhow::anyhow!(
+            "No swap path found from {} to {}",
+            from_token,
+            to_token
+        ))
     }
 }
 

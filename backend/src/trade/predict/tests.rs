@@ -143,9 +143,9 @@ async fn test_convert_prediction_result() {
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
     assert_eq!(preds.len(), 3);
-    assert_eq!(preds[0].price, BigDecimal::from(1)); // 整数に変換されているため
-    assert_eq!(preds[1].price, BigDecimal::from(1)); // 整数に変換されているため
-    assert_eq!(preds[2].price, BigDecimal::from(1)); // 整数に変換されているため
+    assert_eq!(preds[0].price, "1.2".parse::<BigDecimal>().unwrap());
+    assert_eq!(preds[1].price, "1.3".parse::<BigDecimal>().unwrap());
+    assert_eq!(preds[2].price, "1.4".parse::<BigDecimal>().unwrap());
 
     // タイムスタンプが1時間ずつ増加していることを確認
     assert_eq!(preds[1].timestamp - preds[0].timestamp, Duration::hours(1));
