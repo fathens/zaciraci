@@ -1262,6 +1262,239 @@ mod tests {
     }
 
     #[test]
+    fn test_calculate_liquidity_score() {
+        use chrono::Utc;
+        use zaciraci_common::algorithm::types::{PriceHistory, PricePoint};
+
+        // ケース1: 取引量データなし
+        let history_no_volume = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: None,
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(110),
+                    volume: None,
+                },
+            ],
+        };
+        let score = calculate_liquidity_score(&history_no_volume);
+        assert_eq!(score, 0.5, "No volume data should return 0.5");
+
+        // ケース2: 小さい取引量
+        let history_small_volume = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: Some(BigDecimal::from(1000)),
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(110),
+                    volume: Some(BigDecimal::from(2000)),
+                },
+            ],
+        };
+        let score = calculate_liquidity_score(&history_small_volume);
+        assert!(
+            score > 0.0 && score < 0.5,
+            "Small volume should return low score"
+        );
+
+        // ケース3: 大きい取引量
+        let history_large_volume = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: Some(BigDecimal::from(10u128.pow(25))), // 10 NEAR相当
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(110),
+                    volume: Some(BigDecimal::from(10u128.pow(25))),
+                },
+            ],
+        };
+        let score = calculate_liquidity_score(&history_large_volume);
+        assert!(score > 0.4, "Large volume should return higher score");
+    }
+
+    #[test]
+    fn test_estimate_market_cap() {
+        // ケース1: 1 NEAR価格
+        let price_1_near = 10u128.pow(24);
+        let market_cap = estimate_market_cap(price_1_near);
+        assert_eq!(
+            market_cap, 1_000_000.0,
+            "1 NEAR * 1M tokens = 1M market cap"
+        );
+
+        // ケース2: 0.1 NEAR価格
+        let price_01_near = 10u128.pow(23);
+        let market_cap = estimate_market_cap(price_01_near);
+        assert_eq!(
+            market_cap, 100_000.0,
+            "0.1 NEAR * 1M tokens = 100k market cap"
+        );
+
+        // ケース3: 10 NEAR価格
+        let price_10_near = 10u128.pow(25);
+        let market_cap = estimate_market_cap(price_10_near);
+        assert_eq!(
+            market_cap, 10_000_000.0,
+            "10 NEAR * 1M tokens = 10M market cap"
+        );
+    }
+
+    #[test]
+    fn test_sqrt_bigdecimal() {
+        use std::str::FromStr;
+
+        // ケース1: 完全平方数
+        let value = BigDecimal::from(4);
+        let result = sqrt_bigdecimal(&value).unwrap();
+        let expected = BigDecimal::from(2);
+        assert!((result - expected).abs() < BigDecimal::from_str("0.000001").unwrap());
+
+        // ケース2: 非完全平方数
+        let value = BigDecimal::from(2);
+        let result = sqrt_bigdecimal(&value).unwrap();
+        let expected = BigDecimal::from_str("1.41421356").unwrap();
+        assert!((result - expected).abs() < BigDecimal::from_str("0.00001").unwrap());
+
+        // ケース3: 小数
+        let value = BigDecimal::from_str("0.25").unwrap();
+        let result = sqrt_bigdecimal(&value).unwrap();
+        let expected = BigDecimal::from_str("0.5").unwrap();
+        assert!((result - expected).abs() < BigDecimal::from_str("0.000001").unwrap());
+
+        // ケース4: ゼロ
+        let value = BigDecimal::from(0);
+        let result = sqrt_bigdecimal(&value).unwrap();
+        assert_eq!(result, BigDecimal::from(0));
+
+        // ケース5: 負の数（エラーケース）
+        let value = BigDecimal::from(-1);
+        let result = sqrt_bigdecimal(&value);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_calculate_volatility_from_history() {
+        use chrono::Utc;
+        use zaciraci_common::algorithm::types::{PriceHistory, PricePoint};
+
+        // ケース1: データポイントが不足
+        let history_insufficient = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![PricePoint {
+                timestamp: Utc::now(),
+                price: BigDecimal::from(100),
+                volume: None,
+            }],
+        };
+        let result = calculate_volatility_from_history(&history_insufficient);
+        assert!(result.is_err(), "Should error with insufficient data");
+
+        // ケース2: 価格変動なし
+        let history_no_change = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: None,
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: None,
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: None,
+                },
+            ],
+        };
+        let volatility = calculate_volatility_from_history(&history_no_change).unwrap();
+        assert_eq!(
+            volatility,
+            BigDecimal::from(0),
+            "No price change should have 0 volatility"
+        );
+
+        // ケース3: 価格変動あり
+        let history_with_change = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: None,
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(110),
+                    volume: None,
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(105),
+                    volume: None,
+                },
+            ],
+        };
+        let volatility = calculate_volatility_from_history(&history_with_change).unwrap();
+        assert!(
+            volatility > BigDecimal::from(0),
+            "Price changes should result in positive volatility"
+        );
+
+        // ケース4: ゼロ価格を含む（スキップされるべき）
+        let history_with_zero = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(100),
+                    volume: None,
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(0),
+                    volume: None,
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: BigDecimal::from(110),
+                    volume: None,
+                },
+            ],
+        };
+        let volatility = calculate_volatility_from_history(&history_with_zero).unwrap();
+        assert!(
+            volatility > BigDecimal::from(0),
+            "Should calculate volatility skipping zero prices"
+        );
+    }
+
+    #[test]
     fn test_format_decimal_digits() {
         // 整数値のテスト
         assert_eq!(
