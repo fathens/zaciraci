@@ -87,10 +87,9 @@ pub async fn start() -> Result<()> {
                 "total_actions" => report.len()
             );
 
-            // 実際の取引実行は将来の実装で追加
-            for action in report {
-                info!(log, "trading action"; "action" => ?action);
-            }
+            // 実際の取引実行
+            let executed_actions = execute_trading_actions(&report, available_funds).await?;
+            info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
             // Step 5: ハーベスト判定と実行
             check_and_harvest(available_funds).await?;
@@ -289,9 +288,12 @@ async fn execute_portfolio_strategy(
         let prediction = match prediction_service.predict_price(&predict_history, 24).await {
             Ok(pred) => {
                 // 最初の予測値を返却値として使用
-                pred.predictions.first().map(|p| p.price).ok_or_else(|| {
-                    anyhow::anyhow!("No prediction values returned for token {}", token)
-                })?
+                pred.predictions
+                    .first()
+                    .map(|p| p.price.clone())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("No prediction values returned for token {}", token)
+                    })?
             }
             Err(e) => {
                 error!(log, "failed to get prediction for token"; "token" => %token, "error" => ?e);
@@ -302,10 +304,18 @@ async fn execute_portfolio_strategy(
                 ));
             }
         };
-        predictions.insert(token.to_string(), prediction);
+        // BigDecimal を f64 に変換（外部構造体の制約のため）
+        let prediction_f64 = prediction
+            .to_string()
+            .parse::<f64>()
+            .map_err(|e| anyhow::anyhow!("Failed to convert prediction to f64: {}", e))?;
+        predictions.insert(token.to_string(), prediction_f64);
 
         // ボラティリティの計算
         let volatility = calculate_volatility_from_history(&history)?;
+
+        // 流動性スコアの計算（取引量ベース）
+        let liquidity_score = calculate_liquidity_score(&history);
 
         historical_prices.push(history);
 
@@ -315,12 +325,16 @@ async fn execute_portfolio_strategy(
             .parse::<f64>()
             .map_err(|e| anyhow::anyhow!("Failed to convert volatility to f64: {}", e))?;
 
+        // 市場規模の推定（簡易版：現在価格 × 推定発行量）
+        // TODO: 実際の発行量データを取得
+        let market_cap = estimate_market_cap(current_price);
+
         token_data.push(TokenData {
             symbol: token.to_string(),
             current_price: BigDecimal::from(current_price),
             historical_volatility: volatility_f64,
-            liquidity_score: Some(0.5), // TODO: 実際の流動性スコア計算
-            market_cap: Some(10000.0),  // TODO: 実際の市場規模取得
+            liquidity_score: Some(liquidity_score),
+            market_cap: Some(market_cap),
             decimals: Some(24),
         });
     }
@@ -358,6 +372,111 @@ async fn execute_portfolio_strategy(
     );
 
     Ok(execution_report.actions)
+}
+
+/// 取引アクションを実際に実行
+async fn execute_trading_actions(
+    actions: &[TradingAction],
+    _available_funds: u128,
+) -> Result<ExecutionSummary> {
+    let log = DEFAULT.new(o!("function" => "execute_trading_actions"));
+
+    let mut summary = ExecutionSummary {
+        total: actions.len(),
+        success_count: 0,
+        failed_count: 0,
+        skipped_count: 0,
+    };
+
+    // JSONRPCクライアントとウォレットを取得
+    let client = crate::jsonrpc::new_client();
+    let wallet = crate::wallet::new_wallet();
+
+    for action in actions {
+        match execute_single_action(&client, &wallet, action).await {
+            Ok(_) => {
+                info!(log, "action executed successfully"; "action" => ?action);
+                summary.success_count += 1;
+            }
+            Err(e) => {
+                error!(log, "action execution failed"; "action" => ?action, "error" => ?e);
+                summary.failed_count += 1;
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+/// 単一の取引アクションを実行
+async fn execute_single_action(
+    _client: &impl crate::jsonrpc::ViewContract,
+    _wallet: &impl crate::wallet::Wallet,
+    action: &TradingAction,
+) -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "execute_single_action"));
+
+    match action {
+        TradingAction::Hold => {
+            // HODLなので何もしない
+            info!(log, "holding position");
+            Ok(())
+        }
+        TradingAction::Sell { token, target } => {
+            // token を売却して target を購入
+            info!(log, "executing sell"; "from" => token, "to" => target);
+
+            // TODO: 実際のswap処理を実装
+            // 1. token → wrap.near へのパスを検索
+            // 2. wrap.near → target へのパスを検索
+            // 3. swap実行
+
+            warn!(log, "swap execution not yet implemented");
+            Err(anyhow::anyhow!("Swap execution not yet implemented"))
+        }
+        TradingAction::Switch { from, to } => {
+            // from から to へ切り替え
+            info!(log, "executing switch"; "from" => from, "to" => to);
+
+            // TODO: Sell と同様のswap処理
+            warn!(log, "swap execution not yet implemented");
+            Err(anyhow::anyhow!("Swap execution not yet implemented"))
+        }
+        TradingAction::Rebalance { target_weights } => {
+            // ポートフォリオのリバランス
+            info!(log, "executing rebalance"; "weights" => ?target_weights);
+
+            // TODO: 複数のswapを計算して実行
+            warn!(log, "rebalance execution not yet implemented");
+            Err(anyhow::anyhow!("Rebalance execution not yet implemented"))
+        }
+        TradingAction::AddPosition { token, weight } => {
+            // ポジション追加
+            info!(log, "adding position"; "token" => token, "weight" => weight);
+
+            // TODO: wrap.near → token へのswap
+            warn!(log, "add position not yet implemented");
+            Err(anyhow::anyhow!("Add position not yet implemented"))
+        }
+        TradingAction::ReducePosition { token, weight } => {
+            // ポジション削減
+            info!(log, "reducing position"; "token" => token, "weight" => weight);
+
+            // TODO: token → wrap.near へのswap
+            warn!(log, "reduce position not yet implemented");
+            Err(anyhow::anyhow!("Reduce position not yet implemented"))
+        }
+    }
+}
+
+/// 実行サマリー
+struct ExecutionSummary {
+    #[allow(dead_code)]
+    total: usize,
+    success_count: usize,
+    failed_count: usize,
+    #[allow(dead_code)]
+    skipped_count: usize,
 }
 
 /// ハーベスト判定と実行
@@ -430,6 +549,60 @@ fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDecima
     // Newton法による平方根計算
     let sqrt_variance = sqrt_bigdecimal(&variance)?;
     Ok(sqrt_variance)
+}
+
+/// 流動性スコアを計算（取引量ベース）
+/// 0.0 - 1.0 の範囲でスコアを返す
+fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
+    // 取引量データがある価格ポイントを集計
+    let volumes: Vec<&BigDecimal> = history
+        .prices
+        .iter()
+        .filter_map(|p| p.volume.as_ref())
+        .collect();
+
+    if volumes.is_empty() {
+        // 取引量データがない場合は中間値を返す
+        return 0.5;
+    }
+
+    // 平均取引量を計算
+    let sum: BigDecimal = volumes.iter().map(|v| (*v).clone()).sum();
+    let count = BigDecimal::from(volumes.len() as u64);
+    let avg_volume = &sum / &count;
+
+    // 取引量を正規化（簡易版：10^24 yoctoNEAR を基準）
+    let base_volume = BigDecimal::from(10u128.pow(24));
+    let normalized = &avg_volume / &base_volume;
+
+    // 0.0 - 1.0 の範囲に収める（シグモイド的な変換）
+    let score = normalized
+        .to_string()
+        .parse::<f64>()
+        .unwrap_or(0.5)
+        .clamp(0.0, 1.0);
+
+    // 対数スケールで調整（大きな値を圧縮）
+    if score > 0.0 {
+        (score.ln() + 10.0) / 20.0 // -10 to 10 -> 0 to 1
+    } else {
+        0.1 // 最小値
+    }
+}
+
+/// 市場規模を推定（簡易版）
+fn estimate_market_cap(current_price_yocto: u128) -> f64 {
+    // 簡易的に推定発行量を設定（実際はトークンごとに異なる）
+    // TODO: 実際の発行量データをAPIから取得
+    let estimated_supply = BigDecimal::from(1_000_000u128); // 100万トークンと仮定
+
+    // yoctoNEARから通常の単位に変換
+    let price_in_near = BigDecimal::from(current_price_yocto) / BigDecimal::from(10u128.pow(24));
+
+    // 市場規模 = 価格 × 発行量
+    let market_cap = price_in_near * estimated_supply;
+
+    market_cap.to_string().parse::<f64>().unwrap_or(10000.0)
 }
 
 /// BigDecimalで平方根を計算（Newton法による近似）

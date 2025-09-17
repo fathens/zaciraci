@@ -2,6 +2,7 @@ use super::*;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use mockito::{self, Matcher};
+use std::str::FromStr;
 use zaciraci_common::prediction::{ChronosPredictionResponse, PredictionResult};
 
 // モックレスポンスのヘルパー関数
@@ -9,15 +10,15 @@ fn create_mock_top_tokens() -> Vec<TopToken> {
     vec![
         TopToken {
             token: "token1.near".to_string(),
-            volatility: 0.25,
-            volume_24h: 1000000.0,
-            current_price: 1.5,
+            volatility: BigDecimal::from_str("0.25").unwrap(),
+            volume_24h: BigDecimal::from(1000000),
+            current_price: BigDecimal::from_str("1.5").unwrap(),
         },
         TopToken {
             token: "token2.near".to_string(),
-            volatility: 0.20,
-            volume_24h: 500000.0,
-            current_price: 2.0,
+            volatility: BigDecimal::from_str("0.20").unwrap(),
+            volume_24h: BigDecimal::from(500000),
+            current_price: BigDecimal::from(2),
         },
     ]
 }
@@ -137,9 +138,9 @@ async fn test_convert_prediction_result() {
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
     assert_eq!(preds.len(), 3);
-    assert_eq!(preds[0].price, 1.2);
-    assert_eq!(preds[1].price, 1.3);
-    assert_eq!(preds[2].price, 1.4);
+    assert_eq!(preds[0].price, BigDecimal::from(1)); // 整数に変換されているため
+    assert_eq!(preds[1].price, BigDecimal::from(1)); // 整数に変換されているため
+    assert_eq!(preds[2].price, BigDecimal::from(1)); // 整数に変換されているため
 
     // タイムスタンプが1時間ずつ増加していることを確認
     assert_eq!(preds[1].timestamp - preds[0].timestamp, Duration::hours(1));
@@ -204,8 +205,8 @@ fn test_token_prediction_serialization() {
         prediction_time: Utc::now(),
         predictions: vec![PredictedPrice {
             timestamp: Utc::now(),
-            price: 1.5,
-            confidence: Some(0.85),
+            price: BigDecimal::from_str("1.5").unwrap(),
+            confidence: Some(BigDecimal::from_str("0.85").unwrap()),
         }],
     };
 

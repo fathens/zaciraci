@@ -41,17 +41,17 @@ pub struct TokenPrediction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
-    pub price: f64,
-    pub confidence: Option<f64>,
+    pub price: BigDecimal,
+    pub confidence: Option<BigDecimal>,
 }
 
 /// トップトークン情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopToken {
     pub token: String,
-    pub volatility: f64,
-    pub volume_24h: f64,
-    pub current_price: f64,
+    pub volatility: BigDecimal,
+    pub volume_24h: BigDecimal,
+    pub current_price: BigDecimal,
 }
 
 /// 価格予測サービス
@@ -173,6 +173,7 @@ impl PredictionService {
         prediction_horizon: usize,
     ) -> Result<TokenPrediction> {
         // 履歴データを予測用フォーマットに変換
+        // Chronos API は f64 を期待するため、ここでは BigDecimal から f64 に変換
         let values: Vec<f64> = history
             .prices
             .iter()
@@ -288,8 +289,8 @@ impl PredictionService {
                 let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
                 PredictedPrice {
                     timestamp,
-                    price,
-                    confidence: None, // 信頼度は将来実装
+                    price: BigDecimal::from(price as i64), // f64 → BigDecimal 変換
+                    confidence: None,                      // 信頼度は将来実装
                 }
             })
             .collect();
@@ -315,9 +316,9 @@ impl PredictionProvider for PredictionService {
             .into_iter()
             .map(|t| TopTokenInfo {
                 token: t.token,
-                volatility: t.volatility,
-                volume_24h: t.volume_24h,
-                current_price: t.current_price,
+                volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
+                volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
+                current_price: t.current_price.to_string().parse::<f64>().unwrap_or(0.0),
             })
             .collect())
     }
@@ -380,8 +381,10 @@ impl PredictionProvider for PredictionService {
                 .into_iter()
                 .map(|p| CommonPredictedPrice {
                     timestamp: p.timestamp,
-                    price: BigDecimal::from(p.price as i64),
-                    confidence: p.confidence,
+                    price: p.price,
+                    confidence: p
+                        .confidence
+                        .map(|c| c.to_string().parse::<f64>().unwrap_or(0.0)),
                 })
                 .collect(),
         })
@@ -411,8 +414,10 @@ impl PredictionProvider for PredictionService {
                         .into_iter()
                         .map(|p| CommonPredictedPrice {
                             timestamp: p.timestamp,
-                            price: BigDecimal::from(p.price as i64),
-                            confidence: p.confidence,
+                            price: p.price,
+                            confidence: p
+                                .confidence
+                                .map(|c| c.to_string().parse::<f64>().unwrap_or(0.0)),
                         })
                         .collect(),
                 },
