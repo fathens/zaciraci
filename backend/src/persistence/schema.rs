@@ -24,4 +24,17 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(pool_info, token_rates,);
+diesel::table! {
+    trade_transactions (tx_id) {
+        tx_id -> Varchar,
+        trade_batch_id -> Varchar,
+        from_token -> Varchar,
+        from_amount -> Numeric,
+        to_token -> Varchar,
+        to_amount -> Numeric,
+        price_yocto_near -> Numeric,
+        timestamp -> Timestamp,
+    }
+}
+
+diesel::allow_tables_to_appear_in_same_query!(pool_info, token_rates, trade_transactions,);

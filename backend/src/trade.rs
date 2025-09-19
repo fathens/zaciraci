@@ -1,4 +1,5 @@
 pub mod predict;
+pub mod recorder;
 pub mod stats;
 
 // Re-export algorithm from common crate for backward compatibility

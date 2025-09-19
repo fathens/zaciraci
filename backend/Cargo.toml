@@ -50,6 +50,7 @@ base64 = { workspace = true }
 linfa = "0.7"
 linfa-linear = "0.7"
 ndarray = { version = "0.15", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 assertables = "9.5"
