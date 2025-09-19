@@ -178,7 +178,6 @@ pub async fn get_portfolio_timeline() -> Result<Vec<(String, BigDecimal, chrono:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diesel::prelude::*;
 
     #[tokio::test]
     async fn test_trade_recorder() {
@@ -205,17 +204,9 @@ mod tests {
         assert_eq!(portfolio_value, BigDecimal::from(20000000000000000000i128));
 
         // Cleanup
-        let conn = crate::persistence::connection_pool::get().await.unwrap();
-        conn.interact(move |conn| {
-            diesel::delete(
-                crate::persistence::schema::trade_transactions::table
-                    .filter(crate::persistence::schema::trade_transactions::tx_id.eq(&tx_id)),
-            )
-            .execute(conn)
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        crate::persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -250,20 +241,10 @@ mod tests {
         assert_eq!(portfolio_value, BigDecimal::from(60000000000000000000i128));
 
         // Cleanup
-        let conn = crate::persistence::connection_pool::get().await.unwrap();
         for tx_id in tx_ids {
-            let tx_id_clone = tx_id.clone();
-            conn.interact(move |conn| {
-                diesel::delete(
-                    crate::persistence::schema::trade_transactions::table.filter(
-                        crate::persistence::schema::trade_transactions::tx_id.eq(&tx_id_clone),
-                    ),
-                )
-                .execute(conn)
-            })
-            .await
-            .unwrap()
-            .unwrap();
+            crate::persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
+                .await
+                .unwrap();
         }
     }
 }

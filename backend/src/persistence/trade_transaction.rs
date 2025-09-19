@@ -114,6 +114,17 @@ impl TradeTransaction {
             .optional()
     }
 
+    pub async fn find_by_tx_id_async(tx_id: String) -> Result<Option<TradeTransaction>> {
+        let conn = connection_pool::get().await?;
+
+        let result = conn
+            .interact(move |conn| Self::find_by_tx_id(&tx_id, conn))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
+
+        result.context("Failed to find transaction by tx ID")
+    }
+
     pub fn get_portfolio_value_by_batch(
         batch_id: &str,
         conn: &mut PgConnection,
@@ -200,6 +211,20 @@ impl TradeTransaction {
 
         result.context("Failed to get portfolio timeline")
     }
+
+    pub async fn delete_by_tx_id_async(tx_id: String) -> Result<()> {
+        let conn = connection_pool::get().await?;
+
+        conn.interact(move |conn| {
+            diesel::delete(trade_transactions::table.filter(trade_transactions::tx_id.eq(&tx_id)))
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?
+        .map_err(|e| anyhow::anyhow!("Failed to delete transaction: {}", e))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -208,8 +233,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_trade_transaction_crud() {
-        let conn = connection_pool::get().await.unwrap();
-
         let batch_id = uuid::Uuid::new_v4().to_string();
         let tx_id = format!("test_tx_{}", uuid::Uuid::new_v4());
 
@@ -227,11 +250,8 @@ mod tests {
         assert_eq!(result.tx_id, tx_id);
         assert_eq!(result.trade_batch_id, batch_id);
 
-        let tx_id_clone = tx_id.clone();
-        let found = conn
-            .interact(move |conn| TradeTransaction::find_by_tx_id(&tx_id_clone, conn))
+        let found = TradeTransaction::find_by_tx_id_async(tx_id.clone())
             .await
-            .unwrap()
             .unwrap()
             .unwrap();
         assert_eq!(found.tx_id, tx_id);
@@ -241,12 +261,8 @@ mod tests {
             .unwrap();
         assert_eq!(batch_transactions.len(), 1);
 
-        conn.interact(move |conn| {
-            diesel::delete(trade_transactions::table.filter(trade_transactions::tx_id.eq(&tx_id)))
-                .execute(conn)
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        TradeTransaction::delete_by_tx_id_async(tx_id)
+            .await
+            .unwrap();
     }
 }
