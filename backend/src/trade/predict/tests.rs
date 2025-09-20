@@ -59,7 +59,7 @@ async fn test_get_top_tokens() {
     let end_date = Utc::now();
 
     let result = service
-        .get_top_tokens(start_date, end_date, 10, "wrap.near")
+        .get_top_tokens(start_date, end_date, 10, "wrap.near", None)
         .await;
 
     assert!(result.is_ok());
@@ -169,7 +169,7 @@ async fn test_get_top_tokens_error_handling() {
     let end_date = Utc::now();
 
     let result = service
-        .get_top_tokens(start_date, end_date, 10, "wrap.near")
+        .get_top_tokens(start_date, end_date, 10, "wrap.near", None)
         .await;
 
     assert!(result.is_err());

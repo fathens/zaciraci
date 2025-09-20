@@ -75,17 +75,23 @@ impl PredictionService {
         end_date: DateTime<Utc>,
         limit: usize,
         quote_token: &str,
+        min_depth: Option<u64>,
     ) -> Result<Vec<TopToken>> {
         // Backend APIを使用してトップトークンを取得
         let client = reqwest::Client::new();
         let url = format!("{}/api/volatility_tokens", self.backend_url);
 
-        let params = [
+        let mut params = vec![
             ("start_date", start_date.format("%Y-%m-%d").to_string()),
             ("end_date", end_date.format("%Y-%m-%d").to_string()),
             ("limit", limit.to_string()),
             ("quote_token", quote_token.to_string()),
         ];
+
+        // min_depthがある場合は追加
+        if let Some(depth) = min_depth {
+            params.push(("min_depth", depth.to_string()));
+        }
 
         let response = client
             .get(&url)
@@ -306,7 +312,7 @@ impl PredictionProvider for PredictionService {
         quote_token: &str,
     ) -> Result<Vec<TopTokenInfo>> {
         let tokens = self
-            .get_top_tokens(start_date, end_date, limit, quote_token)
+            .get_top_tokens(start_date, end_date, limit, quote_token, None)
             .await?;
         Ok(tokens
             .into_iter()

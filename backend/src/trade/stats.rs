@@ -180,12 +180,20 @@ where
     let quote_token = "wrap.near";
 
     let prediction_service = PredictionService::new(chronos_url, backend_url);
+
+    // min_depth設定（環境変数から取得、デフォルト1000000）
+    let min_depth = config::get("TRADE_MIN_DEPTH")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .or(Some(1000000)); // デフォルト値: 1,000,000
+
     let top_tokens = prediction_service
         .get_top_tokens(
             DateTime::from_naive_utc_and_offset(start_time, Utc),
             DateTime::from_naive_utc_and_offset(end_time, Utc),
             top_n,
             quote_token,
+            min_depth,
         )
         .await?;
 
