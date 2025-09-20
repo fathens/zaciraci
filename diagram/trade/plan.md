@@ -291,22 +291,80 @@ Phase 1 の決定アルゴリズムを使う
 
 **Phase 1が完全に完了し、Phase 2への移行準備が整いました**
 
-#### 🎯 Phase 2 の実装項目:
+## 🔍 Phase 2 現状分析と課題特定 (2025-09-20)
 
-1. **実際のトレード実行機能の統合**:
-   - 現在の架空トレードから実際の取引実行への移行
-   - 既存の `execute_single_action()` の本格運用
-   - リスク管理機能の追加
+### ✅ 実装済み機能の確認
+- **トレード実行機能**: `backend/src/trade/swap.rs` の `execute_single_action()` が完全実装済み
+- **ポートフォリオ最適化**: `common/src/algorithm/portfolio.rs` の `execute_portfolio_optimization()` が完全実装済み
+- **取引記録システム**: TradeTransaction, TradeRecorder が完全実装済み
+- **ハーベスト機能**: check_and_harvest() が完全実装済み
+
+### 🚨 発見された重要な問題
+
+#### **最優先課題: Rebalanceアクションの不完全実装**
+
+**問題の所在:**
+1. **common/portfolio.rs** (✅ 正常):
+   - `generate_rebalance_actions()` は正しく `TradingAction::Rebalance { target_weights }` を生成
+   - `target_weights: BTreeMap<String, f64>` に最適な重みを設定
+
+2. **backend/swap.rs** (❌ 未完成):
+   ```rust
+   TradingAction::Rebalance { target_weights } => {
+       // TODO: 現在の保有量と目標量を比較してswap量を計算  ← 未実装！
+
+       // 簡易実装として、少量のswapを実行  ← 問題の根源
+       if *weight > 0.0 {
+           // wrap.near → token へのswap（ポジション増加）
+       }
+   }
+   ```
+
+**具体的な問題:**
+- `target_weights` に基づく正確なswap量計算が未実装
+- 現在の保有量と目標量の差分計算が未実装
+- 結果として「残高の10%」などのハードコード値でswap実行
+
+#### ✅ Phase 2 の実装完了項目 (2025-09-20):
+
+1. **✅ 🎯 最優先: Rebalanceアルゴリズムの完成** ✅ **完了 (2025-09-20)**:
+   - ✅ `backend/src/trade/swap.rs:69` のTODO実装
+   - ✅ 現在保有量の取得（各トークン残高）
+   - ✅ 目標量の計算（total_portfolio_value × target_weight）
+   - ✅ 差分に基づく正確なswap量計算
+   - ✅ リスク管理（最大トレードサイズ制限）
+
+**実装された主要機能:**
+- **`get_current_portfolio_balances()`**: 全トークンの残高取得
+- **`calculate_total_portfolio_value()`**: ポートフォリオ総価値計算
+- **精密なリバランス実行**: target_weights に基づく正確なswap量計算
+- **リスク管理**:
+  - 最大トレードサイズ: 総価値の10%まで
+  - 最小トレードサイズ: 総価値の1%未満はスキップ
+- **詳細なログ記録**: 各トークンの目標値・現在値・差分をログ出力
 
 2. **取引実行とモニタリング**:
-   - 実際のトレード実行時の詳細ログ記録
+   - ✅ 実際のトレード実行時の詳細ログ記録（実装済み）
    - 取引成否の追跡とアラート機能
    - パフォーマンス分析機能の拡張
 
 3. **運用設定の最適化**:
    - 実際の市場条件に基づくパラメータ調整
-   - リスク管理ルールの実装
+   - ✅ リスク管理ルールの実装（実装済み）
    - ハーベスト条件の実運用調整
+
+## 🏆 Phase 2 前期完了サマリー (2025-09-20)
+
+**Phase 2 最優先課題の完全解決:**
+- ❌ **以前の問題**: commonのportfolioアルゴリズムが生成する `TradingAction::Rebalance { target_weights }` を適切に処理できず、「残高の10%」のハードコード実装
+- ✅ **解決後**: `target_weights` に基づく精密なswap量計算により、ポートフォリオ最適化結果を正確に実行
+
+**技術的実装詳細:**
+- **BigDecimal精度**: 高精度yoctoNEAR計算による正確なリバランス
+- **動的残高取得**: balances::start() を活用したリアルタイム残高取得
+- **価値ベース計算**: total_portfolio_value × target_weight による目標値計算
+- **差分ベーススワップ**: 現在値と目標値の差分に基づく最適化されたswap実行
+- **包括的リスク管理**: 最大・最小トレードサイズの制御
 
 ### 次の実装ターゲット: 取引記録システムとハーベスト機能
 

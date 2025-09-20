@@ -196,9 +196,11 @@ where
 
     // 価格履歴と予測を取得
     let mut token_data = Vec::new();
-    for token_info in &top_tokens {
-        // 簡略化：価格履歴の取得を省略（必要に応じて後で実装）
+    let mut predictions_map = std::collections::BTreeMap::new();
+    let mut historical_prices = Vec::new();
 
+    for token_info in &top_tokens {
+        // トークンデータを構築
         token_data.push(TokenData {
             symbol: token_info.token.clone(),
             current_price: token_info.current_price.clone(),
@@ -207,7 +209,89 @@ where
             market_cap: Some(estimate_market_cap(&token_info.token)),
             decimals: Some(24), // NEAR系トークンのデフォルト
         });
+
+        // 履歴価格データを取得
+        match prediction_service
+            .get_price_history(
+                &token_info.token,
+                quote_token,
+                DateTime::from_naive_utc_and_offset(start_time, Utc),
+                DateTime::from_naive_utc_and_offset(end_time, Utc),
+            )
+            .await
+        {
+            Ok(history) => {
+                if !history.prices.is_empty() {
+                    use zaciraci_common::algorithm::types::{PriceHistory, PricePoint};
+
+                    // PortfolioData用の履歴データを構築
+                    let prices = history
+                        .prices
+                        .iter()
+                        .take(30) // 最新30ポイント
+                        .map(|point| PricePoint {
+                            timestamp: point.timestamp,
+                            price: point.price.clone(),
+                            volume: point.volume.clone(),
+                        })
+                        .collect();
+
+                    historical_prices.push(PriceHistory {
+                        token: token_info.token.clone(),
+                        quote_token: quote_token.to_string(),
+                        prices,
+                    });
+
+                    info!(log, "obtained price history";
+                        "token" => &token_info.token,
+                        "points" => history.prices.len()
+                    );
+
+                    // 予測データを取得（履歴データが必要）
+                    match prediction_service
+                        .predict_price(&history, 24) // 24時間予測
+                        .await
+                    {
+                        Ok(prediction) => {
+                            if let Some(predicted_price_point) = prediction.predictions.first() {
+                                // 予測価格をf64に変換してマップに追加
+                                let predicted_price = predicted_price_point
+                                    .price
+                                    .to_string()
+                                    .parse::<f64>()
+                                    .unwrap_or(0.0);
+                                predictions_map.insert(token_info.token.clone(), predicted_price);
+
+                                info!(log, "obtained prediction";
+                                    "token" => &token_info.token,
+                                    "current_price" => %token_info.current_price,
+                                    "predicted_price" => predicted_price
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(log, "failed to get predictions";
+                                "token" => &token_info.token,
+                                "error" => %e
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(log, "failed to get price history";
+                    "token" => &token_info.token,
+                    "error" => %e
+                );
+            }
+        }
     }
+
+    info!(log, "portfolio data preparation completed";
+        "tokens" => token_data.len(),
+        "predictions" => predictions_map.len(),
+        "historical_prices" => historical_prices.len()
+    );
 
     // ポートフォリオ最適化のためのデータ準備
     let wallet_info = WalletInfo {
@@ -218,8 +302,8 @@ where
 
     let portfolio_data = PortfolioData {
         tokens: token_data,
-        predictions: std::collections::BTreeMap::new(),
-        historical_prices: Vec::new(),
+        predictions: predictions_map,
+        historical_prices,
         correlation_matrix: None,
     };
 

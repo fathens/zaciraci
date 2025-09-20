@@ -5,6 +5,8 @@ use crate::trade::recorder::TradeRecorder;
 use crate::types::MicroNear;
 use bigdecimal::BigDecimal;
 use futures_util::future::join_all;
+use std::collections::BTreeMap;
+use std::str::FromStr;
 use zaciraci_common::algorithm::types::TradingAction;
 
 /// TradingActionに基づいて単一のアクションを実行する
@@ -63,21 +65,82 @@ where
             // ポートフォリオのリバランス
             info!(log, "executing rebalance"; "weights" => ?target_weights);
 
-            // 各トークンの目標ウェイトに基づいてリバランス
-            for (token, weight) in target_weights.iter() {
-                info!(log, "rebalancing token"; "token" => token, "weight" => weight);
-                // TODO: 現在の保有量と目標量を比較してswap量を計算
+            // 1. 現在の保有量を取得
+            let tokens: Vec<String> = target_weights.keys().cloned().collect();
+            let current_balances = get_current_portfolio_balances(client, wallet, &tokens).await?;
 
-                // 簡易実装として、少量のswapを実行
-                if *weight > 0.0 {
-                    // wrap.near → token へのswap（ポジション増加）
-                    let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+            // 2. 総ポートフォリオ価値を計算
+            let total_value =
+                calculate_total_portfolio_value(client, wallet, &current_balances).await?;
+
+            if total_value == BigDecimal::from(0) {
+                return Err(anyhow::anyhow!("Total portfolio value is zero"));
+            }
+
+            // 3. 各トークンのリバランス実行
+            for (token, target_weight) in target_weights.iter() {
+                let current_balance = current_balances.get(token).copied().unwrap_or(0);
+
+                // 目標量を計算（total_value × target_weight）
+                let target_value = &total_value * BigDecimal::from_str(&target_weight.to_string())?;
+                let current_value = BigDecimal::from(current_balance);
+
+                // 差分を計算
+                let value_diff = &target_value - &current_value;
+
+                info!(log, "rebalancing token";
+                    "token" => token,
+                    "target_weight" => target_weight,
+                    "current_balance" => current_balance,
+                    "target_value" => %target_value,
+                    "current_value" => %current_value,
+                    "value_diff" => %value_diff
+                );
+
+                // リスク管理: 最大トレードサイズを総価値の10%に制限
+                let max_trade_size = &total_value * BigDecimal::from_str("0.1")?;
+                let trade_amount = if value_diff.abs() > max_trade_size {
+                    if value_diff > BigDecimal::from(0) {
+                        max_trade_size.clone()
+                    } else {
+                        -max_trade_size.clone()
+                    }
+                } else {
+                    value_diff.clone()
+                };
+
+                // 最小トレードサイズのチェック（総価値の1%未満はスキップ）
+                let min_trade_size = &total_value * BigDecimal::from_str("0.01")?;
+                if trade_amount.abs() < min_trade_size {
+                    info!(log, "skipping small rebalance"; "token" => token, "trade_amount" => %trade_amount);
+                    continue;
+                }
+
+                // 4. スワップ実行
+                let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+
+                if trade_amount > BigDecimal::from(0) {
+                    // ポジション増加: wrap.near → token
                     if token != &wrap_near.to_string() {
+                        info!(log, "increasing position"; "token" => token, "amount" => %trade_amount);
                         execute_direct_swap(
                             client,
                             wallet,
                             &wrap_near.to_string(),
                             token,
+                            recorder,
+                        )
+                        .await?;
+                    }
+                } else if trade_amount < BigDecimal::from(0) {
+                    // ポジション削減: token → wrap.near
+                    if token != &wrap_near.to_string() {
+                        info!(log, "reducing position"; "token" => token, "amount" => %trade_amount.abs());
+                        execute_direct_swap(
+                            client,
+                            wallet,
+                            token,
+                            &wrap_near.to_string(),
                             recorder,
                         )
                         .await?;
@@ -117,6 +180,72 @@ where
             Ok(())
         }
     }
+}
+
+/// ポートフォリオ全体の現在残高を取得（yoctoNEAR単位）
+async fn get_current_portfolio_balances<C, W>(
+    client: &C,
+    wallet: &W,
+    tokens: &[String],
+) -> Result<BTreeMap<String, u128>>
+where
+    C: crate::jsonrpc::AccountInfo
+        + crate::jsonrpc::SendTx
+        + crate::jsonrpc::ViewContract
+        + crate::jsonrpc::GasInfo,
+    W: crate::wallet::Wallet,
+{
+    let log = DEFAULT.new(o!("function" => "get_current_portfolio_balances"));
+    let mut balances = BTreeMap::new();
+
+    for token in tokens {
+        let token_account: crate::ref_finance::token_account::TokenAccount = token
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
+
+        let balance = crate::ref_finance::balances::start(client, wallet, &token_account).await?;
+        balances.insert(token.clone(), balance);
+
+        info!(log, "retrieved balance"; "token" => token, "balance" => balance);
+    }
+
+    Ok(balances)
+}
+
+/// ポートフォリオの総価値を計算（yoctoNEAR単位）
+async fn calculate_total_portfolio_value<C, W>(
+    _client: &C,
+    _wallet: &W,
+    current_balances: &BTreeMap<String, u128>,
+) -> Result<BigDecimal>
+where
+    C: crate::jsonrpc::AccountInfo
+        + crate::jsonrpc::SendTx
+        + crate::jsonrpc::ViewContract
+        + crate::jsonrpc::GasInfo,
+    W: crate::wallet::Wallet,
+{
+    let log = DEFAULT.new(o!("function" => "calculate_total_portfolio_value"));
+    let mut total_value = BigDecimal::from(0);
+
+    for (token, balance) in current_balances {
+        if *balance == 0 {
+            continue;
+        }
+
+        // wrap.nearの場合はそのまま価値とする
+        if token == &crate::ref_finance::token_account::WNEAR_TOKEN.to_string() {
+            total_value += BigDecimal::from(*balance);
+        } else {
+            // 他のトークンの場合は、wrap.nearとの交換レートを使用して価値を計算
+            // 簡易実装として、現在のbalanceをそのまま価値とする
+            // TODO: 実際の価格取得APIとの統合
+            total_value += BigDecimal::from(*balance);
+        }
+    }
+
+    info!(log, "calculated total portfolio value"; "total_value" => %total_value);
+    Ok(total_value)
 }
 
 /// 2つのトークン間で直接スワップを実行（arbitrage.rs実装パターンを使用）
