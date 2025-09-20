@@ -3,17 +3,16 @@ mod tests;
 
 use crate::Result;
 use crate::logging::*;
+use crate::trade::stats::Point;
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Utc};
+use chrono::NaiveDateTime;
 use linfa::prelude::*;
 use linfa_linear::LinearRegression;
 use ndarray::{Array1, Array2};
 use num_traits::ToPrimitive;
 use thiserror::Error;
-use zaciraci_common::algorithm::types::PricePoint as Point;
 
-#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum TimeSeriesPredictionError {
     #[error("insufficient data points for prediction: need at least {required} but got {actual}")]
@@ -30,7 +29,6 @@ pub enum TimeSeriesPredictionError {
 }
 
 /// 時系列データのポイントをf64に変換する
-#[allow(dead_code)]
 fn convert_to_f64(decimal: &BigDecimal) -> Result<f64> {
     decimal.to_f64().ok_or_else(|| {
         anyhow!(TimeSeriesPredictionError::ConversionError(format!(
@@ -41,7 +39,6 @@ fn convert_to_f64(decimal: &BigDecimal) -> Result<f64> {
 }
 
 /// f64から時系列データのポイントに変換する
-#[allow(dead_code)]
 fn convert_from_f64(value: f64) -> Result<BigDecimal> {
     BigDecimal::try_from(value).map_err(|e| {
         anyhow!(TimeSeriesPredictionError::ConversionError(format!(
@@ -53,7 +50,6 @@ fn convert_from_f64(value: f64) -> Result<BigDecimal> {
 
 /// ラグ特徴量を生成する
 /// `lag_count`: 何期前までのデータを特徴量として使用するか
-#[allow(dead_code)]
 fn create_lag_features(points: &[Point], lag_count: usize) -> Result<(Vec<Vec<f64>>, Vec<f64>)> {
     let log = DEFAULT.new(o!(
         "function" => "arima::create_lag_features",
@@ -74,10 +70,10 @@ fn create_lag_features(points: &[Point], lag_count: usize) -> Result<(Vec<Vec<f6
     let mut sorted_points = points.to_vec();
     sorted_points.sort_by_key(|p| p.timestamp);
 
-    // priceをf64に変換
+    // rateをf64に変換
     let rates: Result<Vec<f64>> = sorted_points
         .iter()
-        .map(|p| convert_to_f64(&p.price))
+        .map(|p| convert_to_f64(&p.rate))
         .collect();
 
     let rates = rates?;
@@ -106,7 +102,6 @@ fn create_lag_features(points: &[Point], lag_count: usize) -> Result<(Vec<Vec<f6
 }
 
 /// Vecをndarray形式に変換する
-#[allow(dead_code)]
 fn vec_to_ndarray(
     features: Vec<Vec<f64>>,
     targets: Vec<f64>,
@@ -140,7 +135,6 @@ fn vec_to_ndarray(
 }
 
 /// 線形回帰モデルを訓練する
-#[allow(dead_code)]
 fn train_linear_model(
     features: Vec<Vec<f64>>,
     targets: Vec<f64>,
@@ -167,7 +161,6 @@ fn train_linear_model(
 }
 
 /// 将来の特徴量を生成する
-#[allow(dead_code)]
 fn generate_future_features(
     points: &[Point],
     lag_count: usize,
@@ -193,10 +186,10 @@ fn generate_future_features(
     // 最新のlag_count個のデータポイントを取得
     let latest_points = &sorted_points[sorted_points.len() - lag_count..];
 
-    // priceをf64に変換
+    // rateをf64に変換
     let rates: Result<Vec<f64>> = latest_points
         .iter()
-        .map(|p| convert_to_f64(&p.price))
+        .map(|p| convert_to_f64(&p.rate))
         .collect();
 
     let features = rates?;
@@ -207,8 +200,7 @@ fn generate_future_features(
 }
 
 /// 将来の時点における予測値を計算する
-#[allow(dead_code)]
-pub fn predict_future_rate(points: &[Point], target_time: DateTime<Utc>) -> Result<BigDecimal> {
+pub fn predict_future_rate(points: &[Point], target_time: NaiveDateTime) -> Result<BigDecimal> {
     let log = DEFAULT.new(o!(
         "function" => "arima::predict_future_rate",
         "points_count" => points.len(),

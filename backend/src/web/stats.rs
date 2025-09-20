@@ -27,7 +27,7 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
 async fn make_descs(
     State(_): State<Arc<AppState>>,
     Json(request): Json<DescribesRequest>,
-) -> String {
+) -> std::result::Result<String, String> {
     let log = DEFAULT.new(o!(
         "function" => "make_descs",
         "quote_token" => format!("{}", request.quote_token),
@@ -38,22 +38,18 @@ async fn make_descs(
     ));
     info!(log, "start");
 
-    let quote_token: TokenAccount = request
-        .quote_token
-        .parse()
-        .map_err(|e| {
+    let quote_token: TokenAccount = request.quote_token.parse().map_err(
+        |e: near_primitives::account::id::ParseAccountError| {
             info!(log, "Failed to parse quote token"; "error" => ?e);
-            e
-        })
-        .unwrap();
-    let base_token: TokenAccount = request
-        .base_token
-        .parse()
-        .map_err(|e| {
+            e.to_string()
+        },
+    )?;
+    let base_token: TokenAccount = request.base_token.parse().map_err(
+        |e: near_primitives::account::id::ParseAccountError| {
             info!(log, "Failed to parse base token"; "error" => ?e);
-            e
-        })
-        .unwrap();
+            e.to_string()
+        },
+    )?;
     let range = TimeRange {
         start: request.start,
         end: request.end,
@@ -62,15 +58,20 @@ async fn make_descs(
         .await
         .map_err(|e| {
             info!(log, "Failed to load rates"; "error" => ?e);
-            e
-        })
-        .unwrap();
-    let period = request.period;
-    let descs = rates.aggregate(period).describes();
+            e.to_string()
+        })?;
+    let period_secs = request.period.num_seconds().max(0) as u32;
+    let descs = rates
+        .aggregate(period_secs)
+        .describes(period_secs)
+        .map_err(|e| {
+            info!(log, "Failed to describe rates"; "error" => ?e);
+            e.to_string()
+        })?;
     info!(log, "success";
         "descs_count" => descs.len(),
     );
-    serde_json::to_string(&descs).unwrap()
+    serde_json::to_string(&descs).map_err(|e| e.to_string())
 }
 
 async fn get_values(

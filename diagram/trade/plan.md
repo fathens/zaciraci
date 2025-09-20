@@ -160,6 +160,49 @@ Phase 1 の決定アルゴリズムを使う
    - 型整合性問題の解決
    - 全235テストの成功確認
 
+## 🏆 ハーベスト機能完成サマリー (2025-09-19)
+
+**実装された主要機能:**
+- ✅ **ポートフォリオ価値計算**: trade_transactionsテーブルからの自動集計
+- ✅ **利益判定ロジック**: 初期投資額の300%到達時の自動検出
+- ✅ **利益確定アルゴリズム**: 余剰分の10%を自動ハーベスト
+- ✅ **設定可能なパラメータ**: HARVEST_ACCOUNT_ID、HARVEST_MIN_AMOUNT
+- ✅ **送金フレームワーク**: 既存ref_financeインフラとの統合準備
+- ✅ **エラーハンドリング**: 堅牢なBigDecimal計算とバリデーション
+
+**技術的実装詳細:**
+- **BigDecimal精度**: 高精度yoctoNEAR計算による利益計算
+- **データベース統合**: TradeTransaction::get_latest_batch_id_async使用
+- **設定管理**: 環境変数による柔軟なハーベスト設定
+- **ログ記録**: 詳細なハーベスト実行ログ
+
+**完了した統合ステップ: ✅ (2025-09-19)**
+- ✅ ref_finance::deposit::wnear::unwrapとの実際の統合
+- ✅ wrap.near → NEAR変換の完全実装
+- ✅ ハーベスト実行のTradeTransaction記録
+
+**統合実装詳細:**
+- `execute_harvest_transfer`: 完全なハーベスト実行フロー
+- `deposit::withdraw`: ref_financeからのwrap.near引き出し
+- `deposit::wnear::unwrap`: wrap.nearからNEARへの変換
+- `transfer_native_token`: 指定アカウントへのNEAR送金
+- `TradeRecorder`: ハーベスト取引の自動記録
+
+**✅ 改善実装 (2025-09-19):**
+- **Lazy初期化**: `HARVEST_ACCOUNT`と`HARVEST_MIN_AMOUNT`のstatic変数化
+- **時間管理**: `LAST_HARVEST_TIME`とインターバル制御の実装
+- **設定管理**: balances.rsと一貫性のある設定パターン
+- **パフォーマンス**: 実行時設定読み込みを排除した効率的な実装
+- **エラーハンドリング**: 設定不備時の適切なデフォルト値対応
+
+**✅ Swap機能改善 (2025-09-19):**
+- **arbitrage.rsパターン採用**: `execute_swap_with_recording`関数の実装
+- **並列処理**: `futures_util::future::join_all`による複数swap並列実行
+- **型安全性**: ジェネリック型による`MicroNear`と`Balance`の両対応
+- **エラー処理**: 個別swap失敗時も他のswapを継続実行
+- **成功率追跡**: swap完了時の成功/失敗数の詳細ログ記録
+- **自動記録**: 各swap成功時の`TradeTransaction`への自動記録
+
 ## 🚧 次の優先実装項目
 
 ### 🔧 高優先度 (High Priority) - 即座に実装
@@ -185,14 +228,14 @@ Phase 1 の決定アルゴリズムを使う
    - ✅ バッチIDによる取引グループ管理
    - ✅ ポートフォリオ価値の時系列追跡
 
-### 🛠 最高優先度 (Next Priority) - 次の実装ターゲット
+### ✅ 最高優先度 (Next Priority) - 完了済み (2025-09-19)
 
-1. **ハーベスト機能の実装**:
-   - `stats.rs:483-488`: `check_and_harvest()` 関数の実装
-   - 200%利益時の自動利益確定機能
-   - wrap.near → NEAR 変換と送金処理
-   - ハーベスト条件判定の実装
-   - trade_transactions テーブルとの連携
+1. ~~**ハーベスト機能の実装**~~ ✅ **完了 (2025-09-19)**:
+   - ✅ `stats.rs:695-773`: `check_and_harvest()` 関数の実装
+   - ✅ 200%利益時の自動利益確定機能（3倍で10%ハーベスト）
+   - ✅ wrap.near → NEAR 変換と送金処理のフレームワーク
+   - ✅ ハーベスト条件判定の実装（最小額設定可能）
+   - ✅ trade_transactions テーブルとの連携
 
 ### 🛠 中優先度 (Medium Priority)
 

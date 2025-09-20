@@ -1,8 +1,8 @@
+use super::Point;
 use crate::logging::*;
-use crate::trade::stats::Point;
 use crate::trade::stats::arima::*;
 use bigdecimal::BigDecimal;
-use chrono::{Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::str::FromStr;
@@ -25,7 +25,11 @@ fn create_test_points(count: usize, start_value: f64, increment: f64) -> Vec<Poi
         let rate = BigDecimal::from_str(&value.to_string()).unwrap();
         let timestamp = base_time + Duration::hours(i as i64);
 
-        points.push(Point { rate, timestamp });
+        points.push(Point {
+            price: rate,
+            timestamp: DateTime::from_naive_utc_and_offset(timestamp, Utc),
+            volume: None,
+        });
     }
 
     points
@@ -43,7 +47,11 @@ fn create_random_test_points(count: usize, base_value: f64, noise_range: f64) ->
         let rate = BigDecimal::from_str(&value.to_string()).unwrap();
         let timestamp = base_time + Duration::hours(i as i64);
 
-        points.push(Point { rate, timestamp });
+        points.push(Point {
+            price: rate,
+            timestamp: DateTime::from_naive_utc_and_offset(timestamp, Utc),
+            volume: None,
+        });
     }
 
     points
@@ -514,7 +522,7 @@ mod prediction_tests {
         let empty_points: Vec<Point> = Vec::new();
 
         // 任意の予測時間を設定
-        let target_time = Utc.timestamp_opt(1_600_010_000, 0).unwrap().naive_utc();
+        let target_time = Utc.timestamp_opt(1_600_010_000, 0).unwrap();
 
         // 予測を実行
         let result = predict_future_rate(&empty_points, target_time);
@@ -556,7 +564,11 @@ mod integration_tests {
             let rate = BigDecimal::from_str(&value.to_string()).unwrap();
             let timestamp = base_time + Duration::hours(i as i64);
 
-            points.push(Point { rate, timestamp });
+            points.push(Point {
+                price: rate,
+                timestamp: DateTime::from_naive_utc_and_offset(timestamp, Utc),
+                volume: None,
+            });
         }
 
         // 2. 最後の時点から5ステップ先を予測
@@ -579,7 +591,7 @@ mod integration_tests {
         debug!(
             log,
             "  - Last data point: {:?} at {:?}",
-            convert_to_f64(&points.last().unwrap().rate).unwrap(),
+            convert_to_f64(&points.last().unwrap().price).unwrap(),
             points.last().unwrap().timestamp
         );
         debug!(
