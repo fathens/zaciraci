@@ -6,7 +6,11 @@ use crate::config;
 use crate::jsonrpc::AccountInfo;
 use crate::logging::*;
 use crate::persistence::token_rate::TokenRate;
-use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+use crate::ref_finance::path::graph::TokenGraph;
+use crate::ref_finance::pool_info::{PoolInfoList, TokenPairLike, TokenPath};
+use crate::ref_finance::token_account::{
+    TokenAccount, TokenInAccount, TokenOutAccount, WNEAR_TOKEN,
+};
 use crate::trade::harvest::check_and_harvest;
 use crate::trade::predict::PredictionService;
 use crate::trade::recorder::TradeRecorder;
@@ -14,6 +18,7 @@ use crate::trade::swap::execute_single_action;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
+use num_traits::Zero;
 use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{TokenData, WalletInfo},
@@ -341,14 +346,147 @@ where
     Ok(())
 }
 
-/// 流動性スコアの推定（仮実装）
+/// 流動性スコアの計算（実際のREF Financeデータから算出）
 fn estimate_liquidity_score(token_id: &str) -> f64 {
-    // TODO: 実際の流動性データから計算
     let log = DEFAULT.new(o!("function" => "estimate_liquidity_score"));
-    debug!(log, "estimating liquidity score"; "token_id" => token_id);
+    debug!(log, "calculating liquidity score from actual depth data"; "token_id" => token_id);
 
-    // 仮の値を返す（0.5）
-    0.5
+    // 実際の流動性データを取得して計算
+    match calculate_actual_liquidity_score(token_id) {
+        Ok(score) => {
+            debug!(log, "calculated liquidity score"; "token_id" => token_id, "score" => score);
+            score
+        }
+        Err(e) => {
+            warn!(log, "failed to calculate liquidity score, using fallback";
+                  "token_id" => token_id, "error" => %e);
+            // フォールバック値として0.5を返す
+            0.5
+        }
+    }
+}
+
+/// REF Financeの実際のプールデータから流動性スコアを計算
+async fn calculate_actual_liquidity_score_async(token_id: &str) -> Result<f64> {
+    let log = DEFAULT.new(o!("function" => "calculate_actual_liquidity_score_async"));
+
+    // PoolInfoListを取得
+    let pools = match PoolInfoList::read_from_db(None).await {
+        Ok(pools) => pools,
+        Err(e) => {
+            warn!(log, "failed to read pools from database"; "error" => %e);
+            return Err(anyhow::anyhow!("Failed to read pools: {}", e));
+        }
+    };
+
+    // トークンアカウントを作成
+    let token_account: TokenAccount = token_id
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token account: {}", e))?;
+    let quote_token = WNEAR_TOKEN.clone().into();
+
+    // TokenGraphを使って流動性深度を計算
+    let graph = TokenGraph::new(pools.clone());
+    let outs = graph.update_graph(&quote_token)?;
+
+    // 対象トークンがグラフに存在するかチェック
+    let target_out = outs
+        .iter()
+        .find(|out| TokenAccount::from((*out).clone()) == token_account);
+
+    let depth = if let Some(target_out) = target_out {
+        // パスを取得して流動性深度を計算
+        let path = graph.get_path(&quote_token, target_out)?;
+        calculate_path_liquidity(&path, &pools)
+    } else {
+        debug!(log, "token not found in graph, using minimal depth"; "token_id" => token_id);
+        BigDecimal::from(1000u64) // 最小深度値
+    };
+
+    // 深度をスコア（0-1）に正規化
+    let score = normalize_depth_to_score(&depth);
+
+    debug!(log, "calculated liquidity score";
+           "token_id" => token_id,
+           "depth" => %depth,
+           "score" => score);
+
+    Ok(score)
+}
+
+/// 同期版のラッパー関数
+fn calculate_actual_liquidity_score(token_id: &str) -> Result<f64> {
+    // Tokio runtimeを使って非同期関数を実行
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|_| anyhow::anyhow!("No tokio runtime available"))?;
+
+    runtime.block_on(calculate_actual_liquidity_score_async(token_id))
+}
+
+/// パスの流動性深度を計算
+fn calculate_path_liquidity(path: &TokenPath, pools: &PoolInfoList) -> BigDecimal {
+    // パス上の各プールの深度を取得し、最小値を採用
+    // （ボトルネック流動性が制約となるため）
+    let mut min_depth = BigDecimal::from(u64::MAX);
+
+    for pair in &path.0 {
+        if let Some(pool) = pools.iter().find(|p| p.id == pair.pool_id()) {
+            let pool_depth = calculate_pool_average_depth(pool);
+            if pool_depth < min_depth {
+                min_depth = pool_depth;
+            }
+        }
+    }
+
+    // パスが空の場合は最小深度を返す
+    if min_depth == BigDecimal::from(u64::MAX) {
+        BigDecimal::from(1000u64)
+    } else {
+        min_depth
+    }
+}
+
+/// プールの平均深度を計算
+fn calculate_pool_average_depth(pool: &crate::ref_finance::pool_info::PoolInfo) -> BigDecimal {
+    let mut total_value = BigDecimal::zero();
+    let mut token_count = 0;
+
+    // プール内の各トークンの量を合計
+    for index in 0..pool.tokens().len() {
+        if let Ok(amount) = pool.amount(index.into()) {
+            total_value += BigDecimal::from(amount);
+            token_count += 1;
+        }
+    }
+
+    if token_count > 0 {
+        total_value / BigDecimal::from(token_count)
+    } else {
+        BigDecimal::from(1000u64) // デフォルト最小深度
+    }
+}
+
+/// 深度値を0-1のスコアに正規化
+fn normalize_depth_to_score(depth: &BigDecimal) -> f64 {
+    use num_traits::ToPrimitive;
+
+    // 対数変換でスケールを調整
+    let depth_plus_one = depth + BigDecimal::from(1);
+
+    let log_depth = match depth_plus_one.to_f64() {
+        Some(d) if d > 0.0 => d.ln(),
+        _ => 0.0,
+    };
+
+    // 対数値を0-1の範囲に正規化
+    // ln(1000) = 6.9, ln(1000000000) = 20.7 程度の範囲を想定
+    let min_log = 6.9; // ln(1000) 小規模プール
+    let max_log = 20.7; // ln(1000000000) 大規模プール
+
+    let normalized = (log_depth - min_log) / (max_log - min_log);
+
+    // 0-1の範囲にクランプ
+    normalized.clamp(0.0, 1.0)
 }
 
 /// 時価総額の推定（仮実装）
@@ -441,7 +579,13 @@ mod tests {
     #[test]
     fn test_estimate_liquidity_score() {
         let score = estimate_liquidity_score("test.near");
-        assert_eq!(score, 0.5);
+        // 実際のプールデータが存在しない場合はフォールバック値0.5が返される
+        // プールデータが存在する場合は0.0-1.0の範囲の値が返される
+        assert!(
+            (0.0..=1.0).contains(&score),
+            "Score should be between 0.0 and 1.0, got: {}",
+            score
+        );
     }
 
     // Timerange stats tests
