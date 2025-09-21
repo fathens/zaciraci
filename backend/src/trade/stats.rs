@@ -5,7 +5,6 @@ use crate::Result;
 use crate::config;
 use crate::jsonrpc::AccountInfo;
 use crate::logging::*;
-use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::path::graph::TokenGraph;
 use crate::ref_finance::pool_info::{PoolInfoList, TokenPairLike, TokenPath};
@@ -19,7 +18,7 @@ use crate::trade::swap::execute_single_action;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
-use num_traits::{ToPrimitive, Zero};
+use num_traits::Zero;
 use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{TokenData, WalletInfo},
@@ -214,15 +213,7 @@ where
     let mut historical_prices = Vec::new();
 
     for token_info in &top_tokens {
-        // 市場規模を計算、失敗した場合はこのトークンをスキップ
-        let market_cap = match estimate_market_cap(&token_info.token) {
-            Ok(cap) => cap,
-            Err(e) => {
-                warn!(log, "skipping token due to market cap calculation failure";
-                      "token_id" => &token_info.token, "error" => %e);
-                continue; // このトークンをスキップして次へ
-            }
-        };
+        // 流動性スコアのみでフィルタリング
 
         // トークンデータを構築
         token_data.push(TokenData {
@@ -230,7 +221,7 @@ where
             current_price: token_info.current_price.clone(),
             historical_volatility: 0.1, // デフォルト値またはhistoryから計算
             liquidity_score: Some(estimate_liquidity_score(&token_info.token)),
-            market_cap: Some(market_cap),
+            market_cap: None,
             decimals: Some(24), // NEAR系トークンのデフォルト
         });
 
@@ -500,156 +491,12 @@ fn normalize_depth_to_score(depth: &BigDecimal) -> f64 {
     normalized.clamp(0.0, 1.0)
 }
 
-/// 時価総額の推定（wrap.near建て価格データから計算）
-fn estimate_market_cap(token_id: &str) -> Result<f64> {
-    let log = DEFAULT.new(o!("function" => "estimate_market_cap"));
-    debug!(log, "calculating market cap from price data"; "token_id" => token_id);
-
-    // 実際の価格データを取得して市場規模を推定
-    match calculate_actual_market_cap(token_id) {
-        Ok(market_cap) => {
-            debug!(log, "calculated market cap"; "token_id" => token_id, "market_cap" => market_cap);
-            Ok(market_cap)
-        }
-        Err(e) => {
-            warn!(log, "failed to calculate market cap, token will be excluded";
-                  "token_id" => token_id, "error" => %e);
-            Err(anyhow::anyhow!(
-                "Cannot calculate market cap for token {}: {}",
-                token_id,
-                e
-            ))
-        }
-    }
-}
-
-/// wrap.near建ての価格データから市場規模を推定
-async fn calculate_actual_market_cap_async(token_id: &str) -> Result<f64> {
-    let log = DEFAULT.new(o!("function" => "calculate_actual_market_cap_async"));
-
-    // トークンアカウントを作成
-    let token_account: TokenAccount = token_id
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token account: {}", e))?;
-    let quote_token = WNEAR_TOKEN.clone().into();
-
-    // 最近30日間の価格データを取得して市場規模を推定
-    let end_time = Utc::now().naive_utc();
-    let start_time = end_time - chrono::Duration::days(30);
-
-    let time_range = TimeRange {
-        start: start_time,
-        end: end_time,
-    };
-
-    // SameBaseTokenRatesを使用してwrap.near建て価格データを取得
-    let rates = SameBaseTokenRates::load(&quote_token, &token_account.into(), &time_range)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load price data: {}", e))?;
-
-    if rates.points.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No price data available for token: {}",
-            token_id
-        ));
-    }
-
-    // 最新の価格を取得
-    let latest_price = rates
-        .points
-        .last()
-        .ok_or_else(|| anyhow::anyhow!("No price points available"))?
-        .rate
-        .to_f64()
-        .ok_or_else(|| anyhow::anyhow!("Invalid price value"))?;
-
-    // 市場規模推定（流動性ベース）
-    // プール流動性を基に推定流通量を算出
-    let estimated_market_cap =
-        estimate_market_cap_from_liquidity_and_price(token_id, latest_price).await?;
-
-    debug!(log, "calculated market cap from price data";
-           "token_id" => token_id,
-           "latest_price_wrap_near" => latest_price,
-           "estimated_market_cap" => estimated_market_cap);
-
-    Ok(estimated_market_cap)
-}
-
-/// 同期版のラッパー関数
-fn calculate_actual_market_cap(token_id: &str) -> Result<f64> {
-    // Tokio runtimeを使って非同期関数を実行
-    let runtime = tokio::runtime::Handle::try_current()
-        .map_err(|_| anyhow::anyhow!("No tokio runtime available"))?;
-
-    runtime.block_on(calculate_actual_market_cap_async(token_id))
-}
-
-/// 流動性と価格から市場規模を推定
-async fn estimate_market_cap_from_liquidity_and_price(
-    token_id: &str,
-    price_in_wrap_near: f64,
-) -> Result<f64> {
-    let log = DEFAULT.new(o!("function" => "estimate_market_cap_from_liquidity"));
-
-    // プール情報を取得して流動性から推定
-    let pools = PoolInfoList::read_from_db(None)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to read pools: {}", e))?;
-
-    let token_account: TokenAccount = token_id.parse()?;
-
-    // このトークンを含むプールを検索
-    let mut total_liquidity_in_wrap_near = 0.0;
-    let mut pool_count = 0;
-
-    for pool in pools.iter() {
-        for (index, pool_token_account) in pool.tokens().enumerate() {
-            if *pool_token_account == token_account {
-                // このプールにトークンが含まれている
-                if let Ok(amount) = pool.amount(index.into()) {
-                    let amount_f64 = BigDecimal::from(amount).to_f64().unwrap_or(0.0);
-                    // トークン量をwrap.near価値に変換
-                    let liquidity_value = amount_f64 * price_in_wrap_near;
-                    total_liquidity_in_wrap_near += liquidity_value;
-                    pool_count += 1;
-
-                    debug!(log, "found token in pool";
-                           "token_id" => token_id,
-                           "pool_id" => pool.id,
-                           "token_amount" => amount_f64,
-                           "liquidity_value_wrap_near" => liquidity_value);
-                }
-                break;
-            }
-        }
-    }
-
-    if pool_count == 0 {
-        return Err(anyhow::anyhow!("Token not found in any pool: {}", token_id));
-    }
-
-    // 流動性から市場規模を推定
-    // 経験的に、プール流動性は流通量の5-20%程度を占めることが多い
-    // 保守的に10%と仮定して推定
-    let estimated_circulating_supply_value = total_liquidity_in_wrap_near * 10.0; // 10倍で推定
-
-    debug!(log, "estimated market cap from liquidity";
-           "token_id" => token_id,
-           "total_pool_liquidity_wrap_near" => total_liquidity_in_wrap_near,
-           "estimated_market_cap_wrap_near" => estimated_circulating_supply_value,
-           "pools_found" => pool_count);
-
-    Ok(estimated_circulating_supply_value)
-}
-
 // TODO: Fix tests after TokenRate structure change
 #[cfg(test)]
 mod tests {
     use super::*;
     // Unused imports after commenting out broken tests
-    // use crate::persistence::TimeRange;
-    // use chrono::TimeZone;
+    //     // use chrono::TimeZone;
     // use std::collections::HashMap;
 
     #[test]
@@ -713,16 +560,6 @@ mod tests {
     // fn test_format_decimal_digits() {
     //     // Function removed - need to reimplement if needed
     // }
-
-    #[test]
-    fn test_estimate_market_cap() {
-        // 実際の価格データが存在しない場合はエラーを返す
-        let result = estimate_market_cap("test.near");
-        assert!(
-            result.is_err(),
-            "Should return error when no price data available"
-        );
-    }
 
     #[test]
     fn test_estimate_liquidity_score() {

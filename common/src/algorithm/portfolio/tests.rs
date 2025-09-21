@@ -1636,7 +1636,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
             current_price: BigDecimal::from_f64(50.0).unwrap(),
             historical_volatility: 0.8,  // 非常に高いボラティリティ
             liquidity_score: Some(0.05), // MIN_LIQUIDITY_SCORE以下
-            market_cap: Some(10000.0),   // MIN_MARKET_CAP以下
+            market_cap: Some(10000.0),
             decimals: Some(18),
         },
         TokenInfo {

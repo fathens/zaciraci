@@ -63,9 +63,6 @@ const REGULARIZATION_FACTOR: f64 = 1e-6;
 /// 最小流動性スコア
 const MIN_LIQUIDITY_SCORE: f64 = 0.1;
 
-/// 最小市場規模
-const MIN_MARKET_CAP: f64 = 10000.0;
-
 /// 動的リスク調整の閾値
 const HIGH_VOLATILITY_THRESHOLD: f64 = 0.3; // 30%
 const LOW_VOLATILITY_THRESHOLD: f64 = 0.1; // 10%
@@ -627,14 +624,8 @@ pub fn select_optimal_tokens(
     let filtered_tokens: Vec<&TokenData> = tokens
         .iter()
         .filter(|t| {
-            // 実際のデータ構造に合わせたフィルタリング条件
-            // market_capがNoneの場合は流動性スコアのみでフィルタ
-            let liquidity_ok = t.liquidity_score.unwrap_or(0.0) >= MIN_LIQUIDITY_SCORE;
-            let market_cap_ok = match t.market_cap {
-                Some(cap) => cap >= MIN_MARKET_CAP,
-                None => true, // market_capがNoneの場合はスキップ
-            };
-            liquidity_ok && market_cap_ok
+            // 流動性スコアのみでフィルタリング
+            t.liquidity_score.unwrap_or(0.0) >= MIN_LIQUIDITY_SCORE
         })
         .collect();
 
