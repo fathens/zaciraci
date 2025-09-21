@@ -1,3 +1,6 @@
+use crate::persistence::TimeRange;
+use crate::persistence::token_rate::TokenRate;
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
@@ -57,14 +60,12 @@ pub struct TopToken {
 /// 価格予測サービス
 pub struct PredictionService {
     chronos_client: ChronosApiClient,
-    backend_url: String,
 }
 
 impl PredictionService {
-    pub fn new(chronos_url: String, backend_url: String) -> Self {
+    pub fn new(chronos_url: String, _backend_url: String) -> Self {
         Self {
             chronos_client: ChronosApiClient::new(chronos_url),
-            backend_url,
         }
     }
 
@@ -75,45 +76,37 @@ impl PredictionService {
         end_date: DateTime<Utc>,
         limit: usize,
         quote_token: &str,
-        min_depth: Option<u64>,
+        _min_depth: Option<u64>,
     ) -> Result<Vec<TopToken>> {
-        // Backend APIを使用してトップトークンを取得
-        let client = reqwest::Client::new();
-        let url = format!("{}/api/volatility_tokens", self.backend_url);
+        // 直接データベースからボラティリティ情報を取得
+        let quote_token_account: TokenInAccount = quote_token
+            .parse::<crate::ref_finance::token_account::TokenAccount>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse quote token: {}", e))?
+            .into();
 
-        let mut params = vec![
-            ("start_date", start_date.format("%Y-%m-%d").to_string()),
-            ("end_date", end_date.format("%Y-%m-%d").to_string()),
-            ("limit", limit.to_string()),
-            ("quote_token", quote_token.to_string()),
-        ];
+        let range = TimeRange {
+            start: start_date.naive_utc(),
+            end: end_date.naive_utc(),
+        };
 
-        // min_depthがある場合は追加
-        if let Some(depth) = min_depth {
-            params.push(("min_depth", depth.to_string()));
-        }
+        let volatility_tokens =
+            TokenRate::get_by_volatility_in_time_range(&range, &quote_token_account)
+                .await
+                .context("Failed to get volatility tokens from database")?;
 
-        let response = client
-            .get(&url)
-            .query(&params)
-            .send()
-            .await
-            .context("Failed to fetch top tokens")?;
+        // 上位のトークンを選択してTopToken形式に変換
+        let top_tokens: Vec<TopToken> = volatility_tokens
+            .into_iter()
+            .take(limit)
+            .map(|vol_token| TopToken {
+                token: vol_token.base.to_string(),
+                volatility: vol_token.variance.clone(),
+                volume_24h: BigDecimal::from(0), // TODO: 実際のボリュームデータの取得
+                current_price: BigDecimal::from(1), // TODO: 実際の現在価格の取得
+            })
+            .collect();
 
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to fetch top tokens: HTTP {}",
-                response.status()
-            ));
-        }
-
-        // APIレスポンスをパース
-        let tokens: Vec<TopToken> = response
-            .json()
-            .await
-            .context("Failed to parse top tokens response")?;
-
-        Ok(tokens)
+        Ok(top_tokens)
     }
 
     /// 指定トークンの価格履歴を取得
@@ -124,43 +117,34 @@ impl PredictionService {
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
     ) -> Result<TokenPriceHistory> {
-        let client = reqwest::Client::new();
-        let url = format!(
-            "{}/api/price_history/{}/{}",
-            self.backend_url, quote_token, token
-        );
+        // 直接データベースから価格履歴を取得
+        let base_token: TokenOutAccount = token
+            .parse::<crate::ref_finance::token_account::TokenAccount>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse base token: {}", e))?
+            .into();
 
-        let params = [
-            ("start", start_date.timestamp().to_string()),
-            ("end", end_date.timestamp().to_string()),
-        ];
+        let quote_token_account: TokenInAccount = quote_token
+            .parse::<crate::ref_finance::token_account::TokenAccount>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse quote token: {}", e))?
+            .into();
 
-        let response = client
-            .get(&url)
-            .query(&params)
-            .send()
+        // TODO: 実際の履歴データ取得の実装
+        // 現在は TokenRate::get_history を使用して取得
+        let history_rates = TokenRate::get_history(&base_token, &quote_token_account, 1000)
             .await
-            .context("Failed to fetch price history")?;
+            .context("Failed to get price history from database")?;
 
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to fetch price history: HTTP {}",
-                response.status()
-            ));
-        }
-
-        // APIレスポンスをパース
-        let prices: Vec<(i64, f64)> = response
-            .json()
-            .await
-            .context("Failed to parse price history response")?;
-
-        // タイムスタンプを DateTime に変換
-        let price_points: Vec<PricePoint> = prices
+        // 指定期間でフィルタリング
+        let price_points: Vec<PricePoint> = history_rates
             .into_iter()
-            .map(|(timestamp, price)| PricePoint {
-                timestamp: DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now),
-                price: BigDecimal::from(price as i64),
+            .filter(|rate| {
+                let rate_datetime: DateTime<Utc> =
+                    DateTime::from_naive_utc_and_offset(rate.timestamp, Utc);
+                rate_datetime >= start_date && rate_datetime <= end_date
+            })
+            .map(|rate| PricePoint {
+                timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
+                price: rate.rate,
                 volume: None,
             })
             .collect();
