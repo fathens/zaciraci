@@ -515,33 +515,34 @@ Phase 1 の決定アルゴリズムを使う
 ### 次の目標: Phase 2 実装準備
 Phase 1のコードベース整理が完了し、実際のトレード実行（Phase 2）への移行準備が整いました。
 
-## 📝 技術的負債と将来の改善項目 (2025-09-20 追記)
+## 📝 技術的負債と将来の改善項目 (2025-09-21 更新)
 
-### 🚨 優先度: 高 - PredictionServiceのアーキテクチャ問題
+### ✅ 優先度: 高 - PredictionServiceのアーキテクチャ問題 (完了)
 
-**現状の問題:**
-backend内部の`PredictionService`が自分自身のHTTP APIを呼び出している：
+**✅ 修正完了 (2025-09-21):**
+backend内部の`PredictionService`が自分自身のHTTP APIを呼び出していた問題を解決：
 
-1. **`get_top_tokens()`の問題:**
-   - 現状: `http://localhost:3000/api/volatility_tokens` を呼び出し
-   - 正しい実装: `TokenRate::get_by_volatility_in_time_range()` を直接呼ぶ
+1. **✅ `get_top_tokens()`の修正:**
+   - ~~現状: `http://localhost:3000/api/volatility_tokens` を呼び出し~~
+   - ✅ **修正済み**: `TokenRate::get_by_volatility_in_time_range()` を直接呼び出し
 
-2. **`get_price_history()`の問題:**
-   - 現状: `http://localhost:3000/api/price_history/{quote}/{token}` を呼び出し
-   - 正しい実装: 内部のデータベース関数を直接呼ぶ
+2. **✅ `get_price_history()`の修正:**
+   - ~~現状: `http://localhost:3000/api/price_history/{quote}/{token}` を呼び出し~~
+   - ✅ **修正済み**: `TokenRate::get_history()` を直接呼び出し
 
-**なぜ問題か:**
-- **パフォーマンス**: 不要なHTTPオーバーヘッド
-- **信頼性**: ネットワークエラーの可能性
-- **依存関係**: 自分自身のサーバーが起動していることに依存（循環依存）
-- **アーキテクチャ**: レイヤー構造の混乱
+**✅ 解決された問題:**
+- ✅ **パフォーマンス向上**: HTTPオーバーヘッドを完全に除去
+- ✅ **信頼性向上**: ネットワークエラーリスクを排除
+- ✅ **依存関係解消**: 循環依存の問題を完全に解決
+- ✅ **アーキテクチャ改善**: レイヤー構造の適切な分離を実現
 
-**推奨される修正:**
-1. `PredictionService`を内部データアクセス層を直接使うようにリファクタリング
-2. 共通のビジネスロジックを抽出して再利用
-3. APIハンドラとビジネスロジックの明確な分離
+**実装された改善:**
+1. ✅ 直接データベースアクセス層の使用
+2. ✅ HTTPクライアント依存関係の削除（reqwest削除）
+3. ✅ `backend_url`フィールドの除去
+4. ✅ 型安全なデータベース操作の実装
 
-**対応時期:** Phase 3での実装を推奨
+**コミット:** `76f52f3` - fix(predict): Remove HTTP API dependency and use direct database access
 
 ### 🔧 その他の改善項目
 
