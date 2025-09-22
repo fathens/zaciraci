@@ -95,16 +95,36 @@ impl PredictionService {
                 .context("Failed to get volatility tokens from database")?;
 
         // 上位のトークンを選択してTopToken形式に変換
-        let top_tokens: Vec<TopToken> = volatility_tokens
-            .into_iter()
-            .take(limit)
-            .map(|vol_token| TopToken {
+        let mut top_tokens = Vec::new();
+        for vol_token in volatility_tokens.into_iter().take(limit) {
+            // 現在価格を取得
+            let current_price = {
+                use crate::persistence::token_rate::TokenRate;
+                use crate::ref_finance::token_account::TokenOutAccount;
+
+                let base_token = TokenOutAccount::from(vol_token.base.clone());
+                let quote_token = quote_token_account.clone();
+
+                match TokenRate::get_latest(&base_token, &quote_token).await {
+                    Ok(Some(rate)) => rate.rate,
+                    Ok(None) => {
+                        // ログを後で追加（slogのsetupが必要）
+                        BigDecimal::from(1) // デフォルト値
+                    }
+                    Err(_e) => {
+                        // ログを後で追加（slogのsetupが必要）
+                        BigDecimal::from(1) // デフォルト値
+                    }
+                }
+            };
+
+            top_tokens.push(TopToken {
                 token: vol_token.base.to_string(),
-                volatility: vol_token.variance.clone(),
-                volume_24h: BigDecimal::from(0), // TODO: 実際のボリュームデータの取得
-                current_price: BigDecimal::from(1), // TODO: 実際の現在価格の取得
-            })
-            .collect();
+                volatility: vol_token.variance,
+                volume_24h: BigDecimal::from(0), // ボリュームデータは現在利用不可
+                current_price,
+            });
+        }
 
         Ok(top_tokens)
     }
