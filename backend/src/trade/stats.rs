@@ -491,13 +491,9 @@ fn normalize_depth_to_score(depth: &BigDecimal) -> f64 {
     normalized.clamp(0.0, 1.0)
 }
 
-// TODO: Fix tests after TokenRate structure change
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Unused imports after commenting out broken tests
-    //     // use chrono::TimeZone;
-    // use std::collections::HashMap;
 
     #[test]
     fn test_describes() {
@@ -536,31 +532,6 @@ mod tests {
         assert_eq!(description.change, "-");
     }
 
-    // Test removed - no longer applicable with new TokenRate structure
-
-    // Test removed - no longer applicable with new TokenRate structure
-
-    // #[test]
-    // fn test_sqrt_bigdecimal() {
-    //     // Function removed - need to reimplement if needed
-    // }
-
-    // TODO: Fix tests after function removal
-    // #[test]
-    // fn test_calculate_volatility_from_history() {
-    //     // Function removed - need to reimplement if needed
-    // }
-
-    // #[test]
-    // fn test_calculate_liquidity_score() {
-    //     // Function removed - need to reimplement if needed
-    // }
-
-    // #[test]
-    // fn test_format_decimal_digits() {
-    //     // Function removed - need to reimplement if needed
-    // }
-
     #[test]
     fn test_estimate_liquidity_score() {
         let score = estimate_liquidity_score("test.near");
@@ -572,36 +543,4 @@ mod tests {
             score
         );
     }
-
-    // Timerange stats tests
-    // TODO: Fix after TimeRange structure change
-    // pub fn stats_from_ranges(ranges: &[TimeRange]) -> HashMap<String, Stat> {
-    //     // Function needs to be updated to work with new TimeRange structure
-    //     // TimeRange now only has start/end fields, not token_id/amount_history
-    //     unimplemented!("Function needs updating for new TimeRange structure")
-    // }
-
-    // TODO: Stat struct removed - was only used by commented-out tests
-    // Will need to reimplement if statistical analysis functions are needed
-
-    // TODO: Fix tests after TimeRange structure change
-    // #[test]
-    // fn test_stats_empty() {
-    //     // Function stats_from_ranges needs to be updated for new TimeRange structure
-    // }
-
-    // #[test]
-    // fn test_stats_single_period() {
-    //     // Function stats_from_ranges needs to be updated for new TimeRange structure
-    // }
-
-    // #[test]
-    // fn test_stats_multiple_periods() {
-    //     // Function stats_from_ranges needs to be updated for new TimeRange structure
-    // }
-
-    // #[test]
-    // fn test_stats_period_boundary() {
-    //     // Function stats_from_ranges needs to be updated for new TimeRange structure
-    // }
 }
