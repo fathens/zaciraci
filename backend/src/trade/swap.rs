@@ -238,9 +238,36 @@ where
             total_value += BigDecimal::from(*balance);
         } else {
             // 他のトークンの場合は、wrap.nearとの交換レートを使用して価値を計算
-            // 簡易実装として、現在のbalanceをそのまま価値とする
-            // TODO: 実際の価格取得APIとの統合
-            total_value += BigDecimal::from(*balance);
+            use crate::persistence::token_rate::TokenRate;
+            use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+            use near_sdk::AccountId;
+
+            let base_token = match token.parse::<AccountId>() {
+                Ok(account_id) => TokenOutAccount::from(account_id),
+                Err(_) => {
+                    warn!(log, "Invalid token account ID"; "token" => token);
+                    continue;
+                }
+            };
+            let quote_token =
+                TokenInAccount::from(crate::ref_finance::token_account::WNEAR_TOKEN.clone());
+
+            // 最新のレートを取得
+            match TokenRate::get_latest(&base_token, &quote_token).await {
+                Ok(Some(rate)) => {
+                    // balance * rateで価値を計算
+                    let token_value = BigDecimal::from(*balance) * rate.rate;
+                    total_value += token_value;
+                }
+                Ok(None) => {
+                    // レートが見つからない場合は警告を出して0として扱う
+                    warn!(log, "No price data found for token"; "token" => token);
+                }
+                Err(e) => {
+                    // エラーの場合も警告を出して0として扱う
+                    warn!(log, "Failed to get price for token"; "token" => token, "error" => %e);
+                }
+            }
         }
     }
 
