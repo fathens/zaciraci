@@ -168,6 +168,27 @@ impl TradeTransaction {
         result.context("Failed to get latest batch ID")
     }
 
+    pub fn get_trades_since(
+        conn: &mut PgConnection,
+        since: chrono::NaiveDateTime,
+    ) -> QueryResult<Vec<Self>> {
+        trade_transactions::table
+            .filter(trade_transactions::timestamp.ge(since))
+            .order(trade_transactions::timestamp.desc())
+            .load(conn)
+    }
+
+    pub async fn get_trades_since_async(since: chrono::NaiveDateTime) -> Result<Vec<Self>> {
+        let conn = connection_pool::get().await?;
+
+        let result = conn
+            .interact(move |conn| Self::get_trades_since(conn, since))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
+
+        result.context("Failed to get trades since date")
+    }
+
     pub fn get_batch_summary(
         conn: &mut PgConnection,
         limit: i64,
