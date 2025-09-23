@@ -234,7 +234,8 @@ Phase 1 の決定アルゴリズムを使う
    - ✅ harvest.rs, swap.rs の適切な配置
    - ✅ TokenRate構造の新フィールド対応
    - ✅ clippy/fmt全チェック通過
-   - 🛠 **残りの作業**: 多数の TODO コメント、algorithm.rs のサブモジュール不整合
+   - ✅ **algorithm.rs モジュール不整合**: 修正済み（common crateからの適切な再export構造に変更）
+   - 🛠 **残りの作業**: 多数の TODO コメント
 
 ### ✅ 高優先度 (High Priority) - 完了済み
 
@@ -590,7 +591,7 @@ backend内部の`PredictionService`が自分自身のHTTP APIを呼び出して�
 2. **TODO項目の整理** (中優先度)
    - 10件のTODOコメントが残存
    - テスト修正と実装完了が必要
-   - **コンパイルエラー**: algorithm.rsで宣言されたサブモジュール（momentum.rs, portfolio.rs, trend_following.rs）が存在しない
+   - ✅ **algorithm.rsモジュール不整合**: 修正済み（common crateからの適切な再export構造）
 
 3. **f64使用の残存** (中優先度)
    - algorithm.rs, predict.rsに多数のf64使用
