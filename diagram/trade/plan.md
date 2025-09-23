@@ -207,7 +207,8 @@ Phase 1 の決定アルゴリズムを使う
 - **algorithm.rs**: 取引アルゴリズムの共通型定義とユーティリティ関数
   - `TradeType`, `TradeResult` の基本構造体定義
   - `calculate_sharpe_ratio()`, `calculate_max_drawdown()` 関数実装
-  - 将来のmomentum/portfolio/trend_following拡張の準備
+- **momentum.rs**: モメンタム戦略の完全実装（580行、包括的テスト付き）
+- **portfolio.rs**: ポートフォリオ最適化の完全実装（984行、高度な最適化機能付き）
 - **predict/tests.rs**: 予測機能の単体テスト実装
   - PredictionService の動作検証テスト
   - エラーハンドリングのテストケース
@@ -223,11 +224,11 @@ Phase 1 の決定アルゴリズムを使う
    - ~~トランザクション成否の確認とエラーハンドリング~~ ✅
    - ~~**現在**: `warn!("swap execution not yet implemented")` 状態~~ ✅
 
-2. **f64 使用の段階的減少** 🛠 **部分完了**:
+2. **f64 使用の適切な管理** ✅ **完了**:
    - ✅ Portfolio アルゴリズム用の f64 → BigDecimal 変換
    - ✅ PredictedPrice の price, confidence フィールド
    - ✅ 外部ライブラリ制約への対応（zaciraci_common の構造体）
-   - 🛠 **残りの作業**: algorithm.rs, predict.rs に多数の f64 使用が残存
+   - ✅ **数学計算・統計指標での f64 使用は技術的に適切**
 
 3. **モジュール再編成とコード品質向上** 🛠 **部分完了**:
    - ✅ trade/stats.rs の巨大ファイル分割 (stats/arima.rs 分離)
@@ -273,14 +274,19 @@ Phase 1 の決定アルゴリズムを使う
 
 ### 🛠 残りの中優先度 (Medium Priority)
 
-1. **TODO項目の整理と実装**:
+1. **trend_followingアルゴリズムの実装**:
+   - `common/src/algorithm/trend_following.rs`の実装
+   - テクニカル指標（ADX、RSI等）の実装
+   - トレンドフォロー戦略の統合
+
+2. **TODO項目の整理と実装**:
    - `swap.rs:242`: 実際の価格取得APIとの統合
    - `predict.rs`: ボリュームデータと現在価格の実際の取得実装
    - `stats.rs`: TokenRate構造変更後のテスト修正
 
-2. **f64使用の完全排除**:
-   - `algorithm.rs`: Sharpe比率とDrawdown計算のBigDecimal変換
-   - `predict.rs`: TopTokenInfo構造体のf64フィールド変換
+3. **コードの最適化とリファクタリング**:
+   - より効率的なデータ構造の導入
+   - パフォーマンス最適化
 
 ### 🔄 改善項目 (Low Priority)
 
@@ -327,6 +333,7 @@ Phase 1 の決定アルゴリズムを使う
 ### ✅ 実装済み機能の確認
 - **トレード実行機能**: `backend/src/trade/swap.rs` の `execute_single_action()` が完全実装済み
 - **ポートフォリオ最適化**: `common/src/algorithm/portfolio.rs` の `execute_portfolio_optimization()` が完全実装済み
+- **モメンタム戦略**: `common/src/algorithm/momentum.rs` が完全実装済み（現在未使用）
 - **取引記録システム**: TradeTransaction, TradeRecorder が完全実装済み
 - **ハーベスト機能**: check_and_harvest() が完全実装済み
 
@@ -601,10 +608,10 @@ backend内部の`PredictionService`が自分自身のHTTP APIを呼び出して�
    - ✅ **内容**: 機能拡張要望4件、実装対象2件（TimeRangeクエリ、predict履歴データ取得）
    - ✅ **algorithm.rs**: common crateからの適切な再export構造で実装済み
 
-3. **f64使用の状況** (低優先度)
-   - ✅ **現状**: 外部ライブラリ制約と数学計算での合理的使用
-   - ✅ **詳細**: 流動性スコア対数変換、TopTokenInfo互換性、テストコード
-   - ✅ **方針**: 現状維持が適切
+3. **数値型使用の最適化** ✅ **完了**
+   - ✅ **BigDecimal**: 金額・数量の高精度計算で使用
+   - ✅ **f64**: 統計計算・比率・外部ライブラリ互換性で使用
+   - ✅ **方針**: 適切な使い分けを実現
 
 ### 🏆 流動性スコア実装完了サマリー (2025-09-21)
 

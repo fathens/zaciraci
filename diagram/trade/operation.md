@@ -220,7 +220,8 @@ cargo run --bin zaciraci-backend
 - [ ] パフォーマンス分析レポート自動生成
 
 ### 中優先度
-- [ ] 複数アルゴリズムの並列実行（momentum, trend_following）
+- [ ] trend_followingアルゴリズムの実装
+- [ ] 複数アルゴリズムの並列実行（momentum, portfolio, trend_following）
 - [ ] リスク管理機能の強化（ドローダウン制限）
 - [ ] 設定値の動的調整機能
 
