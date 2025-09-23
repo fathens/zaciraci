@@ -100,10 +100,10 @@ ORDER BY timestamp;
 
 ### Phase 1: 基本記録機能
 - [x] データベーススキーマ設計
-- [ ] Diesel migration ファイル作成
-- [ ] Rust struct 定義
-- [ ] 基本的な記録機能実装
+- [x] Diesel migration ファイル作成 ✅ **2025-09-18 完了**
+- [x] Rust struct 定義 (TradeTransaction) ✅ **実装済み**
+- [x] 基本的な記録機能実装 ✅ **実装済み**
 
 ### Phase 2: 取引連携
-- [ ] 実際の取引実行時の記録
-- [ ] エラーハンドリング
+- [x] 実際の取引実行時の記録 ✅ **実装済み**
+- [x] エラーハンドリング ✅ **実装済み**
