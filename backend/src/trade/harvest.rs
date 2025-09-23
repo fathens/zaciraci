@@ -72,8 +72,8 @@ pub async fn check_and_harvest(initial_amount: u128) -> Result<()> {
         "batch_id" => %latest_batch_id
     );
 
-    // 200%利益時の判定（初期投資額の3倍になった場合）
-    let harvest_threshold = &initial_value * BigDecimal::from(3); // 300% = 3倍
+    // 200%利益時の判定（初期投資額の2倍になった場合）
+    let harvest_threshold = &initial_value * BigDecimal::from(2); // 200% = 2倍
 
     if current_portfolio_value > harvest_threshold {
         info!(log, "Harvest threshold exceeded, executing harvest";
