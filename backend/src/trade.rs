@@ -1,6 +1,8 @@
+pub mod harvest;
 pub mod predict;
 pub mod recorder;
 pub mod stats;
+pub mod swap;
 
 // Re-export algorithm from common crate for backward compatibility
 // pub use zaciraci_common::algorithm;

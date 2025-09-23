@@ -692,12 +692,9 @@ struct ExecutionSummary {
 }
 
 /// ハーベスト判定と実行
-async fn check_and_harvest(_initial_amount: u128) -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "check_and_harvest"));
-
-    // TODO: 実際のポートフォリオ価値計算とハーベスト実行を実装
-    warn!(log, "Harvest functionality not yet implemented");
-    Err(anyhow::anyhow!("Harvest functionality not yet implemented"))
+async fn check_and_harvest(initial_amount: u128) -> Result<()> {
+    // 実際のハーベスト機能を呼び出す
+    crate::trade::harvest::check_and_harvest(initial_amount).await
 }
 
 /// 価格履歴からボラティリティを計算
