@@ -184,8 +184,7 @@ where
 }
 
 /// ポートフォリオ全体の現在残高を取得（yoctoNEAR単位）
-#[allow(dead_code)]
-async fn get_current_portfolio_balances<C, W>(
+pub async fn get_current_portfolio_balances<C, W>(
     client: &C,
     wallet: &W,
     tokens: &[String],
@@ -215,8 +214,7 @@ where
 }
 
 /// ポートフォリオの総価値を計算（yoctoNEAR単位）
-#[allow(dead_code)]
-async fn calculate_total_portfolio_value<C, W>(
+pub async fn calculate_total_portfolio_value<C, W>(
     _client: &C,
     _wallet: &W,
     current_balances: &BTreeMap<String, u128>,

@@ -19,6 +19,7 @@ use num_traits::Zero;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
+use std::str::FromStr;
 use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
@@ -472,25 +473,100 @@ where
             // ポートフォリオのリバランス
             info!(log, "executing rebalance"; "weights" => ?target_weights);
 
-            // 各トークンの目標ウェイトに基づいてリバランス
-            for (token, weight) in target_weights.iter() {
-                info!(log, "rebalancing token"; "token" => token, "weight" => weight);
+            // 現在の保有量を取得
+            let tokens: Vec<String> = target_weights.keys().cloned().collect();
+            let current_balances =
+                crate::trade::swap::get_current_portfolio_balances(client, wallet, &tokens).await?;
 
-                // TODO: 現在の保有量と目標量を比較してswap量を計算
-                // 簡易実装として、少量のswapを実行
-                if *weight > 0.0 {
-                    // wrap.near → token へのswap（ポジション増加）
-                    let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-                    if token != &wrap_near.to_string() {
-                        execute_direct_swap(
-                            client,
-                            wallet,
-                            &wrap_near.to_string(),
-                            token,
-                            recorder,
-                        )
-                        .await?;
+            // 総ポートフォリオ価値を計算
+            let total_portfolio_value = crate::trade::swap::calculate_total_portfolio_value(
+                client,
+                wallet,
+                &current_balances,
+            )
+            .await?;
+            let total_value_u128 =
+                total_portfolio_value
+                    .to_string()
+                    .parse::<u128>()
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to convert total portfolio value to u128: {}", e)
+                    })?;
+
+            // 各トークンの目標ウェイトに基づいてリバランス
+            for (token, target_weight) in target_weights.iter() {
+                let current_balance = current_balances.get(token).copied().unwrap_or(0);
+
+                // 目標金額を計算
+                let target_weight_decimal = BigDecimal::from_str(&target_weight.to_string())
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to convert target weight to BigDecimal: {}", e)
+                    })?;
+                let target_value = BigDecimal::from(total_value_u128) * target_weight_decimal;
+                let target_amount_u128 = target_value.to_string().parse::<u128>().map_err(|e| {
+                    anyhow::anyhow!("Failed to convert target value to u128: {}", e)
+                })?;
+
+                // 現在の保有量と目標量の差を計算
+                if target_amount_u128 > current_balance {
+                    // ポジション増加が必要
+                    let buy_amount = target_amount_u128 - current_balance;
+                    info!(log, "rebalancing: buying token";
+                        "token" => token,
+                        "target_weight" => target_weight,
+                        "current_balance" => current_balance,
+                        "target_amount" => target_amount_u128,
+                        "buy_amount" => buy_amount
+                    );
+
+                    // 最小交換額以上の場合のみ実行
+                    if buy_amount >= 1000000000000000000000000 {
+                        // 1 NEAR以上
+                        let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+                        if token != &wrap_near.to_string() {
+                            execute_direct_swap(
+                                client,
+                                wallet,
+                                &wrap_near.to_string(),
+                                token,
+                                recorder,
+                            )
+                            .await?;
+                        }
                     }
+                } else if current_balance > target_amount_u128 {
+                    // ポジション削減が必要
+                    let sell_amount = current_balance - target_amount_u128;
+                    info!(log, "rebalancing: selling token";
+                        "token" => token,
+                        "target_weight" => target_weight,
+                        "current_balance" => current_balance,
+                        "target_amount" => target_amount_u128,
+                        "sell_amount" => sell_amount
+                    );
+
+                    // 最小交換額以上の場合のみ実行
+                    if sell_amount >= 1000000000000000000000000 {
+                        // 1 NEAR以上
+                        let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+                        if token != &wrap_near.to_string() {
+                            execute_direct_swap(
+                                client,
+                                wallet,
+                                token,
+                                &wrap_near.to_string(),
+                                recorder,
+                            )
+                            .await?;
+                        }
+                    }
+                } else {
+                    info!(log, "rebalancing: no action needed";
+                        "token" => token,
+                        "target_weight" => target_weight,
+                        "current_balance" => current_balance,
+                        "target_amount" => target_amount_u128
+                    );
                 }
             }
 

@@ -201,45 +201,45 @@ Phase 1 の決定アルゴリズムを使う
    - ✅ `swap.rs`: スワップ実行機能を独立モジュールとして分離
    - ✅ モジュール間の責任分界の明確化
 
-### 🛠 新規最高優先度 (New Priority) - リファクタリングと統合
+### ✅ 新規最高優先度 (New Priority) - リファクタリングと統合 (完了済み)
 
-1. **stats APIの機能回復**:
-   - `SameBaseTokenRates::load()` の実装が退行により失われた問題の修復
-   - TokenRate データベース読み取り機能の復旧
-   - history コマンドの動作確認と修復
+1. ~~**stats APIの機能回復**~~ ✅ **完了 (2025-09-23)**:
+   - ✅ `SameBaseTokenRates::load()` の実装が退行により失われた問題の修復
+   - ✅ TokenRate データベース読み取り機能の復旧
+   - ✅ history コマンドの動作確認と修復
 
-2. **完成済み機能の適切な統合**:
-   - harvest.rs モジュールのマージ（HARVEST_RESERVE_AMOUNT機能含む）
-   - swap.rs モジュールのマージ（TradingAction実行機能含む）
-   - モジュール構造の整理（機能を失わないリファクタリング）
+2. ~~**完成済み機能の適切な統合**~~ ✅ **完了 (2025-09-23)**:
+   - ✅ harvest.rs モジュールのマージ（HARVEST_RESERVE_AMOUNT機能含む）
+   - ✅ swap.rs モジュールのマージ（TradingAction実行機能含む）
+   - ✅ モジュール構造の整理（機能を失わないリファクタリング）
 
-3. **回帰テストと動作確認**:
-   - 全取引機能の動作確認
-   - ハーベスト機能のテスト実行
-   - history コマンドの実データ取得確認
+3. ~~**回帰テストと動作確認**~~ ✅ **完了 (2025-09-23)**:
+   - ✅ 全取引機能の動作確認（全テスト成功）
+   - ✅ ハーベスト機能のテスト実行（static初期化問題解決）
+   - ✅ history コマンドの実データ取得確認
 
-### 🔍 特定された追加実装内容（real_tradeブランチから）
+### ✅ 特定された追加実装内容（real_tradeブランチから）- 統合完了
 
-**完了済み機能（統合が必要）**:
-1. **HARVEST_RESERVE_AMOUNT 機能**:
-   - 環境変数による残高保護設定（デフォルト1 NEAR）
-   - yoctoNEAR変換と残高計算ロジック
-   - 包括的なテストスイート（default/custom/parsing/conversion tests）
+**完了済み機能（統合済み）**:
+1. ~~**HARVEST_RESERVE_AMOUNT 機能**~~ ✅ **統合完了 (2025-09-23)**:
+   - ✅ 環境変数による残高保護設定（デフォルト1 NEAR）
+   - ✅ yoctoNEAR変換と残高計算ロジック
+   - ✅ 包括的なテストスイート（default/custom/parsing/conversion tests）
 
-2. **モジュール分離の完了**:
-   - `harvest.rs`: 214行の完全なハーベスト実装
-   - `swap.rs`: TradingAction実行エンジンの分離
-   - 適切な責任分界とモジュール設計
+2. ~~**モジュール分離の完了**~~ ✅ **統合完了 (2025-09-23)**:
+   - ✅ `harvest.rs`: 214行の完全なハーベスト実装
+   - ✅ `swap.rs`: TradingAction実行エンジンの分離
+   - ✅ 適切な責任分界とモジュール設計
 
-3. **取引実行エンジンの強化**:
-   - 全TradingActionパターンの実装（Hold/Sell/Switch/Rebalance/AddPosition/ReducePosition）
-   - arbitrage.rsとの統合による実際のスワップ実行
-   - 包括的なエラーハンドリングとトランザクション待機
+3. ~~**取引実行エンジンの強化**~~ ✅ **統合完了 (2025-09-23)**:
+   - ✅ 全TradingActionパターンの実装（Hold/Sell/Switch/Rebalance/AddPosition/ReducePosition）
+   - ✅ arbitrage.rsとの統合による実際のスワップ実行
+   - ✅ 包括的なエラーハンドリングとトランザクション待機
 
-4. **データベース統合**:
-   - trade_transactions テーブルとの完全連携
-   - バッチIDによる取引グループ管理
-   - ポートフォリオ価値の正確な追跡
+4. ~~**データベース統合**~~ ✅ **統合完了 (2025-09-23)**:
+   - ✅ trade_transactions テーブルとの完全連携
+   - ✅ バッチIDによる取引グループ管理
+   - ✅ ポートフォリオ価値の正確な追跡
 
 ### 🛠 中優先度 (Medium Priority)
 
@@ -247,6 +247,26 @@ Phase 1 の決定アルゴリズムを使う
    - `stats.rs:318-319`: liquidity_score, market_cap の動的取得
    - 実際の流動性スコア計算アルゴリズム
    - 市場規模データの取得方法
+
+### ✅ 新規完了項目 (2025-09-23)
+
+#### ✅ リバランス計算の改善実装
+
+**実装内容**:
+- ✅ **現在保有量の実取得**: `get_current_portfolio_balances()` 関数の活用
+- ✅ **総ポートフォリオ価値の計算**: `calculate_total_portfolio_value()` による正確な価値算出
+- ✅ **目標量の精密計算**: 目標ウェイト × 総価値による各トークンの目標保有量算出
+- ✅ **buy/sell判定の実装**: 現在保有量と目標量の差分による適切なアクション決定
+- ✅ **最小交換額閾値**: 1 NEAR以上の差がある場合のみswap実行（無駄なswap回避）
+- ✅ **詳細ログ出力**: buy/sell/no actionの判定理由とパラメータの詳細記録
+
+**技術的改善**:
+- ✅ f64 → BigDecimal変換の適切な処理（FromStr使用）
+- ✅ エラーハンドリングの強化（BigDecimal変換エラー対応）
+- ✅ モジュール間連携（swap.rsの関数をpublic化）
+
+**解決したTODO**:
+- ✅ `stats.rs:479`: "現在の保有量と目標量を比較してswap量を計算" の完全実装
 
 ### 🔄 改善項目 (Low Priority)
 
