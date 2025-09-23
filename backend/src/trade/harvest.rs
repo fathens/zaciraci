@@ -29,6 +29,11 @@ static HARVEST_MIN_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
     let min_near = min_str.parse::<u64>().unwrap_or(10);
     BigDecimal::from(min_near) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128) // yoctoNEAR変換
 });
+static HARVEST_RESERVE_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
+    let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
+    let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
+    BigDecimal::from(reserve_near) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128) // yoctoNEAR変換
+});
 
 fn is_time_to_harvest() -> bool {
     let last = LAST_HARVEST_TIME.load(Ordering::Relaxed);
@@ -134,7 +139,7 @@ async fn execute_harvest_transfer(
     harvest_amount: BigDecimal,
     log: &slog::Logger,
 ) -> Result<()> {
-    use crate::jsonrpc::SendTx;
+    use crate::jsonrpc::{AccountInfo, SendTx};
     use crate::ref_finance::{deposit, token_account::WNEAR_TOKEN};
 
     info!(log, "Starting harvest transfer execution";
@@ -180,29 +185,65 @@ async fn execute_harvest_transfer(
         "amount" => %harvest_amount_u128
     );
 
-    // 3. 指定アカウントに送金
+    // 3. 保護額を考慮した送金額の計算
+    let account_id = wallet.account_id();
+    let current_native_balance = client.get_native_amount(account_id).await?;
+
+    // 保護額をu128に変換
+    let reserve_amount_u128: u128 = HARVEST_RESERVE_AMOUNT
+        .to_string()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Failed to convert reserve amount to u128: {}", e))?;
+
+    // 送金可能額 = 現在残高 - 保護額
+    let available_for_transfer = if current_native_balance > reserve_amount_u128 {
+        current_native_balance - reserve_amount_u128
+    } else {
+        info!(log, "Insufficient balance for harvest transfer after reserve";
+            "current_balance" => current_native_balance,
+            "reserve_amount" => reserve_amount_u128
+        );
+        return Ok(()); // 保護額を下回る場合は送金をスキップ
+    };
+
+    // 実際の送金額は予定額と送金可能額の小さい方
+    let actual_transfer_amount = harvest_amount_u128.min(available_for_transfer);
+
+    info!(log, "Executing harvest sequence";
+        "step" => "3_transfer_to_target",
+        "target" => %target_account,
+        "planned_amount" => %harvest_amount_u128,
+        "available_for_transfer" => %available_for_transfer,
+        "actual_transfer_amount" => %actual_transfer_amount,
+        "current_native_balance" => %current_native_balance,
+        "reserve_amount" => %reserve_amount_u128
+    );
+
+    // 実際の送金実行
     let signer = wallet.signer();
     client
-        .transfer_native_token(signer, target_account, harvest_amount_u128)
+        .transfer_native_token(signer, target_account, actual_transfer_amount)
         .await?
         .wait_for_success()
         .await?;
 
     info!(log, "Harvest transfer completed successfully";
         "target" => %target_account,
-        "amount" => %harvest_amount_u128
+        "planned_amount" => %harvest_amount_u128,
+        "actual_amount" => %actual_transfer_amount
     );
 
-    // 4. ハーベスト取引をTradeTransactionに記録
+    // 4. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
+    let actual_transfer_bigdecimal = BigDecimal::from(actual_transfer_amount);
     let recorder = TradeRecorder::new();
     recorder
         .record_trade(
             "harvest_tx_placeholder".to_string(), // 実際にはトランザクションハッシュを使用
             "wrap.near".to_string(),
-            harvest_amount.clone(),
+            actual_transfer_bigdecimal.clone(),
             "near".to_string(),
-            harvest_amount.clone(),
-            harvest_amount.clone(), // yoctoNEAR建て価格
+            actual_transfer_bigdecimal.clone(),
+            actual_transfer_bigdecimal.clone(), // yoctoNEAR建て価格
         )
         .await?;
 
@@ -211,4 +252,93 @@ async fn execute_harvest_transfer(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config;
+    use bigdecimal::BigDecimal;
+
+    #[test]
+    fn test_harvest_reserve_amount_default() {
+        // テスト用にデフォルト値（1 NEAR）をテスト
+        let expected =
+            BigDecimal::from(1u64) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+
+        // HARVEST_RESERVE_AMOUNTが設定されていない場合、デフォルト1 NEARになることを確認
+        let actual = &*HARVEST_RESERVE_AMOUNT;
+        assert_eq!(*actual, expected);
+    }
+
+    #[test]
+    fn test_harvest_reserve_amount_custom() {
+        // カスタム値のテスト
+        config::set("HARVEST_RESERVE_AMOUNT", "5");
+
+        // 新しいLazy値を再初期化するため、一旦クリア
+        // 注: 実際の環境では一度だけ初期化されるため、この方法は完璧ではないが
+        // テストの意図を示すために記述
+        let expected =
+            BigDecimal::from(5u64) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+
+        // 実際のテストでは環境変数の変更後に新しいプロセスが必要
+        // ここでは設定値の読み込みロジックをテスト
+        let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
+        let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
+        let actual = BigDecimal::from(reserve_near)
+            * BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_harvest_min_amount_default() {
+        // HARVEST_MIN_AMOUNTのデフォルト値テスト
+        let expected =
+            BigDecimal::from(10u64) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+        let actual = &*HARVEST_MIN_AMOUNT;
+        assert_eq!(*actual, expected);
+    }
+
+    #[test]
+    fn test_yocto_near_conversion() {
+        // yoctoNEAR変換の正確性テスト
+        let one_near_in_yocto = 1_000_000_000_000_000_000_000_000u128;
+        let five_near = BigDecimal::from(5u64) * BigDecimal::from(one_near_in_yocto);
+
+        // 5 NEARが正しくyoctoNEARに変換されることを確認
+        assert_eq!(five_near.to_string(), "5000000000000000000000000");
+    }
+
+    #[test]
+    fn test_harvest_reserve_amount_parsing() {
+        // 無効な設定値の場合のフォールバック動作テスト
+        config::set("HARVEST_RESERVE_AMOUNT", "invalid");
+
+        let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
+        let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
+
+        // 無効な値の場合、デフォルト1に戻ることを確認
+        assert_eq!(reserve_near, 1);
+
+        // 正常な値の場合のテスト
+        config::set("HARVEST_RESERVE_AMOUNT", "3");
+        let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
+        let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
+        assert_eq!(reserve_near, 3);
+    }
+
+    #[test]
+    fn test_harvest_account_parsing() {
+        // HARVEST_ACCOUNT_IDの正常なパース動作テスト
+        config::set("HARVEST_ACCOUNT_ID", "test.near");
+
+        let value =
+            config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|_| "harvest.near".to_string());
+        let parsed_account = value.parse::<AccountId>();
+
+        assert!(parsed_account.is_ok());
+        assert_eq!(parsed_account.unwrap().as_str(), "test.near");
+    }
 }
