@@ -329,8 +329,9 @@ where
         // ボラティリティの計算
         let volatility = calculate_volatility_from_history(&history)?;
 
-        // 流動性スコアの計算（取引量ベース）
-        let liquidity_score = calculate_liquidity_score(&history);
+        // 流動性スコアの計算（プール情報 + 取引量ベース）
+        let liquidity_score =
+            calculate_enhanced_liquidity_score(client, &token_str, &history).await;
 
         historical_prices.push(history);
 
@@ -847,7 +848,95 @@ fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDecima
     Ok(sqrt_variance)
 }
 
-/// 流動性スコアを計算（取引量ベース）
+/// 拡張された流動性スコアを計算（プール情報 + 取引量ベース）
+/// 0.0 - 1.0 の範囲でスコアを返す
+async fn calculate_enhanced_liquidity_score<C>(
+    client: &C,
+    token_id: &str,
+    history: &PriceHistory,
+) -> f64
+where
+    C: crate::jsonrpc::ViewContract,
+{
+    // 1. 基本的な取引量ベーススコア
+    let volume_score = calculate_liquidity_score(history);
+
+    // 2. REF Financeプール流動性スコア
+    let pool_score = calculate_pool_liquidity_score(client, token_id).await;
+
+    // 3. 両方のスコアを重み付き平均で統合（取引量60%, プール40%）
+    let combined_score = volume_score * 0.6 + pool_score * 0.4;
+    combined_score.clamp(0.0, 1.0)
+}
+
+/// プール流動性スコアを計算
+async fn calculate_pool_liquidity_score<C>(client: &C, token_id: &str) -> f64
+where
+    C: crate::jsonrpc::ViewContract,
+{
+    use near_sdk::AccountId;
+
+    // REF Finance Exchangeアカウント
+    let ref_exchange_account = match "v2.ref-finance.near".parse::<AccountId>() {
+        Ok(account) => account,
+        Err(_) => return 0.3, // デフォルト値
+    };
+
+    // プールで利用可能な流動性を取得
+    match get_token_pool_liquidity(client, &ref_exchange_account, token_id).await {
+        Ok(liquidity_amount) => {
+            // 流動性をスコアに変換（10^25 yoctoNEAR を高流動性の基準とする）
+            let high_liquidity_threshold = 10u128.pow(25); // 10 NEAR相当
+            let liquidity_ratio = liquidity_amount as f64 / high_liquidity_threshold as f64;
+
+            // シグモイド的変換で 0.0-1.0 にマッピング
+            let normalized_score = liquidity_ratio / (1.0 + liquidity_ratio);
+            normalized_score.clamp(0.0, 1.0)
+        }
+        Err(_) => 0.3, // エラー時はデフォルト値
+    }
+}
+
+/// トークンのプール流動性を取得
+async fn get_token_pool_liquidity<C>(
+    client: &C,
+    ref_exchange_account: &AccountId,
+    token_id: &str,
+) -> Result<u128>
+where
+    C: crate::jsonrpc::ViewContract,
+{
+    use serde_json::Value;
+
+    // ft_balance_of でREF Exchangeでの残高を取得
+    let token_account: AccountId = token_id
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token account ID: {}", e))?;
+
+    let args = serde_json::json!({
+        "account_id": ref_exchange_account.to_string()
+    });
+
+    let result = client
+        .view_contract(&token_account, "ft_balance_of", &args)
+        .await?;
+
+    let balance_json: Value = serde_json::from_slice(&result.result)
+        .map_err(|e| anyhow::anyhow!("Failed to parse balance result: {}", e))?;
+
+    if let Some(balance_str) = balance_json.as_str() {
+        balance_str
+            .parse::<u128>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse balance: {}", e))
+    } else {
+        Err(anyhow::anyhow!(
+            "Expected string balance, got: {:?}",
+            balance_json
+        ))
+    }
+}
+
+/// 基本的な流動性スコアを計算（取引量ベース）
 /// 0.0 - 1.0 の範囲でスコアを返す
 fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
     // 取引量データがある価格ポイントを集計
@@ -1768,6 +1857,106 @@ mod tests {
         let client = MockClient;
         let result = get_token_total_supply(&client, "test.token").await.unwrap();
         assert_eq!(result, 1_000_000_000_000_000_000_000_000u128);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_enhanced_liquidity_score() {
+        // 拡張流動性スコアのテスト
+        struct MockClient;
+        impl crate::jsonrpc::ViewContract for MockClient {
+            async fn view_contract<T>(
+                &self,
+                _receiver: &near_sdk::AccountId,
+                method_name: &str,
+                _args: &T,
+            ) -> crate::Result<near_primitives::views::CallResult>
+            where
+                T: ?Sized + serde::Serialize + Sync,
+            {
+                match method_name {
+                    "ft_balance_of" => {
+                        // 高い流動性を模擬（100 NEAR相当のプール残高）
+                        let balance = (100u128 * 10u128.pow(24)).to_string(); // 100 NEAR
+                        Ok(near_primitives::views::CallResult {
+                            result: serde_json::to_vec(&balance).unwrap(),
+                            logs: vec![],
+                        })
+                    }
+                    _ => Err(anyhow::anyhow!("Unexpected method: {}", method_name)),
+                }
+            }
+        }
+
+        let client = MockClient;
+
+        // テスト用の取引履歴（中程度の取引量）
+        let history = zaciraci_common::algorithm::types::PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![zaciraci_common::algorithm::types::PricePoint {
+                timestamp: chrono::Utc::now(),
+                price: BigDecimal::from(100),
+                volume: Some(BigDecimal::from(5u128 * 10u128.pow(24))), // 5 NEAR相当の取引量
+            }],
+        };
+
+        let score = calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
+
+        // プール流動性が高いため、スコアは0.5以上になるはず
+        assert!(
+            score >= 0.5,
+            "Enhanced liquidity score should be >= 0.5 with high pool liquidity, got: {}",
+            score
+        );
+        assert!(
+            score <= 1.0,
+            "Enhanced liquidity score should be <= 1.0, got: {}",
+            score
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_token_pool_liquidity() {
+        // プール流動性取得のテスト
+        struct MockClient;
+        impl crate::jsonrpc::ViewContract for MockClient {
+            async fn view_contract<T>(
+                &self,
+                receiver: &near_sdk::AccountId,
+                method_name: &str,
+                _args: &T,
+            ) -> crate::Result<near_primitives::views::CallResult>
+            where
+                T: ?Sized + serde::Serialize + Sync,
+            {
+                match method_name {
+                    "ft_balance_of" => {
+                        // テスト用の残高（50 NEAR相当）
+                        let balance = (50u128 * 10u128.pow(24)).to_string();
+                        Ok(near_primitives::views::CallResult {
+                            result: serde_json::to_vec(&balance).unwrap(),
+                            logs: vec![],
+                        })
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "Unexpected method {} for {}",
+                        method_name,
+                        receiver
+                    )),
+                }
+            }
+        }
+
+        let client = MockClient;
+        let ref_account = "v2.ref-finance.near"
+            .parse::<near_sdk::AccountId>()
+            .unwrap();
+
+        let result = get_token_pool_liquidity(&client, &ref_account, "test.token")
+            .await
+            .unwrap();
+
+        assert_eq!(result, 50u128 * 10u128.pow(24)); // 50 NEAR
     }
 
     #[test]

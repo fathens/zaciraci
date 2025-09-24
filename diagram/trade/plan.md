@@ -268,6 +268,44 @@ Phase 1 の決定アルゴリズムを使う
 **解決したTODO**:
 - ✅ `stats.rs:479`: "現在の保有量と目標量を比較してswap量を計算" の完全実装
 
+### ✅ 新規完了項目 (2025-09-24)
+
+#### ✅ 市場規模データの実データ化実装
+
+**実装内容**:
+- ✅ **実際のトークン発行量取得**: `get_token_total_supply()` 関数によるft_total_supply RPCコール
+- ✅ **市場規模計算の改善**: `estimate_market_cap_async()` 関数で実際の発行量データを使用
+- ✅ **ブロックチェーン連携**: NEAR RPCクライアントとの完全統合
+- ✅ **エラーハンドリング**: RPC失敗時の適切なフォールバック処理
+- ✅ **テストカバレッジ**: モック実装を使った包括的なテスト追加
+
+**技術的改善**:
+- ✅ JSONレスポンスの適切なパース処理（result.resultからの値抽出）
+- ✅ `ExecutionOutcomeView` から `CallResult` への適切な型変換
+- ✅ BigDecimal使用による高精度な市場規模計算
+
+**解決したTODO**:
+- ✅ `stats.rs:331,806`: "実際の発行量データをAPIから取得" の完全実装
+
+#### ✅ ハーベスト機能の完全強化実装
+
+**実装内容**:
+- ✅ **トランザクションハッシュの正確な記録**: FinalExecutionOutcomeViewEnumからの実際のハッシュ取得
+- ✅ **エラーハンドリングの強化**: withdraw, unwrap, transfer各段階での詳細ログと個別エラー処理
+- ✅ **非同期処理の修正**: async/awaitパターンの適切な実装
+- ✅ **統合テストの拡充**: しきい値計算、時間間隔チェック、設定パース等9つのテストケース
+
+**技術的改善**:
+- ✅ `wait_for_executed()` による正確なトランザクション結果取得
+- ✅ `transaction_outcome.id` からのハッシュ抽出処理
+- ✅ clippy警告の修正（unnecessary_lazy_evaluations対応）
+- ✅ 段階的エラー処理によるデバッグ容易性向上
+
+**解決した課題**:
+- ✅ "harvest_tx_placeholder" → 実際のトランザクションハッシュ記録
+- ✅ async/await構文エラーの修正
+- ✅ ExecutionOutcomeView構造体の適切な活用
+
 ### 🔄 改善項目 (Low Priority)
 
 1. **設定管理の強化**:
