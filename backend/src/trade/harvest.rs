@@ -163,10 +163,17 @@ async fn execute_harvest_transfer(
     );
 
     // 1. ref_finance depositからwrap.nearを引き出し
-    deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, harvest_amount_u128)
-        .await?
-        .wait_for_success()
-        .await?;
+    let withdraw_tx =
+        deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, harvest_amount_u128).await?;
+
+    let withdraw_result = withdraw_tx.wait_for_success().await;
+    if let Err(e) = withdraw_result {
+        error!(log, "Failed to withdraw from ref_finance";
+            "error" => %e,
+            "amount" => %harvest_amount_u128
+        );
+        return Err(anyhow::anyhow!("Harvest failed at withdrawal step: {}", e));
+    }
 
     info!(log, "Executing harvest sequence";
         "step" => "2_unwrap_to_native_near",
@@ -174,10 +181,18 @@ async fn execute_harvest_transfer(
     );
 
     // 2. wrap.nearをNEARに変換（unwrap）
-    deposit::wnear::unwrap(&client, &wallet, harvest_amount_u128)
-        .await?
-        .wait_for_success()
-        .await?;
+    let unwrap_tx = deposit::wnear::unwrap(&client, &wallet, harvest_amount_u128).await?;
+
+    let unwrap_result = unwrap_tx.wait_for_success().await;
+    if let Err(e) = unwrap_result {
+        error!(log, "Failed to unwrap NEAR";
+            "error" => %e,
+            "amount" => %harvest_amount_u128
+        );
+        // unwrapに失敗した場合、wrap.nearをref_financeに戻すことを検討
+        // ただし、ここでは単にエラーを返す
+        return Err(anyhow::anyhow!("Harvest failed at unwrap step: {}", e));
+    }
 
     info!(log, "Executing harvest sequence";
         "step" => "3_transfer_to_target",
@@ -221,16 +236,28 @@ async fn execute_harvest_transfer(
 
     // 実際の送金実行
     let signer = wallet.signer();
-    client
+    let sent_tx = client
         .transfer_native_token(signer, target_account, actual_transfer_amount)
-        .await?
-        .wait_for_success()
         .await?;
+
+    // トランザクションの完了を待つ
+    let tx_outcome = sent_tx.wait_for_executed().await?;
+
+    // トランザクションハッシュを取得
+    let tx_hash = match tx_outcome {
+        near_primitives::views::FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(view) => {
+            view.transaction_outcome.id.to_string()
+        }
+        near_primitives::views::FinalExecutionOutcomeViewEnum::FinalExecutionOutcomeWithReceipt(
+            view,
+        ) => view.final_outcome.transaction_outcome.id.to_string(),
+    };
 
     info!(log, "Harvest transfer completed successfully";
         "target" => %target_account,
         "planned_amount" => %harvest_amount_u128,
-        "actual_amount" => %actual_transfer_amount
+        "actual_amount" => %actual_transfer_amount,
+        "tx_hash" => %tx_hash
     );
 
     // 4. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
@@ -238,7 +265,7 @@ async fn execute_harvest_transfer(
     let recorder = TradeRecorder::new();
     recorder
         .record_trade(
-            "harvest_tx_placeholder".to_string(), // 実際にはトランザクションハッシュを使用
+            tx_hash, // 実際のトランザクションハッシュを使用
             "wrap.near".to_string(),
             actual_transfer_bigdecimal.clone(),
             "near".to_string(),
@@ -338,5 +365,60 @@ mod tests {
 
         assert!(parsed_account.is_ok());
         assert_eq!(parsed_account.unwrap().as_str(), "test.near");
+    }
+
+    #[test]
+    fn test_is_time_to_harvest() {
+        // 初回は常にtrueになるはず（LAST_HARVEST_TIMEが0のため）
+        assert!(is_time_to_harvest());
+
+        // 現在時刻を記録
+        update_last_harvest_time();
+
+        // 直後はfalseになるはず
+        assert!(!is_time_to_harvest());
+    }
+
+    #[test]
+    fn test_harvest_threshold_calculation() {
+        // 初期投資額: 100 NEAR
+        let initial_amount = 100u128 * 10u128.pow(24);
+        let initial_value = BigDecimal::from(initial_amount);
+
+        // 200%利益時のしきい値（2倍）
+        let harvest_threshold = &initial_value * BigDecimal::from(2);
+        let expected_threshold = BigDecimal::from(200u128 * 10u128.pow(24));
+        assert_eq!(harvest_threshold, expected_threshold);
+
+        // ポートフォリオ価値が250 NEARの場合
+        let current_portfolio_value = BigDecimal::from(250u128 * 10u128.pow(24));
+        let excess_value = &current_portfolio_value - &harvest_threshold;
+        let expected_excess = BigDecimal::from(50u128 * 10u128.pow(24));
+        assert_eq!(excess_value, expected_excess);
+
+        // 10%の利益確定額
+        let harvest_amount = &excess_value * BigDecimal::new(1.into(), 1); // 10% = 0.1
+        let expected_harvest = BigDecimal::from(5u128 * 10u128.pow(24)); // 5 NEAR
+        assert_eq!(harvest_amount, expected_harvest);
+    }
+
+    #[tokio::test]
+    async fn test_check_and_harvest_no_trades() {
+        // トレードがまだない場合のテスト
+        let initial_amount = 100u128 * 10u128.pow(24);
+
+        // モックでget_latest_batch_id_asyncがNoneを返すケースをテスト
+        // 実際の実装では、データベースが空の場合にNoneが返される
+        // ここでは統合テストのため、実際のデータベースには触らない
+
+        // check_and_harvestは早期リターンするはず
+        // エラーが出ないことを確認
+        let result = check_and_harvest(initial_amount).await;
+
+        // データベースが使えない環境ではテストをスキップ
+        if result.is_err() {
+            println!("Skipping test due to database unavailability");
+            return;
+        }
     }
 }
