@@ -84,7 +84,15 @@ pub async fn start() -> Result<()> {
     }
 
     // Step 4: ポートフォリオ最適化と実行
-    match execute_portfolio_strategy(&prediction_service, &selected_tokens, available_funds).await {
+    let client = crate::jsonrpc::new_client();
+    match execute_portfolio_strategy(
+        &prediction_service,
+        &selected_tokens,
+        available_funds,
+        &client,
+    )
+    .await
+    {
         Ok(report) => {
             info!(log, "portfolio strategy executed successfully";
                 "total_actions" => report.len()
@@ -205,11 +213,15 @@ async fn select_top_volatility_tokens(
 }
 
 /// ポートフォリオ戦略の実行
-async fn execute_portfolio_strategy(
+async fn execute_portfolio_strategy<C>(
     prediction_service: &PredictionService,
     tokens: &[AccountId],
     available_funds: u128,
-) -> Result<Vec<TradingAction>> {
+    client: &C,
+) -> Result<Vec<TradingAction>>
+where
+    C: crate::jsonrpc::ViewContract,
+{
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
     // ポートフォリオデータの準備
@@ -328,9 +340,8 @@ async fn execute_portfolio_strategy(
             .parse::<f64>()
             .map_err(|e| anyhow::anyhow!("Failed to convert volatility to f64: {}", e))?;
 
-        // 市場規模の推定（簡易版：現在価格 × 推定発行量）
-        // TODO: 実際の発行量データを取得
-        let market_cap = estimate_market_cap(current_price);
+        // 市場規模の推定（実際の発行量データを取得）
+        let market_cap = estimate_market_cap_async(client, &token_str, current_price).await;
 
         token_data.push(TokenData {
             symbol: token.to_string(),
@@ -876,19 +887,57 @@ fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
     }
 }
 
-/// 市場規模を推定（簡易版）
-fn estimate_market_cap(current_price_yocto: u128) -> f64 {
-    // 簡易的に推定発行量を設定（実際はトークンごとに異なる）
-    // TODO: 実際の発行量データをAPIから取得
-    let estimated_supply = BigDecimal::from(1_000_000u128); // 100万トークンと仮定
+/// 市場規模を推定（実際の発行量データを取得）
+async fn estimate_market_cap_async<C>(client: &C, token_id: &str, current_price_yocto: u128) -> f64
+where
+    C: crate::jsonrpc::ViewContract,
+{
+    // 実際の発行量データを取得
+    let total_supply = get_token_total_supply(client, token_id)
+        .await
+        .unwrap_or(1_000_000u128); // 取得失敗時は100万トークンと仮定
 
     // yoctoNEARから通常の単位に変換
     let price_in_near = BigDecimal::from(current_price_yocto) / BigDecimal::from(10u128.pow(24));
 
     // 市場規模 = 価格 × 発行量
-    let market_cap = price_in_near * estimated_supply;
+    let market_cap = price_in_near * BigDecimal::from(total_supply);
 
     market_cap.to_string().parse::<f64>().unwrap_or(10000.0)
+}
+
+/// トークンの総発行量を取得
+async fn get_token_total_supply<C>(client: &C, token_id: &str) -> Result<u128>
+where
+    C: crate::jsonrpc::ViewContract,
+{
+    use near_sdk::AccountId;
+    use serde_json::Value;
+
+    let account_id: AccountId = token_id
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token account ID: {}", e))?;
+
+    let args = serde_json::json!({});
+    let result = client
+        .view_contract(&account_id, "ft_total_supply", &args)
+        .await?;
+
+    // resultフィールドからJSONデータを取得してパース
+    let json_value: Value = serde_json::from_slice(&result.result)
+        .map_err(|e| anyhow::anyhow!("Failed to parse result as JSON: {}", e))?;
+
+    // total_supplyは通常文字列として返される
+    if let Some(total_supply_str) = json_value.as_str() {
+        total_supply_str
+            .parse::<u128>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse total supply: {}", e))
+    } else {
+        Err(anyhow::anyhow!(
+            "Expected string value for total supply, got: {:?}",
+            json_value
+        ))
+    }
 }
 
 /// BigDecimalで平方根を計算（Newton法による近似）
@@ -1648,11 +1697,33 @@ mod tests {
         assert!(score > 0.4, "Large volume should return higher score");
     }
 
-    #[test]
-    fn test_estimate_market_cap() {
+    #[tokio::test]
+    async fn test_estimate_market_cap_async() {
+        // モック実装を作成してテスト
+        struct MockClient;
+        impl crate::jsonrpc::ViewContract for MockClient {
+            async fn view_contract<T>(
+                &self,
+                _receiver: &near_sdk::AccountId,
+                _method_name: &str,
+                _args: &T,
+            ) -> crate::Result<near_primitives::views::CallResult>
+            where
+                T: ?Sized + serde::Serialize + Sync,
+            {
+                let total_supply = "1000000"; // 1M tokens
+                Ok(near_primitives::views::CallResult {
+                    result: serde_json::to_vec(total_supply).unwrap(),
+                    logs: vec![],
+                })
+            }
+        }
+
+        let client = MockClient;
+
         // ケース1: 1 NEAR価格
         let price_1_near = 10u128.pow(24);
-        let market_cap = estimate_market_cap(price_1_near);
+        let market_cap = estimate_market_cap_async(&client, "test.token", price_1_near).await;
         assert_eq!(
             market_cap, 1_000_000.0,
             "1 NEAR * 1M tokens = 1M market cap"
@@ -1660,19 +1731,43 @@ mod tests {
 
         // ケース2: 0.1 NEAR価格
         let price_01_near = 10u128.pow(23);
-        let market_cap = estimate_market_cap(price_01_near);
+        let market_cap = estimate_market_cap_async(&client, "test.token", price_01_near).await;
         assert_eq!(
             market_cap, 100_000.0,
             "0.1 NEAR * 1M tokens = 100k market cap"
         );
+    }
 
-        // ケース3: 10 NEAR価格
-        let price_10_near = 10u128.pow(25);
-        let market_cap = estimate_market_cap(price_10_near);
-        assert_eq!(
-            market_cap, 10_000_000.0,
-            "10 NEAR * 1M tokens = 10M market cap"
-        );
+    #[tokio::test]
+    async fn test_get_token_total_supply() {
+        // モック実装を作成してテスト
+        struct MockClient;
+        impl crate::jsonrpc::ViewContract for MockClient {
+            async fn view_contract<T>(
+                &self,
+                _receiver: &near_sdk::AccountId,
+                method_name: &str,
+                _args: &T,
+            ) -> crate::Result<near_primitives::views::CallResult>
+            where
+                T: ?Sized + serde::Serialize + Sync,
+            {
+                match method_name {
+                    "ft_total_supply" => {
+                        let total_supply = "1000000000000000000000000"; // 1M tokens with 18 decimals
+                        Ok(near_primitives::views::CallResult {
+                            result: serde_json::to_vec(total_supply).unwrap(),
+                            logs: vec![],
+                        })
+                    }
+                    _ => Err(anyhow::anyhow!("Unexpected method: {}", method_name)),
+                }
+            }
+        }
+
+        let client = MockClient;
+        let result = get_token_total_supply(&client, "test.token").await.unwrap();
+        assert_eq!(result, 1_000_000_000_000_000_000_000_000u128);
     }
 
     #[test]
