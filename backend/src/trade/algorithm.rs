@@ -11,13 +11,8 @@ use std::str::FromStr;
 
 // ==================== 共通型定義 ====================
 
-/// 取引の種類
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum TradeType {
-    Buy,
-    Sell,
-    Swap,
-}
+// 共通クレートからTradeTypeを再エクスポート
+pub use zaciraci_common::algorithm::types::TradeType;
 
 /// 取引の実行結果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,13 +40,8 @@ pub struct AlgorithmConfig {
     pub max_slippage: f64,
 }
 
-/// 価格データポイント
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PriceDataPoint {
-    pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
-    pub volume: Option<BigDecimal>,
-}
+// 共通クレートからPricePointを再エクスポート
+pub use zaciraci_common::algorithm::types::PricePoint as PriceDataPoint;
 
 /// トークンの市場データ
 #[derive(Debug, Clone, Serialize, Deserialize)]

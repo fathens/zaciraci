@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zaciraci_common::algorithm::prediction::{
     PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
-    PricePoint as CommonPricePoint, TokenPredictionResult, TopTokenInfo,
+    TokenPredictionResult, TopTokenInfo,
 };
 use zaciraci_common::api::chronos::ChronosApiClient;
 use zaciraci_common::api::traits::PredictionClient;
@@ -23,13 +23,8 @@ pub struct TokenPriceHistory {
     pub prices: Vec<PricePoint>,
 }
 
-/// 価格ポイント
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PricePoint {
-    pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
-    pub volume: Option<BigDecimal>,
-}
+// 共通クレートのPricePointを使用
+pub use zaciraci_common::algorithm::types::PricePoint;
 
 /// 予測結果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,15 +331,7 @@ impl PredictionProvider for PredictionService {
         Ok(CommonPriceHistory {
             token: history.token,
             quote_token: history.quote_token,
-            prices: history
-                .prices
-                .into_iter()
-                .map(|p| CommonPricePoint {
-                    timestamp: p.timestamp,
-                    price: p.price.clone(),
-                    volume: p.volume.clone(),
-                })
-                .collect(),
+            prices: history.prices, // 型が統一されたので変換不要
         })
     }
 
