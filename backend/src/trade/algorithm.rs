@@ -67,56 +67,16 @@ pub struct MarketData {
 
 // ==================== 共通ユーティリティ関数 ====================
 
-// 共通ユーティリティ関数はcommonクレートを使用
-// Use common crate functions for price calculations, moving averages, RSI, etc.
-// Re-export commonly used functions from common crate for convenience
-
-/// リスク調整リターンを計算（シャープレシオ）
-pub fn calculate_sharpe_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
-    if returns.is_empty() {
-        return 0.0;
-    }
-
-    let avg_return: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
-    let excess_return = avg_return - risk_free_rate;
-
-    // 標準偏差を計算
-    let variance: f64 = returns
-        .iter()
-        .map(|r| (r - avg_return).powi(2))
-        .sum::<f64>()
-        / returns.len() as f64;
-    let std_dev = variance.sqrt();
-
-    if std_dev == 0.0 {
-        return 0.0;
-    }
-
-    excess_return / std_dev
-}
-
-/// 最大ドローダウンを計算
-pub fn calculate_max_drawdown(portfolio_values: &[f64]) -> f64 {
-    if portfolio_values.len() < 2 {
-        return 0.0;
-    }
-
-    let mut max_drawdown = 0.0;
-    let mut peak = portfolio_values[0];
-
-    for &value in portfolio_values.iter().skip(1) {
-        if value > peak {
-            peak = value;
-        }
-
-        let drawdown = (peak - value) / peak;
-        if drawdown > max_drawdown {
-            max_drawdown = drawdown;
-        }
-    }
-
-    max_drawdown * 100.0 // パーセンテージで返す
-}
+// 共通クレートの関数を再エクスポート
+pub use zaciraci_common::algorithm::indicators::{
+    calculate_sharpe_ratio,
+    calculate_max_drawdown,
+    calculate_price_change_percentage,
+    calculate_moving_average,
+    calculate_rsi,
+    calculate_trading_cost,
+    calculate_sortino_ratio,
+};
 
 // ==================== トレイト定義 ====================
 
@@ -167,7 +127,8 @@ mod tests {
         let max_dd = calculate_max_drawdown(&values);
 
         // 120から80への下落が最大: (120-80)/120 = 33.33%
-        assert!((max_dd - 33.333333333333336).abs() < 0.001);
+        // Note: common crateの実装は100倍しないので、0.333...
+        assert!((max_dd - 0.33333333333333336).abs() < 0.001);
 
         // 単調増加の場合
         let values = vec![100.0, 110.0, 120.0, 130.0];
