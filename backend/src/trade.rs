@@ -32,8 +32,11 @@ async fn run_record_rates() {
 }
 
 async fn run_trade() {
-    const CRON_CONF: &str = "0 0 * * * *"; // 毎時0分
-    cronjob(CRON_CONF.parse().unwrap(), stats::start, "auto_trade").await;
+    // デフォルト: 1日1回（午前0時）、環境変数で設定可能
+    let cron_conf =
+        config::get("TRADE_CRON_SCHEDULE").unwrap_or_else(|_| "0 0 0 * * *".to_string()); // デフォルト: 毎日午前0時
+
+    cronjob(cron_conf.parse().unwrap(), stats::start, "auto_trade").await;
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)

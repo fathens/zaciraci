@@ -16,13 +16,13 @@ cli_tokens で Chronos API を使う実績のあるコードが common にある
 - **ポートフォリオ最適化**: 既存の Portfolio アルゴリズムを活用
 - **価格予測**: Chronos API を使用した価格予測（PredictionService経由）
 - **ボラティリティ計算**: BigDecimal を使用した高精度計算（Newton法平方根）
-- **Cron統合**: `trade.rs` で毎時0分に自動実行
+- **Cron統合**: `trade.rs` でデフォルト毎日午前0時に自動実行（環境変数で設定可能）
 
 ### ルール準拠
 
 `rules.md` で定義されたトレードルールに完全対応:
 - 評価頻度: 10日間（`TRADE_EVALUATION_DAYS`）
-- トレード頻度: 毎時0分実行（24回/日）
+- トレード頻度: デフォルト毎日午前0時（環境変数で設定可能）
 - トークン選定: top 10 volatility（`TRADE_TOP_TOKENS`）
 - ハーベスト: 200%超過の10%を収穫
 

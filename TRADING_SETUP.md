@@ -38,6 +38,13 @@ TRADE_TOP_TOKENS=10
 # 評価期間（日数）
 TRADE_EVALUATION_DAYS=10
 
+# トレード実行スケジュール（cron形式）
+TRADE_CRON_SCHEDULE="0 0 0 * * *"  # デフォルト: 毎日午前0時
+# 例:
+# "0 0 * * * *"     - 毎時実行
+# "0 0 */12 * * *"  - 12時間ごと
+# "0 0 0 * * MON"   - 毎週月曜日
+
 # ハーベスト設定
 HARVEST_ACCOUNT_ID=harvest-account.near  # 利益送金先
 HARVEST_MIN_AMOUNT=10                    # 最小ハーベスト額（NEAR）
@@ -75,7 +82,7 @@ cargo run --release
 ### 自動実行スケジュール
 
 - **価格記録**: 5分ごと（`0 */5 * * * *`）
-- **トレード実行**: 毎時0分（`0 0 * * * *`）
+- **トレード実行**: デフォルト毎日午前0時（環境変数`TRADE_CRON_SCHEDULE`で設定可能）
 
 ### トレード実行フロー
 
