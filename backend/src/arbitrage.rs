@@ -34,8 +34,18 @@ static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
         .unwrap_or_else(|_| Duration::from_secs(10)) // デフォルト: 10秒
 });
 
+fn is_needed() -> bool {
+    config::get("ARBITRAGE_NEEDED")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
 pub async fn run() {
     let log = DEFAULT.new(o!("function" => "main_loop"));
+    if !is_needed() {
+        info!(log, "Arbitrage is not needed.");
+        return;
+    }
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
     loop {
