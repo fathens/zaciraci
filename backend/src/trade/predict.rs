@@ -58,7 +58,7 @@ pub struct PredictionService {
 }
 
 impl PredictionService {
-    pub fn new(chronos_url: String, _backend_url: String) -> Self {
+    pub fn new(chronos_url: String) -> Self {
         Self {
             chronos_client: ChronosApiClient::new(chronos_url),
         }

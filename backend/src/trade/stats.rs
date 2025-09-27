@@ -69,10 +69,8 @@ pub async fn start() -> Result<()> {
     // Step 2: PredictionServiceの初期化
     let chronos_url =
         std::env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
-    let backend_url =
-        std::env::var("BACKEND_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
-    let prediction_service = PredictionService::new(chronos_url, backend_url);
+    let prediction_service = PredictionService::new(chronos_url);
 
     // Step 3: トークン選定 (top volatility)
     let selected_tokens = select_top_volatility_tokens(&prediction_service).await?;

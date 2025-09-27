@@ -95,7 +95,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
     let fixture = TestFixture::new();
     fixture.setup_volatility_data().await?;
 
-    let service = PredictionService::new("http://localhost:8000".to_string(), "unused".to_string());
+    let service = PredictionService::new("http://localhost:8000".to_string());
     let start_date = Utc::now() - Duration::days(1);
     let end_date = Utc::now();
 
@@ -152,7 +152,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         .setup_price_history(&test_token, &expected_prices)
         .await?;
 
-    let service = PredictionService::new("http://localhost:8000".to_string(), "unused".to_string());
+    let service = PredictionService::new("http://localhost:8000".to_string());
     let start_date = Utc::now() - Duration::hours(10);
     let end_date = Utc::now();
 
@@ -207,10 +207,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_convert_prediction_result() {
-    let service = PredictionService::new(
-        "http://localhost:8000".to_string(),
-        "http://localhost:3000".to_string(),
-    );
+    let service = PredictionService::new("http://localhost:8000".to_string());
 
     let result = PredictionResult {
         task_id: "test-id".to_string(),
@@ -251,7 +248,7 @@ async fn test_convert_prediction_result() {
 #[tokio::test]
 #[serial]
 async fn test_error_handling_comprehensive() -> Result<()> {
-    let service = PredictionService::new("http://localhost:8000".to_string(), "unused".to_string());
+    let service = PredictionService::new("http://localhost:8000".to_string());
 
     let start_date = Utc::now() - Duration::days(7);
     let end_date = Utc::now();
@@ -290,10 +287,7 @@ async fn test_error_handling_comprehensive() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_empty_price_history() {
-    let service = PredictionService::new(
-        "http://localhost:8000".to_string(),
-        "http://localhost:3000".to_string(),
-    );
+    let service = PredictionService::new("http://localhost:8000".to_string());
 
     let history = TokenPriceHistory {
         token: "test.near".to_string(),
@@ -381,7 +375,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
     TokenRate::batch_insert(&all_rates).await?;
 
-    let service = PredictionService::new("http://localhost:8000".to_string(), "unused".to_string());
+    let service = PredictionService::new("http://localhost:8000".to_string());
 
     let start_date = Utc::now() - Duration::hours(10);
     let end_date = Utc::now();
