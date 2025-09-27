@@ -2,13 +2,13 @@ mod arima;
 
 use crate::Result;
 use crate::config;
-use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::trade::predict::PredictionService;
 use crate::trade::recorder::TradeRecorder;
+use crate::trade::swap;
 use crate::types::MilliNear;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
@@ -459,13 +459,13 @@ where
 
             // Step 1: token → wrap.near
             if token != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
+                swap::execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
                     .await?;
             }
 
             // Step 2: wrap.near → target
             if target != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, &wrap_near.to_string(), target, recorder)
+                swap::execute_direct_swap(client, wallet, &wrap_near.to_string(), target, recorder)
                     .await?;
             }
 
@@ -476,7 +476,7 @@ where
             // from から to へ切り替え（直接スワップ）
             info!(log, "executing switch"; "from" => from, "to" => to);
 
-            execute_direct_swap(client, wallet, from, to, recorder).await?;
+            swap::execute_direct_swap(client, wallet, from, to, recorder).await?;
 
             info!(log, "switch completed"; "from" => from, "to" => to);
             Ok(())
@@ -536,7 +536,7 @@ where
                         // 1 NEAR以上
                         let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
                         if token != &wrap_near.to_string() {
-                            execute_direct_swap(
+                            swap::execute_direct_swap(
                                 client,
                                 wallet,
                                 &wrap_near.to_string(),
@@ -562,7 +562,7 @@ where
                         // 1 NEAR以上
                         let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
                         if token != &wrap_near.to_string() {
-                            execute_direct_swap(
+                            swap::execute_direct_swap(
                                 client,
                                 wallet,
                                 token,
@@ -592,7 +592,7 @@ where
             // wrap.near → token へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, &wrap_near.to_string(), token, recorder)
+                swap::execute_direct_swap(client, wallet, &wrap_near.to_string(), token, recorder)
                     .await?;
             }
 
@@ -606,7 +606,7 @@ where
             // token → wrap.near へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
+                swap::execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
                     .await?;
             }
 
@@ -614,159 +614,6 @@ where
             Ok(())
         }
     }
-}
-
-/// 2つのトークン間で直接スワップを実行
-async fn execute_direct_swap<C, W>(
-    client: &C,
-    wallet: &W,
-    from_token: &str,
-    to_token: &str,
-    recorder: &TradeRecorder,
-) -> Result<()>
-where
-    C: crate::jsonrpc::AccountInfo
-        + crate::jsonrpc::SendTx
-        + crate::jsonrpc::ViewContract
-        + crate::jsonrpc::GasInfo,
-    <C as crate::jsonrpc::SendTx>::Output: std::fmt::Display + crate::jsonrpc::SentTx,
-    W: crate::wallet::Wallet,
-{
-    let log = DEFAULT.new(o!(
-        "function" => "execute_direct_swap",
-        "from" => format!("{}", from_token),
-        "to" => format!("{}", to_token)
-    ));
-    info!(log, "starting direct swap");
-
-    // プールデータを読み込み
-    let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
-    let graph = crate::ref_finance::path::graph::TokenGraph::new(pools);
-
-    // from_token の残高を取得
-    let from_token_account: crate::ref_finance::token_account::TokenAccount = from_token
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid from_token: {}", e))?;
-    let balance = crate::ref_finance::balances::start(client, wallet, &from_token_account).await?;
-
-    if balance == 0 {
-        return Err(anyhow::anyhow!("No balance for token: {}", from_token));
-    }
-
-    // 少量のswapを実行（残高の10%程度）
-    let swap_amount = balance / 10;
-    let start_balance = crate::types::MicroNear::from_yocto(swap_amount);
-
-    // パス検索用のstart tokenを準備
-    let start: &crate::ref_finance::token_account::TokenInAccount = &from_token_account.into();
-
-    // ガス価格を取得
-    let gas_price = client.get_gas_price(None).await?;
-
-    // パスを検索（arbitrage.rsの実装を参考）
-    let previews =
-        crate::ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
-
-    if let Some(previews) = previews {
-        let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
-
-        // ストレージデポジットの確認
-        let res = crate::ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
-        if res.is_none() {
-            return Err(anyhow::anyhow!("Failed to deposit storage"));
-        }
-
-        // スワップを実行
-        for (preview, path) in pre_path {
-            let arg = crate::ref_finance::swap::SwapArg {
-                initial_in: preview.input_value.into(),
-                min_out: preview.output_value - preview.gain,
-            };
-
-            let (sent_tx, out) =
-                crate::ref_finance::swap::run_swap(client, wallet, &path.0, arg).await?;
-
-            // トランザクションの完了を待機
-            if let Err(e) = sent_tx.wait_for_success().await {
-                error!(log, "transaction failed"; "tx" => %sent_tx, "error" => %e);
-                return Err(e);
-            }
-
-            info!(log, "swap completed";
-                "estimated_output" => out,
-                "tx" => %sent_tx
-            );
-
-            // 取引記録をデータベースに保存
-            if let Err(e) = record_successful_trade(
-                recorder,
-                sent_tx.to_string(),
-                from_token,
-                swap_amount,
-                to_token,
-                out,
-            )
-            .await
-            {
-                error!(log, "failed to record trade"; "tx" => %sent_tx, "error" => %e);
-                // 記録失敗はスワップの成功には影響しない
-            }
-        }
-
-        info!(log, "direct swap successful"; "from" => from_token, "to" => to_token);
-        Ok(())
-    } else {
-        warn!(log, "no swap path found"; "from" => from_token, "to" => to_token);
-        Err(anyhow::anyhow!(
-            "No swap path found from {} to {}",
-            from_token,
-            to_token
-        ))
-    }
-}
-
-/// 成功した取引をデータベースに記録
-async fn record_successful_trade(
-    recorder: &TradeRecorder,
-    tx_hash: String,
-    from_token: &str,
-    from_amount: u128,
-    to_token: &str,
-    to_amount: u128,
-) -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "record_successful_trade"));
-
-    // yoctoNEAR建て価格を計算（簡易版）
-    let price_yocto_near = if from_token.contains("wrap.near") || from_token == "near" {
-        BigDecimal::from(from_amount)
-    } else if to_token.contains("wrap.near") || to_token == "near" {
-        BigDecimal::from(to_amount)
-    } else {
-        // wrap.near以外の場合、from_amountをベースに推定
-        BigDecimal::from(from_amount)
-    };
-
-    recorder
-        .record_trade(
-            tx_hash.clone(),
-            from_token.to_string(),
-            BigDecimal::from(from_amount),
-            to_token.to_string(),
-            BigDecimal::from(to_amount),
-            price_yocto_near,
-        )
-        .await?;
-
-    info!(log, "trade recorded successfully";
-        "tx_hash" => tx_hash,
-        "from_token" => from_token,
-        "from_amount" => from_amount,
-        "to_token" => to_token,
-        "to_amount" => to_amount,
-        "batch_id" => recorder.get_batch_id()
-    );
-
-    Ok(())
 }
 
 /// 実行サマリー

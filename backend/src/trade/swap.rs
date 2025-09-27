@@ -277,8 +277,7 @@ where
 }
 
 /// 2つのトークン間で直接スワップを実行（arbitrage.rs実装パターンを使用）
-#[allow(dead_code)]
-async fn execute_direct_swap<C, W>(
+pub async fn execute_direct_swap<C, W>(
     client: &C,
     wallet: &W,
     from_token: &str,
