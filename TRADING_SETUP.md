@@ -19,11 +19,13 @@ CHRONOS_URL=http://localhost:8000
 BACKEND_URL=http://localhost:3000
 
 # データベース設定
-DATABASE_URL=postgres://username:password@localhost:5432/zaciraci
+PG_DSN=postgres://username:password@localhost:5432/zaciraci
+PG_POOL_SIZE=16  # データベース接続プールサイズ（オプション）
 
 # NEAR ウォレット設定
-NEAR_ACCOUNT_ID=your-account.near
-NEAR_PRIVATE_KEY=ed25519:xxxxx
+ROOT_ACCOUNT_ID=your-account.near
+ROOT_MNEMONIC="your twelve word mnemonic phrase here"
+ROOT_HDPATH="m/44'/397'/0'"
 ```
 
 ### トレード設定
@@ -35,8 +37,8 @@ TRADE_INITIAL_INVESTMENT=100
 # 選定するトップボラティリティトークン数
 TRADE_TOP_TOKENS=10
 
-# 評価期間（日数）
-TRADE_EVALUATION_DAYS=10
+# 価格記録の初期値（ミリNEAR単位）
+CRON_RECORD_RATES_INITIAL_VALUE=100
 
 # トレード実行スケジュール（cron形式）
 TRADE_CRON_SCHEDULE="0 0 0 * * *"  # デフォルト: 毎日午前0時
@@ -49,32 +51,6 @@ TRADE_CRON_SCHEDULE="0 0 0 * * *"  # デフォルト: 毎日午前0時
 HARVEST_ACCOUNT_ID=harvest-account.near  # 利益送金先
 HARVEST_MIN_AMOUNT=10                    # 最小ハーベスト額（NEAR）
 HARVEST_RESERVE_AMOUNT=1                 # アカウント残高保護（NEAR）
-```
-
-## 起動方法
-
-### 1. データベースのセットアップ
-
-```bash
-# Dieselマイグレーション実行
-diesel migration run
-
-# テーブルが作成されていることを確認
-psql $DATABASE_URL -c "\dt"
-```
-
-### 2. Chronos APIの起動
-
-```bash
-cd chronos
-python -m uvicorn main:app --port 8000
-```
-
-### 3. Backend サーバーの起動
-
-```bash
-cd backend
-cargo run --release
 ```
 
 ## トレード実行の仕組み
