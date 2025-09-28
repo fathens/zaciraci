@@ -61,10 +61,10 @@ fn get_quote_token() -> TokenInAccount {
 }
 
 fn get_initial_value() -> u128 {
-    let in_milli = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
+    let in_near = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
         .and_then(|v| Ok(v.parse()?))
         .unwrap_or(100);
-    MilliNear::of(in_milli).to_yocto()
+    MilliNear::from_near(in_near).to_yocto()
 }
 
 async fn record_rates() -> Result<()> {

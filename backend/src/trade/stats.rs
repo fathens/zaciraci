@@ -132,9 +132,9 @@ async fn prepare_funds() -> Result<u128> {
     // 初期投資額の設定値を取得
     let target_investment = config::get("TRADE_INITIAL_INVESTMENT")
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|v| MilliNear::of(v as u32).to_yocto())
-        .unwrap_or_else(|| MilliNear::of(100).to_yocto());
+        .and_then(|v| v.parse::<u128>().ok())
+        .map(|v| MilliNear::from_near(v).to_yocto())
+        .unwrap_or_else(|| MilliNear::from_near(100).to_yocto());
 
     // 保護する残高（最低10 NEAR）
     let reserve_amount = MilliNear::of(10).to_yocto();
