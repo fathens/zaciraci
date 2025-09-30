@@ -74,6 +74,7 @@ fn create_sample_params() -> PredictionCacheParams<'static> {
 }
 
 #[test]
+#[serial]
 fn test_get_prediction_dir() {
     let temp_dir = setup_test_env();
 

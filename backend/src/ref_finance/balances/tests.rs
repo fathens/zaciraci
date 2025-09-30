@@ -45,6 +45,7 @@ impl Wallet for MockWallet {
 fn initialize() {
     INIT.call_once(|| {
         config::set("HARVEST_ACCOUNT_ID", "harvest.near");
+        config::set("TRADE_ACCOUNT_RESERVE", "1");
     });
 }
 
