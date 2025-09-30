@@ -86,7 +86,7 @@ where
 
     let token = WNEAR_TOKEN.clone();
 
-    let balance = ref_finance::balances::start(client, wallet, &token).await?;
+    let balance = ref_finance::balances::start(client, wallet, &token, None).await?;
     let start: &TokenInAccount = &token.into();
     let start_balance = MicroNear::from_yocto(balance);
     info!(log, "start";

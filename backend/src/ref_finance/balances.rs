@@ -16,7 +16,8 @@ use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
-const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
+#[cfg(test)]
+const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear(); // テスト用の定数
 const DEFAULT_DEPOSIT: Balance = MilliNear::of(100).to_yocto();
 const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
@@ -45,7 +46,12 @@ fn update_last_harvest() {
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
-pub async fn start<C, W>(client: &C, wallet: &W, token: &TokenAccount) -> Result<Balance>
+pub async fn start<C, W>(
+    client: &C,
+    wallet: &W,
+    token: &TokenAccount,
+    required_balance: Option<Balance>,
+) -> Result<Balance>
 where
     C: AccountInfo + SendTx + ViewContract,
     W: Wallet,
@@ -53,14 +59,14 @@ where
     let log = DEFAULT.new(o!(
         "function" => "balances.start",
     ));
-    let required_balance = {
+    let required_balance = required_balance.unwrap_or_else(|| {
         let max = get_history().read().unwrap().inputs.max();
         if max.is_zero() {
             DEFAULT_REQUIRED_BALANCE
         } else {
             max
         }
-    };
+    });
     info!(log, "Starting balances";
         "required_balance" => %required_balance,
     );
@@ -163,13 +169,22 @@ where
     let actual_wrapping = if wrapped_balance < want {
         let wrapping = want - wrapped_balance;
         let native_balance = client.get_native_amount(account).await?;
+
+        // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
+        let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
+            .ok()
+            .and_then(|v| v.parse::<u128>().ok())
+            .map(|v| MilliNear::from_near(v).to_yocto())
+            .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+
         let log = log.new(o!(
             "native_balance" => format!("{}", native_balance),
             "wrapping" => format!("{}", wrapping),
+            "minimum_native_balance" => format!("{}", minimum_native_balance),
         ));
         debug!(log, "checking");
         let available = native_balance
-            .checked_sub(MINIMUM_NATIVE_BALANCE)
+            .checked_sub(minimum_native_balance)
             .unwrap_or_default();
 
         let amount = if available < wrapping {
@@ -230,9 +245,17 @@ where
     info!(log, "withdrawing";
         "token" => %token,
     );
+
+    // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
+    let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
+        .ok()
+        .and_then(|v| v.parse::<u128>().ok())
+        .map(|v| MilliNear::from_near(v).to_yocto())
+        .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+
     let account = wallet.account_id();
     let before_withdraw = client.get_native_amount(account).await?;
-    let added = if before_withdraw < MINIMUM_NATIVE_BALANCE || is_time_to_harvest() {
+    let added = if before_withdraw < minimum_native_balance || is_time_to_harvest() {
         deposit::withdraw(client, wallet, token, withdraw)
             .await?
             .wait_for_success()

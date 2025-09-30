@@ -204,7 +204,8 @@ where
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
 
-        let balance = crate::ref_finance::balances::start(client, wallet, &token_account).await?;
+        let balance =
+            crate::ref_finance::balances::start(client, wallet, &token_account, None).await?;
         balances.insert(token.clone(), balance);
 
         info!(log, "retrieved balance"; "token" => token, "balance" => balance);
@@ -303,7 +304,8 @@ where
     let from_token_account: crate::ref_finance::token_account::TokenAccount = from_token
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid from_token: {}", e))?;
-    let balance = crate::ref_finance::balances::start(client, wallet, &from_token_account).await?;
+    let balance =
+        crate::ref_finance::balances::start(client, wallet, &from_token_account, None).await?;
 
     if balance == 0 {
         return Err(anyhow::anyhow!("No balance for token: {}", from_token));

@@ -270,7 +270,7 @@ async fn test_start() {
     let client = MockClient::new(DEFAULT_REQUIRED_BALANCE << 5, 0, 0);
     let wallet = MockWallet::new();
 
-    let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+    let result = start(&client, &wallet, &WNEAR_TOKEN, None).await;
     let balance = result.unwrap();
     assert!(balance.is_zero());
 
@@ -708,7 +708,7 @@ async fn test_start_boundary_values() {
     let client = MockClient::new(0, required_balance * 127, required_balance * 127);
     let wallet = MockWallet::new();
 
-    let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+    let result = start(&client, &wallet, &WNEAR_TOKEN, None).await;
     assert!(result.is_ok());
     assert!(!client.operations_log.contains("transfer_native_token"));
 
@@ -731,7 +731,7 @@ async fn test_start_boundary_values() {
         Ordering::Relaxed,
     );
 
-    let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+    let result = start(&client, &wallet, &WNEAR_TOKEN, None).await;
     assert!(result.is_ok());
 
     assert!(client.operations_log.contains("transfer_native_token"));
@@ -762,7 +762,7 @@ async fn test_start_exact_upper() {
         Ordering::Relaxed,
     );
 
-    let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+    let result = start(&client, &wallet, &WNEAR_TOKEN, None).await;
     assert!(result.is_ok());
 
     // Wait a bit to ensure any async operations complete
@@ -796,7 +796,7 @@ async fn test_start_harvest_time_condition() {
         Ordering::Relaxed,
     );
 
-    let result = start(&client, &wallet, &WNEAR_TOKEN).await;
+    let result = start(&client, &wallet, &WNEAR_TOKEN, None).await;
     assert!(result.is_ok());
 
     // Wait a bit to ensure any async operations complete

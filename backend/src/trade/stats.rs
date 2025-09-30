@@ -120,15 +120,6 @@ async fn prepare_funds() -> Result<u128> {
     let client = crate::jsonrpc::new_client();
     let wallet = crate::wallet::new_wallet();
 
-    // NEAR残高を取得
-    let account_id = wallet.account_id();
-    let balance = crate::ref_finance::balances::start(
-        &client,
-        &wallet,
-        &crate::ref_finance::token_account::WNEAR_TOKEN.clone(),
-    )
-    .await?;
-
     // 初期投資額の設定値を取得
     let target_investment = config::get("TRADE_INITIAL_INVESTMENT")
         .ok()
@@ -136,27 +127,33 @@ async fn prepare_funds() -> Result<u128> {
         .map(|v| MilliNear::from_near(v).to_yocto())
         .unwrap_or_else(|| MilliNear::from_near(100).to_yocto());
 
-    // 保護する残高（最低10 NEAR）
-    let reserve_amount = MilliNear::of(10).to_yocto();
+    // 必要な wrap.near 残高として投資額を設定（NEAR -> wrap.near変換）
+    // アカウントには10 NEARを残し、それ以外を wrap.near に変換
+    let required_balance = target_investment;
+    let account_id = wallet.account_id();
+    let balance = crate::ref_finance::balances::start(
+        &client,
+        &wallet,
+        &crate::ref_finance::token_account::WNEAR_TOKEN.clone(),
+        Some(required_balance),
+    )
+    .await?;
 
-    // 使用可能な金額を計算
-    let available_funds = if balance > reserve_amount {
-        let available = balance - reserve_amount;
-        // 設定された投資額と実際の残高の小さい方を使用
-        available.min(target_investment)
-    } else {
+    // wrap.near の全額が投資可能
+    // 設定された投資額と実際の残高の小さい方を使用
+    let available_funds = balance.min(target_investment);
+
+    if available_funds == 0 {
         return Err(anyhow::anyhow!(
-            "Insufficient NEAR balance: {} yoctoNEAR (minimum required: {} yoctoNEAR)",
-            balance,
-            reserve_amount
+            "Insufficient wrap.near balance for trading: {} yoctoNEAR",
+            balance
         ));
-    };
+    }
 
     info!(log, "prepared funds";
         "account" => %account_id,
-        "total_balance" => balance,
-        "available_funds" => available_funds,
-        "reserve_amount" => reserve_amount
+        "wrap_near_balance" => balance,
+        "available_funds" => available_funds
     );
 
     Ok(available_funds)
