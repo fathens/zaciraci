@@ -493,9 +493,13 @@ Phase 0は完全に完了しており、ハーベスト機能も含めて全て�
 
 **次のステップ**: Phase 1 (架空トレード記録) への移行準備が整いました。
 
-## 📋 実装検証結果 (2025-09-30)
+## 📋 実装検証結果
 
-### ✅ ルール準拠状況の検証
+### 🎉 フローチャート完全準拠達成 (2025-10-01)
+
+**全6ステップの実装完了を確認しました！**
+
+### ✅ ルール準拠状況の検証（最終更新: 2025-10-01）
 
 **実装とフローチャートの照合結果**：
 
@@ -507,41 +511,102 @@ Phase 0は完全に完了しており、ハーベスト機能も含めて全て�
 | 2 | 対象トークン選定<br/>top volatility から上位10個を選定 | ✅ 実装済み | `select_top_volatility_tokens()`でTRADE_TOP_TOKENS個選定 |
 | 3 | ポートフォリオ配分<br/>wrap.nearから選定トークンに配分 | ✅ 実装済み | `execute_portfolio_strategy()`内で最適配分を計算 |
 | 4 | Portfolioアルゴリズム実行 | ✅ 実装済み | `execute_portfolio_optimization()`と`execute_trading_actions()` |
+| 5 | トークン整理と評価<br/>10日ごとに全トークン→wrap.near売却 | ✅ 実装済み | `manage_evaluation_period()`と`liquidate_all_positions()` |
 | 6-9 | ハーベスト判定と実行 | ✅ 実装済み | `check_and_harvest()`で200%超過時の10%利益確定 |
 
-#### ⚠️ 未実装の部分
+#### ✅ 完全実装済み（2025-10-01）
 
 **ステップ5: トークン整理と評価**
 - **フローチャート要件**: 「全保有トークン → wrap.near に売却」して評価
-- **現在の実装**: 評価期間終了時の売却処理が未実装
-- **問題点**:
-  - `wallet_info.holdings`が空（`BTreeMap::new()`）で既存ポジションを考慮していない
-  - 10日ごとの評価期間の概念が実装されていない
-  - 毎日新規ポートフォリオを構築する動作になっている
+- **実装状況**: ✅ 完全実装済み
+- **実装内容**:
+  - ✅ `evaluation_periods` テーブルで10日サイクルを管理
+  - ✅ `manage_evaluation_period()` で期間判定と管理
+  - ✅ `liquidate_all_positions()` で評価期間終了時の全トークン売却
+  - ✅ `wallet_info.holdings` に既存ポジション反映（評価期間中のみ）
+  - ✅ 新規期間: 全売却 → 新規トークン選定 → 空のholdingsでスタート
+  - ✅ 期間中: 既存トークン継続 → 既存ポジション反映 → 調整のみ実行
 
-### 🔧 必要な改善実装
+### ✅ 実装完了した機能（2025-10-01）
 
-#### 1. 評価期間の実装
-```rust
-// 必要な実装:
-// - 最後の評価日時を記録
-// - 10日経過の判定ロジック
-// - 評価期間中は調整のみ、期間終了時に再配分
+#### 1. 評価期間の実装 ✅
+- `evaluation_periods` テーブルの作成（migration完了）
+- 10日ごとの自動期間切り替え
+- 評価期間中は調整のみ、期間終了時は再配分
+- `manage_evaluation_period()` による自動管理
+
+#### 2. 全トークン売却機能 ✅
+- `liquidate_all_positions()` 実装
+- 評価期間終了時の処理:
+  1. 全保有トークンの残高取得
+  2. 各トークン → wrap.near への変換
+  3. ポートフォリオ総価値の算出
+  4. 新規ポートフォリオ配分の実行
+
+#### 3. 既存ポジションの考慮 ✅
+- `swap::get_current_portfolio_balances()` で現在保有量を取得
+- `wallet_info.holdings` に既存ポジションを反映
+- 新規期間は空、期間中は実残高を使用
+
+### 📝 評価期間機能の実装詳細 (2025-10-01)
+
+#### データベーススキーマ
+```sql
+-- evaluation_periods テーブル
+CREATE TABLE evaluation_periods (
+    id SERIAL PRIMARY KEY,
+    period_id VARCHAR NOT NULL UNIQUE,          -- UUID (例: eval_550e8400-...)
+    start_time TIMESTAMP NOT NULL,              -- 期間開始時刻
+    initial_value NUMERIC(39, 0) NOT NULL,      -- 初期投資額 (yoctoNEAR)
+    selected_tokens TEXT[],                     -- 選定トークンリスト
+    token_count INTEGER NOT NULL,               -- トークン数
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- trade_transactions に外部キー追加
+ALTER TABLE trade_transactions
+ADD COLUMN evaluation_period_id VARCHAR;
 ```
 
-#### 2. 全トークン売却機能
-```rust
-// 評価期間終了時:
-// 1. 全保有トークンの残高取得
-// 2. 各トークン → wrap.near への変換
-// 3. ポートフォリオ総価値の算出
-// 4. 新規ポートフォリオ配分の実行
+#### 主要関数
+
+**`manage_evaluation_period(available_funds: u128)`**
+- 最新評価期間を取得
+- 10日経過判定
+- 期間終了時: `liquidate_all_positions()` → 新規期間作成
+- 期間中: 既存選定トークンを返却
+- 戻り値: `(period_id, is_new_period, selected_tokens)`
+
+**`liquidate_all_positions()`**
+- 評価期間終了時に呼び出し
+- 全保有トークン → wrap.near 変換
+- 最終wrap.near残高を返却（yoctoNEAR）
+
+**`execute_portfolio_strategy(..., is_new_period, ...)`**
+- `is_new_period=true`: 空のholdingsで新規ポートフォリオ構築
+- `is_new_period=false`: 既存ポジションを`holdings`に反映
+
+#### 動作フロー
+
+**新規期間開始時（10日経過後）**:
+```
+1. manage_evaluation_period() が10日経過を検知
+2. liquidate_all_positions() で全トークン売却
+3. 新規EvaluationPeriod作成（initial_value = 売却後の総額）
+4. select_top_volatility_tokens() で新規トークン選定
+5. 選定トークンをDBに保存
+6. 空のholdingsで execute_portfolio_strategy() 実行
+7. 新規ポートフォリオ構築
 ```
 
-#### 3. 既存ポジションの考慮
-```rust
-// 現在の保有量を取得して wallet_info に反映
-// get_current_portfolio_balances() の結果を活用
+**評価期間中（10日未満）**:
+```
+1. manage_evaluation_period() が既存期間を返却
+2. DBから既存の選定トークンを取得
+3. get_current_portfolio_balances() で現在保有量を取得
+4. holdingsに既存ポジションを設定
+5. execute_portfolio_strategy() で調整のみ実行
+6. リバランス（大きな偏りがある場合のみswap）
 ```
 
 ### 📊 資金管理の改善実装 (2025-09-30)
@@ -565,22 +630,25 @@ Phase 0は完全に完了しており、ハーベスト機能も含めて全て�
 | 50 NEAR | 40 NEAR | 40 NEAR | 10 NEAR |
 | 20 NEAR | 10 NEAR | 10 NEAR | 10 NEAR |
 
-### 🎯 推奨する改善優先順位
+### 🎯 次のステップと改善提案
 
-#### 高優先度
-1. **評価期間の実装**
-   - 10日ごとの再配分サイクル実装
-   - 評価期間中は調整のみ実行
+#### ✅ 完了した高優先度項目（2025-10-01）
+1. ~~**評価期間の実装**~~ ✅
+   - ✅ 10日ごとの再配分サイクル実装完了
+   - ✅ 評価期間中は調整のみ実行
 
-2. **全トークン売却機能**
-   - 評価期間終了時の清算処理
-   - ポートフォリオ総価値の正確な算出
+2. ~~**全トークン売却機能**~~ ✅
+   - ✅ 評価期間終了時の清算処理実装完了
 
-#### 中優先度
-3. **既存ポジションの反映**
-   - 現在の保有量を wallet_info に設定
-   - リバランスロジックの改善
+3. ~~**既存ポジションの反映**~~ ✅
+   - ✅ `wallet_info.holdings` への既存ポジション反映完了
 
-4. **評価履歴の記録**
-   - 各評価期間の結果をDBに記録
-   - パフォーマンス追跡機能
+#### 今後の改善提案
+
+1. **評価履歴の記録**
+   - 各評価期間の結果（最終価値、リターン率）をDBに記録
+   - パフォーマンス追跡とレポート機能
+
+2. **ポートフォリオ総価値の算出改善**
+   - 現在はwrap.near換算のみ
+   - 各トークンの市場価格を考慮した正確な評価
