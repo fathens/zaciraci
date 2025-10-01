@@ -46,6 +46,7 @@ impl TradeRecorder {
             to_token.clone(),
             to_amount.clone(),
             price_yocto_near.clone(),
+            None, // evaluation_period_id: 後で評価期間機能で設定
         );
 
         let result = transaction
@@ -83,6 +84,7 @@ impl TradeRecorder {
                     trade.to_token,
                     trade.to_amount,
                     trade.price_yocto_near,
+                    None, // evaluation_period_id: 後で評価期間機能で設定
                 )
             })
             .collect();

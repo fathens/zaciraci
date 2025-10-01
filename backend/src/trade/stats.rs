@@ -4,6 +4,7 @@ use crate::Result;
 use crate::config;
 use crate::logging::*;
 use crate::persistence::TimeRange;
+use crate::persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::trade::predict::PredictionService;
@@ -66,15 +67,34 @@ pub async fn start() -> Result<()> {
         return Ok(());
     }
 
+    // Step 1.5: 評価期間のチェックと管理
+    let (period_id, is_new_period, existing_tokens) =
+        manage_evaluation_period(available_funds).await?;
+    info!(log, "evaluation period status";
+        "period_id" => %period_id,
+        "is_new_period" => is_new_period,
+        "existing_tokens_count" => existing_tokens.len()
+    );
+
     // Step 2: PredictionServiceの初期化
     let chronos_url =
         std::env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
 
     let prediction_service = PredictionService::new(chronos_url);
 
-    // Step 3: トークン選定 (top volatility)
-    let selected_tokens = select_top_volatility_tokens(&prediction_service).await?;
-    info!(log, "Selected tokens"; "count" => selected_tokens.len());
+    // Step 3: トークン選定 (評価期間に応じて処理を分岐)
+    let selected_tokens = if is_new_period {
+        // 新規期間: 新しくトークンを選定
+        select_top_volatility_tokens(&prediction_service).await?
+    } else {
+        // 評価期間中: 既存のトークンを使用
+        existing_tokens
+            .into_iter()
+            .filter_map(|s| s.parse::<AccountId>().ok())
+            .collect()
+    };
+
+    info!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
 
     if selected_tokens.is_empty() {
         info!(log, "no tokens selected for trading");
@@ -625,6 +645,162 @@ struct ExecutionSummary {
 async fn check_and_harvest(initial_amount: u128) -> Result<()> {
     // 実際のハーベスト機能を呼び出す
     crate::trade::harvest::check_and_harvest(initial_amount).await
+}
+
+/// 評価期間のチェックと管理
+///
+/// 戻り値: (period_id, is_new_period, selected_tokens)
+async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool, Vec<String>)> {
+    let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
+
+    const EVALUATION_PERIOD_DAYS: i64 = 10;
+
+    // 最新の評価期間を取得
+    let latest_period = EvaluationPeriod::get_latest_async().await?;
+
+    match latest_period {
+        Some(period) => {
+            let now = Utc::now().naive_utc();
+            let period_duration = now.signed_duration_since(period.start_time);
+
+            if period_duration.num_days() >= EVALUATION_PERIOD_DAYS {
+                // 評価期間終了: 全トークンを売却して新規期間を開始
+                info!(log, "evaluation period ended, starting new period";
+                    "previous_period_id" => %period.period_id,
+                    "days_elapsed" => period_duration.num_days()
+                );
+
+                // 全トークンをwrap.nearに売却
+                let final_value = liquidate_all_positions().await?;
+                info!(log, "liquidated all positions"; "final_value" => %final_value);
+
+                // 新規評価期間を作成
+                let new_period = NewEvaluationPeriod::new(final_value.clone(), vec![]);
+                let created_period = new_period.insert_async().await?;
+
+                info!(log, "created new evaluation period";
+                    "period_id" => %created_period.period_id,
+                    "initial_value" => %created_period.initial_value
+                );
+
+                Ok((created_period.period_id, true, vec![]))
+            } else {
+                // 評価期間中: 既存の選定トークンを返す
+                info!(log, "continuing evaluation period";
+                    "period_id" => %period.period_id,
+                    "days_remaining" => EVALUATION_PERIOD_DAYS - period_duration.num_days()
+                );
+
+                let selected_tokens = period
+                    .selected_tokens
+                    .unwrap_or_default()
+                    .into_iter()
+                    .flatten()
+                    .collect();
+
+                Ok((period.period_id, false, selected_tokens))
+            }
+        }
+        None => {
+            // 初回起動: 新規評価期間を作成
+            info!(log, "no evaluation period found, creating first period");
+
+            let initial_value = BigDecimal::from(available_funds);
+            let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
+            let created_period = new_period.insert_async().await?;
+
+            info!(log, "created first evaluation period";
+                "period_id" => %created_period.period_id,
+                "initial_value" => %created_period.initial_value
+            );
+
+            Ok((created_period.period_id, true, vec![]))
+        }
+    }
+}
+
+/// 全保有トークンをwrap.nearに売却
+///
+/// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
+async fn liquidate_all_positions() -> Result<BigDecimal> {
+    let log = DEFAULT.new(o!("function" => "liquidate_all_positions"));
+
+    // 最新の評価期間を取得して選定トークンを確認
+    let latest_period = EvaluationPeriod::get_latest_async().await?;
+    let tokens_to_liquidate: Vec<String> = match latest_period {
+        Some(period) => period
+            .selected_tokens
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .collect(),
+        None => {
+            info!(log, "no evaluation period found, nothing to liquidate");
+            return Ok(BigDecimal::from(0));
+        }
+    };
+
+    if tokens_to_liquidate.is_empty() {
+        info!(log, "no tokens to liquidate");
+        // wrap.nearの残高を返す
+        let client = crate::jsonrpc::new_client();
+        let wallet = crate::wallet::new_wallet();
+        let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+        let balance =
+            crate::ref_finance::balances::start(&client, &wallet, wrap_near, None).await?;
+        return Ok(BigDecimal::from(balance));
+    }
+
+    info!(log, "liquidating positions"; "token_count" => tokens_to_liquidate.len());
+
+    // クライアントとウォレットを取得
+    let client = crate::jsonrpc::new_client();
+    let wallet = crate::wallet::new_wallet();
+    let recorder = TradeRecorder::new();
+
+    // 各トークンをwrap.nearに変換
+    let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
+
+    for token in &tokens_to_liquidate {
+        if token == &wrap_near_str {
+            // wrap.nearは変換不要
+            continue;
+        }
+
+        info!(log, "liquidating token"; "token" => token);
+
+        // トークンの残高を確認
+        let token_account: crate::ref_finance::token_account::TokenAccount = token
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
+
+        let balance =
+            crate::ref_finance::balances::start(&client, &wallet, &token_account, None).await?;
+
+        if balance == 0 {
+            info!(log, "token has zero balance, skipping"; "token" => token);
+            continue;
+        }
+
+        // token → wrap.near にスワップ
+        match swap::execute_direct_swap(&client, &wallet, token, &wrap_near_str, &recorder).await {
+            Ok(_) => {
+                info!(log, "successfully liquidated token"; "token" => token);
+            }
+            Err(e) => {
+                error!(log, "failed to liquidate token"; "token" => token, "error" => ?e);
+                // エラーが発生しても他のトークンの売却は継続
+            }
+        }
+    }
+
+    // 最終的なwrap.near残高を取得
+    let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+    let final_balance =
+        crate::ref_finance::balances::start(&client, &wallet, wrap_near, None).await?;
+
+    info!(log, "liquidation complete"; "final_wrap_near_balance" => final_balance);
+    Ok(BigDecimal::from(final_balance))
 }
 
 /// 価格履歴からボラティリティを計算

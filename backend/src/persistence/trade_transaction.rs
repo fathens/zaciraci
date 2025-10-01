@@ -21,9 +21,11 @@ pub struct TradeTransaction {
     pub to_amount: BigDecimal,
     pub price_yocto_near: BigDecimal,
     pub timestamp: NaiveDateTime,
+    pub evaluation_period_id: Option<String>,
 }
 
 impl TradeTransaction {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tx_id: String,
         trade_batch_id: String,
@@ -32,6 +34,7 @@ impl TradeTransaction {
         to_token: String,
         to_amount: BigDecimal,
         price_yocto_near: BigDecimal,
+        evaluation_period_id: Option<String>,
     ) -> Self {
         Self {
             tx_id,
@@ -42,6 +45,7 @@ impl TradeTransaction {
             to_amount,
             price_yocto_near,
             timestamp: chrono::Utc::now().naive_utc(),
+            evaluation_period_id,
         }
     }
 
@@ -244,6 +248,7 @@ mod tests {
             "akaia.tkn.near".to_string(),
             BigDecimal::from(50000000000000000000000i128),
             BigDecimal::from(20000000000000000000i128),
+            None, // evaluation_period_id
         );
 
         let result = transaction.insert_async().await.unwrap();
