@@ -129,6 +129,44 @@ impl EvaluationPeriod {
 
         result.context("Failed to get all evaluation periods")
     }
+
+    /// 選定トークンを更新
+    pub fn update_selected_tokens(
+        conn: &mut PgConnection,
+        period_id: &str,
+        tokens: Vec<String>,
+    ) -> QueryResult<EvaluationPeriod> {
+        let tokens_opt: Option<Vec<Option<String>>> = if tokens.is_empty() {
+            None
+        } else {
+            Some(tokens.into_iter().map(Some).collect())
+        };
+
+        diesel::update(
+            evaluation_periods::table.filter(evaluation_periods::period_id.eq(period_id)),
+        )
+        .set((
+            evaluation_periods::selected_tokens.eq(tokens_opt.clone()),
+            evaluation_periods::token_count
+                .eq(tokens_opt.as_ref().map(|t| t.len() as i32).unwrap_or(0)),
+        ))
+        .get_result(conn)
+    }
+
+    /// 選定トークンを非同期で更新
+    pub async fn update_selected_tokens_async(
+        period_id: String,
+        tokens: Vec<String>,
+    ) -> Result<EvaluationPeriod> {
+        let conn = connection_pool::get().await?;
+
+        let result = conn
+            .interact(move |conn| Self::update_selected_tokens(conn, &period_id, tokens))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
+
+        result.context("Failed to update selected tokens")
+    }
 }
 
 #[cfg(test)]

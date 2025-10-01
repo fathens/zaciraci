@@ -85,7 +85,24 @@ pub async fn start() -> Result<()> {
     // Step 3: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
         // 新規期間: 新しくトークンを選定
-        select_top_volatility_tokens(&prediction_service).await?
+        let tokens = select_top_volatility_tokens(&prediction_service).await?;
+
+        // 選定したトークンをデータベースに保存
+        if !tokens.is_empty() {
+            let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+            match EvaluationPeriod::update_selected_tokens_async(period_id.clone(), token_strs)
+                .await
+            {
+                Ok(_) => {
+                    info!(log, "updated selected tokens in database"; "count" => tokens.len());
+                }
+                Err(e) => {
+                    error!(log, "failed to update selected tokens"; "error" => ?e);
+                }
+            }
+        }
+
+        tokens
     } else {
         // 評価期間中: 既存のトークンを使用
         existing_tokens
@@ -103,11 +120,14 @@ pub async fn start() -> Result<()> {
 
     // Step 4: ポートフォリオ最適化と実行
     let client = crate::jsonrpc::new_client();
+    let wallet = crate::wallet::new_wallet();
     match execute_portfolio_strategy(
         &prediction_service,
         &selected_tokens,
         available_funds,
+        is_new_period,
         &client,
+        &wallet,
     )
     .await
     {
@@ -228,14 +248,20 @@ async fn select_top_volatility_tokens(
 }
 
 /// ポートフォリオ戦略の実行
-async fn execute_portfolio_strategy<C>(
+async fn execute_portfolio_strategy<C, W>(
     prediction_service: &PredictionService,
     tokens: &[AccountId],
     available_funds: u128,
+    is_new_period: bool,
     client: &C,
+    wallet: &W,
 ) -> Result<Vec<TradingAction>>
 where
-    C: crate::jsonrpc::ViewContract,
+    C: crate::jsonrpc::ViewContract
+        + crate::jsonrpc::AccountInfo
+        + crate::jsonrpc::SendTx
+        + crate::jsonrpc::GasInfo,
+    W: crate::wallet::Wallet,
 {
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
@@ -383,8 +409,38 @@ where
         .parse::<f64>()
         .map_err(|e| anyhow::anyhow!("Failed to convert total_value to f64: {}", e))?;
 
+    // 既存ポジションの取得（評価期間中のみ）
+    let holdings = if is_new_period {
+        // 新規期間: ポジションなし
+        info!(log, "new evaluation period, starting with empty holdings");
+        BTreeMap::new()
+    } else {
+        // 評価期間中: 既存のポジションを取得
+        info!(
+            log,
+            "continuing evaluation period, loading current holdings"
+        );
+        let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let current_balances =
+            swap::get_current_portfolio_balances(client, wallet, &token_strs).await?;
+
+        // u128をf64に変換（外部構造体の制約のため）
+        let mut holdings_f64 = BTreeMap::new();
+        for (token, balance) in current_balances {
+            if balance > 0 {
+                let balance_f64 = BigDecimal::from(balance)
+                    .to_string()
+                    .parse::<f64>()
+                    .map_err(|e| anyhow::anyhow!("Failed to convert balance to f64: {}", e))?;
+                holdings_f64.insert(token.clone(), balance_f64);
+                info!(log, "loaded existing position"; "token" => token, "balance" => balance);
+            }
+        }
+        holdings_f64
+    };
+
     let wallet_info = WalletInfo {
-        holdings: BTreeMap::new(),
+        holdings,
         total_value: total_value_f64,
         cash_balance: total_value_f64,
     };
