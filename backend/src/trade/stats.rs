@@ -313,10 +313,28 @@ where
             // BigDecimalをyoctoNEAR (u128)に変換
             let yocto_multiplier = BigDecimal::from(10u128.pow(24));
             let price_yocto = &latest_price.price * &yocto_multiplier;
-            price_yocto
-                .to_string()
-                .parse::<u128>()
-                .map_err(|e| anyhow::anyhow!("Failed to parse price for token {}: {}", token, e))?
+
+            debug!(log, "converting price to u128";
+                "token" => %token,
+                "original_price" => %latest_price.price,
+                "price_yocto" => %price_yocto,
+                "price_yocto_string" => price_yocto.to_string()
+            );
+
+            // BigDecimalをu128に変換（整数部分のみ）
+            use num_bigint::ToBigInt;
+            let price_bigint = price_yocto.to_bigint().ok_or_else(|| {
+                anyhow::anyhow!("Failed to convert BigDecimal to BigInt for token {}", token)
+            })?;
+
+            price_bigint.to_string().parse::<u128>().map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse price for token {}: {} (value: {})",
+                    token,
+                    e,
+                    price_bigint.to_string()
+                )
+            })?
         } else {
             error!(log, "no price data available for token"; "token" => %token);
             return Err(anyhow::anyhow!(
@@ -586,9 +604,22 @@ where
                         anyhow::anyhow!("Failed to convert target weight to BigDecimal: {}", e)
                     })?;
                 let target_value = BigDecimal::from(total_value_u128) * target_weight_decimal;
-                let target_amount_u128 = target_value.to_string().parse::<u128>().map_err(|e| {
-                    anyhow::anyhow!("Failed to convert target value to u128: {}", e)
+                // BigDecimalをu128に変換（整数部分のみ）
+                use num_bigint::ToBigInt;
+                let target_value_bigint = target_value.to_bigint().ok_or_else(|| {
+                    anyhow::anyhow!("Failed to convert target value BigDecimal to BigInt")
                 })?;
+                let target_amount_u128 =
+                    target_value_bigint
+                        .to_string()
+                        .parse::<u128>()
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to convert target value to u128: {} (value: {})",
+                                e,
+                                target_value_bigint.to_string()
+                            )
+                        })?;
 
                 // 現在の保有量と目標量の差を計算
                 if target_amount_u128 > current_balance {
