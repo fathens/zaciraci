@@ -657,25 +657,35 @@ ADD COLUMN evaluation_period_id VARCHAR;
 
 ### デバッグセッションで発見された問題
 
-#### 1. **trade_transactionsへのレコード記録機能が未統合** 🔴 高優先度
-- **状況**: TradeRecorderの実装(`trade/recorder.rs`)は存在するが、`stats.rs`から呼び出されていない
-- **影響**: トレード実行履歴がデータベースに記録されない
-- **確認方法**: `SELECT COUNT(*) FROM trade_transactions;` → 0件
-- **対応**: TradeRecorderを`execute_portfolio_strategy()`のトレード実行部分に統合
+#### 1. **trade_transactionsへのレコード記録機能** ✅ 統合済み（2025-10-04確認）
+- **状況**: TradeRecorderは既に完全統合されており、正しく動作
+  - `stats.rs:500`: TradeRecorder::new()でインスタンス作成
+  - `stats.rs:504`: execute_single_actionに正しくrecorderを渡している
+  - `swap.rs:428-441`: record_successful_trade()でRPC成功後に記録
+  - `swap.rs:418-421`: sent_tx.wait_for_success()でRPC成功確認済み
+- **記録が無い理由**: 実際のトレード(swap)が実行されていないため
+  - `execute_portfolio_strategy`がNEAR RPCレート制限エラーで失敗
+  - `execute_trading_actions`が一度も呼ばれていない
+- **確認結果**: 「実際にrpcで成功した場合だけDB に保存」という前提に準拠して正しく動作中
 
-#### 2. **NEAR RPCレート制限により実行時間が非常に長い** 🟡 中優先度
-- **状況**: 1回のトレード実行に2時間以上かかる
-  - 実行例1: 07:47開始 → 09:08完了（約1時間21分）
-  - 実行例2: 01:16開始 → 03:24完了（約2時間8分）
+#### 2. **NEAR RPCレート制限によりトレードが失敗する** 🔴 高優先度
+- **状況**: ポートフォリオ戦略実行がレート制限エラーで完全に失敗
+  - 実行例1: 07:47開始 → 09:08失敗（約1時間21分後）
+  - 実行例2: 01:16開始 → 03:24失敗（約2時間8分後）
+  - エラー: "failed to execute portfolio strategy, error: this client has exceeded the rate limit"
 - **原因**:
-  - 多数のRPCクエリ（価格取得、予測、トランザクション）
-  - NEAR RPCレート制限による多数のリトライ（40回以上確認）
-  - ネットワークエラー（IncompleteMessage）の頻発
-- **影響**: 毎日0時実行でも完了が2-3時間後になる
+  - 価格履歴取得で大量のRPCクエリ（10トークン分）
+  - 01:16から03:01まで約1時間45分かけて価格データ取得
+  - 03:01から03:24まで約23分間、"too many requests"エラーが継続
+  - 最終的にレート制限超過でポートフォリオ戦略全体が失敗
+- **影響**:
+  - トレードが一度も実行されない（execute_trading_actionsが呼ばれない）
+  - 記録も当然作成されない（RPCが成功していないため）
 - **対応案**:
   - 複数のRPCエンドポイント使用
-  - キャッシュ活用の拡充
-  - バッチ処理の最適化
+  - キャッシュ活用の拡充（価格データの再利用）
+  - バッチ処理の最適化（並列クエリの制限）
+  - リトライロジックの改善（exponential backoff）
 
 #### 3. **BigDecimal変換箇所の網羅的チェック** 🟡 中優先度
 - **状況**: 2箇所で同じエラーパターン`to_string().parse::<u128>()`を発見・修正
