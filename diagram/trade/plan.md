@@ -682,10 +682,82 @@ ADD COLUMN evaluation_period_id VARCHAR;
   - トレードが一度も実行されない（execute_trading_actionsが呼ばれない）
   - 記録も当然作成されない（RPCが成功していないため）
 - **対応案**:
-  - 複数のRPCエンドポイント使用
-  - キャッシュ活用の拡充（価格データの再利用）
-  - バッチ処理の最適化（並列クエリの制限）
-  - リトライロジックの改善（exponential backoff）
+
+  **短期対策（即効性あり）**:
+  1. **record_rates実行間隔の調整**: 5分 → 15-30分間隔に変更（プール情報は頻繁更新不要）
+  2. **RPC並列度の制限**: Semaphoreで同時実行数を5-10に制限
+  3. **リトライロジック改善**: exponential backoff実装（1s → 2s → 4s → 8s...）
+
+  **中期対策**:
+  4. **複数RPCエンドポイント**: mainnet.near.org以外を追加してラウンドロビン
+  5. **予測結果キャッシュ**: 同一トークンの予測を評価期間中（10日）再利用
+  6. **並列処理の最適化**: トークンごとの順次処理を制限付き並列化
+
+  **長期対策**:
+  7. **インクリメンタルデータ取得**: 全プール情報でなく差分のみ取得
+  8. **専用RPCノード**: 自前RPCノード構築でレート制限回避
+
+#### 2.1 **根本原因の特定** ✅ 解決済み（2025-10-04）
+
+**問題の核心**:
+- プール情報取得（`query`）は成功するが、トランザクションステータス確認（`tx`）だけが失敗
+- 同じ時間帯（03:00-03:24）にrecord_ratesのqueryは成功している
+- **レート制限が直接の原因ではない** - 真の原因は**NEAR RPCの`wait_until`パラメータの仕様**
+
+**真の原因** (NEAR公式ドキュメント・実装確認済み):
+1. `tx`メソッドに`wait_until: TxExecutionStatus::Executed`を指定
+2. **NEAR RPCサーバー側**がトランザクション完了を待つ（公式：「will wait until the transaction appears on the blockchain」）
+3. サーバー側で**10秒のタイムアウト**発生（`broadcast_tx_commit`の仕様）
+4. **クライアント側で128回リトライ** (`StandardRpcClient::call`のretry_limit)
+5. 各リトライが"too many requests"エラー → 累積的にレート制限超過
+
+**証拠**:
+- NEAR公式ドキュメント: wait_untilはサーバー側で待機、10秒タイムアウト
+- GitHub Issue #344: タイムアウトエラーが扱いにくい問題として議論済み
+- ログ: 同時刻にqueryメソッドは成功（全体的なレート制限ではない）
+- ログ: txメソッドのみが連続128回"too many requests"
+- ログ: トランザクションbroadcastは成功、ステータス確認のみ失敗
+
+**副次的な問題** (`jsonrpc/rpc.rs:226`):
+```rust
+// 現在（バグ）:
+let delay = calc_delay(retry_count).min(min_dur);  // ← 最大1秒に制限！
+
+// 正しい実装:
+let delay = calc_delay(retry_count).max(min_dur);  // ← 少なくともmin_dur待つ
+```
+- exponential backoffが効かず、1秒待機に制限
+- 仮にレート制限が原因でも回復できない
+
+#### 2.2 **優先実装項目：短期対策** 🔥 最優先
+
+**実装の優先順位** (NEAR公式推奨に基づく):
+
+1. **wait_until = NONE + クライアント側ポーリング** - **最優先**（根本対策）
+   - `jsonrpc/near_client.rs:141`: `wait_until: TxExecutionStatus::None`に変更
+   - クライアント側でポーリング実装（NEAR公式推奨パターン）
+   - 例: 2秒間隔でステータス確認、最大30回まで（60秒タイムアウト）
+   - 参考: GitHub Issue #344で議論されている`EXPERIMENTAL_broadcast_tx_sync` + `EXPERIMENTAL_check_tx`パターン
+
+2. **リトライロジックのバグ修正** - **必須**（保険）
+   - `jsonrpc/rpc.rs:226`: `.min(min_dur)` → `.max(min_dur)`
+   - exponential backoffを正しく機能させる
+   - これにより、万が一のレート制限エラーにも適切に対応
+
+3. **record_rates間隔調整** - 追加の最適化
+   - `trade.rs:30`: `"0 */5 * * * *"` → `"0 */15 * * * *"` に変更
+   - RPC負荷の軽減
+
+**実装ファイル**:
+- `backend/src/jsonrpc/near_client.rs`: wait_until = NONE、クライアント側ポーリング実装
+- `backend/src/jsonrpc/rpc.rs`: リトライロジック修正
+- `backend/src/trade.rs`: record_rates間隔調整
+
+**期待効果**:
+- wait_until = NONE: サーバー側10秒タイムアウトの回避 → 128回リトライ発生の防止
+- クライアント側ポーリング: トランザクション完了を適切な間隔で確認
+- リトライバグ修正: exponential backoffが正しく機能
+- 全対策実施で: 安定したトレード実行、レート制限エラー解消
 
 #### 3. **BigDecimal変換箇所の網羅的チェック** 🟡 中優先度
 - **状況**: 2箇所で同じエラーパターン`to_string().parse::<u128>()`を発見・修正
