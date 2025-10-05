@@ -60,10 +60,29 @@ impl<A: TxInfo> SentTx for StandardSentTx<A> {
             debug!(attempt_log, "polling transaction status");
 
             // wait_until=NONE でステータスを取得
-            let response = self
+            let response = match self
                 .tx_info
                 .wait_tx_result(&self.account, &self.tx_hash, TxExecutionStatus::None)
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    // "Transaction doesn't exist" エラーは一時的なもの（まだブロックチェーンに取り込まれていない）
+                    let err_msg = format!("{:?}", err);
+                    if err_msg.contains("doesn't exist") || err_msg.contains("UNKNOWN_TRANSACTION")
+                    {
+                        debug!(attempt_log, "transaction not yet available, will retry"; "error" => err_msg);
+                        if attempt < MAX_ATTEMPTS {
+                            debug!(attempt_log, "waiting before next poll"; "interval_secs" => POLL_INTERVAL.as_secs());
+                            tokio::time::sleep(POLL_INTERVAL).await;
+                        }
+                        continue;
+                    } else {
+                        // その他のエラーは即座に返す
+                        return Err(err);
+                    }
+                }
+            };
 
             if let Some(outcome) = response.final_execution_outcome {
                 debug!(attempt_log, "transaction outcome received");
