@@ -4,6 +4,20 @@
 
 cli_tokens で Chronos API を使う実績のあるコードが common にあるのでそれを使う。
 
+## 🔥 現在の優先タスク（2025-10-07更新）
+
+### ✅ 完了
+- **クライアント側ポーリング実装** (2.3): `wait_until=NONE` + トランザクションステータス確認
+- **Storage Deposit 一括セットアップ** (2.4): RPC 呼び出しを 90% 削減
+
+### ⏳ 未実装（優先度順）
+1. **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正
+2. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
+3. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
+
+### 🔄 次回 cron 実行待ち
+- 2.4 実装の動作確認（rate limit エラーの解消確認）
+
 ## ✅ Phase 0: Backend 自動トレード基盤 (完了)
 
 **実装済み**: Portfolio アルゴリズムを使用した自動トレードシステムの基盤を backend に実装。
@@ -791,7 +805,7 @@ let delay = calc_delay(retry_count).max(min_dur);  // ← 少なくともmin_dur
 - ⏳ **リトライロジックのバグ修正**: `jsonrpc/rpc.rs:226` の `.min(min_dur)` → `.max(min_dur)`
 - ⏳ **record_rates間隔調整**: `trade.rs:30` の `"0 */5 * * * *"` → `"0 */15 * * * *"`
 
-#### 2.4 **Storage Deposit 事前一括実行の計画** 🔥 最優先（2025-10-05策定）
+#### 2.4 **Storage Deposit 事前一括実行** ✅ 実装完了（2025-10-07）
 
 **背景**:
 - 2.3でクライアント側ポーリングを実装したが、新たな問題が判明
@@ -811,54 +825,20 @@ let delay = calc_delay(retry_count).max(min_dur);  // ← 少なくともmin_dur
 
 **解決策: 初回セットアップ関数の追加**
 
-#### 実装計画
+#### 実装方針
 
-**1. `ensure_ref_storage_setup()` 関数を追加** (`backend/src/ref_finance/storage.rs`):
-```rust
-pub async fn ensure_ref_storage_setup<C, W>(
-    client: &C,
-    wallet: &W,
-    tokens: &[AccountId]
-) -> Result<()>
-where
-    C: ViewContract + SendTx,
-    W: Wallet,
-{
-    // 1. storage_balance_of() でアカウント状態を確認
-    // 2. 未登録または不足している場合のみ storage_deposit() を実行
-    // 3. 全トークンを一括で register_tokens() に登録（1トランザクション）
-}
-```
+1. **`ensure_ref_storage_setup()` 関数を追加** (`backend/src/ref_finance/storage.rs`)
+   - `storage_balance_of()` でアカウント状態を確認
+   - 未登録時のみ `storage_deposit()` を実行
+   - `register_tokens()` で全トークンを一括登録
 
-**2. `prepare_funds()` の先頭で一度だけ呼び出す** (`backend/src/trade/stats.rs`):
-```rust
-pub async fn prepare_funds<C, W>(...) -> Result<u128> {
-    // 全トークンリストを取得
-    let all_tokens = get_all_token_list();
+2. **`trade::start()` でトークン選定後に呼び出す** (`backend/src/trade/stats.rs`)
+   - トークン選定後に一度だけセットアップを実行
+   - 以降の処理では storage deposit 不要
 
-    // ref-finance セットアップを確認・実行（初回のみ）
-    ensure_ref_storage_setup(client, wallet, &all_tokens).await?;
-
-    // 既存の資金準備処理
-    ...
-}
-```
-
-**3. `balances::start()` を簡素化** (`backend/src/ref_finance/balances.rs`):
-```rust
-pub async fn start<C, W>(...) -> Result<Balance> {
-    // storage deposit のチェック・実行を削除
-    // 単純にトークン残高を取得するだけに変更
-    let deposited_wnear = balance_of_start_token(client, wallet, token).await?;
-
-    if deposited_wnear < required_balance {
-        refill(client, wallet, required_balance - deposited_wnear).await?;
-        Ok(deposited_wnear)
-    } else {
-        ...
-    }
-}
-```
+3. **`balances::start()` を簡素化** (`backend/src/ref_finance/balances.rs`)
+   - `get_storage_account_or_register()` 呼び出しを削除
+   - 残高取得と refill のみに変更
 
 #### 期待効果
 
@@ -876,25 +856,37 @@ pub async fn start<C, W>(...) -> Result<Balance> {
 - ✅ 既存コードへの影響が少ない
 - ✅ DB不要（`storage_balance_of()` のクエリで状態確認可能）
 
-#### 実装手順
+#### 実装内容
 
-1. **`backend/src/ref_finance/storage.rs` に `ensure_setup()` 関数を追加**
-   - `storage_balance_of()` で状態確認
-   - 未登録時のみ `storage_deposit()` 実行
+**コミット**: `0e5b5e6` (2025-10-07)
+
+1. **`backend/src/ref_finance/deposit.rs`**: ✅
+   - `register_tokens()` 関数を追加（line 174-196）
+   - 複数トークンを一括で REF Finance に登録
+
+2. **`backend/src/ref_finance/storage.rs`**: ✅
+   - `ensure_ref_storage_setup()` 関数を追加（line 223-267）
+   - `storage_balance_of()` で登録状態を確認
+   - 未登録時のみ `storage_deposit()` を実行
    - `register_tokens()` で全トークンを一括登録
 
-2. **`backend/src/trade/stats.rs` の `prepare_funds()` で呼び出し**
-   - トークンリスト取得
-   - `ensure_setup()` を最初に実行
+3. **`backend/src/trade/stats.rs`**: ✅
+   - トークン選定後に `ensure_ref_storage_setup()` を呼び出し（line 121-134）
+   - ポートフォリオ実行前に一度だけセットアップを実行
 
-3. **`backend/src/ref_finance/balances.rs` の `start()` を簡素化**
-   - `get_storage_account_or_register()` 呼び出しを削除
-   - 残高取得とrefillのみに変更
+4. **`backend/src/ref_finance/balances.rs`**: ✅
+   - `get_storage_account_or_register()` を削除
+   - `balances::start()` から storage deposit チェックを削除（line 74-76）
+   - 残高取得と refill のみに簡素化
 
-4. **テストと検証**
-   - ローカル環境でテスト実行
-   - Docker 再ビルド・再起動
-   - 次回 cron 実行で動作確認
+5. **`backend/src/ref_finance/balances/tests.rs`**: ✅
+   - テスト用の `DEFAULT_DEPOSIT` 定数を追加（line 15）
+
+#### 検証結果
+
+- ✅ コンパイル成功
+- ✅ Docker ビルド成功
+- ⏳ 次回 cron 実行で動作確認予定
 
 #### 3. **BigDecimal変換箇所の網羅的チェック** 🟡 中優先度
 - **状況**: 2箇所で同じエラーパターン`to_string().parse::<u128>()`を発見・修正
