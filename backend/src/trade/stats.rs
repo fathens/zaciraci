@@ -118,9 +118,22 @@ pub async fn start() -> Result<()> {
         return Ok(());
     }
 
-    // Step 4: ポートフォリオ最適化と実行
+    // Step 3.5: REF Finance のストレージセットアップを確認・実行
     let client = crate::jsonrpc::new_client();
     let wallet = crate::wallet::new_wallet();
+
+    // トークンを TokenAccount に変換
+    let token_accounts: Vec<crate::ref_finance::token_account::TokenAccount> = selected_tokens
+        .iter()
+        .filter_map(|t| t.as_str().parse().ok())
+        .collect();
+
+    info!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
+    crate::ref_finance::storage::ensure_ref_storage_setup(&client, &wallet, &token_accounts)
+        .await?;
+    info!(log, "REF Finance storage setup completed");
+
+    // Step 4: ポートフォリオ最適化と実行
     match execute_portfolio_strategy(
         &prediction_service,
         &selected_tokens,

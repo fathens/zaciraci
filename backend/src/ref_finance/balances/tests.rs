@@ -11,6 +11,9 @@ use std::sync::{Arc, Mutex, Once};
 
 static INIT: Once = Once::new();
 
+// Test constant for storage deposit amount
+const DEFAULT_DEPOSIT: Balance = 100_000_000_000_000_000_000_000; // 0.1 NEAR
+
 struct MockWallet {
     account_id: AccountId,
     signer: InMemorySigner,

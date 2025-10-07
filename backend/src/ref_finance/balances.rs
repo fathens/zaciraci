@@ -4,11 +4,9 @@ use crate::jsonrpc::{AccountInfo, SendTx, SentTx, ViewContract};
 use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
-use crate::ref_finance::storage;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::types::MilliNear;
 use crate::wallet::Wallet;
-use anyhow::bail;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
@@ -18,7 +16,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 #[cfg(test)]
 const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear(); // テスト用の定数
-const DEFAULT_DEPOSIT: Balance = MilliNear::of(100).to_yocto();
 const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
@@ -71,11 +68,8 @@ where
         "required_balance" => %required_balance,
     );
 
-    let basic_info = get_storage_account_or_register(client, wallet).await?;
-    info!(log, "storage account";
-        "near_amount" => ?basic_info.near_amount,
-        "storage_used" => ?basic_info.storage_used,
-    );
+    // Note: storage deposit check is now performed once in trade::start
+    // via ensure_ref_storage_setup, so we skip it here to reduce RPC calls
 
     let deposited_wnear = balance_of_start_token(client, wallet, token).await?;
     info!(log, "comparing";
@@ -103,36 +97,6 @@ where
             }
         }
         Ok(deposited_wnear)
-    }
-}
-
-async fn get_storage_account_or_register<C, W>(
-    client: &C,
-    wallet: &W,
-) -> Result<storage::AccountBaseInfo>
-where
-    C: ViewContract + SendTx,
-    W: Wallet,
-{
-    let account = wallet.account_id();
-    if let Some(a) = storage::get_account_basic_info(client, account).await? {
-        let need = DEFAULT_DEPOSIT - a.near_amount.0;
-        if need > 0 {
-            storage::deposit(client, wallet, need, false)
-                .await?
-                .wait_for_success()
-                .await?;
-        }
-        return Ok(a);
-    }
-    storage::deposit(client, wallet, DEFAULT_DEPOSIT, false)
-        .await?
-        .wait_for_success()
-        .await?;
-    if let Some(a) = storage::get_account_basic_info(client, account).await? {
-        Ok(a)
-    } else {
-        bail!("Failed to get account basic info after deposit")
     }
 }
 
