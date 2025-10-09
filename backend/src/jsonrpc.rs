@@ -1,3 +1,4 @@
+mod endpoint_pool;
 mod near_client;
 mod rpc;
 mod sent_tx;
@@ -38,11 +39,19 @@ pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
 });
 
 static JSONRPC_CLIENT: Lazy<Arc<JsonRpcClient>> = Lazy::new(|| {
-    let client = if *IS_MAINNET {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
-    } else {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
-    };
+    // Get endpoint from pool, fallback to default if pool is empty
+    let endpoint_url = endpoint_pool::ENDPOINT_POOL
+        .next_endpoint()
+        .map(|ep| ep.url.as_str())
+        .unwrap_or_else(|| {
+            if *IS_MAINNET {
+                near_jsonrpc_client::NEAR_MAINNET_RPC_URL
+            } else {
+                near_jsonrpc_client::NEAR_TESTNET_RPC_URL
+            }
+        });
+
+    let client = JsonRpcClient::connect(endpoint_url);
     Arc::new(client)
 });
 
