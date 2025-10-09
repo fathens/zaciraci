@@ -11,9 +11,11 @@ cli_tokens で Chronos API を使う実績のあるコードが common にある
 - **Storage Deposit 一括セットアップ** (2.4): RPC 呼び出しを 90% 削減
 
 ### ⏳ 未実装（優先度順）
-1. **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正
-2. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
-3. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
+1. **設定ファイルTOML化** (2.5): 環境変数からTOML設定ファイルへの移行（詳細は下記セクション2.5参照）
+2. **マルチエンドポイントRPC** (2.6): Rate limit回避のための複数RPCエンドポイント対応（詳細は `diagram/roundrobin.md` 参照）
+3. **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正
+4. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
+5. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
 
 ### 🔄 次回 cron 実行待ち
 - 2.4 実装の動作確認（rate limit エラーの解消確認）
@@ -379,6 +381,95 @@ Phase 1 の決定アルゴリズムを使用 - **実装済み**
    - 取引実績の詳細記録
    - ポートフォリオパフォーマンスの追跡
    - アラート機能の実装
+
+### 2.5 設定ファイルTOML化
+
+**目的**: 環境変数による設定から構造化されたTOML設定ファイルへの移行
+
+**背景**:
+- 現在の環境変数ベース設定は可読性が低い
+- 複雑な設定（RPCエンドポイント配列など）に不向き
+- コメントによる説明ができない
+
+**実装内容**:
+
+1. **設定ファイル構成**:
+   ```
+   config/
+   ├── config.toml           # メイン設定ファイル（git管理）
+   └── config.local.toml     # ローカル環境用（git管理外）
+   ```
+
+2. **TOML構造** (`config/config.toml`):
+   ```toml
+   [network]
+   use_mainnet = true
+
+   [wallet]
+   root_account_id = ""
+   root_mnemonic = ""
+   root_hdpath = "m/44'/397'/0'"
+
+   [rpc]
+   [[rpc.endpoints]]
+   url = "https://rpc.ankr.com/near"
+   weight = 40
+   max_retries = 3
+
+   [external_services]
+   chronos_url = "http://localhost:8000"
+   ollama_base_url = "http://localhost:11434"
+
+   [trade]
+   initial_investment = 100
+   top_tokens = 10
+   cron_schedule = "0 0 0 * * *"
+
+   [harvest]
+   account_id = ""
+   min_amount = 10
+   reserve_amount = 1
+   ```
+
+3. **設定読み込み優先順位**:
+   ```
+   1. 環境変数（最優先・後方互換）
+   2. config.local.toml
+   3. config.toml
+   4. デフォルト値
+   ```
+
+4. **実装タスク**:
+   - [ ] `Cargo.toml` に `toml = "0.8"` 追加
+   - [ ] `common/src/config.rs` にTOML読み込み機能追加
+   - [ ] `config/config.toml` テンプレート作成
+   - [ ] `.gitignore` に `config/config.local.toml` 追加
+   - [ ] Docker設定でconfig/ディレクトリをマウント
+   - [ ] 既存の環境変数設定との後方互換性確保
+
+**メリット**:
+- 一元管理: 全設定を1箇所で管理
+- 可読性: コメント付きで設定の意味が明確
+- 環境分離: config.local.tomlでローカル環境を上書き
+- セキュリティ: 機密情報をgit管理外に配置
+- 後方互換: 環境変数も引き続き使用可能
+
+### 2.6 マルチエンドポイントRPC実装
+
+**目的**: 複数の無料RPCエンドポイントを使用してrate limit回避
+
+**詳細計画**: `diagram/roundrobin.md` 参照
+
+**概要**:
+- Weighted random selectionによるエンドポイント選択
+- Rate limit時の自動フェイルオーバー
+- 失敗エンドポイントの一時的無効化（5分間）
+- 設定ファイル（TOML）による柔軟な設定
+
+**期待効果**:
+- Rate limit到達時間: 7分 → 解消
+- 可用性向上: 1つのエンドポイント障害でも継続稼働
+- コスト最適化: 無料プランの最大活用
 
 ## 🎯 推奨する次のアクション
 

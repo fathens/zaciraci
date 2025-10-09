@@ -247,8 +247,8 @@ mod tests;  // config/tests.rs を参照
 - 失敗エンドポイントを時刻ベースで管理
 
 **config モジュール**:
-- 環境変数 `NEAR_RPC_ENDPOINTS`, `NEAR_RPC_WEIGHTS` をパース
-- 後方互換: `NEAR_RPC_URL` も対応
+- TOML設定ファイル (`config/config.toml`) から `rpc.endpoints` をロード
+- 環境変数でのオーバーライドも可能（後方互換）
 
 ## 実装手順
 
@@ -338,18 +338,6 @@ export NEAR_RPC_FAILURE_RESET_SECONDS="300"  # 5分
 export NEAR_RPC_MAX_ENDPOINT_ATTEMPTS="10"
 ```
 
-### 既存設定との互換性
-
-```rust
-// 環境変数未設定時は単一エンドポイント（後方互換）
-if let Ok(single_endpoint) = env::var("NEAR_RPC_URL") {
-    // 従来の単一エンドポイントモード
-    return vec![RpcEndpoint::new(single_endpoint, 100, 5, 1)];
-}
-
-// 新しい複数エンドポイントモード
-parse_endpoints_from_env()
-```
 
 ## 期待効果
 
