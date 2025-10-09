@@ -4,18 +4,18 @@
 
 cli_tokens で Chronos API を使う実績のあるコードが common にあるのでそれを使う。
 
-## 🔥 現在の優先タスク（2025-10-07更新）
+## 🔥 現在の優先タスク（2025-10-09更新）
 
 ### ✅ 完了
 - **クライアント側ポーリング実装** (2.3): `wait_until=NONE` + トランザクションステータス確認
 - **Storage Deposit 一括セットアップ** (2.4): RPC 呼び出しを 90% 削減
+- **設定ファイルTOML化** (2.5): 環境変数からTOML設定ファイルへの移行完了
 
 ### ⏳ 未実装（優先度順）
-1. **設定ファイルTOML化** (2.5): 環境変数からTOML設定ファイルへの移行（詳細は下記セクション2.5参照）
-2. **マルチエンドポイントRPC** (2.6): Rate limit回避のための複数RPCエンドポイント対応（詳細は `diagram/roundrobin.md` 参照）
-3. **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正
-4. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
-5. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
+1. **マルチエンドポイントRPC** (2.6): Rate limit回避のための複数RPCエンドポイント対応（詳細は `diagram/roundrobin.md` 参照）
+2. **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正
+3. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
+4. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
 
 ### 🔄 次回 cron 実行待ち
 - 2.4 実装の動作確認（rate limit エラーの解消確認）
@@ -382,14 +382,9 @@ Phase 1 の決定アルゴリズムを使用 - **実装済み**
    - ポートフォリオパフォーマンスの追跡
    - アラート機能の実装
 
-### 2.5 設定ファイルTOML化
+### ✅ 2.5 設定ファイルTOML化 (完了 2025-10-09)
 
 **目的**: 環境変数による設定から構造化されたTOML設定ファイルへの移行
-
-**背景**:
-- 現在の環境変数ベース設定は可読性が低い
-- 複雑な設定（RPCエンドポイント配列など）に不向き
-- コメントによる説明ができない
 
 **実装内容**:
 
@@ -400,59 +395,41 @@ Phase 1 の決定アルゴリズムを使用 - **実装済み**
    └── config.local.toml     # ローカル環境用（git管理外）
    ```
 
-2. **TOML構造** (`config/config.toml`):
-   ```toml
-   [network]
-   use_mainnet = true
-
-   [wallet]
-   root_account_id = ""
-   root_mnemonic = ""
-   root_hdpath = "m/44'/397'/0'"
-
-   [rpc]
-   [[rpc.endpoints]]
-   url = "https://rpc.ankr.com/near"
-   weight = 40
-   max_retries = 3
-
-   [external_services]
-   chronos_url = "http://localhost:8000"
-   ollama_base_url = "http://localhost:11434"
-
-   [trade]
-   initial_investment = 100
-   top_tokens = 10
-   cron_schedule = "0 0 0 * * *"
-
-   [harvest]
-   account_id = ""
-   min_amount = 10
-   reserve_amount = 1
+2. **設定読み込み優先順位**:
+   ```
+   1. CONFIG_STORE（ランタイム設定・最優先）
+   2. 環境変数（後方互換）
+   3. config.local.toml
+   4. config.toml
+   5. デフォルト値
    ```
 
-3. **設定読み込み優先順位**:
-   ```
-   1. 環境変数（最優先・後方互換）
-   2. config.local.toml
-   3. config.toml
-   4. デフォルト値
-   ```
+3. **実装済み機能**:
+   - ✅ `Cargo.toml` に `toml = "0.8"` 追加
+   - ✅ `common/src/config.rs` にTOML読み込み機能追加
+   - ✅ `config/config.toml` テンプレート作成（全設定カバー）
+   - ✅ `.gitignore` に `config/config.local.toml` 追加
+   - ✅ Docker設定でconfig/ディレクトリをマウント
+   - ✅ 既存の環境変数設定との後方互換性確保
+   - ✅ 優先順位検証テスト追加（6テストケース）
 
-4. **実装タスク**:
-   - [ ] `Cargo.toml` に `toml = "0.8"` 追加
-   - [ ] `common/src/config.rs` にTOML読み込み機能追加
-   - [ ] `config/config.toml` テンプレート作成
-   - [ ] `.gitignore` に `config/config.local.toml` 追加
-   - [ ] Docker設定でconfig/ディレクトリをマウント
-   - [ ] 既存の環境変数設定との後方互換性確保
+4. **TOML構造**:
+   - `[network]`: mainnet/testnet設定
+   - `[wallet]`: ウォレット情報
+   - `[rpc]`: RPCエンドポイント配列（weight対応）
+   - `[external_services]`: Chronos/Ollama URL
+   - `[trade]`: トレード設定
+   - `[cron]`: Cron設定
+   - `[harvest]`: ハーベスト設定
+   - `[arbitrage]`: アービトラージ設定
+   - `[logging]`: ログ設定
 
-**メリット**:
-- 一元管理: 全設定を1箇所で管理
-- 可読性: コメント付きで設定の意味が明確
-- 環境分離: config.local.tomlでローカル環境を上書き
-- セキュリティ: 機密情報をgit管理外に配置
-- 後方互換: 環境変数も引き続き使用可能
+**達成したメリット**:
+- ✅ 一元管理: 全設定を1箇所で管理
+- ✅ 可読性: コメント付きで設定の意味が明確
+- ✅ 環境分離: config.local.tomlでローカル環境を上書き
+- ✅ セキュリティ: 機密情報をgit管理外に配置
+- ✅ 後方互換: 環境変数も引き続き使用可能
 
 ### 2.6 マルチエンドポイントRPC実装
 
