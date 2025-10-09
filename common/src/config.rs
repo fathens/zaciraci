@@ -524,4 +524,37 @@ mod tests {
         let result = get("TRADE_TOP_TOKENS").unwrap();
         assert_eq!(result, "10");
     }
+
+    #[test]
+    fn test_priority_order() {
+        // 優先順位の完全検証: CONFIG_STORE > 環境変数 > TOML > デフォルト
+        const TEST_KEY: &str = "OLLAMA_BASE_URL";
+
+        // Step 1: TOML/デフォルトのみ (最低優先度)
+        unsafe {
+            std::env::remove_var(TEST_KEY);
+        }
+        let result = get(TEST_KEY).unwrap();
+        assert_eq!(result, "http://localhost:11434"); // config.toml または default
+
+        // Step 2: 環境変数追加 (TOML より優先)
+        unsafe {
+            std::env::set_var(TEST_KEY, "http://env-url:1111");
+        }
+        let result = get(TEST_KEY).unwrap();
+        assert_eq!(result, "http://env-url:1111");
+
+        // Step 3: CONFIG_STORE 追加 (環境変数より優先)
+        set(TEST_KEY, "http://store-url:2222");
+        let result = get(TEST_KEY).unwrap();
+        assert_eq!(result, "http://store-url:2222");
+
+        // Cleanup
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove(TEST_KEY);
+        }
+        unsafe {
+            std::env::remove_var(TEST_KEY);
+        }
+    }
 }
