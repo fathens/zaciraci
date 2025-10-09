@@ -220,6 +220,486 @@ where
 }
 ```
 
+## テスト可能な構造設計
+
+### アーキテクチャ方針
+
+**依存性注入パターンを採用**:
+- エンドポイント選択ロジックを独立したモジュールに分離
+- trait を使ってモック可能な設計
+- 時刻依存処理（失敗リセット）をテスタブルに
+
+### モジュール構成
+
+```
+backend/src/jsonrpc/
+├── mod.rs                    # 既存: JsonRpcClient の定義
+├── rpc.rs                    # 既存: RPCメソッド実装
+├── endpoint_pool.rs          # 新規: エンドポイント選択・管理
+└── endpoint_pool/
+    ├── mod.rs                # EndpointPool の公開API
+    ├── selector.rs           # Weighted random selection ロジック
+    ├── failure_tracker.rs    # 失敗エンドポイント追跡
+    └── config.rs             # 環境変数パース
+```
+
+### 1. EndpointSelector trait（テスト境界）
+
+```rust
+// backend/src/jsonrpc/endpoint_pool/selector.rs
+
+/// エンドポイント選択の抽象化（モック可能）
+pub trait EndpointSelector: Send + Sync {
+    /// 利用可能なエンドポイントから1つ選択
+    fn select<'a>(&self, available: &'a [RpcEndpoint]) -> Option<&'a RpcEndpoint>;
+}
+
+/// Weighted random selection の実装
+pub struct WeightedRandomSelector;
+
+impl EndpointSelector for WeightedRandomSelector {
+    fn select<'a>(&self, available: &'a [RpcEndpoint]) -> Option<&'a RpcEndpoint> {
+        if available.is_empty() {
+            return None;
+        }
+
+        let total_weight: u32 = available.iter().map(|ep| ep.weight).sum();
+
+        if total_weight == 0 {
+            // 均等ランダム
+            let mut rng = rand::thread_rng();
+            let idx = rng.gen_range(0..available.len());
+            return Some(&available[idx]);
+        }
+
+        // 重み付きランダム
+        let mut rng = rand::thread_rng();
+        let mut random_weight = rng.gen_range(0..total_weight);
+
+        for endpoint in available {
+            if random_weight < endpoint.weight {
+                return Some(endpoint);
+            }
+            random_weight -= endpoint.weight;
+        }
+
+        available.first()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_weighted_selection_distribution() {
+        let selector = WeightedRandomSelector;
+        let endpoints = vec![
+            RpcEndpoint { url: "a".into(), weight: 70, max_retries: 3 },
+            RpcEndpoint { url: "b".into(), weight: 30, max_retries: 3 },
+        ];
+
+        // 1000回試行して分布を確認
+        let mut count_a = 0;
+        for _ in 0..1000 {
+            let selected = selector.select(&endpoints).unwrap();
+            if selected.url == "a" {
+                count_a += 1;
+            }
+        }
+
+        // 70%前後になることを確認（600-800の範囲）
+        assert!(count_a > 600 && count_a < 800);
+    }
+
+    #[test]
+    fn test_equal_weight_selection() {
+        let selector = WeightedRandomSelector;
+        let endpoints = vec![
+            RpcEndpoint { url: "a".into(), weight: 0, max_retries: 3 },
+            RpcEndpoint { url: "b".into(), weight: 0, max_retries: 3 },
+        ];
+
+        // weight=0 でも均等選択される
+        let selected = selector.select(&endpoints);
+        assert!(selected.is_some());
+    }
+
+    #[test]
+    fn test_empty_endpoints() {
+        let selector = WeightedRandomSelector;
+        let endpoints: Vec<RpcEndpoint> = vec![];
+        assert!(selector.select(&endpoints).is_none());
+    }
+}
+```
+
+### 2. FailureTracker trait（時刻注入）
+
+```rust
+// backend/src/jsonrpc/endpoint_pool/failure_tracker.rs
+
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+/// 時刻取得の抽象化（テスト時にモック可能）
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Instant;
+}
+
+/// 本番環境用の実装
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// 失敗エンドポイントの追跡
+pub struct FailureTracker {
+    failed_until: Arc<RwLock<HashMap<String, Instant>>>,
+    reset_duration: Duration,
+    clock: Arc<dyn Clock>,
+}
+
+impl FailureTracker {
+    pub fn new(reset_duration: Duration, clock: Arc<dyn Clock>) -> Self {
+        Self {
+            failed_until: Arc::new(RwLock::new(HashMap::new())),
+            reset_duration,
+            clock,
+        }
+    }
+
+    /// エンドポイントが失敗中かチェック
+    pub fn is_failed(&self, url: &str) -> bool {
+        let failed = self.failed_until.read().unwrap();
+        if let Some(&until) = failed.get(url) {
+            self.clock.now() < until
+        } else {
+            false
+        }
+    }
+
+    /// エンドポイントを失敗としてマーク
+    pub fn mark_failed(&self, url: &str) {
+        let until = self.clock.now() + self.reset_duration;
+        self.failed_until.write().unwrap().insert(url.to_string(), until);
+
+        warn!(log, "endpoint marked as failed";
+            "url" => url,
+            "reset_after_seconds" => self.reset_duration.as_secs()
+        );
+    }
+
+    /// 失敗状態を手動でクリア（テスト用）
+    #[cfg(test)]
+    pub fn clear(&self) {
+        self.failed_until.write().unwrap().clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// テスト用のモック時計
+    struct MockClock {
+        now: Mutex<Instant>,
+    }
+
+    impl MockClock {
+        fn new() -> Self {
+            Self {
+                now: Mutex::new(Instant::now()),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            *self.now.lock().unwrap() += duration;
+        }
+    }
+
+    impl Clock for MockClock {
+        fn now(&self) -> Instant {
+            *self.now.lock().unwrap()
+        }
+    }
+
+    #[test]
+    fn test_failure_tracking() {
+        let clock = Arc::new(MockClock::new());
+        let tracker = FailureTracker::new(
+            Duration::from_secs(300),
+            clock.clone() as Arc<dyn Clock>,
+        );
+
+        // 初期状態
+        assert!(!tracker.is_failed("test.url"));
+
+        // 失敗マーク
+        tracker.mark_failed("test.url");
+        assert!(tracker.is_failed("test.url"));
+
+        // 時間を進める（300秒未満）
+        clock.advance(Duration::from_secs(200));
+        assert!(tracker.is_failed("test.url"));
+
+        // 時間を進める（300秒経過）
+        clock.advance(Duration::from_secs(101));
+        assert!(!tracker.is_failed("test.url"));
+    }
+}
+```
+
+### 3. EndpointPool の統合
+
+```rust
+// backend/src/jsonrpc/endpoint_pool/mod.rs
+
+use super::selector::{EndpointSelector, WeightedRandomSelector};
+use super::failure_tracker::{FailureTracker, SystemClock};
+use super::config::load_endpoints_from_env;
+
+pub struct EndpointPool {
+    endpoints: Vec<RpcEndpoint>,
+    selector: Box<dyn EndpointSelector>,
+    failure_tracker: FailureTracker,
+}
+
+impl EndpointPool {
+    /// 本番環境用のコンストラクタ
+    pub fn new() -> Self {
+        let endpoints = load_endpoints_from_env();
+        let selector = Box::new(WeightedRandomSelector);
+        let failure_tracker = FailureTracker::new(
+            Duration::from_secs(300),
+            Arc::new(SystemClock),
+        );
+
+        Self {
+            endpoints,
+            selector,
+            failure_tracker,
+        }
+    }
+
+    /// テスト用のコンストラクタ（依存性注入）
+    #[cfg(test)]
+    pub fn with_dependencies(
+        endpoints: Vec<RpcEndpoint>,
+        selector: Box<dyn EndpointSelector>,
+        failure_tracker: FailureTracker,
+    ) -> Self {
+        Self {
+            endpoints,
+            selector,
+            failure_tracker,
+        }
+    }
+
+    pub fn next_endpoint(&self) -> Option<&RpcEndpoint> {
+        // 利用可能なエンドポイントをフィルタ
+        let available: Vec<_> = self
+            .endpoints
+            .iter()
+            .filter(|ep| !self.failure_tracker.is_failed(&ep.url))
+            .collect();
+
+        if available.is_empty() {
+            warn!(log, "all endpoints failed, retrying all");
+            // 全失敗時は全エンドポイントを再試行
+            return self.selector.select(&self.endpoints);
+        }
+
+        self.selector.select(&available)
+    }
+
+    pub fn mark_failed(&self, url: &str) {
+        self.failure_tracker.mark_failed(url);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockSelector {
+        next_index: std::sync::Mutex<usize>,
+    }
+
+    impl EndpointSelector for MockSelector {
+        fn select<'a>(&self, available: &'a [RpcEndpoint]) -> Option<&'a RpcEndpoint> {
+            let mut idx = self.next_index.lock().unwrap();
+            let result = available.get(*idx);
+            *idx = (*idx + 1) % available.len().max(1);
+            result
+        }
+    }
+
+    #[test]
+    fn test_endpoint_pool_basic() {
+        let endpoints = vec![
+            RpcEndpoint { url: "a".into(), weight: 50, max_retries: 3 },
+            RpcEndpoint { url: "b".into(), weight: 50, max_retries: 3 },
+        ];
+
+        let pool = EndpointPool::with_dependencies(
+            endpoints,
+            Box::new(MockSelector { next_index: Mutex::new(0) }),
+            FailureTracker::new(Duration::from_secs(300), Arc::new(SystemClock)),
+        );
+
+        // 最初は "a" が選ばれる
+        assert_eq!(pool.next_endpoint().unwrap().url, "a");
+
+        // "a" を失敗マーク → "b" が選ばれる
+        pool.mark_failed("a");
+        assert_eq!(pool.next_endpoint().unwrap().url, "b");
+    }
+}
+```
+
+### 4. 設定の環境変数パース
+
+```rust
+// backend/src/jsonrpc/endpoint_pool/config.rs
+
+use std::env;
+
+pub fn load_endpoints_from_env() -> Vec<RpcEndpoint> {
+    // 後方互換: NEAR_RPC_URL が設定されていれば単一エンドポイント
+    if let Ok(url) = env::var("NEAR_RPC_URL") {
+        return vec![RpcEndpoint {
+            url,
+            weight: 100,
+            max_retries: 5,
+        }];
+    }
+
+    // 新形式: カンマ区切りのエンドポイント
+    let urls = env::var("NEAR_RPC_ENDPOINTS")
+        .unwrap_or_else(|_| default_endpoints_string());
+
+    let weights = env::var("NEAR_RPC_WEIGHTS")
+        .unwrap_or_else(|_| "40,40,15,5".to_string());
+
+    parse_endpoints(&urls, &weights)
+}
+
+fn default_endpoints_string() -> String {
+    "https://rpc.ankr.com/near,https://near.drpc.org,https://free.rpc.fastnear.com,https://1rpc.io/near"
+        .to_string()
+}
+
+fn parse_endpoints(urls: &str, weights: &str) -> Vec<RpcEndpoint> {
+    let url_list: Vec<&str> = urls.split(',').collect();
+    let weight_list: Vec<u32> = weights
+        .split(',')
+        .filter_map(|w| w.trim().parse().ok())
+        .collect();
+
+    url_list
+        .into_iter()
+        .enumerate()
+        .map(|(i, url)| RpcEndpoint {
+            url: url.trim().to_string(),
+            weight: weight_list.get(i).copied().unwrap_or(10),
+            max_retries: 3,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_endpoints() {
+        let urls = "http://a,http://b";
+        let weights = "70,30";
+        let endpoints = parse_endpoints(urls, weights);
+
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(endpoints[0].url, "http://a");
+        assert_eq!(endpoints[0].weight, 70);
+        assert_eq!(endpoints[1].url, "http://b");
+        assert_eq!(endpoints[1].weight, 30);
+    }
+
+    #[test]
+    fn test_parse_endpoints_missing_weights() {
+        let urls = "http://a,http://b,http://c";
+        let weights = "70";
+        let endpoints = parse_endpoints(urls, weights);
+
+        assert_eq!(endpoints.len(), 3);
+        assert_eq!(endpoints[0].weight, 70);
+        assert_eq!(endpoints[1].weight, 10); // デフォルト
+        assert_eq!(endpoints[2].weight, 10); // デフォルト
+    }
+}
+```
+
+### テスト戦略
+
+#### 単体テスト
+1. **selector.rs**: ランダム選択の分布テスト
+2. **failure_tracker.rs**: 時刻依存処理のモックテスト
+3. **config.rs**: 環境変数パースのエッジケース
+
+#### 統合テスト
+```rust
+// backend/tests/endpoint_pool_integration_test.rs
+
+#[tokio::test]
+async fn test_endpoint_failover() {
+    // モックRPCサーバーを立てて実際のフェイルオーバーをテスト
+    let mock_server_a = MockServer::start().await;
+    let mock_server_b = MockServer::start().await;
+
+    // サーバーAは rate limit を返す
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(429))
+        .mount(&mock_server_a)
+        .await;
+
+    // サーバーBは成功を返す
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "result": "ok"
+        })))
+        .mount(&mock_server_b)
+        .await;
+
+    // EndpointPoolを設定
+    env::set_var("NEAR_RPC_ENDPOINTS", format!("{},{}",
+        mock_server_a.uri(), mock_server_b.uri()));
+
+    // リクエスト実行
+    let result = call_with_fallback(method).await;
+
+    // サーバーBにフォールバックして成功
+    assert!(result.is_ok());
+}
+```
+
+### メリット
+
+1. **テスタビリティ**:
+   - 時刻・ランダム性を注入可能
+   - モックサーバーで統合テスト可能
+
+2. **保守性**:
+   - 責務が分離されている
+   - 各モジュールが独立してテスト可能
+
+3. **拡張性**:
+   - 新しいセレクター戦略を追加しやすい
+   - メトリクス収集を後から追加可能
+
 ## 実装手順
 
 ### Phase 1: 基礎実装（1-2時間）
