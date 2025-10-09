@@ -1,0 +1,79 @@
+# Zaciraci Configuration
+#
+# このファイルはgit管理されています。
+# ローカル環境固有の設定は config.local.toml に記述してください。
+
+[network]
+# メインネット使用フラグ
+use_mainnet = true
+
+[wallet]
+# NEAR ウォレット設定
+# 注意: 本番環境では config.local.toml で上書きすること
+root_account_id = ""
+root_mnemonic = ""
+root_hdpath = "m/44'/397'/0'"
+
+[rpc]
+# RPCエンドポイント設定
+# 複数のエンドポイントを指定して負荷分散・フェイルオーバー
+[[rpc.endpoints]]
+url = "https://rpc.ankr.com/near"
+weight = 40
+max_retries = 3
+
+[[rpc.endpoints]]
+url = "https://near.drpc.org"
+weight = 40
+max_retries = 3
+
+[[rpc.endpoints]]
+url = "https://free.rpc.fastnear.com"
+weight = 15
+max_retries = 2
+
+[[rpc.endpoints]]
+url = "https://1rpc.io/near"
+weight = 5
+max_retries = 2
+
+[rpc.settings]
+# 失敗エンドポイントのリセット間隔（秒）
+failure_reset_seconds = 300
+# 全エンドポイント試行の最大回数
+max_attempts = 10
+
+[external_services]
+# 外部サービスURL
+chronos_url = "http://localhost:8000"
+ollama_base_url = "http://localhost:11434"
+ollama_model = "llama2"
+
+[trade]
+# トレード設定
+initial_investment = 100
+top_tokens = 10
+# cron スケジュール（デフォルト: 毎日0時）
+cron_schedule = "0 0 0 * * *"
+
+[cron]
+# record_rates の初期値
+record_rates_initial_value = 100
+
+[harvest]
+# ハーベスト設定
+account_id = ""
+min_amount = 10
+reserve_amount = 1
+
+[arbitrage]
+# アービトラージ設定
+needed = false
+token_not_found_wait = "1s"
+other_error_wait = "5s"
+preview_not_found_wait = "2s"
+
+[logging]
+# ログ設定
+# "json" or "text"
+rust_log_format = "json"

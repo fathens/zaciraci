@@ -24,6 +24,8 @@ services:
         - CARGO_BUILD_ARGS=${CARGO_BUILD_ARGS:-}
     ports:
       - "8080:8080"
+    volumes:
+      - ../config:/app/config:ro
     environment:
       - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
       - RUST_LOG=${RUST_LOG:-trace}
