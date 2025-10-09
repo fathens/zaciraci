@@ -44,9 +44,8 @@
 
 pub struct RpcEndpoint {
     url: String,
-    weight: u32,        // 重み（高いほど優先的に使用）
+    weight: u32,        // ランダム選択の重み（リクエスト配分比率: 40 = 40%の確率で選択）
     max_retries: u32,   // このエンドポイントでの最大リトライ回数
-    priority: u32,      // 優先度（1=最高）
 }
 
 static RPC_ENDPOINTS: Lazy<Vec<RpcEndpoint>> = Lazy::new(|| {
@@ -55,25 +54,21 @@ static RPC_ENDPOINTS: Lazy<Vec<RpcEndpoint>> = Lazy::new(|| {
             url: "https://rpc.ankr.com/near".to_string(),
             weight: 40,
             max_retries: 3,
-            priority: 1,
         },
         RpcEndpoint {
             url: "https://near.drpc.org".to_string(),
             weight: 40,
             max_retries: 3,
-            priority: 1,
         },
         RpcEndpoint {
             url: "https://free.rpc.fastnear.com".to_string(),
             weight: 15,
             max_retries: 2,
-            priority: 2,
         },
         RpcEndpoint {
             url: "https://1rpc.io/near".to_string(),
             weight: 5,
             max_retries: 2,
-            priority: 3,
         },
     ]
 });
