@@ -241,13 +241,21 @@ backend/src/
     ├── endpoint_pool.rs                # 新規: EndpointPool（公開API + 統合）
     └── endpoint_pool/
         ├── selector.rs                 # Weighted random selection
+        ├── selector/
+        │   └── tests.rs                # selector のテスト
         ├── failure.rs                  # 失敗エンドポイント追跡
-        └── config.rs                   # 環境変数パース
+        ├── failure/
+        │   └── tests.rs                # failure のテスト
+        ├── config.rs                   # 環境変数パース
+        ├── config/
+        │   └── tests.rs                # config のテスト
+        └── tests.rs                    # endpoint_pool 統合テスト
 ```
 
 **参考にしたパターン**:
-- `ref_finance/path/`: by_token.rs, edge.rs, graph.rs, preview.rs
-- `web/pools/`: sort.rs (さらにサブディレクトリ tests.rs を持つ)
+- `ref_finance/path/graph.rs` + `graph/tests.rs`
+- `web/pools/sort.rs` + `sort/tests.rs`
+- テストファイルは `#[cfg(test)] mod tests;` で参照
 
 **ファイル分割方針**:
 - `endpoint_pool.rs`: 公開API（EndpointPool struct）のみ
@@ -282,7 +290,7 @@ impl EndpointPool {
 }
 
 #[cfg(test)]
-mod tests { ... }
+mod tests;  // endpoint_pool/tests.rs を参照
 ```
 
 **backend/src/jsonrpc/endpoint_pool/selector.rs**:
@@ -291,7 +299,7 @@ pub trait EndpointSelector: Send + Sync { ... }
 pub struct WeightedRandomSelector;
 
 #[cfg(test)]
-mod tests { ... }
+mod tests;  // selector/tests.rs を参照
 ```
 
 **backend/src/jsonrpc/endpoint_pool/failure.rs**:
@@ -301,7 +309,7 @@ pub struct SystemClock;
 pub struct FailureTracker { ... }
 
 #[cfg(test)]
-mod tests { ... }
+mod tests;  // failure/tests.rs を参照
 ```
 
 **backend/src/jsonrpc/endpoint_pool/config.rs**:
@@ -309,7 +317,7 @@ mod tests { ... }
 pub fn load_endpoints_from_env() -> Vec<RpcEndpoint> { ... }
 
 #[cfg(test)]
-mod tests { ... }
+mod tests;  // config/tests.rs を参照
 ```
 
 ### 主要コンポーネント
