@@ -10,12 +10,13 @@ cli_tokens で Chronos API を使う実績のあるコードが common にある
 - **クライアント側ポーリング実装** (2.3): `wait_until=NONE` + トランザクションステータス確認
 - **Storage Deposit 一括セットアップ** (2.4): RPC 呼び出しを 90% 削減
 - **設定ファイルTOML化** (2.5): 環境変数からTOML設定ファイルへの移行完了
+- **マルチエンドポイントRPC Phase 1&2a** (2.6): Rate limit検知と次回リクエスト時の自動切り替え
+- **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正
 
 ### ⏳ 未実装（優先度順）
-1. **マルチエンドポイントRPC** (2.6): Rate limit回避のための複数RPCエンドポイント対応（詳細は `diagram/roundrobin.md` 参照）
-2. **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正
-3. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
-4. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
+1. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
+2. **マルチエンドポイントRPC Phase 2b** (2.6): 同一リトライループ内での動的エンドポイント切り替え（要リファクタリング）
+3. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
 
 ### 🔄 次回 cron 実行待ち
 - 2.4 実装の動作確認（rate limit エラーの解消確認）
@@ -437,14 +438,45 @@ Phase 1 の決定アルゴリズムを使用 - **実装済み**
 
 **詳細計画**: `diagram/roundrobin.md` 参照
 
-**概要**:
-- Weighted random selectionによるエンドポイント選択
-- Rate limit時の自動フェイルオーバー
-- 失敗エンドポイントの一時的無効化（5分間）
-- 設定ファイル（TOML）による柔軟な設定
+#### ✅ Phase 1 & 2a: 基本実装完了（2025-10-09）
 
-**期待効果**:
-- Rate limit到達時間: 7分 → 解消
+**実装完了内容**:
+- ✅ `EndpointPool` の実装（`backend/src/jsonrpc/endpoint_pool.rs`）
+- ✅ Weighted random selection によるエンドポイント選択
+- ✅ Rate limit 検知時の `mark_failed()` 呼び出し
+- ✅ 失敗エンドポイントの一時的無効化（5分間、自動リセット）
+- ✅ 設定ファイル（TOML）からのエンドポイント読み込み
+- ✅ 詳細なログ出力（エンドポイント選択、失敗マーキング）
+- ✅ 統合テスト追加（`test_rate_limit_triggers_endpoint_switch`, `test_all_endpoints_failed_resets`）
+- ✅ リトライロジックのバグ修正（`rpc.rs:226`: `.min(min_dur)` → `.max(min_dur)`）
+
+**動作仕様**:
+1. Rate limit エラー（`TooManyRequests`）検知時に `EndpointPool::mark_failed()` を呼び出し
+2. 失敗エンドポイントを5分間無効化
+3. 次回のリクエスト時に `next_endpoint()` が別のエンドポイントを選択
+4. すべてのエンドポイントが失敗した場合、自動的にリセット
+
+**制限事項**:
+- 同一リクエストのリトライループ内ではエンドポイント切り替えは行われない
+- 次のリクエスト（別トランザクションや別API呼び出し）から別エンドポイントが使われる
+
+#### ⏳ Phase 2b: 動的切り替え（未実装）
+
+**目的**: 同一リトライループ内でのエンドポイント切り替え
+
+**必要な作業**:
+- `StandardRpcClient` が `JsonRpcClient` を保持する代わりに `EndpointPool` を保持
+- リトライ時に動的に `JsonRpcClient::connect()` を呼び出し
+- 大規模なリファクタリングが必要
+
+**期待効果**（Phase 2b完成時）:
+- Rate limit エラー発生時に即座に別エンドポイントへ切り替え
+- リトライ待機時間の削減
+- より堅牢なエラーハンドリング
+
+**期待効果（Phase 2a時点）**:
+- 次回リクエストから別エンドポイントが使われる
+- Rate limit エラーの影響を複数エンドポイントに分散
 - 可用性向上: 1つのエンドポイント障害でも継続稼働
 - コスト最適化: 無料プランの最大活用
 

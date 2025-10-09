@@ -56,11 +56,13 @@ static JSONRPC_CLIENT: Lazy<Arc<JsonRpcClient>> = Lazy::new(|| {
 });
 
 pub fn new_client() -> StandardNearClient<StandardRpcClient> {
+    let endpoint_url = JSONRPC_CLIENT.server_addr().to_string();
     StandardNearClient::new(&Arc::new(StandardRpcClient::new(
         Arc::clone(&JSONRPC_CLIENT),
         128,
         std::time::Duration::from_secs(60),
         0.1,
+        endpoint_url,
     )))
 }
 

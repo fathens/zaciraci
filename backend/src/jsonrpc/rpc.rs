@@ -15,6 +15,8 @@ pub struct StandardRpcClient {
     retry_limit: u16,
     delay_limit: Duration,
     delay_fluctuation: f32,
+
+    endpoint_url: String,
 }
 
 impl StandardRpcClient {
@@ -23,12 +25,14 @@ impl StandardRpcClient {
         retry_limit: u16,
         delay_limit: Duration,
         delay_fluctuation: f32,
+        endpoint_url: String,
     ) -> Self {
         Self {
             underlying,
             retry_limit,
             delay_limit,
             delay_fluctuation,
+            endpoint_url,
         }
     }
 
@@ -59,6 +63,8 @@ impl StandardRpcClient {
                         JsonRpcServerResponseStatusError::TooManyRequests,
                     ) => {
                         info!(log, "response status error: too many requests");
+                        // Mark endpoint as failed in the pool
+                        super::endpoint_pool::ENDPOINT_POOL.mark_failed(&self.endpoint_url);
                         MaybeRetry::Retry {
                             err,
                             msg: "too many requests".to_owned(),
@@ -223,7 +229,7 @@ impl super::RpcClient for StandardRpcClient {
                         return Err(err);
                     }
 
-                    let delay = calc_delay(retry_count).min(min_dur);
+                    let delay = calc_delay(retry_count).max(min_dur);
                     info!(log, "retrying";
                         "delay" => format!("{:?}", delay),
                         "reason" => msg,

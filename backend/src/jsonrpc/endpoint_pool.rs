@@ -68,8 +68,14 @@ impl EndpointPool {
 
     /// Select next available endpoint using weighted random selection
     pub fn next_endpoint(&self) -> Option<&RpcEndpoint> {
+        use crate::logging::*;
+        let log = DEFAULT.new(o!(
+            "function" => "EndpointPool::next_endpoint",
+        ));
+
         let available = self.available_endpoints();
         if available.is_empty() {
+            warn!(log, "no available endpoints, resetting all failures");
             // Reset all failures if no endpoints available
             if let Ok(mut failed) = self.failed_endpoints.lock() {
                 failed.failures.clear();
@@ -78,16 +84,34 @@ impl EndpointPool {
             return self.endpoints.first();
         }
 
-        self.weighted_random_select(&available)
+        let selected = self.weighted_random_select(&available);
+        if let Some(ep) = selected {
+            info!(log, "endpoint selected";
+                "url" => &ep.url,
+                "weight" => ep.weight,
+                "available_count" => available.len()
+            );
+        }
+        selected
     }
 
     /// Mark an endpoint as failed
-    #[allow(dead_code)]
     pub fn mark_failed(&self, url: &str) {
+        use crate::logging::*;
+        let log = DEFAULT.new(o!(
+            "function" => "EndpointPool::mark_failed",
+            "url" => url.to_string(),
+            "failure_reset_seconds" => self.failure_reset_seconds,
+        ));
+
         if let Ok(mut failed) = self.failed_endpoints.lock() {
             failed.failures.insert(
                 url.to_string(),
                 SystemTime::now() + Duration::from_secs(self.failure_reset_seconds),
+            );
+            warn!(log, "endpoint marked as failed";
+                "reset_after_seconds" => self.failure_reset_seconds,
+                "total_failed" => failed.failures.len()
             );
         }
     }
@@ -251,5 +275,81 @@ mod tests {
         // Only one should be available
         assert_eq!(pool.available_endpoints().len(), 1);
         assert_eq!(pool.available_endpoints()[0].url, "http://test2");
+    }
+
+    #[test]
+    fn test_rate_limit_triggers_endpoint_switch() {
+        let endpoints = vec![
+            RpcEndpoint {
+                url: "http://endpoint1".to_string(),
+                weight: 50,
+                max_retries: 3,
+            },
+            RpcEndpoint {
+                url: "http://endpoint2".to_string(),
+                weight: 50,
+                max_retries: 3,
+            },
+        ];
+
+        let pool = EndpointPool {
+            endpoints: endpoints.clone(),
+            failed_endpoints: Arc::new(Mutex::new(FailedEndpoints {
+                failures: std::collections::HashMap::new(),
+            })),
+            failure_reset_seconds: 300,
+        };
+
+        // Simulate rate limit on endpoint1
+        pool.mark_failed("http://endpoint1");
+
+        // Next endpoint selection should exclude endpoint1
+        let selected = pool.next_endpoint();
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap().url, "http://endpoint2");
+
+        // Verify endpoint1 is in failed list
+        if let Ok(failed) = pool.failed_endpoints.lock() {
+            assert!(failed.failures.contains_key("http://endpoint1"));
+            assert!(!failed.failures.contains_key("http://endpoint2"));
+        }
+    }
+
+    #[test]
+    fn test_all_endpoints_failed_resets() {
+        let endpoints = vec![
+            RpcEndpoint {
+                url: "http://endpoint1".to_string(),
+                weight: 50,
+                max_retries: 3,
+            },
+            RpcEndpoint {
+                url: "http://endpoint2".to_string(),
+                weight: 50,
+                max_retries: 3,
+            },
+        ];
+
+        let pool = EndpointPool {
+            endpoints: endpoints.clone(),
+            failed_endpoints: Arc::new(Mutex::new(FailedEndpoints {
+                failures: std::collections::HashMap::new(),
+            })),
+            failure_reset_seconds: 300,
+        };
+
+        // Mark all endpoints as failed
+        pool.mark_failed("http://endpoint1");
+        pool.mark_failed("http://endpoint2");
+
+        // Should reset all failures and return first endpoint
+        let selected = pool.next_endpoint();
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap().url, "http://endpoint1");
+
+        // Verify failures were cleared
+        if let Ok(failed) = pool.failed_endpoints.lock() {
+            assert!(failed.failures.is_empty());
+        }
     }
 }
