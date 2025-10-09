@@ -101,123 +101,34 @@ static RPC_ENDPOINTS: Lazy<Vec<RpcEndpoint>> = Lazy::new(|| {
 
 ### 3. フェイルオーバー機構
 
-```rust
-use rand::Rng;
+```
+next_endpoint():
+  available = endpoints.filter(not failed)
+  if available.empty():
+    reset all failures
+    return first endpoint
+  return weighted_random_select(available)
 
-pub struct EndpointPool {
-    endpoints: Vec<RpcEndpoint>,
-    failed_endpoints: Arc<RwLock<HashSet<String>>>,  // 一時的に無効化されたエンドポイント
-    failure_reset_interval: Duration,  // 無効化解除までの時間（例: 5分）
-}
-
-impl EndpointPool {
-    pub fn next_endpoint(&self) -> Option<&RpcEndpoint> {
-        let failed = self.failed_endpoints.read().unwrap();
-
-        // 利用可能なエンドポイントのみをフィルタ
-        let available: Vec<_> = self.endpoints
-            .iter()
-            .filter(|ep| !failed.contains(&ep.url))
-            .collect();
-
-        if available.is_empty() {
-            // 全エンドポイント失敗 → リセット
-            drop(failed);
-            self.failed_endpoints.write().unwrap().clear();
-            warn!(log, "all endpoints failed, resetting failed list");
-            return self.endpoints.first();
-        }
-
-        // Weighted Random Selection で選択
-        self.select_by_weight_random(&available)
-    }
-
-    fn select_by_weight_random(&self, endpoints: &[&RpcEndpoint]) -> Option<&RpcEndpoint> {
-        // 重みの合計を計算
-        let total_weight: u32 = endpoints.iter().map(|ep| ep.weight).sum();
-
-        if total_weight == 0 {
-            // 全ての重みが0の場合は均等にランダム選択
-            let mut rng = rand::thread_rng();
-            let idx = rng.gen_range(0..endpoints.len());
-            return Some(endpoints[idx]);
-        }
-
-        // 重みに基づいてランダム選択
-        let mut rng = rand::thread_rng();
-        let mut random_weight = rng.gen_range(0..total_weight);
-
-        for endpoint in endpoints {
-            if random_weight < endpoint.weight {
-                return Some(endpoint);
-            }
-            random_weight -= endpoint.weight;
-        }
-
-        // フォールバック（通常は到達しない）
-        endpoints.first().copied()
-    }
-
-    pub fn mark_failed(&self, url: &str) {
-        self.failed_endpoints.write().unwrap().insert(url.to_string());
-
-        warn!(log, "endpoint marked as failed";
-            "url" => url,
-            "reset_after_seconds" => self.failure_reset_interval.as_secs()
-        );
-
-        // 一定時間後に自動解除
-        let failed_eps = Arc::clone(&self.failed_endpoints);
-        let url = url.to_string();
-        let interval = self.failure_reset_interval;
-
-        tokio::spawn(async move {
-            tokio::time::sleep(interval).await;
-            failed_eps.write().unwrap().remove(&url);
-            info!(log, "endpoint failure reset"; "url" => url);
-        });
-    }
-}
+mark_failed(url):
+  failed_endpoints.insert(url, until: now + 5min)
+  log warning
+  schedule auto-reset after 5min
 ```
 
-### 4. リトライロジックの改善
+### 4. リトライロジック
 
-現在の `jsonrpc/rpc.rs` のリトライロジックを拡張:
+```
+call_with_fallback(method):
+  for attempt in 0..MAX_ATTEMPTS:
+    endpoint = pool.next_endpoint()
+    client = connect(endpoint.url)
 
-```rust
-// jsonrpc/rpc.rs
+    match call(client, method):
+      Ok(response) -> return response
+      Err(RateLimitError) -> pool.mark_failed(endpoint.url); continue
+      Err(e) -> return e
 
-pub async fn call_with_fallback<M>(
-    &self,
-    method: M,
-) -> MethodCallResult<M::Response, M::Error>
-where
-    M: methods::RpcMethod + Clone,
-{
-    let endpoint_pool = ENDPOINT_POOL.get_or_init(|| EndpointPool::new());
-
-    for attempt in 0..MAX_ENDPOINT_ATTEMPTS {
-        let endpoint = match endpoint_pool.next_endpoint() {
-            Some(ep) => ep,
-            None => return Err(RpcError::AllEndpointsFailed),
-        };
-
-        // エンドポイント固有のクライアントを作成
-        let client = JsonRpcClient::connect(&endpoint.url);
-
-        match self.call_single_endpoint(&client, method.clone()).await {
-            Ok(response) => return Ok(response),
-            Err(e) if is_rate_limit_error(&e) => {
-                // Rate limit エラー → このエンドポイントを一時無効化
-                endpoint_pool.mark_failed(&endpoint.url);
-                continue;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    Err(RpcError::MaxAttemptsExceeded)
-}
+  return MaxAttemptsExceeded
 ```
 
 ## テスト可能な構造設計
