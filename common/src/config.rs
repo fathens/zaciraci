@@ -97,7 +97,7 @@ pub struct CronConfig {
     pub record_rates_initial_value: u32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct HarvestConfig {
     #[serde(default)]
     pub account_id: String,
@@ -105,6 +105,16 @@ pub struct HarvestConfig {
     pub min_amount: u32,
     #[serde(default = "default_harvest_reserve_amount")]
     pub reserve_amount: u32,
+}
+
+impl Default for HarvestConfig {
+    fn default() -> Self {
+        Self {
+            account_id: String::new(),
+            min_amount: default_harvest_min_amount(),
+            reserve_amount: default_harvest_reserve_amount(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
