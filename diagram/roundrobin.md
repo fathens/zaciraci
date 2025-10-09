@@ -231,25 +231,133 @@ where
 
 ### モジュール構成
 
+既存コードのパターンに従った構成:
+
 ```
-backend/src/jsonrpc/
-├── mod.rs                    # 既存: JsonRpcClient の定義
-├── rpc.rs                    # 既存: RPCメソッド実装
-├── endpoint_pool.rs          # 新規: エンドポイント選択・管理
-└── endpoint_pool/
-    ├── mod.rs                # EndpointPool の公開API
-    ├── selector.rs           # Weighted random selection ロジック
-    ├── failure_tracker.rs    # 失敗エンドポイント追跡
-    └── config.rs             # 環境変数パース
+backend/src/
+├── jsonrpc.rs                          # 親モジュール（mod宣言 + 公開API）
+└── jsonrpc/
+    ├── near_client.rs                  # 既存: NEAR特化クライアント
+    ├── rpc.rs                          # 既存: RPCメソッド実装
+    ├── sent_tx.rs                      # 既存: トランザクション送信
+    └── endpoint_pool.rs                # 新規: EndpointPool（全機能統合）
 ```
 
-### 1. EndpointSelector trait（テスト境界）
+**学習したパターン**:
+
+1. **親モジュールファイル（jsonrpc.rs）**:
+   - `mod サブモジュール名;` で子モジュールを宣言
+   - 公開APIとtraitを定義
+   - static変数とヘルパー関数を配置
+
+2. **子モジュールファイル（jsonrpc/xxx.rs）**:
+   - 単一の責務を持つ実装
+   - 必要に応じてprivate submoduleを内部に持つ
+   - テストも同じファイル内に `#[cfg(test)] mod tests`
+
+3. **分割の基準**:
+   - `ref_finance.rs`: 11個のサブモジュール（pub 8個, private 3個）
+   - `ref_finance/path.rs`: 5個のサブモジュール（4個がprivate）
+   - サブモジュールは機能単位で分割、共通部分は親で定義
+
+**endpoint_pool.rs の設計方針**:
+
+- **単一ファイルに統合**: selector, failure_tracker, config を全て含める
+- **内部モジュール化**: `mod selector { ... }`, `mod failure { ... }`, `mod config { ... }`
+- **公開API**: `pub struct EndpointPool` と必要な trait のみ公開
+- **テスト**: 各内部モジュールに `#[cfg(test)] mod tests` を配置
+
+この方針により:
+- ファイル数を抑えつつ、論理的に分離
+- 既存コードのスタイルに統一
+- テストも同一ファイルで完結
+
+### endpoint_pool.rs の構造
 
 ```rust
-// backend/src/jsonrpc/endpoint_pool/selector.rs
+// backend/src/jsonrpc/endpoint_pool.rs
 
-/// エンドポイント選択の抽象化（モック可能）
-pub trait EndpointSelector: Send + Sync {
+use std::collections::HashMap;
+use std::env;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+use rand::Rng;
+use crate::logging::*;
+
+// ========================================
+// 公開API
+// ========================================
+
+pub struct RpcEndpoint {
+    pub url: String,
+    pub weight: u32,
+    pub max_retries: u32,
+}
+
+pub struct EndpointPool {
+    endpoints: Vec<RpcEndpoint>,
+    selector: Box<dyn selector::EndpointSelector>,
+    failure_tracker: failure::FailureTracker,
+}
+
+impl EndpointPool {
+    pub fn new() -> Self {
+        let endpoints = config::load_endpoints_from_env();
+        let selector = Box::new(selector::WeightedRandomSelector);
+        let failure_tracker = failure::FailureTracker::new(
+            Duration::from_secs(300),
+            Arc::new(failure::SystemClock),
+        );
+
+        Self {
+            endpoints,
+            selector,
+            failure_tracker,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_dependencies(
+        endpoints: Vec<RpcEndpoint>,
+        selector: Box<dyn selector::EndpointSelector>,
+        failure_tracker: failure::FailureTracker,
+    ) -> Self {
+        Self {
+            endpoints,
+            selector,
+            failure_tracker,
+        }
+    }
+
+    pub fn next_endpoint(&self) -> Option<&RpcEndpoint> {
+        let available: Vec<_> = self
+            .endpoints
+            .iter()
+            .filter(|ep| !self.failure_tracker.is_failed(&ep.url))
+            .collect();
+
+        if available.is_empty() {
+            warn!(log, "all endpoints failed, retrying all");
+            return self.selector.select(&self.endpoints);
+        }
+
+        self.selector.select(&available)
+    }
+
+    pub fn mark_failed(&self, url: &str) {
+        self.failure_tracker.mark_failed(url);
+    }
+}
+
+// ========================================
+// 内部モジュール: selector
+// ========================================
+
+mod selector {
+    use super::*;
+
+    /// エンドポイント選択の抽象化（モック可能）
+    pub trait EndpointSelector: Send + Sync {
     /// 利用可能なエンドポイントから1つ選択
     fn select<'a>(&self, available: &'a [RpcEndpoint]) -> Option<&'a RpcEndpoint>;
 }
@@ -332,25 +440,23 @@ mod tests {
         assert!(selector.select(&endpoints).is_none());
     }
 }
-```
 
-### 2. FailureTracker trait（時刻注入）
+// ========================================
+// 内部モジュール: failure
+// ========================================
 
-```rust
-// backend/src/jsonrpc/endpoint_pool/failure_tracker.rs
+mod failure {
+    use super::*;
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+    /// 時刻取得の抽象化（テスト時にモック可能）
+    pub trait Clock: Send + Sync {
+        fn now(&self) -> Instant;
+    }
 
-/// 時刻取得の抽象化（テスト時にモック可能）
-pub trait Clock: Send + Sync {
-    fn now(&self) -> Instant;
-}
+    /// 本番環境用の実装
+    pub struct SystemClock;
 
-/// 本番環境用の実装
-pub struct SystemClock;
-
-impl Clock for SystemClock {
+    impl Clock for SystemClock {
     fn now(&self) -> Instant {
         Instant::now()
     }
@@ -457,11 +563,11 @@ mod tests {
 ### 3. EndpointPool の統合
 
 ```rust
-// backend/src/jsonrpc/endpoint_pool/mod.rs
+// backend/src/jsonrpc/endpoint_pool.rs
 
-use super::selector::{EndpointSelector, WeightedRandomSelector};
-use super::failure_tracker::{FailureTracker, SystemClock};
-use super::config::load_endpoints_from_env;
+use super::endpoint_pool_selector::{EndpointSelector, WeightedRandomSelector};
+use super::endpoint_pool_failure::{FailureTracker, SystemClock};
+use super::endpoint_pool_config::load_endpoints_from_env;
 
 pub struct EndpointPool {
     endpoints: Vec<RpcEndpoint>,
@@ -565,7 +671,7 @@ mod tests {
 ### 4. 設定の環境変数パース
 
 ```rust
-// backend/src/jsonrpc/endpoint_pool/config.rs
+// backend/src/jsonrpc/endpoint_pool_config.rs
 
 use std::env;
 
