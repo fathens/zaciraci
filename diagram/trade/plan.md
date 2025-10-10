@@ -10,14 +10,16 @@ cli_tokens で Chronos API を使う実績のあるコードが common にある
 - **クライアント側ポーリング実装** (2.3): `wait_until=NONE` + トランザクションステータス確認
 - **Storage Deposit 一括セットアップ** (2.4): RPC 呼び出しを 90% 削減
 - **設定ファイルTOML化** (2.5): 環境変数からTOML設定ファイルへの移行完了
-- **マルチエンドポイントRPC Phase 1&2a** (2.6): Rate limit検知と次回リクエスト時の自動切り替え（2025-10-10）
+- **マルチエンドポイントRPC 完全実装** (2.6): Phase 1, 2a, 2b すべて完了（2025-10-10）
+  - Phase 1: EndpointPool 基本実装
+  - Phase 2a: Rate limit 検知と mark_failed
+  - Phase 2b: リトライループ内での動的エンドポイント切り替え
 - **リトライロジックのバグ修正** (2.2): `jsonrpc/rpc.rs:226` の exponential backoff 修正（2025-10-10）
 - **endpoint_pool テストコード分離** (2.6): 可読性向上のためテストを別ファイルに整理（2025-10-10）
 
 ### ⏳ 未実装（優先度順）
 1. **record_rates 間隔調整** (2.2): 5分→15分間隔に変更して RPC 負荷軽減
-2. **マルチエンドポイントRPC Phase 2b** (2.6): 同一リトライループ内での動的エンドポイント切り替え（要リファクタリング）
-3. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
+2. **BigDecimal 変換の網羅チェック** (セクション3): 残存する変換エラーの確認
 
 ### 🔄 次回 cron 実行待ち
 - 2.4 実装の動作確認（rate limit エラーの解消確認）
@@ -468,25 +470,49 @@ Phase 1 の決定アルゴリズムを使用 - **実装済み**
 - 同一リクエストのリトライループ内ではエンドポイント切り替えは行われない
 - 次のリクエスト（別トランザクションや別API呼び出し）から別エンドポイントが使われる
 
-#### ⏳ Phase 2b: 動的切り替え（未実装）
+#### ✅ Phase 2b: 動的切り替え（完了 2025-10-10）
 
 **目的**: 同一リトライループ内でのエンドポイント切り替え
 
-**必要な作業**:
-- `StandardRpcClient` が `JsonRpcClient` を保持する代わりに `EndpointPool` を保持
-- リトライ時に動的に `JsonRpcClient::connect()` を呼び出し
-- 大規模なリファクタリングが必要
+**実装完了内容**:
+- ✅ `StandardRpcClient` の完全リファクタリング
+  - `underlying: Arc<JsonRpcClient>` を削除
+  - `endpoint_pool: Arc<EndpointPool>` を追加
+- ✅ `get_client()` メソッドで動的にクライアント生成
+- ✅ リトライループ内でエンドポイント切り替え（`rpc.rs:222-229`）
+- ✅ Rate limit 検知時に即座に `mark_failed()`（`rpc.rs:72`）
+- ✅ 既存テスト6件すべて成功
 
-**期待効果**（Phase 2b完成時）:
-- Rate limit エラー発生時に即座に別エンドポイントへ切り替え
-- リトライ待機時間の削減
-- より堅牢なエラーハンドリング
+**実装詳細**:
+```rust
+// リトライループ内で動的にエンドポイント取得
+loop {
+    let Some((client, endpoint_url)) = self.get_client() else {
+        // エンドポイントがない場合は5秒待機後リトライ
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        continue;
+    };
 
-**期待効果（Phase 2a時点）**:
-- 次回リクエストから別エンドポイントが使われる
-- Rate limit エラーの影響を複数エンドポイントに分散
-- 可用性向上: 1つのエンドポイント障害でも継続稼働
-- コスト最適化: 無料プランの最大活用
+    match self.call_maybe_retry(&client, &endpoint_url, &method).await {
+        MaybeRetry::Through(res) => return res,
+        MaybeRetry::Retry { err, msg, min_dur } => {
+            // Rate limit エラーは既に mark_failed() 済み
+            // 次のループで別のエンドポイントが選ばれる
+            retry_count += 1;
+            // ...
+        }
+    }
+}
+```
+
+**達成効果（全Phase完了）**:
+- ✅ Rate limit エラー発生時に即座に別エンドポイントへ切り替え
+- ✅ リトライ待機時間の最小化（同一エンドポイントへの無駄なリトライなし）
+- ✅ より堅牢なエラーハンドリング（エンドポイントプールの自動リセット機能）
+- ✅ 複数エンドポイントの完全活用
+- ✅ Rate limit エラーの影響を複数エンドポイントに分散
+- ✅ 可用性向上: 1つのエンドポイント障害でも継続稼働
+- ✅ コスト最適化: 無料プランの最大活用
 
 ## 🎯 推奨する次のアクション
 
