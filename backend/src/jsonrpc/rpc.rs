@@ -10,34 +10,39 @@ use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct StandardRpcClient {
-    underlying: Arc<JsonRpcClient>,
+    endpoint_pool: Arc<super::endpoint_pool::EndpointPool>,
 
     retry_limit: u16,
     delay_limit: Duration,
     delay_fluctuation: f32,
-
-    endpoint_url: String,
 }
 
 impl StandardRpcClient {
     pub fn new(
-        underlying: Arc<JsonRpcClient>,
+        endpoint_pool: Arc<super::endpoint_pool::EndpointPool>,
         retry_limit: u16,
         delay_limit: Duration,
         delay_fluctuation: f32,
-        endpoint_url: String,
     ) -> Self {
         Self {
-            underlying,
+            endpoint_pool,
             retry_limit,
             delay_limit,
             delay_fluctuation,
-            endpoint_url,
         }
+    }
+
+    /// Get a client for the current best endpoint
+    fn get_client(&self) -> Option<(Arc<JsonRpcClient>, String)> {
+        let endpoint = self.endpoint_pool.next_endpoint()?;
+        let client = Arc::new(JsonRpcClient::connect(&endpoint.url));
+        Some((client, endpoint.url.clone()))
     }
 
     async fn call_maybe_retry<M>(
         &self,
+        client: &JsonRpcClient,
+        endpoint_url: &str,
         method: M,
     ) -> MaybeRetry<MethodCallResult<M::Response, M::Error>, JsonRpcError<M::Error>>
     where
@@ -47,11 +52,11 @@ impl StandardRpcClient {
     {
         let log = DEFAULT.new(o!(
             "function" => "jsonrpc::Client::call_maybe_retry",
-            "server" => self.underlying.server_addr().to_owned(),
+            "server" => endpoint_url.to_owned(),
             "method" => method.method_name().to_owned(),
         ));
         info!(log, "calling");
-        let res = self.underlying.call(method).await;
+        let res = client.call(method).await;
         match res {
             Ok(res) => {
                 info!(log, "success");
@@ -64,7 +69,7 @@ impl StandardRpcClient {
                     ) => {
                         info!(log, "response status error: too many requests");
                         // Mark endpoint as failed in the pool
-                        super::endpoint_pool::ENDPOINT_POOL.mark_failed(&self.endpoint_url);
+                        self.endpoint_pool.mark_failed(endpoint_url);
                         MaybeRetry::Retry {
                             err,
                             msg: "too many requests".to_owned(),
@@ -192,7 +197,8 @@ impl StandardRpcClient {
 
 impl super::RpcClient for StandardRpcClient {
     fn server_addr(&self) -> &str {
-        self.underlying.server_addr()
+        // Return a placeholder since we now use dynamic endpoints
+        "dynamic-endpoint-pool"
     }
 
     async fn call<M>(&self, method: M) -> MethodCallResult<M::Response, M::Error>
@@ -207,18 +213,27 @@ impl super::RpcClient for StandardRpcClient {
 
         let log = DEFAULT.new(o!(
             "function" => "jsonrpc::Client::call",
-            "server" => self.server_addr().to_owned(),
             "method" => method.method_name().to_owned(),
             "retry_limit" => format!("{}", retry_limit),
         ));
         let calc_delay = calc_retry_duration(delay_limit, retry_limit, fluctuation);
         let mut retry_count = 0;
         loop {
+            // Get a fresh client from the endpoint pool on each retry
+            let Some((client, endpoint_url)) = self.get_client() else {
+                let log = log.new(o!("error" => "no_available_endpoints"));
+                error!(log, "No available endpoints in pool");
+                // Continue retrying - pool may reset failed endpoints
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            };
+
             let log = log.new(o!(
                 "retry_count" => format!("{}", retry_count),
+                "endpoint" => endpoint_url.clone(),
             ));
             info!(log, "calling");
-            match self.call_maybe_retry(&method).await {
+            match self.call_maybe_retry(&client, &endpoint_url, &method).await {
                 MaybeRetry::Through(res) => return res,
                 MaybeRetry::Retry { err, msg, min_dur } => {
                     retry_count += 1;

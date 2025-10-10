@@ -1,4 +1,3 @@
-use once_cell::sync::Lazy;
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -14,6 +13,7 @@ pub struct RpcEndpoint {
 }
 
 /// Manages multiple RPC endpoints with weighted random selection and failure tracking
+#[derive(Debug)]
 pub struct EndpointPool {
     endpoints: Vec<RpcEndpoint>,
     failed_endpoints: Arc<Mutex<FailedEndpoints>>,
@@ -21,6 +21,7 @@ pub struct EndpointPool {
     failure_reset_seconds: u64,
 }
 
+#[derive(Debug)]
 struct FailedEndpoints {
     failures: std::collections::HashMap<String, SystemTime>,
 }
@@ -167,9 +168,6 @@ impl Default for EndpointPool {
         Self::new()
     }
 }
-
-/// Global endpoint pool instance
-pub static ENDPOINT_POOL: Lazy<EndpointPool> = Lazy::new(EndpointPool::new);
 
 #[cfg(test)]
 mod tests;
