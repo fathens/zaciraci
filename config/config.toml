@@ -17,24 +17,23 @@ root_hdpath = "m/44'/397'/0'"
 [rpc]
 # RPCエンドポイント設定
 # 複数のエンドポイントを指定して負荷分散・フェイルオーバー
-[[rpc.endpoints]]
-url = "https://rpc.ankr.com/near"
-weight = 40
-max_retries = 3
+#
+# 注意: Ankr は 2024年以降 Premium プラン（有料）のみとなり使用しない
+# 無料で使えるエンドポイント: dRPC, fastnear, 1rpc
 
 [[rpc.endpoints]]
 url = "https://near.drpc.org"
-weight = 40
+weight = 60
 max_retries = 3
 
 [[rpc.endpoints]]
 url = "https://free.rpc.fastnear.com"
-weight = 15
+weight = 30
 max_retries = 2
 
 [[rpc.endpoints]]
 url = "https://1rpc.io/near"
-weight = 5
+weight = 10
 max_retries = 2
 
 [rpc.settings]

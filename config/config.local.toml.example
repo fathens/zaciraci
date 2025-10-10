@@ -1,0 +1,55 @@
+# Zaciraci ローカル設定の例
+#
+# このファイルをコピーして config.local.toml として使用してください:
+#   cp config.local.toml.example config.local.toml
+#
+# config.local.toml は .gitignore に含まれており、git管理されません。
+
+# ===========================
+# RPC エンドポイント設定
+# ===========================
+#
+# デフォルトでは以下の無料エンドポイントを使用:
+# - dRPC (60%)
+# - fastnear (30%)
+# - 1rpc (10%)
+#
+# 注意: Ankr は 2024年以降 Premium プラン（有料）のみとなり使用しない
+#
+# 追加のエンドポイントを使いたい場合は以下のように設定:
+# [[rpc.endpoints]]
+# url = "https://your-custom-endpoint.example.com"
+# weight = 20
+# max_retries = 3
+
+# ===========================
+# ウォレット設定（必須）
+# ===========================
+[wallet]
+root_account_id = "your-account.near"
+root_mnemonic = "your twelve word mnemonic phrase here"
+root_hdpath = "m/44'/397'/0'"
+
+# ===========================
+# RPC エンドポイント上書き例
+# ===========================
+# デフォルトの設定を上書きする場合は以下のように記述:
+#
+# [[rpc.endpoints]]
+# url = "https://rpc.ankr.com/near/your-jwt-token"
+# weight = 40
+# max_retries = 3
+
+# ===========================
+# 外部サービス URL
+# ===========================
+[external_services]
+chronos_url = "http://localhost:8000"
+
+# ===========================
+# ハーベスト設定
+# ===========================
+[harvest]
+account_id = "your-harvest-account.near"
+min_amount = 10
+reserve_amount = 1
