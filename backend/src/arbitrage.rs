@@ -36,7 +36,8 @@ static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
 
 fn is_needed() -> bool {
     config::get("ARBITRAGE_NEEDED")
-        .map(|v| !v.is_empty())
+        .ok()
+        .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(false)
 }
 
