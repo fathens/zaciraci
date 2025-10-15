@@ -95,6 +95,8 @@ pub struct TradeConfig {
 pub struct CronConfig {
     #[serde(default = "default_record_rates_initial_value")]
     pub record_rates_initial_value: u32,
+    #[serde(default = "default_pool_info_retention_count")]
+    pub pool_info_retention_count: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +177,9 @@ fn default_cron_schedule() -> String {
 fn default_record_rates_initial_value() -> u32 {
     100
 }
+fn default_pool_info_retention_count() -> u32 {
+    10
+}
 fn default_harvest_min_amount() -> u32 {
     10
 }
@@ -235,6 +240,7 @@ impl Default for CronConfig {
     fn default() -> Self {
         Self {
             record_rates_initial_value: default_record_rates_initial_value(),
+            pool_info_retention_count: default_pool_info_retention_count(),
         }
     }
 }
@@ -312,6 +318,7 @@ pub fn get(name: &str) -> Result<String> {
         "TRADE_TOP_TOKENS" => Some(CONFIG.trade.top_tokens.to_string()),
         "TRADE_CRON_SCHEDULE" => Some(CONFIG.trade.cron_schedule.clone()),
         "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
+        "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
         "HARVEST_ACCOUNT_ID" => {
             if !CONFIG.harvest.account_id.is_empty() {
                 Some(CONFIG.harvest.account_id.clone())
@@ -432,6 +439,9 @@ fn merge_config(base: &mut Config, local: Config) {
     // Cron
     if local.cron.record_rates_initial_value != default_record_rates_initial_value() {
         base.cron.record_rates_initial_value = local.cron.record_rates_initial_value;
+    }
+    if local.cron.pool_info_retention_count != default_pool_info_retention_count() {
+        base.cron.pool_info_retention_count = local.cron.pool_info_retention_count;
     }
 
     // Harvest
