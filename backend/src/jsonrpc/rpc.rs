@@ -35,8 +35,30 @@ impl StandardRpcClient {
     /// Get a client for the current best endpoint
     fn get_client(&self) -> Option<(Arc<JsonRpcClient>, String)> {
         let endpoint = self.endpoint_pool.next_endpoint()?;
-        let client = Arc::new(JsonRpcClient::connect(&endpoint.url));
+        let client = Arc::new(Self::create_client_with_timeout(&endpoint.url));
         Some((client, endpoint.url.clone()))
+    }
+
+    /// Create a JsonRpcClient with HTTP timeout configured
+    fn create_client_with_timeout(server_addr: &str) -> JsonRpcClient {
+        use near_jsonrpc_client::JsonRpcClient;
+
+        // Configure reqwest client with timeouts
+        let mut headers = reqwest::header::HeaderMap::with_capacity(2);
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let reqwest_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .timeout(Duration::from_secs(30)) // Total request timeout: 30 seconds
+            .connect_timeout(Duration::from_secs(10)) // Connection timeout: 10 seconds
+            .build()
+            .expect("Failed to build reqwest client");
+
+        // Use JsonRpcClient::with() to create a connector with custom reqwest client
+        JsonRpcClient::with(reqwest_client).connect(server_addr)
     }
 
     async fn call_maybe_retry<M>(
