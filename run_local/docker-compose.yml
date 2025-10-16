@@ -10,6 +10,7 @@ services:
     volumes:
       - ./.data:/var/lib/postgresql/data
       - ./init_pg:/docker-entrypoint-initdb.d
+    shm_size: 256mb
     logging:
       driver: "json-file"
       options:
