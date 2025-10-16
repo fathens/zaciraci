@@ -18,23 +18,44 @@ root_hdpath = "m/44'/397'/0'"
 # RPCエンドポイント設定
 # 複数のエンドポイントを指定して負荷分散・フェイルオーバー
 #
+# 構成案A（バランス型）: 6つの高品質エンドポイント
+# - 上位2つで65%をカバー
+# - rate limit制限のある公式RPCを除外
+# - 十分な冗長性を確保
+#
+# 最終更新: 2025-10-16
+# 注意: dRPC は認証必須（APIキー必要）のため除外
 # 注意: Ankr は 2024年以降 Premium プラン（有料）のみとなり使用しない
-# 無料で使えるエンドポイント: dRPC, fastnear, 1rpc
-
-[[rpc.endpoints]]
-url = "https://near.drpc.org"
-weight = 60
-max_retries = 3
 
 [[rpc.endpoints]]
 url = "https://free.rpc.fastnear.com"
-weight = 30
-max_retries = 2
+weight = 35
+max_retries = 3
 
 [[rpc.endpoints]]
 url = "https://1rpc.io/near"
+weight = 30
+max_retries = 3
+
+[[rpc.endpoints]]
+url = "https://near.lava.build"
+weight = 15
+max_retries = 2
+
+[[rpc.endpoints]]
+url = "https://rpc.web4.near.page"
 weight = 10
 max_retries = 2
+
+[[rpc.endpoints]]
+url = "https://rpc.intea.rs"
+weight = 8
+max_retries = 2
+
+[[rpc.endpoints]]
+url = "https://near-mainnet.gateway.tatum.io/"
+weight = 2
+max_retries = 1
 
 [rpc.settings]
 # 失敗エンドポイントのリセット間隔（秒）
