@@ -65,8 +65,16 @@ where
             // ポートフォリオのリバランス
             info!(log, "executing rebalance"; "weights" => ?target_weights);
 
-            // 1. 現在の保有量を取得
-            let tokens: Vec<String> = target_weights.keys().cloned().collect();
+            // 1. 現在の保有量を取得（wrap.nearを明示的に追加）
+            let mut tokens: Vec<String> = target_weights.keys().cloned().collect();
+            let wrap_near = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
+            if !tokens.contains(&wrap_near) {
+                tokens.push(wrap_near);
+                info!(
+                    log,
+                    "added wrap.near to balance query for total value calculation"
+                );
+            }
             let current_balances = get_current_portfolio_balances(client, wallet, &tokens).await?;
 
             // 2. 総ポートフォリオ価値を計算

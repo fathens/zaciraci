@@ -141,33 +141,47 @@ pub async fn start() -> Result<()> {
         info!(log, "initial investment deposited to REF Finance");
     }
 
-    // Step 4: ポートフォリオ最適化と実行
-    match execute_portfolio_strategy(
-        &prediction_service,
-        &selected_tokens,
-        available_funds,
-        is_new_period,
-        &client,
-        &wallet,
-    )
-    .await
-    {
-        Ok(report) => {
-            info!(log, "portfolio strategy executed successfully";
-                "total_actions" => report.len()
-            );
+    // Step 4: ポートフォリオ戦略決定と実行
+    let report = if is_new_period {
+        // 新規期間：等分購入（各トークン10%ずつ）
+        info!(log, "new period: creating equal-weight portfolio"; "token_count" => selected_tokens.len());
+        let equal_weight = 1.0 / selected_tokens.len() as f64;
+        let target_weights: std::collections::BTreeMap<String, f64> = selected_tokens
+            .iter()
+            .map(|t| (t.to_string(), equal_weight))
+            .collect();
 
-            // 実際の取引実行
-            let executed_actions = execute_trading_actions(&report, available_funds).await?;
-            info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
+        info!(log, "generated equal weights for initial purchase"; "weight_per_token" => equal_weight);
+        vec![zaciraci_common::algorithm::types::TradingAction::Rebalance { target_weights }]
+    } else {
+        // 既存期間：最適化
+        info!(log, "continuing period: optimizing portfolio");
+        match execute_portfolio_strategy(
+            &prediction_service,
+            &selected_tokens,
+            available_funds,
+            is_new_period,
+            &client,
+            &wallet,
+        )
+        .await
+        {
+            Ok(actions) => actions,
+            Err(e) => {
+                error!(log, "failed to execute portfolio strategy"; "error" => ?e);
+                return Err(e);
+            }
+        }
+    };
 
-            // Step 5: ハーベスト判定と実行
-            check_and_harvest(available_funds).await?;
-        }
-        Err(e) => {
-            error!(log, "failed to execute portfolio strategy"; "error" => ?e);
-        }
-    }
+    info!(log, "portfolio strategy determined"; "total_actions" => report.len());
+
+    // 実際の取引実行
+    let executed_actions = execute_trading_actions(&report, available_funds).await?;
+    info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
+
+    // Step 5: ハーベスト判定と実行
+    check_and_harvest(available_funds).await?;
 
     info!(log, "success");
     Ok(())
