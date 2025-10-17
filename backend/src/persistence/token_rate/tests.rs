@@ -1108,7 +1108,7 @@ async fn test_cleanup_old_records() -> Result<()> {
             BigDecimal::from(1000),
             days_400_ago,
         ),
-        // 200日前のレコード（削除されるはず）
+        // 200日前のレコード（残るはず - 365日以内）
         TokenRate::new_with_timestamp(
             base1.clone(),
             quote.clone(),
@@ -1142,18 +1142,18 @@ async fn test_cleanup_old_records() -> Result<()> {
         TokenRate::new_with_timestamp(base2.clone(), quote.clone(), BigDecimal::from(21000), now),
     ];
 
-    // 3. レコードを挿入（cleanup_old_recordsは自動で呼ばれる）
+    // 3. レコードを挿入（cleanup_old_recordsは自動で呼ばれ、デフォルトで365日より古いレコードが削除される）
     TokenRate::batch_insert(&old_rates).await?;
 
     // 4. 残っているレコード数を確認
     let history1 = TokenRate::get_history(&base1, &quote, 100).await?;
     let history2 = TokenRate::get_history(&base2, &quote, 100).await?;
 
-    // base1: 100日前、10日前、今の3件が残る
+    // base1: 200日前、100日前、10日前、今の4件が残る（全て365日以内）
     assert_eq!(
         history1.len(),
-        3,
-        "Should have 3 records for base1 (within 365 days)"
+        4,
+        "Should have 4 records for base1 (within 365 days)"
     );
 
     // base2: 今の1件が残る
@@ -1169,13 +1169,15 @@ async fn test_cleanup_old_records() -> Result<()> {
         history1[0].timestamp >= days_10_ago,
         "Most recent record should be recent"
     );
+    // 最も古いレコードは200日前のもの（index 3）
     assert!(
-        history1[2].timestamp >= days_100_ago,
-        "Oldest retained record should be at least 100 days old"
+        history1[3].timestamp >= days_200_ago,
+        "Oldest retained record should be at least 200 days old"
     );
+    // 400日前のレコードは削除されているので、200日前のレコードより新しい
     assert!(
-        history1[2].timestamp < days_200_ago,
-        "Should not have records older than 365 days"
+        history1[3].timestamp > days_400_ago,
+        "Oldest retained record should be newer than 400 days ago (400 days old records should be deleted)"
     );
 
     // クリーンアップ
