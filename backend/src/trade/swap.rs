@@ -198,13 +198,20 @@ where
     let log = DEFAULT.new(o!("function" => "get_current_portfolio_balances"));
     let mut balances = BTreeMap::new();
 
+    // REF Finance の全デポジット残高を一度に取得（refillをトリガーしない）
+    let account = wallet.account_id();
+    let deposits = crate::ref_finance::deposit::get_deposits(client, account).await?;
+
     for token in tokens {
         let token_account: crate::ref_finance::token_account::TokenAccount = token
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
 
-        let balance =
-            crate::ref_finance::balances::start(client, wallet, &token_account, None).await?;
+        // depositsから該当トークンの残高を取得
+        let balance = deposits
+            .get(&token_account)
+            .map(|u| u.0)
+            .unwrap_or_default();
         balances.insert(token.clone(), balance);
 
         info!(log, "retrieved balance"; "token" => token, "balance" => balance);

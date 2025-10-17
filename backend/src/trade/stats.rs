@@ -133,6 +133,14 @@ pub async fn start() -> Result<()> {
         .await?;
     info!(log, "REF Finance storage setup completed");
 
+    // Step 3.6: 投資額全額を REF Finance にデポジット (新規期間のみ)
+    if is_new_period {
+        info!(log, "depositing initial investment to REF Finance"; "amount" => available_funds);
+        crate::ref_finance::balances::deposit_wrap_near_to_ref(&client, &wallet, available_funds)
+            .await?;
+        info!(log, "initial investment deposited to REF Finance");
+    }
+
     // Step 4: ポートフォリオ最適化と実行
     match execute_portfolio_strategy(
         &prediction_service,

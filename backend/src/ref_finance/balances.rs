@@ -190,6 +190,68 @@ where
     Ok(())
 }
 
+/// 投資額全額を REF Finance にデポジット（初期ポートフォリオ構築用）
+pub async fn deposit_wrap_near_to_ref<C, W>(client: &C, wallet: &W, amount: Balance) -> Result<()>
+where
+    C: AccountInfo + ViewContract + SendTx,
+    W: Wallet,
+{
+    let log = DEFAULT.new(o!(
+        "function" => "deposit_wrap_near_to_ref",
+        "amount" => format!("{}", amount),
+    ));
+
+    // wrap.near の現在残高を確認
+    let account = wallet.account_id();
+    let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
+
+    info!(log, "current wrap.near balance"; "wrapped_balance" => wrapped_balance);
+
+    if wrapped_balance < amount {
+        // 不足分を wrap
+        let wrapping = amount - wrapped_balance;
+        let native_balance = client.get_native_amount(account).await?;
+
+        let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
+            .ok()
+            .and_then(|v| v.parse::<u128>().ok())
+            .map(|v| MilliNear::from_near(v).to_yocto())
+            .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+
+        let available = native_balance
+            .checked_sub(minimum_native_balance)
+            .unwrap_or_default();
+
+        let actual_wrapping = if available < wrapping {
+            info!(log, "insufficient balance, wrapping maximum available";
+                "available" => %available,
+                "wanted" => %wrapping,
+            );
+            available
+        } else {
+            wrapping
+        };
+
+        if actual_wrapping > 0 {
+            info!(log, "wrapping NEAR to wrap.near"; "amount" => %actual_wrapping);
+            deposit::wnear::wrap(client, wallet, actual_wrapping)
+                .await?
+                .wait_for_success()
+                .await?;
+        }
+    }
+
+    // wrap.near を REF にデポジット
+    info!(log, "depositing wrap.near to REF Finance"; "amount" => %amount);
+    deposit::deposit(client, wallet, &WNEAR_TOKEN, amount)
+        .await?
+        .wait_for_success()
+        .await?;
+
+    info!(log, "deposit completed successfully");
+    Ok(())
+}
+
 pub async fn harvest<C, W>(
     client: &C,
     wallet: &W,
