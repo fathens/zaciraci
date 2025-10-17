@@ -84,8 +84,17 @@ impl<A: TxInfo> SentTx for StandardSentTx<A> {
                 }
             };
 
+            // Finalステータスになるまで待機（nonce衝突を防ぐため）
+            if !matches!(response.final_execution_status, TxExecutionStatus::Final) {
+                debug!(attempt_log, "transaction not yet finalized, waiting"; "status" => format!("{:?}", response.final_execution_status));
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+                continue;
+            }
+
             if let Some(outcome) = response.final_execution_outcome {
-                debug!(attempt_log, "transaction outcome received");
+                debug!(attempt_log, "transaction outcome received and finalized");
 
                 let view = match outcome {
                     FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(view) => view,
@@ -104,7 +113,10 @@ impl<A: TxInfo> SentTx for StandardSentTx<A> {
                         return Err(err.into());
                     }
                     FinalExecutionStatus::SuccessValue(_) => {
-                        info!(attempt_log, "transaction completed successfully");
+                        info!(
+                            attempt_log,
+                            "transaction completed successfully and finalized"
+                        );
                         return Ok(view.transaction_outcome.outcome);
                     }
                 }

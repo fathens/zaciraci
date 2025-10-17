@@ -4,7 +4,6 @@ use crate::logging::*;
 use crate::trade::recorder::TradeRecorder;
 use crate::types::MicroNear;
 use bigdecimal::BigDecimal;
-use futures_util::future::join_all;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::algorithm::types::TradingAction;
@@ -338,32 +337,41 @@ where
             return Err(anyhow::anyhow!("Failed to deposit storage"));
         }
 
-        // arbitrage.rsパターンでスワップを並列実行
+        // スワップを順次実行（nonce衝突を回避）
         let context = SwapContext {
             from_token,
             to_token,
             swap_amount,
             recorder,
         };
-        let swaps = pre_path.into_iter().map(|(preview, path)| {
-            execute_swap_with_recording(client, wallet, preview, path, context)
-        });
-        let results = join_all(swaps).await;
 
-        let success_count = results.iter().filter(|r| r.is_ok()).count();
+        let mut success_count = 0;
+        let total_count = pre_path.len();
+
+        for (preview, path) in pre_path {
+            match execute_swap_with_recording(client, wallet, preview, path, context).await {
+                Ok(_) => {
+                    success_count += 1;
+                    // 1つ成功したら即座に終了（複数パスを試す必要なし）
+                    break;
+                }
+                Err(e) => {
+                    warn!(log, "swap attempt failed, trying next path if available"; "error" => %e);
+                }
+            }
+        }
+
         info!(log, "swaps completed";
-            "success" => format!("{}/{}", success_count, results.len()),
+            "success" => format!("{}/{}", success_count, total_count),
         );
 
         // 少なくとも1つ成功していれば OK
         if success_count > 0 {
             info!(log, "direct swap successful"; "from" => from_token, "to" => to_token);
+            Ok(())
         } else {
-            return Err(anyhow::anyhow!("All swap attempts failed"));
+            Err(anyhow::anyhow!("All swap attempts failed"))
         }
-
-        info!(log, "direct swap successful"; "from" => from_token, "to" => to_token);
-        Ok(())
     } else {
         warn!(log, "no swap path found"; "from" => from_token, "to" => to_token);
         Err(anyhow::anyhow!(

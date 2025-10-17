@@ -10,7 +10,6 @@ use crate::ref_finance::token_account::{TokenInAccount, WNEAR_TOKEN};
 use crate::types::MicroNear;
 use crate::wallet;
 use anyhow::bail;
-use futures_util::future::join_all;
 use humantime::parse_duration;
 use near_primitives::types::Balance;
 use once_cell::sync::Lazy;
@@ -110,13 +109,26 @@ where
             bail!("no account to deposit");
         }
 
-        let swaps = pre_path
-            .into_iter()
-            .map(|(p, v)| swap_each(client, wallet, p, v));
-        let results = join_all(swaps).await;
-        let success_count = results.iter().filter(|r| r.is_ok()).count();
+        // スワップを順次実行（nonce衝突を回避）
+        let mut success_count = 0;
+        let total_count = pre_path.len();
+
+        for (preview, path) in pre_path {
+            match swap_each(client, wallet, preview, path).await {
+                Ok(_) => {
+                    success_count += 1;
+                    // Arbitrageの場合は1つ成功したら終了
+                    info!(log, "arbitrage swap successful, stopping further attempts");
+                    break;
+                }
+                Err(e) => {
+                    warn!(log, "swap attempt failed, trying next path if available"; "error" => %e);
+                }
+            }
+        }
+
         info!(log, "swaps completed";
-            "success" => format!("{}/{}", success_count, results.len()),
+            "success" => format!("{}/{}", success_count, total_count),
         );
     } else {
         info!(log, "previews not found");
