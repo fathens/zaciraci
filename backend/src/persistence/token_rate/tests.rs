@@ -1169,11 +1169,46 @@ async fn test_cleanup_old_records() -> Result<()> {
         history1[0].timestamp >= days_10_ago,
         "Most recent record should be recent"
     );
+
+    // デバッグ情報：レコードの詳細を確認
+    println!("Debug: history1 records:");
+    for (i, record) in history1.iter().enumerate() {
+        println!(
+            "  [{}] rate={}, timestamp={}",
+            i, record.rate, record.timestamp
+        );
+    }
+    println!("Expected timestamps:");
+    println!("  now        = {}", now);
+    println!("  10 days ago = {}", days_10_ago);
+    println!("  100 days ago = {}", days_100_ago);
+    println!("  200 days ago = {}", days_200_ago);
+    println!("  400 days ago = {}", days_400_ago);
+
     // 最も古いレコードは200日前のもの（index 3）
-    assert!(
-        history1[3].timestamp >= days_200_ago,
-        "Oldest retained record should be at least 200 days old"
+    // レートで確認（200日前のレコードは rate = 1100）
+    assert_eq!(
+        history1[3].rate,
+        BigDecimal::from(1100),
+        "Oldest retained record should have rate 1100 (200 days old record)"
     );
+
+    // タイムスタンプも確認（精度の問題を考慮して、200日前から少し前後する範囲を許容）
+    let timestamp_diff = if history1[3].timestamp > days_200_ago {
+        history1[3].timestamp - days_200_ago
+    } else {
+        days_200_ago - history1[3].timestamp
+    };
+
+    assert!(
+        timestamp_diff < chrono::Duration::seconds(1),
+        "Oldest retained record timestamp should be close to 200 days ago. \
+         Expected: {}, Actual: {}, Diff: {:?}",
+        days_200_ago,
+        history1[3].timestamp,
+        timestamp_diff
+    );
+
     // 400日前のレコードは削除されているので、200日前のレコードより新しい
     assert!(
         history1[3].timestamp > days_400_ago,
