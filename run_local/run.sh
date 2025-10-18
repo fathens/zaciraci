@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Usage: ./run.sh
+# Note: 設定を変更したら、このスクリプトを実行して反映させる。
+#       docker compose down などは不要。このスクリプトだけで再起動可能。
+#       再起動後は設定が反映されている事をログや docker の情報で確認することを推奨する。
 
 cd "$(dirname $0)"
 
