@@ -201,15 +201,36 @@ where
         "amount" => format!("{}", amount),
     ));
 
-    // wrap.near の現在残高を確認
     let account = wallet.account_id();
+
+    // REF Finance に既にデポジット済みの残高を確認
+    let deposited_balance = balance_of_start_token(client, wallet, &WNEAR_TOKEN).await?;
+
+    info!(log, "checking existing balances";
+        "deposited_in_ref" => %deposited_balance,
+        "required" => %amount
+    );
+
+    if deposited_balance >= amount {
+        info!(
+            log,
+            "sufficient balance already deposited, no action needed"
+        );
+        return Ok(());
+    }
+
+    // 不足分を計算
+    let shortage = amount - deposited_balance;
+
+    // wrap.near の現在残高を確認
     let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
 
-    info!(log, "current wrap.near balance"; "wrapped_balance" => wrapped_balance);
+    info!(log, "current wrap.near balance"; "wrapped_balance" => %wrapped_balance);
 
-    if wrapped_balance < amount {
-        // 不足分を wrap
-        let wrapping = amount - wrapped_balance;
+    // 不足分を wrap.near から調達
+    if wrapped_balance < shortage {
+        // さらに NEAR を wrap する必要がある
+        let wrapping = shortage - wrapped_balance;
         let native_balance = client.get_native_amount(account).await?;
 
         let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
@@ -241,23 +262,28 @@ where
         }
     }
 
-    // wrap.near の最終残高を確認してデポジット
+    // wrap.near の最終残高を確認して、デポジット可能な量を決定
     let final_wrapped_balance = deposit::wnear::balance_of(client, account).await?;
 
     if final_wrapped_balance == 0 {
         return Err(anyhow::anyhow!("No wrap.near balance available to deposit"));
     }
 
+    // 不足分と実際の残高の少ない方をデポジット
+    let deposit_amount = shortage.min(final_wrapped_balance);
+
     info!(log, "depositing wrap.near to REF Finance";
-        "requested" => %amount,
-        "actual" => %final_wrapped_balance
+        "shortage" => %shortage,
+        "available" => %final_wrapped_balance,
+        "depositing" => %deposit_amount
     );
-    deposit::deposit(client, wallet, &WNEAR_TOKEN, final_wrapped_balance)
+
+    deposit::deposit(client, wallet, &WNEAR_TOKEN, deposit_amount)
         .await?
         .wait_for_success()
         .await?;
 
-    info!(log, "deposit completed successfully"; "deposited" => %final_wrapped_balance);
+    info!(log, "deposit completed successfully"; "deposited" => %deposit_amount);
     Ok(())
 }
 
