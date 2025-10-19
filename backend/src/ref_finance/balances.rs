@@ -241,14 +241,23 @@ where
         }
     }
 
-    // wrap.near を REF にデポジット
-    info!(log, "depositing wrap.near to REF Finance"; "amount" => %amount);
-    deposit::deposit(client, wallet, &WNEAR_TOKEN, amount)
+    // wrap.near の最終残高を確認してデポジット
+    let final_wrapped_balance = deposit::wnear::balance_of(client, account).await?;
+
+    if final_wrapped_balance == 0 {
+        return Err(anyhow::anyhow!("No wrap.near balance available to deposit"));
+    }
+
+    info!(log, "depositing wrap.near to REF Finance";
+        "requested" => %amount,
+        "actual" => %final_wrapped_balance
+    );
+    deposit::deposit(client, wallet, &WNEAR_TOKEN, final_wrapped_balance)
         .await?
         .wait_for_success()
         .await?;
 
-    info!(log, "deposit completed successfully");
+    info!(log, "deposit completed successfully"; "deposited" => %final_wrapped_balance);
     Ok(())
 }
 
