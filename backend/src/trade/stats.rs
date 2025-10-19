@@ -177,7 +177,8 @@ pub async fn start() -> Result<()> {
     info!(log, "portfolio strategy determined"; "total_actions" => report.len());
 
     // 実際の取引実行
-    let executed_actions = execute_trading_actions(&report, available_funds).await?;
+    let executed_actions =
+        execute_trading_actions(&report, available_funds, period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
     // Step 5: ハーベスト判定と実行
@@ -517,6 +518,7 @@ where
 async fn execute_trading_actions(
     actions: &[TradingAction],
     _available_funds: u128,
+    period_id: String,
 ) -> Result<ExecutionSummary> {
     let log = DEFAULT.new(o!("function" => "execute_trading_actions"));
 
@@ -532,8 +534,11 @@ async fn execute_trading_actions(
     let wallet = crate::wallet::new_wallet();
 
     // TradeRecorderを作成（バッチIDで関連取引をグループ化）
-    let recorder = TradeRecorder::new();
-    info!(log, "created trade recorder"; "batch_id" => recorder.get_batch_id());
+    let recorder = TradeRecorder::new(period_id.clone());
+    info!(log, "created trade recorder";
+        "batch_id" => recorder.get_batch_id(),
+        "period_id" => %period_id
+    );
 
     for action in actions {
         match execute_single_action(&client, &wallet, action, &recorder).await {
@@ -807,10 +812,21 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
 
                 Ok((created_period.period_id, true, vec![]))
             } else {
-                // 評価期間中: 既存の選定トークンを返す
-                info!(log, "continuing evaluation period";
+                // 評価期間中: トランザクション記録で判定
+                info!(log, "checking evaluation period status";
                     "period_id" => %period.period_id,
                     "days_remaining" => EVALUATION_PERIOD_DAYS - period_duration.num_days()
+                );
+
+                // トランザクション記録をチェック
+                use crate::persistence::trade_transaction::TradeTransaction;
+                let transaction_count =
+                    TradeTransaction::count_by_evaluation_period_async(period.period_id.clone())
+                        .await?;
+
+                info!(log, "transaction count for period";
+                    "count" => transaction_count,
+                    "period_id" => %period.period_id
                 );
 
                 let selected_tokens = period
@@ -820,7 +836,21 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
                     .flatten()
                     .collect();
 
-                Ok((period.period_id, false, selected_tokens))
+                // トランザクションがゼロなら新規期間として扱う
+                let is_new_period = transaction_count == 0;
+
+                if is_new_period {
+                    info!(
+                        log,
+                        "no transactions found in period, treating as new period"
+                    );
+                } else {
+                    info!(log, "continuing evaluation period with existing positions";
+                        "transaction_count" => transaction_count
+                    );
+                }
+
+                Ok((period.period_id, is_new_period, selected_tokens))
             }
         }
         None => {
@@ -849,13 +879,16 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
 
     // 最新の評価期間を取得して選定トークンを確認
     let latest_period = EvaluationPeriod::get_latest_async().await?;
-    let tokens_to_liquidate: Vec<String> = match latest_period {
-        Some(period) => period
-            .selected_tokens
-            .unwrap_or_default()
-            .into_iter()
-            .flatten()
-            .collect(),
+    let (period_id, tokens_to_liquidate): (String, Vec<String>) = match latest_period {
+        Some(period) => {
+            let tokens = period
+                .selected_tokens
+                .unwrap_or_default()
+                .into_iter()
+                .flatten()
+                .collect();
+            (period.period_id, tokens)
+        }
         None => {
             info!(log, "no evaluation period found, nothing to liquidate");
             return Ok(BigDecimal::from(0));
@@ -878,7 +911,7 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
     // クライアントとウォレットを取得
     let client = crate::jsonrpc::new_client();
     let wallet = crate::wallet::new_wallet();
-    let recorder = TradeRecorder::new();
+    let recorder = TradeRecorder::new(period_id);
 
     // 各トークンをwrap.nearに変換
     let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();

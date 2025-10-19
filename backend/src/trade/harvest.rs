@@ -260,9 +260,21 @@ async fn execute_harvest_transfer(
         "tx_hash" => %tx_hash
     );
 
-    // 4. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
+    // 4. 最新の評価期間を取得
+    let latest_period =
+        crate::persistence::evaluation_period::EvaluationPeriod::get_latest_async().await?;
+    let period_id = match latest_period {
+        Some(period) => period.period_id,
+        None => {
+            return Err(anyhow::anyhow!(
+                "No evaluation period found for harvest transaction"
+            ));
+        }
+    };
+
+    // 5. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
     let actual_transfer_bigdecimal = BigDecimal::from(actual_transfer_amount);
-    let recorder = TradeRecorder::new();
+    let recorder = TradeRecorder::new(period_id);
     recorder
         .record_trade(
             tx_hash, // 実際のトランザクションハッシュを使用

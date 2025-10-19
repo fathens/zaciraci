@@ -7,19 +7,29 @@ use crate::persistence::trade_transaction::TradeTransaction;
 
 pub struct TradeRecorder {
     batch_id: String,
+    evaluation_period_id: String,
 }
 
 impl TradeRecorder {
-    pub fn new() -> Self {
+    pub fn new(evaluation_period_id: String) -> Self {
         let batch_id = Uuid::new_v4().to_string();
         let log = DEFAULT.new(o!("function" => "TradeRecorder::new"));
-        info!(log, "created new trade recorder"; "batch_id" => %batch_id);
-        Self { batch_id }
+        info!(log, "created new trade recorder";
+            "batch_id" => %batch_id,
+            "period_id" => %evaluation_period_id
+        );
+        Self {
+            batch_id,
+            evaluation_period_id,
+        }
     }
 
     #[allow(dead_code)]
-    pub fn with_batch_id(batch_id: String) -> Self {
-        Self { batch_id }
+    pub fn with_batch_id(batch_id: String, evaluation_period_id: String) -> Self {
+        Self {
+            batch_id,
+            evaluation_period_id,
+        }
     }
 
     pub fn get_batch_id(&self) -> &str {
@@ -46,7 +56,7 @@ impl TradeRecorder {
             to_token.clone(),
             to_amount.clone(),
             price_yocto_near.clone(),
-            None, // evaluation_period_id: 後で評価期間機能で設定
+            Some(self.evaluation_period_id.clone()),
         );
 
         let result = transaction
@@ -84,7 +94,7 @@ impl TradeRecorder {
                     trade.to_token,
                     trade.to_amount,
                     trade.price_yocto_near,
-                    None, // evaluation_period_id: 後で評価期間機能で設定
+                    Some(self.evaluation_period_id.clone()),
                 )
             })
             .collect();
@@ -183,7 +193,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_trade_recorder() {
-        let recorder = TradeRecorder::new();
+        use crate::persistence::evaluation_period::NewEvaluationPeriod;
+        use bigdecimal::BigDecimal;
+
+        // 評価期間を作成（外部キー制約のため）
+        let new_period =
+            NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+        let created_period = new_period.insert_async().await.unwrap();
+        let period_id = created_period.period_id;
+
+        let recorder = TradeRecorder::new(period_id);
         let batch_id = recorder.get_batch_id().to_string();
 
         let tx_id = format!("test_tx_{}", Uuid::new_v4());
@@ -213,7 +232,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_recording() {
-        let recorder = TradeRecorder::new();
+        use crate::persistence::evaluation_period::NewEvaluationPeriod;
+        use bigdecimal::BigDecimal;
+
+        // 評価期間を作成（外部キー制約のため）
+        let new_period =
+            NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+        let created_period = new_period.insert_async().await.unwrap();
+        let period_id = created_period.period_id;
+
+        let recorder = TradeRecorder::new(period_id);
 
         let trades = vec![
             TradeData::new(
