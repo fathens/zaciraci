@@ -67,14 +67,18 @@ where
 
             // 1. 現在の保有量を取得（wrap.nearを明示的に追加）
             let mut tokens: Vec<String> = target_weights.keys().cloned().collect();
+            info!(log, "tokens from target_weights"; "tokens" => ?tokens, "count" => tokens.len());
+
             let wrap_near = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
             if !tokens.contains(&wrap_near) {
-                tokens.push(wrap_near);
+                tokens.push(wrap_near.clone());
                 info!(
                     log,
                     "added wrap.near to balance query for total value calculation"
                 );
             }
+            info!(log, "tokens list before get_current_portfolio_balances"; "tokens" => ?tokens, "count" => tokens.len());
+
             let current_balances = get_current_portfolio_balances(client, wallet, &tokens).await?;
 
             // 2. 総ポートフォリオ価値を計算
