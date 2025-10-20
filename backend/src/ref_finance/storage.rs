@@ -257,14 +257,32 @@ where
         info!(log, "account already registered");
     }
 
-    // 3. トークンを一括登録
+    // 3. トークンを一括登録（未登録のもののみ）
     if !tokens.is_empty() {
-        info!(log, "registering tokens"; "count" => tokens.len());
-        deposit::register_tokens(client, wallet, tokens)
-            .await?
-            .wait_for_success()
-            .await?;
-        info!(log, "tokens registered successfully");
+        // 既に登録済みのトークンを取得
+        let registered_tokens = deposit::get_deposits(client, account).await?;
+
+        // 未登録のトークンのみをフィルタリング
+        let unregistered_tokens: Vec<TokenAccount> = tokens
+            .iter()
+            .filter(|token| !registered_tokens.contains_key(token))
+            .cloned()
+            .collect();
+
+        if !unregistered_tokens.is_empty() {
+            info!(log, "registering unregistered tokens";
+                "total" => tokens.len(),
+                "already_registered" => tokens.len() - unregistered_tokens.len(),
+                "to_register" => unregistered_tokens.len()
+            );
+            deposit::register_tokens(client, wallet, &unregistered_tokens)
+                .await?
+                .wait_for_success()
+                .await?;
+            info!(log, "tokens registered successfully"; "count" => unregistered_tokens.len());
+        } else {
+            info!(log, "all tokens already registered"; "count" => tokens.len());
+        }
     }
 
     Ok(())
