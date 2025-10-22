@@ -64,12 +64,11 @@ impl PredictionService {
         }
     }
 
-    /// 指定期間のトップトークンを取得
-    pub async fn get_top_tokens(
+    /// ボラティリティ順に全トークンを取得
+    pub async fn get_tokens_by_volatility(
         &self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        limit: usize,
         quote_token: &str,
     ) -> Result<Vec<TopToken>> {
         // 直接データベースからボラティリティ情報を取得
@@ -88,9 +87,9 @@ impl PredictionService {
                 .await
                 .context("Failed to get volatility tokens from database")?;
 
-        // 上位のトークンを選択してTopToken形式に変換
+        // 全トークンをTopToken形式に変換（limit は呼び出し側で適用）
         let mut top_tokens = Vec::new();
-        for vol_token in volatility_tokens.into_iter().take(limit) {
+        for vol_token in volatility_tokens.into_iter() {
             // 現在価格を取得
             let current_price = {
                 let base_token = TokenOutAccount::from(vol_token.base.clone());
@@ -297,15 +296,14 @@ impl PredictionService {
 // PredictionProviderトレイトの実装
 #[async_trait]
 impl PredictionProvider for PredictionService {
-    async fn get_top_tokens(
+    async fn get_tokens_by_volatility(
         &self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        limit: usize,
         quote_token: &str,
     ) -> Result<Vec<TopTokenInfo>> {
         let tokens = self
-            .get_top_tokens(start_date, end_date, limit, quote_token)
+            .get_tokens_by_volatility(start_date, end_date, quote_token)
             .await?;
         Ok(tokens
             .into_iter()

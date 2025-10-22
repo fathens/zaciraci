@@ -2,8 +2,8 @@ use crate::Result;
 use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::trade::recorder::TradeRecorder;
-use crate::types::MicroNear;
 use bigdecimal::BigDecimal;
+use num_traits::Zero;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::algorithm::types::TradingAction;
@@ -295,7 +295,7 @@ where
     Ok(total_value)
 }
 
-/// 2つのトークン間で直接スワップを実行（arbitrage.rs実装パターンを使用）
+/// 2つのトークン間で直接スワップを実行（シンプルなパス探索を使用）
 pub async fn execute_direct_swap<C, W>(
     client: &C,
     wallet: &W,
@@ -316,12 +316,16 @@ where
         "from" => format!("{}", from_token),
         "to" => format!("{}", to_token)
     ));
-    info!(log, "starting direct swap using arbitrage pattern");
+    info!(log, "starting direct swap");
 
     // from_token の残高を取得
     let from_token_account: crate::ref_finance::token_account::TokenAccount = from_token
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid from_token: {}", e))?;
+    let to_token_account: crate::ref_finance::token_account::TokenAccount = to_token
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid to_token: {}", e))?;
+
     let balance =
         crate::ref_finance::balances::start(client, wallet, &from_token_account, None).await?;
 
@@ -329,76 +333,75 @@ where
         return Err(anyhow::anyhow!("No balance for token: {}", from_token));
     }
 
-    // 少量のswapを実行（残高の10%程度）
-    let swap_amount = balance / 10;
+    // 残高の全額をスワップ
+    let swap_amount = balance;
 
     // プールデータを読み込み
     let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
     let graph = crate::ref_finance::path::graph::TokenGraph::new(pools);
 
-    // パス検索用のstart tokenを準備
-    let start: &crate::ref_finance::token_account::TokenInAccount = &from_token_account.into();
-    let start_balance = MicroNear::from_yocto(swap_amount);
+    // パス検索用のトークンを準備
+    let start: crate::ref_finance::token_account::TokenInAccount =
+        from_token_account.clone().into();
+    let goal: crate::ref_finance::token_account::TokenOutAccount = to_token_account.clone().into();
 
-    // ガス価格を取得
-    let gas_price = client.get_gas_price(None).await?;
+    // from_tokenを起点としてグラフを更新（流動性のあるトークンのみ含める）
+    graph
+        .update_graph(&start)
+        .map_err(|e| anyhow::anyhow!("Failed to update graph from {}: {}", from_token, e))?;
 
-    // パスを検索（arbitrage.rsの実装を使用）
-    let previews =
-        crate::ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
+    // パスに含まれるトークンのストレージデポジットを確認
+    let tokens = vec![from_token_account, to_token_account];
 
-    if let Some(previews) = previews {
-        let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
-
-        // ストレージデポジットの確認
-        let res = crate::ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
-        if res.is_none() {
-            return Err(anyhow::anyhow!("Failed to deposit storage"));
-        }
-
-        // スワップを順次実行（nonce衝突を回避）
-        let context = SwapContext {
-            from_token,
-            to_token,
-            swap_amount,
-            recorder,
-        };
-
-        let mut success_count = 0;
-        let total_count = pre_path.len();
-
-        for (preview, path) in pre_path {
-            match execute_swap_with_recording(client, wallet, preview, path, context).await {
-                Ok(_) => {
-                    success_count += 1;
-                    // 1つ成功したら即座に終了（複数パスを試す必要なし）
-                    break;
-                }
-                Err(e) => {
-                    warn!(log, "swap attempt failed, trying next path if available"; "error" => %e);
-                }
-            }
-        }
-
-        info!(log, "swaps completed";
-            "success" => format!("{}/{}", success_count, total_count),
-        );
-
-        // 少なくとも1つ成功していれば OK
-        if success_count > 0 {
-            info!(log, "direct swap successful"; "from" => from_token, "to" => to_token);
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("All swap attempts failed"))
-        }
-    } else {
-        warn!(log, "no swap path found"; "from" => from_token, "to" => to_token);
-        Err(anyhow::anyhow!(
-            "No swap path found from {} to {}",
-            from_token,
-            to_token
-        ))
+    // シンプルなパス探索（利益を考慮しない）
+    let path = graph.get_path(&start, &goal)?;
+    let res = crate::ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
+    if res.is_none() {
+        return Err(anyhow::anyhow!("Failed to deposit storage"));
     }
+
+    // スワップ引数を準備
+    let arg = crate::ref_finance::swap::SwapArg {
+        initial_in: swap_amount,
+        min_out: 0, // トレードでは最小出力は気にしない
+    };
+
+    // スワップを実行
+    let (sent_tx, out) = crate::ref_finance::swap::run_swap(client, wallet, &path.0, arg).await?;
+
+    if let Err(e) = sent_tx.wait_for_success().await {
+        error!(log, "swap transaction failed"; "error" => %e);
+        return Err(anyhow::anyhow!("Swap transaction failed: {}", e));
+    }
+
+    info!(log, "swap successful";
+        "from" => from_token,
+        "to" => to_token,
+        "input" => swap_amount,
+        "output" => out,
+    );
+
+    // トレード記録を保存
+    let from_amount = BigDecimal::from(swap_amount);
+    let to_amount = BigDecimal::from(out);
+    let price = if !from_amount.is_zero() {
+        to_amount.clone() / from_amount.clone()
+    } else {
+        BigDecimal::from(0)
+    };
+
+    recorder
+        .record_trade(
+            sent_tx.to_string(),
+            from_token.to_string(),
+            from_amount,
+            to_token.to_string(),
+            to_amount,
+            price,
+        )
+        .await?;
+
+    Ok(())
 }
 
 #[derive(Clone, Copy)]

@@ -215,9 +215,10 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     // 追加: トップトークンの予測も取得
     let end_date = Utc::now();
     let start_date = end_date - Duration::days(history_days);
-    let top_tokens = prediction_provider
-        .get_top_tokens(start_date, end_date, TOP_N_TOKENS, quote_token)
+    let all_tokens = prediction_provider
+        .get_tokens_by_volatility(start_date, end_date, quote_token)
         .await?;
+    let top_tokens: Vec<_> = all_tokens.into_iter().take(TOP_N_TOKENS).collect();
 
     // トップトークンの予測を追加
     for top_token in top_tokens {
@@ -373,11 +374,10 @@ mod integration_tests {
 
     #[async_trait]
     impl PredictionProvider for SimpleMockProvider {
-        async fn get_top_tokens(
+        async fn get_tokens_by_volatility(
             &self,
             _start_date: chrono::DateTime<Utc>,
             _end_date: chrono::DateTime<Utc>,
-            limit: usize,
             _quote_token: &str,
         ) -> crate::Result<Vec<TopTokenInfo>> {
             Ok(vec![
@@ -395,7 +395,6 @@ mod integration_tests {
                 },
             ]
             .into_iter()
-            .take(limit)
             .collect())
         }
 

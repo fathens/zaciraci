@@ -439,11 +439,12 @@ impl TokenRate {
         let conn = connection_pool::get().await?;
 
         // SQLクエリを実装してボラティリティを計算
+        // 全トークンを variance 降順で取得（フィルタリングはアプリケーション側）
         let volatility_results: Vec<VolatilityResult> = conn
             .interact(move |conn| {
                 diesel::sql_query(
                     "
-                SELECT 
+                SELECT
                     base_token,
                     var_pop(rate) as variance
                 FROM token_rates
@@ -455,7 +456,6 @@ impl TokenRate {
                 HAVING
                     MIN(rate) > 0
                 ORDER BY variance DESC
-                LIMIT 100
                 ",
                 )
                 .bind::<diesel::sql_types::Text, _>(&quote_str)

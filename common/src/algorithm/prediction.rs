@@ -12,12 +12,11 @@ pub use super::types::{
 /// 予測サービスのトレイト
 #[async_trait]
 pub trait PredictionProvider: Send + Sync {
-    /// 指定期間のトップトークンを取得
-    async fn get_top_tokens(
+    /// ボラティリティ順に全トークンを取得
+    async fn get_tokens_by_volatility(
         &self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        limit: usize,
         quote_token: &str,
     ) -> Result<Vec<TopTokenInfo>>;
 

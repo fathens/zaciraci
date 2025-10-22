@@ -100,15 +100,16 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
     let end_date = Utc::now();
 
     let result = service
-        .get_top_tokens(start_date, end_date, 10, "wrap.near")
+        .get_tokens_by_volatility(start_date, end_date, "wrap.near")
         .await;
 
-    assert!(result.is_ok(), "get_top_tokens should succeed");
+    assert!(result.is_ok(), "get_tokens_by_volatility should succeed");
     let tokens = result.unwrap();
 
     // 具体的な検証
-    assert!(tokens.len() >= 2, "Should return at least our test tokens");
-    assert!(tokens.len() <= 10, "Should return at most 10 tokens");
+    // テストフィクスチャは2つのトークンを作成するので、最低2つ返されるべき
+    // (他のテストで挿入されたトークンがある可能性もあるため>=を使用)
+    assert!(tokens.len() >= 2, "Should return at least 2 test tokens");
 
     // 各トークンの必須フィールドを検証
     for token in &tokens {
@@ -264,7 +265,7 @@ async fn test_error_handling_comprehensive() -> Result<()> {
 
     for (invalid_token, description) in invalid_tokens {
         let result = service
-            .get_top_tokens(start_date, end_date, 10, invalid_token)
+            .get_tokens_by_volatility(start_date, end_date, invalid_token)
             .await;
 
         assert!(result.is_err(), "{} should cause an error", description);

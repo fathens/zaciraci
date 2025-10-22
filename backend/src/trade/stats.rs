@@ -246,12 +246,12 @@ async fn select_top_volatility_tokens(
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
 
-    // 過去7日間のボラティリティトークンを取得
+    // 過去7日間のボラティリティトークンを全て取得（DBから）
     let end_date = Utc::now();
     let start_date = end_date - chrono::Duration::days(7);
 
     match prediction_service
-        .get_top_tokens(start_date, end_date, limit, "wrap.near")
+        .get_tokens_by_volatility(start_date, end_date, "wrap.near")
         .await
     {
         Ok(top_tokens) => {
@@ -274,7 +274,66 @@ async fn select_top_volatility_tokens(
             }
 
             info!(log, "selected tokens from prediction service"; "count" => tokens.len());
-            Ok(tokens)
+
+            // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
+            let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
+            let graph = crate::ref_finance::path::graph::TokenGraph::new(pools);
+            let wnear_token: crate::ref_finance::token_account::TokenInAccount =
+                crate::ref_finance::token_account::WNEAR_TOKEN
+                    .clone()
+                    .into();
+            let liquid_tokens = match graph.update_graph(&wnear_token) {
+                Ok(goals) => {
+                    let liquid_token_ids: std::collections::HashSet<_> =
+                        goals.iter().map(|t| t.as_id().to_string()).collect();
+                    info!(log, "liquid tokens available";
+                        "count" => liquid_token_ids.len(),
+                    );
+                    liquid_token_ids
+                }
+                Err(e) => {
+                    warn!(log, "failed to get liquid tokens, using all volatility tokens";
+                        "error" => ?e,
+                    );
+                    // フィルタリング失敗時は全トークンを返す
+                    return Ok(tokens);
+                }
+            };
+
+            // volatility トークンを流動性でフィルタ
+            let original_count = tokens.len();
+            let mut filtered_tokens: Vec<AccountId> = tokens
+                .into_iter()
+                .filter(|token| liquid_tokens.contains(&token.to_string()))
+                .collect();
+
+            if filtered_tokens.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No tokens with sufficient liquidity after filtering {} volatility tokens",
+                    original_count
+                ));
+            }
+
+            // 要求された数に制限（フィルタ後の上位 limit 個を返す）
+            if filtered_tokens.len() > limit {
+                filtered_tokens.truncate(limit);
+            }
+
+            if filtered_tokens.len() < limit {
+                warn!(log, "insufficient tokens after liquidity filtering";
+                    "required" => limit,
+                    "available" => filtered_tokens.len(),
+                    "fetched" => original_count,
+                );
+            }
+
+            info!(log, "tokens after liquidity filtering";
+                "original_count" => original_count,
+                "filtered_count" => filtered_tokens.len(),
+                "required_count" => limit,
+            );
+
+            Ok(filtered_tokens)
         }
         Err(e) => {
             error!(log, "failed to get tokens from prediction service"; "error" => ?e);

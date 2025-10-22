@@ -57,14 +57,13 @@ impl MockPredictionProvider {
 
 #[async_trait]
 impl PredictionProvider for MockPredictionProvider {
-    async fn get_top_tokens(
+    async fn get_tokens_by_volatility(
         &self,
         _start_date: DateTime<Utc>,
         _end_date: DateTime<Utc>,
-        limit: usize,
         _quote_token: &str,
     ) -> crate::Result<Vec<TopTokenInfo>> {
-        Ok(self.top_tokens.clone().into_iter().take(limit).collect())
+        Ok(self.top_tokens.clone())
     }
 
     async fn get_price_history(
@@ -157,10 +156,11 @@ mod prediction_tests {
         let start_date = create_test_timestamp();
         let end_date = start_date + Duration::days(30);
 
-        let top_tokens = provider
-            .get_top_tokens(start_date, end_date, 1, "wrap.near")
+        let all_tokens = provider
+            .get_tokens_by_volatility(start_date, end_date, "wrap.near")
             .await
             .unwrap();
+        let top_tokens: Vec<_> = all_tokens.into_iter().take(1).collect();
 
         assert_eq!(top_tokens.len(), 1);
         assert_eq!(top_tokens[0].token, "token1");
