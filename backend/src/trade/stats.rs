@@ -952,17 +952,21 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
 async fn liquidate_all_positions() -> Result<BigDecimal> {
     let log = DEFAULT.new(o!("function" => "liquidate_all_positions"));
 
-    // 最新の評価期間を取得して選定トークンを確認
+    // 最新の評価期間を取得
     let latest_period = EvaluationPeriod::get_latest_async().await?;
-    let (period_id, tokens_to_liquidate): (String, Vec<String>) = match latest_period {
+    let period_id = match latest_period {
         Some(period) => {
-            let tokens = period
+            // selected_tokensは履歴として記録（実際の清算には使用しない）
+            let selected_tokens = period
                 .selected_tokens
                 .unwrap_or_default()
                 .into_iter()
                 .flatten()
-                .collect();
-            (period.period_id, tokens)
+                .collect::<Vec<String>>();
+            info!(log, "evaluation period selected tokens";
+                  "period_id" => &period.period_id,
+                  "selected_tokens" => ?selected_tokens);
+            period.period_id
         }
         None => {
             info!(log, "no evaluation period found, nothing to liquidate");
@@ -970,11 +974,29 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
         }
     };
 
+    // 実際のREF Finance残高を取得して清算対象を決定
+    let client = crate::jsonrpc::new_client();
+    let wallet = crate::wallet::new_wallet();
+    let account = wallet.account_id();
+    let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
+
+    let deposits = crate::ref_finance::deposit::get_deposits(&client, account).await?;
+    let tokens_to_liquidate: Vec<String> = deposits
+        .iter()
+        .filter_map(|(token, amount)| {
+            let token_str = token.to_string();
+            // wrap.nearは除外し、残高があるトークンのみを対象とする
+            if token_str != wrap_near_str && amount.0 > 0 {
+                Some(token_str)
+            } else {
+                None
+            }
+        })
+        .collect();
+
     if tokens_to_liquidate.is_empty() {
         info!(log, "no tokens to liquidate");
         // wrap.nearの残高を返す
-        let client = crate::jsonrpc::new_client();
-        let wallet = crate::wallet::new_wallet();
         let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
         let balance =
             crate::ref_finance::balances::start(&client, &wallet, wrap_near, None).await?;
@@ -983,23 +1005,14 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
 
     info!(log, "liquidating positions"; "token_count" => tokens_to_liquidate.len());
 
-    // クライアントとウォレットを取得
-    let client = crate::jsonrpc::new_client();
-    let wallet = crate::wallet::new_wallet();
+    // トレードレコーダーを作成
     let recorder = TradeRecorder::new(period_id);
 
     // 各トークンをwrap.nearに変換
-    let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
-
     for token in &tokens_to_liquidate {
-        if token == &wrap_near_str {
-            // wrap.nearは変換不要
-            continue;
-        }
-
         info!(log, "liquidating token"; "token" => token);
 
-        // トークンの残高を確認
+        // トークンの残高を再確認（取得時点から変更がある可能性を考慮）
         let token_account: crate::ref_finance::token_account::TokenAccount = token
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
@@ -1008,7 +1021,7 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
             crate::ref_finance::balances::start(&client, &wallet, &token_account, None).await?;
 
         if balance == 0 {
-            info!(log, "token has zero balance, skipping"; "token" => token);
+            info!(log, "token balance became zero, skipping"; "token" => token);
             continue;
         }
 
