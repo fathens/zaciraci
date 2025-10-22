@@ -946,6 +946,26 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
     }
 }
 
+/// REF Financeの残高から清算対象トークンをフィルタリング
+///
+/// wrap.nearとゼロ残高のトークンを除外し、清算すべきトークンのリストを返す
+fn filter_tokens_to_liquidate(
+    deposits: &HashMap<crate::ref_finance::token_account::TokenAccount, near_sdk::json_types::U128>,
+    wrap_near_token: &crate::ref_finance::token_account::TokenAccount,
+) -> Vec<String> {
+    deposits
+        .iter()
+        .filter_map(|(token, amount)| {
+            // wrap.nearは除外し、残高があるトークンのみを対象とする
+            if token != wrap_near_token && amount.0 > 0 {
+                Some(token.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// 全保有トークンをwrap.nearに売却
 ///
 /// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
@@ -978,21 +998,10 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
     let client = crate::jsonrpc::new_client();
     let wallet = crate::wallet::new_wallet();
     let account = wallet.account_id();
-    let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let wrap_near_token = &crate::ref_finance::token_account::WNEAR_TOKEN;
 
     let deposits = crate::ref_finance::deposit::get_deposits(&client, account).await?;
-    let tokens_to_liquidate: Vec<String> = deposits
-        .iter()
-        .filter_map(|(token, amount)| {
-            let token_str = token.to_string();
-            // wrap.nearは除外し、残高があるトークンのみを対象とする
-            if token_str != wrap_near_str && amount.0 > 0 {
-                Some(token_str)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let tokens_to_liquidate = filter_tokens_to_liquidate(&deposits, wrap_near_token);
 
     if tokens_to_liquidate.is_empty() {
         info!(log, "no tokens to liquidate");
@@ -1026,6 +1035,7 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
         }
 
         // token → wrap.near にスワップ
+        let wrap_near_str = wrap_near_token.to_string();
         match swap::execute_direct_swap(&client, &wallet, token, &wrap_near_str, &recorder).await {
             Ok(_) => {
                 info!(log, "successfully liquidated token"; "token" => token);
@@ -2462,5 +2472,101 @@ mod tests {
                 BigDecimal::from_str("123.4567").unwrap()
             )
         );
+    }
+
+    #[test]
+    fn test_filter_tokens_to_liquidate_excludes_wrap_near() {
+        use crate::ref_finance::token_account::TokenAccount;
+        use near_sdk::json_types::U128;
+        use std::collections::HashMap;
+
+        let wrap_near: TokenAccount = "wrap.near".parse().unwrap();
+        let token_a: TokenAccount = "token_a.near".parse().unwrap();
+
+        let mut deposits = HashMap::new();
+        deposits.insert(wrap_near.clone(), U128(1000));
+        deposits.insert(token_a.clone(), U128(500));
+
+        let result = super::filter_tokens_to_liquidate(&deposits, &wrap_near);
+
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&"token_a.near".to_string()));
+        assert!(!result.contains(&"wrap.near".to_string()));
+    }
+
+    #[test]
+    fn test_filter_tokens_to_liquidate_excludes_zero_balance() {
+        use crate::ref_finance::token_account::TokenAccount;
+        use near_sdk::json_types::U128;
+        use std::collections::HashMap;
+
+        let wrap_near: TokenAccount = "wrap.near".parse().unwrap();
+        let token_a: TokenAccount = "token_a.near".parse().unwrap();
+        let token_b: TokenAccount = "token_b.near".parse().unwrap();
+
+        let mut deposits = HashMap::new();
+        deposits.insert(token_a.clone(), U128(500));
+        deposits.insert(token_b.clone(), U128(0)); // ゼロ残高
+
+        let result = super::filter_tokens_to_liquidate(&deposits, &wrap_near);
+
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&"token_a.near".to_string()));
+        assert!(!result.contains(&"token_b.near".to_string()));
+    }
+
+    #[test]
+    fn test_filter_tokens_to_liquidate_includes_tokens_with_balance() {
+        use crate::ref_finance::token_account::TokenAccount;
+        use near_sdk::json_types::U128;
+        use std::collections::HashMap;
+
+        let wrap_near: TokenAccount = "wrap.near".parse().unwrap();
+        let token_a: TokenAccount = "token_a.near".parse().unwrap();
+        let token_b: TokenAccount = "token_b.near".parse().unwrap();
+        let token_c: TokenAccount = "token_c.near".parse().unwrap();
+
+        let mut deposits = HashMap::new();
+        deposits.insert(wrap_near.clone(), U128(1000)); // 除外されるべき
+        deposits.insert(token_a.clone(), U128(500));
+        deposits.insert(token_b.clone(), U128(0)); // 除外されるべき
+        deposits.insert(token_c.clone(), U128(750));
+
+        let result = super::filter_tokens_to_liquidate(&deposits, &wrap_near);
+
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&"token_a.near".to_string()));
+        assert!(result.contains(&"token_c.near".to_string()));
+        assert!(!result.contains(&"wrap.near".to_string()));
+        assert!(!result.contains(&"token_b.near".to_string()));
+    }
+
+    #[test]
+    fn test_filter_tokens_to_liquidate_empty_deposits() {
+        use crate::ref_finance::token_account::TokenAccount;
+        use std::collections::HashMap;
+
+        let wrap_near: TokenAccount = "wrap.near".parse().unwrap();
+        let deposits = HashMap::new();
+
+        let result = super::filter_tokens_to_liquidate(&deposits, &wrap_near);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_tokens_to_liquidate_only_wrap_near() {
+        use crate::ref_finance::token_account::TokenAccount;
+        use near_sdk::json_types::U128;
+        use std::collections::HashMap;
+
+        let wrap_near: TokenAccount = "wrap.near".parse().unwrap();
+
+        let mut deposits = HashMap::new();
+        deposits.insert(wrap_near.clone(), U128(1000));
+
+        let result = super::filter_tokens_to_liquidate(&deposits, &wrap_near);
+
+        assert!(result.is_empty());
     }
 }
