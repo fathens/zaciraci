@@ -89,6 +89,8 @@ pub struct TradeConfig {
     pub top_tokens: u32,
     #[serde(default = "default_evaluation_days")]
     pub evaluation_days: u32,
+    #[serde(default = "default_account_reserve")]
+    pub account_reserve: u32,
     #[serde(default = "default_cron_schedule")]
     pub cron_schedule: String,
 }
@@ -111,6 +113,8 @@ pub struct HarvestConfig {
     pub min_amount: u32,
     #[serde(default = "default_harvest_reserve_amount")]
     pub reserve_amount: u32,
+    #[serde(default = "default_harvest_interval_seconds")]
+    pub interval_seconds: u64,
 }
 
 impl Default for HarvestConfig {
@@ -119,6 +123,7 @@ impl Default for HarvestConfig {
             account_id: String::new(),
             min_amount: default_harvest_min_amount(),
             reserve_amount: default_harvest_reserve_amount(),
+            interval_seconds: default_harvest_interval_seconds(),
         }
     }
 }
@@ -178,6 +183,9 @@ fn default_top_tokens() -> u32 {
 fn default_evaluation_days() -> u32 {
     10
 }
+fn default_account_reserve() -> u32 {
+    10
+}
 fn default_cron_schedule() -> String {
     "0 0 0 * * *".to_string()
 }
@@ -195,6 +203,9 @@ fn default_harvest_min_amount() -> u32 {
 }
 fn default_harvest_reserve_amount() -> u32 {
     1
+}
+fn default_harvest_interval_seconds() -> u64 {
+    86400 // 24時間
 }
 fn default_token_not_found_wait() -> String {
     "1s".to_string()
@@ -242,6 +253,7 @@ impl Default for TradeConfig {
             initial_investment: default_initial_investment(),
             top_tokens: default_top_tokens(),
             evaluation_days: default_evaluation_days(),
+            account_reserve: default_account_reserve(),
             cron_schedule: default_cron_schedule(),
         }
     }
@@ -329,6 +341,7 @@ pub fn get(name: &str) -> Result<String> {
         "TRADE_INITIAL_INVESTMENT" => Some(CONFIG.trade.initial_investment.to_string()),
         "TRADE_TOP_TOKENS" => Some(CONFIG.trade.top_tokens.to_string()),
         "TRADE_EVALUATION_DAYS" => Some(CONFIG.trade.evaluation_days.to_string()),
+        "TRADE_ACCOUNT_RESERVE" => Some(CONFIG.trade.account_reserve.to_string()),
         "TRADE_CRON_SCHEDULE" => Some(CONFIG.trade.cron_schedule.clone()),
         "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
         "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
@@ -342,6 +355,7 @@ pub fn get(name: &str) -> Result<String> {
         }
         "HARVEST_MIN_AMOUNT" => Some(CONFIG.harvest.min_amount.to_string()),
         "HARVEST_RESERVE_AMOUNT" => Some(CONFIG.harvest.reserve_amount.to_string()),
+        "HARVEST_INTERVAL_SECONDS" => Some(CONFIG.harvest.interval_seconds.to_string()),
         "ARBITRAGE_NEEDED" => Some(CONFIG.arbitrage.needed.to_string()),
         "ARBITRAGE_TOKEN_NOT_FOUND_WAIT" => Some(CONFIG.arbitrage.token_not_found_wait.clone()),
         "ARBITRAGE_OTHER_ERROR_WAIT" => Some(CONFIG.arbitrage.other_error_wait.clone()),
@@ -449,6 +463,9 @@ fn merge_config(base: &mut Config, local: Config) {
     if local.trade.evaluation_days != default_evaluation_days() {
         base.trade.evaluation_days = local.trade.evaluation_days;
     }
+    if local.trade.account_reserve != default_account_reserve() {
+        base.trade.account_reserve = local.trade.account_reserve;
+    }
     if local.trade.cron_schedule != default_cron_schedule() {
         base.trade.cron_schedule = local.trade.cron_schedule;
     }
@@ -473,6 +490,9 @@ fn merge_config(base: &mut Config, local: Config) {
     }
     if local.harvest.reserve_amount != default_harvest_reserve_amount() {
         base.harvest.reserve_amount = local.harvest.reserve_amount;
+    }
+    if local.harvest.interval_seconds != default_harvest_interval_seconds() {
+        base.harvest.interval_seconds = local.harvest.interval_seconds;
     }
 
     // Arbitrage

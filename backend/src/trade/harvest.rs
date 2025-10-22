@@ -9,9 +9,14 @@ use near_sdk::AccountId;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// ハーベスト関連の定数とstatic変数
-const HARVEST_INTERVAL: u64 = 24 * 60 * 60; // 24時間
+// ハーベスト関連のstatic変数
 static LAST_HARVEST_TIME: AtomicU64 = AtomicU64::new(0);
+static HARVEST_INTERVAL: Lazy<u64> = Lazy::new(|| {
+    config::get("HARVEST_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(86400) // デフォルト: 24時間
+});
 static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
     let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| {
         eprintln!(
@@ -41,7 +46,7 @@ fn is_time_to_harvest() -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    now - last > HARVEST_INTERVAL
+    now - last > *HARVEST_INTERVAL
 }
 
 fn update_last_harvest_time() {

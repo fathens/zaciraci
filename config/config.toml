@@ -75,6 +75,9 @@ initial_investment = 100
 top_tokens = 10
 # 評価期間（日数、デフォルト: 10日）
 evaluation_days = 10
+# アカウント残高保護額（NEAR、デフォルト: 10）
+# アカウントに最低限残すNEARの量
+account_reserve = 10
 # cron スケジュール（デフォルト: 毎日0時）
 cron_schedule = "0 0 0 * * *"
 
@@ -87,6 +90,8 @@ record_rates_initial_value = 100
 account_id = ""
 min_amount = 10
 reserve_amount = 1
+# ハーベスト実行の最小間隔（秒、デフォルト: 86400秒 = 24時間）
+interval_seconds = 86400
 
 [arbitrage]
 # アービトラージ設定
