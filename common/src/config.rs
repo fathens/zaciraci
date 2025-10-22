@@ -87,6 +87,8 @@ pub struct TradeConfig {
     pub initial_investment: u32,
     #[serde(default = "default_top_tokens")]
     pub top_tokens: u32,
+    #[serde(default = "default_evaluation_days")]
+    pub evaluation_days: u32,
     #[serde(default = "default_cron_schedule")]
     pub cron_schedule: String,
 }
@@ -173,6 +175,9 @@ fn default_initial_investment() -> u32 {
 fn default_top_tokens() -> u32 {
     10
 }
+fn default_evaluation_days() -> u32 {
+    10
+}
 fn default_cron_schedule() -> String {
     "0 0 0 * * *".to_string()
 }
@@ -236,6 +241,7 @@ impl Default for TradeConfig {
         Self {
             initial_investment: default_initial_investment(),
             top_tokens: default_top_tokens(),
+            evaluation_days: default_evaluation_days(),
             cron_schedule: default_cron_schedule(),
         }
     }
@@ -322,6 +328,7 @@ pub fn get(name: &str) -> Result<String> {
         "OLLAMA_MODEL" => Some(CONFIG.external_services.ollama_model.clone()),
         "TRADE_INITIAL_INVESTMENT" => Some(CONFIG.trade.initial_investment.to_string()),
         "TRADE_TOP_TOKENS" => Some(CONFIG.trade.top_tokens.to_string()),
+        "TRADE_EVALUATION_DAYS" => Some(CONFIG.trade.evaluation_days.to_string()),
         "TRADE_CRON_SCHEDULE" => Some(CONFIG.trade.cron_schedule.clone()),
         "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
         "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
@@ -438,6 +445,9 @@ fn merge_config(base: &mut Config, local: Config) {
     }
     if local.trade.top_tokens != default_top_tokens() {
         base.trade.top_tokens = local.trade.top_tokens;
+    }
+    if local.trade.evaluation_days != default_evaluation_days() {
+        base.trade.evaluation_days = local.trade.evaluation_days;
     }
     if local.trade.cron_schedule != default_cron_schedule() {
         base.trade.cron_schedule = local.trade.cron_schedule;

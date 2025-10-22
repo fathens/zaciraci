@@ -849,7 +849,13 @@ async fn check_and_harvest(initial_amount: u128) -> Result<()> {
 async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool, Vec<String>)> {
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
-    const EVALUATION_PERIOD_DAYS: i64 = 10;
+    // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
+    let evaluation_period_days = config::get("TRADE_EVALUATION_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(10);
+
+    info!(log, "evaluation period configuration"; "days" => evaluation_period_days);
 
     // 最新の評価期間を取得
     let latest_period = EvaluationPeriod::get_latest_async().await?;
@@ -859,7 +865,7 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
             let now = Utc::now().naive_utc();
             let period_duration = now.signed_duration_since(period.start_time);
 
-            if period_duration.num_days() >= EVALUATION_PERIOD_DAYS {
+            if period_duration.num_days() >= evaluation_period_days {
                 // 評価期間終了: 全トークンを売却して新規期間を開始
                 info!(log, "evaluation period ended, starting new period";
                     "previous_period_id" => %period.period_id,
@@ -884,7 +890,7 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
                 // 評価期間中: トランザクション記録で判定
                 info!(log, "checking evaluation period status";
                     "period_id" => %period.period_id,
-                    "days_remaining" => EVALUATION_PERIOD_DAYS - period_duration.num_days()
+                    "days_remaining" => evaluation_period_days - period_duration.num_days()
                 );
 
                 // トランザクション記録をチェック

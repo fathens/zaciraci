@@ -73,6 +73,8 @@ ollama_model = "llama2"
 # トレード設定
 initial_investment = 100
 top_tokens = 10
+# 評価期間（日数、デフォルト: 10日）
+evaluation_days = 10
 # cron スケジュール（デフォルト: 毎日0時）
 cron_schedule = "0 0 0 * * *"
 
