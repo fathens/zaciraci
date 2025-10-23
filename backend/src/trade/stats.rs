@@ -647,14 +647,28 @@ where
 
             // Step 1: token → wrap.near
             if token != &wrap_near.to_string() {
-                swap::execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
-                    .await?;
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    token,
+                    &wrap_near.to_string(),
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             // Step 2: wrap.near → target
             if target != &wrap_near.to_string() {
-                swap::execute_direct_swap(client, wallet, &wrap_near.to_string(), target, recorder)
-                    .await?;
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near.to_string(),
+                    target,
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             info!(log, "sell completed"; "from" => token, "to" => target);
@@ -664,7 +678,7 @@ where
             // from から to へ切り替え（直接スワップ）
             info!(log, "executing switch"; "from" => from, "to" => to);
 
-            swap::execute_direct_swap(client, wallet, from, to, recorder).await?;
+            swap::execute_direct_swap(client, wallet, from, to, None, recorder).await?;
 
             info!(log, "switch completed"; "from" => from, "to" => to);
             Ok(())
@@ -752,6 +766,7 @@ where
                                 wallet,
                                 &wrap_near.to_string(),
                                 token,
+                                Some(buy_amount),
                                 recorder,
                             )
                             .await?;
@@ -778,6 +793,7 @@ where
                                 wallet,
                                 token,
                                 &wrap_near.to_string(),
+                                Some(sell_amount),
                                 recorder,
                             )
                             .await?;
@@ -803,8 +819,15 @@ where
             // wrap.near → token へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token != &wrap_near.to_string() {
-                swap::execute_direct_swap(client, wallet, &wrap_near.to_string(), token, recorder)
-                    .await?;
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near.to_string(),
+                    token,
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             info!(log, "position added"; "token" => token, "weight" => weight);
@@ -817,8 +840,15 @@ where
             // token → wrap.near へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token != &wrap_near.to_string() {
-                swap::execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
-                    .await?;
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    token,
+                    &wrap_near.to_string(),
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             info!(log, "position reduced"; "token" => token, "weight" => weight);
@@ -1036,7 +1066,9 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
 
         // token → wrap.near にスワップ
         let wrap_near_str = wrap_near_token.to_string();
-        match swap::execute_direct_swap(&client, &wallet, token, &wrap_near_str, &recorder).await {
+        match swap::execute_direct_swap(&client, &wallet, token, &wrap_near_str, None, &recorder)
+            .await
+        {
             Ok(_) => {
                 info!(log, "successfully liquidated token"; "token" => token);
             }

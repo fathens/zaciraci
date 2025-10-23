@@ -41,14 +41,28 @@ where
 
             // Step 1: token → wrap.near
             if token != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
-                    .await?;
+                execute_direct_swap(
+                    client,
+                    wallet,
+                    token,
+                    &wrap_near.to_string(),
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             // Step 2: wrap.near → target
             if target != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, &wrap_near.to_string(), target, recorder)
-                    .await?;
+                execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near.to_string(),
+                    target,
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             info!(log, "sell completed"; "from" => token, "to" => target);
@@ -57,7 +71,7 @@ where
         TradingAction::Switch { from, to } => {
             // from から to へ切り替え（直接スワップ）
             info!(log, "executing switch"; "from" => from, "to" => to);
-            execute_direct_swap(client, wallet, from, to, recorder).await?;
+            execute_direct_swap(client, wallet, from, to, None, recorder).await?;
             info!(log, "switch completed"; "from" => from, "to" => to);
             Ok(())
         }
@@ -140,6 +154,7 @@ where
                             wallet,
                             &wrap_near.to_string(),
                             token,
+                            None,
                             recorder,
                         )
                         .await?;
@@ -153,6 +168,7 @@ where
                             wallet,
                             token,
                             &wrap_near.to_string(),
+                            None,
                             recorder,
                         )
                         .await?;
@@ -170,8 +186,15 @@ where
             // wrap.near → token へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, &wrap_near.to_string(), token, recorder)
-                    .await?;
+                execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near.to_string(),
+                    token,
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             info!(log, "position added"; "token" => token, "weight" => weight);
@@ -184,8 +207,15 @@ where
             // token → wrap.near へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token != &wrap_near.to_string() {
-                execute_direct_swap(client, wallet, token, &wrap_near.to_string(), recorder)
-                    .await?;
+                execute_direct_swap(
+                    client,
+                    wallet,
+                    token,
+                    &wrap_near.to_string(),
+                    None,
+                    recorder,
+                )
+                .await?;
             }
 
             info!(log, "position reduced"; "token" => token, "weight" => weight);
@@ -301,6 +331,7 @@ pub async fn execute_direct_swap<C, W>(
     wallet: &W,
     from_token: &str,
     to_token: &str,
+    swap_amount: Option<u128>,
     recorder: &TradeRecorder,
 ) -> Result<()>
 where
@@ -326,15 +357,17 @@ where
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid to_token: {}", e))?;
 
+    // swap_amountが指定されている場合は、その金額が使えるようにbalances::startを呼び出す
     let balance =
-        crate::ref_finance::balances::start(client, wallet, &from_token_account, None).await?;
+        crate::ref_finance::balances::start(client, wallet, &from_token_account, swap_amount)
+            .await?;
 
     if balance == 0 {
         return Err(anyhow::anyhow!("No balance for token: {}", from_token));
     }
 
-    // 残高の全額をスワップ
-    let swap_amount = balance;
+    // swap_amountが指定されていない場合は残高の全額、指定されている場合は指定金額を使用
+    let swap_amount = swap_amount.unwrap_or(balance).min(balance);
 
     // プールデータを読み込み
     let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
