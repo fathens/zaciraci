@@ -357,10 +357,20 @@ where
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid to_token: {}", e))?;
 
-    // swap_amountが指定されている場合は、その金額が使えるようにbalances::startを呼び出す
-    let balance =
+    // from_tokenの残高を取得
+    // wrap.nearの場合のみ balances::start を使用（refill/harvest処理が必要な場合があるため）
+    let balance = if from_token_account == *crate::ref_finance::token_account::WNEAR_TOKEN {
         crate::ref_finance::balances::start(client, wallet, &from_token_account, swap_amount)
-            .await?;
+            .await?
+    } else {
+        // その他のトークンは直接 get_deposits で残高を取得
+        let account = wallet.account_id();
+        let deposits = crate::ref_finance::deposit::get_deposits(client, account).await?;
+        deposits
+            .get(&from_token_account)
+            .map(|u| u.0)
+            .unwrap_or_default()
+    };
 
     if balance == 0 {
         return Err(anyhow::anyhow!("No balance for token: {}", from_token));
