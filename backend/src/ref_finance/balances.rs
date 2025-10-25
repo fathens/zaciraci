@@ -79,7 +79,9 @@ where
 
     if deposited_wnear < required_balance {
         refill(client, wallet, required_balance - deposited_wnear).await?;
-        Ok(deposited_wnear)
+        // refill後の残高を再取得して返す
+        let new_balance = balance_of_start_token(client, wallet, token).await?;
+        Ok(new_balance)
     } else {
         let upper = required_balance << 7; // 128倍
         if upper < deposited_wnear {

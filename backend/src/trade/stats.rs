@@ -15,6 +15,7 @@ use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures_util::future::join_all;
+use near_primitives::types::Balance;
 use near_sdk::AccountId;
 use num_traits::Zero;
 use std::collections::{BTreeMap, HashMap};
@@ -58,31 +59,52 @@ pub async fn start() -> Result<()> {
 
     info!(log, "starting portfolio-based trading strategy");
 
-    // Step 1: 資金準備 (NEAR -> wrap.near)
-    let available_funds = prepare_funds().await?;
-    info!(log, "Prepared funds"; "available_funds" => available_funds);
-
-    if available_funds == 0 {
-        info!(log, "no funds available for trading");
-        return Ok(());
-    }
-
-    // Step 1.5: 評価期間のチェックと管理
-    let (period_id, is_new_period, existing_tokens) =
-        manage_evaluation_period(available_funds).await?;
+    // Step 1: 評価期間のチェックと管理（清算が必要な場合は先に実行）
+    // 初回起動時は available_funds=0 で呼び出し、後で prepare_funds() で資金準備
+    let (period_id, is_new_period, existing_tokens, liquidated_balance) =
+        manage_evaluation_period(0).await?;
     info!(log, "evaluation period status";
         "period_id" => %period_id,
         "is_new_period" => is_new_period,
-        "existing_tokens_count" => existing_tokens.len()
+        "existing_tokens_count" => existing_tokens.len(),
+        "liquidated_balance" => ?liquidated_balance
     );
 
-    // Step 2: PredictionServiceの初期化
+    // Step 2: 資金準備（新規期間で清算がなかった場合のみ）
+    let available_funds = if is_new_period {
+        if let Some(balance) = liquidated_balance {
+            // 清算が行われた場合: 清算後の残高をそのまま使用（Option A）
+            info!(log, "Using liquidated balance for new period"; "available_funds" => balance);
+            if balance == 0 {
+                info!(log, "no funds available after liquidation");
+                return Ok(());
+            }
+            balance
+        } else {
+            // 初回起動: NEAR -> wrap.near 変換
+            let funds = prepare_funds().await?;
+            info!(log, "Prepared funds for new period"; "available_funds" => funds);
+
+            if funds == 0 {
+                info!(log, "no funds available for trading");
+                return Ok(());
+            }
+
+            funds
+        }
+    } else {
+        // 評価期間中: 既存トークンを継続使用、追加の資金準備は不要
+        info!(log, "continuing evaluation period, skipping prepare_funds");
+        0 // available_funds は使用されない
+    };
+
+    // Step 3: PredictionServiceの初期化
     let chronos_url =
         std::env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
 
     let prediction_service = PredictionService::new(chronos_url);
 
-    // Step 3: トークン選定 (評価期間に応じて処理を分岐)
+    // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
         // 新規期間: 新しくトークンを選定
         let tokens = select_top_volatility_tokens(&prediction_service).await?;
@@ -118,7 +140,7 @@ pub async fn start() -> Result<()> {
         return Ok(());
     }
 
-    // Step 3.5: REF Finance のストレージセットアップを確認・実行
+    // Step 4.5: REF Finance のストレージセットアップを確認・実行
     let client = crate::jsonrpc::new_client();
     let wallet = crate::wallet::new_wallet();
 
@@ -133,7 +155,7 @@ pub async fn start() -> Result<()> {
         .await?;
     info!(log, "REF Finance storage setup completed");
 
-    // Step 3.6: 投資額全額を REF Finance にデポジット (新規期間のみ)
+    // Step 5: 投資額全額を REF Finance にデポジット (新規期間のみ)
     if is_new_period {
         info!(log, "depositing initial investment to REF Finance"; "amount" => available_funds);
         crate::ref_finance::balances::deposit_wrap_near_to_ref(&client, &wallet, available_funds)
@@ -141,7 +163,7 @@ pub async fn start() -> Result<()> {
         info!(log, "initial investment deposited to REF Finance");
     }
 
-    // Step 4: ポートフォリオ戦略決定と実行
+    // Step 6: ポートフォリオ戦略決定と実行
     let report = if is_new_period {
         // 新規期間：等分購入（各トークン10%ずつ）
         info!(log, "new period: creating equal-weight portfolio"; "token_count" => selected_tokens.len());
@@ -181,7 +203,7 @@ pub async fn start() -> Result<()> {
         execute_trading_actions(&report, available_funds, period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
-    // Step 5: ハーベスト判定と実行
+    // Step 7: ハーベスト判定と実行
     check_and_harvest(available_funds).await?;
 
     info!(log, "success");
@@ -875,8 +897,11 @@ async fn check_and_harvest(initial_amount: u128) -> Result<()> {
 
 /// 評価期間のチェックと管理
 ///
-/// 戻り値: (period_id, is_new_period, selected_tokens)
-async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool, Vec<String>)> {
+/// 戻り値: (period_id, is_new_period, selected_tokens, liquidated_balance)
+/// - liquidated_balance: 清算が行われた場合の最終残高（yoctoNEAR）
+async fn manage_evaluation_period(
+    available_funds: u128,
+) -> Result<(String, bool, Vec<String>, Option<Balance>)> {
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
     // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
@@ -903,10 +928,11 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
                 );
 
                 // 全トークンをwrap.nearに売却
-                let final_value = liquidate_all_positions().await?;
-                info!(log, "liquidated all positions"; "final_value" => %final_value);
+                let final_balance = liquidate_all_positions().await?;
+                info!(log, "liquidated all positions"; "final_balance" => %final_balance);
 
                 // 新規評価期間を作成
+                let final_value = BigDecimal::from(final_balance);
                 let new_period = NewEvaluationPeriod::new(final_value.clone(), vec![]);
                 let created_period = new_period.insert_async().await?;
 
@@ -915,7 +941,7 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
                     "initial_value" => %created_period.initial_value
                 );
 
-                Ok((created_period.period_id, true, vec![]))
+                Ok((created_period.period_id, true, vec![], Some(final_balance)))
             } else {
                 // 評価期間中: トランザクション記録で判定
                 info!(log, "checking evaluation period status";
@@ -955,7 +981,7 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
                     );
                 }
 
-                Ok((period.period_id, is_new_period, selected_tokens))
+                Ok((period.period_id, is_new_period, selected_tokens, None))
             }
         }
         None => {
@@ -971,7 +997,7 @@ async fn manage_evaluation_period(available_funds: u128) -> Result<(String, bool
                 "initial_value" => %created_period.initial_value
             );
 
-            Ok((created_period.period_id, true, vec![]))
+            Ok((created_period.period_id, true, vec![], None))
         }
     }
 }
@@ -999,7 +1025,7 @@ fn filter_tokens_to_liquidate(
 /// 全保有トークンをwrap.nearに売却
 ///
 /// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
-async fn liquidate_all_positions() -> Result<BigDecimal> {
+async fn liquidate_all_positions() -> Result<Balance> {
     let log = DEFAULT.new(o!("function" => "liquidate_all_positions"));
 
     // 最新の評価期間を取得
@@ -1020,7 +1046,7 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
         }
         None => {
             info!(log, "no evaluation period found, nothing to liquidate");
-            return Ok(BigDecimal::from(0));
+            return Ok(0);
         }
     };
 
@@ -1037,9 +1063,8 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
         info!(log, "no tokens to liquidate");
         // wrap.nearの残高を返す
         let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-        let balance =
-            crate::ref_finance::balances::start(&client, &wallet, wrap_near, None).await?;
-        return Ok(BigDecimal::from(balance));
+        let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
+        return Ok(balance);
     }
 
     info!(log, "liquidating positions"; "token_count" => tokens_to_liquidate.len());
@@ -1056,8 +1081,13 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
 
-        let balance =
-            crate::ref_finance::balances::start(&client, &wallet, &token_account, None).await?;
+        // トークンの REF Finance 上の残高を取得
+        let account = wallet.account_id();
+        let deposits = crate::ref_finance::deposit::get_deposits(&client, account).await?;
+        let balance = deposits
+            .get(&token_account)
+            .map(|u| u.0)
+            .unwrap_or_default();
 
         if balance == 0 {
             info!(log, "token balance became zero, skipping"; "token" => token);
@@ -1080,12 +1110,13 @@ async fn liquidate_all_positions() -> Result<BigDecimal> {
     }
 
     // 最終的なwrap.near残高を取得
+    let account = wallet.account_id();
+    let deposits = crate::ref_finance::deposit::get_deposits(&client, account).await?;
     let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-    let final_balance =
-        crate::ref_finance::balances::start(&client, &wallet, wrap_near, None).await?;
+    let final_balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
 
     info!(log, "liquidation complete"; "final_wrap_near_balance" => final_balance);
-    Ok(BigDecimal::from(final_balance))
+    Ok(final_balance)
 }
 
 /// 価格履歴からボラティリティを計算
