@@ -304,17 +304,19 @@ async fn select_top_volatility_tokens(
                 crate::ref_finance::token_account::WNEAR_TOKEN
                     .clone()
                     .into();
-            let liquid_tokens = match graph.update_graph(&wnear_token) {
+
+            // 購入方向のパスを確認（wrap.near → token）
+            let buyable_tokens = match graph.update_graph(&wnear_token) {
                 Ok(goals) => {
-                    let liquid_token_ids: std::collections::HashSet<_> =
+                    let token_ids: std::collections::HashSet<_> =
                         goals.iter().map(|t| t.as_id().to_string()).collect();
-                    info!(log, "liquid tokens available";
-                        "count" => liquid_token_ids.len(),
+                    info!(log, "buyable tokens (wrap.near → token)";
+                        "count" => token_ids.len(),
                     );
-                    liquid_token_ids
+                    token_ids
                 }
                 Err(e) => {
-                    warn!(log, "failed to get liquid tokens, using all volatility tokens";
+                    warn!(log, "failed to get buyable tokens, using all volatility tokens";
                         "error" => ?e,
                     );
                     // フィルタリング失敗時は全トークンを返す
@@ -322,12 +324,50 @@ async fn select_top_volatility_tokens(
                 }
             };
 
-            // volatility トークンを流動性でフィルタ
+            // volatility トークンを購入可能性でフィルタ
             let original_count = tokens.len();
-            let mut filtered_tokens: Vec<AccountId> = tokens
+            let buyable_filtered: Vec<AccountId> = tokens
                 .into_iter()
-                .filter(|token| liquid_tokens.contains(&token.to_string()))
+                .filter(|token| buyable_tokens.contains(&token.to_string()))
                 .collect();
+
+            info!(log, "tokens after buyability filtering";
+                "original_count" => original_count,
+                "buyable_count" => buyable_filtered.len(),
+            );
+
+            // 売却方向のパスも確認（token → wrap.near）
+            let wnear_out: crate::ref_finance::token_account::TokenOutAccount =
+                crate::ref_finance::token_account::WNEAR_TOKEN
+                    .clone()
+                    .into();
+            let mut filtered_tokens: Vec<AccountId> = Vec::new();
+            for token in buyable_filtered {
+                let token_account: crate::ref_finance::token_account::TokenAccount =
+                    match token.to_string().parse() {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                let token_in: crate::ref_finance::token_account::TokenInAccount =
+                    token_account.into();
+
+                // token から wrap.near へのパスが存在するか確認
+                match graph.update_graph(&token_in) {
+                    Ok(sellable_goals) => {
+                        if sellable_goals
+                            .iter()
+                            .any(|g| g.as_id() == wnear_out.as_id())
+                        {
+                            filtered_tokens.push(token);
+                        } else {
+                            info!(log, "token not sellable to wrap.near, skipping"; "token" => %token);
+                        }
+                    }
+                    Err(_) => {
+                        info!(log, "failed to check sellability, skipping"; "token" => %token);
+                    }
+                }
+            }
 
             if filtered_tokens.is_empty() {
                 return Err(anyhow::anyhow!(

@@ -33,6 +33,9 @@ impl TokenGraph {
     fn cached_path(
         pools: Arc<PoolInfoList>,
     ) -> CachedPath<TokenInAccount, TokenOutAccount, TokenAccount, EdgeWeight> {
+        let log = DEFAULT.new(o!("function" => "cached_path"));
+        info!(log, "start building token graph");
+
         let pools_by_token = PoolsByToken::new(pools);
         let mut graph = petgraph::Graph::new();
         let mut nodes = HashMap::new();
@@ -40,16 +43,61 @@ impl TokenGraph {
             let node = graph.add_node(token_in.clone());
             nodes.insert(token_in, node);
         }
+        info!(log, "nodes created"; "count" => nodes.len());
+
+        let mut edges_added = 0;
+        let mut edges_skipped = 0;
+
         for (token_in, &node_in) in nodes.iter() {
+            let token_in_str = token_in.to_string();
+            let is_important = token_in_str.contains("akaia")
+                || token_in_str.contains("a0b86991")
+                || token_in_str.contains("wrap.near");
+
             let edges_by_token_out = pools_by_token.get_groups_by_out(&token_in.clone().into());
+
             for (token_out, edges) in edges_by_token_out.iter() {
-                for edge in edges.at_top().into_iter() {
-                    for &node_out in nodes.get(&token_out.clone().into()).into_iter() {
-                        graph.add_edge(node_in, node_out, edge.weight());
+                let token_out_str = token_out.to_string();
+                let is_important_pair = is_important
+                    || token_out_str.contains("akaia")
+                    || token_out_str.contains("a0b86991")
+                    || token_out_str.contains("wrap.near");
+
+                let at_top = edges.at_top();
+
+                if at_top.is_none() {
+                    edges_skipped += 1;
+                    if is_important_pair {
+                        warn!(log, "at_top() returned None";
+                            "token_in" => token_in_str.as_str(),
+                            "token_out" => token_out_str.as_str(),
+                        );
+                    }
+                } else {
+                    for edge in at_top.into_iter() {
+                        for &node_out in nodes.get(&token_out.clone().into()).into_iter() {
+                            graph.add_edge(node_in, node_out, edge.weight());
+                            edges_added += 1;
+
+                            if is_important_pair {
+                                info!(log, "edge added";
+                                    "token_in" => token_in_str.as_str(),
+                                    "token_out" => token_out_str.as_str(),
+                                    "weight" => format!("{:?}", edge.weight()),
+                                );
+                            }
+                        }
                     }
                 }
             }
         }
+
+        info!(log, "graph construction complete";
+            "nodes" => nodes.len(),
+            "edges_added" => edges_added,
+            "edges_skipped" => edges_skipped,
+        );
+
         CachedPath::new(graph, nodes)
     }
 
@@ -223,7 +271,7 @@ where
             "start" => format!("{:?}", start),
             "goal" => format!("{:?}", goal),
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let from = self.node_index(&start.clone().into())?;
         let to = if let Some(goal) = goal {
@@ -231,9 +279,26 @@ where
         } else {
             None
         };
-        debug!(log, "finding by dijkstra"; "from" => ?from, "to" => ?to);
+        trace!(log, "finding by dijkstra"; "from" => ?from, "to" => ?to);
         let goals = algo::dijkstra(&self.graph, from, to, |e| *e.weight());
-        debug!(log, "goals"; "goals" => ?goals);
+
+        // Dijkstra の結果を分析
+        let reachable_tokens: Vec<String> = goals
+            .keys()
+            .filter_map(|&idx| self.graph.node_weight(idx))
+            .map(|n| n.to_string())
+            .collect();
+
+        let important_reachable: Vec<&str> = reachable_tokens
+            .iter()
+            .filter(|t| t.contains("akaia") || t.contains("a0b86991") || t.contains("wrap.near"))
+            .map(|s| s.as_str())
+            .collect();
+
+        info!(log, "dijkstra complete";
+            "reachable_count" => goals.len(),
+            "important_reachable" => format!("{:?}", important_reachable),
+        );
 
         let finder = GraphPath {
             graph: &self.graph,
@@ -261,12 +326,6 @@ where
     }
 
     fn get_edges(&self, start: &I, goal: &O) -> Result<Vec<E>> {
-        let log = DEFAULT.new(o!(
-            "function" => "CachedPath::get_edges",
-            "start" => format!("{:?}", start),
-            "goal" => format!("{:?}", goal),
-        ));
-        info!(log, "start");
         let path = self.get_path(start, goal)?;
         let mut edges = Vec::new();
         let mut prev = start.clone();
@@ -291,12 +350,6 @@ where
     }
 
     fn get_weight(&self, token_in: &I, token_out: &O) -> Result<E> {
-        let log = DEFAULT.new(o!(
-            "function" => "CachedPath::get_weight",
-            "token_in" => format!("{:?}", token_in),
-            "token_out" => format!("{:?}", token_out),
-        ));
-        debug!(log, "start");
         let weight: Option<_> = self
             .graph
             .find_edge(
@@ -344,14 +397,7 @@ where
         locked_paths: Rc<Mutex<HashMap<NodeIndex, Vec<NodeIndex>>>>,
         goal: NodeIndex,
     ) -> Vec<NodeIndex> {
-        let log = DEFAULT.new(o!(
-            "function" => "GraphPath::find_path",
-            "goal" => format!("{:?}", goal),
-        ));
-        debug!(log, "start");
-
         if let Some(result) = locked_paths.lock().unwrap().get(&goal) {
-            debug!(log, "cached"; "result" => ?result);
             return result.clone();
         }
         let mut path = Vec::new();
@@ -361,21 +407,12 @@ where
             path.extend(more);
             let mut paths = locked_paths.lock().unwrap();
             paths.insert(goal, path.clone());
-        } else {
-            debug!(log, "no previous");
         }
         path
     }
 
     fn find_prev(&self, target: NodeIndex) -> Option<NodeIndex> {
-        let log = DEFAULT.new(o!(
-            "function" => "GraphPath::find_prev",
-            "target" => format!("{:?}", target),
-        ));
-        debug!(log, "start");
-
         self.goals.get(&target).into_iter().find_map(|&d| {
-            debug!(log, "goal"; "d" => format!("{:?}", d));
             self.graph
                 .edges_directed(target, petgraph::Direction::Incoming)
                 .find_map(|edge| {
