@@ -276,7 +276,8 @@ async fn test_start() {
 
     let result = start(&client, &wallet, &WNEAR_TOKEN, None).await;
     let balance = result.unwrap();
-    assert!(balance.is_zero());
+    // refill が実行されるため、refill後の残高が返される
+    assert_eq!(balance, DEFAULT_REQUIRED_BALANCE);
 
     assert!(
         client
