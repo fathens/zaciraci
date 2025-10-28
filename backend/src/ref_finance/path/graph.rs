@@ -273,6 +273,15 @@ where
         ));
         trace!(log, "start");
 
+        // キャッシュチェック (goal が None の場合のみ)
+        if goal.is_none() {
+            let cached = self.cached_path.read().unwrap();
+            if let Some(path_to_outs) = cached.get(start) {
+                info!(log, "cache hit, returning cached result"; "outs_count" => path_to_outs.len());
+                return Ok(path_to_outs.keys().cloned().collect());
+            }
+        }
+
         let from = self.node_index(&start.clone().into())?;
         let to = if let Some(goal) = goal {
             Some(self.node_index(&goal.into())?)
