@@ -19,9 +19,10 @@ static HARVEST_INTERVAL: Lazy<u64> = Lazy::new(|| {
 });
 static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
     let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| {
-        eprintln!(
-            "Warning: HARVEST_ACCOUNT_ID not set, using default. Error: {}",
-            err
+        let log = DEFAULT.new(o!("function" => "HARVEST_ACCOUNT initialization"));
+        warn!(log, "HARVEST_ACCOUNT_ID not set, using default";
+            "error" => %err,
+            "default" => "harvest.near"
         );
         "harvest.near".to_string()
     });

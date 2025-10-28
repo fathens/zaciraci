@@ -1,5 +1,9 @@
 # CLI Tokens - Volatility Tokens Analysis Tool
 
+> **注意**: このファイルは1125行と非常に長いため、将来的にコマンド別のファイルに分割予定です。
+> - 概要情報は [README.md](./README.md) を参照してください
+> - 分割予定: top.md, history.md, predict.md, verify.md, report.md, chart.md
+
 ## 概要
 
 `cli_tokens`は、高ボラティリティトークンの取得と価格予測を行うコマンドラインツールです。フロントエンドの機能をCLIとして提供し、バッチ処理や自動化に適した形で実装します。

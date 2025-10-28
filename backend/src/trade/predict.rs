@@ -1,3 +1,4 @@
+use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
@@ -170,6 +171,8 @@ impl PredictionService {
         history: &TokenPriceHistory,
         prediction_horizon: usize,
     ) -> Result<TokenPrediction> {
+        let log = DEFAULT.new(o!("function" => "predict_price"));
+
         // 履歴データを予測用フォーマットに変換
         // BigDecimalを直接使用（ChronosAPIはJSON経由で数値を受け取るため）
         let values: Vec<BigDecimal> = history.prices.iter().map(|p| p.price.clone()).collect();
@@ -198,9 +201,8 @@ impl PredictionService {
             .await
             .context("Failed to start prediction")?;
 
-        println!(
-            "Prediction started with task ID: {}",
-            async_response.task_id
+        info!(log, "Prediction started";
+            "task_id" => %async_response.task_id
         );
 
         // 予測完了まで待機
@@ -233,6 +235,8 @@ impl PredictionService {
         history_days: i64,
         prediction_horizon: usize,
     ) -> Result<HashMap<String, TokenPrediction>> {
+        let log = DEFAULT.new(o!("function" => "predict_multiple_tokens"));
+
         let end_date = Utc::now();
         let start_date = end_date - Duration::days(history_days);
         let batch_size = 10;
@@ -240,14 +244,21 @@ impl PredictionService {
         let mut all_predictions = HashMap::new();
 
         // トークンを10個ずつのバッチに分割して処理
-        for batch in tokens.chunks(batch_size) {
-            println!("Processing batch of {} tokens", batch.len());
+        for (batch_index, batch) in tokens.chunks(batch_size).enumerate() {
+            info!(log, "Processing batch";
+                "batch_index" => batch_index,
+                "batch_size" => batch.len()
+            );
 
             // バッチ内の各トークンを順次処理
             // 注: バッチ間では並列化せず、バッチ内のトークンも順次処理する
             // これによりChronosサービスへの同時リクエスト数を制限
-            for token in batch {
-                println!("Processing token: {}", token);
+            for (token_index, token) in batch.iter().enumerate() {
+                info!(log, "Processing token";
+                    "batch_index" => batch_index,
+                    "token_index" => token_index,
+                    "token" => token
+                );
 
                 // 価格履歴を取得
                 let history = self

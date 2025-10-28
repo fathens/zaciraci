@@ -1,5 +1,9 @@
 # NEAR Protocol RPC Endpoints 調査結果
 
+> 📖 **クイックガイド**: 推奨エンドポイント構成は [endpoints_guide.md](./endpoints_guide.md) を参照してください。
+>
+> このファイル（598行）には全20プロバイダーの詳細な調査結果が含まれています。
+
 ## 最終更新日
 2025-10-16
 
