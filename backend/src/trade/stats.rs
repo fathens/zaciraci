@@ -164,39 +164,32 @@ pub async fn start() -> Result<()> {
     }
 
     // Step 6: ポートフォリオ戦略決定と実行
-    let report = if is_new_period {
-        // 新規期間：等分購入（各トークン10%ずつ）
-        info!(log, "new period: creating equal-weight portfolio"; "token_count" => selected_tokens.len());
-        let equal_weight = 1.0 / selected_tokens.len() as f64;
-        let target_weights: std::collections::BTreeMap<String, f64> = selected_tokens
-            .iter()
-            .map(|t| (t.to_string(), equal_weight))
-            .collect();
+    // 新規期間も評価期間中も予測ベースの最適化を実行
+    info!(log, "executing portfolio optimization";
+        "is_new_period" => is_new_period,
+        "token_count" => selected_tokens.len()
+    );
 
-        info!(log, "generated equal weights for initial purchase"; "weight_per_token" => equal_weight);
-        vec![zaciraci_common::algorithm::types::TradingAction::Rebalance { target_weights }]
-    } else {
-        // 既存期間：最適化
-        info!(log, "continuing period: optimizing portfolio");
-        match execute_portfolio_strategy(
-            &prediction_service,
-            &selected_tokens,
-            available_funds,
-            is_new_period,
-            &client,
-            &wallet,
-        )
-        .await
-        {
-            Ok(actions) => actions,
-            Err(e) => {
-                error!(log, "failed to execute portfolio strategy"; "error" => ?e);
-                return Err(e);
-            }
+    let report = match execute_portfolio_strategy(
+        &prediction_service,
+        &selected_tokens,
+        available_funds,
+        is_new_period,
+        &client,
+        &wallet,
+    )
+    .await
+    {
+        Ok(actions) => actions,
+        Err(e) => {
+            error!(log, "failed to execute portfolio strategy"; "error" => ?e);
+            return Err(e);
         }
     };
 
-    info!(log, "portfolio strategy determined"; "total_actions" => report.len());
+    info!(log, "portfolio optimization completed";
+        "action_count" => report.len()
+    );
 
     // 実際の取引実行
     let executed_actions =
