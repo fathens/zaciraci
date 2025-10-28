@@ -359,6 +359,12 @@ async fn select_top_volatility_tokens(
                             .any(|g| g.as_id() == wnear_out.as_id())
                         {
                             filtered_tokens.push(token);
+
+                            // 必要な数に達したら即座に終了
+                            if filtered_tokens.len() >= limit {
+                                info!(log, "reached required token count, stopping early"; "count" => limit);
+                                break;
+                            }
                         } else {
                             info!(log, "token not sellable to wrap.near, skipping"; "token" => %token);
                         }
@@ -930,9 +936,11 @@ struct ExecutionSummary {
 }
 
 /// ハーベスト判定と実行
-async fn check_and_harvest(initial_amount: u128) -> Result<()> {
+async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()> {
     // 実際のハーベスト機能を呼び出す
-    crate::trade::harvest::check_and_harvest(initial_amount).await
+    // 注: 評価期間中は available_funds = 0 が渡されるため、ハーベスト判定はスキップされる
+    // 評価期間終了時（清算後）のみ、liquidated_balance が渡され、ハーベスト判定が実行される
+    crate::trade::harvest::check_and_harvest(current_portfolio_value_yocto).await
 }
 
 /// 評価期間のチェックと管理

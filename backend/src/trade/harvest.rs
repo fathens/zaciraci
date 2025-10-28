@@ -58,41 +58,39 @@ fn update_last_harvest_time() {
 }
 
 /// ハーベスト判定と実行
-pub async fn check_and_harvest(initial_amount: u128) -> Result<()> {
+pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "check_and_harvest"));
 
-    // 最新のバッチIDを取得してポートフォリオ価値を計算
-    let latest_batch_id =
-        match crate::persistence::trade_transaction::TradeTransaction::get_latest_batch_id_async()
-            .await?
-        {
-            Some(batch_id) => batch_id,
+    // 最新の評価期間を取得して初期投資額を取得
+    let latest_period =
+        match crate::persistence::evaluation_period::EvaluationPeriod::get_latest_async().await? {
+            Some(period) => period,
             None => {
-                debug!(log, "No trades recorded yet, skipping harvest");
+                debug!(log, "No evaluation period found, skipping harvest");
                 return Ok(());
             }
         };
 
-    let current_portfolio_value = crate::persistence::trade_transaction::TradeTransaction::get_portfolio_value_by_batch_async(latest_batch_id.clone()).await?;
-    let initial_value = BigDecimal::from(initial_amount);
+    let initial_value = latest_period.initial_value;
+    let current_value = BigDecimal::from(current_portfolio_value_yocto);
 
     info!(log, "Portfolio value check";
         "initial_value" => %initial_value,
-        "current_value" => %current_portfolio_value,
-        "batch_id" => %latest_batch_id
+        "current_value" => %current_value,
+        "period_id" => %latest_period.period_id
     );
 
     // 200%利益時の判定（初期投資額の2倍になった場合）
     let harvest_threshold = &initial_value * BigDecimal::from(2); // 200% = 2倍
 
-    if current_portfolio_value > harvest_threshold {
+    if current_value > harvest_threshold {
         info!(log, "Harvest threshold exceeded, executing harvest";
             "threshold" => %harvest_threshold,
-            "excess" => %(&current_portfolio_value - &harvest_threshold)
+            "excess" => %(&current_value - &harvest_threshold)
         );
 
         // 10%の利益確定（余剰分の10%をハーベスト）
-        let excess_value = &current_portfolio_value - &harvest_threshold;
+        let excess_value = &current_value - &harvest_threshold;
         let harvest_amount = &excess_value * BigDecimal::new(1.into(), 1); // 10% = 0.1
 
         // static変数から設定値を取得
@@ -131,7 +129,7 @@ pub async fn check_and_harvest(initial_amount: u128) -> Result<()> {
         update_last_harvest_time();
     } else {
         debug!(log, "Portfolio value below harvest threshold";
-            "current_percentage" => %((&current_portfolio_value / &initial_value) * BigDecimal::from(100))
+            "current_percentage" => %((&current_value / &initial_value) * BigDecimal::from(100))
         );
     }
 
@@ -420,17 +418,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_and_harvest_no_trades() {
-        // トレードがまだない場合のテスト
-        let initial_amount = 100u128 * 10u128.pow(24);
+    async fn test_check_and_harvest_no_evaluation_period() {
+        // 評価期間がまだない場合のテスト
+        let current_portfolio_value = 100u128 * 10u128.pow(24);
 
-        // モックでget_latest_batch_id_asyncがNoneを返すケースをテスト
-        // 実際の実装では、データベースが空の場合にNoneが返される
-        // ここでは統合テストのため、実際のデータベースには触らない
-
-        // check_and_harvestは早期リターンするはず
+        // check_and_harvestは早期リターンするはず（評価期間がない場合）
         // エラーが出ないことを確認
-        let result = check_and_harvest(initial_amount).await;
+        let result = check_and_harvest(current_portfolio_value).await;
 
         // データベースが使えない環境ではテストをスキップ
         if result.is_err() {
