@@ -24,6 +24,10 @@ echo "Starting ollama server..."
 ollama serve &
 
 mkdir -pv .data
-docker compose --env-file .env up -d --build --remove-orphans
+
+# postgres は再作成不要（環境変数変更の影響を受けないため）
+docker compose --env-file .env up -d postgres
+# zaciraci だけを確実に再作成（環境変数やコード変更を反映）
+docker compose --env-file .env up -d --build --force-recreate --remove-orphans zaciraci
 
 echo 'to stop the container, run: docker compose down'
