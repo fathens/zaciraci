@@ -70,7 +70,32 @@ where
                     "wait_seconds" => wait.as_secs(),
                     "next_time" => %next
                 );
-                tokio::time::sleep(wait).await;
+
+                // 長時間sleepを避けるため、1分間隔でチェック
+                loop {
+                    let now = TZ::now();
+                    if now >= next {
+                        break;
+                    }
+
+                    let remaining = match (next - now).to_std() {
+                        Ok(d) => d,
+                        Err(_) => break, // 時刻が過去になった場合は即座に実行
+                    };
+
+                    // 最大1分間sleep（残り時間が1分未満なら残り時間）
+                    let sleep_duration = remaining.min(std::time::Duration::from_secs(60));
+
+                    // 長時間待機の場合は定期的にログを出力（5分以上待機時のみ）
+                    if remaining.as_secs() > 300 {
+                        debug!(log, "still waiting for next execution";
+                            "remaining_seconds" => remaining.as_secs(),
+                            "next_time" => %next
+                        );
+                    }
+
+                    tokio::time::sleep(sleep_duration).await;
+                }
 
                 let exec_log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
                 info!(exec_log, "executing scheduled task");

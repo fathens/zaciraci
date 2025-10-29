@@ -770,104 +770,134 @@ where
                 &current_balances,
             )
             .await?;
-            let total_value_u128 =
-                total_portfolio_value
-                    .to_string()
-                    .parse::<u128>()
-                    .map_err(|e| {
-                        anyhow::anyhow!("Failed to convert total portfolio value to u128: {}", e)
-                    })?;
 
-            // 各トークンの目標ウェイトに基づいてリバランス
+            // Phase 1と2に分けてリバランスを実行
+            // まず各トークンの差分（wrap.near換算）を計算
+            use num_bigint::ToBigInt;
+
+            let mut sell_operations: Vec<(String, BigDecimal, BigDecimal)> = Vec::new();
+            let mut buy_operations: Vec<(String, BigDecimal)> = Vec::new();
+
+            let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
+
             for (token, target_weight) in target_weights.iter() {
+                if token == &wrap_near_str {
+                    continue; // wrap.nearは除外
+                }
+
                 let current_balance = current_balances.get(token).copied().unwrap_or(0);
 
-                // 目標金額を計算
+                // 現在の価値（wrap.near換算）を計算
+                let current_value_wrap_near = if current_balance > 0 {
+                    let token_out: crate::ref_finance::token_account::TokenOutAccount =
+                        token.parse::<near_sdk::AccountId>()?.into();
+                    let quote_in: crate::ref_finance::token_account::TokenInAccount =
+                        wrap_near_str.parse::<near_sdk::AccountId>()?.into();
+
+                    let rate = crate::persistence::token_rate::TokenRate::get_latest(
+                        &token_out, &quote_in,
+                    )
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token))?;
+
+                    BigDecimal::from(current_balance) / &rate.rate
+                } else {
+                    BigDecimal::from(0)
+                };
+
+                // 目標価値（wrap.near換算）を計算
                 let target_weight_decimal = BigDecimal::from_str(&target_weight.to_string())
                     .map_err(|e| {
                         anyhow::anyhow!("Failed to convert target weight to BigDecimal: {}", e)
                     })?;
-                let target_value = BigDecimal::from(total_value_u128) * target_weight_decimal;
-                // BigDecimalをu128に変換（整数部分のみ）
-                use num_bigint::ToBigInt;
-                let target_value_bigint = target_value.to_bigint().ok_or_else(|| {
-                    anyhow::anyhow!("Failed to convert target value BigDecimal to BigInt")
-                })?;
-                let target_amount_u128 =
-                    target_value_bigint
-                        .to_string()
-                        .parse::<u128>()
-                        .map_err(|e| {
-                            anyhow::anyhow!(
-                                "Failed to convert target value to u128: {} (value: {})",
-                                e,
-                                target_value_bigint.to_string()
-                            )
-                        })?;
+                let target_value_wrap_near = &total_portfolio_value * &target_weight_decimal;
 
-                // 現在の保有量と目標量の差を計算
-                if target_amount_u128 > current_balance {
-                    // ポジション増加が必要
-                    let buy_amount = target_amount_u128 - current_balance;
-                    info!(log, "rebalancing: buying token";
-                        "token" => token,
-                        "target_weight" => target_weight,
-                        "current_balance" => current_balance,
-                        "target_amount" => target_amount_u128,
-                        "buy_amount" => buy_amount
-                    );
+                // 差分を計算（wrap.near単位）
+                let diff_wrap_near = &target_value_wrap_near - &current_value_wrap_near;
 
-                    // 最小交換額以上の場合のみ実行
-                    if buy_amount >= 1000000000000000000000000 {
-                        // 1 NEAR以上
-                        let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-                        if token != &wrap_near.to_string() {
-                            swap::execute_direct_swap(
-                                client,
-                                wallet,
-                                &wrap_near.to_string(),
-                                token,
-                                Some(buy_amount),
-                                recorder,
-                            )
-                            .await?;
-                        }
-                    }
-                } else if current_balance > target_amount_u128 {
-                    // ポジション削減が必要
-                    let sell_amount = current_balance - target_amount_u128;
-                    info!(log, "rebalancing: selling token";
-                        "token" => token,
-                        "target_weight" => target_weight,
-                        "current_balance" => current_balance,
-                        "target_amount" => target_amount_u128,
-                        "sell_amount" => sell_amount
-                    );
+                info!(log, "rebalancing: token analysis";
+                    "token" => token,
+                    "current_value_wrap_near" => %current_value_wrap_near,
+                    "target_value_wrap_near" => %target_value_wrap_near,
+                    "diff_wrap_near" => %diff_wrap_near
+                );
 
-                    // 最小交換額以上の場合のみ実行
-                    if sell_amount >= 1000000000000000000000000 {
-                        // 1 NEAR以上
-                        let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-                        if token != &wrap_near.to_string() {
-                            swap::execute_direct_swap(
-                                client,
-                                wallet,
-                                token,
-                                &wrap_near.to_string(),
-                                Some(sell_amount),
-                                recorder,
-                            )
-                            .await?;
-                        }
-                    }
-                } else {
-                    info!(log, "rebalancing: no action needed";
-                        "token" => token,
-                        "target_weight" => target_weight,
-                        "current_balance" => current_balance,
-                        "target_amount" => target_amount_u128
-                    );
+                // 最小交換額チェック（1 NEAR以上）
+                let min_trade_size = BigDecimal::from(1000000000000000000000000u128);
+
+                if diff_wrap_near < BigDecimal::from(0) && diff_wrap_near.abs() >= min_trade_size {
+                    // 売却が必要
+                    let token_out: crate::ref_finance::token_account::TokenOutAccount =
+                        token.parse::<near_sdk::AccountId>()?.into();
+                    let quote_in: crate::ref_finance::token_account::TokenInAccount =
+                        wrap_near_str.parse::<near_sdk::AccountId>()?.into();
+
+                    let rate = crate::persistence::token_rate::TokenRate::get_latest(
+                        &token_out, &quote_in,
+                    )
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token))?;
+
+                    sell_operations.push((token.clone(), diff_wrap_near.abs(), rate.rate));
+                } else if diff_wrap_near > BigDecimal::from(0) && diff_wrap_near >= min_trade_size {
+                    // 購入が必要
+                    buy_operations.push((token.clone(), diff_wrap_near));
                 }
+            }
+
+            // Phase 1: 全ての売却を実行（token → wrap.near）
+            info!(log, "Phase 1: executing sell operations"; "count" => sell_operations.len());
+            for (token, wrap_near_value, rate) in sell_operations {
+                // wrap.near価値をトークン数量に変換
+                let token_amount = &wrap_near_value * &rate;
+                let token_amount_u128 = token_amount
+                    .to_bigint()
+                    .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))?
+                    .to_string()
+                    .parse::<u128>()
+                    .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
+
+                info!(log, "selling token";
+                    "token" => &token,
+                    "wrap_near_value" => %wrap_near_value,
+                    "token_amount" => token_amount_u128
+                );
+
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &token,
+                    &wrap_near_str,
+                    Some(token_amount_u128),
+                    recorder,
+                )
+                .await?;
+            }
+
+            // Phase 2: 全ての購入を実行（wrap.near → token）
+            info!(log, "Phase 2: executing buy operations"; "count" => buy_operations.len());
+            for (token, wrap_near_amount) in buy_operations {
+                let wrap_near_amount_u128 = wrap_near_amount
+                    .to_bigint()
+                    .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))?
+                    .to_string()
+                    .parse::<u128>()
+                    .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
+
+                info!(log, "buying token";
+                    "token" => &token,
+                    "wrap_near_amount" => wrap_near_amount_u128
+                );
+
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near_str,
+                    &token,
+                    Some(wrap_near_amount_u128),
+                    recorder,
+                )
+                .await?;
             }
 
             info!(log, "rebalance completed");
@@ -2672,5 +2702,137 @@ mod tests {
         let result = super::filter_tokens_to_liquidate(&deposits, &wrap_near);
 
         assert!(result.is_empty());
+    }
+
+    // Rebalance logic tests
+    mod rebalance_tests {
+        use bigdecimal::BigDecimal;
+        use std::str::FromStr;
+
+        #[test]
+        fn test_rebalance_calculations_sell_only() {
+            // Setup: Token A has 200 wrap.near value, target is 100 wrap.near
+            // Should sell 100 wrap.near worth of Token A
+            let current_value = BigDecimal::from_str("200.0").unwrap();
+            let target_value = BigDecimal::from_str("100.0").unwrap();
+            let diff = &target_value - &current_value;
+
+            assert_eq!(diff, BigDecimal::from_str("-100.0").unwrap());
+            assert!(diff < BigDecimal::from(0));
+
+            // If rate is 0.5 (1 Token A = 2 wrap.near)
+            // Then 100 wrap.near = 50 Token A
+            let rate = BigDecimal::from_str("0.5").unwrap();
+            let token_amount = diff.abs() * &rate;
+
+            assert_eq!(token_amount, BigDecimal::from_str("50.0").unwrap());
+        }
+
+        #[test]
+        fn test_rebalance_calculations_buy_only() {
+            // Setup: Token B has 50 wrap.near value, target is 100 wrap.near
+            // Should buy 50 wrap.near worth of Token B
+            let current_value = BigDecimal::from_str("50.0").unwrap();
+            let target_value = BigDecimal::from_str("100.0").unwrap();
+            let diff = &target_value - &current_value;
+
+            assert_eq!(diff, BigDecimal::from_str("50.0").unwrap());
+            assert!(diff > BigDecimal::from(0));
+
+            // For buying, we use wrap.near amount directly
+            let wrap_near_amount = diff;
+
+            assert_eq!(wrap_near_amount, BigDecimal::from_str("50.0").unwrap());
+        }
+
+        #[test]
+        fn test_rebalance_minimum_trade_size() {
+            // Minimum trade size is 1 NEAR (1000000000000000000000000 yoctoNEAR)
+            let min_trade_size = BigDecimal::from(1000000000000000000000000u128);
+
+            // Small difference: 0.5 NEAR
+            let small_diff = BigDecimal::from_str("500000000000000000000000").unwrap();
+            assert!(small_diff < min_trade_size);
+
+            // Large difference: 2 NEAR
+            let large_diff = BigDecimal::from_str("2000000000000000000000000").unwrap();
+            assert!(large_diff >= min_trade_size);
+        }
+
+        #[test]
+        fn test_token_amount_conversion() {
+            // Test: Convert wrap.near value to token amount
+            // If 100 wrap.near worth should be sold, and rate is 0.5
+            // Then token_amount = 100 * 0.5 = 50 tokens
+            let wrap_near_value = BigDecimal::from(100);
+            let rate = BigDecimal::from_str("0.5").unwrap();
+            let token_amount = &wrap_near_value * &rate;
+
+            assert_eq!(token_amount, BigDecimal::from(50));
+        }
+
+        #[test]
+        fn test_wrap_near_value_calculation() {
+            // Test: Calculate current value in wrap.near
+            // If balance is 100 tokens and rate is 0.5
+            // Then value = 100 / 0.5 = 200 wrap.near
+            let balance = BigDecimal::from(100);
+            let rate = BigDecimal::from_str("0.5").unwrap();
+            let value = &balance / &rate;
+
+            assert_eq!(value, BigDecimal::from(200));
+        }
+
+        #[test]
+        fn test_two_phase_rebalance_scenario() {
+            // Scenario: Portfolio with 2 tokens
+            // Total value: 300 wrap.near
+            // Target weights: Token A = 40%, Token B = 60%
+            // Current: Token A = 200 wrap.near, Token B = 100 wrap.near
+            // Expected:
+            //   Token A target = 120 wrap.near -> sell 80 wrap.near worth
+            //   Token B target = 180 wrap.near -> buy 80 wrap.near worth
+
+            let total_value = BigDecimal::from(300);
+
+            // Token A
+            let token_a_current = BigDecimal::from(200);
+            let token_a_weight = BigDecimal::from_str("0.4").unwrap();
+            let token_a_target = &total_value * &token_a_weight;
+            let token_a_diff = &token_a_target - &token_a_current;
+
+            assert_eq!(token_a_target, BigDecimal::from(120));
+            assert_eq!(token_a_diff, BigDecimal::from(-80));
+            assert!(token_a_diff < BigDecimal::from(0)); // Need to sell
+
+            // Token B
+            let token_b_current = BigDecimal::from(100);
+            let token_b_weight = BigDecimal::from_str("0.6").unwrap();
+            let token_b_target = &total_value * &token_b_weight;
+            let token_b_diff = &token_b_target - &token_b_current;
+
+            assert_eq!(token_b_target, BigDecimal::from(180));
+            assert_eq!(token_b_diff, BigDecimal::from(80));
+            assert!(token_b_diff > BigDecimal::from(0)); // Need to buy
+
+            // Verify balance: sell amount = buy amount
+            assert_eq!(token_a_diff.abs(), token_b_diff);
+        }
+
+        #[test]
+        fn test_rate_conversion_accuracy() {
+            // Test precise conversion with realistic values
+            // 1 Token = 2.5 wrap.near, so rate = 1/2.5 = 0.4
+            let rate = BigDecimal::from_str("0.4").unwrap();
+
+            // Selling: 50 wrap.near worth = 50 * 0.4 = 20 tokens
+            let wrap_near_value = BigDecimal::from(50);
+            let token_amount = &wrap_near_value * &rate;
+            assert_eq!(token_amount, BigDecimal::from(20));
+
+            // Verify reverse: 20 tokens = 20 / 0.4 = 50 wrap.near
+            let reverse_value = &token_amount / &rate;
+            assert_eq!(reverse_value, wrap_near_value);
+        }
     }
 }
