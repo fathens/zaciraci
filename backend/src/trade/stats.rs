@@ -874,22 +874,80 @@ where
                 .await?;
             }
 
+            // Phase 1完了後、利用可能なwrap.nearを確認し、Phase 2の購入額を調整
+            let available_wrap_near = {
+                let account = wallet.account_id();
+                let deposits = crate::ref_finance::deposit::get_deposits(client, account).await?;
+                let wrap_near_account: crate::ref_finance::token_account::TokenAccount =
+                    wrap_near_str.parse::<near_sdk::AccountId>()?.into();
+                deposits
+                    .get(&wrap_near_account)
+                    .map(|u| u.0)
+                    .unwrap_or_default()
+            };
+
+            info!(log, "Phase 1 completed, checking available wrap.near";
+                "available_wrap_near" => %available_wrap_near
+            );
+
+            // Phase 2の購入操作の総額を計算
+            let total_buy_amount: BigDecimal =
+                buy_operations.iter().map(|(_, amount)| amount).sum();
+
+            info!(log, "Phase 2 purchase amount analysis";
+                "total_buy_amount" => %total_buy_amount,
+                "available_wrap_near" => %available_wrap_near
+            );
+
+            // 利用可能残高に基づいて購入額を調整
+            let adjusted_buy_operations: Vec<(String, BigDecimal)> = if total_buy_amount
+                > BigDecimal::from(available_wrap_near)
+            {
+                let adjustment_factor = BigDecimal::from(available_wrap_near) / &total_buy_amount;
+                info!(log, "Adjusting purchase amounts to fit available balance";
+                    "adjustment_factor" => %adjustment_factor
+                );
+
+                buy_operations
+                    .into_iter()
+                    .map(|(token, amount)| {
+                        let adjusted = &amount * &adjustment_factor;
+                        (token, adjusted)
+                    })
+                    .collect()
+            } else {
+                buy_operations
+            };
+
             // Phase 2: 全ての購入を実行（wrap.near → token）
-            info!(log, "Phase 2: executing buy operations"; "count" => buy_operations.len());
-            for (token, wrap_near_amount) in buy_operations {
-                let wrap_near_amount_u128 = wrap_near_amount
+            info!(log, "Phase 2: executing buy operations"; "count" => adjusted_buy_operations.len());
+
+            let mut phase2_success = 0;
+            let mut phase2_failed = 0;
+
+            for (token, wrap_near_amount) in adjusted_buy_operations {
+                let wrap_near_amount_u128 = match wrap_near_amount
                     .to_bigint()
-                    .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))?
-                    .to_string()
-                    .parse::<u128>()
-                    .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
+                    .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))
+                    .and_then(|v| {
+                        v.to_string()
+                            .parse::<u128>()
+                            .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))
+                    }) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!(log, "Failed to convert purchase amount"; "token" => &token, "error" => %e);
+                        phase2_failed += 1;
+                        continue;
+                    }
+                };
 
                 info!(log, "buying token";
                     "token" => &token,
                     "wrap_near_amount" => wrap_near_amount_u128
                 );
 
-                swap::execute_direct_swap(
+                match swap::execute_direct_swap(
                     client,
                     wallet,
                     &wrap_near_str,
@@ -897,10 +955,32 @@ where
                     Some(wrap_near_amount_u128),
                     recorder,
                 )
-                .await?;
+                .await
+                {
+                    Ok(_) => {
+                        info!(log, "purchase completed successfully"; "token" => &token);
+                        phase2_success += 1;
+                    }
+                    Err(e) => {
+                        error!(log, "purchase failed"; "token" => &token, "error" => %e);
+                        phase2_failed += 1;
+                    }
+                }
             }
 
-            info!(log, "rebalance completed");
+            info!(log, "rebalance completed";
+                "phase2_success" => phase2_success,
+                "phase2_failed" => phase2_failed
+            );
+
+            // Phase 2で全ての購入が失敗した場合のみエラーを返す
+            if phase2_success == 0 && phase2_failed > 0 {
+                return Err(anyhow::anyhow!(
+                    "All Phase 2 purchases failed ({} failed)",
+                    phase2_failed
+                ));
+            }
+
             Ok(())
         }
         TradingAction::AddPosition { token, weight } => {
@@ -2833,6 +2913,125 @@ mod tests {
             // Verify reverse: 20 tokens = 20 / 0.4 = 50 wrap.near
             let reverse_value = &token_amount / &rate;
             assert_eq!(reverse_value, wrap_near_value);
+        }
+
+        #[test]
+        fn test_phase2_purchase_amount_adjustment() {
+            // Scenario: Phase 2 needs to buy 3 tokens for total 300 wrap.near
+            // But only 100 wrap.near is available after Phase 1
+            // Should adjust all purchase amounts proportionally by factor 100/300 = 1/3
+
+            let available_wrap_near = BigDecimal::from(100);
+            let buy_operations = [
+                BigDecimal::from(100), // Token A
+                BigDecimal::from(100), // Token B
+                BigDecimal::from(100), // Token C
+            ];
+
+            let total_buy_amount: BigDecimal = buy_operations.iter().sum();
+            assert_eq!(total_buy_amount, BigDecimal::from(300));
+
+            // Calculate adjustment factor
+            let adjustment_factor = &available_wrap_near / &total_buy_amount;
+            // Should be approximately 1/3
+            let expected_min = BigDecimal::from_str("0.333").unwrap();
+            let expected_max = BigDecimal::from_str("0.334").unwrap();
+            assert!(adjustment_factor >= expected_min && adjustment_factor <= expected_max);
+
+            // Apply adjustment to each purchase
+            let adjusted_operations: Vec<BigDecimal> = buy_operations
+                .iter()
+                .map(|amount| amount * &adjustment_factor)
+                .collect();
+
+            // Each should be adjusted to ~33.33 wrap.near
+            for adjusted in &adjusted_operations {
+                assert!(
+                    adjusted > &BigDecimal::from_str("33.33").unwrap()
+                        && adjusted < &BigDecimal::from_str("33.34").unwrap()
+                );
+            }
+
+            // Total should approximately equal available balance (within rounding error)
+            let adjusted_total: BigDecimal = adjusted_operations.iter().sum();
+            let tolerance = BigDecimal::from_str("0.01").unwrap(); // Allow 0.01 tolerance
+            let diff = (&adjusted_total - &available_wrap_near).abs();
+            assert!(
+                diff < tolerance,
+                "Adjusted total {} should be close to available {}",
+                adjusted_total,
+                available_wrap_near
+            );
+        }
+
+        #[test]
+        fn test_phase2_no_adjustment_needed() {
+            // Scenario: Available wrap.near (200) >= total buy amount (150)
+            // No adjustment should be applied
+
+            let available_wrap_near = BigDecimal::from(200);
+            let buy_operations = vec![
+                BigDecimal::from(50),
+                BigDecimal::from(50),
+                BigDecimal::from(50),
+            ];
+
+            let total_buy_amount: BigDecimal = buy_operations.iter().sum();
+            assert_eq!(total_buy_amount, BigDecimal::from(150));
+
+            // No adjustment needed
+            assert!(total_buy_amount <= available_wrap_near);
+
+            // Adjustment factor would be >= 1
+            let adjustment_factor = &available_wrap_near / &total_buy_amount;
+            assert!(adjustment_factor >= BigDecimal::from(1));
+
+            // In this case, we use the original amounts
+            let adjusted_operations = if total_buy_amount > available_wrap_near {
+                buy_operations
+                    .iter()
+                    .map(|amount| amount * &adjustment_factor)
+                    .collect()
+            } else {
+                buy_operations.clone()
+            };
+
+            // Amounts should remain unchanged
+            assert_eq!(adjusted_operations, buy_operations);
+        }
+
+        #[test]
+        fn test_phase2_extreme_shortage() {
+            // Scenario: Severe shortage - only 1 wrap.near available for 1000 wrap.near needed
+            // Adjustment factor = 0.001
+
+            let available_wrap_near = BigDecimal::from(1);
+            let buy_operations = [
+                BigDecimal::from(400),
+                BigDecimal::from(300),
+                BigDecimal::from(300),
+            ];
+
+            let total_buy_amount: BigDecimal = buy_operations.iter().sum();
+            assert_eq!(total_buy_amount, BigDecimal::from(1000));
+
+            let adjustment_factor = &available_wrap_near / &total_buy_amount;
+            assert_eq!(adjustment_factor, BigDecimal::from_str("0.001").unwrap());
+
+            // Apply adjustment
+            let adjusted_operations: Vec<BigDecimal> = buy_operations
+                .iter()
+                .map(|amount| amount * &adjustment_factor)
+                .collect();
+
+            // Proportions should be maintained
+            assert_eq!(adjusted_operations[0], BigDecimal::from_str("0.4").unwrap());
+            assert_eq!(adjusted_operations[1], BigDecimal::from_str("0.3").unwrap());
+            assert_eq!(adjusted_operations[2], BigDecimal::from_str("0.3").unwrap());
+
+            // Total should equal available balance
+            let adjusted_total: BigDecimal = adjusted_operations.iter().sum();
+            assert_eq!(adjusted_total, available_wrap_near);
         }
     }
 }
