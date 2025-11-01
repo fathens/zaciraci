@@ -23,6 +23,7 @@ services:
       dockerfile: Dockerfile
       args:
         - CARGO_BUILD_ARGS=${CARGO_BUILD_ARGS:-}
+        - GIT_COMMIT_HASH=${GIT_COMMIT_HASH:-unknown}
     ports:
       - "8080:8080"
     volumes:

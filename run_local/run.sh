@@ -9,6 +9,7 @@ cd "$(dirname $0)"
 set -e
 
 export CARGO_BUILD_ARGS="$@"
+export GIT_COMMIT_HASH=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
 
 LOCAL_IP=$(ifconfig en0 | grep "inet " | awk '{print $2}' | head -1)
 export OLLAMA_HOST=$LOCAL_IP:11434

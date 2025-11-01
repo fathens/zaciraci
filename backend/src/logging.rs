@@ -32,6 +32,7 @@ pub static DEFAULT: Lazy<Logger> = Lazy::new(|| {
         drain,
         o!(
             "version" => env!("CARGO_PKG_VERSION"),
+            "commit" => option_env!("GIT_COMMIT_HASH").unwrap_or("unknown"),
         ),
     )
 });
