@@ -64,6 +64,16 @@ where
         let now = TZ::now();
         debug!(log, "cron iteration"; "iteration" => iteration, "next" => %next, "now" => %now);
 
+        // 実行時刻を過ぎている場合はスキップ
+        if next <= now {
+            warn!(log, "execution time already passed, skipping to next iteration";
+                "next" => %next,
+                "now" => %now,
+                "iteration" => iteration
+            );
+            continue;
+        }
+
         match (next - now).to_std() {
             Ok(wait) => {
                 info!(log, "waiting for next execution";
