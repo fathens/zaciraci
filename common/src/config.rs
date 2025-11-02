@@ -93,6 +93,10 @@ pub struct TradeConfig {
     pub account_reserve: u32,
     #[serde(default = "default_cron_schedule")]
     pub cron_schedule: String,
+    #[serde(default = "default_prediction_max_retries")]
+    pub prediction_max_retries: u32,
+    #[serde(default = "default_prediction_retry_delay_seconds")]
+    pub prediction_retry_delay_seconds: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,6 +193,12 @@ fn default_account_reserve() -> u32 {
 fn default_cron_schedule() -> String {
     "0 0 0 * * *".to_string()
 }
+fn default_prediction_max_retries() -> u32 {
+    2
+}
+fn default_prediction_retry_delay_seconds() -> u64 {
+    5
+}
 fn default_record_rates_initial_value() -> u32 {
     100
 }
@@ -255,6 +265,8 @@ impl Default for TradeConfig {
             evaluation_days: default_evaluation_days(),
             account_reserve: default_account_reserve(),
             cron_schedule: default_cron_schedule(),
+            prediction_max_retries: default_prediction_max_retries(),
+            prediction_retry_delay_seconds: default_prediction_retry_delay_seconds(),
         }
     }
 }
@@ -343,6 +355,10 @@ pub fn get(name: &str) -> Result<String> {
         "TRADE_EVALUATION_DAYS" => Some(CONFIG.trade.evaluation_days.to_string()),
         "TRADE_ACCOUNT_RESERVE" => Some(CONFIG.trade.account_reserve.to_string()),
         "TRADE_CRON_SCHEDULE" => Some(CONFIG.trade.cron_schedule.clone()),
+        "TRADE_PREDICTION_MAX_RETRIES" => Some(CONFIG.trade.prediction_max_retries.to_string()),
+        "TRADE_PREDICTION_RETRY_DELAY_SECONDS" => {
+            Some(CONFIG.trade.prediction_retry_delay_seconds.to_string())
+        }
         "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
         "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
         "TOKEN_RATES_RETENTION_DAYS" => Some(CONFIG.cron.token_rates_retention_days.to_string()),
@@ -468,6 +484,12 @@ fn merge_config(base: &mut Config, local: Config) {
     }
     if local.trade.cron_schedule != default_cron_schedule() {
         base.trade.cron_schedule = local.trade.cron_schedule;
+    }
+    if local.trade.prediction_max_retries != default_prediction_max_retries() {
+        base.trade.prediction_max_retries = local.trade.prediction_max_retries;
+    }
+    if local.trade.prediction_retry_delay_seconds != default_prediction_retry_delay_seconds() {
+        base.trade.prediction_retry_delay_seconds = local.trade.prediction_retry_delay_seconds;
     }
 
     // Cron

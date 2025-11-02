@@ -80,6 +80,10 @@ evaluation_days = 10
 account_reserve = 10
 # cron スケジュール（デフォルト: 毎日0時）
 cron_schedule = "0 0 0 * * *"
+# 予測失敗時の最大リトライ回数（デフォルト: 2）
+prediction_max_retries = 2
+# リトライ間の待機時間（秒、デフォルト: 5）
+prediction_retry_delay_seconds = 5
 
 [cron]
 # record_rates の初期値
