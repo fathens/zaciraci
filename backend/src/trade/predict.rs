@@ -56,8 +56,8 @@ pub struct TopToken {
 /// 価格予測サービス
 pub struct PredictionService {
     chronos_client: ChronosApiClient,
-    max_retries: u32,
-    retry_delay_seconds: u64,
+    pub(crate) max_retries: u32,
+    pub(crate) retry_delay_seconds: u64,
 }
 
 impl PredictionService {
