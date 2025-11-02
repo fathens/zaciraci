@@ -56,12 +56,17 @@ pub struct TopToken {
 /// 価格予測サービス
 pub struct PredictionService {
     chronos_client: ChronosApiClient,
+    max_retries: u32,
+    retry_delay_seconds: u64,
 }
 
 impl PredictionService {
     pub fn new(chronos_url: String) -> Self {
+        let config = zaciraci_common::config::config();
         Self {
             chronos_client: ChronosApiClient::new(chronos_url),
+            max_retries: config.trade.prediction_max_retries,
+            retry_delay_seconds: config.trade.prediction_retry_delay_seconds,
         }
     }
 
@@ -260,17 +265,54 @@ impl PredictionService {
                     "token" => token
                 );
 
-                // 価格履歴を取得
-                let history = self
-                    .get_price_history(token, quote_token, start_date, end_date)
-                    .await?;
+                // 価格履歴を取得（リトライあり）
+                let history = match self
+                    .get_price_history_with_retry(token, quote_token, start_date, end_date, &log)
+                    .await
+                {
+                    Ok(h) => h,
+                    Err(e) => {
+                        warn!(log, "Failed to get price history after retries, skipping token";
+                            "token" => token,
+                            "error" => %e
+                        );
+                        continue;
+                    }
+                };
 
-                // 価格予測を実行
-                let prediction = self.predict_price(&history, prediction_horizon).await?;
-
-                all_predictions.insert(token.clone(), prediction);
+                // 価格予測を実行（リトライあり）
+                match self
+                    .predict_price_with_retry(&history, prediction_horizon, &log)
+                    .await
+                {
+                    Ok(prediction) => {
+                        all_predictions.insert(token.clone(), prediction);
+                        info!(log, "Successfully predicted price";
+                            "token" => token
+                        );
+                    }
+                    Err(e) => {
+                        warn!(log, "Failed to predict price after retries, skipping token";
+                            "token" => token,
+                            "error" => %e
+                        );
+                    }
+                }
             }
         }
+
+        // 全てのトークンが失敗した場合はエラーを返す
+        if all_predictions.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Failed to predict any tokens. All {} tokens failed.",
+                tokens.len()
+            ));
+        }
+
+        info!(log, "Successfully predicted prices";
+            "successful" => all_predictions.len(),
+            "total" => tokens.len()
+        );
 
         Ok(all_predictions)
     }
@@ -301,6 +343,83 @@ impl PredictionService {
             .collect();
 
         Ok(predicted_prices)
+    }
+
+    /// 価格履歴を取得（リトライ付き）
+    async fn get_price_history_with_retry(
+        &self,
+        token: &str,
+        quote_token: &str,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+        log: &slog::Logger,
+    ) -> Result<TokenPriceHistory> {
+        let mut last_error = None;
+
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                info!(log, "Retrying get_price_history";
+                    "token" => token,
+                    "attempt" => attempt,
+                    "max_retries" => self.max_retries
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(self.retry_delay_seconds))
+                    .await;
+            }
+
+            match self
+                .get_price_history(token, quote_token, start_date, end_date)
+                .await
+            {
+                Ok(history) => return Ok(history),
+                Err(e) => {
+                    warn!(log, "Failed to get price history";
+                        "token" => token,
+                        "attempt" => attempt,
+                        "error" => %e
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap())
+    }
+
+    /// 価格予測を実行（リトライ付き）
+    async fn predict_price_with_retry(
+        &self,
+        history: &TokenPriceHistory,
+        prediction_horizon: usize,
+        log: &slog::Logger,
+    ) -> Result<TokenPrediction> {
+        let mut last_error = None;
+
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                info!(log, "Retrying predict_price";
+                    "token" => &history.token,
+                    "attempt" => attempt,
+                    "max_retries" => self.max_retries
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(self.retry_delay_seconds))
+                    .await;
+            }
+
+            match self.predict_price(history, prediction_horizon).await {
+                Ok(prediction) => return Ok(prediction),
+                Err(e) => {
+                    warn!(log, "Failed to predict price";
+                        "token" => &history.token,
+                        "attempt" => attempt,
+                        "error" => %e
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap())
     }
 }
 
