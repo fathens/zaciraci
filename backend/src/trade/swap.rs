@@ -557,3 +557,7 @@ async fn record_successful_trade(
     info!(log, "trade recorded successfully"; "tx_hash" => %tx_hash);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "swap/tests.rs"]
+mod tests;

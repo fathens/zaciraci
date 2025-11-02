@@ -1034,3 +1034,7 @@ impl From<&PredictionData> for TokenOpportunity {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "trading/tests.rs"]
+mod tests;
