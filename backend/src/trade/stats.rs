@@ -1082,8 +1082,25 @@ async fn manage_evaluation_period(
                 let final_balance = liquidate_all_positions().await?;
                 info!(log, "liquidated all positions"; "final_balance" => %final_balance);
 
-                // 新規評価期間を作成
+                // 評価期間のパフォーマンスを計算してログ出力
+                let previous_initial_value = period.initial_value.clone();
                 let final_value = BigDecimal::from(final_balance);
+                let change_amount = &final_value - &previous_initial_value;
+                let change_percentage = if previous_initial_value > BigDecimal::from(0) {
+                    (&change_amount / &previous_initial_value) * BigDecimal::from(100)
+                } else {
+                    BigDecimal::from(0)
+                };
+
+                info!(log, "evaluation period performance";
+                    "period_id" => %period.period_id,
+                    "initial_value" => %previous_initial_value,
+                    "final_value" => %final_value,
+                    "change_amount" => %change_amount,
+                    "change_percentage" => %format!("{:.2}%", change_percentage)
+                );
+
+                // 新規評価期間を作成
                 let new_period = NewEvaluationPeriod::new(final_value.clone(), vec![]);
                 let created_period = new_period.insert_async().await?;
 
