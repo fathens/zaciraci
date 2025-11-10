@@ -7,7 +7,6 @@ diesel::table! {
         start_time -> Timestamp,
         initial_value -> Numeric,
         selected_tokens -> Nullable<Array<Nullable<Text>>>,
-        token_count -> Int4,
         created_at -> Timestamp,
     }
 }

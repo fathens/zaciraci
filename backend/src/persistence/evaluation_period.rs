@@ -16,7 +16,6 @@ pub struct EvaluationPeriod {
     pub start_time: NaiveDateTime,
     pub initial_value: BigDecimal,
     pub selected_tokens: Option<Vec<Option<String>>>,
-    pub token_count: i32,
     pub created_at: NaiveDateTime,
 }
 
@@ -27,12 +26,10 @@ pub struct NewEvaluationPeriod {
     pub start_time: NaiveDateTime,
     pub initial_value: BigDecimal,
     pub selected_tokens: Option<Vec<Option<String>>>,
-    pub token_count: i32,
 }
 
 impl NewEvaluationPeriod {
     pub fn new(initial_value: BigDecimal, selected_tokens: Vec<String>) -> Self {
-        let token_count = selected_tokens.len() as i32;
         let selected_tokens_opt: Option<Vec<Option<String>>> = if selected_tokens.is_empty() {
             None
         } else {
@@ -44,7 +41,6 @@ impl NewEvaluationPeriod {
             start_time: chrono::Utc::now().naive_utc(),
             initial_value,
             selected_tokens: selected_tokens_opt,
-            token_count,
         }
     }
 
@@ -145,11 +141,7 @@ impl EvaluationPeriod {
         diesel::update(
             evaluation_periods::table.filter(evaluation_periods::period_id.eq(period_id)),
         )
-        .set((
-            evaluation_periods::selected_tokens.eq(tokens_opt.clone()),
-            evaluation_periods::token_count
-                .eq(tokens_opt.as_ref().map(|t| t.len() as i32).unwrap_or(0)),
-        ))
+        .set(evaluation_periods::selected_tokens.eq(tokens_opt))
         .get_result(conn)
     }
 
@@ -182,8 +174,8 @@ mod tests {
 
         let new_period = NewEvaluationPeriod::new(initial_value.clone(), tokens);
 
-        assert_eq!(new_period.token_count, 2);
         assert!(new_period.period_id.starts_with("eval_"));
+        assert_eq!(new_period.selected_tokens.as_ref().unwrap().len(), 2);
 
         // 実際のDBへの挿入テストは統合テストで行う
     }
@@ -195,7 +187,6 @@ mod tests {
 
         let new_period = NewEvaluationPeriod::new(initial_value, tokens);
 
-        assert_eq!(new_period.token_count, 0);
         assert_eq!(new_period.selected_tokens, None);
     }
 }
