@@ -15,7 +15,7 @@ use crate::models::{
     token::TokenFileData,
 };
 use crate::utils::{
-    cache::{save_prediction_result, PredictionCacheParams},
+    cache::{PredictionCacheParams, save_prediction_result},
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
 };
@@ -34,12 +34,13 @@ async fn find_task_file(dir: &Path, token_name: &str) -> Result<Option<PathBuf>>
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.starts_with(&sanitized_token) && name.ends_with(".task.json") {
-                    return Ok(Some(path));
-                }
-            }
+        if path.is_file()
+            && path.extension().and_then(|s| s.to_str()) == Some("json")
+            && let Some(name) = path.file_name().and_then(|s| s.to_str())
+            && name.starts_with(&sanitized_token)
+            && name.ends_with(".task.json")
+        {
+            return Ok(Some(path));
         }
     }
 
@@ -207,7 +208,7 @@ pub async fn run(args: PullArgs) -> Result<()> {
                 return Err(anyhow::anyhow!(
                     "Unknown prediction status: {}",
                     response.status
-                ))
+                ));
             }
         }
     };

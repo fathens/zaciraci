@@ -23,16 +23,16 @@ pub async fn find_latest_history_file(dir: &Path) -> Result<Option<PathBuf>> {
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.starts_with("history-") {
-                    let metadata = entry.metadata().await?;
-                    let modified = metadata.modified()?;
+        if path.is_file()
+            && path.extension().and_then(|s| s.to_str()) == Some("json")
+            && let Some(name) = path.file_name().and_then(|s| s.to_str())
+            && name.starts_with("history-")
+        {
+            let metadata = entry.metadata().await?;
+            let modified = metadata.modified()?;
 
-                    if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
-                        latest_file = Some((path, modified));
-                    }
-                }
+            if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
+                latest_file = Some((path, modified));
             }
         }
     }
@@ -55,21 +55,21 @@ pub async fn find_overlapping_history_files(
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.starts_with("history-") && name.ends_with(".json") {
-                    // Extract date range from filename: history-start-end.json
-                    let date_part = &name[8..name.len() - 5]; // Remove "history-" prefix and ".json" suffix
-                    if let Some((start_str, end_str)) = date_part.split_once('-') {
-                        if let (Ok(file_start), Ok(file_end)) =
-                            (parse_datetime(start_str), parse_datetime(end_str))
-                        {
-                            // Check if time ranges overlap
-                            if file_start <= end_time && file_end >= start_time {
-                                matching_files.push(path);
-                            }
-                        }
-                    }
+        if path.is_file()
+            && path.extension().and_then(|s| s.to_str()) == Some("json")
+            && let Some(name) = path.file_name().and_then(|s| s.to_str())
+            && name.starts_with("history-")
+            && name.ends_with(".json")
+        {
+            // Extract date range from filename: history-start-end.json
+            let date_part = &name[8..name.len() - 5]; // Remove "history-" prefix and ".json" suffix
+            if let Some((start_str, end_str)) = date_part.split_once('-')
+                && let (Ok(file_start), Ok(file_end)) =
+                    (parse_datetime(start_str), parse_datetime(end_str))
+            {
+                // Check if time ranges overlap
+                if file_start <= end_time && file_end >= start_time {
+                    matching_files.push(path);
                 }
             }
         }

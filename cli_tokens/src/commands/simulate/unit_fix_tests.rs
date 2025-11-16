@@ -185,7 +185,9 @@ async fn test_momentum_calculation_units() {
         Err(e) => {
             // Momentum アルゴリズムが不十分なデータなどで失敗した場合は警告を出すだけ
             println!("Warning: Momentum simulation failed: {}", e);
-            println!("This might be due to insufficient historical data or API limitations in test environment");
+            println!(
+                "This might be due to insufficient historical data or API limitations in test environment"
+            );
             // テストは失敗させない（Momentum は外部API依存のため）
         }
     }

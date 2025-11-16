@@ -280,27 +280,25 @@ async fn load_chart_data(detected: &DetectedFiles, args: &ChartArgs) -> Result<C
     };
 
     // Load history data if available and needed
-    if let Some(ref history_file) = detected.history {
-        if !args.history_only
+    if let Some(ref history_file) = detected.history
+        && (!args.history_only
             || matches!(
                 args.chart_type,
                 ChartType::History | ChartType::Auto | ChartType::Combined
-            )
-        {
-            chart_data.history = Some(load_history_data(history_file).await?);
-        }
+            ))
+    {
+        chart_data.history = Some(load_history_data(history_file).await?);
     }
 
     // Load prediction data if available and needed
-    if let Some(ref prediction_file) = detected.prediction {
-        if !args.history_only
-            && matches!(
-                args.chart_type,
-                ChartType::Prediction | ChartType::Auto | ChartType::Combined
-            )
-        {
-            chart_data.predictions = Some(load_prediction_data(prediction_file).await?);
-        }
+    if let Some(ref prediction_file) = detected.prediction
+        && !args.history_only
+        && matches!(
+            args.chart_type,
+            ChartType::Prediction | ChartType::Auto | ChartType::Combined
+        )
+    {
+        chart_data.predictions = Some(load_prediction_data(prediction_file).await?);
     }
 
     // Calculate time range

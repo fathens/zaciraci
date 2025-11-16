@@ -328,10 +328,12 @@ fn test_get_prices_at_time_stale_data() {
 
     let result = get_prices_at_time(&price_data, target_time);
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("No price data found for token 'token1' within 1 hour"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("No price data found for token 'token1' within 1 hour")
+    );
 }
 
 #[test]
@@ -403,10 +405,12 @@ fn test_get_prices_at_time_with_insufficient_data() {
 
     let result = get_prices_at_time(&price_data, target_time);
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("No price data found for token 'token1' within 1 hour"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("No price data found for token 'token1' within 1 hour")
+    );
 }
 
 #[test]

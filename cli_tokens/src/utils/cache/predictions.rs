@@ -99,16 +99,14 @@ pub async fn find_latest_prediction_file(
                 let pred_path = pred_entry.path();
                 if pred_path.is_file()
                     && pred_path.extension().and_then(|s| s.to_str()) == Some("json")
+                    && let Some(name) = pred_path.file_name().and_then(|s| s.to_str())
+                    && name.starts_with("predict-")
                 {
-                    if let Some(name) = pred_path.file_name().and_then(|s| s.to_str()) {
-                        if name.starts_with("predict-") {
-                            let metadata = pred_entry.metadata().await?;
-                            let modified = metadata.modified()?;
+                    let metadata = pred_entry.metadata().await?;
+                    let modified = metadata.modified()?;
 
-                            if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
-                                latest_file = Some((pred_path, modified));
-                            }
-                        }
+                    if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
+                        latest_file = Some((pred_path, modified));
                     }
                 }
             }

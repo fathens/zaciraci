@@ -156,7 +156,7 @@ pub async fn check_deposits<C: ViewContract>(
 
     let shortage = more_needed - available;
     let mut needing_count = (shortage / per_token) as usize;
-    if shortage % per_token != 0 {
+    if !shortage.is_multiple_of(per_token) {
         needing_count += 1;
     }
     let mut noneeds: Vec<_> = deposits

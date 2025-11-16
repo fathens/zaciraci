@@ -15,8 +15,8 @@ fn setup_test_env() -> tempfile::TempDir {
     // Use unique environment variable name to avoid race conditions
     let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let unique_var_name = format!("CLI_TOKENS_BASE_DIR_TEST_{}", test_id);
-    env::set_var(&unique_var_name, temp_dir.path());
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    unsafe { env::set_var(&unique_var_name, temp_dir.path()); }
+    unsafe { env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path()); }
     temp_dir
 }
 

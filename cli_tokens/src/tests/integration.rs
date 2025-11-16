@@ -9,7 +9,7 @@ use chrono::Utc;
 use common::algorithm::calculate_volatility_score;
 use common::stats::ValueAtTime;
 
-use crate::commands::simulate::{calculate_trading_cost, FeeModel};
+use crate::commands::simulate::{FeeModel, calculate_trading_cost};
 use crate::commands::top::parse_date;
 use crate::utils::file::sanitize_filename;
 

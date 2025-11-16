@@ -66,7 +66,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
     price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
 ) -> Result<SimulationResult> {
     use super::metrics::calculate_performance_metrics;
-    use super::trading::{execute_trading_action, generate_api_predictions, TradeContext};
+    use super::trading::{TradeContext, execute_trading_action, generate_api_predictions};
     use bigdecimal::{BigDecimal, FromPrimitive};
     use common::algorithm::momentum::execute_momentum_strategy;
     use common::algorithm::{TokenHolding, TradingAction};
@@ -408,7 +408,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     use super::metrics::calculate_performance_metrics;
     use super::trading::generate_api_predictions;
     use bigdecimal::{BigDecimal, FromPrimitive};
-    use common::algorithm::portfolio::{execute_portfolio_optimization, PortfolioData};
+    use common::algorithm::portfolio::{PortfolioData, execute_portfolio_optimization};
     use common::algorithm::{PriceHistory, PricePoint, TokenData, TradingAction, WalletInfo};
 
     let duration = config.end_date - config.start_date;

@@ -6,9 +6,9 @@
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use common::ApiResponse;
 use common::api::chronos::ChronosApiClient;
 use common::types::TokenAccount;
-use common::ApiResponse;
 
 use crate::api::backend::BackendClient;
 
@@ -71,10 +71,12 @@ async fn test_backend_api_get_volatility_tokens_error() -> Result<()> {
         .await;
 
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Database connection failed"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Database connection failed")
+    );
 
     Ok(())
 }
@@ -243,10 +245,12 @@ async fn test_chronos_api_poll_prediction_failed() -> Result<()> {
     let result = client.poll_prediction_until_complete("pred_123").await;
 
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Prediction failed"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Prediction failed")
+    );
 
     Ok(())
 }
@@ -336,10 +340,12 @@ async fn test_backend_api_get_price_history_error() -> Result<()> {
         .await;
 
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Insufficient data points"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Insufficient data points")
+    );
 
     Ok(())
 }

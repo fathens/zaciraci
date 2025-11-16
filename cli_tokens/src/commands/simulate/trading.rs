@@ -12,7 +12,7 @@ use crate::models::prediction::{
     PredictionResults,
 };
 use crate::utils::cache::{
-    check_prediction_cache, load_prediction_data, save_prediction_result, PredictionCacheParams,
+    PredictionCacheParams, check_prediction_cache, load_prediction_data, save_prediction_result,
 };
 use common::cache::CacheOutput;
 
@@ -844,13 +844,13 @@ impl TradingStrategy for PortfolioStrategy {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
-            if let Some(opp) = best_new_opportunity {
-                if opp.expected_return > 0.05 {
-                    // 5% minimum expected return
-                    return Ok(TradingDecision::Sell {
-                        target_token: opp.token.clone(),
-                    });
-                }
+            if let Some(opp) = best_new_opportunity
+                && opp.expected_return > 0.05
+            {
+                // 5% minimum expected return
+                return Ok(TradingDecision::Sell {
+                    target_token: opp.token.clone(),
+                });
             }
         }
 
@@ -875,14 +875,14 @@ impl TradingStrategy for PortfolioStrategy {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
-            if let (Some(worst), Some(best)) = (worst_position, best_opportunity) {
-                if best.expected_return > worst.expected_return * 1.2 {
-                    // 20% improvement threshold
-                    return Ok(TradingDecision::Switch {
-                        from: worst.token.clone(),
-                        to: best.token.clone(),
-                    });
-                }
+            if let (Some(worst), Some(best)) = (worst_position, best_opportunity)
+                && best.expected_return > worst.expected_return * 1.2
+            {
+                // 20% improvement threshold
+                return Ok(TradingDecision::Switch {
+                    from: worst.token.clone(),
+                    to: best.token.clone(),
+                });
             }
         }
 

@@ -15,17 +15,23 @@ use crate::commands::top::TopArgs;
 #[test]
 fn test_base_dir_environment_variable() {
     // Test default behavior (no environment variable)
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
     let default_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
     assert_eq!(default_base, ".");
 
     // Test custom base directory
-    env::set_var("CLI_TOKENS_BASE_DIR", "/custom/workspace");
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", "/custom/workspace");
+    }
     let custom_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
     assert_eq!(custom_base, "/custom/workspace");
 
     // Clean up
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
 }
 
 #[test]
@@ -43,20 +49,26 @@ fn test_path_construction_with_base_dir() {
     ];
 
     for (base_dir, relative_path, expected) in test_cases {
-        env::set_var("CLI_TOKENS_BASE_DIR", base_dir);
+        unsafe {
+            env::set_var("CLI_TOKENS_BASE_DIR", base_dir);
+        }
         let actual_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
         let constructed_path = PathBuf::from(actual_base).join(relative_path);
         assert_eq!(constructed_path, PathBuf::from(expected));
     }
 
     // Clean up
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
 }
 
 #[test]
 fn test_history_file_path_construction() {
     // Test history file path construction logic similar to predict command
-    env::set_var("CLI_TOKENS_BASE_DIR", "/test/workspace");
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", "/test/workspace");
+    }
 
     let base_dir = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
     let quote_token = "wrap.near";
@@ -73,7 +85,9 @@ fn test_history_file_path_construction() {
     );
 
     // Clean up
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
 }
 
 #[tokio::test]
@@ -82,7 +96,9 @@ async fn test_top_command_with_base_dir() -> Result<()> {
     let base_path = temp_dir.path().to_str().unwrap();
 
     // Set environment variable
-    env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+    }
 
     let args = TopArgs {
         start: None,
@@ -104,7 +120,9 @@ async fn test_top_command_with_base_dir() -> Result<()> {
     assert_eq!(constructed_path, expected_output_path);
 
     // Clean up
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
     Ok(())
 }
 
@@ -114,7 +132,9 @@ async fn test_history_command_with_base_dir() -> Result<()> {
     let base_path = temp_dir.path().to_str().unwrap();
 
     // Set environment variable
-    env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+    }
 
     let args = HistoryArgs {
         token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
@@ -132,7 +152,9 @@ async fn test_history_command_with_base_dir() -> Result<()> {
     assert_eq!(constructed_path, expected_output_path);
 
     // Clean up
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
     Ok(())
 }
 
@@ -142,7 +164,9 @@ async fn test_predict_command_with_base_dir() -> Result<()> {
     let base_path = temp_dir.path().to_str().unwrap();
 
     // Set environment variable
-    env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", base_path);
+    }
 
     let args = KickArgs {
         token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
@@ -171,14 +195,18 @@ async fn test_predict_command_with_base_dir() -> Result<()> {
     assert_eq!(constructed_history_path, expected_history_path);
 
     // Clean up
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
     Ok(())
 }
 
 #[tokio::test]
 async fn test_commands_without_base_dir() -> Result<()> {
     // Ensure environment variable is not set
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
 
     // Test default behavior (should use "." as base directory)
     let default_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
@@ -194,20 +222,28 @@ async fn test_commands_without_base_dir() -> Result<()> {
 #[test]
 fn test_environment_variable_precedence() {
     // Test that environment variable takes precedence over default
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
     let default_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
     assert_eq!(default_base, ".");
 
     // Set custom value
-    env::set_var("CLI_TOKENS_BASE_DIR", "/custom/path");
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", "/custom/path");
+    }
     let custom_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
     assert_eq!(custom_base, "/custom/path");
 
     // Test empty value handling
-    env::set_var("CLI_TOKENS_BASE_DIR", "");
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", "");
+    }
     let empty_base = env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
     assert_eq!(empty_base, "");
 
     // Clean up
-    env::remove_var("CLI_TOKENS_BASE_DIR");
+    unsafe {
+        env::remove_var("CLI_TOKENS_BASE_DIR");
+    }
 }

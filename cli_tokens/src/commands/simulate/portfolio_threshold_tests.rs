@@ -2,7 +2,7 @@ use super::types::*;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{NaiveDate, TimeZone, Utc};
 use common::algorithm::portfolio::{
-    execute_portfolio_optimization, needs_rebalancing, PortfolioData,
+    PortfolioData, execute_portfolio_optimization, needs_rebalancing,
 };
 use common::algorithm::{PriceHistory, PricePoint, TokenData, WalletInfo};
 use std::collections::{BTreeMap, HashMap};

@@ -488,7 +488,7 @@ where
                     "Failed to parse price for token {}: {} (value: {})",
                     token,
                     e,
-                    price_bigint.to_string()
+                    price_bigint
                 )
             })?
         } else {

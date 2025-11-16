@@ -131,23 +131,24 @@ fn load_tokens_from_directory(tokens_dir: &Path, quote_token: &str) -> Result<Ve
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
-                // Verify the file is a valid token file by checking its content
-                match fs::read_to_string(&path) {
-                    Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                        Ok(json) => {
-                            if json.get("token").is_some() && json.get("metadata").is_some() {
-                                token_names.push(file_stem.to_string());
-                            }
+        if path.is_file()
+            && path.extension().and_then(|s| s.to_str()) == Some("json")
+            && let Some(file_stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            // Verify the file is a valid token file by checking its content
+            match fs::read_to_string(&path) {
+                Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(json) => {
+                        if json.get("token").is_some() && json.get("metadata").is_some() {
+                            token_names.push(file_stem.to_string());
                         }
-                        Err(_) => {
-                            eprintln!("Warning: Skipping invalid JSON file: {}", path.display());
-                        }
-                    },
-                    Err(_) => {
-                        eprintln!("Warning: Could not read file: {}", path.display());
                     }
+                    Err(_) => {
+                        eprintln!("Warning: Skipping invalid JSON file: {}", path.display());
+                    }
+                },
+                Err(_) => {
+                    eprintln!("Warning: Could not read file: {}", path.display());
                 }
             }
         }

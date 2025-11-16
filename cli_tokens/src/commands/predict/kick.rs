@@ -30,16 +30,16 @@ async fn find_latest_history_file(dir: &Path) -> Result<Option<PathBuf>> {
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.starts_with("history-") {
-                    let metadata = entry.metadata().await?;
-                    let modified = metadata.modified()?;
+        if path.is_file()
+            && path.extension().and_then(|s| s.to_str()) == Some("json")
+            && let Some(name) = path.file_name().and_then(|s| s.to_str())
+            && name.starts_with("history-")
+        {
+            let metadata = entry.metadata().await?;
+            let modified = metadata.modified()?;
 
-                    if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
-                        latest_file = Some((path, modified));
-                    }
-                }
+            if latest_file.is_none() || latest_file.as_ref().unwrap().1 < modified {
+                latest_file = Some((path, modified));
             }
         }
     }
