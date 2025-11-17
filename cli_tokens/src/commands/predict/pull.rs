@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -14,7 +15,7 @@ use crate::models::{
     token::TokenFileData,
 };
 use crate::utils::{
-    cache::{save_prediction_result, PredictionCacheParams},
+    cache::{PredictionCacheParams, save_prediction_result},
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
 };
@@ -33,12 +34,13 @@ async fn find_task_file(dir: &Path, token_name: &str) -> Result<Option<PathBuf>>
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.starts_with(&sanitized_token) && name.ends_with(".task.json") {
-                    return Ok(Some(path));
-                }
-            }
+        if path.is_file()
+            && path.extension().and_then(|s| s.to_str()) == Some("json")
+            && let Some(name) = path.file_name().and_then(|s| s.to_str())
+            && name.starts_with(&sanitized_token)
+            && name.ends_with(".task.json")
+        {
+            return Ok(Some(path));
         }
     }
 
@@ -79,10 +81,10 @@ async fn calculate_history_period(
 fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePredictionPoint {
     CachePredictionPoint {
         timestamp: point.timestamp,
-        price: point.value,
+        price: point.value.clone(),
         confidence: point.confidence_interval.as_ref().map(|ci| {
             // Use average of lower and upper bounds as confidence score
-            (ci.upper - ci.lower) / 2.0 / point.value
+            (ci.upper.clone() - ci.lower.clone()) / BigDecimal::from(2) / point.value.clone()
         }),
     }
 }
@@ -206,7 +208,7 @@ pub async fn run(args: PullArgs) -> Result<()> {
                 return Err(anyhow::anyhow!(
                     "Unknown prediction status: {}",
                     response.status
-                ))
+                ));
             }
         }
     };
@@ -242,8 +244,8 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(common::prediction::ConfidenceInterval {
-                                    lower: lower_values[i],
-                                    upper: upper_values[i],
+                                    lower: lower_values[i].clone(),
+                                    upper: upper_values[i].clone(),
                                 })
                             } else {
                                 None
@@ -268,12 +270,16 @@ pub async fn run(args: PullArgs) -> Result<()> {
             scale_factor
         ));
 
+        let scale_bd: BigDecimal = scale_factor
+            .to_string()
+            .parse()
+            .unwrap_or_else(|_| BigDecimal::from(1));
         for point in &mut forecast {
-            point.value *= scale_factor;
+            point.value = point.value.clone() * scale_bd.clone();
             // Also scale confidence intervals if present
             if let Some(ref mut ci) = point.confidence_interval {
-                ci.lower *= scale_factor;
-                ci.upper *= scale_factor;
+                ci.lower = ci.lower.clone() * scale_bd.clone();
+                ci.upper = ci.upper.clone() * scale_bd.clone();
             }
         }
     }

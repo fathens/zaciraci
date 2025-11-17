@@ -72,7 +72,7 @@ pub struct TokenHolding {
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
     pub price: BigDecimal,
-    pub confidence: Option<f64>,
+    pub confidence: Option<BigDecimal>,
 }
 
 /// 予測データを格納する構造体
@@ -82,7 +82,7 @@ pub struct PredictionData {
     pub current_price: BigDecimal,
     pub predicted_price_24h: BigDecimal,
     pub timestamp: DateTime<Utc>,
-    pub confidence: Option<f64>,
+    pub confidence: Option<BigDecimal>,
 }
 
 /// トークン予測結果
@@ -295,4 +295,251 @@ pub struct TopTokenInfo {
     pub volatility: f64,
     pub volume_24h: f64,
     pub current_price: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    // ==================== TradingAction のテスト ====================
+
+    #[test]
+    fn test_trading_action_hold() {
+        let action = TradingAction::Hold;
+        assert_eq!(action, TradingAction::Hold);
+    }
+
+    #[test]
+    fn test_trading_action_sell() {
+        let action = TradingAction::Sell {
+            token: "token1".to_string(),
+            target: "token2".to_string(),
+        };
+        match action {
+            TradingAction::Sell { token, target } => {
+                assert_eq!(token, "token1");
+                assert_eq!(target, "token2");
+            }
+            _ => panic!("Expected Sell action"),
+        }
+    }
+
+    #[test]
+    fn test_trading_action_rebalance() {
+        let mut weights = BTreeMap::new();
+        weights.insert("token1".to_string(), 0.5);
+        weights.insert("token2".to_string(), 0.5);
+
+        let action = TradingAction::Rebalance {
+            target_weights: weights.clone(),
+        };
+
+        match action {
+            TradingAction::Rebalance { target_weights } => {
+                assert_eq!(target_weights.len(), 2);
+                assert_eq!(target_weights.get("token1"), Some(&0.5));
+            }
+            _ => panic!("Expected Rebalance action"),
+        }
+    }
+
+    #[test]
+    fn test_trading_action_clone() {
+        let action1 = TradingAction::Hold;
+        let action2 = action1.clone();
+        assert_eq!(action1, action2);
+    }
+
+    // ==================== ExecutionReport のテスト ====================
+
+    #[test]
+    fn test_execution_report_new() {
+        let actions = vec![TradingAction::Hold];
+        let report = ExecutionReport::new(actions.clone(), AlgorithmType::Momentum);
+
+        assert_eq!(report.actions.len(), 1);
+        assert_eq!(report.total_trades, 1);
+        assert_eq!(report.success_count, 0);
+        assert_eq!(report.failed_count, 0);
+        assert_eq!(report.skipped_count, 0);
+    }
+
+    #[test]
+    fn test_execution_report_mark_success() {
+        let actions = vec![TradingAction::Hold];
+        let mut report = ExecutionReport::new(actions, AlgorithmType::Portfolio);
+
+        report.mark_success();
+        assert_eq!(report.success_count, 1);
+    }
+
+    #[test]
+    fn test_execution_report_mark_failed() {
+        let actions = vec![];
+        let mut report = ExecutionReport::new(actions, AlgorithmType::Momentum);
+
+        report.mark_failed();
+        assert_eq!(report.failed_count, 1);
+    }
+
+    #[test]
+    fn test_execution_report_mark_skipped() {
+        let actions = vec![];
+        let mut report = ExecutionReport::new(actions, AlgorithmType::Portfolio);
+
+        report.mark_skipped();
+        assert_eq!(report.skipped_count, 1);
+    }
+
+    #[test]
+    fn test_execution_report_multiple_marks() {
+        let actions = vec![TradingAction::Hold, TradingAction::Hold];
+        let mut report = ExecutionReport::new(actions, AlgorithmType::Momentum);
+
+        report.mark_success();
+        report.mark_success();
+        report.mark_failed();
+        report.mark_skipped();
+
+        assert_eq!(report.success_count, 2);
+        assert_eq!(report.failed_count, 1);
+        assert_eq!(report.skipped_count, 1);
+    }
+
+    // ==================== PredictionData のテスト ====================
+
+    #[test]
+    fn test_prediction_data_creation() {
+        let prediction = PredictionData {
+            token: "test.tkn.near".to_string(),
+            current_price: BigDecimal::from_str("1.0").unwrap(),
+            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            timestamp: Utc::now(),
+            confidence: Some(BigDecimal::from_str("0.85").unwrap()),
+        };
+
+        assert_eq!(prediction.token, "test.tkn.near");
+        assert!(prediction.confidence.is_some());
+    }
+
+    #[test]
+    fn test_prediction_data_without_confidence() {
+        let prediction = PredictionData {
+            token: "test.tkn.near".to_string(),
+            current_price: BigDecimal::from_str("1.0").unwrap(),
+            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            timestamp: Utc::now(),
+            confidence: None,
+        };
+
+        assert!(prediction.confidence.is_none());
+    }
+
+    // ==================== TradeType のテスト ====================
+
+    #[test]
+    fn test_trade_type_equality() {
+        assert_eq!(TradeType::Buy, TradeType::Buy);
+        assert_ne!(TradeType::Buy, TradeType::Sell);
+    }
+
+    #[test]
+    fn test_trade_type_clone() {
+        let trade_type = TradeType::Swap;
+        let cloned = trade_type.clone();
+        assert_eq!(trade_type, cloned);
+    }
+
+    // ==================== TrendDirection のテスト ====================
+
+    #[test]
+    fn test_trend_direction_equality() {
+        assert_eq!(TrendDirection::Upward, TrendDirection::Upward);
+        assert_ne!(TrendDirection::Upward, TrendDirection::Downward);
+    }
+
+    #[test]
+    fn test_trend_direction_clone() {
+        let direction = TrendDirection::Sideways;
+        let cloned = direction.clone();
+        assert_eq!(direction, cloned);
+    }
+
+    // ==================== TrendStrength のテスト ====================
+
+    #[test]
+    fn test_trend_strength_values() {
+        let strengths = [
+            TrendStrength::Strong,
+            TrendStrength::Moderate,
+            TrendStrength::Weak,
+            TrendStrength::NoTrend,
+        ];
+
+        assert_eq!(strengths.len(), 4);
+    }
+
+    // ==================== PerformanceMetrics のテスト ====================
+
+    #[test]
+    fn test_performance_metrics_creation() {
+        let metrics = PerformanceMetrics {
+            total_return: 0.15,
+            sharpe_ratio: 1.5,
+            max_drawdown: 0.1,
+            win_rate: 0.6,
+            total_trades: 100,
+            annualized_return: Some(0.25),
+            volatility: Some(0.2),
+            sortino_ratio: Some(2.0),
+            calmar_ratio: Some(1.5),
+        };
+
+        assert_eq!(metrics.total_return, 0.15);
+        assert_eq!(metrics.total_trades, 100);
+        assert!(metrics.annualized_return.is_some());
+    }
+
+    // ==================== TokenData のテスト ====================
+
+    #[test]
+    fn test_token_data_creation() {
+        let token = TokenData {
+            symbol: "NEAR".to_string(),
+            current_price: BigDecimal::from_str("5.0").unwrap(),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.8),
+            market_cap: Some(1000000.0),
+            decimals: Some(24),
+        };
+
+        assert_eq!(token.symbol, "NEAR");
+        assert_eq!(token.decimals, Some(24));
+    }
+
+    // ==================== シリアライゼーションのテスト ====================
+
+    #[test]
+    fn test_trading_action_serialization() {
+        let action = TradingAction::Hold;
+        let serialized = serde_json::to_string(&action).unwrap();
+        let deserialized: TradingAction = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(action, deserialized);
+    }
+
+    #[test]
+    fn test_prediction_data_serialization() {
+        let prediction = PredictionData {
+            token: "test".to_string(),
+            current_price: BigDecimal::from_str("1.0").unwrap(),
+            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            timestamp: Utc::now(),
+            confidence: Some(BigDecimal::from_str("0.9").unwrap()),
+        };
+
+        let serialized = serde_json::to_string(&prediction).unwrap();
+        let deserialized: PredictionData = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(prediction.token, deserialized.token);
+    }
 }

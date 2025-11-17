@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod algorithm_integration_tests {
     use super::super::{AlgorithmType, FeeModel, RebalanceInterval, SimulationConfig};
+    use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{DateTime, Duration, Utc};
     use common::stats::ValueAtTime;
     use std::collections::HashMap;
@@ -33,7 +34,7 @@ mod algorithm_integration_tests {
 
                 values.push(ValueAtTime {
                     time: current_date.naive_utc(),
-                    value: price,
+                    value: BigDecimal::from_f64(price).unwrap_or_default(),
                 });
             }
 
@@ -54,14 +55,14 @@ mod algorithm_integration_tests {
             start_date,
             end_date,
             algorithm,
-            initial_capital: bigdecimal::BigDecimal::from(1000),
+            initial_capital: BigDecimal::from(1000),
             quote_token: "wrap.near".to_string(),
             target_tokens: tokens,
             rebalance_interval: RebalanceInterval::parse("1d").unwrap(),
             fee_model: FeeModel::Zero,
             slippage_rate: 0.01,
-            gas_cost: bigdecimal::BigDecimal::from(0),
-            min_trade_amount: bigdecimal::BigDecimal::from(1),
+            gas_cost: BigDecimal::from(0),
+            min_trade_amount: BigDecimal::from(1),
             prediction_horizon: Duration::hours(24),
             historical_days: 30,
             model: None,
@@ -245,8 +246,8 @@ mod algorithm_integration_tests {
         );
 
         // Validate price trend (should generally increase with positive trend)
-        let first_price = token1_data.first().unwrap().value;
-        let last_price = token1_data.last().unwrap().value;
+        let first_price = token1_data.first().unwrap().value.clone();
+        let last_price = token1_data.last().unwrap().value.clone();
         assert!(
             last_price > first_price,
             "Price should increase with positive trend"
@@ -278,7 +279,7 @@ mod algorithm_integration_tests {
         assert_eq!(config.start_date, start_date);
         assert_eq!(config.end_date, end_date);
         assert_eq!(config.target_tokens, tokens);
-        assert_eq!(config.initial_capital, bigdecimal::BigDecimal::from(1000));
+        assert_eq!(config.initial_capital, BigDecimal::from(1000));
         assert_eq!(config.quote_token, "wrap.near");
     }
 }

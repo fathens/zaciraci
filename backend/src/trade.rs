@@ -1,6 +1,8 @@
-// pub mod algorithm; // Moved to common crate
+pub mod harvest;
 pub mod predict;
+pub mod recorder;
 pub mod stats;
+pub mod swap;
 
 // Re-export algorithm from common crate for backward compatibility
 // pub use zaciraci_common::algorithm;
@@ -30,8 +32,24 @@ async fn run_record_rates() {
 }
 
 async fn run_trade() {
-    const CRON_CONF: &str = "0 0 * * * *"; // 毎時0分
-    cronjob(CRON_CONF.parse().unwrap(), stats::start, "trade").await;
+    let log = DEFAULT.new(o!("function" => "run_trade"));
+    info!(log, "initializing auto trade cron job");
+
+    // デフォルト: 1日1回（午前0時）、環境変数で設定可能
+    let cron_conf =
+        config::get("TRADE_CRON_SCHEDULE").unwrap_or_else(|_| "0 0 0 * * *".to_string()); // デフォルト: 毎日午前0時
+
+    info!(log, "cron schedule configured"; "schedule" => &cron_conf);
+
+    match cron_conf.parse() {
+        Ok(schedule) => {
+            info!(log, "cron schedule parsed successfully");
+            cronjob(schedule, stats::start, "auto_trade").await;
+        }
+        Err(e) => {
+            error!(log, "failed to parse cron schedule"; "error" => ?e, "schedule" => &cron_conf);
+        }
+    }
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)
@@ -39,13 +57,71 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    for next in schedule.upcoming(TZ) {
-        if let Ok(wait) = (next - TZ::now()).to_std() {
-            tokio::time::sleep(wait).await;
-            let log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
-            match func().await {
-                Ok(_) => info!(log, "success"),
-                Err(err) => error!(log, "failure"; "error" => ?err),
+    let log = DEFAULT.new(o!("function" => "cronjob", "name" => name.to_owned()));
+    info!(log, "starting cron job");
+
+    for (iteration, next) in schedule.upcoming(TZ).enumerate() {
+        let now = TZ::now();
+        debug!(log, "cron iteration"; "iteration" => iteration, "next" => %next, "now" => %now);
+
+        // 実行時刻を過ぎている場合はスキップ
+        if next <= now {
+            warn!(log, "execution time already passed, skipping to next iteration";
+                "next" => %next,
+                "now" => %now,
+                "iteration" => iteration
+            );
+            continue;
+        }
+
+        match (next - now).to_std() {
+            Ok(wait) => {
+                info!(log, "waiting for next execution";
+                    "wait_seconds" => wait.as_secs(),
+                    "next_time" => %next
+                );
+
+                // 長時間sleepを避けるため、1分間隔でチェック
+                loop {
+                    let now = TZ::now();
+                    if now >= next {
+                        break;
+                    }
+
+                    let remaining = match (next - now).to_std() {
+                        Ok(d) => d,
+                        Err(_) => break, // 時刻が過去になった場合は即座に実行
+                    };
+
+                    // 最大1分間sleep（残り時間が1分未満なら残り時間）
+                    let sleep_duration = remaining.min(std::time::Duration::from_secs(60));
+
+                    // 長時間待機の場合は定期的にログを出力（5分以上待機時のみ）
+                    if remaining.as_secs() > 300 {
+                        debug!(log, "still waiting for next execution";
+                            "remaining_seconds" => remaining.as_secs(),
+                            "next_time" => %next
+                        );
+                    }
+
+                    tokio::time::sleep(sleep_duration).await;
+                }
+
+                let exec_log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
+                info!(exec_log, "executing scheduled task");
+
+                match func().await {
+                    Ok(_) => info!(exec_log, "success"),
+                    Err(err) => error!(exec_log, "failure"; "error" => ?err),
+                }
+            }
+            Err(e) => {
+                error!(log, "failed to calculate wait duration";
+                    "error" => ?e,
+                    "next" => %next,
+                    "now" => %now,
+                    "iteration" => iteration
+                );
             }
         }
     }
@@ -56,10 +132,10 @@ fn get_quote_token() -> TokenInAccount {
 }
 
 fn get_initial_value() -> u128 {
-    let in_milli = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
+    let in_near = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
         .and_then(|v| Ok(v.parse()?))
         .unwrap_or(100);
-    MilliNear::of(in_milli).to_yocto()
+    MilliNear::from_near(in_near).to_yocto()
 }
 
 async fn record_rates() -> Result<()> {

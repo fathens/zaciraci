@@ -9,6 +9,7 @@ use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use std::str::FromStr;
+use zaciraci_common::config;
 
 // データベース用モデル
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -129,6 +130,11 @@ impl TokenRate {
 
     // 複数レコードを一括挿入
     pub async fn batch_insert(token_rates: &[TokenRate]) -> Result<()> {
+        let log = DEFAULT.new(o!(
+            "function" => "batch_insert",
+            "token_rates" => token_rates.len(),
+        ));
+        info!(log, "start");
         use diesel::RunQueryDsl;
 
         if token_rates.is_empty() {
@@ -148,6 +154,46 @@ impl TokenRate {
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
+        // 古いレコードをクリーンアップ
+        let retention_days = config::get("TOKEN_RATES_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(365);
+
+        info!(log, "cleaning up old records"; "retention_days" => retention_days);
+        TokenRate::cleanup_old_records(retention_days).await?;
+
+        info!(log, "finish");
+        Ok(())
+    }
+
+    // 指定日数より古いレコードを削除
+    pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
+        use diesel::prelude::*;
+        use diesel::sql_types::Timestamp;
+
+        let log = DEFAULT.new(o!(
+            "function" => "cleanup_old_records",
+            "retention_days" => retention_days,
+        ));
+        info!(log, "start");
+
+        let conn = connection_pool::get().await?;
+
+        // 保持期間より古いレコードを削除
+        let cutoff_date =
+            chrono::Utc::now().naive_utc() - chrono::Duration::days(retention_days as i64);
+
+        let deleted_count = conn
+            .interact(move |conn| {
+                diesel::sql_query("DELETE FROM token_rates WHERE timestamp < $1")
+                    .bind::<Timestamp, _>(cutoff_date)
+                    .execute(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        info!(log, "finish"; "deleted_count" => deleted_count, "cutoff_date" => %cutoff_date);
         Ok(())
     }
 
@@ -393,11 +439,12 @@ impl TokenRate {
         let conn = connection_pool::get().await?;
 
         // SQLクエリを実装してボラティリティを計算
+        // 全トークンを variance 降順で取得（フィルタリングはアプリケーション側）
         let volatility_results: Vec<VolatilityResult> = conn
             .interact(move |conn| {
                 diesel::sql_query(
                     "
-                SELECT 
+                SELECT
                     base_token,
                     var_pop(rate) as variance
                 FROM token_rates
@@ -409,7 +456,6 @@ impl TokenRate {
                 HAVING
                     MIN(rate) > 0
                 ORDER BY variance DESC
-                LIMIT 100
                 ",
                 )
                 .bind::<diesel::sql_types::Text, _>(&quote_str)

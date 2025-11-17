@@ -1,6 +1,6 @@
 use super::algorithms::{run_momentum_timestep_simulation, run_portfolio_optimization_simulation};
 use super::types::*;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{NaiveDate, TimeZone, Utc};
 use common::stats::ValueAtTime;
 use std::collections::HashMap;
@@ -21,7 +21,8 @@ fn create_test_price_data() -> HashMap<String, Vec<ValueAtTime>> {
                 .unwrap_or_else(|| NaiveDate::from_ymd_opt(2024, 8, 1 + i - 31).unwrap())
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
-            value: current_price_yocto * (1.0 + (i as f64 * 0.02)), // 2%ずつ価格上昇
+            value: BigDecimal::from_f64(current_price_yocto * (1.0 + (i as f64 * 0.02)))
+                .unwrap_or_default(), // 2%ずつ価格上昇
         });
     }
 
@@ -184,7 +185,9 @@ async fn test_momentum_calculation_units() {
         Err(e) => {
             // Momentum アルゴリズムが不十分なデータなどで失敗した場合は警告を出すだけ
             println!("Warning: Momentum simulation failed: {}", e);
-            println!("This might be due to insufficient historical data or API limitations in test environment");
+            println!(
+                "This might be due to insufficient historical data or API limitations in test environment"
+            );
             // テストは失敗させない（Momentum は外部API依存のため）
         }
     }

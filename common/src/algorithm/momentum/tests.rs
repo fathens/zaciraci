@@ -8,7 +8,7 @@ fn test_calculate_expected_return() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(110.0).unwrap(),
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
 
     let return_val = calculate_expected_return(&prediction);
@@ -25,21 +25,21 @@ fn test_rank_tokens_by_momentum() {
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(110.0).unwrap(), // 高いリターンに変更
             timestamp: Utc::now(),
-            confidence: Some(0.7),
+            confidence: Some("0.7".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
             token: "TOKEN2".to_string(),
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(120.0).unwrap(), // 最高リターンに変更
             timestamp: Utc::now(),
-            confidence: Some(0.9),
+            confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
             token: "TOKEN3".to_string(),
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(105.0).unwrap(), // 適度なリターンに変更
             timestamp: Utc::now(),
-            confidence: Some(0.6),
+            confidence: Some("0.6".parse::<BigDecimal>().unwrap()),
         },
     ];
 
@@ -144,7 +144,7 @@ fn test_calculate_expected_return_edge_cases() {
         current_price: BigDecimal::from(0),
         predicted_price_24h: BigDecimal::from_f64(100.0).unwrap(),
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
     let return_val = calculate_expected_return(&zero_price_prediction);
     assert_eq!(return_val, 0.0);
@@ -155,7 +155,7 @@ fn test_calculate_expected_return_edge_cases() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(80.0).unwrap(),
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
     let return_val = calculate_expected_return(&negative_prediction);
     assert!(return_val < 0.0);
@@ -168,7 +168,7 @@ fn test_confidence_adjusted_return() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(110.0).unwrap(),
         timestamp: Utc::now(),
-        confidence: Some(0.5), // 50%信頼度
+        confidence: Some("0.5".parse::<BigDecimal>().unwrap()), // 50%信頼度
     };
 
     let base_return = calculate_expected_return(&prediction);
@@ -203,14 +203,14 @@ fn test_rank_tokens_by_momentum_edge_cases() {
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(80.0).unwrap(),
             timestamp: Utc::now(),
-            confidence: Some(0.8),
+            confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
             token: "NEG2".to_string(),
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(70.0).unwrap(),
             timestamp: Utc::now(),
-            confidence: Some(0.9),
+            confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
         },
     ];
     let ranked = rank_tokens_by_momentum(negative_predictions);
@@ -223,7 +223,7 @@ fn test_rank_tokens_by_momentum_edge_cases() {
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(105.0 + i as f64).unwrap(),
             timestamp: Utc::now(),
-            confidence: Some(0.8),
+            confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         })
         .collect();
     let ranked = rank_tokens_by_momentum(many_predictions);
@@ -282,7 +282,7 @@ fn test_momentum_under_changing_volatility_regimes() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(103.0).unwrap(), // 3%上昇
         timestamp: Utc::now(),
-        confidence: Some(0.9),
+        confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
     }];
 
     // 高ボラティリティ期間のデータ
@@ -291,7 +291,7 @@ fn test_momentum_under_changing_volatility_regimes() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(125.0).unwrap(), // 25%上昇
         timestamp: Utc::now(),
-        confidence: Some(0.7), // 信頼度は下がる
+        confidence: Some("0.7".parse::<BigDecimal>().unwrap()), // 信頼度は下がる
     }];
 
     let low_vol_ranked = rank_tokens_by_momentum(low_vol_predictions);
@@ -320,7 +320,7 @@ fn test_prediction_confidence_degradation() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(110.0).unwrap(), // 10%上昇
         timestamp: Utc::now(),
-        confidence: Some(0.9),
+        confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
     };
 
     let confidence_levels = vec![0.9, 0.7, 0.5, 0.3, 0.1];
@@ -328,7 +328,7 @@ fn test_prediction_confidence_degradation() {
 
     for &confidence in &confidence_levels {
         let mut pred = base_prediction.clone();
-        pred.confidence = Some(confidence);
+        pred.confidence = Some(confidence.to_string().parse::<BigDecimal>().unwrap());
         let expected_return = calculate_confidence_adjusted_return(&pred);
         expected_returns.push(expected_return);
     }
@@ -352,14 +352,14 @@ fn test_market_stress_scenario() {
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(130.0).unwrap(), // 30%上昇予測
             timestamp: Utc::now(),
-            confidence: Some(0.4), // 低信頼度
+            confidence: Some("0.4".parse::<BigDecimal>().unwrap()), // 低信頼度
         },
         PredictionData {
             token: "STRESS_TOKEN2".to_string(),
             current_price: BigDecimal::from_f64(100.0).unwrap(),
             predicted_price_24h: BigDecimal::from_f64(70.0).unwrap(), // 30%下落予測
             timestamp: Utc::now(),
-            confidence: Some(0.5),
+            confidence: Some("0.5".parse::<BigDecimal>().unwrap()),
         },
     ];
 
@@ -370,7 +370,13 @@ fn test_market_stress_scenario() {
         for (_, expected_return, confidence) in &ranked {
             // 信頼度調整後のリターンが十分に高い場合のみ取引
             assert!(*expected_return > 0.05 * 1.5);
-            assert!(confidence.unwrap_or(0.0) >= 0.4);
+            assert!(
+                confidence
+                    .as_ref()
+                    .map(|c| c.to_string().parse::<f64>().unwrap_or(0.0))
+                    .unwrap_or(0.0)
+                    >= 0.4
+            );
         }
     }
 }
@@ -387,7 +393,7 @@ fn test_trading_frequency_cost_impact() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(102.0).unwrap(), // 2%上昇
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
 
     // 低頻度取引シナリオ（週1回）
@@ -396,7 +402,7 @@ fn test_trading_frequency_cost_impact() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(108.0).unwrap(), // 8%上昇
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
 
     let high_freq_ranked = rank_tokens_by_momentum(high_freq_predictions);
@@ -437,7 +443,11 @@ fn test_trading_frequency_cost_impact() {
         assert!((low_freq_expected - 0.0432).abs() < 0.001);
 
         // 1.5 * confidence_factor を考慮した条件チェック
-        let confidence_factor = low_freq_ranked[0].2.unwrap_or(0.5);
+        let confidence_factor = low_freq_ranked[0]
+            .2
+            .as_ref()
+            .map(|c| c.to_string().parse::<f64>().unwrap_or(0.5))
+            .unwrap_or(0.5);
         let switch_threshold = 0.01 * 1.5 * confidence_factor; // 0.01 * 1.5 * 0.8 = 0.012
 
         if low_freq_expected > switch_threshold {
@@ -464,7 +474,7 @@ fn test_partial_fill_scenario() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(115.0).unwrap(), // 15%上昇
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
 
     let ranked = rank_tokens_by_momentum(predictions);
@@ -521,7 +531,7 @@ fn test_multi_timeframe_momentum_consistency() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(105.0).unwrap(), // 短期上昇
         timestamp: Utc::now(),
-        confidence: Some(0.9),
+        confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
     };
 
     let long_term_prediction = PredictionData {
@@ -529,7 +539,7 @@ fn test_multi_timeframe_momentum_consistency() {
         current_price: BigDecimal::from_f64(100.0).unwrap(),
         predicted_price_24h: BigDecimal::from_f64(95.0).unwrap(), // 長期下落
         timestamp: Utc::now(),
-        confidence: Some(0.8),
+        confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
 
     // 短期シグナルでの判断
@@ -584,7 +594,7 @@ fn test_momentum_signal_strength_threshold() {
             )
             .unwrap(),
             timestamp: Utc::now(),
-            confidence: Some(0.8),
+            confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         };
 
         let ranked = rank_tokens_by_momentum(vec![prediction]);

@@ -540,9 +540,11 @@ mod phase_4_3_tests {
         assert_eq!(template.template_name, "default");
         assert_eq!(template.title, "Trading Simulation Report");
         assert!(!template.css_style.is_empty());
-        assert!(template
-            .javascript_libs
-            .contains(&"https://cdn.jsdelivr.net/npm/chart.js".to_string()));
+        assert!(
+            template
+                .javascript_libs
+                .contains(&"https://cdn.jsdelivr.net/npm/chart.js".to_string())
+        );
     }
 
     #[test]

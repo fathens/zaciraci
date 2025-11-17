@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
 use serial_test::serial;
 use std::env;
@@ -14,8 +15,12 @@ fn setup_test_env() -> tempfile::TempDir {
     // Use unique environment variable name to avoid race conditions
     let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let unique_var_name = format!("CLI_TOKENS_BASE_DIR_TEST_{}", test_id);
-    env::set_var(&unique_var_name, temp_dir.path());
-    env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    unsafe {
+        env::set_var(&unique_var_name, temp_dir.path());
+    }
+    unsafe {
+        env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+    }
     temp_dir
 }
 
@@ -41,18 +46,18 @@ async fn test_real_cache_behavior() {
     let mock_values = vec![
         ValueAtTime {
             time: start_time.naive_utc(),
-            value: 1.0,
+            value: BigDecimal::from(1),
         },
         ValueAtTime {
             time: Utc
                 .with_ymd_and_hms(2025, 8, 10, 12, 0, 0)
                 .unwrap()
                 .naive_utc(),
-            value: 1.5,
+            value: "1.5".parse().unwrap(),
         },
         ValueAtTime {
             time: end_time.naive_utc(),
-            value: 2.0,
+            value: BigDecimal::from(2),
         },
     ];
 
@@ -154,7 +159,7 @@ async fn test_find_overlapping_files_debug() {
     // Add a data point at the beginning
     mock_values.push(ValueAtTime {
         time: file_start.naive_utc(),
-        value: 1.0,
+        value: BigDecimal::from(1),
     });
 
     // Add data points in the requested range (2025-08-10 to 2025-08-11)
@@ -163,7 +168,7 @@ async fn test_find_overlapping_files_debug() {
             .with_ymd_and_hms(2025, 8, 10, 12, 0, 0)
             .unwrap()
             .naive_utc(),
-        value: 1.5,
+        value: "1.5".parse().unwrap(),
     });
 
     mock_values.push(ValueAtTime {
@@ -171,13 +176,13 @@ async fn test_find_overlapping_files_debug() {
             .with_ymd_and_hms(2025, 8, 11, 0, 0, 0)
             .unwrap()
             .naive_utc(),
-        value: 2.0,
+        value: BigDecimal::from(2),
     });
 
     // Add a data point at the end
     mock_values.push(ValueAtTime {
         time: file_end.naive_utc(),
-        value: 2.5,
+        value: "2.5".parse().unwrap(),
     });
 
     let history_data = HistoryFileData {

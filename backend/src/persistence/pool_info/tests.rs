@@ -413,3 +413,143 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial(pool_info)]
+async fn test_cleanup_old_records() -> Result<()> {
+    use chrono::NaiveDateTime;
+    use diesel::Connection;
+    use diesel::prelude::*;
+
+    // データベース接続を取得
+    let conn = connection_pool::get().await?;
+
+    // テーブルをクリーンアップ
+    match conn
+        .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Failed to clear table: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
+    };
+
+    // テストデータに使用するタイムスタンプを定義（1秒ごとに15個）
+    let base_time = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+    let pool_id_1: u32 = 100;
+    let pool_id_2: u32 = 200;
+
+    let test_pool_info = create_test_pool_info();
+    let mut pool_infos = Vec::new();
+
+    // プールID 100 のデータを15個作成（timestamp が異なる）
+    for i in 0..15 {
+        let mut pool_info = test_pool_info.clone();
+        pool_info.id = pool_id_1;
+        pool_info.timestamp = base_time + chrono::Duration::seconds(i);
+        pool_infos.push(pool_info.to_new_db()?);
+    }
+
+    // プールID 200 のデータを5個作成
+    for i in 0..5 {
+        let mut pool_info = test_pool_info.clone();
+        pool_info.id = pool_id_2;
+        pool_info.timestamp = base_time + chrono::Duration::seconds(i);
+        pool_infos.push(pool_info.to_new_db()?);
+    }
+
+    // データベースに挿入
+    match conn
+        .interact(move |conn| {
+            conn.transaction(|conn| {
+                diesel::insert_into(pool_info::table)
+                    .values(&pool_infos)
+                    .execute(conn)
+            })
+        })
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
+        Err(e) => return Err(anyhow!("DB error: {}", e)),
+    };
+
+    // クリーンアップ実行（保持数10）
+    RefPoolInfo::cleanup_old_records(10).await?;
+
+    // pool_id 100 のレコード数を確認（10件残っているはず）
+    let conn = connection_pool::get().await?;
+    let count_pool_1 = conn
+        .interact(move |conn| {
+            use diesel::dsl::count;
+            pool_info::table
+                .filter(pool_info::pool_id.eq(pool_id_1 as i32))
+                .select(count(pool_info::id))
+                .first::<i64>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    assert_eq!(
+        count_pool_1, 10,
+        "プールID 100 のレコード数は10件であるべきです"
+    );
+
+    // pool_id 200 のレコード数を確認（5件のまま残っているはず）
+    let conn = connection_pool::get().await?;
+    let count_pool_2 = conn
+        .interact(move |conn| {
+            use diesel::dsl::count;
+            pool_info::table
+                .filter(pool_info::pool_id.eq(pool_id_2 as i32))
+                .select(count(pool_info::id))
+                .first::<i64>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    assert_eq!(
+        count_pool_2, 5,
+        "プールID 200 のレコード数は5件のままであるべきです"
+    );
+
+    // pool_id 100 の最新のレコードのタイムスタンプを確認（timestamp14が最新であるべき）
+    let conn = connection_pool::get().await?;
+    let latest_timestamp = conn
+        .interact(move |conn| {
+            use diesel::dsl::max;
+            pool_info::table
+                .filter(pool_info::pool_id.eq(pool_id_1 as i32))
+                .select(max(pool_info::timestamp))
+                .first::<Option<NaiveDateTime>>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    assert_eq!(
+        latest_timestamp,
+        Some(base_time + chrono::Duration::seconds(14)),
+        "最新のタイムスタンプは14秒後であるべきです"
+    );
+
+    // pool_id 100 の最古のレコードのタイムスタンプを確認（timestamp5が最古であるべき）
+    let conn = connection_pool::get().await?;
+    let oldest_timestamp = conn
+        .interact(move |conn| {
+            use diesel::dsl::min;
+            pool_info::table
+                .filter(pool_info::pool_id.eq(pool_id_1 as i32))
+                .select(min(pool_info::timestamp))
+                .first::<Option<NaiveDateTime>>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    assert_eq!(
+        oldest_timestamp,
+        Some(base_time + chrono::Duration::seconds(5)),
+        "最古のタイムスタンプは5秒後であるべきです（0-4秒が削除される）"
+    );
+
+    Ok(())
+}

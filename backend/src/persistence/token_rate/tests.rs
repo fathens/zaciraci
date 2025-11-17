@@ -1081,3 +1081,201 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial]
+async fn test_cleanup_old_records() -> Result<()> {
+    // 1. テーブルの全レコード削除
+    clean_table().await?;
+
+    // テスト用のトークンアカウント作成
+    let base1: TokenOutAccount = TokenAccount::from_str("eth.token")?.into();
+    let base2: TokenOutAccount = TokenAccount::from_str("btc.token")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
+
+    // 2. 異なる時期のレコードを作成
+    let now = chrono::Utc::now().naive_utc();
+    let days_400_ago = now - chrono::Duration::days(400);
+    let days_200_ago = now - chrono::Duration::days(200);
+    let days_100_ago = now - chrono::Duration::days(100);
+    let days_10_ago = now - chrono::Duration::days(10);
+
+    let old_rates = vec![
+        // 400日前のレコード（削除されるはず）
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1000),
+            days_400_ago,
+        ),
+        // 200日前のレコード（残るはず - 365日以内）
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1100),
+            days_200_ago,
+        ),
+        // 100日前のレコード（残るはず）
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1200),
+            days_100_ago,
+        ),
+        // 10日前のレコード（残るはず）
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1300),
+            days_10_ago,
+        ),
+        // 今のレコード（残るはず）
+        TokenRate::new_with_timestamp(base1.clone(), quote.clone(), BigDecimal::from(1400), now),
+        // 別のトークンペア - 400日前（削除されるはず）
+        TokenRate::new_with_timestamp(
+            base2.clone(),
+            quote.clone(),
+            BigDecimal::from(20000),
+            days_400_ago,
+        ),
+        // 別のトークンペア - 今（残るはず）
+        TokenRate::new_with_timestamp(base2.clone(), quote.clone(), BigDecimal::from(21000), now),
+    ];
+
+    // 3. レコードを挿入（cleanup_old_recordsは自動で呼ばれ、デフォルトで365日より古いレコードが削除される）
+    TokenRate::batch_insert(&old_rates).await?;
+
+    // 4. 残っているレコード数を確認
+    let history1 = TokenRate::get_history(&base1, &quote, 100).await?;
+    let history2 = TokenRate::get_history(&base2, &quote, 100).await?;
+
+    // base1: 200日前、100日前、10日前、今の4件が残る（全て365日以内）
+    assert_eq!(
+        history1.len(),
+        4,
+        "Should have 4 records for base1 (within 365 days)"
+    );
+
+    // base2: 今の1件が残る
+    assert_eq!(
+        history2.len(),
+        1,
+        "Should have 1 record for base2 (within 365 days)"
+    );
+
+    // 5. 残っているレコードのタイムスタンプを確認
+    // 新しい順にソートされているので、最初が最新
+    assert!(
+        history1[0].timestamp >= days_10_ago,
+        "Most recent record should be recent"
+    );
+
+    // デバッグ情報：レコードの詳細を確認
+    println!("Debug: history1 records:");
+    for (i, record) in history1.iter().enumerate() {
+        println!(
+            "  [{}] rate={}, timestamp={}",
+            i, record.rate, record.timestamp
+        );
+    }
+    println!("Expected timestamps:");
+    println!("  now        = {}", now);
+    println!("  10 days ago = {}", days_10_ago);
+    println!("  100 days ago = {}", days_100_ago);
+    println!("  200 days ago = {}", days_200_ago);
+    println!("  400 days ago = {}", days_400_ago);
+
+    // 最も古いレコードは200日前のもの（index 3）
+    // レートで確認（200日前のレコードは rate = 1100）
+    assert_eq!(
+        history1[3].rate,
+        BigDecimal::from(1100),
+        "Oldest retained record should have rate 1100 (200 days old record)"
+    );
+
+    // タイムスタンプも確認（精度の問題を考慮して、200日前から少し前後する範囲を許容）
+    let timestamp_diff = if history1[3].timestamp > days_200_ago {
+        history1[3].timestamp - days_200_ago
+    } else {
+        days_200_ago - history1[3].timestamp
+    };
+
+    assert!(
+        timestamp_diff < chrono::Duration::seconds(1),
+        "Oldest retained record timestamp should be close to 200 days ago. \
+         Expected: {}, Actual: {}, Diff: {:?}",
+        days_200_ago,
+        history1[3].timestamp,
+        timestamp_diff
+    );
+
+    // 400日前のレコードは削除されているので、200日前のレコードより新しい
+    assert!(
+        history1[3].timestamp > days_400_ago,
+        "Oldest retained record should be newer than 400 days ago (400 days old records should be deleted)"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    // 6. カスタム保持期間のテスト（30日）
+    let recent_rates = vec![
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1000),
+            now - chrono::Duration::days(100),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1100),
+            now - chrono::Duration::days(50),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1200),
+            now - chrono::Duration::days(20),
+        ),
+        TokenRate::new_with_timestamp(
+            base1.clone(),
+            quote.clone(),
+            BigDecimal::from(1300),
+            now - chrono::Duration::days(5),
+        ),
+    ];
+
+    // まず全件挿入（デフォルトのクリーンアップで全件残る）
+    TokenRate::batch_insert(&recent_rates).await?;
+
+    // 全件残っていることを確認
+    let all_history = TokenRate::get_history(&base1, &quote, 100).await?;
+    assert_eq!(all_history.len(), 4, "Should have all 4 records initially");
+
+    // 7. 30日でクリーンアップを実行
+    TokenRate::cleanup_old_records(30).await?;
+
+    // 8. 30日以内のレコードだけが残っていることを確認
+    let recent_history = TokenRate::get_history(&base1, &quote, 100).await?;
+    assert_eq!(
+        recent_history.len(),
+        2,
+        "Should have 2 records (within 30 days)"
+    );
+
+    // 残っているレコードが20日前と5日前のものであることを確認
+    assert!(
+        recent_history[0].timestamp >= now - chrono::Duration::days(6),
+        "Most recent should be ~5 days old"
+    );
+    assert!(
+        recent_history[1].timestamp >= now - chrono::Duration::days(21),
+        "Second should be ~20 days old"
+    );
+
+    // クリーンアップ
+    clean_table().await?;
+
+    Ok(())
+}

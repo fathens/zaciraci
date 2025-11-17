@@ -1,3 +1,7 @@
+use crate::logging::*;
+use crate::persistence::TimeRange;
+use crate::persistence::token_rate::TokenRate;
+use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
@@ -6,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zaciraci_common::algorithm::prediction::{
     PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
-    PricePoint as CommonPricePoint, TokenPredictionResult, TopTokenInfo,
+    TokenPredictionResult, TopTokenInfo,
 };
 use zaciraci_common::api::chronos::ChronosApiClient;
 use zaciraci_common::api::traits::PredictionClient;
@@ -20,13 +24,8 @@ pub struct TokenPriceHistory {
     pub prices: Vec<PricePoint>,
 }
 
-/// 価格ポイント
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PricePoint {
-    pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
-    pub volume: Option<BigDecimal>,
-}
+// 共通クレートのPricePointを使用
+pub use zaciraci_common::algorithm::types::PricePoint;
 
 /// 予測結果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,73 +40,89 @@ pub struct TokenPrediction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
-    pub price: f64,
-    pub confidence: Option<f64>,
+    pub price: BigDecimal,
+    pub confidence: Option<BigDecimal>,
 }
 
 /// トップトークン情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopToken {
     pub token: String,
-    pub volatility: f64,
-    pub volume_24h: f64,
-    pub current_price: f64,
+    pub volatility: BigDecimal,
+    pub volume_24h: BigDecimal,
+    pub current_price: BigDecimal,
 }
 
 /// 価格予測サービス
 pub struct PredictionService {
     chronos_client: ChronosApiClient,
-    backend_url: String,
+    pub(crate) max_retries: u32,
+    pub(crate) retry_delay_seconds: u64,
 }
 
 impl PredictionService {
-    pub fn new(chronos_url: String, backend_url: String) -> Self {
+    pub fn new(chronos_url: String) -> Self {
+        let config = zaciraci_common::config::config();
         Self {
             chronos_client: ChronosApiClient::new(chronos_url),
-            backend_url,
+            max_retries: config.trade.prediction_max_retries,
+            retry_delay_seconds: config.trade.prediction_retry_delay_seconds,
         }
     }
 
-    /// 指定期間のトップトークンを取得
-    pub async fn get_top_tokens(
+    /// ボラティリティ順に全トークンを取得
+    pub async fn get_tokens_by_volatility(
         &self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        limit: usize,
         quote_token: &str,
     ) -> Result<Vec<TopToken>> {
-        // Backend APIを使用してトップトークンを取得
-        let client = reqwest::Client::new();
-        let url = format!("{}/api/volatility_tokens", self.backend_url);
+        // 直接データベースからボラティリティ情報を取得
+        let quote_token_account: TokenInAccount = quote_token
+            .parse::<TokenAccount>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse quote token: {}", e))?
+            .into();
 
-        let params = [
-            ("start_date", start_date.format("%Y-%m-%d").to_string()),
-            ("end_date", end_date.format("%Y-%m-%d").to_string()),
-            ("limit", limit.to_string()),
-            ("quote_token", quote_token.to_string()),
-        ];
+        let range = TimeRange {
+            start: start_date.naive_utc(),
+            end: end_date.naive_utc(),
+        };
 
-        let response = client
-            .get(&url)
-            .query(&params)
-            .send()
-            .await
-            .context("Failed to fetch top tokens")?;
+        let volatility_tokens =
+            TokenRate::get_by_volatility_in_time_range(&range, &quote_token_account)
+                .await
+                .context("Failed to get volatility tokens from database")?;
 
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to fetch top tokens: HTTP {}",
-                response.status()
-            ));
+        // 全トークンをTopToken形式に変換（limit は呼び出し側で適用）
+        let mut top_tokens = Vec::new();
+        for vol_token in volatility_tokens.into_iter() {
+            // 現在価格を取得
+            let current_price = {
+                let base_token = TokenOutAccount::from(vol_token.base.clone());
+                let quote_token = quote_token_account.clone();
+
+                match TokenRate::get_latest(&base_token, &quote_token).await {
+                    Ok(Some(rate)) => rate.rate,
+                    Ok(None) => {
+                        // ログを後で追加（slogのsetupが必要）
+                        BigDecimal::from(1) // デフォルト値
+                    }
+                    Err(_e) => {
+                        // ログを後で追加（slogのsetupが必要）
+                        BigDecimal::from(1) // デフォルト値
+                    }
+                }
+            };
+
+            top_tokens.push(TopToken {
+                token: vol_token.base.to_string(),
+                volatility: vol_token.variance,
+                volume_24h: BigDecimal::from(0), // ボリュームデータは現在利用不可
+                current_price,
+            });
         }
 
-        // APIレスポンスをパース
-        let tokens: Vec<TopToken> = response
-            .json()
-            .await
-            .context("Failed to parse top tokens response")?;
-
-        Ok(tokens)
+        Ok(top_tokens)
     }
 
     /// 指定トークンの価格履歴を取得
@@ -118,44 +133,33 @@ impl PredictionService {
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
     ) -> Result<TokenPriceHistory> {
-        let client = reqwest::Client::new();
-        let url = format!(
-            "{}/api/price_history/{}/{}",
-            self.backend_url, quote_token, token
-        );
+        // 直接データベースから価格履歴を取得
+        let base_token: TokenOutAccount = token
+            .parse::<TokenAccount>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse base token: {}", e))?
+            .into();
 
-        let params = [
-            ("start", start_date.timestamp().to_string()),
-            ("end", end_date.timestamp().to_string()),
-        ];
+        let quote_token_account: TokenInAccount = quote_token
+            .parse::<TokenAccount>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse quote token: {}", e))?
+            .into();
 
-        let response = client
-            .get(&url)
-            .query(&params)
-            .send()
+        let range = TimeRange {
+            start: start_date.naive_utc(),
+            end: end_date.naive_utc(),
+        };
+
+        let rates = TokenRate::get_rates_in_time_range(&range, &base_token, &quote_token_account)
             .await
-            .context("Failed to fetch price history")?;
+            .context("Failed to get price history from database")?;
 
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to fetch price history: HTTP {}",
-                response.status()
-            ));
-        }
-
-        // APIレスポンスをパース
-        let prices: Vec<(i64, f64)> = response
-            .json()
-            .await
-            .context("Failed to parse price history response")?;
-
-        // タイムスタンプを DateTime に変換
-        let price_points: Vec<PricePoint> = prices
+        // TokenRateをPricePointに変換
+        let price_points: Vec<PricePoint> = rates
             .into_iter()
-            .map(|(timestamp, price)| PricePoint {
-                timestamp: DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now),
-                price: BigDecimal::from(price as i64),
-                volume: None,
+            .map(|rate| PricePoint {
+                timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
+                price: rate.rate,
+                volume: None, // ボリュームデータは現在利用不可
             })
             .collect();
 
@@ -172,12 +176,11 @@ impl PredictionService {
         history: &TokenPriceHistory,
         prediction_horizon: usize,
     ) -> Result<TokenPrediction> {
+        let log = DEFAULT.new(o!("function" => "predict_price"));
+
         // 履歴データを予測用フォーマットに変換
-        let values: Vec<f64> = history
-            .prices
-            .iter()
-            .map(|p| p.price.to_string().parse::<f64>().unwrap_or(0.0))
-            .collect();
+        // BigDecimalを直接使用（ChronosAPIはJSON経由で数値を受け取るため）
+        let values: Vec<BigDecimal> = history.prices.iter().map(|p| p.price.clone()).collect();
         let timestamps: Vec<DateTime<Utc>> = history.prices.iter().map(|p| p.timestamp).collect();
 
         if values.is_empty() {
@@ -203,9 +206,8 @@ impl PredictionService {
             .await
             .context("Failed to start prediction")?;
 
-        println!(
-            "Prediction started with task ID: {}",
-            async_response.task_id
+        info!(log, "Prediction started";
+            "task_id" => %async_response.task_id
         );
 
         // 予測完了まで待機
@@ -238,6 +240,8 @@ impl PredictionService {
         history_days: i64,
         prediction_horizon: usize,
     ) -> Result<HashMap<String, TokenPrediction>> {
+        let log = DEFAULT.new(o!("function" => "predict_multiple_tokens"));
+
         let end_date = Utc::now();
         let start_date = end_date - Duration::days(history_days);
         let batch_size = 10;
@@ -245,26 +249,70 @@ impl PredictionService {
         let mut all_predictions = HashMap::new();
 
         // トークンを10個ずつのバッチに分割して処理
-        for batch in tokens.chunks(batch_size) {
-            println!("Processing batch of {} tokens", batch.len());
+        for (batch_index, batch) in tokens.chunks(batch_size).enumerate() {
+            info!(log, "Processing batch";
+                "batch_index" => batch_index,
+                "batch_size" => batch.len()
+            );
 
             // バッチ内の各トークンを順次処理
             // 注: バッチ間では並列化せず、バッチ内のトークンも順次処理する
             // これによりChronosサービスへの同時リクエスト数を制限
-            for token in batch {
-                println!("Processing token: {}", token);
+            for (token_index, token) in batch.iter().enumerate() {
+                info!(log, "Processing token";
+                    "batch_index" => batch_index,
+                    "token_index" => token_index,
+                    "token" => token
+                );
 
-                // 価格履歴を取得
-                let history = self
-                    .get_price_history(token, quote_token, start_date, end_date)
-                    .await?;
+                // 価格履歴を取得（リトライあり）
+                let history = match self
+                    .get_price_history_with_retry(token, quote_token, start_date, end_date, &log)
+                    .await
+                {
+                    Ok(h) => h,
+                    Err(e) => {
+                        warn!(log, "Failed to get price history after retries, skipping token";
+                            "token" => token,
+                            "error" => %e
+                        );
+                        continue;
+                    }
+                };
 
-                // 価格予測を実行
-                let prediction = self.predict_price(&history, prediction_horizon).await?;
-
-                all_predictions.insert(token.clone(), prediction);
+                // 価格予測を実行（リトライあり）
+                match self
+                    .predict_price_with_retry(&history, prediction_horizon, &log)
+                    .await
+                {
+                    Ok(prediction) => {
+                        all_predictions.insert(token.clone(), prediction);
+                        info!(log, "Successfully predicted price";
+                            "token" => token
+                        );
+                    }
+                    Err(e) => {
+                        warn!(log, "Failed to predict price after retries, skipping token";
+                            "token" => token,
+                            "error" => %e
+                        );
+                    }
+                }
             }
         }
+
+        // 全てのトークンが失敗した場合はエラーを返す
+        if all_predictions.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Failed to predict any tokens. All {} tokens failed.",
+                tokens.len()
+            ));
+        }
+
+        info!(log, "Successfully predicted prices";
+            "successful" => all_predictions.len(),
+            "total" => tokens.len()
+        );
 
         Ok(all_predictions)
     }
@@ -284,11 +332,11 @@ impl PredictionService {
             .iter()
             .take(horizon)
             .enumerate()
-            .map(|(i, &price)| {
+            .map(|(i, price)| {
                 let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
                 PredictedPrice {
                     timestamp,
-                    price,
+                    price: price.clone(),
                     confidence: None, // 信頼度は将来実装
                 }
             })
@@ -296,28 +344,104 @@ impl PredictionService {
 
         Ok(predicted_prices)
     }
+
+    /// 価格履歴を取得（リトライ付き）
+    async fn get_price_history_with_retry(
+        &self,
+        token: &str,
+        quote_token: &str,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+        log: &slog::Logger,
+    ) -> Result<TokenPriceHistory> {
+        let mut last_error = None;
+
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                info!(log, "Retrying get_price_history";
+                    "token" => token,
+                    "attempt" => attempt,
+                    "max_retries" => self.max_retries
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(self.retry_delay_seconds))
+                    .await;
+            }
+
+            match self
+                .get_price_history(token, quote_token, start_date, end_date)
+                .await
+            {
+                Ok(history) => return Ok(history),
+                Err(e) => {
+                    warn!(log, "Failed to get price history";
+                        "token" => token,
+                        "attempt" => attempt,
+                        "error" => %e
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap())
+    }
+
+    /// 価格予測を実行（リトライ付き）
+    async fn predict_price_with_retry(
+        &self,
+        history: &TokenPriceHistory,
+        prediction_horizon: usize,
+        log: &slog::Logger,
+    ) -> Result<TokenPrediction> {
+        let mut last_error = None;
+
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                info!(log, "Retrying predict_price";
+                    "token" => &history.token,
+                    "attempt" => attempt,
+                    "max_retries" => self.max_retries
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(self.retry_delay_seconds))
+                    .await;
+            }
+
+            match self.predict_price(history, prediction_horizon).await {
+                Ok(prediction) => return Ok(prediction),
+                Err(e) => {
+                    warn!(log, "Failed to predict price";
+                        "token" => &history.token,
+                        "attempt" => attempt,
+                        "error" => %e
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap())
+    }
 }
 
 // PredictionProviderトレイトの実装
 #[async_trait]
 impl PredictionProvider for PredictionService {
-    async fn get_top_tokens(
+    async fn get_tokens_by_volatility(
         &self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        limit: usize,
         quote_token: &str,
     ) -> Result<Vec<TopTokenInfo>> {
         let tokens = self
-            .get_top_tokens(start_date, end_date, limit, quote_token)
+            .get_tokens_by_volatility(start_date, end_date, quote_token)
             .await?;
         Ok(tokens
             .into_iter()
             .map(|t| TopTokenInfo {
                 token: t.token,
-                volatility: t.volatility,
-                volume_24h: t.volume_24h,
-                current_price: t.current_price,
+                volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
+                volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
+                current_price: t.current_price.to_string().parse::<f64>().unwrap_or(0.0),
             })
             .collect())
     }
@@ -335,15 +459,7 @@ impl PredictionProvider for PredictionService {
         Ok(CommonPriceHistory {
             token: history.token,
             quote_token: history.quote_token,
-            prices: history
-                .prices
-                .into_iter()
-                .map(|p| CommonPricePoint {
-                    timestamp: p.timestamp,
-                    price: p.price.clone(),
-                    volume: p.volume.clone(),
-                })
-                .collect(),
+            prices: history.prices, // 型が統一されたので変換不要
         })
     }
 
@@ -380,8 +496,8 @@ impl PredictionProvider for PredictionService {
                 .into_iter()
                 .map(|p| CommonPredictedPrice {
                     timestamp: p.timestamp,
-                    price: BigDecimal::from(p.price as i64),
-                    confidence: p.confidence,
+                    price: p.price,
+                    confidence: p.confidence.clone(),
                 })
                 .collect(),
         })
@@ -411,8 +527,8 @@ impl PredictionProvider for PredictionService {
                         .into_iter()
                         .map(|p| CommonPredictedPrice {
                             timestamp: p.timestamp,
-                            price: BigDecimal::from(p.price as i64),
-                            confidence: p.confidence,
+                            price: p.price,
+                            confidence: p.confidence.clone(),
                         })
                         .collect(),
                 },

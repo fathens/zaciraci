@@ -9,6 +9,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
+use zaciraci_common::config;
 
 // データベース用モデル
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -132,7 +133,54 @@ impl RefPoolInfo {
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
+        // 古いレコードをクリーンアップ
+        let retention_count = config::get("POOL_INFO_RETENTION_COUNT")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(10);
+
+        info!(log, "cleaning up old records"; "retention_count" => retention_count);
+        RefPoolInfo::cleanup_old_records(retention_count).await?;
+
         info!(log, "finish");
+        Ok(())
+    }
+
+    // 古いレコードを削除し、pool_id ごとに指定数だけ保持する
+    pub async fn cleanup_old_records(retention_count: u32) -> Result<()> {
+        use diesel::prelude::*;
+        use diesel::sql_types::BigInt;
+
+        let log = DEFAULT.new(o!(
+            "function" => "cleanup_old_records",
+            "retention_count" => retention_count,
+        ));
+        info!(log, "start");
+
+        let retention_count_i64 = retention_count as i64;
+        let conn = connection_pool::get().await?;
+
+        // pool_id ごとに、timestamp が新しい順に retention_count 件を残して削除
+        // PostgreSQL の DISTINCT ON と ROW_NUMBER を使った削除
+        let deleted_count = conn
+            .interact(move |conn| {
+                diesel::sql_query(
+                    "DELETE FROM pool_info WHERE id IN (
+                        SELECT id FROM (
+                            SELECT id,
+                                   ROW_NUMBER() OVER (PARTITION BY pool_id ORDER BY timestamp DESC) as rn
+                            FROM pool_info
+                        ) t
+                        WHERE t.rn > $1
+                    )"
+                )
+                .bind::<BigInt, _>(retention_count_i64)
+                .execute(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        info!(log, "finish"; "deleted_count" => deleted_count);
         Ok(())
     }
 

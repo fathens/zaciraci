@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::prediction::{ChronosPredictionResponse, ConfidenceInterval};
 use std::collections::HashMap;
@@ -6,8 +7,22 @@ use std::collections::HashMap;
 #[test]
 fn test_confidence_interval_extraction_with_standard_keys() {
     let mut confidence_intervals = HashMap::new();
-    confidence_intervals.insert("lower".to_string(), vec![95.0, 105.0, 115.0]);
-    confidence_intervals.insert("upper".to_string(), vec![105.0, 115.0, 125.0]);
+    confidence_intervals.insert(
+        "lower".to_string(),
+        vec![
+            BigDecimal::from(95),
+            BigDecimal::from(105),
+            BigDecimal::from(115),
+        ],
+    );
+    confidence_intervals.insert(
+        "upper".to_string(),
+        vec![
+            BigDecimal::from(105),
+            BigDecimal::from(115),
+            BigDecimal::from(125),
+        ],
+    );
 
     let prediction_result = ChronosPredictionResponse {
         forecast_timestamp: vec![
@@ -15,7 +30,11 @@ fn test_confidence_interval_extraction_with_standard_keys() {
             Utc::now() + chrono::Duration::hours(1),
             Utc::now() + chrono::Duration::hours(2),
         ],
-        forecast_values: vec![100.0, 110.0, 120.0],
+        forecast_values: vec![
+            BigDecimal::from(100),
+            BigDecimal::from(110),
+            BigDecimal::from(120),
+        ],
         model_name: "test_model".to_string(),
         confidence_intervals: Some(confidence_intervals),
         metrics: None,
@@ -46,8 +65,8 @@ fn test_confidence_interval_extraction_with_standard_keys() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i],
-                                    upper: upper_values[i],
+                                    lower: lower_values[i].clone(),
+                                    upper: upper_values[i].clone(),
                                 })
                             } else {
                                 None
@@ -70,29 +89,43 @@ fn test_confidence_interval_extraction_with_standard_keys() {
 
     assert!(forecast[0].confidence_interval.is_some());
     let ci0 = forecast[0].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci0.lower, 95.0);
-    assert_eq!(ci0.upper, 105.0);
+    assert_eq!(ci0.lower, BigDecimal::from(95));
+    assert_eq!(ci0.upper, BigDecimal::from(105));
 
     assert!(forecast[1].confidence_interval.is_some());
     let ci1 = forecast[1].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci1.lower, 105.0);
-    assert_eq!(ci1.upper, 115.0);
+    assert_eq!(ci1.lower, BigDecimal::from(105));
+    assert_eq!(ci1.upper, BigDecimal::from(115));
 
     assert!(forecast[2].confidence_interval.is_some());
     let ci2 = forecast[2].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci2.lower, 115.0);
-    assert_eq!(ci2.upper, 125.0);
+    assert_eq!(ci2.lower, BigDecimal::from(115));
+    assert_eq!(ci2.upper, BigDecimal::from(125));
 }
 
 #[test]
 fn test_confidence_interval_extraction_with_quantile_keys() {
     let mut confidence_intervals = HashMap::new();
-    confidence_intervals.insert("0.025".to_string(), vec![90.0, 100.0, 110.0]);
-    confidence_intervals.insert("0.975".to_string(), vec![110.0, 120.0, 130.0]);
+    confidence_intervals.insert(
+        "0.025".to_string(),
+        vec![
+            BigDecimal::from(90),
+            BigDecimal::from(100),
+            BigDecimal::from(110),
+        ],
+    );
+    confidence_intervals.insert(
+        "0.975".to_string(),
+        vec![
+            BigDecimal::from(110),
+            BigDecimal::from(120),
+            BigDecimal::from(130),
+        ],
+    );
 
     let prediction_result = ChronosPredictionResponse {
         forecast_timestamp: vec![Utc::now(), Utc::now() + chrono::Duration::hours(1)],
-        forecast_values: vec![100.0, 110.0],
+        forecast_values: vec![BigDecimal::from(100), BigDecimal::from(110)],
         model_name: "test_model".to_string(),
         confidence_intervals: Some(confidence_intervals),
         metrics: None,
@@ -123,8 +156,8 @@ fn test_confidence_interval_extraction_with_quantile_keys() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i],
-                                    upper: upper_values[i],
+                                    lower: lower_values[i].clone(),
+                                    upper: upper_values[i].clone(),
                                 })
                             } else {
                                 None
@@ -146,19 +179,19 @@ fn test_confidence_interval_extraction_with_quantile_keys() {
     assert_eq!(forecast.len(), 2);
 
     let ci0 = forecast[0].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci0.lower, 90.0);
-    assert_eq!(ci0.upper, 110.0);
+    assert_eq!(ci0.lower, BigDecimal::from(90));
+    assert_eq!(ci0.upper, BigDecimal::from(110));
 
     let ci1 = forecast[1].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci1.lower, 100.0);
-    assert_eq!(ci1.upper, 120.0);
+    assert_eq!(ci1.lower, BigDecimal::from(100));
+    assert_eq!(ci1.upper, BigDecimal::from(120));
 }
 
 #[test]
 fn test_confidence_interval_extraction_no_intervals() {
     let prediction_result = ChronosPredictionResponse {
         forecast_timestamp: vec![Utc::now()],
-        forecast_values: vec![100.0],
+        forecast_values: vec![BigDecimal::from(100)],
         model_name: "test_model".to_string(),
         confidence_intervals: None,
         metrics: None,
@@ -189,8 +222,8 @@ fn test_confidence_interval_extraction_no_intervals() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i],
-                                    upper: upper_values[i],
+                                    lower: lower_values[i].clone(),
+                                    upper: upper_values[i].clone(),
                                 })
                             } else {
                                 None
@@ -216,8 +249,18 @@ fn test_confidence_interval_extraction_no_intervals() {
 #[test]
 fn test_confidence_interval_extraction_mismatched_lengths() {
     let mut confidence_intervals = HashMap::new();
-    confidence_intervals.insert("lower".to_string(), vec![95.0, 105.0]); // Only 2 values
-    confidence_intervals.insert("upper".to_string(), vec![105.0, 115.0, 125.0]); // 3 values
+    confidence_intervals.insert(
+        "lower".to_string(),
+        vec![BigDecimal::from(95), BigDecimal::from(105)],
+    ); // Only 2 values
+    confidence_intervals.insert(
+        "upper".to_string(),
+        vec![
+            BigDecimal::from(105),
+            BigDecimal::from(115),
+            BigDecimal::from(125),
+        ],
+    ); // 3 values
 
     let prediction_result = ChronosPredictionResponse {
         forecast_timestamp: vec![
@@ -225,7 +268,11 @@ fn test_confidence_interval_extraction_mismatched_lengths() {
             Utc::now() + chrono::Duration::hours(1),
             Utc::now() + chrono::Duration::hours(2),
         ],
-        forecast_values: vec![100.0, 110.0, 120.0],
+        forecast_values: vec![
+            BigDecimal::from(100),
+            BigDecimal::from(110),
+            BigDecimal::from(120),
+        ],
         model_name: "test_model".to_string(),
         confidence_intervals: Some(confidence_intervals),
         metrics: None,
@@ -256,8 +303,8 @@ fn test_confidence_interval_extraction_mismatched_lengths() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i],
-                                    upper: upper_values[i],
+                                    lower: lower_values[i].clone(),
+                                    upper: upper_values[i].clone(),
                                 })
                             } else {
                                 None
@@ -286,34 +333,34 @@ fn test_confidence_interval_extraction_mismatched_lengths() {
 #[test]
 fn test_confidence_interval_scaling() {
     let mut confidence_intervals = HashMap::new();
-    confidence_intervals.insert("lower".to_string(), vec![95.0]);
-    confidence_intervals.insert("upper".to_string(), vec![105.0]);
+    confidence_intervals.insert("lower".to_string(), vec![BigDecimal::from(95)]);
+    confidence_intervals.insert("upper".to_string(), vec![BigDecimal::from(105)]);
 
     let forecast = vec![PredictionPoint {
         timestamp: Utc::now(),
-        value: 100.0,
+        value: BigDecimal::from(100),
         confidence_interval: Some(ConfidenceInterval {
-            lower: 95.0,
-            upper: 105.0,
+            lower: BigDecimal::from(95),
+            upper: BigDecimal::from(105),
         }),
     }];
 
     // Test scaling of confidence intervals
-    let scale_factor = 2.0;
+    let scale_factor = BigDecimal::from(2);
     let mut scaled_forecast = forecast;
 
     for point in &mut scaled_forecast {
-        point.value *= scale_factor;
+        point.value *= &scale_factor;
         if let Some(ref mut ci) = point.confidence_interval {
-            ci.lower *= scale_factor;
-            ci.upper *= scale_factor;
+            ci.lower *= &scale_factor;
+            ci.upper *= &scale_factor;
         }
     }
 
     let scaled_point = &scaled_forecast[0];
-    assert_eq!(scaled_point.value, 200.0);
+    assert_eq!(scaled_point.value, BigDecimal::from(200));
 
     let scaled_ci = scaled_point.confidence_interval.as_ref().unwrap();
-    assert_eq!(scaled_ci.lower, 190.0);
-    assert_eq!(scaled_ci.upper, 210.0);
+    assert_eq!(scaled_ci.lower, BigDecimal::from(190));
+    assert_eq!(scaled_ci.upper, BigDecimal::from(210));
 }

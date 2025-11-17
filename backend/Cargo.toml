@@ -28,7 +28,7 @@ slog-term = { workspace = true }
 slog-json = { workspace = true }
 slog-envlogger = { workspace = true }
 near-gas = "0.3"
-near-sdk = "5.9"
+near-sdk = { version = "5.9", features = ["non-contract-usage"] }
 near-jsonrpc-client = "0.16"
 near-jsonrpc-primitives = "0.29"
 near-primitives = "0.29"
@@ -50,6 +50,7 @@ base64 = { workspace = true }
 linfa = "0.7"
 linfa-linear = "0.7"
 ndarray = { version = "0.15", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 assertables = "9.5"

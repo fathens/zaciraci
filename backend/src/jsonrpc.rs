@@ -1,3 +1,4 @@
+mod endpoint_pool;
 mod near_client;
 mod rpc;
 mod sent_tx;
@@ -9,7 +10,7 @@ use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
 use near_crypto::InMemorySigner;
-use near_jsonrpc_client::{JsonRpcClient, MethodCallResult, methods};
+use near_jsonrpc_client::{MethodCallResult, methods};
 use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
 use near_primitives::action::Action;
 use near_primitives::hash::CryptoHash;
@@ -37,18 +38,9 @@ pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
     value
 });
 
-static JSONRPC_CLIENT: Lazy<Arc<JsonRpcClient>> = Lazy::new(|| {
-    let client = if *IS_MAINNET {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_MAINNET_RPC_URL)
-    } else {
-        JsonRpcClient::connect(near_jsonrpc_client::NEAR_TESTNET_RPC_URL)
-    };
-    Arc::new(client)
-});
-
 pub fn new_client() -> StandardNearClient<StandardRpcClient> {
     StandardNearClient::new(&Arc::new(StandardRpcClient::new(
-        Arc::clone(&JSONRPC_CLIENT),
+        Arc::new(endpoint_pool::EndpointPool::new()),
         128,
         std::time::Duration::from_secs(60),
         0.1,
@@ -56,6 +48,7 @@ pub fn new_client() -> StandardNearClient<StandardRpcClient> {
 }
 
 pub trait RpcClient {
+    #[allow(dead_code)]
     fn server_addr(&self) -> &str;
 
     fn call<M>(

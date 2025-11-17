@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use chrono::Utc;
 use std::path::PathBuf;
 
@@ -221,17 +222,17 @@ fn test_calculate_time_range_predictions_only() {
     let predictions = vec![
         PredictionPoint {
             timestamp: now,
-            value: 100.0,
+            value: BigDecimal::from(100),
             confidence_interval: None,
         },
         PredictionPoint {
             timestamp: future1,
-            value: 105.0,
+            value: BigDecimal::from(105),
             confidence_interval: None,
         },
         PredictionPoint {
             timestamp: future2,
-            value: 110.0,
+            value: BigDecimal::from(110),
             confidence_interval: None,
         },
     ];
@@ -260,12 +261,12 @@ fn test_calculate_time_range_combined() {
     let predictions = vec![
         PredictionPoint {
             timestamp: now,
-            value: 100.0,
+            value: BigDecimal::from(100),
             confidence_interval: None,
         },
         PredictionPoint {
             timestamp: future,
-            value: 105.0,
+            value: BigDecimal::from(105),
             confidence_interval: None,
         },
     ];
@@ -327,18 +328,18 @@ fn test_calculate_value_range_with_confidence_intervals() {
     let predictions = vec![
         PredictionPoint {
             timestamp: now,
-            value: 100.0,
+            value: BigDecimal::from(100),
             confidence_interval: Some(ConfidenceInterval {
-                lower: 80.0,
-                upper: 120.0,
+                lower: BigDecimal::from(80),
+                upper: BigDecimal::from(120),
             }),
         },
         PredictionPoint {
             timestamp: now,
-            value: 110.0,
+            value: BigDecimal::from(110),
             confidence_interval: Some(ConfidenceInterval {
-                lower: 90.0,
-                upper: 130.0,
+                lower: BigDecimal::from(90),
+                upper: BigDecimal::from(130),
             }),
         },
     ];

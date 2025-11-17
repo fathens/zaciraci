@@ -259,7 +259,7 @@ mod tests {
         setup_mock_token_files(&temp_dir);
         
         // Step 2: Set up environment to use our temp directory
-        std::env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+        unsafe { std::env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path()); }
         
         // Step 3: Create SimulateArgs similar to actual CLI usage
         use crate::commands::simulate::{SimulateArgs, validate_and_convert_args};
@@ -353,7 +353,7 @@ mod tests {
         assert!(html_content.contains("Multi-Algorithm"), "Should contain multi-algorithm content");
         
         // Clean up environment
-        std::env::remove_var("CLI_TOKENS_BASE_DIR");
+        unsafe { std::env::remove_var("CLI_TOKENS_BASE_DIR"); }
     }
     
     /// Create realistic simulation results that match actual simulate command output

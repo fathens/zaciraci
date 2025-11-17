@@ -42,6 +42,7 @@ pub struct AccountBaseInfo {
     pub storage_used: U64,
 }
 
+#[allow(dead_code)]
 pub async fn get_account_basic_info<C: ViewContract>(
     client: &C,
     account: &AccountId,
@@ -155,7 +156,7 @@ pub async fn check_deposits<C: ViewContract>(
 
     let shortage = more_needed - available;
     let mut needing_count = (shortage / per_token) as usize;
-    if shortage % per_token != 0 {
+    if !shortage.is_multiple_of(per_token) {
         needing_count += 1;
     }
     let mut noneeds: Vec<_> = deposits
@@ -207,6 +208,84 @@ where
             .await?;
     }
     Ok(Some(()))
+}
+
+/// REF Finance のストレージセットアップを確認し、必要に応じて初期化を実行する
+///
+/// この関数は以下を実行します:
+/// 1. storage_balance_of でアカウントの登録状態を確認
+/// 2. 未登録の場合は storage_deposit を実行
+/// 3. 指定されたトークンを register_tokens で一括登録
+///
+/// # Arguments
+/// * `client` - NEAR RPCクライアント
+/// * `wallet` - ウォレット
+/// * `tokens` - 登録するトークンのリスト
+pub async fn ensure_ref_storage_setup<C, W>(
+    client: &C,
+    wallet: &W,
+    tokens: &[TokenAccount],
+) -> Result<()>
+where
+    C: SendTx + ViewContract,
+    W: Wallet,
+{
+    let log = DEFAULT.new(o!("function" => "storage::ensure_ref_storage_setup"));
+    let account = wallet.account_id();
+
+    info!(log, "checking REF Finance storage setup"; "account" => %account, "token_count" => tokens.len());
+
+    // 1. storage_balance_of でアカウント状態を確認
+    let maybe_balance = balance_of(client, account).await?;
+
+    // 2. 未登録または不足している場合は storage_deposit を実行
+    if maybe_balance.is_none() {
+        info!(
+            log,
+            "account not registered, performing initial storage deposit"
+        );
+        let bounds = check_bounds(client).await?;
+        let min_deposit = bounds.min.0;
+
+        deposit(client, wallet, min_deposit, false)
+            .await?
+            .wait_for_success()
+            .await?;
+
+        info!(log, "initial storage deposit completed"; "amount" => min_deposit);
+    } else {
+        info!(log, "account already registered");
+    }
+
+    // 3. トークンを一括登録（未登録のもののみ）
+    if !tokens.is_empty() {
+        // 既に登録済みのトークンを取得
+        let registered_tokens = deposit::get_deposits(client, account).await?;
+
+        // 未登録のトークンのみをフィルタリング
+        let unregistered_tokens: Vec<TokenAccount> = tokens
+            .iter()
+            .filter(|token| !registered_tokens.contains_key(token))
+            .cloned()
+            .collect();
+
+        if !unregistered_tokens.is_empty() {
+            info!(log, "registering unregistered tokens";
+                "total" => tokens.len(),
+                "already_registered" => tokens.len() - unregistered_tokens.len(),
+                "to_register" => unregistered_tokens.len()
+            );
+            deposit::register_tokens(client, wallet, &unregistered_tokens)
+                .await?
+                .wait_for_success()
+                .await?;
+            info!(log, "tokens registered successfully"; "count" => unregistered_tokens.len());
+        } else {
+            info!(log, "all tokens already registered"; "count" => tokens.len());
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

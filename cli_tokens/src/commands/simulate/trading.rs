@@ -12,7 +12,7 @@ use crate::models::prediction::{
     PredictionResults,
 };
 use crate::utils::cache::{
-    check_prediction_cache, load_prediction_data, save_prediction_result, PredictionCacheParams,
+    PredictionCacheParams, check_prediction_cache, load_prediction_data, save_prediction_result,
 };
 use common::cache::CacheOutput;
 
@@ -47,16 +47,15 @@ async fn try_load_from_cache(
                 .prediction_results
                 .predictions
                 .first()
-                .map(|p| p.price)
-                .unwrap_or(last_prediction.price);
+                .map(|p| p.price.clone())
+                .unwrap_or(last_prediction.price.clone());
 
             return Ok(Some(PredictionData {
                 token: token.to_string(),
-                current_price: BigDecimal::from_f64(current_price).unwrap_or_default(),
-                predicted_price_24h: BigDecimal::from_f64(last_prediction.price)
-                    .unwrap_or_default(),
+                current_price,
+                predicted_price_24h: last_prediction.price.clone(),
                 timestamp: pred_start,
-                confidence: last_prediction.confidence,
+                confidence: last_prediction.confidence.clone(),
             }));
         }
     }
@@ -76,7 +75,7 @@ async fn save_to_cache(
         .zip(forecast_data.forecast_values.iter())
         .map(|(timestamp, price)| CachePredictionPoint {
             timestamp: *timestamp,
-            price: *price,
+            price: price.clone(),
             confidence: None, // Could extract from confidence intervals if available
         })
         .collect();
@@ -255,18 +254,14 @@ pub async fn generate_api_predictions(
 
                                         predictions.push(PredictionData {
                                             token: token.clone(),
-                                            current_price: BigDecimal::from_f64(current_price)
-                                                .unwrap_or_default(),
-                                            predicted_price_24h: BigDecimal::from_f64(
-                                                *predicted_value,
-                                            )
-                                            .unwrap_or_default(),
+                                            current_price: current_price.clone(),
+                                            predicted_price_24h: predicted_value.clone(),
                                             timestamp: current_time,
                                             confidence: chronos_result
                                                 .metrics
                                                 .as_ref()
                                                 .and_then(|m| m.get("confidence"))
-                                                .copied(),
+                                                .cloned(),
                                         });
                                         if verbose {
                                             println!(
@@ -343,7 +338,7 @@ async fn get_historical_price_data(
     quote_token: &str,
     historical_days: i64,
     current_simulation_time: DateTime<Utc>,
-) -> Result<(Vec<DateTime<Utc>>, Vec<f64>, f64)> {
+) -> Result<(Vec<DateTime<Utc>>, Vec<BigDecimal>, BigDecimal)> {
     let end_time = current_simulation_time.naive_utc();
     let start_time = end_time - chrono::Duration::days(historical_days);
 
@@ -363,8 +358,8 @@ async fn get_historical_price_data(
         .map(|p| DateTime::from_naive_utc_and_offset(p.time, Utc))
         .collect();
 
-    let values: Vec<f64> = prices.iter().map(|p| p.value).collect();
-    let current_price = prices.last().unwrap().value;
+    let values: Vec<BigDecimal> = prices.iter().map(|p| p.value.clone()).collect();
+    let current_price = prices.last().unwrap().value.clone();
 
     Ok((timestamps, values, current_price))
 }
@@ -849,13 +844,13 @@ impl TradingStrategy for PortfolioStrategy {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
-            if let Some(opp) = best_new_opportunity {
-                if opp.expected_return > 0.05 {
-                    // 5% minimum expected return
-                    return Ok(TradingDecision::Sell {
-                        target_token: opp.token.clone(),
-                    });
-                }
+            if let Some(opp) = best_new_opportunity
+                && opp.expected_return > 0.05
+            {
+                // 5% minimum expected return
+                return Ok(TradingDecision::Sell {
+                    target_token: opp.token.clone(),
+                });
             }
         }
 
@@ -880,14 +875,14 @@ impl TradingStrategy for PortfolioStrategy {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
-            if let (Some(worst), Some(best)) = (worst_position, best_opportunity) {
-                if best.expected_return > worst.expected_return * 1.2 {
-                    // 20% improvement threshold
-                    return Ok(TradingDecision::Switch {
-                        from: worst.token.clone(),
-                        to: best.token.clone(),
-                    });
-                }
+            if let (Some(worst), Some(best)) = (worst_position, best_opportunity)
+                && best.expected_return > worst.expected_return * 1.2
+            {
+                // 20% improvement threshold
+                return Ok(TradingDecision::Switch {
+                    from: worst.token.clone(),
+                    to: best.token.clone(),
+                });
             }
         }
 
@@ -1032,7 +1027,14 @@ impl From<&PredictionData> for TokenOpportunity {
         TokenOpportunity {
             token: prediction.token.clone(),
             expected_return,
-            confidence: prediction.confidence,
+            confidence: prediction
+                .confidence
+                .as_ref()
+                .map(|c| c.to_string().parse::<f64>().unwrap_or(0.0)),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "trading/tests.rs"]
+mod tests;

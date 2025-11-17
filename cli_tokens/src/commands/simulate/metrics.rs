@@ -1,6 +1,7 @@
 use super::types::*;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use common::algorithm::indicators::calculate_max_drawdown;
 
 /// Calculate comprehensive performance metrics
 pub fn calculate_performance_metrics(
@@ -191,18 +192,8 @@ pub fn calculate_performance_metrics_legacy(
     };
 
     // ドローダウン計算
-    let mut max_value = initial_value;
-    let mut max_drawdown = 0.0;
-
-    for pv in portfolio_values {
-        if pv.total_value > max_value {
-            max_value = pv.total_value;
-        }
-        let drawdown = (pv.total_value - max_value) / max_value;
-        if drawdown < max_drawdown {
-            max_drawdown = drawdown;
-        }
-    }
+    let portfolio_values_f64: Vec<f64> = portfolio_values.iter().map(|pv| pv.total_value).collect();
+    let max_drawdown = calculate_max_drawdown(&portfolio_values_f64);
 
     // 取引分析
     let mut total_profit = 0.0;

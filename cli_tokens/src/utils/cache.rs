@@ -12,8 +12,8 @@ pub use price_history::{
 
 // Re-export prediction cache functions
 pub use predictions::{
-    check_prediction_cache, create_prediction_filename, find_latest_prediction_file,
-    get_prediction_dir, load_prediction_data, save_prediction_result, PredictionCacheParams,
+    PredictionCacheParams, check_prediction_cache, create_prediction_filename,
+    find_latest_prediction_file, get_prediction_dir, load_prediction_data, save_prediction_result,
 };
 
 // Common cache utilities

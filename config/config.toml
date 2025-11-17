@@ -1,0 +1,110 @@
+# Zaciraci Configuration
+#
+# このファイルはgit管理されています。
+# ローカル環境固有の設定は config.local.toml に記述してください。
+
+[network]
+# メインネット使用フラグ
+use_mainnet = true
+
+[wallet]
+# NEAR ウォレット設定
+# 注意: 本番環境では config.local.toml で上書きすること
+root_account_id = ""
+root_mnemonic = ""
+root_hdpath = "m/44'/397'/0'"
+
+[rpc]
+# RPCエンドポイント設定
+# 複数のエンドポイントを指定して負荷分散・フェイルオーバー
+#
+# 構成案A（バランス型）: 6つの高品質エンドポイント
+# - 上位2つで65%をカバー
+# - rate limit制限のある公式RPCを除外
+# - 十分な冗長性を確保
+#
+# 最終更新: 2025-10-16
+# 注意: dRPC は認証必須（APIキー必要）のため除外
+# 注意: Ankr は 2024年以降 Premium プラン（有料）のみとなり使用しない
+
+[[rpc.endpoints]]
+url = "https://free.rpc.fastnear.com"
+weight = 35
+max_retries = 3
+
+[[rpc.endpoints]]
+url = "https://1rpc.io/near"
+weight = 30
+max_retries = 3
+
+[[rpc.endpoints]]
+url = "https://near.lava.build"
+weight = 15
+max_retries = 2
+
+[[rpc.endpoints]]
+url = "https://rpc.web4.near.page"
+weight = 10
+max_retries = 2
+
+[[rpc.endpoints]]
+url = "https://rpc.intea.rs"
+weight = 8
+max_retries = 2
+
+[[rpc.endpoints]]
+url = "https://near-mainnet.gateway.tatum.io/"
+weight = 2
+max_retries = 1
+
+[rpc.settings]
+# 失敗エンドポイントのリセット間隔（秒）
+failure_reset_seconds = 300
+# 全エンドポイント試行の最大回数
+max_attempts = 10
+
+[external_services]
+# 外部サービスURL
+chronos_url = "http://localhost:8000"
+ollama_base_url = "http://localhost:11434"
+ollama_model = "llama2"
+
+[trade]
+# トレード設定
+initial_investment = 100
+top_tokens = 10
+# 評価期間（日数、デフォルト: 10日）
+evaluation_days = 10
+# アカウント残高保護額（NEAR、デフォルト: 10）
+# アカウントに最低限残すNEARの量
+account_reserve = 10
+# cron スケジュール（デフォルト: 毎日0時）
+cron_schedule = "0 0 0 * * *"
+# 予測失敗時の最大リトライ回数（デフォルト: 2）
+prediction_max_retries = 2
+# リトライ間の待機時間（秒、デフォルト: 5）
+prediction_retry_delay_seconds = 5
+
+[cron]
+# record_rates の初期値
+record_rates_initial_value = 100
+
+[harvest]
+# ハーベスト設定
+account_id = ""
+min_amount = 10
+reserve_amount = 1
+# ハーベスト実行の最小間隔（秒、デフォルト: 86400秒 = 24時間）
+interval_seconds = 86400
+
+[arbitrage]
+# アービトラージ設定
+needed = false
+token_not_found_wait = "1s"
+other_error_wait = "5s"
+preview_not_found_wait = "2s"
+
+[logging]
+# ログ設定
+# "json" or "text"
+rust_log_format = "json"

@@ -2,6 +2,7 @@
 #[allow(clippy::module_inception)]
 mod data_flow_debug {
     use super::super::data::get_prices_at_time;
+    use bigdecimal::BigDecimal;
     use chrono::{DateTime, Utc};
     use common::stats::ValueAtTime;
     use serde_json;
@@ -47,8 +48,8 @@ mod data_flow_debug {
         println!("   Raw JSON time: {:?}", values[0].time);
 
         // NEAR単位への変換をテスト
-        let yocto_value = values[0].value;
-        let near_value = common::units::Units::yocto_f64_to_near_f64(yocto_value);
+        let yocto_value = &values.clone()[0].value;
+        let near_value = common::units::Units::yocto_to_near(yocto_value);
         println!("   Converted to NEAR: {:.2e} NEAR", near_value);
 
         // get_prices_at_timeの動作をテスト
@@ -65,14 +66,22 @@ mod data_flow_debug {
         println!("   get_prices_at_time returned: {}", returned_price);
         println!("   Expected yoctoNEAR value: {}", yocto_value);
 
-        // 値が同じことを確認
-        assert_eq!(*returned_price, yocto_value);
+        // 値が同じことを確認（f64からBigDecimalへの変換のため精度の問題があるかもしれない）
+        let returned_as_bigdecimal = returned_price.to_string().parse::<BigDecimal>().unwrap();
+        let diff = (&returned_as_bigdecimal - yocto_value).abs();
+        assert!(
+            diff < "0.01".parse::<BigDecimal>().unwrap(),
+            "Values should be approximately equal"
+        );
 
         // 問題：この値を使った時の初期ポートフォリオ計算
-        let initial_capital = 1000.0; // NEAR
-        let initial_per_token = initial_capital / 2.0; // 2つのトークンを想定
-        let initial_price_near = common::units::Units::yocto_f64_to_near_f64(*returned_price);
-        let token_amount = initial_per_token / initial_price_near;
+        let initial_capital = BigDecimal::from(1000); // NEAR
+        let initial_per_token = &initial_capital / BigDecimal::from(2); // 2つのトークンを想定
+        let initial_price_near = common::units::Units::yocto_f64_to_near_f64(*returned_price)
+            .to_string()
+            .parse::<BigDecimal>()
+            .unwrap();
+        let token_amount = &initial_per_token / &initial_price_near;
 
         println!("   💰 Portfolio Calculation:");
         println!("   initial_capital: {} NEAR", initial_capital);
@@ -82,7 +91,7 @@ mod data_flow_debug {
         println!("   calculated_token_amount: {:.2e}", token_amount);
 
         // これが問題の原因！
-        if token_amount > 1e20 {
+        if token_amount > "1e20".parse::<BigDecimal>().unwrap() {
             println!("   ❌ PROBLEM: Token amount is astronomical!");
             println!("   This explains the 5.45e20 trade amounts in momentum algorithm");
         }
@@ -96,19 +105,19 @@ mod data_flow_debug {
             println!("   {}: {:.2e} tokens", token, amount);
 
             // ポートフォリオ価値の計算
-            let portfolio_value = amount * initial_price_near;
+            let portfolio_value = amount * initial_price_near.clone();
             println!("   Portfolio value: {:.6} NEAR", portfolio_value);
         }
 
         // TradeContextで使われる値をシミュレート
-        if let Some(&current_amount) = simulated_current_holdings.get("nearai.aidols.near") {
+        if let Some(current_amount) = simulated_current_holdings.get("nearai.aidols.near") {
             println!("   🔄 Trading Context Simulation:");
             println!(
                 "   current_amount (for TradeContext): {:.2e}",
                 current_amount
             );
 
-            if current_amount > 1e20 {
+            if current_amount > &"1e20".parse::<BigDecimal>().unwrap() {
                 println!("   ❌ This current_amount would cause astronomical trades!");
                 println!("   In TradeExecution.amount, this becomes the 5.45e20 we saw");
             }

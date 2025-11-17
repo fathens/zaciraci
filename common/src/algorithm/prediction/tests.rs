@@ -57,14 +57,13 @@ impl MockPredictionProvider {
 
 #[async_trait]
 impl PredictionProvider for MockPredictionProvider {
-    async fn get_top_tokens(
+    async fn get_tokens_by_volatility(
         &self,
         _start_date: DateTime<Utc>,
         _end_date: DateTime<Utc>,
-        limit: usize,
         _quote_token: &str,
     ) -> crate::Result<Vec<TopTokenInfo>> {
-        Ok(self.top_tokens.clone().into_iter().take(limit).collect())
+        Ok(self.top_tokens.clone())
     }
 
     async fn get_price_history(
@@ -104,7 +103,7 @@ impl PredictionProvider for MockPredictionProvider {
             predictions.push(PredictedPrice {
                 timestamp,
                 price,
-                confidence: Some(0.8),
+                confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
             });
         }
 
@@ -157,10 +156,11 @@ mod prediction_tests {
         let start_date = create_test_timestamp();
         let end_date = start_date + Duration::days(30);
 
-        let top_tokens = provider
-            .get_top_tokens(start_date, end_date, 1, "wrap.near")
+        let all_tokens = provider
+            .get_tokens_by_volatility(start_date, end_date, "wrap.near")
             .await
             .unwrap();
+        let top_tokens: Vec<_> = all_tokens.into_iter().take(1).collect();
 
         assert_eq!(top_tokens.len(), 1);
         assert_eq!(top_tokens[0].token, "token1");
@@ -207,7 +207,7 @@ mod prediction_tests {
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
                 price: BigDecimal::from_f64(110.0).unwrap(),
-                confidence: Some(0.85),
+                confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
 
@@ -220,7 +220,7 @@ mod prediction_tests {
         assert_eq!(data.token, "test_token");
         assert_eq!(data.current_price, current_price);
         assert_eq!(data.predicted_price_24h, BigDecimal::from(110));
-        assert_eq!(data.confidence, Some(0.85));
+        assert_eq!(data.confidence, Some("0.85".parse::<BigDecimal>().unwrap()));
     }
 
     #[tokio::test]
@@ -258,7 +258,7 @@ mod prediction_tests {
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
                 price: BigDecimal::from_f64(110.0).unwrap(),
-                confidence: Some(0.85),
+                confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
 

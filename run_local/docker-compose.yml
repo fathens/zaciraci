@@ -10,6 +10,7 @@ services:
     volumes:
       - ./.data:/var/lib/postgresql/data
       - ./init_pg:/docker-entrypoint-initdb.d
+    shm_size: 256mb
     logging:
       driver: "json-file"
       options:
@@ -22,8 +23,11 @@ services:
       dockerfile: Dockerfile
       args:
         - CARGO_BUILD_ARGS=${CARGO_BUILD_ARGS:-}
+        - GIT_COMMIT_HASH=${GIT_COMMIT_HASH:-unknown}
     ports:
       - "8080:8080"
+    volumes:
+      - ../config:/app/config:ro
     environment:
       - PG_DSN=postgres://postgres:postgres@postgres:5432/postgres
       - RUST_LOG=${RUST_LOG:-trace}
@@ -34,10 +38,19 @@ services:
       - ROOT_HDPATH=${ROOT_HDPATH:-m/44'/397'/0'}
       - ROOT_ACCOUNT_ID=${ROOT_ACCOUNT_ID}
       - HARVEST_ACCOUNT_ID=${HARVEST_ACCOUNT_ID}
+      - TRADE_CRON_SCHEDULE=${TRADE_CRON_SCHEDULE}
+      - TRADE_INITIAL_INVESTMENT=${TRADE_INITIAL_INVESTMENT}
+      - TRADE_TOP_TOKENS=${TRADE_TOP_TOKENS}
+      - TRADE_EVALUATION_DAYS=${TRADE_EVALUATION_DAYS:-10}
+      - TRADE_ACCOUNT_RESERVE=${TRADE_ACCOUNT_RESERVE:-10}
+      - CRON_RECORD_RATES_INITIAL_VALUE=${CRON_RECORD_RATES_INITIAL_VALUE}
+      - HARVEST_MIN_AMOUNT=${HARVEST_MIN_AMOUNT}
+      - HARVEST_RESERVE_AMOUNT=${HARVEST_RESERVE_AMOUNT}
+      - CHRONOS_URL=${CHRONOS_URL}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
       - OLLAMA_MODEL=gemma3:12b
     logging:
       driver: "json-file"
       options:
         max-size: "100m"
-        max-file: "10"
+        max-file: "90"

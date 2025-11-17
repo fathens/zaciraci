@@ -2782,7 +2782,7 @@ fn test_portfolio_evaluation_accuracy() {
     // 現実的な価格での評価
     let realistic_tokens = vec![super::TokenData {
         symbol: "token_a".to_string(),
-        current_price: bigdecimal::BigDecimal::from_str("1000000000000000000000000").unwrap(), // 1 NEAR = 1e24 yoctoNEAR
+        current_price: "1000000000000000000000000".parse::<BigDecimal>().unwrap(), // 1 NEAR = 1e24 yoctoNEAR
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
         market_cap: Some(1000000.0),
@@ -2824,7 +2824,7 @@ fn test_extreme_price_weight_calculation() {
     let extreme_tokens = vec![
         super::TokenData {
             symbol: "bean.tkn.near".to_string(),
-            current_price: bigdecimal::BigDecimal::from_str("2.783120479512128E-19").unwrap(),
+            current_price: BigDecimal::from_str("2.783120479512128E-19").unwrap(),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
@@ -2832,7 +2832,7 @@ fn test_extreme_price_weight_calculation() {
         },
         super::TokenData {
             symbol: "ndc.tkn.near".to_string(),
-            current_price: bigdecimal::BigDecimal::from_str("4.8596827014459204E-20").unwrap(),
+            current_price: BigDecimal::from_str("4.8596827014459204E-20").unwrap(),
             historical_volatility: 0.4,
             liquidity_score: Some(0.7),
             market_cap: Some(500000.0),
@@ -2888,9 +2888,9 @@ fn test_extreme_price_weight_calculation() {
     println!("\n=== BigDecimal計算結果検証 ===");
 
     // 手動でBigDecimal計算を検証
-    let bean_price = bigdecimal::BigDecimal::from_str("2.783120479512128E-19").unwrap();
-    let bean_holding = bigdecimal::BigDecimal::from_str("847810222598858200000").unwrap();
-    let yocto_per_near = bigdecimal::BigDecimal::from_str("1000000000000000000000000").unwrap();
+    let bean_price = BigDecimal::from_str("2.783120479512128E-19").unwrap();
+    let bean_holding = "847810222598858200000".parse::<BigDecimal>().unwrap();
+    let yocto_per_near = "1000000000000000000000000".parse::<BigDecimal>().unwrap();
 
     let bean_value_yocto = &bean_price * &bean_holding;
     let bean_value_near = &bean_value_yocto / &yocto_per_near;

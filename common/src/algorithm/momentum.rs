@@ -49,7 +49,11 @@ pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
 /// 信頼度で調整されたリターンを計算
 pub fn calculate_confidence_adjusted_return(prediction: &PredictionData) -> f64 {
     let base_return = calculate_expected_return(prediction);
-    let confidence = prediction.confidence.unwrap_or(0.5);
+    let confidence = prediction
+        .confidence
+        .as_ref()
+        .map(|c| c.to_string().parse::<f64>().unwrap_or(0.5))
+        .unwrap_or(0.5);
 
     // 信頼度で調整（信頼度が低い場合はリターンを減少）
     base_return * confidence
@@ -63,7 +67,11 @@ pub fn rank_tokens_by_momentum(
         .iter()
         .map(|p| {
             let return_val = calculate_confidence_adjusted_return(p);
-            (p.token.clone(), return_val, p.confidence)
+            let confidence_f64 = p
+                .confidence
+                .as_ref()
+                .map(|c| c.to_string().parse::<f64>().unwrap_or(0.5));
+            (p.token.clone(), return_val, confidence_f64)
         })
         .filter(|(_, return_val, _)| *return_val > 0.0) // 正のリターンのみ
         .collect();
@@ -207,9 +215,10 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     // 追加: トップトークンの予測も取得
     let end_date = Utc::now();
     let start_date = end_date - Duration::days(history_days);
-    let top_tokens = prediction_provider
-        .get_top_tokens(start_date, end_date, TOP_N_TOKENS, quote_token)
+    let all_tokens = prediction_provider
+        .get_tokens_by_volatility(start_date, end_date, quote_token)
         .await?;
+    let top_tokens: Vec<_> = all_tokens.into_iter().take(TOP_N_TOKENS).collect();
 
     // トップトークンの予測を追加
     for top_token in top_tokens {
@@ -365,11 +374,10 @@ mod integration_tests {
 
     #[async_trait]
     impl PredictionProvider for SimpleMockProvider {
-        async fn get_top_tokens(
+        async fn get_tokens_by_volatility(
             &self,
             _start_date: chrono::DateTime<Utc>,
             _end_date: chrono::DateTime<Utc>,
-            limit: usize,
             _quote_token: &str,
         ) -> crate::Result<Vec<TopTokenInfo>> {
             Ok(vec![
@@ -387,7 +395,6 @@ mod integration_tests {
                 },
             ]
             .into_iter()
-            .take(limit)
             .collect())
         }
 
@@ -423,7 +430,7 @@ mod integration_tests {
                 predictions.push(PredictedPrice {
                     timestamp,
                     price,
-                    confidence: Some(0.8),
+                    confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
                 });
             }
 

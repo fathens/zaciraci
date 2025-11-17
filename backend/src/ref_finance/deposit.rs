@@ -171,6 +171,30 @@ pub async fn withdraw<C: SendTx, W: Wallet>(
         .await
 }
 
+pub async fn register_tokens<C: SendTx, W: Wallet>(
+    client: &C,
+    wallet: &W,
+    tokens: &[TokenAccount],
+) -> Result<C::Output> {
+    let log = DEFAULT.new(o!(
+        "function" => "register_tokens",
+        "tokens" => format!("{:?}", tokens),
+    ));
+    info!(log, "entered");
+
+    const METHOD_NAME: &str = "register_tokens";
+    let args = json!({
+        "token_ids": tokens
+    });
+
+    let deposit = 1; // minimum deposit
+    let signer = wallet.signer();
+
+    client
+        .exec_contract(signer, &CONTRACT_ADDRESS, METHOD_NAME, &args, deposit)
+        .await
+}
+
 pub async fn unregister_tokens<C: SendTx, W: Wallet>(
     client: &C,
     wallet: &W,

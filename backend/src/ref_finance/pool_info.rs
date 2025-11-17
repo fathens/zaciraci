@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, json};
 use std::collections::HashMap;
 use std::slice::Iter;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
 
@@ -171,7 +171,9 @@ impl TokenPair {
         if balance_in == 0 {
             return Err(Error::ZeroAmount.into());
         }
-        let in_value = (balance_in / 2).min(*MAX_AMOUNT);
+        // balance_in/2を使用することで、極端な流動性の偏りがあるプールでも
+        // 適切な見積もり値を取得できる
+        let in_value = balance_in / 2;
         let out_value = self
             .pool
             .estimate_return(self.token_in, in_value, self.token_out)?;
@@ -217,9 +219,6 @@ impl TokenPath {
 }
 
 pub const FEE_DIVISOR: u32 = 10_000;
-pub static MAX_AMOUNT: LazyLock<u128> = LazyLock::new(|| {
-    zaciraci_common::types::YoctoNearToken::from_near(BigDecimal::from(1000)).as_yoctonear()
-});
 
 impl PoolInfo {
     pub fn new(id: u32, bare: PoolInfoBared, timestamp: NaiveDateTime) -> Self {
@@ -576,13 +575,5 @@ mod tests {
         let result = sample.estimate_return(0.into(), 100, 1.into());
         assert!(result.is_ok());
         assert_eq!(10756643_u128, result.unwrap());
-    }
-
-    #[test]
-    fn test_max_amount() {
-        let v = *MAX_AMOUNT;
-        assert!(v > 0);
-        assert!(v < u128::MAX);
-        assert_eq!(v, 1_000_000_000_000_000_000_000_000_000);
     }
 }

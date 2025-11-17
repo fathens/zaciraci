@@ -1,4 +1,4 @@
-FROM rust:1.89.0-bookworm AS base
+FROM rust:1.91.0-bookworm AS base
 
 RUN cargo install sccache
 RUN cargo install cargo-chef
@@ -20,6 +20,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM base AS builder
 ARG CARGO_BUILD_ARGS
+ARG GIT_COMMIT_HASH=unknown
+
+ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
 
 WORKDIR /app
 

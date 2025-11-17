@@ -896,7 +896,7 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
 
     // BigDecimalで高精度計算を実行
     let total_value_bd = BigDecimal::from_str(&wallet.total_value.to_string()).unwrap_or_default();
-    let yocto_per_near = BigDecimal::from_str("1000000000000000000000000").unwrap(); // 10^24
+    let yocto_per_near = "1000000000000000000000000".parse::<BigDecimal>().unwrap(); // 10^24
 
     for (i, token) in tokens.iter().enumerate() {
         if let Some(&holding) = wallet.holdings.get(&token.symbol) {
