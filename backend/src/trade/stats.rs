@@ -541,6 +541,13 @@ where
             .map_err(|e| anyhow::anyhow!("Failed to convert prediction to f64: {}", e))?;
         predictions.insert(token.to_string(), prediction_f64);
 
+        info!(log, "token prediction";
+            "token" => %token,
+            "current_price" => %current_price,
+            "predicted_price" => prediction_f64,
+            "expected_return_pct" => format!("{:.2}%", ((prediction_f64 - current_price as f64) / current_price as f64) * 100.0)
+        );
+
         // ボラティリティの計算
         let volatility = calculate_volatility_from_history(&history)?;
 
@@ -628,8 +635,20 @@ where
     .await?;
 
     info!(log, "portfolio optimization completed";
-        "actions" => execution_report.actions.len()
+        "actions" => execution_report.actions.len(),
+        "rebalance_needed" => execution_report.rebalance_needed,
+        "expected_return" => execution_report.optimal_weights.expected_return,
+        "expected_volatility" => execution_report.optimal_weights.expected_volatility,
+        "sharpe_ratio" => execution_report.optimal_weights.sharpe_ratio
     );
+
+    for (token, weight) in &execution_report.optimal_weights.weights {
+        info!(log, "optimal weight";
+            "token" => token,
+            "weight" => weight,
+            "percentage" => format!("{:.2}%", weight * 100.0)
+        );
+    }
 
     Ok(execution_report.actions)
 }
