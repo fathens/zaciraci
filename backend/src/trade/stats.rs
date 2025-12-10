@@ -539,13 +539,16 @@ where
             .to_string()
             .parse::<f64>()
             .map_err(|e| anyhow::anyhow!("Failed to convert prediction to f64: {}", e))?;
-        predictions.insert(token.to_string(), prediction_f64);
+
+        // 予測値を yoctoNEAR 単位に変換（current_price と同じ単位に揃える）
+        let prediction_yocto = prediction_f64 * 1e24;
+        predictions.insert(token.to_string(), prediction_yocto);
 
         info!(log, "token prediction";
             "token" => %token,
             "current_price" => %current_price,
-            "predicted_price" => prediction_f64,
-            "expected_return_pct" => format!("{:.2}%", ((prediction_f64 - current_price as f64) / current_price as f64) * 100.0)
+            "predicted_price" => prediction_yocto,
+            "expected_return_pct" => format!("{:.2}%", ((prediction_yocto - current_price as f64) / current_price as f64) * 100.0)
         );
 
         // ボラティリティの計算
