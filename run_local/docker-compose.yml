@@ -49,6 +49,7 @@ services:
       - CHRONOS_URL=${CHRONOS_URL}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
       - OLLAMA_MODEL=gemma3:12b
+      - TRADE_ENABLED=${TRADE_ENABLED:-false}
     logging:
       driver: "json-file"
       options:

@@ -83,6 +83,8 @@ pub struct ExternalServicesConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct TradeConfig {
+    #[serde(default = "default_trade_enabled")]
+    pub enabled: bool,
     #[serde(default = "default_initial_investment")]
     pub initial_investment: u32,
     #[serde(default = "default_top_tokens")]
@@ -178,6 +180,9 @@ fn default_ollama_base_url() -> String {
 fn default_ollama_model() -> String {
     "llama2".to_string()
 }
+fn default_trade_enabled() -> bool {
+    false
+}
 fn default_initial_investment() -> u32 {
     100
 }
@@ -260,6 +265,7 @@ impl Default for ExternalServicesConfig {
 impl Default for TradeConfig {
     fn default() -> Self {
         Self {
+            enabled: default_trade_enabled(),
             initial_investment: default_initial_investment(),
             top_tokens: default_top_tokens(),
             evaluation_days: default_evaluation_days(),

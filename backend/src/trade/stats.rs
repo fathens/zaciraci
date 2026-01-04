@@ -59,6 +59,11 @@ pub async fn start() -> Result<()> {
 
     info!(log, "starting portfolio-based trading strategy");
 
+    // TRADE_ENABLED のチェック
+    let trade_enabled = config::get("TRADE_ENABLED")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false);
+
     // Step 1: 評価期間のチェックと管理（清算が必要な場合は先に実行）
     // 初回起動時は available_funds=0 で呼び出し、後で prepare_funds() で資金準備
     let (period_id, is_new_period, existing_tokens, liquidated_balance) =
@@ -67,8 +72,28 @@ pub async fn start() -> Result<()> {
         "period_id" => %period_id,
         "is_new_period" => is_new_period,
         "existing_tokens_count" => existing_tokens.len(),
-        "liquidated_balance" => ?liquidated_balance
+        "liquidated_balance" => ?liquidated_balance,
+        "trade_enabled" => trade_enabled
     );
+
+    // period_id が空の場合は清算のみで終了（manage_evaluation_period で停止された）
+    if period_id.is_empty() {
+        info!(log, "trade stopped after liquidation (TRADE_ENABLED=false)");
+        return Ok(());
+    }
+
+    // 取引が無効化されている場合
+    if !trade_enabled {
+        if is_new_period {
+            info!(log, "trade disabled, skipping new period");
+            return Ok(());
+        } else {
+            // 評価期間中: 清算して終了
+            info!(log, "trade disabled, liquidating positions");
+            let _ = liquidate_all_positions().await?;
+            return Ok(());
+        }
+    }
 
     // Step 2: 資金準備（新規期間で清算がなかった場合のみ）
     let available_funds = if is_new_period {
@@ -1121,6 +1146,19 @@ async fn manage_evaluation_period(
                     "change_amount" => %change_amount,
                     "change_percentage" => %format!("{:.2}%", change_percentage)
                 );
+
+                // TRADE_ENABLED をチェック
+                let trade_enabled = config::get("TRADE_ENABLED")
+                    .map(|v| v.to_lowercase() == "true")
+                    .unwrap_or(false);
+
+                if !trade_enabled {
+                    info!(log, "trade disabled, not starting new period";
+                        "final_balance" => %final_balance
+                    );
+                    // 空の period_id を返して停止を通知
+                    return Ok((String::new(), false, vec![], Some(final_balance)));
+                }
 
                 // 新規評価期間を作成
                 let new_period = NewEvaluationPeriod::new(final_value.clone(), vec![]);
