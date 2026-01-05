@@ -26,6 +26,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
+use zaciraci_common::units::Units;
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -492,8 +493,7 @@ where
         // 現在価格を履歴から取得
         let current_price = if let Some(latest_price) = history.prices.last() {
             // BigDecimalをyoctoNEAR (u128)に変換
-            let yocto_multiplier = BigDecimal::from(10u128.pow(24));
-            let price_yocto = &latest_price.price * &yocto_multiplier;
+            let price_yocto = Units::near_to_yocto(&latest_price.price);
 
             debug!(log, "converting price to u128";
                 "token" => %token,
@@ -566,7 +566,7 @@ where
             .map_err(|e| anyhow::anyhow!("Failed to convert prediction to f64: {}", e))?;
 
         // 予測値を yoctoNEAR 単位に変換（current_price と同じ単位に揃える）
-        let prediction_yocto = prediction_f64 * 1e24;
+        let prediction_yocto = Units::near_f64_to_yocto_f64(prediction_f64);
         predictions.insert(token.to_string(), prediction_yocto);
 
         info!(log, "token prediction";

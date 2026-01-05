@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::units::Units;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
@@ -896,7 +897,6 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
 
     // BigDecimalで高精度計算を実行
     let total_value_bd = BigDecimal::from_str(&wallet.total_value.to_string()).unwrap_or_default();
-    let yocto_per_near = "1000000000000000000000000".parse::<BigDecimal>().unwrap(); // 10^24
 
     for (i, token) in tokens.iter().enumerate() {
         if let Some(&holding) = wallet.holdings.get(&token.symbol) {
@@ -911,7 +911,7 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
             let value_yocto_bd = price_bd * &holding_bd;
 
             // yoctoNEARからNEARに変換 (高精度)
-            let value_near_bd = &value_yocto_bd / &yocto_per_near;
+            let value_near_bd = Units::yocto_to_near(&value_yocto_bd);
 
             // 重みを計算 (BigDecimal)
             if total_value_bd > BigDecimal::from(0) {
