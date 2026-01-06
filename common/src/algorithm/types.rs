@@ -653,8 +653,14 @@ mod tests {
         let price = Price::new(BigDecimal::from_str("123.456789").unwrap());
         let json = serde_json::to_string(&price).unwrap();
 
-        // BigDecimal のシリアライズ形式を検証
-        // （内部実装に依存するが、文字列または数値として表現される）
+        // BigDecimal単体のシリアライズ形式と比較
+        let bd = BigDecimal::from_str("123.456789").unwrap();
+        let bd_json = serde_json::to_string(&bd).unwrap();
+
+        // Price と BigDecimal は同じJSON形式でシリアライズされることを確認
+        assert_eq!(json, bd_json);
+
+        // デシリアライズの往復確認
         let deserialized: Price = serde_json::from_str(&json).unwrap();
         assert_eq!(price, deserialized);
     }
