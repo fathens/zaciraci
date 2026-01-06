@@ -12,6 +12,10 @@ use common::types::Price;
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
+// 型エイリアスを明示的にインポート（ドキュメント目的）
+#[allow(unused_imports)]
+use super::types::{NearPrice, NearValue, TokenAmount, YoctoPrice};
+
 /// Run momentum simulation
 pub async fn run_momentum_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
     if config.verbose {
@@ -74,7 +78,8 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
     let duration = config.end_date - config.start_date;
     let duration_days = duration.num_days();
-    let initial_value = config
+    // initial_value: NEAR単位（ユーザー入力）
+    let initial_value: NearValue = config
         .initial_capital
         .to_string()
         .parse::<f64>()
@@ -86,23 +91,25 @@ pub(crate) async fn run_momentum_timestep_simulation(
     let mut current_time = config.start_date;
     let mut portfolio_values = Vec::new();
     let mut trades = Vec::new();
-    let mut current_holdings = HashMap::new();
-    let mut total_costs = 0.0;
+    let mut current_holdings: HashMap<String, TokenAmount> = HashMap::new();
+    let mut total_costs: NearValue = 0.0;
 
     // 初期ポートフォリオ設定（均等分散）
     let tokens_count = config.target_tokens.len() as f64;
-    let initial_per_token = initial_value / tokens_count;
+    let initial_per_token: NearValue = initial_value / tokens_count;
 
-    // 初期価格データを取得
-    let initial_prices = get_prices_at_time(price_data, config.start_date)?;
+    // 初期価格データを取得（yoctoNEAR/token単位）
+    let initial_prices: HashMap<String, YoctoPrice> =
+        get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
         if let Some(&initial_price_yocto) = initial_prices.get(token) {
-            // initial_per_tokenはNEAR単位、initial_price_yoctoはyoctoNEAR単位
-            // NEAR単位に変換してから計算
-            let initial_price_near =
+            // initial_per_token: NEAR単位
+            // initial_price_yocto: yoctoNEAR/token単位
+            // → NEAR/token単位に変換してからトークン数量を計算
+            let initial_price_near: NearPrice =
                 common::units::Units::yocto_f64_to_near_f64(initial_price_yocto);
-            let token_amount = initial_per_token / initial_price_near;
+            let token_amount: TokenAmount = initial_per_token / initial_price_near;
             current_holdings.insert(token.clone(), token_amount);
         } else {
             return Err(anyhow::anyhow!(
@@ -123,7 +130,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
         step_count += 1;
         total_timesteps += 1;
 
-        // 価格データ取得を試行
+        // 価格データ取得を試行（yoctoNEAR/token単位）
         match get_prices_at_time_optional(price_data, current_time) {
             Some(current_prices) => {
                 // データがある場合：通常の取引処理
@@ -416,7 +423,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
     let duration = config.end_date - config.start_date;
     let duration_days = duration.num_days();
-    let initial_value = config
+    // initial_value: NEAR単位（ユーザー入力）
+    let initial_value: NearValue = config
         .initial_capital
         .to_string()
         .parse::<f64>()
@@ -428,24 +436,26 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     let mut current_time = config.start_date;
     let mut portfolio_values = Vec::new();
     let mut trades = Vec::new();
-    let mut current_holdings = HashMap::new();
-    let mut total_costs = 0.0;
+    let mut current_holdings: HashMap<String, TokenAmount> = HashMap::new();
+    let mut total_costs: NearValue = 0.0;
     let mut last_rebalance_time = config.start_date;
 
     // 初期ポートフォリオ設定（均等分散）
     let tokens_count = config.target_tokens.len() as f64;
-    let initial_per_token = initial_value / tokens_count;
+    let initial_per_token: NearValue = initial_value / tokens_count;
 
-    // 初期価格データを取得
-    let initial_prices = get_prices_at_time(price_data, config.start_date)?;
+    // 初期価格データを取得（yoctoNEAR/token単位）
+    let initial_prices: HashMap<String, YoctoPrice> =
+        get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
         if let Some(&initial_price_yocto) = initial_prices.get(token) {
-            // initial_per_tokenはNEAR単位、initial_price_yoctoはyoctoNEAR単位
-            // NEAR単位に変換してから計算
-            let initial_price_near =
+            // initial_per_token: NEAR単位
+            // initial_price_yocto: yoctoNEAR/token単位
+            // → NEAR/token単位に変換してからトークン数量を計算
+            let initial_price_near: NearPrice =
                 common::units::Units::yocto_f64_to_near_f64(initial_price_yocto);
-            let token_amount = initial_per_token / initial_price_near;
+            let token_amount: TokenAmount = initial_per_token / initial_price_near;
             current_holdings.insert(token.clone(), token_amount);
         } else {
             return Err(anyhow::anyhow!(
@@ -466,7 +476,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         step_count += 1;
         total_timesteps += 1;
 
-        // 価格データ取得を試行
+        // 価格データ取得を試行（yoctoNEAR/token単位）
         match get_prices_at_time_optional(price_data, current_time) {
             Some(current_prices) => {
                 // データがある場合：通常の処理

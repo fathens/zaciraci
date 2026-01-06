@@ -7,6 +7,10 @@ use common::algorithm::{PredictionData, TradingAction};
 use common::types::Price;
 use std::collections::HashMap;
 
+// 型エイリアスを明示的にインポート（ドキュメント目的）
+#[allow(unused_imports)]
+use super::types::{NearPrice, NearValue, TokenAmount, YoctoPrice};
+
 // Import cache-related modules
 use crate::models::prediction::{
     PredictionFileData, PredictionMetadata, PredictionPoint as CachePredictionPoint,
@@ -370,10 +374,14 @@ async fn get_historical_price_data(
 /// Trading context for managing mutable state during trade execution
 pub struct TradeContext<'a> {
     pub current_token: &'a str,
-    pub current_amount: f64,
-    pub current_price: f64,
-    pub all_prices: &'a HashMap<String, f64>,
-    pub holdings: &'a mut HashMap<String, f64>,
+    /// 現在保有量（トークン数量）
+    pub current_amount: TokenAmount,
+    /// 現在価格（yoctoNEAR/token単位）
+    pub current_price: YoctoPrice,
+    /// 全トークンの価格（yoctoNEAR/token単位）
+    pub all_prices: &'a HashMap<String, YoctoPrice>,
+    /// 保有量（トークン数量）
+    pub holdings: &'a mut HashMap<String, TokenAmount>,
     pub timestamp: DateTime<Utc>,
     pub config: &'a SimulationConfig,
 }
@@ -557,7 +565,11 @@ pub fn execute_trading_action(
 /// Immutable portfolio operations for functional trading
 impl ImmutablePortfolio {
     /// Create a new portfolio with initial capital in a specific token
-    pub fn new(initial_capital: f64, initial_token: &str) -> Self {
+    ///
+    /// # Arguments
+    /// * `initial_capital` - 初期資金（トークン数量）
+    /// * `initial_token` - 初期トークン名
+    pub fn new(initial_capital: TokenAmount, initial_token: &str) -> Self {
         let mut holdings = HashMap::new();
         holdings.insert(initial_token.to_string(), initial_capital);
 
@@ -569,12 +581,21 @@ impl ImmutablePortfolio {
     }
 
     /// Calculate total portfolio value using market prices
+    ///
+    /// # Returns
+    /// ポートフォリオ総価値（yoctoNEAR単位）
+    ///
+    /// 注意: market.prices は yoctoNEAR/token 単位なので、
+    /// 結果も yoctoNEAR 単位となる
     pub fn total_value(&self, market: &MarketSnapshot) -> f64 {
         let mut total = self.cash_balance;
 
         for (token, amount) in &self.holdings {
-            if let Some(&price) = market.prices.get(token) {
-                total += amount * price;
+            if let Some(&price_yocto) = market.prices.get(token) {
+                // price_yocto: yoctoNEAR/token
+                // amount: トークン数量
+                // → 結果は yoctoNEAR 単位
+                total += amount * price_yocto;
             }
         }
 

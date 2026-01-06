@@ -6,6 +6,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
+// =============================================================================
+// 単位を明示するための型エイリアス
+// =============================================================================
+//
+// シミュレーションコードでは以下の単位が混在するため、型エイリアスで明示する：
+// - 価格: yoctoNEAR/token または NEAR/token
+// - 量: トークン数量
+// - 金額: NEAR
+//
+// 注意: これらは型エイリアスなので、コンパイル時の型チェックは提供しない。
+// 将来的には common::types の型に置き換えることを推奨。
+
+/// 価格（yoctoNEAR/token）- バックエンドから取得した生の価格
+pub type YoctoPrice = f64;
+
+/// 価格（NEAR/token）- ユーザー表示や計算用に変換した価格
+pub type NearPrice = f64;
+
+/// トークン数量
+pub type TokenAmount = f64;
+
+/// 金額（NEAR）- ポートフォリオ評価額など
+pub type NearValue = f64;
+
 // Trading related structures
 #[derive(Debug, Clone, PartialEq)]
 pub enum TradingDecision {
@@ -31,14 +55,17 @@ pub struct TokenOpportunity {
 // Immutable data structures for better functional programming
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImmutablePortfolio {
-    pub holdings: HashMap<String, f64>,
-    pub cash_balance: f64,
+    /// トークン別保有量（トークン数量）
+    pub holdings: HashMap<String, TokenAmount>,
+    /// 現金残高（NEAR）
+    pub cash_balance: NearValue,
     pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MarketSnapshot {
-    pub prices: HashMap<String, f64>,
+    /// 価格マップ（yoctoNEAR/token単位）
+    pub prices: HashMap<String, YoctoPrice>,
     pub timestamp: DateTime<Utc>,
     pub data_quality: DataQuality,
 }
@@ -366,7 +393,10 @@ impl std::str::FromStr for RebalanceInterval {
 
 impl MarketSnapshot {
     /// Create a new MarketSnapshot from price data
-    pub fn new(prices: HashMap<String, f64>) -> Self {
+    ///
+    /// # Arguments
+    /// * `prices` - 価格マップ（yoctoNEAR/token単位）
+    pub fn new(prices: HashMap<String, YoctoPrice>) -> Self {
         let data_quality = if prices.len() >= 2 {
             DataQuality::High
         } else if prices.len() == 1 {
@@ -387,31 +417,32 @@ impl MarketSnapshot {
         matches!(self.data_quality, DataQuality::High | DataQuality::Medium)
     }
 
-    /// Get price for a specific token
-    pub fn get_price(&self, token: &str) -> Option<f64> {
+    /// Get price for a specific token (yoctoNEAR/token単位)
+    pub fn get_price(&self, token: &str) -> Option<YoctoPrice> {
         self.prices.get(token).copied()
     }
 
     /// Create MarketSnapshot from price data at a specific time
+    ///
+    /// 返される価格は yoctoNEAR/token 単位
     pub fn from_price_data(
         price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
         timestamp: DateTime<Utc>,
     ) -> Result<Self> {
-        let mut prices = HashMap::new();
+        let mut prices: HashMap<String, YoctoPrice> = HashMap::new();
 
         for (token, data_points) in price_data {
             // Find the closest price point to the target timestamp
             if let Some(closest_point) = data_points.iter().min_by_key(|point| {
                 (DateTime::<Utc>::from_naive_utc_and_offset(point.time, Utc) - timestamp).abs()
             }) {
-                prices.insert(
-                    token.clone(),
-                    closest_point
-                        .value
-                        .to_string()
-                        .parse::<f64>()
-                        .unwrap_or(0.0),
-                );
+                // 価格は yoctoNEAR/token 単位として取得
+                let price_yocto: YoctoPrice = closest_point
+                    .value
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+                prices.insert(token.clone(), price_yocto);
             }
         }
 
@@ -572,11 +603,15 @@ pub struct TradeExecution {
     pub timestamp: DateTime<Utc>,
     pub from_token: String,
     pub to_token: String,
-    pub amount: f64,
-    pub executed_price: f64,
+    /// 取引数量（トークン数量）
+    pub amount: TokenAmount,
+    /// 約定価格（NEAR/token単位）
+    pub executed_price: NearPrice,
     pub cost: TradingCost,
-    pub portfolio_value_before: f64,
-    pub portfolio_value_after: f64,
+    /// 取引前のポートフォリオ価値（NEAR）
+    pub portfolio_value_before: NearValue,
+    /// 取引後のポートフォリオ価値（NEAR）
+    pub portfolio_value_after: NearValue,
     pub success: bool,
     pub reason: String,
 }
@@ -584,10 +619,14 @@ pub struct TradeExecution {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioValue {
     pub timestamp: DateTime<Utc>,
-    pub total_value: f64,
-    pub holdings: HashMap<String, f64>,
-    pub cash_balance: f64,
-    pub unrealized_pnl: f64,
+    /// 総ポートフォリオ価値（NEAR）
+    pub total_value: NearValue,
+    /// トークン別保有価値（NEAR）
+    pub holdings: HashMap<String, NearValue>,
+    /// 現金残高（NEAR）
+    pub cash_balance: NearValue,
+    /// 未実現損益（NEAR）
+    pub unrealized_pnl: NearValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
