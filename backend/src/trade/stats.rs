@@ -1,3 +1,20 @@
+//! 価格統計・取引処理モジュール
+//!
+//! ## 単位の規約
+//!
+//! このモジュールでは以下の単位規約を使用しています：
+//!
+//! - **current_price (u128)**: yoctoNEAR 単位 (1 NEAR = 10^24 yoctoNEAR)
+//! - **Price 型**: 本来は無次元比率だが、このモジュールでは yoctoNEAR 値を格納
+//! - **predictions (HashMap<String, f64>)**: yoctoNEAR 単位の予測価格
+//! - **volatility**: 比率（単位なし）
+//!
+//! ## 単位変換
+//!
+//! - NEAR → yoctoNEAR: `Units::near_to_yocto()`
+//! - yoctoNEAR → NEAR: `Units::yocto_to_near()`
+//! - f64 版: `Units::near_f64_to_yocto_f64()`, `Units::yocto_f64_to_near_f64()`
+
 mod arima;
 
 use crate::Result;
@@ -431,6 +448,18 @@ async fn select_top_volatility_tokens(
 }
 
 /// ポートフォリオ戦略の実行
+///
+/// # 引数
+/// * `prediction_service` - 価格予測サービス
+/// * `tokens` - 対象トークンのアカウントID
+/// * `available_funds` - 利用可能資金（yoctoNEAR単位）
+/// * `is_new_period` - 新しい評価期間かどうか
+/// * `client` - RPCクライアント
+/// * `wallet` - ウォレット
+///
+/// # 内部の単位
+/// * 価格: yoctoNEAR/token（Price型に格納されるがyoctoNEAR値）
+/// * 予測: f64 yoctoNEAR/token
 async fn execute_portfolio_strategy<C, W>(
     prediction_service: &PredictionService,
     tokens: &[AccountId],
