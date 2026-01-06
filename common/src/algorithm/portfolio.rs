@@ -904,10 +904,10 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
             // 科学的記数法の値も正確に扱える
             let holding_bd = BigDecimal::from_str(&holding.to_string()).unwrap_or_default();
 
-            // 価格も完全にBigDecimalで処理
-            let price_bd = &token.current_price; // yoctoNEAR単位
+            // 価格のBigDecimal表現を取得
+            let price_bd = token.current_price.as_bigdecimal();
 
-            // 価値をyoctoNEAR単位で計算 (BigDecimal同士の乗算)
+            // 価値を計算 (BigDecimal同士の乗算)
             let value_yocto_bd = price_bd * &holding_bd;
 
             // yoctoNEARからNEARに変換 (高精度)

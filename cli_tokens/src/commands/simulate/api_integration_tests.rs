@@ -2,13 +2,19 @@ use crate::api::backend::BackendClient;
 use crate::commands::simulate::algorithms::run_momentum_timestep_simulation;
 use crate::commands::simulate::trading::generate_api_predictions;
 use crate::commands::simulate::{AlgorithmType, FeeModel, RebalanceInterval, SimulationConfig};
+use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
 use common::algorithm::PredictionData;
 use common::api::chronos::ChronosApiClient;
 use common::prediction::{ChronosPredictionResponse, ZeroShotPredictionRequest};
 use common::stats::ValueAtTime;
+use common::types::Price;
 use mockito::{Mock, ServerGuard};
 use std::collections::HashMap;
+
+fn price(v: f64) -> Price {
+    Price::new(BigDecimal::from_f64(v).unwrap())
+}
 
 /// API統合テスト用のモックサーバーを設定
 async fn setup_mock_server() -> (ServerGuard, Mock, Mock) {
@@ -189,21 +195,15 @@ mod tests {
     fn test_prediction_data_structure() {
         let prediction = PredictionData {
             token: "test_token".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
-            predicted_price_24h: BigDecimal::from_f64(110.0).unwrap(),
+            current_price: price(100.0),
+            predicted_price_24h: price(110.0),
             timestamp: Utc::now(),
             confidence: Some("0.8".parse().unwrap()),
         };
 
         assert_eq!(prediction.token, "test_token");
-        assert_eq!(
-            prediction.current_price,
-            BigDecimal::from_f64(100.0).unwrap()
-        );
-        assert_eq!(
-            prediction.predicted_price_24h,
-            BigDecimal::from_f64(110.0).unwrap()
-        );
+        assert_eq!(prediction.current_price, price(100.0));
+        assert_eq!(prediction.predicted_price_24h, price(110.0));
         assert_eq!(prediction.confidence, Some("0.8".parse().unwrap()));
     }
 

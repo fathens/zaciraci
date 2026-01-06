@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::{Price, PriceF64};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
@@ -19,13 +20,13 @@ impl MockPredictionProvider {
                     token: "token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_price: 100.0,
+                    current_price: PriceF64::new(100.0),
                 },
                 TopTokenInfo {
                     token: "token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_price: 50.0,
+                    current_price: PriceF64::new(50.0),
                 },
             ],
             price_histories: HashMap::new(),
@@ -38,7 +39,7 @@ impl MockPredictionProvider {
             .into_iter()
             .map(|(timestamp, price)| PricePoint {
                 timestamp,
-                price: BigDecimal::from_f64(price).unwrap(),
+                price: Price::new(BigDecimal::from_f64(price).unwrap()),
                 volume: None,
             })
             .collect();
@@ -99,7 +100,8 @@ impl PredictionProvider for MockPredictionProvider {
 
         for i in 1..=prediction_horizon {
             let timestamp = prediction_time + Duration::hours(i as i64);
-            let price = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(); // 1%ずつ増加する予測
+            let price =
+                Price::new(BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap()); // 1%ずつ増加する予測
             predictions.push(PredictedPrice {
                 timestamp,
                 price,
@@ -164,7 +166,7 @@ mod prediction_tests {
 
         assert_eq!(top_tokens.len(), 1);
         assert_eq!(top_tokens[0].token, "token1");
-        assert_eq!(top_tokens[0].current_price, 100.0);
+        assert_eq!(top_tokens[0].current_price, PriceF64::new(100.0));
     }
 
     #[tokio::test]
@@ -187,11 +189,11 @@ mod prediction_tests {
         assert_eq!(history.prices.len(), 2);
         assert_eq!(
             history.prices[0].price,
-            BigDecimal::from_f64(100.0).unwrap()
+            Price::new(BigDecimal::from_f64(100.0).unwrap())
         );
         assert_eq!(
             history.prices[1].price,
-            BigDecimal::from_f64(105.0).unwrap()
+            Price::new(BigDecimal::from_f64(105.0).unwrap())
         );
     }
 
@@ -206,12 +208,12 @@ mod prediction_tests {
             prediction_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
-                price: BigDecimal::from_f64(110.0).unwrap(),
+                price: Price::new(BigDecimal::from_f64(110.0).unwrap()),
                 confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
 
-        let current_price = BigDecimal::from(100);
+        let current_price = Price::new(BigDecimal::from(100));
         let prediction_data =
             PredictionData::from_token_prediction(&prediction_result, current_price.clone());
 
@@ -219,7 +221,7 @@ mod prediction_tests {
         let data = prediction_data.unwrap();
         assert_eq!(data.token, "test_token");
         assert_eq!(data.current_price, current_price);
-        assert_eq!(data.predicted_price_24h, BigDecimal::from(110));
+        assert_eq!(data.predicted_price_24h, Price::new(BigDecimal::from(110)));
         assert_eq!(data.confidence, Some("0.85".parse::<BigDecimal>().unwrap()));
     }
 
@@ -257,12 +259,12 @@ mod prediction_tests {
             prediction_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
-                price: BigDecimal::from_f64(110.0).unwrap(),
+                price: Price::new(BigDecimal::from_f64(110.0).unwrap()),
                 confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
 
-        let current_price = BigDecimal::from(100);
+        let current_price = Price::new(BigDecimal::from(100));
         let prediction_data =
             PredictionData::from_token_prediction(&prediction_result, current_price);
 

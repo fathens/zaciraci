@@ -4,6 +4,7 @@ use anyhow::Result;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
 use common::algorithm::{PredictionData, TradingAction};
+use common::types::Price;
 use std::collections::HashMap;
 
 // Import cache-related modules
@@ -52,8 +53,8 @@ async fn try_load_from_cache(
 
             return Ok(Some(PredictionData {
                 token: token.to_string(),
-                current_price,
-                predicted_price_24h: last_prediction.price.clone(),
+                current_price: Price::new(current_price),
+                predicted_price_24h: Price::new(last_prediction.price.clone()),
                 timestamp: pred_start,
                 confidence: last_prediction.confidence.clone(),
             }));
@@ -254,8 +255,10 @@ pub async fn generate_api_predictions(
 
                                         predictions.push(PredictionData {
                                             token: token.clone(),
-                                            current_price: current_price.clone(),
-                                            predicted_price_24h: predicted_value.clone(),
+                                            current_price: Price::new(current_price.clone()),
+                                            predicted_price_24h: Price::new(
+                                                predicted_value.clone(),
+                                            ),
                                             timestamp: current_time,
                                             confidence: chronos_result
                                                 .metrics

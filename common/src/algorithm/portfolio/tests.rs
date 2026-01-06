@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::Price;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::Duration;
 use ndarray::array;
@@ -7,11 +8,15 @@ use std::str::FromStr;
 
 // ==================== テストヘルパー ====================
 
+fn price(v: f64) -> Price {
+    Price::new(BigDecimal::from_f64(v).unwrap())
+}
+
 fn create_sample_tokens() -> Vec<TokenInfo> {
     vec![
         TokenInfo {
             symbol: "TOKEN_A".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
@@ -19,7 +24,7 @@ fn create_sample_tokens() -> Vec<TokenInfo> {
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
             market_cap: Some(500000.0),
@@ -27,7 +32,7 @@ fn create_sample_tokens() -> Vec<TokenInfo> {
         },
         TokenInfo {
             symbol: "TOKEN_C".to_string(),
-            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            current_price: price(200.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(2000000.0),
@@ -53,7 +58,7 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
     for i in 0..30 {
         token_a_prices.push(PricePoint {
             timestamp: base_time + Duration::days(i),
-            price: BigDecimal::from_f64(90.0 + i as f64 * 0.5).unwrap(),
+            price: price(90.0 + i as f64 * 0.5),
             volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
         });
     }
@@ -69,7 +74,7 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
         let volatility = ((i as f64 * 0.2).sin() * 10.0) + 50.0;
         token_b_prices.push(PricePoint {
             timestamp: base_time + Duration::days(i),
-            price: BigDecimal::from_f64(volatility).unwrap(),
+            price: price(volatility),
             volume: Some(BigDecimal::from_f64(800.0).unwrap()),
         });
     }
@@ -84,7 +89,7 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
     for i in 0..30 {
         token_c_prices.push(PricePoint {
             timestamp: base_time + Duration::days(i),
-            price: BigDecimal::from_f64(195.0 + (i as f64 * 0.2)).unwrap(),
+            price: price(195.0 + (i as f64 * 0.2)),
             volume: Some(BigDecimal::from_f64(1200.0).unwrap()),
         });
     }
@@ -442,7 +447,7 @@ fn test_empty_inputs() {
 fn test_single_token_portfolio() {
     let tokens = vec![TokenInfo {
         symbol: "SINGLE_TOKEN".to_string(),
-        current_price: BigDecimal::from_f64(100.0).unwrap(),
+        current_price: price(100.0),
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
         market_cap: Some(1000000.0),
@@ -847,7 +852,7 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
     let tokens_alphabetical = vec![
         TokenInfo {
             symbol: "TOKEN_A".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
@@ -855,7 +860,7 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
             market_cap: Some(500000.0),
@@ -863,7 +868,7 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
         },
         TokenInfo {
             symbol: "TOKEN_C".to_string(),
-            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            current_price: price(200.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(2000000.0),
@@ -875,7 +880,7 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
     let tokens_reverse = vec![
         TokenInfo {
             symbol: "TOKEN_C".to_string(),
-            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            current_price: price(200.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(2000000.0),
@@ -883,7 +888,7 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
             market_cap: Some(500000.0),
@@ -891,7 +896,7 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
         },
         TokenInfo {
             symbol: "TOKEN_A".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
@@ -934,12 +939,12 @@ fn test_daily_returns_ordering_consistency() {
             prices: vec![
                 PricePoint {
                     timestamp: base_time,
-                    price: BigDecimal::from_f64(100.0).unwrap(),
+                    price: price(100.0),
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
                 PricePoint {
                     timestamp: base_time + Duration::days(1),
-                    price: BigDecimal::from_f64(105.0).unwrap(),
+                    price: price(105.0),
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
             ],
@@ -950,12 +955,12 @@ fn test_daily_returns_ordering_consistency() {
             prices: vec![
                 PricePoint {
                     timestamp: base_time,
-                    price: BigDecimal::from_f64(50.0).unwrap(),
+                    price: price(50.0),
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
                 PricePoint {
                     timestamp: base_time + Duration::days(1),
-                    price: BigDecimal::from_f64(48.0).unwrap(),
+                    price: price(48.0),
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
             ],
@@ -970,12 +975,12 @@ fn test_daily_returns_ordering_consistency() {
             prices: vec![
                 PricePoint {
                     timestamp: base_time,
-                    price: BigDecimal::from_f64(50.0).unwrap(),
+                    price: price(50.0),
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
                 PricePoint {
                     timestamp: base_time + Duration::days(1),
-                    price: BigDecimal::from_f64(48.0).unwrap(),
+                    price: price(48.0),
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
             ],
@@ -986,12 +991,12 @@ fn test_daily_returns_ordering_consistency() {
             prices: vec![
                 PricePoint {
                     timestamp: base_time,
-                    price: BigDecimal::from_f64(100.0).unwrap(),
+                    price: price(100.0),
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
                 PricePoint {
                     timestamp: base_time + Duration::days(1),
-                    price: BigDecimal::from_f64(105.0).unwrap(),
+                    price: price(105.0),
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
             ],
@@ -1043,7 +1048,7 @@ fn test_btreemap_vs_original_ordering_impact() {
     let tokens = vec![
         TokenInfo {
             symbol: "zzz.high_return.near".to_string(), // 辞書順では最後だが高リターン
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.15, // 低リスク
             liquidity_score: Some(0.9),
             market_cap: Some(1000000.0),
@@ -1051,7 +1056,7 @@ fn test_btreemap_vs_original_ordering_impact() {
         },
         TokenInfo {
             symbol: "aaa.low_return.near".to_string(), // 辞書順では最初だが低リターン
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.4, // 高リスク
             liquidity_score: Some(0.5),
             market_cap: Some(500000.0),
@@ -1059,7 +1064,7 @@ fn test_btreemap_vs_original_ordering_impact() {
         },
         TokenInfo {
             symbol: "mmm.medium.near".to_string(), // 中程度
-            current_price: BigDecimal::from_f64(75.0).unwrap(),
+            current_price: price(75.0),
             historical_volatility: 0.25,
             liquidity_score: Some(0.7),
             market_cap: Some(750000.0),
@@ -1138,8 +1143,9 @@ fn test_demonstrate_ordering_performance_impact() {
         for i in 0..10 {
             prices.push(PricePoint {
                 timestamp: base_time + Duration::days(i),
-                price: BigDecimal::from_f64(start_price * (1.0 + growth_rate).powi(i as i32))
-                    .unwrap(),
+                price: Price::new(
+                    BigDecimal::from_f64(start_price * (1.0 + growth_rate).powi(i as i32)).unwrap(),
+                ),
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
             });
         }
@@ -1316,7 +1322,7 @@ fn test_token_scoring() {
     let tokens = vec![
         TokenInfo {
             symbol: "HIGH_SHARPE".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(5000000.0),
@@ -1324,7 +1330,7 @@ fn test_token_scoring() {
         },
         TokenInfo {
             symbol: "LOW_LIQUIDITY".to_string(),
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.05), // 低流動性
             market_cap: Some(1000000.0),
@@ -1332,7 +1338,7 @@ fn test_token_scoring() {
         },
         TokenInfo {
             symbol: "HIGH_VOL".to_string(),
-            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            current_price: price(200.0),
             historical_volatility: 0.5, // 高ボラティリティ
             liquidity_score: Some(0.7),
             market_cap: Some(2000000.0),
@@ -1366,7 +1372,7 @@ fn test_correlation_based_selection() {
     let tokens = vec![
         TokenInfo {
             symbol: "TOKEN_A".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
@@ -1374,7 +1380,7 @@ fn test_correlation_based_selection() {
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(), // Aと高相関
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
@@ -1382,7 +1388,7 @@ fn test_correlation_based_selection() {
         },
         TokenInfo {
             symbol: "TOKEN_C".to_string(), // 独立
-            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            current_price: price(200.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.9),
             market_cap: Some(2000000.0),
@@ -1410,7 +1416,7 @@ fn test_correlation_based_selection() {
             quote_token: "QUOTE".to_string(),
             prices: vec![PricePoint {
                 timestamp: time,
-                price: BigDecimal::from_f64(price_a).unwrap(),
+                price: price(price_a),
                 volume: None,
             }],
         });
@@ -1420,7 +1426,7 @@ fn test_correlation_based_selection() {
             quote_token: "QUOTE".to_string(),
             prices: vec![PricePoint {
                 timestamp: time,
-                price: BigDecimal::from_f64(price_b).unwrap(),
+                price: price(price_b),
                 volume: None,
             }],
         });
@@ -1430,7 +1436,7 @@ fn test_correlation_based_selection() {
             quote_token: "QUOTE".to_string(),
             prices: vec![PricePoint {
                 timestamp: time,
-                price: BigDecimal::from_f64(price_c).unwrap(),
+                price: price(price_c),
                 volume: None,
             }],
         });
@@ -1484,7 +1490,7 @@ fn test_portfolio_performance_with_token_selection() {
         // 高品質トークン
         TokenInfo {
             symbol: "EXCELLENT_1".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.95),
             market_cap: Some(10000000.0),
@@ -1492,7 +1498,7 @@ fn test_portfolio_performance_with_token_selection() {
         },
         TokenInfo {
             symbol: "EXCELLENT_2".to_string(),
-            current_price: BigDecimal::from_f64(200.0).unwrap(),
+            current_price: price(200.0),
             historical_volatility: 0.12,
             liquidity_score: Some(0.92),
             market_cap: Some(8000000.0),
@@ -1501,7 +1507,7 @@ fn test_portfolio_performance_with_token_selection() {
         // 中品質トークン
         TokenInfo {
             symbol: "MEDIUM_1".to_string(),
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.25,
             liquidity_score: Some(0.5),
             market_cap: Some(1000000.0),
@@ -1509,7 +1515,7 @@ fn test_portfolio_performance_with_token_selection() {
         },
         TokenInfo {
             symbol: "MEDIUM_2".to_string(),
-            current_price: BigDecimal::from_f64(75.0).unwrap(),
+            current_price: price(75.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.4),
             market_cap: Some(800000.0),
@@ -1518,7 +1524,7 @@ fn test_portfolio_performance_with_token_selection() {
         // 低品質トークン
         TokenInfo {
             symbol: "POOR_1".to_string(),
-            current_price: BigDecimal::from_f64(10.0).unwrap(),
+            current_price: price(10.0),
             historical_volatility: 0.5,
             liquidity_score: Some(0.08), // 低流動性
             market_cap: Some(50000.0),
@@ -1526,7 +1532,7 @@ fn test_portfolio_performance_with_token_selection() {
         },
         TokenInfo {
             symbol: "POOR_2".to_string(),
-            current_price: BigDecimal::from_f64(5.0).unwrap(),
+            current_price: price(5.0),
             historical_volatility: 0.6,
             liquidity_score: Some(0.05), // 非常に低い流動性
             market_cap: Some(10000.0),
@@ -1548,22 +1554,22 @@ fn test_portfolio_performance_with_token_selection() {
     let mut history = Vec::new();
 
     for token in &tokens {
-        let mut prices = Vec::new();
+        let mut prices_vec = Vec::new();
         for i in 0..30 {
             let time = base_time + Duration::days(i);
             // シンプルな価格変動
             let price_multiplier = 1.0 + (i as f64 * 0.01);
-            let price = token.current_price.to_string().parse::<f64>().unwrap() * price_multiplier;
-            prices.push(PricePoint {
+            let p = token.current_price.to_f64().as_f64() * price_multiplier;
+            prices_vec.push(PricePoint {
                 timestamp: time,
-                price: BigDecimal::from_f64(price).unwrap(),
+                price: price(p),
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
             });
         }
         history.push(PriceHistory {
             token: token.symbol.clone(),
             quote_token: "QUOTE".to_string(),
-            prices,
+            prices: prices_vec,
         });
     }
 
@@ -1625,7 +1631,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
     let tokens = vec![
         TokenInfo {
             symbol: "HIGH_SHARPE".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(5000000.0),
@@ -1633,7 +1639,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         },
         TokenInfo {
             symbol: "LOW_QUALITY".to_string(),
-            current_price: BigDecimal::from_f64(50.0).unwrap(),
+            current_price: price(50.0),
             historical_volatility: 0.8,  // 非常に高いボラティリティ
             liquidity_score: Some(0.05), // MIN_LIQUIDITY_SCORE以下
             market_cap: Some(10000.0),   // MIN_MARKET_CAP以下
@@ -1641,7 +1647,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         },
         TokenInfo {
             symbol: "MEDIUM".to_string(),
-            current_price: BigDecimal::from_f64(75.0).unwrap(),
+            current_price: price(75.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.6),
             market_cap: Some(1000000.0),
@@ -1649,7 +1655,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         },
         TokenInfo {
             symbol: "GOOD".to_string(),
-            current_price: BigDecimal::from_f64(150.0).unwrap(),
+            current_price: price(150.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.8),
             market_cap: Some(3000000.0),
@@ -1674,38 +1680,27 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
     let base_time = Utc::now() - Duration::days(10);
 
     for (idx, token) in tokens.iter().enumerate() {
-        let mut prices = Vec::new();
+        let mut prices_vec = Vec::new();
         for i in 0..10 {
             let time = base_time + Duration::days(i);
+            let current = token.current_price.to_f64().as_f64();
             // 各トークンで異なる価格変動パターンを作成
-            let price = match idx {
-                0 => {
-                    token.current_price.to_string().parse::<f64>().unwrap()
-                        * (1.0 + i as f64 * 0.015)
-                } // 高成長
-                1 => {
-                    token.current_price.to_string().parse::<f64>().unwrap()
-                        * (1.0 - i as f64 * 0.005)
-                } // 下落
-                2 => {
-                    token.current_price.to_string().parse::<f64>().unwrap()
-                        * (1.0 + (i as f64 * 0.01).sin() * 0.05)
-                } // 波動
-                _ => {
-                    token.current_price.to_string().parse::<f64>().unwrap()
-                        * (1.0 + i as f64 * 0.008)
-                } // 安定成長
+            let p = match idx {
+                0 => current * (1.0 + i as f64 * 0.015), // 高成長
+                1 => current * (1.0 - i as f64 * 0.005), // 下落
+                2 => current * (1.0 + (i as f64 * 0.01).sin() * 0.05), // 波動
+                _ => current * (1.0 + i as f64 * 0.008), // 安定成長
             };
-            prices.push(PricePoint {
+            prices_vec.push(PricePoint {
                 timestamp: time,
-                price: BigDecimal::from_f64(price).unwrap(),
+                price: price(p),
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
             });
         }
         full_history.push(PriceHistory {
             token: token.symbol.clone(),
             quote_token: "QUOTE".to_string(),
-            prices,
+            prices: prices_vec,
         });
     }
 
@@ -1765,7 +1760,7 @@ fn test_token_selection_with_real_simulation_data() {
         // 実際のシミュレーション同様の設定
         TokenData {
             symbol: "token1.tkn.near".to_string(),
-            current_price: BigDecimal::from_f64(1000000000000000000.0).unwrap(), // yoctoNEAR
+            current_price: price(1000000000000000000.0), // yoctoNEAR
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: None, // 実際のコードでは None
@@ -1773,7 +1768,7 @@ fn test_token_selection_with_real_simulation_data() {
         },
         TokenData {
             symbol: "token2.tkn.near".to_string(),
-            current_price: BigDecimal::from_f64(500000000000000000.0).unwrap(),
+            current_price: price(500000000000000000.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.9),
             market_cap: None, // 実際のコードでは None
@@ -1781,7 +1776,7 @@ fn test_token_selection_with_real_simulation_data() {
         },
         TokenData {
             symbol: "token3.tkn.near".to_string(),
-            current_price: BigDecimal::from_f64(2000000000000000000.0).unwrap(),
+            current_price: price(2000000000000000000.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.6),
             market_cap: None, // 実際のコードでは None
@@ -1820,7 +1815,7 @@ fn test_improved_token_selection_filtering() {
     let tokens = vec![
         TokenData {
             symbol: "good_token".to_string(),
-            current_price: BigDecimal::from_f64(1000.0).unwrap(),
+            current_price: price(1000.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),  // 高流動性
             market_cap: Some(5000000.0), // 高時価総額
@@ -1828,7 +1823,7 @@ fn test_improved_token_selection_filtering() {
         },
         TokenData {
             symbol: "medium_token".to_string(),
-            current_price: BigDecimal::from_f64(500.0).unwrap(),
+            current_price: price(500.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.5), // 中程度の流動性
             market_cap: None,           // 実際のデータのようにNone
@@ -1836,7 +1831,7 @@ fn test_improved_token_selection_filtering() {
         },
         TokenData {
             symbol: "poor_token".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.5,
             liquidity_score: Some(0.05), // 低流動性
             market_cap: None,
@@ -1872,7 +1867,7 @@ fn test_liquidity_based_performance_improvement() {
     let tokens = vec![
         TokenData {
             symbol: "high_liquidity_good_return".to_string(),
-            current_price: BigDecimal::from_f64(1000.0).unwrap(),
+            current_price: price(1000.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.9), // 高流動性
             market_cap: None,
@@ -1880,7 +1875,7 @@ fn test_liquidity_based_performance_improvement() {
         },
         TokenData {
             symbol: "medium_liquidity_medium_return".to_string(),
-            current_price: BigDecimal::from_f64(500.0).unwrap(),
+            current_price: price(500.0),
             historical_volatility: 0.25,
             liquidity_score: Some(0.5), // 中程度の流動性
             market_cap: None,
@@ -1888,7 +1883,7 @@ fn test_liquidity_based_performance_improvement() {
         },
         TokenData {
             symbol: "low_liquidity_high_risk".to_string(),
-            current_price: BigDecimal::from_f64(100.0).unwrap(),
+            current_price: price(100.0),
             historical_volatility: 0.8,  // 高リスク
             liquidity_score: Some(0.05), // 低流動性（フィルタアウト）
             market_cap: None,
@@ -1896,7 +1891,7 @@ fn test_liquidity_based_performance_improvement() {
         },
         TokenData {
             symbol: "good_liquidity_stable".to_string(),
-            current_price: BigDecimal::from_f64(800.0).unwrap(),
+            current_price: price(800.0),
             historical_volatility: 0.12, // 安定
             liquidity_score: Some(0.8),  // 高流動性
             market_cap: None,
@@ -1985,7 +1980,7 @@ fn test_actual_token_data_simulation() {
     let tokens = vec![
         TokenData {
             symbol: "excellent_performer".to_string(),
-            current_price: BigDecimal::from_f64(1000.0).unwrap(),
+            current_price: price(1000.0),
             historical_volatility: 0.1, // 低ボラティリティ
             liquidity_score: Some(0.8), // 実際のデフォルト値
             market_cap: None,
@@ -1993,7 +1988,7 @@ fn test_actual_token_data_simulation() {
         },
         TokenData {
             symbol: "good_performer".to_string(),
-            current_price: BigDecimal::from_f64(800.0).unwrap(),
+            current_price: price(800.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2001,7 +1996,7 @@ fn test_actual_token_data_simulation() {
         },
         TokenData {
             symbol: "average_performer".to_string(),
-            current_price: BigDecimal::from_f64(600.0).unwrap(),
+            current_price: price(600.0),
             historical_volatility: 0.25,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2009,7 +2004,7 @@ fn test_actual_token_data_simulation() {
         },
         TokenData {
             symbol: "poor_performer".to_string(),
-            current_price: BigDecimal::from_f64(400.0).unwrap(),
+            current_price: price(400.0),
             historical_volatility: 0.4, // 高ボラティリティ
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2073,7 +2068,7 @@ fn test_token_selection_off_vs_on() {
     let tokens = vec![
         TokenData {
             symbol: "good_token".to_string(),
-            current_price: BigDecimal::from_f64(1000.0).unwrap(),
+            current_price: price(1000.0),
             historical_volatility: 0.12,
             liquidity_score: Some(0.9),
             market_cap: None,
@@ -2081,7 +2076,7 @@ fn test_token_selection_off_vs_on() {
         },
         TokenData {
             symbol: "bad_token1".to_string(),
-            current_price: BigDecimal::from_f64(500.0).unwrap(),
+            current_price: price(500.0),
             historical_volatility: 0.6,  // 非常に高いボラティリティ
             liquidity_score: Some(0.05), // 低流動性
             market_cap: None,
@@ -2089,7 +2084,7 @@ fn test_token_selection_off_vs_on() {
         },
         TokenData {
             symbol: "bad_token2".to_string(),
-            current_price: BigDecimal::from_f64(300.0).unwrap(),
+            current_price: price(300.0),
             historical_volatility: 0.8,
             liquidity_score: Some(0.03),
             market_cap: None,
@@ -2142,7 +2137,7 @@ fn test_why_btreemap_reduces_performance() {
     let tokens_original_order = vec![
         TokenData {
             symbol: "nearkat.tkn.near".to_string(), // 高パフォーマンス
-            current_price: BigDecimal::from_f64(1000.0).unwrap(),
+            current_price: price(1000.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2150,7 +2145,7 @@ fn test_why_btreemap_reduces_performance() {
         },
         TokenData {
             symbol: "bean.tkn.near".to_string(), // 高パフォーマンス
-            current_price: BigDecimal::from_f64(800.0).unwrap(),
+            current_price: price(800.0),
             historical_volatility: 0.12,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2158,7 +2153,7 @@ fn test_why_btreemap_reduces_performance() {
         },
         TokenData {
             symbol: "babyblackdragon.tkn.near".to_string(), // 低パフォーマンス
-            current_price: BigDecimal::from_f64(600.0).unwrap(),
+            current_price: price(600.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2170,7 +2165,7 @@ fn test_why_btreemap_reduces_performance() {
     let tokens_btree_order = vec![
         TokenData {
             symbol: "babyblackdragon.tkn.near".to_string(), // アルファベット順で最初
-            current_price: BigDecimal::from_f64(600.0).unwrap(),
+            current_price: price(600.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2178,7 +2173,7 @@ fn test_why_btreemap_reduces_performance() {
         },
         TokenData {
             symbol: "bean.tkn.near".to_string(),
-            current_price: BigDecimal::from_f64(800.0).unwrap(),
+            current_price: price(800.0),
             historical_volatility: 0.12,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2186,7 +2181,7 @@ fn test_why_btreemap_reduces_performance() {
         },
         TokenData {
             symbol: "nearkat.tkn.near".to_string(),
-            current_price: BigDecimal::from_f64(1000.0).unwrap(),
+            current_price: price(1000.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2226,7 +2221,7 @@ fn test_revert_to_original_behavior() {
     let tokens = vec![
         TokenData {
             symbol: "token_a".to_string(),
-            current_price: BigDecimal::from_f64(1000.0).unwrap(),
+            current_price: price(1000.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2234,7 +2229,7 @@ fn test_revert_to_original_behavior() {
         },
         TokenData {
             symbol: "token_b".to_string(),
-            current_price: BigDecimal::from_f64(800.0).unwrap(),
+            current_price: price(800.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: None,
@@ -2346,15 +2341,15 @@ fn create_low_volatility_portfolio_data() -> super::PortfolioData {
     }
 }
 
-fn create_high_volatility_price_history() -> Vec<super::PriceHistory> {
+fn create_high_volatility_price_history() -> Vec<PriceHistory> {
     use chrono::{Duration, TimeZone, Utc};
 
     let mut histories = Vec::new();
     let tokens = ["token_a", "token_b", "token_c"];
 
     for token in tokens.iter() {
-        let mut prices = Vec::new();
-        let mut price = 1000000000000000000i64; // 小さな価格単位
+        let mut prices_vec = Vec::new();
+        let mut p = 1000000000000000000i64; // 小さな価格単位
 
         // 30日間の高ボラティリティ価格データ
         for i in 0..30 {
@@ -2362,34 +2357,34 @@ fn create_high_volatility_price_history() -> Vec<super::PriceHistory> {
 
             // ±15%の大きな変動を生成
             let volatility_factor = 1.0 + (i as f64 * 0.7).sin() * 0.15;
-            price = ((price as f64 * volatility_factor) as i64).max(1);
+            p = ((p as f64 * volatility_factor) as i64).max(1);
 
-            prices.push(super::PricePoint {
+            prices_vec.push(PricePoint {
                 timestamp,
-                price: bigdecimal::BigDecimal::from(price),
+                price: Price::new(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)), // ダミーボリューム
             });
         }
 
-        histories.push(super::PriceHistory {
+        histories.push(PriceHistory {
             token: token.to_string(),
             quote_token: "wrap.near".to_string(), // ダミークォートトークン
-            prices,
+            prices: prices_vec,
         });
     }
 
     histories
 }
 
-fn create_low_volatility_price_history() -> Vec<super::PriceHistory> {
+fn create_low_volatility_price_history() -> Vec<PriceHistory> {
     use chrono::{Duration, TimeZone, Utc};
 
     let mut histories = Vec::new();
     let tokens = ["token_a", "token_b", "token_c"];
 
     for token in tokens.iter() {
-        let mut prices = Vec::new();
-        let mut price = 1000000000000000000i64; // 小さな価格単位
+        let mut prices_vec = Vec::new();
+        let mut p = 1000000000000000000i64; // 小さな価格単位
 
         // 30日間の低ボラティリティ価格データ
         for i in 0..30 {
@@ -2397,19 +2392,19 @@ fn create_low_volatility_price_history() -> Vec<super::PriceHistory> {
 
             // ±2%の小さな変動を生成
             let volatility_factor = 1.0 + (i as f64 * 0.3).sin() * 0.02;
-            price = ((price as f64 * volatility_factor) as i64).max(1);
+            p = ((p as f64 * volatility_factor) as i64).max(1);
 
-            prices.push(super::PricePoint {
+            prices_vec.push(PricePoint {
                 timestamp,
-                price: bigdecimal::BigDecimal::from(price),
+                price: Price::new(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)), // ダミーボリューム
             });
         }
 
-        histories.push(super::PriceHistory {
+        histories.push(PriceHistory {
             token: token.to_string(),
             quote_token: "wrap.near".to_string(), // ダミークォートトークン
-            prices,
+            prices: prices_vec,
         });
     }
 
@@ -2558,7 +2553,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
     vec![
         TokenData {
             symbol: "high_return_token".to_string(),
-            current_price: bigdecimal::BigDecimal::from(1000000000000000000i64),
+            current_price: Price::new(bigdecimal::BigDecimal::from(1000000000000000000i64)),
             historical_volatility: 0.40, // 40%ボラティリティ（高リスク・高リターン）
             liquidity_score: Some(0.9),
             market_cap: Some(1000000.0),
@@ -2566,7 +2561,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
         },
         TokenData {
             symbol: "medium_return_token".to_string(),
-            current_price: bigdecimal::BigDecimal::from(500000000000000000i64),
+            current_price: Price::new(bigdecimal::BigDecimal::from(500000000000000000i64)),
             historical_volatility: 0.20, // 20%ボラティリティ
             liquidity_score: Some(0.8),
             market_cap: Some(500000.0),
@@ -2574,7 +2569,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
         },
         TokenData {
             symbol: "stable_token".to_string(),
-            current_price: bigdecimal::BigDecimal::from(2000000000000000000i64),
+            current_price: Price::new(bigdecimal::BigDecimal::from(2000000000000000000i64)),
             historical_volatility: 0.10, // 10%ボラティリティ
             liquidity_score: Some(0.7),
             market_cap: Some(2000000.0),
@@ -2583,7 +2578,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
     ]
 }
 
-fn create_realistic_price_history() -> Vec<super::PriceHistory> {
+fn create_realistic_price_history() -> Vec<PriceHistory> {
     use chrono::{Duration, TimeZone, Utc};
 
     let mut histories = Vec::new();
@@ -2594,8 +2589,8 @@ fn create_realistic_price_history() -> Vec<super::PriceHistory> {
     ];
 
     for (token_name, initial_price, daily_growth) in token_configs.iter() {
-        let mut prices = Vec::new();
-        let mut price = *initial_price;
+        let mut prices_vec = Vec::new();
+        let mut p = *initial_price;
 
         // 30日間の価格履歴
         for i in 0..30 {
@@ -2603,19 +2598,19 @@ fn create_realistic_price_history() -> Vec<super::PriceHistory> {
 
             // トレンド成長 + ランダムノイズ
             let growth_factor = 1.0 + daily_growth + (i as f64 * 0.5).sin() * 0.005;
-            price = ((price as f64 * growth_factor) as i64).max(1);
+            p = ((p as f64 * growth_factor) as i64).max(1);
 
-            prices.push(super::PricePoint {
+            prices_vec.push(PricePoint {
                 timestamp,
-                price: bigdecimal::BigDecimal::from(price),
+                price: Price::new(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)),
             });
         }
 
-        histories.push(super::PriceHistory {
+        histories.push(PriceHistory {
             token: token_name.to_string(),
             quote_token: "wrap.near".to_string(),
-            prices,
+            prices: prices_vec,
         });
     }
 
@@ -2780,9 +2775,9 @@ fn test_portfolio_evaluation_accuracy() {
     // ポートフォリオ評価の精度をテスト
 
     // 現実的な価格での評価
-    let realistic_tokens = vec![super::TokenData {
+    let realistic_tokens = vec![TokenData {
         symbol: "token_a".to_string(),
-        current_price: "1000000000000000000000000".parse::<BigDecimal>().unwrap(), // 1 NEAR = 1e24 yoctoNEAR
+        current_price: Price::new("1000000000000000000000000".parse::<BigDecimal>().unwrap()), // 1 NEAR = 1e24 yoctoNEAR
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
         market_cap: Some(1000000.0),
@@ -2822,17 +2817,17 @@ fn test_extreme_price_weight_calculation() {
 
     // シミュレーションで見られた極端な価格を使用
     let extreme_tokens = vec![
-        super::TokenData {
+        TokenData {
             symbol: "bean.tkn.near".to_string(),
-            current_price: BigDecimal::from_str("2.783120479512128E-19").unwrap(),
+            current_price: Price::new(BigDecimal::from_str("2.783120479512128E-19").unwrap()),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
             decimals: Some(24),
         },
-        super::TokenData {
+        TokenData {
             symbol: "ndc.tkn.near".to_string(),
-            current_price: BigDecimal::from_str("4.8596827014459204E-20").unwrap(),
+            current_price: Price::new(BigDecimal::from_str("4.8596827014459204E-20").unwrap()),
             historical_volatility: 0.4,
             liquidity_score: Some(0.7),
             market_cap: Some(500000.0),

@@ -3,6 +3,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+use crate::types::{Price, PriceF64};
+
 // ==================== 取引関連型 ====================
 
 /// 取引の種類
@@ -32,7 +34,7 @@ pub struct TradeExecution {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricePoint {
     pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
+    pub price: Price,
     pub volume: Option<BigDecimal>,
 }
 
@@ -50,7 +52,7 @@ pub struct PriceHistory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenData {
     pub symbol: String,
-    pub current_price: BigDecimal,
+    pub current_price: Price,
     pub historical_volatility: f64,
     pub liquidity_score: Option<f64>,
     pub market_cap: Option<f64>,
@@ -62,7 +64,7 @@ pub struct TokenData {
 pub struct TokenHolding {
     pub token: String,
     pub amount: BigDecimal,
-    pub current_price: BigDecimal,
+    pub current_price: Price,
 }
 
 // ==================== 予測データ ====================
@@ -71,7 +73,7 @@ pub struct TokenHolding {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
+    pub price: Price,
     pub confidence: Option<BigDecimal>,
 }
 
@@ -79,8 +81,8 @@ pub struct PredictedPrice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionData {
     pub token: String,
-    pub current_price: BigDecimal,
-    pub predicted_price_24h: BigDecimal,
+    pub current_price: Price,
+    pub predicted_price_24h: Price,
     pub timestamp: DateTime<Utc>,
     pub confidence: Option<BigDecimal>,
 }
@@ -294,7 +296,7 @@ pub struct TopTokenInfo {
     pub token: String,
     pub volatility: f64,
     pub volume_24h: f64,
-    pub current_price: f64,
+    pub current_price: PriceF64,
 }
 
 #[cfg(test)]
@@ -413,8 +415,8 @@ mod tests {
     fn test_prediction_data_creation() {
         let prediction = PredictionData {
             token: "test.tkn.near".to_string(),
-            current_price: BigDecimal::from_str("1.0").unwrap(),
-            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            current_price: Price::new(BigDecimal::from_str("1.0").unwrap()),
+            predicted_price_24h: Price::new(BigDecimal::from_str("1.2").unwrap()),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.85").unwrap()),
         };
@@ -427,8 +429,8 @@ mod tests {
     fn test_prediction_data_without_confidence() {
         let prediction = PredictionData {
             token: "test.tkn.near".to_string(),
-            current_price: BigDecimal::from_str("1.0").unwrap(),
-            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            current_price: Price::new(BigDecimal::from_str("1.0").unwrap()),
+            predicted_price_24h: Price::new(BigDecimal::from_str("1.2").unwrap()),
             timestamp: Utc::now(),
             confidence: None,
         };
@@ -507,7 +509,7 @@ mod tests {
     fn test_token_data_creation() {
         let token = TokenData {
             symbol: "NEAR".to_string(),
-            current_price: BigDecimal::from_str("5.0").unwrap(),
+            current_price: Price::new(BigDecimal::from_str("5.0").unwrap()),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
             market_cap: Some(1000000.0),
@@ -532,8 +534,8 @@ mod tests {
     fn test_prediction_data_serialization() {
         let prediction = PredictionData {
             token: "test".to_string(),
-            current_price: BigDecimal::from_str("1.0").unwrap(),
-            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            current_price: Price::new(BigDecimal::from_str("1.0").unwrap()),
+            predicted_price_24h: Price::new(BigDecimal::from_str("1.2").unwrap()),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.9").unwrap()),
         };
@@ -541,5 +543,153 @@ mod tests {
         let serialized = serde_json::to_string(&prediction).unwrap();
         let deserialized: PredictionData = serde_json::from_str(&serialized).unwrap();
         assert_eq!(prediction.token, deserialized.token);
+    }
+
+    // ==================== PricePoint のテスト ====================
+
+    #[test]
+    fn test_price_point_creation() {
+        let price_point = PricePoint {
+            timestamp: Utc::now(),
+            price: Price::new(BigDecimal::from_str("123.456").unwrap()),
+            volume: Some(BigDecimal::from(1000)),
+        };
+
+        assert_eq!(
+            price_point.price,
+            Price::new(BigDecimal::from_str("123.456").unwrap())
+        );
+        assert!(price_point.volume.is_some());
+    }
+
+    #[test]
+    fn test_price_point_serialization() {
+        let price_point = PricePoint {
+            timestamp: Utc::now(),
+            price: Price::new(BigDecimal::from_str("999.123456789").unwrap()),
+            volume: Some(BigDecimal::from(5000)),
+        };
+
+        let serialized = serde_json::to_string(&price_point).unwrap();
+        let deserialized: PricePoint = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(price_point.price, deserialized.price);
+        assert_eq!(price_point.volume, deserialized.volume);
+    }
+
+    #[test]
+    fn test_price_point_serialization_without_volume() {
+        let price_point = PricePoint {
+            timestamp: Utc::now(),
+            price: Price::new(BigDecimal::from(100)),
+            volume: None,
+        };
+
+        let serialized = serde_json::to_string(&price_point).unwrap();
+        let deserialized: PricePoint = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(price_point.price, deserialized.price);
+        assert!(deserialized.volume.is_none());
+    }
+
+    // ==================== TokenData のシリアライゼーションテスト ====================
+
+    #[test]
+    fn test_token_data_serialization() {
+        let token = TokenData {
+            symbol: "NEAR".to_string(),
+            current_price: Price::new(BigDecimal::from_str("5.123").unwrap()),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.8),
+            market_cap: Some(1000000.0),
+            decimals: Some(24),
+        };
+
+        let serialized = serde_json::to_string(&token).unwrap();
+        let deserialized: TokenData = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(token.symbol, deserialized.symbol);
+        assert_eq!(token.current_price, deserialized.current_price);
+        assert_eq!(
+            token.historical_volatility,
+            deserialized.historical_volatility
+        );
+    }
+
+    // ==================== PriceHistory のテスト ====================
+
+    #[test]
+    fn test_price_history_serialization() {
+        let history = PriceHistory {
+            token: "test.token".to_string(),
+            quote_token: "wrap.near".to_string(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: Price::new(BigDecimal::from(100)),
+                    volume: Some(BigDecimal::from(1000)),
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: Price::new(BigDecimal::from(110)),
+                    volume: Some(BigDecimal::from(2000)),
+                },
+            ],
+        };
+
+        let serialized = serde_json::to_string(&history).unwrap();
+        let deserialized: PriceHistory = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(history.token, deserialized.token);
+        assert_eq!(history.prices.len(), deserialized.prices.len());
+        assert_eq!(history.prices[0].price, deserialized.prices[0].price);
+    }
+
+    // ==================== Price 型のJSON形式テスト ====================
+
+    #[test]
+    fn test_price_json_format() {
+        // Price 型が正しくJSONにシリアライズされることを確認
+        let price = Price::new(BigDecimal::from_str("123.456789").unwrap());
+        let json = serde_json::to_string(&price).unwrap();
+
+        // BigDecimal のシリアライズ形式を検証
+        // （内部実装に依存するが、文字列または数値として表現される）
+        let deserialized: Price = serde_json::from_str(&json).unwrap();
+        assert_eq!(price, deserialized);
+    }
+
+    #[test]
+    fn test_price_comparison_in_structures() {
+        // Price 型を含む構造体の比較が正しく動作することを確認
+        let token1 = TokenData {
+            symbol: "TEST".to_string(),
+            current_price: Price::new(BigDecimal::from(100)),
+            historical_volatility: 0.2,
+            liquidity_score: None,
+            market_cap: None,
+            decimals: None,
+        };
+
+        let token2 = TokenData {
+            symbol: "TEST".to_string(),
+            current_price: Price::new(BigDecimal::from(100)),
+            historical_volatility: 0.2,
+            liquidity_score: None,
+            market_cap: None,
+            decimals: None,
+        };
+
+        let token3 = TokenData {
+            symbol: "TEST".to_string(),
+            current_price: Price::new(BigDecimal::from(200)), // 異なる価格
+            historical_volatility: 0.2,
+            liquidity_score: None,
+            market_cap: None,
+            decimals: None,
+        };
+
+        assert_eq!(token1.current_price, token2.current_price);
+        assert_ne!(token1.current_price, token3.current_price);
     }
 }

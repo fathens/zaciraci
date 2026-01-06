@@ -26,6 +26,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
+use zaciraci_common::types::Price;
 use zaciraci_common::units::Units;
 
 #[derive(Clone)]
@@ -492,8 +493,8 @@ where
 
         // 現在価格を履歴から取得
         let current_price = if let Some(latest_price) = history.prices.last() {
-            // BigDecimalをyoctoNEAR (u128)に変換
-            let price_yocto = Units::near_to_yocto(&latest_price.price);
+            // PriceのBigDecimalをyoctoNEAR (u128)に変換
+            let price_yocto = Units::near_to_yocto(latest_price.price.as_bigdecimal());
 
             debug!(log, "converting price to u128";
                 "token" => %token,
@@ -596,7 +597,7 @@ where
 
         token_data.push(TokenData {
             symbol: token.to_string(),
-            current_price: BigDecimal::from(current_price),
+            current_price: Price::new(BigDecimal::from(current_price)),
             historical_volatility: volatility_f64,
             liquidity_score: Some(liquidity_score),
             market_cap: Some(market_cap),
@@ -1927,6 +1928,11 @@ mod tests {
     use super::*;
     use crate::ref_finance::token_account::TokenAccount;
     use std::str::FromStr;
+    use zaciraci_common::types::Price;
+
+    fn price_from_int(v: i64) -> Price {
+        Price::new(BigDecimal::from(v))
+    }
 
     #[test]
     fn test_describes() {
@@ -2290,12 +2296,12 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: None,
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(110),
+                    price: price_from_int(110),
                     volume: None,
                 },
             ],
@@ -2310,12 +2316,12 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: Some(BigDecimal::from(1000)),
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(110),
+                    price: price_from_int(110),
                     volume: Some(BigDecimal::from(2000)),
                 },
             ],
@@ -2334,12 +2340,12 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: Some(BigDecimal::from(10u128.pow(25))), // 10 NEAR相当
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(110),
+                    price: price_from_int(110),
                     volume: Some(BigDecimal::from(10u128.pow(25))),
                 },
             ],
@@ -2457,7 +2463,7 @@ mod tests {
             quote_token: "wrap.near".to_string(),
             prices: vec![zaciraci_common::algorithm::types::PricePoint {
                 timestamp: chrono::Utc::now(),
-                price: BigDecimal::from(100),
+                price: price_from_int(100),
                 volume: Some(BigDecimal::from(5u128 * 10u128.pow(24))), // 5 NEAR相当の取引量
             }],
         };
@@ -2565,7 +2571,7 @@ mod tests {
             quote_token: "wrap.near".to_string(),
             prices: vec![PricePoint {
                 timestamp: Utc::now(),
-                price: BigDecimal::from(100),
+                price: price_from_int(100),
                 volume: None,
             }],
         };
@@ -2579,17 +2585,17 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: None,
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: None,
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: None,
                 },
             ],
@@ -2608,17 +2614,17 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: None,
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(110),
+                    price: price_from_int(110),
                     volume: None,
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(105),
+                    price: price_from_int(105),
                     volume: None,
                 },
             ],
@@ -2636,17 +2642,17 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     volume: None,
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(0),
+                    price: price_from_int(0),
                     volume: None,
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: BigDecimal::from(110),
+                    price: price_from_int(110),
                     volume: None,
                 },
             ],

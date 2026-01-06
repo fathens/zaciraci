@@ -7,6 +7,11 @@ use chrono::{Duration, Utc};
 use serial_test::serial;
 use std::str::FromStr;
 use zaciraci_common::prediction::{ChronosPredictionResponse, PredictionResult};
+use zaciraci_common::types::Price;
+
+fn price(s: &str) -> Price {
+    Price::new(BigDecimal::from_str(s).unwrap())
+}
 
 // テスト用のヘルパー構造体
 struct TestFixture {
@@ -401,7 +406,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
             // 価格データの妥当性確認
             for price_point in &history.prices {
                 assert!(
-                    price_point.price > BigDecimal::from(0),
+                    price_point.price.as_bigdecimal() > &BigDecimal::from(0),
                     "Price should be positive"
                 );
             }
@@ -548,7 +553,7 @@ fn test_price_point_validation() {
     let now = Utc::now();
     let price_point = PricePoint {
         timestamp: now,
-        price: BigDecimal::from_str("1.5").unwrap(),
+        price: price("1.5"),
         volume: Some(BigDecimal::from_str("1000.0").unwrap()),
     };
 

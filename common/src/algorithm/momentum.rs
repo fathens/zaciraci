@@ -21,25 +21,16 @@ const MAX_SLIPPAGE: f64 = 0.02;
 // ==================== コアアルゴリズム ====================
 
 /// 予測リターンを計算（取引コスト考慮）
-/// 注意: current_priceとpredicted_price_24hは両方ともyoctoNEAR単位
+/// 注意: current_priceとpredicted_price_24hは両方とも無次元の価格比率
 pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
-    // current_priceとpredicted_price_24hは両方ともyoctoNEAR単位のBigDecimal
-    let current = prediction
-        .current_price
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(0.0);
-    let predicted = prediction
-        .predicted_price_24h
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(0.0);
+    let current = prediction.current_price.to_f64().as_f64();
+    let predicted = prediction.predicted_price_24h.to_f64().as_f64();
 
     if current == 0.0 {
         return 0.0;
     }
 
-    // 両方ともyoctoNEAR単位なので直接比較可能
+    // 両方とも同じ単位なので直接比較可能
     let raw_return = (predicted - current) / current;
 
     // 取引コストを考慮
@@ -235,7 +226,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
 
         if let Some(data) = PredictionData::from_token_prediction(
             &prediction,
-            BigDecimal::from(top_token.current_price as i64),
+            top_token.current_price.to_bigdecimal(),
         ) {
             prediction_data.push(data);
         }
@@ -329,6 +320,7 @@ mod integration_tests {
     use super::execute_with_prediction_provider;
     use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
     use crate::algorithm::types::*;
+    use crate::types::{Price, PriceF64};
     use async_trait::async_trait;
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{Duration, Utc};
@@ -355,7 +347,7 @@ mod integration_tests {
                 .into_iter()
                 .map(|(timestamp, price)| PricePoint {
                     timestamp,
-                    price: BigDecimal::from_f64(price).unwrap_or_default(),
+                    price: Price::new(BigDecimal::from_f64(price).unwrap_or_default()),
                     volume: None,
                 })
                 .collect();
@@ -385,13 +377,13 @@ mod integration_tests {
                     token: "top_token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_price: 100.0,
+                    current_price: PriceF64::new(100.0),
                 },
                 TopTokenInfo {
                     token: "top_token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_price: 50.0,
+                    current_price: PriceF64::new(50.0),
                 },
             ]
             .into_iter()
@@ -426,7 +418,9 @@ mod integration_tests {
 
             for i in 1..=prediction_horizon {
                 let timestamp = prediction_time + Duration::hours(i as i64);
-                let price = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap();
+                let price = Price::new(
+                    BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(),
+                );
                 predictions.push(PredictedPrice {
                     timestamp,
                     price,
@@ -481,12 +475,12 @@ mod integration_tests {
             TokenHolding {
                 token: "token1".to_string(),
                 amount: BigDecimal::from(10),
-                current_price: BigDecimal::from(100),
+                current_price: Price::new(BigDecimal::from(100)),
             },
             TokenHolding {
                 token: "token2".to_string(),
                 amount: BigDecimal::from(20),
-                current_price: BigDecimal::from(50),
+                current_price: Price::new(BigDecimal::from(50)),
             },
         ];
 
@@ -555,7 +549,7 @@ mod integration_tests {
         let current_holdings = vec![TokenHolding {
             token: "other_token".to_string(),
             amount: BigDecimal::from(10),
-            current_price: BigDecimal::from(75),
+            current_price: Price::new(BigDecimal::from(75)),
         }];
 
         let result = execute_with_prediction_provider(

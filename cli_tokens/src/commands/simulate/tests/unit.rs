@@ -10,6 +10,7 @@
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::stats::ValueAtTime;
+use common::types::Price;
 use std::collections::HashMap;
 
 use super::super::data::get_prices_at_time;
@@ -18,6 +19,10 @@ use super::super::utils::{
 };
 use super::super::*;
 use common::algorithm::momentum::{calculate_confidence_adjusted_return, rank_tokens_by_momentum};
+
+fn price(v: i32) -> Price {
+    Price::new(BigDecimal::from(v))
+}
 use common::algorithm::{PredictionData, TradingAction};
 
 #[test]
@@ -221,8 +226,8 @@ fn test_trading_cost_calculation() {
 fn test_calculate_confidence_adjusted_return() {
     let prediction = PredictionData {
         token: "test_token".to_string(),
-        current_price: BigDecimal::from(100),
-        predicted_price_24h: BigDecimal::from(110), // 10% growth
+        current_price: price(100),
+        predicted_price_24h: price(110), // 10% growth
         timestamp: Utc::now(),
         confidence: Some("0.8".parse().unwrap()),
     };
@@ -247,22 +252,22 @@ fn test_rank_tokens_by_momentum() {
     let predictions = vec![
         PredictionData {
             token: "token1".to_string(),
-            current_price: BigDecimal::from(100),
-            predicted_price_24h: BigDecimal::from(105), // 5% growth
+            current_price: price(100),
+            predicted_price_24h: price(105), // 5% growth
             timestamp: Utc::now(),
             confidence: Some("0.8".parse().unwrap()),
         },
         PredictionData {
             token: "token2".to_string(),
-            current_price: BigDecimal::from(100),
-            predicted_price_24h: BigDecimal::from(110), // 10% growth
+            current_price: price(100),
+            predicted_price_24h: price(110), // 10% growth
             timestamp: Utc::now(),
             confidence: Some("0.6".parse().unwrap()),
         },
         PredictionData {
             token: "token3".to_string(),
-            current_price: BigDecimal::from(100),
-            predicted_price_24h: BigDecimal::from(95), // -5% decline
+            current_price: price(100),
+            predicted_price_24h: price(95), // -5% decline
             timestamp: Utc::now(),
             confidence: Some("0.9".parse().unwrap()),
         },

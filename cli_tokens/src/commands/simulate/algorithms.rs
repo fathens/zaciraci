@@ -8,6 +8,7 @@ use anyhow::Result;
 #[allow(unused_imports)]
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use common::types::Price;
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
@@ -149,7 +150,9 @@ pub(crate) async fn run_momentum_timestep_simulation(
                         token_holdings.push(TokenHolding {
                             token: token.clone(),
                             amount: BigDecimal::from_f64(*amount).unwrap_or_default(),
-                            current_price: BigDecimal::from_f64(price).unwrap_or_default(),
+                            current_price: Price::new(
+                                BigDecimal::from_f64(price).unwrap_or_default(),
+                            ),
                         });
                     }
                 }
@@ -494,11 +497,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     let mut token_data = Vec::new();
                     for token in &config.target_tokens {
                         if let Some(&current_price_yocto) = current_prices.get(token) {
-                            // current_priceはyoctoNEAR単位として保存
+                            // current_priceはPrice型として保存
                             token_data.push(TokenData {
                                 symbol: token.clone(),
-                                current_price: BigDecimal::from_f64(current_price_yocto)
-                                    .unwrap_or_default(),
+                                current_price: Price::new(
+                                    BigDecimal::from_f64(current_price_yocto).unwrap_or_default(),
+                                ),
                                 historical_volatility: 0.2, // デフォルト値
                                 liquidity_score: Some(0.8),
                                 market_cap: None,
@@ -531,8 +535,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             point.time,
                                             chrono::Utc,
                                         ),
-                                        // point.valueはyoctoNEAR単位で保存
-                                        price: point.value.clone(),
+                                        // point.valueをPrice型に変換
+                                        price: Price::new(point.value.clone()),
                                         volume: None,
                                     })
                                     .collect()

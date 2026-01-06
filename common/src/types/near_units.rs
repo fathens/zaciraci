@@ -104,6 +104,13 @@ impl Sub<&Price> for Price {
     }
 }
 
+impl Sub for &Price {
+    type Output = Price;
+    fn sub(self, other: &Price) -> Price {
+        Price(&self.0 - &other.0)
+    }
+}
+
 // Price 同士の除算 → 比率を返す
 impl Div for Price {
     type Output = BigDecimal;
@@ -171,7 +178,7 @@ impl Div<f64> for Price {
 /// 価格（無次元比率）- f64 版
 ///
 /// シミュレーションやアルゴリズムで使用する高速版。
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct PriceF64(f64);
 
 impl PriceF64 {

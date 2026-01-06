@@ -15,6 +15,7 @@ use zaciraci_common::algorithm::prediction::{
 use zaciraci_common::api::chronos::ChronosApiClient;
 use zaciraci_common::api::traits::PredictionClient;
 use zaciraci_common::prediction::{PredictionResult, ZeroShotPredictionRequest};
+use zaciraci_common::types::{Price, PriceF64};
 
 /// トークンの価格履歴
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,7 +159,7 @@ impl PredictionService {
             .into_iter()
             .map(|rate| PricePoint {
                 timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                price: rate.rate,
+                price: Price::new(rate.rate),
                 volume: None, // ボリュームデータは現在利用不可
             })
             .collect();
@@ -180,7 +181,11 @@ impl PredictionService {
 
         // 履歴データを予測用フォーマットに変換
         // BigDecimalを直接使用（ChronosAPIはJSON経由で数値を受け取るため）
-        let values: Vec<BigDecimal> = history.prices.iter().map(|p| p.price.clone()).collect();
+        let values: Vec<BigDecimal> = history
+            .prices
+            .iter()
+            .map(|p| p.price.as_bigdecimal().clone())
+            .collect();
         let timestamps: Vec<DateTime<Utc>> = history.prices.iter().map(|p| p.timestamp).collect();
 
         if values.is_empty() {
@@ -441,7 +446,9 @@ impl PredictionProvider for PredictionService {
                 token: t.token,
                 volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
                 volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
-                current_price: t.current_price.to_string().parse::<f64>().unwrap_or(0.0),
+                current_price: PriceF64::new(
+                    t.current_price.to_string().parse::<f64>().unwrap_or(0.0),
+                ),
             })
             .collect())
     }
@@ -496,7 +503,7 @@ impl PredictionProvider for PredictionService {
                 .into_iter()
                 .map(|p| CommonPredictedPrice {
                     timestamp: p.timestamp,
-                    price: p.price,
+                    price: Price::new(p.price),
                     confidence: p.confidence.clone(),
                 })
                 .collect(),
@@ -527,7 +534,7 @@ impl PredictionProvider for PredictionService {
                         .into_iter()
                         .map(|p| CommonPredictedPrice {
                             timestamp: p.timestamp,
-                            price: p.price,
+                            price: Price::new(p.price),
                             confidence: p.confidence.clone(),
                         })
                         .collect(),

@@ -1,6 +1,6 @@
 use crate::Result;
+use crate::types::Price;
 use async_trait::async_trait;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -51,7 +51,7 @@ impl crate::algorithm::PredictionData {
     /// TokenPredictionResultから変換
     pub fn from_token_prediction(
         prediction: &TokenPredictionResult,
-        current_price: BigDecimal,
+        current_price: Price,
     ) -> Option<Self> {
         use chrono::Duration;
 

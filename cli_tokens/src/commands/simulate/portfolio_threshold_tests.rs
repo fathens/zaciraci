@@ -5,7 +5,12 @@ use common::algorithm::portfolio::{
     PortfolioData, execute_portfolio_optimization, needs_rebalancing,
 };
 use common::algorithm::{PriceHistory, PricePoint, TokenData, WalletInfo};
+use common::types::Price;
 use std::collections::{BTreeMap, HashMap};
+
+fn price(v: f64) -> Price {
+    Price::new(BigDecimal::from_f64(v).unwrap())
+}
 
 // テスト用のポートフォリオデータを作成
 fn create_test_portfolio_data() -> PortfolioData {
@@ -14,7 +19,7 @@ fn create_test_portfolio_data() -> PortfolioData {
 
     let tokens = vec![TokenData {
         symbol: "test.token".to_string(),
-        current_price: BigDecimal::from_f64(1000.0).unwrap(), // 0.001 NEAR in yoctoNEAR units
+        current_price: price(1000.0), // 0.001 NEAR in yoctoNEAR units
         historical_volatility: 0.2,
         liquidity_score: Some(1.0),
         market_cap: Some(1000000.0),
@@ -33,7 +38,7 @@ fn create_test_portfolio_data() -> PortfolioData {
             quote_token: "wrap.near".to_string(),
             prices: vec![PricePoint {
                 timestamp: Utc.from_utc_datetime(&date),
-                price: BigDecimal::from_f64(1000.0 * (1.0 + i as f64 * 0.01)).unwrap(), // わずかな価格変動
+                price: price(1000.0 * (1.0 + i as f64 * 0.01)), // わずかな価格変動
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
             }],
         });
