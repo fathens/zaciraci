@@ -97,15 +97,15 @@ async fn test_portfolio_calculation_units() {
             // ポートフォリオ価値の履歴もチェック
             for portfolio_value in &result.portfolio_values {
                 assert!(
-                    portfolio_value.total_value < 10000.0,
+                    portfolio_value.total_value.as_f64() < 10000.0,
                     "Portfolio value should be reasonable: {} at {}",
-                    portfolio_value.total_value,
+                    portfolio_value.total_value.as_f64(),
                     portfolio_value.timestamp
                 );
                 assert!(
-                    portfolio_value.total_value > 0.0,
+                    portfolio_value.total_value.as_f64() > 0.0,
                     "Portfolio value should be positive: {}",
-                    portfolio_value.total_value
+                    portfolio_value.total_value.as_f64()
                 );
             }
 
@@ -159,15 +159,15 @@ async fn test_momentum_calculation_units() {
             // ポートフォリオ価値の履歴もチェック
             for portfolio_value in &result.portfolio_values {
                 assert!(
-                    portfolio_value.total_value < 10000.0,
+                    portfolio_value.total_value.as_f64() < 10000.0,
                     "Portfolio value should be reasonable: {} at {}",
-                    portfolio_value.total_value,
+                    portfolio_value.total_value.as_f64(),
                     portfolio_value.timestamp
                 );
                 assert!(
-                    portfolio_value.total_value > 0.0,
+                    portfolio_value.total_value.as_f64() > 0.0,
                     "Portfolio value should be positive: {}",
-                    portfolio_value.total_value
+                    portfolio_value.total_value.as_f64()
                 );
             }
 

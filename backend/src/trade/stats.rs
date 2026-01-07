@@ -29,7 +29,7 @@ use crate::trade::recorder::TradeRecorder;
 use crate::trade::swap;
 use crate::types::MilliNear;
 use crate::wallet::Wallet;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures_util::future::join_all;
 use near_primitives::types::Balance;
@@ -43,7 +43,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::Price;
+use zaciraci_common::types::{NearValue, Price};
 use zaciraci_common::units::Units;
 
 #[derive(Clone)]
@@ -589,14 +589,13 @@ where
                 ));
             }
         };
-        // BigDecimal を f64 に変換（外部構造体の制約のため）
-        let prediction_f64 = prediction
-            .to_string()
-            .parse::<f64>()
-            .map_err(|e| anyhow::anyhow!("Failed to convert prediction to f64: {}", e))?;
-
         // 予測値を yoctoNEAR 単位に変換（current_price と同じ単位に揃える）
-        let prediction_yocto = Units::near_f64_to_yocto_f64(prediction_f64);
+        // BigDecimal版のNearValueを使用し、最後にf64に変換（精度損失を最小化）
+        let prediction_yocto = NearValue::new(prediction.clone())
+            .to_yocto()
+            .into_bigdecimal()
+            .to_f64()
+            .unwrap_or(0.0);
         predictions.insert(token.to_string(), prediction_yocto);
 
         info!(log, "token prediction";

@@ -6,10 +6,6 @@ use chrono::{DateTime, Utc};
 use common::stats::ValueAtTime;
 use std::collections::HashMap;
 
-// 型エイリアスを明示的にインポート（ドキュメント目的）
-#[allow(unused_imports)]
-use super::types::{NearValue, TokenAmount, YoctoPrice};
-
 /// Fetch price data from backend with cache support
 pub async fn fetch_price_data(
     backend_client: &BackendClient,
@@ -33,12 +29,12 @@ pub async fn fetch_price_data(
 /// Get prices at a specific time point
 ///
 /// # Returns
-/// 価格マップ（yoctoNEAR/token単位）
+/// 価格マップ（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
 pub fn get_prices_at_time(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     target_time: DateTime<Utc>,
-) -> Result<HashMap<String, YoctoPrice>> {
-    let mut prices: HashMap<String, YoctoPrice> = HashMap::new();
+) -> Result<HashMap<String, PriceF64>> {
+    let mut prices: HashMap<String, PriceF64> = HashMap::new();
     let one_hour = chrono::Duration::hours(1);
     let time_window_start = target_time - one_hour;
     let time_window_end = target_time + one_hour;
@@ -72,13 +68,13 @@ pub fn get_prices_at_time(
             })
             .unwrap();
 
-        // 価格は yoctoNEAR/token 単位
-        let price_yocto: YoctoPrice = closest_value
+        // 価格は無次元比率（yoctoNEAR/smallest_unit = NEAR/token）
+        let price_value = closest_value
             .value
             .to_string()
             .parse::<f64>()
             .unwrap_or(0.0);
-        prices.insert(token.clone(), price_yocto);
+        prices.insert(token.clone(), PriceF64::new(price_value));
     }
 
     Ok(prices)
@@ -87,11 +83,11 @@ pub fn get_prices_at_time(
 /// Get prices at a specific time point, returning None if data is insufficient
 ///
 /// # Returns
-/// 価格マップ（yoctoNEAR/token単位）
+/// 価格マップ（無次元比率）
 pub fn get_prices_at_time_optional(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     target_time: DateTime<Utc>,
-) -> Option<HashMap<String, YoctoPrice>> {
+) -> Option<HashMap<String, PriceF64>> {
     get_prices_at_time(price_data, target_time).ok()
 }
 
@@ -220,12 +216,12 @@ fn find_next_valid_data_time(
 /// ポートフォリオ評価用：より柔軟な価格取得（最大7日前まで遡る）
 ///
 /// # Returns
-/// 価格マップ（yoctoNEAR/token単位）
+/// 価格マップ（無次元比率）
 pub fn get_last_known_prices_for_evaluation(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     target_time: DateTime<Utc>,
-) -> Option<HashMap<String, YoctoPrice>> {
-    let mut prices: HashMap<String, YoctoPrice> = HashMap::new();
+) -> Option<HashMap<String, PriceF64>> {
+    let mut prices: HashMap<String, PriceF64> = HashMap::new();
     let max_lookback = chrono::Duration::days(7); // 最大7日前まで遡る
 
     for (token, values) in price_data {
@@ -241,12 +237,12 @@ pub fn get_last_known_prices_for_evaluation(
     }
 }
 
-/// 指定期間内で最も近い価格を探す（yoctoNEAR/token単位）
+/// 指定期間内で最も近い価格を探す（無次元比率）
 fn find_price_within(
     values: &[ValueAtTime],
     target_time: DateTime<Utc>,
     max_lookback: chrono::Duration,
-) -> Option<YoctoPrice> {
+) -> Option<PriceF64> {
     let earliest_allowed = target_time - max_lookback;
 
     values
@@ -256,5 +252,5 @@ fn find_price_within(
             value_time <= target_time && value_time >= earliest_allowed
         })
         .max_by_key(|v| v.time)
-        .map(|v| v.value.to_string().parse::<YoctoPrice>().unwrap_or(0.0))
+        .map(|v| PriceF64::new(v.value.to_string().parse::<f64>().unwrap_or(0.0)))
 }

@@ -77,10 +77,11 @@ mod data_flow_debug {
         // 問題：この値を使った時の初期ポートフォリオ計算
         let initial_capital = BigDecimal::from(1000); // NEAR
         let initial_per_token = &initial_capital / BigDecimal::from(2); // 2つのトークンを想定
-        let initial_price_near = common::units::Units::yocto_f64_to_near_f64(*returned_price)
-            .to_string()
-            .parse::<BigDecimal>()
-            .unwrap();
+        let initial_price_near =
+            common::units::Units::yocto_f64_to_near_f64(returned_price.as_f64())
+                .to_string()
+                .parse::<BigDecimal>()
+                .unwrap();
         let token_amount = &initial_per_token / &initial_price_near;
 
         println!("   💰 Portfolio Calculation:");

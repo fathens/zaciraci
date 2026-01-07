@@ -3,8 +3,9 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::commands::simulate::{
-    AlgorithmType, DataQualityStats, ExecutionSummary, PerformanceMetrics as SimPerformanceMetrics,
-    SimulationResult, SimulationSummary, TradeExecution, TradingCost,
+    AlgorithmType, DataQualityStats, ExecutionSummary, NearValueF64,
+    PerformanceMetrics as SimPerformanceMetrics, PriceF64, SimulationResult, SimulationSummary,
+    TokenAmountF64, TradeExecution, TradingCost,
 };
 use bigdecimal::BigDecimal;
 
@@ -46,16 +47,16 @@ mod unit_tests {
                 timestamp: Utc::now(),
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
-                amount: 100.0,
-                executed_price: 1.5,
+                amount: TokenAmountF64::new(100.0),
+                executed_price: PriceF64::new(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
                     slippage: BigDecimal::from(2),
                     gas_fee: BigDecimal::from(1),
                     total: BigDecimal::from(6),
                 },
-                portfolio_value_before: 1000.0,
-                portfolio_value_after: 1020.0,
+                portfolio_value_before: NearValueF64::new(1000.0),
+                portfolio_value_after: NearValueF64::new(1020.0),
                 success: true,
                 reason: "Test trade".to_string(),
             }],
@@ -63,20 +64,20 @@ mod unit_tests {
                 PortfolioValue {
                     timestamp: Utc::now(),
                     holdings: HashMap::new(),
-                    total_value: 1000.0,
-                    cash_balance: 1000.0,
-                    unrealized_pnl: 0.0,
+                    total_value: NearValueF64::new(1000.0),
+                    cash_balance: NearValueF64::new(1000.0),
+                    unrealized_pnl: NearValueF64::zero(),
                 },
                 PortfolioValue {
                     timestamp: Utc::now(),
                     holdings: {
                         let mut h = HashMap::new();
-                        h.insert("token_b".to_string(), 150.0);
+                        h.insert("token_b".to_string(), NearValueF64::new(150.0));
                         h
                     },
-                    total_value: 1150.0,
-                    cash_balance: 850.0,
-                    unrealized_pnl: 150.0,
+                    total_value: NearValueF64::new(1150.0),
+                    cash_balance: NearValueF64::new(850.0),
+                    unrealized_pnl: NearValueF64::new(150.0),
                 },
             ],
             execution_summary: ExecutionSummary {
@@ -154,18 +155,18 @@ mod unit_tests {
                     .unwrap()
                     .with_timezone(&Utc),
                 holdings: HashMap::new(),
-                total_value: 1000.0,
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
+                total_value: NearValueF64::new(1000.0),
+                cash_balance: NearValueF64::new(1000.0),
+                unrealized_pnl: NearValueF64::zero(),
             },
             PortfolioValue {
                 timestamp: chrono::DateTime::parse_from_rfc3339("2024-01-02T00:00:00Z")
                     .unwrap()
                     .with_timezone(&Utc),
                 holdings: HashMap::new(),
-                total_value: 1100.0,
-                cash_balance: 1100.0,
-                unrealized_pnl: 100.0,
+                total_value: NearValueF64::new(1100.0),
+                cash_balance: NearValueF64::new(1100.0),
+                unrealized_pnl: NearValueF64::new(100.0),
             },
         ];
 
@@ -196,16 +197,16 @@ mod unit_tests {
                 .with_timezone(&Utc),
             from_token: "token_a".to_string(),
             to_token: "token_b".to_string(),
-            amount: 100.0,
-            executed_price: 1.5,
+            amount: TokenAmountF64::new(100.0),
+            executed_price: PriceF64::new(1.5),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from(3),
                 slippage: BigDecimal::from(2),
                 gas_fee: BigDecimal::from(1),
                 total: BigDecimal::from(6),
             },
-            portfolio_value_before: 1000.0,
-            portfolio_value_after: 1020.0,
+            portfolio_value_before: NearValueF64::new(1000.0),
+            portfolio_value_after: NearValueF64::new(1020.0),
             success: true,
             reason: "Test trade".to_string(),
         }];
@@ -227,16 +228,16 @@ mod unit_tests {
                 timestamp: Utc::now(),
                 from_token: format!("token_{}", i),
                 to_token: format!("token_{}", i + 1),
-                amount: 100.0,
-                executed_price: 1.5,
+                amount: TokenAmountF64::new(100.0),
+                executed_price: PriceF64::new(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
                     slippage: BigDecimal::from(2),
                     gas_fee: BigDecimal::from(1),
                     total: BigDecimal::from(6),
                 },
-                portfolio_value_before: 1000.0,
-                portfolio_value_after: 1020.0,
+                portfolio_value_before: NearValueF64::new(1000.0),
+                portfolio_value_after: NearValueF64::new(1020.0),
                 success: true,
                 reason: "Test trade".to_string(),
             })
@@ -352,16 +353,16 @@ mod phase_4_2_tests {
                 timestamp: Utc::now(),
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
-                amount: 100.0,
-                executed_price: 1.5,
+                amount: TokenAmountF64::new(100.0),
+                executed_price: PriceF64::new(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
                     slippage: BigDecimal::from(2),
                     gas_fee: BigDecimal::from(1),
                     total: BigDecimal::from(6),
                 },
-                portfolio_value_before: 1000.0,
-                portfolio_value_after: 1020.0, // +20 profit
+                portfolio_value_before: NearValueF64::new(1000.0),
+                portfolio_value_after: NearValueF64::new(1020.0), // +20 profit
                 success: true,
                 reason: "Profitable trade".to_string(),
             },
@@ -369,16 +370,16 @@ mod phase_4_2_tests {
                 timestamp: Utc::now(),
                 from_token: "token_b".to_string(),
                 to_token: "token_c".to_string(),
-                amount: 120.0,
-                executed_price: 0.8,
+                amount: TokenAmountF64::new(120.0),
+                executed_price: PriceF64::new(0.8),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(4),
                     slippage: BigDecimal::from(3),
                     gas_fee: BigDecimal::from(1),
                     total: BigDecimal::from(8),
                 },
-                portfolio_value_before: 1020.0,
-                portfolio_value_after: 990.0, // -30 loss
+                portfolio_value_before: NearValueF64::new(1020.0),
+                portfolio_value_after: NearValueF64::new(990.0), // -30 loss
                 success: true,
                 reason: "Losing trade".to_string(),
             },

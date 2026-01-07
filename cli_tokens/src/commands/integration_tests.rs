@@ -5,6 +5,7 @@ use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 use crate::commands::simulate::{
     AlgorithmType, DataQualityStats, ExecutionSummary, MultiAlgorithmSimulationResult, PerformanceMetrics,
     PortfolioValue, SimulationResult, SimulationSummary, TradeExecution, TradingCost,
+    NearValueF64, PriceF64, TokenAmountF64,
 };
 
 /// Create a test simulation result for a specific algorithm
@@ -31,10 +32,10 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
     let portfolio_values: Vec<PortfolioValue> = (0..11)
         .map(|day| PortfolioValue {
             timestamp: start_date + chrono::Duration::days(day),
-            total_value: initial_capital + (final_value - initial_capital) * (day as f64) / 10.0,
-            cash_balance: 100.0,
+            total_value: NearValueF64::new(initial_capital + (final_value - initial_capital) * (day as f64) / 10.0),
+            cash_balance: NearValueF64::new(100.0),
             holdings: HashMap::new(),
-            unrealized_pnl: 0.0,
+            unrealized_pnl: NearValueF64::zero(),
         })
         .collect();
 
@@ -44,8 +45,8 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             timestamp: start_date + chrono::Duration::days(2),
             from_token: "wrap.near".to_string(),
             to_token: "akaia.tkn.near".to_string(),
-            amount: 500.0,
-            executed_price: 1.2,
+            amount: TokenAmountF64::new(500.0),
+            executed_price: PriceF64::new(1.2),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from_f64(1.5).unwrap(),
                 slippage: BigDecimal::from_f64(2.0).unwrap(),
@@ -53,16 +54,16 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
                 total: BigDecimal::from_f64(4.0).unwrap(),
             },
             reason: "momentum signal".to_string(),
-            portfolio_value_before: 1000.0,
-            portfolio_value_after: 996.0,
+            portfolio_value_before: NearValueF64::new(1000.0),
+            portfolio_value_after: NearValueF64::new(996.0),
             success: true,
         },
         TradeExecution {
             timestamp: start_date + chrono::Duration::days(5),
             from_token: "akaia.tkn.near".to_string(),
             to_token: "babyblackdragon.tkn.near".to_string(),
-            amount: 600.0,
-            executed_price: 0.8,
+            amount: TokenAmountF64::new(600.0),
+            executed_price: PriceF64::new(0.8),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from_f64(1.8).unwrap(),
                 slippage: BigDecimal::from_f64(2.4).unwrap(),
@@ -70,8 +71,8 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
                 total: BigDecimal::from_f64(4.7).unwrap(),
             },
             reason: "rebalancing".to_string(),
-            portfolio_value_before: 1100.0,
-            portfolio_value_after: 1095.3,
+            portfolio_value_before: NearValueF64::new(1100.0),
+            portfolio_value_after: NearValueF64::new(1095.3),
             success: true,
         },
     ];

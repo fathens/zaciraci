@@ -7,10 +7,6 @@ use common::algorithm::{PredictionData, TradingAction};
 use common::types::Price;
 use std::collections::HashMap;
 
-// 型エイリアスを明示的にインポート（ドキュメント目的）
-#[allow(unused_imports)]
-use super::types::{NearPrice, NearValue, TokenAmount, YoctoPrice};
-
 // Import cache-related modules
 use crate::models::prediction::{
     PredictionFileData, PredictionMetadata, PredictionPoint as CachePredictionPoint,
@@ -374,14 +370,14 @@ async fn get_historical_price_data(
 /// Trading context for managing mutable state during trade execution
 pub struct TradeContext<'a> {
     pub current_token: &'a str,
-    /// 現在保有量（トークン数量）
-    pub current_amount: TokenAmount,
-    /// 現在価格（yoctoNEAR/token単位）
-    pub current_price: YoctoPrice,
-    /// 全トークンの価格（yoctoNEAR/token単位）
-    pub all_prices: &'a HashMap<String, YoctoPrice>,
-    /// 保有量（トークン数量）
-    pub holdings: &'a mut HashMap<String, TokenAmount>,
+    /// 現在保有量（smallest_unit）
+    pub current_amount: TokenAmountF64,
+    /// 現在価格（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
+    pub current_price: PriceF64,
+    /// 全トークンの価格（無次元比率）
+    pub all_prices: &'a HashMap<String, PriceF64>,
+    /// 保有量（smallest_unit）
+    pub holdings: &'a mut HashMap<String, TokenAmountF64>,
     pub timestamp: DateTime<Utc>,
     pub config: &'a SimulationConfig,
 }
@@ -395,27 +391,27 @@ pub fn execute_trading_action(
         TradingAction::Hold => Ok(None),
 
         TradingAction::Sell { token: _, target } => {
-            let target_price = ctx.all_prices.get(&target).copied().unwrap_or(0.0);
-            if target_price <= 0.0 {
+            let target_price = ctx
+                .all_prices
+                .get(&target)
+                .copied()
+                .unwrap_or(PriceF64::zero());
+            if target_price.is_zero() {
                 return Ok(None);
             }
 
             // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
-            let current_amount_bd = BigDecimal::from_f64(ctx.current_amount).unwrap_or_default();
-            let current_price_bd = BigDecimal::from_f64(ctx.current_price).unwrap_or_default();
+            // 型安全な変換メソッドを使用
+            let current_amount_bd = ctx.current_amount.to_bigdecimal();
+            let current_price_bd = ctx.current_price.to_bigdecimal().into_bigdecimal();
             let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
 
-            // ガスコストをBigDecimalで計算
-            let gas_cost_near = ctx
-                .config
-                .gas_cost
-                .to_string()
-                .parse::<f64>()
-                .unwrap_or(0.01);
-            let gas_cost_yocto_f64 = common::units::Units::near_f64_to_yocto_f64(gas_cost_near);
-            let gas_cost_yocto_bd = BigDecimal::from_f64(gas_cost_yocto_f64).unwrap_or_default();
+            // ガスコストをBigDecimalで計算（型安全な変換、精度損失なし）
+            let gas_cost_yocto_bd = NearValue::new(ctx.config.gas_cost.clone())
+                .to_yocto()
+                .into_bigdecimal();
 
-            // スリッパレートをBigDecimalで計算
+            // スリッパレートをBigDecimalで計算（無次元の比率なのでそのまま変換）
             let slippage_rate_bd =
                 BigDecimal::from_f64(ctx.config.slippage_rate).unwrap_or_default();
 
@@ -428,13 +424,15 @@ pub fn execute_trading_action(
             );
 
             // コストをトークン数量で表現（BigDecimal精度保持）
-            let trade_cost = if ctx.current_price > 0.0 {
-                (&trade_cost_value_yocto_bd / &current_price_bd)
-                    .to_string()
-                    .parse::<f64>()
-                    .unwrap_or(0.0)
+            let trade_cost = if !ctx.current_price.is_zero() {
+                TokenAmountF64::new(
+                    (&trade_cost_value_yocto_bd / &current_price_bd)
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap_or(0.0),
+                )
             } else {
-                0.0
+                TokenAmountF64::zero()
             };
 
             // SELLアクション: 現在のトークンを売却してtarget（quote_token）を取得
@@ -446,15 +444,21 @@ pub fn execute_trading_action(
             ctx.holdings.remove(ctx.current_token);
             ctx.holdings.insert(target.clone(), new_amount);
 
-            let portfolio_before = ctx.current_amount * ctx.current_price;
-            let portfolio_after = new_amount * target_price;
+            // ポートフォリオ価値をNEAR単位で計算（型安全な変換を使用）
+            let portfolio_before_yocto = ctx.current_amount * ctx.current_price;
+            let portfolio_after_yocto = new_amount * target_price;
+            let portfolio_before = portfolio_before_yocto.to_near();
+            let portfolio_after = portfolio_after_yocto.to_near();
+
+            // 約定価格（無次元比率なので変換不要）
+            let executed_price = target_price;
 
             Ok(Some(TradeExecution {
                 timestamp: ctx.timestamp,
                 from_token: ctx.current_token.to_string(),
                 to_token: target,
-                amount: new_amount,           // 購入するトークン数量
-                executed_price: target_price, // 購入トークンの価格
+                amount: new_amount, // 購入するトークン数量
+                executed_price,     // 購入トークンの価格（無次元比率）
                 cost: TradingCost {
                     protocol_fee: &trade_cost_value_yocto_bd
                         * BigDecimal::from_f64(0.7).unwrap_or_default(),
@@ -471,27 +475,23 @@ pub fn execute_trading_action(
         }
 
         TradingAction::Switch { from: _, to } => {
-            let target_price = ctx.all_prices.get(&to).copied().unwrap_or(0.0);
-            if target_price <= 0.0 {
+            let target_price = ctx.all_prices.get(&to).copied().unwrap_or(PriceF64::zero());
+            if target_price.is_zero() {
                 return Ok(None);
             }
 
             // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
-            let current_amount_bd = BigDecimal::from_f64(ctx.current_amount).unwrap_or_default();
-            let current_price_bd = BigDecimal::from_f64(ctx.current_price).unwrap_or_default();
+            // 型安全な変換メソッドを使用
+            let current_amount_bd = ctx.current_amount.to_bigdecimal();
+            let current_price_bd = ctx.current_price.to_bigdecimal().into_bigdecimal();
             let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
 
-            // ガスコストをBigDecimalで計算
-            let gas_cost_near = ctx
-                .config
-                .gas_cost
-                .to_string()
-                .parse::<f64>()
-                .unwrap_or(0.01);
-            let gas_cost_yocto_f64 = common::units::Units::near_f64_to_yocto_f64(gas_cost_near);
-            let gas_cost_yocto_bd = BigDecimal::from_f64(gas_cost_yocto_f64).unwrap_or_default();
+            // ガスコストをBigDecimalで計算（型安全な変換、精度損失なし）
+            let gas_cost_yocto_bd = NearValue::new(ctx.config.gas_cost.clone())
+                .to_yocto()
+                .into_bigdecimal();
 
-            // スリッパレートをBigDecimalで計算
+            // スリッパレートをBigDecimalで計算（無次元の比率なのでそのまま変換）
             let slippage_rate_bd =
                 BigDecimal::from_f64(ctx.config.slippage_rate).unwrap_or_default();
 
@@ -504,13 +504,15 @@ pub fn execute_trading_action(
             );
 
             // コストをトークン数量で表現（BigDecimal精度保持）
-            let trade_cost = if ctx.current_price > 0.0 {
-                (&trade_cost_value_yocto_bd / &current_price_bd)
-                    .to_string()
-                    .parse::<f64>()
-                    .unwrap_or(0.0)
+            let trade_cost = if !ctx.current_price.is_zero() {
+                TokenAmountF64::new(
+                    (&trade_cost_value_yocto_bd / &current_price_bd)
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap_or(0.0),
+                )
             } else {
-                0.0
+                TokenAmountF64::zero()
             };
 
             // SWITCHアクション: fromトークンをtoトークンに交換
@@ -522,15 +524,21 @@ pub fn execute_trading_action(
             ctx.holdings.remove(ctx.current_token);
             ctx.holdings.insert(to.clone(), new_amount);
 
-            let portfolio_before = ctx.current_amount * ctx.current_price;
-            let portfolio_after = new_amount * target_price;
+            // ポートフォリオ価値をNEAR単位で計算（型安全な変換を使用）
+            let portfolio_before_yocto = ctx.current_amount * ctx.current_price;
+            let portfolio_after_yocto = new_amount * target_price;
+            let portfolio_before = portfolio_before_yocto.to_near();
+            let portfolio_after = portfolio_after_yocto.to_near();
+
+            // 約定価格（無次元比率なので変換不要）
+            let executed_price = target_price;
 
             Ok(Some(TradeExecution {
                 timestamp: ctx.timestamp,
                 from_token: ctx.current_token.to_string(),
                 to_token: to,
-                amount: new_amount,           // 購入するトークン数量
-                executed_price: target_price, // 購入トークンの価格
+                amount: new_amount, // 購入するトークン数量
+                executed_price,     // 購入トークンの価格（無次元比率）
                 cost: TradingCost {
                     protocol_fee: &trade_cost_value_yocto_bd
                         * BigDecimal::from_f64(0.7).unwrap_or_default(),
@@ -567,15 +575,15 @@ impl ImmutablePortfolio {
     /// Create a new portfolio with initial capital in a specific token
     ///
     /// # Arguments
-    /// * `initial_capital` - 初期資金（トークン数量）
+    /// * `initial_capital` - 初期資金（smallest_unit）
     /// * `initial_token` - 初期トークン名
-    pub fn new(initial_capital: TokenAmount, initial_token: &str) -> Self {
+    pub fn new(initial_capital: TokenAmountF64, initial_token: &str) -> Self {
         let mut holdings = HashMap::new();
         holdings.insert(initial_token.to_string(), initial_capital);
 
         Self {
             holdings,
-            cash_balance: 0.0,
+            cash_balance: NearValueF64::zero(),
             timestamp: Utc::now(),
         }
     }
@@ -585,17 +593,18 @@ impl ImmutablePortfolio {
     /// # Returns
     /// ポートフォリオ総価値（yoctoNEAR単位）
     ///
-    /// 注意: market.prices は yoctoNEAR/token 単位なので、
-    /// 結果も yoctoNEAR 単位となる
-    pub fn total_value(&self, market: &MarketSnapshot) -> f64 {
-        let mut total = self.cash_balance;
+    /// 注意: market.prices は無次元比率（yoctoNEAR/smallest_unit）なので、
+    /// amount * price = yoctoNEAR 単位となる
+    pub fn total_value(&self, market: &MarketSnapshot) -> YoctoValueF64 {
+        let mut total = self.cash_balance.to_yocto();
 
-        for (token, amount) in &self.holdings {
-            if let Some(&price_yocto) = market.prices.get(token) {
-                // price_yocto: yoctoNEAR/token
-                // amount: トークン数量
+        for (token, &amount) in &self.holdings {
+            if let Some(&price) = market.prices.get(token) {
+                // price: 無次元比率（yoctoNEAR/smallest_unit）
+                // amount: smallest_unit
                 // → 結果は yoctoNEAR 単位
-                total += amount * price_yocto;
+                let value = amount * price;
+                total = total + value;
             }
         }
 
@@ -620,18 +629,23 @@ impl ImmutablePortfolio {
             },
             TradingDecision::Sell { target_token } => {
                 // Sell current holding to target token
-                if let Some((current_token, current_amount)) = new_holdings.iter().next() {
+                if let Some((current_token, &current_amount)) = new_holdings.iter().next() {
                     let current_token = current_token.clone();
-                    let current_amount = *current_amount;
 
                     new_holdings.remove(&current_token);
 
-                    if let Some(&target_price) = market.prices.get(target_token) {
-                        let target_amount = current_amount / target_price;
-                        cost = current_amount * 0.006; // Simple fee calculation
-                        let net_amount = target_amount - (cost / target_price);
+                    // 両方のトークン価格を取得して正しく変換
+                    if let (Some(&current_price), Some(&target_price)) = (
+                        market.prices.get(&current_token),
+                        market.prices.get(target_token),
+                    ) {
+                        // 現在の価値を計算（yoctoNEAR単位）
+                        let current_value = current_amount * current_price;
+                        cost = current_value.as_f64() * 0.006; // Simple fee calculation (yoctoNEAR単位)
+                        let net_value = YoctoValueF64::new(current_value.as_f64() - cost);
+                        let target_amount = net_value / target_price;
 
-                        new_holdings.insert(target_token.clone(), net_amount);
+                        new_holdings.insert(target_token.clone(), target_amount);
                     }
                 }
 
@@ -649,8 +663,8 @@ impl ImmutablePortfolio {
                         (market.prices.get(from), market.prices.get(to))
                     {
                         let from_value = from_amount * from_price;
-                        cost = from_value * 0.006; // Simple fee calculation
-                        let net_value = from_value - cost;
+                        cost = from_value.as_f64() * 0.006; // Simple fee calculation
+                        let net_value = YoctoValueF64::new(from_value.as_f64() - cost);
                         let to_amount = net_value / to_price;
 
                         new_holdings.insert(to.clone(), to_amount);
@@ -676,13 +690,13 @@ impl ImmutablePortfolio {
 
     /// Get the dominant token in the portfolio (token with highest value)
     pub fn get_dominant_token(&self, market: &MarketSnapshot) -> Option<String> {
-        let mut max_value = 0.0;
+        let mut max_value = YoctoValueF64::zero();
         let mut dominant_token = None;
 
-        for (token, amount) in &self.holdings {
+        for (token, &amount) in &self.holdings {
             if let Some(&price) = market.prices.get(token) {
                 let value = amount * price;
-                if value > max_value {
+                if value.as_f64() > max_value.as_f64() {
                     max_value = value;
                     dominant_token = Some(token.clone());
                 }
@@ -694,7 +708,10 @@ impl ImmutablePortfolio {
 
     /// Check if portfolio has exposure to a specific token
     pub fn has_token(&self, token: &str) -> bool {
-        self.holdings.contains_key(token) && self.holdings[token] > 0.0
+        self.holdings
+            .get(token)
+            .map(|amount| amount.is_positive())
+            .unwrap_or(false)
     }
 
     /// Get allocation percentage for each token
@@ -702,19 +719,20 @@ impl ImmutablePortfolio {
         let total_value = self.total_value(market);
         let mut allocations = HashMap::new();
 
-        if total_value > 0.0 {
-            for (token, amount) in &self.holdings {
+        if total_value.as_f64() > 0.0 {
+            for (token, &amount) in &self.holdings {
                 if let Some(&price) = market.prices.get(token) {
                     let token_value = amount * price;
-                    let allocation = (token_value / total_value) * 100.0;
+                    let allocation = (token_value.as_f64() / total_value.as_f64()) * 100.0;
                     allocations.insert(token.clone(), allocation);
                 }
             }
         }
 
         // Add cash allocation
-        if self.cash_balance > 0.0 {
-            let cash_allocation = (self.cash_balance / total_value) * 100.0;
+        if self.cash_balance.is_positive() {
+            let cash_allocation =
+                (self.cash_balance.to_yocto().as_f64() / total_value.as_f64()) * 100.0;
             allocations.insert("cash".to_string(), cash_allocation);
         }
 

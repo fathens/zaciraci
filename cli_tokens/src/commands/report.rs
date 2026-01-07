@@ -236,7 +236,7 @@ pub fn generate_portfolio_chart_data(values: &[PortfolioValue]) -> ChartData {
         .map(|pv| format!("'{}'", pv.timestamp.format("%m/%d")))
         .collect();
 
-    let chart_values: Vec<f64> = values.iter().map(|pv| pv.total_value).collect();
+    let chart_values: Vec<f64> = values.iter().map(|pv| pv.total_value.as_f64()).collect();
 
     ChartData {
         labels,
@@ -363,7 +363,7 @@ pub fn analyze_trades(trades: &[TradeExecution]) -> TradeAnalysis {
 
     let trade_pnls: Vec<f64> = trades
         .iter()
-        .map(|t| t.portfolio_value_after - t.portfolio_value_before)
+        .map(|t| t.portfolio_value_after.as_f64() - t.portfolio_value_before.as_f64())
         .collect();
 
     TradeAnalysis {
@@ -396,8 +396,8 @@ fn calculate_daily_returns(portfolio_values: &[PortfolioValue]) -> Vec<f64> {
     portfolio_values
         .windows(2)
         .map(|window| {
-            let prev_value = window[0].total_value;
-            let curr_value = window[1].total_value;
+            let prev_value = window[0].total_value.as_f64();
+            let curr_value = window[1].total_value.as_f64();
             if prev_value != 0.0 {
                 (curr_value - prev_value) / prev_value
             } else {
@@ -1434,8 +1434,8 @@ fn generate_comparison_chart_script(results: &[SimulationResult]) -> Result<Stri
 mod comparison_chart_tests {
     use super::*;
     use crate::commands::simulate::{
-        AlgorithmType, DataQualityStats, ExecutionSummary, PerformanceMetrics, PortfolioValue,
-        SimulationResult, SimulationSummary, TradeExecution,
+        AlgorithmType, DataQualityStats, ExecutionSummary, NearValueF64, PerformanceMetrics,
+        PortfolioValue, SimulationResult, SimulationSummary, TradeExecution,
     };
     use chrono::{DateTime, Utc};
 
@@ -1463,10 +1463,10 @@ mod comparison_chart_tests {
             .enumerate()
             .map(|(i, &value)| PortfolioValue {
                 timestamp: start_date + chrono::Duration::days(i as i64),
-                total_value: value,
-                cash_balance: 0.0,
+                total_value: NearValueF64::new(value),
+                cash_balance: NearValueF64::zero(),
                 holdings: std::collections::HashMap::new(),
-                unrealized_pnl: value - 1000.0,
+                unrealized_pnl: NearValueF64::new(value - 1000.0),
             })
             .collect();
 

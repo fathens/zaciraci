@@ -10,11 +10,6 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use common::types::Price;
 use std::collections::{BTreeMap, HashMap};
-use std::str::FromStr;
-
-// 型エイリアスを明示的にインポート（ドキュメント目的）
-#[allow(unused_imports)]
-use super::types::{NearPrice, NearValue, TokenAmount, YoctoPrice};
 
 /// Run momentum simulation
 pub async fn run_momentum_simulation(config: &SimulationConfig) -> Result<SimulationResult> {
@@ -72,18 +67,19 @@ pub(crate) async fn run_momentum_timestep_simulation(
 ) -> Result<SimulationResult> {
     use super::metrics::calculate_performance_metrics;
     use super::trading::{TradeContext, execute_trading_action, generate_api_predictions};
-    use bigdecimal::{BigDecimal, FromPrimitive};
     use common::algorithm::momentum::execute_momentum_strategy;
     use common::algorithm::{TokenHolding, TradingAction};
 
     let duration = config.end_date - config.start_date;
     let duration_days = duration.num_days();
     // initial_value: NEAR単位（ユーザー入力）
-    let initial_value: NearValue = config
-        .initial_capital
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(1000.0);
+    let initial_value = NearValueF64::new(
+        config
+            .initial_capital
+            .to_string()
+            .parse::<f64>()
+            .unwrap_or(1000.0),
+    );
 
     // タイムステップ設定
     let time_step = config.rebalance_interval.as_duration();
@@ -91,25 +87,27 @@ pub(crate) async fn run_momentum_timestep_simulation(
     let mut current_time = config.start_date;
     let mut portfolio_values = Vec::new();
     let mut trades = Vec::new();
-    let mut current_holdings: HashMap<String, TokenAmount> = HashMap::new();
-    let mut total_costs: NearValue = 0.0;
+    let mut current_holdings: HashMap<String, TokenAmountF64> = HashMap::new();
+    let mut total_costs = NearValueF64::zero();
 
     // 初期ポートフォリオ設定（均等分散）
     let tokens_count = config.target_tokens.len() as f64;
-    let initial_per_token: NearValue = initial_value / tokens_count;
+    let initial_per_token = NearValueF64::new(initial_value.as_f64() / tokens_count);
 
-    // 初期価格データを取得（yoctoNEAR/token単位）
-    let initial_prices: HashMap<String, YoctoPrice> =
+    // 初期価格データを取得（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
+    let initial_prices: HashMap<String, PriceF64> =
         get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
-        if let Some(&initial_price_yocto) = initial_prices.get(token) {
-            // initial_per_token: NEAR単位
-            // initial_price_yocto: yoctoNEAR/token単位
-            // → NEAR/token単位に変換してからトークン数量を計算
-            let initial_price_near: NearPrice =
-                common::units::Units::yocto_f64_to_near_f64(initial_price_yocto);
-            let token_amount: TokenAmount = initial_per_token / initial_price_near;
+        if let Some(&initial_price) = initial_prices.get(token) {
+            // initial_per_token: NEAR単位 (NearValueF64)
+            // initial_price: 無次元比率 (yoctoNEAR/smallest_unit = NEAR/token)
+            // → トークン数量を計算: NEAR / (NEAR/token) = token
+            // ただし price は yoctoNEAR/smallest_unit 単位なので、
+            // amount (smallest_unit) = value (yoctoNEAR) / price (yoctoNEAR/smallest_unit)
+            // value を yoctoNEAR に変換してから計算
+            let initial_value_yocto = initial_per_token.to_yocto();
+            let token_amount = initial_value_yocto / initial_price;
             current_holdings.insert(token.clone(), token_amount);
         } else {
             return Err(anyhow::anyhow!(
@@ -150,16 +148,14 @@ pub(crate) async fn run_momentum_timestep_simulation(
                 )
                 .await?;
 
-                // TokenHoldingに変換
+                // TokenHoldingに変換（型安全な変換メソッドを使用）
                 let mut token_holdings = Vec::new();
                 for (token, amount) in &current_holdings {
                     if let Some(&price) = current_prices.get(token) {
                         token_holdings.push(TokenHolding {
                             token: token.clone(),
-                            amount: BigDecimal::from_f64(*amount).unwrap_or_default(),
-                            current_price: Price::new(
-                                BigDecimal::from_f64(price).unwrap_or_default(),
-                            ),
+                            amount: amount.to_bigdecimal(),
+                            current_price: price.to_bigdecimal(),
                         });
                     }
                 }
@@ -205,12 +201,14 @@ pub(crate) async fn run_momentum_timestep_simulation(
                                         },
                                         &mut trade_ctx,
                                     ) {
-                                        total_costs += trade
+                                        let cost_f64 = trade
                                             .cost
                                             .total
                                             .to_string()
                                             .parse::<f64>()
                                             .unwrap_or(0.0);
+                                        total_costs =
+                                            NearValueF64::new(total_costs.as_f64() + cost_f64);
                                         trades.push(trade);
                                     }
                                 }
@@ -242,12 +240,14 @@ pub(crate) async fn run_momentum_timestep_simulation(
                                         },
                                         &mut trade_ctx,
                                     ) {
-                                        total_costs += trade
+                                        let cost_f64 = trade
                                             .cost
                                             .total
                                             .to_string()
                                             .parse::<f64>()
                                             .unwrap_or(0.0);
+                                        total_costs =
+                                            NearValueF64::new(total_costs.as_f64() + cost_f64);
                                         trades.push(trade);
                                     }
                                 }
@@ -258,17 +258,17 @@ pub(crate) async fn run_momentum_timestep_simulation(
                 }
 
                 // ポートフォリオ価値を計算
-                let mut total_value = 0.0;
-                let mut holdings_value = HashMap::new();
+                let mut total_value = NearValueF64::zero();
+                let mut holdings_value: HashMap<String, NearValueF64> = HashMap::new();
 
                 for (token, amount) in &current_holdings {
-                    if let Some(&price_yocto) = current_prices.get(token) {
-                        // priceはyoctoNEAR単位、amountはトークン数量
-                        // 計算結果をNEAR単位に変換
-                        let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                        let value = amount * price_near;
-                        holdings_value.insert(token.clone(), value);
-                        total_value += value;
+                    if let Some(&price) = current_prices.get(token) {
+                        // amount: TokenAmountF64 (smallest unit), price: PriceF64 (無次元比率)
+                        // amount * price = YoctoValueF64, then .to_near() = NearValueF64
+                        let value_yocto = *amount * price;
+                        let value_near = value_yocto.to_near();
+                        holdings_value.insert(token.clone(), value_near);
+                        total_value = NearValueF64::new(total_value.as_f64() + value_near.as_f64());
                     }
                 }
 
@@ -276,9 +276,11 @@ pub(crate) async fn run_momentum_timestep_simulation(
                 portfolio_values.push(PortfolioValue {
                     timestamp: current_time,
                     total_value,
-                    holdings: holdings_value.into_iter().collect(),
-                    cash_balance: 0.0,
-                    unrealized_pnl: total_value - initial_value,
+                    holdings: holdings_value,
+                    cash_balance: NearValueF64::zero(),
+                    unrealized_pnl: NearValueF64::new(
+                        total_value.as_f64() - initial_value.as_f64(),
+                    ),
                 });
             }
             None => {
@@ -308,25 +310,27 @@ pub(crate) async fn run_momentum_timestep_simulation(
                     get_last_known_prices_for_evaluation(price_data, current_time)
                 {
                     // 評価のみ実行（取引はしない）
-                    let mut total_value = 0.0;
-                    let mut holdings_value = HashMap::new();
+                    let mut total_value = NearValueF64::zero();
+                    let mut holdings_value: HashMap<String, NearValueF64> = HashMap::new();
 
                     for (token, amount) in &current_holdings {
-                        if let Some(&price_yocto) = evaluation_prices.get(token) {
-                            let price_near =
-                                common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                            let value = amount * price_near;
-                            holdings_value.insert(token.clone(), value);
-                            total_value += value;
+                        if let Some(&price) = evaluation_prices.get(token) {
+                            let value_yocto = *amount * price;
+                            let value_near = value_yocto.to_near();
+                            holdings_value.insert(token.clone(), value_near);
+                            total_value =
+                                NearValueF64::new(total_value.as_f64() + value_near.as_f64());
                         }
                     }
 
                     portfolio_values.push(PortfolioValue {
                         timestamp: current_time,
                         total_value,
-                        holdings: holdings_value.into_iter().collect(),
-                        cash_balance: 0.0,
-                        unrealized_pnl: total_value - initial_value,
+                        holdings: holdings_value,
+                        cash_balance: NearValueF64::zero(),
+                        unrealized_pnl: NearValueF64::new(
+                            total_value.as_f64() - initial_value.as_f64(),
+                        ),
                     });
                 }
             }
@@ -343,11 +347,11 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
     // パフォーマンス指標を計算
     let performance = calculate_performance_metrics(
-        initial_value,
-        final_value,
+        initial_value.as_f64(),
+        final_value.as_f64(),
         &portfolio_values,
         &trades,
-        total_costs,
+        total_costs.as_f64(),
         config.start_date,
         config.end_date,
     )?;
@@ -356,9 +360,9 @@ pub(crate) async fn run_momentum_timestep_simulation(
         start_date: config.start_date,
         end_date: config.end_date,
         algorithm: AlgorithmType::Momentum,
-        initial_capital: initial_value,
-        final_value,
-        total_return: final_value - initial_value,
+        initial_capital: initial_value.as_f64(),
+        final_value: final_value.as_f64(),
+        total_return: final_value.as_f64() - initial_value.as_f64(),
         duration_days,
     };
 
@@ -371,9 +375,9 @@ pub(crate) async fn run_momentum_timestep_simulation(
         } else {
             0.0
         },
-        total_cost: total_costs,
+        total_cost: total_costs.as_f64(),
         avg_cost_per_trade: if !trades.is_empty() {
-            total_costs / trades.len() as f64
+            total_costs.as_f64() / trades.len() as f64
         } else {
             0.0
         },
@@ -424,11 +428,13 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     let duration = config.end_date - config.start_date;
     let duration_days = duration.num_days();
     // initial_value: NEAR単位（ユーザー入力）
-    let initial_value: NearValue = config
-        .initial_capital
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(1000.0);
+    let initial_value = NearValueF64::new(
+        config
+            .initial_capital
+            .to_string()
+            .parse::<f64>()
+            .unwrap_or(1000.0),
+    );
 
     // タイムステップ設定
     let time_step = config.rebalance_interval.as_duration();
@@ -436,26 +442,25 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     let mut current_time = config.start_date;
     let mut portfolio_values = Vec::new();
     let mut trades = Vec::new();
-    let mut current_holdings: HashMap<String, TokenAmount> = HashMap::new();
-    let mut total_costs: NearValue = 0.0;
+    let mut current_holdings: HashMap<String, TokenAmountF64> = HashMap::new();
+    let mut total_costs = NearValueF64::zero();
     let mut last_rebalance_time = config.start_date;
 
     // 初期ポートフォリオ設定（均等分散）
     let tokens_count = config.target_tokens.len() as f64;
-    let initial_per_token: NearValue = initial_value / tokens_count;
+    let initial_per_token = NearValueF64::new(initial_value.as_f64() / tokens_count);
 
-    // 初期価格データを取得（yoctoNEAR/token単位）
-    let initial_prices: HashMap<String, YoctoPrice> =
+    // 初期価格データを取得（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
+    let initial_prices: HashMap<String, PriceF64> =
         get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
-        if let Some(&initial_price_yocto) = initial_prices.get(token) {
-            // initial_per_token: NEAR単位
-            // initial_price_yocto: yoctoNEAR/token単位
-            // → NEAR/token単位に変換してからトークン数量を計算
-            let initial_price_near: NearPrice =
-                common::units::Units::yocto_f64_to_near_f64(initial_price_yocto);
-            let token_amount: TokenAmount = initial_per_token / initial_price_near;
+        if let Some(&initial_price) = initial_prices.get(token) {
+            // initial_per_token: NEAR単位 (NearValueF64)
+            // initial_price: 無次元比率 (yoctoNEAR/smallest_unit = NEAR/token)
+            // → トークン数量を計算
+            let initial_value_yocto = initial_per_token.to_yocto();
+            let token_amount = initial_value_yocto / initial_price;
             current_holdings.insert(token.clone(), token_amount);
         } else {
             return Err(anyhow::anyhow!(
@@ -503,16 +508,13 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     )
                     .await?;
 
-                    // TokenDataに変換
+                    // TokenDataに変換（型安全な変換メソッドを使用）
                     let mut token_data = Vec::new();
                     for token in &config.target_tokens {
-                        if let Some(&current_price_yocto) = current_prices.get(token) {
-                            // current_priceはPrice型として保存
+                        if let Some(&current_price) = current_prices.get(token) {
                             token_data.push(TokenData {
                                 symbol: token.clone(),
-                                current_price: Price::new(
-                                    BigDecimal::from_f64(current_price_yocto).unwrap_or_default(),
-                                ),
+                                current_price: current_price.to_bigdecimal(),
                                 historical_volatility: 0.2, // デフォルト値
                                 liquidity_score: Some(0.8),
                                 market_cap: None,
@@ -572,7 +574,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     // 現在のホールディングをWalletInfoに変換
                     let mut holdings_for_wallet = BTreeMap::new();
                     for (token, amount) in &current_holdings {
-                        holdings_for_wallet.insert(token.clone(), *amount);
+                        holdings_for_wallet.insert(token.clone(), amount.as_f64());
                     }
 
                     let wallet_info = WalletInfo {
@@ -580,11 +582,10 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         total_value: current_holdings
                             .iter()
                             .map(|(token, amount)| {
-                                if let Some(&price_yocto) = current_prices.get(token) {
-                                    // 価格をNEAR単位に変換してから計算
-                                    let price_near =
-                                        common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                                    amount * price_near
+                                if let Some(&price) = current_prices.get(token) {
+                                    // 型安全な計算
+                                    let value_yocto = *amount * price;
+                                    value_yocto.to_near().as_f64()
                                 } else {
                                     0.0
                                 }
@@ -605,82 +606,50 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                             // リバランスアクションを実行
                             for action in execution_report.actions {
                                 if let TradingAction::Rebalance { target_weights } = action {
-                                    // 現在の総価値を高精度で計算（NEAR単位）
-                                    let mut total_portfolio_value_bd = BigDecimal::from(0);
+                                    // 現在の総価値を型安全に計算（NEAR単位）
+                                    let mut total_portfolio_value = NearValueF64::zero();
                                     for (token, amount) in &current_holdings {
-                                        if let Some(&price_yocto) = current_prices.get(token) {
-                                            let price_yocto_bd =
-                                                BigDecimal::from_str(&price_yocto.to_string())
-                                                    .unwrap_or_default();
-                                            let yocto_per_near =
-                                                BigDecimal::from_str("1000000000000000000000000")
-                                                    .unwrap();
-                                            let price_near_bd = &price_yocto_bd / &yocto_per_near;
-                                            let amount_bd =
-                                                BigDecimal::from_str(&amount.to_string())
-                                                    .unwrap_or_default();
-                                            let value_bd = &price_near_bd * &amount_bd;
-
-                                            total_portfolio_value_bd += value_bd;
+                                        if let Some(&price) = current_prices.get(token) {
+                                            let value_yocto = *amount * price;
+                                            let value_near = value_yocto.to_near();
+                                            total_portfolio_value = NearValueF64::new(
+                                                total_portfolio_value.as_f64()
+                                                    + value_near.as_f64(),
+                                            );
                                         }
                                     }
-                                    let total_portfolio_value = total_portfolio_value_bd
-                                        .to_string()
-                                        .parse::<f64>()
-                                        .unwrap_or(0.0);
 
-                                    // 目標配分に基づいてリバランス（高精度計算で数量制限適用）
+                                    // 目標配分に基づいてリバランス
                                     for (token, target_weight) in target_weights {
-                                        if let Some(&current_price_yocto) =
-                                            current_prices.get(&token)
-                                        {
-                                            // BigDecimalでの高精度計算
-                                            let price_yocto_bd = BigDecimal::from_str(
-                                                &current_price_yocto.to_string(),
-                                            )
-                                            .unwrap_or_default();
-                                            let yocto_per_near =
-                                                BigDecimal::from_str("1000000000000000000000000")
-                                                    .unwrap();
-                                            let price_near_bd = &price_yocto_bd / &yocto_per_near;
-
-                                            let target_weight_bd =
-                                                BigDecimal::from_str(&target_weight.to_string())
-                                                    .unwrap_or_default();
-                                            let target_value_bd =
-                                                &total_portfolio_value_bd * &target_weight_bd;
-                                            let target_amount_bd =
-                                                if price_near_bd > BigDecimal::from(0) {
-                                                    &target_value_bd / &price_near_bd
-                                                } else {
-                                                    BigDecimal::from(0)
-                                                };
+                                        if let Some(&current_price) = current_prices.get(&token) {
+                                            // 目標価値を計算（NEAR単位）
+                                            let target_value_near = NearValueF64::new(
+                                                total_portfolio_value.as_f64() * target_weight,
+                                            );
+                                            // 目標価値をyoctoNEARに変換して数量を計算
+                                            let target_value_yocto = target_value_near.to_yocto();
+                                            let target_amount = target_value_yocto / current_price;
 
                                             // 現実的な数量制限を適用
-                                            let max_reasonable_amount =
-                                                BigDecimal::from_str("1000000000000000000000")
-                                                    .unwrap(); // 10^21
-                                            let target_amount_limited =
-                                                if target_amount_bd > max_reasonable_amount {
-                                                    max_reasonable_amount.clone()
-                                                } else {
-                                                    target_amount_bd.clone()
-                                                };
-
-                                            let target_amount = target_amount_limited
-                                                .to_string()
-                                                .parse::<f64>()
-                                                .unwrap_or(0.0);
+                                            let max_reasonable_amount = TokenAmountF64::new(1e21);
+                                            let target_amount_limited = if target_amount.as_f64()
+                                                > max_reasonable_amount.as_f64()
+                                            {
+                                                max_reasonable_amount
+                                            } else {
+                                                target_amount
+                                            };
 
                                             // 現在の保有量と目標量の差を計算
                                             let current_amount = current_holdings
                                                 .get(&token)
                                                 .copied()
-                                                .unwrap_or(0.0);
-                                            let diff = target_amount - current_amount;
+                                                .unwrap_or(TokenAmountF64::zero());
+                                            let diff = target_amount_limited.as_f64()
+                                                - current_amount.as_f64();
 
                                             // 相対的な閾値: 現在保有量の1%以上の差でリバランス
-                                            let relative_threshold = current_amount * 0.01;
+                                            let relative_threshold = current_amount.as_f64() * 0.01;
                                             let min_threshold = 0.001; // 最小絶対閾値
                                             let effective_threshold =
                                                 relative_threshold.max(min_threshold);
@@ -688,24 +657,24 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             if diff.abs() > effective_threshold {
                                                 // 保有量の1%以上の差がある場合のみリバランス
                                                 current_holdings
-                                                    .insert(token.clone(), target_amount);
+                                                    .insert(token.clone(), target_amount_limited);
 
-                                                // 簡易的な取引コスト計算（NEAR単位、高精度）
-                                                let price_near_f64 = price_near_bd
-                                                    .to_string()
-                                                    .parse::<f64>()
-                                                    .unwrap_or(0.0);
-                                                let trade_cost =
-                                                    diff.abs() * price_near_f64 * 0.003; // 0.3%手数料
-                                                total_costs += trade_cost;
+                                                // 簡易的な取引コスト計算（NEAR単位）
+                                                let diff_amount = TokenAmountF64::new(diff.abs());
+                                                let diff_value_yocto = diff_amount * current_price;
+                                                let diff_value_near = diff_value_yocto.to_near();
+                                                let trade_cost = diff_value_near.as_f64() * 0.003; // 0.3%手数料
+                                                total_costs = NearValueF64::new(
+                                                    total_costs.as_f64() + trade_cost,
+                                                );
 
                                                 // TradeExecutionを記録
                                                 trades.push(TradeExecution {
                                                     timestamp: current_time,
                                                     from_token: config.quote_token.clone(),
                                                     to_token: token.clone(),
-                                                    amount: diff.abs(),
-                                                    executed_price: price_near_f64,
+                                                    amount: diff_amount,
+                                                    executed_price: current_price,
                                                     cost: TradingCost {
                                                         protocol_fee: BigDecimal::from_f64(
                                                             trade_cost * 0.7,
@@ -720,8 +689,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                             .unwrap_or_default(),
                                                     },
                                                     portfolio_value_before: total_portfolio_value,
-                                                    portfolio_value_after: total_portfolio_value
-                                                        - trade_cost,
+                                                    portfolio_value_after: NearValueF64::new(
+                                                        total_portfolio_value.as_f64() - trade_cost,
+                                                    ),
                                                     success: true,
                                                     reason: format!(
                                                         "Portfolio rebalancing: {} -> {:.1}%",
@@ -741,17 +711,16 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 }
 
                 // ポートフォリオ価値を計算
-                let mut total_value = 0.0;
-                let mut holdings_value = HashMap::new();
+                let mut total_value = NearValueF64::zero();
+                let mut holdings_value: HashMap<String, NearValueF64> = HashMap::new();
 
                 for (token, amount) in &current_holdings {
-                    if let Some(&price_yocto) = current_prices.get(token) {
-                        // priceはyoctoNEAR単位、amountはトークン数量
-                        // 計算結果をNEAR単位に変換
-                        let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                        let value = amount * price_near;
-                        holdings_value.insert(token.clone(), value);
-                        total_value += value;
+                    if let Some(&price) = current_prices.get(token) {
+                        // 型安全な計算
+                        let value_yocto = *amount * price;
+                        let value_near = value_yocto.to_near();
+                        holdings_value.insert(token.clone(), value_near);
+                        total_value = NearValueF64::new(total_value.as_f64() + value_near.as_f64());
                     }
                 }
 
@@ -759,9 +728,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 portfolio_values.push(PortfolioValue {
                     timestamp: current_time,
                     total_value,
-                    holdings: holdings_value.into_iter().collect(),
-                    cash_balance: 0.0,
-                    unrealized_pnl: total_value - initial_value,
+                    holdings: holdings_value,
+                    cash_balance: NearValueF64::zero(),
+                    unrealized_pnl: NearValueF64::new(
+                        total_value.as_f64() - initial_value.as_f64(),
+                    ),
                 });
             }
             None => {
@@ -790,25 +761,27 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                 if let Some(evaluation_prices) =
                     get_last_known_prices_for_evaluation(price_data, current_time)
                 {
-                    let mut total_value = 0.0;
-                    let mut holdings_value = HashMap::new();
+                    let mut total_value = NearValueF64::zero();
+                    let mut holdings_value: HashMap<String, NearValueF64> = HashMap::new();
 
                     for (token, amount) in &current_holdings {
-                        if let Some(&price_yocto) = evaluation_prices.get(token) {
-                            let price_near =
-                                common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                            let value = amount * price_near;
-                            holdings_value.insert(token.clone(), value);
-                            total_value += value;
+                        if let Some(&price) = evaluation_prices.get(token) {
+                            let value_yocto = *amount * price;
+                            let value_near = value_yocto.to_near();
+                            holdings_value.insert(token.clone(), value_near);
+                            total_value =
+                                NearValueF64::new(total_value.as_f64() + value_near.as_f64());
                         }
                     }
 
                     portfolio_values.push(PortfolioValue {
                         timestamp: current_time,
                         total_value,
-                        holdings: holdings_value.into_iter().collect(),
-                        cash_balance: 0.0,
-                        unrealized_pnl: total_value - initial_value,
+                        holdings: holdings_value,
+                        cash_balance: NearValueF64::zero(),
+                        unrealized_pnl: NearValueF64::new(
+                            total_value.as_f64() - initial_value.as_f64(),
+                        ),
                     });
                 }
             }
@@ -825,11 +798,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
     // パフォーマンス指標を計算
     let performance = calculate_performance_metrics(
-        initial_value,
-        final_value,
+        initial_value.as_f64(),
+        final_value.as_f64(),
         &portfolio_values,
         &trades,
-        total_costs,
+        total_costs.as_f64(),
         config.start_date,
         config.end_date,
     )?;
@@ -838,9 +811,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         start_date: config.start_date,
         end_date: config.end_date,
         algorithm: AlgorithmType::Portfolio,
-        initial_capital: initial_value,
-        final_value,
-        total_return: final_value - initial_value,
+        initial_capital: initial_value.as_f64(),
+        final_value: final_value.as_f64(),
+        total_return: final_value.as_f64() - initial_value.as_f64(),
         duration_days,
     };
 
@@ -853,9 +826,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         } else {
             0.0
         },
-        total_cost: total_costs,
+        total_cost: total_costs.as_f64(),
         avg_cost_per_trade: if !trades.is_empty() {
-            total_costs / trades.len() as f64
+            total_costs.as_f64() / trades.len() as f64
         } else {
             0.0
         },
@@ -895,6 +868,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 #[cfg(test)]
 mod precision_tests {
     use super::*;
+    use std::str::FromStr;
 
     /// Bean tokenの精度問題を再現するヘルパー関数
     fn calculate_portfolio_value_precise(
