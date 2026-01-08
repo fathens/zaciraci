@@ -124,7 +124,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
             "Volatility should be non-negative"
         );
         assert!(
-            token.current_price > BigDecimal::from(0),
+            token.current_price > price("0"),
             "Current price should be positive"
         );
     }
@@ -243,9 +243,9 @@ async fn test_convert_prediction_result() {
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
     assert_eq!(preds.len(), 3);
-    assert_eq!(preds[0].price, "1.2".parse::<BigDecimal>().unwrap());
-    assert_eq!(preds[1].price, "1.3".parse::<BigDecimal>().unwrap());
-    assert_eq!(preds[2].price, "1.4".parse::<BigDecimal>().unwrap());
+    assert_eq!(preds[0].price, price("1.2"));
+    assert_eq!(preds[1].price, price("1.3"));
+    assert_eq!(preds[2].price, price("1.4"));
 
     // タイムスタンプが1時間ずつ増加していることを確認
     assert_eq!(preds[1].timestamp - preds[0].timestamp, Duration::hours(1));
@@ -321,7 +321,7 @@ fn test_token_prediction_serialization_roundtrip() {
         prediction_time: Utc::now(),
         predictions: vec![PredictedPrice {
             timestamp: Utc::now(),
-            price: BigDecimal::from_str("1.5").unwrap(),
+            price: price("1.5"),
             confidence: Some(BigDecimal::from_str("0.85").unwrap()),
         }],
     };

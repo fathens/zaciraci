@@ -53,8 +53,8 @@ async fn try_load_from_cache(
 
             return Ok(Some(PredictionData {
                 token: token.to_string(),
-                current_price: Price::new(current_price),
-                predicted_price_24h: Price::new(last_prediction.price.clone()),
+                current_price,                                      // 既にPrice型
+                predicted_price_24h: last_prediction.price.clone(), // 既にPrice型
                 timestamp: pred_start,
                 confidence: last_prediction.confidence.clone(),
             }));
@@ -76,7 +76,7 @@ async fn save_to_cache(
         .zip(forecast_data.forecast_values.iter())
         .map(|(timestamp, price)| CachePredictionPoint {
             timestamp: *timestamp,
-            price: price.clone(),
+            price: common::types::Price::new(price.clone()),
             confidence: None, // Could extract from confidence intervals if available
         })
         .collect();

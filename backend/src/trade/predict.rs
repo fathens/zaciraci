@@ -15,7 +15,7 @@ use zaciraci_common::algorithm::prediction::{
 use zaciraci_common::api::chronos::ChronosApiClient;
 use zaciraci_common::api::traits::PredictionClient;
 use zaciraci_common::prediction::{PredictionResult, ZeroShotPredictionRequest};
-use zaciraci_common::types::{Price, PriceF64};
+use zaciraci_common::types::Price;
 
 /// トークンの価格履歴
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +41,8 @@ pub struct TokenPrediction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
+    /// 予測価格（無次元の価格比率）
+    pub price: Price,
     pub confidence: Option<BigDecimal>,
 }
 
@@ -51,7 +52,8 @@ pub struct TopToken {
     pub token: String,
     pub volatility: BigDecimal,
     pub volume_24h: BigDecimal,
-    pub current_price: BigDecimal,
+    /// 現在価格（無次元の価格比率）
+    pub current_price: Price,
 }
 
 /// 価格予測サービス
@@ -103,14 +105,14 @@ impl PredictionService {
                 let quote_token = quote_token_account.clone();
 
                 match TokenRate::get_latest(&base_token, &quote_token).await {
-                    Ok(Some(rate)) => rate.rate,
+                    Ok(Some(rate)) => Price::new(rate.rate),
                     Ok(None) => {
                         // ログを後で追加（slogのsetupが必要）
-                        BigDecimal::from(1) // デフォルト値
+                        Price::new(BigDecimal::from(1)) // デフォルト値
                     }
                     Err(_e) => {
                         // ログを後で追加（slogのsetupが必要）
-                        BigDecimal::from(1) // デフォルト値
+                        Price::new(BigDecimal::from(1)) // デフォルト値
                     }
                 }
             };
@@ -341,7 +343,7 @@ impl PredictionService {
                 let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
                 PredictedPrice {
                     timestamp,
-                    price: price.clone(),
+                    price: Price::new(price.clone()),
                     confidence: None, // 信頼度は将来実装
                 }
             })
@@ -446,9 +448,7 @@ impl PredictionProvider for PredictionService {
                 token: t.token,
                 volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
                 volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
-                current_price: PriceF64::new(
-                    t.current_price.to_string().parse::<f64>().unwrap_or(0.0),
-                ),
+                current_price: t.current_price.to_f64(), // Price → PriceF64
             })
             .collect())
     }
@@ -503,7 +503,7 @@ impl PredictionProvider for PredictionService {
                 .into_iter()
                 .map(|p| CommonPredictedPrice {
                     timestamp: p.timestamp,
-                    price: Price::new(p.price),
+                    price: p.price, // 既にPrice型
                     confidence: p.confidence.clone(),
                 })
                 .collect(),
@@ -534,7 +534,7 @@ impl PredictionProvider for PredictionService {
                         .into_iter()
                         .map(|p| CommonPredictedPrice {
                             timestamp: p.timestamp,
-                            price: Price::new(p.price),
+                            price: p.price, // 既にPrice型
                             confidence: p.confidence.clone(),
                         })
                         .collect(),

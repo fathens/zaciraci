@@ -1,5 +1,6 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use common::types::Price;
 use serde::{Deserialize, Serialize};
 
 /// Prediction file metadata (similar to HistoryMetadata)
@@ -19,7 +20,8 @@ pub struct PredictionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionPoint {
     pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
+    /// 予測価格（無次元の価格比率）
+    pub price: Price,
     pub confidence: Option<BigDecimal>,
 }
 

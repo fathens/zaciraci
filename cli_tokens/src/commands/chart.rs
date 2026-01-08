@@ -357,7 +357,7 @@ async fn load_prediction_data(prediction_file: &Path) -> Result<Vec<PredictionPo
             .into_iter()
             .map(|cache_point| PredictionPoint {
                 timestamp: cache_point.timestamp,
-                value: cache_point.price,
+                value: cache_point.price.into_bigdecimal(), // Price → BigDecimal
                 confidence_interval: None, // Could be improved to convert confidence values
             })
             .collect();

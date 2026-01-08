@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use zaciraci_common::types::Price;
 
 // ==================== 共通型定義 ====================
 
@@ -48,7 +49,8 @@ pub use zaciraci_common::algorithm::types::PricePoint as PriceDataPoint;
 pub struct MarketData {
     pub token: String,
     pub quote_token: String,
-    pub current_price: BigDecimal,
+    /// 現在価格（無次元の価格比率）
+    pub current_price: Price,
     pub price_history: Vec<PriceDataPoint>,
     pub volume_24h: Option<BigDecimal>,
     pub market_cap: Option<BigDecimal>,

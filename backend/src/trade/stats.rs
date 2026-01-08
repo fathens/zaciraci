@@ -591,7 +591,8 @@ where
         };
         // 予測値を yoctoNEAR 単位に変換（current_price と同じ単位に揃える）
         // BigDecimal版のNearValueを使用し、最後にf64に変換（精度損失を最小化）
-        let prediction_yocto = NearValue::new(prediction.clone())
+        // 注: prediction は Price 型だが、このモジュールでは NEAR 値を格納している
+        let prediction_yocto = NearValue::new(prediction.into_bigdecimal())
             .to_yocto()
             .into_bigdecimal()
             .to_f64()

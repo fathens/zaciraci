@@ -81,7 +81,7 @@ async fn calculate_history_period(
 fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePredictionPoint {
     CachePredictionPoint {
         timestamp: point.timestamp,
-        price: point.value.clone(),
+        price: common::types::Price::new(point.value.clone()),
         confidence: point.confidence_interval.as_ref().map(|ci| {
             // Use average of lower and upper bounds as confidence score
             (ci.upper.clone() - ci.lower.clone()) / BigDecimal::from(2) / point.value.clone()
