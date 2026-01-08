@@ -1,5 +1,6 @@
 use crate::Result;
-use bigdecimal::BigDecimal;
+use crate::types::YoctoAmount;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -79,7 +80,7 @@ pub fn make_trading_decision(
     current_token: &str,
     current_return: f64,
     ranked_tokens: &[(String, f64, Option<f64>)],
-    holding_amount: &BigDecimal,
+    holding_amount: &YoctoAmount,
     min_profit_threshold: f64,
     switch_multiplier: f64,
     min_trade_amount: f64,
@@ -97,7 +98,7 @@ pub fn make_trading_decision(
     }
 
     // 保有額が最小取引額以下の場合はHold
-    let amount = holding_amount.to_string().parse::<f64>().unwrap_or(0.0);
+    let amount = holding_amount.as_bigdecimal().to_f64().unwrap_or(0.0);
     if amount < min_trade_amount {
         return TradingAction::Hold;
     }
@@ -320,7 +321,7 @@ mod integration_tests {
     use super::execute_with_prediction_provider;
     use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
     use crate::algorithm::types::*;
-    use crate::types::{Price, PriceF64};
+    use crate::types::{Price, PriceF64, YoctoAmount};
     use async_trait::async_trait;
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{Duration, Utc};
@@ -474,12 +475,12 @@ mod integration_tests {
         let current_holdings = vec![
             TokenHolding {
                 token: "token1".to_string(),
-                amount: BigDecimal::from(10),
+                amount: YoctoAmount::new(10),
                 current_price: Price::new(BigDecimal::from(100)),
             },
             TokenHolding {
                 token: "token2".to_string(),
-                amount: BigDecimal::from(20),
+                amount: YoctoAmount::new(20),
                 current_price: Price::new(BigDecimal::from(50)),
             },
         ];
@@ -548,7 +549,7 @@ mod integration_tests {
 
         let current_holdings = vec![TokenHolding {
             token: "other_token".to_string(),
-            amount: BigDecimal::from(10),
+            amount: YoctoAmount::new(10),
             current_price: Price::new(BigDecimal::from(75)),
         }];
 

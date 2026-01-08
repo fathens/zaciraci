@@ -1,6 +1,6 @@
 use super::*;
-use crate::types::Price;
-use bigdecimal::FromPrimitive;
+use crate::types::{Price, YoctoAmount};
+use bigdecimal::{FromPrimitive, ToPrimitive};
 
 fn price(v: f64) -> Price {
     Price::new(BigDecimal::from_f64(v).unwrap())
@@ -8,6 +8,10 @@ fn price(v: f64) -> Price {
 
 fn price_from_int(v: i64) -> Price {
     Price::new(BigDecimal::from(v))
+}
+
+fn amount_f64(v: f64) -> YoctoAmount {
+    YoctoAmount::from_bigdecimal(BigDecimal::from_f64(v).unwrap())
 }
 
 #[test]
@@ -73,7 +77,7 @@ fn test_make_trading_decision() {
         ("OK_TOKEN".to_string(), 0.08, Some(0.6)), // より高いリターンに調整
     ];
 
-    let amount = BigDecimal::from_f64(10.0).unwrap();
+    let holding_amount = amount_f64(10.0);
 
     // デフォルトパラメータ
     let min_profit_threshold = 0.05;
@@ -85,7 +89,7 @@ fn test_make_trading_decision() {
         "BEST_TOKEN",
         0.2,
         &ranked,
-        &amount,
+        &holding_amount,
         min_profit_threshold,
         switch_multiplier,
         min_trade_amount,
@@ -97,7 +101,7 @@ fn test_make_trading_decision() {
         "BAD_TOKEN",
         0.02,
         &ranked,
-        &amount,
+        &holding_amount,
         min_profit_threshold,
         switch_multiplier,
         min_trade_amount,
@@ -111,7 +115,7 @@ fn test_make_trading_decision() {
         "MEDIUM_TOKEN",
         0.05,
         &ranked,
-        &amount,
+        &holding_amount,
         min_profit_threshold,
         switch_multiplier,
         min_trade_amount,
@@ -119,7 +123,7 @@ fn test_make_trading_decision() {
     assert!(matches!(action, TradingAction::Switch { .. }));
 
     // Case 4: Hold when amount is too small
-    let small_amount = BigDecimal::from_f64(0.5).unwrap();
+    let small_amount = amount_f64(0.5);
     let action = make_trading_decision(
         "BAD_TOKEN",
         0.02,
@@ -394,7 +398,7 @@ fn test_market_stress_scenario() {
 
 #[test]
 fn test_trading_frequency_cost_impact() {
-    let base_amount = BigDecimal::from_f64(1000.0).unwrap();
+    let base_amount = amount_f64(1000.0);
 
     // 高頻度取引シナリオ（1日10回）
     let high_freq_predictions = vec![PredictionData {
@@ -487,8 +491,8 @@ fn test_partial_fill_scenario() {
     }];
 
     let ranked = rank_tokens_by_momentum(predictions);
-    let full_amount = BigDecimal::from_f64(1000.0).unwrap();
-    let partial_amount = BigDecimal::from_f64(300.0).unwrap(); // 30%のみ約定
+    let full_amount = amount_f64(1000.0);
+    let partial_amount = amount_f64(300.0); // 30%のみ約定
 
     let full_action =
         make_trading_decision("CURRENT_TOKEN", 0.03, &ranked, &full_amount, 0.05, 1.5, 1.0);
@@ -518,7 +522,7 @@ fn test_partial_fill_scenario() {
         }
         TradingAction::Hold => {
             // 部分約定によりリターンが取引コストを下回る場合はHold
-            let partial_f64 = partial_amount.to_string().parse::<f64>().unwrap_or(0.0);
+            let partial_f64 = partial_amount.as_bigdecimal().to_f64().unwrap_or(0.0);
             assert!(partial_f64 < 1.0);
         }
         TradingAction::Rebalance { .. }
@@ -553,11 +557,12 @@ fn test_multi_timeframe_momentum_consistency() {
 
     // 短期シグナルでの判断
     let short_ranked = rank_tokens_by_momentum(vec![short_term_prediction]);
+    let holding_amount = amount_f64(1000.0);
     let short_decision = make_trading_decision(
         "CURRENT_TOKEN",
         0.02,
         &short_ranked,
-        &BigDecimal::from_f64(1000.0).unwrap(),
+        &holding_amount,
         0.05,
         1.5,
         1.0,
@@ -569,7 +574,7 @@ fn test_multi_timeframe_momentum_consistency() {
         "CURRENT_TOKEN",
         0.02,
         &long_ranked,
-        &BigDecimal::from_f64(1000.0).unwrap(),
+        &holding_amount,
         0.05,
         1.5,
         1.0,

@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::types::{Price, PriceF64};
+use crate::types::{Price, PriceF64, YoctoAmount};
 
 // ==================== 取引関連型 ====================
 
@@ -63,7 +63,8 @@ pub struct TokenData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenHolding {
     pub token: String,
-    pub amount: BigDecimal,
+    /// 保有量（トークンの最小単位）
+    pub amount: YoctoAmount,
     pub current_price: Price,
 }
 

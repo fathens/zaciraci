@@ -1577,8 +1577,8 @@ where
         .await
         .unwrap_or(1_000_000u128); // 取得失敗時は100万トークンと仮定
 
-    // yoctoNEARから通常の単位に変換
-    let price_in_near = BigDecimal::from(current_price_yocto) / BigDecimal::from(10u128.pow(24));
+    // yoctoNEARから通常の単位に変換（型安全な変換を使用）
+    let price_in_near = Units::yocto_to_near(&BigDecimal::from(current_price_yocto));
 
     // 市場規模 = 価格 × 発行量
     let market_cap = price_in_near * BigDecimal::from(total_supply);

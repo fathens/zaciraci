@@ -154,7 +154,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
                     if let Some(&price) = current_prices.get(token) {
                         token_holdings.push(TokenHolding {
                             token: token.clone(),
-                            amount: amount.to_bigdecimal(),
+                            amount: YoctoAmount::from_bigdecimal(amount.to_bigdecimal()),
                             current_price: price.to_bigdecimal(),
                         });
                     }

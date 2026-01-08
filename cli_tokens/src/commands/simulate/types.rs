@@ -20,7 +20,9 @@ use std::fmt;
 // - TokenAmountF64 × PriceF64 = YoctoValueF64
 // - YoctoValueF64.to_near() → NearValueF64
 
-pub use common::types::{NearValue, NearValueF64, PriceF64, TokenAmountF64, YoctoValueF64};
+pub use common::types::{
+    NearValue, NearValueF64, PriceF64, TokenAmountF64, YoctoAmount, YoctoValueF64,
+};
 
 // Trading related structures
 #[derive(Debug, Clone, PartialEq)]
