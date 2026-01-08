@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::str::FromStr;
 
 use super::types::*;
 
@@ -891,18 +890,17 @@ pub async fn execute_portfolio_optimization(
 }
 
 /// 現在の重みを計算
-/// 注意: price_f64はyoctoNEAR単位、holdingはトークン数量、total_valueは総NEAR単位の値
+/// 型安全: holdingsはYoctoAmount（yocto単位）、total_valueはNearValue（NEAR単位）
 fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
 
-    // BigDecimalで高精度計算を実行
-    let total_value_bd = BigDecimal::from_str(&wallet.total_value.to_string()).unwrap_or_default();
+    // NearValue から BigDecimal を直接取得（精度損失なし）
+    let total_value_bd = wallet.total_value.as_bigdecimal().clone();
 
     for (i, token) in tokens.iter().enumerate() {
-        if let Some(&holding) = wallet.holdings.get(&token.symbol) {
-            // f64のholdingを直接BigDecimalに変換（精度を保つため）
-            // 科学的記数法の値も正確に扱える
-            let holding_bd = BigDecimal::from_str(&holding.to_string()).unwrap_or_default();
+        if let Some(holding) = wallet.holdings.get(&token.symbol) {
+            // YoctoAmount から BigDecimal を直接取得（精度損失なし）
+            let holding_bd = holding.as_bigdecimal().clone();
 
             // 価格のBigDecimal表現を取得
             let price_bd = token.current_price.as_bigdecimal();

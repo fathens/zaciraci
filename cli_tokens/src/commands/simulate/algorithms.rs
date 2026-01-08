@@ -424,6 +424,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     use bigdecimal::{BigDecimal, FromPrimitive};
     use common::algorithm::portfolio::{PortfolioData, execute_portfolio_optimization};
     use common::algorithm::{PriceHistory, PricePoint, TokenData, TradingAction, WalletInfo};
+    use common::types::{NearValue, YoctoAmount};
 
     let duration = config.end_date - config.start_date;
     let duration_days = duration.num_days();
@@ -571,27 +572,39 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         correlation_matrix: None,
                     };
 
-                    // 現在のホールディングをWalletInfoに変換
+                    // 現在のホールディングをWalletInfoに変換（BigDecimal精度）
                     let mut holdings_for_wallet = BTreeMap::new();
                     for (token, amount) in &current_holdings {
-                        holdings_for_wallet.insert(token.clone(), amount.as_f64());
+                        // TokenAmountF64 → YoctoAmount (BigDecimal)
+                        holdings_for_wallet.insert(
+                            token.clone(),
+                            YoctoAmount::from_bigdecimal(
+                                BigDecimal::from_f64(amount.as_f64()).unwrap_or_default(),
+                            ),
+                        );
                     }
+
+                    // 総価値を計算（NEAR単位、BigDecimal精度）
+                    let total_value_near: NearValue = current_holdings
+                        .iter()
+                        .map(|(token, amount)| {
+                            if let Some(&price) = current_prices.get(token) {
+                                // f64で計算してからBigDecimalに変換
+                                let value_yocto = *amount * price;
+                                let value_near_f64 = value_yocto.to_near().as_f64();
+                                NearValue::new(
+                                    BigDecimal::from_f64(value_near_f64).unwrap_or_default(),
+                                )
+                            } else {
+                                NearValue::zero()
+                            }
+                        })
+                        .fold(NearValue::zero(), |acc, v| acc + v);
 
                     let wallet_info = WalletInfo {
                         holdings: holdings_for_wallet,
-                        total_value: current_holdings
-                            .iter()
-                            .map(|(token, amount)| {
-                                if let Some(&price) = current_prices.get(token) {
-                                    // 型安全な計算
-                                    let value_yocto = *amount * price;
-                                    value_yocto.to_near().as_f64()
-                                } else {
-                                    0.0
-                                }
-                            })
-                            .sum(),
-                        cash_balance: 0.0,
+                        total_value: total_value_near,
+                        cash_balance: NearValue::zero(),
                     };
 
                     // ポートフォリオ最適化を実行

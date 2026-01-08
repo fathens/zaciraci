@@ -674,6 +674,11 @@ impl NearValue {
         YoctoValue(&self.0 * BigDecimal::from(YOCTO_PER_NEAR))
     }
 
+    /// f64 版に変換（精度損失あり）
+    pub fn to_f64(&self) -> NearValueF64 {
+        NearValueF64(self.0.to_f64().unwrap_or(0.0))
+    }
+
     /// 金額がゼロかどうか
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()

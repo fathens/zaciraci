@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::types::{Price, PriceF64, YoctoAmount};
+use crate::types::{NearValue, Price, PriceF64, YoctoAmount};
 
 // ==================== 取引関連型 ====================
 
@@ -210,9 +210,12 @@ pub struct PortfolioMetrics {
 /// ウォレット情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletInfo {
-    pub holdings: BTreeMap<String, f64>,
-    pub total_value: f64,
-    pub cash_balance: f64,
+    /// トークン保有量（トークンのyocto単位、BigDecimal精度）
+    pub holdings: BTreeMap<String, YoctoAmount>,
+    /// 総価値（NEAR単位、BigDecimal精度）
+    pub total_value: NearValue,
+    /// 現金残高（NEAR単位、BigDecimal精度）
+    pub cash_balance: NearValue,
 }
 
 // ==================== トレンド分析関連 ====================

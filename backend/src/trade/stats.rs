@@ -42,7 +42,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{NearValue, Price, YoctoValue};
+use zaciraci_common::types::{NearValue, Price, YoctoAmount, YoctoValue};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -641,12 +641,8 @@ where
         correlation_matrix: None,
     };
 
-    // BigDecimalで正確に計算してからf64に変換（外部構造体の制約のため）
-    let funds_bd = BigDecimal::from(available_funds);
-    let total_value_f64 = funds_bd
-        .to_string()
-        .parse::<f64>()
-        .map_err(|e| anyhow::anyhow!("Failed to convert total_value to f64: {}", e))?;
+    // yoctoNEARからNEARに変換（型安全、BigDecimal精度維持）
+    let total_value_near = YoctoValue::new(BigDecimal::from(available_funds)).to_near();
 
     // 既存ポジションの取得（評価期間中のみ）
     let holdings = if is_new_period {
@@ -663,25 +659,21 @@ where
         let current_balances =
             swap::get_current_portfolio_balances(client, wallet, &token_strs).await?;
 
-        // u128をf64に変換（外部構造体の制約のため）
-        let mut holdings_f64 = BTreeMap::new();
+        // u128をYoctoAmountに変換（型安全、BigDecimal精度維持）
+        let mut holdings_typed = BTreeMap::new();
         for (token, balance) in current_balances {
             if balance > 0 {
-                let balance_f64 = BigDecimal::from(balance)
-                    .to_string()
-                    .parse::<f64>()
-                    .map_err(|e| anyhow::anyhow!("Failed to convert balance to f64: {}", e))?;
-                holdings_f64.insert(token.clone(), balance_f64);
+                holdings_typed.insert(token.clone(), YoctoAmount::new(balance));
                 info!(log, "loaded existing position"; "token" => token, "balance" => balance);
             }
         }
-        holdings_f64
+        holdings_typed
     };
 
     let wallet_info = WalletInfo {
         holdings,
-        total_value: total_value_f64,
-        cash_balance: total_value_f64,
+        total_value: total_value_near.clone(),
+        cash_balance: total_value_near,
     };
 
     // ポートフォリオ最適化の実行

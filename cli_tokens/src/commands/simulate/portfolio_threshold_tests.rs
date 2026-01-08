@@ -5,7 +5,7 @@ use common::algorithm::portfolio::{
     PortfolioData, execute_portfolio_optimization, needs_rebalancing,
 };
 use common::algorithm::{PriceHistory, PricePoint, TokenData, WalletInfo};
-use common::types::Price;
+use common::types::{NearValue, Price, YoctoAmount};
 use std::collections::{BTreeMap, HashMap};
 
 fn price(v: f64) -> Price {
@@ -54,11 +54,12 @@ fn create_test_portfolio_data() -> PortfolioData {
 
 fn create_test_wallet_info() -> WalletInfo {
     WalletInfo {
-        holdings: BTreeMap::from([
-            ("test.token".to_string(), 500000.0), // 500 tokens
-        ]),
-        total_value: 1000000.0, // 1000 NEAR in yoctoNEAR units
-        cash_balance: 500000.0, // 500 NEAR in yoctoNEAR units
+        holdings: BTreeMap::from([(
+            "test.token".to_string(),
+            YoctoAmount::from_bigdecimal(BigDecimal::from(500000)), // 500000 yocto tokens
+        )]),
+        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR
+        cash_balance: NearValue::new(BigDecimal::from(500)), // 500 NEAR
     }
 }
 

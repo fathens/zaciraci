@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::Price;
+use crate::types::{NearValue, Price, YoctoAmount};
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::Duration;
 use ndarray::array;
@@ -104,13 +104,20 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
 
 fn create_sample_wallet() -> WalletInfo {
     let mut holdings = BTreeMap::new();
-    holdings.insert("TOKEN_A".to_string(), 5.0); // 500 value
-    holdings.insert("TOKEN_B".to_string(), 10.0); // 500 value
+    // トークン数量（yocto単位）: 価格×数量=価値 となるように設定
+    holdings.insert(
+        "TOKEN_A".to_string(),
+        YoctoAmount::from_bigdecimal(BigDecimal::from(5)),
+    ); // price=100, value=500 NEAR
+    holdings.insert(
+        "TOKEN_B".to_string(),
+        YoctoAmount::from_bigdecimal(BigDecimal::from(10)),
+    ); // price=50, value=500 NEAR
 
     WalletInfo {
         holdings,
-        total_value: 1000.0,
-        cash_balance: 0.0,
+        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR
+        cash_balance: NearValue::zero(),
     }
 }
 
@@ -1671,8 +1678,8 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
 
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: 1000.0,
-        cash_balance: 1000.0,
+        total_value: NearValue::new(BigDecimal::from(1000)),
+        cash_balance: NearValue::new(BigDecimal::from(1000)),
     };
 
     // 価格履歴を正しく作成（全トークン分）
@@ -2472,8 +2479,8 @@ async fn test_enhanced_portfolio_performance() {
     // 空のウォレット（初期状態）
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: 1000.0, // 1000 NEAR初期資本
-        cash_balance: 1000.0,
+        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR初期資本
+        cash_balance: NearValue::new(BigDecimal::from(1000)),
     };
 
     // 拡張ポートフォリオ最適化を実行
@@ -2655,8 +2662,8 @@ async fn test_baseline_vs_enhanced_comparison() {
 
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: 1000.0,
-        cash_balance: 1000.0,
+        total_value: NearValue::new(BigDecimal::from(1000)),
+        cash_balance: NearValue::new(BigDecimal::from(1000)),
     };
 
     // エンハンスドポートフォリオの実行
@@ -2786,10 +2793,13 @@ fn test_portfolio_evaluation_accuracy() {
 
     let mut wallet = super::super::types::WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: 1000.0,
-        cash_balance: 500.0,
+        total_value: NearValue::new(BigDecimal::from(1000)),
+        cash_balance: NearValue::new(BigDecimal::from(500)),
     };
-    wallet.holdings.insert("token_a".to_string(), 500.0); // 500トークン保有
+    wallet.holdings.insert(
+        "token_a".to_string(),
+        YoctoAmount::from_bigdecimal(BigDecimal::from(500)),
+    ); // 500トークン保有
 
     let weights = super::calculate_current_weights(&realistic_tokens, &wallet);
     println!("=== Portfolio Evaluation Test ===");
@@ -2838,17 +2848,23 @@ fn test_extreme_price_weight_calculation() {
     // 極端な保有量を設定
     let mut wallet = super::super::types::WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: 1000.0, // 1000 NEAR総価値
-        cash_balance: 0.0,
+        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR総価値
+        cash_balance: NearValue::zero(),
     };
 
     // 実際のシミュレーションで見られた保有量
-    wallet
-        .holdings
-        .insert("bean.tkn.near".to_string(), 8.478102225988582E+20);
-    wallet
-        .holdings
-        .insert("ndc.tkn.near".to_string(), 3.942646877247608E+21);
+    wallet.holdings.insert(
+        "bean.tkn.near".to_string(),
+        YoctoAmount::from_bigdecimal(
+            BigDecimal::from_f64(8.478102225988582E+20).unwrap_or_default(),
+        ),
+    );
+    wallet.holdings.insert(
+        "ndc.tkn.near".to_string(),
+        YoctoAmount::from_bigdecimal(
+            BigDecimal::from_f64(3.942646877247608E+21).unwrap_or_default(),
+        ),
+    );
 
     let weights = super::calculate_current_weights(&extreme_tokens, &wallet);
 
