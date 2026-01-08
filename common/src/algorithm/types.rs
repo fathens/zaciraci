@@ -15,19 +15,6 @@ pub enum TradeType {
     Swap,
 }
 
-/// 取引実行結果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TradeExecution {
-    pub trade_type: TradeType,
-    pub token_in: String,
-    pub token_out: String,
-    pub amount_in: BigDecimal,
-    pub amount_out: BigDecimal,
-    pub timestamp: DateTime<Utc>,
-    pub cost: BigDecimal,
-    pub success: bool,
-}
-
 // ==================== 共通価格データ ====================
 
 /// 価格ポイント
