@@ -9,11 +9,10 @@
 //! - **predictions (HashMap<String, f64>)**: yoctoNEAR 単位の予測価格
 //! - **volatility**: 比率（単位なし）
 //!
-//! ## 単位変換
+//! ## 単位変換（型安全）
 //!
-//! - NEAR → yoctoNEAR: `Units::near_to_yocto()`
-//! - yoctoNEAR → NEAR: `Units::yocto_to_near()`
-//! - f64 版: `Units::near_f64_to_yocto_f64()`, `Units::yocto_f64_to_near_f64()`
+//! - NEAR → yoctoNEAR: `NearValue::new(bd).to_yocto().into_bigdecimal()`
+//! - yoctoNEAR → NEAR: `YoctoValue::new(bd).to_near().into_bigdecimal()`
 
 mod arima;
 
@@ -43,8 +42,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{NearValue, Price};
-use zaciraci_common::units::Units;
+use zaciraci_common::types::{NearValue, Price, YoctoValue};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -522,8 +520,10 @@ where
 
         // 現在価格を履歴から取得
         let current_price = if let Some(latest_price) = history.prices.last() {
-            // PriceのBigDecimalをyoctoNEAR (u128)に変換
-            let price_yocto = Units::near_to_yocto(latest_price.price.as_bigdecimal());
+            // PriceのBigDecimalをyoctoNEAR (u128)に変換（型安全な変換）
+            let price_yocto = NearValue::new(latest_price.price.as_bigdecimal().clone())
+                .to_yocto()
+                .into_bigdecimal();
 
             debug!(log, "converting price to u128";
                 "token" => %token,
@@ -1577,8 +1577,10 @@ where
         .await
         .unwrap_or(1_000_000u128); // 取得失敗時は100万トークンと仮定
 
-    // yoctoNEARから通常の単位に変換（型安全な変換を使用）
-    let price_in_near = Units::yocto_to_near(&BigDecimal::from(current_price_yocto));
+    // yoctoNEARから通常の単位に変換（型安全な変換）
+    let price_in_near = YoctoValue::new(BigDecimal::from(current_price_yocto))
+        .to_near()
+        .into_bigdecimal();
 
     // 市場規模 = 価格 × 発行量
     let market_cap = price_in_near * BigDecimal::from(total_supply);

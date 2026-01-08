@@ -8,6 +8,7 @@ use bigdecimal::BigDecimal;
 use near_sdk::AccountId;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
+use zaciraci_common::types::NearValue;
 
 // ハーベスト関連のstatic変数
 static LAST_HARVEST_TIME: AtomicU64 = AtomicU64::new(0);
@@ -33,12 +34,18 @@ static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
 static HARVEST_MIN_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
     let min_str = config::get("HARVEST_MIN_AMOUNT").unwrap_or_else(|_| "10".to_string());
     let min_near = min_str.parse::<u64>().unwrap_or(10);
-    BigDecimal::from(min_near) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128) // yoctoNEAR変換
+    // NEAR → yoctoNEAR 変換（型安全）
+    NearValue::new(BigDecimal::from(min_near))
+        .to_yocto()
+        .into_bigdecimal()
 });
 static HARVEST_RESERVE_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
     let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
     let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
-    BigDecimal::from(reserve_near) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128) // yoctoNEAR変換
+    // NEAR → yoctoNEAR 変換（型安全）
+    NearValue::new(BigDecimal::from(reserve_near))
+        .to_yocto()
+        .into_bigdecimal()
 });
 
 fn is_time_to_harvest() -> bool {
@@ -302,20 +309,27 @@ mod tests {
     use super::*;
     use crate::config;
     use bigdecimal::BigDecimal;
+    use zaciraci_common::types::NearValue;
+
+    /// NEAR → yoctoNEAR 変換のヘルパー（型安全）
+    fn near_to_yocto(near: u64) -> BigDecimal {
+        NearValue::new(BigDecimal::from(near))
+            .to_yocto()
+            .into_bigdecimal()
+    }
 
     // テスト専用: staticを使わずに設定値を計算する関数
     #[cfg(test)]
     fn calculate_harvest_reserve_amount_from_config(config_value: Option<&str>) -> BigDecimal {
         let reserve_str = config_value.unwrap_or("1").to_string();
         let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
-        BigDecimal::from(reserve_near) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128)
+        near_to_yocto(reserve_near)
     }
 
     #[test]
     fn test_harvest_reserve_amount_default() {
         // テスト用にデフォルト値（1 NEAR）をテスト
-        let expected =
-            BigDecimal::from(1u64) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+        let expected = near_to_yocto(1);
 
         // staticを使わずに設定ロジックを直接テスト
         let actual = calculate_harvest_reserve_amount_from_config(None);
@@ -325,8 +339,7 @@ mod tests {
     #[test]
     fn test_harvest_reserve_amount_custom() {
         // カスタム値のテスト: 5 NEAR
-        let expected =
-            BigDecimal::from(5u64) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+        let expected = near_to_yocto(5);
 
         // staticを使わずに設定ロジックを直接テスト
         let actual = calculate_harvest_reserve_amount_from_config(Some("5"));
@@ -336,17 +349,15 @@ mod tests {
     #[test]
     fn test_harvest_min_amount_default() {
         // HARVEST_MIN_AMOUNTのデフォルト値テスト
-        let expected =
-            BigDecimal::from(10u64) * BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+        let expected = near_to_yocto(10);
         let actual = &*HARVEST_MIN_AMOUNT;
         assert_eq!(*actual, expected);
     }
 
     #[test]
     fn test_yocto_near_conversion() {
-        // yoctoNEAR変換の正確性テスト
-        let one_near_in_yocto = 1_000_000_000_000_000_000_000_000u128;
-        let five_near = BigDecimal::from(5u64) * BigDecimal::from(one_near_in_yocto);
+        // yoctoNEAR変換の正確性テスト（型安全版）
+        let five_near = near_to_yocto(5);
 
         // 5 NEARが正しくyoctoNEARに変換されることを確認
         assert_eq!(five_near.to_string(), "5000000000000000000000000");

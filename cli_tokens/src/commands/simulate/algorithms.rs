@@ -870,36 +870,61 @@ mod precision_tests {
     use super::*;
     use std::str::FromStr;
 
-    /// Bean tokenの精度問題を再現するヘルパー関数
+    /// ポートフォリオ価値計算（型安全版）
+    ///
+    /// 型安全な計算: TokenAmountF64 × PriceF64 = YoctoValueF64 → NearValueF64
+    #[allow(dead_code)]
+    fn calculate_portfolio_value_typed(
+        holdings: &HashMap<String, TokenAmountF64>,
+        prices: &HashMap<String, PriceF64>,
+    ) -> NearValueF64 {
+        let mut total_value = NearValueF64::zero();
+        for (token, &amount) in holdings {
+            if let Some(&price) = prices.get(token) {
+                // TokenAmountF64 × PriceF64 = YoctoValueF64
+                let value_yocto = amount * price;
+                // YoctoValueF64 → NearValueF64
+                total_value =
+                    NearValueF64::new(total_value.as_f64() + value_yocto.to_near().as_f64());
+            }
+        }
+        total_value
+    }
+
+    /// レガシー: BigDecimal精度テスト用（スケーリングされた価格形式）
+    ///
+    /// 注: prices は yoctoNEAR/token 形式で保存されているため 1e24 で除算
     fn calculate_portfolio_value_precise(
         holdings: &HashMap<String, f64>,
         prices: &HashMap<String, f64>,
     ) -> BigDecimal {
         let mut total_value_bd = BigDecimal::from(0);
+        let scale_factor = BigDecimal::from_str("1000000000000000000000000").unwrap(); // 1e24
         for (token, amount) in holdings {
-            if let Some(&price_yocto) = prices.get(token) {
-                let price_yocto_bd =
-                    BigDecimal::from_str(&price_yocto.to_string()).unwrap_or_default();
-                let yocto_per_near = BigDecimal::from_str("1000000000000000000000000").unwrap();
-                let price_near_bd = &price_yocto_bd / &yocto_per_near;
+            if let Some(&price_scaled) = prices.get(token) {
+                let price_scaled_bd =
+                    BigDecimal::from_str(&price_scaled.to_string()).unwrap_or_default();
+                let price_normalized_bd = &price_scaled_bd / &scale_factor;
                 let amount_bd = BigDecimal::from_str(&amount.to_string()).unwrap_or_default();
-                let value_bd = &price_near_bd * &amount_bd;
+                let value_bd = &price_normalized_bd * &amount_bd;
                 total_value_bd += value_bd;
             }
         }
         total_value_bd
     }
 
-    /// 従来のf64計算
+    /// レガシー: f64精度テスト用（スケーリングされた価格形式）
+    ///
+    /// 注: prices は yoctoNEAR/token 形式で保存されているため 1e24 で除算
     fn calculate_portfolio_value_f64(
         holdings: &HashMap<String, f64>,
         prices: &HashMap<String, f64>,
     ) -> f64 {
         let mut total_value = 0.0;
         for (token, amount) in holdings {
-            if let Some(&price_yocto) = prices.get(token) {
-                let price_near = common::units::Units::yocto_f64_to_near_f64(price_yocto);
-                total_value += amount * price_near;
+            if let Some(&price_scaled) = prices.get(token) {
+                let price_normalized = price_scaled / 1e24;
+                total_value += amount * price_normalized;
             }
         }
         total_value
@@ -908,13 +933,14 @@ mod precision_tests {
     #[test]
     fn test_bean_token_precision_issue() {
         // Bean tokenの実際の値でテスト
+        // 注: このテストは精度比較用。prices は yoctoNEAR/token 形式（スケーリング済み）
         let mut holdings = HashMap::new();
         holdings.insert("bean.token".to_string(), 8.478e20);
 
         let mut prices = HashMap::new();
         prices.insert("bean.token".to_string(), 2.783e-19);
 
-        // f64計算（精度問題あり）
+        // f64計算
         let value_f64 = calculate_portfolio_value_f64(&holdings, &prices);
 
         // BigDecimal計算（高精度）
@@ -934,7 +960,7 @@ mod precision_tests {
             value_bd_f64
         );
 
-        // 実際の問題は値が極小すぎてポートフォリオではほぼゼロになるべき
+        // 値が極小であることを確認
         assert!(
             value_f64 < 1e-20,
             "Value should be extremely small: {}",
@@ -945,22 +971,19 @@ mod precision_tests {
             "BigDecimal value should be extremely small: {}",
             value_bd_f64
         );
-
-        // 精度の違いを確認（このケースでは極小なため、差は小さい）
-        let precision_difference = (value_f64 - value_bd_f64).abs();
-        println!("   Precision difference: {}", precision_difference);
     }
 
     #[test]
     fn test_realistic_portfolio_precision() {
         // より現実的なポートフォリオでテスト
+        // 注: このテストは精度比較用。prices は yoctoNEAR/token 形式（スケーリング済み）
         let mut holdings = HashMap::new();
-        holdings.insert("usdc.tether-token.near".to_string(), 100.0); // 通常のトークン
-        holdings.insert("bean.token".to_string(), 8.478e20); // Bean token
-        holdings.insert("ndc.tkn.near".to_string(), 5.2e15); // 中程度の数量
+        holdings.insert("usdc.tether-token.near".to_string(), 100.0);
+        holdings.insert("bean.token".to_string(), 8.478e20);
+        holdings.insert("ndc.tkn.near".to_string(), 5.2e15);
 
         let mut prices = HashMap::new();
-        prices.insert("usdc.tether-token.near".to_string(), 1e24); // 1 NEAR
+        prices.insert("usdc.tether-token.near".to_string(), 1e24); // 1 NEAR (スケーリング済み)
         prices.insert("bean.token".to_string(), 2.783e-19); // 極小価格
         prices.insert("ndc.tkn.near".to_string(), 1.5e15); // 中程度の価格
 
@@ -973,28 +996,9 @@ mod precision_tests {
         println!("   BigDecimal total: {}", value_bd);
         println!("   BigDecimal as f64: {}", value_bd_f64);
 
-        // リターン計算への影響をテスト
-        let initial_capital = 1000.0;
-        let return_f64 = (value_f64 - initial_capital) / initial_capital * 100.0;
-        let return_bd = (value_bd_f64 - initial_capital) / initial_capital * 100.0;
-
-        println!("   Return (f64): {:.2}%", return_f64);
-        println!("   Return (BigDecimal): {:.6}%", return_bd);
-
-        // 異常なリターンが発生しているかチェック
-        if return_f64.abs() > 1000.0 {
-            // 1000%を超える場合
-            println!(
-                "⚠️  WARNING: Abnormal return detected with f64: {:.2}%",
-                return_f64
-            );
-        }
-        if return_bd.abs() > 1000.0 {
-            println!(
-                "⚠️  WARNING: Abnormal return detected with BigDecimal: {:.6}%",
-                return_bd
-            );
-        }
+        // 値が正であることを確認
+        assert!(value_f64 > 0.0, "f64 value should be positive");
+        assert!(value_bd_f64 > 0.0, "BigDecimal value should be positive");
     }
 
     #[test]
