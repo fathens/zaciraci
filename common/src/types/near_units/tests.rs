@@ -47,16 +47,16 @@ fn test_yocto_amount_arithmetic() {
     let a2 = YoctoAmount::new(300);
 
     // 加算
-    let sum = a1 + a2;
-    assert_eq!(sum.0, 1300);
+    let sum = a1.clone() + a2.clone();
+    assert_eq!(sum.to_u128(), 1300);
 
     // 減算
-    let diff = a1 - a2;
-    assert_eq!(diff.0, 700);
+    let diff = a1.clone() - a2.clone();
+    assert_eq!(diff.to_u128(), 700);
 
     // 減算（アンダーフロー防止）
     let diff2 = a2 - a1;
-    assert_eq!(diff2.0, 0);
+    assert_eq!(diff2.to_u128(), 0);
 }
 
 #[test]
@@ -64,11 +64,11 @@ fn test_unit_conversion() {
     // 1 NEAR = 10^24 yoctoNEAR
     let yocto = YoctoAmount::new(YOCTO_PER_NEAR);
     let near = yocto.to_near();
-    assert_eq!(near.0, BigDecimal::from(1));
+    assert_eq!(near.as_bigdecimal(), &BigDecimal::from(1));
 
     // 逆変換
     let back_to_yocto = near.to_yocto();
-    assert_eq!(back_to_yocto.0, YOCTO_PER_NEAR);
+    assert_eq!(back_to_yocto.to_u128(), YOCTO_PER_NEAR);
 }
 
 #[test]
@@ -77,12 +77,12 @@ fn test_price_times_amount() {
     let price = Price::new(BigDecimal::from_str("0.5").unwrap());
     let amount = YoctoAmount::new(1000);
     let value: YoctoValue = price.clone() * amount;
-    assert_eq!(value.0, BigDecimal::from(500));
+    assert_eq!(value.as_bigdecimal(), &BigDecimal::from(500));
 
     // Price × NearAmount = NearValue
     let near_amount = NearAmount::new(BigDecimal::from(2));
     let near_value: NearValue = price * near_amount;
-    assert_eq!(near_value.0, BigDecimal::from(1));
+    assert_eq!(near_value.as_bigdecimal(), &BigDecimal::from(1));
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn test_value_divided_by_price() {
     let value = YoctoValue::new(BigDecimal::from(1000));
     let price = Price::new(BigDecimal::from(2));
     let amount: YoctoAmount = value / price;
-    assert_eq!(amount.0, 500);
+    assert_eq!(amount.to_u128(), 500);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn test_value_divided_by_amount() {
     let value = YoctoValue::new(BigDecimal::from(1000));
     let amount = YoctoAmount::new(500);
     let price: Price = value / amount;
-    assert_eq!(price.0, BigDecimal::from(2));
+    assert_eq!(price.as_bigdecimal(), &BigDecimal::from(2));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn test_zero_division() {
     let value = YoctoValue::new(BigDecimal::from(100));
     let zero_price = Price::zero();
     let amount: YoctoAmount = value / zero_price;
-    assert_eq!(amount.0, 0);
+    assert_eq!(amount.to_u128(), 0);
 }
 
 #[test]
@@ -305,10 +305,71 @@ fn test_price_into_bigdecimal() {
 fn test_yocto_amount_scalar_mul() {
     let amount = YoctoAmount::new(100);
     let scaled = amount * 3u128;
-    assert_eq!(scaled.as_u128(), 300);
+    assert_eq!(scaled.to_u128(), 300);
 
-    // オーバーフロー防止（saturating）
-    let large = YoctoAmount::new(u128::MAX / 2);
-    let result = large * 3u128;
-    assert_eq!(result.as_u128(), u128::MAX); // saturating_mul
+    // BigDecimal版はオーバーフローしない（任意精度）
+    // u128::MAX より大きい値も保持できる
+    let large = YoctoAmount::new(u128::MAX);
+    let result = large * 2u128;
+    // BigDecimal として値を保持している
+    let expected = BigDecimal::from(u128::MAX) * BigDecimal::from(2u128);
+    assert_eq!(result.as_bigdecimal(), &expected);
+    // to_u128() は None になるので 0 を返す
+    assert_eq!(result.to_u128(), 0);
+}
+
+/// YoctoAmount (BigDecimal) の精度保持と整数部取得の動作を検証
+///
+/// ## 設計上の注意点
+/// - YoctoAmount は最小単位（yoctoNEAR = 10^-24 NEAR）を表す
+/// - 内部は BigDecimal なので計算途中の精度損失がない
+/// - `to_u128()` でブロックチェーン用に整数部を取得する
+#[test]
+fn test_yocto_amount_truncation_behavior() {
+    // ケース1: 割り切れる場合
+    let value = YoctoValue::new(BigDecimal::from(1000));
+    let price = Price::new(BigDecimal::from(2));
+    let amount: YoctoAmount = value / price;
+    assert_eq!(amount.as_bigdecimal(), &BigDecimal::from(500));
+    assert_eq!(amount.to_u128(), 500);
+
+    // ケース2: 割り切れない場合 - 精度を保持
+    let value = YoctoValue::new(BigDecimal::from(1001));
+    let price = Price::new(BigDecimal::from(2));
+    let amount: YoctoAmount = value / price;
+    // 1001 / 2 = 500.5（精度を保持）
+    assert_eq!(
+        amount.as_bigdecimal(),
+        &BigDecimal::from_str("500.5").unwrap()
+    );
+    // ブロックチェーン用に整数部を取得すると切り捨て
+    assert_eq!(amount.to_u128(), 500);
+
+    // ケース3: 小数価格での除算 - 精度を保持
+    let value = YoctoValue::new(BigDecimal::from(100));
+    let price = Price::new(BigDecimal::from_str("0.3").unwrap());
+    let amount: YoctoAmount = value / price;
+    // 100 / 0.3 = 333.333...（精度を保持）
+    // BigDecimal での除算結果を直接比較
+    let expected = BigDecimal::from(100) / BigDecimal::from_str("0.3").unwrap();
+    assert_eq!(amount.as_bigdecimal(), &expected);
+    // ブロックチェーン用に整数部を取得
+    assert_eq!(amount.to_u128(), 333);
+
+    // ケース4: from_bigdecimal で直接作成
+    let amount = YoctoAmount::from_bigdecimal(BigDecimal::from_str("123.456").unwrap());
+    assert_eq!(
+        amount.as_bigdecimal(),
+        &BigDecimal::from_str("123.456").unwrap()
+    );
+    assert_eq!(amount.to_u128(), 123);
+
+    // ケース5: NearAmount::to_yocto() - 精度を保持
+    let near_amount = NearAmount::new(BigDecimal::from_str("1.5").unwrap());
+    let yocto = near_amount.to_yocto();
+    // 1.5 NEAR = 1.5 * 10^24 yoctoNEAR（精度を保持）
+    let expected = BigDecimal::from_str("1.5").unwrap() * BigDecimal::from(YOCTO_PER_NEAR);
+    assert_eq!(yocto.as_bigdecimal(), &expected);
+    // ブロックチェーン用に整数部を取得
+    assert_eq!(yocto.to_u128(), expected.to_u128().unwrap());
 }

@@ -275,36 +275,76 @@ impl Div<f64> for PriceF64 {
 // YoctoAmount（量）- yoctoNEAR 単位
 // =============================================================================
 
-/// 量（yoctoNEAR 単位）
+/// 量（yoctoNEAR 単位）- BigDecimal 版
 ///
 /// トークン残高やスワップ量を表す。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct YoctoAmount(u128);
+///
+/// # 内部表現
+///
+/// BigDecimal を使用しているため、計算途中の精度損失がない。
+/// 最終的にブロックチェーンに送信する際は `to_u128()` で整数部を取得する。
+///
+/// # 例
+///
+/// ```ignore
+/// use common::types::{YoctoValue, Price, YoctoAmount};
+/// use bigdecimal::BigDecimal;
+///
+/// let value = YoctoValue::new(BigDecimal::from(1001));
+/// let price = Price::new(BigDecimal::from(2));
+/// let amount: YoctoAmount = value / price;
+/// // 1001 / 2 = 500.5（精度を保持）
+/// assert_eq!(amount.as_bigdecimal(), &BigDecimal::from_str("500.5").unwrap());
+/// // ブロックチェーン用に整数部を取得
+/// assert_eq!(amount.to_u128(), 500);
+/// ```
+///
+/// 詳細は `tests::test_yocto_amount_truncation_behavior` を参照。
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct YoctoAmount(BigDecimal);
 
 impl YoctoAmount {
     /// ゼロ量を作成
     pub fn zero() -> Self {
-        YoctoAmount(0)
+        YoctoAmount(BigDecimal::zero())
     }
 
     /// u128 から YoctoAmount を作成
     pub fn new(value: u128) -> Self {
+        YoctoAmount(BigDecimal::from(value))
+    }
+
+    /// BigDecimal から YoctoAmount を作成
+    pub fn from_bigdecimal(value: BigDecimal) -> Self {
         YoctoAmount(value)
     }
 
-    /// 内部の u128 を取得
-    pub fn as_u128(&self) -> u128 {
+    /// 内部の BigDecimal への参照を取得
+    pub fn as_bigdecimal(&self) -> &BigDecimal {
+        &self.0
+    }
+
+    /// BigDecimal に変換
+    pub fn into_bigdecimal(self) -> BigDecimal {
         self.0
+    }
+
+    /// 整数部を u128 として取得（切り捨て）
+    ///
+    /// ブロックチェーンに送信する際に使用する。
+    /// yoctoNEAR より小さい単位は存在しないため、整数部のみを取得する。
+    pub fn to_u128(&self) -> u128 {
+        self.0.to_u128().unwrap_or(0)
     }
 
     /// NEAR 単位に変換
     pub fn to_near(&self) -> NearAmount {
-        NearAmount(BigDecimal::from(self.0) / BigDecimal::from(YOCTO_PER_NEAR))
+        NearAmount(&self.0 / BigDecimal::from(YOCTO_PER_NEAR))
     }
 
     /// 量がゼロかどうか
     pub fn is_zero(&self) -> bool {
-        self.0 == 0
+        self.0.is_zero()
     }
 }
 
@@ -318,7 +358,14 @@ impl fmt::Display for YoctoAmount {
 impl Add for YoctoAmount {
     type Output = YoctoAmount;
     fn add(self, other: YoctoAmount) -> YoctoAmount {
-        YoctoAmount(self.0.saturating_add(other.0))
+        YoctoAmount(self.0 + other.0)
+    }
+}
+
+impl Add<&YoctoAmount> for YoctoAmount {
+    type Output = YoctoAmount;
+    fn add(self, other: &YoctoAmount) -> YoctoAmount {
+        YoctoAmount(self.0 + &other.0)
     }
 }
 
@@ -326,7 +373,25 @@ impl Add for YoctoAmount {
 impl Sub for YoctoAmount {
     type Output = YoctoAmount;
     fn sub(self, other: YoctoAmount) -> YoctoAmount {
-        YoctoAmount(self.0.saturating_sub(other.0))
+        let result = &self.0 - &other.0;
+        // 負の値にならないようにする（ブロックチェーンの量は常に非負）
+        if result < BigDecimal::zero() {
+            YoctoAmount::zero()
+        } else {
+            YoctoAmount(result)
+        }
+    }
+}
+
+impl Sub<&YoctoAmount> for YoctoAmount {
+    type Output = YoctoAmount;
+    fn sub(self, other: &YoctoAmount) -> YoctoAmount {
+        let result = self.0 - &other.0;
+        if result < BigDecimal::zero() {
+            YoctoAmount::zero()
+        } else {
+            YoctoAmount(result)
+        }
     }
 }
 
@@ -334,10 +399,10 @@ impl Sub for YoctoAmount {
 impl Div for YoctoAmount {
     type Output = BigDecimal;
     fn div(self, other: YoctoAmount) -> BigDecimal {
-        if other.0 == 0 {
+        if other.0.is_zero() {
             BigDecimal::zero()
         } else {
-            BigDecimal::from(self.0) / BigDecimal::from(other.0)
+            self.0 / other.0
         }
     }
 }
@@ -346,7 +411,15 @@ impl Div for YoctoAmount {
 impl Mul<u128> for YoctoAmount {
     type Output = YoctoAmount;
     fn mul(self, scalar: u128) -> YoctoAmount {
-        YoctoAmount(self.0.saturating_mul(scalar))
+        YoctoAmount(self.0 * BigDecimal::from(scalar))
+    }
+}
+
+// YoctoAmount × スカラー (BigDecimal)
+impl Mul<BigDecimal> for YoctoAmount {
+    type Output = YoctoAmount;
+    fn mul(self, scalar: BigDecimal) -> YoctoAmount {
+        YoctoAmount(self.0 * scalar)
     }
 }
 
@@ -378,8 +451,7 @@ impl NearAmount {
 
     /// yoctoNEAR 単位に変換
     pub fn to_yocto(&self) -> YoctoAmount {
-        let yocto = &self.0 * BigDecimal::from(YOCTO_PER_NEAR);
-        YoctoAmount(yocto.to_u128().unwrap_or(0))
+        YoctoAmount(&self.0 * BigDecimal::from(YOCTO_PER_NEAR))
     }
 
     /// 量がゼロかどうか
@@ -544,8 +616,7 @@ impl Div<Price> for YoctoValue {
         if price.0.is_zero() {
             YoctoAmount::zero()
         } else {
-            let result = self.0 / price.0;
-            YoctoAmount(result.to_u128().unwrap_or(0))
+            YoctoAmount(self.0 / price.0)
         }
     }
 }
@@ -554,10 +625,10 @@ impl Div<Price> for YoctoValue {
 impl Div<YoctoAmount> for YoctoValue {
     type Output = Price;
     fn div(self, amount: YoctoAmount) -> Price {
-        if amount.0 == 0 {
+        if amount.0.is_zero() {
             Price::zero()
         } else {
-            Price(self.0 / BigDecimal::from(amount.0))
+            Price(self.0 / amount.0)
         }
     }
 }
@@ -684,7 +755,7 @@ impl Div<NearAmount> for NearValue {
 impl Mul<YoctoAmount> for Price {
     type Output = YoctoValue;
     fn mul(self, amount: YoctoAmount) -> YoctoValue {
-        YoctoValue(self.0 * BigDecimal::from(amount.0))
+        YoctoValue(self.0 * amount.0)
     }
 }
 
@@ -692,7 +763,7 @@ impl Mul<YoctoAmount> for Price {
 impl Mul<Price> for YoctoAmount {
     type Output = YoctoValue;
     fn mul(self, price: Price) -> YoctoValue {
-        YoctoValue(BigDecimal::from(self.0) * price.0)
+        YoctoValue(self.0 * price.0)
     }
 }
 
@@ -716,7 +787,7 @@ impl Mul<Price> for NearAmount {
 impl Mul<YoctoAmount> for PriceF64 {
     type Output = f64;
     fn mul(self, amount: YoctoAmount) -> f64 {
-        self.0 * (amount.0 as f64)
+        self.0 * amount.0.to_f64().unwrap_or(0.0)
     }
 }
 
