@@ -649,6 +649,11 @@ impl NearValue {
         NearValue(BigDecimal::zero())
     }
 
+    /// 1 NEAR を作成
+    pub fn one() -> Self {
+        NearValue(BigDecimal::from(1))
+    }
+
     /// BigDecimal から NearValue を作成
     pub fn new(value: BigDecimal) -> Self {
         NearValue(value)

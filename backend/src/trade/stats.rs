@@ -900,7 +900,7 @@ where
                 );
 
                 // 最小交換額チェック（1 NEAR以上）
-                let min_trade_size = BigDecimal::from(1000000000000000000000000u128);
+                let min_trade_size = NearValue::one().to_yocto().into_bigdecimal();
 
                 if diff_wrap_near < BigDecimal::from(0) && diff_wrap_near.abs() >= min_trade_size {
                     // 売却が必要
