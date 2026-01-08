@@ -8,7 +8,7 @@ use bigdecimal::BigDecimal;
 use near_sdk::AccountId;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
-use zaciraci_common::types::NearValue;
+use zaciraci_common::types::{NearValue, YoctoAmount, YoctoValue};
 
 // ハーベスト関連のstatic変数
 static LAST_HARVEST_TIME: AtomicU64 = AtomicU64::new(0);
@@ -290,10 +290,10 @@ async fn execute_harvest_transfer(
         .record_trade(
             tx_hash, // 実際のトランザクションハッシュを使用
             "wrap.near".to_string(),
-            actual_transfer_bigdecimal.clone(),
+            YoctoAmount::from_bigdecimal(actual_transfer_bigdecimal.clone()),
             "near".to_string(),
-            actual_transfer_bigdecimal.clone(),
-            actual_transfer_bigdecimal.clone(), // yoctoNEAR建て価格
+            YoctoAmount::from_bigdecimal(actual_transfer_bigdecimal.clone()),
+            YoctoValue::new(actual_transfer_bigdecimal), // yoctoNEAR建て価格
         )
         .await?;
 

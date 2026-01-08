@@ -2,6 +2,7 @@ use crate::logging::*;
 use anyhow::{Context, Result};
 use bigdecimal::BigDecimal;
 use uuid::Uuid;
+use zaciraci_common::types::{YoctoAmount, YoctoValue};
 
 use crate::persistence::trade_transaction::TradeTransaction;
 
@@ -40,22 +41,27 @@ impl TradeRecorder {
         &self,
         tx_id: String,
         from_token: String,
-        from_amount: BigDecimal,
+        from_amount: YoctoAmount,
         to_token: String,
-        to_amount: BigDecimal,
-        price_yocto_near: BigDecimal,
+        to_amount: YoctoAmount,
+        price_yocto_near: YoctoValue,
     ) -> Result<TradeTransaction> {
         let log = DEFAULT.new(o!("function" => "record_trade"));
         debug!(log, "recording trade"; "from_token" => %from_token, "to_token" => %to_token, "tx_id" => %tx_id);
+
+        // 型安全な値をDB層用のBigDecimalに変換
+        let from_amount_bd = from_amount.clone().into_bigdecimal();
+        let to_amount_bd = to_amount.clone().into_bigdecimal();
+        let price_bd = price_yocto_near.clone().into_bigdecimal();
 
         let transaction = TradeTransaction::new(
             tx_id.clone(),
             self.batch_id.clone(),
             from_token.clone(),
-            from_amount.clone(),
+            from_amount_bd.clone(),
             to_token.clone(),
-            to_amount.clone(),
-            price_yocto_near.clone(),
+            to_amount_bd.clone(),
+            price_bd,
             Some(self.evaluation_period_id.clone()),
         );
 
@@ -65,9 +71,9 @@ impl TradeRecorder {
             .with_context(|| format!("Failed to insert trade transaction: {}", tx_id))?;
 
         info!(log, "successfully recorded trade";
-            "from_amount" => %from_amount,
+            "from_amount" => %from_amount_bd,
             "from_token" => %from_token,
-            "to_amount" => %to_amount,
+            "to_amount" => %to_amount_bd,
             "to_token" => %to_token,
             "batch_id" => %self.batch_id
         );
@@ -90,10 +96,10 @@ impl TradeRecorder {
                     trade.tx_id,
                     self.batch_id.clone(),
                     trade.from_token,
-                    trade.from_amount,
+                    trade.from_amount.into_bigdecimal(),
                     trade.to_token,
-                    trade.to_amount,
-                    trade.price_yocto_near,
+                    trade.to_amount.into_bigdecimal(),
+                    trade.price_yocto_near.into_bigdecimal(),
                     Some(self.evaluation_period_id.clone()),
                 )
             })
@@ -131,10 +137,10 @@ impl TradeRecorder {
 pub struct TradeData {
     pub tx_id: String,
     pub from_token: String,
-    pub from_amount: BigDecimal,
+    pub from_amount: YoctoAmount,
     pub to_token: String,
-    pub to_amount: BigDecimal,
-    pub price_yocto_near: BigDecimal,
+    pub to_amount: YoctoAmount,
+    pub price_yocto_near: YoctoValue,
 }
 
 impl TradeData {
@@ -142,10 +148,10 @@ impl TradeData {
     pub fn new(
         tx_id: String,
         from_token: String,
-        from_amount: BigDecimal,
+        from_amount: YoctoAmount,
         to_token: String,
-        to_amount: BigDecimal,
-        price_yocto_near: BigDecimal,
+        to_amount: YoctoAmount,
+        price_yocto_near: YoctoValue,
     ) -> Self {
         Self {
             tx_id,
@@ -210,10 +216,10 @@ mod tests {
             .record_trade(
                 tx_id.clone(),
                 "wrap.near".to_string(),
-                BigDecimal::from(1000000000000000000000000i128),
+                YoctoAmount::new(1000000000000000000000000u128),
                 "akaia.tkn.near".to_string(),
-                BigDecimal::from(50000000000000000000000i128),
-                BigDecimal::from(20000000000000000000i128),
+                YoctoAmount::new(50000000000000000000000u128),
+                YoctoValue::new(BigDecimal::from(20000000000000000000i128)),
             )
             .await
             .unwrap();
@@ -247,18 +253,18 @@ mod tests {
             TradeData::new(
                 format!("test_tx1_{}", Uuid::new_v4()),
                 "wrap.near".to_string(),
-                BigDecimal::from(1000000000000000000000000i128),
+                YoctoAmount::new(1000000000000000000000000u128),
                 "token1.near".to_string(),
-                BigDecimal::from(50000000000000000000000i128),
-                BigDecimal::from(20000000000000000000i128),
+                YoctoAmount::new(50000000000000000000000u128),
+                YoctoValue::new(BigDecimal::from(20000000000000000000i128)),
             ),
             TradeData::new(
                 format!("test_tx2_{}", Uuid::new_v4()),
                 "wrap.near".to_string(),
-                BigDecimal::from(2000000000000000000000000i128),
+                YoctoAmount::new(2000000000000000000000000u128),
                 "token2.near".to_string(),
-                BigDecimal::from(100000000000000000000000i128),
-                BigDecimal::from(40000000000000000000i128),
+                YoctoAmount::new(100000000000000000000000u128),
+                YoctoValue::new(BigDecimal::from(40000000000000000000i128)),
             ),
         ];
 

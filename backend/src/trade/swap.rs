@@ -7,6 +7,7 @@ use num_traits::Zero;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::algorithm::types::TradingAction;
+use zaciraci_common::types::{YoctoAmount, YoctoValue};
 
 /// TradingActionに基づいて単一のアクションを実行する
 #[allow(dead_code)]
@@ -442,10 +443,10 @@ where
         .record_trade(
             sent_tx.to_string(),
             from_token.to_string(),
-            from_amount,
+            YoctoAmount::from_bigdecimal(from_amount),
             to_token.to_string(),
-            to_amount,
-            price,
+            YoctoAmount::from_bigdecimal(to_amount),
+            YoctoValue::new(price),
         )
         .await?;
 
@@ -547,10 +548,10 @@ async fn record_successful_trade(
         .record_trade(
             tx_hash.clone(),
             from_token.to_string(),
-            BigDecimal::from(from_amount),
+            YoctoAmount::new(from_amount),
             to_token.to_string(),
-            BigDecimal::from(to_amount),
-            price_yocto_near,
+            YoctoAmount::new(to_amount),
+            YoctoValue::new(price_yocto_near),
         )
         .await?;
 
