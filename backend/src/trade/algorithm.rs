@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-use zaciraci_common::types::Price;
+use zaciraci_common::types::{Price, YoctoAmount};
 
 // ==================== 共通型定義 ====================
 
@@ -21,8 +21,10 @@ pub struct TradeResult {
     pub trade_type: TradeType,
     pub from_token: String,
     pub to_token: String,
-    pub amount: BigDecimal,
-    pub executed_price: BigDecimal,
+    /// 取引数量（トークンの最小単位）
+    pub amount: YoctoAmount,
+    /// 約定価格（無次元の価格比率）
+    pub executed_price: Price,
     pub timestamp: DateTime<Utc>,
     pub transaction_hash: Option<String>,
     pub gas_used: Option<u64>,
@@ -36,8 +38,10 @@ pub struct AlgorithmConfig {
     pub name: String,
     pub parameters: std::collections::HashMap<String, serde_json::Value>,
     pub enabled: bool,
-    pub max_trade_amount: BigDecimal,
-    pub min_trade_amount: BigDecimal,
+    /// 最大取引量（トークンの最小単位）
+    pub max_trade_amount: YoctoAmount,
+    /// 最小取引量（トークンの最小単位）
+    pub min_trade_amount: YoctoAmount,
     pub max_slippage: f64,
 }
 
