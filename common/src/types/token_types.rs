@@ -274,4 +274,137 @@ mod tests {
         // TokenPrice = 10^24 / 10^24 = 1.0 NEAR/wNEAR
         assert_eq!(price.to_f64(), 1.0);
     }
+
+    // =============================================================================
+    // ExchangeRate 追加テスト
+    // =============================================================================
+
+    #[test]
+    fn test_exchange_rate_accessors() {
+        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+
+        // raw_rate()
+        assert_eq!(rate.raw_rate(), &BigDecimal::from(5_000_000));
+
+        // decimals()
+        assert_eq!(rate.decimals(), 6);
+    }
+
+    #[test]
+    fn test_exchange_rate_is_zero() {
+        let zero_rate = ExchangeRate::new(BigDecimal::zero(), 6);
+        assert!(zero_rate.is_zero());
+
+        let non_zero_rate = ExchangeRate::new(BigDecimal::from(100), 6);
+        assert!(!non_zero_rate.is_zero());
+    }
+
+    #[test]
+    fn test_exchange_rate_zero_to_price() {
+        // ゼロレートからの価格変換
+        let zero_rate = ExchangeRate::new(BigDecimal::zero(), 6);
+        let price = zero_rate.to_price();
+        assert!(price.is_zero());
+    }
+
+    #[test]
+    fn test_exchange_rate_display() {
+        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let display = format!("{}", rate);
+        assert!(display.contains("5000000"));
+        assert!(display.contains("decimals=6"));
+    }
+
+    #[test]
+    fn test_exchange_rate_serialization() {
+        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let json = serde_json::to_string(&rate).unwrap();
+        let deserialized: ExchangeRate = serde_json::from_str(&json).unwrap();
+        assert_eq!(rate, deserialized);
+    }
+
+    // =============================================================================
+    // TokenAmount 追加テスト
+    // =============================================================================
+
+    #[test]
+    fn test_token_amount_basic() {
+        let amount = TokenAmount::from_u128(100_000_000, 6);
+
+        // smallest_units()
+        assert_eq!(amount.smallest_units(), &BigDecimal::from(100_000_000));
+
+        // decimals()
+        assert_eq!(amount.decimals(), 6);
+
+        // is_zero()
+        assert!(!amount.is_zero());
+
+        // to_whole()
+        let whole = amount.to_whole();
+        assert_eq!(whole.to_f64().unwrap(), 100.0); // 100_000_000 / 10^6 = 100
+    }
+
+    #[test]
+    fn test_token_amount_zero() {
+        let zero = TokenAmount::zero(6);
+        assert!(zero.is_zero());
+        assert_eq!(zero.decimals(), 6);
+        assert_eq!(zero.smallest_units(), &BigDecimal::zero());
+    }
+
+    #[test]
+    fn test_token_amount_display() {
+        let amount = TokenAmount::from_u128(100_000_000, 6);
+        let display = format!("{}", amount);
+        assert!(display.contains("100")); // whole tokens
+        assert!(display.contains("decimals=6"));
+    }
+
+    #[test]
+    fn test_token_amount_serialization() {
+        let amount = TokenAmount::from_u128(100_000_000, 6);
+        let json = serde_json::to_string(&amount).unwrap();
+        let deserialized: TokenAmount = serde_json::from_str(&json).unwrap();
+        assert_eq!(amount, deserialized);
+    }
+
+    #[test]
+    fn test_token_amount_div_zero_rate() {
+        let amount = TokenAmount::from_u128(100_000_000, 6);
+        let zero_rate = ExchangeRate::new(BigDecimal::zero(), 6);
+
+        // ゼロレートでの除算 → NearValue::zero()
+        let value: NearValue = amount / &zero_rate;
+        assert!(value.is_zero());
+    }
+
+    #[test]
+    fn test_token_amount_reference_div_rate() {
+        let amount = TokenAmount::from_u128(100_000_000, 6);
+        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+
+        // &TokenAmount / &ExchangeRate
+        let value: NearValue = &amount / &rate;
+        assert_eq!(value.as_bigdecimal().to_f64().unwrap(), 20.0);
+    }
+
+    #[test]
+    fn test_token_amount_reference_mul_price() {
+        let amount = TokenAmount::from_u128(100_000_000, 6);
+        let price = TokenPrice::new(BigDecimal::from_f64(0.2).unwrap());
+
+        // &TokenAmount × &TokenPrice
+        let value: NearValue = &amount * &price;
+        assert_eq!(value.as_bigdecimal().to_f64().unwrap(), 20.0);
+    }
+
+    #[test]
+    fn test_token_amount_new_with_bigdecimal() {
+        let amount = TokenAmount::new(BigDecimal::from_f64(100.5).unwrap(), 6);
+
+        // 小数も保持できる
+        assert_eq!(amount.decimals(), 6);
+        assert!(!amount.is_zero());
+    }
 }
