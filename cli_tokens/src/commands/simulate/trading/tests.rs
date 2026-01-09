@@ -2,11 +2,11 @@ use super::*;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::algorithm::{PredictionData, TradingAction};
-use common::types::Price;
+use common::types::ExchangeRate;
 use std::str::FromStr;
 
-fn price(s: &str) -> Price {
-    Price::new(BigDecimal::from_str(s).unwrap())
+fn rate(s: &str) -> ExchangeRate {
+    ExchangeRate::new(BigDecimal::from_str(s).unwrap(), 24)
 }
 
 // Note: trading.rsの関数は外部API(Chronos)への依存が多いため、
@@ -39,15 +39,18 @@ fn test_trading_action_execution_structure() {
 fn test_prediction_data_structure() {
     let prediction = PredictionData {
         token: "test.tkn.near".to_string(),
-        current_price: price("1.5"),
-        predicted_price_24h: price("1.8"),
+        current_rate: rate("1.5"),
+        predicted_rate_24h: rate("1.8"),
         timestamp: Utc::now(),
         confidence: Some(BigDecimal::from_str("0.85").unwrap()),
     };
 
     assert_eq!(prediction.token, "test.tkn.near");
-    assert_eq!(prediction.current_price, price("1.5"));
-    assert_eq!(prediction.predicted_price_24h, price("1.8"));
+    assert_eq!(prediction.current_rate.raw_rate(), rate("1.5").raw_rate());
+    assert_eq!(
+        prediction.predicted_rate_24h.raw_rate(),
+        rate("1.8").raw_rate()
+    );
     assert!(prediction.confidence.is_some());
 }
 

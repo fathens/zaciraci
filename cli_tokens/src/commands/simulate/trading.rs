@@ -4,7 +4,7 @@ use anyhow::Result;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
 use common::algorithm::{PredictionData, TradingAction};
-use common::types::Price;
+use common::types::ExchangeRate;
 use std::collections::HashMap;
 
 // Import cache-related modules
@@ -51,10 +51,15 @@ async fn try_load_from_cache(
                 .map(|p| p.price.clone())
                 .unwrap_or(last_prediction.price.clone());
 
+            // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 24）
+            const DEFAULT_DECIMALS: u8 = 24;
             return Ok(Some(PredictionData {
                 token: token.to_string(),
-                current_price,                                      // 既にPrice型
-                predicted_price_24h: last_prediction.price.clone(), // 既にPrice型
+                current_rate: ExchangeRate::new(current_price.into_bigdecimal(), DEFAULT_DECIMALS),
+                predicted_rate_24h: ExchangeRate::new(
+                    last_prediction.price.as_bigdecimal().clone(),
+                    DEFAULT_DECIMALS,
+                ),
                 timestamp: pred_start,
                 confidence: last_prediction.confidence.clone(),
             }));
@@ -253,11 +258,17 @@ pub async fn generate_api_predictions(
                                             // Continue anyway, don't fail the simulation
                                         }
 
+                                        // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 24）
+                                        const DEFAULT_DECIMALS: u8 = 24;
                                         predictions.push(PredictionData {
                                             token: token.clone(),
-                                            current_price: Price::new(current_price.clone()),
-                                            predicted_price_24h: Price::new(
+                                            current_rate: ExchangeRate::new(
+                                                current_price.clone(),
+                                                DEFAULT_DECIMALS,
+                                            ),
+                                            predicted_rate_24h: ExchangeRate::new(
                                                 predicted_value.clone(),
+                                                DEFAULT_DECIMALS,
                                             ),
                                             timestamp: current_time,
                                             confidence: chronos_result
@@ -1049,19 +1060,12 @@ impl StrategyContext {
 /// Convert PredictionData to TokenOpportunity for strategy use
 impl From<&PredictionData> for TokenOpportunity {
     fn from(prediction: &PredictionData) -> Self {
-        let current_price = prediction
-            .current_price
-            .to_string()
-            .parse::<f64>()
-            .unwrap_or(0.0);
-        let predicted_price = prediction
-            .predicted_price_24h
-            .to_string()
-            .parse::<f64>()
-            .unwrap_or(0.0);
+        let current_price_tp = prediction.current_rate.to_price();
+        let predicted_price_tp = prediction.predicted_rate_24h.to_price();
 
-        let expected_return = if current_price > 0.0 {
-            (predicted_price - current_price) / current_price
+        // Use TokenPrice's expected_return for correct sign handling
+        let expected_return = if !current_price_tp.is_zero() && !predicted_price_tp.is_zero() {
+            current_price_tp.expected_return(&predicted_price_tp)
         } else {
             0.0
         };

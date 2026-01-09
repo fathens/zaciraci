@@ -165,12 +165,16 @@ async fn record_rates() -> Result<()> {
         "num_values" => values.len().to_string(),
     ));
 
-    info!(log, "converting to rates");
+    // initial_value は "100 NEAR" の yocto 値 = 100 * 10^24
+    // rate_yocto = value / 100 = yocto tokens per 1 NEAR
+    // これにより後続処理でのスケーリングが不要になる
+    let near_amount = initial_value / 1_000_000_000_000_000_000_000_000u128; // yocto → NEAR
+    info!(log, "converting to rates (yocto scale)");
     let rates: Vec<_> = values
         .into_iter()
         .map(|(base, value)| {
-            let rate = BigDecimal::from(value) / BigDecimal::from(initial_value);
-            TokenRate::new(base, quote_token.clone(), rate)
+            let rate_yocto = BigDecimal::from(value) / BigDecimal::from(near_amount);
+            TokenRate::new(base, quote_token.clone(), rate_yocto)
         })
         .collect();
 

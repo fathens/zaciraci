@@ -22,17 +22,17 @@ const MAX_SLIPPAGE: f64 = 0.02;
 // ==================== コアアルゴリズム ====================
 
 /// 予測リターンを計算（取引コスト考慮）
-/// 注意: current_priceとpredicted_price_24hは両方とも無次元の価格比率
+///
+/// `TokenPrice.expected_return()` を使用して符号の間違いを防ぐ。
 pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
-    let current = prediction.current_price.to_f64().as_f64();
-    let predicted = prediction.predicted_price_24h.to_f64().as_f64();
+    let current_price = prediction.current_rate.to_price();
+    let predicted_price = prediction.predicted_rate_24h.to_price();
 
-    if current == 0.0 {
+    if current_price.is_zero() || predicted_price.is_zero() {
         return 0.0;
     }
 
-    // 両方とも同じ単位なので直接比較可能
-    let raw_return = (predicted - current) / current;
+    let raw_return = current_price.expected_return(&predicted_price);
 
     // 取引コストを考慮
     adjust_for_trading_costs(raw_return)
@@ -198,7 +198,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     for holding in &current_holdings {
         if let Some(prediction) = predictions_map.get(&holding.token)
             && let Some(data) =
-                PredictionData::from_token_prediction(prediction, holding.current_price.clone())
+                PredictionData::from_token_prediction(prediction, holding.current_rate.clone())
         {
             prediction_data.push(data);
         }
@@ -225,10 +225,12 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
 
         let prediction = prediction_provider.predict_price(&history, 24).await?;
 
-        if let Some(data) = PredictionData::from_token_prediction(
-            &prediction,
-            top_token.current_price.to_bigdecimal(),
-        ) {
+        // PriceF64 + decimals から ExchangeRate を構築
+        let current_rate = crate::types::ExchangeRate::new(
+            top_token.current_rate.to_bigdecimal().into_bigdecimal(),
+            top_token.decimals,
+        );
+        if let Some(data) = PredictionData::from_token_prediction(&prediction, current_rate) {
             prediction_data.push(data);
         }
     }
@@ -321,7 +323,7 @@ mod integration_tests {
     use super::execute_with_prediction_provider;
     use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
     use crate::algorithm::types::*;
-    use crate::types::{Price, PriceF64, YoctoAmount};
+    use crate::types::{ExchangeRate, Price, PriceF64, YoctoAmount};
     use async_trait::async_trait;
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{Duration, Utc};
@@ -378,13 +380,15 @@ mod integration_tests {
                     token: "top_token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_price: PriceF64::new(100.0),
+                    current_rate: PriceF64::new(100.0),
+                    decimals: 24,
                 },
                 TopTokenInfo {
                     token: "top_token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_price: PriceF64::new(50.0),
+                    current_rate: PriceF64::new(50.0),
+                    decimals: 24,
                 },
             ]
             .into_iter()
@@ -476,12 +480,12 @@ mod integration_tests {
             TokenHolding {
                 token: "token1".to_string(),
                 amount: YoctoAmount::new(10),
-                current_price: Price::new(BigDecimal::from(100)),
+                current_rate: ExchangeRate::new(BigDecimal::from(100), 24),
             },
             TokenHolding {
                 token: "token2".to_string(),
                 amount: YoctoAmount::new(20),
-                current_price: Price::new(BigDecimal::from(50)),
+                current_rate: ExchangeRate::new(BigDecimal::from(50), 24),
             },
         ];
 
@@ -550,7 +554,7 @@ mod integration_tests {
         let current_holdings = vec![TokenHolding {
             token: "other_token".to_string(),
             amount: YoctoAmount::new(10),
-            current_price: Price::new(BigDecimal::from(75)),
+            current_rate: ExchangeRate::new(BigDecimal::from(75), 24),
         }];
 
         let result = execute_with_prediction_provider(

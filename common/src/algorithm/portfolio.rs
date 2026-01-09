@@ -76,7 +76,15 @@ const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
 // ==================== コア計算関数 ====================
 
 /// 期待リターンを計算
-/// 注意: current_priceとpredicted_priceは両方ともyoctoNEAR単位で比較
+///
+/// # 注意
+/// rate = tokens/NEAR（1 NEAR あたりのトークン数）は価格の逆数。
+/// rate が上がる = 価格が下がる なので、符号を反転させる。
+///
+/// - rate 上昇 → 価格下落 → 保有価値減少 → 負のリターン
+/// - rate 下降 → 価格上昇 → 保有価値増加 → 正のリターン
+///
+/// `TokenPrice.expected_return()` を使用して符号の間違いを防ぐ。
 pub fn calculate_expected_returns(
     tokens: &[TokenInfo],
     predictions: &BTreeMap<String, f64>,
@@ -84,19 +92,23 @@ pub fn calculate_expected_returns(
     tokens
         .iter()
         .map(|token| {
-            if let Some(&predicted_price) = predictions.get(&token.symbol) {
-                // current_priceはBigDecimal(yoctoNEAR)、predicted_priceはf64(yoctoNEAR)
-                let current = token
-                    .current_price
-                    .to_string()
-                    .parse::<f64>()
-                    .unwrap_or(0.0);
-                if current != 0.0 {
-                    // 両方ともyoctoNEAR単位なので直接比較可能
-                    (predicted_price - current) / current
-                } else {
-                    0.0
+            if let Some(&predicted_rate_f64) = predictions.get(&token.symbol) {
+                let current_price = token.current_rate.to_price();
+                if current_price.is_zero() || predicted_rate_f64 == 0.0 {
+                    return 0.0;
                 }
+
+                // predicted_rate_f64 を TokenPrice に変換
+                // decimals は current_rate と同じと仮定
+                use crate::types::ExchangeRate;
+                use bigdecimal::FromPrimitive;
+                let predicted_rate = ExchangeRate::new(
+                    bigdecimal::BigDecimal::from_f64(predicted_rate_f64).unwrap_or_default(),
+                    token.current_rate.decimals(),
+                );
+                let predicted_price = predicted_rate.to_price();
+
+                current_price.expected_return(&predicted_price)
             } else {
                 0.0
             }
@@ -105,7 +117,7 @@ pub fn calculate_expected_returns(
 }
 
 /// 日次リターンを計算
-/// 注意: 価格データはyoctoNEAR単位で保存されているため、リターン計算では単位変換不要
+/// 注意: 価格データは比率（Price型）として保存されている。リターン計算は相対値なので単位に依存しない。
 ///
 /// **重要**: この関数は入力されたhistorical_pricesの順序を保持します。
 /// BTreeMapを使用して決定的な処理を行いますが、結果の順序は入力順序に従います。
@@ -115,7 +127,7 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
     // トークン別に価格データをグループ化
     for price_data in historical_prices {
         for price_point in &price_data.prices {
-            // 価格はyoctoNEAR単位のBigDecimalとして保存されている
+            // Price型（比率）をf64に変換
             let price_f64 = price_point.price.to_string().parse::<f64>().unwrap_or(0.0);
             token_prices
                 .entry(price_data.token.clone())
@@ -902,11 +914,11 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
             // YoctoAmount から BigDecimal を直接取得（精度損失なし）
             let holding_bd = holding.as_bigdecimal().clone();
 
-            // 価格のBigDecimal表現を取得
-            let price_bd = token.current_price.as_bigdecimal();
+            // レートのBigDecimal表現を取得
+            let rate_bd = token.current_rate.raw_rate();
 
             // 価値を計算 (BigDecimal同士の乗算)
-            let value_yocto_bd = price_bd * &holding_bd;
+            let value_yocto_bd = rate_bd * &holding_bd;
 
             // yoctoNEARからNEARに変換 (型安全な変換)
             let value_near_bd = YoctoValue::new(value_yocto_bd.clone())
@@ -925,9 +937,9 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
             {
                 let value_near_f64 = value_near_bd.to_string().parse::<f64>().unwrap_or(0.0);
                 println!(
-                    "Token {}: price={}, holding={}, value_near={:.6}, weight={:.6}%",
+                    "Token {}: rate={}, holding={}, value_near={:.6}, weight={:.6}%",
                     token.symbol,
-                    price_bd,
+                    rate_bd,
                     holding_bd,
                     value_near_f64,
                     weights[i] * 100.0
@@ -939,7 +951,7 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
                         "WARNING: Token {} has unusually high value: {:.6} NEAR",
                         token.symbol, value_near_f64
                     );
-                    println!("  Price (BigDecimal): {}", price_bd);
+                    println!("  Rate (BigDecimal): {}", rate_bd);
                     println!("  Holdings (BigDecimal): {}", holding_bd);
                     println!("  Value (yocto): {}", value_yocto_bd);
                     println!("  Value (NEAR): {}", value_near_bd);

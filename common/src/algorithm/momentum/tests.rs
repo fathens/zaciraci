@@ -1,13 +1,9 @@
 use super::*;
-use crate::types::{Price, YoctoAmount};
+use crate::types::{ExchangeRate, YoctoAmount};
 use bigdecimal::{FromPrimitive, ToPrimitive};
 
-fn price(v: f64) -> Price {
-    Price::new(BigDecimal::from_f64(v).unwrap())
-}
-
-fn price_from_int(v: i64) -> Price {
-    Price::new(BigDecimal::from(v))
+fn rate(v: f64) -> ExchangeRate {
+    ExchangeRate::new(BigDecimal::from_f64(v).unwrap(), 24)
 }
 
 fn amount_f64(v: f64) -> YoctoAmount {
@@ -16,10 +12,12 @@ fn amount_f64(v: f64) -> YoctoAmount {
 
 #[test]
 fn test_calculate_expected_return() {
+    // rate 110 → rate 100 は +10% の価格上昇
+    // (rate が小さい = 1NEARあたりのトークンが少ない = 価格が高い)
     let prediction = PredictionData {
         token: "TEST".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(110.0),
+        current_rate: rate(110.0),
+        predicted_rate_24h: rate(100.0),
         timestamp: Utc::now(),
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
@@ -27,30 +25,36 @@ fn test_calculate_expected_return() {
     let return_val = calculate_expected_return(&prediction);
     // 10%のリターンから取引コスト（往復0.6% + スリッページ2%）を差し引き
     let expected = 0.1 - (2.0 * TRADING_FEE) - MAX_SLIPPAGE; // 0.1 - 0.006 - 0.02 = 0.074
-    assert!((return_val - expected).abs() < 0.001);
+    assert!(
+        (return_val - expected).abs() < 0.001,
+        "Expected ~{:.4}, got {:.4}",
+        expected,
+        return_val
+    );
 }
 
 #[test]
 fn test_rank_tokens_by_momentum() {
+    // rate が減少 = 価格が上昇 = 正のリターン
     let predictions = vec![
         PredictionData {
             token: "TOKEN1".to_string(),
-            current_price: price(100.0),
-            predicted_price_24h: price(110.0), // 高いリターンに変更
+            current_rate: rate(110.0),
+            predicted_rate_24h: rate(100.0), // +10% リターン
             timestamp: Utc::now(),
             confidence: Some("0.7".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
             token: "TOKEN2".to_string(),
-            current_price: price(100.0),
-            predicted_price_24h: price(120.0), // 最高リターンに変更
+            current_rate: rate(120.0),
+            predicted_rate_24h: rate(100.0), // +20% リターン（最高）
             timestamp: Utc::now(),
             confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
             token: "TOKEN3".to_string(),
-            current_price: price(100.0),
-            predicted_price_24h: price(105.0), // 適度なリターンに変更
+            current_rate: rate(105.0),
+            predicted_rate_24h: rate(100.0), // +5% リターン
             timestamp: Utc::now(),
             confidence: Some("0.6".parse::<BigDecimal>().unwrap()),
         },
@@ -154,32 +158,37 @@ fn test_calculate_expected_return_edge_cases() {
     // ゼロ価格のケース
     let zero_price_prediction = PredictionData {
         token: "ZERO".to_string(),
-        current_price: price_from_int(0),
-        predicted_price_24h: price(100.0),
+        current_rate: rate(0.0),
+        predicted_rate_24h: rate(100.0),
         timestamp: Utc::now(),
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
     let return_val = calculate_expected_return(&zero_price_prediction);
     assert_eq!(return_val, 0.0);
 
-    // 負のリターンのケース
+    // 負のリターンのケース (rate 増加 = 価格下落)
     let negative_prediction = PredictionData {
         token: "NEGATIVE".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(80.0),
+        current_rate: rate(100.0),
+        predicted_rate_24h: rate(120.0), // rate 増加 = 価格下落 = 負のリターン
         timestamp: Utc::now(),
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
     let return_val = calculate_expected_return(&negative_prediction);
-    assert!(return_val < 0.0);
+    assert!(
+        return_val < 0.0,
+        "Expected negative return, got {}",
+        return_val
+    );
 }
 
 #[test]
 fn test_confidence_adjusted_return() {
+    // rate 110 → 100 = +10% の価格上昇
     let prediction = PredictionData {
         token: "TEST".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(110.0),
+        current_rate: rate(110.0),
+        predicted_rate_24h: rate(100.0),
         timestamp: Utc::now(),
         confidence: Some("0.5".parse::<BigDecimal>().unwrap()), // 50%信頼度
     };
@@ -190,13 +199,13 @@ fn test_confidence_adjusted_return() {
     // 信頼度50%なので半分になる
     assert!((adjusted_return - base_return * 0.5).abs() < 0.001);
 
-    // 信頼度なしの場合のテスト
+    // 信頼度なしの場合のテスト - same rate change as prediction above
     let no_confidence_prediction = PredictionData {
         token: "NO_CONF".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(110.0),
+        current_rate: rate(110.0),
+        predicted_rate_24h: rate(100.0), // same positive return
         timestamp: Utc::now(),
-        confidence: None, // 信頼度なし
+        confidence: None, // 信頼度なし → デフォルト50%
     };
     let adjusted_return_no_conf = calculate_confidence_adjusted_return(&no_confidence_prediction);
     assert!((adjusted_return_no_conf - base_return * 0.5).abs() < 0.001); // デフォルト50%
@@ -209,19 +218,19 @@ fn test_rank_tokens_by_momentum_edge_cases() {
     let ranked = rank_tokens_by_momentum(empty_predictions);
     assert!(ranked.is_empty());
 
-    // 全て負のリターン
+    // 全て負のリターン (rate 増加 = 価格下落 = 負のリターン)
     let negative_predictions = vec![
         PredictionData {
             token: "NEG1".to_string(),
-            current_price: price(100.0),
-            predicted_price_24h: price(80.0),
+            current_rate: rate(100.0),
+            predicted_rate_24h: rate(120.0), // rate 増加 = 負のリターン
             timestamp: Utc::now(),
             confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
             token: "NEG2".to_string(),
-            current_price: price(100.0),
-            predicted_price_24h: price(70.0),
+            current_rate: rate(100.0),
+            predicted_rate_24h: rate(130.0), // rate 増加 = 負のリターン
             timestamp: Utc::now(),
             confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
         },
@@ -229,12 +238,12 @@ fn test_rank_tokens_by_momentum_edge_cases() {
     let ranked = rank_tokens_by_momentum(negative_predictions);
     assert!(ranked.is_empty()); // 負のリターンはフィルタされる
 
-    // TOP_N_TOKENS以上のトークン
+    // TOP_N_TOKENS以上のトークン (rate 減少 = 正のリターン)
     let many_predictions: Vec<PredictionData> = (0..10)
         .map(|i| PredictionData {
             token: format!("TOKEN{}", i),
-            current_price: price(100.0),
-            predicted_price_24h: price(105.0 + i as f64),
+            current_rate: rate(110.0 + i as f64),
+            predicted_rate_24h: rate(100.0), // rate 減少 = 正のリターン
             timestamp: Utc::now(),
             confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         })
@@ -290,19 +299,21 @@ fn test_volatility_edge_cases() {
 #[test]
 fn test_momentum_under_changing_volatility_regimes() {
     // 低ボラティリティ期間のデータ
+    // rate 減少 = 価格上昇（正のリターン）
     let low_vol_predictions = vec![PredictionData {
         token: "LOW_VOL_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(103.0), // 3%上昇
+        current_rate: rate(103.0),
+        predicted_rate_24h: rate(100.0), // rate減少 = 3%価格上昇
         timestamp: Utc::now(),
         confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
     }];
 
     // 高ボラティリティ期間のデータ
+    // rate 減少 = 価格上昇（正のリターン）
     let high_vol_predictions = vec![PredictionData {
         token: "HIGH_VOL_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(125.0), // 25%上昇
+        current_rate: rate(125.0),
+        predicted_rate_24h: rate(100.0), // rate減少 = 25%価格上昇
         timestamp: Utc::now(),
         confidence: Some("0.7".parse::<BigDecimal>().unwrap()), // 信頼度は下がる
     }];
@@ -328,10 +339,11 @@ fn test_momentum_under_changing_volatility_regimes() {
 #[test]
 fn test_prediction_confidence_degradation() {
     // 同じ価格予測で信頼度が段階的に悪化するケース
+    // rate 110 → 100 = +10% 価格上昇
     let base_prediction = PredictionData {
         token: "DEGRADING_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(110.0), // 10%上昇
+        current_rate: rate(110.0),
+        predicted_rate_24h: rate(100.0), // 10%上昇
         timestamp: Utc::now(),
         confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
     };
@@ -359,18 +371,19 @@ fn test_prediction_confidence_degradation() {
 #[test]
 fn test_market_stress_scenario() {
     // 市場ストレス時：高ボラティリティ + 低信頼度
+    // rate 減少 = 価格上昇, rate 増加 = 価格下落
     let stress_predictions = vec![
         PredictionData {
             token: "STRESS_TOKEN1".to_string(),
-            current_price: price(100.0),
-            predicted_price_24h: price(130.0), // 30%上昇予測
+            current_rate: rate(130.0),
+            predicted_rate_24h: rate(100.0), // rate減少 = 30%価格上昇
             timestamp: Utc::now(),
             confidence: Some("0.4".parse::<BigDecimal>().unwrap()), // 低信頼度
         },
         PredictionData {
             token: "STRESS_TOKEN2".to_string(),
-            current_price: price(100.0),
-            predicted_price_24h: price(70.0), // 30%下落予測
+            current_rate: rate(70.0),
+            predicted_rate_24h: rate(100.0), // rate増加 = 約43%価格下落
             timestamp: Utc::now(),
             confidence: Some("0.5".parse::<BigDecimal>().unwrap()),
         },
@@ -401,19 +414,21 @@ fn test_trading_frequency_cost_impact() {
     let base_amount = amount_f64(1000.0);
 
     // 高頻度取引シナリオ（1日10回）
+    // rate 減少 = 価格上昇（正のリターン）
     let high_freq_predictions = vec![PredictionData {
         token: "HIGH_FREQ_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(102.0), // 2%上昇
+        current_rate: rate(102.0),
+        predicted_rate_24h: rate(100.0), // rate減少 = 2%価格上昇
         timestamp: Utc::now(),
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
 
     // 低頻度取引シナリオ（週1回）
+    // rate 減少 = 価格上昇（正のリターン）
     let low_freq_predictions = vec![PredictionData {
         token: "LOW_FREQ_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(108.0), // 8%上昇
+        current_rate: rate(108.0),
+        predicted_rate_24h: rate(100.0), // rate減少 = 8%価格上昇
         timestamp: Utc::now(),
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
@@ -482,10 +497,11 @@ fn test_trading_frequency_cost_impact() {
 
 #[test]
 fn test_partial_fill_scenario() {
+    // rate 減少 = 価格上昇（正のリターン）
     let predictions = vec![PredictionData {
         token: "TARGET_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(115.0), // 15%上昇
+        current_rate: rate(115.0),
+        predicted_rate_24h: rate(100.0), // rate減少 = 15%価格上昇
         timestamp: Utc::now(),
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
@@ -539,18 +555,19 @@ fn test_partial_fill_scenario() {
 #[test]
 fn test_multi_timeframe_momentum_consistency() {
     // 短期（1時間）と長期（24時間）のシグナルが矛盾する場合
+    // rate 減少 = 価格上昇, rate 増加 = 価格下落
     let short_term_prediction = PredictionData {
         token: "CONFLICT_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(105.0), // 短期上昇
+        current_rate: rate(105.0),
+        predicted_rate_24h: rate(100.0), // rate減少 = 短期上昇
         timestamp: Utc::now(),
         confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
     };
 
     let long_term_prediction = PredictionData {
         token: "CONFLICT_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(95.0), // 長期下落
+        current_rate: rate(95.0),
+        predicted_rate_24h: rate(100.0), // rate増加 = 長期下落
         timestamp: Utc::now(),
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     };
@@ -593,6 +610,7 @@ fn test_multi_timeframe_momentum_consistency() {
 #[test]
 fn test_momentum_signal_strength_threshold() {
     // 閾値近辺でのシグナル強度テスト
+    // rate 減少 = 価格上昇なので、predicted_rate = current_rate / (1 + gross_return)
     let threshold_cases = vec![
         (0.05 - 0.001, "below_threshold"),
         (0.05, "at_threshold"),
@@ -600,12 +618,16 @@ fn test_momentum_signal_strength_threshold() {
     ];
 
     for (return_level, case_name) in threshold_cases {
+        // 目標リターン + 取引コスト = 必要な総リターン
+        let gross_return = return_level + (2.0 * TRADING_FEE) + MAX_SLIPPAGE;
+        // rate 減少 = 価格上昇: predicted_rate = current_rate / (1 + gross_return)
+        let current = 100.0 * (1.0 + gross_return);
+        let predicted = 100.0;
+
         let prediction = PredictionData {
             token: format!("THRESHOLD_{}", case_name),
-            current_price: price(100.0),
-            predicted_price_24h: price(
-                100.0 * (1.0 + return_level + (2.0 * TRADING_FEE) + MAX_SLIPPAGE),
-            ),
+            current_rate: rate(current),
+            predicted_rate_24h: rate(predicted),
             timestamp: Utc::now(),
             confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         };
@@ -635,8 +657,8 @@ fn test_real_api_prediction_data_confidence_issue() {
     // 実際のAPI応答と類似した予測データ（confidenceがnull）
     let api_prediction = PredictionData {
         token: "akaia.tkn.near".to_string(),
-        current_price: price(33276625285048.96), // 実際の価格履歴データ
-        predicted_price_24h: price(41877657359838.57), // 実際の予測データ
+        current_rate: rate(33276625285048.96), // 実際の価格履歴データ
+        predicted_rate_24h: rate(41877657359838.57), // 実際の予測データ
         timestamp: Utc::now(),
         confidence: None, // ChronosAPIがnullを返すケース
     };
@@ -671,10 +693,11 @@ fn test_real_api_prediction_data_confidence_issue() {
 #[test]
 fn test_minimal_positive_return_filtering() {
     // 取引コスト後に非常に小さな正のリターンになるケース
+    // rate 減少 = 価格上昇（正のリターン）
     let marginal_prediction = PredictionData {
         token: "MARGINAL_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(102.7), // ギリギリ正のリターン
+        current_rate: rate(102.7),
+        predicted_rate_24h: rate(100.0), // rate減少 = 2.7%価格上昇
         timestamp: Utc::now(),
         confidence: None, // デフォルト0.5が適用される
     };
@@ -698,10 +721,11 @@ fn test_minimal_positive_return_filtering() {
 #[test]
 fn test_negative_return_filtering() {
     // 取引コスト後に負のリターンになるケース
+    // rate 減少 = 価格上昇だが、1%では取引コストを賄えない
     let negative_prediction = PredictionData {
         token: "NEGATIVE_TOKEN".to_string(),
-        current_price: price(100.0),
-        predicted_price_24h: price(101.0), // 1%上昇だが取引コストで負になる
+        current_rate: rate(101.0),
+        predicted_rate_24h: rate(100.0), // rate減少 = 1%価格上昇だが取引コストで負になる
         timestamp: Utc::now(),
         confidence: None,
     };

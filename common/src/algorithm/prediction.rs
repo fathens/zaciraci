@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::types::Price;
+use crate::types::ExchangeRate;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -49,9 +49,11 @@ pub trait PredictionProvider: Send + Sync {
 /// PredictionDataへの変換（momentum.rsから移動）
 impl crate::algorithm::PredictionData {
     /// TokenPredictionResultから変換
+    ///
+    /// `current_rate` の decimals を予測レートにも適用する。
     pub fn from_token_prediction(
         prediction: &TokenPredictionResult,
-        current_price: Price,
+        current_rate: ExchangeRate,
     ) -> Option<Self> {
         use chrono::Duration;
 
@@ -61,10 +63,16 @@ impl crate::algorithm::PredictionData {
             diff >= Duration::hours(23) && diff <= Duration::hours(25)
         })?;
 
+        // 予測レートに同じ decimals を適用
+        let predicted_rate_24h = ExchangeRate::new(
+            predicted_24h.price.as_bigdecimal().clone(),
+            current_rate.decimals(),
+        );
+
         Some(Self {
             token: prediction.token.clone(),
-            current_price,
-            predicted_price_24h: predicted_24h.price.clone(),
+            current_rate,
+            predicted_rate_24h,
             timestamp: prediction.prediction_time,
             confidence: predicted_24h.confidence.clone(),
         })

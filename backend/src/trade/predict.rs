@@ -448,7 +448,9 @@ impl PredictionProvider for PredictionService {
                 token: t.token,
                 volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
                 volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
-                current_price: t.current_price.to_f64(), // Price → PriceF64
+                current_rate: t.current_price.to_f64(),
+                // TODO: decimals を実際に取得する（現在はデフォルト 24）
+                decimals: 24,
             })
             .collect())
     }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{Price, PriceF64};
+use crate::types::{ExchangeRate, Price, PriceF64};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
@@ -20,13 +20,15 @@ impl MockPredictionProvider {
                     token: "token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_price: PriceF64::new(100.0),
+                    current_rate: PriceF64::new(100.0),
+                    decimals: 24,
                 },
                 TopTokenInfo {
                     token: "token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_price: PriceF64::new(50.0),
+                    current_rate: PriceF64::new(50.0),
+                    decimals: 24,
                 },
             ],
             price_histories: HashMap::new(),
@@ -166,7 +168,7 @@ mod prediction_tests {
 
         assert_eq!(top_tokens.len(), 1);
         assert_eq!(top_tokens[0].token, "token1");
-        assert_eq!(top_tokens[0].current_price, PriceF64::new(100.0));
+        assert_eq!(top_tokens[0].current_rate, PriceF64::new(100.0));
     }
 
     #[tokio::test]
@@ -213,15 +215,19 @@ mod prediction_tests {
             }],
         };
 
-        let current_price = Price::new(BigDecimal::from(100));
+        let current_rate = ExchangeRate::new(BigDecimal::from(100), 24);
         let prediction_data =
-            PredictionData::from_token_prediction(&prediction_result, current_price.clone());
+            PredictionData::from_token_prediction(&prediction_result, current_rate.clone());
 
         assert!(prediction_data.is_some());
         let data = prediction_data.unwrap();
         assert_eq!(data.token, "test_token");
-        assert_eq!(data.current_price, current_price);
-        assert_eq!(data.predicted_price_24h, Price::new(BigDecimal::from(110)));
+        assert_eq!(data.current_rate.raw_rate(), current_rate.raw_rate());
+        // predicted_rate_24h は prediction_result の最後の price から作成される
+        assert_eq!(
+            data.predicted_rate_24h.raw_rate(),
+            &BigDecimal::from_f64(110.0).unwrap()
+        );
         assert_eq!(data.confidence, Some("0.85".parse::<BigDecimal>().unwrap()));
     }
 
@@ -264,9 +270,9 @@ mod prediction_tests {
             }],
         };
 
-        let current_price = Price::new(BigDecimal::from(100));
+        let current_rate = ExchangeRate::new(BigDecimal::from(100), 24);
         let prediction_data =
-            PredictionData::from_token_prediction(&prediction_result, current_price);
+            PredictionData::from_token_prediction(&prediction_result, current_rate);
 
         // 24時間後の予測が見つからないため、Noneが返される
         assert!(prediction_data.is_none());

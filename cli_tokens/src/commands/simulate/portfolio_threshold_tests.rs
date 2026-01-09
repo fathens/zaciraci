@@ -5,11 +5,15 @@ use common::algorithm::portfolio::{
     PortfolioData, execute_portfolio_optimization, needs_rebalancing,
 };
 use common::algorithm::{PriceHistory, PricePoint, TokenData, WalletInfo};
-use common::types::{NearValue, Price, YoctoAmount};
+use common::types::{ExchangeRate, NearValue, Price, YoctoAmount};
 use std::collections::{BTreeMap, HashMap};
 
 fn price(v: f64) -> Price {
     Price::new(BigDecimal::from_f64(v).unwrap())
+}
+
+fn rate(v: f64) -> ExchangeRate {
+    ExchangeRate::new(BigDecimal::from_f64(v).unwrap(), 18)
 }
 
 // テスト用のポートフォリオデータを作成
@@ -19,11 +23,10 @@ fn create_test_portfolio_data() -> PortfolioData {
 
     let tokens = vec![TokenData {
         symbol: "test.token".to_string(),
-        current_price: price(1000.0), // 0.001 NEAR in yoctoNEAR units
+        current_rate: rate(1000.0), // 0.001 NEAR in yoctoNEAR units
         historical_volatility: 0.2,
         liquidity_score: Some(1.0),
         market_cap: Some(1000000.0),
-        decimals: Some(18),
     }];
 
     // 価格履歴を作成（7日分）

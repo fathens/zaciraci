@@ -6,9 +6,9 @@ use super::types::*;
 use crate::api::backend::BackendClient;
 use anyhow::Result;
 #[allow(unused_imports)]
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
-use common::types::Price;
+use common::types::{ExchangeRate, Price};
 use std::collections::{BTreeMap, HashMap};
 
 /// Run momentum simulation
@@ -149,13 +149,18 @@ pub(crate) async fn run_momentum_timestep_simulation(
                 .await?;
 
                 // TokenHoldingに変換（型安全な変換メソッドを使用）
+                // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 24）
+                const DEFAULT_DECIMALS: u8 = 24;
                 let mut token_holdings = Vec::new();
                 for (token, amount) in &current_holdings {
                     if let Some(&price) = current_prices.get(token) {
                         token_holdings.push(TokenHolding {
                             token: token.clone(),
                             amount: YoctoAmount::from_bigdecimal(amount.to_bigdecimal()),
-                            current_price: price.to_bigdecimal(),
+                            current_rate: ExchangeRate::new(
+                                BigDecimal::from_f64(price.as_f64()).unwrap_or_default(),
+                                DEFAULT_DECIMALS,
+                            ),
                         });
                     }
                 }
@@ -510,16 +515,21 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     .await?;
 
                     // TokenDataに変換（型安全な変換メソッドを使用）
+                    // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 18）
+                    const TOKEN_DECIMALS: u8 = 18;
                     let mut token_data = Vec::new();
                     for token in &config.target_tokens {
                         if let Some(&current_price) = current_prices.get(token) {
                             token_data.push(TokenData {
                                 symbol: token.clone(),
-                                current_price: current_price.to_bigdecimal(),
+                                current_rate: ExchangeRate::new(
+                                    BigDecimal::from_f64(current_price.as_f64())
+                                        .unwrap_or_default(),
+                                    TOKEN_DECIMALS,
+                                ),
                                 historical_volatility: 0.2, // デフォルト値
                                 liquidity_score: Some(0.8),
                                 market_cap: None,
-                                decimals: Some(18),
                             });
                         }
                     }
@@ -527,11 +537,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     // ポートフォリオデータを構築
                     let mut predictions_map = HashMap::new();
                     for pred in predictions {
-                        let predicted_price = pred
-                            .predicted_price_24h
-                            .to_string()
-                            .parse::<f64>()
-                            .unwrap_or(0.0);
+                        let predicted_price = pred.predicted_rate_24h.to_price().to_f64();
                         predictions_map.insert(pred.token, predicted_price);
                     }
 

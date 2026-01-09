@@ -4,10 +4,14 @@
 //!
 //! このモジュールでは以下の単位規約を使用しています：
 //!
-//! - **current_price (u128)**: yoctoNEAR 単位 (1 NEAR = 10^24 yoctoNEAR)
-//! - **Price 型**: 本来は無次元比率だが、このモジュールでは yoctoNEAR 値を格納
-//! - **predictions (HashMap<String, f64>)**: yoctoNEAR 単位の予測価格
+//! - **rate_yocto**: yocto tokens per 1 NEAR（DB に保存される形式）
+//! - **predictions (BTreeMap<String, f64>)**: 同じ yocto スケールの予測価格
 //! - **volatility**: 比率（単位なし）
+//!
+//! ## yocto スケールの利点
+//!
+//! DBには `rate_yocto = tokens_yocto / NEAR` を保存。
+//! これにより使用時のスケーリング（× 10^24）が不要になり効率的。
 //!
 //! ## 単位変換（型安全）
 //!
@@ -42,7 +46,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{NearValue, Price, YoctoAmount, YoctoValue};
+use zaciraci_common::types::{ExchangeRate, NearValue, YoctoAmount, YoctoValue};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -456,8 +460,8 @@ async fn select_top_volatility_tokens(
 /// * `wallet` - ウォレット
 ///
 /// # 内部の単位
-/// * 価格: yoctoNEAR/token（Price型に格納されるがyoctoNEAR値）
-/// * 予測: f64 yoctoNEAR/token
+/// * 価格: Price型（無次元比率）をスケーリング（× 10^24）してu128に格納
+/// * 予測: 同じスケーリング済みf64値
 async fn execute_portfolio_strategy<C, W>(
     prediction_service: &PredictionService,
     tokens: &[AccountId],
@@ -519,33 +523,9 @@ where
         };
 
         // 現在価格を履歴から取得
-        let current_price = if let Some(latest_price) = history.prices.last() {
-            // PriceのBigDecimalをyoctoNEAR (u128)に変換（型安全な変換）
-            let price_yocto = NearValue::new(latest_price.price.as_bigdecimal().clone())
-                .to_yocto()
-                .into_bigdecimal();
-
-            debug!(log, "converting price to u128";
-                "token" => %token,
-                "original_price" => %latest_price.price,
-                "price_yocto" => %price_yocto,
-                "price_yocto_string" => price_yocto.to_string()
-            );
-
-            // BigDecimalをu128に変換（整数部分のみ）
-            use num_bigint::ToBigInt;
-            let price_bigint = price_yocto.to_bigint().ok_or_else(|| {
-                anyhow::anyhow!("Failed to convert BigDecimal to BigInt for token {}", token)
-            })?;
-
-            price_bigint.to_string().parse::<u128>().map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to parse price for token {}: {} (value: {})",
-                    token,
-                    e,
-                    price_bigint
-                )
-            })?
+        // rate は既に yocto スケール（yocto tokens per 1 NEAR）なのでそのまま使用
+        let current_price_yocto = if let Some(latest_price) = history.prices.last() {
+            latest_price.price.as_bigdecimal().clone()
         } else {
             error!(log, "no price data available for token"; "token" => %token);
             return Err(anyhow::anyhow!(
@@ -589,21 +569,24 @@ where
                 ));
             }
         };
-        // 予測値を yoctoNEAR 単位に変換（current_price と同じ単位に揃える）
-        // BigDecimal版のNearValueを使用し、最後にf64に変換（精度損失を最小化）
-        // 注: prediction は Price 型だが、このモジュールでは NEAR 値を格納している
-        let prediction_yocto = NearValue::new(prediction.into_bigdecimal())
-            .to_yocto()
-            .into_bigdecimal()
-            .to_f64()
-            .unwrap_or(0.0);
+        // 予測値も既に yocto スケールなのでそのまま使用
+        let prediction_yocto = prediction.as_bigdecimal().to_f64().unwrap_or(0.0);
         predictions.insert(token.to_string(), prediction_yocto);
+
+        // 相対リターンの計算
+        // rate = 1/price なので、価格リターンは rate リターンの逆符号
+        let current_f64 = current_price_yocto.to_f64().unwrap_or(0.0);
+        let expected_price_return_pct = if current_f64 > 0.0 && prediction_yocto > 0.0 {
+            ((current_f64 - prediction_yocto) / current_f64) * 100.0
+        } else {
+            0.0
+        };
 
         info!(log, "token prediction";
             "token" => %token,
-            "current_price" => %current_price,
-            "predicted_price" => prediction_yocto,
-            "expected_return_pct" => format!("{:.2}%", ((prediction_yocto - current_price as f64) / current_price as f64) * 100.0)
+            "current_rate" => %current_price_yocto,
+            "predicted_rate" => prediction_yocto,
+            "expected_price_return_pct" => format!("{:.2}%", expected_price_return_pct)
         );
 
         // ボラティリティの計算
@@ -621,16 +604,19 @@ where
             .parse::<f64>()
             .map_err(|e| anyhow::anyhow!("Failed to convert volatility to f64: {}", e))?;
 
+        // トークンの decimals を取得
+        let decimals = get_token_decimals(client, &token_str).await;
+
         // 市場規模の推定（実際の発行量データを取得）
-        let market_cap = estimate_market_cap_async(client, &token_str, current_price).await;
+        let market_cap =
+            estimate_market_cap_async(client, &token_str, &current_price_yocto, decimals).await;
 
         token_data.push(TokenData {
             symbol: token.to_string(),
-            current_price: Price::new(BigDecimal::from(current_price)),
+            current_rate: ExchangeRate::new(current_price_yocto, decimals),
             historical_volatility: volatility_f64,
             liquidity_score: Some(liquidity_score),
             market_cap: Some(market_cap),
-            decimals: Some(24),
         });
     }
 
@@ -1561,22 +1547,42 @@ fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
 }
 
 /// 市場規模を推定（実際の発行量データを取得）
-async fn estimate_market_cap_async<C>(client: &C, token_id: &str, current_price_yocto: u128) -> f64
+///
+/// # Arguments
+/// * `client` - RPC クライアント
+/// * `token_id` - トークン ID
+/// * `rate` - レート（smallest_token_units per 1 NEAR）
+/// * `_decimals` - トークンの decimals（将来の拡張用、現在は未使用）
+///
+/// # 計算式
+/// ```text
+/// rate = smallest_units / NEAR
+/// total_supply = total_tokens × 10^decimals (smallest units)
+/// market_cap = total_supply / rate
+///            = (total_tokens × 10^decimals) / (smallest_per_NEAR)
+///            = total_tokens × NEAR
+/// ```
+/// decimals は分子・分母でキャンセルされるため、計算結果に影響しない。
+async fn estimate_market_cap_async<C>(
+    client: &C,
+    token_id: &str,
+    rate: &BigDecimal,
+    _decimals: u8,
+) -> f64
 where
     C: crate::jsonrpc::ViewContract,
 {
-    // 実際の発行量データを取得
+    // 実際の発行量データを取得（smallest units）
     let total_supply = get_token_total_supply(client, token_id)
         .await
-        .unwrap_or(1_000_000u128); // 取得失敗時は100万トークンと仮定
+        .unwrap_or(1_000_000_000_000_000_000_000_000u128); // 取得失敗時は 10^24 と仮定
 
-    // yoctoNEARから通常の単位に変換（型安全な変換）
-    let price_in_near = YoctoValue::new(BigDecimal::from(current_price_yocto))
-        .to_near()
-        .into_bigdecimal();
+    if rate.is_zero() {
+        return 10000.0; // デフォルト値
+    }
 
-    // 市場規模 = 価格 × 発行量
-    let market_cap = price_in_near * BigDecimal::from(total_supply);
+    // market_cap (NEAR) = total_supply / rate
+    let market_cap = BigDecimal::from(total_supply) / rate;
 
     market_cap.to_string().parse::<f64>().unwrap_or(10000.0)
 }
@@ -1612,6 +1618,56 @@ where
             "Expected string value for total supply, got: {:?}",
             json_value
         ))
+    }
+}
+
+/// トークンメタデータ（NEP-148 準拠）
+#[derive(Debug, Clone, serde::Deserialize)]
+#[allow(dead_code)] // デシリアライズ用に全フィールド必要
+pub struct TokenMetadata {
+    pub spec: String,
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default)]
+    pub reference_hash: Option<String>,
+}
+
+/// トークンのメタデータを取得（ft_metadata）
+pub async fn get_token_metadata<C>(client: &C, token_id: &str) -> Result<TokenMetadata>
+where
+    C: crate::jsonrpc::ViewContract,
+{
+    use near_sdk::AccountId;
+
+    let account_id: AccountId = token_id
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token account ID: {}", e))?;
+
+    let args = serde_json::json!({});
+    let result = client
+        .view_contract(&account_id, "ft_metadata", &args)
+        .await?;
+
+    // resultフィールドからJSONデータを取得してパース
+    let metadata: TokenMetadata = serde_json::from_slice(&result.result)
+        .map_err(|e| anyhow::anyhow!("Failed to parse token metadata: {}", e))?;
+
+    Ok(metadata)
+}
+
+/// トークンの decimals を取得（キャッシュなし、エラー時は 24 を返す）
+pub async fn get_token_decimals<C>(client: &C, token_id: &str) -> u8
+where
+    C: crate::jsonrpc::ViewContract,
+{
+    match get_token_metadata(client, token_id).await {
+        Ok(metadata) => metadata.decimals,
+        Err(_) => 24, // デフォルト値（NEAR ネイティブトークンの decimals）
     }
 }
 
@@ -2380,6 +2436,7 @@ mod tests {
     #[tokio::test]
     async fn test_estimate_market_cap_async() {
         // モック実装を作成してテスト
+        // 1M トークン（decimals=24）の場合、smallest units では 10^30
         struct MockClient;
         impl crate::jsonrpc::ViewContract for MockClient {
             async fn view_contract<T>(
@@ -2391,7 +2448,8 @@ mod tests {
             where
                 T: ?Sized + serde::Serialize + Sync,
             {
-                let total_supply = "1000000"; // 1M tokens
+                // 1M tokens * 10^24 = 10^30 smallest units
+                let total_supply = "1000000000000000000000000000000";
                 Ok(near_primitives::views::CallResult {
                     result: serde_json::to_vec(total_supply).unwrap(),
                     logs: vec![],
@@ -2401,20 +2459,22 @@ mod tests {
 
         let client = MockClient;
 
-        // ケース1: 1 NEAR価格
-        let price_1_near = 10u128.pow(24);
-        let market_cap = estimate_market_cap_async(&client, "test.token", price_1_near).await;
+        // ケース1: 1 NEAR価格 (rate = 10^24 smallest_units/NEAR)
+        // market_cap = 10^30 / 10^24 = 10^6 = 1M NEAR
+        let rate_1_near = BigDecimal::from_str("1000000000000000000000000").unwrap();
+        let market_cap = estimate_market_cap_async(&client, "test.token", &rate_1_near, 24).await;
         assert_eq!(
             market_cap, 1_000_000.0,
             "1 NEAR * 1M tokens = 1M market cap"
         );
 
-        // ケース2: 0.1 NEAR価格
-        let price_01_near = 10u128.pow(23);
-        let market_cap = estimate_market_cap_async(&client, "test.token", price_01_near).await;
+        // ケース2: 10 NEAR価格 (rate = 10^23 smallest_units/NEAR = 0.1 NEAR/token)
+        // market_cap = 10^30 / 10^23 = 10^7 = 10M NEAR
+        let rate_10x = BigDecimal::from_str("100000000000000000000000").unwrap();
+        let market_cap = estimate_market_cap_async(&client, "test.token", &rate_10x, 24).await;
         assert_eq!(
-            market_cap, 100_000.0,
-            "0.1 NEAR * 1M tokens = 100k market cap"
+            market_cap, 10_000_000.0,
+            "10 NEAR * 1M tokens = 10M market cap"
         );
     }
 
@@ -3138,6 +3198,66 @@ mod tests {
             // Total should equal available balance
             let adjusted_total: BigDecimal = adjusted_operations.iter().sum();
             assert_eq!(adjusted_total, available_wrap_near);
+        }
+
+        #[test]
+        fn test_small_rate_scaling_issue() {
+            // Test: Very small rates can become 0 when converted to u128
+            // This happens for expensive tokens with few decimals
+            use num_bigint::ToBigInt;
+
+            // Case 1: Normal rate (token worth 0.001 NEAR, 18 decimals)
+            // rate = 1e18 / 1e26 = 1e-8
+            let rate_normal = BigDecimal::from_str("0.00000001").unwrap();
+            let scale = BigDecimal::from_str("1000000000000000000000000").unwrap(); // 1e24
+            let scaled_normal = &rate_normal * &scale;
+            let bigint_normal = scaled_normal.to_bigint().unwrap();
+            println!(
+                "Normal rate: {} -> scaled: {} -> bigint: {}",
+                rate_normal, scaled_normal, bigint_normal
+            );
+            assert!(
+                bigint_normal > num_bigint::BigInt::from(0),
+                "Normal rate should not become 0"
+            );
+
+            // Case 2: Problematic rate (expensive token with 0 decimals, worth 2 NEAR)
+            // rate = 50 / 1e26 = 5e-25
+            let rate_problem = BigDecimal::from_str("0.0000000000000000000000005").unwrap();
+            let scaled_problem = &rate_problem * &scale;
+            let bigint_problem = scaled_problem.to_bigint();
+            println!(
+                "Problem rate: {} -> scaled: {} -> bigint: {:?}",
+                rate_problem, scaled_problem, bigint_problem
+            );
+
+            // This test documents the known issue: small rates become 0
+            // The bigint should be Some(0) or the scaled value should be < 1
+            if let Some(bi) = bigint_problem {
+                println!("WARNING: Very small rate results in bigint = {}", bi);
+                // If this is 0, we have a precision issue
+                if bi == num_bigint::BigInt::from(0) {
+                    println!(
+                        "ISSUE CONFIRMED: Rate {} scaled to {} truncates to 0",
+                        rate_problem, scaled_problem
+                    );
+                }
+            }
+
+            // Case 3: Edge case - rate exactly at boundary
+            // rate × 1e24 = 1 -> rate = 1e-24
+            let rate_boundary = BigDecimal::from_str("0.000000000000000000000001").unwrap();
+            let scaled_boundary = &rate_boundary * &scale;
+            let bigint_boundary = scaled_boundary.to_bigint().unwrap();
+            println!(
+                "Boundary rate: {} -> scaled: {} -> bigint: {}",
+                rate_boundary, scaled_boundary, bigint_boundary
+            );
+            assert_eq!(
+                bigint_boundary,
+                num_bigint::BigInt::from(1),
+                "Boundary rate should be exactly 1"
+            );
         }
     }
 }
