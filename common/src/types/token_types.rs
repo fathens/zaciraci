@@ -5,17 +5,17 @@
 //! ## 型の概要
 //!
 //! - [`ExchangeRate`]: tokens_smallest/NEAR のレート（DB保存用）
-//! - [`TokenPrice`]: NEAR/token の価格（比較・分析用）
+//! - [`TokenPrice`]: NEAR/token の価格（比較・分析用） - `near_units` から再エクスポート
 //! - [`TokenAmount`]: トークン量 + decimals
 //!
 //! 詳細は `README.md` を参照。
 
-use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
+use bigdecimal::{BigDecimal, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::{Div, Mul};
 
-use super::near_units::NearValue;
+use super::near_units::{NearValue, TokenPrice};
 
 /// 10^n を BigDecimal で計算（オーバーフロー回避）
 fn pow10(n: u8) -> BigDecimal {
@@ -86,111 +86,6 @@ impl ExchangeRate {
 impl fmt::Display for ExchangeRate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} (decimals={})", self.raw_rate, self.decimals)
-    }
-}
-
-// =============================================================================
-// TokenPrice（トークン価格）
-// =============================================================================
-
-/// トークン価格（NEAR / token）
-///
-/// decimals を考慮済みの「whole token あたりの NEAR」。
-///
-/// - `TokenPrice` が大きい = トークンが高い
-/// - `TokenPrice` が小さい = トークンが安い
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct TokenPrice(BigDecimal);
-
-impl TokenPrice {
-    /// ゼロ価格を作成
-    pub fn zero() -> Self {
-        TokenPrice(BigDecimal::zero())
-    }
-
-    /// BigDecimal から TokenPrice を作成
-    pub fn new(value: BigDecimal) -> Self {
-        TokenPrice(value)
-    }
-
-    /// 内部の BigDecimal への参照を取得
-    pub fn as_bigdecimal(&self) -> &BigDecimal {
-        &self.0
-    }
-
-    /// BigDecimal に変換
-    pub fn into_bigdecimal(self) -> BigDecimal {
-        self.0
-    }
-
-    /// f64 に変換（精度損失あり）
-    pub fn to_f64(&self) -> f64 {
-        self.0.to_f64().unwrap_or(0.0)
-    }
-
-    /// 価格がゼロかどうか
-    pub fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
-
-    /// 期待リターンを計算
-    ///
-    /// ```text
-    /// return = (predicted - current) / current
-    /// ```
-    ///
-    /// # 注意
-    ///
-    /// `ExchangeRate` から直接リターンを計算すると符号が逆になる。
-    /// `TokenPrice` を使えばこの混乱を防げる。
-    pub fn expected_return(&self, predicted: &TokenPrice) -> f64 {
-        let current = self.to_f64();
-        let pred = predicted.to_f64();
-        if current == 0.0 {
-            return 0.0;
-        }
-        (pred - current) / current
-    }
-}
-
-impl fmt::Display for TokenPrice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} NEAR/token", self.0)
-    }
-}
-
-// TokenPrice 同士の減算 → BigDecimal
-impl std::ops::Sub for TokenPrice {
-    type Output = BigDecimal;
-    fn sub(self, other: TokenPrice) -> BigDecimal {
-        self.0 - other.0
-    }
-}
-
-impl std::ops::Sub<&TokenPrice> for &TokenPrice {
-    type Output = BigDecimal;
-    fn sub(self, other: &TokenPrice) -> BigDecimal {
-        &self.0 - &other.0
-    }
-}
-
-// TokenPrice 同士の除算 → 比率
-impl Div for TokenPrice {
-    type Output = BigDecimal;
-    fn div(self, other: TokenPrice) -> BigDecimal {
-        if other.0.is_zero() {
-            BigDecimal::zero()
-        } else {
-            self.0 / other.0
-        }
-    }
-}
-
-// TokenPrice × スカラー
-impl Mul<f64> for TokenPrice {
-    type Output = TokenPrice;
-    fn mul(self, scalar: f64) -> TokenPrice {
-        TokenPrice(self.0 * BigDecimal::from_f64(scalar).unwrap_or_default())
     }
 }
 
@@ -320,6 +215,7 @@ impl Mul<&TokenPrice> for &TokenAmount {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bigdecimal::{FromPrimitive, ToPrimitive};
 
     #[test]
     fn test_exchange_rate_to_price() {

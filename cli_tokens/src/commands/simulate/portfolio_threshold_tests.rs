@@ -5,11 +5,11 @@ use common::algorithm::portfolio::{
     PortfolioData, execute_portfolio_optimization, needs_rebalancing,
 };
 use common::algorithm::{PriceHistory, PricePoint, TokenData, WalletInfo};
-use common::types::{ExchangeRate, NearValue, Price, YoctoAmount};
+use common::types::{ExchangeRate, NearValue, TokenPrice, YoctoAmount};
 use std::collections::{BTreeMap, HashMap};
 
-fn price(v: f64) -> Price {
-    Price::new(BigDecimal::from_f64(v).unwrap())
+fn price(v: f64) -> TokenPrice {
+    TokenPrice::new(BigDecimal::from_f64(v).unwrap())
 }
 
 fn rate(v: f64) -> ExchangeRate {

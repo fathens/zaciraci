@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{ExchangeRate, Price, PriceF64};
+use crate::types::{ExchangeRate, PriceF64, TokenPrice};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
@@ -41,7 +41,7 @@ impl MockPredictionProvider {
             .into_iter()
             .map(|(timestamp, price)| PricePoint {
                 timestamp,
-                price: Price::new(BigDecimal::from_f64(price).unwrap()),
+                price: TokenPrice::new(BigDecimal::from_f64(price).unwrap()),
                 volume: None,
             })
             .collect();
@@ -102,8 +102,9 @@ impl PredictionProvider for MockPredictionProvider {
 
         for i in 1..=prediction_horizon {
             let timestamp = prediction_time + Duration::hours(i as i64);
-            let price =
-                Price::new(BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap()); // 1%ずつ増加する予測
+            let price = TokenPrice::new(
+                BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(),
+            ); // 1%ずつ増加する予測
             predictions.push(PredictedPrice {
                 timestamp,
                 price,
@@ -191,11 +192,11 @@ mod prediction_tests {
         assert_eq!(history.prices.len(), 2);
         assert_eq!(
             history.prices[0].price,
-            Price::new(BigDecimal::from_f64(100.0).unwrap())
+            TokenPrice::new(BigDecimal::from_f64(100.0).unwrap())
         );
         assert_eq!(
             history.prices[1].price,
-            Price::new(BigDecimal::from_f64(105.0).unwrap())
+            TokenPrice::new(BigDecimal::from_f64(105.0).unwrap())
         );
     }
 
@@ -210,7 +211,7 @@ mod prediction_tests {
             prediction_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
-                price: Price::new(BigDecimal::from_f64(110.0).unwrap()),
+                price: TokenPrice::new(BigDecimal::from_f64(110.0).unwrap()),
                 confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
@@ -265,7 +266,7 @@ mod prediction_tests {
             prediction_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
-                price: Price::new(BigDecimal::from_f64(110.0).unwrap()),
+                price: TokenPrice::new(BigDecimal::from_f64(110.0).unwrap()),
                 confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };

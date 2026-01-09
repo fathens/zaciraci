@@ -2007,10 +2007,10 @@ mod tests {
     use super::*;
     use crate::ref_finance::token_account::TokenAccount;
     use std::str::FromStr;
-    use zaciraci_common::types::Price;
+    use zaciraci_common::types::TokenPrice;
 
-    fn price_from_int(v: i64) -> Price {
-        Price::new(BigDecimal::from(v))
+    fn price_from_int(v: i64) -> TokenPrice {
+        TokenPrice::new(BigDecimal::from(v))
     }
 
     #[test]

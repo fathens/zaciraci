@@ -15,7 +15,7 @@ use zaciraci_common::algorithm::prediction::{
 use zaciraci_common::api::chronos::ChronosApiClient;
 use zaciraci_common::api::traits::PredictionClient;
 use zaciraci_common::prediction::{PredictionResult, ZeroShotPredictionRequest};
-use zaciraci_common::types::Price;
+use zaciraci_common::types::TokenPrice;
 
 /// トークンの価格履歴
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +42,7 @@ pub struct TokenPrediction {
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
     /// 予測価格（無次元の価格比率）
-    pub price: Price,
+    pub price: TokenPrice,
     pub confidence: Option<BigDecimal>,
 }
 
@@ -53,7 +53,7 @@ pub struct TopToken {
     pub volatility: BigDecimal,
     pub volume_24h: BigDecimal,
     /// 現在価格（無次元の価格比率）
-    pub current_price: Price,
+    pub current_price: TokenPrice,
 }
 
 /// 価格予測サービス
@@ -105,14 +105,14 @@ impl PredictionService {
                 let quote_token = quote_token_account.clone();
 
                 match TokenRate::get_latest(&base_token, &quote_token).await {
-                    Ok(Some(rate)) => Price::new(rate.rate),
+                    Ok(Some(rate)) => TokenPrice::new(rate.rate),
                     Ok(None) => {
                         // ログを後で追加（slogのsetupが必要）
-                        Price::new(BigDecimal::from(1)) // デフォルト値
+                        TokenPrice::new(BigDecimal::from(1)) // デフォルト値
                     }
                     Err(_e) => {
                         // ログを後で追加（slogのsetupが必要）
-                        Price::new(BigDecimal::from(1)) // デフォルト値
+                        TokenPrice::new(BigDecimal::from(1)) // デフォルト値
                     }
                 }
             };
@@ -161,7 +161,7 @@ impl PredictionService {
             .into_iter()
             .map(|rate| PricePoint {
                 timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                price: Price::new(rate.rate),
+                price: TokenPrice::new(rate.rate),
                 volume: None, // ボリュームデータは現在利用不可
             })
             .collect();
@@ -343,7 +343,7 @@ impl PredictionService {
                 let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
                 PredictedPrice {
                     timestamp,
-                    price: Price::new(price.clone()),
+                    price: TokenPrice::new(price.clone()),
                     confidence: None, // 信頼度は将来実装
                 }
             })
@@ -448,7 +448,7 @@ impl PredictionProvider for PredictionService {
                 token: t.token,
                 volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
                 volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
-                current_rate: t.current_price.to_f64(),
+                current_rate: t.current_price.to_price_f64(),
                 // TODO: decimals を実際に取得する（現在はデフォルト 24）
                 decimals: 24,
             })

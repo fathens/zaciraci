@@ -2,7 +2,7 @@ use super::*;
 use bigdecimal::BigDecimal;
 use crate::models::prediction::{PredictionFileData, PredictionMetadata, PredictionPoint, PredictionResults};
 use chrono::{DateTime, Utc};
-use common::types::Price;
+use common::types::TokenPrice;
 use std::env;
 use std::str::FromStr;
 use tempfile::tempdir;
@@ -11,14 +11,14 @@ use serial_test::serial;
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-/// Create Price from string for tests
-fn price(s: &str) -> Price {
-    Price::new(BigDecimal::from_str(s).unwrap())
+/// Create TokenPrice from string for tests
+fn price(s: &str) -> TokenPrice {
+    TokenPrice::new(BigDecimal::from_str(s).unwrap())
 }
 
-/// Create Price from integer for tests
-fn price_from_int(n: i64) -> Price {
-    Price::new(BigDecimal::from(n))
+/// Create TokenPrice from integer for tests
+fn price_from_int(n: i64) -> TokenPrice {
+    TokenPrice::new(BigDecimal::from(n))
 }
 
 /// Setup test environment with unique base directory

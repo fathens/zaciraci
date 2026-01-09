@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{ExchangeRate, NearValue, Price, YoctoAmount};
+use crate::types::{ExchangeRate, NearValue, TokenPrice, YoctoAmount};
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::Duration;
 use ndarray::array;
@@ -8,8 +8,8 @@ use std::str::FromStr;
 
 // ==================== テストヘルパー ====================
 
-fn price(v: f64) -> Price {
-    Price::new(BigDecimal::from_f64(v).unwrap())
+fn price(v: f64) -> TokenPrice {
+    TokenPrice::new(BigDecimal::from_f64(v).unwrap())
 }
 
 fn rate(v: f64) -> ExchangeRate {
@@ -1154,7 +1154,7 @@ fn test_demonstrate_ordering_performance_impact() {
         for i in 0..10 {
             prices.push(PricePoint {
                 timestamp: base_time + Duration::days(i),
-                price: Price::new(
+                price: TokenPrice::new(
                     BigDecimal::from_f64(start_price * (1.0 + growth_rate).powi(i as i32)).unwrap(),
                 ),
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
@@ -2331,7 +2331,7 @@ fn create_high_volatility_price_history() -> Vec<PriceHistory> {
 
             prices_vec.push(PricePoint {
                 timestamp,
-                price: Price::new(bigdecimal::BigDecimal::from(p)),
+                price: TokenPrice::new(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)), // ダミーボリューム
             });
         }
@@ -2366,7 +2366,7 @@ fn create_low_volatility_price_history() -> Vec<PriceHistory> {
 
             prices_vec.push(PricePoint {
                 timestamp,
-                price: Price::new(bigdecimal::BigDecimal::from(p)),
+                price: TokenPrice::new(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)), // ダミーボリューム
             });
         }
@@ -2578,7 +2578,7 @@ fn create_realistic_price_history() -> Vec<PriceHistory> {
 
             prices_vec.push(PricePoint {
                 timestamp,
-                price: Price::new(bigdecimal::BigDecimal::from(p)),
+                price: TokenPrice::new(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)),
             });
         }

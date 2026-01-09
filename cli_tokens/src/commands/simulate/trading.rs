@@ -81,7 +81,7 @@ async fn save_to_cache(
         .zip(forecast_data.forecast_values.iter())
         .map(|(timestamp, price)| CachePredictionPoint {
             timestamp: *timestamp,
-            price: common::types::Price::new(price.clone()),
+            price: common::types::TokenPrice::new(price.clone()),
             confidence: None, // Could extract from confidence intervals if available
         })
         .collect();

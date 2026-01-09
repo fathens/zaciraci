@@ -7,10 +7,10 @@ use chrono::{Duration, Utc};
 use serial_test::serial;
 use std::str::FromStr;
 use zaciraci_common::prediction::{ChronosPredictionResponse, PredictionResult};
-use zaciraci_common::types::Price;
+use zaciraci_common::types::TokenPrice;
 
-fn price(s: &str) -> Price {
-    Price::new(BigDecimal::from_str(s).unwrap())
+fn price(s: &str) -> TokenPrice {
+    TokenPrice::new(BigDecimal::from_str(s).unwrap())
 }
 
 // テスト用のヘルパー構造体

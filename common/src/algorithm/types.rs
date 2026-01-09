@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::types::{ExchangeRate, NearValue, Price, PriceF64, YoctoAmount};
+use crate::types::{ExchangeRate, NearValue, PriceF64, TokenPrice, YoctoAmount};
 
 // ==================== 取引関連型 ====================
 
@@ -21,7 +21,7 @@ pub enum TradeType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricePoint {
     pub timestamp: DateTime<Utc>,
-    pub price: Price,
+    pub price: TokenPrice,
     pub volume: Option<BigDecimal>,
 }
 
@@ -62,7 +62,7 @@ pub struct TokenHolding {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
-    pub price: Price,
+    pub price: TokenPrice,
     pub confidence: Option<BigDecimal>,
 }
 
@@ -550,13 +550,13 @@ mod tests {
     fn test_price_point_creation() {
         let price_point = PricePoint {
             timestamp: Utc::now(),
-            price: Price::new(BigDecimal::from_str("123.456").unwrap()),
+            price: TokenPrice::new(BigDecimal::from_str("123.456").unwrap()),
             volume: Some(BigDecimal::from(1000)),
         };
 
         assert_eq!(
             price_point.price,
-            Price::new(BigDecimal::from_str("123.456").unwrap())
+            TokenPrice::new(BigDecimal::from_str("123.456").unwrap())
         );
         assert!(price_point.volume.is_some());
     }
@@ -565,7 +565,7 @@ mod tests {
     fn test_price_point_serialization() {
         let price_point = PricePoint {
             timestamp: Utc::now(),
-            price: Price::new(BigDecimal::from_str("999.123456789").unwrap()),
+            price: TokenPrice::new(BigDecimal::from_str("999.123456789").unwrap()),
             volume: Some(BigDecimal::from(5000)),
         };
 
@@ -580,7 +580,7 @@ mod tests {
     fn test_price_point_serialization_without_volume() {
         let price_point = PricePoint {
             timestamp: Utc::now(),
-            price: Price::new(BigDecimal::from(100)),
+            price: TokenPrice::new(BigDecimal::from(100)),
             volume: None,
         };
 
@@ -627,12 +627,12 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: Price::new(BigDecimal::from(100)),
+                    price: TokenPrice::new(BigDecimal::from(100)),
                     volume: Some(BigDecimal::from(1000)),
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: Price::new(BigDecimal::from(110)),
+                    price: TokenPrice::new(BigDecimal::from(110)),
                     volume: Some(BigDecimal::from(2000)),
                 },
             ],
@@ -646,23 +646,23 @@ mod tests {
         assert_eq!(history.prices[0].price, deserialized.prices[0].price);
     }
 
-    // ==================== Price 型のJSON形式テスト ====================
+    // ==================== TokenPrice 型のJSON形式テスト ====================
 
     #[test]
-    fn test_price_json_format() {
-        // Price 型が正しくJSONにシリアライズされることを確認
-        let price = Price::new(BigDecimal::from_str("123.456789").unwrap());
+    fn test_token_price_json_format() {
+        // TokenPrice 型が正しくJSONにシリアライズされることを確認
+        let price = TokenPrice::new(BigDecimal::from_str("123.456789").unwrap());
         let json = serde_json::to_string(&price).unwrap();
 
         // BigDecimal単体のシリアライズ形式と比較
         let bd = BigDecimal::from_str("123.456789").unwrap();
         let bd_json = serde_json::to_string(&bd).unwrap();
 
-        // Price と BigDecimal は同じJSON形式でシリアライズされることを確認
+        // TokenPrice と BigDecimal は同じJSON形式でシリアライズされることを確認
         assert_eq!(json, bd_json);
 
         // デシリアライズの往復確認
-        let deserialized: Price = serde_json::from_str(&json).unwrap();
+        let deserialized: TokenPrice = serde_json::from_str(&json).unwrap();
         assert_eq!(price, deserialized);
     }
 

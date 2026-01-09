@@ -4,18 +4,23 @@
 //!
 //! ## 概念
 //!
-//! - **Price**: 1トークンあたりのNEAR価値（無次元比率）
+//! - **TokenPrice**: 1トークンあたりのNEAR価値（無次元比率）
 //! - **Amount**: トークンの数量（yoctoNEAR または NEAR 単位）
-//! - **Value**: Price × Amount の結果（yoctoNEAR または NEAR 単位）
+//! - **Value**: TokenPrice × Amount の結果（yoctoNEAR または NEAR 単位）
 //!
 //! ## 型間の演算
 //!
 //! ```text
-//! Price × YoctoAmount = YoctoValue
-//! Price × NearAmount = NearValue
-//! YoctoValue / Price = YoctoAmount
-//! YoctoValue / YoctoAmount = Price
+//! TokenPrice × YoctoAmount = YoctoValue
+//! TokenPrice × NearAmount = NearValue
+//! YoctoValue / TokenPrice = YoctoAmount
+//! YoctoValue / YoctoAmount = TokenPrice
 //! ```
+//!
+//! ## 後方互換性
+//!
+//! 旧型名 `Price` は `TokenPrice` のエイリアスとして残していますが、
+//! 新しいコードでは `TokenPrice` を使用してください。
 
 use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
@@ -26,25 +31,32 @@ use std::ops::{Add, Div, Mul, Sub};
 pub(crate) const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 
 // =============================================================================
-// Price（価格）- 無次元比率
+// TokenPrice（価格）- 無次元比率
 // =============================================================================
 
-/// 価格（無次元比率）- BigDecimal 版
+/// トークン価格（NEAR / token）- BigDecimal 版
 ///
 /// 1トークンあたり何NEARかを表す比率。
 /// 単位を持たないため、yoctoNEAR/NEAR の区別は不要。
+///
+/// - `TokenPrice` が大きい = トークンが高い
+/// - `TokenPrice` が小さい = トークンが安い
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct Price(BigDecimal);
+pub struct TokenPrice(pub(crate) BigDecimal);
 
-impl Price {
+/// 後方互換性のためのエイリアス
+#[deprecated(since = "1.0.0", note = "Use TokenPrice instead")]
+pub type Price = TokenPrice;
+
+impl TokenPrice {
     /// ゼロ価格を作成
     pub fn zero() -> Self {
-        Price(BigDecimal::zero())
+        TokenPrice(BigDecimal::zero())
     }
 
-    /// BigDecimal から Price を作成
+    /// BigDecimal から TokenPrice を作成
     pub fn new(value: BigDecimal) -> Self {
-        Price(value)
+        TokenPrice(value)
     }
 
     /// 内部の BigDecimal を取得
@@ -57,8 +69,13 @@ impl Price {
         self.0
     }
 
-    /// f64 版に変換（精度損失あり）
-    pub fn to_f64(&self) -> PriceF64 {
+    /// f64 に変換（精度損失あり）
+    pub fn to_f64(&self) -> f64 {
+        self.0.to_f64().unwrap_or(0.0)
+    }
+
+    /// PriceF64 版に変換（精度損失あり）
+    pub fn to_price_f64(&self) -> PriceF64 {
         PriceF64(self.0.to_f64().unwrap_or(0.0))
     }
 
@@ -66,55 +83,74 @@ impl Price {
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
+
+    /// 期待リターンを計算
+    ///
+    /// ```text
+    /// return = (predicted - current) / current
+    /// ```
+    ///
+    /// # 注意
+    ///
+    /// `ExchangeRate` から直接リターンを計算すると符号が逆になる。
+    /// `TokenPrice` を使えばこの混乱を防げる。
+    pub fn expected_return(&self, predicted: &TokenPrice) -> f64 {
+        let current = self.to_f64();
+        let pred = predicted.to_f64();
+        if current == 0.0 {
+            return 0.0;
+        }
+        (pred - current) / current
+    }
 }
 
-impl fmt::Display for Price {
+impl fmt::Display for TokenPrice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-// Price 同士の加算
-impl Add for Price {
-    type Output = Price;
-    fn add(self, other: Price) -> Price {
-        Price(self.0 + other.0)
+// TokenPrice 同士の加算
+impl Add for TokenPrice {
+    type Output = TokenPrice;
+    fn add(self, other: TokenPrice) -> TokenPrice {
+        TokenPrice(self.0 + other.0)
     }
 }
 
-impl Add<&Price> for Price {
-    type Output = Price;
-    fn add(self, other: &Price) -> Price {
-        Price(self.0 + &other.0)
+impl Add<&TokenPrice> for TokenPrice {
+    type Output = TokenPrice;
+    fn add(self, other: &TokenPrice) -> TokenPrice {
+        TokenPrice(self.0 + &other.0)
     }
 }
 
-// Price 同士の減算
-impl Sub for Price {
-    type Output = Price;
-    fn sub(self, other: Price) -> Price {
-        Price(self.0 - other.0)
+// TokenPrice 同士の減算
+impl Sub for TokenPrice {
+    type Output = TokenPrice;
+    fn sub(self, other: TokenPrice) -> TokenPrice {
+        TokenPrice(self.0 - other.0)
     }
 }
 
-impl Sub<&Price> for Price {
-    type Output = Price;
-    fn sub(self, other: &Price) -> Price {
-        Price(self.0 - &other.0)
+impl Sub<&TokenPrice> for TokenPrice {
+    type Output = TokenPrice;
+    fn sub(self, other: &TokenPrice) -> TokenPrice {
+        TokenPrice(self.0 - &other.0)
     }
 }
 
-impl Sub for &Price {
-    type Output = Price;
-    fn sub(self, other: &Price) -> Price {
-        Price(&self.0 - &other.0)
+impl Sub for &TokenPrice {
+    type Output = TokenPrice;
+    fn sub(self, other: &TokenPrice) -> TokenPrice {
+        TokenPrice(&self.0 - &other.0)
     }
 }
 
-// Price 同士の除算 → 比率を返す
-impl Div for Price {
+// TokenPrice 同士の除算 → 比率を返す
+impl Div for TokenPrice {
     type Output = BigDecimal;
-    fn div(self, other: Price) -> BigDecimal {
+    fn div(self, other: TokenPrice) -> BigDecimal {
         if other.0.is_zero() {
             BigDecimal::zero()
         } else {
@@ -123,9 +159,9 @@ impl Div for Price {
     }
 }
 
-impl Div<&Price> for Price {
+impl Div<&TokenPrice> for TokenPrice {
     type Output = BigDecimal;
-    fn div(self, other: &Price) -> BigDecimal {
+    fn div(self, other: &TokenPrice) -> BigDecimal {
         if other.0.is_zero() {
             BigDecimal::zero()
         } else {
@@ -134,39 +170,39 @@ impl Div<&Price> for Price {
     }
 }
 
-// Price × スカラー (f64)
-impl Mul<f64> for Price {
-    type Output = Price;
-    fn mul(self, scalar: f64) -> Price {
-        Price(self.0 * BigDecimal::from_f64(scalar).unwrap_or_default())
+// TokenPrice × スカラー (f64)
+impl Mul<f64> for TokenPrice {
+    type Output = TokenPrice;
+    fn mul(self, scalar: f64) -> TokenPrice {
+        TokenPrice(self.0 * BigDecimal::from_f64(scalar).unwrap_or_default())
     }
 }
 
-// スカラー (f64) × Price
-impl Mul<Price> for f64 {
-    type Output = Price;
-    fn mul(self, price: Price) -> Price {
-        Price(BigDecimal::from_f64(self).unwrap_or_default() * price.0)
+// スカラー (f64) × TokenPrice
+impl Mul<TokenPrice> for f64 {
+    type Output = TokenPrice;
+    fn mul(self, price: TokenPrice) -> TokenPrice {
+        TokenPrice(BigDecimal::from_f64(self).unwrap_or_default() * price.0)
     }
 }
 
-// Price × スカラー (BigDecimal)
-impl Mul<BigDecimal> for Price {
-    type Output = Price;
-    fn mul(self, scalar: BigDecimal) -> Price {
-        Price(self.0 * scalar)
+// TokenPrice × スカラー (BigDecimal)
+impl Mul<BigDecimal> for TokenPrice {
+    type Output = TokenPrice;
+    fn mul(self, scalar: BigDecimal) -> TokenPrice {
+        TokenPrice(self.0 * scalar)
     }
 }
 
-// Price / スカラー (f64)
-impl Div<f64> for Price {
-    type Output = Price;
-    fn div(self, scalar: f64) -> Price {
+// TokenPrice / スカラー (f64)
+impl Div<f64> for TokenPrice {
+    type Output = TokenPrice;
+    fn div(self, scalar: f64) -> TokenPrice {
         let divisor = BigDecimal::from_f64(scalar).unwrap_or_default();
         if divisor.is_zero() {
-            Price::zero()
+            TokenPrice::zero()
         } else {
-            Price(self.0 / divisor)
+            TokenPrice(self.0 / divisor)
         }
     }
 }
@@ -198,8 +234,8 @@ impl PriceF64 {
     }
 
     /// BigDecimal 版に変換（精度は回復しない）
-    pub fn to_bigdecimal(&self) -> Price {
-        Price(BigDecimal::from_f64(self.0).unwrap_or_default())
+    pub fn to_bigdecimal(&self) -> TokenPrice {
+        TokenPrice(BigDecimal::from_f64(self.0).unwrap_or_default())
     }
 
     /// 価格がゼロかどうか
@@ -609,10 +645,10 @@ impl Div<&YoctoValue> for YoctoValue {
     }
 }
 
-// YoctoValue / Price = YoctoAmount
-impl Div<Price> for YoctoValue {
+// YoctoValue / TokenPrice = YoctoAmount
+impl Div<TokenPrice> for YoctoValue {
     type Output = YoctoAmount;
-    fn div(self, price: Price) -> YoctoAmount {
+    fn div(self, price: TokenPrice) -> YoctoAmount {
         if price.0.is_zero() {
             YoctoAmount::zero()
         } else {
@@ -621,14 +657,14 @@ impl Div<Price> for YoctoValue {
     }
 }
 
-// YoctoValue / YoctoAmount = Price
+// YoctoValue / YoctoAmount = TokenPrice
 impl Div<YoctoAmount> for YoctoValue {
-    type Output = Price;
-    fn div(self, amount: YoctoAmount) -> Price {
+    type Output = TokenPrice;
+    fn div(self, amount: YoctoAmount) -> TokenPrice {
         if amount.0.is_zero() {
-            Price::zero()
+            TokenPrice::zero()
         } else {
-            Price(self.0 / amount.0)
+            TokenPrice(self.0 / amount.0)
         }
     }
 }
@@ -733,10 +769,10 @@ impl Div for NearValue {
     }
 }
 
-// NearValue / Price = NearAmount
-impl Div<Price> for NearValue {
+// NearValue / TokenPrice = NearAmount
+impl Div<TokenPrice> for NearValue {
     type Output = NearAmount;
-    fn div(self, price: Price) -> NearAmount {
+    fn div(self, price: TokenPrice) -> NearAmount {
         if price.0.is_zero() {
             NearAmount::zero()
         } else {
@@ -745,50 +781,50 @@ impl Div<Price> for NearValue {
     }
 }
 
-// NearValue / NearAmount = Price
+// NearValue / NearAmount = TokenPrice
 impl Div<NearAmount> for NearValue {
-    type Output = Price;
-    fn div(self, amount: NearAmount) -> Price {
+    type Output = TokenPrice;
+    fn div(self, amount: NearAmount) -> TokenPrice {
         if amount.0.is_zero() {
-            Price::zero()
+            TokenPrice::zero()
         } else {
-            Price(self.0 / amount.0)
+            TokenPrice(self.0 / amount.0)
         }
     }
 }
 
 // =============================================================================
-// Price × Amount = Value の演算
+// TokenPrice × Amount = Value の演算
 // =============================================================================
 
-// Price × YoctoAmount = YoctoValue
-impl Mul<YoctoAmount> for Price {
+// TokenPrice × YoctoAmount = YoctoValue
+impl Mul<YoctoAmount> for TokenPrice {
     type Output = YoctoValue;
     fn mul(self, amount: YoctoAmount) -> YoctoValue {
         YoctoValue(self.0 * amount.0)
     }
 }
 
-// YoctoAmount × Price = YoctoValue
-impl Mul<Price> for YoctoAmount {
+// YoctoAmount × TokenPrice = YoctoValue
+impl Mul<TokenPrice> for YoctoAmount {
     type Output = YoctoValue;
-    fn mul(self, price: Price) -> YoctoValue {
+    fn mul(self, price: TokenPrice) -> YoctoValue {
         YoctoValue(self.0 * price.0)
     }
 }
 
-// Price × NearAmount = NearValue
-impl Mul<NearAmount> for Price {
+// TokenPrice × NearAmount = NearValue
+impl Mul<NearAmount> for TokenPrice {
     type Output = NearValue;
     fn mul(self, amount: NearAmount) -> NearValue {
         NearValue(self.0 * amount.0)
     }
 }
 
-// NearAmount × Price = NearValue
-impl Mul<Price> for NearAmount {
+// NearAmount × TokenPrice = NearValue
+impl Mul<TokenPrice> for NearAmount {
     type Output = NearValue;
-    fn mul(self, price: Price) -> NearValue {
+    fn mul(self, price: TokenPrice) -> NearValue {
         NearValue(self.0 * price.0)
     }
 }

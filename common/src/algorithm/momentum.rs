@@ -323,7 +323,7 @@ mod integration_tests {
     use super::execute_with_prediction_provider;
     use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
     use crate::algorithm::types::*;
-    use crate::types::{ExchangeRate, Price, PriceF64, YoctoAmount};
+    use crate::types::{ExchangeRate, PriceF64, TokenPrice, YoctoAmount};
     use async_trait::async_trait;
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{Duration, Utc};
@@ -350,7 +350,7 @@ mod integration_tests {
                 .into_iter()
                 .map(|(timestamp, price)| PricePoint {
                     timestamp,
-                    price: Price::new(BigDecimal::from_f64(price).unwrap_or_default()),
+                    price: TokenPrice::new(BigDecimal::from_f64(price).unwrap_or_default()),
                     volume: None,
                 })
                 .collect();
@@ -423,7 +423,7 @@ mod integration_tests {
 
             for i in 1..=prediction_horizon {
                 let timestamp = prediction_time + Duration::hours(i as i64);
-                let price = Price::new(
+                let price = TokenPrice::new(
                     BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(),
                 );
                 predictions.push(PredictedPrice {

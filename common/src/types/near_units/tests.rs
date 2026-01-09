@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 #[test]
 fn test_price_arithmetic() {
-    let p1 = Price::new(BigDecimal::from(10));
-    let p2 = Price::new(BigDecimal::from(3));
+    let p1 = TokenPrice::new(BigDecimal::from(10));
+    let p2 = TokenPrice::new(BigDecimal::from(3));
 
     // 加算
     let sum = p1.clone() + p2.clone();
@@ -73,13 +73,13 @@ fn test_unit_conversion() {
 
 #[test]
 fn test_price_times_amount() {
-    // Price × YoctoAmount = YoctoValue
-    let price = Price::new(BigDecimal::from_str("0.5").unwrap());
+    // TokenPrice × YoctoAmount = YoctoValue
+    let price = TokenPrice::new(BigDecimal::from_str("0.5").unwrap());
     let amount = YoctoAmount::new(1000);
     let value: YoctoValue = price.clone() * amount;
     assert_eq!(value.as_bigdecimal(), &BigDecimal::from(500));
 
-    // Price × NearAmount = NearValue
+    // TokenPrice × NearAmount = NearValue
     let near_amount = NearAmount::new(BigDecimal::from(2));
     let near_value: NearValue = price * near_amount;
     assert_eq!(near_value.as_bigdecimal(), &BigDecimal::from(1));
@@ -87,53 +87,58 @@ fn test_price_times_amount() {
 
 #[test]
 fn test_value_divided_by_price() {
-    // YoctoValue / Price = YoctoAmount
+    // YoctoValue / TokenPrice = YoctoAmount
     let value = YoctoValue::new(BigDecimal::from(1000));
-    let price = Price::new(BigDecimal::from(2));
+    let price = TokenPrice::new(BigDecimal::from(2));
     let amount: YoctoAmount = value / price;
     assert_eq!(amount.to_u128(), 500);
 }
 
 #[test]
 fn test_value_divided_by_amount() {
-    // YoctoValue / YoctoAmount = Price
+    // YoctoValue / YoctoAmount = TokenPrice
     let value = YoctoValue::new(BigDecimal::from(1000));
     let amount = YoctoAmount::new(500);
-    let price: Price = value / amount;
+    let price: TokenPrice = value / amount;
     assert_eq!(price.as_bigdecimal(), &BigDecimal::from(2));
 }
 
 #[test]
 fn test_zero_division() {
     // ゼロ除算は安全にゼロを返す
-    let p1 = Price::new(BigDecimal::from(10));
-    let p2 = Price::zero();
+    let p1 = TokenPrice::new(BigDecimal::from(10));
+    let p2 = TokenPrice::zero();
     let ratio = p1 / p2;
     assert_eq!(ratio, BigDecimal::zero());
 
     let value = YoctoValue::new(BigDecimal::from(100));
-    let zero_price = Price::zero();
+    let zero_price = TokenPrice::zero();
     let amount: YoctoAmount = value / zero_price;
     assert_eq!(amount.to_u128(), 0);
 }
 
 #[test]
 fn test_price_f64_conversion() {
-    let price = Price::new(BigDecimal::from_str("123.456").unwrap());
-    let price_f64 = price.to_f64();
-    assert!((price_f64.0 - 123.456).abs() < 0.001);
+    let price = TokenPrice::new(BigDecimal::from_str("123.456").unwrap());
+    // to_f64() は直接 f64 を返す
+    let price_f64_raw = price.to_f64();
+    assert!((price_f64_raw - 123.456).abs() < 0.001);
+
+    // to_price_f64() は PriceF64 を返す
+    let price_f64 = price.to_price_f64();
+    assert!((price_f64.as_f64() - 123.456).abs() < 0.001);
 
     let back_to_price = price_f64.to_bigdecimal();
     // 精度損失があるため、完全一致はしない
-    assert!((back_to_price.0.to_f64().unwrap() - 123.456).abs() < 0.001);
+    assert!((back_to_price.as_bigdecimal().to_f64().unwrap() - 123.456).abs() < 0.001);
 }
 
 #[test]
 fn test_price_serialization() {
-    // Price のシリアライズ/デシリアライズ
-    let price = Price::new(BigDecimal::from_str("123.456789").unwrap());
+    // TokenPrice のシリアライズ/デシリアライズ
+    let price = TokenPrice::new(BigDecimal::from_str("123.456789").unwrap());
     let json = serde_json::to_string(&price).unwrap();
-    let deserialized: Price = serde_json::from_str(&json).unwrap();
+    let deserialized: TokenPrice = serde_json::from_str(&json).unwrap();
     assert_eq!(price, deserialized);
 
     // PriceF64 のシリアライズ/デシリアライズ
@@ -145,9 +150,9 @@ fn test_price_serialization() {
 
 #[test]
 fn test_price_comparison() {
-    let p1 = Price::new(BigDecimal::from(10));
-    let p2 = Price::new(BigDecimal::from(20));
-    let p3 = Price::new(BigDecimal::from(10));
+    let p1 = TokenPrice::new(BigDecimal::from(10));
+    let p2 = TokenPrice::new(BigDecimal::from(20));
+    let p3 = TokenPrice::new(BigDecimal::from(10));
 
     // PartialEq
     assert_eq!(p1, p3);
@@ -168,7 +173,7 @@ fn test_price_comparison() {
 
 #[test]
 fn test_price_display() {
-    let price = Price::new(BigDecimal::from_str("123.456").unwrap());
+    let price = TokenPrice::new(BigDecimal::from_str("123.456").unwrap());
     assert_eq!(format!("{}", price), "123.456");
 
     let price_f64 = PriceF64::new(123.456);
@@ -183,9 +188,9 @@ fn test_price_display() {
 
 #[test]
 fn test_is_zero_methods() {
-    // Price
-    assert!(Price::zero().is_zero());
-    assert!(!Price::new(BigDecimal::from(1)).is_zero());
+    // TokenPrice
+    assert!(TokenPrice::zero().is_zero());
+    assert!(!TokenPrice::new(BigDecimal::from(1)).is_zero());
 
     // PriceF64
     assert!(PriceF64::zero().is_zero());
@@ -225,14 +230,14 @@ fn test_near_value_arithmetic() {
     let ratio = v1.clone() / v2.clone();
     assert!(ratio > BigDecimal::from(3) && ratio < BigDecimal::from(4));
 
-    // NearValue / Price = NearAmount
-    let price = Price::new(BigDecimal::from(2));
+    // NearValue / TokenPrice = NearAmount
+    let price = TokenPrice::new(BigDecimal::from(2));
     let amount: NearAmount = v1.clone() / price;
     assert_eq!(amount.as_bigdecimal(), &BigDecimal::from(50));
 
-    // NearValue / NearAmount = Price
+    // NearValue / NearAmount = TokenPrice
     let near_amount = NearAmount::new(BigDecimal::from(50));
-    let price_result: Price = v1 / near_amount;
+    let price_result: TokenPrice = v1 / near_amount;
     assert_eq!(price_result.as_bigdecimal(), &BigDecimal::from(2));
 }
 
@@ -254,9 +259,9 @@ fn test_yocto_value_conversion() {
 
 #[test]
 fn test_reference_arithmetic() {
-    // Price の参照演算
-    let p1 = Price::new(BigDecimal::from(10));
-    let p2 = Price::new(BigDecimal::from(3));
+    // TokenPrice の参照演算
+    let p1 = TokenPrice::new(BigDecimal::from(10));
+    let p2 = TokenPrice::new(BigDecimal::from(3));
 
     let diff = &p1 - &p2;
     assert_eq!(diff.as_bigdecimal(), &BigDecimal::from(7));
@@ -275,13 +280,13 @@ fn test_reference_arithmetic() {
 #[test]
 fn test_price_edge_cases() {
     // 非常に小さい価格
-    let tiny = Price::new(BigDecimal::from_str("0.000000000001").unwrap());
+    let tiny = TokenPrice::new(BigDecimal::from_str("0.000000000001").unwrap());
     assert!(!tiny.is_zero());
     let doubled = tiny.clone() * 2.0;
     assert!(doubled.as_bigdecimal() > tiny.as_bigdecimal());
 
     // 非常に大きい価格
-    let huge = Price::new(BigDecimal::from_str("999999999999999999").unwrap());
+    let huge = TokenPrice::new(BigDecimal::from_str("999999999999999999").unwrap());
     let half = huge.clone() * 0.5;
     assert!(half.as_bigdecimal() < huge.as_bigdecimal());
 
@@ -296,7 +301,7 @@ fn test_price_edge_cases() {
 
 #[test]
 fn test_price_into_bigdecimal() {
-    let price = Price::new(BigDecimal::from(42));
+    let price = TokenPrice::new(BigDecimal::from(42));
     let bd = price.into_bigdecimal();
     assert_eq!(bd, BigDecimal::from(42));
 }
@@ -328,14 +333,14 @@ fn test_yocto_amount_scalar_mul() {
 fn test_yocto_amount_truncation_behavior() {
     // ケース1: 割り切れる場合
     let value = YoctoValue::new(BigDecimal::from(1000));
-    let price = Price::new(BigDecimal::from(2));
+    let price = TokenPrice::new(BigDecimal::from(2));
     let amount: YoctoAmount = value / price;
     assert_eq!(amount.as_bigdecimal(), &BigDecimal::from(500));
     assert_eq!(amount.to_u128(), 500);
 
     // ケース2: 割り切れない場合 - 精度を保持
     let value = YoctoValue::new(BigDecimal::from(1001));
-    let price = Price::new(BigDecimal::from(2));
+    let price = TokenPrice::new(BigDecimal::from(2));
     let amount: YoctoAmount = value / price;
     // 1001 / 2 = 500.5（精度を保持）
     assert_eq!(
@@ -347,7 +352,7 @@ fn test_yocto_amount_truncation_behavior() {
 
     // ケース3: 小数価格での除算 - 精度を保持
     let value = YoctoValue::new(BigDecimal::from(100));
-    let price = Price::new(BigDecimal::from_str("0.3").unwrap());
+    let price = TokenPrice::new(BigDecimal::from_str("0.3").unwrap());
     let amount: YoctoAmount = value / price;
     // 100 / 0.3 = 333.333...（精度を保持）
     // BigDecimal での除算結果を直接比較

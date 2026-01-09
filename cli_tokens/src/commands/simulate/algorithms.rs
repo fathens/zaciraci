@@ -8,7 +8,7 @@ use anyhow::Result;
 #[allow(unused_imports)]
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
-use common::types::{ExchangeRate, Price};
+use common::types::{ExchangeRate, TokenPrice};
 use std::collections::{BTreeMap, HashMap};
 
 /// Run momentum simulation
@@ -554,8 +554,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             point.time,
                                             chrono::Utc,
                                         ),
-                                        // point.valueをPrice型に変換
-                                        price: Price::new(point.value.clone()),
+                                        // point.valueをTokenPrice型に変換
+                                        price: TokenPrice::new(point.value.clone()),
                                         volume: None,
                                     })
                                     .collect()
