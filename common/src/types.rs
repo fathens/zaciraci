@@ -1,5 +1,6 @@
 pub mod near_units;
 pub mod token_account;
+pub mod token_types;
 pub mod yocto_near;
 
 pub use self::near_units::{
@@ -7,6 +8,7 @@ pub use self::near_units::{
     YoctoValueF64,
 };
 pub use self::token_account::TokenAccount;
+pub use self::token_types::{ExchangeRate, TokenAmount, TokenPrice};
 pub use self::yocto_near::NearUnit;
 #[deprecated(note = "Use Price, YoctoAmount, YoctoValue instead")]
 pub use self::yocto_near::YoctoNearToken;
