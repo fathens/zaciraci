@@ -216,6 +216,7 @@ impl Mul<&TokenPrice> for &TokenAmount {
 mod tests {
     use super::*;
     use bigdecimal::{FromPrimitive, ToPrimitive};
+    use std::str::FromStr;
 
     #[test]
     fn test_exchange_rate_to_price() {
@@ -509,6 +510,113 @@ mod tests {
             (ret_up - 0.25).abs() < 0.01,
             "Expected ≈0.25, got {}",
             ret_up
+        );
+    }
+
+    // =============================================================================
+    // データフロー整合性テスト
+    // =============================================================================
+
+    /// predict.rs での TokenPrice 使用パターンを検証
+    ///
+    /// ## 現状の問題
+    ///
+    /// predict.rs では `TokenPrice::new(rate.rate)` で DB の rate を直接格納している。
+    /// これは意味的には誤り（TokenPrice は NEAR/token のはずだが、rate は tokens/NEAR）。
+    ///
+    /// ## 実際の動作
+    ///
+    /// 1. DB に rate = 1,500,000 (USDT, decimals=6) が格納
+    /// 2. predict.rs: TokenPrice::new(1,500,000) で "price" として格納
+    /// 3. stats.rs: この値を抽出し `ExchangeRate::new(1,500,000, 6)` で作成
+    /// 4. portfolio.rs: `rate.to_price()` で正しい TokenPrice に変換
+    ///
+    /// ## 結論
+    ///
+    /// 現状のコードは数値的には正しく動作する。
+    /// ただし、predict.rs の "price" は実際には "rate" である点に注意。
+    #[test]
+    fn test_predict_rs_data_flow() {
+        // DB からの rate 値 (yocto_tokens_per_NEAR)
+        let db_rate = BigDecimal::from(1_500_000);
+
+        // predict.rs: TokenPrice として格納（意味的には誤りだが数値は正しい）
+        let price_in_predict_rs = TokenPrice::new(db_rate.clone());
+
+        // stats.rs: 値を抽出して ExchangeRate として解釈
+        let extracted_value = price_in_predict_rs.as_bigdecimal().clone();
+        let exchange_rate = ExchangeRate::new(extracted_value, 6);
+
+        // portfolio.rs: 正しい TokenPrice に変換
+        let correct_price = exchange_rate.to_price();
+
+        // 検証: 最終的な TokenPrice は正しい値
+        // 1 NEAR = 1.5 USDT → 1 USDT = 0.666 NEAR
+        assert!(
+            (correct_price.to_f64() - 0.666666).abs() < 0.001,
+            "Expected ≈0.666, got {}",
+            correct_price.to_f64()
+        );
+
+        // 注意: price_in_predict_rs は「価格」ではなく「レート」を保持している
+        // 誤って価格として使うと間違った結果になる
+        assert!(
+            (price_in_predict_rs.to_f64() - 1_500_000.0).abs() < 0.001,
+            "predict.rs の 'price' は実際には rate 値: {}",
+            price_in_predict_rs.to_f64()
+        );
+    }
+
+    /// decimals が異なるトークン間での正しい価格計算を検証
+    ///
+    /// DB の rate は decimals を考慮していない（smallest_units 数のみ）。
+    /// ExchangeRate に decimals を渡すことで正しい価格に変換できる。
+    #[test]
+    fn test_decimals_agnostic_rate_storage() {
+        // シナリオ: 1 NEAR = 1.5 トークン
+        // decimals=6 の場合: rate = 1,500,000
+        // decimals=18 の場合: rate = 1,500,000,000,000,000,000
+
+        // decimals=6 (USDT風)
+        let rate_6 = BigDecimal::from(1_500_000u64);
+        let exchange_rate_6 = ExchangeRate::new(rate_6, 6);
+        let price_6 = exchange_rate_6.to_price();
+
+        // decimals=18 (ETH風)
+        let rate_18 = BigDecimal::from_str("1500000000000000000").unwrap();
+        let exchange_rate_18 = ExchangeRate::new(rate_18, 18);
+        let price_18 = exchange_rate_18.to_price();
+
+        // 両方とも同じ価格になるべき: 0.666... NEAR/token
+        assert!(
+            (price_6.to_f64() - price_18.to_f64()).abs() < 0.001,
+            "Different decimals should yield same price: {} vs {}",
+            price_6.to_f64(),
+            price_18.to_f64()
+        );
+
+        assert!(
+            (price_6.to_f64() - 0.666666).abs() < 0.001,
+            "Expected ≈0.666, got {}",
+            price_6.to_f64()
+        );
+    }
+
+    /// wrap.near (wNEAR) の rate 検証
+    ///
+    /// wrap.near は 1:1 で NEAR と等価なので rate = 10^24
+    #[test]
+    fn test_wnear_rate_with_decimals() {
+        // wNEAR: decimals=24, rate = 10^24
+        let wnear_rate = BigDecimal::from_str("1000000000000000000000000").unwrap();
+        let exchange_rate = ExchangeRate::new(wnear_rate, 24);
+        let price = exchange_rate.to_price();
+
+        // 1 wNEAR = 1 NEAR
+        assert!(
+            (price.to_f64() - 1.0).abs() < 0.0001,
+            "wNEAR should be 1:1 with NEAR, got {}",
+            price.to_f64()
         );
     }
 }
