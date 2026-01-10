@@ -407,4 +407,108 @@ mod tests {
         assert_eq!(amount.decimals(), 6);
         assert!(!amount.is_zero());
     }
+
+    // =============================================================================
+    // DB整合性テスト
+    // =============================================================================
+
+    /// DBに格納されるrateの形式を検証
+    ///
+    /// ## DB格納形式（migration適用後）
+    ///
+    /// `rate = yocto_tokens_per_near` (yoctoトークン数 / 1 NEAR)
+    ///
+    /// 例: USDT (decimals=6) で 1 NEAR = 1.5 USDT の場合
+    /// - 1 NEAR → 1,500,000 smallest_units (1.5 × 10^6)
+    /// - rate = 1,500,000
+    ///
+    /// ## TokenPrice への変換
+    ///
+    /// TokenPrice = 10^decimals / rate = 10^6 / 1,500,000 = 0.666... NEAR/USDT
+    ///
+    /// ## migration
+    ///
+    /// 2026-01-08-073422_scale_token_rates_to_yocto で既存データを × 10^24
+    #[test]
+    fn test_db_rate_format_after_migration() {
+        // シナリオ: 1 NEAR = 1.5 USDT, USDT decimals=6
+        // DB格納: rate = 1,500,000 (yocto tokens per 1 NEAR)
+        let db_rate = BigDecimal::from(1_500_000);
+        let rate = ExchangeRate::new(db_rate, 6);
+
+        let price = rate.to_price();
+        // TokenPrice ≈ 0.666... NEAR/USDT (1/1.5)
+        assert!((price.to_f64() - 0.666666).abs() < 0.001);
+
+        // 逆に: 1 USDT = 0.666 NEAR なので 1 NEAR = 1.5 USDT
+        let near_per_usdt = 1.0 / price.to_f64();
+        assert!((near_per_usdt - 1.5).abs() < 0.001);
+    }
+
+    /// migration前の旧形式データを検証（参考用）
+    ///
+    /// 旧形式: rate = value / (initial_value) where initial_value = 100 × 10^24
+    /// 新形式: rate = value / 100
+    /// 変換: new_rate = old_rate × 10^24
+    #[test]
+    fn test_db_rate_migration_conversion() {
+        use std::str::FromStr;
+
+        // 旧形式の実際のDB値（USDT例）
+        let old_rate = BigDecimal::from_str("0.00000000000000000151200709").unwrap();
+
+        // migration後（× 10^24）
+        let yocto_per_near = BigDecimal::from(1_000_000_000_000_000_000_000_000u128);
+        let new_rate = &old_rate * &yocto_per_near;
+
+        // 新形式レート ≈ 1,512,007
+        let new_rate_f64 = new_rate.to_f64().unwrap();
+        assert!((new_rate_f64 - 1_512_007.0).abs() < 1.0);
+
+        // ExchangeRate として解釈
+        let rate = ExchangeRate::new(new_rate, 6);
+        let price = rate.to_price();
+
+        // TokenPrice ≈ 0.66 NEAR/USDT
+        assert!((price.to_f64() - 0.66).abs() < 0.01);
+    }
+
+    /// 期待リターンの計算検証
+    ///
+    /// rate と price は逆関係:
+    /// - rate 増加 = price 減少 = 負のリターン
+    /// - rate 減少 = price 増加 = 正のリターン
+    #[test]
+    fn test_expected_return_from_rates() {
+        // 現在: 1 NEAR = 1.5 USDT (rate = 1,500,000)
+        let current_rate = ExchangeRate::new(BigDecimal::from(1_500_000), 6);
+        let current_price = current_rate.to_price();
+
+        // 予測: 1 NEAR = 1.8 USDT (rate = 1,800,000)
+        // rate 増加 = トークンが安くなった = 価格下落
+        let predicted_rate = ExchangeRate::new(BigDecimal::from(1_800_000), 6);
+        let predicted_price = predicted_rate.to_price();
+
+        // current_price ≈ 0.666, predicted_price ≈ 0.555
+        // expected_return = (predicted - current) / current = (0.555 - 0.666) / 0.666 ≈ -0.166
+        let ret = current_price.expected_return(&predicted_price);
+        assert!(
+            (ret - (-0.166)).abs() < 0.01,
+            "Expected ≈-0.166, got {}",
+            ret
+        );
+
+        // 逆のケース: rate 減少 = 価格上昇 = 正のリターン
+        // 予測: 1 NEAR = 1.2 USDT (rate = 1,200,000)
+        let predicted_rate_up = ExchangeRate::new(BigDecimal::from(1_200_000), 6);
+        let predicted_price_up = predicted_rate_up.to_price();
+
+        // expected_return = (0.833 - 0.666) / 0.666 ≈ 0.25
+        let ret_up = current_price.expected_return(&predicted_price_up);
+        assert!(
+            (ret_up - 0.25).abs() < 0.01,
+            "Expected ≈0.25, got {}",
+            ret_up
+        );
+    }
 }
