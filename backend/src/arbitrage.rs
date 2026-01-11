@@ -138,6 +138,9 @@ where
     Ok(())
 }
 
+#[cfg(test)]
+mod tests;
+
 async fn swap_each<A, C, W>(
     client: &C,
     wallet: &W,
