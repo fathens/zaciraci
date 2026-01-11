@@ -43,8 +43,8 @@ fn test_price_f64_arithmetic() {
 
 #[test]
 fn test_yocto_amount_arithmetic() {
-    let a1 = YoctoAmount::new(1000);
-    let a2 = YoctoAmount::new(300);
+    let a1 = YoctoAmount::from_u128(1000);
+    let a2 = YoctoAmount::from_u128(300);
 
     // 加算
     let sum = a1.clone() + a2.clone();
@@ -62,7 +62,7 @@ fn test_yocto_amount_arithmetic() {
 #[test]
 fn test_unit_conversion() {
     // 1 NEAR = 10^24 yoctoNEAR
-    let yocto = YoctoAmount::new(YOCTO_PER_NEAR);
+    let yocto = YoctoAmount::from_u128(YOCTO_PER_NEAR);
     let near = yocto.to_near();
     assert_eq!(near.as_bigdecimal(), &BigDecimal::from(1));
 
@@ -75,7 +75,7 @@ fn test_unit_conversion() {
 fn test_price_times_amount() {
     // TokenPrice × YoctoAmount = YoctoValue
     let price = TokenPrice::from_near_per_token(BigDecimal::from_str("0.5").unwrap());
-    let amount = YoctoAmount::new(1000);
+    let amount = YoctoAmount::from_u128(1000);
     let value: YoctoValue = price.clone() * amount;
     assert_eq!(value.as_bigdecimal(), &BigDecimal::from(500));
 
@@ -98,7 +98,7 @@ fn test_value_divided_by_price() {
 fn test_value_divided_by_amount() {
     // YoctoValue / YoctoAmount = TokenPrice
     let value = YoctoValue::from_yocto(BigDecimal::from(1000));
-    let amount = YoctoAmount::new(500);
+    let amount = YoctoAmount::from_u128(500);
     let price: TokenPrice = value / amount;
     assert_eq!(price.as_bigdecimal(), &BigDecimal::from(2));
 }
@@ -198,7 +198,7 @@ fn test_is_zero_methods() {
 
     // YoctoAmount
     assert!(YoctoAmount::zero().is_zero());
-    assert!(!YoctoAmount::new(1).is_zero());
+    assert!(!YoctoAmount::from_u128(1).is_zero());
 
     // NearAmount
     assert!(NearAmount::zero().is_zero());
@@ -309,13 +309,13 @@ fn test_price_into_bigdecimal() {
 
 #[test]
 fn test_yocto_amount_scalar_mul() {
-    let amount = YoctoAmount::new(100);
+    let amount = YoctoAmount::from_u128(100);
     let scaled = amount * 3u128;
     assert_eq!(scaled.to_u128(), 300);
 
     // BigDecimal版はオーバーフローしない（任意精度）
     // u128::MAX より大きい値も保持できる
-    let large = YoctoAmount::new(u128::MAX);
+    let large = YoctoAmount::from_u128(u128::MAX);
     let result = large * 2u128;
     // BigDecimal として値を保持している
     let expected = BigDecimal::from(u128::MAX) * BigDecimal::from(2u128);
@@ -684,7 +684,7 @@ fn test_f64_value_divided_by_amount() {
 #[test]
 fn test_price_f64_times_yocto_amount() {
     let price = TokenPriceF64::from_near_per_token(0.5);
-    let amount = YoctoAmount::new(1000);
+    let amount = YoctoAmount::from_u128(1000);
 
     // TokenPriceF64 × YoctoAmount = f64
     let value: f64 = price * amount;
@@ -724,14 +724,14 @@ fn test_near_value_into_bigdecimal() {
 
 #[test]
 fn test_yocto_amount_into_bigdecimal() {
-    let amount = YoctoAmount::new(12345);
+    let amount = YoctoAmount::from_u128(12345);
     let bd = amount.into_bigdecimal();
     assert_eq!(bd, BigDecimal::from(12345));
 }
 
 #[test]
 fn test_yocto_amount_times_bigdecimal() {
-    let amount = YoctoAmount::new(100);
+    let amount = YoctoAmount::from_u128(100);
     let scaled = amount * BigDecimal::from_str("2.5").unwrap();
     assert_eq!(
         scaled.as_bigdecimal(),

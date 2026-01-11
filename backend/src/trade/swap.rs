@@ -556,9 +556,9 @@ async fn record_successful_trade(
         .record_trade(
             tx_hash.clone(),
             from_token.to_string(),
-            YoctoAmount::new(from_amount),
+            YoctoAmount::from_u128(from_amount),
             to_token.to_string(),
-            YoctoAmount::new(to_amount),
+            YoctoAmount::from_u128(to_amount),
             YoctoValue::from_yocto(price_yocto_near),
         )
         .await?;

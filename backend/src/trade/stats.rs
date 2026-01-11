@@ -660,7 +660,7 @@ where
         let mut holdings_typed = BTreeMap::new();
         for (token, balance) in current_balances {
             if balance > 0 {
-                holdings_typed.insert(token.clone(), YoctoAmount::new(balance));
+                holdings_typed.insert(token.clone(), YoctoAmount::from_u128(balance));
                 info!(log, "loaded existing position"; "token" => token, "balance" => balance);
             }
         }

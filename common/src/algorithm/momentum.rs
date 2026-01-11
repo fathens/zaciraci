@@ -481,12 +481,12 @@ mod integration_tests {
         let current_holdings = vec![
             TokenHolding {
                 token: "token1".to_string(),
-                amount: YoctoAmount::new(10),
+                amount: YoctoAmount::from_u128(10),
                 current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
             },
             TokenHolding {
                 token: "token2".to_string(),
-                amount: YoctoAmount::new(20),
+                amount: YoctoAmount::from_u128(20),
                 current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(50), 24),
             },
         ];
@@ -555,7 +555,7 @@ mod integration_tests {
 
         let current_holdings = vec![TokenHolding {
             token: "other_token".to_string(),
-            amount: YoctoAmount::new(10),
+            amount: YoctoAmount::from_u128(10),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(75), 24),
         }];
 

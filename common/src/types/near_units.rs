@@ -365,7 +365,7 @@ impl YoctoAmount {
     }
 
     /// u128 から YoctoAmount を作成
-    pub fn new(value: u128) -> Self {
+    pub fn from_u128(value: u128) -> Self {
         YoctoAmount(BigDecimal::from(value))
     }
 
