@@ -15,13 +15,13 @@ use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance;
 use crate::ref_finance::token_account::TokenInAccount;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
-use crate::types::MilliNear;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::Utc as TZ;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use zaciraci_common::types::ExchangeRate;
+use zaciraci_common::types::NearValue;
 
 pub async fn run() {
     tokio::spawn(run_record_rates());
@@ -133,11 +133,11 @@ fn get_quote_token() -> TokenInAccount {
     WNEAR_TOKEN.clone().into()
 }
 
-fn get_initial_value() -> u128 {
-    let in_near = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
+fn get_initial_value() -> NearValue {
+    let in_near: u64 = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
         .and_then(|v| Ok(v.parse()?))
         .unwrap_or(100);
-    MilliNear::from_near(in_near).to_yocto()
+    NearValue::new(BigDecimal::from(in_near))
 }
 
 async fn record_rates() -> Result<()> {
@@ -161,16 +161,21 @@ async fn record_rates() -> Result<()> {
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
     let goals = graph.update_graph(quote_token)?;
     info!(log, "found targets"; "goals" => %goals.len());
-    let values = graph.list_values(initial_value, quote_token, &goals)?;
+    // NearValue → yoctoNEAR (u128) に変換して list_values に渡す
+    let initial_yocto = initial_value
+        .to_yocto()
+        .into_bigdecimal()
+        .to_u128()
+        .unwrap_or(0);
+    let values = graph.list_values(initial_yocto, quote_token, &goals)?;
 
     let log = log.new(o!(
         "num_values" => values.len().to_string(),
     ));
 
-    // initial_value は "100 NEAR" の yocto 値 = 100 * 10^24
-    // rate_yocto = value / 100 = yocto tokens per 1 NEAR
+    // rate_yocto = value / near_amount (e.g. value / 100)
     // これにより後続処理でのスケーリングが不要になる
-    let near_amount = initial_value / 1_000_000_000_000_000_000_000_000u128; // yocto → NEAR
+    let near_amount = initial_value.as_bigdecimal();
     info!(log, "converting to rates (yocto scale)");
 
     // 各トークンの decimals を取得
@@ -191,7 +196,7 @@ async fn record_rates() -> Result<()> {
         .map(|(base, value)| {
             let token_str = base.to_string();
             let decimals = token_decimals.get(&token_str).copied().unwrap_or(24);
-            let rate_yocto = BigDecimal::from(value) / BigDecimal::from(near_amount);
+            let rate_yocto = BigDecimal::from(value) / near_amount;
             let exchange_rate = ExchangeRate::new(rate_yocto, decimals);
             TokenRate::new(base, quote_token.clone(), exchange_rate)
         })

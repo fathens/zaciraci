@@ -30,7 +30,6 @@ use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::trade::predict::PredictionService;
 use crate::trade::recorder::TradeRecorder;
 use crate::trade::swap;
-use crate::types::MilliNear;
 use crate::wallet::Wallet;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{Duration, NaiveDateTime, Utc};
@@ -257,12 +256,24 @@ async fn prepare_funds() -> Result<u128> {
     let client = crate::jsonrpc::new_client();
     let wallet = crate::wallet::new_wallet();
 
-    // 初期投資額の設定値を取得
+    // 初期投資額の設定値を取得（NEAR単位で入力、yoctoNEARに変換）
     let target_investment = config::get("TRADE_INITIAL_INVESTMENT")
         .ok()
-        .and_then(|v| v.parse::<u128>().ok())
-        .map(|v| MilliNear::from_near(v).to_yocto())
-        .unwrap_or_else(|| MilliNear::from_near(100).to_yocto());
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| {
+            NearValue::new(BigDecimal::from(v))
+                .to_yocto()
+                .into_bigdecimal()
+                .to_u128()
+                .unwrap_or(0)
+        })
+        .unwrap_or_else(|| {
+            NearValue::new(BigDecimal::from(100))
+                .to_yocto()
+                .into_bigdecimal()
+                .to_u128()
+                .unwrap_or(0)
+        });
 
     // 必要な wrap.near 残高として投資額を設定（NEAR -> wrap.near変換）
     // アカウントには10 NEARを残し、それ以外を wrap.near に変換

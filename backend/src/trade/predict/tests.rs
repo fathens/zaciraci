@@ -203,20 +203,32 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         );
     }
 
-    // 価格値の検証（順序は保証されないため、含まれているかをチェック）
-    let actual_prices: Vec<f64> = history
-        .prices
+    // 価格値の検証
+    // 挿入時: ExchangeRate::new(rate, 24) として保存
+    // 読み込み時: exchange_rate.to_price() = 10^24 / rate として TokenPrice に変換
+    // 相対的な順序と変換の整合性を確認
+    let yocto_per_near = BigDecimal::from_str("1000000000000000000000000").unwrap();
+    let expected_token_prices: Vec<f64> = expected_prices
         .iter()
-        .map(|p| p.price.to_string().parse::<f64>().unwrap())
+        .map(|rate| {
+            let rate_bd = BigDecimal::from_str(&rate.to_string()).unwrap();
+            (&yocto_per_near / rate_bd)
+                .to_string()
+                .parse::<f64>()
+                .unwrap()
+        })
         .collect();
 
-    for expected_price in &expected_prices {
+    let actual_prices: Vec<f64> = history.prices.iter().map(|p| p.price.to_f64()).collect();
+
+    for expected_price in &expected_token_prices {
         assert!(
             actual_prices
                 .iter()
-                .any(|&p| (p - expected_price).abs() < 0.0001),
-            "Expected price {} should be present in history",
-            expected_price
+                .any(|&p| ((p - expected_price) / expected_price).abs() < 0.01),
+            "Expected TokenPrice {} should be present in history (actual: {:?})",
+            expected_price,
+            actual_prices
         );
     }
 

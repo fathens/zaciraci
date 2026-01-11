@@ -99,20 +99,20 @@ impl PredictionService {
         // 全トークンをTopToken形式に変換（limit は呼び出し側で適用）
         let mut top_tokens = Vec::new();
         for vol_token in volatility_tokens.into_iter() {
-            // 現在価格を取得
+            // 現在価格を取得（ExchangeRate から正しく TokenPrice に変換）
             let current_price = {
                 let base_token = TokenOutAccount::from(vol_token.base.clone());
                 let quote_token = quote_token_account.clone();
 
                 match TokenRate::get_latest(&base_token, &quote_token).await {
-                    Ok(Some(rate)) => TokenPrice::new(rate.rate().clone()),
+                    Ok(Some(rate)) => rate.exchange_rate.to_price(),
                     Ok(None) => {
                         // ログを後で追加（slogのsetupが必要）
-                        TokenPrice::new(BigDecimal::from(1)) // デフォルト値
+                        TokenPrice::zero() // デフォルト値
                     }
                     Err(_e) => {
                         // ログを後で追加（slogのsetupが必要）
-                        TokenPrice::new(BigDecimal::from(1)) // デフォルト値
+                        TokenPrice::zero() // デフォルト値
                     }
                 }
             };
@@ -156,12 +156,12 @@ impl PredictionService {
             .await
             .context("Failed to get price history from database")?;
 
-        // TokenRateをPricePointに変換
+        // TokenRateをPricePointに変換（ExchangeRate から正しく TokenPrice に変換）
         let price_points: Vec<PricePoint> = rates
             .into_iter()
             .map(|rate| PricePoint {
                 timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                price: TokenPrice::new(rate.rate().clone()),
+                price: rate.exchange_rate.to_price(),
                 volume: None, // ボリュームデータは現在利用不可
             })
             .collect();
