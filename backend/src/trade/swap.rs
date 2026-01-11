@@ -568,5 +568,4 @@ async fn record_successful_trade(
 }
 
 #[cfg(test)]
-#[path = "swap/tests.rs"]
 mod tests;

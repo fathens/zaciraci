@@ -16,7 +16,6 @@ use crate::utils::{
 use common::prediction::{PredictionPoint, TokenPredictionResult};
 
 #[cfg(test)]
-#[path = "chart/tests.rs"]
 mod tests;
 
 #[derive(Debug, Args)]

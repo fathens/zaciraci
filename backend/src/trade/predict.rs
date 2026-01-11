@@ -553,5 +553,4 @@ impl PredictionProvider for PredictionService {
 }
 
 #[cfg(test)]
-#[path = "predict/tests.rs"]
 mod tests;
