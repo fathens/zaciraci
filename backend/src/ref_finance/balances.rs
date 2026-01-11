@@ -5,13 +5,14 @@ use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
-use crate::types::MilliNear;
 use crate::wallet::Wallet;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
+use zaciraci_common::types::NearValue;
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 #[cfg(test)]
@@ -139,9 +140,21 @@ where
         // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
         let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
             .ok()
-            .and_then(|v| v.parse::<u128>().ok())
-            .map(|v| MilliNear::from_near(v).to_yocto())
-            .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|v| {
+                NearValue::new(BigDecimal::from(v))
+                    .to_yocto()
+                    .into_bigdecimal()
+                    .to_u128()
+                    .unwrap_or(0)
+            })
+            .unwrap_or_else(|| {
+                NearValue::new(BigDecimal::from(10))
+                    .to_yocto()
+                    .into_bigdecimal()
+                    .to_u128()
+                    .unwrap_or(0)
+            });
 
         let log = log.new(o!(
             "native_balance" => format!("{}", native_balance),
@@ -237,9 +250,21 @@ where
 
         let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
             .ok()
-            .and_then(|v| v.parse::<u128>().ok())
-            .map(|v| MilliNear::from_near(v).to_yocto())
-            .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|v| {
+                NearValue::new(BigDecimal::from(v))
+                    .to_yocto()
+                    .into_bigdecimal()
+                    .to_u128()
+                    .unwrap_or(0)
+            })
+            .unwrap_or_else(|| {
+                NearValue::new(BigDecimal::from(10))
+                    .to_yocto()
+                    .into_bigdecimal()
+                    .to_u128()
+                    .unwrap_or(0)
+            });
 
         let available = native_balance
             .checked_sub(minimum_native_balance)
@@ -312,9 +337,21 @@ where
     // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
     let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
         .ok()
-        .and_then(|v| v.parse::<u128>().ok())
-        .map(|v| MilliNear::from_near(v).to_yocto())
-        .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| {
+            NearValue::new(BigDecimal::from(v))
+                .to_yocto()
+                .into_bigdecimal()
+                .to_u128()
+                .unwrap_or(0)
+        })
+        .unwrap_or_else(|| {
+            NearValue::new(BigDecimal::from(10))
+                .to_yocto()
+                .into_bigdecimal()
+                .to_u128()
+                .unwrap_or(0)
+        });
 
     let account = wallet.account_id();
     let before_withdraw = client.get_native_amount(account).await?;
