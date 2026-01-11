@@ -900,4 +900,4 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 }
 
 #[cfg(test)]
-mod precision_tests;
+mod tests;

@@ -1,11 +1,11 @@
+use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 
 use crate::commands::simulate::{
-    AlgorithmType, DataQualityStats, ExecutionSummary, MultiAlgorithmSimulationResult, PerformanceMetrics,
-    PortfolioValue, SimulationResult, SimulationSummary, TradeExecution, TradingCost,
-    NearValueF64, TokenPriceF64, TokenAmountF64,
+    AlgorithmType, DataQualityStats, ExecutionSummary, MultiAlgorithmSimulationResult,
+    NearValueF64, PerformanceMetrics, PortfolioValue, SimulationResult, SimulationSummary,
+    TokenAmountF64, TokenPriceF64, TradeExecution, TradingCost,
 };
 
 /// Create a test simulation result for a specific algorithm
@@ -32,7 +32,9 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
     let portfolio_values: Vec<PortfolioValue> = (0..11)
         .map(|day| PortfolioValue {
             timestamp: start_date + chrono::Duration::days(day),
-            total_value: NearValueF64::from_near(initial_capital + (final_value - initial_capital) * (day as f64) / 10.0),
+            total_value: NearValueF64::from_near(
+                initial_capital + (final_value - initial_capital) * (day as f64) / 10.0,
+            ),
             cash_balance: NearValueF64::from_near(100.0),
             holdings: HashMap::new(),
             unrealized_pnl: NearValueF64::zero(),
@@ -101,7 +103,12 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             losing_trades: 1,
             win_rate: 0.5,
             profit_factor: 1.1,
-            total_costs: trades.iter().map(|t| &t.cost.total).fold(BigDecimal::from(0), |acc, x| acc + x).to_f64().unwrap_or(0.0),
+            total_costs: trades
+                .iter()
+                .map(|t| &t.cost.total)
+                .fold(BigDecimal::from(0), |acc, x| acc + x)
+                .to_f64()
+                .unwrap_or(0.0),
             cost_ratio: 0.87,
             simulation_days: 10,
             active_trading_days: 8,
@@ -178,15 +185,17 @@ mod tests {
         assert_eq!(deserialized.comparison.summary_table.len(), 3);
 
         // Test 3: Verify the JSON structure matches what report expects
-        let json_value: serde_json::Value = serde_json::from_str(&json_content)
-            .expect("Should parse as JSON value");
+        let json_value: serde_json::Value =
+            serde_json::from_str(&json_content).expect("Should parse as JSON value");
 
         // Check required fields exist
         assert!(json_value.get("results").is_some());
         assert!(json_value.get("comparison").is_some());
 
         // Check results array structure
-        let results_array = json_value["results"].as_array().expect("results should be array");
+        let results_array = json_value["results"]
+            .as_array()
+            .expect("results should be array");
         assert_eq!(results_array.len(), 3);
 
         for result in results_array {
@@ -222,8 +231,8 @@ mod tests {
         assert_eq!(deserialized.config.final_value, 1150.0);
 
         // Test 3: Verify JSON structure
-        let json_value: serde_json::Value = serde_json::from_str(&json_content)
-            .expect("Should parse as JSON value");
+        let json_value: serde_json::Value =
+            serde_json::from_str(&json_content).expect("Should parse as JSON value");
 
         assert!(json_value.get("config").is_some());
         assert!(json_value.get("performance").is_some());
@@ -247,21 +256,23 @@ mod tests {
         assert!(performance.get("total_trades").is_some());
     }
 
-    #[test] 
+    #[test]
     fn test_simulate_output_structure_compatibility() {
         // This test verifies that the JSON structure output by simulate
         // matches exactly what report expects to read
         use tempfile::TempDir;
-        
+
         // Create temp workspace
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        
+
         // Step 1: Create mock token files that simulate would typically read
         setup_mock_token_files(&temp_dir);
-        
+
         // Step 2: Set up environment to use our temp directory
-        unsafe { std::env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path()); }
-        
+        unsafe {
+            std::env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
+        }
+
         // Step 3: Create SimulateArgs similar to actual CLI usage
         use crate::commands::simulate::{SimulateArgs, validate_and_convert_args};
         let args = SimulateArgs {
@@ -291,12 +302,12 @@ mod tests {
             trend_adx_strong_threshold: 20.0,
             trend_r_squared_threshold: 0.5,
         };
-        
+
         // Step 4: Try to validate args (this tests the actual config creation)
-        let result = tokio::runtime::Runtime::new().unwrap().block_on(
-            validate_and_convert_args(args)
-        );
-        
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(validate_and_convert_args(args));
+
         // If validation works, the structure should be compatible
         match result {
             Ok(config) => {
@@ -304,74 +315,86 @@ mod tests {
                 assert!(!config.target_tokens.is_empty() || config.target_tokens.is_empty()); // Allow empty for this test
                 assert!(config.initial_capital > bigdecimal::BigDecimal::from(0));
                 println!("✅ Config validation successful - structure is compatible");
-            },
+            }
             Err(e) => {
                 // If it fails due to missing tokens, that's expected in test environment
                 if e.to_string().contains("No tokens found") {
-                    println!("ℹ️  Expected token directory error in test environment: {}", e);
+                    println!(
+                        "ℹ️  Expected token directory error in test environment: {}",
+                        e
+                    );
                 } else {
                     panic!("Unexpected validation error: {}", e);
                 }
             }
         }
-        
+
         // Step 5: Test JSON structure compatibility directly
         // Create a minimal but realistic result structure
         let test_results = create_realistic_simulation_results();
-        
+
         // Use the actual save function that simulate uses
         use crate::commands::simulate::save_simple_multi_algorithm_result;
         let output_path = temp_dir.path().join("output");
         std::fs::create_dir_all(&output_path).unwrap();
-        
+
         save_simple_multi_algorithm_result(&test_results, output_path.to_str().unwrap(), false)
             .expect("Should save results successfully");
-            
+
         // Find output file
         let entries = std::fs::read_dir(&output_path).expect("Should read output directory");
         let multi_dir = entries
             .filter_map(|e| e.ok())
-            .find(|e| e.file_name().to_string_lossy().starts_with("multi_algorithm_"))
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("multi_algorithm_")
+            })
             .expect("Should find multi_algorithm directory");
-            
+
         let json_file = multi_dir.path().join("multi_results.json");
         assert!(json_file.exists(), "multi_results.json should exist");
-        
+
         // Step 6: Test that report can read this exact JSON
-        use crate::commands::report::{run_report, ReportArgs};
+        use crate::commands::report::{ReportArgs, run_report};
         let report_args = ReportArgs {
             input: json_file,
             output: Some(temp_dir.path().join("test_report.html")),
         };
-        
+
         // This is the critical test - can report actually process simulate's output?
         run_report(report_args).expect("Report must be able to process simulate's output");
-        
+
         let html_file = temp_dir.path().join("test_report.html");
         assert!(html_file.exists(), "HTML report should be generated");
-        
+
         let html_content = std::fs::read_to_string(html_file).expect("Should read HTML");
-        assert!(html_content.contains("Multi-Algorithm"), "Should contain multi-algorithm content");
-        
+        assert!(
+            html_content.contains("Multi-Algorithm"),
+            "Should contain multi-algorithm content"
+        );
+
         // Clean up environment
-        unsafe { std::env::remove_var("CLI_TOKENS_BASE_DIR"); }
+        unsafe {
+            std::env::remove_var("CLI_TOKENS_BASE_DIR");
+        }
     }
-    
+
     /// Create realistic simulation results that match actual simulate command output
     fn create_realistic_simulation_results() -> Vec<SimulationResult> {
         // Use the same creation function but with realistic data patterns
         vec![
             create_test_simulation_result(AlgorithmType::Momentum, 1050.0),
-            create_test_simulation_result(AlgorithmType::Portfolio, 1030.0), 
+            create_test_simulation_result(AlgorithmType::Portfolio, 1030.0),
             create_test_simulation_result(AlgorithmType::Portfolio, 990.0),
         ]
     }
-    
+
     /// Set up mock token files that simulate would read
     fn setup_mock_token_files(temp_dir: &tempfile::TempDir) {
         let tokens_dir = temp_dir.path().join("tokens").join("wrap.near");
         std::fs::create_dir_all(&tokens_dir).expect("Should create tokens directory");
-        
+
         // Create a mock token file
         let token_file = tokens_dir.join("test.tkn.near.json");
         let token_data = serde_json::json!({
@@ -381,31 +404,31 @@ mod tests {
                 "symbol": "TEST"
             }
         });
-        
-        std::fs::write(&token_file, serde_json::to_string_pretty(&token_data).unwrap())
-            .expect("Should write token file");
+
+        std::fs::write(
+            &token_file,
+            serde_json::to_string_pretty(&token_data).unwrap(),
+        )
+        .expect("Should write token file");
     }
 
     #[test]
     fn test_algorithm_type_serialization() {
         // Test that AlgorithmType serializes correctly for JSON compatibility
-        let algorithms = vec![
-            AlgorithmType::Momentum,
-            AlgorithmType::Portfolio,
-        ];
+        let algorithms = vec![AlgorithmType::Momentum, AlgorithmType::Portfolio];
 
         for algo in algorithms {
             let json_value = serde_json::to_value(&algo).expect("Should serialize AlgorithmType");
             let string_repr = json_value.as_str().expect("Should be string");
-            
+
             match algo {
                 AlgorithmType::Momentum => assert_eq!(string_repr, "Momentum"),
                 AlgorithmType::Portfolio => assert_eq!(string_repr, "Portfolio"),
             }
 
             // Test round-trip
-            let deserialized: AlgorithmType = serde_json::from_value(json_value)
-                .expect("Should deserialize AlgorithmType");
+            let deserialized: AlgorithmType =
+                serde_json::from_value(json_value).expect("Should deserialize AlgorithmType");
             assert_eq!(deserialized, algo);
         }
     }
