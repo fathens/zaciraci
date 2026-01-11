@@ -102,7 +102,7 @@ pub fn calculate_expected_returns(
                 // decimals は current_rate と同じと仮定
                 use crate::types::ExchangeRate;
                 use bigdecimal::FromPrimitive;
-                let predicted_rate = ExchangeRate::new(
+                let predicted_rate = ExchangeRate::from_raw_rate(
                     bigdecimal::BigDecimal::from_f64(predicted_rate_f64).unwrap_or_default(),
                     token.current_rate.decimals(),
                 );

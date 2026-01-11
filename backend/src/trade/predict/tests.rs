@@ -15,7 +15,7 @@ fn price(s: &str) -> TokenPrice {
 
 /// テスト用ヘルパー: 文字列から ExchangeRate を作成 (decimals = 24)
 fn make_rate_from_str(s: &str) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from_str(s).unwrap(), 24)
+    ExchangeRate::from_raw_rate(BigDecimal::from_str(s).unwrap(), 24)
 }
 
 /// テスト用ヘルパー: TokenRate を簡潔に作成
@@ -204,7 +204,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
     }
 
     // 価格値の検証
-    // 挿入時: ExchangeRate::new(rate, 24) として保存
+    // 挿入時: ExchangeRate::from_raw_rate(rate, 24) として保存
     // 読み込み時: exchange_rate.to_price() = 10^24 / rate として TokenPrice に変換
     // 相対的な順序と変換の整合性を確認
     let yocto_per_near = BigDecimal::from_str("1000000000000000000000000").unwrap();

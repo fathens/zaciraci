@@ -6,7 +6,7 @@ use common::types::ExchangeRate;
 use std::str::FromStr;
 
 fn rate(s: &str) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from_str(s).unwrap(), 24)
+    ExchangeRate::from_raw_rate(BigDecimal::from_str(s).unwrap(), 24)
 }
 
 // Note: trading.rsの関数は外部API(Chronos)への依存が多いため、

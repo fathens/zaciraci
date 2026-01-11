@@ -63,11 +63,9 @@ impl crate::algorithm::PredictionData {
             diff >= Duration::hours(23) && diff <= Duration::hours(25)
         })?;
 
-        // 予測レートに同じ decimals を適用
-        let predicted_rate_24h = ExchangeRate::new(
-            predicted_24h.price.as_bigdecimal().clone(),
-            current_rate.decimals(),
-        );
+        // 予測価格から ExchangeRate を構築
+        let predicted_rate_24h =
+            ExchangeRate::from_price(&predicted_24h.price, current_rate.decimals());
 
         Some(Self {
             token: prediction.token.clone(),

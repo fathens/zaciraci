@@ -3,7 +3,7 @@ use crate::types::{ExchangeRate, YoctoAmount};
 use bigdecimal::{FromPrimitive, ToPrimitive};
 
 fn rate(v: f64) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from_f64(v).unwrap(), 24)
+    ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 24)
 }
 
 fn amount_f64(v: f64) -> YoctoAmount {

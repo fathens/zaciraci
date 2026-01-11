@@ -216,7 +216,7 @@ mod prediction_tests {
             }],
         };
 
-        let current_rate = ExchangeRate::new(BigDecimal::from(100), 24);
+        let current_rate = ExchangeRate::from_raw_rate(BigDecimal::from(100), 24);
         let prediction_data =
             PredictionData::from_token_prediction(&prediction_result, current_rate.clone());
 
@@ -224,10 +224,19 @@ mod prediction_tests {
         let data = prediction_data.unwrap();
         assert_eq!(data.token, "test_token");
         assert_eq!(data.current_rate.raw_rate(), current_rate.raw_rate());
-        // predicted_rate_24h は prediction_result の最後の price から作成される
-        assert_eq!(
-            data.predicted_rate_24h.raw_rate(),
-            &BigDecimal::from_f64(110.0).unwrap()
+        // predicted_rate_24h は prediction_result の最後の price から ExchangeRate::from_price で作成される
+        // from_price は price を rate に変換する (raw_rate = 10^decimals / price)
+        // 変換後 to_price() で元の価格に戻ることを確認
+        let expected_price = TokenPrice::new(BigDecimal::from_f64(110.0).unwrap());
+        let actual_price = data.predicted_rate_24h.to_price();
+        // f64 比較で十分な精度を確認
+        let expected_f64 = expected_price.to_f64();
+        let actual_f64 = actual_price.to_f64();
+        assert!(
+            (expected_f64 - actual_f64).abs() < 0.001,
+            "expected price: {}, actual price: {}",
+            expected_f64,
+            actual_f64
         );
         assert_eq!(data.confidence, Some("0.85".parse::<BigDecimal>().unwrap()));
     }
@@ -271,7 +280,7 @@ mod prediction_tests {
             }],
         };
 
-        let current_rate = ExchangeRate::new(BigDecimal::from(100), 24);
+        let current_rate = ExchangeRate::from_raw_rate(BigDecimal::from(100), 24);
         let prediction_data =
             PredictionData::from_token_prediction(&prediction_result, current_rate);
 

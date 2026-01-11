@@ -13,7 +13,7 @@ use mockito::{Mock, ServerGuard};
 use std::collections::HashMap;
 
 fn rate(v: f64) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from_f64(v).unwrap(), 24)
+    ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 24)
 }
 
 /// API統合テスト用のモックサーバーを設定

@@ -13,7 +13,7 @@ fn price(v: f64) -> TokenPrice {
 }
 
 fn rate(v: f64) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from_f64(v).unwrap(), 18)
+    ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 18)
 }
 
 fn create_sample_tokens() -> Vec<TokenInfo> {
@@ -2523,7 +2523,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
     vec![
         TokenData {
             symbol: "high_return_token".to_string(),
-            current_rate: ExchangeRate::new(
+            current_rate: ExchangeRate::from_raw_rate(
                 bigdecimal::BigDecimal::from(1000000000000000000i64),
                 24,
             ),
@@ -2533,7 +2533,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
         },
         TokenData {
             symbol: "medium_return_token".to_string(),
-            current_rate: ExchangeRate::new(
+            current_rate: ExchangeRate::from_raw_rate(
                 bigdecimal::BigDecimal::from(500000000000000000i64),
                 24,
             ),
@@ -2543,7 +2543,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
         },
         TokenData {
             symbol: "stable_token".to_string(),
-            current_rate: ExchangeRate::new(
+            current_rate: ExchangeRate::from_raw_rate(
                 bigdecimal::BigDecimal::from(2000000000000000000i64),
                 24,
             ),
@@ -2753,7 +2753,7 @@ fn test_portfolio_evaluation_accuracy() {
     // 現実的な価格での評価
     let realistic_tokens = vec![TokenData {
         symbol: "token_a".to_string(),
-        current_rate: ExchangeRate::new(
+        current_rate: ExchangeRate::from_raw_rate(
             "1000000000000000000000000".parse::<BigDecimal>().unwrap(),
             24,
         ), // 1 NEAR = 1e24 yoctoNEAR
@@ -2800,7 +2800,7 @@ fn test_extreme_price_weight_calculation() {
     let extreme_tokens = vec![
         TokenData {
             symbol: "bean.tkn.near".to_string(),
-            current_rate: ExchangeRate::new(
+            current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("2.783120479512128E-19").unwrap(),
                 24,
             ),
@@ -2810,7 +2810,7 @@ fn test_extreme_price_weight_calculation() {
         },
         TokenData {
             symbol: "ndc.tkn.near".to_string(),
-            current_rate: ExchangeRate::new(
+            current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("4.8596827014459204E-20").unwrap(),
                 24,
             ),

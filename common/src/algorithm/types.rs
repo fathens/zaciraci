@@ -412,8 +412,11 @@ mod tests {
     fn test_prediction_data_creation() {
         let prediction = PredictionData {
             token: "test.tkn.near".to_string(),
-            current_rate: ExchangeRate::new(BigDecimal::from_str("1000000").unwrap(), 6),
-            predicted_rate_24h: ExchangeRate::new(BigDecimal::from_str("1200000").unwrap(), 6),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str("1000000").unwrap(), 6),
+            predicted_rate_24h: ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("1200000").unwrap(),
+                6,
+            ),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.85").unwrap()),
         };
@@ -426,8 +429,11 @@ mod tests {
     fn test_prediction_data_without_confidence() {
         let prediction = PredictionData {
             token: "test.tkn.near".to_string(),
-            current_rate: ExchangeRate::new(BigDecimal::from_str("1000000").unwrap(), 6),
-            predicted_rate_24h: ExchangeRate::new(BigDecimal::from_str("1200000").unwrap(), 6),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str("1000000").unwrap(), 6),
+            predicted_rate_24h: ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("1200000").unwrap(),
+                6,
+            ),
             timestamp: Utc::now(),
             confidence: None,
         };
@@ -506,7 +512,7 @@ mod tests {
     fn test_token_data_creation() {
         let token = TokenData {
             symbol: "NEAR".to_string(),
-            current_rate: ExchangeRate::new(
+            current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("1000000000000000000000000").unwrap(),
                 24,
             ),
@@ -533,8 +539,11 @@ mod tests {
     fn test_prediction_data_serialization() {
         let prediction = PredictionData {
             token: "test".to_string(),
-            current_rate: ExchangeRate::new(BigDecimal::from_str("1000000").unwrap(), 6),
-            predicted_rate_24h: ExchangeRate::new(BigDecimal::from_str("1200000").unwrap(), 6),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str("1000000").unwrap(), 6),
+            predicted_rate_24h: ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("1200000").unwrap(),
+                6,
+            ),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.9").unwrap()),
         };
@@ -597,7 +606,7 @@ mod tests {
     fn test_token_data_serialization() {
         let token = TokenData {
             symbol: "NEAR".to_string(),
-            current_rate: ExchangeRate::new(
+            current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("1000000000000000000000000").unwrap(),
                 24,
             ),
@@ -671,7 +680,7 @@ mod tests {
         // ExchangeRate 型を含む構造体の比較が正しく動作することを確認
         let token1 = TokenData {
             symbol: "TEST".to_string(),
-            current_rate: ExchangeRate::new(BigDecimal::from(100), 6),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 6),
             historical_volatility: 0.2,
             liquidity_score: None,
             market_cap: None,
@@ -679,7 +688,7 @@ mod tests {
 
         let token2 = TokenData {
             symbol: "TEST".to_string(),
-            current_rate: ExchangeRate::new(BigDecimal::from(100), 6),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 6),
             historical_volatility: 0.2,
             liquidity_score: None,
             market_cap: None,
@@ -687,7 +696,7 @@ mod tests {
 
         let token3 = TokenData {
             symbol: "TEST".to_string(),
-            current_rate: ExchangeRate::new(BigDecimal::from(200), 6), // 異なるレート
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(200), 6), // 異なるレート
             historical_volatility: 0.2,
             liquidity_score: None,
             market_cap: None,

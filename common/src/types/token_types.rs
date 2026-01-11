@@ -49,7 +49,62 @@ pub struct ExchangeRate {
 }
 
 impl ExchangeRate {
+    /// raw_rate（tokens_smallest/NEAR）から ExchangeRate を作成
+    ///
+    /// DB から読み込んだ値や、計算結果の rate を渡す場合に使用。
+    ///
+    /// # 注意
+    ///
+    /// price（NEAR/token）を渡す場合は [`from_price`] を使うこと。
+    /// 間違えると値が逆数になる。
+    pub fn from_raw_rate(raw_rate: BigDecimal, decimals: u8) -> Self {
+        Self { raw_rate, decimals }
+    }
+
+    /// TokenPrice（NEAR/token）から ExchangeRate を作成
+    ///
+    /// ```text
+    /// raw_rate = 10^decimals / price
+    /// ```
+    ///
+    /// # 例
+    ///
+    /// ```ignore
+    /// use common::types::{ExchangeRate, TokenPrice};
+    /// use bigdecimal::BigDecimal;
+    /// use std::str::FromStr;
+    ///
+    /// // 1 USDT = 0.2 NEAR の場合
+    /// let price = TokenPrice::new(BigDecimal::from_str("0.2").unwrap());
+    /// let rate = ExchangeRate::from_price(&price, 6);
+    ///
+    /// // raw_rate = 10^6 / 0.2 = 5,000,000
+    /// assert_eq!(rate.raw_rate(), &BigDecimal::from(5_000_000));
+    /// ```
+    pub fn from_price(price: &TokenPrice, decimals: u8) -> Self {
+        if price.is_zero() {
+            return Self {
+                raw_rate: BigDecimal::zero(),
+                decimals,
+            };
+        }
+        let divisor = pow10(decimals);
+        Self {
+            raw_rate: divisor / price.as_bigdecimal(),
+            decimals,
+        }
+    }
+
     /// 新しい ExchangeRate を作成
+    ///
+    /// # Deprecated
+    ///
+    /// `from_raw_rate` または `from_price` を使うこと。
+    /// どちらを使うべきかは、渡す値が rate か price かで決まる。
+    #[deprecated(
+        since = "0.1.0",
+        note = "use `from_raw_rate` for rate values or `from_price` for price values"
+    )]
     pub fn new(raw_rate: BigDecimal, decimals: u8) -> Self {
         Self { raw_rate, decimals }
     }
@@ -222,7 +277,7 @@ mod tests {
     fn test_exchange_rate_to_price() {
         // USDT: 1 NEAR = 5 USDT, decimals=6
         // raw_rate = 5_000_000
-        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
         let price = rate.to_price();
 
         // TokenPrice = 10^6 / 5_000_000 = 0.2 NEAR/USDT
@@ -235,7 +290,7 @@ mod tests {
         let holdings = TokenAmount::from_u128(100_000_000, 6); // 100 × 10^6
 
         // 1 NEAR = 5 USDT
-        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
 
         // 100 USDT = 20 NEAR
         let value: NearValue = holdings / &rate;
@@ -269,7 +324,10 @@ mod tests {
     fn test_wnear_rate() {
         // wNEAR: 1 NEAR = 1 wNEAR, decimals=24
         // raw_rate = 10^24
-        let rate = ExchangeRate::new(BigDecimal::from(1_000_000_000_000_000_000_000_000u128), 24);
+        let rate = ExchangeRate::from_raw_rate(
+            BigDecimal::from(1_000_000_000_000_000_000_000_000u128),
+            24,
+        );
         let price = rate.to_price();
 
         // TokenPrice = 10^24 / 10^24 = 1.0 NEAR/wNEAR
@@ -282,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_exchange_rate_accessors() {
-        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
 
         // raw_rate()
         assert_eq!(rate.raw_rate(), &BigDecimal::from(5_000_000));
@@ -293,24 +351,24 @@ mod tests {
 
     #[test]
     fn test_exchange_rate_is_zero() {
-        let zero_rate = ExchangeRate::new(BigDecimal::zero(), 6);
+        let zero_rate = ExchangeRate::from_raw_rate(BigDecimal::zero(), 6);
         assert!(zero_rate.is_zero());
 
-        let non_zero_rate = ExchangeRate::new(BigDecimal::from(100), 6);
+        let non_zero_rate = ExchangeRate::from_raw_rate(BigDecimal::from(100), 6);
         assert!(!non_zero_rate.is_zero());
     }
 
     #[test]
     fn test_exchange_rate_zero_to_price() {
         // ゼロレートからの価格変換
-        let zero_rate = ExchangeRate::new(BigDecimal::zero(), 6);
+        let zero_rate = ExchangeRate::from_raw_rate(BigDecimal::zero(), 6);
         let price = zero_rate.to_price();
         assert!(price.is_zero());
     }
 
     #[test]
     fn test_exchange_rate_display() {
-        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
         let display = format!("{}", rate);
         assert!(display.contains("5000000"));
         assert!(display.contains("decimals=6"));
@@ -318,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_exchange_rate_serialization() {
-        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
         let json = serde_json::to_string(&rate).unwrap();
         let deserialized: ExchangeRate = serde_json::from_str(&json).unwrap();
         assert_eq!(rate, deserialized);
@@ -373,7 +431,7 @@ mod tests {
     #[test]
     fn test_token_amount_div_zero_rate() {
         let amount = TokenAmount::from_u128(100_000_000, 6);
-        let zero_rate = ExchangeRate::new(BigDecimal::zero(), 6);
+        let zero_rate = ExchangeRate::from_raw_rate(BigDecimal::zero(), 6);
 
         // ゼロレートでの除算 → NearValue::zero()
         let value: NearValue = amount / &zero_rate;
@@ -383,7 +441,7 @@ mod tests {
     #[test]
     fn test_token_amount_reference_div_rate() {
         let amount = TokenAmount::from_u128(100_000_000, 6);
-        let rate = ExchangeRate::new(BigDecimal::from(5_000_000), 6);
+        let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
 
         // &TokenAmount / &ExchangeRate
         let value: NearValue = &amount / &rate;
@@ -435,7 +493,7 @@ mod tests {
         // シナリオ: 1 NEAR = 1.5 USDT, USDT decimals=6
         // DB格納: rate = 1,500,000 (yocto tokens per 1 NEAR)
         let db_rate = BigDecimal::from(1_500_000);
-        let rate = ExchangeRate::new(db_rate, 6);
+        let rate = ExchangeRate::from_raw_rate(db_rate, 6);
 
         let price = rate.to_price();
         // TokenPrice ≈ 0.666... NEAR/USDT (1/1.5)
@@ -467,7 +525,7 @@ mod tests {
         assert!((new_rate_f64 - 1_512_007.0).abs() < 1.0);
 
         // ExchangeRate として解釈
-        let rate = ExchangeRate::new(new_rate, 6);
+        let rate = ExchangeRate::from_raw_rate(new_rate, 6);
         let price = rate.to_price();
 
         // TokenPrice ≈ 0.66 NEAR/USDT
@@ -482,12 +540,12 @@ mod tests {
     #[test]
     fn test_expected_return_from_rates() {
         // 現在: 1 NEAR = 1.5 USDT (rate = 1,500,000)
-        let current_rate = ExchangeRate::new(BigDecimal::from(1_500_000), 6);
+        let current_rate = ExchangeRate::from_raw_rate(BigDecimal::from(1_500_000), 6);
         let current_price = current_rate.to_price();
 
         // 予測: 1 NEAR = 1.8 USDT (rate = 1,800,000)
         // rate 増加 = トークンが安くなった = 価格下落
-        let predicted_rate = ExchangeRate::new(BigDecimal::from(1_800_000), 6);
+        let predicted_rate = ExchangeRate::from_raw_rate(BigDecimal::from(1_800_000), 6);
         let predicted_price = predicted_rate.to_price();
 
         // current_price ≈ 0.666, predicted_price ≈ 0.555
@@ -501,7 +559,7 @@ mod tests {
 
         // 逆のケース: rate 減少 = 価格上昇 = 正のリターン
         // 予測: 1 NEAR = 1.2 USDT (rate = 1,200,000)
-        let predicted_rate_up = ExchangeRate::new(BigDecimal::from(1_200_000), 6);
+        let predicted_rate_up = ExchangeRate::from_raw_rate(BigDecimal::from(1_200_000), 6);
         let predicted_price_up = predicted_rate_up.to_price();
 
         // expected_return = (0.833 - 0.666) / 0.666 ≈ 0.25
@@ -528,7 +586,7 @@ mod tests {
     ///
     /// 1. DB に rate = 1,500,000 (USDT, decimals=6) が格納
     /// 2. predict.rs: TokenPrice::new(1,500,000) で "price" として格納
-    /// 3. stats.rs: この値を抽出し `ExchangeRate::new(1,500,000, 6)` で作成
+    /// 3. stats.rs: この値を抽出し `ExchangeRate::from_raw_rate(1,500,000, 6)` で作成
     /// 4. portfolio.rs: `rate.to_price()` で正しい TokenPrice に変換
     ///
     /// ## 結論
@@ -545,7 +603,7 @@ mod tests {
 
         // stats.rs: 値を抽出して ExchangeRate として解釈
         let extracted_value = price_in_predict_rs.as_bigdecimal().clone();
-        let exchange_rate = ExchangeRate::new(extracted_value, 6);
+        let exchange_rate = ExchangeRate::from_raw_rate(extracted_value, 6);
 
         // portfolio.rs: 正しい TokenPrice に変換
         let correct_price = exchange_rate.to_price();
@@ -579,12 +637,12 @@ mod tests {
 
         // decimals=6 (USDT風)
         let rate_6 = BigDecimal::from(1_500_000u64);
-        let exchange_rate_6 = ExchangeRate::new(rate_6, 6);
+        let exchange_rate_6 = ExchangeRate::from_raw_rate(rate_6, 6);
         let price_6 = exchange_rate_6.to_price();
 
         // decimals=18 (ETH風)
         let rate_18 = BigDecimal::from_str("1500000000000000000").unwrap();
-        let exchange_rate_18 = ExchangeRate::new(rate_18, 18);
+        let exchange_rate_18 = ExchangeRate::from_raw_rate(rate_18, 18);
         let price_18 = exchange_rate_18.to_price();
 
         // 両方とも同じ価格になるべき: 0.666... NEAR/token
@@ -609,7 +667,7 @@ mod tests {
     fn test_wnear_rate_with_decimals() {
         // wNEAR: decimals=24, rate = 10^24
         let wnear_rate = BigDecimal::from_str("1000000000000000000000000").unwrap();
-        let exchange_rate = ExchangeRate::new(wnear_rate, 24);
+        let exchange_rate = ExchangeRate::from_raw_rate(wnear_rate, 24);
         let price = exchange_rate.to_price();
 
         // 1 wNEAR = 1 NEAR

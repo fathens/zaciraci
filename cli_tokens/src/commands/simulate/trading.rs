@@ -55,9 +55,9 @@ async fn try_load_from_cache(
             const DEFAULT_DECIMALS: u8 = 24;
             return Ok(Some(PredictionData {
                 token: token.to_string(),
-                current_rate: ExchangeRate::new(current_price.into_bigdecimal(), DEFAULT_DECIMALS),
-                predicted_rate_24h: ExchangeRate::new(
-                    last_prediction.price.as_bigdecimal().clone(),
+                current_rate: ExchangeRate::from_price(&current_price, DEFAULT_DECIMALS),
+                predicted_rate_24h: ExchangeRate::from_price(
+                    &last_prediction.price,
                     DEFAULT_DECIMALS,
                 ),
                 timestamp: pred_start,
@@ -262,11 +262,11 @@ pub async fn generate_api_predictions(
                                         const DEFAULT_DECIMALS: u8 = 24;
                                         predictions.push(PredictionData {
                                             token: token.clone(),
-                                            current_rate: ExchangeRate::new(
+                                            current_rate: ExchangeRate::from_raw_rate(
                                                 current_price.clone(),
                                                 DEFAULT_DECIMALS,
                                             ),
-                                            predicted_rate_24h: ExchangeRate::new(
+                                            predicted_rate_24h: ExchangeRate::from_raw_rate(
                                                 predicted_value.clone(),
                                                 DEFAULT_DECIMALS,
                                             ),

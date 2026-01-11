@@ -624,7 +624,7 @@ where
 
         token_data.push(TokenData {
             symbol: token.to_string(),
-            current_rate: ExchangeRate::new(current_price_yocto, decimals),
+            current_rate: ExchangeRate::from_raw_rate(current_price_yocto, decimals),
             historical_volatility: volatility_f64,
             liquidity_score: Some(liquidity_score),
             market_cap: Some(market_cap),

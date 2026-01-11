@@ -197,7 +197,7 @@ async fn record_rates() -> Result<()> {
             let token_str = base.to_string();
             let decimals = token_decimals.get(&token_str).copied().unwrap_or(24);
             let rate_yocto = BigDecimal::from(value) / near_amount;
-            let exchange_rate = ExchangeRate::new(rate_yocto, decimals);
+            let exchange_rate = ExchangeRate::from_raw_rate(rate_yocto, decimals);
             TokenRate::new(base, quote_token.clone(), exchange_rate)
         })
         .collect();

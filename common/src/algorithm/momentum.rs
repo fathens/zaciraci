@@ -225,9 +225,9 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
 
         let prediction = prediction_provider.predict_price(&history, 24).await?;
 
-        // TokenPriceF64 + decimals から ExchangeRate を構築
-        let current_rate = crate::types::ExchangeRate::new(
-            top_token.current_price.to_bigdecimal().into_bigdecimal(),
+        // TokenPriceF64 を TokenPrice に変換して ExchangeRate を構築
+        let current_rate = crate::types::ExchangeRate::from_price(
+            &top_token.current_price.to_bigdecimal(),
             top_token.decimals,
         );
         if let Some(data) = PredictionData::from_token_prediction(&prediction, current_rate) {
@@ -480,12 +480,12 @@ mod integration_tests {
             TokenHolding {
                 token: "token1".to_string(),
                 amount: YoctoAmount::new(10),
-                current_rate: ExchangeRate::new(BigDecimal::from(100), 24),
+                current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
             },
             TokenHolding {
                 token: "token2".to_string(),
                 amount: YoctoAmount::new(20),
-                current_rate: ExchangeRate::new(BigDecimal::from(50), 24),
+                current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(50), 24),
             },
         ];
 
@@ -554,7 +554,7 @@ mod integration_tests {
         let current_holdings = vec![TokenHolding {
             token: "other_token".to_string(),
             amount: YoctoAmount::new(10),
-            current_rate: ExchangeRate::new(BigDecimal::from(75), 24),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(75), 24),
         }];
 
         let result = execute_with_prediction_provider(

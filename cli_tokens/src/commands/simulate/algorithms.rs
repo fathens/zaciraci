@@ -157,8 +157,8 @@ pub(crate) async fn run_momentum_timestep_simulation(
                         token_holdings.push(TokenHolding {
                             token: token.clone(),
                             amount: YoctoAmount::from_bigdecimal(amount.to_bigdecimal()),
-                            current_rate: ExchangeRate::new(
-                                BigDecimal::from_f64(price.as_f64()).unwrap_or_default(),
+                            current_rate: ExchangeRate::from_price(
+                                &price.to_bigdecimal(),
                                 DEFAULT_DECIMALS,
                             ),
                         });
@@ -522,9 +522,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         if let Some(&current_price) = current_prices.get(token) {
                             token_data.push(TokenData {
                                 symbol: token.clone(),
-                                current_rate: ExchangeRate::new(
-                                    BigDecimal::from_f64(current_price.as_f64())
-                                        .unwrap_or_default(),
+                                current_rate: ExchangeRate::from_price(
+                                    &current_price.to_bigdecimal(),
                                     TOKEN_DECIMALS,
                                 ),
                                 historical_volatility: 0.2, // デフォルト値

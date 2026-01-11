@@ -13,7 +13,7 @@ fn price(v: f64) -> TokenPrice {
 }
 
 fn rate(v: f64) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from_f64(v).unwrap(), 18)
+    ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 18)
 }
 
 // テスト用のポートフォリオデータを作成

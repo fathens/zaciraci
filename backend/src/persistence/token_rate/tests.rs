@@ -14,12 +14,12 @@ use zaciraci_common::types::ExchangeRate;
 
 /// テスト用ヘルパー: BigDecimal からデフォルト decimals (24) の ExchangeRate を作成
 fn make_rate(value: i64) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from(value), 24)
+    ExchangeRate::from_raw_rate(BigDecimal::from(value), 24)
 }
 
 /// テスト用ヘルパー: 文字列からデフォルト decimals (24) の ExchangeRate を作成
 fn make_rate_str(value: &str) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from_str(value).unwrap(), 24)
+    ExchangeRate::from_raw_rate(BigDecimal::from_str(value).unwrap(), 24)
 }
 
 /// テスト用ヘルパー: TokenRate を簡潔に作成

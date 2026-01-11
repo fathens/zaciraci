@@ -131,7 +131,7 @@ impl TokenRate {
 
         // decimals が NULL の場合はデフォルト値 24 (NEAR) を使用
         let decimals = db_rate.decimals.map(|d| d as u8).unwrap_or(24);
-        let exchange_rate = ExchangeRate::new(db_rate.rate, decimals);
+        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
 
         Ok(Self {
             base,
@@ -165,7 +165,7 @@ impl TokenRate {
             }
         };
 
-        let exchange_rate = ExchangeRate::new(db_rate.rate, decimals);
+        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
 
         Ok(Self {
             base,

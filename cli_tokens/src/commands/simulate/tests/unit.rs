@@ -24,7 +24,7 @@ use common::algorithm::momentum::{calculate_confidence_adjusted_return, rank_tok
 use super::super::{NearValueF64, TokenAmountF64, TokenPriceF64, YoctoValueF64};
 
 fn rate(v: i32) -> ExchangeRate {
-    ExchangeRate::new(BigDecimal::from(v), 24)
+    ExchangeRate::from_raw_rate(BigDecimal::from(v), 24)
 }
 use common::algorithm::{PredictionData, TradingAction};
 
