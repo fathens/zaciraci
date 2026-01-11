@@ -54,6 +54,8 @@ pub struct TopToken {
     pub volume_24h: BigDecimal,
     /// 現在価格（無次元の価格比率）
     pub current_price: TokenPrice,
+    /// トークンの小数点桁数
+    pub decimals: u8,
 }
 
 /// 価格予測サービス
@@ -99,20 +101,22 @@ impl PredictionService {
         // 全トークンをTopToken形式に変換（limit は呼び出し側で適用）
         let mut top_tokens = Vec::new();
         for vol_token in volatility_tokens.into_iter() {
-            // 現在価格を取得（ExchangeRate から正しく TokenPrice に変換）
-            let current_price = {
+            // 現在価格と decimals を取得（ExchangeRate から正しく TokenPrice に変換）
+            let (current_price, decimals) = {
                 let base_token = TokenOutAccount::from(vol_token.base.clone());
                 let quote_token = quote_token_account.clone();
 
                 match TokenRate::get_latest(&base_token, &quote_token).await {
-                    Ok(Some(rate)) => rate.exchange_rate.to_price(),
+                    Ok(Some(rate)) => {
+                        (rate.exchange_rate.to_price(), rate.exchange_rate.decimals())
+                    }
                     Ok(None) => {
                         // ログを後で追加（slogのsetupが必要）
-                        TokenPrice::zero() // デフォルト値
+                        (TokenPrice::zero(), 24) // デフォルト値
                     }
                     Err(_e) => {
                         // ログを後で追加（slogのsetupが必要）
-                        TokenPrice::zero() // デフォルト値
+                        (TokenPrice::zero(), 24) // デフォルト値
                     }
                 }
             };
@@ -122,6 +126,7 @@ impl PredictionService {
                 volatility: vol_token.variance,
                 volume_24h: BigDecimal::from(0), // ボリュームデータは現在利用不可
                 current_price,
+                decimals,
             });
         }
 
@@ -449,8 +454,7 @@ impl PredictionProvider for PredictionService {
                 volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
                 volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
                 current_price: t.current_price.to_price_f64(),
-                // TODO: decimals を実際に取得する（現在はデフォルト 24）
-                decimals: 24,
+                decimals: t.decimals,
             })
             .collect())
     }
