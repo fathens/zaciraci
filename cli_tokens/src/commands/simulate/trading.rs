@@ -384,9 +384,9 @@ pub struct TradeContext<'a> {
     /// 現在保有量（smallest_unit）
     pub current_amount: TokenAmountF64,
     /// 現在価格（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
-    pub current_price: PriceF64,
+    pub current_price: TokenPriceF64,
     /// 全トークンの価格（無次元比率）
-    pub all_prices: &'a HashMap<String, PriceF64>,
+    pub all_prices: &'a HashMap<String, TokenPriceF64>,
     /// 保有量（smallest_unit）
     pub holdings: &'a mut HashMap<String, TokenAmountF64>,
     pub timestamp: DateTime<Utc>,
@@ -406,7 +406,7 @@ pub fn execute_trading_action(
                 .all_prices
                 .get(&target)
                 .copied()
-                .unwrap_or(PriceF64::zero());
+                .unwrap_or(TokenPriceF64::zero());
             if target_price.is_zero() {
                 return Ok(None);
             }
@@ -486,7 +486,11 @@ pub fn execute_trading_action(
         }
 
         TradingAction::Switch { from: _, to } => {
-            let target_price = ctx.all_prices.get(&to).copied().unwrap_or(PriceF64::zero());
+            let target_price = ctx
+                .all_prices
+                .get(&to)
+                .copied()
+                .unwrap_or(TokenPriceF64::zero());
             if target_price.is_zero() {
                 return Ok(None);
             }

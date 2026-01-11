@@ -95,7 +95,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
     let initial_per_token = NearValueF64::new(initial_value.as_f64() / tokens_count);
 
     // 初期価格データを取得（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
-    let initial_prices: HashMap<String, PriceF64> =
+    let initial_prices: HashMap<String, TokenPriceF64> =
         get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
@@ -268,7 +268,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
                 for (token, amount) in &current_holdings {
                     if let Some(&price) = current_prices.get(token) {
-                        // amount: TokenAmountF64 (smallest unit), price: PriceF64 (無次元比率)
+                        // amount: TokenAmountF64 (smallest unit), price: TokenPriceF64 (無次元比率)
                         // amount * price = YoctoValueF64, then .to_near() = NearValueF64
                         let value_yocto = *amount * price;
                         let value_near = value_yocto.to_near();
@@ -457,7 +457,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     let initial_per_token = NearValueF64::new(initial_value.as_f64() / tokens_count);
 
     // 初期価格データを取得（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
-    let initial_prices: HashMap<String, PriceF64> =
+    let initial_prices: HashMap<String, TokenPriceF64> =
         get_prices_at_time(price_data, config.start_date)?;
 
     for token in &config.target_tokens {
@@ -891,16 +891,16 @@ mod precision_tests {
 
     /// ポートフォリオ価値計算（型安全版）
     ///
-    /// 型安全な計算: TokenAmountF64 × PriceF64 = YoctoValueF64 → NearValueF64
+    /// 型安全な計算: TokenAmountF64 × TokenPriceF64 = YoctoValueF64 → NearValueF64
     #[allow(dead_code)]
     fn calculate_portfolio_value_typed(
         holdings: &HashMap<String, TokenAmountF64>,
-        prices: &HashMap<String, PriceF64>,
+        prices: &HashMap<String, TokenPriceF64>,
     ) -> NearValueF64 {
         let mut total_value = NearValueF64::zero();
         for (token, &amount) in holdings {
             if let Some(&price) = prices.get(token) {
-                // TokenAmountF64 × PriceF64 = YoctoValueF64
+                // TokenAmountF64 × TokenPriceF64 = YoctoValueF64
                 let value_yocto = amount * price;
                 // YoctoValueF64 → NearValueF64
                 total_value =

@@ -6,7 +6,7 @@ pub mod yocto_near;
 #[allow(deprecated)]
 pub use self::near_units::Price;
 pub use self::near_units::{
-    NearAmount, NearValue, NearValueF64, PriceF64, TokenAmountF64, TokenPrice, YoctoAmount,
+    NearAmount, NearValue, NearValueF64, TokenAmountF64, TokenPrice, TokenPriceF64, YoctoAmount,
     YoctoValue, YoctoValueF64,
 };
 pub use self::token_account::TokenAccount;

@@ -33,8 +33,8 @@ pub async fn fetch_price_data(
 pub fn get_prices_at_time(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     target_time: DateTime<Utc>,
-) -> Result<HashMap<String, PriceF64>> {
-    let mut prices: HashMap<String, PriceF64> = HashMap::new();
+) -> Result<HashMap<String, TokenPriceF64>> {
+    let mut prices: HashMap<String, TokenPriceF64> = HashMap::new();
     let one_hour = chrono::Duration::hours(1);
     let time_window_start = target_time - one_hour;
     let time_window_end = target_time + one_hour;
@@ -74,7 +74,7 @@ pub fn get_prices_at_time(
             .to_string()
             .parse::<f64>()
             .unwrap_or(0.0);
-        prices.insert(token.clone(), PriceF64::new(price_value));
+        prices.insert(token.clone(), TokenPriceF64::new(price_value));
     }
 
     Ok(prices)
@@ -87,7 +87,7 @@ pub fn get_prices_at_time(
 pub fn get_prices_at_time_optional(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     target_time: DateTime<Utc>,
-) -> Option<HashMap<String, PriceF64>> {
+) -> Option<HashMap<String, TokenPriceF64>> {
     get_prices_at_time(price_data, target_time).ok()
 }
 
@@ -220,8 +220,8 @@ fn find_next_valid_data_time(
 pub fn get_last_known_prices_for_evaluation(
     price_data: &HashMap<String, Vec<ValueAtTime>>,
     target_time: DateTime<Utc>,
-) -> Option<HashMap<String, PriceF64>> {
-    let mut prices: HashMap<String, PriceF64> = HashMap::new();
+) -> Option<HashMap<String, TokenPriceF64>> {
+    let mut prices: HashMap<String, TokenPriceF64> = HashMap::new();
     let max_lookback = chrono::Duration::days(7); // 最大7日前まで遡る
 
     for (token, values) in price_data {
@@ -242,7 +242,7 @@ fn find_price_within(
     values: &[ValueAtTime],
     target_time: DateTime<Utc>,
     max_lookback: chrono::Duration,
-) -> Option<PriceF64> {
+) -> Option<TokenPriceF64> {
     let earliest_allowed = target_time - max_lookback;
 
     values
@@ -252,5 +252,5 @@ fn find_price_within(
             value_time <= target_time && value_time >= earliest_allowed
         })
         .max_by_key(|v| v.time)
-        .map(|v| PriceF64::new(v.value.to_string().parse::<f64>().unwrap_or(0.0)))
+        .map(|v| TokenPriceF64::new(v.value.to_string().parse::<f64>().unwrap_or(0.0)))
 }

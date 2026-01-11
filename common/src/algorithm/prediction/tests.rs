@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{ExchangeRate, PriceF64, TokenPrice};
+use crate::types::{ExchangeRate, TokenPrice, TokenPriceF64};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
@@ -20,14 +20,14 @@ impl MockPredictionProvider {
                     token: "token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_rate: PriceF64::new(100.0),
+                    current_price: TokenPriceF64::new(100.0),
                     decimals: 24,
                 },
                 TopTokenInfo {
                     token: "token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_rate: PriceF64::new(50.0),
+                    current_price: TokenPriceF64::new(50.0),
                     decimals: 24,
                 },
             ],
@@ -169,7 +169,7 @@ mod prediction_tests {
 
         assert_eq!(top_tokens.len(), 1);
         assert_eq!(top_tokens[0].token, "token1");
-        assert_eq!(top_tokens[0].current_rate, PriceF64::new(100.0));
+        assert_eq!(top_tokens[0].current_price, TokenPriceF64::new(100.0));
     }
 
     #[tokio::test]

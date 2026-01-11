@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::types::{ExchangeRate, NearValue, PriceF64, TokenPrice, YoctoAmount};
+use crate::types::{ExchangeRate, NearValue, TokenPrice, TokenPriceF64, YoctoAmount};
 
 // ==================== 取引関連型 ====================
 
@@ -290,8 +290,8 @@ pub struct TopTokenInfo {
     pub token: String,
     pub volatility: f64,
     pub volume_24h: f64,
-    /// 現在のレート (tokens_smallest / NEAR)
-    pub current_rate: PriceF64,
+    /// 現在の価格 (NEAR/token)
+    pub current_price: TokenPriceF64,
     /// トークンの decimals
     pub decimals: u8,
 }

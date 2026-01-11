@@ -225,9 +225,9 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
 
         let prediction = prediction_provider.predict_price(&history, 24).await?;
 
-        // PriceF64 + decimals から ExchangeRate を構築
+        // TokenPriceF64 + decimals から ExchangeRate を構築
         let current_rate = crate::types::ExchangeRate::new(
-            top_token.current_rate.to_bigdecimal().into_bigdecimal(),
+            top_token.current_price.to_bigdecimal().into_bigdecimal(),
             top_token.decimals,
         );
         if let Some(data) = PredictionData::from_token_prediction(&prediction, current_rate) {
@@ -323,7 +323,7 @@ mod integration_tests {
     use super::execute_with_prediction_provider;
     use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
     use crate::algorithm::types::*;
-    use crate::types::{ExchangeRate, PriceF64, TokenPrice, YoctoAmount};
+    use crate::types::{ExchangeRate, TokenPrice, TokenPriceF64, YoctoAmount};
     use async_trait::async_trait;
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{Duration, Utc};
@@ -380,14 +380,14 @@ mod integration_tests {
                     token: "top_token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_rate: PriceF64::new(100.0),
+                    current_price: TokenPriceF64::new(100.0),
                     decimals: 24,
                 },
                 TopTokenInfo {
                     token: "top_token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_rate: PriceF64::new(50.0),
+                    current_price: TokenPriceF64::new(50.0),
                     decimals: 24,
                 },
             ]

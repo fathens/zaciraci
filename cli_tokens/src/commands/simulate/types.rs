@@ -11,17 +11,17 @@ use std::fmt;
 // =============================================================================
 //
 // シミュレーションコードでは以下の型を使用する：
-// - PriceF64: 価格（無次元比率、yoctoNEAR/smallest_unit = NEAR/token）
-// - TokenAmountF64: トークン数量（smallest_unit）
+// - TokenPriceF64: 価格（NEAR/token）
+// - TokenAmountF64: トークン数量
 // - YoctoValueF64: 金額（yoctoNEAR）- 内部計算用
 // - NearValueF64: 金額（NEAR）- 表示・保存用
 //
 // 演算:
-// - TokenAmountF64 × PriceF64 = YoctoValueF64
+// - TokenAmountF64 × TokenPriceF64 = YoctoValueF64
 // - YoctoValueF64.to_near() → NearValueF64
 
 pub use common::types::{
-    NearValue, NearValueF64, PriceF64, TokenAmountF64, YoctoAmount, YoctoValueF64,
+    NearValue, NearValueF64, TokenAmountF64, TokenPriceF64, YoctoAmount, YoctoValueF64,
 };
 
 // Trading related structures
@@ -59,7 +59,7 @@ pub struct ImmutablePortfolio {
 #[derive(Debug, Clone)]
 pub struct MarketSnapshot {
     /// 価格マップ（yoctoNEAR/smallest_unit = NEAR/token）
-    pub prices: HashMap<String, PriceF64>,
+    pub prices: HashMap<String, TokenPriceF64>,
     pub timestamp: DateTime<Utc>,
     pub data_quality: DataQuality,
 }
@@ -390,7 +390,7 @@ impl MarketSnapshot {
     ///
     /// # Arguments
     /// * `prices` - 価格マップ（無次元比率）
-    pub fn new(prices: HashMap<String, PriceF64>) -> Self {
+    pub fn new(prices: HashMap<String, TokenPriceF64>) -> Self {
         let data_quality = if prices.len() >= 2 {
             DataQuality::High
         } else if prices.len() == 1 {
@@ -412,7 +412,7 @@ impl MarketSnapshot {
     }
 
     /// Get price for a specific token（無次元比率）
-    pub fn get_price(&self, token: &str) -> Option<PriceF64> {
+    pub fn get_price(&self, token: &str) -> Option<TokenPriceF64> {
         self.prices.get(token).copied()
     }
 
@@ -423,7 +423,7 @@ impl MarketSnapshot {
         price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
         timestamp: DateTime<Utc>,
     ) -> Result<Self> {
-        let mut prices: HashMap<String, PriceF64> = HashMap::new();
+        let mut prices: HashMap<String, TokenPriceF64> = HashMap::new();
 
         for (token, data_points) in price_data {
             // Find the closest price point to the target timestamp
@@ -436,7 +436,7 @@ impl MarketSnapshot {
                     .to_string()
                     .parse::<f64>()
                     .unwrap_or(0.0);
-                prices.insert(token.clone(), PriceF64::new(price_value));
+                prices.insert(token.clone(), TokenPriceF64::new(price_value));
             }
         }
 
@@ -600,7 +600,7 @@ pub struct TradeExecution {
     /// 取引数量（smallest_unit）
     pub amount: TokenAmountF64,
     /// 約定価格（無次元比率）
-    pub executed_price: PriceF64,
+    pub executed_price: TokenPriceF64,
     pub cost: TradingCost,
     /// 取引前のポートフォリオ価値（NEAR）
     pub portfolio_value_before: NearValueF64,

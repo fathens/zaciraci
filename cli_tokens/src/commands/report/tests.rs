@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use super::*;
 use crate::commands::simulate::{
     AlgorithmType, DataQualityStats, ExecutionSummary, NearValueF64,
-    PerformanceMetrics as SimPerformanceMetrics, PriceF64, SimulationResult, SimulationSummary,
-    TokenAmountF64, TradeExecution, TradingCost,
+    PerformanceMetrics as SimPerformanceMetrics, SimulationResult, SimulationSummary,
+    TokenAmountF64, TokenPriceF64, TradeExecution, TradingCost,
 };
 use bigdecimal::BigDecimal;
 
@@ -48,7 +48,7 @@ mod unit_tests {
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
                 amount: TokenAmountF64::new(100.0),
-                executed_price: PriceF64::new(1.5),
+                executed_price: TokenPriceF64::new(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
                     slippage: BigDecimal::from(2),
@@ -198,7 +198,7 @@ mod unit_tests {
             from_token: "token_a".to_string(),
             to_token: "token_b".to_string(),
             amount: TokenAmountF64::new(100.0),
-            executed_price: PriceF64::new(1.5),
+            executed_price: TokenPriceF64::new(1.5),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from(3),
                 slippage: BigDecimal::from(2),
@@ -229,7 +229,7 @@ mod unit_tests {
                 from_token: format!("token_{}", i),
                 to_token: format!("token_{}", i + 1),
                 amount: TokenAmountF64::new(100.0),
-                executed_price: PriceF64::new(1.5),
+                executed_price: TokenPriceF64::new(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
                     slippage: BigDecimal::from(2),
@@ -354,7 +354,7 @@ mod phase_4_2_tests {
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
                 amount: TokenAmountF64::new(100.0),
-                executed_price: PriceF64::new(1.5),
+                executed_price: TokenPriceF64::new(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
                     slippage: BigDecimal::from(2),
@@ -371,7 +371,7 @@ mod phase_4_2_tests {
                 from_token: "token_b".to_string(),
                 to_token: "token_c".to_string(),
                 amount: TokenAmountF64::new(120.0),
-                executed_price: PriceF64::new(0.8),
+                executed_price: TokenPriceF64::new(0.8),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(4),
                     slippage: BigDecimal::from(3),

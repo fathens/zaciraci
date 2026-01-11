@@ -5,7 +5,7 @@ use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 use crate::commands::simulate::{
     AlgorithmType, DataQualityStats, ExecutionSummary, MultiAlgorithmSimulationResult, PerformanceMetrics,
     PortfolioValue, SimulationResult, SimulationSummary, TradeExecution, TradingCost,
-    NearValueF64, PriceF64, TokenAmountF64,
+    NearValueF64, TokenPriceF64, TokenAmountF64,
 };
 
 /// Create a test simulation result for a specific algorithm
@@ -46,7 +46,7 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             from_token: "wrap.near".to_string(),
             to_token: "akaia.tkn.near".to_string(),
             amount: TokenAmountF64::new(500.0),
-            executed_price: PriceF64::new(1.2),
+            executed_price: TokenPriceF64::new(1.2),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from_f64(1.5).unwrap(),
                 slippage: BigDecimal::from_f64(2.0).unwrap(),
@@ -63,7 +63,7 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             from_token: "akaia.tkn.near".to_string(),
             to_token: "babyblackdragon.tkn.near".to_string(),
             amount: TokenAmountF64::new(600.0),
-            executed_price: PriceF64::new(0.8),
+            executed_price: TokenPriceF64::new(0.8),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from_f64(1.8).unwrap(),
                 slippage: BigDecimal::from_f64(2.4).unwrap(),

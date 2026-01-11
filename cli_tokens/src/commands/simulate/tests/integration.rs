@@ -12,7 +12,7 @@ use super::super::metrics::calculate_performance_metrics;
 use super::super::*;
 
 // Import newtype wrappers
-use super::super::{NearValueF64, PriceF64, TokenAmountF64};
+use super::super::{NearValueF64, TokenAmountF64, TokenPriceF64};
 
 // Note: generate_mock_price_data function is not available in simulate module
 // This test has been commented out as it depends on non-existent functionality
@@ -32,7 +32,7 @@ fn create_test_trade(
         from_token: "token_a".to_string(),
         to_token: "token_b".to_string(),
         amount: TokenAmountF64::new(100.0),
-        executed_price: PriceF64::new(1.0),
+        executed_price: TokenPriceF64::new(1.0),
         cost: TradingCost {
             protocol_fee: BigDecimal::from_str("0.0").unwrap(),
             slippage: BigDecimal::from_str("0.0").unwrap(),

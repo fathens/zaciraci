@@ -74,9 +74,9 @@ impl TokenPrice {
         self.0.to_f64().unwrap_or(0.0)
     }
 
-    /// PriceF64 版に変換（精度損失あり）
-    pub fn to_price_f64(&self) -> PriceF64 {
-        PriceF64(self.0.to_f64().unwrap_or(0.0))
+    /// TokenPriceF64 版に変換（精度損失あり）
+    pub fn to_price_f64(&self) -> TokenPriceF64 {
+        TokenPriceF64(self.0.to_f64().unwrap_or(0.0))
     }
 
     /// 価格がゼロかどうか
@@ -208,24 +208,25 @@ impl Div<f64> for TokenPrice {
 }
 
 // =============================================================================
-// PriceF64（価格）- f64 版
+// TokenPriceF64（価格）- f64 版
 // =============================================================================
 
-/// 価格（無次元比率）- f64 版
+/// 価格（NEAR/token）- f64 版
 ///
 /// シミュレーションやアルゴリズムで使用する高速版。
+/// TokenPrice の f64 版。
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct PriceF64(f64);
+pub struct TokenPriceF64(f64);
 
-impl PriceF64 {
+impl TokenPriceF64 {
     /// ゼロ価格を作成
     pub fn zero() -> Self {
-        PriceF64(0.0)
+        TokenPriceF64(0.0)
     }
 
-    /// f64 から PriceF64 を作成
+    /// f64 から TokenPriceF64 を作成
     pub fn new(value: f64) -> Self {
-        PriceF64(value)
+        TokenPriceF64(value)
     }
 
     /// 内部の f64 を取得
@@ -244,33 +245,33 @@ impl PriceF64 {
     }
 }
 
-impl fmt::Display for PriceF64 {
+impl fmt::Display for TokenPriceF64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Forward formatting options (precision, width, etc.) to inner f64
         fmt::Display::fmt(&self.0, f)
     }
 }
 
-// PriceF64 同士の加算
-impl Add for PriceF64 {
-    type Output = PriceF64;
-    fn add(self, other: PriceF64) -> PriceF64 {
-        PriceF64(self.0 + other.0)
+// TokenPriceF64 同士の加算
+impl Add for TokenPriceF64 {
+    type Output = TokenPriceF64;
+    fn add(self, other: TokenPriceF64) -> TokenPriceF64 {
+        TokenPriceF64(self.0 + other.0)
     }
 }
 
-// PriceF64 同士の減算
-impl Sub for PriceF64 {
-    type Output = PriceF64;
-    fn sub(self, other: PriceF64) -> PriceF64 {
-        PriceF64(self.0 - other.0)
+// TokenPriceF64 同士の減算
+impl Sub for TokenPriceF64 {
+    type Output = TokenPriceF64;
+    fn sub(self, other: TokenPriceF64) -> TokenPriceF64 {
+        TokenPriceF64(self.0 - other.0)
     }
 }
 
-// PriceF64 同士の除算 → 比率を返す
-impl Div for PriceF64 {
+// TokenPriceF64 同士の除算 → 比率を返す
+impl Div for TokenPriceF64 {
     type Output = f64;
-    fn div(self, other: PriceF64) -> f64 {
+    fn div(self, other: TokenPriceF64) -> f64 {
         if other.0 == 0.0 {
             0.0
         } else {
@@ -279,30 +280,30 @@ impl Div for PriceF64 {
     }
 }
 
-// PriceF64 × スカラー (f64)
-impl Mul<f64> for PriceF64 {
-    type Output = PriceF64;
-    fn mul(self, scalar: f64) -> PriceF64 {
-        PriceF64(self.0 * scalar)
+// TokenPriceF64 × スカラー (f64)
+impl Mul<f64> for TokenPriceF64 {
+    type Output = TokenPriceF64;
+    fn mul(self, scalar: f64) -> TokenPriceF64 {
+        TokenPriceF64(self.0 * scalar)
     }
 }
 
-// スカラー (f64) × PriceF64
-impl Mul<PriceF64> for f64 {
-    type Output = PriceF64;
-    fn mul(self, price: PriceF64) -> PriceF64 {
-        PriceF64(self * price.0)
+// スカラー (f64) × TokenPriceF64
+impl Mul<TokenPriceF64> for f64 {
+    type Output = TokenPriceF64;
+    fn mul(self, price: TokenPriceF64) -> TokenPriceF64 {
+        TokenPriceF64(self * price.0)
     }
 }
 
-// PriceF64 / スカラー (f64)
-impl Div<f64> for PriceF64 {
-    type Output = PriceF64;
-    fn div(self, scalar: f64) -> PriceF64 {
+// TokenPriceF64 / スカラー (f64)
+impl Div<f64> for TokenPriceF64 {
+    type Output = TokenPriceF64;
+    fn div(self, scalar: f64) -> TokenPriceF64 {
         if scalar == 0.0 {
-            PriceF64::zero()
+            TokenPriceF64::zero()
         } else {
-            PriceF64(self.0 / scalar)
+            TokenPriceF64(self.0 / scalar)
         }
     }
 }
@@ -829,8 +830,8 @@ impl Mul<TokenPrice> for NearAmount {
     }
 }
 
-// PriceF64 × YoctoAmount (f64にキャストして計算)
-impl Mul<YoctoAmount> for PriceF64 {
+// TokenPriceF64 × YoctoAmount (f64にキャストして計算)
+impl Mul<YoctoAmount> for TokenPriceF64 {
     type Output = f64;
     fn mul(self, amount: YoctoAmount) -> f64 {
         self.0 * amount.0.to_f64().unwrap_or(0.0)
@@ -944,7 +945,7 @@ impl Div<f64> for TokenAmountF64 {
 
 /// 金額（yoctoNEAR 単位）- f64 版
 ///
-/// シミュレーションで使用する金額。TokenAmountF64 × PriceF64 の結果。
+/// シミュレーションで使用する金額。TokenAmountF64 × TokenPriceF64 の結果。
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct YoctoValueF64(f64);
 
@@ -1039,10 +1040,10 @@ impl Mul<YoctoValueF64> for f64 {
     }
 }
 
-// YoctoValueF64 / PriceF64 = TokenAmountF64
-impl Div<PriceF64> for YoctoValueF64 {
+// YoctoValueF64 / TokenPriceF64 = TokenAmountF64
+impl Div<TokenPriceF64> for YoctoValueF64 {
     type Output = TokenAmountF64;
-    fn div(self, price: PriceF64) -> TokenAmountF64 {
+    fn div(self, price: TokenPriceF64) -> TokenAmountF64 {
         if price.0 == 0.0 {
             TokenAmountF64::zero()
         } else {
@@ -1051,14 +1052,14 @@ impl Div<PriceF64> for YoctoValueF64 {
     }
 }
 
-// YoctoValueF64 / TokenAmountF64 = PriceF64
+// YoctoValueF64 / TokenAmountF64 = TokenPriceF64
 impl Div<TokenAmountF64> for YoctoValueF64 {
-    type Output = PriceF64;
-    fn div(self, amount: TokenAmountF64) -> PriceF64 {
+    type Output = TokenPriceF64;
+    fn div(self, amount: TokenAmountF64) -> TokenPriceF64 {
         if amount.0 == 0.0 {
-            PriceF64::zero()
+            TokenPriceF64::zero()
         } else {
-            PriceF64(self.0 / amount.0)
+            TokenPriceF64(self.0 / amount.0)
         }
     }
 }
@@ -1155,16 +1156,16 @@ impl Mul<NearValueF64> for f64 {
 // f64 版の Price × Amount = Value の演算
 // =============================================================================
 
-// TokenAmountF64 × PriceF64 = YoctoValueF64
-impl Mul<PriceF64> for TokenAmountF64 {
+// TokenAmountF64 × TokenPriceF64 = YoctoValueF64
+impl Mul<TokenPriceF64> for TokenAmountF64 {
     type Output = YoctoValueF64;
-    fn mul(self, price: PriceF64) -> YoctoValueF64 {
+    fn mul(self, price: TokenPriceF64) -> YoctoValueF64 {
         YoctoValueF64(self.0 * price.0)
     }
 }
 
-// PriceF64 × TokenAmountF64 = YoctoValueF64
-impl Mul<TokenAmountF64> for PriceF64 {
+// TokenPriceF64 × TokenAmountF64 = YoctoValueF64
+impl Mul<TokenAmountF64> for TokenPriceF64 {
     type Output = YoctoValueF64;
     fn mul(self, amount: TokenAmountF64) -> YoctoValueF64 {
         YoctoValueF64(self.0 * amount.0)

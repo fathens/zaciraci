@@ -21,7 +21,7 @@ use super::super::*;
 use common::algorithm::momentum::{calculate_confidence_adjusted_return, rank_tokens_by_momentum};
 
 // Import newtype wrappers
-use super::super::{NearValueF64, PriceF64, TokenAmountF64, YoctoValueF64};
+use super::super::{NearValueF64, TokenAmountF64, TokenPriceF64, YoctoValueF64};
 
 fn rate(v: i32) -> ExchangeRate {
     ExchangeRate::new(BigDecimal::from(v), 24)
@@ -319,7 +319,7 @@ fn test_get_prices_at_time_multiple_tokens() {
     price_data.insert("token1".to_string(), values);
 
     let result = get_prices_at_time(&price_data, target_time).unwrap();
-    assert_eq!(result.get("token1"), Some(&PriceF64::new(105.0)));
+    assert_eq!(result.get("token1"), Some(&TokenPriceF64::new(105.0)));
 }
 
 #[test]
@@ -402,7 +402,7 @@ fn test_get_prices_at_time_with_sufficient_data() {
     price_data.insert("token1".to_string(), values);
 
     let result = get_prices_at_time(&price_data, target_time).unwrap();
-    assert_eq!(result.get("token1").unwrap(), &PriceF64::new(105.0));
+    assert_eq!(result.get("token1").unwrap(), &TokenPriceF64::new(105.0));
 }
 
 #[test]
@@ -462,7 +462,7 @@ fn test_get_prices_at_time_closest_selection() {
     price_data.insert("token1".to_string(), values);
 
     let result = get_prices_at_time(&price_data, target_time).unwrap();
-    assert_eq!(result.get("token1").unwrap(), &PriceF64::new(105.0));
+    assert_eq!(result.get("token1").unwrap(), &TokenPriceF64::new(105.0));
 }
 
 // === New Refactored Function Tests ===
@@ -715,7 +715,7 @@ fn test_portfolio_total_value_calculation() {
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
 
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.5));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.5));
     let market = MarketSnapshot::new(prices);
 
     let total_value = portfolio.total_value(&market);
@@ -734,7 +734,7 @@ fn test_portfolio_total_value_with_cash() {
     };
 
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(2.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(2.0));
     let market = MarketSnapshot::new(prices);
 
     let total_value = portfolio.total_value(&market);
@@ -751,8 +751,8 @@ fn test_portfolio_total_value_with_cash() {
 #[test]
 fn test_market_snapshot_creation() {
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(100.0));
-    prices.insert("token_b".to_string(), PriceF64::new(200.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(100.0));
+    prices.insert("token_b".to_string(), TokenPriceF64::new(200.0));
 
     let market = MarketSnapshot::new(prices.clone());
 
@@ -770,16 +770,16 @@ fn test_data_quality_assessment() {
 
     // Single token
     let mut single_prices = HashMap::new();
-    single_prices.insert("token_a".to_string(), PriceF64::new(100.0));
+    single_prices.insert("token_a".to_string(), TokenPriceF64::new(100.0));
     let single_market = MarketSnapshot::new(single_prices);
     assert_eq!(single_market.data_quality, DataQuality::Low);
     assert!(!single_market.is_reliable());
 
     // Multiple tokens
     let mut multi_prices = HashMap::new();
-    multi_prices.insert("token_a".to_string(), PriceF64::new(100.0));
-    multi_prices.insert("token_b".to_string(), PriceF64::new(200.0));
-    multi_prices.insert("token_c".to_string(), PriceF64::new(300.0));
+    multi_prices.insert("token_a".to_string(), TokenPriceF64::new(100.0));
+    multi_prices.insert("token_b".to_string(), TokenPriceF64::new(200.0));
+    multi_prices.insert("token_c".to_string(), TokenPriceF64::new(300.0));
     let multi_market = MarketSnapshot::new(multi_prices);
     assert_eq!(multi_market.data_quality, DataQuality::High);
     assert!(multi_market.is_reliable());
@@ -787,7 +787,7 @@ fn test_data_quality_assessment() {
     // High quality market (6+ tokens)
     let mut high_prices = HashMap::new();
     for i in 0..7 {
-        high_prices.insert(format!("token_{}", i), PriceF64::new(100.0 + i as f64));
+        high_prices.insert(format!("token_{}", i), TokenPriceF64::new(100.0 + i as f64));
     }
     let high_market = MarketSnapshot::new(high_prices);
     assert_eq!(high_market.data_quality, DataQuality::High);
@@ -799,7 +799,7 @@ fn test_portfolio_apply_hold_decision() {
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
 
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
     let market = MarketSnapshot::new(prices);
 
     let config = TradingConfig {
@@ -825,8 +825,8 @@ fn test_portfolio_apply_sell_decision() {
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
 
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
-    prices.insert("token_b".to_string(), PriceF64::new(2.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
+    prices.insert("token_b".to_string(), TokenPriceF64::new(2.0));
     let market = MarketSnapshot::new(prices);
 
     let config = TradingConfig {
@@ -862,8 +862,8 @@ fn test_portfolio_apply_switch_decision() {
     };
 
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(2.0));
-    prices.insert("token_b".to_string(), PriceF64::new(1.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(2.0));
+    prices.insert("token_b".to_string(), TokenPriceF64::new(1.0));
     let market = MarketSnapshot::new(prices);
 
     let config = TradingConfig {
@@ -901,7 +901,7 @@ fn test_market_snapshot_from_price_data() {
 
     let market = MarketSnapshot::from_price_data(&price_data, target_time).unwrap();
 
-    assert_eq!(market.get_price("token_a"), Some(PriceF64::new(150.0)));
+    assert_eq!(market.get_price("token_a"), Some(TokenPriceF64::new(150.0)));
     assert_eq!(market.timestamp, target_time);
     assert_eq!(market.data_quality, DataQuality::Low);
 }
@@ -915,9 +915,9 @@ fn test_immutable_portfolio_demo_trading_sequence() {
 
     // Market snapshot with multiple tokens
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
-    prices.insert("token_b".to_string(), PriceF64::new(2.0));
-    prices.insert("token_c".to_string(), PriceF64::new(0.5));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
+    prices.insert("token_b".to_string(), TokenPriceF64::new(2.0));
+    prices.insert("token_c".to_string(), TokenPriceF64::new(0.5));
     let market = MarketSnapshot::new(prices);
 
     // Trading config
@@ -1009,7 +1009,7 @@ fn test_momentum_strategy_hold_decision() {
 
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
     let market = MarketSnapshot::new(prices);
 
     let opportunities = vec![TokenOpportunity {
@@ -1039,8 +1039,8 @@ fn test_momentum_strategy_switch_decision() {
 
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
-    prices.insert("token_b".to_string(), PriceF64::new(2.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
+    prices.insert("token_b".to_string(), TokenPriceF64::new(2.0));
     let market = MarketSnapshot::new(prices);
 
     let opportunities = vec![TokenOpportunity {
@@ -1073,7 +1073,7 @@ fn test_portfolio_strategy_rebalancing() {
     // Test single token portfolio (should rebalance)
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
     let market = MarketSnapshot::new(prices);
 
     assert!(strategy.should_rebalance(&portfolio, &market));
@@ -1095,8 +1095,8 @@ fn test_trend_following_strategy_decision() {
 
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
-    prices.insert("token_b".to_string(), PriceF64::new(2.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
+    prices.insert("token_b".to_string(), TokenPriceF64::new(2.0));
     let market = MarketSnapshot::new(prices);
 
     let opportunities = vec![TokenOpportunity {
@@ -1135,7 +1135,7 @@ fn test_strategy_context_execution() {
 
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
     let market = MarketSnapshot::new(prices);
 
     let opportunities = vec![TokenOpportunity {
@@ -1163,9 +1163,9 @@ fn test_strategy_comparison_demo() {
     // Setup common test data
     let portfolio = ImmutablePortfolio::new(TokenAmountF64::new(1000.0), "token_a");
     let mut prices = HashMap::new();
-    prices.insert("token_a".to_string(), PriceF64::new(1.0));
-    prices.insert("token_b".to_string(), PriceF64::new(2.0));
-    prices.insert("token_c".to_string(), PriceF64::new(1.5));
+    prices.insert("token_a".to_string(), TokenPriceF64::new(1.0));
+    prices.insert("token_b".to_string(), TokenPriceF64::new(2.0));
+    prices.insert("token_c".to_string(), TokenPriceF64::new(1.5));
     let market = MarketSnapshot::new(prices);
 
     let opportunities = vec![
@@ -1272,7 +1272,10 @@ fn test_data_gap_handling_get_prices_at_time_optional() {
     let target_time_0 = start_time;
     let result_0 = get_prices_at_time_optional(&price_data, target_time_0);
     assert!(result_0.is_some(), "00:00のデータは取得できるはず");
-    assert_eq!(result_0.unwrap().get(&token), Some(&PriceF64::new(100.0)));
+    assert_eq!(
+        result_0.unwrap().get(&token),
+        Some(&TokenPriceF64::new(100.0))
+    );
 
     // テストケース2: データが存在する時刻の近く（00:30 - 1時間以内）
     let target_time_30min = start_time + chrono::Duration::minutes(30);

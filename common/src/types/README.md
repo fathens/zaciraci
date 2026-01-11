@@ -34,7 +34,7 @@ NEAR プロトコルでは：
 
 | 型 | 内部表現 | 意味 |
 |---|---|---|
-| `PriceF64` | f64 | 価格（高速計算用） |
+| `TokenPriceF64` | f64 | 価格 NEAR/token（高速計算用） |
 | `TokenAmountF64` | f64 | トークン量 |
 | `YoctoValueF64` | f64 | yoctoNEAR 金額 |
 | `NearValueF64` | f64 | NEAR 金額 |
