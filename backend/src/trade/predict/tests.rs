@@ -3,14 +3,29 @@ use crate::Result;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDateTime, Utc};
 use serial_test::serial;
 use std::str::FromStr;
 use zaciraci_common::prediction::{ChronosPredictionResponse, PredictionResult};
-use zaciraci_common::types::TokenPrice;
+use zaciraci_common::types::{ExchangeRate, TokenPrice};
 
 fn price(s: &str) -> TokenPrice {
     TokenPrice::new(BigDecimal::from_str(s).unwrap())
+}
+
+/// テスト用ヘルパー: 文字列から ExchangeRate を作成 (decimals = 24)
+fn make_rate_from_str(s: &str) -> ExchangeRate {
+    ExchangeRate::new(BigDecimal::from_str(s).unwrap(), 24)
+}
+
+/// テスト用ヘルパー: TokenRate を簡潔に作成
+fn make_token_rate(
+    base: TokenOutAccount,
+    quote: TokenInAccount,
+    rate_str: &str,
+    timestamp: NaiveDateTime,
+) -> TokenRate {
+    TokenRate::new_with_timestamp(base, quote, make_rate_from_str(rate_str), timestamp)
 }
 
 // テスト用のヘルパー構造体
@@ -49,10 +64,10 @@ impl TestFixture {
                 let price_variation = (hour as f64 * 0.1).sin() * volatility_factor;
                 let price = base_price + price_variation;
 
-                let rate = TokenRate::new_with_timestamp(
+                let rate = make_token_rate(
                     token.clone(),
                     self.quote_token.clone(),
-                    BigDecimal::from_str(&format!("{:.4}", price)).unwrap(),
+                    &format!("{:.4}", price),
                     now - chrono::Duration::hours(hour),
                 );
                 rates.push(rate);
@@ -69,10 +84,10 @@ impl TestFixture {
 
         for (i, price) in prices.iter().enumerate() {
             let timestamp = now - chrono::Duration::hours((prices.len() - i - 1) as i64);
-            let rate = TokenRate::new_with_timestamp(
+            let rate = make_token_rate(
                 token.clone(),
                 self.quote_token.clone(),
-                BigDecimal::from_str(&price.to_string()).unwrap(),
+                &price.to_string(),
                 timestamp,
             );
             rates.push(rate);
@@ -369,10 +384,10 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
         for hour in 1..=6 {
             let price = base_price + (hour as f64 * 0.1);
-            let rate = TokenRate::new_with_timestamp(
+            let rate = make_token_rate(
                 base_token.clone(),
                 fixture.quote_token.clone(),
-                BigDecimal::from_str(&format!("{:.3}", price)).unwrap(),
+                &format!("{:.3}", price),
                 now - chrono::Duration::hours(hour),
             );
             all_rates.push(rate);

@@ -32,6 +32,7 @@ diesel::table! {
         quote_token -> Varchar,
         rate -> Numeric,
         timestamp -> Timestamp,
+        decimals -> Nullable<Int2>,
     }
 }
 

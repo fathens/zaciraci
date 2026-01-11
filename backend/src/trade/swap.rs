@@ -308,10 +308,10 @@ where
                 Ok(Some(rate)) => {
                     // balance / rateで価値を計算
                     // rate = (base_token / quote_token) なので、balance / rate = quote_token換算
-                    if rate.rate.is_zero() {
+                    if rate.rate().is_zero() {
                         warn!(log, "Rate is zero for token"; "token" => token);
                     } else {
-                        let token_value = BigDecimal::from(*balance) / rate.rate;
+                        let token_value = BigDecimal::from(*balance) / rate.rate();
                         total_value += token_value;
                     }
                 }

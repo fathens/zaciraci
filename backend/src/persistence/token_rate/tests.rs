@@ -6,10 +6,42 @@ use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
-use chrono::SubsecRound;
+use chrono::{NaiveDateTime, SubsecRound};
 use diesel::RunQueryDsl;
 use serial_test::serial;
 use std::str::FromStr;
+use zaciraci_common::types::ExchangeRate;
+
+/// テスト用ヘルパー: BigDecimal からデフォルト decimals (24) の ExchangeRate を作成
+fn make_rate(value: i64) -> ExchangeRate {
+    ExchangeRate::new(BigDecimal::from(value), 24)
+}
+
+/// テスト用ヘルパー: 文字列からデフォルト decimals (24) の ExchangeRate を作成
+fn make_rate_str(value: &str) -> ExchangeRate {
+    ExchangeRate::new(BigDecimal::from_str(value).unwrap(), 24)
+}
+
+/// テスト用ヘルパー: TokenRate を簡潔に作成
+fn make_token_rate(
+    base: TokenOutAccount,
+    quote: TokenInAccount,
+    rate: i64,
+    timestamp: NaiveDateTime,
+) -> TokenRate {
+    TokenRate::new_with_timestamp(base, quote, make_rate(rate), timestamp)
+}
+
+/// テスト用ヘルパー: TokenRate を文字列レートで作成
+#[allow(dead_code)]
+fn make_token_rate_str(
+    base: TokenOutAccount,
+    quote: TokenInAccount,
+    rate: &str,
+    timestamp: NaiveDateTime,
+) -> TokenRate {
+    TokenRate::new_with_timestamp(base, quote, make_rate_str(rate), timestamp)
+}
 
 // TokenRateインスタンス比較用マクロ
 macro_rules! assert_token_rate_eq {
@@ -28,7 +60,8 @@ macro_rules! assert_token_rate_eq {
             $message
         );
         assert_eq!(
-            $left.rate, $right.rate,
+            $left.rate(),
+            $right.rate(),
             "{} - レートが一致しません",
             $message
         );
@@ -72,10 +105,8 @@ async fn test_token_rate_single_insert() -> Result<()> {
     assert!(result.is_none(), "Empty table should return None");
 
     // 3. １つインサート
-    let rate = BigDecimal::from(1000);
     let timestamp = chrono::Utc::now().naive_utc();
-    let token_rate =
-        TokenRate::new_with_timestamp(base.clone(), quote.clone(), rate.clone(), timestamp);
+    let token_rate = make_token_rate(base.clone(), quote.clone(), 1000, timestamp);
     token_rate.insert().await?;
 
     // 4. get_latest でインサートしたレコードが返ることを確認
@@ -107,14 +138,9 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     let latest = chrono::Utc::now().naive_utc();
 
     let rates = vec![
-        TokenRate::new_with_timestamp(
-            base.clone(),
-            quote.clone(),
-            BigDecimal::from(1000),
-            earliest,
-        ),
-        TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1050), middle),
-        TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1100), latest),
+        make_token_rate(base.clone(), quote.clone(), 1000, earliest),
+        make_token_rate(base.clone(), quote.clone(), 1050, middle),
+        make_token_rate(base.clone(), quote.clone(), 1100, latest),
     ];
 
     // 3. バッチ挿入
@@ -134,9 +160,11 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     ];
     for (i, rate) in history.iter().enumerate() {
         assert_eq!(
-            rate.rate, expected_rates[i],
+            rate.rate(),
+            &expected_rates[i],
             "Record {} should have rate {}",
-            i, expected_rates[i]
+            i,
+            expected_rates[i]
         );
     }
 
@@ -154,22 +182,17 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     // 個別のTimestampを確認
     assert_token_rate_eq!(
         history[0],
-        TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1100), latest),
+        make_token_rate(base.clone(), quote.clone(), 1100, latest),
         "Latest record should match"
     );
     assert_token_rate_eq!(
         history[1],
-        TokenRate::new_with_timestamp(base.clone(), quote.clone(), BigDecimal::from(1050), middle),
+        make_token_rate(base.clone(), quote.clone(), 1050, middle),
         "Middle record should match"
     );
     assert_token_rate_eq!(
         history[2],
-        TokenRate::new_with_timestamp(
-            base.clone(),
-            quote.clone(),
-            BigDecimal::from(1000),
-            earliest
-        ),
+        make_token_rate(base.clone(), quote.clone(), 1000, earliest),
         "Earliest record should match"
     );
 
@@ -177,13 +200,13 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     let limited_history = TokenRate::get_history(&base, &quote, 2).await?;
     assert_eq!(limited_history.len(), 2, "Should return only 2 records");
     assert_eq!(
-        limited_history[0].rate,
-        BigDecimal::from(1100),
+        limited_history[0].rate(),
+        &BigDecimal::from(1100),
         "Newest record should be first"
     );
     assert_eq!(
-        limited_history[1].rate,
-        BigDecimal::from(1050),
+        limited_history[1].rate(),
+        &BigDecimal::from(1050),
         "Second newest should be second"
     );
 
@@ -207,12 +230,9 @@ async fn test_token_rate_different_pairs() -> Result<()> {
 
     // 2. 異なるトークンペアのレコードを挿入
     let now = chrono::Utc::now().naive_utc();
-    let rate1 =
-        TokenRate::new_with_timestamp(base1.clone(), quote1.clone(), BigDecimal::from(1000), now);
-    let rate2 =
-        TokenRate::new_with_timestamp(base2.clone(), quote1.clone(), BigDecimal::from(2000), now);
-    let rate3 =
-        TokenRate::new_with_timestamp(base1.clone(), quote2.clone(), BigDecimal::from(3000), now);
+    let rate1 = make_token_rate(base1.clone(), quote1.clone(), 1000, now);
+    let rate2 = make_token_rate(base2.clone(), quote1.clone(), 2000, now);
+    let rate3 = make_token_rate(base1.clone(), quote2.clone(), 3000, now);
 
     // 3. レコードを挿入
     TokenRate::batch_insert(&[rate1.clone(), rate2.clone(), rate3.clone()]).await?;
@@ -297,26 +317,11 @@ async fn test_token_rate_get_latests_by_quote() -> Result<()> {
     // 3. 複数のレコードを挿入（同じクォートトークンで異なるベーストークン）
     let rates = vec![
         // quote1用のレコード
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(1000),
-            two_hours_ago, // 古いレコード
-        ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(1100),
-            one_hour_ago, // 新しいレコード（base1用）
-        ),
-        TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote1.clone(),
-            BigDecimal::from(20000),
-            now, // 最新レコード（base2用）
-        ),
+        make_token_rate(base1.clone(), quote1.clone(), 1000, two_hours_ago), // 古いレコード
+        make_token_rate(base1.clone(), quote1.clone(), 1100, one_hour_ago), // 新しいレコード（base1用）
+        make_token_rate(base2.clone(), quote1.clone(), 20000, now), // 最新レコード（base2用）
         // 異なるクォートトークン（quote2）用のレコード - 結果に含まれないはず
-        TokenRate::new_with_timestamp(base3.clone(), quote2.clone(), BigDecimal::from(5), now),
+        make_token_rate(base3.clone(), quote2.clone(), 5, now),
     ];
 
     // 4. バッチ挿入
@@ -352,18 +357,9 @@ async fn test_token_rate_get_latests_by_quote() -> Result<()> {
     // タイムスタンプを精度を考慮して比較
     {
         // base2 (btc) のタイムスタンプがnowに近いことを確認
-        let expected_btc = TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote1.clone(),
-            BigDecimal::from(20000),
-            now,
-        );
-        let actual_btc = TokenRate::new_with_timestamp(
-            result_base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(20000),
-            *result_time1,
-        );
+        let expected_btc = make_token_rate(base2.clone(), quote1.clone(), 20000, now);
+        let actual_btc =
+            make_token_rate(result_base1.clone(), quote1.clone(), 20000, *result_time1);
         assert_token_rate_eq!(
             actual_btc,
             expected_btc,
@@ -373,18 +369,8 @@ async fn test_token_rate_get_latests_by_quote() -> Result<()> {
 
     {
         // base1 (eth) のタイムスタンプがone_hour_agoに近いことを確認
-        let expected_eth = TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(1100),
-            one_hour_ago,
-        );
-        let actual_eth = TokenRate::new_with_timestamp(
-            result_base2.clone(),
-            quote1.clone(),
-            BigDecimal::from(1100),
-            *result_time2,
-        );
+        let expected_eth = make_token_rate(base1.clone(), quote1.clone(), 1100, one_hour_ago);
+        let actual_eth = make_token_rate(result_base2.clone(), quote1.clone(), 1100, *result_time2);
         assert_token_rate_eq!(
             actual_eth,
             expected_eth,
@@ -427,44 +413,14 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // 3. 複数のレコードを挿入（異なるボラティリティを持つデータ）
     let rates = vec![
         // base1 (eth) - 変動率 50%
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote.clone(),
-            BigDecimal::from(1000),
-            two_hours_ago,
-        ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote.clone(),
-            BigDecimal::from(1500),
-            one_hour_ago,
-        ),
+        make_token_rate(base1.clone(), quote.clone(), 1000, two_hours_ago),
+        make_token_rate(base1.clone(), quote.clone(), 1500, one_hour_ago),
         // base2 (btc) - 変動率 100%
-        TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote.clone(),
-            BigDecimal::from(20000),
-            two_hours_ago,
-        ),
-        TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote.clone(),
-            BigDecimal::from(40000),
-            one_hour_ago,
-        ),
+        make_token_rate(base2.clone(), quote.clone(), 20000, two_hours_ago),
+        make_token_rate(base2.clone(), quote.clone(), 40000, one_hour_ago),
         // base3 (near) - 変動率 10%
-        TokenRate::new_with_timestamp(
-            base3.clone(),
-            quote.clone(),
-            BigDecimal::from(5),
-            two_hours_ago,
-        ),
-        TokenRate::new_with_timestamp(
-            base3.clone(),
-            quote.clone(),
-            BigDecimal::from_str("5.5").unwrap(),
-            one_hour_ago,
-        ),
+        make_token_rate(base3.clone(), quote.clone(), 5, two_hours_ago),
+        make_token_rate_str(base3.clone(), quote.clone(), "5.5", one_hour_ago),
     ];
 
     // 4. バッチ挿入
@@ -532,35 +488,30 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // レートが0を含むデータを挿入（HAVING MIN(rate) > 0により0を含むトークンは除外）
     let zero_rate_data = vec![
         // base1: 0を含むため除外される
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(0), // MIN(rate) = 0 なので除外
+            0,
             two_hours_ago + chrono::Duration::minutes(1),
-        ),
-        TokenRate::new_with_timestamp(
+        ), // MIN(rate) = 0 なので除外
+        make_token_rate(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(100),
+            100,
             two_hours_ago + chrono::Duration::minutes(2),
         ),
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(150),
+            150,
             one_hour_ago + chrono::Duration::minutes(1),
         ),
         // base2: 全て正の値のため含まれる
-        TokenRate::new_with_timestamp(
+        make_token_rate(base2.clone(), quote.clone(), 50, one_hour_ago),
+        make_token_rate(
             base2.clone(),
             quote.clone(),
-            BigDecimal::from(50),
-            one_hour_ago,
-        ),
-        TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote.clone(),
-            BigDecimal::from(60),
+            60,
             one_hour_ago + chrono::Duration::minutes(30),
         ),
     ];
@@ -642,31 +593,21 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // ケース1: 境界値テスト - 時間範囲の境界値データ
     let boundary_test_data = vec![
         // 範囲内のデータ（境界値ぎりぎり）
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(1000),
-            just_before_range,
-        ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(1500),
-            just_after_range,
-        ),
+        make_token_rate(base1.clone(), quote1.clone(), 1000, just_before_range),
+        make_token_rate(base1.clone(), quote1.clone(), 1500, just_after_range),
         // 範囲外のデータ（除外されるはず）
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(800),
-            two_hours_ago - chrono::Duration::seconds(1), // 範囲開始直前
-        ),
-        TokenRate::new_with_timestamp(
+            800,
+            two_hours_ago - chrono::Duration::seconds(1),
+        ), // 範囲開始直前
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(2000),
-            now + chrono::Duration::seconds(1), // 範囲終了直後
-        ),
+            2000,
+            now + chrono::Duration::seconds(1),
+        ), // 範囲終了直後
     ];
 
     TokenRate::batch_insert(&boundary_test_data).await?;
@@ -696,31 +637,21 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // ケース2: 同一ボラティリティ値の処理
     let same_volatility_data = vec![
         // base1 (eth) - 変動率 50%
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(100),
+            100,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(150),
-            one_hour_ago,
-        ),
+        make_token_rate(base1.clone(), quote1.clone(), 150, one_hour_ago),
         // base2 (btc) - 変動率 50%（同じ）
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(200),
+            200,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote1.clone(),
-            BigDecimal::from(300),
-            one_hour_ago,
-        ),
+        make_token_rate(base2.clone(), quote1.clone(), 300, one_hour_ago),
     ];
 
     TokenRate::batch_insert(&same_volatility_data).await?;
@@ -753,31 +684,21 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // ケース3: 最小レートが0の場合（HAVING MIN(rate) > 0により除外されるケース）
     let zero_max_rate_data = vec![
         // base1: 負の値(-10)と0の値 → MIN(rate) = -10 > 0 が false なので除外される
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(-10),
+            -10,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(0), // MIN(rate) = -10 (negative) なので除外
-            one_hour_ago,
-        ),
+        make_token_rate(base1.clone(), quote1.clone(), 0, one_hour_ago), // MIN(rate) = -10 (negative) なので除外
         // base2: 全て正の値 → MIN(rate) = 5 > 0 が true なので含まれる
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(5),
+            5,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote1.clone(),
-            BigDecimal::from(10),
-            one_hour_ago,
-        ),
+        make_token_rate(base2.clone(), quote1.clone(), 10, one_hour_ago),
     ];
 
     TokenRate::batch_insert(&zero_max_rate_data).await?;
@@ -806,10 +727,10 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     clean_table().await?;
 
     // ケース4: 1つのレコードのみの場合（ボラティリティ = 0）
-    let single_record_data = vec![TokenRate::new_with_timestamp(
+    let single_record_data = vec![make_token_rate(
         base1.clone(),
         quote1.clone(),
-        BigDecimal::from(100),
+        100,
         one_hour_ago,
     )];
 
@@ -836,31 +757,21 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // ケース5: 異なる quote トークンのフィルタリング
     let different_quote_data = vec![
         // quote1用のデータ
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(100),
+            100,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(150),
-            one_hour_ago,
-        ),
+        make_token_rate(base1.clone(), quote1.clone(), 150, one_hour_ago),
         // quote2用のデータ（フィルタリングされるはず）
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote2.clone(),
-            BigDecimal::from(200),
+            200,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote2.clone(),
-            BigDecimal::from(400),
-            one_hour_ago, // 変動率100%だが、quote1でフィルタリングされる
-        ),
+        make_token_rate(base1.clone(), quote2.clone(), 400, one_hour_ago), // 変動率100%だが、quote1でフィルタリングされる
     ];
 
     TokenRate::batch_insert(&different_quote_data).await?;
@@ -891,37 +802,37 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // ケース6: 負の値やゼロレートの混在（HAVING MIN(rate) > 0による除外テスト）
     let mixed_rates_data = vec![
         // base1: 負の値、ゼロ、正の値を含む → MIN(rate) = -10 < 0 なので除外される
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(-10),
-            two_hours_ago + chrono::Duration::minutes(10), // 確実に範囲内
-        ),
-        TokenRate::new_with_timestamp(
+            -10,
+            two_hours_ago + chrono::Duration::minutes(10),
+        ), // 確実に範囲内
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(0), // MIN(rate) = -10 なので除外
-            two_hours_ago + chrono::Duration::minutes(20), // 確実に範囲内
-        ),
-        TokenRate::new_with_timestamp(
+            0,
+            two_hours_ago + chrono::Duration::minutes(20),
+        ), // MIN(rate) = -10 なので除外
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(10),
-            two_hours_ago + chrono::Duration::minutes(30), // 確実に範囲内
-        ),
+            10,
+            two_hours_ago + chrono::Duration::minutes(30),
+        ), // 確実に範囲内
         // base2: 全て正の値 → MIN(rate) = 5 > 0 なので含まれる
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(5),
-            two_hours_ago + chrono::Duration::minutes(40), // 確実に範囲内
-        ),
-        TokenRate::new_with_timestamp(
+            5,
+            two_hours_ago + chrono::Duration::minutes(40),
+        ), // 確実に範囲内
+        make_token_rate(
             base2.clone(),
             quote1.clone(),
-            BigDecimal::from(15),
-            two_hours_ago + chrono::Duration::minutes(50), // 確実に範囲内
-        ),
+            15,
+            two_hours_ago + chrono::Duration::minutes(50),
+        ), // 確実に範囲内
     ];
 
     TokenRate::batch_insert(&mixed_rates_data).await?;
@@ -971,18 +882,13 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // ケース1: 通常の計算 - 正の値
     let normal_data = vec![
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(1000),
+            1000,
             two_hours_ago + chrono::Duration::minutes(30),
         ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(1500),
-            one_hour_ago,
-        ),
+        make_token_rate(base1.clone(), quote1.clone(), 1500, one_hour_ago),
     ];
 
     TokenRate::batch_insert(&normal_data).await?;
@@ -1007,18 +913,13 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // ケース2: 負の値を含む計算（HAVING MIN(rate) > 0により除外される）
     let negative_data = vec![
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(10), // MIN(rate) = 10 > 0 なので含まれる
+            10,
             two_hours_ago + chrono::Duration::minutes(1),
-        ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(100),
-            one_hour_ago,
-        ),
+        ), // MIN(rate) = 10 > 0 なので含まれる
+        make_token_rate(base1.clone(), quote1.clone(), 100, one_hour_ago),
     ];
 
     TokenRate::batch_insert(&negative_data).await?;
@@ -1043,18 +944,13 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // ケース3: 同一値の計算
     let same_value_data = vec![
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote1.clone(),
-            BigDecimal::from(100),
+            100,
             two_hours_ago + chrono::Duration::minutes(30),
         ),
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote1.clone(),
-            BigDecimal::from(100),
-            one_hour_ago,
-        ),
+        make_token_rate(base1.clone(), quote1.clone(), 100, one_hour_ago),
     ];
 
     TokenRate::batch_insert(&same_value_data).await?;
@@ -1102,44 +998,19 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     let old_rates = vec![
         // 400日前のレコード（削除されるはず）
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote.clone(),
-            BigDecimal::from(1000),
-            days_400_ago,
-        ),
+        make_token_rate(base1.clone(), quote.clone(), 1000, days_400_ago),
         // 200日前のレコード（残るはず - 365日以内）
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote.clone(),
-            BigDecimal::from(1100),
-            days_200_ago,
-        ),
+        make_token_rate(base1.clone(), quote.clone(), 1100, days_200_ago),
         // 100日前のレコード（残るはず）
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote.clone(),
-            BigDecimal::from(1200),
-            days_100_ago,
-        ),
+        make_token_rate(base1.clone(), quote.clone(), 1200, days_100_ago),
         // 10日前のレコード（残るはず）
-        TokenRate::new_with_timestamp(
-            base1.clone(),
-            quote.clone(),
-            BigDecimal::from(1300),
-            days_10_ago,
-        ),
+        make_token_rate(base1.clone(), quote.clone(), 1300, days_10_ago),
         // 今のレコード（残るはず）
-        TokenRate::new_with_timestamp(base1.clone(), quote.clone(), BigDecimal::from(1400), now),
+        make_token_rate(base1.clone(), quote.clone(), 1400, now),
         // 別のトークンペア - 400日前（削除されるはず）
-        TokenRate::new_with_timestamp(
-            base2.clone(),
-            quote.clone(),
-            BigDecimal::from(20000),
-            days_400_ago,
-        ),
+        make_token_rate(base2.clone(), quote.clone(), 20000, days_400_ago),
         // 別のトークンペア - 今（残るはず）
-        TokenRate::new_with_timestamp(base2.clone(), quote.clone(), BigDecimal::from(21000), now),
+        make_token_rate(base2.clone(), quote.clone(), 21000, now),
     ];
 
     // 3. レコードを挿入（cleanup_old_recordsは自動で呼ばれ、デフォルトで365日より古いレコードが削除される）
@@ -1175,7 +1046,9 @@ async fn test_cleanup_old_records() -> Result<()> {
     for (i, record) in history1.iter().enumerate() {
         println!(
             "  [{}] rate={}, timestamp={}",
-            i, record.rate, record.timestamp
+            i,
+            record.rate(),
+            record.timestamp
         );
     }
     println!("Expected timestamps:");
@@ -1188,8 +1061,8 @@ async fn test_cleanup_old_records() -> Result<()> {
     // 最も古いレコードは200日前のもの（index 3）
     // レートで確認（200日前のレコードは rate = 1100）
     assert_eq!(
-        history1[3].rate,
-        BigDecimal::from(1100),
+        history1[3].rate(),
+        &BigDecimal::from(1100),
         "Oldest retained record should have rate 1100 (200 days old record)"
     );
 
@@ -1220,28 +1093,28 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     // 6. カスタム保持期間のテスト（30日）
     let recent_rates = vec![
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(1000),
+            1000,
             now - chrono::Duration::days(100),
         ),
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(1100),
+            1100,
             now - chrono::Duration::days(50),
         ),
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(1200),
+            1200,
             now - chrono::Duration::days(20),
         ),
-        TokenRate::new_with_timestamp(
+        make_token_rate(
             base1.clone(),
             quote.clone(),
-            BigDecimal::from(1300),
+            1300,
             now - chrono::Duration::days(5),
         ),
     ];

@@ -105,7 +105,7 @@ impl PredictionService {
                 let quote_token = quote_token_account.clone();
 
                 match TokenRate::get_latest(&base_token, &quote_token).await {
-                    Ok(Some(rate)) => TokenPrice::new(rate.rate),
+                    Ok(Some(rate)) => TokenPrice::new(rate.rate().clone()),
                     Ok(None) => {
                         // ログを後で追加（slogのsetupが必要）
                         TokenPrice::new(BigDecimal::from(1)) // デフォルト値
@@ -161,7 +161,7 @@ impl PredictionService {
             .into_iter()
             .map(|rate| PricePoint {
                 timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                price: TokenPrice::new(rate.rate),
+                price: TokenPrice::new(rate.rate().clone()),
                 volume: None, // ボリュームデータは現在利用不可
             })
             .collect();

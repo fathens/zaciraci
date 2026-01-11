@@ -18,8 +18,10 @@ use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::types::MilliNear;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
+use zaciraci_common::types::ExchangeRate;
 
 pub async fn run() {
     tokio::spawn(run_record_rates());
@@ -170,11 +172,28 @@ async fn record_rates() -> Result<()> {
     // これにより後続処理でのスケーリングが不要になる
     let near_amount = initial_value / 1_000_000_000_000_000_000_000_000u128; // yocto → NEAR
     info!(log, "converting to rates (yocto scale)");
+
+    // 各トークンの decimals を取得
+    let mut token_decimals: HashMap<String, u8> = HashMap::new();
+    for (base, _) in &values {
+        let token_str = base.to_string();
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            token_decimals.entry(token_str.clone())
+        {
+            let decimals = stats::get_token_decimals(client, &token_str).await;
+            e.insert(decimals);
+        }
+    }
+
+    // ExchangeRate を使って TokenRate を構築
     let rates: Vec<_> = values
         .into_iter()
         .map(|(base, value)| {
+            let token_str = base.to_string();
+            let decimals = token_decimals.get(&token_str).copied().unwrap_or(24);
             let rate_yocto = BigDecimal::from(value) / BigDecimal::from(near_amount);
-            TokenRate::new(base, quote_token.clone(), rate_yocto)
+            let exchange_rate = ExchangeRate::new(rate_yocto, decimals);
+            TokenRate::new(base, quote_token.clone(), exchange_rate)
         })
         .collect();
 

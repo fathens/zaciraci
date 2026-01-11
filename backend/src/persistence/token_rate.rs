@@ -10,8 +10,9 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use std::str::FromStr;
 use zaciraci_common::config;
+use zaciraci_common::types::ExchangeRate;
 
-// データベース用モデル
+// データベース用モデル（読み込み用）
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = token_rates)]
 struct DbTokenRate {
@@ -20,17 +21,37 @@ struct DbTokenRate {
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
+    pub decimals: Option<i16>,
     pub timestamp: NaiveDateTime,
 }
 
-// データベース挿入用モデル
+// データベース挿入用モデル（ExchangeRate から構築）
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = token_rates)]
 struct NewDbTokenRate {
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
+    pub decimals: Option<i16>,
     pub timestamp: NaiveDateTime,
+}
+
+impl NewDbTokenRate {
+    /// ExchangeRate から挿入用モデルを作成
+    fn from_exchange_rate(
+        base: &TokenOutAccount,
+        quote: &TokenInAccount,
+        exchange_rate: &ExchangeRate,
+        timestamp: NaiveDateTime,
+    ) -> Self {
+        Self {
+            base_token: base.to_string(),
+            quote_token: quote.to_string(),
+            rate: exchange_rate.raw_rate().clone(),
+            decimals: Some(exchange_rate.decimals() as i16),
+            timestamp,
+        }
+    }
 }
 
 // ボラティリティ計算結果用の一時的な構造体
@@ -50,63 +71,150 @@ pub struct TokenVolatility {
 }
 
 // アプリケーションロジック用モデル
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct TokenRate {
     pub base: TokenOutAccount,
     pub quote: TokenInAccount,
-    pub rate: BigDecimal,
+    pub exchange_rate: ExchangeRate,
     pub timestamp: NaiveDateTime,
+}
+
+/// 後方互換性のために rate フィールドへのアクセサを提供
+impl TokenRate {
+    /// rate の BigDecimal 値を取得（後方互換性用）
+    pub fn rate(&self) -> &BigDecimal {
+        self.exchange_rate.raw_rate()
+    }
+
+    /// decimals を取得
+    #[allow(dead_code)]
+    pub fn decimals(&self) -> u8 {
+        self.exchange_rate.decimals()
+    }
 }
 
 // 相互変換の実装
 impl TokenRate {
-    // 新しいTokenRateインスタンスを現在時刻で作成
-    pub fn new(base: TokenOutAccount, quote: TokenInAccount, rate: BigDecimal) -> Self {
+    /// 新しい TokenRate を作成（ExchangeRate 使用）
+    pub fn new(base: TokenOutAccount, quote: TokenInAccount, exchange_rate: ExchangeRate) -> Self {
         Self {
             base,
             quote,
-            rate,
+            exchange_rate,
             timestamp: chrono::Utc::now().naive_utc(),
         }
     }
 
-    // 特定の時刻でTokenRateインスタンスを作成
+    /// 特定の時刻で TokenRate を作成
     #[allow(dead_code)]
     pub fn new_with_timestamp(
         base: TokenOutAccount,
         quote: TokenInAccount,
-        rate: BigDecimal,
+        exchange_rate: ExchangeRate,
         timestamp: NaiveDateTime,
     ) -> Self {
         Self {
             base,
             quote,
-            rate,
+            exchange_rate,
             timestamp,
         }
     }
 
-    // DBオブジェクトから変換
+    /// DB レコードから変換（decimals が NULL の場合はデフォルト値を使用）
+    ///
+    /// 注意: 本来は decimals が NULL の場合は RPC で取得して backfill すべき。
+    /// バッチ処理など backfill が不要な場合はこの関数を使用する。
     fn from_db(db_rate: DbTokenRate) -> Result<Self> {
         let base = TokenAccount::from_str(&db_rate.base_token)?.into();
         let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
 
+        // decimals が NULL の場合はデフォルト値 24 (NEAR) を使用
+        let decimals = db_rate.decimals.map(|d| d as u8).unwrap_or(24);
+        let exchange_rate = ExchangeRate::new(db_rate.rate, decimals);
+
         Ok(Self {
             base,
             quote,
-            rate: db_rate.rate,
+            exchange_rate,
             timestamp: db_rate.timestamp,
         })
     }
 
-    // NewDbTokenRateに変換
+    /// DB レコードから変換（decimals が NULL の場合は RPC で取得して backfill）
+    ///
+    /// decimals が NULL の場合:
+    /// 1. RPC で ft_metadata を呼び出して decimals を取得
+    /// 2. 同じトークンの全レコードを UPDATE
+    /// 3. 取得した decimals で ExchangeRate を構築
+    #[allow(dead_code)]
+    async fn from_db_with_backfill<C>(db_rate: DbTokenRate, client: &C) -> Result<Self>
+    where
+        C: crate::jsonrpc::ViewContract,
+    {
+        let base = TokenAccount::from_str(&db_rate.base_token)?.into();
+        let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
+
+        let decimals = match db_rate.decimals {
+            Some(d) => d as u8,
+            None => {
+                // decimals が NULL → RPC で取得して backfill
+                let d = crate::trade::stats::get_token_decimals(client, &db_rate.base_token).await;
+                Self::backfill_decimals(&db_rate.base_token, d).await?;
+                d
+            }
+        };
+
+        let exchange_rate = ExchangeRate::new(db_rate.rate, decimals);
+
+        Ok(Self {
+            base,
+            quote,
+            exchange_rate,
+            timestamp: db_rate.timestamp,
+        })
+    }
+
+    /// 指定トークンの全レコードに decimals を設定
+    #[allow(dead_code)]
+    pub async fn backfill_decimals(base_token: &str, decimals: u8) -> Result<usize> {
+        use diesel::sql_types::{SmallInt, Text};
+
+        let log = DEFAULT.new(o!(
+            "function" => "backfill_decimals",
+            "base_token" => base_token.to_string(),
+            "decimals" => decimals,
+        ));
+        info!(log, "start");
+
+        let conn = connection_pool::get().await?;
+        let base_token = base_token.to_string();
+        let decimals_i16 = decimals as i16;
+
+        let updated_count = conn
+            .interact(move |conn| {
+                diesel::sql_query(
+                    "UPDATE token_rates SET decimals = $1 WHERE base_token = $2 AND decimals IS NULL",
+                )
+                .bind::<SmallInt, _>(decimals_i16)
+                .bind::<Text, _>(&base_token)
+                .execute(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        info!(log, "finish"; "updated_count" => updated_count);
+        Ok(updated_count)
+    }
+
+    /// NewDbTokenRate に変換
     fn to_new_db(&self) -> NewDbTokenRate {
-        NewDbTokenRate {
-            base_token: self.base.to_string(),
-            quote_token: self.quote.to_string(),
-            rate: self.rate.clone(),
-            timestamp: self.timestamp,
-        }
+        NewDbTokenRate::from_exchange_rate(
+            &self.base,
+            &self.quote,
+            &self.exchange_rate,
+            self.timestamp,
+        )
     }
 
     // データベースに挿入

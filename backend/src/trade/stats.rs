@@ -855,7 +855,7 @@ where
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token))?;
 
-                    BigDecimal::from(current_balance) / &rate.rate
+                    BigDecimal::from(current_balance) / rate.rate()
                 } else {
                     BigDecimal::from(0)
                 };
@@ -893,7 +893,11 @@ where
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token))?;
 
-                    sell_operations.push((token.clone(), diff_wrap_near.abs(), rate.rate));
+                    sell_operations.push((
+                        token.clone(),
+                        diff_wrap_near.abs(),
+                        rate.rate().clone(),
+                    ));
                 } else if diff_wrap_near > BigDecimal::from(0) && diff_wrap_near >= min_trade_size {
                     // 購入が必要
                     buy_operations.push((token.clone(), diff_wrap_near));
@@ -1790,7 +1794,7 @@ impl SameBaseTokenRates {
                 let points = rates
                     .iter()
                     .map(|r| Point {
-                        rate: r.rate.clone(),
+                        rate: r.rate().clone(),
                         timestamp: r.timestamp,
                     })
                     .collect();
