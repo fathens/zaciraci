@@ -343,7 +343,7 @@ impl PredictionService {
                 let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
                 PredictedPrice {
                     timestamp,
-                    price: TokenPrice::new(price.clone()),
+                    price: TokenPrice::from_near_per_token(price.clone()),
                     confidence: None, // 信頼度は将来実装
                 }
             })

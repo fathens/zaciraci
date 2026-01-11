@@ -13,12 +13,12 @@ static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Create TokenPrice from string for tests
 fn price(s: &str) -> TokenPrice {
-    TokenPrice::new(BigDecimal::from_str(s).unwrap())
+    TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
 }
 
 /// Create TokenPrice from integer for tests
 fn price_from_int(n: i64) -> TokenPrice {
-    TokenPrice::new(BigDecimal::from(n))
+    TokenPrice::from_near_per_token(BigDecimal::from(n))
 }
 
 /// Setup test environment with unique base directory

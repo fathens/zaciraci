@@ -74,7 +74,10 @@ pub fn get_prices_at_time(
             .to_string()
             .parse::<f64>()
             .unwrap_or(0.0);
-        prices.insert(token.clone(), TokenPriceF64::new(price_value));
+        prices.insert(
+            token.clone(),
+            TokenPriceF64::from_near_per_token(price_value),
+        );
     }
 
     Ok(prices)
@@ -252,5 +255,7 @@ fn find_price_within(
             value_time <= target_time && value_time >= earliest_allowed
         })
         .max_by_key(|v| v.time)
-        .map(|v| TokenPriceF64::new(v.value.to_string().parse::<f64>().unwrap_or(0.0)))
+        .map(|v| {
+            TokenPriceF64::from_near_per_token(v.value.to_string().parse::<f64>().unwrap_or(0.0))
+        })
 }

@@ -1463,10 +1463,10 @@ mod comparison_chart_tests {
             .enumerate()
             .map(|(i, &value)| PortfolioValue {
                 timestamp: start_date + chrono::Duration::days(i as i64),
-                total_value: NearValueF64::new(value),
+                total_value: NearValueF64::from_near(value),
                 cash_balance: NearValueF64::zero(),
                 holdings: std::collections::HashMap::new(),
-                unrealized_pnl: NearValueF64::new(value - 1000.0),
+                unrealized_pnl: NearValueF64::from_near(value - 1000.0),
             })
             .collect();
 

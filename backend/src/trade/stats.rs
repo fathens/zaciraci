@@ -15,8 +15,8 @@
 //!
 //! ## 単位変換（型安全）
 //!
-//! - NEAR → yoctoNEAR: `NearValue::new(bd).to_yocto().into_bigdecimal()`
-//! - yoctoNEAR → NEAR: `YoctoValue::new(bd).to_near().into_bigdecimal()`
+//! - NEAR → yoctoNEAR: `NearValue::from_near(bd).to_yocto().into_bigdecimal()`
+//! - yoctoNEAR → NEAR: `YoctoValue::from_yocto(bd).to_near().into_bigdecimal()`
 
 mod arima;
 
@@ -261,14 +261,14 @@ async fn prepare_funds() -> Result<u128> {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .map(|v| {
-            NearValue::new(BigDecimal::from(v))
+            NearValue::from_near(BigDecimal::from(v))
                 .to_yocto()
                 .into_bigdecimal()
                 .to_u128()
                 .unwrap_or(0)
         })
         .unwrap_or_else(|| {
-            NearValue::new(BigDecimal::from(100))
+            NearValue::from_near(BigDecimal::from(100))
                 .to_yocto()
                 .into_bigdecimal()
                 .to_u128()
@@ -639,7 +639,7 @@ where
     };
 
     // yoctoNEARからNEARに変換（型安全、BigDecimal精度維持）
-    let total_value_near = YoctoValue::new(BigDecimal::from(available_funds)).to_near();
+    let total_value_near = YoctoValue::from_yocto(BigDecimal::from(available_funds)).to_near();
 
     // 既存ポジションの取得（評価期間中のみ）
     let holdings = if is_new_period {
@@ -2025,7 +2025,7 @@ mod tests {
     use zaciraci_common::types::TokenPrice;
 
     fn price_from_int(v: i64) -> TokenPrice {
-        TokenPrice::new(BigDecimal::from(v))
+        TokenPrice::from_near_per_token(BigDecimal::from(v))
     }
 
     #[test]

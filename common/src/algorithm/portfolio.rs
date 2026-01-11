@@ -1,6 +1,5 @@
 use crate::Result;
-use crate::types::YoctoValue;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, Zero};
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
@@ -915,15 +914,15 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
             let holding_bd = holding.as_bigdecimal().clone();
 
             // レートのBigDecimal表現を取得
+            // raw_rate = tokens_smallest / NEAR
             let rate_bd = token.current_rate.raw_rate();
 
-            // 価値を計算 (BigDecimal同士の乗算)
-            let value_yocto_bd = rate_bd * &holding_bd;
-
-            // yoctoNEARからNEARに変換 (型安全な変換)
-            let value_near_bd = YoctoValue::new(value_yocto_bd.clone())
-                .to_near()
-                .into_bigdecimal();
+            // 価値を計算: holding / rate = tokens_smallest / (tokens_smallest/NEAR) = NEAR
+            let value_near_bd = if rate_bd.is_zero() {
+                BigDecimal::zero()
+            } else {
+                &holding_bd / rate_bd
+            };
 
             // 重みを計算 (BigDecimal)
             if total_value_bd > BigDecimal::from(0) {
@@ -953,7 +952,6 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
                     );
                     println!("  Rate (BigDecimal): {}", rate_bd);
                     println!("  Holdings (BigDecimal): {}", holding_bd);
-                    println!("  Value (yocto): {}", value_yocto_bd);
                     println!("  Value (NEAR): {}", value_near_bd);
                     println!("  Weight: {:.6}%", weights[i] * 100.0);
                 }

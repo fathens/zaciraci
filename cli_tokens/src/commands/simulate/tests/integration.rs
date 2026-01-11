@@ -31,16 +31,16 @@ fn create_test_trade(
         timestamp: Utc::now(),
         from_token: "token_a".to_string(),
         to_token: "token_b".to_string(),
-        amount: TokenAmountF64::new(100.0),
-        executed_price: TokenPriceF64::new(1.0),
+        amount: TokenAmountF64::from_smallest_units(100.0),
+        executed_price: TokenPriceF64::from_near_per_token(1.0),
         cost: TradingCost {
             protocol_fee: BigDecimal::from_str("0.0").unwrap(),
             slippage: BigDecimal::from_str("0.0").unwrap(),
             gas_fee: BigDecimal::from_str("0.0").unwrap(),
             total: BigDecimal::from_str(&cost.to_string()).unwrap(),
         },
-        portfolio_value_before: NearValueF64::new(portfolio_value_before),
-        portfolio_value_after: NearValueF64::new(portfolio_value_after),
+        portfolio_value_before: NearValueF64::from_near(portfolio_value_before),
+        portfolio_value_after: NearValueF64::from_near(portfolio_value_after),
         success: true,
         reason: "Test trade".to_string(),
     }
@@ -51,7 +51,7 @@ fn create_portfolio_value(timestamp: DateTime<Utc>, total_value: f64) -> Portfol
     PortfolioValue {
         timestamp,
         holdings: HashMap::new(),
-        total_value: NearValueF64::new(total_value),
+        total_value: NearValueF64::from_near(total_value),
         cash_balance: NearValueF64::zero(),
         unrealized_pnl: NearValueF64::zero(),
     }
@@ -194,17 +194,17 @@ fn test_performance_metrics_calculation() {
     let portfolio_values = vec![
         PortfolioValue {
             timestamp: Utc::now(),
-            total_value: NearValueF64::new(initial_value),
-            cash_balance: NearValueF64::new(initial_value),
+            total_value: NearValueF64::from_near(initial_value),
+            cash_balance: NearValueF64::from_near(initial_value),
             holdings: HashMap::new(),
             unrealized_pnl: NearValueF64::zero(),
         },
         PortfolioValue {
             timestamp: Utc::now(),
-            total_value: NearValueF64::new(final_value),
+            total_value: NearValueF64::from_near(final_value),
             cash_balance: NearValueF64::zero(),
             holdings: HashMap::new(),
-            unrealized_pnl: NearValueF64::new(100.0),
+            unrealized_pnl: NearValueF64::from_near(100.0),
         },
     ];
 

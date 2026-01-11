@@ -433,10 +433,18 @@ where
     // トレード記録を保存
     let from_amount = BigDecimal::from(swap_amount);
     let to_amount = BigDecimal::from(out);
-    let price = if !from_amount.is_zero() {
-        to_amount.clone() / from_amount.clone()
+
+    // yoctoNEAR建て価格を計算
+    // - from_token が wrap.near/NEAR の場合: from_amount が yoctoNEAR
+    // - to_token が wrap.near/NEAR の場合: to_amount が yoctoNEAR
+    // - それ以外: from_amount をベースに推定（改善の余地あり）
+    let price_yocto_near = if from_token.contains("wrap.near") || from_token == "near" {
+        from_amount.clone()
+    } else if to_token.contains("wrap.near") || to_token == "near" {
+        to_amount.clone()
     } else {
-        BigDecimal::from(0)
+        // wrap.near以外の場合、from_amountをベースに推定
+        from_amount.clone()
     };
 
     recorder
@@ -446,7 +454,7 @@ where
             YoctoAmount::from_bigdecimal(from_amount),
             to_token.to_string(),
             YoctoAmount::from_bigdecimal(to_amount),
-            YoctoValue::new(price),
+            YoctoValue::from_yocto(price_yocto_near),
         )
         .await?;
 
@@ -551,7 +559,7 @@ async fn record_successful_trade(
             YoctoAmount::new(from_amount),
             to_token.to_string(),
             YoctoAmount::new(to_amount),
-            YoctoValue::new(price_yocto_near),
+            YoctoValue::from_yocto(price_yocto_near),
         )
         .await?;
 

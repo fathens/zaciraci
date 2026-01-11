@@ -75,14 +75,23 @@ async fn save_to_cache(
     forecast_data: &common::prediction::ChronosPredictionResponse,
 ) -> Result<()> {
     // Convert forecast data to cache format
+    // NOTE: Chronos は入力データと同じスケールで値を返す
+    //       CLI は Backend API から rate (ExchangeRate形式) を取得して Chronos に送信するため、
+    //       Chronos の予測値も rate 形式になっている
+    //       rate → TokenPrice に変換して保存する
+    const DEFAULT_DECIMALS: u8 = 24;
     let cache_predictions: Vec<CachePredictionPoint> = forecast_data
         .forecast_timestamp
         .iter()
         .zip(forecast_data.forecast_values.iter())
-        .map(|(timestamp, price)| CachePredictionPoint {
-            timestamp: *timestamp,
-            price: common::types::TokenPrice::new(price.clone()),
-            confidence: None, // Could extract from confidence intervals if available
+        .map(|(timestamp, rate_value)| {
+            // rate_value は rate (ExchangeRate形式) なので TokenPrice に変換
+            let rate = ExchangeRate::from_raw_rate(rate_value.clone(), DEFAULT_DECIMALS);
+            CachePredictionPoint {
+                timestamp: *timestamp,
+                price: rate.to_price(),
+                confidence: None, // Could extract from confidence intervals if available
+            }
         })
         .collect();
 
@@ -418,7 +427,7 @@ pub fn execute_trading_action(
             let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
 
             // ガスコストをBigDecimalで計算（型安全な変換、精度損失なし）
-            let gas_cost_yocto_bd = NearValue::new(ctx.config.gas_cost.clone())
+            let gas_cost_yocto_bd = NearValue::from_near(ctx.config.gas_cost.clone())
                 .to_yocto()
                 .into_bigdecimal();
 
@@ -436,7 +445,7 @@ pub fn execute_trading_action(
 
             // コストをトークン数量で表現（BigDecimal精度保持）
             let trade_cost = if !ctx.current_price.is_zero() {
-                TokenAmountF64::new(
+                TokenAmountF64::from_smallest_units(
                     (&trade_cost_value_yocto_bd / &current_price_bd)
                         .to_string()
                         .parse::<f64>()
@@ -502,7 +511,7 @@ pub fn execute_trading_action(
             let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
 
             // ガスコストをBigDecimalで計算（型安全な変換、精度損失なし）
-            let gas_cost_yocto_bd = NearValue::new(ctx.config.gas_cost.clone())
+            let gas_cost_yocto_bd = NearValue::from_near(ctx.config.gas_cost.clone())
                 .to_yocto()
                 .into_bigdecimal();
 
@@ -520,7 +529,7 @@ pub fn execute_trading_action(
 
             // コストをトークン数量で表現（BigDecimal精度保持）
             let trade_cost = if !ctx.current_price.is_zero() {
-                TokenAmountF64::new(
+                TokenAmountF64::from_smallest_units(
                     (&trade_cost_value_yocto_bd / &current_price_bd)
                         .to_string()
                         .parse::<f64>()
@@ -657,7 +666,7 @@ impl ImmutablePortfolio {
                         // 現在の価値を計算（yoctoNEAR単位）
                         let current_value = current_amount * current_price;
                         cost = current_value.as_f64() * 0.006; // Simple fee calculation (yoctoNEAR単位)
-                        let net_value = YoctoValueF64::new(current_value.as_f64() - cost);
+                        let net_value = YoctoValueF64::from_yocto(current_value.as_f64() - cost);
                         let target_amount = net_value / target_price;
 
                         new_holdings.insert(target_token.clone(), target_amount);
@@ -679,7 +688,7 @@ impl ImmutablePortfolio {
                     {
                         let from_value = from_amount * from_price;
                         cost = from_value.as_f64() * 0.006; // Simple fee calculation
-                        let net_value = YoctoValueF64::new(from_value.as_f64() - cost);
+                        let net_value = YoctoValueF64::from_yocto(from_value.as_f64() - cost);
                         let to_amount = net_value / to_price;
 
                         new_holdings.insert(to.clone(), to_amount);

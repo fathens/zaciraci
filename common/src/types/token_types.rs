@@ -75,7 +75,7 @@ impl ExchangeRate {
     /// use std::str::FromStr;
     ///
     /// // 1 USDT = 0.2 NEAR の場合
-    /// let price = TokenPrice::new(BigDecimal::from_str("0.2").unwrap());
+    /// let price = TokenPrice::from_near_per_token(BigDecimal::from_str("0.2").unwrap());
     /// let rate = ExchangeRate::from_price(&price, 6);
     ///
     /// // raw_rate = 10^6 / 0.2 = 5,000,000
@@ -93,20 +93,6 @@ impl ExchangeRate {
             raw_rate: divisor / price.as_bigdecimal(),
             decimals,
         }
-    }
-
-    /// 新しい ExchangeRate を作成
-    ///
-    /// # Deprecated
-    ///
-    /// `from_raw_rate` または `from_price` を使うこと。
-    /// どちらを使うべきかは、渡す値が rate か price かで決まる。
-    #[deprecated(
-        since = "0.1.0",
-        note = "use `from_raw_rate` for rate values or `from_price` for price values"
-    )]
-    pub fn new(raw_rate: BigDecimal, decimals: u8) -> Self {
-        Self { raw_rate, decimals }
     }
 
     /// raw_rate への参照を取得
@@ -160,15 +146,31 @@ pub struct TokenAmount {
 }
 
 impl TokenAmount {
-    /// 新しい TokenAmount を作成
-    pub fn new(smallest_units: BigDecimal, decimals: u8) -> Self {
+    /// smallest_units（最小単位）から TokenAmount を作成
+    ///
+    /// # 引数
+    /// - `smallest_units`: 最小単位での量（例: USDT decimals=6 なら 1_000_000 = 1 USDT）
+    /// - `decimals`: トークンの decimals
+    pub fn from_smallest_units(smallest_units: BigDecimal, decimals: u8) -> Self {
         Self {
             smallest_units,
             decimals,
         }
     }
 
-    /// u128 から TokenAmount を作成
+    /// whole tokens（整数単位）から TokenAmount を作成
+    ///
+    /// # 引数
+    /// - `whole_tokens`: 整数単位での量（例: 1.5 USDT）
+    /// - `decimals`: トークンの decimals
+    pub fn from_whole_tokens(whole_tokens: BigDecimal, decimals: u8) -> Self {
+        Self {
+            smallest_units: whole_tokens * pow10(decimals),
+            decimals,
+        }
+    }
+
+    /// u128 から TokenAmount を作成（smallest_units として解釈）
     pub fn from_u128(smallest_units: u128, decimals: u8) -> Self {
         Self {
             smallest_units: BigDecimal::from(smallest_units),
@@ -229,7 +231,7 @@ impl Div<&ExchangeRate> for TokenAmount {
         if rate.raw_rate.is_zero() {
             return NearValue::zero();
         }
-        NearValue::new(&self.smallest_units / &rate.raw_rate)
+        NearValue::from_near(&self.smallest_units / &rate.raw_rate)
     }
 }
 
@@ -244,7 +246,7 @@ impl Div<&ExchangeRate> for &TokenAmount {
         if rate.raw_rate.is_zero() {
             return NearValue::zero();
         }
-        NearValue::new(&self.smallest_units / &rate.raw_rate)
+        NearValue::from_near(&self.smallest_units / &rate.raw_rate)
     }
 }
 
@@ -255,7 +257,7 @@ impl Mul<&TokenPrice> for TokenAmount {
     type Output = NearValue;
     fn mul(self, price: &TokenPrice) -> NearValue {
         let whole_tokens = self.to_whole();
-        NearValue::new(whole_tokens * price.as_bigdecimal())
+        NearValue::from_near(whole_tokens * price.as_bigdecimal())
     }
 }
 
@@ -263,7 +265,7 @@ impl Mul<&TokenPrice> for &TokenAmount {
     type Output = NearValue;
     fn mul(self, price: &TokenPrice) -> NearValue {
         let whole_tokens = self.to_whole();
-        NearValue::new(whole_tokens * price.as_bigdecimal())
+        NearValue::from_near(whole_tokens * price.as_bigdecimal())
     }
 }
 
@@ -303,7 +305,7 @@ mod tests {
         let holdings = TokenAmount::from_u128(100_000_000, 6);
 
         // 1 USDT = 0.2 NEAR
-        let price = TokenPrice::new(BigDecimal::from_f64(0.2).unwrap());
+        let price = TokenPrice::from_near_per_token(BigDecimal::from_f64(0.2).unwrap());
 
         // 100 USDT × 0.2 = 20 NEAR
         let value: NearValue = holdings * &price;
@@ -312,8 +314,8 @@ mod tests {
 
     #[test]
     fn test_expected_return() {
-        let current = TokenPrice::new(BigDecimal::from_f64(0.2).unwrap());
-        let predicted = TokenPrice::new(BigDecimal::from_f64(0.24).unwrap());
+        let current = TokenPrice::from_near_per_token(BigDecimal::from_f64(0.2).unwrap());
+        let predicted = TokenPrice::from_near_per_token(BigDecimal::from_f64(0.24).unwrap());
 
         // (0.24 - 0.2) / 0.2 = 0.2 = 20%
         let ret = current.expected_return(&predicted);
@@ -451,7 +453,7 @@ mod tests {
     #[test]
     fn test_token_amount_reference_mul_price() {
         let amount = TokenAmount::from_u128(100_000_000, 6);
-        let price = TokenPrice::new(BigDecimal::from_f64(0.2).unwrap());
+        let price = TokenPrice::from_near_per_token(BigDecimal::from_f64(0.2).unwrap());
 
         // &TokenAmount × &TokenPrice
         let value: NearValue = &amount * &price;
@@ -460,7 +462,7 @@ mod tests {
 
     #[test]
     fn test_token_amount_new_with_bigdecimal() {
-        let amount = TokenAmount::new(BigDecimal::from_f64(100.5).unwrap(), 6);
+        let amount = TokenAmount::from_smallest_units(BigDecimal::from_f64(100.5).unwrap(), 6);
 
         // 小数も保持できる
         assert_eq!(amount.decimals(), 6);
@@ -579,13 +581,13 @@ mod tests {
     ///
     /// ## 現状の問題
     ///
-    /// predict.rs では `TokenPrice::new(rate.rate)` で DB の rate を直接格納している。
+    /// predict.rs では `TokenPrice::from_f64(rate.rate)` で DB の rate を直接格納している。
     /// これは意味的には誤り（TokenPrice は NEAR/token のはずだが、rate は tokens/NEAR）。
     ///
     /// ## 実際の動作
     ///
     /// 1. DB に rate = 1,500,000 (USDT, decimals=6) が格納
-    /// 2. predict.rs: TokenPrice::new(1,500,000) で "price" として格納
+    /// 2. predict.rs: TokenPrice::from_f64(1,500,000) で "price" として格納
     /// 3. stats.rs: この値を抽出し `ExchangeRate::from_raw_rate(1,500,000, 6)` で作成
     /// 4. portfolio.rs: `rate.to_price()` で正しい TokenPrice に変換
     ///
@@ -599,7 +601,7 @@ mod tests {
         let db_rate = BigDecimal::from(1_500_000);
 
         // predict.rs: TokenPrice として格納（意味的には誤りだが数値は正しい）
-        let price_in_predict_rs = TokenPrice::new(db_rate.clone());
+        let price_in_predict_rs = TokenPrice::from_near_per_token(db_rate.clone());
 
         // stats.rs: 値を抽出して ExchangeRate として解釈
         let extracted_value = price_in_predict_rs.as_bigdecimal().clone();

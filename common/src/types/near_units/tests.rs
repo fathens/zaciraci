@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 #[test]
 fn test_price_arithmetic() {
-    let p1 = TokenPrice::new(BigDecimal::from(10));
-    let p2 = TokenPrice::new(BigDecimal::from(3));
+    let p1 = TokenPrice::from_near_per_token(BigDecimal::from(10));
+    let p2 = TokenPrice::from_near_per_token(BigDecimal::from(3));
 
     // 加算
     let sum = p1.clone() + p2.clone();
@@ -25,8 +25,8 @@ fn test_price_arithmetic() {
 
 #[test]
 fn test_price_f64_arithmetic() {
-    let p1 = TokenPriceF64::new(10.0);
-    let p2 = TokenPriceF64::new(3.0);
+    let p1 = TokenPriceF64::from_near_per_token(10.0);
+    let p2 = TokenPriceF64::from_near_per_token(3.0);
 
     // 加算
     let sum = p1 + p2;
@@ -74,13 +74,13 @@ fn test_unit_conversion() {
 #[test]
 fn test_price_times_amount() {
     // TokenPrice × YoctoAmount = YoctoValue
-    let price = TokenPrice::new(BigDecimal::from_str("0.5").unwrap());
+    let price = TokenPrice::from_near_per_token(BigDecimal::from_str("0.5").unwrap());
     let amount = YoctoAmount::new(1000);
     let value: YoctoValue = price.clone() * amount;
     assert_eq!(value.as_bigdecimal(), &BigDecimal::from(500));
 
     // TokenPrice × NearAmount = NearValue
-    let near_amount = NearAmount::new(BigDecimal::from(2));
+    let near_amount = NearAmount::from_near(BigDecimal::from(2));
     let near_value: NearValue = price * near_amount;
     assert_eq!(near_value.as_bigdecimal(), &BigDecimal::from(1));
 }
@@ -88,8 +88,8 @@ fn test_price_times_amount() {
 #[test]
 fn test_value_divided_by_price() {
     // YoctoValue / TokenPrice = YoctoAmount
-    let value = YoctoValue::new(BigDecimal::from(1000));
-    let price = TokenPrice::new(BigDecimal::from(2));
+    let value = YoctoValue::from_yocto(BigDecimal::from(1000));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(2));
     let amount: YoctoAmount = value / price;
     assert_eq!(amount.to_u128(), 500);
 }
@@ -97,7 +97,7 @@ fn test_value_divided_by_price() {
 #[test]
 fn test_value_divided_by_amount() {
     // YoctoValue / YoctoAmount = TokenPrice
-    let value = YoctoValue::new(BigDecimal::from(1000));
+    let value = YoctoValue::from_yocto(BigDecimal::from(1000));
     let amount = YoctoAmount::new(500);
     let price: TokenPrice = value / amount;
     assert_eq!(price.as_bigdecimal(), &BigDecimal::from(2));
@@ -106,12 +106,12 @@ fn test_value_divided_by_amount() {
 #[test]
 fn test_zero_division() {
     // ゼロ除算は安全にゼロを返す
-    let p1 = TokenPrice::new(BigDecimal::from(10));
+    let p1 = TokenPrice::from_near_per_token(BigDecimal::from(10));
     let p2 = TokenPrice::zero();
     let ratio = p1 / p2;
     assert_eq!(ratio, BigDecimal::zero());
 
-    let value = YoctoValue::new(BigDecimal::from(100));
+    let value = YoctoValue::from_yocto(BigDecimal::from(100));
     let zero_price = TokenPrice::zero();
     let amount: YoctoAmount = value / zero_price;
     assert_eq!(amount.to_u128(), 0);
@@ -119,7 +119,7 @@ fn test_zero_division() {
 
 #[test]
 fn test_price_f64_conversion() {
-    let price = TokenPrice::new(BigDecimal::from_str("123.456").unwrap());
+    let price = TokenPrice::from_near_per_token(BigDecimal::from_str("123.456").unwrap());
     // to_f64() は直接 f64 を返す
     let price_f64_raw = price.to_f64();
     assert!((price_f64_raw - 123.456).abs() < 0.001);
@@ -136,13 +136,13 @@ fn test_price_f64_conversion() {
 #[test]
 fn test_price_serialization() {
     // TokenPrice のシリアライズ/デシリアライズ
-    let price = TokenPrice::new(BigDecimal::from_str("123.456789").unwrap());
+    let price = TokenPrice::from_near_per_token(BigDecimal::from_str("123.456789").unwrap());
     let json = serde_json::to_string(&price).unwrap();
     let deserialized: TokenPrice = serde_json::from_str(&json).unwrap();
     assert_eq!(price, deserialized);
 
     // TokenPriceF64 のシリアライズ/デシリアライズ
-    let price_f64 = TokenPriceF64::new(123.456);
+    let price_f64 = TokenPriceF64::from_near_per_token(123.456);
     let json_f64 = serde_json::to_string(&price_f64).unwrap();
     let deserialized_f64: TokenPriceF64 = serde_json::from_str(&json_f64).unwrap();
     assert!((price_f64.as_f64() - deserialized_f64.as_f64()).abs() < 1e-10);
@@ -150,9 +150,9 @@ fn test_price_serialization() {
 
 #[test]
 fn test_price_comparison() {
-    let p1 = TokenPrice::new(BigDecimal::from(10));
-    let p2 = TokenPrice::new(BigDecimal::from(20));
-    let p3 = TokenPrice::new(BigDecimal::from(10));
+    let p1 = TokenPrice::from_near_per_token(BigDecimal::from(10));
+    let p2 = TokenPrice::from_near_per_token(BigDecimal::from(20));
+    let p3 = TokenPrice::from_near_per_token(BigDecimal::from(10));
 
     // PartialEq
     assert_eq!(p1, p3);
@@ -173,16 +173,16 @@ fn test_price_comparison() {
 
 #[test]
 fn test_price_display() {
-    let price = TokenPrice::new(BigDecimal::from_str("123.456").unwrap());
+    let price = TokenPrice::from_near_per_token(BigDecimal::from_str("123.456").unwrap());
     assert_eq!(format!("{}", price), "123.456");
 
-    let price_f64 = TokenPriceF64::new(123.456);
+    let price_f64 = TokenPriceF64::from_near_per_token(123.456);
     assert!(format!("{}", price_f64).starts_with("123.45"));
 
-    let near_amount = NearAmount::new(BigDecimal::from(5));
+    let near_amount = NearAmount::from_near(BigDecimal::from(5));
     assert_eq!(format!("{}", near_amount), "5 NEAR");
 
-    let near_value = NearValue::new(BigDecimal::from(10));
+    let near_value = NearValue::from_near(BigDecimal::from(10));
     assert_eq!(format!("{}", near_value), "10 NEAR");
 }
 
@@ -190,11 +190,11 @@ fn test_price_display() {
 fn test_is_zero_methods() {
     // TokenPrice
     assert!(TokenPrice::zero().is_zero());
-    assert!(!TokenPrice::new(BigDecimal::from(1)).is_zero());
+    assert!(!TokenPrice::from_near_per_token(BigDecimal::from(1)).is_zero());
 
     // TokenPriceF64
     assert!(TokenPriceF64::zero().is_zero());
-    assert!(!TokenPriceF64::new(0.001).is_zero());
+    assert!(!TokenPriceF64::from_near_per_token(0.001).is_zero());
 
     // YoctoAmount
     assert!(YoctoAmount::zero().is_zero());
@@ -202,21 +202,21 @@ fn test_is_zero_methods() {
 
     // NearAmount
     assert!(NearAmount::zero().is_zero());
-    assert!(!NearAmount::new(BigDecimal::from(1)).is_zero());
+    assert!(!NearAmount::from_near(BigDecimal::from(1)).is_zero());
 
     // YoctoValue
     assert!(YoctoValue::zero().is_zero());
-    assert!(!YoctoValue::new(BigDecimal::from(1)).is_zero());
+    assert!(!YoctoValue::from_yocto(BigDecimal::from(1)).is_zero());
 
     // NearValue
     assert!(NearValue::zero().is_zero());
-    assert!(!NearValue::new(BigDecimal::from(1)).is_zero());
+    assert!(!NearValue::from_near(BigDecimal::from(1)).is_zero());
 }
 
 #[test]
 fn test_near_value_arithmetic() {
-    let v1 = NearValue::new(BigDecimal::from(100));
-    let v2 = NearValue::new(BigDecimal::from(30));
+    let v1 = NearValue::from_near(BigDecimal::from(100));
+    let v2 = NearValue::from_near(BigDecimal::from(30));
 
     // 加算
     let sum = v1.clone() + v2.clone();
@@ -231,12 +231,12 @@ fn test_near_value_arithmetic() {
     assert!(ratio > BigDecimal::from(3) && ratio < BigDecimal::from(4));
 
     // NearValue / TokenPrice = NearAmount
-    let price = TokenPrice::new(BigDecimal::from(2));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(2));
     let amount: NearAmount = v1.clone() / price;
     assert_eq!(amount.as_bigdecimal(), &BigDecimal::from(50));
 
     // NearValue / NearAmount = TokenPrice
-    let near_amount = NearAmount::new(BigDecimal::from(50));
+    let near_amount = NearAmount::from_near(BigDecimal::from(50));
     let price_result: TokenPrice = v1 / near_amount;
     assert_eq!(price_result.as_bigdecimal(), &BigDecimal::from(2));
 }
@@ -244,12 +244,13 @@ fn test_near_value_arithmetic() {
 #[test]
 fn test_yocto_value_conversion() {
     // YoctoValue → NearValue
-    let yocto_value = YoctoValue::new(BigDecimal::from(YOCTO_PER_NEAR) * BigDecimal::from(5));
+    let yocto_value =
+        YoctoValue::from_yocto(BigDecimal::from(YOCTO_PER_NEAR) * BigDecimal::from(5));
     let near_value = yocto_value.to_near();
     assert_eq!(near_value.as_bigdecimal(), &BigDecimal::from(5));
 
     // NearValue → YoctoValue
-    let near_value2 = NearValue::new(BigDecimal::from(3));
+    let near_value2 = NearValue::from_near(BigDecimal::from(3));
     let yocto_value2 = near_value2.to_yocto();
     assert_eq!(
         yocto_value2.as_bigdecimal(),
@@ -260,15 +261,15 @@ fn test_yocto_value_conversion() {
 #[test]
 fn test_reference_arithmetic() {
     // TokenPrice の参照演算
-    let p1 = TokenPrice::new(BigDecimal::from(10));
-    let p2 = TokenPrice::new(BigDecimal::from(3));
+    let p1 = TokenPrice::from_near_per_token(BigDecimal::from(10));
+    let p2 = TokenPrice::from_near_per_token(BigDecimal::from(3));
 
     let diff = &p1 - &p2;
     assert_eq!(diff.as_bigdecimal(), &BigDecimal::from(7));
 
     // NearAmount の参照演算
-    let a1 = NearAmount::new(BigDecimal::from(10));
-    let a2 = NearAmount::new(BigDecimal::from(3));
+    let a1 = NearAmount::from_near(BigDecimal::from(10));
+    let a2 = NearAmount::from_near(BigDecimal::from(3));
 
     let sum = a1.clone() + &a2;
     assert_eq!(sum.as_bigdecimal(), &BigDecimal::from(13));
@@ -280,28 +281,28 @@ fn test_reference_arithmetic() {
 #[test]
 fn test_price_edge_cases() {
     // 非常に小さい価格
-    let tiny = TokenPrice::new(BigDecimal::from_str("0.000000000001").unwrap());
+    let tiny = TokenPrice::from_near_per_token(BigDecimal::from_str("0.000000000001").unwrap());
     assert!(!tiny.is_zero());
     let doubled = tiny.clone() * 2.0;
     assert!(doubled.as_bigdecimal() > tiny.as_bigdecimal());
 
     // 非常に大きい価格
-    let huge = TokenPrice::new(BigDecimal::from_str("999999999999999999").unwrap());
+    let huge = TokenPrice::from_near_per_token(BigDecimal::from_str("999999999999999999").unwrap());
     let half = huge.clone() * 0.5;
     assert!(half.as_bigdecimal() < huge.as_bigdecimal());
 
     // TokenPriceF64 のエッジケース
-    let tiny_f64 = TokenPriceF64::new(1e-15);
+    let tiny_f64 = TokenPriceF64::from_near_per_token(1e-15);
     assert!(!tiny_f64.is_zero());
 
-    let huge_f64 = TokenPriceF64::new(1e15);
+    let huge_f64 = TokenPriceF64::from_near_per_token(1e15);
     let ratio = huge_f64 / tiny_f64;
     assert!(ratio > 1e29);
 }
 
 #[test]
 fn test_price_into_bigdecimal() {
-    let price = TokenPrice::new(BigDecimal::from(42));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(42));
     let bd = price.into_bigdecimal();
     assert_eq!(bd, BigDecimal::from(42));
 }
@@ -329,7 +330,7 @@ fn test_yocto_amount_scalar_mul() {
 
 #[test]
 fn test_price_scalar_division() {
-    let price = TokenPrice::new(BigDecimal::from(100));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(100));
 
     // TokenPrice / f64
     let divided = price.clone() / 4.0;
@@ -342,7 +343,7 @@ fn test_price_scalar_division() {
 
 #[test]
 fn test_f64_times_price() {
-    let price = TokenPrice::new(BigDecimal::from(10));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(10));
 
     // f64 × TokenPrice
     let scaled = 3.0 * price;
@@ -351,7 +352,7 @@ fn test_f64_times_price() {
 
 #[test]
 fn test_price_times_bigdecimal() {
-    let price = TokenPrice::new(BigDecimal::from(10));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(10));
 
     // TokenPrice × BigDecimal
     let scaled = price * BigDecimal::from(5);
@@ -361,13 +362,13 @@ fn test_price_times_bigdecimal() {
 #[test]
 fn test_expected_return() {
     // 上昇ケース: 10 → 12 = 20% リターン
-    let current = TokenPrice::new(BigDecimal::from(10));
-    let predicted = TokenPrice::new(BigDecimal::from(12));
+    let current = TokenPrice::from_near_per_token(BigDecimal::from(10));
+    let predicted = TokenPrice::from_near_per_token(BigDecimal::from(12));
     let ret = current.expected_return(&predicted);
     assert!((ret - 0.2).abs() < 1e-10, "Expected 0.2, got {}", ret);
 
     // 下落ケース: 10 → 8 = -20% リターン
-    let predicted_down = TokenPrice::new(BigDecimal::from(8));
+    let predicted_down = TokenPrice::from_near_per_token(BigDecimal::from(8));
     let ret_down = current.expected_return(&predicted_down);
     assert!(
         (ret_down - (-0.2)).abs() < 1e-10,
@@ -387,7 +388,7 @@ fn test_expected_return() {
 
 #[test]
 fn test_price_f64_scalar_operations() {
-    let price = TokenPriceF64::new(10.0);
+    let price = TokenPriceF64::from_near_per_token(10.0);
 
     // TokenPriceF64 × f64
     let scaled = price * 2.5;
@@ -408,7 +409,7 @@ fn test_price_f64_scalar_operations() {
 
 #[test]
 fn test_price_f64_zero_division() {
-    let p1 = TokenPriceF64::new(10.0);
+    let p1 = TokenPriceF64::from_near_per_token(10.0);
     let p2 = TokenPriceF64::zero();
 
     // TokenPriceF64 / TokenPriceF64 (ゼロ除算)
@@ -418,9 +419,9 @@ fn test_price_f64_zero_division() {
 
 #[test]
 fn test_price_f64_comparison() {
-    let p1 = TokenPriceF64::new(10.0);
-    let p2 = TokenPriceF64::new(20.0);
-    let p3 = TokenPriceF64::new(10.0);
+    let p1 = TokenPriceF64::from_near_per_token(10.0);
+    let p2 = TokenPriceF64::from_near_per_token(20.0);
+    let p3 = TokenPriceF64::from_near_per_token(10.0);
 
     // PartialEq
     assert_eq!(p1, p3);
@@ -437,7 +438,7 @@ fn test_price_f64_comparison() {
 
 #[test]
 fn test_token_amount_f64_basic() {
-    let amount = TokenAmountF64::new(1000.0);
+    let amount = TokenAmountF64::from_smallest_units(1000.0);
 
     assert_eq!(amount.as_f64(), 1000.0);
     assert!(!amount.is_zero());
@@ -450,8 +451,8 @@ fn test_token_amount_f64_basic() {
 
 #[test]
 fn test_token_amount_f64_arithmetic() {
-    let a1 = TokenAmountF64::new(100.0);
-    let a2 = TokenAmountF64::new(30.0);
+    let a1 = TokenAmountF64::from_smallest_units(100.0);
+    let a2 = TokenAmountF64::from_smallest_units(30.0);
 
     // 加算
     let sum = a1 + a2;
@@ -472,7 +473,7 @@ fn test_token_amount_f64_arithmetic() {
 
 #[test]
 fn test_token_amount_f64_scalar_operations() {
-    let amount = TokenAmountF64::new(100.0);
+    let amount = TokenAmountF64::from_smallest_units(100.0);
 
     // スカラー乗算
     let scaled = amount * 2.5;
@@ -493,14 +494,14 @@ fn test_token_amount_f64_scalar_operations() {
 
 #[test]
 fn test_token_amount_f64_to_bigdecimal() {
-    let amount = TokenAmountF64::new(123.456);
+    let amount = TokenAmountF64::from_smallest_units(123.456);
     let bd = amount.to_bigdecimal();
     assert!((bd.to_f64().unwrap() - 123.456).abs() < 0.001);
 }
 
 #[test]
 fn test_token_amount_f64_display() {
-    let amount = TokenAmountF64::new(123.456);
+    let amount = TokenAmountF64::from_smallest_units(123.456);
     let display = format!("{}", amount);
     assert!(display.starts_with("123.45"));
 }
@@ -511,7 +512,7 @@ fn test_token_amount_f64_display() {
 
 #[test]
 fn test_yocto_value_f64_basic() {
-    let value = YoctoValueF64::new(1e24);
+    let value = YoctoValueF64::from_yocto(1e24);
 
     assert_eq!(value.as_f64(), 1e24);
     assert!(!value.is_zero());
@@ -524,8 +525,8 @@ fn test_yocto_value_f64_basic() {
 
 #[test]
 fn test_yocto_value_f64_arithmetic() {
-    let v1 = YoctoValueF64::new(100.0);
-    let v2 = YoctoValueF64::new(30.0);
+    let v1 = YoctoValueF64::from_yocto(100.0);
+    let v2 = YoctoValueF64::from_yocto(30.0);
 
     // 加算
     let sum = v1 + v2;
@@ -546,7 +547,7 @@ fn test_yocto_value_f64_arithmetic() {
 
 #[test]
 fn test_yocto_value_f64_scalar_operations() {
-    let value = YoctoValueF64::new(100.0);
+    let value = YoctoValueF64::from_yocto(100.0);
 
     // スカラー乗算
     let scaled = value * 2.5;
@@ -560,7 +561,7 @@ fn test_yocto_value_f64_scalar_operations() {
 #[test]
 fn test_yocto_value_f64_conversion() {
     // 1 NEAR = 10^24 yoctoNEAR
-    let yocto = YoctoValueF64::new(1e24);
+    let yocto = YoctoValueF64::from_yocto(1e24);
     let near = yocto.to_near();
     assert!((near.as_f64() - 1.0).abs() < 1e-10);
 
@@ -575,7 +576,7 @@ fn test_yocto_value_f64_conversion() {
 
 #[test]
 fn test_near_value_f64_basic() {
-    let value = NearValueF64::new(10.0);
+    let value = NearValueF64::from_near(10.0);
 
     assert_eq!(value.as_f64(), 10.0);
     assert!(!value.is_zero());
@@ -588,8 +589,8 @@ fn test_near_value_f64_basic() {
 
 #[test]
 fn test_near_value_f64_arithmetic() {
-    let v1 = NearValueF64::new(100.0);
-    let v2 = NearValueF64::new(30.0);
+    let v1 = NearValueF64::from_near(100.0);
+    let v2 = NearValueF64::from_near(30.0);
 
     // 加算
     let sum = v1 + v2;
@@ -610,7 +611,7 @@ fn test_near_value_f64_arithmetic() {
 
 #[test]
 fn test_near_value_f64_scalar_operations() {
-    let value = NearValueF64::new(100.0);
+    let value = NearValueF64::from_near(100.0);
 
     // スカラー乗算
     let scaled = value * 2.5;
@@ -623,14 +624,14 @@ fn test_near_value_f64_scalar_operations() {
 
 #[test]
 fn test_near_value_f64_conversion() {
-    let near = NearValueF64::new(1.0);
+    let near = NearValueF64::from_near(1.0);
     let yocto = near.to_yocto();
     assert!((yocto.as_f64() - 1e24).abs() < 1e10);
 }
 
 #[test]
 fn test_near_value_f64_display() {
-    let value = NearValueF64::new(123.456);
+    let value = NearValueF64::from_near(123.456);
     assert_eq!(format!("{}", value), "123.456 NEAR");
 }
 
@@ -640,8 +641,8 @@ fn test_near_value_f64_display() {
 
 #[test]
 fn test_f64_price_times_amount() {
-    let price = TokenPriceF64::new(0.5);
-    let amount = TokenAmountF64::new(1000.0);
+    let price = TokenPriceF64::from_near_per_token(0.5);
+    let amount = TokenAmountF64::from_smallest_units(1000.0);
 
     // TokenAmountF64 × TokenPriceF64 = YoctoValueF64
     let value1: YoctoValueF64 = amount * price;
@@ -654,8 +655,8 @@ fn test_f64_price_times_amount() {
 
 #[test]
 fn test_f64_value_divided_by_price() {
-    let value = YoctoValueF64::new(1000.0);
-    let price = TokenPriceF64::new(2.0);
+    let value = YoctoValueF64::from_yocto(1000.0);
+    let price = TokenPriceF64::from_near_per_token(2.0);
 
     // YoctoValueF64 / TokenPriceF64 = TokenAmountF64
     let amount: TokenAmountF64 = value / price;
@@ -668,8 +669,8 @@ fn test_f64_value_divided_by_price() {
 
 #[test]
 fn test_f64_value_divided_by_amount() {
-    let value = YoctoValueF64::new(1000.0);
-    let amount = TokenAmountF64::new(500.0);
+    let value = YoctoValueF64::from_yocto(1000.0);
+    let amount = TokenAmountF64::from_smallest_units(500.0);
 
     // YoctoValueF64 / TokenAmountF64 = TokenPriceF64
     let price: TokenPriceF64 = value / amount;
@@ -682,7 +683,7 @@ fn test_f64_value_divided_by_amount() {
 
 #[test]
 fn test_price_f64_times_yocto_amount() {
-    let price = TokenPriceF64::new(0.5);
+    let price = TokenPriceF64::from_near_per_token(0.5);
     let amount = YoctoAmount::new(1000);
 
     // TokenPriceF64 × YoctoAmount = f64
@@ -702,21 +703,21 @@ fn test_near_value_one() {
 
 #[test]
 fn test_near_value_to_f64() {
-    let value = NearValue::new(BigDecimal::from_str("123.456").unwrap());
+    let value = NearValue::from_near(BigDecimal::from_str("123.456").unwrap());
     let f64_val = value.to_f64();
     assert!((f64_val.as_f64() - 123.456).abs() < 0.001);
 }
 
 #[test]
 fn test_yocto_value_into_bigdecimal() {
-    let value = YoctoValue::new(BigDecimal::from(12345));
+    let value = YoctoValue::from_yocto(BigDecimal::from(12345));
     let bd = value.into_bigdecimal();
     assert_eq!(bd, BigDecimal::from(12345));
 }
 
 #[test]
 fn test_near_value_into_bigdecimal() {
-    let value = NearValue::new(BigDecimal::from(12345));
+    let value = NearValue::from_near(BigDecimal::from(12345));
     let bd = value.into_bigdecimal();
     assert_eq!(bd, BigDecimal::from(12345));
 }
@@ -740,7 +741,7 @@ fn test_yocto_amount_times_bigdecimal() {
 
 #[test]
 fn test_near_amount_zero_division() {
-    let a1 = NearAmount::new(BigDecimal::from(100));
+    let a1 = NearAmount::from_near(BigDecimal::from(100));
     let a2 = NearAmount::zero();
 
     let ratio = a1 / a2;
@@ -749,7 +750,7 @@ fn test_near_amount_zero_division() {
 
 #[test]
 fn test_yocto_value_zero_division() {
-    let v1 = YoctoValue::new(BigDecimal::from(100));
+    let v1 = YoctoValue::from_yocto(BigDecimal::from(100));
     let v2 = YoctoValue::zero();
 
     let ratio = v1 / v2;
@@ -758,7 +759,7 @@ fn test_yocto_value_zero_division() {
 
 #[test]
 fn test_near_value_zero_division() {
-    let v1 = NearValue::new(BigDecimal::from(100));
+    let v1 = NearValue::from_near(BigDecimal::from(100));
     let v2 = NearValue::zero();
 
     let ratio = v1 / v2;
@@ -767,7 +768,7 @@ fn test_near_value_zero_division() {
 
 #[test]
 fn test_yocto_value_div_zero_price() {
-    let value = YoctoValue::new(BigDecimal::from(100));
+    let value = YoctoValue::from_yocto(BigDecimal::from(100));
     let price = TokenPrice::zero();
 
     let amount: YoctoAmount = value / price;
@@ -776,7 +777,7 @@ fn test_yocto_value_div_zero_price() {
 
 #[test]
 fn test_yocto_value_div_zero_amount() {
-    let value = YoctoValue::new(BigDecimal::from(100));
+    let value = YoctoValue::from_yocto(BigDecimal::from(100));
     let amount = YoctoAmount::zero();
 
     let price: TokenPrice = value / amount;
@@ -785,7 +786,7 @@ fn test_yocto_value_div_zero_amount() {
 
 #[test]
 fn test_near_value_div_zero_price() {
-    let value = NearValue::new(BigDecimal::from(100));
+    let value = NearValue::from_near(BigDecimal::from(100));
     let price = TokenPrice::zero();
 
     let amount: NearAmount = value / price;
@@ -794,7 +795,7 @@ fn test_near_value_div_zero_price() {
 
 #[test]
 fn test_near_value_div_zero_amount() {
-    let value = NearValue::new(BigDecimal::from(100));
+    let value = NearValue::from_near(BigDecimal::from(100));
     let amount = NearAmount::zero();
 
     let price: TokenPrice = value / amount;
@@ -810,15 +811,15 @@ fn test_near_value_div_zero_amount() {
 #[test]
 fn test_yocto_amount_truncation_behavior() {
     // ケース1: 割り切れる場合
-    let value = YoctoValue::new(BigDecimal::from(1000));
-    let price = TokenPrice::new(BigDecimal::from(2));
+    let value = YoctoValue::from_yocto(BigDecimal::from(1000));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(2));
     let amount: YoctoAmount = value / price;
     assert_eq!(amount.as_bigdecimal(), &BigDecimal::from(500));
     assert_eq!(amount.to_u128(), 500);
 
     // ケース2: 割り切れない場合 - 精度を保持
-    let value = YoctoValue::new(BigDecimal::from(1001));
-    let price = TokenPrice::new(BigDecimal::from(2));
+    let value = YoctoValue::from_yocto(BigDecimal::from(1001));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(2));
     let amount: YoctoAmount = value / price;
     // 1001 / 2 = 500.5（精度を保持）
     assert_eq!(
@@ -829,8 +830,8 @@ fn test_yocto_amount_truncation_behavior() {
     assert_eq!(amount.to_u128(), 500);
 
     // ケース3: 小数価格での除算 - 精度を保持
-    let value = YoctoValue::new(BigDecimal::from(100));
-    let price = TokenPrice::new(BigDecimal::from_str("0.3").unwrap());
+    let value = YoctoValue::from_yocto(BigDecimal::from(100));
+    let price = TokenPrice::from_near_per_token(BigDecimal::from_str("0.3").unwrap());
     let amount: YoctoAmount = value / price;
     // 100 / 0.3 = 333.333...（精度を保持）
     // BigDecimal での除算結果を直接比較
@@ -848,7 +849,7 @@ fn test_yocto_amount_truncation_behavior() {
     assert_eq!(amount.to_u128(), 123);
 
     // ケース5: NearAmount::to_yocto() - 精度を保持
-    let near_amount = NearAmount::new(BigDecimal::from_str("1.5").unwrap());
+    let near_amount = NearAmount::from_near(BigDecimal::from_str("1.5").unwrap());
     let yocto = near_amount.to_yocto();
     // 1.5 NEAR = 1.5 * 10^24 yoctoNEAR（精度を保持）
     let expected = BigDecimal::from_str("1.5").unwrap() * BigDecimal::from(YOCTO_PER_NEAR);

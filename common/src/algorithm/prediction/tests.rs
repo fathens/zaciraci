@@ -20,14 +20,14 @@ impl MockPredictionProvider {
                     token: "token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_price: TokenPriceF64::new(100.0),
+                    current_price: TokenPriceF64::from_near_per_token(100.0),
                     decimals: 24,
                 },
                 TopTokenInfo {
                     token: "token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_price: TokenPriceF64::new(50.0),
+                    current_price: TokenPriceF64::from_near_per_token(50.0),
                     decimals: 24,
                 },
             ],
@@ -41,7 +41,7 @@ impl MockPredictionProvider {
             .into_iter()
             .map(|(timestamp, price)| PricePoint {
                 timestamp,
-                price: TokenPrice::new(BigDecimal::from_f64(price).unwrap()),
+                price: TokenPrice::from_near_per_token(BigDecimal::from_f64(price).unwrap()),
                 volume: None,
             })
             .collect();
@@ -102,7 +102,7 @@ impl PredictionProvider for MockPredictionProvider {
 
         for i in 1..=prediction_horizon {
             let timestamp = prediction_time + Duration::hours(i as i64);
-            let price = TokenPrice::new(
+            let price = TokenPrice::from_near_per_token(
                 BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(),
             ); // 1%ずつ増加する予測
             predictions.push(PredictedPrice {
@@ -169,7 +169,10 @@ mod prediction_tests {
 
         assert_eq!(top_tokens.len(), 1);
         assert_eq!(top_tokens[0].token, "token1");
-        assert_eq!(top_tokens[0].current_price, TokenPriceF64::new(100.0));
+        assert_eq!(
+            top_tokens[0].current_price,
+            TokenPriceF64::from_near_per_token(100.0)
+        );
     }
 
     #[tokio::test]
@@ -192,11 +195,11 @@ mod prediction_tests {
         assert_eq!(history.prices.len(), 2);
         assert_eq!(
             history.prices[0].price,
-            TokenPrice::new(BigDecimal::from_f64(100.0).unwrap())
+            TokenPrice::from_near_per_token(BigDecimal::from_f64(100.0).unwrap())
         );
         assert_eq!(
             history.prices[1].price,
-            TokenPrice::new(BigDecimal::from_f64(105.0).unwrap())
+            TokenPrice::from_near_per_token(BigDecimal::from_f64(105.0).unwrap())
         );
     }
 
@@ -211,7 +214,7 @@ mod prediction_tests {
             prediction_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
-                price: TokenPrice::new(BigDecimal::from_f64(110.0).unwrap()),
+                price: TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap()),
                 confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
@@ -227,7 +230,7 @@ mod prediction_tests {
         // predicted_rate_24h は prediction_result の最後の price から ExchangeRate::from_price で作成される
         // from_price は price を rate に変換する (raw_rate = 10^decimals / price)
         // 変換後 to_price() で元の価格に戻ることを確認
-        let expected_price = TokenPrice::new(BigDecimal::from_f64(110.0).unwrap());
+        let expected_price = TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap());
         let actual_price = data.predicted_rate_24h.to_price();
         // f64 比較で十分な精度を確認
         let expected_f64 = expected_price.to_f64();
@@ -275,7 +278,7 @@ mod prediction_tests {
             prediction_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
-                price: TokenPrice::new(BigDecimal::from_f64(110.0).unwrap()),
+                price: TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap()),
                 confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };

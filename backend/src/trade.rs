@@ -137,7 +137,7 @@ fn get_initial_value() -> NearValue {
     let in_near: u64 = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
         .and_then(|v| Ok(v.parse()?))
         .unwrap_or(100);
-    NearValue::new(BigDecimal::from(in_near))
+    NearValue::from_near(BigDecimal::from(in_near))
 }
 
 async fn record_rates() -> Result<()> {

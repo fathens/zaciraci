@@ -10,7 +10,7 @@ use zaciraci_common::prediction::{ChronosPredictionResponse, PredictionResult};
 use zaciraci_common::types::{ExchangeRate, TokenPrice};
 
 fn price(s: &str) -> TokenPrice {
-    TokenPrice::new(BigDecimal::from_str(s).unwrap())
+    TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
 }
 
 /// テスト用ヘルパー: 文字列から ExchangeRate を作成 (decimals = 24)

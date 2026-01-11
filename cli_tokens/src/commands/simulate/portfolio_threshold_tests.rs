@@ -9,7 +9,7 @@ use common::types::{ExchangeRate, NearValue, TokenPrice, YoctoAmount};
 use std::collections::{BTreeMap, HashMap};
 
 fn price(v: f64) -> TokenPrice {
-    TokenPrice::new(BigDecimal::from_f64(v).unwrap())
+    TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
 }
 
 fn rate(v: f64) -> ExchangeRate {
@@ -61,8 +61,8 @@ fn create_test_wallet_info() -> WalletInfo {
             "test.token".to_string(),
             YoctoAmount::from_bigdecimal(BigDecimal::from(500000)), // 500000 yocto tokens
         )]),
-        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR
-        cash_balance: NearValue::new(BigDecimal::from(500)), // 500 NEAR
+        total_value: NearValue::from_near(BigDecimal::from(1000)), // 1000 NEAR
+        cash_balance: NearValue::from_near(BigDecimal::from(500)), // 500 NEAR
     }
 }
 

@@ -436,7 +436,10 @@ impl MarketSnapshot {
                     .to_string()
                     .parse::<f64>()
                     .unwrap_or(0.0);
-                prices.insert(token.clone(), TokenPriceF64::new(price_value));
+                prices.insert(
+                    token.clone(),
+                    TokenPriceF64::from_near_per_token(price_value),
+                );
             }
         }
 

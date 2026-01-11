@@ -559,13 +559,13 @@ mod tests {
     fn test_price_point_creation() {
         let price_point = PricePoint {
             timestamp: Utc::now(),
-            price: TokenPrice::new(BigDecimal::from_str("123.456").unwrap()),
+            price: TokenPrice::from_near_per_token(BigDecimal::from_str("123.456").unwrap()),
             volume: Some(BigDecimal::from(1000)),
         };
 
         assert_eq!(
             price_point.price,
-            TokenPrice::new(BigDecimal::from_str("123.456").unwrap())
+            TokenPrice::from_near_per_token(BigDecimal::from_str("123.456").unwrap())
         );
         assert!(price_point.volume.is_some());
     }
@@ -574,7 +574,7 @@ mod tests {
     fn test_price_point_serialization() {
         let price_point = PricePoint {
             timestamp: Utc::now(),
-            price: TokenPrice::new(BigDecimal::from_str("999.123456789").unwrap()),
+            price: TokenPrice::from_near_per_token(BigDecimal::from_str("999.123456789").unwrap()),
             volume: Some(BigDecimal::from(5000)),
         };
 
@@ -589,7 +589,7 @@ mod tests {
     fn test_price_point_serialization_without_volume() {
         let price_point = PricePoint {
             timestamp: Utc::now(),
-            price: TokenPrice::new(BigDecimal::from(100)),
+            price: TokenPrice::from_near_per_token(BigDecimal::from(100)),
             volume: None,
         };
 
@@ -636,12 +636,12 @@ mod tests {
             prices: vec![
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: TokenPrice::new(BigDecimal::from(100)),
+                    price: TokenPrice::from_near_per_token(BigDecimal::from(100)),
                     volume: Some(BigDecimal::from(1000)),
                 },
                 PricePoint {
                     timestamp: Utc::now(),
-                    price: TokenPrice::new(BigDecimal::from(110)),
+                    price: TokenPrice::from_near_per_token(BigDecimal::from(110)),
                     volume: Some(BigDecimal::from(2000)),
                 },
             ],
@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn test_token_price_json_format() {
         // TokenPrice 型が正しくJSONにシリアライズされることを確認
-        let price = TokenPrice::new(BigDecimal::from_str("123.456789").unwrap());
+        let price = TokenPrice::from_near_per_token(BigDecimal::from_str("123.456789").unwrap());
         let json = serde_json::to_string(&price).unwrap();
 
         // BigDecimal単体のシリアライズ形式と比較

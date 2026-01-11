@@ -9,7 +9,7 @@ use std::str::FromStr;
 // ==================== テストヘルパー ====================
 
 fn price(v: f64) -> TokenPrice {
-    TokenPrice::new(BigDecimal::from_f64(v).unwrap())
+    TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
 }
 
 fn rate(v: f64) -> ExchangeRate {
@@ -120,7 +120,7 @@ fn create_sample_wallet() -> WalletInfo {
 
     WalletInfo {
         holdings,
-        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR
+        total_value: NearValue::from_near(BigDecimal::from(1000)), // 1000 NEAR
         cash_balance: NearValue::zero(),
     }
 }
@@ -1154,7 +1154,7 @@ fn test_demonstrate_ordering_performance_impact() {
         for i in 0..10 {
             prices.push(PricePoint {
                 timestamp: base_time + Duration::days(i),
-                price: TokenPrice::new(
+                price: TokenPrice::from_near_per_token(
                     BigDecimal::from_f64(start_price * (1.0 + growth_rate).powi(i as i32)).unwrap(),
                 ),
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
@@ -1666,8 +1666,8 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
 
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: NearValue::new(BigDecimal::from(1000)),
-        cash_balance: NearValue::new(BigDecimal::from(1000)),
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::from_near(BigDecimal::from(1000)),
     };
 
     // 価格履歴を正しく作成（全トークン分）
@@ -2331,7 +2331,7 @@ fn create_high_volatility_price_history() -> Vec<PriceHistory> {
 
             prices_vec.push(PricePoint {
                 timestamp,
-                price: TokenPrice::new(bigdecimal::BigDecimal::from(p)),
+                price: TokenPrice::from_near_per_token(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)), // ダミーボリューム
             });
         }
@@ -2366,7 +2366,7 @@ fn create_low_volatility_price_history() -> Vec<PriceHistory> {
 
             prices_vec.push(PricePoint {
                 timestamp,
-                price: TokenPrice::new(bigdecimal::BigDecimal::from(p)),
+                price: TokenPrice::from_near_per_token(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)), // ダミーボリューム
             });
         }
@@ -2442,8 +2442,8 @@ async fn test_enhanced_portfolio_performance() {
     // 空のウォレット（初期状態）
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR初期資本
-        cash_balance: NearValue::new(BigDecimal::from(1000)),
+        total_value: NearValue::from_near(BigDecimal::from(1000)), // 1000 NEAR初期資本
+        cash_balance: NearValue::from_near(BigDecimal::from(1000)),
     };
 
     // 拡張ポートフォリオ最適化を実行
@@ -2578,7 +2578,7 @@ fn create_realistic_price_history() -> Vec<PriceHistory> {
 
             prices_vec.push(PricePoint {
                 timestamp,
-                price: TokenPrice::new(bigdecimal::BigDecimal::from(p)),
+                price: TokenPrice::from_near_per_token(bigdecimal::BigDecimal::from(p)),
                 volume: Some(bigdecimal::BigDecimal::from(1000000)),
             });
         }
@@ -2631,8 +2631,8 @@ async fn test_baseline_vs_enhanced_comparison() {
 
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: NearValue::new(BigDecimal::from(1000)),
-        cash_balance: NearValue::new(BigDecimal::from(1000)),
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::from_near(BigDecimal::from(1000)),
     };
 
     // エンハンスドポートフォリオの実行
@@ -2749,33 +2749,38 @@ fn test_price_calculation_precision() {
 #[test]
 fn test_portfolio_evaluation_accuracy() {
     // ポートフォリオ評価の精度をテスト
+    // calculate_current_weights の計算式: value_near = holding / rate
+    // rate = 10^decimals / price なので、value_near = holding * price / 10^decimals
 
     // 現実的な価格での評価
+    // price = 1 NEAR/token → rate = 10^24 / 1 = 10^24
     let realistic_tokens = vec![TokenData {
         symbol: "token_a".to_string(),
         current_rate: ExchangeRate::from_raw_rate(
-            "1000000000000000000000000".parse::<BigDecimal>().unwrap(),
+            BigDecimal::from_str("1E+24").unwrap(), // 1 NEAR/token
             24,
-        ), // 1 NEAR = 1e24 yoctoNEAR
+        ),
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
         market_cap: Some(1000000.0),
     }];
 
+    // 500 whole tokens = 500 * 10^24 tokens_smallest
+    // value = 5E+26 / 10^24 = 500 NEAR
     let mut wallet = super::super::types::WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: NearValue::new(BigDecimal::from(1000)),
-        cash_balance: NearValue::new(BigDecimal::from(500)),
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::from_near(BigDecimal::from(500)),
     };
     wallet.holdings.insert(
         "token_a".to_string(),
-        YoctoAmount::from_bigdecimal(BigDecimal::from(500)),
-    ); // 500トークン保有
+        YoctoAmount::from_bigdecimal(BigDecimal::from_str("5E+26").unwrap()), // 500 tokens in smallest units
+    );
 
     let weights = super::calculate_current_weights(&realistic_tokens, &wallet);
     println!("=== Portfolio Evaluation Test ===");
-    println!("Token A holdings: 500 tokens");
-    println!("Token A price: 1 NEAR");
+    println!("Token A holdings: 500 tokens (5E+26 tokens_smallest)");
+    println!("Token A price: 1 NEAR (rate = 1E+24)");
     println!("Expected weight: ~50% (500 NEAR / 1000 NEAR total)");
     println!("Calculated weight: {:.1}%", weights[0] * 100.0);
 
@@ -2792,16 +2797,20 @@ fn test_portfolio_evaluation_accuracy() {
 
 #[test]
 fn test_extreme_price_weight_calculation() {
-    // 極端な価格での重み計算をテスト（修正版）
+    // 極端な価格での重み計算をテスト
+    // calculate_current_weights の計算式: value_near = holding / rate
+    // rate = 10^decimals / price なので、value_near = holding * price / 10^decimals
 
     println!("=== Extreme Price Weight Calculation Test ===");
 
-    // シミュレーションで見られた極端な価格を使用
+    // 現実的な価格での計算テスト
+    // bean: price = 0.001 NEAR/token → rate = 10^24 / 0.001 = 10^27
+    // ndc: price = 0.01 NEAR/token → rate = 10^24 / 0.01 = 10^26
     let extreme_tokens = vec![
         TokenData {
             symbol: "bean.tkn.near".to_string(),
             current_rate: ExchangeRate::from_raw_rate(
-                BigDecimal::from_str("2.783120479512128E-19").unwrap(),
+                BigDecimal::from_str("1E+27").unwrap(), // 0.001 NEAR/token
                 24,
             ),
             historical_volatility: 0.3,
@@ -2811,7 +2820,7 @@ fn test_extreme_price_weight_calculation() {
         TokenData {
             symbol: "ndc.tkn.near".to_string(),
             current_rate: ExchangeRate::from_raw_rate(
-                BigDecimal::from_str("4.8596827014459204E-20").unwrap(),
+                BigDecimal::from_str("1E+26").unwrap(), // 0.01 NEAR/token
                 24,
             ),
             historical_volatility: 0.4,
@@ -2820,24 +2829,26 @@ fn test_extreme_price_weight_calculation() {
         },
     ];
 
-    // 極端な保有量を設定
+    // 保有量を設定
+    // bean: 10^28 tokens_smallest (10000 tokens) → value = 10^28 / 10^27 = 10 NEAR
+    // ndc: 10^28 tokens_smallest (10000 tokens) → value = 10^28 / 10^26 = 100 NEAR
+    // 合計: 110 NEAR
     let mut wallet = super::super::types::WalletInfo {
         holdings: BTreeMap::new(),
-        total_value: NearValue::new(BigDecimal::from(1000)), // 1000 NEAR総価値
+        total_value: NearValue::from_near(BigDecimal::from(110)), // 110 NEAR総価値
         cash_balance: NearValue::zero(),
     };
 
-    // 実際のシミュレーションで見られた保有量
     wallet.holdings.insert(
         "bean.tkn.near".to_string(),
         YoctoAmount::from_bigdecimal(
-            BigDecimal::from_f64(8.478102225988582E+20).unwrap_or_default(),
+            BigDecimal::from_str("1E+28").unwrap(), // 10000 tokens
         ),
     );
     wallet.holdings.insert(
         "ndc.tkn.near".to_string(),
         YoctoAmount::from_bigdecimal(
-            BigDecimal::from_f64(3.942646877247608E+21).unwrap_or_default(),
+            BigDecimal::from_str("1E+28").unwrap(), // 10000 tokens
         ),
     );
 
@@ -2896,4 +2907,113 @@ fn test_extreme_price_weight_calculation() {
     );
 
     println!("✅ BigDecimal計算により異常な高値が修正されました");
+}
+
+#[test]
+fn test_dimensional_analysis_correctness() {
+    // 次元解析の正しさを検証するテスト
+    //
+    // calculate_current_weights の計算式:
+    //   value_near = holding / rate
+    //
+    // ここで:
+    //   rate = raw_rate = 10^decimals / price
+    //   price = NEAR/token
+    //
+    // 従って:
+    //   value_near = holding / (10^decimals / price)
+    //              = holding * price / 10^decimals
+    //              = (tokens_smallest) * (NEAR/token) / 10^decimals
+    //              = tokens * NEAR/token
+    //              = NEAR  ✓
+
+    println!("=== Dimensional Analysis Correctness Test ===");
+
+    // ケース1: 価格 10 NEAR/token, 100 tokens 保有
+    // 期待される価値: 10 * 100 = 1000 NEAR
+    let price1 = 10.0; // NEAR/token
+    let tokens1 = 100.0; // whole tokens
+    let decimals: u32 = 24;
+    let rate1 = pow10(decimals as u8) / BigDecimal::from_f64(price1).unwrap();
+    let holding1 = BigDecimal::from_f64(tokens1).unwrap() * pow10(decimals as u8);
+
+    let value1 = &holding1 / &rate1;
+    let value1_f64 = value1.to_string().parse::<f64>().unwrap();
+    let expected1 = price1 * tokens1;
+
+    println!(
+        "Case 1: price = {} NEAR/token, tokens = {}",
+        price1, tokens1
+    );
+    println!("  Rate: {}", rate1);
+    println!("  Holding: {}", holding1);
+    println!("  Calculated value: {} NEAR", value1_f64);
+    println!("  Expected value: {} NEAR", expected1);
+
+    assert!(
+        (value1_f64 - expected1).abs() < 0.001,
+        "Case 1 failed: expected {}, got {}",
+        expected1,
+        value1_f64
+    );
+
+    // ケース2: 価格 0.001 NEAR/token (安いトークン), 1,000,000 tokens 保有
+    // 期待される価値: 0.001 * 1,000,000 = 1000 NEAR
+    let price2 = 0.001; // NEAR/token
+    let tokens2 = 1_000_000.0; // whole tokens
+    let rate2 = pow10(decimals as u8) / BigDecimal::from_f64(price2).unwrap();
+    let holding2 = BigDecimal::from_f64(tokens2).unwrap() * pow10(decimals as u8);
+
+    let value2 = &holding2 / &rate2;
+    let value2_f64 = value2.to_string().parse::<f64>().unwrap();
+    let expected2 = price2 * tokens2;
+
+    println!(
+        "\nCase 2: price = {} NEAR/token, tokens = {}",
+        price2, tokens2
+    );
+    println!("  Rate: {}", rate2);
+    println!("  Holding: {}", holding2);
+    println!("  Calculated value: {} NEAR", value2_f64);
+    println!("  Expected value: {} NEAR", expected2);
+
+    assert!(
+        (value2_f64 - expected2).abs() < 0.001,
+        "Case 2 failed: expected {}, got {}",
+        expected2,
+        value2_f64
+    );
+
+    // ケース3: 価格 1000 NEAR/token (高価なトークン), 0.5 tokens 保有
+    // 期待される価値: 1000 * 0.5 = 500 NEAR
+    let price3 = 1000.0; // NEAR/token
+    let tokens3 = 0.5; // whole tokens
+    let rate3 = pow10(decimals as u8) / BigDecimal::from_f64(price3).unwrap();
+    let holding3 = BigDecimal::from_f64(tokens3).unwrap() * pow10(decimals as u8);
+
+    let value3 = &holding3 / &rate3;
+    let value3_f64 = value3.to_string().parse::<f64>().unwrap();
+    let expected3 = price3 * tokens3;
+
+    println!(
+        "\nCase 3: price = {} NEAR/token, tokens = {}",
+        price3, tokens3
+    );
+    println!("  Rate: {}", rate3);
+    println!("  Holding: {}", holding3);
+    println!("  Calculated value: {} NEAR", value3_f64);
+    println!("  Expected value: {} NEAR", expected3);
+
+    assert!(
+        (value3_f64 - expected3).abs() < 0.001,
+        "Case 3 failed: expected {}, got {}",
+        expected3,
+        value3_f64
+    );
+
+    println!("\n✅ All dimensional analysis cases passed");
+}
+
+fn pow10(exp: u8) -> BigDecimal {
+    BigDecimal::from_str(&format!("1{}", "0".repeat(exp as usize))).unwrap()
 }

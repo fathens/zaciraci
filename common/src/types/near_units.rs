@@ -54,17 +54,32 @@ impl TokenPrice {
         TokenPrice(BigDecimal::zero())
     }
 
-    /// BigDecimal から TokenPrice を作成
-    pub fn new(value: BigDecimal) -> Self {
-        TokenPrice(value)
+    /// f64 から TokenPrice を作成
+    ///
+    /// 主にテストやシミュレーション用。本番コードでは `ExchangeRate::to_price()` を使うこと。
+    pub fn from_f64(value: f64) -> Self {
+        TokenPrice(BigDecimal::from_f64(value).unwrap_or_default())
     }
 
-    /// 内部の BigDecimal を取得
+    /// BigDecimal から TokenPrice を作成
+    ///
+    /// 値は「1トークンあたり何NEAR」を表す。
+    /// 主にキャッシュされた価格データの読み込み用。
+    pub fn from_near_per_token(near_per_token: BigDecimal) -> Self {
+        TokenPrice(near_per_token)
+    }
+
+    /// 内部の BigDecimal を取得（計算用）
+    ///
+    /// 注意: この値を他の型のコンストラクタに渡さないこと。
+    /// 型変換には専用のメソッドを使う。
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0
     }
 
-    /// BigDecimal に変換
+    /// BigDecimal に変換（消費）
+    ///
+    /// 注意: この値を他の型のコンストラクタに渡さないこと。
     pub fn into_bigdecimal(self) -> BigDecimal {
         self.0
     }
@@ -224,12 +239,15 @@ impl TokenPriceF64 {
         TokenPriceF64(0.0)
     }
 
-    /// f64 から TokenPriceF64 を作成
-    pub fn new(value: f64) -> Self {
-        TokenPriceF64(value)
+    /// NEAR/token の価格から作成
+    ///
+    /// # 引数
+    /// - `near_per_token`: 1トークンあたりの NEAR 価格
+    pub fn from_near_per_token(near_per_token: f64) -> Self {
+        TokenPriceF64(near_per_token)
     }
 
-    /// 内部の f64 を取得
+    /// 内部の f64 を取得（計算用）
     pub fn as_f64(&self) -> f64 {
         self.0
     }
@@ -324,11 +342,11 @@ impl Div<f64> for TokenPriceF64 {
 /// # 例
 ///
 /// ```ignore
-/// use common::types::{YoctoValue, Price, YoctoAmount};
+/// use common::types::{YoctoValue, TokenPrice, YoctoAmount};
 /// use bigdecimal::BigDecimal;
 ///
-/// let value = YoctoValue::new(BigDecimal::from(1001));
-/// let price = Price::new(BigDecimal::from(2));
+/// let value = YoctoValue::from_yocto(BigDecimal::from(1001));
+/// let price = TokenPrice::from_f64(2.0);
 /// let amount: YoctoAmount = value / price;
 /// // 1001 / 2 = 500.5（精度を保持）
 /// assert_eq!(amount.as_bigdecimal(), &BigDecimal::from_str("500.5").unwrap());
@@ -476,12 +494,17 @@ impl NearAmount {
         NearAmount(BigDecimal::zero())
     }
 
-    /// BigDecimal から NearAmount を作成
-    pub fn new(value: BigDecimal) -> Self {
-        NearAmount(value)
+    /// NEAR 単位の量から作成
+    pub fn from_near(near: BigDecimal) -> Self {
+        NearAmount(near)
     }
 
-    /// 内部の BigDecimal を取得
+    /// f64 から作成（テスト用）
+    pub fn from_f64(near: f64) -> Self {
+        NearAmount(BigDecimal::from_f64(near).unwrap_or_default())
+    }
+
+    /// 内部の BigDecimal を取得（計算用）
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0
     }
@@ -561,17 +584,17 @@ impl YoctoValue {
         YoctoValue(BigDecimal::zero())
     }
 
-    /// BigDecimal から YoctoValue を作成
-    pub fn new(value: BigDecimal) -> Self {
-        YoctoValue(value)
+    /// yoctoNEAR 単位の金額から作成
+    pub fn from_yocto(yocto: BigDecimal) -> Self {
+        YoctoValue(yocto)
     }
 
-    /// 内部の BigDecimal を取得
+    /// 内部の BigDecimal を取得（計算用）
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0
     }
 
-    /// BigDecimal に変換
+    /// BigDecimal に変換（消費）
     pub fn into_bigdecimal(self) -> BigDecimal {
         self.0
     }
@@ -691,17 +714,22 @@ impl NearValue {
         NearValue(BigDecimal::from(1))
     }
 
-    /// BigDecimal から NearValue を作成
-    pub fn new(value: BigDecimal) -> Self {
-        NearValue(value)
+    /// NEAR 単位の金額から作成
+    pub fn from_near(near: BigDecimal) -> Self {
+        NearValue(near)
     }
 
-    /// 内部の BigDecimal を取得
+    /// f64 から作成（テスト用）
+    pub fn from_f64(near: f64) -> Self {
+        NearValue(BigDecimal::from_f64(near).unwrap_or_default())
+    }
+
+    /// 内部の BigDecimal を取得（計算用）
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0
     }
 
-    /// BigDecimal に変換
+    /// BigDecimal に変換（消費）
     pub fn into_bigdecimal(self) -> BigDecimal {
         self.0
     }
@@ -854,12 +882,12 @@ impl TokenAmountF64 {
         TokenAmountF64(0.0)
     }
 
-    /// f64 から TokenAmountF64 を作成
-    pub fn new(value: f64) -> Self {
-        TokenAmountF64(value)
+    /// smallest_units（最小単位）から作成
+    pub fn from_smallest_units(smallest_units: f64) -> Self {
+        TokenAmountF64(smallest_units)
     }
 
-    /// 内部の f64 を取得
+    /// 内部の f64 を取得（計算用）
     pub fn as_f64(&self) -> f64 {
         self.0
     }
@@ -958,12 +986,12 @@ impl YoctoValueF64 {
         YoctoValueF64(0.0)
     }
 
-    /// f64 から YoctoValueF64 を作成
-    pub fn new(value: f64) -> Self {
-        YoctoValueF64(value)
+    /// yoctoNEAR 単位の金額から作成
+    pub fn from_yocto(yocto: f64) -> Self {
+        YoctoValueF64(yocto)
     }
 
-    /// 内部の f64 を取得
+    /// 内部の f64 を取得（計算用）
     pub fn as_f64(&self) -> f64 {
         self.0
     }
@@ -985,7 +1013,7 @@ impl YoctoValueF64 {
 
     /// BigDecimal 版（YoctoValue）に変換（精度は回復しない）
     pub fn to_bigdecimal(&self) -> YoctoValue {
-        YoctoValue::new(BigDecimal::from_f64(self.0).unwrap_or_default())
+        YoctoValue::from_yocto(BigDecimal::from_f64(self.0).unwrap_or_default())
     }
 }
 
@@ -1076,12 +1104,12 @@ impl NearValueF64 {
         NearValueF64(0.0)
     }
 
-    /// f64 から NearValueF64 を作成
-    pub fn new(value: f64) -> Self {
-        NearValueF64(value)
+    /// NEAR 単位の金額から作成
+    pub fn from_near(near: f64) -> Self {
+        NearValueF64(near)
     }
 
-    /// 内部の f64 を取得
+    /// 内部の f64 を取得（計算用）
     pub fn as_f64(&self) -> f64 {
         self.0
     }

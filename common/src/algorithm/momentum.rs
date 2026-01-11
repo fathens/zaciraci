@@ -350,7 +350,9 @@ mod integration_tests {
                 .into_iter()
                 .map(|(timestamp, price)| PricePoint {
                     timestamp,
-                    price: TokenPrice::new(BigDecimal::from_f64(price).unwrap_or_default()),
+                    price: TokenPrice::from_near_per_token(
+                        BigDecimal::from_f64(price).unwrap_or_default(),
+                    ),
                     volume: None,
                 })
                 .collect();
@@ -380,14 +382,14 @@ mod integration_tests {
                     token: "top_token1".to_string(),
                     volatility: 0.2,
                     volume_24h: 1000000.0,
-                    current_price: TokenPriceF64::new(100.0),
+                    current_price: TokenPriceF64::from_near_per_token(100.0),
                     decimals: 24,
                 },
                 TopTokenInfo {
                     token: "top_token2".to_string(),
                     volatility: 0.3,
                     volume_24h: 800000.0,
-                    current_price: TokenPriceF64::new(50.0),
+                    current_price: TokenPriceF64::from_near_per_token(50.0),
                     decimals: 24,
                 },
             ]
@@ -423,7 +425,7 @@ mod integration_tests {
 
             for i in 1..=prediction_horizon {
                 let timestamp = prediction_time + Duration::hours(i as i64);
-                let price = TokenPrice::new(
+                let price = TokenPrice::from_near_per_token(
                     BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(),
                 );
                 predictions.push(PredictedPrice {

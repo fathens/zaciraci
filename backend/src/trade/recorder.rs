@@ -219,7 +219,7 @@ mod tests {
                 YoctoAmount::new(1000000000000000000000000u128),
                 "akaia.tkn.near".to_string(),
                 YoctoAmount::new(50000000000000000000000u128),
-                YoctoValue::new(BigDecimal::from(20000000000000000000i128)),
+                YoctoValue::from_yocto(BigDecimal::from(20000000000000000000i128)),
             )
             .await
             .unwrap();
@@ -256,7 +256,7 @@ mod tests {
                 YoctoAmount::new(1000000000000000000000000u128),
                 "token1.near".to_string(),
                 YoctoAmount::new(50000000000000000000000u128),
-                YoctoValue::new(BigDecimal::from(20000000000000000000i128)),
+                YoctoValue::from_yocto(BigDecimal::from(20000000000000000000i128)),
             ),
             TradeData::new(
                 format!("test_tx2_{}", Uuid::new_v4()),
@@ -264,7 +264,7 @@ mod tests {
                 YoctoAmount::new(2000000000000000000000000u128),
                 "token2.near".to_string(),
                 YoctoAmount::new(100000000000000000000000u128),
-                YoctoValue::new(BigDecimal::from(40000000000000000000i128)),
+                YoctoValue::from_yocto(BigDecimal::from(40000000000000000000i128)),
             ),
         ];
 

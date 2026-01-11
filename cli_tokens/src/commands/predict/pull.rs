@@ -78,10 +78,17 @@ async fn calculate_history_period(
 }
 
 /// Convert common PredictionPoint to cache PredictionPoint
+///
+/// NOTE: Chronos は入力データと同じスケールで値を返す。
+///       CLI が Backend API から取得した rate (ExchangeRate形式) を Chronos に送信した場合、
+///       予測値も rate 形式になっているため、TokenPrice に変換する必要がある。
 fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePredictionPoint {
+    // point.value は rate (ExchangeRate形式) なので TokenPrice に変換
+    const DEFAULT_DECIMALS: u8 = 24;
+    let rate = common::types::ExchangeRate::from_raw_rate(point.value.clone(), DEFAULT_DECIMALS);
     CachePredictionPoint {
         timestamp: point.timestamp,
-        price: common::types::TokenPrice::new(point.value.clone()),
+        price: rate.to_price(),
         confidence: point.confidence_interval.as_ref().map(|ci| {
             // Use average of lower and upper bounds as confidence score
             (ci.upper.clone() - ci.lower.clone()) / BigDecimal::from(2) / point.value.clone()

@@ -596,9 +596,9 @@ mod tests {
     fn pv(timestamp: DateTime<Utc>, total_value: f64) -> PortfolioValue {
         PortfolioValue {
             timestamp,
-            total_value: NearValueF64::new(total_value),
+            total_value: NearValueF64::from_near(total_value),
             holdings: HashMap::new(),
-            cash_balance: NearValueF64::new(total_value),
+            cash_balance: NearValueF64::from_near(total_value),
             unrealized_pnl: NearValueF64::zero(),
         }
     }

@@ -35,7 +35,7 @@ static HARVEST_MIN_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
     let min_str = config::get("HARVEST_MIN_AMOUNT").unwrap_or_else(|_| "10".to_string());
     let min_near = min_str.parse::<u64>().unwrap_or(10);
     // NEAR → yoctoNEAR 変換（型安全）
-    NearValue::new(BigDecimal::from(min_near))
+    NearValue::from_near(BigDecimal::from(min_near))
         .to_yocto()
         .into_bigdecimal()
 });
@@ -43,7 +43,7 @@ static HARVEST_RESERVE_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
     let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
     let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
     // NEAR → yoctoNEAR 変換（型安全）
-    NearValue::new(BigDecimal::from(reserve_near))
+    NearValue::from_near(BigDecimal::from(reserve_near))
         .to_yocto()
         .into_bigdecimal()
 });
@@ -293,7 +293,7 @@ async fn execute_harvest_transfer(
             YoctoAmount::from_bigdecimal(actual_transfer_bigdecimal.clone()),
             "near".to_string(),
             YoctoAmount::from_bigdecimal(actual_transfer_bigdecimal.clone()),
-            YoctoValue::new(actual_transfer_bigdecimal), // yoctoNEAR建て価格
+            YoctoValue::from_yocto(actual_transfer_bigdecimal), // yoctoNEAR建て価格
         )
         .await?;
 
@@ -313,7 +313,7 @@ mod tests {
 
     /// NEAR → yoctoNEAR 変換のヘルパー（型安全）
     fn near_to_yocto(near: u64) -> BigDecimal {
-        NearValue::new(BigDecimal::from(near))
+        NearValue::from_near(BigDecimal::from(near))
             .to_yocto()
             .into_bigdecimal()
     }
