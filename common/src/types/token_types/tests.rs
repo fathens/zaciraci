@@ -333,46 +333,47 @@ fn test_expected_return_from_rates() {
 ///
 /// ## 現在の実装（型安全な設計）
 ///
-/// predict.rs では forecast_values (rate 形式) を直接 `ExchangeRate::from_raw_rate()` で
-/// `PredictedPrice.rate: ExchangeRate` に格納している。
+/// predict.rs では forecast_values (price 形式) を `TokenPrice::from_near_per_token()` で
+/// `PredictedPrice.price: TokenPrice` に格納している。
 ///
 /// ## データフロー
 ///
-/// 1. Chronos API から forecast_values (rate 形式: tokens_smallest/NEAR) を取得
-/// 2. predict.rs: `ExchangeRate::from_raw_rate(rate, DEFAULT_DECIMALS)` で `PredictedPrice.rate` に格納
-/// 3. prediction.rs: `PredictionData.predicted_rate_24h` としてそのまま使用
-/// 4. portfolio.rs: `rate.to_price()` で TokenPrice に変換（必要に応じて）
+/// 1. Chronos API から forecast_values (price 形式: NEAR/token) を取得
+/// 2. predict.rs: `TokenPrice::from_near_per_token(price_value)` で `PredictedPrice.price` に格納
+/// 3. algorithm/types.rs: `PredictionData.predicted_price_24h` として使用
+/// 4. portfolio.rs: TokenPrice をそのまま使用
 ///
 /// ## 設計意図
 ///
 /// - rate と price の型を明確に区別
-/// - forecast_values が rate 形式であることをコード上で明示
+/// - forecast_values が price 形式であることを型で保証
 /// - 型による誤用防止
 #[test]
 fn test_predict_rs_data_flow() {
-    // Chronos API からの rate 値 (tokens_smallest/NEAR)
-    // 例: 1 NEAR = 1.5 USDT (decimals=6) → rate = 1,500,000
-    let forecast_rate = BigDecimal::from(1_500_000);
+    // Chronos API からの予測値 (price 形式: NEAR/token)
+    // 例: 1 USDT = 0.2 NEAR
+    let forecast_price_value = BigDecimal::from_str("0.2").unwrap();
 
-    // predict.rs: ExchangeRate として格納（型安全）
-    let rate_in_predict_rs = ExchangeRate::from_raw_rate(forecast_rate.clone(), 6);
+    // predict.rs: TokenPrice として格納（型安全）
+    let predicted_price = TokenPrice::from_near_per_token(forecast_price_value.clone());
 
-    // portfolio.rs: 必要に応じて TokenPrice に変換
-    let token_price = rate_in_predict_rs.to_price();
-
-    // 検証: TokenPrice は正しい値
-    // 1 NEAR = 1.5 USDT → 1 USDT = 0.666 NEAR
+    // 検証: TokenPrice は正しい値を保持
     assert!(
-        (token_price.to_f64() - 0.666666).abs() < 0.001,
-        "Expected ≈0.666, got {}",
-        token_price.to_f64()
+        (predicted_price.to_f64() - 0.2).abs() < 0.001,
+        "Expected ≈0.2, got {}",
+        predicted_price.to_f64()
     );
 
-    // rate の raw_rate は元の値を保持
-    assert_eq!(
-        rate_in_predict_rs.raw_rate(),
-        &forecast_rate,
-        "ExchangeRate should preserve raw rate value"
+    // 期待リターンの計算例
+    // 現在価格: 1 USDT = 0.2 NEAR, 予測価格: 1 USDT = 0.24 NEAR (+20%)
+    let current_price = TokenPrice::from_near_per_token(BigDecimal::from_str("0.2").unwrap());
+    let predicted_higher = TokenPrice::from_near_per_token(BigDecimal::from_str("0.24").unwrap());
+    let expected_return = current_price.expected_return(&predicted_higher);
+
+    assert!(
+        (expected_return - 0.2).abs() < 0.001,
+        "Expected return ≈0.2 (20%), got {}",
+        expected_return
     );
 }
 
