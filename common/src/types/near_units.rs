@@ -17,11 +17,6 @@
 //! YoctoValue / YoctoAmount = TokenPrice
 //! ```
 //!
-//! ## 後方互換性
-//!
-//! 旧型名 `Price` は `TokenPrice` のエイリアスとして残していますが、
-//! 新しいコードでは `TokenPrice` を使用してください。
-
 use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -44,10 +39,6 @@ pub(crate) const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 /// - `TokenPrice` が小さい = トークンが安い
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TokenPrice(BigDecimal);
-
-/// 後方互換性のためのエイリアス
-#[deprecated(since = "1.0.0", note = "Use TokenPrice instead")]
-pub type Price = TokenPrice;
 
 impl TokenPrice {
     /// ゼロ価格を作成
