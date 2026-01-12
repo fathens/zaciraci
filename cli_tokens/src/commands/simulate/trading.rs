@@ -434,15 +434,18 @@ pub fn execute_trading_action(
             );
 
             // コストをトークン数量で表現（BigDecimal精度保持）
+            // current_amount と同じ decimals を使用
+            let decimals = ctx.current_amount.decimals();
             let trade_cost = if !ctx.current_price.is_zero() {
                 TokenAmountF64::from_smallest_units(
                     (&trade_cost_value_yocto_bd / &current_price_bd)
                         .to_string()
                         .parse::<f64>()
                         .unwrap_or(0.0),
+                    decimals,
                 )
             } else {
-                TokenAmountF64::zero()
+                TokenAmountF64::zero(decimals)
             };
 
             // SELLアクション: 現在のトークンを売却してtarget（quote_token）を取得
@@ -518,15 +521,18 @@ pub fn execute_trading_action(
             );
 
             // コストをトークン数量で表現（BigDecimal精度保持）
+            // current_amount と同じ decimals を使用
+            let decimals = ctx.current_amount.decimals();
             let trade_cost = if !ctx.current_price.is_zero() {
                 TokenAmountF64::from_smallest_units(
                     (&trade_cost_value_yocto_bd / &current_price_bd)
                         .to_string()
                         .parse::<f64>()
                         .unwrap_or(0.0),
+                    decimals,
                 )
             } else {
-                TokenAmountF64::zero()
+                TokenAmountF64::zero(decimals)
             };
 
             // SWITCHアクション: fromトークンをtoトークンに交換

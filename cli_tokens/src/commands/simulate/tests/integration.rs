@@ -31,7 +31,7 @@ fn create_test_trade(
         timestamp: Utc::now(),
         from_token: "token_a".to_string(),
         to_token: "token_b".to_string(),
-        amount: TokenAmountF64::from_smallest_units(100.0),
+        amount: TokenAmountF64::from_smallest_units(100.0, 24),
         executed_price: TokenPriceF64::from_near_per_token(1.0),
         cost: TradingCost {
             protocol_fee: BigDecimal::from_str("0.0").unwrap(),

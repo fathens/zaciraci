@@ -851,73 +851,141 @@ impl Mul<YoctoAmount> for TokenPriceF64 {
 
 /// トークン量（最小単位）- f64 版
 ///
-/// シミュレーションで使用するトークン量。decimals=24 の場合、1 token = 10^24 smallest_unit。
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
-pub struct TokenAmountF64(f64);
+/// シミュレーションで使用するトークン量。decimals 情報を保持し、
+/// 異なる decimals のトークン間での誤った演算を防ぐ。
+///
+/// # 例
+/// ```
+/// use zaciraci_common::types::TokenAmountF64;
+///
+/// // USDT (decimals=6): 100 USDT = 100_000_000 smallest_units
+/// let usdt = TokenAmountF64::from_smallest_units(100_000_000.0, 6);
+///
+/// // wNEAR (decimals=24): 1 wNEAR = 10^24 smallest_units
+/// let wnear = TokenAmountF64::from_smallest_units(1e24, 24);
+///
+/// // whole token 単位で取得
+/// assert!((usdt.to_whole() - 100.0).abs() < 0.001);
+/// assert!((wnear.to_whole() - 1.0).abs() < 0.001);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct TokenAmountF64 {
+    /// 最小単位での量
+    amount: f64,
+    /// トークンの decimals
+    decimals: u8,
+}
 
 impl TokenAmountF64 {
     /// ゼロ量を作成
-    pub fn zero() -> Self {
-        TokenAmountF64(0.0)
+    pub fn zero(decimals: u8) -> Self {
+        TokenAmountF64 {
+            amount: 0.0,
+            decimals,
+        }
     }
 
     /// smallest_units（最小単位）から作成
-    pub fn from_smallest_units(smallest_units: f64) -> Self {
-        TokenAmountF64(smallest_units)
+    pub fn from_smallest_units(smallest_units: f64, decimals: u8) -> Self {
+        TokenAmountF64 {
+            amount: smallest_units,
+            decimals,
+        }
     }
 
     /// 内部の f64 を取得（計算用）
     pub fn as_f64(&self) -> f64 {
-        self.0
+        self.amount
+    }
+
+    /// decimals を取得
+    pub fn decimals(&self) -> u8 {
+        self.decimals
+    }
+
+    /// whole token 単位に変換
+    pub fn to_whole(&self) -> f64 {
+        self.amount / 10_f64.powi(self.decimals as i32)
     }
 
     /// 量がゼロかどうか
     pub fn is_zero(&self) -> bool {
-        self.0 == 0.0
+        self.amount == 0.0
     }
 
     /// 量がゼロより大きいかどうか
     pub fn is_positive(&self) -> bool {
-        self.0 > 0.0
+        self.amount > 0.0
     }
 
     /// BigDecimal に変換（精度は回復しない）
     pub fn to_bigdecimal(&self) -> BigDecimal {
-        BigDecimal::from_f64(self.0).unwrap_or_default()
+        BigDecimal::from_f64(self.amount).unwrap_or_default()
     }
 }
 
 impl fmt::Display for TokenAmountF64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Forward formatting options (precision, width, etc.) to inner f64
-        fmt::Display::fmt(&self.0, f)
+        write!(f, "{} (decimals={})", self.amount, self.decimals)
     }
 }
 
-// TokenAmountF64 同士の加算
+impl PartialOrd for TokenAmountF64 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // decimals が異なる場合は whole 単位で比較
+        if self.decimals == other.decimals {
+            self.amount.partial_cmp(&other.amount)
+        } else {
+            self.to_whole().partial_cmp(&other.to_whole())
+        }
+    }
+}
+
+// TokenAmountF64 同士の加算（同じ decimals のみ）
 impl Add for TokenAmountF64 {
     type Output = TokenAmountF64;
     fn add(self, other: TokenAmountF64) -> TokenAmountF64 {
-        TokenAmountF64(self.0 + other.0)
+        debug_assert_eq!(
+            self.decimals, other.decimals,
+            "TokenAmountF64 addition requires same decimals: {} vs {}",
+            self.decimals, other.decimals
+        );
+        TokenAmountF64 {
+            amount: self.amount + other.amount,
+            decimals: self.decimals,
+        }
     }
 }
 
-// TokenAmountF64 同士の減算
+// TokenAmountF64 同士の減算（同じ decimals のみ）
 impl Sub for TokenAmountF64 {
     type Output = TokenAmountF64;
     fn sub(self, other: TokenAmountF64) -> TokenAmountF64 {
-        TokenAmountF64(self.0 - other.0)
+        debug_assert_eq!(
+            self.decimals, other.decimals,
+            "TokenAmountF64 subtraction requires same decimals: {} vs {}",
+            self.decimals, other.decimals
+        );
+        TokenAmountF64 {
+            amount: self.amount - other.amount,
+            decimals: self.decimals,
+        }
     }
 }
 
-// TokenAmountF64 同士の除算 → 比率を返す
+// TokenAmountF64 同士の除算 → 比率を返す（同じ decimals のみ）
 impl Div for TokenAmountF64 {
     type Output = f64;
     fn div(self, other: TokenAmountF64) -> f64 {
-        if other.0 == 0.0 {
+        debug_assert_eq!(
+            self.decimals, other.decimals,
+            "TokenAmountF64 division requires same decimals: {} vs {}",
+            self.decimals, other.decimals
+        );
+        if other.amount == 0.0 {
             0.0
         } else {
-            self.0 / other.0
+            self.amount / other.amount
         }
     }
 }
@@ -926,7 +994,10 @@ impl Div for TokenAmountF64 {
 impl Mul<f64> for TokenAmountF64 {
     type Output = TokenAmountF64;
     fn mul(self, scalar: f64) -> TokenAmountF64 {
-        TokenAmountF64(self.0 * scalar)
+        TokenAmountF64 {
+            amount: self.amount * scalar,
+            decimals: self.decimals,
+        }
     }
 }
 
@@ -934,7 +1005,10 @@ impl Mul<f64> for TokenAmountF64 {
 impl Mul<TokenAmountF64> for f64 {
     type Output = TokenAmountF64;
     fn mul(self, amount: TokenAmountF64) -> TokenAmountF64 {
-        TokenAmountF64(self * amount.0)
+        TokenAmountF64 {
+            amount: self * amount.amount,
+            decimals: amount.decimals,
+        }
     }
 }
 
@@ -943,9 +1017,12 @@ impl Div<f64> for TokenAmountF64 {
     type Output = TokenAmountF64;
     fn div(self, scalar: f64) -> TokenAmountF64 {
         if scalar == 0.0 {
-            TokenAmountF64::zero()
+            TokenAmountF64::zero(self.decimals)
         } else {
-            TokenAmountF64(self.0 / scalar)
+            TokenAmountF64 {
+                amount: self.amount / scalar,
+                decimals: self.decimals,
+            }
         }
     }
 }
@@ -993,6 +1070,26 @@ impl YoctoValueF64 {
     /// BigDecimal 版（YoctoValue）に変換（精度は回復しない）
     pub fn to_bigdecimal(&self) -> YoctoValue {
         YoctoValue::from_yocto(BigDecimal::from_f64(self.0).unwrap_or_default())
+    }
+
+    /// 価格で割ってトークン量に変換
+    ///
+    /// # 計算
+    /// - yoctoNEAR / (NEAR/token) → token (smallest_units)
+    /// - result = yoctoNEAR / 10^24 / price × 10^decimals
+    ///
+    /// # 引数
+    /// - `price`: トークン価格（NEAR/token）
+    /// - `decimals`: 結果のトークンの decimals
+    pub fn to_amount(&self, price: TokenPriceF64, decimals: u8) -> TokenAmountF64 {
+        if price.is_zero() {
+            return TokenAmountF64::zero(decimals);
+        }
+        // yoctoNEAR → NEAR → whole tokens → smallest_units
+        let near_value = self.0 / YOCTO_PER_NEAR_F64;
+        let whole_tokens = near_value / price.as_f64();
+        let smallest_units = whole_tokens * 10_f64.powi(decimals as i32);
+        TokenAmountF64::from_smallest_units(smallest_units, decimals)
     }
 }
 
@@ -1048,14 +1145,12 @@ impl Mul<YoctoValueF64> for f64 {
 }
 
 // YoctoValueF64 / TokenPriceF64 = TokenAmountF64
+// 注意: decimals 情報が必要なため、to_amount() メソッドを使用することを推奨
 impl Div<TokenPriceF64> for YoctoValueF64 {
     type Output = TokenAmountF64;
     fn div(self, price: TokenPriceF64) -> TokenAmountF64 {
-        if price.0 == 0.0 {
-            TokenAmountF64::zero()
-        } else {
-            TokenAmountF64(self.0 / price.0)
-        }
+        // デフォルト decimals=24 で作成（後方互換性）
+        self.to_amount(price, 24)
     }
 }
 
@@ -1063,10 +1158,13 @@ impl Div<TokenPriceF64> for YoctoValueF64 {
 impl Div<TokenAmountF64> for YoctoValueF64 {
     type Output = TokenPriceF64;
     fn div(self, amount: TokenAmountF64) -> TokenPriceF64 {
-        if amount.0 == 0.0 {
+        // whole token 単位に変換してから計算
+        let whole_amount = amount.to_whole();
+        if whole_amount == 0.0 {
             TokenPriceF64::zero()
         } else {
-            TokenPriceF64(self.0 / amount.0)
+            // yoctoNEAR / token → NEAR/token に変換
+            TokenPriceF64::from_near_per_token(self.to_near().as_f64() / whole_amount)
         }
     }
 }
@@ -1164,10 +1262,15 @@ impl Mul<NearValueF64> for f64 {
 // =============================================================================
 
 // TokenAmountF64 × TokenPriceF64 = YoctoValueF64
+// 計算: amount (smallest_units) / 10^decimals × price (NEAR/token) × 10^24 = yoctoNEAR
 impl Mul<TokenPriceF64> for TokenAmountF64 {
     type Output = YoctoValueF64;
     fn mul(self, price: TokenPriceF64) -> YoctoValueF64 {
-        YoctoValueF64(self.0 * price.0)
+        // smallest_units → whole tokens → NEAR → yoctoNEAR
+        let whole_tokens = self.to_whole();
+        let near_value = whole_tokens * price.as_f64();
+        let yocto_value = near_value * YOCTO_PER_NEAR_F64;
+        YoctoValueF64::from_yocto(yocto_value)
     }
 }
 
@@ -1175,7 +1278,7 @@ impl Mul<TokenPriceF64> for TokenAmountF64 {
 impl Mul<TokenAmountF64> for TokenPriceF64 {
     type Output = YoctoValueF64;
     fn mul(self, amount: TokenAmountF64) -> YoctoValueF64 {
-        YoctoValueF64(self.0 * amount.0)
+        amount * self // 可換なので上の実装に委譲
     }
 }
 

@@ -47,7 +47,7 @@ mod unit_tests {
                 timestamp: Utc::now(),
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
-                amount: TokenAmountF64::from_smallest_units(100.0),
+                amount: TokenAmountF64::from_smallest_units(100.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
@@ -197,7 +197,7 @@ mod unit_tests {
                 .with_timezone(&Utc),
             from_token: "token_a".to_string(),
             to_token: "token_b".to_string(),
-            amount: TokenAmountF64::from_smallest_units(100.0),
+            amount: TokenAmountF64::from_smallest_units(100.0, 24),
             executed_price: TokenPriceF64::from_near_per_token(1.5),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from(3),
@@ -215,7 +215,8 @@ mod unit_tests {
 
         assert!(html.contains("token_a → token_b"));
         assert!(html.contains("2024-01-01 12:00"));
-        assert!(html.contains("100.0000"));
+        // TokenAmountF64 の Display は "100 (decimals=24)" 形式
+        assert!(html.contains("100"));
         assert!(html.contains("1.500000"));
         assert!(html.contains("6.0000"));
         assert!(html.contains("Test trade"));
@@ -228,7 +229,7 @@ mod unit_tests {
                 timestamp: Utc::now(),
                 from_token: format!("token_{}", i),
                 to_token: format!("token_{}", i + 1),
-                amount: TokenAmountF64::from_smallest_units(100.0),
+                amount: TokenAmountF64::from_smallest_units(100.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
@@ -353,7 +354,7 @@ mod phase_4_2_tests {
                 timestamp: Utc::now(),
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
-                amount: TokenAmountF64::from_smallest_units(100.0),
+                amount: TokenAmountF64::from_smallest_units(100.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(3),
@@ -370,7 +371,7 @@ mod phase_4_2_tests {
                 timestamp: Utc::now(),
                 from_token: "token_b".to_string(),
                 to_token: "token_c".to_string(),
-                amount: TokenAmountF64::from_smallest_units(120.0),
+                amount: TokenAmountF64::from_smallest_units(120.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(0.8),
                 cost: TradingCost {
                     protocol_fee: BigDecimal::from(4),

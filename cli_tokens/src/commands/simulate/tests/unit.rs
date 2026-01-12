@@ -710,11 +710,11 @@ fn test_convert_decision_to_action() {
 #[test]
 fn test_immutable_portfolio_creation() {
     let portfolio =
-        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "wrap.near");
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "wrap.near");
 
     assert_eq!(
         portfolio.holdings.get("wrap.near"),
-        Some(&TokenAmountF64::from_smallest_units(1000.0))
+        Some(&TokenAmountF64::from_smallest_units(1000.0, 24))
     );
     assert_eq!(portfolio.cash_balance, NearValueF64::zero());
     assert!(portfolio.holdings.len() == 1);
@@ -722,7 +722,8 @@ fn test_immutable_portfolio_creation() {
 
 #[test]
 fn test_portfolio_total_value_calculation() {
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
 
     let mut prices = HashMap::new();
     prices.insert(
@@ -732,7 +733,12 @@ fn test_portfolio_total_value_calculation() {
     let market = MarketSnapshot::new(prices);
 
     let total_value = portfolio.total_value(&market);
-    assert_eq!(total_value, YoctoValueF64::from_yocto(1500.0)); // 1000 * 1.5
+    // 浮動小数点の精度誤差を許容
+    assert!(
+        (total_value.as_f64() - 1500.0).abs() < 1e-10,
+        "Expected ~1500.0, got {}",
+        total_value.as_f64()
+    );
 }
 
 #[test]
@@ -740,7 +746,7 @@ fn test_portfolio_total_value_with_cash() {
     let mut holdings = HashMap::new();
     holdings.insert(
         "token_a".to_string(),
-        TokenAmountF64::from_smallest_units(500.0),
+        TokenAmountF64::from_smallest_units(500.0, 24),
     );
 
     let portfolio = ImmutablePortfolio {
@@ -837,7 +843,8 @@ fn test_data_quality_assessment() {
 
 #[test]
 fn test_portfolio_apply_hold_decision() {
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
 
     let mut prices = HashMap::new();
     prices.insert(
@@ -858,7 +865,7 @@ fn test_portfolio_apply_hold_decision() {
     assert_eq!(transition.from, portfolio);
     assert_eq!(
         transition.to.holdings.get("token_a"),
-        Some(&TokenAmountF64::from_smallest_units(1000.0))
+        Some(&TokenAmountF64::from_smallest_units(1000.0, 24))
     );
     assert_eq!(transition.cost, 0.0);
     assert_eq!(transition.action, TradingDecision::Hold);
@@ -866,7 +873,8 @@ fn test_portfolio_apply_hold_decision() {
 
 #[test]
 fn test_portfolio_apply_sell_decision() {
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
 
     let mut prices = HashMap::new();
     prices.insert(
@@ -905,7 +913,7 @@ fn test_portfolio_apply_switch_decision() {
     let mut holdings = HashMap::new();
     holdings.insert(
         "token_a".to_string(),
-        TokenAmountF64::from_smallest_units(500.0),
+        TokenAmountF64::from_smallest_units(500.0, 24),
     );
 
     let portfolio = ImmutablePortfolio {
@@ -974,7 +982,7 @@ fn test_immutable_portfolio_demo_trading_sequence() {
 
     // Initial portfolio: 1000 units of token_a
     let portfolio_v1 =
-        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
 
     // Market snapshot with multiple tokens
     let mut prices = HashMap::new();
@@ -1040,7 +1048,7 @@ fn test_immutable_portfolio_demo_trading_sequence() {
     // Verify immutability: original portfolios are unchanged
     assert_eq!(
         portfolio_v1.holdings.get("token_a"),
-        Some(&TokenAmountF64::from_smallest_units(1000.0))
+        Some(&TokenAmountF64::from_smallest_units(1000.0, 24))
     );
     assert!(portfolio_v2.holdings.contains_key("token_b"));
     assert!(portfolio_v3.holdings.contains_key("token_c"));
@@ -1079,7 +1087,8 @@ fn test_momentum_strategy_hold_decision() {
         lookback_periods: 14,
     };
 
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
     let mut prices = HashMap::new();
     prices.insert(
         "token_a".to_string(),
@@ -1112,7 +1121,8 @@ fn test_momentum_strategy_switch_decision() {
         lookback_periods: 14,
     };
 
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
     let mut prices = HashMap::new();
     prices.insert(
         "token_a".to_string(),
@@ -1152,7 +1162,8 @@ fn test_portfolio_strategy_rebalancing() {
     assert_eq!(strategy.name(), "Portfolio");
 
     // Test single token portfolio (should rebalance)
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
     let mut prices = HashMap::new();
     prices.insert(
         "token_a".to_string(),
@@ -1173,11 +1184,12 @@ fn test_trend_following_strategy_decision() {
     assert_eq!(strategy.name(), "TrendFollowing");
     // Trend following now uses RSI/ADX conditions, so empty market may not trigger rebalance
     let _empty_rebalance = strategy.should_rebalance(
-        &ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a"),
+        &ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a"),
         &MarketSnapshot::new(HashMap::new()),
     );
 
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
     let mut prices = HashMap::new();
     prices.insert(
         "token_a".to_string(),
@@ -1223,7 +1235,8 @@ fn test_strategy_context_execution() {
     let context = StrategyContext::new(momentum_strategy);
     assert_eq!(context.strategy_name(), "Momentum");
 
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
     let mut prices = HashMap::new();
     prices.insert(
         "token_a".to_string(),
@@ -1254,7 +1267,8 @@ fn test_strategy_comparison_demo() {
     println!("=== Phase 3 Strategy Pattern Demo ===");
 
     // Setup common test data
-    let portfolio = ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0), "token_a");
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
     let mut prices = HashMap::new();
     prices.insert(
         "token_a".to_string(),

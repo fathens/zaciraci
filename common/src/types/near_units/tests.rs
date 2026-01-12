@@ -438,42 +438,59 @@ fn test_price_f64_comparison() {
 
 #[test]
 fn test_token_amount_f64_basic() {
-    let amount = TokenAmountF64::from_smallest_units(1000.0);
+    // decimals=6 (USDT風)
+    let amount = TokenAmountF64::from_smallest_units(1000.0, 6);
 
     assert_eq!(amount.as_f64(), 1000.0);
+    assert_eq!(amount.decimals(), 6);
     assert!(!amount.is_zero());
     assert!(amount.is_positive());
 
-    let zero = TokenAmountF64::zero();
+    let zero = TokenAmountF64::zero(6);
     assert!(zero.is_zero());
     assert!(!zero.is_positive());
+    assert_eq!(zero.decimals(), 6);
+}
+
+#[test]
+fn test_token_amount_f64_to_whole() {
+    // decimals=6: 1_000_000 smallest_units = 1 token
+    let amount = TokenAmountF64::from_smallest_units(1_000_000.0, 6);
+    assert!((amount.to_whole() - 1.0).abs() < 1e-10);
+
+    // decimals=24: 1e24 smallest_units = 1 token
+    let amount_24 = TokenAmountF64::from_smallest_units(1e24, 24);
+    assert!((amount_24.to_whole() - 1.0).abs() < 1e-10);
 }
 
 #[test]
 fn test_token_amount_f64_arithmetic() {
-    let a1 = TokenAmountF64::from_smallest_units(100.0);
-    let a2 = TokenAmountF64::from_smallest_units(30.0);
+    // 同じ decimals での演算
+    let a1 = TokenAmountF64::from_smallest_units(100.0, 6);
+    let a2 = TokenAmountF64::from_smallest_units(30.0, 6);
 
     // 加算
     let sum = a1 + a2;
     assert!((sum.as_f64() - 130.0).abs() < 1e-10);
+    assert_eq!(sum.decimals(), 6);
 
     // 減算
     let diff = a1 - a2;
     assert!((diff.as_f64() - 70.0).abs() < 1e-10);
+    assert_eq!(diff.decimals(), 6);
 
     // 除算（比率）
     let ratio = a1 / a2;
     assert!((ratio - 3.333333).abs() < 0.001);
 
     // ゼロ除算
-    let zero_div = a1 / TokenAmountF64::zero();
+    let zero_div = a1 / TokenAmountF64::zero(6);
     assert_eq!(zero_div, 0.0);
 }
 
 #[test]
 fn test_token_amount_f64_scalar_operations() {
-    let amount = TokenAmountF64::from_smallest_units(100.0);
+    let amount = TokenAmountF64::from_smallest_units(100.0, 6);
 
     // スカラー乗算
     let scaled = amount * 2.5;
@@ -494,16 +511,18 @@ fn test_token_amount_f64_scalar_operations() {
 
 #[test]
 fn test_token_amount_f64_to_bigdecimal() {
-    let amount = TokenAmountF64::from_smallest_units(123.456);
+    let amount = TokenAmountF64::from_smallest_units(123.456, 6);
     let bd = amount.to_bigdecimal();
     assert!((bd.to_f64().unwrap() - 123.456).abs() < 0.001);
 }
 
 #[test]
 fn test_token_amount_f64_display() {
-    let amount = TokenAmountF64::from_smallest_units(123.456);
+    let amount = TokenAmountF64::from_smallest_units(123.456, 6);
     let display = format!("{}", amount);
-    assert!(display.starts_with("123.45"));
+    // decimals=6 なので "123.456 (decimals=6)" 形式
+    assert!(display.contains("123.456"));
+    assert!(display.contains("decimals=6"));
 }
 
 // =============================================================================
@@ -641,11 +660,16 @@ fn test_near_value_f64_display() {
 
 #[test]
 fn test_f64_price_times_amount() {
+    // decimals=24 (wNEAR): 1e24 smallest_units = 1 token
+    // price = 0.5 NEAR/token, amount = 1000 smallest_units = 1000/1e24 tokens
+    // value = 1000/1e24 * 0.5 NEAR = 5e-22 NEAR = 5e2 yoctoNEAR
     let price = TokenPriceF64::from_near_per_token(0.5);
-    let amount = TokenAmountF64::from_smallest_units(1000.0);
+    let amount = TokenAmountF64::from_smallest_units(1000.0, 24);
 
     // TokenAmountF64 × TokenPriceF64 = YoctoValueF64
     let value1: YoctoValueF64 = amount * price;
+    // 1000 smallest_units / 1e24 = 1e-21 tokens
+    // 1e-21 tokens * 0.5 NEAR/token = 5e-22 NEAR = 5e2 yoctoNEAR
     assert!((value1.as_f64() - 500.0).abs() < 1e-10);
 
     // TokenPriceF64 × TokenAmountF64 = YoctoValueF64
@@ -655,12 +679,17 @@ fn test_f64_price_times_amount() {
 
 #[test]
 fn test_f64_value_divided_by_price() {
-    let value = YoctoValueF64::from_yocto(1000.0);
+    // 1e24 yoctoNEAR = 1 NEAR
+    // price = 2 NEAR/token
+    // amount = 1 NEAR / 2 NEAR/token = 0.5 token = 0.5 * 1e24 smallest_units
+    let value = YoctoValueF64::from_yocto(1e24);
     let price = TokenPriceF64::from_near_per_token(2.0);
 
-    // YoctoValueF64 / TokenPriceF64 = TokenAmountF64
+    // YoctoValueF64 / TokenPriceF64 = TokenAmountF64 (decimals=24)
     let amount: TokenAmountF64 = value / price;
-    assert!((amount.as_f64() - 500.0).abs() < 1e-10);
+    // 1 NEAR / 2 NEAR/token = 0.5 token = 0.5 * 1e24 smallest_units = 5e23
+    assert!((amount.as_f64() - 5e23).abs() < 1e10);
+    assert_eq!(amount.decimals(), 24);
 
     // ゼロ除算
     let zero_div: TokenAmountF64 = value / TokenPriceF64::zero();
@@ -669,15 +698,20 @@ fn test_f64_value_divided_by_price() {
 
 #[test]
 fn test_f64_value_divided_by_amount() {
-    let value = YoctoValueF64::from_yocto(1000.0);
-    let amount = TokenAmountF64::from_smallest_units(500.0);
+    // decimals=6: 1e6 smallest_units = 1 token
+    // value = 1e24 yoctoNEAR = 1 NEAR
+    // amount = 500000 smallest_units = 0.5 token
+    // price = 1 NEAR / 0.5 token = 2 NEAR/token
+    let value = YoctoValueF64::from_yocto(1e24);
+    let amount = TokenAmountF64::from_smallest_units(500000.0, 6);
 
     // YoctoValueF64 / TokenAmountF64 = TokenPriceF64
     let price: TokenPriceF64 = value / amount;
-    assert!((price.as_f64() - 2.0).abs() < 1e-10);
+    // 1 NEAR / 0.5 token = 2 NEAR/token
+    assert!((price.as_f64() - 2.0).abs() < 0.001);
 
     // ゼロ除算
-    let zero_div: TokenPriceF64 = value / TokenAmountF64::zero();
+    let zero_div: TokenPriceF64 = value / TokenAmountF64::zero(6);
     assert!(zero_div.is_zero());
 }
 

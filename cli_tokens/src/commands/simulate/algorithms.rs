@@ -663,8 +663,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             let target_amount = target_value_yocto / current_price;
 
                                             // 現実的な数量制限を適用
+                                            // TODO: トークンごとの decimals を使用する
                                             let max_reasonable_amount =
-                                                TokenAmountF64::from_smallest_units(1e21);
+                                                TokenAmountF64::from_smallest_units(1e21, 24);
                                             let target_amount_limited = if target_amount.as_f64()
                                                 > max_reasonable_amount.as_f64()
                                             {
@@ -674,10 +675,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             };
 
                                             // 現在の保有量と目標量の差を計算
+                                            // TODO: トークンごとの decimals を使用する
                                             let current_amount = current_holdings
                                                 .get(&token)
                                                 .copied()
-                                                .unwrap_or(TokenAmountF64::zero());
+                                                .unwrap_or(TokenAmountF64::zero(24));
                                             let diff = target_amount_limited.as_f64()
                                                 - current_amount.as_f64();
 
@@ -693,8 +695,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                     .insert(token.clone(), target_amount_limited);
 
                                                 // 簡易的な取引コスト計算（NEAR単位）
+                                                // TODO: トークンごとの decimals を使用する
                                                 let diff_amount =
-                                                    TokenAmountF64::from_smallest_units(diff.abs());
+                                                    TokenAmountF64::from_smallest_units(
+                                                        diff.abs(),
+                                                        24,
+                                                    );
                                                 let diff_value_yocto = diff_amount * current_price;
                                                 let diff_value_near = diff_value_yocto.to_near();
                                                 let trade_cost = diff_value_near.as_f64() * 0.003; // 0.3%手数料

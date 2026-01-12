@@ -47,7 +47,7 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             timestamp: start_date + chrono::Duration::days(2),
             from_token: "wrap.near".to_string(),
             to_token: "akaia.tkn.near".to_string(),
-            amount: TokenAmountF64::from_smallest_units(500.0),
+            amount: TokenAmountF64::from_smallest_units(500.0, 24),
             executed_price: TokenPriceF64::from_near_per_token(1.2),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from_f64(1.5).unwrap(),
@@ -64,7 +64,7 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             timestamp: start_date + chrono::Duration::days(5),
             from_token: "akaia.tkn.near".to_string(),
             to_token: "babyblackdragon.tkn.near".to_string(),
-            amount: TokenAmountF64::from_smallest_units(600.0),
+            amount: TokenAmountF64::from_smallest_units(600.0, 24),
             executed_price: TokenPriceF64::from_near_per_token(0.8),
             cost: TradingCost {
                 protocol_fee: BigDecimal::from_f64(1.8).unwrap(),
