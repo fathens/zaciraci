@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use std::collections::HashSet;
 use std::str::FromStr;
 use zaciraci_common::config;
 use zaciraci_common::types::ExchangeRate;
@@ -121,16 +122,10 @@ impl TokenRate {
         }
     }
 
-    /// DB レコードから変換（decimals が NULL の場合はデフォルト値を使用）
-    ///
-    /// 注意: 本来は decimals が NULL の場合は RPC で取得して backfill すべき。
-    /// バッチ処理など backfill が不要な場合はこの関数を使用する。
-    fn from_db(db_rate: DbTokenRate) -> Result<Self> {
+    /// DB レコードから変換（decimals を明示的に指定）
+    fn from_db_with_decimals(db_rate: DbTokenRate, decimals: u8) -> Result<Self> {
         let base = TokenAccount::from_str(&db_rate.base_token)?.into();
         let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
-
-        // decimals が NULL の場合はデフォルト値 24 (NEAR) を使用
-        let decimals = db_rate.decimals.map(|d| d as u8).unwrap_or(24);
         let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
 
         Ok(Self {
@@ -141,42 +136,73 @@ impl TokenRate {
         })
     }
 
-    /// DB レコードから変換（decimals が NULL の場合は RPC で取得して backfill）
-    ///
-    /// decimals が NULL の場合:
-    /// 1. RPC で ft_metadata を呼び出して decimals を取得
-    /// 2. 同じトークンの全レコードを UPDATE
-    /// 3. 取得した decimals で ExchangeRate を構築
-    #[allow(dead_code)]
-    async fn from_db_with_backfill<C>(db_rate: DbTokenRate, client: &C) -> Result<Self>
-    where
-        C: crate::jsonrpc::ViewContract,
-    {
-        let base = TokenAccount::from_str(&db_rate.base_token)?.into();
-        let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
-
+    /// 単一の DB レコードを変換し、NULL decimals があれば RPC で取得して backfill
+    async fn from_db_with_backfill(db_rate: DbTokenRate) -> Result<Self> {
         let decimals = match db_rate.decimals {
             Some(d) => d as u8,
             None => {
-                // decimals が NULL → RPC で取得して backfill
-                let d = crate::trade::stats::get_token_decimals(client, &db_rate.base_token).await;
-                Self::backfill_decimals(&db_rate.base_token, d).await?;
-                d
+                let log = DEFAULT.new(o!(
+                    "function" => "from_db_with_backfill",
+                    "base_token" => db_rate.base_token.clone(),
+                ));
+                info!(log, "backfilling decimals for token with NULL");
+
+                let client = crate::jsonrpc::new_client();
+                let decimals =
+                    crate::trade::stats::get_token_decimals(&client, &db_rate.base_token).await;
+                Self::backfill_decimals(&db_rate.base_token, decimals).await?;
+                decimals
             }
         };
+        Self::from_db_with_decimals(db_rate, decimals)
+    }
 
-        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
+    /// 複数の DB レコードを変換し、NULL decimals があれば RPC で取得して backfill
+    ///
+    /// 1. NULL decimals を持つトークンを特定
+    /// 2. RPC で decimals を取得して DB を backfill
+    /// 3. 正しい decimals で全レコードを変換
+    async fn from_db_results_with_backfill(results: Vec<DbTokenRate>) -> Result<Vec<Self>> {
+        use std::collections::HashMap;
 
-        Ok(Self {
-            base,
-            quote,
-            exchange_rate,
-            timestamp: db_rate.timestamp,
-        })
+        // NULL decimals を持つトークンを特定
+        let tokens_with_null: HashSet<String> = results
+            .iter()
+            .filter(|r| r.decimals.is_none())
+            .map(|r| r.base_token.clone())
+            .collect();
+
+        // RPC で decimals を取得して backfill
+        let mut decimals_map: HashMap<String, u8> = HashMap::new();
+        if !tokens_with_null.is_empty() {
+            let log = DEFAULT.new(o!(
+                "function" => "from_db_results_with_backfill",
+                "tokens_with_null_count" => tokens_with_null.len(),
+            ));
+            info!(log, "backfilling decimals for tokens with NULL");
+
+            let client = crate::jsonrpc::new_client();
+            for token in &tokens_with_null {
+                let decimals = crate::trade::stats::get_token_decimals(&client, token).await;
+                Self::backfill_decimals(token, decimals).await?;
+                decimals_map.insert(token.clone(), decimals);
+            }
+        }
+
+        // 正しい decimals で変換
+        let mut rates = Vec::with_capacity(results.len());
+        for db_rate in results {
+            let decimals = match db_rate.decimals {
+                Some(d) => d as u8,
+                None => *decimals_map.get(&db_rate.base_token).unwrap_or(&24), // フォールバック（通常到達しない）
+            };
+            rates.push(Self::from_db_with_decimals(db_rate, decimals)?);
+        }
+
+        Ok(rates)
     }
 
     /// 指定トークンの全レコードに decimals を設定
-    #[allow(dead_code)]
     pub async fn backfill_decimals(base_token: &str, decimals: u8) -> Result<usize> {
         use diesel::sql_types::{SmallInt, Text};
 
@@ -305,8 +331,9 @@ impl TokenRate {
         Ok(())
     }
 
-    // 最新のレートを取得
-    #[allow(dead_code)]
+    /// 最新のレートを取得
+    ///
+    /// NULL decimals があれば RPC で取得して DB を backfill する。
     pub async fn get_latest(
         base: &TokenOutAccount,
         quote: &TokenInAccount,
@@ -349,13 +376,15 @@ impl TokenRate {
                 .await
                 .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-            Ok(Some(TokenRate::from_db(result)?))
+            Ok(Some(TokenRate::from_db_with_backfill(result).await?))
         } else {
             Ok(None)
         }
     }
 
-    // 履歴レコードを取得（新しい順）
+    /// 履歴レコードを取得（新しい順）
+    ///
+    /// NULL decimals があれば RPC で取得して DB を backfill する。
     #[allow(dead_code)]
     pub async fn get_history(
         base: &TokenOutAccount,
@@ -380,7 +409,7 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        results.into_iter().map(TokenRate::from_db).collect()
+        Self::from_db_results_with_backfill(results).await
     }
 
     // quoteトークンを指定して対応するすべてのbaseトークンとその最新時刻を取得
@@ -498,6 +527,9 @@ impl TokenRate {
         Ok(bases)
     }
 
+    /// 時間範囲内のレートを取得
+    ///
+    /// NULL decimals があれば RPC で取得して DB を backfill する。
     pub async fn get_rates_in_time_range(
         range: &TimeRange,
         base: &TokenOutAccount,
@@ -525,7 +557,7 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        results.into_iter().map(TokenRate::from_db).collect()
+        Self::from_db_results_with_backfill(results).await
     }
 
     // ボラティリティ（変動率）の高い順にトークンペアを取得
