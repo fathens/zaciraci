@@ -54,13 +54,6 @@ impl TokenPrice {
         TokenPrice(BigDecimal::zero())
     }
 
-    /// f64 から TokenPrice を作成
-    ///
-    /// 主にテストやシミュレーション用。本番コードでは `ExchangeRate::to_price()` を使うこと。
-    pub fn from_f64(value: f64) -> Self {
-        TokenPrice(BigDecimal::from_f64(value).unwrap_or_default())
-    }
-
     /// BigDecimal から TokenPrice を作成
     ///
     /// 値は「1トークンあたり何NEAR」を表す。
@@ -494,16 +487,6 @@ impl NearAmount {
         NearAmount(BigDecimal::zero())
     }
 
-    /// NEAR 単位の量から作成
-    pub fn from_near(near: BigDecimal) -> Self {
-        NearAmount(near)
-    }
-
-    /// f64 から作成（テスト用）
-    pub fn from_f64(near: f64) -> Self {
-        NearAmount(BigDecimal::from_f64(near).unwrap_or_default())
-    }
-
     /// 内部の BigDecimal を取得（計算用）
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0
@@ -717,11 +700,6 @@ impl NearValue {
     /// NEAR 単位の金額から作成
     pub fn from_near(near: BigDecimal) -> Self {
         NearValue(near)
-    }
-
-    /// f64 から作成（テスト用）
-    pub fn from_f64(near: f64) -> Self {
-        NearValue(BigDecimal::from_f64(near).unwrap_or_default())
     }
 
     /// 内部の BigDecimal を取得（計算用）

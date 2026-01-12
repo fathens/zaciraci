@@ -146,38 +146,6 @@ pub struct TokenAmount {
 }
 
 impl TokenAmount {
-    /// smallest_units（最小単位）から TokenAmount を作成
-    ///
-    /// # 引数
-    /// - `smallest_units`: 最小単位での量（例: USDT decimals=6 なら 1_000_000 = 1 USDT）
-    /// - `decimals`: トークンの decimals
-    pub fn from_smallest_units(smallest_units: BigDecimal, decimals: u8) -> Self {
-        Self {
-            smallest_units,
-            decimals,
-        }
-    }
-
-    /// whole tokens（整数単位）から TokenAmount を作成
-    ///
-    /// # 引数
-    /// - `whole_tokens`: 整数単位での量（例: 1.5 USDT）
-    /// - `decimals`: トークンの decimals
-    pub fn from_whole_tokens(whole_tokens: BigDecimal, decimals: u8) -> Self {
-        Self {
-            smallest_units: whole_tokens * pow10(decimals),
-            decimals,
-        }
-    }
-
-    /// u128 から TokenAmount を作成（smallest_units として解釈）
-    pub fn from_u128(smallest_units: u128, decimals: u8) -> Self {
-        Self {
-            smallest_units: BigDecimal::from(smallest_units),
-            decimals,
-        }
-    }
-
     /// ゼロ量を作成
     pub fn zero(decimals: u8) -> Self {
         Self {

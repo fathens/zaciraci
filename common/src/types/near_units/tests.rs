@@ -80,7 +80,7 @@ fn test_price_times_amount() {
     assert_eq!(value.as_bigdecimal(), &BigDecimal::from(500));
 
     // TokenPrice × NearAmount = NearValue
-    let near_amount = NearAmount::from_near(BigDecimal::from(2));
+    let near_amount = NearAmount(BigDecimal::from(2));
     let near_value: NearValue = price * near_amount;
     assert_eq!(near_value.as_bigdecimal(), &BigDecimal::from(1));
 }
@@ -179,7 +179,7 @@ fn test_price_display() {
     let price_f64 = TokenPriceF64::from_near_per_token(123.456);
     assert!(format!("{}", price_f64).starts_with("123.45"));
 
-    let near_amount = NearAmount::from_near(BigDecimal::from(5));
+    let near_amount = NearAmount(BigDecimal::from(5));
     assert_eq!(format!("{}", near_amount), "5 NEAR");
 
     let near_value = NearValue::from_near(BigDecimal::from(10));
@@ -202,7 +202,7 @@ fn test_is_zero_methods() {
 
     // NearAmount
     assert!(NearAmount::zero().is_zero());
-    assert!(!NearAmount::from_near(BigDecimal::from(1)).is_zero());
+    assert!(!NearAmount(BigDecimal::from(1)).is_zero());
 
     // YoctoValue
     assert!(YoctoValue::zero().is_zero());
@@ -236,7 +236,7 @@ fn test_near_value_arithmetic() {
     assert_eq!(amount.as_bigdecimal(), &BigDecimal::from(50));
 
     // NearValue / NearAmount = TokenPrice
-    let near_amount = NearAmount::from_near(BigDecimal::from(50));
+    let near_amount = NearAmount(BigDecimal::from(50));
     let price_result: TokenPrice = v1 / near_amount;
     assert_eq!(price_result.as_bigdecimal(), &BigDecimal::from(2));
 }
@@ -268,8 +268,8 @@ fn test_reference_arithmetic() {
     assert_eq!(diff.as_bigdecimal(), &BigDecimal::from(7));
 
     // NearAmount の参照演算
-    let a1 = NearAmount::from_near(BigDecimal::from(10));
-    let a2 = NearAmount::from_near(BigDecimal::from(3));
+    let a1 = NearAmount(BigDecimal::from(10));
+    let a2 = NearAmount(BigDecimal::from(3));
 
     let sum = a1.clone() + &a2;
     assert_eq!(sum.as_bigdecimal(), &BigDecimal::from(13));
@@ -741,7 +741,7 @@ fn test_yocto_amount_times_bigdecimal() {
 
 #[test]
 fn test_near_amount_zero_division() {
-    let a1 = NearAmount::from_near(BigDecimal::from(100));
+    let a1 = NearAmount(BigDecimal::from(100));
     let a2 = NearAmount::zero();
 
     let ratio = a1 / a2;
@@ -849,7 +849,7 @@ fn test_yocto_amount_truncation_behavior() {
     assert_eq!(amount.to_u128(), 123);
 
     // ケース5: NearAmount::to_yocto() - 精度を保持
-    let near_amount = NearAmount::from_near(BigDecimal::from_str("1.5").unwrap());
+    let near_amount = NearAmount(BigDecimal::from_str("1.5").unwrap());
     let yocto = near_amount.to_yocto();
     // 1.5 NEAR = 1.5 * 10^24 yoctoNEAR（精度を保持）
     let expected = BigDecimal::from_str("1.5").unwrap() * BigDecimal::from(YOCTO_PER_NEAR);

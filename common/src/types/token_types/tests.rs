@@ -16,7 +16,10 @@ fn test_exchange_rate_to_price() {
 #[test]
 fn test_token_amount_div_exchange_rate() {
     // 100 USDT を保有
-    let holdings = TokenAmount::from_u128(100_000_000, 6); // 100 × 10^6
+    let holdings = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    }; // 100 × 10^6
 
     // 1 NEAR = 5 USDT
     let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
@@ -29,7 +32,10 @@ fn test_token_amount_div_exchange_rate() {
 #[test]
 fn test_token_amount_mul_price() {
     // 100 USDT を保有
-    let holdings = TokenAmount::from_u128(100_000_000, 6);
+    let holdings = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    };
 
     // 1 USDT = 0.2 NEAR
     let price = TokenPrice::from_near_per_token(BigDecimal::from_f64(0.2).unwrap());
@@ -115,7 +121,10 @@ fn test_exchange_rate_serialization() {
 
 #[test]
 fn test_token_amount_basic() {
-    let amount = TokenAmount::from_u128(100_000_000, 6);
+    let amount = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    };
 
     // smallest_units()
     assert_eq!(amount.smallest_units(), &BigDecimal::from(100_000_000));
@@ -141,7 +150,10 @@ fn test_token_amount_zero() {
 
 #[test]
 fn test_token_amount_display() {
-    let amount = TokenAmount::from_u128(100_000_000, 6);
+    let amount = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    };
     let display = format!("{}", amount);
     assert!(display.contains("100")); // whole tokens
     assert!(display.contains("decimals=6"));
@@ -149,7 +161,10 @@ fn test_token_amount_display() {
 
 #[test]
 fn test_token_amount_serialization() {
-    let amount = TokenAmount::from_u128(100_000_000, 6);
+    let amount = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    };
     let json = serde_json::to_string(&amount).unwrap();
     let deserialized: TokenAmount = serde_json::from_str(&json).unwrap();
     assert_eq!(amount, deserialized);
@@ -157,7 +172,10 @@ fn test_token_amount_serialization() {
 
 #[test]
 fn test_token_amount_div_zero_rate() {
-    let amount = TokenAmount::from_u128(100_000_000, 6);
+    let amount = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    };
     let zero_rate = ExchangeRate::from_raw_rate(BigDecimal::zero(), 6);
 
     // ゼロレートでの除算 → NearValue::zero()
@@ -167,7 +185,10 @@ fn test_token_amount_div_zero_rate() {
 
 #[test]
 fn test_token_amount_reference_div_rate() {
-    let amount = TokenAmount::from_u128(100_000_000, 6);
+    let amount = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    };
     let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
 
     // &TokenAmount / &ExchangeRate
@@ -177,7 +198,10 @@ fn test_token_amount_reference_div_rate() {
 
 #[test]
 fn test_token_amount_reference_mul_price() {
-    let amount = TokenAmount::from_u128(100_000_000, 6);
+    let amount = TokenAmount {
+        smallest_units: BigDecimal::from(100_000_000),
+        decimals: 6,
+    };
     let price = TokenPrice::from_near_per_token(BigDecimal::from_f64(0.2).unwrap());
 
     // &TokenAmount × &TokenPrice
@@ -187,7 +211,10 @@ fn test_token_amount_reference_mul_price() {
 
 #[test]
 fn test_token_amount_new_with_bigdecimal() {
-    let amount = TokenAmount::from_smallest_units(BigDecimal::from_f64(100.5).unwrap(), 6);
+    let amount = TokenAmount {
+        smallest_units: BigDecimal::from_f64(100.5).unwrap(),
+        decimals: 6,
+    };
 
     // 小数も保持できる
     assert_eq!(amount.decimals(), 6);
