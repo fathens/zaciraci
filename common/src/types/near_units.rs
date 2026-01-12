@@ -42,7 +42,7 @@ pub(crate) const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 /// - `TokenPrice` が大きい = トークンが高い
 /// - `TokenPrice` が小さい = トークンが安い
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct TokenPrice(pub(crate) BigDecimal);
+pub struct TokenPrice(BigDecimal);
 
 /// 後方互換性のためのエイリアス
 #[deprecated(since = "1.0.0", note = "Use TokenPrice instead")]

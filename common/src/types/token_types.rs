@@ -115,7 +115,7 @@ impl ExchangeRate {
             return TokenPrice::zero();
         }
         let divisor = pow10(self.decimals);
-        TokenPrice(divisor / &self.raw_rate)
+        TokenPrice::from_near_per_token(divisor / &self.raw_rate)
     }
 
     /// レートがゼロかどうか

@@ -15,7 +15,7 @@ const ONE_NEAR: u128 = 10_u128.pow(24);
 const ONE_MILLINEAR: u128 = 10_u128.pow(21);
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct YoctoNearToken(pub u128);
+pub struct YoctoNearToken(u128);
 
 impl YoctoNearToken {
     pub fn from_near(near: BigDecimal) -> Self {
