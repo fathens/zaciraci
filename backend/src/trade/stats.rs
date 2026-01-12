@@ -561,12 +561,12 @@ where
         };
 
         // 予測の取得
-        let prediction = match prediction_service.predict_price(&predict_history, 24).await {
+        let prediction_price = match prediction_service.predict_price(&predict_history, 24).await {
             Ok(pred) => {
                 // 最初の予測値を返却値として使用
                 pred.predictions
                     .first()
-                    .map(|p| p.price.clone())
+                    .map(|p| p.price.as_bigdecimal().clone())
                     .ok_or_else(|| {
                         anyhow::anyhow!("No prediction values returned for token {}", token)
                     })?
@@ -580,23 +580,23 @@ where
                 ));
             }
         };
-        // 予測値も既に yocto スケールなのでそのまま使用
-        let prediction_yocto = prediction.as_bigdecimal().to_f64().unwrap_or(0.0);
-        predictions.insert(token.to_string(), prediction_yocto);
+        // 予測値は price 形式（NEAR/token）
+        let prediction_f64 = prediction_price.to_f64().unwrap_or(0.0);
+        predictions.insert(token.to_string(), prediction_f64);
 
         // 相対リターンの計算
-        // rate = 1/price なので、価格リターンは rate リターンの逆符号
+        // price 形式なので、予測価格 > 現在価格 = 正のリターン
         let current_f64 = current_price_yocto.to_f64().unwrap_or(0.0);
-        let expected_price_return_pct = if current_f64 > 0.0 && prediction_yocto > 0.0 {
-            ((current_f64 - prediction_yocto) / current_f64) * 100.0
+        let expected_price_return_pct = if current_f64 > 0.0 && prediction_f64 > 0.0 {
+            ((prediction_f64 - current_f64) / current_f64) * 100.0
         } else {
             0.0
         };
 
         info!(log, "token prediction";
             "token" => %token,
-            "current_rate" => %current_price_yocto,
-            "predicted_rate" => prediction_yocto,
+            "current_price" => %current_price_yocto,
+            "predicted_price" => prediction_f64,
             "expected_price_return_pct" => format!("{:.2}%", expected_price_return_pct)
         );
 

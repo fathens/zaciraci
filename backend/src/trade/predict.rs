@@ -38,10 +38,12 @@ pub struct TokenPrediction {
 }
 
 /// 予測価格
+///
+/// Chronos API から返される予測値は price 形式（NEAR/token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
-    /// 予測価格（無次元の価格比率）
+    /// 予測価格（NEAR/token）
     pub price: TokenPrice,
     pub confidence: Option<BigDecimal>,
 }
@@ -344,11 +346,12 @@ impl PredictionService {
             .iter()
             .take(horizon)
             .enumerate()
-            .map(|(i, price)| {
+            .map(|(i, price_value)| {
                 let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
                 PredictedPrice {
                     timestamp,
-                    price: TokenPrice::from_near_per_token(price.clone()),
+                    // forecast_values は price 形式（NEAR/token）
+                    price: TokenPrice::from_near_per_token(price_value.clone()),
                     confidence: None, // 信頼度は将来実装
                 }
             })
@@ -509,7 +512,7 @@ impl PredictionProvider for PredictionService {
                 .into_iter()
                 .map(|p| CommonPredictedPrice {
                     timestamp: p.timestamp,
-                    price: p.price, // 既にPrice型
+                    price: p.price, // 既にTokenPrice型
                     confidence: p.confidence.clone(),
                 })
                 .collect(),
@@ -540,7 +543,7 @@ impl PredictionProvider for PredictionService {
                         .into_iter()
                         .map(|p| CommonPredictedPrice {
                             timestamp: p.timestamp,
-                            price: p.price, // 既にPrice型
+                            price: p.price, // 既にTokenPrice型
                             confidence: p.confidence.clone(),
                         })
                         .collect(),

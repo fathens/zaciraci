@@ -270,6 +270,7 @@ async fn test_convert_prediction_result() {
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
     assert_eq!(preds.len(), 3);
+    // price フィールドで比較（forecast_values は price 形式 NEAR/token）
     assert_eq!(preds[0].price, price("1.2"));
     assert_eq!(preds[1].price, price("1.3"));
     assert_eq!(preds[2].price, price("1.4"));

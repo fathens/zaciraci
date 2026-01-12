@@ -7,6 +7,11 @@ use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
 use std::collections::HashMap;
 
+#[allow(dead_code)]
+fn price(v: f64) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
+}
+
 // テスト用のシンプルなMockPredictionProvider
 struct SimpleMockProvider {
     price_histories: HashMap<String, PriceHistory>,
@@ -103,12 +108,11 @@ impl PredictionProvider for SimpleMockProvider {
 
         for i in 1..=prediction_horizon {
             let timestamp = prediction_time + Duration::hours(i as i64);
-            let price = TokenPrice::from_near_per_token(
-                BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(),
-            );
+            // price 形式で予測を作成（NEAR/token）
+            let price_value = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap();
             predictions.push(PredictedPrice {
                 timestamp,
-                price,
+                price: TokenPrice::from_near_per_token(price_value),
                 confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
             });
         }

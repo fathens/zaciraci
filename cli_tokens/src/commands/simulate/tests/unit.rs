@@ -10,7 +10,7 @@
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::stats::ValueAtTime;
-use common::types::ExchangeRate;
+use common::types::TokenPrice;
 use std::collections::HashMap;
 
 use super::super::data::get_prices_at_time;
@@ -23,8 +23,8 @@ use common::algorithm::momentum::{calculate_confidence_adjusted_return, rank_tok
 // Import newtype wrappers
 use super::super::{NearValueF64, TokenAmountF64, TokenPriceF64, YoctoValueF64};
 
-fn rate(v: i32) -> ExchangeRate {
-    ExchangeRate::from_raw_rate(BigDecimal::from(v), 24)
+fn price(v: i32) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from(v))
 }
 use common::algorithm::{PredictionData, TradingAction};
 
@@ -227,12 +227,11 @@ fn test_trading_cost_calculation() {
 
 #[test]
 fn test_calculate_confidence_adjusted_return() {
-    // rate が小さい = 価格が高い (rate = tokens_smallest/NEAR の逆数に比例)
-    // rate 110 → rate 100 は約10%の価格上昇
+    // price 100 → price 110 は10%の価格上昇
     let prediction = PredictionData {
         token: "test_token".to_string(),
-        current_rate: rate(110),
-        predicted_rate_24h: rate(100), // 価格が 10% 上昇
+        current_price: price(100),
+        predicted_price_24h: price(110), // 価格が 10% 上昇
         timestamp: Utc::now(),
         confidence: Some("0.8".parse().unwrap()),
     };
@@ -259,25 +258,26 @@ fn test_calculate_confidence_adjusted_return() {
 
 #[test]
 fn test_rank_tokens_by_momentum() {
+    // price 形式: price 上昇 = 正のリターン
     let predictions = vec![
         PredictionData {
             token: "token1".to_string(),
-            current_rate: rate(100),
-            predicted_rate_24h: rate(105), // 5% growth
+            current_price: price(100),
+            predicted_price_24h: price(105), // 5% growth
             timestamp: Utc::now(),
             confidence: Some("0.8".parse().unwrap()),
         },
         PredictionData {
             token: "token2".to_string(),
-            current_rate: rate(100),
-            predicted_rate_24h: rate(110), // 10% growth
+            current_price: price(100),
+            predicted_price_24h: price(110), // 10% growth
             timestamp: Utc::now(),
             confidence: Some("0.6".parse().unwrap()),
         },
         PredictionData {
             token: "token3".to_string(),
-            current_rate: rate(100),
-            predicted_rate_24h: rate(95), // -5% decline
+            current_price: price(100),
+            predicted_price_24h: price(95), // -5% decline
             timestamp: Utc::now(),
             confidence: Some("0.9".parse().unwrap()),
         },

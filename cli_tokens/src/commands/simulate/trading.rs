@@ -4,7 +4,7 @@ use anyhow::Result;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
 use common::algorithm::{PredictionData, TradingAction};
-use common::types::ExchangeRate;
+use common::types::TokenPrice;
 use std::collections::HashMap;
 
 // Import cache-related modules
@@ -51,15 +51,11 @@ async fn try_load_from_cache(
                 .map(|p| p.price.clone())
                 .unwrap_or(last_prediction.price.clone());
 
-            // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 24）
-            const DEFAULT_DECIMALS: u8 = 24;
+            // キャッシュには TokenPrice として保存されているのでそのまま使用
             return Ok(Some(PredictionData {
                 token: token.to_string(),
-                current_rate: ExchangeRate::from_price(&current_price, DEFAULT_DECIMALS),
-                predicted_rate_24h: ExchangeRate::from_price(
-                    &last_prediction.price,
-                    DEFAULT_DECIMALS,
-                ),
+                current_price,
+                predicted_price_24h: last_prediction.price.clone(),
                 timestamp: pred_start,
                 confidence: last_prediction.confidence.clone(),
             }));
@@ -76,20 +72,17 @@ async fn save_to_cache(
 ) -> Result<()> {
     // Convert forecast data to cache format
     // NOTE: Chronos は入力データと同じスケールで値を返す
-    //       CLI は Backend API から rate (ExchangeRate形式) を取得して Chronos に送信するため、
-    //       Chronos の予測値も rate 形式になっている
-    //       rate → TokenPrice に変換して保存する
-    const DEFAULT_DECIMALS: u8 = 24;
+    //       CLI は Backend API から price (NEAR/token) を取得して Chronos に送信するため、
+    //       Chronos の予測値も price 形式になっている
     let cache_predictions: Vec<CachePredictionPoint> = forecast_data
         .forecast_timestamp
         .iter()
         .zip(forecast_data.forecast_values.iter())
-        .map(|(timestamp, rate_value)| {
-            // rate_value は rate (ExchangeRate形式) なので TokenPrice に変換
-            let rate = ExchangeRate::from_raw_rate(rate_value.clone(), DEFAULT_DECIMALS);
+        .map(|(timestamp, price_value)| {
+            // price_value は price 形式（NEAR/token）
             CachePredictionPoint {
                 timestamp: *timestamp,
-                price: rate.to_price(),
+                price: TokenPrice::from_near_per_token(price_value.clone()),
                 confidence: None, // Could extract from confidence intervals if available
             }
         })
@@ -267,17 +260,14 @@ pub async fn generate_api_predictions(
                                             // Continue anyway, don't fail the simulation
                                         }
 
-                                        // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 24）
-                                        const DEFAULT_DECIMALS: u8 = 24;
+                                        // Chronos の予測値は price 形式（NEAR/token）
                                         predictions.push(PredictionData {
                                             token: token.clone(),
-                                            current_rate: ExchangeRate::from_raw_rate(
+                                            current_price: TokenPrice::from_near_per_token(
                                                 current_price.clone(),
-                                                DEFAULT_DECIMALS,
                                             ),
-                                            predicted_rate_24h: ExchangeRate::from_raw_rate(
+                                            predicted_price_24h: TokenPrice::from_near_per_token(
                                                 predicted_value.clone(),
-                                                DEFAULT_DECIMALS,
                                             ),
                                             timestamp: current_time,
                                             confidence: chronos_result
@@ -1073,15 +1063,15 @@ impl StrategyContext {
 /// Convert PredictionData to TokenOpportunity for strategy use
 impl From<&PredictionData> for TokenOpportunity {
     fn from(prediction: &PredictionData) -> Self {
-        let current_price_tp = prediction.current_rate.to_price();
-        let predicted_price_tp = prediction.predicted_rate_24h.to_price();
-
-        // Use TokenPrice's expected_return for correct sign handling
-        let expected_return = if !current_price_tp.is_zero() && !predicted_price_tp.is_zero() {
-            current_price_tp.expected_return(&predicted_price_tp)
-        } else {
-            0.0
-        };
+        // PredictionData は既に TokenPrice を持っているので直接使用
+        let expected_return =
+            if !prediction.current_price.is_zero() && !prediction.predicted_price_24h.is_zero() {
+                prediction
+                    .current_price
+                    .expected_return(&prediction.predicted_price_24h)
+            } else {
+                0.0
+            };
 
         TokenOpportunity {
             token: prediction.token.clone(),

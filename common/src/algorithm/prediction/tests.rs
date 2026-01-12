@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{ExchangeRate, TokenPrice, TokenPriceF64};
+use crate::types::{TokenPrice, TokenPriceF64};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
@@ -102,12 +102,11 @@ impl PredictionProvider for MockPredictionProvider {
 
         for i in 1..=prediction_horizon {
             let timestamp = prediction_time + Duration::hours(i as i64);
-            let price = TokenPrice::from_near_per_token(
-                BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap(),
-            ); // 1%ずつ増加する予測
+            // price 形式で予測を作成（NEAR/token）
+            let price_value = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap();
             predictions.push(PredictedPrice {
                 timestamp,
-                price,
+                price: TokenPrice::from_near_per_token(price_value),
                 confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
             });
         }
@@ -208,38 +207,35 @@ mod prediction_tests {
         let prediction_time = create_test_timestamp();
         let predicted_timestamp = prediction_time + Duration::hours(24);
 
+        // 予測価格を price 形式（NEAR/token）で作成
+        let predicted_price_value = BigDecimal::from_f64(110.0).unwrap();
         let prediction_result = TokenPredictionResult {
             token: "test_token".to_string(),
             quote_token: "wrap.near".to_string(),
             prediction_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
-                price: TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap()),
+                price: TokenPrice::from_near_per_token(predicted_price_value.clone()),
                 confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
             }],
         };
 
-        let current_rate = ExchangeRate::from_raw_rate(BigDecimal::from(100), 24);
+        let current_price = TokenPrice::from_near_per_token(BigDecimal::from(100));
         let prediction_data =
-            PredictionData::from_token_prediction(&prediction_result, current_rate.clone());
+            PredictionData::from_token_prediction(&prediction_result, current_price.clone());
 
         assert!(prediction_data.is_some());
         let data = prediction_data.unwrap();
         assert_eq!(data.token, "test_token");
-        assert_eq!(data.current_rate.raw_rate(), current_rate.raw_rate());
-        // predicted_rate_24h は prediction_result の最後の price から ExchangeRate::from_price で作成される
-        // from_price は price を rate に変換する (raw_rate = 10^decimals / price)
-        // 変換後 to_price() で元の価格に戻ることを確認
-        let expected_price = TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap());
-        let actual_price = data.predicted_rate_24h.to_price();
-        // f64 比較で十分な精度を確認
-        let expected_f64 = expected_price.to_f64();
-        let actual_f64 = actual_price.to_f64();
-        assert!(
-            (expected_f64 - actual_f64).abs() < 0.001,
-            "expected price: {}, actual price: {}",
-            expected_f64,
-            actual_f64
+        assert_eq!(
+            data.current_price.as_bigdecimal(),
+            current_price.as_bigdecimal()
+        );
+        // predicted_price_24h は prediction_result の price をそのまま使用
+        assert_eq!(
+            data.predicted_price_24h.as_bigdecimal(),
+            &predicted_price_value,
+            "predicted price should match the input price"
         );
         assert_eq!(data.confidence, Some("0.85".parse::<BigDecimal>().unwrap()));
     }
@@ -283,9 +279,9 @@ mod prediction_tests {
             }],
         };
 
-        let current_rate = ExchangeRate::from_raw_rate(BigDecimal::from(100), 24);
+        let current_price = TokenPrice::from_near_per_token(BigDecimal::from(100));
         let prediction_data =
-            PredictionData::from_token_prediction(&prediction_result, current_rate);
+            PredictionData::from_token_prediction(&prediction_result, current_price);
 
         // 24時間後の予測が見つからないため、Noneが返される
         assert!(prediction_data.is_none());

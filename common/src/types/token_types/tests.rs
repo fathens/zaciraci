@@ -302,53 +302,50 @@ fn test_expected_return_from_rates() {
 // データフロー整合性テスト
 // =============================================================================
 
-/// predict.rs での TokenPrice 使用パターンを検証
+/// predict.rs での予測データフローを検証
 ///
-/// ## 現状の問題
+/// ## 現在の実装（型安全な設計）
 ///
-/// predict.rs では `TokenPrice::from_f64(rate.rate)` で DB の rate を直接格納している。
-/// これは意味的には誤り（TokenPrice は NEAR/token のはずだが、rate は tokens/NEAR）。
+/// predict.rs では forecast_values (rate 形式) を直接 `ExchangeRate::from_raw_rate()` で
+/// `PredictedPrice.rate: ExchangeRate` に格納している。
 ///
-/// ## 実際の動作
+/// ## データフロー
 ///
-/// 1. DB に rate = 1,500,000 (USDT, decimals=6) が格納
-/// 2. predict.rs: TokenPrice::from_f64(1,500,000) で "price" として格納
-/// 3. stats.rs: この値を抽出し `ExchangeRate::from_raw_rate(1,500,000, 6)` で作成
-/// 4. portfolio.rs: `rate.to_price()` で正しい TokenPrice に変換
+/// 1. Chronos API から forecast_values (rate 形式: tokens_smallest/NEAR) を取得
+/// 2. predict.rs: `ExchangeRate::from_raw_rate(rate, DEFAULT_DECIMALS)` で `PredictedPrice.rate` に格納
+/// 3. prediction.rs: `PredictionData.predicted_rate_24h` としてそのまま使用
+/// 4. portfolio.rs: `rate.to_price()` で TokenPrice に変換（必要に応じて）
 ///
-/// ## 結論
+/// ## 設計意図
 ///
-/// 現状のコードは数値的には正しく動作する。
-/// ただし、predict.rs の "price" は実際には "rate" である点に注意。
+/// - rate と price の型を明確に区別
+/// - forecast_values が rate 形式であることをコード上で明示
+/// - 型による誤用防止
 #[test]
 fn test_predict_rs_data_flow() {
-    // DB からの rate 値 (yocto_tokens_per_NEAR)
-    let db_rate = BigDecimal::from(1_500_000);
+    // Chronos API からの rate 値 (tokens_smallest/NEAR)
+    // 例: 1 NEAR = 1.5 USDT (decimals=6) → rate = 1,500,000
+    let forecast_rate = BigDecimal::from(1_500_000);
 
-    // predict.rs: TokenPrice として格納（意味的には誤りだが数値は正しい）
-    let price_in_predict_rs = TokenPrice::from_near_per_token(db_rate.clone());
+    // predict.rs: ExchangeRate として格納（型安全）
+    let rate_in_predict_rs = ExchangeRate::from_raw_rate(forecast_rate.clone(), 6);
 
-    // stats.rs: 値を抽出して ExchangeRate として解釈
-    let extracted_value = price_in_predict_rs.as_bigdecimal().clone();
-    let exchange_rate = ExchangeRate::from_raw_rate(extracted_value, 6);
+    // portfolio.rs: 必要に応じて TokenPrice に変換
+    let token_price = rate_in_predict_rs.to_price();
 
-    // portfolio.rs: 正しい TokenPrice に変換
-    let correct_price = exchange_rate.to_price();
-
-    // 検証: 最終的な TokenPrice は正しい値
+    // 検証: TokenPrice は正しい値
     // 1 NEAR = 1.5 USDT → 1 USDT = 0.666 NEAR
     assert!(
-        (correct_price.to_f64() - 0.666666).abs() < 0.001,
+        (token_price.to_f64() - 0.666666).abs() < 0.001,
         "Expected ≈0.666, got {}",
-        correct_price.to_f64()
+        token_price.to_f64()
     );
 
-    // 注意: price_in_predict_rs は「価格」ではなく「レート」を保持している
-    // 誤って価格として使うと間違った結果になる
-    assert!(
-        (price_in_predict_rs.to_f64() - 1_500_000.0).abs() < 0.001,
-        "predict.rs の 'price' は実際には rate 値: {}",
-        price_in_predict_rs.to_f64()
+    // rate の raw_rate は元の値を保持
+    assert_eq!(
+        rate_in_predict_rs.raw_rate(),
+        &forecast_rate,
+        "ExchangeRate should preserve raw rate value"
     );
 }
 

@@ -8,12 +8,12 @@ use common::algorithm::PredictionData;
 use common::api::chronos::ChronosApiClient;
 use common::prediction::{ChronosPredictionResponse, ZeroShotPredictionRequest};
 use common::stats::ValueAtTime;
-use common::types::ExchangeRate;
+use common::types::TokenPrice;
 use mockito::{Mock, ServerGuard};
 use std::collections::HashMap;
 
-fn rate(v: f64) -> ExchangeRate {
-    ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 24)
+fn price(v: f64) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
 }
 
 /// API統合テスト用のモックサーバーを設定
@@ -195,17 +195,20 @@ mod tests {
     fn test_prediction_data_structure() {
         let prediction = PredictionData {
             token: "test_token".to_string(),
-            current_rate: rate(100.0),
-            predicted_rate_24h: rate(110.0),
+            current_price: price(100.0),
+            predicted_price_24h: price(110.0),
             timestamp: Utc::now(),
             confidence: Some("0.8".parse().unwrap()),
         };
 
         assert_eq!(prediction.token, "test_token");
-        assert_eq!(prediction.current_rate.raw_rate(), rate(100.0).raw_rate());
         assert_eq!(
-            prediction.predicted_rate_24h.raw_rate(),
-            rate(110.0).raw_rate()
+            prediction.current_price.as_bigdecimal(),
+            price(100.0).as_bigdecimal()
+        );
+        assert_eq!(
+            prediction.predicted_price_24h.as_bigdecimal(),
+            price(110.0).as_bigdecimal()
         );
         assert_eq!(prediction.confidence, Some("0.8".parse().unwrap()));
     }

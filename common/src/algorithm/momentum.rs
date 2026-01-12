@@ -25,14 +25,13 @@ const MAX_SLIPPAGE: f64 = 0.02;
 ///
 /// `TokenPrice.expected_return()` を使用して符号の間違いを防ぐ。
 pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
-    let current_price = prediction.current_rate.to_price();
-    let predicted_price = prediction.predicted_rate_24h.to_price();
-
-    if current_price.is_zero() || predicted_price.is_zero() {
+    if prediction.current_price.is_zero() || prediction.predicted_price_24h.is_zero() {
         return 0.0;
     }
 
-    let raw_return = current_price.expected_return(&predicted_price);
+    let raw_return = prediction
+        .current_price
+        .expected_return(&prediction.predicted_price_24h);
 
     // 取引コストを考慮
     adjust_for_trading_costs(raw_return)
@@ -198,7 +197,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     for holding in &current_holdings {
         if let Some(prediction) = predictions_map.get(&holding.token)
             && let Some(data) =
-                PredictionData::from_token_prediction(prediction, holding.current_rate.clone())
+                PredictionData::from_token_prediction(prediction, holding.current_rate.to_price())
         {
             prediction_data.push(data);
         }
@@ -225,12 +224,9 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
 
         let prediction = prediction_provider.predict_price(&history, 24).await?;
 
-        // TokenPriceF64 を TokenPrice に変換して ExchangeRate を構築
-        let current_rate = crate::types::ExchangeRate::from_price(
-            &top_token.current_price.to_bigdecimal(),
-            top_token.decimals,
-        );
-        if let Some(data) = PredictionData::from_token_prediction(&prediction, current_rate) {
+        // TokenPriceF64 を TokenPrice に変換
+        let current_price = top_token.current_price.to_bigdecimal();
+        if let Some(data) = PredictionData::from_token_prediction(&prediction, current_price) {
             prediction_data.push(data);
         }
     }

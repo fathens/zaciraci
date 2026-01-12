@@ -539,7 +539,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     // ポートフォリオデータを構築
                     let mut predictions_map = HashMap::new();
                     for pred in predictions {
-                        let predicted_price = pred.predicted_rate_24h.to_price().to_f64();
+                        // PredictionData は既に TokenPrice を持っているので直接 to_f64() で変換
+                        let predicted_price = pred.predicted_price_24h.to_f64();
                         predictions_map.insert(pred.token, predicted_price);
                     }
 

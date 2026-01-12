@@ -58,10 +58,16 @@ pub struct TokenHolding {
 
 // ==================== 予測データ ====================
 
+/// NEAR トークンの標準 decimals（wNEAR など）
+pub const DEFAULT_DECIMALS: u8 = 24;
+
 /// 予測価格
+///
+/// Chronos API から返される予測値は price 形式（NEAR/token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
+    /// 予測価格（NEAR/token）
     pub price: TokenPrice,
     pub confidence: Option<BigDecimal>,
 }
@@ -70,10 +76,10 @@ pub struct PredictedPrice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionData {
     pub token: String,
-    /// 現在の交換レート
-    pub current_rate: ExchangeRate,
-    /// 24時間後の予測交換レート
-    pub predicted_rate_24h: ExchangeRate,
+    /// 現在の価格（NEAR/token）
+    pub current_price: TokenPrice,
+    /// 24時間後の予測価格（NEAR/token）
+    pub predicted_price_24h: TokenPrice,
     pub timestamp: DateTime<Utc>,
     pub confidence: Option<BigDecimal>,
 }
@@ -412,10 +418,9 @@ mod tests {
     fn test_prediction_data_creation() {
         let prediction = PredictionData {
             token: "test.tkn.near".to_string(),
-            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str("1000000").unwrap(), 6),
-            predicted_rate_24h: ExchangeRate::from_raw_rate(
-                BigDecimal::from_str("1200000").unwrap(),
-                6,
+            current_price: TokenPrice::from_near_per_token(BigDecimal::from_str("100.0").unwrap()),
+            predicted_price_24h: TokenPrice::from_near_per_token(
+                BigDecimal::from_str("120.0").unwrap(),
             ),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.85").unwrap()),
@@ -429,10 +434,9 @@ mod tests {
     fn test_prediction_data_without_confidence() {
         let prediction = PredictionData {
             token: "test.tkn.near".to_string(),
-            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str("1000000").unwrap(), 6),
-            predicted_rate_24h: ExchangeRate::from_raw_rate(
-                BigDecimal::from_str("1200000").unwrap(),
-                6,
+            current_price: TokenPrice::from_near_per_token(BigDecimal::from_str("100.0").unwrap()),
+            predicted_price_24h: TokenPrice::from_near_per_token(
+                BigDecimal::from_str("120.0").unwrap(),
             ),
             timestamp: Utc::now(),
             confidence: None,
@@ -539,10 +543,9 @@ mod tests {
     fn test_prediction_data_serialization() {
         let prediction = PredictionData {
             token: "test".to_string(),
-            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str("1000000").unwrap(), 6),
-            predicted_rate_24h: ExchangeRate::from_raw_rate(
-                BigDecimal::from_str("1200000").unwrap(),
-                6,
+            current_price: TokenPrice::from_near_per_token(BigDecimal::from_str("100.0").unwrap()),
+            predicted_price_24h: TokenPrice::from_near_per_token(
+                BigDecimal::from_str("120.0").unwrap(),
             ),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.9").unwrap()),
