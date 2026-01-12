@@ -8,7 +8,7 @@ use bigdecimal::BigDecimal;
 use near_sdk::AccountId;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
-use zaciraci_common::types::{NearValue, YoctoAmount, YoctoValue};
+use zaciraci_common::types::{NearAmount, YoctoAmount, YoctoValue};
 
 // ハーベスト関連のstatic変数
 static LAST_HARVEST_TIME: AtomicU64 = AtomicU64::new(0);
@@ -31,21 +31,19 @@ static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{}`: {}", value, err))
 });
-static HARVEST_MIN_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
-    let min_str = config::get("HARVEST_MIN_AMOUNT").unwrap_or_else(|_| "10".to_string());
-    let min_near = min_str.parse::<u64>().unwrap_or(10);
-    // NEAR → yoctoNEAR 変換（型安全）
-    NearValue::from_near(BigDecimal::from(min_near))
+static HARVEST_MIN_AMOUNT: Lazy<YoctoAmount> = Lazy::new(|| {
+    config::get("HARVEST_MIN_AMOUNT")
+        .ok()
+        .and_then(|v| v.parse::<NearAmount>().ok())
+        .unwrap_or_else(|| "10".parse().unwrap())
         .to_yocto()
-        .into_bigdecimal()
 });
-static HARVEST_RESERVE_AMOUNT: Lazy<BigDecimal> = Lazy::new(|| {
-    let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
-    let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
-    // NEAR → yoctoNEAR 変換（型安全）
-    NearValue::from_near(BigDecimal::from(reserve_near))
+static HARVEST_RESERVE_AMOUNT: Lazy<YoctoAmount> = Lazy::new(|| {
+    config::get("HARVEST_RESERVE_AMOUNT")
+        .ok()
+        .and_then(|v| v.parse::<NearAmount>().ok())
+        .unwrap_or_else(|| "1".parse().unwrap())
         .to_yocto()
-        .into_bigdecimal()
 });
 
 fn is_time_to_harvest() -> bool {
@@ -105,7 +103,7 @@ pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()
         let harvest_account = &*HARVEST_ACCOUNT;
         let min_harvest_amount = &*HARVEST_MIN_AMOUNT;
 
-        if harvest_amount < *min_harvest_amount {
+        if harvest_amount < *min_harvest_amount.as_bigdecimal() {
             info!(log, "Harvest amount below minimum threshold, skipping";
                 "harvest_amount" => %harvest_amount,
                 "min_amount" => %min_harvest_amount
@@ -216,10 +214,7 @@ async fn execute_harvest_transfer(
     let current_native_balance = client.get_native_amount(account_id).await?;
 
     // 保護額をu128に変換
-    let reserve_amount_u128: u128 = HARVEST_RESERVE_AMOUNT
-        .to_string()
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Failed to convert reserve amount to u128: {}", e))?;
+    let reserve_amount_u128: u128 = HARVEST_RESERVE_AMOUNT.to_u128();
 
     // 送金可能額 = 現在残高 - 保護額
     let available_for_transfer = if current_native_balance > reserve_amount_u128 {

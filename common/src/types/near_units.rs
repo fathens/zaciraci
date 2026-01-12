@@ -26,6 +26,7 @@ use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::{Add, Div, Mul, Sub};
+use std::str::FromStr;
 
 /// 1 NEAR = 10^24 yoctoNEAR
 pub(crate) const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
@@ -500,6 +501,15 @@ impl NearAmount {
     /// 量がゼロかどうか
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
+    }
+}
+
+impl FromStr for NearAmount {
+    type Err = bigdecimal::ParseBigDecimalError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = s.parse::<BigDecimal>()?;
+        Ok(NearAmount(value))
     }
 }
 

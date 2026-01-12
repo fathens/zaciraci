@@ -1,13 +1,19 @@
 use super::*;
 use crate::config;
 use bigdecimal::BigDecimal;
-use zaciraci_common::types::NearValue;
+use zaciraci_common::types::{NearValue, YoctoAmount};
 
 /// NEAR → yoctoNEAR 変換のヘルパー（型安全）
 fn near_to_yocto(near: u64) -> BigDecimal {
     NearValue::from_near(BigDecimal::from(near))
         .to_yocto()
         .into_bigdecimal()
+}
+
+/// NEAR → YoctoAmount 変換のヘルパー（型安全）
+fn near_to_yocto_amount(near: u64) -> YoctoAmount {
+    let yocto_value = near as u128 * 10u128.pow(24);
+    YoctoAmount::from_u128(yocto_value)
 }
 
 // テスト専用: staticを使わずに設定値を計算する関数
@@ -41,7 +47,7 @@ fn test_harvest_reserve_amount_custom() {
 #[test]
 fn test_harvest_min_amount_default() {
     // HARVEST_MIN_AMOUNTのデフォルト値テスト
-    let expected = near_to_yocto(10);
+    let expected = near_to_yocto_amount(10);
     let actual = &*HARVEST_MIN_AMOUNT;
     assert_eq!(*actual, expected);
 }

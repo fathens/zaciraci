@@ -15,13 +15,13 @@ use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance;
 use crate::ref_finance::token_account::TokenInAccount;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use zaciraci_common::types::ExchangeRate;
-use zaciraci_common::types::NearValue;
+use zaciraci_common::types::NearAmount;
 
 pub async fn run() {
     tokio::spawn(run_record_rates());
@@ -133,11 +133,11 @@ fn get_quote_token() -> TokenInAccount {
     WNEAR_TOKEN.clone().into()
 }
 
-fn get_initial_value() -> NearValue {
-    let in_near: u64 = config::get("CRON_RECORD_RATES_INITIAL_VALUE")
-        .and_then(|v| Ok(v.parse()?))
-        .unwrap_or(100);
-    NearValue::from_near(BigDecimal::from(in_near))
+fn get_initial_value() -> NearAmount {
+    config::get("CRON_RECORD_RATES_INITIAL_VALUE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| "100".parse().unwrap())
 }
 
 async fn record_rates() -> Result<()> {
@@ -161,12 +161,8 @@ async fn record_rates() -> Result<()> {
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
     let goals = graph.update_graph(quote_token)?;
     info!(log, "found targets"; "goals" => %goals.len());
-    // NearValue → yoctoNEAR (u128) に変換して list_values に渡す
-    let initial_yocto = initial_value
-        .to_yocto()
-        .into_bigdecimal()
-        .to_u128()
-        .unwrap_or(0);
+    // NearAmount → YoctoAmount → u128 に変換して list_values に渡す
+    let initial_yocto = initial_value.to_yocto().to_u128();
     let values = graph.list_values(initial_yocto, quote_token, &goals)?;
 
     let log = log.new(o!(

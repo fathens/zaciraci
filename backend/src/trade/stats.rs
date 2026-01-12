@@ -45,7 +45,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{ExchangeRate, NearValue, YoctoAmount, YoctoValue};
+use zaciraci_common::types::{ExchangeRate, NearAmount, NearValue, YoctoAmount, YoctoValue};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -257,23 +257,12 @@ async fn prepare_funds() -> Result<u128> {
     let wallet = crate::wallet::new_wallet();
 
     // 初期投資額の設定値を取得（NEAR単位で入力、yoctoNEARに変換）
-    let target_investment = config::get("TRADE_INITIAL_INVESTMENT")
+    let target_investment: u128 = config::get("TRADE_INITIAL_INVESTMENT")
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|v| {
-            NearValue::from_near(BigDecimal::from(v))
-                .to_yocto()
-                .into_bigdecimal()
-                .to_u128()
-                .unwrap_or(0)
-        })
-        .unwrap_or_else(|| {
-            NearValue::from_near(BigDecimal::from(100))
-                .to_yocto()
-                .into_bigdecimal()
-                .to_u128()
-                .unwrap_or(0)
-        });
+        .and_then(|v| v.parse::<NearAmount>().ok())
+        .unwrap_or_else(|| "100".parse().unwrap())
+        .to_yocto()
+        .to_u128();
 
     // 必要な wrap.near 残高として投資額を設定（NEAR -> wrap.near変換）
     // アカウントには10 NEARを残し、それ以外を wrap.near に変換
