@@ -1,5 +1,5 @@
 use crate::Result;
-use bigdecimal::{BigDecimal, Zero};
+use bigdecimal::ToPrimitive;
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
@@ -901,58 +901,46 @@ pub async fn execute_portfolio_optimization(
 }
 
 /// 現在の重みを計算
-/// 型安全: holdingsはYoctoAmount（yocto単位）、total_valueはNearValue（NEAR単位）
+/// 型安全: holdingsはTokenAmount（smallest_units + decimals）、total_valueはNearValue（NEAR単位）
 fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
-
-    // NearValue から BigDecimal を直接取得（精度損失なし）
-    let total_value_bd = wallet.total_value.as_bigdecimal().clone();
+    let total_value = &wallet.total_value;
 
     for (i, token) in tokens.iter().enumerate() {
         if let Some(holding) = wallet.holdings.get(&token.symbol) {
-            // YoctoAmount から BigDecimal を直接取得（精度損失なし）
-            let holding_bd = holding.as_bigdecimal().clone();
+            // TokenAmount / &ExchangeRate = NearValue トレイトを使用
+            // holding の decimals と current_rate の decimals は一致している必要がある
+            let value_near = holding / &token.current_rate;
 
-            // レートのBigDecimal表現を取得
-            // raw_rate = tokens_smallest / NEAR
-            let rate_bd = token.current_rate.raw_rate();
-
-            // 価値を計算: holding / rate = tokens_smallest / (tokens_smallest/NEAR) = NEAR
-            let value_near_bd = if rate_bd.is_zero() {
-                BigDecimal::zero()
-            } else {
-                &holding_bd / rate_bd
-            };
-
-            // 重みを計算 (BigDecimal)
-            if total_value_bd > BigDecimal::from(0) {
-                let weight_bd = &value_near_bd / &total_value_bd;
-                // 最終的にf64に変換（必要最小限のみ）
-                weights[i] = weight_bd.to_string().parse::<f64>().unwrap_or(0.0);
+            // &NearValue / &NearValue = BigDecimal
+            if !total_value.is_zero() {
+                let weight = &value_near / total_value;
+                weights[i] = weight.to_f64().unwrap_or(0.0);
             }
 
             // デバッグ用ログ (テスト時のみ)
             #[cfg(test)]
             {
-                let value_near_f64 = value_near_bd.to_string().parse::<f64>().unwrap_or(0.0);
+                let value_near_f64 = value_near.to_f64();
                 println!(
                     "Token {}: rate={}, holding={}, value_near={:.6}, weight={:.6}%",
                     token.symbol,
-                    rate_bd,
-                    holding_bd,
-                    value_near_f64,
+                    token.current_rate,
+                    holding,
+                    value_near_f64.as_f64(),
                     weights[i] * 100.0
                 );
 
-                if value_near_f64 > 100.0 {
+                if value_near_f64.as_f64() > 100.0 {
                     // 100 NEAR以上の場合は警告
                     println!(
                         "WARNING: Token {} has unusually high value: {:.6} NEAR",
-                        token.symbol, value_near_f64
+                        token.symbol,
+                        value_near_f64.as_f64()
                     );
-                    println!("  Rate (BigDecimal): {}", rate_bd);
-                    println!("  Holdings (BigDecimal): {}", holding_bd);
-                    println!("  Value (NEAR): {}", value_near_bd);
+                    println!("  Rate: {}", token.current_rate);
+                    println!("  Holdings: {}", holding);
+                    println!("  Value (NEAR): {}", value_near);
                     println!("  Weight: {:.6}%", weights[i] * 100.0);
                 }
             }

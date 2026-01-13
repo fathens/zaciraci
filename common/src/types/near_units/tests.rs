@@ -512,8 +512,10 @@ fn test_token_amount_f64_scalar_operations() {
 #[test]
 fn test_token_amount_f64_to_bigdecimal() {
     let amount = TokenAmountF64::from_smallest_units(123.456, 6);
-    let bd = amount.to_bigdecimal();
-    assert!((bd.to_f64().unwrap() - 123.456).abs() < 0.001);
+    let token_amount = amount.to_bigdecimal();
+    // to_bigdecimal() は TokenAmount を返す
+    assert!((token_amount.smallest_units().to_f64().unwrap() - 123.456).abs() < 0.001);
+    assert_eq!(token_amount.decimals(), 6);
 }
 
 #[test]

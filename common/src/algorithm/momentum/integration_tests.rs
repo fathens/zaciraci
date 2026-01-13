@@ -1,7 +1,7 @@
 use super::execute_with_prediction_provider;
 use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
 use crate::algorithm::types::*;
-use crate::types::{ExchangeRate, TokenPrice, TokenPriceF64, YoctoAmount};
+use crate::types::{ExchangeRate, TokenAmount, TokenPrice, TokenPriceF64};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
@@ -163,12 +163,12 @@ async fn test_execute_with_prediction_provider() {
     let current_holdings = vec![
         TokenHolding {
             token: "token1".to_string(),
-            amount: YoctoAmount::from_u128(10),
+            amount: TokenAmount::from_smallest_units(BigDecimal::from(10), 24),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
         },
         TokenHolding {
             token: "token2".to_string(),
-            amount: YoctoAmount::from_u128(20),
+            amount: TokenAmount::from_smallest_units(BigDecimal::from(20), 24),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(50), 24),
         },
     ];
@@ -237,7 +237,7 @@ async fn test_execute_with_prediction_provider_with_top_tokens() {
 
     let current_holdings = vec![TokenHolding {
         token: "other_token".to_string(),
-        amount: YoctoAmount::from_u128(10),
+        amount: TokenAmount::from_smallest_units(BigDecimal::from(10), 24),
         current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(75), 24),
     }];
 

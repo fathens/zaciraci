@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::types::YoctoAmount;
+use crate::types::TokenAmount;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,7 @@ pub fn make_trading_decision(
     current_token: &str,
     current_return: f64,
     ranked_tokens: &[(String, f64, Option<f64>)],
-    holding_amount: &YoctoAmount,
+    holding_amount: &TokenAmount,
     min_profit_threshold: f64,
     switch_multiplier: f64,
     min_trade_amount: f64,
@@ -97,7 +97,7 @@ pub fn make_trading_decision(
     }
 
     // 保有額が最小取引額以下の場合はHold
-    let amount = holding_amount.as_bigdecimal().to_f64().unwrap_or(0.0);
+    let amount = holding_amount.smallest_units().to_f64().unwrap_or(0.0);
     if amount < min_trade_amount {
         return TradingAction::Hold;
     }

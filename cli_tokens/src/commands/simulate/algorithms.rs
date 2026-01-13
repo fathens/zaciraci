@@ -149,17 +149,17 @@ pub(crate) async fn run_momentum_timestep_simulation(
                 .await?;
 
                 // TokenHoldingに変換（型安全な変換メソッドを使用）
-                // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 24）
-                const DEFAULT_DECIMALS: u8 = 24;
                 let mut token_holdings = Vec::new();
                 for (token, amount) in &current_holdings {
                     if let Some(&price) = current_prices.get(token) {
+                        // amount: TokenAmountF64 -> TokenAmount
+                        // amount.decimals() と price は同じ decimals を使用
                         token_holdings.push(TokenHolding {
                             token: token.clone(),
-                            amount: YoctoAmount::from_bigdecimal(amount.to_bigdecimal()),
+                            amount: amount.to_bigdecimal(),
                             current_rate: ExchangeRate::from_price(
                                 &price.to_bigdecimal(),
-                                DEFAULT_DECIMALS,
+                                amount.decimals(),
                             ),
                         });
                     }
@@ -426,7 +426,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     use bigdecimal::{BigDecimal, FromPrimitive};
     use common::algorithm::portfolio::{PortfolioData, execute_portfolio_optimization};
     use common::algorithm::{PriceHistory, PricePoint, TokenData, TradingAction, WalletInfo};
-    use common::types::{NearValue, YoctoAmount};
+    use common::types::NearValue;
 
     let duration = config.end_date - config.start_date;
     let duration_days = duration.num_days();
@@ -585,16 +585,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         correlation_matrix: None,
                     };
 
-                    // 現在のホールディングをWalletInfoに変換（BigDecimal精度）
+                    // 現在のホールディングをWalletInfoに変換（TokenAmount）
                     let mut holdings_for_wallet = BTreeMap::new();
                     for (token, amount) in &current_holdings {
-                        // TokenAmountF64 → YoctoAmount (BigDecimal)
-                        holdings_for_wallet.insert(
-                            token.clone(),
-                            YoctoAmount::from_bigdecimal(
-                                BigDecimal::from_f64(amount.as_f64()).unwrap_or_default(),
-                            ),
-                        );
+                        // TokenAmountF64 → TokenAmount
+                        holdings_for_wallet.insert(token.clone(), amount.to_bigdecimal());
                     }
 
                     // 総価値を計算（NEAR単位、BigDecimal精度）

@@ -412,7 +412,7 @@ pub fn execute_trading_action(
 
             // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
             // 型安全な変換メソッドを使用
-            let current_amount_bd = ctx.current_amount.to_bigdecimal();
+            let current_amount_bd = ctx.current_amount.to_bigdecimal().smallest_units().clone();
             let current_price_bd = ctx.current_price.to_bigdecimal().into_bigdecimal();
             let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
 
@@ -499,7 +499,7 @@ pub fn execute_trading_action(
 
             // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
             // 型安全な変換メソッドを使用
-            let current_amount_bd = ctx.current_amount.to_bigdecimal();
+            let current_amount_bd = ctx.current_amount.to_bigdecimal().smallest_units().clone();
             let current_price_bd = ctx.current_price.to_bigdecimal().into_bigdecimal();
             let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
 

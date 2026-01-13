@@ -154,6 +154,14 @@ impl TokenAmount {
         }
     }
 
+    /// smallest_units と decimals から作成
+    pub fn from_smallest_units(smallest_units: BigDecimal, decimals: u8) -> Self {
+        Self {
+            smallest_units,
+            decimals,
+        }
+    }
+
     /// smallest_units への参照を取得
     pub fn smallest_units(&self) -> &BigDecimal {
         &self.smallest_units

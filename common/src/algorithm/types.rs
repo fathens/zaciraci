@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::types::{ExchangeRate, NearValue, TokenPrice, TokenPriceF64, YoctoAmount};
+use crate::types::{ExchangeRate, NearValue, TokenAmount, TokenPrice, TokenPriceF64};
 
 // ==================== 取引関連型 ====================
 
@@ -50,8 +50,8 @@ pub struct TokenData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenHolding {
     pub token: String,
-    /// 保有量（トークンの最小単位）
-    pub amount: YoctoAmount,
+    /// 保有量（TokenAmount: smallest_units + decimals）
+    pub amount: TokenAmount,
     /// 現在の交換レート
     pub current_rate: ExchangeRate,
 }
@@ -219,8 +219,8 @@ pub struct PortfolioMetrics {
 /// ウォレット情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletInfo {
-    /// トークン保有量（トークンのyocto単位、BigDecimal精度）
-    pub holdings: BTreeMap<String, YoctoAmount>,
+    /// トークン保有量（TokenAmount: smallest_units + decimals）
+    pub holdings: BTreeMap<String, TokenAmount>,
     /// 総価値（NEAR単位、BigDecimal精度）
     pub total_value: NearValue,
     /// 現金残高（NEAR単位、BigDecimal精度）

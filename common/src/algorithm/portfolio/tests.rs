@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{ExchangeRate, NearValue, TokenPrice, YoctoAmount};
+use crate::types::{ExchangeRate, NearValue, TokenAmount, TokenPrice};
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::Duration;
 use ndarray::array;
@@ -108,14 +108,15 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
 
 fn create_sample_wallet() -> WalletInfo {
     let mut holdings = BTreeMap::new();
-    // トークン数量（yocto単位）: 価格×数量=価値 となるように設定
+    // トークン数量（smallest_units）: 価格×数量=価値 となるように設定
+    // decimals=18 で rate() と一致させる
     holdings.insert(
         "TOKEN_A".to_string(),
-        YoctoAmount::from_bigdecimal(BigDecimal::from(5)),
+        TokenAmount::from_smallest_units(BigDecimal::from(5), 18),
     ); // price=100, value=500 NEAR
     holdings.insert(
         "TOKEN_B".to_string(),
-        YoctoAmount::from_bigdecimal(BigDecimal::from(10)),
+        TokenAmount::from_smallest_units(BigDecimal::from(10), 18),
     ); // price=50, value=500 NEAR
 
     WalletInfo {
@@ -2774,7 +2775,7 @@ fn test_portfolio_evaluation_accuracy() {
     };
     wallet.holdings.insert(
         "token_a".to_string(),
-        YoctoAmount::from_bigdecimal(BigDecimal::from_str("5E+26").unwrap()), // 500 tokens in smallest units
+        TokenAmount::from_smallest_units(BigDecimal::from_str("5E+26").unwrap(), 24), // 500 tokens in smallest units
     );
 
     let weights = super::calculate_current_weights(&realistic_tokens, &wallet);
@@ -2841,14 +2842,16 @@ fn test_extreme_price_weight_calculation() {
 
     wallet.holdings.insert(
         "bean.tkn.near".to_string(),
-        YoctoAmount::from_bigdecimal(
-            BigDecimal::from_str("1E+28").unwrap(), // 10000 tokens
+        TokenAmount::from_smallest_units(
+            BigDecimal::from_str("1E+28").unwrap(),
+            24, // 10000 tokens
         ),
     );
     wallet.holdings.insert(
         "ndc.tkn.near".to_string(),
-        YoctoAmount::from_bigdecimal(
-            BigDecimal::from_str("1E+28").unwrap(), // 10000 tokens
+        TokenAmount::from_smallest_units(
+            BigDecimal::from_str("1E+28").unwrap(),
+            24, // 10000 tokens
         ),
     );
 
@@ -3016,4 +3019,115 @@ fn test_dimensional_analysis_correctness() {
 
 fn pow10(exp: u8) -> BigDecimal {
     BigDecimal::from_str(&format!("1{}", "0".repeat(exp as usize))).unwrap()
+}
+
+/// 元の calculate_current_weights の実装（BigDecimal直接計算版）
+/// 計算結果の比較用
+fn calculate_current_weights_original(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
+    use bigdecimal::Zero;
+
+    let mut weights = vec![0.0; tokens.len()];
+
+    // NearValue から BigDecimal を直接取得（精度損失なし）
+    let total_value_bd = wallet.total_value.as_bigdecimal().clone();
+
+    for (i, token) in tokens.iter().enumerate() {
+        if let Some(holding) = wallet.holdings.get(&token.symbol) {
+            // TokenAmount から smallest_units を取得（精度損失なし）
+            let holding_bd = holding.smallest_units().clone();
+
+            // レートのBigDecimal表現を取得
+            // raw_rate = tokens_smallest / NEAR
+            let rate_bd = token.current_rate.raw_rate();
+
+            // 価値を計算: holding / rate = tokens_smallest / (tokens_smallest/NEAR) = NEAR
+            let value_near_bd = if rate_bd.is_zero() {
+                BigDecimal::zero()
+            } else {
+                &holding_bd / rate_bd
+            };
+
+            // 重みを計算 (BigDecimal)
+            if total_value_bd > BigDecimal::from(0) {
+                let weight_bd = &value_near_bd / &total_value_bd;
+                // 最終的にf64に変換（必要最小限のみ）
+                weights[i] = weight_bd.to_string().parse::<f64>().unwrap_or(0.0);
+            }
+        }
+    }
+
+    weights
+}
+
+#[test]
+fn test_calculate_current_weights_equivalence() {
+    // テストデータを作成
+    let tokens = vec![
+        TokenInfo {
+            symbol: "TOKEN_A".to_string(),
+            current_rate: ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("1000000000000000000").unwrap(), // 1e18
+                18,
+            ),
+            historical_volatility: 0.2,
+            liquidity_score: Some(0.8),
+            market_cap: Some(1000000.0),
+        },
+        TokenInfo {
+            symbol: "TOKEN_B".to_string(),
+            current_rate: ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("500000000000000000").unwrap(), // 0.5e18
+                18,
+            ),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.7),
+            market_cap: Some(500000.0),
+        },
+    ];
+
+    let mut holdings = BTreeMap::new();
+    holdings.insert(
+        "TOKEN_A".to_string(),
+        TokenAmount::from_smallest_units(BigDecimal::from_str("10000000000000000000").unwrap(), 18), // 10e18
+    );
+    holdings.insert(
+        "TOKEN_B".to_string(),
+        TokenAmount::from_smallest_units(BigDecimal::from_str("20000000000000000000").unwrap(), 18), // 20e18
+    );
+
+    let wallet = WalletInfo {
+        holdings,
+        total_value: NearValue::from_near(BigDecimal::from_str("50").unwrap()),
+        cash_balance: NearValue::zero(),
+    };
+
+    // BigDecimal直接計算版と実際のコードで計算
+    let weights_original = calculate_current_weights_original(&tokens, &wallet);
+    let weights_actual = super::calculate_current_weights(&tokens, &wallet);
+
+    println!("Original (BigDecimal直接): {:?}", weights_original);
+    println!("Actual (トレイトベース): {:?}", weights_actual);
+
+    // 結果を比較（小数点以下6桁の精度で）
+    for (i, (orig, actual)) in weights_original
+        .iter()
+        .zip(weights_actual.iter())
+        .enumerate()
+    {
+        let diff = (orig - actual).abs();
+        println!(
+            "Token {}: original={:.10}, actual={:.10}, diff={:.10}",
+            i, orig, actual, diff
+        );
+        assert!(
+            diff < 1e-6,
+            "Weight mismatch at index {}: original={}, actual={}, diff={}",
+            i,
+            orig,
+            actual,
+            diff
+        );
+    }
+
+    println!("\n✅ calculate_current_weights equivalence test passed");
 }

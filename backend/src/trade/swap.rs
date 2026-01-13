@@ -7,7 +7,7 @@ use num_traits::Zero;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::algorithm::types::TradingAction;
-use zaciraci_common::types::{YoctoAmount, YoctoValue};
+use zaciraci_common::types::{NearValue, TokenAmount, YoctoAmount, YoctoValue};
 
 /// TradingActionに基づいて単一のアクションを実行する
 #[allow(dead_code)]
@@ -100,17 +100,23 @@ where
             let total_value =
                 calculate_total_portfolio_value(client, wallet, &current_balances).await?;
 
-            if total_value == BigDecimal::from(0) {
+            if total_value.is_zero() {
                 return Err(anyhow::anyhow!("Total portfolio value is zero"));
             }
 
             // 3. 各トークンのリバランス実行
+            // Note: 以下の計算では BigDecimal で yoctoNEAR 単位のまま計算
+            let total_value_bd = total_value.as_bigdecimal();
             for (token, target_weight) in target_weights.iter() {
-                let current_balance = current_balances.get(token).copied().unwrap_or(0);
+                let current_balance = current_balances
+                    .get(token)
+                    .map(|a| a.smallest_units().clone())
+                    .unwrap_or_default();
 
                 // 目標量を計算（total_value × target_weight）
-                let target_value = &total_value * BigDecimal::from_str(&target_weight.to_string())?;
-                let current_value = BigDecimal::from(current_balance);
+                let target_value =
+                    total_value_bd * BigDecimal::from_str(&target_weight.to_string())?;
+                let current_value = current_balance.clone();
 
                 // 差分を計算
                 let value_diff = &target_value - &current_value;
@@ -118,14 +124,14 @@ where
                 info!(log, "rebalancing token";
                     "token" => token,
                     "target_weight" => target_weight,
-                    "current_balance" => current_balance,
+                    "current_balance" => %current_balance,
                     "target_value" => %target_value,
                     "current_value" => %current_value,
                     "value_diff" => %value_diff
                 );
 
                 // リスク管理: 最大トレードサイズを総価値の10%に制限
-                let max_trade_size = &total_value * BigDecimal::from_str("0.1")?;
+                let max_trade_size = total_value_bd * BigDecimal::from_str("0.1")?;
                 let trade_amount = if value_diff.abs() > max_trade_size {
                     if value_diff > BigDecimal::from(0) {
                         max_trade_size.clone()
@@ -137,7 +143,7 @@ where
                 };
 
                 // 最小トレードサイズのチェック（総価値の1%未満はスキップ）
-                let min_trade_size = &total_value * BigDecimal::from_str("0.01")?;
+                let min_trade_size = total_value_bd * BigDecimal::from_str("0.01")?;
                 if trade_amount.abs() < min_trade_size {
                     info!(log, "skipping small rebalance"; "token" => token, "trade_amount" => %trade_amount);
                     continue;
@@ -225,12 +231,12 @@ where
     }
 }
 
-/// ポートフォリオ全体の現在残高を取得（yoctoNEAR単位）
+/// ポートフォリオ全体の現在残高を取得（TokenAmount: smallest_units + decimals）
 pub async fn get_current_portfolio_balances<C, W>(
     client: &C,
     wallet: &W,
     tokens: &[String],
-) -> Result<BTreeMap<String, u128>>
+) -> Result<BTreeMap<String, TokenAmount>>
 where
     C: crate::jsonrpc::AccountInfo
         + crate::jsonrpc::SendTx
@@ -255,20 +261,27 @@ where
             .get(&token_account)
             .map(|u| u.0)
             .unwrap_or_default();
-        balances.insert(token.clone(), balance);
 
-        info!(log, "retrieved balance"; "token" => token, "balance" => balance);
+        // トークンの decimals を取得
+        let decimals = crate::trade::stats::get_token_decimals(client, token).await;
+
+        balances.insert(
+            token.clone(),
+            TokenAmount::from_smallest_units(BigDecimal::from(balance), decimals),
+        );
+
+        info!(log, "retrieved balance"; "token" => token, "balance" => balance, "decimals" => decimals);
     }
 
     Ok(balances)
 }
 
-/// ポートフォリオの総価値を計算（yoctoNEAR単位）
+/// ポートフォリオの総価値を計算（NEAR単位）
 pub async fn calculate_total_portfolio_value<C, W>(
     _client: &C,
     _wallet: &W,
-    current_balances: &BTreeMap<String, u128>,
-) -> Result<BigDecimal>
+    current_balances: &BTreeMap<String, TokenAmount>,
+) -> Result<NearValue>
 where
     C: crate::jsonrpc::AccountInfo
         + crate::jsonrpc::SendTx
@@ -276,17 +289,25 @@ where
         + crate::jsonrpc::GasInfo,
     W: crate::wallet::Wallet,
 {
-    let log = DEFAULT.new(o!("function" => "calculate_total_portfolio_value"));
-    let mut total_value = BigDecimal::from(0);
+    use zaciraci_common::types::ExchangeRate;
 
-    for (token, balance) in current_balances {
-        if *balance == 0 {
+    let log = DEFAULT.new(o!("function" => "calculate_total_portfolio_value"));
+    let mut total_value = NearValue::zero();
+
+    for (token, amount) in current_balances {
+        if amount.is_zero() {
             continue;
         }
 
-        // wrap.nearの場合はそのまま価値とする
+        // wrap.nearの場合はそのまま価値とする（decimals=24）
         if token == &crate::ref_finance::token_account::WNEAR_TOKEN.to_string() {
-            total_value += BigDecimal::from(*balance);
+            // wrap.near: smallest_units = yoctoNEAR, rate = 1e24 (1 NEAR = 1e24 yocto)
+            let rate = ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("1000000000000000000000000").unwrap(),
+                amount.decimals(),
+            );
+            let value = amount / &rate;
+            total_value = total_value + value;
         } else {
             // 他のトークンの場合は、wrap.nearとの交換レートを使用して価値を計算
             use crate::persistence::token_rate::TokenRate;
@@ -306,13 +327,14 @@ where
             // 最新のレートを取得
             match TokenRate::get_latest(&base_token, &quote_token).await {
                 Ok(Some(rate)) => {
-                    // balance / rateで価値を計算
-                    // rate = (base_token / quote_token) なので、balance / rate = quote_token換算
+                    // TokenAmount / &ExchangeRate = NearValue トレイトを使用
                     if rate.rate().is_zero() {
                         warn!(log, "Rate is zero for token"; "token" => token);
                     } else {
-                        let token_value = BigDecimal::from(*balance) / rate.rate();
-                        total_value += token_value;
+                        let exchange_rate =
+                            ExchangeRate::from_raw_rate(rate.rate().clone(), amount.decimals());
+                        let token_value = amount / &exchange_rate;
+                        total_value = total_value + token_value;
                     }
                 }
                 Ok(None) => {

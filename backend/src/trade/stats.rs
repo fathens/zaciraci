@@ -45,7 +45,7 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{ExchangeRate, NearAmount, NearValue, YoctoAmount, YoctoValue};
+use zaciraci_common::types::{ExchangeRate, NearAmount, NearValue, YoctoValue};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -645,12 +645,12 @@ where
         let current_balances =
             swap::get_current_portfolio_balances(client, wallet, &token_strs).await?;
 
-        // u128をYoctoAmountに変換（型安全、BigDecimal精度維持）
+        // get_current_portfolio_balances は TokenAmount を返すので、ゼロを除外するだけ
         let mut holdings_typed = BTreeMap::new();
-        for (token, balance) in current_balances {
-            if balance > 0 {
-                holdings_typed.insert(token.clone(), YoctoAmount::from_u128(balance));
-                info!(log, "loaded existing position"; "token" => token, "balance" => balance);
+        for (token, amount) in current_balances {
+            if !amount.is_zero() {
+                info!(log, "loaded existing position"; "token" => &token, "amount" => %amount);
+                holdings_typed.insert(token, amount);
             }
         }
         holdings_typed
@@ -835,29 +835,37 @@ where
 
             let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
 
+            // total_portfolio_value は NearValue なので、BigDecimal に変換
+            let total_portfolio_value_bd = total_portfolio_value.as_bigdecimal();
+
             for (token, target_weight) in target_weights.iter() {
                 if token == &wrap_near_str {
                     continue; // wrap.nearは除外
                 }
 
-                let current_balance = current_balances.get(token).copied().unwrap_or(0);
+                let current_amount = current_balances.get(token);
 
                 // 現在の価値（wrap.near換算）を計算
-                let current_value_wrap_near = if current_balance > 0 {
-                    let token_out: crate::ref_finance::token_account::TokenOutAccount =
-                        token.parse::<near_sdk::AccountId>()?.into();
-                    let quote_in: crate::ref_finance::token_account::TokenInAccount =
-                        wrap_near_str.parse::<near_sdk::AccountId>()?.into();
+                let current_value_wrap_near = match current_amount {
+                    Some(amount) if !amount.is_zero() => {
+                        let token_out: crate::ref_finance::token_account::TokenOutAccount =
+                            token.parse::<near_sdk::AccountId>()?.into();
+                        let quote_in: crate::ref_finance::token_account::TokenInAccount =
+                            wrap_near_str.parse::<near_sdk::AccountId>()?.into();
 
-                    let rate = crate::persistence::token_rate::TokenRate::get_latest(
-                        &token_out, &quote_in,
-                    )
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token))?;
+                        let rate = crate::persistence::token_rate::TokenRate::get_latest(
+                            &token_out, &quote_in,
+                        )
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token))?;
 
-                    BigDecimal::from(current_balance) / rate.rate()
-                } else {
-                    BigDecimal::from(0)
+                        // TokenAmount / &ExchangeRate = NearValue トレイトを使用
+                        let exchange_rate =
+                            ExchangeRate::from_raw_rate(rate.rate().clone(), amount.decimals());
+                        let value = amount / &exchange_rate;
+                        value.as_bigdecimal().clone()
+                    }
+                    _ => BigDecimal::from(0),
                 };
 
                 // 目標価値（wrap.near換算）を計算
@@ -865,7 +873,7 @@ where
                     .map_err(|e| {
                         anyhow::anyhow!("Failed to convert target weight to BigDecimal: {}", e)
                     })?;
-                let target_value_wrap_near = &total_portfolio_value * &target_weight_decimal;
+                let target_value_wrap_near = total_portfolio_value_bd * &target_weight_decimal;
 
                 // 差分を計算（wrap.near単位）
                 let diff_wrap_near = &target_value_wrap_near - &current_value_wrap_near;

@@ -23,6 +23,8 @@ use std::fmt;
 use std::ops::{Add, Div, Mul, Sub};
 use std::str::FromStr;
 
+use super::token_types::TokenAmount;
+
 /// 1 NEAR = 10^24 yoctoNEAR
 pub(crate) const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 
@@ -777,6 +779,18 @@ impl Div for NearValue {
     }
 }
 
+// &NearValue / &NearValue = BigDecimal（参照版）
+impl Div<&NearValue> for &NearValue {
+    type Output = BigDecimal;
+    fn div(self, other: &NearValue) -> BigDecimal {
+        if other.0.is_zero() {
+            BigDecimal::zero()
+        } else {
+            &self.0 / &other.0
+        }
+    }
+}
+
 // NearValue / TokenPrice = NearAmount
 impl Div<TokenPrice> for NearValue {
     type Output = NearAmount;
@@ -818,6 +832,14 @@ impl Mul<TokenPrice> for YoctoAmount {
     type Output = YoctoValue;
     fn mul(self, price: TokenPrice) -> YoctoValue {
         YoctoValue(self.0 * price.0)
+    }
+}
+
+// &YoctoAmount × TokenPrice = YoctoValue（参照版）
+impl Mul<TokenPrice> for &YoctoAmount {
+    type Output = YoctoValue;
+    fn mul(self, price: TokenPrice) -> YoctoValue {
+        YoctoValue(&self.0 * &price.0)
     }
 }
 
@@ -918,9 +940,12 @@ impl TokenAmountF64 {
         self.amount > 0.0
     }
 
-    /// BigDecimal に変換（精度は回復しない）
-    pub fn to_bigdecimal(&self) -> BigDecimal {
-        BigDecimal::from_f64(self.amount).unwrap_or_default()
+    /// TokenAmount に変換（精度は回復しない）
+    pub fn to_bigdecimal(&self) -> TokenAmount {
+        TokenAmount::from_smallest_units(
+            BigDecimal::from_f64(self.amount).unwrap_or_default(),
+            self.decimals,
+        )
     }
 }
 

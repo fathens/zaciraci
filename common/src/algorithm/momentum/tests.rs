@@ -1,13 +1,13 @@
 use super::*;
-use crate::types::{TokenPrice, YoctoAmount};
+use crate::types::{TokenAmount, TokenPrice};
 use bigdecimal::{FromPrimitive, ToPrimitive};
 
 fn price(v: f64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
 }
 
-fn amount_f64(v: f64) -> YoctoAmount {
-    YoctoAmount::from_bigdecimal(BigDecimal::from_f64(v).unwrap())
+fn amount_f64(v: f64) -> TokenAmount {
+    TokenAmount::from_smallest_units(BigDecimal::from_f64(v).unwrap(), 18)
 }
 
 #[test]
@@ -537,7 +537,7 @@ fn test_partial_fill_scenario() {
         }
         TradingAction::Hold => {
             // 部分約定によりリターンが取引コストを下回る場合はHold
-            let partial_f64 = partial_amount.as_bigdecimal().to_f64().unwrap_or(0.0);
+            let partial_f64 = partial_amount.smallest_units().to_f64().unwrap_or(0.0);
             assert!(partial_f64 < 1.0);
         }
         TradingAction::Rebalance { .. }
