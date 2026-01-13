@@ -275,8 +275,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
                         let value_yocto = *amount * price;
                         let value_near = value_yocto.to_near();
                         holdings_value.insert(token.clone(), value_near);
-                        total_value =
-                            NearValueF64::from_near(total_value.as_f64() + value_near.as_f64());
+                        total_value = total_value + value_near;
                     }
                 }
 
@@ -326,8 +325,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
                             let value_yocto = *amount * price;
                             let value_near = value_yocto.to_near();
                             holdings_value.insert(token.clone(), value_near);
-                            total_value =
-                                NearValueF64::from_near(total_value.as_f64() + value_near.as_f64());
+                            total_value = total_value + value_near;
                         }
                     }
 
@@ -644,10 +642,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                         if let Some(&price) = current_prices.get(token) {
                                             let value_yocto = *amount * price;
                                             let value_near = value_yocto.to_near();
-                                            total_portfolio_value = NearValueF64::from_near(
-                                                total_portfolio_value.as_f64()
-                                                    + value_near.as_f64(),
-                                            );
+                                            total_portfolio_value =
+                                                total_portfolio_value + value_near;
                                         }
                                     }
 
@@ -666,13 +662,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             // TODO: トークンごとの decimals を使用する
                                             let max_reasonable_amount =
                                                 TokenAmountF64::from_smallest_units(1e21, 24);
-                                            let target_amount_limited = if target_amount.as_f64()
-                                                > max_reasonable_amount.as_f64()
-                                            {
-                                                max_reasonable_amount
-                                            } else {
-                                                target_amount
-                                            };
+                                            let target_amount_limited =
+                                                if target_amount > max_reasonable_amount {
+                                                    max_reasonable_amount
+                                                } else {
+                                                    target_amount
+                                                };
 
                                             // 現在の保有量と目標量の差を計算
                                             // TODO: トークンごとの decimals を使用する
@@ -680,8 +675,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                 .get(&token)
                                                 .copied()
                                                 .unwrap_or(TokenAmountF64::zero(24));
-                                            let diff = target_amount_limited.as_f64()
-                                                - current_amount.as_f64();
+                                            let diff_amount =
+                                                target_amount_limited - current_amount;
+                                            let diff = diff_amount.as_f64();
 
                                             // 相対的な閾値: 現在保有量の1%以上の差でリバランス
                                             let relative_threshold = current_amount.as_f64() * 0.01;
@@ -760,8 +756,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         let value_yocto = *amount * price;
                         let value_near = value_yocto.to_near();
                         holdings_value.insert(token.clone(), value_near);
-                        total_value =
-                            NearValueF64::from_near(total_value.as_f64() + value_near.as_f64());
+                        total_value = total_value + value_near;
                     }
                 }
 
@@ -810,8 +805,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                             let value_yocto = *amount * price;
                             let value_near = value_yocto.to_near();
                             holdings_value.insert(token.clone(), value_near);
-                            total_value =
-                                NearValueF64::from_near(total_value.as_f64() + value_near.as_f64());
+                            total_value = total_value + value_near;
                         }
                     }
 
