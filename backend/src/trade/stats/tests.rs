@@ -938,130 +938,193 @@ fn test_filter_tokens_to_liquidate_only_wrap_near() {
 mod rebalance_tests {
     use bigdecimal::BigDecimal;
     use std::str::FromStr;
+    use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount};
 
     #[test]
     fn test_rebalance_calculations_sell_only() {
-        // Setup: Token A has 200 wrap.near value, target is 100 wrap.near
-        // Should sell 100 wrap.near worth of Token A
-        let current_value = BigDecimal::from_str("200.0").unwrap();
-        let target_value = BigDecimal::from_str("100.0").unwrap();
+        // Setup: Token A has 200 NEAR value, target is 100 NEAR
+        // Should sell 100 NEAR worth of Token A
+        let current_value = NearValue::from_near(BigDecimal::from(200));
+        let target_value = NearValue::from_near(BigDecimal::from(100));
         let diff = &target_value - &current_value;
 
-        assert_eq!(diff, BigDecimal::from_str("-100.0").unwrap());
-        assert!(diff < BigDecimal::from(0));
+        assert_eq!(diff, NearValue::from_near(BigDecimal::from(-100)));
+        assert!(diff < NearValue::zero());
 
-        // If rate is 0.5 (1 Token A = 2 wrap.near)
-        // Then 100 wrap.near = 50 Token A
-        let rate = BigDecimal::from_str("0.5").unwrap();
-        let token_amount = diff.abs() * &rate;
+        // ExchangeRate: raw_rate = 5e23 smallest_units/NEAR
+        // つまり 1 NEAR で 0.5e24 = 0.5 tokens を取得 (price = 2 NEAR/token)
+        // 100 NEAR × 5e23 = 5e25 = 50e24 smallest_units = 50 tokens
+        let rate = ExchangeRate::from_raw_rate(
+            BigDecimal::from_str("500000000000000000000000").unwrap(), // 5e23
+            24,
+        );
+        let token_amount: TokenAmount = &diff.abs() * &rate;
 
-        assert_eq!(token_amount, BigDecimal::from_str("50.0").unwrap());
+        // Expected: 50 tokens = 50e24 smallest units
+        let expected = BigDecimal::from_str("50000000000000000000000000").unwrap(); // 50e24
+        assert_eq!(token_amount.smallest_units(), &expected);
     }
 
     #[test]
     fn test_rebalance_calculations_buy_only() {
-        // Setup: Token B has 50 wrap.near value, target is 100 wrap.near
-        // Should buy 50 wrap.near worth of Token B
-        let current_value = BigDecimal::from_str("50.0").unwrap();
-        let target_value = BigDecimal::from_str("100.0").unwrap();
+        // Setup: Token B has 50 NEAR value, target is 100 NEAR
+        // Should buy 50 NEAR worth of Token B
+        let current_value = NearValue::from_near(BigDecimal::from(50));
+        let target_value = NearValue::from_near(BigDecimal::from(100));
         let diff = &target_value - &current_value;
 
-        assert_eq!(diff, BigDecimal::from_str("50.0").unwrap());
-        assert!(diff > BigDecimal::from(0));
+        assert_eq!(diff, NearValue::from_near(BigDecimal::from(50)));
+        assert!(diff > NearValue::zero());
 
-        // For buying, we use wrap.near amount directly
+        // For buying, we use wrap.near amount directly (no token conversion needed)
         let wrap_near_amount = diff;
-
-        assert_eq!(wrap_near_amount, BigDecimal::from_str("50.0").unwrap());
+        assert_eq!(wrap_near_amount, NearValue::from_near(BigDecimal::from(50)));
     }
 
     #[test]
     fn test_rebalance_minimum_trade_size() {
-        // Minimum trade size is 1 NEAR (1000000000000000000000000 yoctoNEAR)
-        let min_trade_size = BigDecimal::from(1000000000000000000000000u128);
+        // Minimum trade size is 1 NEAR
+        let min_trade_size = NearValue::one();
 
         // Small difference: 0.5 NEAR
-        let small_diff = BigDecimal::from_str("500000000000000000000000").unwrap();
+        let small_diff = NearValue::from_near(BigDecimal::from_str("0.5").unwrap());
         assert!(small_diff < min_trade_size);
 
         // Large difference: 2 NEAR
-        let large_diff = BigDecimal::from_str("2000000000000000000000000").unwrap();
+        let large_diff = NearValue::from_near(BigDecimal::from(2));
         assert!(large_diff >= min_trade_size);
     }
 
     #[test]
     fn test_token_amount_conversion() {
-        // Test: Convert wrap.near value to token amount
-        // If 100 wrap.near worth should be sold, and rate is 0.5
-        // Then token_amount = 100 * 0.5 = 50 tokens
-        let wrap_near_value = BigDecimal::from(100);
-        let rate = BigDecimal::from_str("0.5").unwrap();
-        let token_amount = &wrap_near_value * &rate;
+        // Test: Convert NEAR value to token amount
+        // If 100 NEAR worth should be sold, and price = 2 NEAR/token
+        // Then token_amount = 100 NEAR × (0.5 tokens/NEAR) = 50 tokens
+        //
+        // raw_rate = 5e23 smallest_units/NEAR (価格の逆数)
+        // 計算: 100 NEAR × 5e23 = 5e25 = 50e24 = 50 tokens
+        let wrap_near_value = NearValue::from_near(BigDecimal::from(100));
+        let rate = ExchangeRate::from_raw_rate(
+            BigDecimal::from_str("500000000000000000000000").unwrap(), // 5e23
+            24,
+        );
+        let token_amount: TokenAmount = &wrap_near_value * &rate;
 
-        assert_eq!(token_amount, BigDecimal::from(50));
+        // Expected: 50 tokens = 50e24 smallest units
+        let expected = BigDecimal::from_str("50000000000000000000000000").unwrap();
+        assert_eq!(token_amount.smallest_units(), &expected);
     }
 
     #[test]
     fn test_wrap_near_value_calculation() {
-        // Test: Calculate current value in wrap.near
-        // If balance is 100 tokens and rate is 0.5
-        // Then value = 100 / 0.5 = 200 wrap.near
-        let balance = BigDecimal::from(100);
-        let rate = BigDecimal::from_str("0.5").unwrap();
-        let value = &balance / &rate;
+        // Test: Calculate current value in NEAR
+        // If balance is 100 tokens and price = 2 NEAR/token
+        // Then value = 100 tokens × 2 NEAR/token = 200 NEAR
+        //
+        // raw_rate = 5e23 smallest_units/NEAR (価格 2 NEAR/token の逆数)
+        // 計算: 100e24 / 5e23 = 200 NEAR
+        let balance = TokenAmount::from_smallest_units(
+            BigDecimal::from_str("100000000000000000000000000").unwrap(), // 100e24 = 100 tokens
+            24,
+        );
+        let rate = ExchangeRate::from_raw_rate(
+            BigDecimal::from_str("500000000000000000000000").unwrap(), // 5e23
+            24,
+        );
+        let value: NearValue = &balance / &rate;
 
-        assert_eq!(value, BigDecimal::from(200));
+        assert_eq!(value, NearValue::from_near(BigDecimal::from(200)));
     }
 
     #[test]
     fn test_two_phase_rebalance_scenario() {
         // Scenario: Portfolio with 2 tokens
-        // Total value: 300 wrap.near
+        // Total value: 300 NEAR
         // Target weights: Token A = 40%, Token B = 60%
-        // Current: Token A = 200 wrap.near, Token B = 100 wrap.near
+        // Current: Token A = 200 NEAR, Token B = 100 NEAR
         // Expected:
-        //   Token A target = 120 wrap.near -> sell 80 wrap.near worth
-        //   Token B target = 180 wrap.near -> buy 80 wrap.near worth
+        //   Token A target = 120 NEAR -> sell 80 NEAR worth
+        //   Token B target = 180 NEAR -> buy 80 NEAR worth
 
-        let total_value = BigDecimal::from(300);
+        let total_value = NearValue::from_near(BigDecimal::from(300));
 
         // Token A
-        let token_a_current = BigDecimal::from(200);
-        let token_a_weight = BigDecimal::from_str("0.4").unwrap();
-        let token_a_target = &total_value * &token_a_weight;
+        let token_a_current = NearValue::from_near(BigDecimal::from(200));
+        let token_a_weight = 0.4;
+        let token_a_target = &total_value * token_a_weight;
         let token_a_diff = &token_a_target - &token_a_current;
 
-        assert_eq!(token_a_target, BigDecimal::from(120));
-        assert_eq!(token_a_diff, BigDecimal::from(-80));
-        assert!(token_a_diff < BigDecimal::from(0)); // Need to sell
+        // f64 は 0.4 を正確に表現できないため、tolerance-based で比較
+        let target_a_f64 = token_a_target.to_f64().as_f64();
+        assert!(
+            (target_a_f64 - 120.0).abs() < 0.0001,
+            "Token A target should be ~120 NEAR, got {}",
+            target_a_f64
+        );
+
+        let diff_a_f64 = token_a_diff.to_f64().as_f64();
+        assert!(
+            (diff_a_f64 - (-80.0)).abs() < 0.0001,
+            "Token A diff should be ~-80 NEAR, got {}",
+            diff_a_f64
+        );
+        assert!(token_a_diff < NearValue::zero()); // Need to sell
 
         // Token B
-        let token_b_current = BigDecimal::from(100);
-        let token_b_weight = BigDecimal::from_str("0.6").unwrap();
-        let token_b_target = &total_value * &token_b_weight;
+        let token_b_current = NearValue::from_near(BigDecimal::from(100));
+        let token_b_weight = 0.6;
+        let token_b_target = &total_value * token_b_weight;
         let token_b_diff = &token_b_target - &token_b_current;
 
-        assert_eq!(token_b_target, BigDecimal::from(180));
-        assert_eq!(token_b_diff, BigDecimal::from(80));
-        assert!(token_b_diff > BigDecimal::from(0)); // Need to buy
+        let target_b_f64 = token_b_target.to_f64().as_f64();
+        assert!(
+            (target_b_f64 - 180.0).abs() < 0.0001,
+            "Token B target should be ~180 NEAR, got {}",
+            target_b_f64
+        );
 
-        // Verify balance: sell amount = buy amount
-        assert_eq!(token_a_diff.abs(), token_b_diff);
+        let diff_b_f64 = token_b_diff.to_f64().as_f64();
+        assert!(
+            (diff_b_f64 - 80.0).abs() < 0.0001,
+            "Token B diff should be ~80 NEAR, got {}",
+            diff_b_f64
+        );
+        assert!(token_b_diff > NearValue::zero()); // Need to buy
+
+        // Verify balance: sell amount ~= buy amount (within tolerance)
+        let sell_amount = token_a_diff.abs().to_f64().as_f64();
+        let buy_amount = token_b_diff.to_f64().as_f64();
+        assert!(
+            (sell_amount - buy_amount).abs() < 0.0001,
+            "Sell and buy amounts should match: sell={}, buy={}",
+            sell_amount,
+            buy_amount
+        );
     }
 
     #[test]
     fn test_rate_conversion_accuracy() {
         // Test precise conversion with realistic values
-        // 1 Token = 2.5 wrap.near, so rate = 1/2.5 = 0.4
-        let rate = BigDecimal::from_str("0.4").unwrap();
+        // 1 Token = 2.5 NEAR (price = 2.5 NEAR/token)
+        // raw_rate = 1e24 / 2.5 = 4e23 smallest_units/NEAR
+        let rate = ExchangeRate::from_raw_rate(
+            BigDecimal::from_str("400000000000000000000000").unwrap(), // 4e23
+            24,
+        );
 
-        // Selling: 50 wrap.near worth = 50 * 0.4 = 20 tokens
-        let wrap_near_value = BigDecimal::from(50);
-        let token_amount = &wrap_near_value * &rate;
-        assert_eq!(token_amount, BigDecimal::from(20));
+        // Selling: 50 NEAR worth
+        // token_amount = 50 NEAR × 4e23 = 2e25 = 20e24 = 20 tokens
+        let wrap_near_value = NearValue::from_near(BigDecimal::from(50));
+        let token_amount: TokenAmount = &wrap_near_value * &rate;
 
-        // Verify reverse: 20 tokens = 20 / 0.4 = 50 wrap.near
-        let reverse_value = &token_amount / &rate;
+        // Expected: 20 tokens = 20e24 smallest units
+        let expected = BigDecimal::from_str("20000000000000000000000000").unwrap();
+        assert_eq!(token_amount.smallest_units(), &expected);
+
+        // Verify roundtrip:
+        // value * rate = amount (NearValue → TokenAmount, 乗算)
+        // amount / rate = value (TokenAmount → NearValue, 除算)
+        let reverse_value: NearValue = &token_amount / &rate;
         assert_eq!(reverse_value, wrap_near_value);
     }
 

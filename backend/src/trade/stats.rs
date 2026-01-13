@@ -40,12 +40,11 @@ use num_traits::Zero;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
-use std::str::FromStr;
 use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{ExchangeRate, NearAmount, NearValue, YoctoValue};
+use zaciraci_common::types::{ExchangeRate, NearAmount, NearValue, TokenAmount, YoctoValue};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -830,13 +829,10 @@ where
             // まず各トークンの差分（wrap.near換算）を計算
             use num_bigint::ToBigInt;
 
-            let mut sell_operations: Vec<(String, BigDecimal, BigDecimal)> = Vec::new();
-            let mut buy_operations: Vec<(String, BigDecimal)> = Vec::new();
+            let mut sell_operations: Vec<(String, NearValue, ExchangeRate)> = Vec::new();
+            let mut buy_operations: Vec<(String, NearValue)> = Vec::new();
 
             let wrap_near_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
-
-            // total_portfolio_value は NearValue なので、BigDecimal に変換
-            let total_portfolio_value_bd = total_portfolio_value.as_bigdecimal();
 
             for (token, target_weight) in target_weights.iter() {
                 if token == &wrap_near_str {
@@ -846,7 +842,7 @@ where
                 let current_amount = current_balances.get(token);
 
                 // 現在の価値（wrap.near換算）を計算
-                let current_value_wrap_near = match current_amount {
+                let current_value_wrap_near: NearValue = match current_amount {
                     Some(amount) if !amount.is_zero() => {
                         let token_out: crate::ref_finance::token_account::TokenOutAccount =
                             token.parse::<near_sdk::AccountId>()?.into();
@@ -860,23 +856,17 @@ where
                         .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token))?;
 
                         // TokenAmount / &ExchangeRate = NearValue トレイトを使用
-                        let exchange_rate =
-                            ExchangeRate::from_raw_rate(rate.rate().clone(), amount.decimals());
-                        let value = amount / &exchange_rate;
-                        value.as_bigdecimal().clone()
+                        amount / &rate.exchange_rate
                     }
-                    _ => BigDecimal::from(0),
+                    _ => NearValue::zero(),
                 };
 
                 // 目標価値（wrap.near換算）を計算
-                let target_weight_decimal = BigDecimal::from_str(&target_weight.to_string())
-                    .map_err(|e| {
-                        anyhow::anyhow!("Failed to convert target weight to BigDecimal: {}", e)
-                    })?;
-                let target_value_wrap_near = total_portfolio_value_bd * &target_weight_decimal;
+                // target_weight は f64 (0.0~1.0)、例: 0.3 = ポートフォリオの30%
+                let target_value_wrap_near: NearValue = &total_portfolio_value * *target_weight;
 
                 // 差分を計算（wrap.near単位）
-                let diff_wrap_near = &target_value_wrap_near - &current_value_wrap_near;
+                let diff_wrap_near: NearValue = &target_value_wrap_near - &current_value_wrap_near;
 
                 info!(log, "rebalancing: token analysis";
                     "token" => token,
@@ -886,9 +876,10 @@ where
                 );
 
                 // 最小交換額チェック（1 NEAR以上）
-                let min_trade_size = NearValue::one().to_yocto().into_bigdecimal();
+                let min_trade_size = NearValue::one();
+                let zero = NearValue::zero();
 
-                if diff_wrap_near < BigDecimal::from(0) && diff_wrap_near.abs() >= min_trade_size {
+                if diff_wrap_near < zero && diff_wrap_near.abs() >= min_trade_size {
                     // 売却が必要
                     let token_out: crate::ref_finance::token_account::TokenOutAccount =
                         token.parse::<near_sdk::AccountId>()?.into();
@@ -904,9 +895,9 @@ where
                     sell_operations.push((
                         token.clone(),
                         diff_wrap_near.abs(),
-                        rate.rate().clone(),
+                        rate.exchange_rate.clone(),
                     ));
-                } else if diff_wrap_near > BigDecimal::from(0) && diff_wrap_near >= min_trade_size {
+                } else if diff_wrap_near > zero && diff_wrap_near >= min_trade_size {
                     // 購入が必要
                     buy_operations.push((token.clone(), diff_wrap_near));
                 }
@@ -914,10 +905,12 @@ where
 
             // Phase 1: 全ての売却を実行（token → wrap.near）
             info!(log, "Phase 1: executing sell operations"; "count" => sell_operations.len());
-            for (token, wrap_near_value, rate) in sell_operations {
+            for (token, wrap_near_value, exchange_rate) in sell_operations {
                 // wrap.near価値をトークン数量に変換
-                let token_amount = &wrap_near_value * &rate;
+                // NearValue * ExchangeRate = TokenAmount
+                let token_amount: TokenAmount = &wrap_near_value * &exchange_rate;
                 let token_amount_u128 = token_amount
+                    .smallest_units()
                     .to_bigint()
                     .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))?
                     .to_string()
@@ -957,34 +950,39 @@ where
                 "available_wrap_near" => %available_wrap_near
             );
 
+            // available_wrap_near (u128) を NearValue に変換
+            let available_wrap_near_value =
+                YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
+
             // Phase 2の購入操作の総額を計算
-            let total_buy_amount: BigDecimal =
-                buy_operations.iter().map(|(_, amount)| amount).sum();
+            let total_buy_value: NearValue = buy_operations
+                .iter()
+                .map(|(_, value)| value.clone())
+                .fold(NearValue::zero(), |acc, v| acc + v);
 
             info!(log, "Phase 2 purchase amount analysis";
-                "total_buy_amount" => %total_buy_amount,
-                "available_wrap_near" => %available_wrap_near
+                "total_buy_value" => %total_buy_value,
+                "available_wrap_near_value" => %available_wrap_near_value
             );
 
             // 利用可能残高に基づいて購入額を調整
-            let adjusted_buy_operations: Vec<(String, BigDecimal)> = if total_buy_amount
-                > BigDecimal::from(available_wrap_near)
-            {
-                let adjustment_factor = BigDecimal::from(available_wrap_near) / &total_buy_amount;
-                info!(log, "Adjusting purchase amounts to fit available balance";
-                    "adjustment_factor" => %adjustment_factor
-                );
+            let adjusted_buy_operations: Vec<(String, NearValue)> =
+                if total_buy_value > available_wrap_near_value {
+                    // 比率を計算して調整
+                    let ratio =
+                        available_wrap_near_value.as_bigdecimal() / total_buy_value.as_bigdecimal();
+                    let ratio_f64 = ratio.to_f64().unwrap_or(1.0);
+                    info!(log, "Adjusting purchase amounts to fit available balance";
+                        "adjustment_factor" => ratio_f64
+                    );
 
-                buy_operations
-                    .into_iter()
-                    .map(|(token, amount)| {
-                        let adjusted = &amount * &adjustment_factor;
-                        (token, adjusted)
-                    })
-                    .collect()
-            } else {
-                buy_operations
-            };
+                    buy_operations
+                        .into_iter()
+                        .map(|(token, value)| (token, &value * ratio_f64))
+                        .collect()
+                } else {
+                    buy_operations
+                };
 
             // Phase 2: 全ての購入を実行（wrap.near → token）
             info!(log, "Phase 2: executing buy operations"; "count" => adjusted_buy_operations.len());
@@ -992,22 +990,19 @@ where
             let mut phase2_success = 0;
             let mut phase2_failed = 0;
 
-            for (token, wrap_near_amount) in adjusted_buy_operations {
-                let wrap_near_amount_u128 = match wrap_near_amount
-                    .to_bigint()
-                    .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))
-                    .and_then(|v| {
-                        v.to_string()
-                            .parse::<u128>()
-                            .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))
-                    }) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        error!(log, "Failed to convert purchase amount"; "token" => &token, "error" => %e);
-                        phase2_failed += 1;
-                        continue;
-                    }
-                };
+            for (token, wrap_near_value) in adjusted_buy_operations {
+                // NearValue から yoctoNEAR (u128) に変換
+                let wrap_near_amount_u128 = wrap_near_value
+                    .to_yocto()
+                    .as_bigdecimal()
+                    .to_u128()
+                    .unwrap_or(0);
+
+                if wrap_near_amount_u128 == 0 {
+                    error!(log, "Failed to convert purchase amount to u128"; "token" => &token);
+                    phase2_failed += 1;
+                    continue;
+                }
 
                 info!(log, "buying token";
                     "token" => &token,

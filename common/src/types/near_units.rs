@@ -23,7 +23,7 @@ use std::fmt;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::str::FromStr;
 
-use super::token_types::TokenAmount;
+use super::token_types::{ExchangeRate, TokenAmount};
 
 /// 1 NEAR = 10^24 yoctoNEAR
 pub(crate) const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
@@ -772,6 +772,13 @@ impl Sub<&NearValue> for NearValue {
     }
 }
 
+impl Sub<&NearValue> for &NearValue {
+    type Output = NearValue;
+    fn sub(self, other: &NearValue) -> NearValue {
+        NearValue(&self.0 - &other.0)
+    }
+}
+
 // NearValue × f64 → NearValue（ウェイト計算用）
 impl Mul<f64> for NearValue {
     type Output = NearValue;
@@ -847,6 +854,25 @@ impl Div<NearAmount> for NearValue {
         } else {
             TokenPrice(self.0 / amount.0)
         }
+    }
+}
+
+// &NearValue * &ExchangeRate = TokenAmount
+// NEAR価値をトークン数量に変換（リバランス時の売却量計算用）
+//
+// 次元分析:
+//   ExchangeRate.raw_rate = smallest_units / NEAR
+//   NEAR × (smallest_units/NEAR) = smallest_units
+impl Mul<&ExchangeRate> for &NearValue {
+    type Output = TokenAmount;
+
+    fn mul(self, rhs: &ExchangeRate) -> Self::Output {
+        let smallest_units = if rhs.raw_rate().is_zero() {
+            BigDecimal::zero()
+        } else {
+            &self.0 * rhs.raw_rate()
+        };
+        TokenAmount::from_smallest_units(smallest_units, rhs.decimals())
     }
 }
 

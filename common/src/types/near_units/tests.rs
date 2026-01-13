@@ -1041,3 +1041,74 @@ fn test_near_value_rebalance_calculation() {
     // trade_value > min_trade_size なので実行可能
     assert!(trade_value.abs().to_f64().as_f64() >= min_f64 - 0.0001);
 }
+
+#[test]
+fn test_near_value_sub_ref() {
+    let a = NearValue::from_near(BigDecimal::from(100));
+    let b = NearValue::from_near(BigDecimal::from(30));
+
+    // 参照同士の減算
+    let result = &a - &b;
+    assert_eq!(result, NearValue::from_near(BigDecimal::from(70)));
+
+    // 負の結果
+    let result2 = &b - &a;
+    assert_eq!(result2, NearValue::from_near(BigDecimal::from(-70)));
+}
+
+#[test]
+fn test_near_value_mul_exchange_rate() {
+    use super::super::token_types::ExchangeRate;
+
+    // 10 NEAR を rate (2e24 smallest_units/NEAR) で変換
+    // 計算: smallest_units = NEAR × raw_rate = 10 × 2e24 = 20e24
+    // これは 20 tokens (decimals=24)
+    let near_value = NearValue::from_near(BigDecimal::from(10));
+    let rate = ExchangeRate::from_raw_rate(
+        BigDecimal::from_str("2000000000000000000000000").unwrap(), // 2e24
+        24,
+    );
+
+    let token_amount: TokenAmount = &near_value * &rate;
+
+    assert_eq!(token_amount.decimals(), 24);
+    let expected = BigDecimal::from_str("20000000000000000000000000").unwrap(); // 20e24
+    assert_eq!(token_amount.smallest_units(), &expected);
+}
+
+#[test]
+fn test_near_value_mul_exchange_rate_zero_rate() {
+    use super::super::token_types::ExchangeRate;
+
+    // ゼロレートの場合はゼロ量を返す
+    let near_value = NearValue::from_near(BigDecimal::from(10));
+    let rate = ExchangeRate::from_raw_rate(BigDecimal::zero(), 24);
+
+    let token_amount: TokenAmount = &near_value * &rate;
+
+    assert_eq!(token_amount.decimals(), 24);
+    assert!(token_amount.smallest_units().is_zero());
+}
+
+#[test]
+fn test_exchange_rate_roundtrip() {
+    use super::super::token_types::ExchangeRate;
+
+    // ラウンドトリップ検証:
+    // value * rate = amount (NearValue → TokenAmount, 乗算)
+    // amount / rate = value (TokenAmount → NearValue, 除算)
+    let original_value = NearValue::from_near(BigDecimal::from(100));
+    let rate = ExchangeRate::from_raw_rate(
+        BigDecimal::from_str("2000000000000000000000000").unwrap(), // 2e24
+        24,
+    );
+
+    // value * rate = amount (NearValue * ExchangeRate = TokenAmount)
+    let token_amount: TokenAmount = &original_value * &rate;
+
+    // amount / rate = value (TokenAmount / ExchangeRate = NearValue)
+    let recovered_value: NearValue = &token_amount / &rate;
+
+    // ラウンドトリップで元の値に戻ることを確認
+    assert_eq!(recovered_value, original_value);
+}
