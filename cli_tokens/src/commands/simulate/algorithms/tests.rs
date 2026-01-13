@@ -15,8 +15,7 @@ fn calculate_portfolio_value_typed(
             // TokenAmountF64 × TokenPriceF64 = YoctoValueF64
             let value_yocto = amount * price;
             // YoctoValueF64 → NearValueF64
-            total_value =
-                NearValueF64::from_near(total_value.as_f64() + value_yocto.to_near().as_f64());
+            total_value = total_value + value_yocto.to_near();
         }
     }
     total_value

@@ -92,7 +92,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
     // 初期ポートフォリオ設定（均等分散）
     let tokens_count = config.target_tokens.len() as f64;
-    let initial_per_token = NearValueF64::from_near(initial_value.as_f64() / tokens_count);
+    let initial_per_token = initial_value / tokens_count;
 
     // 初期価格データを取得（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
     let initial_prices: HashMap<String, TokenPriceF64> =
@@ -285,9 +285,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
                     total_value,
                     holdings: holdings_value,
                     cash_balance: NearValueF64::zero(),
-                    unrealized_pnl: NearValueF64::from_near(
-                        total_value.as_f64() - initial_value.as_f64(),
-                    ),
+                    unrealized_pnl: total_value - initial_value,
                 });
             }
             None => {
@@ -334,9 +332,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
                         total_value,
                         holdings: holdings_value,
                         cash_balance: NearValueF64::zero(),
-                        unrealized_pnl: NearValueF64::from_near(
-                            total_value.as_f64() - initial_value.as_f64(),
-                        ),
+                        unrealized_pnl: total_value - initial_value,
                     });
                 }
             }
@@ -455,7 +451,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
     // 初期ポートフォリオ設定（均等分散）
     let tokens_count = config.target_tokens.len() as f64;
-    let initial_per_token = NearValueF64::from_near(initial_value.as_f64() / tokens_count);
+    let initial_per_token = initial_value / tokens_count;
 
     // 初期価格データを取得（無次元比率: yoctoNEAR/smallest_unit = NEAR/token）
     let initial_prices: HashMap<String, TokenPriceF64> =
@@ -766,9 +762,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     total_value,
                     holdings: holdings_value,
                     cash_balance: NearValueF64::zero(),
-                    unrealized_pnl: NearValueF64::from_near(
-                        total_value.as_f64() - initial_value.as_f64(),
-                    ),
+                    unrealized_pnl: total_value - initial_value,
                 });
             }
             None => {
@@ -814,9 +808,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         total_value,
                         holdings: holdings_value,
                         cash_balance: NearValueF64::zero(),
-                        unrealized_pnl: NearValueF64::from_near(
-                            total_value.as_f64() - initial_value.as_f64(),
-                        ),
+                        unrealized_pnl: total_value - initial_value,
                     });
                 }
             }

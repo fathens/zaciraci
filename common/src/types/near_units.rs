@@ -1257,6 +1257,18 @@ impl Mul<NearValueF64> for f64 {
     }
 }
 
+// NearValueF64 ÷ スカラー (f64)
+impl Div<f64> for NearValueF64 {
+    type Output = NearValueF64;
+    fn div(self, scalar: f64) -> NearValueF64 {
+        if scalar == 0.0 {
+            NearValueF64(0.0)
+        } else {
+            NearValueF64(self.0 / scalar)
+        }
+    }
+}
+
 // =============================================================================
 // f64 版の Price × Amount = Value の演算
 // =============================================================================

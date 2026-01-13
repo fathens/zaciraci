@@ -716,7 +716,7 @@ impl ImmutablePortfolio {
         for (token, &amount) in &self.holdings {
             if let Some(&price) = market.prices.get(token) {
                 let value = amount * price;
-                if value.as_f64() > max_value.as_f64() {
+                if value > max_value {
                     max_value = value;
                     dominant_token = Some(token.clone());
                 }
