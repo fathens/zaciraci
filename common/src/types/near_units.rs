@@ -20,7 +20,7 @@
 use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::str::FromStr;
 
 use super::token_types::TokenAmount;
@@ -729,6 +729,11 @@ impl NearValue {
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
+
+    /// 絶対値を取得
+    pub fn abs(&self) -> NearValue {
+        NearValue(self.0.abs())
+    }
 }
 
 impl fmt::Display for NearValue {
@@ -764,6 +769,36 @@ impl Sub<&NearValue> for NearValue {
     type Output = NearValue;
     fn sub(self, other: &NearValue) -> NearValue {
         NearValue(self.0 - &other.0)
+    }
+}
+
+// NearValue × f64 → NearValue（ウェイト計算用）
+impl Mul<f64> for NearValue {
+    type Output = NearValue;
+    fn mul(self, rhs: f64) -> NearValue {
+        NearValue(self.0 * BigDecimal::from_f64(rhs).unwrap_or_default())
+    }
+}
+
+impl Mul<f64> for &NearValue {
+    type Output = NearValue;
+    fn mul(self, rhs: f64) -> NearValue {
+        NearValue(self.0.clone() * BigDecimal::from_f64(rhs).unwrap_or_default())
+    }
+}
+
+// NearValue の符号反転
+impl Neg for NearValue {
+    type Output = NearValue;
+    fn neg(self) -> NearValue {
+        NearValue(-self.0)
+    }
+}
+
+impl Neg for &NearValue {
+    type Output = NearValue;
+    fn neg(self) -> NearValue {
+        NearValue(-self.0.clone())
     }
 }
 

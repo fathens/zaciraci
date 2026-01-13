@@ -7,7 +7,7 @@ use num_traits::Zero;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::algorithm::types::TradingAction;
-use zaciraci_common::types::{NearValue, TokenAmount, YoctoAmount, YoctoValue};
+use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount, YoctoAmount, YoctoValue};
 
 /// TradingActionに基づいて単一のアクションを実行する
 #[allow(dead_code)]
@@ -105,21 +105,28 @@ where
             }
 
             // 3. 各トークンのリバランス実行
-            // Note: 以下の計算では BigDecimal で yoctoNEAR 単位のまま計算
-            let total_value_bd = total_value.as_bigdecimal();
+            // NearValue を使った型安全な計算
             for (token, target_weight) in target_weights.iter() {
+                // 現在の保有量を取得
                 let current_balance = current_balances
                     .get(token)
-                    .map(|a| a.smallest_units().clone())
-                    .unwrap_or_default();
+                    .cloned()
+                    .unwrap_or_else(|| TokenAmount::from_smallest_units(BigDecimal::zero(), 24));
 
-                // 目標量を計算（total_value × target_weight）
-                let target_value =
-                    total_value_bd * BigDecimal::from_str(&target_weight.to_string())?;
-                let current_value = current_balance.clone();
+                // 目標価値を計算（NEAR 単位）
+                let target_value: NearValue = &total_value * *target_weight;
 
-                // 差分を計算
-                let value_diff = &target_value - &current_value;
+                // 現在価値を計算（NEAR 単位）- レートを取得して変換
+                let current_value: NearValue =
+                    if let Some(rate) = get_token_exchange_rate(token).await? {
+                        &current_balance / &rate // TokenAmount / &ExchangeRate = NearValue
+                    } else {
+                        warn!(log, "No rate found for token, using zero"; "token" => token);
+                        NearValue::zero()
+                    };
+
+                // 差分を計算（NEAR 単位）
+                let value_diff: NearValue = target_value.clone() - current_value.clone();
 
                 info!(log, "rebalancing token";
                     "token" => token,
@@ -131,31 +138,29 @@ where
                 );
 
                 // リスク管理: 最大トレードサイズを総価値の10%に制限
-                let max_trade_size = total_value_bd * BigDecimal::from_str("0.1")?;
-                let trade_amount = if value_diff.abs() > max_trade_size {
-                    if value_diff > BigDecimal::from(0) {
-                        max_trade_size.clone()
-                    } else {
-                        -max_trade_size.clone()
-                    }
+                let max_trade_size: NearValue = &total_value * 0.1;
+                let trade_value: NearValue = if value_diff > max_trade_size {
+                    max_trade_size.clone()
+                } else if value_diff < -max_trade_size.clone() {
+                    -max_trade_size.clone()
                 } else {
                     value_diff.clone()
                 };
 
                 // 最小トレードサイズのチェック（総価値の1%未満はスキップ）
-                let min_trade_size = total_value_bd * BigDecimal::from_str("0.01")?;
-                if trade_amount.abs() < min_trade_size {
-                    info!(log, "skipping small rebalance"; "token" => token, "trade_amount" => %trade_amount);
+                let min_trade_size: NearValue = &total_value * 0.01;
+                if trade_value.abs() < min_trade_size {
+                    info!(log, "skipping small rebalance"; "token" => token, "trade_value" => %trade_value);
                     continue;
                 }
 
                 // 4. スワップ実行
                 let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
 
-                if trade_amount > BigDecimal::from(0) {
+                if trade_value > NearValue::zero() {
                     // ポジション増加: wrap.near → token
                     if token != &wrap_near.to_string() {
-                        info!(log, "increasing position"; "token" => token, "amount" => %trade_amount);
+                        info!(log, "increasing position"; "token" => token, "trade_value" => %trade_value);
                         execute_direct_swap(
                             client,
                             wallet,
@@ -166,10 +171,10 @@ where
                         )
                         .await?;
                     }
-                } else if trade_amount < BigDecimal::from(0) {
+                } else if trade_value < NearValue::zero() {
                     // ポジション削減: token → wrap.near
                     if token != &wrap_near.to_string() {
-                        info!(log, "reducing position"; "token" => token, "amount" => %trade_amount.abs());
+                        info!(log, "reducing position"; "token" => token, "trade_value" => %trade_value.abs());
                         execute_direct_swap(
                             client,
                             wallet,
@@ -351,6 +356,39 @@ where
 
     info!(log, "calculated total portfolio value"; "total_value" => %total_value);
     Ok(total_value)
+}
+
+/// トークンの ExchangeRate を取得
+/// - wrap.near: 固定レート 1e24 (decimals=24)
+/// - その他: TokenRate::get_latest から取得
+async fn get_token_exchange_rate(token: &str) -> Result<Option<ExchangeRate>> {
+    if token == crate::ref_finance::token_account::WNEAR_TOKEN.to_string() {
+        // wrap.near: 1 NEAR = 1e24 yocto, decimals = 24
+        return Ok(Some(ExchangeRate::from_raw_rate(
+            BigDecimal::from_str("1000000000000000000000000").unwrap(),
+            24, // wrap.near は常に 24 decimals
+        )));
+    }
+
+    // 他のトークン: TokenRate から取得
+    use crate::persistence::token_rate::TokenRate;
+    use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+    use near_sdk::AccountId;
+
+    let base_token = token
+        .parse::<AccountId>()
+        .map(TokenOutAccount::from)
+        .map_err(|_| anyhow::anyhow!("Invalid token account ID: {}", token))?;
+    let quote_token = TokenInAccount::from(crate::ref_finance::token_account::WNEAR_TOKEN.clone());
+
+    match TokenRate::get_latest(&base_token, &quote_token).await? {
+        Some(token_rate) if !token_rate.exchange_rate.raw_rate().is_zero() => {
+            // TokenRate は既に ExchangeRate を持っている
+            // decimals は DB backfill 時に get_token_decimals で設定済み
+            Ok(Some(token_rate.exchange_rate))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// 2つのトークン間で直接スワップを実行（シンプルなパス探索を使用）

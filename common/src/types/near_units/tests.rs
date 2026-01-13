@@ -893,3 +893,151 @@ fn test_yocto_amount_truncation_behavior() {
     // ブロックチェーン用に整数部を取得
     assert_eq!(yocto.to_u128(), expected.to_u128().unwrap());
 }
+
+// ==================== NearValue の新しいトレイトのテスト ====================
+
+#[test]
+fn test_near_value_mul_f64() {
+    let value = NearValue::from_near(BigDecimal::from(100));
+
+    // 基本的な乗算
+    let result = value.clone() * 0.5;
+    assert_eq!(result, NearValue::from_near(BigDecimal::from(50)));
+
+    // 参照からの乗算
+    let result = &value * 0.5;
+    assert_eq!(result, NearValue::from_near(BigDecimal::from(50)));
+
+    // 小数点の精度（f64 の精度で比較）
+    let result = &value * 0.1;
+    let result_f64 = result.to_f64().as_f64();
+    assert!(
+        (result_f64 - 10.0).abs() < 0.0001,
+        "expected ~10, got {}",
+        result_f64
+    );
+
+    // ゼロとの乗算
+    let result = &value * 0.0;
+    assert_eq!(result, NearValue::zero());
+}
+
+#[test]
+fn test_near_value_neg() {
+    let value = NearValue::from_near(BigDecimal::from(100));
+
+    // 正の値の符号反転
+    let neg = -value.clone();
+    assert_eq!(neg, NearValue::from_near(BigDecimal::from(-100)));
+
+    // 参照からの符号反転
+    let neg = -&value;
+    assert_eq!(neg, NearValue::from_near(BigDecimal::from(-100)));
+
+    // 負の値の符号反転
+    let neg_value = NearValue::from_near(BigDecimal::from(-50));
+    let pos = -neg_value;
+    assert_eq!(pos, NearValue::from_near(BigDecimal::from(50)));
+
+    // ゼロの符号反転
+    let zero = NearValue::zero();
+    let neg_zero = -zero;
+    assert_eq!(neg_zero, NearValue::zero());
+}
+
+#[test]
+fn test_near_value_abs() {
+    // 正の値
+    let positive = NearValue::from_near(BigDecimal::from(100));
+    assert_eq!(positive.abs(), NearValue::from_near(BigDecimal::from(100)));
+
+    // 負の値
+    let negative = NearValue::from_near(BigDecimal::from(-100));
+    assert_eq!(negative.abs(), NearValue::from_near(BigDecimal::from(100)));
+
+    // ゼロ
+    let zero = NearValue::zero();
+    assert_eq!(zero.abs(), NearValue::zero());
+}
+
+#[test]
+fn test_near_value_comparison() {
+    let a = NearValue::from_near(BigDecimal::from(100));
+    let b = NearValue::from_near(BigDecimal::from(50));
+    let neg = NearValue::from_near(BigDecimal::from(-50));
+    let zero = NearValue::zero();
+
+    // 大小比較
+    assert!(a > b);
+    assert!(b > neg);
+    assert!(neg < zero);
+    assert!(zero < b);
+
+    // 等価比較
+    let a2 = NearValue::from_near(BigDecimal::from(100));
+    assert_eq!(a, a2);
+}
+
+#[test]
+fn test_near_value_rebalance_calculation() {
+    // Rebalance ブランチで使われる計算パターンをテスト
+    let total_value = NearValue::from_near(BigDecimal::from(1000));
+    let target_weight = 0.3; // 30%
+
+    // 目標価値を計算（f64 精度で比較）
+    let target_value = &total_value * target_weight;
+    let target_f64 = target_value.to_f64().as_f64();
+    assert!(
+        (target_f64 - 300.0).abs() < 0.0001,
+        "expected ~300, got {}",
+        target_f64
+    );
+
+    // 現在価値（例: 200 NEAR）
+    let current_value = NearValue::from_near(BigDecimal::from(200));
+
+    // 差分を計算
+    let value_diff = target_value.clone() - current_value.clone();
+    let diff_f64 = value_diff.to_f64().as_f64();
+    assert!(
+        (diff_f64 - 100.0).abs() < 0.0001,
+        "expected ~100, got {}",
+        diff_f64
+    );
+
+    // 最大トレードサイズ（10%）
+    let max_trade_size = &total_value * 0.1;
+    let max_f64 = max_trade_size.to_f64().as_f64();
+    assert!(
+        (max_f64 - 100.0).abs() < 0.0001,
+        "expected ~100, got {}",
+        max_f64
+    );
+
+    // 差分が最大サイズと同等なので、どちらが使われても OK
+    let trade_value = if value_diff > max_trade_size {
+        max_trade_size.clone()
+    } else if value_diff < -max_trade_size.clone() {
+        -max_trade_size.clone()
+    } else {
+        value_diff.clone()
+    };
+    let trade_f64 = trade_value.to_f64().as_f64();
+    assert!(
+        (trade_f64 - 100.0).abs() < 0.0001,
+        "expected ~100, got {}",
+        trade_f64
+    );
+
+    // 最小トレードサイズ（1%）
+    let min_trade_size = &total_value * 0.01;
+    let min_f64 = min_trade_size.to_f64().as_f64();
+    assert!(
+        (min_f64 - 10.0).abs() < 0.0001,
+        "expected ~10, got {}",
+        min_f64
+    );
+
+    // trade_value > min_trade_size なので実行可能
+    assert!(trade_value.abs().to_f64().as_f64() >= min_f64 - 0.0001);
+}
