@@ -77,7 +77,8 @@ pub struct PortfolioTransition {
     pub from: ImmutablePortfolio,
     pub to: ImmutablePortfolio,
     pub action: TradingDecision,
-    pub cost: f64,
+    /// 取引コスト（yoctoNEAR）
+    pub cost: YoctoValueF64,
     pub reason: String,
 }
 

@@ -633,7 +633,7 @@ fn test_portfolio_apply_hold_decision() {
         transition.to.holdings.get("token_a"),
         Some(&TokenAmountF64::from_smallest_units(1000.0, 24))
     );
-    assert_eq!(transition.cost, 0.0);
+    assert!(transition.cost.is_zero());
     assert_eq!(transition.action, TradingDecision::Hold);
 }
 
@@ -666,7 +666,7 @@ fn test_portfolio_apply_sell_decision() {
 
     assert!(!transition.to.holdings.contains_key("token_a"));
     assert!(transition.to.holdings.contains_key("token_b"));
-    assert!(transition.cost > 0.0); // Some transaction cost
+    assert!(transition.cost.is_positive()); // Some transaction cost
 
     // Should have converted 1000 token_a (worth 1000) to token_b (price 2.0)
     // After fees: ~1000 * 0.994 / 2.0 = ~497
@@ -713,7 +713,7 @@ fn test_portfolio_apply_switch_decision() {
 
     assert!(!transition.to.holdings.contains_key("token_a"));
     assert!(transition.to.holdings.contains_key("token_b"));
-    assert!(transition.cost > 0.0);
+    assert!(transition.cost.is_positive());
 
     // Should have converted 500 token_a (worth 1000) to token_b (price 1.0)
     // After fees: ~1000 * 0.994 = ~994

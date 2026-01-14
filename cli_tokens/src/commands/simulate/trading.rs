@@ -639,7 +639,7 @@ impl ImmutablePortfolio {
         _config: &TradingConfig,
     ) -> Result<PortfolioTransition> {
         let mut new_holdings = self.holdings.clone();
-        let mut cost = 0.0;
+        let mut cost = YoctoValueF64::zero();
 
         let new_portfolio = match decision {
             TradingDecision::Hold => ImmutablePortfolio {
@@ -660,11 +660,11 @@ impl ImmutablePortfolio {
                         market.prices.get(target_token),
                     ) {
                         // 現在の価値を計算（yoctoNEAR単位）
-                        // 型安全な演算子を使用: YoctoValueF64 * f64, YoctoValueF64 - f64
+                        // 型安全な演算子を使用: YoctoValueF64 同士の演算
                         let current_value = current_amount * current_price;
                         let fee = current_value * 0.006; // Simple fee calculation (yoctoNEAR単位)
-                        cost = fee.as_f64();
-                        let net_value = current_value - cost;
+                        cost = fee;
+                        let net_value = current_value - fee;
                         let target_amount = net_value / target_price;
 
                         new_holdings.insert(target_token.clone(), target_amount);
@@ -684,11 +684,11 @@ impl ImmutablePortfolio {
                     if let (Some(&from_price), Some(&to_price)) =
                         (market.prices.get(from), market.prices.get(to))
                     {
-                        // 型安全な演算子を使用: YoctoValueF64 * f64, YoctoValueF64 - f64
+                        // 型安全な演算子を使用: YoctoValueF64 同士の演算
                         let from_value = from_amount * from_price;
                         let fee = from_value * 0.006; // Simple fee calculation
-                        cost = fee.as_f64();
-                        let net_value = from_value - cost;
+                        cost = fee;
+                        let net_value = from_value - fee;
                         let to_amount = net_value / to_price;
 
                         new_holdings.insert(to.clone(), to_amount);
