@@ -388,6 +388,14 @@ impl YoctoAmount {
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
+
+    /// YoctoValue（価値）に変換
+    ///
+    /// NEAR は native トークンなので、数量と価値は同じ値になる。
+    /// ポートフォリオ価値計算など、数量を価値として扱う際に使用する。
+    pub fn to_value(&self) -> YoctoValue {
+        YoctoValue(self.0.clone())
+    }
 }
 
 impl fmt::Display for YoctoAmount {

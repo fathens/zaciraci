@@ -46,7 +46,7 @@ use zaciraci_common::algorithm::{
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
 use zaciraci_common::types::{
-    ExchangeRate, NearAmount, NearValue, TokenAmount, TokenPrice, YoctoValue,
+    ExchangeRate, NearAmount, NearValue, TokenAmount, TokenPrice, YoctoAmount, YoctoValue,
 };
 
 #[derive(Clone)]
@@ -118,21 +118,22 @@ pub async fn start() -> Result<()> {
     }
 
     // Step 2: 資金準備（新規期間で清算がなかった場合のみ）
-    let available_funds = if is_new_period {
+    let available_funds: YoctoAmount = if is_new_period {
         if let Some(balance) = liquidated_balance {
             // 清算が行われた場合: 清算後の残高をそのまま使用（Option A）
-            info!(log, "Using liquidated balance for new period"; "available_funds" => balance);
-            if balance == 0 {
+            let balance_amount = YoctoAmount::from_u128(balance);
+            info!(log, "Using liquidated balance for new period"; "available_funds" => %balance_amount);
+            if balance_amount.is_zero() {
                 info!(log, "no funds available after liquidation");
                 return Ok(());
             }
-            balance
+            balance_amount
         } else {
             // 初回起動: NEAR -> wrap.near 変換
             let funds = prepare_funds().await?;
-            info!(log, "Prepared funds for new period"; "available_funds" => funds);
+            info!(log, "Prepared funds for new period"; "available_funds" => %funds);
 
-            if funds == 0 {
+            if funds.is_zero() {
                 info!(log, "no funds available for trading");
                 return Ok(());
             }
@@ -142,7 +143,7 @@ pub async fn start() -> Result<()> {
     } else {
         // 評価期間中: 既存トークンを継続使用、追加の資金準備は不要
         info!(log, "continuing evaluation period, skipping prepare_funds");
-        0 // available_funds は使用されない
+        YoctoAmount::zero() // available_funds は使用されない
     };
 
     // Step 3: PredictionServiceの初期化
@@ -204,9 +205,13 @@ pub async fn start() -> Result<()> {
 
     // Step 5: 投資額全額を REF Finance にデポジット (新規期間のみ)
     if is_new_period {
-        info!(log, "depositing initial investment to REF Finance"; "amount" => available_funds);
-        crate::ref_finance::balances::deposit_wrap_near_to_ref(&client, &wallet, available_funds)
-            .await?;
+        info!(log, "depositing initial investment to REF Finance"; "amount" => %available_funds);
+        crate::ref_finance::balances::deposit_wrap_near_to_ref(
+            &client,
+            &wallet,
+            available_funds.to_u128(),
+        )
+        .await?;
         info!(log, "initial investment deposited to REF Finance");
     }
 
@@ -220,7 +225,7 @@ pub async fn start() -> Result<()> {
     let report = match execute_portfolio_strategy(
         &prediction_service,
         &selected_tokens,
-        available_funds,
+        available_funds.to_u128(),
         is_new_period,
         &client,
         &wallet,
@@ -240,19 +245,19 @@ pub async fn start() -> Result<()> {
 
     // 実際の取引実行
     let executed_actions =
-        execute_trading_actions(&report, available_funds, period_id.clone()).await?;
+        execute_trading_actions(&report, available_funds.to_u128(), period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
     // Step 7: ハーベスト判定と実行
-    let portfolio_value = YoctoValue::from_yocto(BigDecimal::from(available_funds));
-    check_and_harvest(portfolio_value).await?;
+    // YoctoAmount → YoctoValue（NEAR は数量=価値）
+    check_and_harvest(available_funds.to_value()).await?;
 
     info!(log, "success");
     Ok(())
 }
 
 /// 資金準備 (NEAR -> wrap.near 変換)
-async fn prepare_funds() -> Result<u128> {
+async fn prepare_funds() -> Result<YoctoAmount> {
     let log = DEFAULT.new(o!("function" => "prepare_funds"));
 
     // JSONRPCクライアントとウォレットを取得
@@ -260,16 +265,15 @@ async fn prepare_funds() -> Result<u128> {
     let wallet = crate::wallet::new_wallet();
 
     // 初期投資額の設定値を取得（NEAR単位で入力、yoctoNEARに変換）
-    let target_investment: u128 = config::get("TRADE_INITIAL_INVESTMENT")
+    let target_investment: YoctoAmount = config::get("TRADE_INITIAL_INVESTMENT")
         .ok()
         .and_then(|v| v.parse::<NearAmount>().ok())
         .unwrap_or_else(|| "100".parse().unwrap())
-        .to_yocto()
-        .to_u128();
+        .to_yocto();
 
     // 必要な wrap.near 残高として投資額を設定（NEAR -> wrap.near変換）
     // アカウントには10 NEARを残し、それ以外を wrap.near に変換
-    let required_balance = target_investment;
+    let required_balance = target_investment.to_u128();
     let account_id = wallet.account_id();
     let balance = crate::ref_finance::balances::start(
         &client,
@@ -281,9 +285,14 @@ async fn prepare_funds() -> Result<u128> {
 
     // wrap.near の全額が投資可能
     // 設定された投資額と実際の残高の小さい方を使用
-    let available_funds = balance.min(target_investment);
+    let balance_amount = YoctoAmount::from_u128(balance);
+    let available_funds = if balance_amount < target_investment {
+        balance_amount
+    } else {
+        target_investment
+    };
 
-    if available_funds == 0 {
+    if available_funds.is_zero() {
         return Err(anyhow::anyhow!(
             "Insufficient wrap.near balance for trading: {} yoctoNEAR",
             balance
@@ -293,7 +302,7 @@ async fn prepare_funds() -> Result<u128> {
     info!(log, "prepared funds";
         "account" => %account_id,
         "wrap_near_balance" => balance,
-        "available_funds" => available_funds
+        "available_funds" => %available_funds
     );
 
     Ok(available_funds)
