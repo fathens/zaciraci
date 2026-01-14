@@ -34,7 +34,6 @@ use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures_util::future::join_all;
-use near_primitives::types::Balance;
 use near_sdk::AccountId;
 use num_traits::Zero;
 use std::collections::{BTreeMap, HashMap};
@@ -89,7 +88,7 @@ pub async fn start() -> Result<()> {
     // Step 1: 評価期間のチェックと管理（清算が必要な場合は先に実行）
     // 初回起動時は available_funds=0 で呼び出し、後で prepare_funds() で資金準備
     let (period_id, is_new_period, existing_tokens, liquidated_balance) =
-        manage_evaluation_period(0).await?;
+        manage_evaluation_period(YoctoAmount::zero()).await?;
     info!(log, "evaluation period status";
         "period_id" => %period_id,
         "is_new_period" => is_new_period,
@@ -120,14 +119,13 @@ pub async fn start() -> Result<()> {
     // Step 2: 資金準備（新規期間で清算がなかった場合のみ）
     let available_funds: YoctoAmount = if is_new_period {
         if let Some(balance) = liquidated_balance {
-            // 清算が行われた場合: 清算後の残高をそのまま使用（Option A）
-            let balance_amount = YoctoAmount::from_u128(balance);
-            info!(log, "Using liquidated balance for new period"; "available_funds" => %balance_amount);
-            if balance_amount.is_zero() {
+            // 清算が行われた場合: 清算後の残高をそのまま使用
+            info!(log, "Using liquidated balance for new period"; "available_funds" => %balance);
+            if balance.is_zero() {
                 info!(log, "no funds available after liquidation");
                 return Ok(());
             }
-            balance_amount
+            balance
         } else {
             // 初回起動: NEAR -> wrap.near 変換
             let funds = prepare_funds().await?;
@@ -1112,10 +1110,10 @@ async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()> {
 /// 評価期間のチェックと管理
 ///
 /// 戻り値: (period_id, is_new_period, selected_tokens, liquidated_balance)
-/// - liquidated_balance: 清算が行われた場合の最終残高（yoctoNEAR）
+/// - liquidated_balance: 清算が行われた場合の最終残高
 async fn manage_evaluation_period(
-    available_funds: u128,
-) -> Result<(String, bool, Vec<String>, Option<Balance>)> {
+    available_funds: YoctoAmount,
+) -> Result<(String, bool, Vec<String>, Option<YoctoAmount>)> {
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
     // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
@@ -1147,7 +1145,7 @@ async fn manage_evaluation_period(
 
                 // 評価期間のパフォーマンスを計算してログ出力
                 let previous_initial_value = period.initial_value.clone();
-                let final_value = BigDecimal::from(final_balance);
+                let final_value = final_balance.as_bigdecimal().clone();
                 let change_amount = &final_value - &previous_initial_value;
                 let change_percentage = if previous_initial_value > BigDecimal::from(0) {
                     (&change_amount / &previous_initial_value) * BigDecimal::from(100)
@@ -1232,7 +1230,7 @@ async fn manage_evaluation_period(
             // 初回起動: 新規評価期間を作成
             info!(log, "no evaluation period found, creating first period");
 
-            let initial_value = BigDecimal::from(available_funds);
+            let initial_value = available_funds.as_bigdecimal().clone();
             let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
             let created_period = new_period.insert_async().await?;
 
@@ -1269,7 +1267,7 @@ fn filter_tokens_to_liquidate(
 /// 全保有トークンをwrap.nearに売却
 ///
 /// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
-async fn liquidate_all_positions() -> Result<Balance> {
+async fn liquidate_all_positions() -> Result<YoctoAmount> {
     let log = DEFAULT.new(o!("function" => "liquidate_all_positions"));
 
     // 最新の評価期間を取得
@@ -1290,7 +1288,7 @@ async fn liquidate_all_positions() -> Result<Balance> {
         }
         None => {
             info!(log, "no evaluation period found, nothing to liquidate");
-            return Ok(0);
+            return Ok(YoctoAmount::zero());
         }
     };
 
@@ -1308,7 +1306,7 @@ async fn liquidate_all_positions() -> Result<Balance> {
         // wrap.nearの残高を返す
         let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
         let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
-        return Ok(balance);
+        return Ok(YoctoAmount::from_u128(balance));
     }
 
     info!(log, "liquidating positions"; "token_count" => tokens_to_liquidate.len());
@@ -1357,9 +1355,10 @@ async fn liquidate_all_positions() -> Result<Balance> {
     let account = wallet.account_id();
     let deposits = crate::ref_finance::deposit::get_deposits(&client, account).await?;
     let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-    let final_balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
+    let final_balance =
+        YoctoAmount::from_u128(deposits.get(wrap_near).map(|u| u.0).unwrap_or_default());
 
-    info!(log, "liquidation complete"; "final_wrap_near_balance" => final_balance);
+    info!(log, "liquidation complete"; "final_wrap_near_balance" => %final_balance);
     Ok(final_balance)
 }
 
