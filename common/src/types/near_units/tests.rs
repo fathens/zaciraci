@@ -1112,3 +1112,120 @@ fn test_exchange_rate_roundtrip() {
     // ラウンドトリップで元の値に戻ることを確認
     assert_eq!(recovered_value, original_value);
 }
+
+// =============================================================================
+// YoctoAmount ↔ YoctoValue 変換テスト
+// =============================================================================
+
+#[test]
+fn test_yocto_amount_to_value() {
+    // 基本的な変換
+    let amount = YoctoAmount::from_u128(1000);
+    let value = amount.to_value();
+    assert_eq!(value.as_bigdecimal(), &BigDecimal::from(1000));
+
+    // ゼロの変換
+    let zero_amount = YoctoAmount::zero();
+    let zero_value = zero_amount.to_value();
+    assert!(zero_value.is_zero());
+
+    // 大きな値の変換（1 NEAR = 10^24 yocto）
+    let one_near_amount = YoctoAmount::from_u128(YOCTO_PER_NEAR);
+    let one_near_value = one_near_amount.to_value();
+    assert_eq!(
+        one_near_value.as_bigdecimal(),
+        &BigDecimal::from(YOCTO_PER_NEAR)
+    );
+}
+
+#[test]
+fn test_yocto_value_to_amount() {
+    // 基本的な変換
+    let value = YoctoValue::from_yocto(BigDecimal::from(1000));
+    let amount = value.to_amount();
+    assert_eq!(amount.to_u128(), 1000);
+
+    // ゼロの変換
+    let zero_value = YoctoValue::zero();
+    let zero_amount = zero_value.to_amount();
+    assert!(zero_amount.is_zero());
+
+    // 大きな値の変換（1 NEAR = 10^24 yocto）
+    let one_near_value = YoctoValue::from_yocto(BigDecimal::from(YOCTO_PER_NEAR));
+    let one_near_amount = one_near_value.to_amount();
+    assert_eq!(one_near_amount.to_u128(), YOCTO_PER_NEAR);
+}
+
+#[test]
+fn test_yocto_amount_value_roundtrip() {
+    // YoctoAmount → YoctoValue → YoctoAmount のラウンドトリップ
+    let original_amount = YoctoAmount::from_u128(12345678);
+    let value = original_amount.to_value();
+    let recovered_amount = value.to_amount();
+    assert_eq!(recovered_amount.to_u128(), original_amount.to_u128());
+
+    // YoctoValue → YoctoAmount → YoctoValue のラウンドトリップ
+    let original_value = YoctoValue::from_yocto(BigDecimal::from(987654321u64));
+    let amount = original_value.to_amount();
+    let recovered_value = amount.to_value();
+    assert_eq!(recovered_value, original_value);
+}
+
+// =============================================================================
+// YoctoValue スカラー乗算テスト
+// =============================================================================
+
+#[test]
+fn test_yocto_value_mul_bigdecimal() {
+    let value = YoctoValue::from_yocto(BigDecimal::from(100));
+
+    // &YoctoValue * BigDecimal
+    let result = &value * BigDecimal::from(2);
+    assert_eq!(result.as_bigdecimal(), &BigDecimal::from(200));
+
+    // 小数スカラー（10% = 0.1）
+    let result_10pct = &value * BigDecimal::new(1.into(), 1);
+    assert_eq!(result_10pct.as_bigdecimal(), &BigDecimal::from(10));
+
+    // ゼロとの乗算
+    let result_zero = &value * BigDecimal::zero();
+    assert!(result_zero.is_zero());
+}
+
+#[test]
+fn test_yocto_value_mul_bigdecimal_ref() {
+    let value = YoctoValue::from_yocto(BigDecimal::from(100));
+    let scalar = BigDecimal::from(3);
+
+    // &YoctoValue * &BigDecimal
+    let result = &value * &scalar;
+    assert_eq!(result.as_bigdecimal(), &BigDecimal::from(300));
+}
+
+#[test]
+fn test_yocto_value_harvest_calculation_pattern() {
+    // ハーベスト計算で使われるパターンをテスト
+    // initial_value の 2 倍がしきい値
+    let initial_value = YoctoValue::from_yocto(BigDecimal::from(100u128 * YOCTO_PER_NEAR));
+    let harvest_threshold = &initial_value * BigDecimal::from(2);
+
+    let expected_threshold = BigDecimal::from(200u128 * YOCTO_PER_NEAR);
+    assert_eq!(harvest_threshold.as_bigdecimal(), &expected_threshold);
+
+    // 現在価値が 250 NEAR の場合
+    let current_value = YoctoValue::from_yocto(BigDecimal::from(250u128 * YOCTO_PER_NEAR));
+
+    // 超過分を計算
+    let excess = current_value - &harvest_threshold;
+    let expected_excess = BigDecimal::from(50u128 * YOCTO_PER_NEAR);
+    assert_eq!(excess.as_bigdecimal(), &expected_excess);
+
+    // 10% をハーベスト
+    let harvest_amount = &excess * BigDecimal::new(1.into(), 1);
+    let expected_harvest = BigDecimal::from(5u128 * YOCTO_PER_NEAR);
+    assert_eq!(harvest_amount.as_bigdecimal(), &expected_harvest);
+
+    // 送金用に YoctoAmount に変換
+    let harvest_yocto_amount = harvest_amount.to_amount();
+    assert_eq!(harvest_yocto_amount.to_u128(), 5u128 * YOCTO_PER_NEAR);
+}
