@@ -12,8 +12,12 @@ fn price(v: f64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
 }
 
-fn rate(v: f64) -> ExchangeRate {
-    ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 18)
+fn rate(tokens_per_near: f64) -> ExchangeRate {
+    // tokens_per_near = 100 means "100 whole tokens per 1 NEAR"
+    // → price = 1/100 = 0.01 NEAR/token
+    let price =
+        TokenPrice::from_near_per_token(BigDecimal::from_f64(1.0 / tokens_per_near).unwrap());
+    ExchangeRate::from_price(&price, 18)
 }
 
 fn cap(v: i64) -> NearValue {
@@ -2574,11 +2578,18 @@ async fn test_enhanced_portfolio_performance() {
 }
 
 fn create_high_return_tokens() -> Vec<TokenData> {
+    // 予測価格との整合性のために現在価格を設定:
+    // - high_return_token: predicted = 0.50, +50% → current = 0.333
+    // - medium_return_token: predicted = 0.30, +30% → current = 0.231
+    // - stable_token: predicted = 0.10, +10% → current = 0.091
     vec![
         TokenData {
             symbol: "high_return_token".to_string(),
-            current_rate: ExchangeRate::from_raw_rate(
-                bigdecimal::BigDecimal::from(1000000000000000000i64),
+            // current_price = 0.333 NEAR/token (50% リターンで 0.50 に)
+            current_rate: ExchangeRate::from_price(
+                &TokenPrice::from_near_per_token(
+                    BigDecimal::from_f64(0.50 / 1.5).unwrap(), // 0.333
+                ),
                 24,
             ),
             historical_volatility: 0.40, // 40%ボラティリティ（高リスク・高リターン）
@@ -2587,8 +2598,11 @@ fn create_high_return_tokens() -> Vec<TokenData> {
         },
         TokenData {
             symbol: "medium_return_token".to_string(),
-            current_rate: ExchangeRate::from_raw_rate(
-                bigdecimal::BigDecimal::from(500000000000000000i64),
+            // current_price = 0.231 NEAR/token (30% リターンで 0.30 に)
+            current_rate: ExchangeRate::from_price(
+                &TokenPrice::from_near_per_token(
+                    BigDecimal::from_f64(0.30 / 1.3).unwrap(), // 0.231
+                ),
                 24,
             ),
             historical_volatility: 0.20, // 20%ボラティリティ
@@ -2597,8 +2611,11 @@ fn create_high_return_tokens() -> Vec<TokenData> {
         },
         TokenData {
             symbol: "stable_token".to_string(),
-            current_rate: ExchangeRate::from_raw_rate(
-                bigdecimal::BigDecimal::from(2000000000000000000i64),
+            // current_price = 0.091 NEAR/token (10% リターンで 0.10 に)
+            current_rate: ExchangeRate::from_price(
+                &TokenPrice::from_near_per_token(
+                    BigDecimal::from_f64(0.10 / 1.1).unwrap(), // 0.091
+                ),
                 24,
             ),
             historical_volatility: 0.10, // 10%ボラティリティ
@@ -2673,10 +2690,14 @@ async fn test_baseline_vs_enhanced_comparison() {
     // ベースライン（従来の40%制限）とエンハンスド（60%制限）の比較
 
     let tokens = create_high_return_tokens();
+    // create_high_return_tokens() の現在価格に対して正のリターンを設定:
+    // - high_return_token: current = 0.333, +25% → predicted = 0.416
+    // - medium_return_token: current = 0.231, +20% → predicted = 0.277
+    // - stable_token: current = 0.091, +15% → predicted = 0.105
     let mut predictions = BTreeMap::new();
-    predictions.insert("high_return_token".to_string(), price(0.25));
-    predictions.insert("medium_return_token".to_string(), price(0.15));
-    predictions.insert("stable_token".to_string(), price(0.08));
+    predictions.insert("high_return_token".to_string(), price(0.333 * 1.25)); // +25%
+    predictions.insert("medium_return_token".to_string(), price(0.231 * 1.20)); // +20%
+    predictions.insert("stable_token".to_string(), price(0.091 * 1.15)); // +15%
 
     let historical_prices = create_realistic_price_history();
     let portfolio_data = super::PortfolioData {
