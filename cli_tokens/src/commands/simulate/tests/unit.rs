@@ -722,6 +722,74 @@ fn test_portfolio_apply_switch_decision() {
 }
 
 #[test]
+fn test_portfolio_transition_cost_value() {
+    // PortfolioTransition.cost (YoctoValueF64) の具体的な値を検証
+
+    // Setup: 1000 smallest_units @ 1.0 NEAR/token = 1000 yoctoNEAR 価値
+    let portfolio =
+        ImmutablePortfolio::new(TokenAmountF64::from_smallest_units(1000.0, 24), "token_a");
+
+    let mut prices = HashMap::new();
+    prices.insert(
+        "token_a".to_string(),
+        TokenPriceF64::from_near_per_token(1.0),
+    );
+    prices.insert(
+        "token_b".to_string(),
+        TokenPriceF64::from_near_per_token(1.0),
+    );
+    let market = MarketSnapshot::new(prices);
+
+    let config = TradingConfig {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_amount: 1.0,
+    };
+
+    let decision = TradingDecision::Sell {
+        target_token: "token_b".to_string(),
+    };
+    let transition = portfolio.apply_trade(&decision, &market, &config).unwrap();
+
+    // 期待コスト: 1000 yoctoNEAR * 0.006 = 6 yoctoNEAR
+    let expected_cost = 6.0;
+    let actual_cost = transition.cost.as_f64();
+
+    // 浮動小数点の誤差を考慮
+    assert!(
+        (actual_cost - expected_cost).abs() < 0.01,
+        "Cost should be ~6 yoctoNEAR, got {}",
+        actual_cost
+    );
+
+    // YoctoValueF64 の演算テスト
+    let double_cost = transition.cost + transition.cost;
+    assert!(
+        (double_cost.as_f64() - 12.0).abs() < 0.01,
+        "Double cost should be ~12 yoctoNEAR"
+    );
+
+    // net_value との整合性: gross - fee = net
+    let gross_value = 1000.0; // yoctoNEAR
+    let net_value = gross_value - actual_cost;
+    let token_b_amount = transition.to.holdings.get("token_b").unwrap();
+
+    // token_b_amount (smallest_units) を yoctoNEAR に変換して比較
+    // 1 smallest_unit @ 1.0 NEAR/token = 1 yoctoNEAR
+    assert!(
+        (token_b_amount.as_f64() - net_value).abs() < 0.01,
+        "Net value should match: expected {}, got {}",
+        net_value,
+        token_b_amount.as_f64()
+    );
+
+    println!("✅ Cost calculation verified:");
+    println!("  - Gross value: {} yoctoNEAR", gross_value);
+    println!("  - Fee (0.6%): {} yoctoNEAR", transition.cost);
+    println!("  - Net value: {} yoctoNEAR", net_value);
+}
+
+#[test]
 fn test_market_snapshot_from_price_data() {
     let target_time = Utc::now();
     let mut price_data = HashMap::new();
