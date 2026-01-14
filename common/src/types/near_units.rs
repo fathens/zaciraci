@@ -590,17 +590,17 @@ impl YoctoValue {
         NearValue(&self.0 / BigDecimal::from(YOCTO_PER_NEAR))
     }
 
+    /// YoctoAmount（数量）に変換
+    ///
+    /// NEAR は native トークンなので、価値と数量は同じ値になる。
+    /// 送金時など、価値を数量として扱う際に使用する。
+    pub fn to_amount(&self) -> YoctoAmount {
+        YoctoAmount(self.0.clone())
+    }
+
     /// 金額がゼロかどうか
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
-    }
-
-    /// 整数部を u128 として取得（切り捨て）
-    ///
-    /// ブロックチェーンに送信する際に使用する。
-    /// yoctoNEAR より小さい単位は存在しないため、整数部のみを取得する。
-    pub fn to_u128(&self) -> u128 {
-        self.0.to_u128().unwrap_or(0)
     }
 }
 
@@ -684,6 +684,22 @@ impl Div<YoctoAmount> for YoctoValue {
         } else {
             TokenPrice(self.0 / amount.0)
         }
+    }
+}
+
+// &YoctoValue * BigDecimal = YoctoValue（スカラー乗算）
+impl Mul<BigDecimal> for &YoctoValue {
+    type Output = YoctoValue;
+    fn mul(self, scalar: BigDecimal) -> YoctoValue {
+        YoctoValue(&self.0 * scalar)
+    }
+}
+
+// &YoctoValue * &BigDecimal = YoctoValue（スカラー乗算）
+impl Mul<&BigDecimal> for &YoctoValue {
+    type Output = YoctoValue;
+    fn mul(self, scalar: &BigDecimal) -> YoctoValue {
+        YoctoValue(&self.0 * scalar)
     }
 }
 

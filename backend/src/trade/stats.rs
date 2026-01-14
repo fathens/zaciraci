@@ -986,8 +986,8 @@ where
             let mut phase2_failed = 0;
 
             for (token, wrap_near_value) in adjusted_buy_operations {
-                // NearValue から yoctoNEAR (u128) に変換（型安全なメソッドを使用）
-                let wrap_near_amount_u128 = wrap_near_value.to_yocto().to_u128();
+                // NearValue → YoctoValue → YoctoAmount → u128 に変換
+                let wrap_near_amount_u128 = wrap_near_value.to_yocto().to_amount().to_u128();
 
                 if wrap_near_amount_u128 == 0 {
                     error!(log, "Failed to convert purchase amount to u128"; "token" => &token);

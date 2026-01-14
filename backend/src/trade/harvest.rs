@@ -77,8 +77,9 @@ pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()
             }
         };
 
-    let initial_value = latest_period.initial_value;
-    let current_value = BigDecimal::from(current_portfolio_value_yocto);
+    // 型安全な YoctoValue で計算
+    let initial_value = YoctoValue::from_yocto(latest_period.initial_value);
+    let current_value = YoctoValue::from_yocto(BigDecimal::from(current_portfolio_value_yocto));
 
     info!(log, "Portfolio value check";
         "initial_value" => %initial_value,
@@ -87,23 +88,31 @@ pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()
     );
 
     // 200%利益時の判定（初期投資額の2倍になった場合）
-    let harvest_threshold = &initial_value * BigDecimal::from(2); // 200% = 2倍
+    // &YoctoValue * BigDecimal = YoctoValue
+    let harvest_threshold = &initial_value * BigDecimal::from(2);
 
     if current_value > harvest_threshold {
+        // YoctoValue - &YoctoValue = YoctoValue
+        let excess = current_value.clone() - &harvest_threshold;
         info!(log, "Harvest threshold exceeded, executing harvest";
             "threshold" => %harvest_threshold,
-            "excess" => %(&current_value - &harvest_threshold)
+            "excess" => %excess
         );
 
         // 10%の利益確定（余剰分の10%をハーベスト）
-        let excess_value = &current_value - &harvest_threshold;
-        let harvest_amount = &excess_value * BigDecimal::new(1.into(), 1); // 10% = 0.1
+        // &YoctoValue * BigDecimal = YoctoValue
+        let excess_value = current_value - &harvest_threshold;
+        let harvest_value = &excess_value * BigDecimal::new(1.into(), 1); // 10% = 0.1
+
+        // 価値を送金数量に変換（NEAR は価値=数量）
+        let harvest_amount = harvest_value.to_amount();
 
         // static変数から設定値を取得
         let harvest_account = &*HARVEST_ACCOUNT;
         let min_harvest_amount = &*HARVEST_MIN_AMOUNT;
 
-        if harvest_amount < *min_harvest_amount.as_bigdecimal() {
+        // YoctoAmount < YoctoAmount
+        if harvest_amount < *min_harvest_amount {
             info!(log, "Harvest amount below minimum threshold, skipping";
                 "harvest_amount" => %harvest_amount,
                 "min_amount" => %min_harvest_amount
@@ -114,7 +123,7 @@ pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()
         info!(log, "Executing harvest";
             "amount" => %harvest_amount,
             "target_account" => %harvest_account,
-            "excess_value" => %excess_value
+            "harvest_value" => %harvest_value
         );
 
         // ハーベスト時間条件もチェック
@@ -134,8 +143,10 @@ pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()
         // ハーベスト実行時間を更新
         update_last_harvest_time();
     } else {
+        // YoctoValue / YoctoValue = BigDecimal（比率）
+        let current_percentage = (current_value / initial_value) * BigDecimal::from(100);
         debug!(log, "Portfolio value below harvest threshold";
-            "current_percentage" => %((&current_value / &initial_value) * BigDecimal::from(100))
+            "current_percentage" => %current_percentage
         );
     }
 
@@ -145,7 +156,7 @@ pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()
 /// ハーベスト送金の実行
 async fn execute_harvest_transfer(
     target_account: &AccountId,
-    harvest_amount: BigDecimal,
+    harvest_amount: YoctoAmount,
     log: &slog::Logger,
 ) -> Result<()> {
     use crate::jsonrpc::{AccountInfo, SendTx};
@@ -156,11 +167,8 @@ async fn execute_harvest_transfer(
         "amount" => %harvest_amount
     );
 
-    // BigDecimal → u128 変換（yoctoNEAR）
-    let harvest_amount_u128: u128 = harvest_amount
-        .to_string()
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Failed to convert harvest amount to u128: {}", e))?;
+    // YoctoAmount → u128 変換（ブロックチェーン API 境界）
+    let harvest_amount_u128: u128 = harvest_amount.to_u128();
 
     // クライアントとウォレットの準備
     let client = crate::jsonrpc::new_client();
