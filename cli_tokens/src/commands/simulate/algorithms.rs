@@ -8,7 +8,7 @@ use anyhow::Result;
 #[allow(unused_imports)]
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
-use common::types::ExchangeRate;
+use common::types::{ExchangeRate, NearValue};
 use std::collections::{BTreeMap, HashMap};
 
 /// Run momentum simulation
@@ -167,12 +167,17 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
                 // Momentum戦略を実行
                 if !token_holdings.is_empty() && !predictions.is_empty() {
+                    // f64 を NearValue に変換（NEAR 単位として解釈）
+                    let min_trade_value = NearValue::from_near(
+                        BigDecimal::from_f64(config.momentum_min_trade_amount).unwrap_or_default(),
+                    );
+
                     let execution_report = execute_momentum_strategy(
                         token_holdings,
                         predictions,
                         config.momentum_min_profit_threshold,
                         config.momentum_switch_multiplier,
-                        config.momentum_min_trade_amount,
+                        &min_trade_value,
                     )
                     .await?;
 

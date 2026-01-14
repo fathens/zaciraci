@@ -1,13 +1,23 @@
 use super::*;
-use crate::types::{TokenAmount, TokenPrice};
+use crate::types::{NearValue, TokenAmount, TokenPrice};
 use bigdecimal::{FromPrimitive, ToPrimitive};
 
 fn price(v: f64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
 }
 
+/// whole tokens として TokenAmount を作成（decimals = 18）
 fn amount_f64(v: f64) -> TokenAmount {
-    TokenAmount::from_smallest_units(BigDecimal::from_f64(v).unwrap(), 18)
+    // v whole tokens → smallest_units = v * 10^decimals
+    let decimals: u8 = 18;
+    let factor = BigDecimal::from(10_i64.pow(decimals as u32));
+    let smallest_units = BigDecimal::from_f64(v).unwrap() * factor;
+    TokenAmount::from_smallest_units(smallest_units, decimals)
+}
+
+/// 最小取引価値を NearValue で作成（NEAR 単位）
+fn near_value(v: f64) -> NearValue {
+    NearValue::from_near(BigDecimal::from_f64(v).unwrap())
 }
 
 #[test]
@@ -81,11 +91,12 @@ fn test_make_trading_decision() {
     ];
 
     let holding_amount = amount_f64(10.0);
+    let holding_price = price(1.0); // 1 NEAR/token として計算
 
     // デフォルトパラメータ
     let min_profit_threshold = 0.05;
     let switch_multiplier = 1.5;
-    let min_trade_amount = 1.0;
+    let min_trade_value = near_value(1.0); // 1 NEAR
 
     // Case 1: Hold when current token is best
     let action = make_trading_decision(
@@ -93,9 +104,10 @@ fn test_make_trading_decision() {
         0.2,
         &ranked,
         &holding_amount,
+        &holding_price,
         min_profit_threshold,
         switch_multiplier,
-        min_trade_amount,
+        &min_trade_value,
     );
     assert_eq!(action, TradingAction::Hold);
 
@@ -105,9 +117,10 @@ fn test_make_trading_decision() {
         0.02,
         &ranked,
         &holding_amount,
+        &holding_price,
         min_profit_threshold,
         switch_multiplier,
-        min_trade_amount,
+        &min_trade_value,
     );
     assert!(matches!(action, TradingAction::Sell { .. }));
 
@@ -119,22 +132,25 @@ fn test_make_trading_decision() {
         0.05,
         &ranked,
         &holding_amount,
+        &holding_price,
         min_profit_threshold,
         switch_multiplier,
-        min_trade_amount,
+        &min_trade_value,
     );
     assert!(matches!(action, TradingAction::Switch { .. }));
 
-    // Case 4: Hold when amount is too small
+    // Case 4: Hold when amount is too small (保有価値 < min_trade_value)
+    // small_amount * holding_price = 0.5 * 1.0 = 0.5 NEAR < 1 NEAR
     let small_amount = amount_f64(0.5);
     let action = make_trading_decision(
         "BAD_TOKEN",
         0.02,
         &ranked,
         &small_amount,
+        &holding_price,
         min_profit_threshold,
         switch_multiplier,
-        min_trade_amount,
+        &min_trade_value,
     );
     assert_eq!(action, TradingAction::Hold);
 }
@@ -435,14 +451,18 @@ fn test_trading_frequency_cost_impact() {
     let high_freq_ranked = rank_tokens_by_momentum(high_freq_predictions);
     let low_freq_ranked = rank_tokens_by_momentum(low_freq_predictions);
 
+    let base_price = price(1.0); // 1 NEAR/token
+    let min_trade_value = near_value(1.0); // 1 NEAR
+
     let _high_freq_decision = make_trading_decision(
         "CURRENT_TOKEN",
         0.015, // 1.5%の現在リターン
         &high_freq_ranked,
         &base_amount,
+        &base_price,
         0.05,
         1.5,
-        1.0,
+        &min_trade_value,
     );
 
     let low_freq_decision = make_trading_decision(
@@ -450,9 +470,10 @@ fn test_trading_frequency_cost_impact() {
         0.01, // より低い現在リターン
         &low_freq_ranked,
         &base_amount,
+        &base_price,
         0.05,
         1.5,
-        1.0,
+        &min_trade_value,
     );
 
     // 高頻度取引では小さなリターンでHold
@@ -508,17 +529,28 @@ fn test_partial_fill_scenario() {
     let ranked = rank_tokens_by_momentum(predictions);
     let full_amount = amount_f64(1000.0);
     let partial_amount = amount_f64(300.0); // 30%のみ約定
+    let holding_price = price(1.0); // 1 NEAR/token
+    let min_trade_value = near_value(1.0); // 1 NEAR
 
-    let full_action =
-        make_trading_decision("CURRENT_TOKEN", 0.03, &ranked, &full_amount, 0.05, 1.5, 1.0);
+    let full_action = make_trading_decision(
+        "CURRENT_TOKEN",
+        0.03,
+        &ranked,
+        &full_amount,
+        &holding_price,
+        0.05,
+        1.5,
+        &min_trade_value,
+    );
     let partial_action = make_trading_decision(
         "CURRENT_TOKEN",
         0.03,
         &ranked,
         &partial_amount,
+        &holding_price,
         0.05,
         1.5,
-        1.0,
+        &min_trade_value,
     );
 
     // フル約定時はSwitchまたはSell
@@ -574,14 +606,17 @@ fn test_multi_timeframe_momentum_consistency() {
     // 短期シグナルでの判断
     let short_ranked = rank_tokens_by_momentum(vec![short_term_prediction]);
     let holding_amount = amount_f64(1000.0);
+    let holding_price = price(1.0); // 1 NEAR/token
+    let min_trade_value = near_value(1.0); // 1 NEAR
     let short_decision = make_trading_decision(
         "CURRENT_TOKEN",
         0.02,
         &short_ranked,
         &holding_amount,
+        &holding_price,
         0.05,
         1.5,
-        1.0,
+        &min_trade_value,
     );
 
     // 長期シグナルでの判断
@@ -591,9 +626,10 @@ fn test_multi_timeframe_momentum_consistency() {
         0.02,
         &long_ranked,
         &holding_amount,
+        &holding_price,
         0.05,
         1.5,
-        1.0,
+        &min_trade_value,
     );
 
     // 短期では取引機会あり（またはSell）

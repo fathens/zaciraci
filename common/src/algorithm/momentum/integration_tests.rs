@@ -1,7 +1,7 @@
 use super::execute_with_prediction_provider;
 use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
 use crate::algorithm::types::*;
-use crate::types::{ExchangeRate, TokenAmount, TokenPrice, TokenPriceF64};
+use crate::types::{ExchangeRate, NearValue, TokenAmount, TokenPrice, TokenPriceF64};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
@@ -173,14 +173,15 @@ async fn test_execute_with_prediction_provider() {
         },
     ];
 
+    let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
     let result = execute_with_prediction_provider(
         &provider,
         current_holdings,
         "wrap.near",
         7,
-        0.05, // min_profit_threshold
-        1.5,  // switch_multiplier
-        1.0,  // min_trade_amount
+        0.05,             // min_profit_threshold
+        1.5,              // switch_multiplier
+        &min_trade_value, // min_trade_value
     )
     .await;
 
@@ -205,14 +206,15 @@ async fn test_execute_with_prediction_provider_empty_holdings() {
         .with_price_history("top_token2", vec![(current_time, 50.0)]);
     let current_holdings = vec![];
 
+    let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
     let result = execute_with_prediction_provider(
         &provider,
         current_holdings,
         "wrap.near",
         7,
-        0.05, // min_profit_threshold
-        1.5,  // switch_multiplier
-        1.0,  // min_trade_amount
+        0.05,             // min_profit_threshold
+        1.5,              // switch_multiplier
+        &min_trade_value, // min_trade_value
     )
     .await;
 
@@ -241,14 +243,15 @@ async fn test_execute_with_prediction_provider_with_top_tokens() {
         current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(75), 24),
     }];
 
+    let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
     let result = execute_with_prediction_provider(
         &provider,
         current_holdings,
         "wrap.near",
         7,
-        0.05, // min_profit_threshold
-        1.5,  // switch_multiplier
-        1.0,  // min_trade_amount
+        0.05,             // min_profit_threshold
+        1.5,              // switch_multiplier
+        &min_trade_value, // min_trade_value
     )
     .await;
 
