@@ -12,8 +12,9 @@ fn price(v: f64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
 }
 
-fn rate(v: f64) -> ExchangeRate {
-    ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 18)
+/// ExchangeRate を price (NEAR/token) から作成するヘルパー
+fn rate_from_price(near_per_token: f64) -> ExchangeRate {
+    ExchangeRate::from_price(&price(near_per_token), 18)
 }
 
 fn cap(v: i64) -> NearValue {
@@ -22,14 +23,14 @@ fn cap(v: i64) -> NearValue {
 
 // テスト用のポートフォリオデータを作成
 fn create_test_portfolio_data() -> PortfolioData {
-    // current_rate = rate(1000) → current_price = 1/1000 = 0.001 NEAR/token
+    // current_price = 0.001 NEAR/token
     // 10% リターン → predicted_price = 0.001 * 1.1 = 0.0011
     let mut predictions = HashMap::new();
     predictions.insert("test.token".to_string(), price(0.001 * 1.1)); // 10%のリターン予測
 
     let tokens = vec![TokenData {
         symbol: "test.token".to_string(),
-        current_rate: rate(1000.0), // 0.001 NEAR/token
+        current_rate: rate_from_price(0.001), // 0.001 NEAR/token
         historical_volatility: 0.2,
         liquidity_score: Some(1.0),
         market_cap: Some(cap(1000000)),
@@ -47,7 +48,7 @@ fn create_test_portfolio_data() -> PortfolioData {
             quote_token: "wrap.near".to_string(),
             prices: vec![PricePoint {
                 timestamp: Utc.from_utc_datetime(&date),
-                price: price(1000.0 * (1.0 + i as f64 * 0.01)), // わずかな価格変動
+                price: price(0.001 * (1.0 + i as f64 * 0.01)), // わずかな価格変動
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
             }],
         });
