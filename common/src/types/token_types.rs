@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::{Div, Mul};
 
-use super::near_units::{NearValue, TokenPrice};
+use super::near_units::{NearAmount, NearValue, TokenPrice};
 
 /// 10^n を BigDecimal で計算（オーバーフロー回避）
 fn pow10(n: u8) -> BigDecimal {
@@ -242,6 +242,32 @@ impl Mul<&TokenPrice> for &TokenAmount {
     fn mul(self, price: &TokenPrice) -> NearValue {
         let whole_tokens = self.to_whole();
         NearValue::from_near(whole_tokens * price.as_bigdecimal())
+    }
+}
+
+/// TokenAmount / NearAmount = ExchangeRate
+///
+/// トークン量と NEAR 量から交換レートを計算。
+///
+/// # 例
+///
+/// ```ignore
+/// // 100 USDT / 20 NEAR = rate（1 NEAR = 5 USDT）
+/// let amount = TokenAmount::from_smallest_units(BigDecimal::from(100_000_000), 6);
+/// let near = NearAmount::from_str("20").unwrap();
+/// let rate: ExchangeRate = &amount / &near;
+/// // raw_rate = 100_000_000 / 20 = 5_000_000
+/// ```
+impl Div<&NearAmount> for &TokenAmount {
+    type Output = ExchangeRate;
+
+    fn div(self, rhs: &NearAmount) -> ExchangeRate {
+        if rhs.is_zero() {
+            return ExchangeRate::from_raw_rate(BigDecimal::zero(), self.decimals);
+        }
+        // raw_rate = smallest_units / NEAR
+        let raw_rate = &self.smallest_units / rhs.as_bigdecimal();
+        ExchangeRate::from_raw_rate(raw_rate, self.decimals)
     }
 }
 

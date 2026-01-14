@@ -429,3 +429,118 @@ fn test_wnear_rate_with_decimals() {
         price.to_f64()
     );
 }
+
+// =============================================================================
+// TokenAmount / NearAmount → ExchangeRate テスト
+// =============================================================================
+
+use super::NearAmount;
+
+/// 基本テスト: 100 USDT / 20 NEAR = rate (1 NEAR = 5 USDT)
+#[test]
+fn test_token_amount_div_near_amount() {
+    // 100 USDT = 100_000_000 smallest_units (decimals=6)
+    let amount = TokenAmount::from_smallest_units(BigDecimal::from(100_000_000), 6);
+    // 20 NEAR
+    let near = NearAmount::from_str("20").unwrap();
+
+    // rate = 100_000_000 / 20 = 5_000_000
+    let rate: ExchangeRate = &amount / &near;
+
+    // 検証: raw_rate = 5_000_000
+    assert_eq!(rate.raw_rate(), &BigDecimal::from(5_000_000));
+    assert_eq!(rate.decimals(), 6);
+
+    // 検証: 1 NEAR = 5 USDT → price = 0.2 NEAR/USDT
+    let price = rate.to_price();
+    assert!((price.to_f64() - 0.2).abs() < 0.001);
+}
+
+/// ゼロ除算テスト
+#[test]
+fn test_token_amount_div_zero_near() {
+    let amount = TokenAmount::from_smallest_units(BigDecimal::from(100_000_000), 6);
+    let zero_near = NearAmount::zero();
+
+    let rate: ExchangeRate = &amount / &zero_near;
+    assert!(rate.is_zero());
+    assert_eq!(rate.decimals(), 6); // decimals は保持
+}
+
+/// wNEAR テスト: 1e24 wNEAR / 1 NEAR = rate (1 NEAR = 1 wNEAR)
+#[test]
+fn test_wnear_token_amount_div_near_amount() {
+    // 1 wNEAR = 10^24 smallest_units (decimals=24)
+    let amount = TokenAmount::from_smallest_units(
+        BigDecimal::from(1_000_000_000_000_000_000_000_000u128),
+        24,
+    );
+    // 1 NEAR
+    let near = NearAmount::from_str("1").unwrap();
+
+    let rate: ExchangeRate = &amount / &near;
+
+    // 検証: 1 NEAR = 1 wNEAR
+    assert_eq!(
+        rate.raw_rate(),
+        &BigDecimal::from(1_000_000_000_000_000_000_000_000u128)
+    );
+    assert_eq!(rate.decimals(), 24);
+
+    // rate.to_price() = 10^24 / 10^24 = 1.0 NEAR/wNEAR
+    let price = rate.to_price();
+    assert!((price.to_f64() - 1.0).abs() < 0.0001);
+}
+
+/// ラウンドトリップ: TokenAmount → ExchangeRate → TokenAmount
+///
+/// TokenAmount / NearAmount → ExchangeRate
+/// NearValue * ExchangeRate → TokenAmount （既存演算の逆）
+#[test]
+fn test_token_amount_exchange_rate_roundtrip() {
+    // 開始: 100 USDT
+    let original_amount = TokenAmount::from_smallest_units(BigDecimal::from(100_000_000), 6);
+    let near = NearAmount::from_str("20").unwrap();
+
+    // TokenAmount / NearAmount → ExchangeRate
+    let rate: ExchangeRate = &original_amount / &near;
+
+    // NearValue * ExchangeRate → TokenAmount
+    // 既存: &NearValue * &ExchangeRate → TokenAmount
+    let near_value = NearValue::from_near(BigDecimal::from(20));
+    let recovered_amount: TokenAmount = &near_value * &rate;
+
+    // 検証: 元の値に戻る
+    assert_eq!(
+        recovered_amount.smallest_units(),
+        original_amount.smallest_units()
+    );
+    assert_eq!(recovered_amount.decimals(), original_amount.decimals());
+}
+
+/// 既存テストとの整合性: TokenAmount / ExchangeRate = NearValue の逆
+///
+/// 既存: TokenAmount / ExchangeRate → NearValue
+/// 新規: TokenAmount / NearAmount → ExchangeRate
+/// これらは逆演算の関係にある
+#[test]
+fn test_token_amount_near_amount_inverse_of_existing() {
+    // 既存テスト (test_token_amount_div_exchange_rate) の逆演算を検証
+    // 100 USDT / rate(5_000_000) = 20 NEAR
+    // 逆: 100 USDT / 20 NEAR = rate(5_000_000)
+
+    let amount = TokenAmount::from_smallest_units(BigDecimal::from(100_000_000), 6);
+    let expected_rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
+
+    // 既存: TokenAmount / ExchangeRate → NearValue
+    let near_value: NearValue = &amount / &expected_rate;
+    assert_eq!(near_value.as_bigdecimal().to_f64().unwrap(), 20.0);
+
+    // 新規: TokenAmount / NearAmount → ExchangeRate
+    let near_amount = NearAmount::from_str("20").unwrap();
+    let actual_rate: ExchangeRate = &amount / &near_amount;
+
+    // 検証: 同じ ExchangeRate になる
+    assert_eq!(actual_rate.raw_rate(), expected_rate.raw_rate());
+    assert_eq!(actual_rate.decimals(), expected_rate.decimals());
+}

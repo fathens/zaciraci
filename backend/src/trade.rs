@@ -20,8 +20,8 @@ use chrono::Utc as TZ;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
-use zaciraci_common::types::ExchangeRate;
 use zaciraci_common::types::NearAmount;
+use zaciraci_common::types::TokenAmount;
 
 pub async fn run() {
     tokio::spawn(run_record_rates());
@@ -169,9 +169,6 @@ async fn record_rates() -> Result<()> {
         "num_values" => values.len().to_string(),
     ));
 
-    // rate_yocto = value / near_amount (e.g. value / 100)
-    // これにより後続処理でのスケーリングが不要になる
-    let near_amount = initial_value.as_bigdecimal();
     info!(log, "converting to rates (yocto scale)");
 
     // 各トークンの decimals を取得
@@ -187,13 +184,14 @@ async fn record_rates() -> Result<()> {
     }
 
     // ExchangeRate を使って TokenRate を構築
+    // TokenAmount / NearAmount → ExchangeRate で型安全に rate を計算
     let rates: Vec<_> = values
         .into_iter()
         .map(|(base, value)| {
             let token_str = base.to_string();
             let decimals = token_decimals.get(&token_str).copied().unwrap_or(24);
-            let rate_yocto = BigDecimal::from(value) / near_amount;
-            let exchange_rate = ExchangeRate::from_raw_rate(rate_yocto, decimals);
+            let amount = TokenAmount::from_smallest_units(BigDecimal::from(value), decimals);
+            let exchange_rate = &amount / &initial_value;
             TokenRate::new(base, quote_token.clone(), exchange_rate)
         })
         .collect();
