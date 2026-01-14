@@ -660,9 +660,11 @@ impl ImmutablePortfolio {
                         market.prices.get(target_token),
                     ) {
                         // 現在の価値を計算（yoctoNEAR単位）
+                        // 型安全な演算子を使用: YoctoValueF64 * f64, YoctoValueF64 - f64
                         let current_value = current_amount * current_price;
-                        cost = current_value.as_f64() * 0.006; // Simple fee calculation (yoctoNEAR単位)
-                        let net_value = YoctoValueF64::from_yocto(current_value.as_f64() - cost);
+                        let fee = current_value * 0.006; // Simple fee calculation (yoctoNEAR単位)
+                        cost = fee.as_f64();
+                        let net_value = current_value - cost;
                         let target_amount = net_value / target_price;
 
                         new_holdings.insert(target_token.clone(), target_amount);
@@ -682,9 +684,11 @@ impl ImmutablePortfolio {
                     if let (Some(&from_price), Some(&to_price)) =
                         (market.prices.get(from), market.prices.get(to))
                     {
+                        // 型安全な演算子を使用: YoctoValueF64 * f64, YoctoValueF64 - f64
                         let from_value = from_amount * from_price;
-                        cost = from_value.as_f64() * 0.006; // Simple fee calculation
-                        let net_value = YoctoValueF64::from_yocto(from_value.as_f64() - cost);
+                        let fee = from_value * 0.006; // Simple fee calculation
+                        cost = fee.as_f64();
+                        let net_value = from_value - cost;
                         let to_amount = net_value / to_price;
 
                         new_holdings.insert(to.clone(), to_amount);
@@ -739,11 +743,13 @@ impl ImmutablePortfolio {
         let total_value = self.total_value(market);
         let mut allocations = HashMap::new();
 
-        if total_value.as_f64() > 0.0 {
+        // 型安全なメソッドを使用: YoctoValueF64.is_positive()
+        if total_value.is_positive() {
             for (token, &amount) in &self.holdings {
                 if let Some(&price) = market.prices.get(token) {
                     let token_value = amount * price;
-                    let allocation = (token_value.as_f64() / total_value.as_f64()) * 100.0;
+                    // 型安全な除算を使用: YoctoValueF64 / YoctoValueF64 = f64
+                    let allocation = (token_value / total_value) * 100.0;
                     allocations.insert(token.clone(), allocation);
                 }
             }
@@ -751,8 +757,8 @@ impl ImmutablePortfolio {
 
         // Add cash allocation
         if self.cash_balance.is_positive() {
-            let cash_allocation =
-                (self.cash_balance.to_yocto().as_f64() / total_value.as_f64()) * 100.0;
+            // 型安全な除算を使用: YoctoValueF64 / YoctoValueF64 = f64
+            let cash_allocation = (self.cash_balance.to_yocto() / total_value) * 100.0;
             allocations.insert("cash".to_string(), cash_allocation);
         }
 

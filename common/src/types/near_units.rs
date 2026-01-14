@@ -1016,6 +1016,14 @@ impl TokenAmountF64 {
         self.amount > 0.0
     }
 
+    /// 絶対値を返す
+    pub fn abs(&self) -> Self {
+        TokenAmountF64 {
+            amount: self.amount.abs(),
+            decimals: self.decimals,
+        }
+    }
+
     /// TokenAmount に変換（精度は回復しない）
     pub fn to_bigdecimal(&self) -> TokenAmount {
         TokenAmount::from_smallest_units(
@@ -1245,6 +1253,14 @@ impl Mul<YoctoValueF64> for f64 {
     }
 }
 
+// YoctoValueF64 - スカラー (f64)
+impl Sub<f64> for YoctoValueF64 {
+    type Output = YoctoValueF64;
+    fn sub(self, scalar: f64) -> YoctoValueF64 {
+        YoctoValueF64(self.0 - scalar)
+    }
+}
+
 // YoctoValueF64 / TokenPriceF64 = TokenAmountF64
 // 注意: decimals 情報が必要なため、to_amount() メソッドを使用することを推奨
 impl Div<TokenPriceF64> for YoctoValueF64 {
@@ -1305,6 +1321,11 @@ impl NearValueF64 {
     /// 金額がゼロより大きいかどうか
     pub fn is_positive(&self) -> bool {
         self.0 > 0.0
+    }
+
+    /// 絶対値を返す
+    pub fn abs(&self) -> Self {
+        NearValueF64(self.0.abs())
     }
 }
 
@@ -1367,6 +1388,22 @@ impl Div<f64> for NearValueF64 {
         } else {
             NearValueF64(self.0 / scalar)
         }
+    }
+}
+
+// NearValueF64 + スカラー (f64)
+impl Add<f64> for NearValueF64 {
+    type Output = NearValueF64;
+    fn add(self, scalar: f64) -> NearValueF64 {
+        NearValueF64(self.0 + scalar)
+    }
+}
+
+// NearValueF64 - スカラー (f64)
+impl Sub<f64> for NearValueF64 {
+    type Output = NearValueF64;
+    fn sub(self, scalar: f64) -> NearValueF64 {
+        NearValueF64(self.0 - scalar)
     }
 }
 

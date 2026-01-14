@@ -217,9 +217,8 @@ pub(crate) async fn run_momentum_timestep_simulation(
                                             .to_string()
                                             .parse::<f64>()
                                             .unwrap_or(0.0);
-                                        total_costs = NearValueF64::from_near(
-                                            total_costs.as_f64() + cost_f64,
-                                        );
+                                        // 型安全な加算を使用: NearValueF64 + f64 = NearValueF64
+                                        total_costs = total_costs + cost_f64;
                                         trades.push(trade);
                                     }
                                 }
@@ -257,9 +256,8 @@ pub(crate) async fn run_momentum_timestep_simulation(
                                             .to_string()
                                             .parse::<f64>()
                                             .unwrap_or(0.0);
-                                        total_costs = NearValueF64::from_near(
-                                            total_costs.as_f64() + cost_f64,
-                                        );
+                                        // 型安全な加算を使用: NearValueF64 + f64 = NearValueF64
+                                        total_costs = total_costs + cost_f64;
                                         trades.push(trade);
                                     }
                                 }
@@ -646,9 +644,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                     for (token, target_weight) in target_weights {
                                         if let Some(&current_price) = current_prices.get(&token) {
                                             // 目標価値を計算（NEAR単位）
-                                            let target_value_near = NearValueF64::from_near(
-                                                total_portfolio_value.as_f64() * target_weight,
-                                            );
+                                            // 型安全な乗算を使用: NearValueF64 * f64 = NearValueF64
+                                            let target_value_near =
+                                                total_portfolio_value * target_weight;
                                             // 目標価値をyoctoNEARに変換して数量を計算
                                             let target_value_yocto = target_value_near.to_yocto();
                                             let target_amount = target_value_yocto / current_price;
@@ -670,59 +668,60 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                 .get(&token)
                                                 .copied()
                                                 .unwrap_or(TokenAmountF64::zero(24));
+                                            // 型安全な演算子を使用
                                             let diff_amount =
                                                 target_amount_limited - current_amount;
-                                            let diff = diff_amount.as_f64();
+                                            let diff_abs = diff_amount.abs();
 
                                             // 相対的な閾値: 現在保有量の1%以上の差でリバランス
-                                            let relative_threshold = current_amount.as_f64() * 0.01;
-                                            let min_threshold = 0.001; // 最小絶対閾値
+                                            let relative_threshold = current_amount * 0.01;
+                                            // 最小絶対閾値（smallest_units で比較）
+                                            let min_threshold =
+                                                TokenAmountF64::from_smallest_units(0.001, 24);
                                             let effective_threshold =
-                                                relative_threshold.max(min_threshold);
+                                                if relative_threshold > min_threshold {
+                                                    relative_threshold
+                                                } else {
+                                                    min_threshold
+                                                };
 
-                                            if diff.abs() > effective_threshold {
+                                            if diff_abs > effective_threshold {
                                                 // 保有量の1%以上の差がある場合のみリバランス
                                                 current_holdings
                                                     .insert(token.clone(), target_amount_limited);
-
-                                                // 簡易的な取引コスト計算（NEAR単位）
-                                                // TODO: トークンごとの decimals を使用する
-                                                let diff_amount =
-                                                    TokenAmountF64::from_smallest_units(
-                                                        diff.abs(),
-                                                        24,
-                                                    );
-                                                let diff_value_yocto = diff_amount * current_price;
+                                                // 絶対値でコスト計算
+                                                let diff_value_yocto = diff_abs * current_price;
                                                 let diff_value_near = diff_value_yocto.to_near();
-                                                let trade_cost = diff_value_near.as_f64() * 0.003; // 0.3%手数料
-                                                total_costs = NearValueF64::from_near(
-                                                    total_costs.as_f64() + trade_cost,
-                                                );
+                                                // 型安全な乗算・加算を使用
+                                                let trade_cost = diff_value_near * 0.003; // 0.3%手数料
+                                                total_costs = total_costs + trade_cost;
 
                                                 // TradeExecutionを記録
+                                                // trade_cost は NearValueF64 なので、BigDecimal変換時は .as_f64()
+                                                let trade_cost_f64 = trade_cost.as_f64();
                                                 trades.push(TradeExecution {
                                                     timestamp: current_time,
                                                     from_token: config.quote_token.clone(),
                                                     to_token: token.clone(),
-                                                    amount: diff_amount,
+                                                    amount: diff_abs,
                                                     executed_price: current_price,
                                                     cost: TradingCost {
                                                         protocol_fee: BigDecimal::from_f64(
-                                                            trade_cost * 0.7,
+                                                            trade_cost_f64 * 0.7,
                                                         )
                                                         .unwrap_or_default(),
                                                         slippage: BigDecimal::from_f64(
-                                                            trade_cost * 0.2,
+                                                            trade_cost_f64 * 0.2,
                                                         )
                                                         .unwrap_or_default(),
                                                         gas_fee: config.gas_cost.clone(),
-                                                        total: BigDecimal::from_f64(trade_cost)
+                                                        total: BigDecimal::from_f64(trade_cost_f64)
                                                             .unwrap_or_default(),
                                                     },
                                                     portfolio_value_before: total_portfolio_value,
-                                                    portfolio_value_after: NearValueF64::from_near(
-                                                        total_portfolio_value.as_f64() - trade_cost,
-                                                    ),
+                                                    // 型安全な減算を使用: NearValueF64 - NearValueF64
+                                                    portfolio_value_after: total_portfolio_value
+                                                        - trade_cost,
                                                     success: true,
                                                     reason: format!(
                                                         "Portfolio rebalancing: {} -> {:.1}%",

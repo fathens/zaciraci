@@ -19,9 +19,7 @@ pub fn calculate_performance_metrics(
     // 型安全な減算演算子を使用（NearValueF64 - NearValueF64 = NearValueF64）
     let total_return = final_value - initial_value;
 
-    // 比率計算のため f64 に変換（NearValueF64 / NearValueF64 = f64）
-    let initial_value_f64 = initial_value.as_f64();
-    let final_value_f64 = final_value.as_f64();
+    // 比率計算（NearValueF64 / NearValueF64 = f64）
     let total_return_pct = if initial_value.is_positive() {
         (total_return / initial_value) * 100.0
     } else {
@@ -29,20 +27,22 @@ pub fn calculate_performance_metrics(
     };
 
     // Calculate annualized return
+    // 型安全な除算を使用: NearValueF64 / NearValueF64 = f64
     let years = duration_days as f64 / 365.25;
     let annualized_return = if years > 0.0 && initial_value.is_positive() {
-        ((final_value_f64 / initial_value_f64).powf(1.0 / years) - 1.0) * 100.0
+        ((final_value / initial_value).powf(1.0 / years) - 1.0) * 100.0
     } else {
         0.0
     };
 
     // Calculate volatility from portfolio values
+    // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64, NearValueF64 / NearValueF64 = f64
     let returns: Vec<f64> = portfolio_values
         .windows(2)
         .map(|window| {
-            let prev = window[0].total_value.as_f64();
-            let curr = window[1].total_value.as_f64();
-            if prev > 0.0 {
+            let prev = window[0].total_value;
+            let curr = window[1].total_value;
+            if prev.is_positive() {
                 (curr - prev) / prev
             } else {
                 0.0
@@ -53,17 +53,22 @@ pub fn calculate_performance_metrics(
     let volatility = calculate_volatility(&returns) * 100.0; // Convert to percentage
 
     // Calculate maximum drawdown
-    let mut peak = initial_value_f64;
+    // 型安全な演算子を使用: NearValueF64 の比較・減算・除算
+    let mut peak = initial_value;
     let mut max_drawdown = 0.0;
-    let mut max_drawdown_value = 0.0;
+    let mut max_drawdown_value = NearValueF64::zero();
 
     for portfolio_value in portfolio_values {
-        let value = portfolio_value.total_value.as_f64();
+        let value = portfolio_value.total_value;
         if value > peak {
             peak = value;
         }
-        let drawdown = peak - value;
-        let drawdown_pct = if peak > 0.0 { drawdown / peak } else { 0.0 };
+        let drawdown = peak - value; // NearValueF64
+        let drawdown_pct = if peak.is_positive() {
+            drawdown / peak // NearValueF64 / NearValueF64 = f64
+        } else {
+            0.0
+        };
 
         if drawdown > max_drawdown_value {
             max_drawdown_value = drawdown;
@@ -136,8 +141,9 @@ pub fn calculate_performance_metrics(
     // Trade analysis
     let trade_metrics = analyze_trades(trades);
 
+    // 型安全な除算を使用: NearValueF64 / NearValueF64 = f64
     let cost_ratio = if initial_value.is_positive() {
-        (total_costs.as_f64() / initial_value_f64) * 100.0
+        (total_costs / initial_value) * 100.0
     } else {
         0.0
     };
@@ -150,7 +156,7 @@ pub fn calculate_performance_metrics(
         annualized_return,
         total_return_pct,
         volatility,
-        max_drawdown: NearValueF64::from_near(max_drawdown_value),
+        max_drawdown: max_drawdown_value,
         max_drawdown_pct,
         sharpe_ratio,
         sortino_ratio,
@@ -189,10 +195,17 @@ pub fn calculate_performance_metrics_legacy(
     };
 
     // ボラティリティ計算
+    // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64, NearValueF64 / NearValueF64 = f64
     let returns: Vec<f64> = portfolio_values
         .windows(2)
         .map(|w| {
-            (w[1].total_value.as_f64() - w[0].total_value.as_f64()) / w[0].total_value.as_f64()
+            let prev = w[0].total_value;
+            let curr = w[1].total_value;
+            if prev.is_positive() {
+                (curr - prev) / prev
+            } else {
+                0.0
+            }
         })
         .collect();
 
@@ -225,18 +238,19 @@ pub fn calculate_performance_metrics_legacy(
     }
 
     // 取引分析
-    let mut total_profit = 0.0;
-    let mut total_loss = 0.0;
+    // 型安全な累積: NearValueF64 で管理
+    let mut total_profit = NearValueF64::zero();
+    let mut total_loss = NearValueF64::zero();
     let mut winning_trades_count = 0;
 
     for trade in trades {
-        let profit_loss =
-            trade.portfolio_value_after.as_f64() - trade.portfolio_value_before.as_f64();
-        if profit_loss > 0.0 {
-            total_profit += profit_loss;
+        // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64
+        let profit_loss = trade.portfolio_value_after - trade.portfolio_value_before;
+        if profit_loss.is_positive() {
+            total_profit = total_profit + profit_loss;
             winning_trades_count += 1;
-        } else if profit_loss < 0.0 {
-            total_loss += -profit_loss; // 損失は正の値として計算
+        } else if !profit_loss.is_zero() {
+            total_loss = total_loss + profit_loss.abs(); // 損失は正の値として計算
         }
     }
 
@@ -247,10 +261,10 @@ pub fn calculate_performance_metrics_legacy(
         winning_trades_count as f64 / trades.len() as f64
     };
 
-    // プロフィットファクター = 総利益 / 総損失
-    let profit_factor = if total_loss > 0.0 {
+    // プロフィットファクター = 総利益 / 総損失 (NearValueF64 / NearValueF64 = f64)
+    let profit_factor = if total_loss.is_positive() {
         total_profit / total_loss
-    } else if total_profit > 0.0 {
+    } else if total_profit.is_positive() {
         // 損失がない場合は無限大を表す大きな値
         f64::MAX
     } else {
@@ -341,51 +355,61 @@ pub fn analyze_trades(trades: &[TradeExecution]) -> TradeAnalysis {
         };
     }
 
-    let mut total_profit = 0.0;
-    let mut total_loss = 0.0;
+    // 型安全な累積: NearValueF64 で管理
+    let mut total_profit = NearValueF64::zero();
+    let mut total_loss = NearValueF64::zero();
     let mut winning_trades = 0;
     let mut losing_trades = 0;
-    let mut wins = Vec::new();
-    let mut losses = Vec::new();
+    let mut largest_win = NearValueF64::zero();
+    let mut largest_loss = NearValueF64::zero();
 
     for trade in trades {
-        let pnl = trade.portfolio_value_after.as_f64() - trade.portfolio_value_before.as_f64();
+        // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64
+        let pnl = trade.portfolio_value_after - trade.portfolio_value_before;
 
-        if pnl > 0.0 {
-            total_profit += pnl;
+        if pnl.is_positive() {
+            total_profit = total_profit + pnl;
             winning_trades += 1;
-            wins.push(pnl);
-        } else if pnl < 0.0 {
-            total_loss += -pnl; // Store as positive value
+            if pnl > largest_win {
+                largest_win = pnl;
+            }
+        } else if !pnl.is_zero() {
+            let loss_abs = pnl.abs(); // Store as positive value
+            total_loss = total_loss + loss_abs;
             losing_trades += 1;
-            losses.push(-pnl);
+            if loss_abs > largest_loss {
+                largest_loss = loss_abs;
+            }
         }
     }
 
     let win_rate = (winning_trades as f64 / trades.len() as f64) * 100.0;
 
-    let profit_factor = if total_loss > 0.0 {
+    // NearValueF64 / NearValueF64 = f64 (比率)
+    let profit_factor = if total_loss.is_positive() {
         total_profit / total_loss
-    } else if total_profit > 0.0 {
+    } else if total_profit.is_positive() {
         f64::INFINITY
     } else {
         0.0
     };
 
-    let avg_win = if !wins.is_empty() {
-        wins.iter().sum::<f64>() / wins.len() as f64
+    // 平均値は合計 / 回数で計算 (NearValueF64 * f64 = NearValueF64 → f64)
+    let avg_win = if winning_trades > 0 {
+        total_profit / NearValueF64::from_near(winning_trades as f64)
     } else {
         0.0
     };
 
-    let avg_loss = if !losses.is_empty() {
-        losses.iter().sum::<f64>() / losses.len() as f64
+    let avg_loss = if losing_trades > 0 {
+        total_loss / NearValueF64::from_near(losing_trades as f64)
     } else {
         0.0
     };
 
-    let largest_win = wins.iter().fold(0.0f64, |a, &b| a.max(b));
-    let largest_loss = losses.iter().fold(0.0f64, |a, &b| a.max(b));
+    // largest_win/loss は型安全な比較で取得済み - f64 に変換
+    let largest_win = largest_win / NearValueF64::from_near(1.0);
+    let largest_loss = largest_loss / NearValueF64::from_near(1.0);
 
     TradeAnalysis {
         winning_trades,
@@ -575,13 +599,14 @@ pub fn calculate_max_drawdown_duration(portfolio_values: &[PortfolioValue]) -> i
         return 0;
     }
 
-    let mut peak_value = portfolio_values[0].total_value.as_f64();
+    // 型安全な比較を使用: NearValueF64 の PartialOrd
+    let mut peak_value = portfolio_values[0].total_value;
     let mut peak_time = portfolio_values[0].timestamp;
     let mut max_duration = 0i64;
     let mut current_drawdown_start: Option<DateTime<Utc>> = None;
 
     for pv in portfolio_values.iter().skip(1) {
-        let current_value = pv.total_value.as_f64();
+        let current_value = pv.total_value;
         if current_value > peak_value {
             // New peak reached
             peak_value = current_value;
