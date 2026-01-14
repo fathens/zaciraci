@@ -79,23 +79,31 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
         },
     ];
 
+    let total_return_abs = final_value - initial_capital;
+    let total_costs_f64 = trades
+        .iter()
+        .map(|t| &t.cost.total)
+        .fold(BigDecimal::from(0), |acc, x| acc + x)
+        .to_f64()
+        .unwrap_or(0.0);
+
     SimulationResult {
         config: SimulationSummary {
             start_date,
             end_date,
             algorithm,
-            initial_capital,
-            final_value,
-            total_return,
+            initial_capital: NearValueF64::from_near(initial_capital),
+            final_value: NearValueF64::from_near(final_value),
+            total_return: NearValueF64::from_near(total_return_abs),
             duration_days: 10,
         },
         performance: PerformanceMetrics {
-            total_return: total_return / 100.0,
+            total_return: NearValueF64::from_near(total_return_abs),
             annualized_return: total_return * 36.5 / 10.0, // Rough annualization
             total_return_pct: total_return,
             volatility: 0.15,
-            max_drawdown: -20.0,
-            max_drawdown_pct: -2.0,
+            max_drawdown: NearValueF64::from_near(20.0),
+            max_drawdown_pct: 2.0,
             sharpe_ratio: 1.2,
             sortino_ratio: 1.4,
             total_trades: trades.len(),
@@ -103,12 +111,7 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             losing_trades: 1,
             win_rate: 0.5,
             profit_factor: 1.1,
-            total_costs: trades
-                .iter()
-                .map(|t| &t.cost.total)
-                .fold(BigDecimal::from(0), |acc, x| acc + x)
-                .to_f64()
-                .unwrap_or(0.0),
+            total_costs: NearValueF64::from_near(total_costs_f64),
             cost_ratio: 0.87,
             simulation_days: 10,
             active_trading_days: 8,
@@ -120,8 +123,8 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             successful_trades: 2,
             failed_trades: 0,
             success_rate: 1.0,
-            total_cost: 8.7,
-            avg_cost_per_trade: 4.35,
+            total_cost: NearValueF64::from_near(8.7),
+            avg_cost_per_trade: NearValueF64::from_near(4.35),
         },
         data_quality: DataQualityStats {
             total_timesteps: 10,
@@ -228,7 +231,10 @@ mod tests {
             .expect("Should be able to deserialize SimulationResult");
 
         assert_eq!(deserialized.config.algorithm, AlgorithmType::Momentum);
-        assert_eq!(deserialized.config.final_value, 1150.0);
+        assert_eq!(
+            deserialized.config.final_value,
+            NearValueF64::from_near(1150.0)
+        );
 
         // Test 3: Verify JSON structure
         let json_value: serde_json::Value =

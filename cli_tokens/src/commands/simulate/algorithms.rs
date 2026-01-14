@@ -354,11 +354,11 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
     // パフォーマンス指標を計算
     let performance = calculate_performance_metrics(
-        initial_value.as_f64(),
-        final_value.as_f64(),
+        initial_value,
+        final_value,
         &portfolio_values,
         &trades,
-        total_costs.as_f64(),
+        total_costs,
         config.start_date,
         config.end_date,
     )?;
@@ -367,9 +367,9 @@ pub(crate) async fn run_momentum_timestep_simulation(
         start_date: config.start_date,
         end_date: config.end_date,
         algorithm: AlgorithmType::Momentum,
-        initial_capital: initial_value.as_f64(),
-        final_value: final_value.as_f64(),
-        total_return: final_value.as_f64() - initial_value.as_f64(),
+        initial_capital: initial_value,
+        final_value,
+        total_return: final_value - initial_value,
         duration_days,
     };
 
@@ -382,11 +382,11 @@ pub(crate) async fn run_momentum_timestep_simulation(
         } else {
             0.0
         },
-        total_cost: total_costs.as_f64(),
+        total_cost: total_costs,
         avg_cost_per_trade: if !trades.is_empty() {
-            total_costs.as_f64() / trades.len() as f64
+            total_costs / trades.len() as f64
         } else {
-            0.0
+            NearValueF64::zero()
         },
     };
 
@@ -824,11 +824,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
     // パフォーマンス指標を計算
     let performance = calculate_performance_metrics(
-        initial_value.as_f64(),
-        final_value.as_f64(),
+        initial_value,
+        final_value,
         &portfolio_values,
         &trades,
-        total_costs.as_f64(),
+        total_costs,
         config.start_date,
         config.end_date,
     )?;
@@ -837,9 +837,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         start_date: config.start_date,
         end_date: config.end_date,
         algorithm: AlgorithmType::Portfolio,
-        initial_capital: initial_value.as_f64(),
-        final_value: final_value.as_f64(),
-        total_return: final_value.as_f64() - initial_value.as_f64(),
+        initial_capital: initial_value,
+        final_value,
+        total_return: final_value - initial_value,
         duration_days,
     };
 
@@ -852,11 +852,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
         } else {
             0.0
         },
-        total_cost: total_costs.as_f64(),
+        total_cost: total_costs,
         avg_cost_per_trade: if !trades.is_empty() {
-            total_costs.as_f64() / trades.len() as f64
+            total_costs / trades.len() as f64
         } else {
-            0.0
+            NearValueF64::zero()
         },
     };
 

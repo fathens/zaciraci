@@ -568,28 +568,43 @@ pub struct SimulationSummary {
     pub start_date: DateTime<Utc>,
     pub end_date: DateTime<Utc>,
     pub algorithm: AlgorithmType,
-    pub initial_capital: f64,
-    pub final_value: f64,
-    pub total_return: f64,
+    /// 初期資金（NEAR）
+    pub initial_capital: NearValueF64,
+    /// 最終価値（NEAR）
+    pub final_value: NearValueF64,
+    /// 総リターン（NEAR）
+    pub total_return: NearValueF64,
     pub duration_days: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
-    pub total_return: f64,
+    /// 総リターン（NEAR）
+    pub total_return: NearValueF64,
+    /// 年率リターン（比率）
     pub annualized_return: f64,
+    /// 総リターン率（%）
     pub total_return_pct: f64,
+    /// ボラティリティ（比率）
     pub volatility: f64,
-    pub max_drawdown: f64,
+    /// 最大ドローダウン（NEAR）
+    pub max_drawdown: NearValueF64,
+    /// 最大ドローダウン率（%）
     pub max_drawdown_pct: f64,
+    /// シャープレシオ
     pub sharpe_ratio: f64,
+    /// ソルティノレシオ
     pub sortino_ratio: f64,
     pub total_trades: usize,
     pub winning_trades: usize,
     pub losing_trades: usize,
+    /// 勝率（比率）
     pub win_rate: f64,
+    /// プロフィットファクター（比率）
     pub profit_factor: f64,
-    pub total_costs: f64,
+    /// 総コスト（NEAR）
+    pub total_costs: NearValueF64,
+    /// コスト比率（%）
     pub cost_ratio: f64,
     pub simulation_days: i64,
     pub active_trading_days: i64,
@@ -631,9 +646,12 @@ pub struct ExecutionSummary {
     pub total_trades: usize,
     pub successful_trades: usize,
     pub failed_trades: usize,
+    /// 成功率（比率）
     pub success_rate: f64,
-    pub total_cost: f64,
-    pub avg_cost_per_trade: f64,
+    /// 総コスト（NEAR）
+    pub total_cost: NearValueF64,
+    /// 取引あたりの平均コスト（NEAR）
+    pub avg_cost_per_trade: NearValueF64,
 }
 
 // Trait implementations

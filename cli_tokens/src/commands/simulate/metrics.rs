@@ -5,19 +5,24 @@ use common::algorithm::indicators::calculate_max_drawdown;
 
 /// Calculate comprehensive performance metrics
 pub fn calculate_performance_metrics(
-    initial_value: f64,
-    final_value: f64,
+    initial_value: NearValueF64,
+    final_value: NearValueF64,
     portfolio_values: &[PortfolioValue],
     trades: &[TradeExecution],
-    total_costs: f64,
+    total_costs: NearValueF64,
     start_date: DateTime<Utc>,
     end_date: DateTime<Utc>,
 ) -> Result<PerformanceMetrics> {
     let duration = end_date - start_date;
     let duration_days = duration.num_days();
 
+    // 型安全な減算演算子を使用（NearValueF64 - NearValueF64 = NearValueF64）
     let total_return = final_value - initial_value;
-    let total_return_pct = if initial_value > 0.0 {
+
+    // 比率計算のため f64 に変換（NearValueF64 / NearValueF64 = f64）
+    let initial_value_f64 = initial_value.as_f64();
+    let final_value_f64 = final_value.as_f64();
+    let total_return_pct = if initial_value.is_positive() {
         (total_return / initial_value) * 100.0
     } else {
         0.0
@@ -25,8 +30,8 @@ pub fn calculate_performance_metrics(
 
     // Calculate annualized return
     let years = duration_days as f64 / 365.25;
-    let annualized_return = if years > 0.0 && initial_value > 0.0 {
-        ((final_value / initial_value).powf(1.0 / years) - 1.0) * 100.0
+    let annualized_return = if years > 0.0 && initial_value.is_positive() {
+        ((final_value_f64 / initial_value_f64).powf(1.0 / years) - 1.0) * 100.0
     } else {
         0.0
     };
@@ -48,7 +53,7 @@ pub fn calculate_performance_metrics(
     let volatility = calculate_volatility(&returns) * 100.0; // Convert to percentage
 
     // Calculate maximum drawdown
-    let mut peak = initial_value;
+    let mut peak = initial_value_f64;
     let mut max_drawdown = 0.0;
     let mut max_drawdown_value = 0.0;
 
@@ -131,8 +136,8 @@ pub fn calculate_performance_metrics(
     // Trade analysis
     let trade_metrics = analyze_trades(trades);
 
-    let cost_ratio = if initial_value > 0.0 {
-        (total_costs / initial_value) * 100.0
+    let cost_ratio = if initial_value.is_positive() {
+        (total_costs.as_f64() / initial_value_f64) * 100.0
     } else {
         0.0
     };
@@ -145,7 +150,7 @@ pub fn calculate_performance_metrics(
         annualized_return,
         total_return_pct,
         volatility,
-        max_drawdown: max_drawdown_value,
+        max_drawdown: NearValueF64::from_near(max_drawdown_value),
         max_drawdown_pct,
         sharpe_ratio,
         sortino_ratio,
@@ -169,9 +174,16 @@ pub fn calculate_performance_metrics_legacy(
     trades: &[TradeExecution],
     duration_days: i64,
 ) -> PerformanceMetrics {
-    let total_return = (final_value - initial_value) / initial_value;
+    // 絶対値としての total_return
+    let total_return = NearValueF64::from_near(final_value - initial_value);
+    // 比率としての total_return（パーセント計算用）
+    let total_return_ratio = if initial_value > 0.0 {
+        (final_value - initial_value) / initial_value
+    } else {
+        0.0
+    };
     let annualized_return = if duration_days > 0 {
-        total_return * 365.0 / duration_days as f64
+        total_return_ratio * 365.0 / duration_days as f64
     } else {
         0.0
     };
@@ -198,7 +210,19 @@ pub fn calculate_performance_metrics_legacy(
         .iter()
         .map(|pv| pv.total_value.as_f64())
         .collect();
-    let max_drawdown = calculate_max_drawdown(&portfolio_values_f64);
+    let max_drawdown_ratio = calculate_max_drawdown(&portfolio_values_f64);
+    // 絶対値としての max_drawdown を計算
+    let mut peak = initial_value;
+    let mut max_drawdown_value = 0.0;
+    for value in &portfolio_values_f64 {
+        if *value > peak {
+            peak = *value;
+        }
+        let drawdown = peak - value;
+        if drawdown > max_drawdown_value {
+            max_drawdown_value = drawdown;
+        }
+    }
 
     // 取引分析
     let mut total_profit = 0.0;
@@ -234,13 +258,14 @@ pub fn calculate_performance_metrics_legacy(
         0.0
     };
 
-    let total_costs = trades
+    let total_costs_f64: f64 = trades
         .iter()
         .map(|t| t.cost.total.to_string().parse::<f64>().unwrap_or(0.0))
-        .sum::<f64>();
+        .sum();
+    let total_costs = NearValueF64::from_near(total_costs_f64);
 
     let cost_ratio = if final_value > 0.0 {
-        total_costs / final_value * 100.0
+        total_costs_f64 / final_value * 100.0
     } else {
         0.0
     };
@@ -271,10 +296,10 @@ pub fn calculate_performance_metrics_legacy(
     PerformanceMetrics {
         total_return,
         annualized_return,
-        total_return_pct: total_return * 100.0,
+        total_return_pct: total_return_ratio * 100.0,
         volatility,
-        max_drawdown,
-        max_drawdown_pct: max_drawdown * 100.0,
+        max_drawdown: NearValueF64::from_near(max_drawdown_value),
+        max_drawdown_pct: max_drawdown_ratio * 100.0,
         sharpe_ratio,
         sortino_ratio: sharpe_ratio, // 暫定的にシャープレシオと同じ
         total_trades: trades.len(),
@@ -592,6 +617,11 @@ mod tests {
 
     const MAX_SHARPE_RATIO: f64 = 999.99;
 
+    /// Helper function to create a NearValueF64 for testing
+    fn nv(value: f64) -> NearValueF64 {
+        NearValueF64::from_near(value)
+    }
+
     /// Helper function to create a PortfolioValue for testing
     fn pv(timestamp: DateTime<Utc>, total_value: f64) -> PortfolioValue {
         PortfolioValue {
@@ -614,11 +644,11 @@ mod tests {
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1020.0,
+            nv(1000.0),
+            nv(1020.0),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
         )
@@ -642,11 +672,11 @@ mod tests {
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1000.0,
+            nv(1000.0),
+            nv(1000.0),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         )
@@ -676,11 +706,11 @@ mod tests {
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1000.00003,
+            nv(1000.0),
+            nv(1000.00003),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
         )
@@ -708,11 +738,11 @@ mod tests {
         }
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1100.0,
+            nv(1000.0),
+            nv(1100.0),
             &values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
         )
@@ -741,11 +771,11 @@ mod tests {
         }
 
         let result = calculate_performance_metrics(
-            1000.0,
-            900.0,
+            nv(1000.0),
+            nv(900.0),
             &values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
         )
@@ -769,11 +799,11 @@ mod tests {
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            2000.0000001,
+            nv(1000.0),
+            nv(2000.0000001),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         )

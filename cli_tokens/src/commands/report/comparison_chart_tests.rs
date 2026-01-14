@@ -33,23 +33,27 @@ fn create_test_simulation_result(algorithm: AlgorithmType, values: Vec<f64>) -> 
         })
         .collect();
 
+    let final_value_f64 = values.last().copied().unwrap_or(1000.0);
+    let total_return_abs = final_value_f64 - 1000.0;
+    let total_return_pct = total_return_abs / 1000.0 * 100.0;
+
     SimulationResult {
         config: SimulationSummary {
             start_date,
             end_date,
             algorithm,
-            initial_capital: 1000.0,
-            final_value: values.last().copied().unwrap_or(1000.0),
-            total_return: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0 * 100.0,
+            initial_capital: NearValueF64::from_near(1000.0),
+            final_value: NearValueF64::from_near(final_value_f64),
+            total_return: NearValueF64::from_near(total_return_abs),
             duration_days: 10,
         },
         performance: PerformanceMetrics {
-            total_return: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0 * 100.0,
+            total_return: NearValueF64::from_near(total_return_abs),
             annualized_return: 0.1,
-            total_return_pct: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0 * 100.0,
+            total_return_pct,
             volatility: 0.2,
-            max_drawdown: -50.0,
-            max_drawdown_pct: -5.0,
+            max_drawdown: NearValueF64::from_near(50.0),
+            max_drawdown_pct: 5.0,
             sharpe_ratio: 1.5,
             sortino_ratio: 2.0,
             total_trades: 5,
@@ -57,7 +61,7 @@ fn create_test_simulation_result(algorithm: AlgorithmType, values: Vec<f64>) -> 
             losing_trades: 2,
             win_rate: 0.6,
             profit_factor: 1.2,
-            total_costs: 10.0,
+            total_costs: NearValueF64::from_near(10.0),
             cost_ratio: 0.01,
             simulation_days: 10,
             active_trading_days: 8,
@@ -69,8 +73,8 @@ fn create_test_simulation_result(algorithm: AlgorithmType, values: Vec<f64>) -> 
             successful_trades: 5,
             failed_trades: 0,
             success_rate: 1.0,
-            total_cost: 10.0,
-            avg_cost_per_trade: 2.0,
+            total_cost: NearValueF64::from_near(10.0),
+            avg_cost_per_trade: NearValueF64::from_near(2.0),
         },
         data_quality: DataQualityStats {
             total_timesteps: 100,

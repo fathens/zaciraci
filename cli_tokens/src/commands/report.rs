@@ -193,8 +193,9 @@ pub fn extract_report_data(result: &SimulationResult) -> ReportData {
             start_date: result.config.start_date,
             end_date: result.config.end_date,
             algorithm: format!("{:?}", result.config.algorithm),
-            initial_capital: result.config.initial_capital,
-            final_value: result.config.final_value,
+            // NearValueF64 から f64 への変換（レポート表示用）
+            initial_capital: result.config.initial_capital.as_f64(),
+            final_value: result.config.final_value.as_f64(),
         },
         performance: PerformanceMetrics {
             total_return_pct: result.performance.total_return_pct,
@@ -205,7 +206,8 @@ pub fn extract_report_data(result: &SimulationResult) -> ReportData {
             win_rate: result.performance.win_rate,
             active_trading_days: result.performance.active_trading_days as usize,
             simulation_days: result.performance.simulation_days as usize,
-            total_costs: result.performance.total_costs,
+            // NearValueF64 から f64 への変換（レポート表示用）
+            total_costs: result.performance.total_costs.as_f64(),
         },
         trades: result.trades.clone(),
         portfolio_values: result.portfolio_values.clone(),

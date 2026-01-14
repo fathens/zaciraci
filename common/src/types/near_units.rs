@@ -594,6 +594,14 @@ impl YoctoValue {
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
+
+    /// 整数部を u128 として取得（切り捨て）
+    ///
+    /// ブロックチェーンに送信する際に使用する。
+    /// yoctoNEAR より小さい単位は存在しないため、整数部のみを取得する。
+    pub fn to_u128(&self) -> u128 {
+        self.0.to_u128().unwrap_or(0)
+    }
 }
 
 impl fmt::Display for YoctoValue {
@@ -790,7 +798,14 @@ impl Mul<f64> for NearValue {
 impl Mul<f64> for &NearValue {
     type Output = NearValue;
     fn mul(self, rhs: f64) -> NearValue {
-        NearValue(self.0.clone() * BigDecimal::from_f64(rhs).unwrap_or_default())
+        NearValue(&self.0 * BigDecimal::from_f64(rhs).unwrap_or_default())
+    }
+}
+
+impl Mul<&BigDecimal> for &NearValue {
+    type Output = NearValue;
+    fn mul(self, rhs: &BigDecimal) -> NearValue {
+        NearValue(&self.0 * rhs)
     }
 }
 

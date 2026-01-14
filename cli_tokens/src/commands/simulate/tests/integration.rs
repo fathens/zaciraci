@@ -57,6 +57,11 @@ fn create_portfolio_value(timestamp: DateTime<Utc>, total_value: f64) -> Portfol
     }
 }
 
+/// Helper function to create a NearValueF64 for testing
+fn nv(value: f64) -> NearValueF64 {
+    NearValueF64::from_near(value)
+}
+
 #[test]
 fn test_profit_factor_calculation_only_profits() {
     let trades = vec![
@@ -73,11 +78,11 @@ fn test_profit_factor_calculation_only_profits() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        1350.0,
+        nv(1000.0),
+        nv(1350.0),
         &portfolio_values,
         &trades,
-        50.0,
+        nv(50.0),
         start_date,
         end_date,
     )
@@ -106,11 +111,11 @@ fn test_profit_factor_calculation_only_losses() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        800.0,
+        nv(1000.0),
+        nv(800.0),
         &portfolio_values,
         &trades,
-        30.0,
+        nv(30.0),
         start_date,
         end_date,
     )
@@ -140,11 +145,11 @@ fn test_profit_factor_calculation_mixed_trades() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        1100.0,
+        nv(1000.0),
+        nv(1100.0),
         &portfolio_values,
         &trades,
-        30.0,
+        nv(30.0),
         start_date,
         end_date,
     )
@@ -168,11 +173,11 @@ fn test_profit_factor_calculation_no_trades() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        1000.0,
+        nv(1000.0),
+        nv(1000.0),
         &portfolio_values,
         &trades,
-        0.0,
+        nv(0.0),
         start_date,
         end_date,
     )
@@ -214,17 +219,17 @@ fn test_performance_metrics_calculation() {
     let start_date = Utc::now() - chrono::Duration::days(simulation_days);
     let end_date = Utc::now();
     let performance = calculate_performance_metrics(
-        initial_value,
-        final_value,
+        nv(initial_value),
+        nv(final_value),
         &portfolio_values,
         &trades,
-        0.0,
+        nv(0.0),
         start_date,
         end_date,
     )
     .unwrap();
 
-    assert_eq!(performance.total_return, 100.0); // 100 profit amount
+    assert_eq!(performance.total_return, nv(100.0)); // 100 profit amount
     assert_eq!(performance.total_trades, 0);
     assert_eq!(performance.simulation_days, 30);
 }

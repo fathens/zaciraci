@@ -31,7 +31,7 @@ use crate::trade::predict::PredictionService;
 use crate::trade::recorder::TradeRecorder;
 use crate::trade::swap;
 use crate::wallet::Wallet;
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, Utc};
 use futures_util::future::join_all;
 use near_primitives::types::Balance;
@@ -965,17 +965,15 @@ where
             // 利用可能残高に基づいて購入額を調整
             let adjusted_buy_operations: Vec<(String, NearValue)> =
                 if total_buy_value > available_wrap_near_value {
-                    // 比率を計算して調整
-                    let ratio =
-                        available_wrap_near_value.as_bigdecimal() / total_buy_value.as_bigdecimal();
-                    let ratio_f64 = ratio.to_f64().unwrap_or(1.0);
+                    // 比率を計算して調整（型安全な除算演算子を使用）
+                    let ratio = &available_wrap_near_value / &total_buy_value;
                     info!(log, "Adjusting purchase amounts to fit available balance";
-                        "adjustment_factor" => ratio_f64
+                        "adjustment_factor" => %ratio
                     );
 
                     buy_operations
                         .into_iter()
-                        .map(|(token, value)| (token, &value * ratio_f64))
+                        .map(|(token, value)| (token, &value * &ratio))
                         .collect()
                 } else {
                     buy_operations
@@ -988,12 +986,8 @@ where
             let mut phase2_failed = 0;
 
             for (token, wrap_near_value) in adjusted_buy_operations {
-                // NearValue から yoctoNEAR (u128) に変換
-                let wrap_near_amount_u128 = wrap_near_value
-                    .to_yocto()
-                    .as_bigdecimal()
-                    .to_u128()
-                    .unwrap_or(0);
+                // NearValue から yoctoNEAR (u128) に変換（型安全なメソッドを使用）
+                let wrap_near_amount_u128 = wrap_near_value.to_yocto().to_u128();
 
                 if wrap_near_amount_u128 == 0 {
                     error!(log, "Failed to convert purchase amount to u128"; "token" => &token);

@@ -83,15 +83,15 @@ async fn test_portfolio_calculation_units() {
             // ポートフォリオ価値が現実的な範囲内にあることを確認
             // 1000 NEAR の初期資本で始まり、異常に大きな値（兆単位）になっていないことを確認
             assert!(
-                result.config.initial_capital < 2000.0,
+                result.config.initial_capital.as_f64() < 2000.0,
                 "Initial capital should be reasonable: {}",
-                result.config.initial_capital
+                result.config.initial_capital.as_f64()
             );
 
             assert!(
-                result.config.final_value < 10000.0,
+                result.config.final_value.as_f64() < 10000.0,
                 "Final value should be reasonable: {} (not in trillions)",
-                result.config.final_value
+                result.config.final_value.as_f64()
             );
 
             // ポートフォリオ価値の履歴もチェック
@@ -145,15 +145,15 @@ async fn test_momentum_calculation_units() {
 
             // ポートフォリオ価値が現実的な範囲内にあることを確認
             assert!(
-                result.config.initial_capital < 2000.0,
+                result.config.initial_capital.as_f64() < 2000.0,
                 "Initial capital should be reasonable: {}",
-                result.config.initial_capital
+                result.config.initial_capital.as_f64()
             );
 
             assert!(
-                result.config.final_value < 10000.0,
+                result.config.final_value.as_f64() < 10000.0,
                 "Final value should be reasonable: {} (not in trillions)",
-                result.config.final_value
+                result.config.final_value.as_f64()
             );
 
             // ポートフォリオ価値の履歴もチェック
