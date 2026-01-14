@@ -1,5 +1,6 @@
 use crate::Result;
-use bigdecimal::ToPrimitive;
+use crate::types::{NearValue, TokenPrice};
+use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,8 @@ use super::types::*;
 #[derive(Debug, Clone)]
 pub struct PortfolioData {
     pub tokens: Vec<TokenData>,
-    pub predictions: BTreeMap<String, f64>,
+    /// 予測価格（TokenPrice: NEAR/token）
+    pub predictions: BTreeMap<String, TokenPrice>,
     pub historical_prices: Vec<PriceHistory>,
     pub correlation_matrix: Option<Array2<f64>>,
 }
@@ -62,8 +64,10 @@ const REGULARIZATION_FACTOR: f64 = 1e-6;
 /// 最小流動性スコア
 const MIN_LIQUIDITY_SCORE: f64 = 0.1;
 
-/// 最小市場規模
-const MIN_MARKET_CAP: f64 = 10000.0;
+/// 最小市場規模（10,000 NEAR）
+fn min_market_cap() -> NearValue {
+    NearValue::from_near(BigDecimal::from(10000))
+}
 
 /// 動的リスク調整の閾値
 const HIGH_VOLATILITY_THRESHOLD: f64 = 0.3; // 30%
@@ -86,28 +90,19 @@ const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
 /// `TokenPrice.expected_return()` を使用して符号の間違いを防ぐ。
 pub fn calculate_expected_returns(
     tokens: &[TokenInfo],
-    predictions: &BTreeMap<String, f64>,
+    predictions: &BTreeMap<String, TokenPrice>,
 ) -> Vec<f64> {
     tokens
         .iter()
         .map(|token| {
-            if let Some(&predicted_rate_f64) = predictions.get(&token.symbol) {
+            if let Some(predicted_price) = predictions.get(&token.symbol) {
                 let current_price = token.current_rate.to_price();
-                if current_price.is_zero() || predicted_rate_f64 == 0.0 {
+                if current_price.is_zero() || predicted_price.is_zero() {
                     return 0.0;
                 }
 
-                // predicted_rate_f64 を TokenPrice に変換
-                // decimals は current_rate と同じと仮定
-                use crate::types::ExchangeRate;
-                use bigdecimal::FromPrimitive;
-                let predicted_rate = ExchangeRate::from_raw_rate(
-                    bigdecimal::BigDecimal::from_f64(predicted_rate_f64).unwrap_or_default(),
-                    token.current_rate.decimals(),
-                );
-                let predicted_price = predicted_rate.to_price();
-
-                current_price.expected_return(&predicted_price)
+                // TokenPrice.expected_return() で直接計算（型安全）
+                current_price.expected_return(predicted_price)
             } else {
                 0.0
             }
@@ -589,11 +584,21 @@ fn calculate_std_dev(values: &[f64]) -> f64 {
 /// トークンのスコアを計算
 fn calculate_token_score(
     token: &TokenData,
-    prediction: Option<&f64>,
+    prediction: Option<&TokenPrice>,
     historical_prices: &[PriceHistory],
     all_volatilities: &[f64],
 ) -> TokenScore {
-    let expected_return = prediction.copied().unwrap_or(0.0);
+    // 予測価格から期待リターンを計算
+    let expected_return = if let Some(predicted_price) = prediction {
+        let current_price = token.current_rate.to_price();
+        if current_price.is_zero() || predicted_price.is_zero() {
+            0.0
+        } else {
+            current_price.expected_return(predicted_price)
+        }
+    } else {
+        0.0
+    };
     let sharpe = calculate_individual_sharpe(token, historical_prices, expected_return);
     let liquidity = token.liquidity_score.unwrap_or(0.0);
     let confidence = 0.5; // デフォルト信頼度
@@ -630,19 +635,20 @@ fn calculate_token_score(
 /// 最適なトークンを選択
 pub fn select_optimal_tokens(
     tokens: &[TokenData],
-    predictions: &BTreeMap<String, f64>,
+    predictions: &BTreeMap<String, TokenPrice>,
     historical_prices: &[PriceHistory],
     max_tokens: usize,
 ) -> Vec<TokenData> {
     // フィルタリング: 最小要件を満たすトークンのみ
+    let min_cap = min_market_cap();
     let filtered_tokens: Vec<&TokenData> = tokens
         .iter()
         .filter(|t| {
             // 実際のデータ構造に合わせたフィルタリング条件
             // market_capがNoneの場合は流動性スコアのみでフィルタ
             let liquidity_ok = t.liquidity_score.unwrap_or(0.0) >= MIN_LIQUIDITY_SCORE;
-            let market_cap_ok = match t.market_cap {
-                Some(cap) => cap >= MIN_MARKET_CAP,
+            let market_cap_ok = match &t.market_cap {
+                Some(cap) => cap >= &min_cap,
                 None => true, // market_capがNoneの場合はスキップ
             };
             liquidity_ok && market_cap_ok
@@ -797,11 +803,11 @@ pub async fn execute_portfolio_optimization(
     );
 
     // 選択されたトークンのみでポートフォリオを構築
-    let selected_predictions: BTreeMap<String, f64> = portfolio_data
+    let selected_predictions: BTreeMap<String, TokenPrice> = portfolio_data
         .predictions
         .iter()
         .filter(|(symbol, _)| selected_tokens.iter().any(|t| &t.symbol == *symbol))
-        .map(|(k, v)| (k.clone(), *v))
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
     // 期待リターンを計算

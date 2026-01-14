@@ -43,7 +43,8 @@ pub struct TokenData {
     pub current_rate: ExchangeRate,
     pub historical_volatility: f64,
     pub liquidity_score: Option<f64>,
-    pub market_cap: Option<f64>,
+    /// 時価総額（NearValue: NEAR 単位）
+    pub market_cap: Option<NearValue>,
 }
 
 /// トークン保有情報
@@ -522,7 +523,7 @@ mod tests {
             ),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(NearValue::from_near(BigDecimal::from(1000000))),
         };
 
         assert_eq!(token.symbol, "NEAR");
@@ -615,7 +616,7 @@ mod tests {
             ),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(NearValue::from_near(BigDecimal::from(1000000))),
         };
 
         let serialized = serde_json::to_string(&token).unwrap();

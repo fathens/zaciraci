@@ -453,22 +453,26 @@ async fn test_estimate_market_cap_async() {
 
     let client = MockClient;
 
-    // ケース1: 1 NEAR価格 (rate = 10^24 smallest_units/NEAR)
-    // market_cap = 10^30 / 10^24 = 10^6 = 1M NEAR
-    let rate_1_near = BigDecimal::from_str("1000000000000000000000000").unwrap();
-    let market_cap = estimate_market_cap_async(&client, "test.token", &rate_1_near, 24).await;
+    // ケース1: 1 NEAR/token
+    // total_supply = 10^30 smallest_units = 10^6 whole tokens（decimals=24）
+    // market_cap = 10^6 tokens × 1 NEAR/token = 1M NEAR
+    let price_1_near = TokenPrice::from_near_per_token(BigDecimal::from(1));
+    let market_cap = estimate_market_cap_async(&client, "test.token", &price_1_near, 24).await;
+    let expected_1m = NearValue::from_near(BigDecimal::from(1_000_000));
     assert_eq!(
-        market_cap, 1_000_000.0,
-        "1 NEAR * 1M tokens = 1M market cap"
+        market_cap, expected_1m,
+        "1 NEAR/token × 1M tokens = 1M NEAR market cap"
     );
 
-    // ケース2: 10 NEAR価格 (rate = 10^23 smallest_units/NEAR = 0.1 NEAR/token)
-    // market_cap = 10^30 / 10^23 = 10^7 = 10M NEAR
-    let rate_10x = BigDecimal::from_str("100000000000000000000000").unwrap();
-    let market_cap = estimate_market_cap_async(&client, "test.token", &rate_10x, 24).await;
+    // ケース2: 10 NEAR/token
+    // total_supply = 10^30 smallest_units = 10^6 whole tokens（decimals=24）
+    // market_cap = 10^6 tokens × 10 NEAR/token = 10M NEAR
+    let price_10_near = TokenPrice::from_near_per_token(BigDecimal::from(10));
+    let market_cap = estimate_market_cap_async(&client, "test.token", &price_10_near, 24).await;
+    let expected_10m = NearValue::from_near(BigDecimal::from(10_000_000));
     assert_eq!(
-        market_cap, 10_000_000.0,
-        "10 NEAR * 1M tokens = 10M market cap"
+        market_cap, expected_10m,
+        "10 NEAR/token × 1M tokens = 10M NEAR market cap"
     );
 }
 
@@ -488,7 +492,7 @@ async fn test_get_token_total_supply() {
         {
             match method_name {
                 "ft_total_supply" => {
-                    let total_supply = "1000000000000000000000000"; // 1M tokens with 18 decimals
+                    let total_supply = "1000000000000000000000000"; // 10^24 smallest units
                     Ok(near_primitives::views::CallResult {
                         result: serde_json::to_vec(total_supply).unwrap(),
                         logs: vec![],
@@ -500,8 +504,23 @@ async fn test_get_token_total_supply() {
     }
 
     let client = MockClient;
-    let result = get_token_total_supply(&client, "test.token").await.unwrap();
-    assert_eq!(result, 1_000_000_000_000_000_000_000_000u128);
+
+    // decimals=18 の場合: 10^24 smallest_units = 10^6 whole tokens
+    let result = get_token_total_supply(&client, "test.token", 18)
+        .await
+        .unwrap();
+    let expected = TokenAmount::from_smallest_units(
+        BigDecimal::from_str("1000000000000000000000000").unwrap(),
+        18,
+    );
+    assert_eq!(result, expected);
+
+    // decimals を確認
+    assert_eq!(result.decimals(), 18);
+
+    // whole tokens に変換して確認
+    let whole_tokens = result.to_whole();
+    assert_eq!(whole_tokens, BigDecimal::from(1_000_000)); // 10^6 whole tokens
 }
 
 #[tokio::test]

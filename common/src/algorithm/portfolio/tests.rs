@@ -16,6 +16,10 @@ fn rate(v: f64) -> ExchangeRate {
     ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 18)
 }
 
+fn cap(v: i64) -> NearValue {
+    NearValue::from_near(BigDecimal::from(v))
+}
+
 fn create_sample_tokens() -> Vec<TokenInfo> {
     vec![
         TokenInfo {
@@ -23,33 +27,34 @@ fn create_sample_tokens() -> Vec<TokenInfo> {
             current_rate: rate(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
             current_rate: rate(50.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
-            market_cap: Some(500000.0),
+            market_cap: Some(cap(500000)),
         },
         TokenInfo {
             symbol: "TOKEN_C".to_string(),
             current_rate: rate(200.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
-            market_cap: Some(2000000.0),
+            market_cap: Some(cap(2000000)),
         },
     ]
 }
 
-fn create_sample_predictions() -> BTreeMap<String, f64> {
-    // predictions は予測レートを表す
-    // rate 減少 = 価格上昇 = 正のリターン
-    // +10% リターン: predicted_rate = current_rate / 1.1
+fn create_sample_predictions() -> BTreeMap<String, TokenPrice> {
+    // predictions は予測価格（TokenPrice: NEAR/token）を表す
+    // 価格上昇 = 正のリターン
+    // current_rate = rate(100) → current_price = 0.01 NEAR/token
+    // +10% リターン: predicted_price = current_price * 1.1
     let mut predictions = BTreeMap::new();
-    predictions.insert("TOKEN_A".to_string(), 100.0 / 1.1); // current=100, +10%
-    predictions.insert("TOKEN_B".to_string(), 50.0 / 1.1); // current=50, +10%
-    predictions.insert("TOKEN_C".to_string(), 200.0 / 1.05); // current=200, +5%
+    predictions.insert("TOKEN_A".to_string(), price(0.01 * 1.1)); // current=0.01, +10%
+    predictions.insert("TOKEN_B".to_string(), price(0.02 * 1.1)); // current=0.02, +10%
+    predictions.insert("TOKEN_C".to_string(), price(0.005 * 1.05)); // current=0.005, +5%
     predictions
 }
 
@@ -462,13 +467,13 @@ fn test_single_token_portfolio() {
         current_rate: rate(100.0),
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
-        market_cap: Some(1000000.0),
+        market_cap: Some(cap(1000000)),
     }];
 
     // rate 減少 = 価格上昇 = 正のリターン
     // +10% リターン: predicted_rate = 100 / 1.1 ≈ 90.9
     let mut predictions = BTreeMap::new();
-    predictions.insert("SINGLE_TOKEN".to_string(), 100.0 / 1.1);
+    predictions.insert("SINGLE_TOKEN".to_string(), price(1.0 / (100.0 / 1.1)));
 
     let expected_returns = calculate_expected_returns(&tokens, &predictions);
     assert_eq!(expected_returns.len(), 1);
@@ -526,9 +531,13 @@ fn test_extreme_predictions() {
     // TOKEN_A: current=100, +1000%リターン → predicted = 100/11 ≈ 9.09
     // TOKEN_B: current=50, -99.8%リターン → predicted = 50/0.002 = 25000
     // TOKEN_C: current=200, 変化なし → predicted = 200
-    predictions.insert("TOKEN_A".to_string(), 100.0 / 11.0); // +1000%上昇
-    predictions.insert("TOKEN_B".to_string(), 50.0 / 0.002); // 99.8%下落
-    predictions.insert("TOKEN_C".to_string(), 200.0); // 変化なし
+    // TokenPrice = 1 / rate なので:
+    // TOKEN_A: current_price = 1/100 = 0.01, +1000% → predicted_price = 0.01 * 11 = 0.11
+    // TOKEN_B: current_price = 1/50 = 0.02, -99.8% → predicted_price = 0.02 * 0.002 = 0.00004
+    // TOKEN_C: current_price = 1/200 = 0.005, 変化なし → predicted_price = 0.005
+    predictions.insert("TOKEN_A".to_string(), price(0.01 * 11.0)); // +1000%上昇
+    predictions.insert("TOKEN_B".to_string(), price(0.02 * 0.002)); // 99.8%下落
+    predictions.insert("TOKEN_C".to_string(), price(0.005)); // 変化なし
 
     let expected_returns = calculate_expected_returns(&tokens, &predictions);
 
@@ -564,11 +573,11 @@ fn test_market_crash_scenario() {
     let mut crash_predictions = BTreeMap::new();
 
     // 全てのトークンが大幅下落を予測
-    // rate 増加 = 価格下落 = 負のリターン
-    // -50%リターン: predicted_rate = current_rate / 0.5 = current_rate * 2
-    crash_predictions.insert("TOKEN_A".to_string(), 100.0 * 2.0); // -50%
-    crash_predictions.insert("TOKEN_B".to_string(), 50.0 * 2.0); // -50%
-    crash_predictions.insert("TOKEN_C".to_string(), 200.0 * 2.0); // -50%
+    // 価格下落 = 負のリターン
+    // -50%リターン: predicted_price = current_price * 0.5
+    crash_predictions.insert("TOKEN_A".to_string(), price(0.01 * 0.5)); // -50%
+    crash_predictions.insert("TOKEN_B".to_string(), price(0.02 * 0.5)); // -50%
+    crash_predictions.insert("TOKEN_C".to_string(), price(0.005 * 0.5)); // -50%
 
     let expected_returns = calculate_expected_returns(&tokens, &crash_predictions);
 
@@ -874,21 +883,21 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
             current_rate: rate(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
             current_rate: rate(50.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
-            market_cap: Some(500000.0),
+            market_cap: Some(cap(500000)),
         },
         TokenInfo {
             symbol: "TOKEN_C".to_string(),
             current_rate: rate(200.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
-            market_cap: Some(2000000.0),
+            market_cap: Some(cap(2000000)),
         },
     ];
 
@@ -899,28 +908,28 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
             current_rate: rate(200.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
-            market_cap: Some(2000000.0),
+            market_cap: Some(cap(2000000)),
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
             current_rate: rate(50.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
-            market_cap: Some(500000.0),
+            market_cap: Some(cap(500000)),
         },
         TokenInfo {
             symbol: "TOKEN_A".to_string(),
             current_rate: rate(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("TOKEN_A".to_string(), 110.0); // +10%
-    predictions.insert("TOKEN_B".to_string(), 55.0); // +10%
-    predictions.insert("TOKEN_C".to_string(), 210.0); // +5%
+    predictions.insert("TOKEN_A".to_string(), price(110.0)); // +10%
+    predictions.insert("TOKEN_B".to_string(), price(55.0)); // +10%
+    predictions.insert("TOKEN_C".to_string(), price(210.0)); // +5%
 
     // 両ケースで期待リターンを計算
     let returns_alphabetical = calculate_expected_returns(&tokens_alphabetical, &predictions);
@@ -1064,30 +1073,30 @@ fn test_btreemap_vs_original_ordering_impact() {
             current_rate: rate(100.0),
             historical_volatility: 0.15, // 低リスク
             liquidity_score: Some(0.9),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "aaa.low_return.near".to_string(), // 辞書順では最初だが低リターン
             current_rate: rate(50.0),
             historical_volatility: 0.4, // 高リスク
             liquidity_score: Some(0.5),
-            market_cap: Some(500000.0),
+            market_cap: Some(cap(500000)),
         },
         TokenInfo {
             symbol: "mmm.medium.near".to_string(), // 中程度
             current_rate: rate(75.0),
             historical_volatility: 0.25,
             liquidity_score: Some(0.7),
-            market_cap: Some(750000.0),
+            market_cap: Some(cap(750000)),
         },
     ];
 
-    // rate 減少 = 価格上昇 = 正のリターン
-    // +X%リターン: predicted_rate = current_rate / (1 + X)
+    // 価格上昇 = 正のリターン
+    // +X%リターン: predicted_price = current_price * (1 + X)
     let mut predictions = BTreeMap::new();
-    predictions.insert("zzz.high_return.near".to_string(), 100.0 / 1.2); // +20% 高リターン
-    predictions.insert("aaa.low_return.near".to_string(), 50.0 / 1.04); // +4% 低リターン
-    predictions.insert("mmm.medium.near".to_string(), 75.0 / 1.05); // +5% 中程度
+    predictions.insert("zzz.high_return.near".to_string(), price(0.01 * 1.2)); // +20% 高リターン
+    predictions.insert("aaa.low_return.near".to_string(), price(0.02 * 1.04)); // +4% 低リターン
+    predictions.insert("mmm.medium.near".to_string(), price(1.0 / 75.0 * 1.05)); // +5% 中程度
 
     let expected_returns = calculate_expected_returns(&tokens, &predictions);
 
@@ -1337,28 +1346,28 @@ fn test_token_scoring() {
             current_rate: rate(100.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
-            market_cap: Some(5000000.0),
+            market_cap: Some(cap(5000000)),
         },
         TokenInfo {
             symbol: "LOW_LIQUIDITY".to_string(),
             current_rate: rate(50.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.05), // 低流動性
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "HIGH_VOL".to_string(),
             current_rate: rate(200.0),
             historical_volatility: 0.5, // 高ボラティリティ
             liquidity_score: Some(0.7),
-            market_cap: Some(2000000.0),
+            market_cap: Some(cap(2000000)),
         },
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("HIGH_SHARPE".to_string(), 0.15);
-    predictions.insert("LOW_LIQUIDITY".to_string(), 0.20);
-    predictions.insert("HIGH_VOL".to_string(), 0.10);
+    predictions.insert("HIGH_SHARPE".to_string(), price(0.15));
+    predictions.insert("LOW_LIQUIDITY".to_string(), price(0.20));
+    predictions.insert("HIGH_VOL".to_string(), price(0.10));
 
     let history = create_sample_price_history();
 
@@ -1384,28 +1393,28 @@ fn test_correlation_based_selection() {
             current_rate: rate(100.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(), // Aと高相関
             current_rate: rate(50.0),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "TOKEN_C".to_string(), // 独立
             current_rate: rate(200.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.9),
-            market_cap: Some(2000000.0),
+            market_cap: Some(cap(2000000)),
         },
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("TOKEN_A".to_string(), 0.12);
-    predictions.insert("TOKEN_B".to_string(), 0.11);
-    predictions.insert("TOKEN_C".to_string(), 0.10);
+    predictions.insert("TOKEN_A".to_string(), price(0.12));
+    predictions.insert("TOKEN_B".to_string(), price(0.11));
+    predictions.insert("TOKEN_C".to_string(), price(0.10));
 
     // 価格履歴を作成（AとBは同じ動き、Cは独立）
     let base_time = Utc::now() - Duration::days(10);
@@ -1499,14 +1508,14 @@ fn test_portfolio_performance_with_token_selection() {
             current_rate: rate(100.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.95),
-            market_cap: Some(10000000.0),
+            market_cap: Some(cap(10000000)),
         },
         TokenInfo {
             symbol: "EXCELLENT_2".to_string(),
             current_rate: rate(200.0),
             historical_volatility: 0.12,
             liquidity_score: Some(0.92),
-            market_cap: Some(8000000.0),
+            market_cap: Some(cap(8000000)),
         },
         // 中品質トークン
         TokenInfo {
@@ -1514,14 +1523,14 @@ fn test_portfolio_performance_with_token_selection() {
             current_rate: rate(50.0),
             historical_volatility: 0.25,
             liquidity_score: Some(0.5),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "MEDIUM_2".to_string(),
             current_rate: rate(75.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.4),
-            market_cap: Some(800000.0),
+            market_cap: Some(cap(800000)),
         },
         // 低品質トークン
         TokenInfo {
@@ -1529,25 +1538,25 @@ fn test_portfolio_performance_with_token_selection() {
             current_rate: rate(10.0),
             historical_volatility: 0.5,
             liquidity_score: Some(0.08), // 低流動性
-            market_cap: Some(50000.0),
+            market_cap: Some(cap(50000)),
         },
         TokenInfo {
             symbol: "POOR_2".to_string(),
             current_rate: rate(5.0),
             historical_volatility: 0.6,
             liquidity_score: Some(0.05), // 非常に低い流動性
-            market_cap: Some(10000.0),
+            market_cap: Some(cap(10000)),
         },
     ];
 
     // 予測リターン（高品質トークンほど良いリターン）
     let mut predictions = BTreeMap::new();
-    predictions.insert("EXCELLENT_1".to_string(), 0.20); // 20%
-    predictions.insert("EXCELLENT_2".to_string(), 0.18); // 18%
-    predictions.insert("MEDIUM_1".to_string(), 0.10); // 10%
-    predictions.insert("MEDIUM_2".to_string(), 0.08); // 8%
-    predictions.insert("POOR_1".to_string(), 0.05); // 5%
-    predictions.insert("POOR_2".to_string(), 0.02); // 2%
+    predictions.insert("EXCELLENT_1".to_string(), price(0.20)); // 20%
+    predictions.insert("EXCELLENT_2".to_string(), price(0.18)); // 18%
+    predictions.insert("MEDIUM_1".to_string(), price(0.10)); // 10%
+    predictions.insert("MEDIUM_2".to_string(), price(0.08)); // 8%
+    predictions.insert("POOR_1".to_string(), price(0.05)); // 5%
+    predictions.insert("POOR_2".to_string(), price(0.02)); // 2%
 
     // 価格履歴を作成
     let base_time = Utc::now() - Duration::days(30);
@@ -1591,12 +1600,26 @@ fn test_portfolio_performance_with_token_selection() {
     // 選択されたトークンの平均期待リターンを計算
     let selected_avg_return: f64 = selected
         .iter()
-        .filter_map(|t| predictions.get(&t.symbol))
+        .filter_map(|t| {
+            predictions.get(&t.symbol).map(|pred_price| {
+                let current_price = t.current_rate.to_price();
+                current_price.expected_return(pred_price)
+            })
+        })
         .sum::<f64>()
         / selected.len() as f64;
 
     // 全トークンの平均期待リターンを計算
-    let all_avg_return: f64 = predictions.values().sum::<f64>() / predictions.len() as f64;
+    let all_avg_return: f64 = tokens
+        .iter()
+        .filter_map(|t| {
+            predictions.get(&t.symbol).map(|pred_price| {
+                let current_price = t.current_rate.to_price();
+                current_price.expected_return(pred_price)
+            })
+        })
+        .sum::<f64>()
+        / predictions.len() as f64;
 
     println!(
         "Selected tokens average return: {:.2}%",
@@ -1634,36 +1657,36 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
             current_rate: rate(100.0),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
-            market_cap: Some(5000000.0),
+            market_cap: Some(cap(5000000)),
         },
         TokenInfo {
             symbol: "LOW_QUALITY".to_string(),
             current_rate: rate(50.0),
-            historical_volatility: 0.8,  // 非常に高いボラティリティ
-            liquidity_score: Some(0.05), // MIN_LIQUIDITY_SCORE以下
-            market_cap: Some(10000.0),   // MIN_MARKET_CAP以下
+            historical_volatility: 0.8,   // 非常に高いボラティリティ
+            liquidity_score: Some(0.05),  // MIN_LIQUIDITY_SCORE以下
+            market_cap: Some(cap(10000)), // MIN_MARKET_CAP以下
         },
         TokenInfo {
             symbol: "MEDIUM".to_string(),
             current_rate: rate(75.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.6),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "GOOD".to_string(),
             current_rate: rate(150.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.8),
-            market_cap: Some(3000000.0),
+            market_cap: Some(cap(3000000)),
         },
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("HIGH_SHARPE".to_string(), 0.15);
-    predictions.insert("LOW_QUALITY".to_string(), 0.08);
-    predictions.insert("MEDIUM".to_string(), 0.10);
-    predictions.insert("GOOD".to_string(), 0.12);
+    predictions.insert("HIGH_SHARPE".to_string(), price(0.15));
+    predictions.insert("LOW_QUALITY".to_string(), price(0.08));
+    predictions.insert("MEDIUM".to_string(), price(0.10));
+    predictions.insert("GOOD".to_string(), price(0.12));
 
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
@@ -1778,9 +1801,9 @@ fn test_token_selection_with_real_simulation_data() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("token1.tkn.near".to_string(), 0.10);
-    predictions.insert("token2.tkn.near".to_string(), 0.15);
-    predictions.insert("token3.tkn.near".to_string(), 0.08);
+    predictions.insert("token1.tkn.near".to_string(), price(0.10));
+    predictions.insert("token2.tkn.near".to_string(), price(0.15));
+    predictions.insert("token3.tkn.near".to_string(), price(0.08));
 
     let history = create_sample_price_history();
 
@@ -1810,8 +1833,8 @@ fn test_improved_token_selection_filtering() {
             symbol: "good_token".to_string(),
             current_rate: rate(1000.0),
             historical_volatility: 0.1,
-            liquidity_score: Some(0.9),  // 高流動性
-            market_cap: Some(5000000.0), // 高時価総額
+            liquidity_score: Some(0.9),     // 高流動性
+            market_cap: Some(cap(5000000)), // 高時価総額
         },
         TokenData {
             symbol: "medium_token".to_string(),
@@ -1830,9 +1853,9 @@ fn test_improved_token_selection_filtering() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("good_token".to_string(), 0.15);
-    predictions.insert("medium_token".to_string(), 0.10);
-    predictions.insert("poor_token".to_string(), 0.05);
+    predictions.insert("good_token".to_string(), price(0.15));
+    predictions.insert("medium_token".to_string(), price(0.10));
+    predictions.insert("poor_token".to_string(), price(0.05));
 
     let history = create_sample_price_history();
 
@@ -1886,10 +1909,10 @@ fn test_liquidity_based_performance_improvement() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("high_liquidity_good_return".to_string(), 0.18); // 18%
-    predictions.insert("medium_liquidity_medium_return".to_string(), 0.12); // 12%
-    predictions.insert("low_liquidity_high_risk".to_string(), 0.25); // 25% - 高リターンだが高リスク
-    predictions.insert("good_liquidity_stable".to_string(), 0.14); // 14%
+    predictions.insert("high_liquidity_good_return".to_string(), price(0.18)); // 18%
+    predictions.insert("medium_liquidity_medium_return".to_string(), price(0.12)); // 12%
+    predictions.insert("low_liquidity_high_risk".to_string(), price(0.25)); // 25% - 高リターンだが高リスク
+    predictions.insert("good_liquidity_stable".to_string(), price(0.14)); // 14%
 
     let history = create_sample_price_history();
 
@@ -1898,14 +1921,17 @@ fn test_liquidity_based_performance_improvement() {
 
     println!("Selected {} tokens:", selected.len());
     for token in &selected {
+        let expected_return = predictions.get(&token.symbol).map(|pred_price| {
+            let current_price = token.current_rate.to_price();
+            current_price.expected_return(pred_price) * 100.0
+        });
         println!(
             "  - {} (volatility: {:.3}, liquidity: {:?}, predicted_return: {}%)",
             token.symbol,
             token.historical_volatility,
             token.liquidity_score,
-            predictions
-                .get(&token.symbol)
-                .map(|r| format!("{:.1}", r * 100.0))
+            expected_return
+                .map(|r| format!("{:.1}", r))
                 .unwrap_or("N/A".to_string())
         );
     }
@@ -1934,15 +1960,24 @@ fn test_liquidity_based_performance_improvement() {
     // 選択されたトークンの平均予測リターンを計算
     let selected_avg_return: f64 = selected
         .iter()
-        .filter_map(|t| predictions.get(&t.symbol))
+        .filter_map(|t| {
+            predictions.get(&t.symbol).map(|pred_price| {
+                let current_price = t.current_rate.to_price();
+                current_price.expected_return(pred_price)
+            })
+        })
         .sum::<f64>()
         / selected.len() as f64;
 
     // フィルタされたトークンの平均リターンを計算
     let _filtered_predictions: Vec<f64> = selected
         .iter()
-        .filter_map(|t| predictions.get(&t.symbol))
-        .cloned()
+        .filter_map(|t| {
+            predictions.get(&t.symbol).map(|pred_price| {
+                let current_price = t.current_rate.to_price();
+                current_price.expected_return(pred_price)
+            })
+        })
         .collect();
 
     // 低流動性トークンを除外することで、リスク調整後リターンが改善される
@@ -1995,10 +2030,10 @@ fn test_actual_token_data_simulation() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("excellent_performer".to_string(), 0.20); // 20%
-    predictions.insert("good_performer".to_string(), 0.15); // 15%
-    predictions.insert("average_performer".to_string(), 0.10); // 10%
-    predictions.insert("poor_performer".to_string(), 0.05); // 5%
+    predictions.insert("excellent_performer".to_string(), price(0.20)); // 20%
+    predictions.insert("good_performer".to_string(), price(0.15)); // 15%
+    predictions.insert("average_performer".to_string(), price(0.10)); // 10%
+    predictions.insert("poor_performer".to_string(), price(0.05)); // 5%
 
     let history = create_sample_price_history();
 
@@ -2007,7 +2042,13 @@ fn test_actual_token_data_simulation() {
 
     println!("Selected {} tokens:", selected.len());
     for token in &selected {
-        let predicted_return = predictions.get(&token.symbol).unwrap_or(&0.0);
+        let predicted_return = predictions
+            .get(&token.symbol)
+            .map(|pred_price| {
+                let current_price = token.current_rate.to_price();
+                current_price.expected_return(pred_price)
+            })
+            .unwrap_or(0.0);
         println!(
             "  - {} (volatility: {:.3}, liquidity: {:?}, predicted: {:.1}%)",
             token.symbol,
@@ -2023,12 +2064,24 @@ fn test_actual_token_data_simulation() {
     // 選択されたトークンの予測リターンを確認
     let selected_returns: Vec<f64> = selected
         .iter()
-        .filter_map(|t| predictions.get(&t.symbol))
-        .cloned()
+        .filter_map(|t| {
+            predictions.get(&t.symbol).map(|pred_price| {
+                let current_price = t.current_rate.to_price();
+                current_price.expected_return(pred_price)
+            })
+        })
         .collect();
 
     let avg_selected_return = selected_returns.iter().sum::<f64>() / selected_returns.len() as f64;
-    let all_returns: Vec<f64> = predictions.values().cloned().collect();
+    let all_returns: Vec<f64> = tokens
+        .iter()
+        .filter_map(|t| {
+            predictions.get(&t.symbol).map(|pred_price| {
+                let current_price = t.current_rate.to_price();
+                current_price.expected_return(pred_price)
+            })
+        })
+        .collect();
     let avg_all_return = all_returns.iter().sum::<f64>() / all_returns.len() as f64;
 
     println!(
@@ -2072,9 +2125,9 @@ fn test_token_selection_off_vs_on() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("good_token".to_string(), 0.15);
-    predictions.insert("bad_token1".to_string(), 0.12);
-    predictions.insert("bad_token2".to_string(), 0.10);
+    predictions.insert("good_token".to_string(), price(0.15));
+    predictions.insert("bad_token1".to_string(), price(0.12));
+    predictions.insert("bad_token2".to_string(), price(0.10));
 
     let history = create_sample_price_history();
 
@@ -2163,9 +2216,9 @@ fn test_why_btreemap_reduces_performance() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("nearkat.tkn.near".to_string(), 0.25); // 高リターン
-    predictions.insert("bean.tkn.near".to_string(), 0.20); // 高リターン
-    predictions.insert("babyblackdragon.tkn.near".to_string(), 0.05); // 低リターン
+    predictions.insert("nearkat.tkn.near".to_string(), price(0.25)); // 高リターン
+    predictions.insert("bean.tkn.near".to_string(), price(0.20)); // 高リターン
+    predictions.insert("babyblackdragon.tkn.near".to_string(), price(0.05)); // 低リターン
 
     let _history = create_sample_price_history();
 
@@ -2209,8 +2262,8 @@ fn test_revert_to_original_behavior() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("token_a".to_string(), 0.15);
-    predictions.insert("token_b".to_string(), 0.12);
+    predictions.insert("token_a".to_string(), price(0.15));
+    predictions.insert("token_b".to_string(), price(0.12));
 
     let _history = create_sample_price_history();
 
@@ -2277,9 +2330,9 @@ fn create_high_volatility_portfolio_data() -> super::PortfolioData {
     tokens.truncate(3); // 少数のトークンでテスト
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("token_a".to_string(), 0.25);
-    predictions.insert("token_b".to_string(), 0.20);
-    predictions.insert("token_c".to_string(), 0.15);
+    predictions.insert("token_a".to_string(), price(0.25));
+    predictions.insert("token_b".to_string(), price(0.20));
+    predictions.insert("token_c".to_string(), price(0.15));
 
     // 高ボラティリティの価格履歴を生成
     let historical_prices = create_high_volatility_price_history();
@@ -2297,9 +2350,9 @@ fn create_low_volatility_portfolio_data() -> super::PortfolioData {
     tokens.truncate(3);
 
     let mut predictions = BTreeMap::new();
-    predictions.insert("token_a".to_string(), 0.15);
-    predictions.insert("token_b".to_string(), 0.12);
-    predictions.insert("token_c".to_string(), 0.10);
+    predictions.insert("token_a".to_string(), price(0.15));
+    predictions.insert("token_b".to_string(), price(0.12));
+    predictions.insert("token_c".to_string(), price(0.10));
 
     // 低ボラティリティの価格履歴を生成
     let historical_prices = create_low_volatility_price_history();
@@ -2386,9 +2439,9 @@ fn create_low_volatility_price_history() -> Vec<PriceHistory> {
 fn test_aggressive_parameters_effect() {
     let tokens = create_sample_tokens();
     let mut predictions = BTreeMap::new();
-    predictions.insert("token_a".to_string(), 0.25);
-    predictions.insert("token_b".to_string(), 0.20);
-    predictions.insert("token_c".to_string(), 0.15);
+    predictions.insert("token_a".to_string(), price(0.25));
+    predictions.insert("token_b".to_string(), price(0.20));
+    predictions.insert("token_c".to_string(), price(0.15));
 
     let expected_returns = super::calculate_expected_returns(&tokens, &predictions);
     let daily_returns = super::calculate_daily_returns(&create_sample_price_history());
@@ -2427,9 +2480,9 @@ async fn test_enhanced_portfolio_performance() {
     // 高リターン期待値のトークンでテストデータを作成
     let tokens = create_high_return_tokens();
     let mut predictions = BTreeMap::new();
-    predictions.insert("high_return_token".to_string(), 0.50); // 50%リターン期待
-    predictions.insert("medium_return_token".to_string(), 0.30); // 30%リターン期待
-    predictions.insert("stable_token".to_string(), 0.10); // 10%リターン期待
+    predictions.insert("high_return_token".to_string(), price(0.50)); // 50%リターン期待
+    predictions.insert("medium_return_token".to_string(), price(0.30)); // 30%リターン期待
+    predictions.insert("stable_token".to_string(), price(0.10)); // 10%リターン期待
 
     let historical_prices = create_realistic_price_history();
 
@@ -2530,7 +2583,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
             ),
             historical_volatility: 0.40, // 40%ボラティリティ（高リスク・高リターン）
             liquidity_score: Some(0.9),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenData {
             symbol: "medium_return_token".to_string(),
@@ -2540,7 +2593,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
             ),
             historical_volatility: 0.20, // 20%ボラティリティ
             liquidity_score: Some(0.8),
-            market_cap: Some(500000.0),
+            market_cap: Some(cap(500000)),
         },
         TokenData {
             symbol: "stable_token".to_string(),
@@ -2550,7 +2603,7 @@ fn create_high_return_tokens() -> Vec<TokenData> {
             ),
             historical_volatility: 0.10, // 10%ボラティリティ
             liquidity_score: Some(0.7),
-            market_cap: Some(2000000.0),
+            market_cap: Some(cap(2000000)),
         },
     ]
 }
@@ -2596,15 +2649,18 @@ fn create_realistic_price_history() -> Vec<PriceHistory> {
 
 fn calculate_expected_portfolio_return(
     weights: &PortfolioWeights,
-    predictions: &BTreeMap<String, f64>,
+    predictions: &BTreeMap<String, TokenPrice>,
     tokens: &[TokenData],
 ) -> f64 {
     let mut total_return = 0.0;
 
     for token in tokens {
         if let Some(weight) = weights.weights.get(&token.symbol)
-            && let Some(expected_return) = predictions.get(&token.symbol)
+            && let Some(predicted_price) = predictions.get(&token.symbol)
         {
+            // 現在価格から期待リターンを計算
+            let current_price = token.current_rate.to_price();
+            let expected_return = current_price.expected_return(predicted_price);
             total_return += weight * expected_return;
         }
     }
@@ -2618,9 +2674,9 @@ async fn test_baseline_vs_enhanced_comparison() {
 
     let tokens = create_high_return_tokens();
     let mut predictions = BTreeMap::new();
-    predictions.insert("high_return_token".to_string(), 0.25);
-    predictions.insert("medium_return_token".to_string(), 0.15);
-    predictions.insert("stable_token".to_string(), 0.08);
+    predictions.insert("high_return_token".to_string(), price(0.25));
+    predictions.insert("medium_return_token".to_string(), price(0.15));
+    predictions.insert("stable_token".to_string(), price(0.08));
 
     let historical_prices = create_realistic_price_history();
     let portfolio_data = super::PortfolioData {
@@ -2763,7 +2819,7 @@ fn test_portfolio_evaluation_accuracy() {
         ),
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
-        market_cap: Some(1000000.0),
+        market_cap: Some(cap(1000000)),
     }];
 
     // 500 whole tokens = 500 * 10^24 tokens_smallest
@@ -2816,7 +2872,7 @@ fn test_extreme_price_weight_calculation() {
             ),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenData {
             symbol: "ndc.tkn.near".to_string(),
@@ -2826,7 +2882,7 @@ fn test_extreme_price_weight_calculation() {
             ),
             historical_volatility: 0.4,
             liquidity_score: Some(0.7),
-            market_cap: Some(500000.0),
+            market_cap: Some(cap(500000)),
         },
     ];
 
@@ -3071,7 +3127,7 @@ fn test_calculate_current_weights_equivalence() {
             ),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
+            market_cap: Some(cap(1000000)),
         },
         TokenInfo {
             symbol: "TOKEN_B".to_string(),
@@ -3081,7 +3137,7 @@ fn test_calculate_current_weights_equivalence() {
             ),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
-            market_cap: Some(500000.0),
+            market_cap: Some(cap(500000)),
         },
     ];
 

@@ -16,17 +16,23 @@ fn rate(v: f64) -> ExchangeRate {
     ExchangeRate::from_raw_rate(BigDecimal::from_f64(v).unwrap(), 18)
 }
 
+fn cap(v: i64) -> NearValue {
+    NearValue::from_near(BigDecimal::from(v))
+}
+
 // テスト用のポートフォリオデータを作成
 fn create_test_portfolio_data() -> PortfolioData {
+    // current_rate = rate(1000) → current_price = 1/1000 = 0.001 NEAR/token
+    // 10% リターン → predicted_price = 0.001 * 1.1 = 0.0011
     let mut predictions = HashMap::new();
-    predictions.insert("test.token".to_string(), 0.1); // 10%のリターン予測
+    predictions.insert("test.token".to_string(), price(0.001 * 1.1)); // 10%のリターン予測
 
     let tokens = vec![TokenData {
         symbol: "test.token".to_string(),
-        current_rate: rate(1000.0), // 0.001 NEAR in yoctoNEAR units
+        current_rate: rate(1000.0), // 0.001 NEAR/token
         historical_volatility: 0.2,
         liquidity_score: Some(1.0),
-        market_cap: Some(1000000.0),
+        market_cap: Some(cap(1000000)),
     }];
 
     // 価格履歴を作成（7日分）

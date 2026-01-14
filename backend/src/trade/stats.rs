@@ -5,7 +5,7 @@
 //! このモジュールでは以下の単位規約を使用しています：
 //!
 //! - **rate_yocto**: yocto tokens per 1 NEAR（DB に保存される形式）
-//! - **predictions (BTreeMap<String, f64>)**: 同じ yocto スケールの予測価格
+//! - **predictions (BTreeMap<String, TokenPrice>)**: 予測価格（NEAR/token 単位、型安全）
 //! - **volatility**: 比率（単位なし）
 //!
 //! ## yocto スケールの利点
@@ -40,11 +40,14 @@ use num_traits::Zero;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
+use std::str::FromStr;
 use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{PriceHistory, TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{ExchangeRate, NearAmount, NearValue, TokenAmount, YoctoValue};
+use zaciraci_common::types::{
+    ExchangeRate, NearAmount, NearValue, TokenAmount, TokenPrice, YoctoValue,
+};
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
@@ -521,10 +524,9 @@ where
             }
         };
 
-        // 現在価格を履歴から取得
-        // rate は既に yocto スケール（yocto tokens per 1 NEAR）なのでそのまま使用
-        let current_price_yocto = if let Some(latest_price) = history.prices.last() {
-            latest_price.price.as_bigdecimal().clone()
+        // 現在価格を履歴から取得（TokenPrice: NEAR/token 単位）
+        let current_price = if let Some(latest_price) = history.prices.last() {
+            latest_price.price.clone()
         } else {
             error!(log, "no price data available for token"; "token" => %token);
             return Err(anyhow::anyhow!(
@@ -548,13 +550,13 @@ where
                 .collect(),
         };
 
-        // 予測の取得
-        let prediction_price = match prediction_service.predict_price(&predict_history, 24).await {
+        // 予測の取得（TokenPrice: NEAR/token 単位）
+        let predicted_price = match prediction_service.predict_price(&predict_history, 24).await {
             Ok(pred) => {
                 // 最初の予測値を返却値として使用
                 pred.predictions
                     .first()
-                    .map(|p| p.price.as_bigdecimal().clone())
+                    .map(|p| p.price.clone())
                     .ok_or_else(|| {
                         anyhow::anyhow!("No prediction values returned for token {}", token)
                     })?
@@ -568,23 +570,18 @@ where
                 ));
             }
         };
-        // 予測値は price 形式（NEAR/token）
-        let prediction_f64 = prediction_price.to_f64().unwrap_or(0.0);
-        predictions.insert(token.to_string(), prediction_f64);
 
-        // 相対リターンの計算
+        // 予測価格を TokenPrice で保存（型安全）
+        predictions.insert(token.to_string(), predicted_price.clone());
+
+        // 相対リターンの計算（expected_return メソッドを使用）
         // price 形式なので、予測価格 > 現在価格 = 正のリターン
-        let current_f64 = current_price_yocto.to_f64().unwrap_or(0.0);
-        let expected_price_return_pct = if current_f64 > 0.0 && prediction_f64 > 0.0 {
-            ((prediction_f64 - current_f64) / current_f64) * 100.0
-        } else {
-            0.0
-        };
+        let expected_price_return_pct = current_price.expected_return(&predicted_price) * 100.0;
 
         info!(log, "token prediction";
             "token" => %token,
-            "current_price" => %current_price_yocto,
-            "predicted_price" => prediction_f64,
+            "current_price" => %current_price,
+            "predicted_price" => %predicted_price,
             "expected_price_return_pct" => format!("{:.2}%", expected_price_return_pct)
         );
 
@@ -608,11 +605,11 @@ where
 
         // 市場規模の推定（実際の発行量データを取得）
         let market_cap =
-            estimate_market_cap_async(client, &token_str, &current_price_yocto, decimals).await;
+            estimate_market_cap_async(client, &token_str, &current_price, decimals).await;
 
         token_data.push(TokenData {
             symbol: token.to_string(),
-            current_rate: ExchangeRate::from_raw_rate(current_price_yocto, decimals),
+            current_rate: ExchangeRate::from_price(&current_price, decimals),
             historical_volatility: volatility_f64,
             liquidity_score: Some(liquidity_score),
             market_cap: Some(market_cap),
@@ -1558,44 +1555,56 @@ fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
 /// # Arguments
 /// * `client` - RPC クライアント
 /// * `token_id` - トークン ID
-/// * `rate` - レート（smallest_token_units per 1 NEAR）
-/// * `_decimals` - トークンの decimals（将来の拡張用、現在は未使用）
+/// * `price` - 価格（TokenPrice: NEAR/token）
+/// * `decimals` - トークンの decimals
+///
+/// # Returns
+/// * `NearValue` - 時価総額（NEAR 単位）
 ///
 /// # 計算式
 /// ```text
-/// rate = smallest_units / NEAR
-/// total_supply = total_tokens × 10^decimals (smallest units)
-/// market_cap = total_supply / rate
-///            = (total_tokens × 10^decimals) / (smallest_per_NEAR)
-///            = total_tokens × NEAR
+/// total_supply (TokenAmount) = get_token_total_supply(client, token_id, decimals)
+/// market_cap (NearValue) = total_supply × price
 /// ```
-/// decimals は分子・分母でキャンセルされるため、計算結果に影響しない。
 async fn estimate_market_cap_async<C>(
     client: &C,
     token_id: &str,
-    rate: &BigDecimal,
-    _decimals: u8,
-) -> f64
+    price: &TokenPrice,
+    decimals: u8,
+) -> NearValue
 where
     C: crate::jsonrpc::ViewContract,
 {
-    // 実際の発行量データを取得（smallest units）
-    let total_supply = get_token_total_supply(client, token_id)
+    // 実際の発行量データを取得（TokenAmount）
+    let total_supply = get_token_total_supply(client, token_id, decimals)
         .await
-        .unwrap_or(1_000_000_000_000_000_000_000_000u128); // 取得失敗時は 10^24 と仮定
+        .unwrap_or_else(|_| {
+            // 取得失敗時は 10^24 smallest units と仮定
+            TokenAmount::from_smallest_units(
+                BigDecimal::from_str("1000000000000000000000000").unwrap(), // 10^24 smallest units
+                decimals,
+            )
+        });
 
-    if rate.is_zero() {
-        return 10000.0; // デフォルト値
+    if price.is_zero() {
+        // デフォルト値: 10,000 NEAR
+        return NearValue::from_near(BigDecimal::from(10000));
     }
 
-    // market_cap (NEAR) = total_supply / rate
-    let market_cap = BigDecimal::from(total_supply) / rate;
-
-    market_cap.to_string().parse::<f64>().unwrap_or(10000.0)
+    // market_cap (NearValue) = TokenAmount × TokenPrice
+    &total_supply * price
 }
 
 /// トークンの総発行量を取得
-async fn get_token_total_supply<C>(client: &C, token_id: &str) -> Result<u128>
+///
+/// # Arguments
+/// * `client` - RPC クライアント
+/// * `token_id` - トークン ID
+/// * `decimals` - トークンの decimals
+///
+/// # Returns
+/// * `TokenAmount` - 総発行量（smallest_units + decimals）
+async fn get_token_total_supply<C>(client: &C, token_id: &str, decimals: u8) -> Result<TokenAmount>
 where
     C: crate::jsonrpc::ViewContract,
 {
@@ -1617,9 +1626,9 @@ where
 
     // total_supplyは通常文字列として返される
     if let Some(total_supply_str) = json_value.as_str() {
-        total_supply_str
-            .parse::<u128>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse total supply: {}", e))
+        let smallest_units = BigDecimal::from_str(total_supply_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse total supply: {}", e))?;
+        Ok(TokenAmount::from_smallest_units(smallest_units, decimals))
     } else {
         Err(anyhow::anyhow!(
             "Expected string value for total supply, got: {:?}",

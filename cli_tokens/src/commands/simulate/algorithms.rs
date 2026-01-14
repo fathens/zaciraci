@@ -535,12 +535,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         }
                     }
 
-                    // ポートフォリオデータを構築
+                    // ポートフォリオデータを構築（TokenPrice で型安全）
                     let mut predictions_map = HashMap::new();
                     for pred in predictions {
-                        // PredictionData は既に TokenPrice を持っているので直接 to_f64() で変換
-                        let predicted_price = pred.predicted_price_24h.to_f64();
-                        predictions_map.insert(pred.token, predicted_price);
+                        // PredictionData は既に TokenPrice を持っているのでそのまま使用
+                        predictions_map.insert(pred.token, pred.predicted_price_24h);
                     }
 
                     // 履歴価格データを構築（簡略版）
