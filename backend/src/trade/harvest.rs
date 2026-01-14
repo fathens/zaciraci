@@ -64,7 +64,7 @@ fn update_last_harvest_time() {
 }
 
 /// ハーベスト判定と実行
-pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()> {
+pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "check_and_harvest"));
 
     // 最新の評価期間を取得して初期投資額を取得
@@ -79,7 +79,7 @@ pub async fn check_and_harvest(current_portfolio_value_yocto: u128) -> Result<()
 
     // 型安全な YoctoValue で計算
     let initial_value = YoctoValue::from_yocto(latest_period.initial_value);
-    let current_value = YoctoValue::from_yocto(BigDecimal::from(current_portfolio_value_yocto));
+    let current_value = current_portfolio_value;
 
     info!(log, "Portfolio value check";
         "initial_value" => %initial_value,

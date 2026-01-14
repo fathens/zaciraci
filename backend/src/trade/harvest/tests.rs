@@ -1,7 +1,7 @@
 use super::*;
 use crate::config;
 use bigdecimal::BigDecimal;
-use zaciraci_common::types::{NearValue, YoctoAmount};
+use zaciraci_common::types::{NearValue, YoctoAmount, YoctoValue};
 
 /// NEAR → yoctoNEAR 変換のヘルパー（型安全）
 fn near_to_yocto(near: u64) -> BigDecimal {
@@ -129,7 +129,8 @@ fn test_harvest_threshold_calculation() {
 #[tokio::test]
 async fn test_check_and_harvest_no_evaluation_period() {
     // 評価期間がまだない場合のテスト
-    let current_portfolio_value = 100u128 * 10u128.pow(24);
+    let current_portfolio_value =
+        YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24)));
 
     // check_and_harvestは早期リターンするはず（評価期間がない場合）
     // エラーが出ないことを確認
