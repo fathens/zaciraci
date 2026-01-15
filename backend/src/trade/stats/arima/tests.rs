@@ -6,6 +6,7 @@ use chrono::{Duration, TimeZone, Utc};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::str::FromStr;
+use zaciraci_common::types::TokenPrice;
 
 // 乱数を使用したノイズ生成関数
 fn simple_noise(i: usize, range: f64) -> f64 {
@@ -22,10 +23,11 @@ fn create_test_points(count: usize, start_value: f64, increment: f64) -> Vec<Poi
 
     for i in 0..count {
         let value = start_value + (i as f64 * increment);
-        let rate = BigDecimal::from_str(&value.to_string()).unwrap();
+        let price =
+            TokenPrice::from_near_per_token(BigDecimal::from_str(&value.to_string()).unwrap());
         let timestamp = base_time + Duration::hours(i as i64);
 
-        points.push(Point { rate, timestamp });
+        points.push(Point { price, timestamp });
     }
 
     points
@@ -40,10 +42,11 @@ fn create_random_test_points(count: usize, base_value: f64, noise_range: f64) ->
         // ベース値 + 乱数ノイズ
         let noise = simple_noise(i, noise_range);
         let value = base_value + noise;
-        let rate = BigDecimal::from_str(&value.to_string()).unwrap();
+        let price =
+            TokenPrice::from_near_per_token(BigDecimal::from_str(&value.to_string()).unwrap());
         let timestamp = base_time + Duration::hours(i as i64);
 
-        points.push(Point { rate, timestamp });
+        points.push(Point { price, timestamp });
     }
 
     points
@@ -553,10 +556,11 @@ mod integration_tests {
             let noise = simple_noise(i, 5.0);
 
             let value = trend + cycle + noise;
-            let rate = BigDecimal::from_str(&value.to_string()).unwrap();
+            let price =
+                TokenPrice::from_near_per_token(BigDecimal::from_str(&value.to_string()).unwrap());
             let timestamp = base_time + Duration::hours(i as i64);
 
-            points.push(Point { rate, timestamp });
+            points.push(Point { price, timestamp });
         }
 
         // 2. 最後の時点から5ステップ先を予測
@@ -579,7 +583,7 @@ mod integration_tests {
         debug!(
             log,
             "  - Last data point: {:?} at {:?}",
-            convert_to_f64(&points.last().unwrap().rate).unwrap(),
+            points.last().unwrap().price.to_f64(),
             points.last().unwrap().timestamp
         );
         debug!(

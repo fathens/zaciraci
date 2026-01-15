@@ -24,6 +24,46 @@ fn test_price_arithmetic() {
 }
 
 #[test]
+fn test_token_price_sum() {
+    let prices = vec![
+        TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        TokenPrice::from_near_per_token(BigDecimal::from(200)),
+        TokenPrice::from_near_per_token(BigDecimal::from(300)),
+    ];
+
+    // Iterator::sum (owned)
+    let sum: TokenPrice = prices.clone().into_iter().sum();
+    assert_eq!(sum.as_bigdecimal(), &BigDecimal::from(600));
+
+    // Iterator::sum (reference)
+    let sum_ref: TokenPrice = prices.iter().sum();
+    assert_eq!(sum_ref.as_bigdecimal(), &BigDecimal::from(600));
+}
+
+#[test]
+fn test_token_price_div_i64() {
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(300));
+
+    // Div<i64> for TokenPrice
+    let avg = price.clone() / 3_i64;
+    assert_eq!(avg.as_bigdecimal(), &BigDecimal::from(100));
+
+    // Div<i64> for &TokenPrice
+    let avg_ref = &price / 3_i64;
+    assert_eq!(avg_ref.as_bigdecimal(), &BigDecimal::from(100));
+
+    // 0除算は TokenPrice::zero() を返す
+    let zero_div = price / 0_i64;
+    assert!(zero_div.is_zero());
+}
+
+#[test]
+fn test_token_price_from_i64() {
+    let price: TokenPrice = 100_i64.into();
+    assert_eq!(price.as_bigdecimal(), &BigDecimal::from(100));
+}
+
+#[test]
 fn test_price_f64_arithmetic() {
     let p1 = TokenPriceF64::from_near_per_token(10.0);
     let p2 = TokenPriceF64::from_near_per_token(3.0);

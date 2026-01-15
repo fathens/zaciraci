@@ -209,6 +209,49 @@ impl Div<f64> for TokenPrice {
     }
 }
 
+// TokenPrice / スカラー (i64) - 平均計算用
+impl Div<i64> for TokenPrice {
+    type Output = TokenPrice;
+    fn div(self, scalar: i64) -> TokenPrice {
+        if scalar == 0 {
+            TokenPrice::zero()
+        } else {
+            TokenPrice(self.0 / BigDecimal::from(scalar))
+        }
+    }
+}
+
+impl Div<i64> for &TokenPrice {
+    type Output = TokenPrice;
+    fn div(self, scalar: i64) -> TokenPrice {
+        if scalar == 0 {
+            TokenPrice::zero()
+        } else {
+            TokenPrice(&self.0 / BigDecimal::from(scalar))
+        }
+    }
+}
+
+// TokenPrice の Sum trait（統計計算用）
+impl std::iter::Sum for TokenPrice {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(TokenPrice::zero(), |acc, x| acc + x)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a TokenPrice> for TokenPrice {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(TokenPrice::zero(), |acc, x| acc + x)
+    }
+}
+
+// From<i64> for TokenPrice（ジェネリック制約用）
+impl From<i64> for TokenPrice {
+    fn from(value: i64) -> Self {
+        TokenPrice::from_near_per_token(BigDecimal::from(value))
+    }
+}
+
 // =============================================================================
 // TokenPriceF64（価格）- f64 版
 // =============================================================================

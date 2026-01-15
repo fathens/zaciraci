@@ -168,15 +168,15 @@ fn test_stats_single_period() {
     let points = vec![
         Point {
             timestamp: base_time,
-            rate: BigDecimal::from(100),
+            price: price_from_int(100),
         },
         Point {
             timestamp: base_time + Duration::seconds(20),
-            rate: BigDecimal::from(110),
+            price: price_from_int(110),
         },
         Point {
             timestamp: base_time + Duration::seconds(40),
-            rate: BigDecimal::from(90),
+            price: price_from_int(90),
         },
     ];
 
@@ -216,29 +216,29 @@ fn test_stats_multiple_periods() {
         // 最初の期間 (10:00:00 - 10:01:00)
         Point {
             timestamp: base_time,
-            rate: BigDecimal::from(100),
+            price: price_from_int(100),
         },
         Point {
             timestamp: base_time + Duration::seconds(30),
-            rate: BigDecimal::from(110),
+            price: price_from_int(110),
         },
         // 2番目の期間 (10:01:00 - 10:02:00)
         Point {
             timestamp: base_time + Duration::minutes(1),
-            rate: BigDecimal::from(120),
+            price: price_from_int(120),
         },
         Point {
             timestamp: base_time + Duration::minutes(1) + Duration::seconds(30),
-            rate: BigDecimal::from(130),
+            price: price_from_int(130),
         },
         // 3番目の期間 (10:02:00 - 10:03:00)
         Point {
             timestamp: base_time + Duration::minutes(2),
-            rate: BigDecimal::from(140),
+            price: price_from_int(140),
         },
         Point {
             timestamp: base_time + Duration::minutes(2) + Duration::seconds(30),
-            rate: BigDecimal::from(150),
+            price: price_from_int(150),
         },
     ];
 
@@ -303,17 +303,17 @@ fn test_stats_period_boundary() {
         // 最初の期間 (10:00:00 - 10:05:00)
         Point {
             timestamp: base_time,
-            rate: BigDecimal::from(100),
+            price: price_from_int(100),
         },
         // 境界値ちょうど (10:05:00) - 次の期間に含まれる
         Point {
             timestamp: base_time + Duration::minutes(5),
-            rate: BigDecimal::from(200),
+            price: price_from_int(200),
         },
         // 2番目の期間 (10:05:00 - 10:10:00)
         Point {
             timestamp: base_time + Duration::minutes(7),
-            rate: BigDecimal::from(300),
+            price: price_from_int(300),
         },
     ];
 

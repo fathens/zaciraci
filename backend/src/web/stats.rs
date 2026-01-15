@@ -9,8 +9,6 @@ use axum::{
     extract::{Json, State},
     routing::post,
 };
-use bigdecimal::{BigDecimal, FromPrimitive};
-use num_traits::ToPrimitive;
 use std::sync::Arc;
 use zaciraci_common::ApiResponse;
 use zaciraci_common::stats::{DescribesRequest, GetValuesRequest, GetValuesResponse, ValueAtTime};
@@ -114,25 +112,9 @@ async fn get_values(
     let values: Vec<_> = rates
         .points
         .into_iter()
-        .filter_map(|p| match p.rate.to_f64() {
-            Some(value) if value.is_finite() && value >= 0.0 => Some(ValueAtTime {
-                time: p.timestamp,
-                value: BigDecimal::from_f64(value).unwrap_or_default(),
-            }),
-            Some(value) => {
-                error!(log, "Invalid rate value filtered out";
-                    "value" => %value,
-                    "timestamp" => %p.timestamp
-                );
-                None
-            }
-            None => {
-                error!(log, "Failed to convert BigDecimal to f64";
-                    "rate" => %p.rate,
-                    "timestamp" => %p.timestamp
-                );
-                None
-            }
+        .map(|p| ValueAtTime {
+            time: p.timestamp,
+            value: p.price.into_bigdecimal(),
         })
         .collect();
 

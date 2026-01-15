@@ -59,7 +59,7 @@ pub struct SameBaseTokenRates {
 
 #[derive(Clone)]
 pub struct Point {
-    pub rate: BigDecimal,
+    pub price: TokenPrice,
     pub timestamp: NaiveDateTime,
 }
 
@@ -1809,7 +1809,7 @@ impl SameBaseTokenRates {
                 let points = rates
                     .iter()
                     .map(|r| Point {
-                        rate: r.exchange_rate.raw_rate().clone(),
+                        price: r.exchange_rate.to_price(),
                         timestamp: r.timestamp,
                     })
                     .collect();
@@ -1886,17 +1886,17 @@ impl SameBaseTokenRates {
                 let start = rates_in_period
                     .first()
                     .expect("Rates in period is not empty")
-                    .rate
+                    .price
                     .clone();
                 let end = rates_in_period
                     .last()
                     .expect("Rates in period is not empty")
-                    .rate
+                    .price
                     .clone();
-                let values: Vec<_> = rates_in_period.iter().map(|tr| tr.rate.clone()).collect();
-                let sum: BigDecimal = values.iter().sum();
-                let count = BigDecimal::from(values.len() as i64);
-                let average = &sum / &count;
+                let values: Vec<_> = rates_in_period.iter().map(|p| p.price.clone()).collect();
+                let sum: TokenPrice = values.iter().sum();
+                let count = values.len() as i64;
+                let average = &sum / count;
                 let max = values
                     .iter()
                     .max()
@@ -1911,11 +1911,11 @@ impl SameBaseTokenRates {
                 stats.push(StatsInPeriod {
                     timestamp: current_start,
                     period,
-                    start,
-                    end,
-                    average,
-                    max,
-                    min,
+                    start: start.into_bigdecimal(),
+                    end: end.into_bigdecimal(),
+                    average: average.into_bigdecimal(),
+                    max: max.into_bigdecimal(),
+                    min: min.into_bigdecimal(),
                 });
             }
 

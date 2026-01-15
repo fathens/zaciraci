@@ -10,6 +10,7 @@ use chrono::NaiveDateTime;
 use linfa::prelude::*;
 use linfa_linear::LinearRegression;
 use ndarray::{Array1, Array2};
+#[cfg(test)]
 use num_traits::ToPrimitive;
 use thiserror::Error;
 
@@ -29,6 +30,7 @@ pub enum TimeSeriesPredictionError {
 }
 
 /// 時系列データのポイントをf64に変換する
+#[cfg(test)]
 fn convert_to_f64(decimal: &BigDecimal) -> Result<f64> {
     decimal.to_f64().ok_or_else(|| {
         anyhow!(TimeSeriesPredictionError::ConversionError(format!(
@@ -71,10 +73,7 @@ fn create_lag_features(points: &[Point], lag_count: usize) -> Result<(Vec<Vec<f6
     sorted_points.sort_by_key(|p| p.timestamp);
 
     // rateをf64に変換
-    let rates: Result<Vec<f64>> = sorted_points
-        .iter()
-        .map(|p| convert_to_f64(&p.rate))
-        .collect();
+    let rates: Result<Vec<f64>> = sorted_points.iter().map(|p| Ok(p.price.to_f64())).collect();
 
     let rates = rates?;
 
@@ -186,11 +185,8 @@ fn generate_future_features(
     // 最新のlag_count個のデータポイントを取得
     let latest_points = &sorted_points[sorted_points.len() - lag_count..];
 
-    // rateをf64に変換
-    let rates: Result<Vec<f64>> = latest_points
-        .iter()
-        .map(|p| convert_to_f64(&p.rate))
-        .collect();
+    // priceをf64に変換
+    let rates: Result<Vec<f64>> = latest_points.iter().map(|p| Ok(p.price.to_f64())).collect();
 
     let features = rates?;
 
