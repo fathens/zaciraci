@@ -325,7 +325,7 @@ async fn load_history_data(history_file: &Path) -> Result<Vec<(DateTime<Utc>, f6
         .map(|v| {
             (
                 DateTime::from_naive_utc_and_offset(v.time, Utc),
-                v.value.to_string().parse::<f64>().unwrap_or(0.0),
+                v.value.to_f64(),
             )
         })
         .collect();

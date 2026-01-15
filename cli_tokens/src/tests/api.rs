@@ -8,7 +8,7 @@ use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::ApiResponse;
 use common::api::chronos::ChronosApiClient;
-use common::types::TokenAccount;
+use common::types::{TokenAccount, TokenPrice};
 
 use crate::api::backend::BackendClient;
 
@@ -264,14 +264,14 @@ async fn test_backend_api_get_price_history_success() -> Result<()> {
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
-            value: "5.23".parse().unwrap(),
+            value: TokenPrice::from_near_per_token("5.23".parse().unwrap()),
         },
         common::stats::ValueAtTime {
             time: chrono::NaiveDate::from_ymd_opt(2025, 7, 6)
                 .unwrap()
                 .and_hms_opt(1, 0, 0)
                 .unwrap(),
-            value: "5.25".parse().unwrap(),
+            value: TokenPrice::from_near_per_token("5.25".parse().unwrap()),
         },
     ];
     let price_response = common::stats::GetValuesResponse {
@@ -305,8 +305,14 @@ async fn test_backend_api_get_price_history_success() -> Result<()> {
     assert!(result.is_ok());
     let values = result.unwrap();
     assert_eq!(values.len(), 2);
-    assert_eq!(values[0].value, "5.23".parse::<BigDecimal>().unwrap());
-    assert_eq!(values[1].value, "5.25".parse::<BigDecimal>().unwrap());
+    assert_eq!(
+        values[0].value,
+        TokenPrice::from_near_per_token("5.23".parse().unwrap())
+    );
+    assert_eq!(
+        values[1].value,
+        TokenPrice::from_near_per_token("5.25".parse().unwrap())
+    );
 
     Ok(())
 }

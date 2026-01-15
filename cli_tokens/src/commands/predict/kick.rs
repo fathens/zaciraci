@@ -370,7 +370,7 @@ async fn load_history_data(
         .price_history
         .values
         .iter()
-        .map(|v| v.value.clone())
+        .map(|v| v.value.clone().into_bigdecimal())
         .collect();
 
     if timestamps.len() != values.len() {

@@ -3,6 +3,7 @@ use super::types::*;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{NaiveDate, TimeZone, Utc};
 use common::stats::ValueAtTime;
+use common::types::TokenPrice;
 use std::collections::HashMap;
 
 // yoctoNEAR単位のテストデータ
@@ -21,8 +22,10 @@ fn create_test_price_data() -> HashMap<String, Vec<ValueAtTime>> {
                 .unwrap_or_else(|| NaiveDate::from_ymd_opt(2024, 8, 1 + i - 31).unwrap())
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
-            value: BigDecimal::from_f64(current_price_yocto * (1.0 + (i as f64 * 0.02)))
-                .unwrap_or_default(), // 2%ずつ価格上昇
+            value: TokenPrice::from_near_per_token(
+                BigDecimal::from_f64(current_price_yocto * (1.0 + (i as f64 * 0.02)))
+                    .unwrap_or_default(),
+            ), // 2%ずつ価格上昇
         });
     }
 

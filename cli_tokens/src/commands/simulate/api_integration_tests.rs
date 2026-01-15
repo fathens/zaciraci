@@ -346,15 +346,15 @@ mod tests {
         let values = vec![
             ValueAtTime {
                 time: (Utc::now() - Duration::hours(2)).naive_utc(),
-                value: BigDecimal::from(100),
+                value: price(100.0),
             },
             ValueAtTime {
                 time: (Utc::now() - Duration::hours(1)).naive_utc(),
-                value: BigDecimal::from(105),
+                value: price(105.0),
             },
             ValueAtTime {
                 time: Utc::now().naive_utc(),
-                value: BigDecimal::from(110),
+                value: price(110.0),
             },
         ];
         price_data.insert("test_token".to_string(), values);

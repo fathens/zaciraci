@@ -5,6 +5,7 @@ mod unit_conversion_debug {
     use bigdecimal::BigDecimal;
     use chrono::{DateTime, Duration, Utc};
     use common::stats::ValueAtTime;
+    use common::types::TokenPrice;
     use mockito::{Mock, ServerGuard};
     use std::collections::HashMap;
 
@@ -110,7 +111,7 @@ mod unit_conversion_debug {
             "akaia.tkn.near".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: "33276625285048.96".parse().unwrap(), // yoctoNEAR
+                value: TokenPrice::from_near_per_token("33276625285048.96".parse().unwrap()), // yoctoNEAR
             }],
         );
 
@@ -119,7 +120,7 @@ mod unit_conversion_debug {
             "babyblackdragon.tkn.near".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: "50212780681.19036".parse().unwrap(), // yoctoNEAR
+                value: TokenPrice::from_near_per_token("50212780681.19036".parse().unwrap()), // yoctoNEAR
             }],
         );
 
@@ -137,8 +138,8 @@ mod unit_conversion_debug {
 
         for token in &config.target_tokens {
             if let Some(price_point) = price_data.get(token).and_then(|data| data.first()) {
-                let initial_price_yocto = &price_point.value;
-                let initial_price_near = common::units::Units::yocto_to_near(initial_price_yocto);
+                let initial_price_yocto = price_point.value.clone().into_bigdecimal();
+                let initial_price_near = common::units::Units::yocto_to_near(&initial_price_yocto);
                 let token_amount = &initial_per_token / &initial_price_near;
 
                 println!("   Token: {}", token);
@@ -167,7 +168,8 @@ mod unit_conversion_debug {
         let mut total_portfolio_value = BigDecimal::from(0);
         for (token, amount) in &holdings {
             if let Some(price_point) = price_data.get(token).and_then(|data| data.first()) {
-                let price_near = common::units::Units::yocto_to_near(&price_point.value);
+                let price_yocto = price_point.value.clone().into_bigdecimal();
+                let price_near = common::units::Units::yocto_to_near(&price_yocto);
                 let value = amount * &price_near;
                 total_portfolio_value += &value;
                 println!("   {} value: {:.6} NEAR", token, value);
@@ -249,7 +251,7 @@ mod unit_conversion_debug {
             "nearai.aidols.near".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: "166759.9203717577".parse().unwrap(), // yoctoNEAR ≈ 1.67e-19 NEAR
+                value: TokenPrice::from_near_per_token("166759.9203717577".parse().unwrap()), // yoctoNEAR ≈ 1.67e-19 NEAR
             }],
         );
 
@@ -338,7 +340,7 @@ mod unit_conversion_debug {
             "good_token".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: BigDecimal::from(1000000000000i64), // yoctoNEAR = 1e-12 NEAR (合理的な範囲内)
+                value: TokenPrice::from_near_per_token(BigDecimal::from(1000000000000i64)), // yoctoNEAR = 1e-12 NEAR (合理的な範囲内)
             }],
         );
 
@@ -427,7 +429,7 @@ mod unit_conversion_debug {
             "extreme_token".to_string(),
             vec![ValueAtTime {
                 time: config.start_date.naive_utc(),
-                value: BigDecimal::from(100), // yoctoNEAR = 1e-22 NEAR (制限1e-21未満)
+                value: TokenPrice::from_near_per_token(BigDecimal::from(100)), // yoctoNEAR = 1e-22 NEAR (制限1e-21未満)
             }],
         );
 

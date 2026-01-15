@@ -69,11 +69,7 @@ pub fn get_prices_at_time(
             .unwrap();
 
         // 価格は無次元比率（yoctoNEAR/smallest_unit = NEAR/token）
-        let price_value = closest_value
-            .value
-            .to_string()
-            .parse::<f64>()
-            .unwrap_or(0.0);
+        let price_value = closest_value.value.to_f64();
         prices.insert(
             token.clone(),
             TokenPriceF64::from_near_per_token(price_value),
@@ -121,13 +117,6 @@ pub fn calculate_volatility(returns: &[f64]) -> f64 {
         returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
 
     variance.sqrt()
-}
-
-/// Extract price values from ValueAtTime series
-pub fn extract_prices(data: &[ValueAtTime]) -> Vec<f64> {
-    data.iter()
-        .map(|v| v.value.to_string().parse::<f64>().unwrap_or(0.0))
-        .collect()
 }
 
 /// Validate data quality for simulation (placeholder implementation)
@@ -255,7 +244,5 @@ fn find_price_within(
             value_time <= target_time && value_time >= earliest_allowed
         })
         .max_by_key(|v| v.time)
-        .map(|v| {
-            TokenPriceF64::from_near_per_token(v.value.to_string().parse::<f64>().unwrap_or(0.0))
-        })
+        .map(|v| TokenPriceF64::from_near_per_token(v.value.to_f64()))
 }

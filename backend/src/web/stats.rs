@@ -114,7 +114,7 @@ async fn get_values(
         .into_iter()
         .map(|p| ValueAtTime {
             time: p.timestamp,
-            value: p.price.into_bigdecimal(),
+            value: p.price,
         })
         .collect();
 

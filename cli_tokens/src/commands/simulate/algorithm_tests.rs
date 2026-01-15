@@ -4,6 +4,7 @@ mod algorithm_integration_tests {
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{DateTime, Duration, Utc};
     use common::stats::ValueAtTime;
+    use common::types::TokenPrice;
     use std::collections::HashMap;
 
     /// Test data generator for algorithm testing
@@ -34,7 +35,9 @@ mod algorithm_integration_tests {
 
                 values.push(ValueAtTime {
                     time: current_date.naive_utc(),
-                    value: BigDecimal::from_f64(price).unwrap_or_default(),
+                    value: TokenPrice::from_near_per_token(
+                        BigDecimal::from_f64(price).unwrap_or_default(),
+                    ),
                 });
             }
 

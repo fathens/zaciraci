@@ -8,6 +8,11 @@ use bigdecimal::ToPrimitive;
 use chrono::Utc;
 use common::algorithm::calculate_volatility_score;
 use common::stats::ValueAtTime;
+use common::types::TokenPrice;
+
+fn price(v: i32) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from(v))
+}
 
 use crate::commands::simulate::{FeeModel, calculate_trading_cost};
 use crate::commands::top::parse_date;
@@ -170,19 +175,19 @@ fn test_volatility_token_filtering() {
     let high_volatility_data = vec![
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(150),
+            value: price(150),
         }, // +50%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(75),
+            value: price(75),
         }, // -50%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(125),
+            value: price(125),
         }, // +67%
     ];
 
@@ -192,19 +197,19 @@ fn test_volatility_token_filtering() {
     let low_volatility_data = vec![
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(101),
+            value: price(101),
         }, // +1%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(102),
+            value: price(102),
         }, // +1%
         ValueAtTime {
             time: Utc::now().naive_utc(),
-            value: BigDecimal::from(103),
+            value: price(103),
         }, // +1%
     ];
 

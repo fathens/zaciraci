@@ -301,15 +301,15 @@ fn test_get_prices_at_time_multiple_tokens() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(30)).naive_utc(),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: target_time.naive_utc(),
-            value: BigDecimal::from(105),
+            value: price(105),
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::minutes(30)).naive_utc(),
-            value: BigDecimal::from(110),
+            value: price(110),
         },
     ];
 
@@ -331,11 +331,11 @@ fn test_get_prices_at_time_stale_data() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::hours(2)).naive_utc(),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::hours(2)).naive_utc(),
-            value: BigDecimal::from(110),
+            value: price(110),
         },
     ];
 
@@ -369,11 +369,11 @@ fn test_get_prices_at_time_boundary_case() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::hours(1)).naive_utc(),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::hours(1)).naive_utc(),
-            value: BigDecimal::from(110),
+            value: price(110),
         },
     ];
 
@@ -391,11 +391,11 @@ fn test_get_prices_at_time_with_sufficient_data() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(30)).naive_utc(),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: target_time.naive_utc(),
-            value: BigDecimal::from(105),
+            value: price(105),
         },
     ];
 
@@ -416,7 +416,7 @@ fn test_get_prices_at_time_with_insufficient_data() {
     // 前後1時間以内にデータがない場合
     let values = vec![ValueAtTime {
         time: (target_time - chrono::Duration::hours(2)).naive_utc(),
-        value: BigDecimal::from(100),
+        value: price(100),
     }];
 
     price_data.insert("token1".to_string(), values);
@@ -450,15 +450,15 @@ fn test_get_prices_at_time_closest_selection() {
     let values = vec![
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(45)).naive_utc(),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: (target_time - chrono::Duration::minutes(15)).naive_utc(),
-            value: BigDecimal::from(105), // これが最も近い
+            value: price(105), // これが最も近い
         },
         ValueAtTime {
             time: (target_time + chrono::Duration::minutes(30)).naive_utc(),
-            value: BigDecimal::from(110),
+            value: price(110),
         },
     ];
 
@@ -796,7 +796,7 @@ fn test_market_snapshot_from_price_data() {
 
     let values = vec![ValueAtTime {
         time: target_time.naive_utc(),
-        value: BigDecimal::from(150),
+        value: price(150),
     }];
     price_data.insert("token_a".to_string(), values);
 
@@ -1208,11 +1208,11 @@ fn test_data_gap_handling_get_prices_at_time_optional() {
         (6, 106.0), // 06:00
     ];
 
-    for (hour_offset, price) in times_and_prices {
+    for (hour_offset, p) in times_and_prices {
         let time = start_time + chrono::Duration::hours(hour_offset);
         data_points.push(ValueAtTime {
             time: time.naive_utc(),
-            value: BigDecimal::from(price as i64),
+            value: price(p as i32),
         });
     }
 

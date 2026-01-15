@@ -371,8 +371,11 @@ async fn get_historical_price_data(
         .map(|p| DateTime::from_naive_utc_and_offset(p.time, Utc))
         .collect();
 
-    let values: Vec<BigDecimal> = prices.iter().map(|p| p.value.clone()).collect();
-    let current_price = prices.last().unwrap().value.clone();
+    let values: Vec<BigDecimal> = prices
+        .iter()
+        .map(|p| p.value.clone().into_bigdecimal())
+        .collect();
+    let current_price = prices.last().unwrap().value.clone().into_bigdecimal();
 
     Ok((timestamps, values, current_price))
 }

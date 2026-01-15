@@ -541,9 +541,6 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     }
 
                     // 履歴価格データを構築（簡略版）
-                    // NOTE: Backend API は rate (= 10^decimals / price) を返すため、
-                    //       ExchangeRate として解釈し、TokenPrice に変換する必要がある
-                    const DEFAULT_DECIMALS: u8 = 24;
                     let historical_prices: Vec<PriceHistory> = config
                         .target_tokens
                         .iter()
@@ -551,21 +548,13 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                             let prices = if let Some(data) = price_data.get(token) {
                                 data.iter()
                                     .take(30)
-                                    .map(|point| {
-                                        // point.value は rate (ExchangeRate形式) なので
-                                        // ExchangeRate → TokenPrice に変換
-                                        let rate = ExchangeRate::from_raw_rate(
-                                            point.value.clone(),
-                                            DEFAULT_DECIMALS,
-                                        );
-                                        PricePoint {
-                                            timestamp: chrono::DateTime::from_naive_utc_and_offset(
-                                                point.time,
-                                                chrono::Utc,
-                                            ),
-                                            price: rate.to_price(),
-                                            volume: None,
-                                        }
+                                    .map(|point| PricePoint {
+                                        timestamp: chrono::DateTime::from_naive_utc_and_offset(
+                                            point.time,
+                                            chrono::Utc,
+                                        ),
+                                        price: point.value.clone(),
+                                        volume: None,
                                     })
                                     .collect()
                             } else {
