@@ -1809,7 +1809,7 @@ impl SameBaseTokenRates {
                 let points = rates
                     .iter()
                     .map(|r| Point {
-                        rate: r.rate().clone(),
+                        rate: r.exchange_rate.raw_rate().clone(),
                         timestamp: r.timestamp,
                     })
                     .collect();

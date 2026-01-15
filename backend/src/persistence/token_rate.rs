@@ -80,20 +80,6 @@ pub struct TokenRate {
     pub timestamp: NaiveDateTime,
 }
 
-/// 後方互換性のために rate フィールドへのアクセサを提供
-impl TokenRate {
-    /// rate の BigDecimal 値を取得（後方互換性用）
-    pub fn rate(&self) -> &BigDecimal {
-        self.exchange_rate.raw_rate()
-    }
-
-    /// decimals を取得
-    #[allow(dead_code)]
-    pub fn decimals(&self) -> u8 {
-        self.exchange_rate.decimals()
-    }
-}
-
 // 相互変換の実装
 impl TokenRate {
     /// 新しい TokenRate を作成（ExchangeRate 使用）

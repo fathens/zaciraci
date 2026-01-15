@@ -906,7 +906,7 @@ impl Mul<&ExchangeRate> for &NearValue {
     type Output = TokenAmount;
 
     fn mul(self, rhs: &ExchangeRate) -> Self::Output {
-        let smallest_units = if rhs.raw_rate().is_zero() {
+        let smallest_units = if rhs.is_zero() {
             BigDecimal::zero()
         } else {
             &self.0 * rhs.raw_rate()

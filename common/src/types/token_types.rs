@@ -204,7 +204,7 @@ impl Div<&ExchangeRate> for TokenAmount {
             "decimals mismatch: TokenAmount={}, ExchangeRate={}",
             self.decimals, rate.decimals
         );
-        if rate.raw_rate.is_zero() {
+        if rate.is_zero() {
             return NearValue::zero();
         }
         NearValue::from_near(&self.smallest_units / &rate.raw_rate)
@@ -219,7 +219,7 @@ impl Div<&ExchangeRate> for &TokenAmount {
             "decimals mismatch: TokenAmount={}, ExchangeRate={}",
             self.decimals, rate.decimals
         );
-        if rate.raw_rate.is_zero() {
+        if rate.is_zero() {
             return NearValue::zero();
         }
         NearValue::from_near(&self.smallest_units / &rate.raw_rate)

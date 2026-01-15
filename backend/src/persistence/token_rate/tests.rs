@@ -60,8 +60,8 @@ macro_rules! assert_token_rate_eq {
             $message
         );
         assert_eq!(
-            $left.rate(),
-            $right.rate(),
+            $left.exchange_rate.raw_rate(),
+            $right.exchange_rate.raw_rate(),
             "{} - レートが一致しません",
             $message
         );
@@ -160,7 +160,7 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     ];
     for (i, rate) in history.iter().enumerate() {
         assert_eq!(
-            rate.rate(),
+            rate.exchange_rate.raw_rate(),
             &expected_rates[i],
             "Record {} should have rate {}",
             i,
@@ -200,12 +200,12 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     let limited_history = TokenRate::get_history(&base, &quote, 2).await?;
     assert_eq!(limited_history.len(), 2, "Should return only 2 records");
     assert_eq!(
-        limited_history[0].rate(),
+        limited_history[0].exchange_rate.raw_rate(),
         &BigDecimal::from(1100),
         "Newest record should be first"
     );
     assert_eq!(
-        limited_history[1].rate(),
+        limited_history[1].exchange_rate.raw_rate(),
         &BigDecimal::from(1050),
         "Second newest should be second"
     );
@@ -1047,7 +1047,7 @@ async fn test_cleanup_old_records() -> Result<()> {
         println!(
             "  [{}] rate={}, timestamp={}",
             i,
-            record.rate(),
+            record.exchange_rate.raw_rate(),
             record.timestamp
         );
     }
@@ -1061,7 +1061,7 @@ async fn test_cleanup_old_records() -> Result<()> {
     // 最も古いレコードは200日前のもの（index 3）
     // レートで確認（200日前のレコードは rate = 1100）
     assert_eq!(
-        history1[3].rate(),
+        history1[3].exchange_rate.raw_rate(),
         &BigDecimal::from(1100),
         "Oldest retained record should have rate 1100 (200 days old record)"
     );

@@ -333,12 +333,12 @@ where
             match TokenRate::get_latest(&base_token, &quote_token).await {
                 Ok(Some(rate)) => {
                     // TokenAmount / &ExchangeRate = NearValue トレイトを使用
-                    if rate.rate().is_zero() {
+                    // TokenRate は既に正しい ExchangeRate を持っている
+                    // decimals は DB backfill 時に設定済み
+                    if rate.exchange_rate.is_zero() {
                         warn!(log, "Rate is zero for token"; "token" => token);
                     } else {
-                        let exchange_rate =
-                            ExchangeRate::from_raw_rate(rate.rate().clone(), amount.decimals());
-                        let token_value = amount / &exchange_rate;
+                        let token_value = amount / &rate.exchange_rate;
                         total_value = total_value + token_value;
                     }
                 }
@@ -382,7 +382,7 @@ async fn get_token_exchange_rate(token: &str) -> Result<Option<ExchangeRate>> {
     let quote_token = TokenInAccount::from(crate::ref_finance::token_account::WNEAR_TOKEN.clone());
 
     match TokenRate::get_latest(&base_token, &quote_token).await? {
-        Some(token_rate) if !token_rate.exchange_rate.raw_rate().is_zero() => {
+        Some(token_rate) if !token_rate.exchange_rate.is_zero() => {
             // TokenRate は既に ExchangeRate を持っている
             // decimals は DB backfill 時に get_token_decimals で設定済み
             Ok(Some(token_rate.exchange_rate))
