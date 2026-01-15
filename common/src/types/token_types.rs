@@ -122,6 +122,19 @@ impl ExchangeRate {
     pub fn is_zero(&self) -> bool {
         self.raw_rate.is_zero()
     }
+
+    /// wNEAR (wrap.near) の ExchangeRate を取得
+    ///
+    /// wNEAR は 1:1 で NEAR と交換可能なため、固定レート。
+    /// - raw_rate = 10^24 (1 NEAR = 10^24 yocto wNEAR)
+    /// - decimals = 24
+    pub fn wnear() -> Self {
+        use super::near_units::YOCTO_PER_NEAR;
+        Self {
+            raw_rate: BigDecimal::from(YOCTO_PER_NEAR),
+            decimals: 24,
+        }
+    }
 }
 
 impl fmt::Display for ExchangeRate {

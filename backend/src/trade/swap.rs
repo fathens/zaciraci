@@ -5,7 +5,6 @@ use crate::trade::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
 use num_traits::Zero;
 use std::collections::BTreeMap;
-use std::str::FromStr;
 use zaciraci_common::algorithm::types::TradingAction;
 use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount, YoctoAmount, YoctoValue};
 
@@ -306,11 +305,8 @@ where
 
         // wrap.nearの場合はそのまま価値とする（decimals=24）
         if token == &crate::ref_finance::token_account::WNEAR_TOKEN.to_string() {
-            // wrap.near: smallest_units = yoctoNEAR, rate = 1e24 (1 NEAR = 1e24 yocto)
-            let rate = ExchangeRate::from_raw_rate(
-                BigDecimal::from_str("1000000000000000000000000").unwrap(),
-                amount.decimals(),
-            );
+            // wrap.near: 1 NEAR = 1 wNEAR (固定レート)
+            let rate = ExchangeRate::wnear();
             let value = amount / &rate;
             total_value = total_value + value;
         } else {
@@ -363,11 +359,8 @@ where
 /// - その他: TokenRate::get_latest から取得
 async fn get_token_exchange_rate(token: &str) -> Result<Option<ExchangeRate>> {
     if token == crate::ref_finance::token_account::WNEAR_TOKEN.to_string() {
-        // wrap.near: 1 NEAR = 1e24 yocto, decimals = 24
-        return Ok(Some(ExchangeRate::from_raw_rate(
-            BigDecimal::from_str("1000000000000000000000000").unwrap(),
-            24, // wrap.near は常に 24 decimals
-        )));
+        // wrap.near: 1 NEAR = 1 wNEAR (固定レート)
+        return Ok(Some(ExchangeRate::wnear()));
     }
 
     // 他のトークン: TokenRate から取得

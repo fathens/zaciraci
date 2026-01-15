@@ -67,6 +67,22 @@ fn test_wnear_rate() {
     assert_eq!(price.to_f64(), 1.0);
 }
 
+#[test]
+fn test_exchange_rate_wnear_helper() {
+    // ExchangeRate::wnear() は from_raw_rate(1e24, 24) と等価
+    let rate = ExchangeRate::wnear();
+
+    assert_eq!(
+        rate.raw_rate(),
+        &BigDecimal::from(1_000_000_000_000_000_000_000_000u128)
+    );
+    assert_eq!(rate.decimals(), 24);
+
+    // 1 NEAR = 1 wNEAR
+    let price = rate.to_price();
+    assert!((price.to_f64() - 1.0).abs() < 0.0001);
+}
+
 // =============================================================================
 // ExchangeRate 追加テスト
 // =============================================================================
