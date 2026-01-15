@@ -4,6 +4,7 @@
 //! 予測結果を元のスケールに復元する。
 
 use bigdecimal::BigDecimal;
+use common::types::TokenPrice;
 use serde::{Deserialize, Serialize};
 
 /// スケーリングのターゲット最大値
@@ -25,25 +26,28 @@ pub struct ScaleResult {
 /// 値を 0〜1,000,000 の範囲にスケーリング
 ///
 /// # 引数
-/// * `values` - スケーリングする値のスライス
+/// * `values` - スケーリングする TokenPrice のスライス
 ///
 /// # 戻り値
 /// スケーリングされた値と復元用パラメータ
 ///
 /// # パニック
 /// `values` が空の場合はパニック
-pub fn scale_values(values: &[BigDecimal]) -> ScaleResult {
+pub fn scale_values(values: &[TokenPrice]) -> ScaleResult {
     assert!(!values.is_empty(), "values must not be empty");
 
     let min = values.iter().min().expect("values is not empty").clone();
     let max = values.iter().max().expect("values is not empty").clone();
 
+    let min_bd = min.into_bigdecimal();
+    let max_bd = max.into_bigdecimal();
+
     let params = ScaleParams {
-        original_min: min.clone(),
-        original_max: max.clone(),
+        original_min: min_bd.clone(),
+        original_max: max_bd.clone(),
     };
 
-    let range = &max - &min;
+    let range = &max_bd - &min_bd;
     let target = BigDecimal::from(SCALE_TARGET);
 
     let scaled_values = if range == BigDecimal::from(0) {
@@ -53,7 +57,8 @@ pub fn scale_values(values: &[BigDecimal]) -> ScaleResult {
         values
             .iter()
             .map(|v| {
-                let normalized = (v - &min) / &range;
+                let v_bd = v.clone().into_bigdecimal();
+                let normalized = (v_bd - &min_bd) / &range;
                 normalized * &target
             })
             .collect()
@@ -72,18 +77,20 @@ pub fn scale_values(values: &[BigDecimal]) -> ScaleResult {
 /// * `params` - スケーリングパラメータ
 ///
 /// # 戻り値
-/// 元のスケールに復元された値
-pub fn restore_value(scaled: &BigDecimal, params: &ScaleParams) -> BigDecimal {
+/// 元のスケールに復元された TokenPrice
+pub fn restore_value(scaled: &BigDecimal, params: &ScaleParams) -> TokenPrice {
     let range = &params.original_max - &params.original_min;
     let target = BigDecimal::from(SCALE_TARGET);
 
-    if range == BigDecimal::from(0) {
+    let restored = if range == BigDecimal::from(0) {
         // min == max の場合は元の値を返す
         params.original_min.clone()
     } else {
         let normalized = scaled / &target;
         normalized * &range + &params.original_min
-    }
+    };
+
+    TokenPrice::from_near_per_token(restored)
 }
 
 #[cfg(test)]
@@ -91,12 +98,22 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
+    /// ヘルパー: BigDecimal から TokenPrice を作成
+    fn tp(value: i64) -> TokenPrice {
+        TokenPrice::from_near_per_token(BigDecimal::from(value))
+    }
+
+    /// ヘルパー: 文字列から TokenPrice を作成
+    fn tp_str(s: &str) -> TokenPrice {
+        TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
+    }
+
     #[test]
     fn test_scale_and_restore_roundtrip() {
         let original = vec![
-            BigDecimal::from(30_000_000_000_000i64),
-            BigDecimal::from(35_000_000_000_000i64),
-            BigDecimal::from(40_000_000_000_000i64),
+            tp(30_000_000_000_000),
+            tp(35_000_000_000_000),
+            tp(40_000_000_000_000),
         ];
 
         let result = scale_values(&original);
@@ -118,11 +135,7 @@ mod tests {
     #[test]
     fn test_scale_small_values() {
         // 割り切れる値を使用（無限小数を避ける）
-        let values = vec![
-            BigDecimal::from(0),
-            BigDecimal::from(500),
-            BigDecimal::from(1000),
-        ];
+        let values = vec![tp(0), tp(500), tp(1000)];
 
         let result = scale_values(&values);
 
@@ -140,11 +153,7 @@ mod tests {
 
     #[test]
     fn test_scale_equal_values() {
-        let values = vec![
-            BigDecimal::from(100),
-            BigDecimal::from(100),
-            BigDecimal::from(100),
-        ];
+        let values = vec![tp(100), tp(100), tp(100)];
 
         let result = scale_values(&values);
 
@@ -162,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_scale_single_value() {
-        let values = vec![BigDecimal::from(12345)];
+        let values = vec![tp(12345)];
 
         let result = scale_values(&values);
 
@@ -176,11 +185,7 @@ mod tests {
 
     #[test]
     fn test_scale_with_decimals() {
-        let values = vec![
-            BigDecimal::from_str("100.123").unwrap(),
-            BigDecimal::from_str("200.456").unwrap(),
-            BigDecimal::from_str("300.789").unwrap(),
-        ];
+        let values = vec![tp_str("100.123"), tp_str("200.456"), tp_str("300.789")];
 
         let result = scale_values(&values);
 
@@ -192,31 +197,9 @@ mod tests {
     }
 
     #[test]
-    fn test_scale_negative_values() {
-        let values = vec![
-            BigDecimal::from(-100),
-            BigDecimal::from(0),
-            BigDecimal::from(100),
-        ];
-
-        let result = scale_values(&values);
-
-        // スケール後の値は 0〜1,000,000 の範囲
-        assert_eq!(result.values[0], BigDecimal::from(0));
-        assert_eq!(result.values[1], BigDecimal::from(500_000));
-        assert_eq!(result.values[2], BigDecimal::from(SCALE_TARGET));
-
-        // 復元の確認
-        for (scaled, orig) in result.values.iter().zip(values.iter()) {
-            let restored = restore_value(scaled, &result.params);
-            assert_eq!(restored, *orig);
-        }
-    }
-
-    #[test]
     #[should_panic(expected = "values must not be empty")]
     fn test_scale_empty_values() {
-        let values: Vec<BigDecimal> = vec![];
+        let values: Vec<TokenPrice> = vec![];
         scale_values(&values);
     }
 

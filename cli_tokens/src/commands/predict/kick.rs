@@ -1,5 +1,4 @@
 use anyhow::Result;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -19,6 +18,7 @@ use crate::utils::{
 };
 use common::api::chronos::ChronosApiClient;
 use common::prediction::ZeroShotPredictionRequest;
+use common::types::TokenPrice;
 
 /// Find the latest history file in the given directory
 async fn find_latest_history_file(dir: &Path) -> Result<Option<PathBuf>> {
@@ -337,7 +337,7 @@ fn extract_quote_token_from_path(token_file: &Path) -> Option<String> {
 
 async fn load_history_data(
     history_file: &PathBuf,
-) -> Result<(Vec<DateTime<Utc>>, Vec<BigDecimal>)> {
+) -> Result<(Vec<DateTime<Utc>>, Vec<TokenPrice>)> {
     let content = fs::read_to_string(history_file).await?;
     let history_data: HistoryFileData = serde_json::from_str(&content)?;
 
@@ -351,11 +351,11 @@ async fn load_history_data(
         .iter()
         .map(|v| DateTime::from_naive_utc_and_offset(v.time, Utc))
         .collect();
-    let values: Vec<BigDecimal> = history_data
+    let values: Vec<TokenPrice> = history_data
         .price_history
         .values
         .iter()
-        .map(|v| v.value.clone().into_bigdecimal())
+        .map(|v| v.value.clone())
         .collect();
 
     if timestamps.len() != values.len() {

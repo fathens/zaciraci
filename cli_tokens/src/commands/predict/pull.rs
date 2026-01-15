@@ -273,14 +273,11 @@ pub async fn run(args: PullArgs) -> Result<()> {
     ));
 
     for point in &mut forecast {
-        let restored_value = restore_value(&point.value.clone().into_bigdecimal(), scale_params);
-        point.value = TokenPrice::from_near_per_token(restored_value);
+        point.value = restore_value(&point.value.clone().into_bigdecimal(), scale_params);
         // Also restore confidence intervals if present
         if let Some(ref mut ci) = point.confidence_interval {
-            let restored_lower = restore_value(&ci.lower.clone().into_bigdecimal(), scale_params);
-            let restored_upper = restore_value(&ci.upper.clone().into_bigdecimal(), scale_params);
-            ci.lower = TokenPrice::from_near_per_token(restored_lower);
-            ci.upper = TokenPrice::from_near_per_token(restored_upper);
+            ci.lower = restore_value(&ci.lower.clone().into_bigdecimal(), scale_params);
+            ci.upper = restore_value(&ci.upper.clone().into_bigdecimal(), scale_params);
         }
     }
 
