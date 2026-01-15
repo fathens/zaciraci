@@ -2,6 +2,7 @@ use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
+use common::types::TokenPrice;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -78,20 +79,13 @@ async fn calculate_history_period(
 }
 
 /// Convert common PredictionPoint to cache PredictionPoint
-///
-/// NOTE: Chronos は入力データと同じスケールで値を返す。
-///       CLI が Backend API から取得した price (NEAR/token) を Chronos に送信した場合、
-///       予測値も price 形式になっている。
 fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePredictionPoint {
-    use common::types::TokenPrice;
-
-    // point.value は price 形式（NEAR/token）
     CachePredictionPoint {
         timestamp: point.timestamp,
-        price: TokenPrice::from_near_per_token(point.value.clone()),
+        price: point.value.clone(),
         confidence: point.confidence_interval.as_ref().map(|ci| {
-            // Use average of lower and upper bounds as confidence score
-            (ci.upper.clone() - ci.lower.clone()) / BigDecimal::from(2) / point.value.clone()
+            let range = ci.upper.clone().into_bigdecimal() - ci.lower.clone().into_bigdecimal();
+            range / BigDecimal::from(2) / point.value.clone().into_bigdecimal()
         }),
     }
 }
@@ -251,8 +245,8 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(common::prediction::ConfidenceInterval {
-                                    lower: lower_values[i].clone(),
-                                    upper: upper_values[i].clone(),
+                                    lower: TokenPrice::from_near_per_token(lower_values[i].clone()),
+                                    upper: TokenPrice::from_near_per_token(upper_values[i].clone()),
                                 })
                             } else {
                                 None
@@ -264,7 +258,7 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
             PredictionPoint {
                 timestamp,
-                value,
+                value: TokenPrice::from_near_per_token(value),
                 confidence_interval,
             }
         })
@@ -282,11 +276,14 @@ pub async fn run(args: PullArgs) -> Result<()> {
             .parse()
             .unwrap_or_else(|_| BigDecimal::from(1));
         for point in &mut forecast {
-            point.value = point.value.clone() * scale_bd.clone();
+            let scaled_value = point.value.clone().into_bigdecimal() * scale_bd.clone();
+            point.value = TokenPrice::from_near_per_token(scaled_value);
             // Also scale confidence intervals if present
             if let Some(ref mut ci) = point.confidence_interval {
-                ci.lower = ci.lower.clone() * scale_bd.clone();
-                ci.upper = ci.upper.clone() * scale_bd.clone();
+                let scaled_lower = ci.lower.clone().into_bigdecimal() * scale_bd.clone();
+                let scaled_upper = ci.upper.clone().into_bigdecimal() * scale_bd.clone();
+                ci.lower = TokenPrice::from_near_per_token(scaled_lower);
+                ci.upper = TokenPrice::from_near_per_token(scaled_upper);
             }
         }
     }
