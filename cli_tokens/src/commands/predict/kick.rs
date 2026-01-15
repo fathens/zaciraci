@@ -15,6 +15,7 @@ use crate::utils::{
     cache::get_price_history_dir,
     config::Config,
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
+    scaling::scale_values,
 };
 use common::api::chronos::ChronosApiClient;
 use common::prediction::ZeroShotPredictionRequest;
@@ -265,31 +266,15 @@ pub async fn run(args: KickArgs) -> Result<()> {
         (input_duration.num_milliseconds() as f64 * (args.forecast_ratio / 100.0)) as i64;
     let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
 
-    // Scale down values if they are too large to prevent numerical issues
-    let max_value = values.iter().cloned().max().unwrap_or(BigDecimal::from(0));
-    let mut scaled_values = values.clone();
-    let one_million = BigDecimal::from(1_000_000);
-    let scale_factor = if max_value > one_million {
-        let max_value_f64: f64 = max_value.to_string().parse().unwrap_or(0.0);
-        pb.set_message(format!(
-            "⚠️ Scaling down large values (max: {:.2e}) for numerical stability",
-            max_value_f64
-        ));
+    // Scale values to 0-1,000,000 range using min-max normalization
+    let scale_result = scale_values(&values);
+    let scaled_values = scale_result.values;
+    let scale_params = scale_result.params;
 
-        // Scale values to be between 0 and 1
-        for value in &mut scaled_values {
-            *value = value.clone() / max_value.clone();
-        }
-
-        pb.set_message(format!(
-            "📊 Values scaled down by factor of {:.2e} for numerical stability",
-            max_value_f64
-        ));
-
-        Some(max_value_f64)
-    } else {
-        None
-    };
+    pb.set_message(format!(
+        "📊 Values scaled to 0-1,000,000 range (original: {} - {})",
+        scale_params.original_min, scale_params.original_max
+    ));
 
     pb.set_message(format!(
         "📊 Input period: {:.1} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
@@ -319,7 +304,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
             start_pct: args.start_pct,
             end_pct: args.end_pct,
             forecast_ratio: args.forecast_ratio,
-            scale_factor,
+            scale_params,
         },
     );
 

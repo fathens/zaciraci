@@ -19,6 +19,7 @@ use crate::utils::{
     cache::{PredictionCacheParams, save_prediction_result},
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
+    scaling::restore_value,
 };
 use common::api::chronos::ChronosApiClient;
 use common::cache::CacheOutput;
@@ -264,27 +265,22 @@ pub async fn run(args: PullArgs) -> Result<()> {
         })
         .collect();
 
-    // Restore original scale if values were scaled down
-    if let Some(scale_factor) = task_info.params.scale_factor {
-        pb.set_message(format!(
-            "📊 Restoring values to original scale (factor: {:.2e})",
-            scale_factor
-        ));
+    // Restore original scale using scale params
+    let scale_params = &task_info.params.scale_params;
+    pb.set_message(format!(
+        "📊 Restoring values to original scale (range: {} - {})",
+        scale_params.original_min, scale_params.original_max
+    ));
 
-        let scale_bd: BigDecimal = scale_factor
-            .to_string()
-            .parse()
-            .unwrap_or_else(|_| BigDecimal::from(1));
-        for point in &mut forecast {
-            let scaled_value = point.value.clone().into_bigdecimal() * scale_bd.clone();
-            point.value = TokenPrice::from_near_per_token(scaled_value);
-            // Also scale confidence intervals if present
-            if let Some(ref mut ci) = point.confidence_interval {
-                let scaled_lower = ci.lower.clone().into_bigdecimal() * scale_bd.clone();
-                let scaled_upper = ci.upper.clone().into_bigdecimal() * scale_bd.clone();
-                ci.lower = TokenPrice::from_near_per_token(scaled_lower);
-                ci.upper = TokenPrice::from_near_per_token(scaled_upper);
-            }
+    for point in &mut forecast {
+        let restored_value = restore_value(&point.value.clone().into_bigdecimal(), scale_params);
+        point.value = TokenPrice::from_near_per_token(restored_value);
+        // Also restore confidence intervals if present
+        if let Some(ref mut ci) = point.confidence_interval {
+            let restored_lower = restore_value(&ci.lower.clone().into_bigdecimal(), scale_params);
+            let restored_upper = restore_value(&ci.upper.clone().into_bigdecimal(), scale_params);
+            ci.lower = TokenPrice::from_near_per_token(restored_lower);
+            ci.upper = TokenPrice::from_near_per_token(restored_upper);
         }
     }
 
