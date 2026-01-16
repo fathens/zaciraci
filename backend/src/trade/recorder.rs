@@ -2,7 +2,7 @@ use crate::logging::*;
 use anyhow::{Context, Result};
 use bigdecimal::BigDecimal;
 use uuid::Uuid;
-use zaciraci_common::types::{YoctoAmount, YoctoValue};
+use zaciraci_common::types::{TokenAmount, YoctoValue};
 
 use crate::persistence::trade_transaction::TradeTransaction;
 
@@ -41,17 +41,17 @@ impl TradeRecorder {
         &self,
         tx_id: String,
         from_token: String,
-        from_amount: YoctoAmount,
+        from_amount: TokenAmount,
         to_token: String,
-        to_amount: YoctoAmount,
+        to_amount: TokenAmount,
         price_yocto_near: YoctoValue,
     ) -> Result<TradeTransaction> {
         let log = DEFAULT.new(o!("function" => "record_trade"));
         debug!(log, "recording trade"; "from_token" => %from_token, "to_token" => %to_token, "tx_id" => %tx_id);
 
         // 型安全な値をDB層用のBigDecimalに変換
-        let from_amount_bd = from_amount.clone().into_bigdecimal();
-        let to_amount_bd = to_amount.clone().into_bigdecimal();
+        let from_amount_bd = from_amount.smallest_units().clone();
+        let to_amount_bd = to_amount.smallest_units().clone();
         let price_bd = price_yocto_near.clone().into_bigdecimal();
 
         let transaction = TradeTransaction::new(
@@ -96,9 +96,9 @@ impl TradeRecorder {
                     trade.tx_id,
                     self.batch_id.clone(),
                     trade.from_token,
-                    trade.from_amount.into_bigdecimal(),
+                    trade.from_amount.smallest_units().clone(),
                     trade.to_token,
-                    trade.to_amount.into_bigdecimal(),
+                    trade.to_amount.smallest_units().clone(),
                     trade.price_yocto_near.into_bigdecimal(),
                     Some(self.evaluation_period_id.clone()),
                 )
@@ -137,9 +137,9 @@ impl TradeRecorder {
 pub struct TradeData {
     pub tx_id: String,
     pub from_token: String,
-    pub from_amount: YoctoAmount,
+    pub from_amount: TokenAmount,
     pub to_token: String,
-    pub to_amount: YoctoAmount,
+    pub to_amount: TokenAmount,
     pub price_yocto_near: YoctoValue,
 }
 
@@ -148,9 +148,9 @@ impl TradeData {
     pub fn new(
         tx_id: String,
         from_token: String,
-        from_amount: YoctoAmount,
+        from_amount: TokenAmount,
         to_token: String,
-        to_amount: YoctoAmount,
+        to_amount: TokenAmount,
         price_yocto_near: YoctoValue,
     ) -> Self {
         Self {
@@ -197,14 +197,28 @@ pub async fn get_portfolio_timeline() -> Result<Vec<(String, BigDecimal, chrono:
 mod tests {
     use super::*;
 
+    // テスト用定数
+    const WNEAR_DECIMALS: u8 = 24;
+    const TEST_TOKEN_DECIMALS: u8 = 18;
+
+    /// テスト用の TokenAmount を作成（smallest_units の u128 値と decimals を指定）
+    fn token_amount(smallest_units: u128, decimals: u8) -> TokenAmount {
+        TokenAmount::from_smallest_units(BigDecimal::from(smallest_units), decimals)
+    }
+
+    /// テスト用の YoctoValue を作成（yocto 単位の u128 値を指定）
+    fn yocto_value(yocto: u128) -> YoctoValue {
+        YoctoValue::from_yocto(BigDecimal::from(yocto))
+    }
+
     #[tokio::test]
     async fn test_trade_recorder() {
         use crate::persistence::evaluation_period::NewEvaluationPeriod;
-        use bigdecimal::BigDecimal;
 
         // 評価期間を作成（外部キー制約のため）
-        let new_period =
-            NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+        // 初期投資額: 100 NEAR (= 100e24 yocto)
+        let initial_value = BigDecimal::from(100_000_000_000_000_000_000_000_000u128); // 100 NEAR
+        let new_period = NewEvaluationPeriod::new(initial_value, vec![]);
         let created_period = new_period.insert_async().await.unwrap();
         let period_id = created_period.period_id;
 
@@ -216,10 +230,10 @@ mod tests {
             .record_trade(
                 tx_id.clone(),
                 "wrap.near".to_string(),
-                YoctoAmount::from_u128(1000000000000000000000000u128),
+                token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
                 "akaia.tkn.near".to_string(),
-                YoctoAmount::from_u128(50000000000000000000000u128),
-                YoctoValue::from_yocto(BigDecimal::from(20000000000000000000i128)),
+                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
+                yocto_value(20_000_000_000_000_000_000),                           // 0.02 NEAR
             )
             .await
             .unwrap();
@@ -228,7 +242,11 @@ mod tests {
         assert_eq!(result.trade_batch_id, batch_id);
 
         let portfolio_value = recorder.get_portfolio_value().await.unwrap();
-        assert_eq!(portfolio_value, BigDecimal::from(20000000000000000000i128));
+        // price_yocto_near の合計値 = 0.02 NEAR (= 20e18 yocto)
+        assert_eq!(
+            portfolio_value,
+            BigDecimal::from(20_000_000_000_000_000_000u128)
+        );
 
         // Cleanup
         crate::persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
@@ -239,11 +257,11 @@ mod tests {
     #[tokio::test]
     async fn test_batch_recording() {
         use crate::persistence::evaluation_period::NewEvaluationPeriod;
-        use bigdecimal::BigDecimal;
 
         // 評価期間を作成（外部キー制約のため）
-        let new_period =
-            NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+        // 初期投資額: 100 NEAR (= 100e24 yocto)
+        let initial_value = BigDecimal::from(100_000_000_000_000_000_000_000_000u128); // 100 NEAR
+        let new_period = NewEvaluationPeriod::new(initial_value, vec![]);
         let created_period = new_period.insert_async().await.unwrap();
         let period_id = created_period.period_id;
 
@@ -253,18 +271,18 @@ mod tests {
             TradeData::new(
                 format!("test_tx1_{}", Uuid::new_v4()),
                 "wrap.near".to_string(),
-                YoctoAmount::from_u128(1000000000000000000000000u128),
+                token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
                 "token1.near".to_string(),
-                YoctoAmount::from_u128(50000000000000000000000u128),
-                YoctoValue::from_yocto(BigDecimal::from(20000000000000000000i128)),
+                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
+                yocto_value(20_000_000_000_000_000_000),                           // 0.02 NEAR
             ),
             TradeData::new(
                 format!("test_tx2_{}", Uuid::new_v4()),
                 "wrap.near".to_string(),
-                YoctoAmount::from_u128(2000000000000000000000000u128),
+                token_amount(2_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 2 wNEAR
                 "token2.near".to_string(),
-                YoctoAmount::from_u128(100000000000000000000000u128),
-                YoctoValue::from_yocto(BigDecimal::from(40000000000000000000i128)),
+                token_amount(100_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 100000 tokens
+                yocto_value(40_000_000_000_000_000_000),                            // 0.04 NEAR
             ),
         ];
 
@@ -274,7 +292,11 @@ mod tests {
         assert_eq!(results.len(), 2);
 
         let portfolio_value = recorder.get_portfolio_value().await.unwrap();
-        assert_eq!(portfolio_value, BigDecimal::from(60000000000000000000i128));
+        // price_yocto_near の合計値 = 0.02 + 0.04 = 0.06 NEAR (= 60e18 yocto)
+        assert_eq!(
+            portfolio_value,
+            BigDecimal::from(60_000_000_000_000_000_000u128)
+        );
 
         // Cleanup
         for tx_id in tx_ids {

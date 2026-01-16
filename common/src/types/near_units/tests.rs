@@ -1242,6 +1242,71 @@ fn test_yocto_value_mul_bigdecimal_ref() {
     assert_eq!(result.as_bigdecimal(), &BigDecimal::from(300));
 }
 
+// =============================================================================
+// YoctoAmount::to_token_amount テスト
+// =============================================================================
+
+#[test]
+fn test_yocto_amount_to_token_amount() {
+    // 基本的な変換: decimals=24 で TokenAmount に変換
+    let yocto_amount = YoctoAmount::from_u128(1_000_000_000_000_000_000_000_000); // 1e24 = 1 NEAR
+    let token_amount = yocto_amount.to_token_amount();
+
+    assert_eq!(token_amount.decimals(), 24);
+    assert_eq!(
+        token_amount.smallest_units(),
+        &BigDecimal::from(1_000_000_000_000_000_000_000_000u128)
+    );
+
+    // whole token 単位で 1.0 になることを確認
+    assert_eq!(token_amount.to_whole(), BigDecimal::from(1));
+}
+
+#[test]
+fn test_yocto_amount_to_token_amount_zero() {
+    // ゼロの変換
+    let zero = YoctoAmount::zero();
+    let token_amount = zero.to_token_amount();
+
+    assert_eq!(token_amount.decimals(), 24);
+    assert!(token_amount.is_zero());
+}
+
+#[test]
+fn test_yocto_amount_to_token_amount_fractional() {
+    // 小数値を持つ YoctoAmount の変換
+    let yocto_amount = YoctoAmount::from_bigdecimal(BigDecimal::from_str("500.5").unwrap());
+    let token_amount = yocto_amount.to_token_amount();
+
+    assert_eq!(token_amount.decimals(), 24);
+    assert_eq!(
+        token_amount.smallest_units(),
+        &BigDecimal::from_str("500.5").unwrap()
+    );
+}
+
+#[test]
+fn test_yocto_amount_to_token_amount_harvest_pattern() {
+    // harvest.rs で使われるパターン: wNEAR → NEAR 変換
+    // 実際の送金額を YoctoAmount として作成し、TokenAmount に変換
+    let actual_transfer = 5_000_000_000_000_000_000_000_000u128; // 5 NEAR
+    let yocto_amount = YoctoAmount::from_bigdecimal(BigDecimal::from(actual_transfer));
+
+    let from_amount = yocto_amount.to_token_amount();
+    let to_amount = yocto_amount.to_token_amount();
+
+    // wNEAR と NEAR は同じ decimals=24
+    assert_eq!(from_amount.decimals(), 24);
+    assert_eq!(to_amount.decimals(), 24);
+    assert_eq!(from_amount.smallest_units(), to_amount.smallest_units());
+
+    // 5 NEAR = 5e24 smallest_units
+    assert_eq!(
+        from_amount.smallest_units(),
+        &BigDecimal::from(5_000_000_000_000_000_000_000_000u128)
+    );
+}
+
 #[test]
 fn test_yocto_value_harvest_calculation_pattern() {
     // ハーベスト計算で使われるパターンをテスト

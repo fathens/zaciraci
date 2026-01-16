@@ -6,7 +6,7 @@ use bigdecimal::BigDecimal;
 use num_traits::Zero;
 use std::collections::BTreeMap;
 use zaciraci_common::algorithm::types::TradingAction;
-use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount, YoctoAmount, YoctoValue};
+use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount, YoctoValue};
 
 /// TradingActionに基づいて単一のアクションを実行する
 #[allow(dead_code)]
@@ -484,139 +484,39 @@ where
     );
 
     // トレード記録を保存
-    let from_amount = BigDecimal::from(swap_amount);
-    let to_amount = BigDecimal::from(out);
+    let from_amount_bd = BigDecimal::from(swap_amount);
+    let to_amount_bd = BigDecimal::from(out);
+
+    // トークンの decimals を取得して TokenAmount を作成
+    let from_decimals = crate::trade::stats::get_token_decimals(client, from_token).await;
+    let to_decimals = crate::trade::stats::get_token_decimals(client, to_token).await;
+    let from_amount = TokenAmount::from_smallest_units(from_amount_bd.clone(), from_decimals);
+    let to_amount = TokenAmount::from_smallest_units(to_amount_bd.clone(), to_decimals);
 
     // yoctoNEAR建て価格を計算
     // - from_token が wrap.near/NEAR の場合: from_amount が yoctoNEAR
     // - to_token が wrap.near/NEAR の場合: to_amount が yoctoNEAR
     // - それ以外: from_amount をベースに推定（改善の余地あり）
     let price_yocto_near = if from_token.contains("wrap.near") || from_token == "near" {
-        from_amount.clone()
+        from_amount_bd.clone()
     } else if to_token.contains("wrap.near") || to_token == "near" {
-        to_amount.clone()
+        to_amount_bd.clone()
     } else {
         // wrap.near以外の場合、from_amountをベースに推定
-        from_amount.clone()
+        from_amount_bd.clone()
     };
 
     recorder
         .record_trade(
             sent_tx.to_string(),
             from_token.to_string(),
-            YoctoAmount::from_bigdecimal(from_amount),
+            from_amount,
             to_token.to_string(),
-            YoctoAmount::from_bigdecimal(to_amount),
+            to_amount,
             YoctoValue::from_yocto(price_yocto_near),
         )
         .await?;
 
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct SwapContext<'a> {
-    from_token: &'a str,
-    to_token: &'a str,
-    swap_amount: near_primitives::types::Balance,
-    recorder: &'a TradeRecorder,
-}
-
-/// arbitrage.rsのswap_each関数に基づくswap実行とrecording
-#[allow(clippy::useless_conversion)]
-#[allow(dead_code)]
-async fn execute_swap_with_recording<A, C, W>(
-    client: &C,
-    wallet: &W,
-    preview: crate::ref_finance::path::preview::Preview<A>,
-    path: crate::ref_finance::pool_info::TokenPath,
-    context: SwapContext<'_>,
-) -> Result<()>
-where
-    A: Into<near_primitives::types::Balance> + Copy,
-    C: crate::jsonrpc::SendTx,
-    <C as crate::jsonrpc::SendTx>::Output: std::fmt::Display + crate::jsonrpc::SentTx,
-    W: crate::wallet::Wallet,
-{
-    let log = DEFAULT.new(o!(
-        "function" => "execute_swap_with_recording",
-        "path.len" => format!("{}", path.len()),
-    ));
-
-    let initial_in: near_primitives::types::Balance = preview.input_value.into();
-    let output_value: near_primitives::types::Balance = preview.output_value.into();
-    let gain: near_primitives::types::Balance = preview.gain.into();
-
-    let arg = crate::ref_finance::swap::SwapArg {
-        initial_in,
-        min_out: output_value - gain,
-    };
-
-    let (sent_tx, out) = crate::ref_finance::swap::run_swap(client, wallet, &path.0, arg).await?;
-
-    if let Err(e) = sent_tx.wait_for_success().await {
-        error!(log, "transaction failed"; "tx" => %sent_tx, "error" => %e);
-        return Err(e);
-    }
-
-    info!(log, "swap done";
-        "estimated_output" => out,
-        "tx" => %sent_tx
-    );
-
-    // 取引記録をデータベースに保存
-    if let Err(e) = record_successful_trade(
-        context.recorder,
-        sent_tx.to_string(),
-        context.from_token,
-        context.swap_amount,
-        context.to_token,
-        out,
-    )
-    .await
-    {
-        error!(log, "failed to record trade"; "tx" => %sent_tx, "error" => %e);
-        // 記録失敗はスワップの成功には影響しない
-    }
-
-    Ok(())
-}
-
-/// 成功した取引をデータベースに記録
-#[allow(dead_code)]
-async fn record_successful_trade(
-    recorder: &TradeRecorder,
-    tx_hash: String,
-    from_token: &str,
-    from_amount: u128,
-    to_token: &str,
-    to_amount: u128,
-) -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "record_successful_trade"));
-
-    // yoctoNEAR建て価格を計算（簡易版）
-    let price_yocto_near = if from_token.contains("wrap.near") || from_token == "near" {
-        BigDecimal::from(from_amount)
-    } else if to_token.contains("wrap.near") || to_token == "near" {
-        BigDecimal::from(to_amount)
-    } else {
-        // wrap.near以外の場合、from_amountをベースに推定
-        BigDecimal::from(from_amount)
-    };
-
-    recorder
-        .record_trade(
-            tx_hash.clone(),
-            from_token.to_string(),
-            YoctoAmount::from_u128(from_amount),
-            to_token.to_string(),
-            YoctoAmount::from_u128(to_amount),
-            YoctoValue::from_yocto(price_yocto_near),
-        )
-        .await?;
-
-    info!(log, "trade recorded successfully"; "tx_hash" => %tx_hash);
     Ok(())
 }
 

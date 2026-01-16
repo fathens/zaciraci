@@ -287,16 +287,21 @@ async fn execute_harvest_transfer(
     };
 
     // 5. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
-    let actual_transfer_bigdecimal = BigDecimal::from(actual_transfer_amount);
+    // wNEAR → NEAR 変換なので、どちらも decimals=24
+    let actual_transfer_yocto =
+        YoctoAmount::from_bigdecimal(BigDecimal::from(actual_transfer_amount));
+    let from_amount = actual_transfer_yocto.to_token_amount();
+    let to_amount = actual_transfer_yocto.to_token_amount();
+
     let recorder = TradeRecorder::new(period_id);
     recorder
         .record_trade(
             tx_hash, // 実際のトランザクションハッシュを使用
             "wrap.near".to_string(),
-            YoctoAmount::from_bigdecimal(actual_transfer_bigdecimal.clone()),
+            from_amount,
             "near".to_string(),
-            YoctoAmount::from_bigdecimal(actual_transfer_bigdecimal.clone()),
-            YoctoValue::from_yocto(actual_transfer_bigdecimal), // yoctoNEAR建て価格
+            to_amount,
+            actual_transfer_yocto.to_value(), // yoctoNEAR建て価格
         )
         .await?;
 

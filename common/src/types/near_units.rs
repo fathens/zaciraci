@@ -439,6 +439,19 @@ impl YoctoAmount {
     pub fn to_value(&self) -> YoctoValue {
         YoctoValue(self.0.clone())
     }
+
+    /// TokenAmount に変換
+    ///
+    /// yoctoNEAR は NEAR/wNEAR の最小単位（decimals=24）なので、
+    /// そのまま TokenAmount に変換できる。
+    ///
+    /// # 用途
+    ///
+    /// wNEAR ⇔ NEAR の変換時など、decimals が 24 で固定されている
+    /// 場合に使用する。get_token_decimals() を呼び出す必要がない。
+    pub fn to_token_amount(&self) -> TokenAmount {
+        TokenAmount::from_smallest_units(self.0.clone(), 24)
+    }
 }
 
 impl fmt::Display for YoctoAmount {
