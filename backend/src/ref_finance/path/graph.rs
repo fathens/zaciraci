@@ -290,24 +290,7 @@ where
         };
         trace!(log, "finding by dijkstra"; "from" => ?from, "to" => ?to);
         let goals = algo::dijkstra(&self.graph, from, to, |e| *e.weight());
-
-        // Dijkstra の結果を分析
-        let reachable_tokens: Vec<String> = goals
-            .keys()
-            .filter_map(|&idx| self.graph.node_weight(idx))
-            .map(|n| n.to_string())
-            .collect();
-
-        let important_reachable: Vec<&str> = reachable_tokens
-            .iter()
-            .filter(|t| t.contains("akaia") || t.contains("a0b86991") || t.contains("wrap.near"))
-            .map(|s| s.as_str())
-            .collect();
-
-        info!(log, "dijkstra complete";
-            "reachable_count" => goals.len(),
-            "important_reachable" => format!("{:?}", important_reachable),
-        );
+        info!(log, "dijkstra complete"; "reachable_count" => goals.len());
 
         let finder = GraphPath {
             graph: &self.graph,
