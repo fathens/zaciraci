@@ -44,7 +44,6 @@ diesel::table! {
         from_amount -> Numeric,
         to_token -> Varchar,
         to_amount -> Numeric,
-        price_yocto_near -> Numeric,
         timestamp -> Timestamp,
         evaluation_period_id -> Nullable<Varchar>,
     }

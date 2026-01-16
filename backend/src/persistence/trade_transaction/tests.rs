@@ -12,7 +12,6 @@ async fn test_trade_transaction_crud() {
         BigDecimal::from(1000000000000000000000000i128), // 1 NEAR
         "akaia.tkn.near".to_string(),
         BigDecimal::from(50000000000000000000000i128),
-        BigDecimal::from(20000000000000000000i128),
         None, // evaluation_period_id
     );
 
@@ -60,7 +59,6 @@ async fn test_count_by_evaluation_period() {
             BigDecimal::from(1000000000000000000000000i128),
             "akaia.tkn.near".to_string(),
             BigDecimal::from(50000000000000000000000i128),
-            BigDecimal::from(20000000000000000000i128),
             Some(period_id.clone()),
         );
 
@@ -108,7 +106,6 @@ async fn test_transaction_with_evaluation_period_id() {
         BigDecimal::from(1000000000000000000000000i128),
         "akaia.tkn.near".to_string(),
         BigDecimal::from(50000000000000000000000i128),
-        BigDecimal::from(20000000000000000000i128),
         Some(period_id.clone()),
     );
 

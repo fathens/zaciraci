@@ -6,7 +6,7 @@ use bigdecimal::BigDecimal;
 use num_traits::Zero;
 use std::collections::BTreeMap;
 use zaciraci_common::algorithm::types::TradingAction;
-use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount, YoctoValue};
+use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount};
 
 /// TradingActionに基づいて単一のアクションを実行する
 #[allow(dead_code)]
@@ -484,27 +484,12 @@ where
     );
 
     // トレード記録を保存
-    let from_amount_bd = BigDecimal::from(swap_amount);
-    let to_amount_bd = BigDecimal::from(out);
-
     // トークンの decimals を取得して TokenAmount を作成
     let from_decimals = crate::trade::stats::get_token_decimals(client, from_token).await;
     let to_decimals = crate::trade::stats::get_token_decimals(client, to_token).await;
-    let from_amount = TokenAmount::from_smallest_units(from_amount_bd.clone(), from_decimals);
-    let to_amount = TokenAmount::from_smallest_units(to_amount_bd.clone(), to_decimals);
-
-    // yoctoNEAR建て価格を計算
-    // - from_token が wrap.near/NEAR の場合: from_amount が yoctoNEAR
-    // - to_token が wrap.near/NEAR の場合: to_amount が yoctoNEAR
-    // - それ以外: from_amount をベースに推定（改善の余地あり）
-    let price_yocto_near = if from_token.contains("wrap.near") || from_token == "near" {
-        from_amount_bd.clone()
-    } else if to_token.contains("wrap.near") || to_token == "near" {
-        to_amount_bd.clone()
-    } else {
-        // wrap.near以外の場合、from_amountをベースに推定
-        from_amount_bd.clone()
-    };
+    let from_amount =
+        TokenAmount::from_smallest_units(BigDecimal::from(swap_amount), from_decimals);
+    let to_amount = TokenAmount::from_smallest_units(BigDecimal::from(out), to_decimals);
 
     recorder
         .record_trade(
@@ -513,7 +498,6 @@ where
             from_amount,
             to_token.to_string(),
             to_amount,
-            YoctoValue::from_yocto(price_yocto_near),
         )
         .await?;
 

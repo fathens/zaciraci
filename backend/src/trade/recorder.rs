@@ -1,8 +1,7 @@
 use crate::logging::*;
 use anyhow::{Context, Result};
-use bigdecimal::BigDecimal;
 use uuid::Uuid;
-use zaciraci_common::types::{TokenAmount, YoctoValue};
+use zaciraci_common::types::TokenAmount;
 
 use crate::persistence::trade_transaction::TradeTransaction;
 
@@ -44,7 +43,6 @@ impl TradeRecorder {
         from_amount: TokenAmount,
         to_token: String,
         to_amount: TokenAmount,
-        price_yocto_near: YoctoValue,
     ) -> Result<TradeTransaction> {
         let log = DEFAULT.new(o!("function" => "record_trade"));
         debug!(log, "recording trade"; "from_token" => %from_token, "to_token" => %to_token, "tx_id" => %tx_id);
@@ -52,7 +50,6 @@ impl TradeRecorder {
         // 型安全な値をDB層用のBigDecimalに変換
         let from_amount_bd = from_amount.smallest_units().clone();
         let to_amount_bd = to_amount.smallest_units().clone();
-        let price_bd = price_yocto_near.clone().into_bigdecimal();
 
         let transaction = TradeTransaction::new(
             tx_id.clone(),
@@ -61,7 +58,6 @@ impl TradeRecorder {
             from_amount_bd.clone(),
             to_token.clone(),
             to_amount_bd.clone(),
-            price_bd,
             Some(self.evaluation_period_id.clone()),
         );
 
@@ -99,7 +95,6 @@ impl TradeRecorder {
                     trade.from_amount.smallest_units().clone(),
                     trade.to_token,
                     trade.to_amount.smallest_units().clone(),
-                    trade.price_yocto_near.into_bigdecimal(),
                     Some(self.evaluation_period_id.clone()),
                 )
             })
@@ -118,13 +113,6 @@ impl TradeRecorder {
     }
 
     #[allow(dead_code)]
-    pub async fn get_portfolio_value(&self) -> Result<BigDecimal> {
-        TradeTransaction::get_portfolio_value_by_batch_async(self.batch_id.clone())
-            .await
-            .context("Failed to get portfolio value")
-    }
-
-    #[allow(dead_code)]
     pub async fn get_batch_transactions(&self) -> Result<Vec<TradeTransaction>> {
         TradeTransaction::find_by_batch_id_async(self.batch_id.clone())
             .await
@@ -140,7 +128,6 @@ pub struct TradeData {
     pub from_amount: TokenAmount,
     pub to_token: String,
     pub to_amount: TokenAmount,
-    pub price_yocto_near: YoctoValue,
 }
 
 impl TradeData {
@@ -151,7 +138,6 @@ impl TradeData {
         from_amount: TokenAmount,
         to_token: String,
         to_amount: TokenAmount,
-        price_yocto_near: YoctoValue,
     ) -> Self {
         Self {
             tx_id,
@@ -159,43 +145,14 @@ impl TradeData {
             from_amount,
             to_token,
             to_amount,
-            price_yocto_near,
         }
     }
-}
-
-#[allow(dead_code)]
-pub async fn get_latest_portfolio_value() -> Result<Option<BigDecimal>> {
-    let latest_batch = TradeTransaction::get_latest_batch_id_async().await?;
-
-    match latest_batch {
-        Some(batch_id) => {
-            let value = TradeTransaction::get_portfolio_value_by_batch_async(batch_id).await?;
-            Ok(Some(value))
-        }
-        None => Ok(None),
-    }
-}
-
-#[allow(dead_code)]
-pub async fn get_portfolio_timeline() -> Result<Vec<(String, BigDecimal, chrono::NaiveDateTime)>> {
-    let timeline = TradeTransaction::get_portfolio_timeline_async().await?;
-
-    Ok(timeline
-        .into_iter()
-        .map(|(batch_id, value, timestamp)| {
-            (
-                batch_id,
-                value.unwrap_or_else(|| BigDecimal::from(0)),
-                timestamp,
-            )
-        })
-        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bigdecimal::BigDecimal;
 
     // テスト用定数
     const WNEAR_DECIMALS: u8 = 24;
@@ -204,11 +161,6 @@ mod tests {
     /// テスト用の TokenAmount を作成（smallest_units の u128 値と decimals を指定）
     fn token_amount(smallest_units: u128, decimals: u8) -> TokenAmount {
         TokenAmount::from_smallest_units(BigDecimal::from(smallest_units), decimals)
-    }
-
-    /// テスト用の YoctoValue を作成（yocto 単位の u128 値を指定）
-    fn yocto_value(yocto: u128) -> YoctoValue {
-        YoctoValue::from_yocto(BigDecimal::from(yocto))
     }
 
     #[tokio::test]
@@ -233,20 +185,12 @@ mod tests {
                 token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
                 "akaia.tkn.near".to_string(),
                 token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
-                yocto_value(20_000_000_000_000_000_000),                           // 0.02 NEAR
             )
             .await
             .unwrap();
 
         assert_eq!(result.tx_id, tx_id);
         assert_eq!(result.trade_batch_id, batch_id);
-
-        let portfolio_value = recorder.get_portfolio_value().await.unwrap();
-        // price_yocto_near の合計値 = 0.02 NEAR (= 20e18 yocto)
-        assert_eq!(
-            portfolio_value,
-            BigDecimal::from(20_000_000_000_000_000_000u128)
-        );
 
         // Cleanup
         crate::persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
@@ -274,7 +218,6 @@ mod tests {
                 token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
                 "token1.near".to_string(),
                 token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
-                yocto_value(20_000_000_000_000_000_000),                           // 0.02 NEAR
             ),
             TradeData::new(
                 format!("test_tx2_{}", Uuid::new_v4()),
@@ -282,7 +225,6 @@ mod tests {
                 token_amount(2_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 2 wNEAR
                 "token2.near".to_string(),
                 token_amount(100_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 100000 tokens
-                yocto_value(40_000_000_000_000_000_000),                            // 0.04 NEAR
             ),
         ];
 
@@ -290,13 +232,6 @@ mod tests {
         let results = recorder.record_batch(trades).await.unwrap();
 
         assert_eq!(results.len(), 2);
-
-        let portfolio_value = recorder.get_portfolio_value().await.unwrap();
-        // price_yocto_near の合計値 = 0.02 + 0.04 = 0.06 NEAR (= 60e18 yocto)
-        assert_eq!(
-            portfolio_value,
-            BigDecimal::from(60_000_000_000_000_000_000u128)
-        );
 
         // Cleanup
         for tx_id in tx_ids {

@@ -301,7 +301,6 @@ async fn execute_harvest_transfer(
             from_amount,
             "near".to_string(),
             to_amount,
-            actual_transfer_yocto.to_value(), // yoctoNEAR建て価格
         )
         .await?;
 

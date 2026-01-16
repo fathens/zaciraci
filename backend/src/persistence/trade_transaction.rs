@@ -6,9 +6,6 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-pub type BatchSummary = (String, Option<BigDecimal>, i64, NaiveDateTime);
-pub type TimelineSummary = (String, Option<BigDecimal>, NaiveDateTime);
-
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, Insertable, AsChangeset)]
 #[diesel(table_name = trade_transactions)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
@@ -19,7 +16,6 @@ pub struct TradeTransaction {
     pub from_amount: BigDecimal,
     pub to_token: String,
     pub to_amount: BigDecimal,
-    pub price_yocto_near: BigDecimal,
     pub timestamp: NaiveDateTime,
     pub evaluation_period_id: Option<String>,
 }
@@ -33,7 +29,6 @@ impl TradeTransaction {
         from_amount: BigDecimal,
         to_token: String,
         to_amount: BigDecimal,
-        price_yocto_near: BigDecimal,
         evaluation_period_id: Option<String>,
     ) -> Self {
         Self {
@@ -43,7 +38,6 @@ impl TradeTransaction {
             from_amount,
             to_token,
             to_amount,
-            price_yocto_near,
             timestamp: chrono::Utc::now().naive_utc(),
             evaluation_period_id,
         }
@@ -129,30 +123,6 @@ impl TradeTransaction {
         result.context("Failed to find transaction by tx ID")
     }
 
-    pub fn get_portfolio_value_by_batch(
-        batch_id: &str,
-        conn: &mut PgConnection,
-    ) -> QueryResult<BigDecimal> {
-        use diesel::dsl::sum;
-
-        trade_transactions::table
-            .filter(trade_transactions::trade_batch_id.eq(batch_id))
-            .select(sum(trade_transactions::price_yocto_near))
-            .first::<Option<BigDecimal>>(conn)
-            .map(|opt| opt.unwrap_or_else(|| BigDecimal::from(0)))
-    }
-
-    pub async fn get_portfolio_value_by_batch_async(batch_id: String) -> Result<BigDecimal> {
-        let conn = connection_pool::get().await?;
-
-        let result = conn
-            .interact(move |conn| Self::get_portfolio_value_by_batch(&batch_id, conn))
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
-
-        result.context("Failed to get portfolio value")
-    }
-
     pub fn get_latest_batch_id(conn: &mut PgConnection) -> QueryResult<Option<String>> {
         trade_transactions::table
             .select(trade_transactions::trade_batch_id)
@@ -170,50 +140,6 @@ impl TradeTransaction {
             .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
 
         result.context("Failed to get latest batch ID")
-    }
-
-    pub fn get_batch_summary(
-        conn: &mut PgConnection,
-        limit: i64,
-    ) -> QueryResult<Vec<BatchSummary>> {
-        use diesel::dsl::{count, min, sum};
-
-        trade_transactions::table
-            .group_by(trade_transactions::trade_batch_id)
-            .select((
-                trade_transactions::trade_batch_id,
-                sum(trade_transactions::price_yocto_near),
-                count(trade_transactions::tx_id),
-                min(trade_transactions::timestamp).assume_not_null(),
-            ))
-            .order(min(trade_transactions::timestamp).desc())
-            .limit(limit)
-            .load(conn)
-    }
-
-    pub fn get_portfolio_timeline(conn: &mut PgConnection) -> QueryResult<Vec<TimelineSummary>> {
-        use diesel::dsl::{min, sum};
-
-        trade_transactions::table
-            .group_by(trade_transactions::trade_batch_id)
-            .select((
-                trade_transactions::trade_batch_id,
-                sum(trade_transactions::price_yocto_near),
-                min(trade_transactions::timestamp).assume_not_null(),
-            ))
-            .order(min(trade_transactions::timestamp).asc())
-            .load(conn)
-    }
-
-    pub async fn get_portfolio_timeline_async() -> Result<Vec<TimelineSummary>> {
-        let conn = connection_pool::get().await?;
-
-        let result = conn
-            .interact(Self::get_portfolio_timeline)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
-
-        result.context("Failed to get portfolio timeline")
     }
 
     pub async fn delete_by_tx_id_async(tx_id: String) -> Result<()> {
