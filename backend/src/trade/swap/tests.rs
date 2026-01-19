@@ -2,6 +2,11 @@ use super::*;
 use bigdecimal::BigDecimal;
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use zaciraci_common::types::TokenOutAccount;
+
+fn token_out(s: &str) -> TokenOutAccount {
+    s.parse().unwrap()
+}
 
 // Note: swap.rs の関数は外部依存(jsonrpc, wallet, database)が多いため、
 // ここでは構造体やロジックのユニットテストのみを実施します。
@@ -18,17 +23,21 @@ fn test_trading_action_hold() {
     }
 }
 
+fn token(s: &str) -> zaciraci_common::types::TokenOutAccount {
+    s.parse().unwrap()
+}
+
 #[test]
 fn test_trading_action_sell_structure() {
     let action = TradingAction::Sell {
-        token: "token1.near".to_string(),
-        target: "token2.near".to_string(),
+        token: token("token1.near"),
+        target: token("token2.near"),
     };
 
     match action {
-        TradingAction::Sell { token, target } => {
-            assert_eq!(token, "token1.near");
-            assert_eq!(target, "token2.near");
+        TradingAction::Sell { token: t, target } => {
+            assert_eq!(t, token("token1.near"));
+            assert_eq!(target, token("token2.near"));
         }
         _ => panic!("Expected Sell action"),
     }
@@ -37,8 +46,8 @@ fn test_trading_action_sell_structure() {
 #[test]
 fn test_trading_action_rebalance_structure() {
     let mut weights = BTreeMap::new();
-    weights.insert("token1.near".to_string(), 0.5);
-    weights.insert("token2.near".to_string(), 0.5);
+    weights.insert(token_out("token1.near"), 0.5);
+    weights.insert(token_out("token2.near"), 0.5);
 
     let action = TradingAction::Rebalance {
         target_weights: weights.clone(),
@@ -47,8 +56,8 @@ fn test_trading_action_rebalance_structure() {
     match action {
         TradingAction::Rebalance { target_weights } => {
             assert_eq!(target_weights.len(), 2);
-            assert_eq!(target_weights.get("token1.near"), Some(&0.5));
-            assert_eq!(target_weights.get("token2.near"), Some(&0.5));
+            assert_eq!(target_weights.get(&token_out("token1.near")), Some(&0.5));
+            assert_eq!(target_weights.get(&token_out("token2.near")), Some(&0.5));
         }
         _ => panic!("Expected Rebalance action"),
     }

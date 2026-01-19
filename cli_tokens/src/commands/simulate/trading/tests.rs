@@ -2,11 +2,15 @@ use super::*;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::algorithm::{PredictionData, TradingAction};
-use common::types::TokenPrice;
+use common::types::{TokenOutAccount, TokenPrice};
 use std::str::FromStr;
 
 fn price(s: &str) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
+}
+
+fn token(s: &str) -> TokenOutAccount {
+    s.parse().unwrap()
 }
 
 // Note: trading.rsの関数は外部API(Chronos)への依存が多いため、
@@ -23,13 +27,13 @@ fn test_trading_action_execution_structure() {
     }
 
     let sell = TradingAction::Sell {
-        token: "token1.near".to_string(),
-        target: "token2.near".to_string(),
+        token: token("token1.near"),
+        target: token("token2.near"),
     };
     match sell {
-        TradingAction::Sell { token, target } => {
-            assert_eq!(token, "token1.near");
-            assert_eq!(target, "token2.near");
+        TradingAction::Sell { token: t, target } => {
+            assert_eq!(t, token("token1.near"));
+            assert_eq!(target, token("token2.near"));
         }
         _ => panic!("Expected Sell action"),
     }
@@ -38,14 +42,14 @@ fn test_trading_action_execution_structure() {
 #[test]
 fn test_prediction_data_structure() {
     let prediction = PredictionData {
-        token: "test.tkn.near".to_string(),
+        token: token("test.tkn.near"),
         current_price: price("1.5"),
         predicted_price_24h: price("1.8"),
         timestamp: Utc::now(),
         confidence: Some(BigDecimal::from_str("0.85").unwrap()),
     };
 
-    assert_eq!(prediction.token, "test.tkn.near");
+    assert_eq!(prediction.token, token("test.tkn.near"));
     assert_eq!(
         prediction.current_price.as_bigdecimal(),
         price("1.5").as_bigdecimal()

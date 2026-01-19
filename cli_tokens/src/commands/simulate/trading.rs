@@ -53,7 +53,9 @@ async fn try_load_from_cache(
 
             // キャッシュには TokenPrice として保存されているのでそのまま使用
             return Ok(Some(PredictionData {
-                token: token.to_string(),
+                token: token
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("Invalid token: {:?}", e))?,
                 current_price,
                 predicted_price_24h: last_prediction.price.clone(),
                 timestamp: pred_start,
@@ -261,21 +263,24 @@ pub async fn generate_api_predictions(
                                         }
 
                                         // Chronos の予測値は price 形式（NEAR/token）
-                                        predictions.push(PredictionData {
-                                            token: token.clone(),
-                                            current_price: TokenPrice::from_near_per_token(
-                                                current_price.clone(),
-                                            ),
-                                            predicted_price_24h: TokenPrice::from_near_per_token(
-                                                predicted_value.clone(),
-                                            ),
-                                            timestamp: current_time,
-                                            confidence: chronos_result
-                                                .metrics
-                                                .as_ref()
-                                                .and_then(|m| m.get("confidence"))
-                                                .cloned(),
-                                        });
+                                        if let Ok(token_out) = token.parse() {
+                                            predictions.push(PredictionData {
+                                                token: token_out,
+                                                current_price: TokenPrice::from_near_per_token(
+                                                    current_price.clone(),
+                                                ),
+                                                predicted_price_24h:
+                                                    TokenPrice::from_near_per_token(
+                                                        predicted_value.clone(),
+                                                    ),
+                                                timestamp: current_time,
+                                                confidence: chronos_result
+                                                    .metrics
+                                                    .as_ref()
+                                                    .and_then(|m| m.get("confidence"))
+                                                    .cloned(),
+                                            });
+                                        }
                                         if verbose {
                                             println!(
                                                 "✅ Got prediction for {}: {:.4} -> {:.4}",
@@ -404,9 +409,10 @@ pub fn execute_trading_action(
         TradingAction::Hold => Ok(None),
 
         TradingAction::Sell { token: _, target } => {
+            let target_str = target.to_string();
             let target_price = ctx
                 .all_prices
-                .get(&target)
+                .get(&target_str)
                 .copied()
                 .unwrap_or(TokenPriceF64::zero());
             if target_price.is_zero() {
@@ -458,7 +464,7 @@ pub fn execute_trading_action(
 
             // ポートフォリオ更新
             ctx.holdings.remove(ctx.current_token);
-            ctx.holdings.insert(target.clone(), new_amount);
+            ctx.holdings.insert(target_str.clone(), new_amount);
 
             // ポートフォリオ価値をNEAR単位で計算（型安全な変換を使用）
             let portfolio_before_yocto = ctx.current_amount * ctx.current_price;
@@ -472,7 +478,7 @@ pub fn execute_trading_action(
             Ok(Some(TradeExecution {
                 timestamp: ctx.timestamp,
                 from_token: ctx.current_token.to_string(),
-                to_token: target,
+                to_token: target_str,
                 amount: new_amount, // 購入するトークン数量
                 executed_price,     // 購入トークンの価格（無次元比率）
                 cost: TradingCost {
@@ -491,9 +497,10 @@ pub fn execute_trading_action(
         }
 
         TradingAction::Switch { from: _, to } => {
+            let to_str = to.to_string();
             let target_price = ctx
                 .all_prices
-                .get(&to)
+                .get(&to_str)
                 .copied()
                 .unwrap_or(TokenPriceF64::zero());
             if target_price.is_zero() {
@@ -545,7 +552,7 @@ pub fn execute_trading_action(
 
             // ポートフォリオ更新
             ctx.holdings.remove(ctx.current_token);
-            ctx.holdings.insert(to.clone(), new_amount);
+            ctx.holdings.insert(to_str.clone(), new_amount);
 
             // ポートフォリオ価値をNEAR単位で計算（型安全な変換を使用）
             let portfolio_before_yocto = ctx.current_amount * ctx.current_price;
@@ -559,7 +566,7 @@ pub fn execute_trading_action(
             Ok(Some(TradeExecution {
                 timestamp: ctx.timestamp,
                 from_token: ctx.current_token.to_string(),
-                to_token: to,
+                to_token: to_str,
                 amount: new_amount, // 購入するトークン数量
                 executed_price,     // 購入トークンの価格（無次元比率）
                 cost: TradingCost {
@@ -1089,7 +1096,7 @@ impl From<&PredictionData> for TokenOpportunity {
             };
 
         TokenOpportunity {
-            token: prediction.token.clone(),
+            token: prediction.token.to_string(),
             expected_return,
             confidence: prediction
                 .confidence

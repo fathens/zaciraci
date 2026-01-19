@@ -1,7 +1,9 @@
 use super::*;
 use crate::ref_finance::token_account::TokenAccount;
 use std::str::FromStr;
-use zaciraci_common::types::TokenPrice;
+use zaciraci_common::types::{
+    TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount, TokenPrice,
+};
 
 fn price_from_int(v: i64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from(v))
@@ -364,8 +366,8 @@ fn test_calculate_liquidity_score() {
 
     // ケース1: 取引量データなし
     let history_no_volume = PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -384,8 +386,8 @@ fn test_calculate_liquidity_score() {
 
     // ケース2: 小さい取引量
     let history_small_volume = PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -408,8 +410,8 @@ fn test_calculate_liquidity_score() {
 
     // ケース3: 大きい取引量
     let history_large_volume = PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -555,8 +557,8 @@ async fn test_calculate_enhanced_liquidity_score() {
 
     // テスト用の取引履歴（中程度の取引量）
     let history = zaciraci_common::algorithm::types::PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![zaciraci_common::algorithm::types::PricePoint {
             timestamp: chrono::Utc::now(),
             price: price_from_int(100),
@@ -663,8 +665,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース1: データポイントが不足
     let history_insufficient = PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![PricePoint {
             timestamp: Utc::now(),
             price: price_from_int(100),
@@ -676,8 +678,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース2: 価格変動なし
     let history_no_change = PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -705,8 +707,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース3: 価格変動あり
     let history_with_change = PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -733,8 +735,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース4: ゼロ価格を含む（スキップされるべき）
     let history_with_zero = PriceHistory {
-        token: "test.token".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),

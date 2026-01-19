@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::types::{NearValue, TokenPrice};
+use crate::types::{NearValue, TokenOutAccount, TokenPrice};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
@@ -15,7 +15,7 @@ use super::types::*;
 pub struct PortfolioData {
     pub tokens: Vec<TokenData>,
     /// 予測価格（TokenPrice: NEAR/token）
-    pub predictions: BTreeMap<String, TokenPrice>,
+    pub predictions: BTreeMap<TokenOutAccount, TokenPrice>,
     pub historical_prices: Vec<PriceHistory>,
     pub correlation_matrix: Option<Array2<f64>>,
 }
@@ -90,7 +90,7 @@ const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
 /// `TokenPrice.expected_return()` を使用して符号の間違いを防ぐ。
 pub fn calculate_expected_returns(
     tokens: &[TokenInfo],
-    predictions: &BTreeMap<String, TokenPrice>,
+    predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
 ) -> Vec<f64> {
     tokens
         .iter()
@@ -124,7 +124,7 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
             // Price型（比率）をf64に変換
             let price_f64 = price_point.price.to_string().parse::<f64>().unwrap_or(0.0);
             token_prices
-                .entry(price_data.token.clone())
+                .entry(price_data.token.to_string())
                 .or_default()
                 .push((price_point.timestamp, price_f64));
         }
@@ -136,8 +136,9 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
         historical_prices
             .iter()
             .filter_map(|p| {
-                if seen.insert(p.token.clone()) {
-                    Some(p.token.clone())
+                let token_str = p.token.to_string();
+                if seen.insert(token_str.clone()) {
+                    Some(token_str)
                 } else {
                     None
                 }
@@ -623,7 +624,7 @@ fn calculate_token_score(
     let composite = sharpe.max(0.0) * 0.4 + liquidity * 0.2 + confidence * 0.2 + vol_rank * 0.2;
 
     TokenScore {
-        token: token.symbol.clone(),
+        token: token.symbol.to_string(),
         sharpe_ratio: sharpe,
         liquidity_score: liquidity,
         prediction_confidence: confidence,
@@ -635,7 +636,7 @@ fn calculate_token_score(
 /// 最適なトークンを選択
 pub fn select_optimal_tokens(
     tokens: &[TokenData],
-    predictions: &BTreeMap<String, TokenPrice>,
+    predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
     historical_prices: &[PriceHistory],
     max_tokens: usize,
 ) -> Vec<TokenData> {
@@ -710,8 +711,8 @@ fn select_uncorrelated_tokens(
         let mut correlations = Vec::new();
         for selected_token in &selected {
             let correlation = calculate_token_correlation(
-                &token.symbol,
-                &selected_token.symbol,
+                &token.symbol.to_string(),
+                &selected_token.symbol.to_string(),
                 historical_prices,
             );
             correlations.push(correlation.abs());
@@ -741,11 +742,11 @@ fn calculate_token_correlation(
     // トークンの価格履歴を取得
     let prices1 = historical_prices
         .iter()
-        .find(|p| p.token == token1)
+        .find(|p| p.token.to_string() == token1)
         .map(|p| &p.prices);
     let prices2 = historical_prices
         .iter()
-        .find(|p| p.token == token2)
+        .find(|p| p.token.to_string() == token2)
         .map(|p| &p.prices);
 
     if let (Some(p1), Some(p2)) = (prices1, prices2) {
@@ -803,7 +804,7 @@ pub async fn execute_portfolio_optimization(
     );
 
     // 選択されたトークンのみでポートフォリオを構築
-    let selected_predictions: BTreeMap<String, TokenPrice> = portfolio_data
+    let selected_predictions: BTreeMap<TokenOutAccount, TokenPrice> = portfolio_data
         .predictions
         .iter()
         .filter(|(symbol, _)| selected_tokens.iter().any(|t| &t.symbol == *symbol))
@@ -871,7 +872,7 @@ pub async fn execute_portfolio_optimization(
     };
 
     // 重みをBTreeMapに変換（順序安定化のため）
-    let weight_map: BTreeMap<String, f64> = selected_tokens
+    let weight_map: BTreeMap<TokenOutAccount, f64> = selected_tokens
         .iter()
         .zip(optimal_weights.iter())
         .filter(|&(_, weight)| *weight > 0.0)

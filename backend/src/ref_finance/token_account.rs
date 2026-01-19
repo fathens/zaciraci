@@ -15,6 +15,9 @@ pub static WNEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
     TokenAccount(id.parse().unwrap())
 });
 
+/// ネイティブ NEAR を表す特別なトークン（mainnet/testnet で同じ）
+pub static NEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| TokenAccount("near".parse().unwrap()));
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct TokenAccount(AccountId);
 

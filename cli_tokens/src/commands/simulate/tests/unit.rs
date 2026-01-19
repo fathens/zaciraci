@@ -10,7 +10,7 @@
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::stats::ValueAtTime;
-use common::types::TokenPrice;
+use common::types::{TokenOutAccount, TokenPrice};
 use std::collections::HashMap;
 
 use super::super::data::get_prices_at_time;
@@ -22,6 +22,10 @@ use super::super::{NearValueF64, TokenAmountF64, TokenPriceF64, YoctoValueF64};
 
 fn price(v: i32) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from(v))
+}
+
+fn token(s: &str) -> TokenOutAccount {
+    s.parse().unwrap()
 }
 use common::algorithm::PredictionData;
 
@@ -226,7 +230,7 @@ fn test_trading_cost_calculation() {
 fn test_calculate_confidence_adjusted_return() {
     // price 100 → price 110 は10%の価格上昇
     let prediction = PredictionData {
-        token: "test_token".to_string(),
+        token: token("test_token"),
         current_price: price(100),
         predicted_price_24h: price(110), // 価格が 10% 上昇
         timestamp: Utc::now(),
@@ -258,21 +262,21 @@ fn test_rank_tokens_by_momentum() {
     // price 形式: price 上昇 = 正のリターン
     let predictions = vec![
         PredictionData {
-            token: "token1".to_string(),
+            token: token("token1"),
             current_price: price(100),
             predicted_price_24h: price(105), // 5% growth
             timestamp: Utc::now(),
             confidence: Some("0.8".parse().unwrap()),
         },
         PredictionData {
-            token: "token2".to_string(),
+            token: token("token2"),
             current_price: price(100),
             predicted_price_24h: price(110), // 10% growth
             timestamp: Utc::now(),
             confidence: Some("0.6".parse().unwrap()),
         },
         PredictionData {
-            token: "token3".to_string(),
+            token: token("token3"),
             current_price: price(100),
             predicted_price_24h: price(95), // -5% decline
             timestamp: Utc::now(),

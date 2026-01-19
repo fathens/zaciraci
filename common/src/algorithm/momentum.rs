@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::types::{NearValue, TokenAmount, TokenPrice};
+use crate::types::{NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice};
 use bigdecimal::BigDecimal;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,7 @@ pub fn calculate_confidence_adjusted_return(prediction: &PredictionData) -> f64 
 /// トークンをモメンタムでランキング
 pub fn rank_tokens_by_momentum(
     predictions: Vec<PredictionData>,
-) -> Vec<(String, f64, Option<f64>)> {
+) -> Vec<(TokenOutAccount, f64, Option<f64>)> {
     let mut ranked: Vec<_> = predictions
         .iter()
         .map(|p| {
@@ -80,7 +80,7 @@ pub fn rank_tokens_by_momentum(
 ///
 /// * `current_token` - 現在保有しているトークン
 /// * `current_return` - 現在のトークンの期待リターン率（無次元）
-/// * `ranked_tokens` - ランキングされたトークン（トークン名, 期待リターン率, 信頼度）
+/// * `ranked_tokens` - ランキングされたトークン（トークン, 期待リターン率, 信頼度）
 /// * `holding_amount` - 保有量（TokenAmount）
 /// * `holding_price` - 保有トークンの価格（TokenPrice: NEAR/token）
 /// * `min_profit_threshold` - 最小利益閾値（無次元、例: 0.05 = 5%）
@@ -88,9 +88,9 @@ pub fn rank_tokens_by_momentum(
 /// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
 #[allow(clippy::too_many_arguments)]
 pub fn make_trading_decision(
-    current_token: &str,
+    current_token: &TokenOutAccount,
     current_return: f64,
-    ranked_tokens: &[(String, f64, Option<f64>)],
+    ranked_tokens: &[(TokenOutAccount, f64, Option<f64>)],
     holding_amount: &TokenAmount,
     holding_price: &TokenPrice,
     min_profit_threshold: f64,
@@ -105,7 +105,7 @@ pub fn make_trading_decision(
     let best_token = &ranked_tokens[0];
 
     // 現在のトークンが最良の場合はHold
-    if best_token.0 == current_token {
+    if &best_token.0 == current_token {
         return TradingAction::Hold;
     }
 
@@ -119,7 +119,7 @@ pub fn make_trading_decision(
     // 現在のトークンの期待リターンが閾値以下
     if current_return < min_profit_threshold {
         return TradingAction::Sell {
-            token: current_token.to_string(),
+            token: current_token.clone(),
             target: best_token.0.clone(),
         };
     }
@@ -128,7 +128,7 @@ pub fn make_trading_decision(
     let confidence_factor = best_token.2.unwrap_or(0.5);
     if best_token.1 > current_return * switch_multiplier * confidence_factor {
         return TradingAction::Switch {
-            from: current_token.to_string(),
+            from: current_token.clone(),
             to: best_token.0.clone(),
         };
     }
@@ -154,7 +154,7 @@ pub async fn execute_momentum_strategy(
     let ranked = rank_tokens_by_momentum(predictions.clone());
 
     // 予測データをHashMapに変換（高速検索用）
-    let prediction_map: HashMap<String, &PredictionData> =
+    let prediction_map: HashMap<TokenOutAccount, &PredictionData> =
         predictions.iter().map(|p| (p.token.clone(), p)).collect();
 
     // 各保有トークンについて判断
@@ -205,14 +205,14 @@ pub async fn execute_momentum_strategy(
 pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     prediction_provider: &P,
     current_holdings: Vec<TokenHolding>,
-    quote_token: &str,
+    quote_token: &TokenInAccount,
     history_days: i64,
     min_profit_threshold: f64,
     switch_multiplier: f64,
     min_trade_value: &NearValue,
 ) -> Result<ExecutionReport> {
     // 保有トークンの予測を取得
-    let tokens: Vec<String> = current_holdings.iter().map(|h| h.token.clone()).collect();
+    let tokens: Vec<TokenOutAccount> = current_holdings.iter().map(|h| h.token.clone()).collect();
 
     let predictions_map = prediction_provider
         .predict_multiple_tokens(tokens.clone(), quote_token, history_days, 24)

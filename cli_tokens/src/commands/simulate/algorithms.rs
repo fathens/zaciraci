@@ -8,7 +8,7 @@ use anyhow::Result;
 #[allow(unused_imports)]
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Utc};
-use common::types::{ExchangeRate, NearValue};
+use common::types::{ExchangeRate, NearValue, TokenOutAccount, TokenPrice};
 use std::collections::{BTreeMap, HashMap};
 
 /// Run momentum simulation
@@ -152,10 +152,15 @@ pub(crate) async fn run_momentum_timestep_simulation(
                 let mut token_holdings = Vec::new();
                 for (token, amount) in &current_holdings {
                     if let Some(&price) = current_prices.get(token) {
+                        // String を TokenOutAccount に変換
+                        let token_out: TokenOutAccount = match token.parse() {
+                            Ok(t) => t,
+                            Err(_) => continue,
+                        };
                         // amount: TokenAmountF64 -> TokenAmount
                         // amount.decimals() と price は同じ decimals を使用
                         token_holdings.push(TokenHolding {
-                            token: token.clone(),
+                            token: token_out,
                             amount: amount.to_bigdecimal(),
                             current_rate: ExchangeRate::from_price(
                                 &price.to_bigdecimal(),
@@ -184,18 +189,23 @@ pub(crate) async fn run_momentum_timestep_simulation(
                     // 取引アクションを実行
                     for action in execution_report.actions {
                         match action {
-                            TradingAction::Sell { token, target } => {
+                            TradingAction::Sell {
+                                ref token,
+                                ref target,
+                            } => {
+                                let token_str = token.to_string();
+                                let target_str = target.to_string();
                                 if let (
                                     Some(&current_amount),
                                     Some(&current_price),
                                     Some(&_target_price),
                                 ) = (
-                                    current_holdings.get(&token),
-                                    current_prices.get(&token),
-                                    current_prices.get(&target),
+                                    current_holdings.get(&token_str),
+                                    current_prices.get(&token_str),
+                                    current_prices.get(&target_str),
                                 ) {
                                     let mut trade_ctx = TradeContext {
-                                        current_token: &token,
+                                        current_token: &token_str,
                                         current_amount,
                                         current_price,
                                         all_prices: &current_prices,
@@ -223,18 +233,20 @@ pub(crate) async fn run_momentum_timestep_simulation(
                                     }
                                 }
                             }
-                            TradingAction::Switch { from, to } => {
+                            TradingAction::Switch { ref from, ref to } => {
+                                let from_str = from.to_string();
+                                let to_str = to.to_string();
                                 if let (
                                     Some(&current_amount),
                                     Some(&from_price),
                                     Some(&_to_price),
                                 ) = (
-                                    current_holdings.get(&from),
-                                    current_prices.get(&from),
-                                    current_prices.get(&to),
+                                    current_holdings.get(&from_str),
+                                    current_prices.get(&from_str),
+                                    current_prices.get(&to_str),
                                 ) {
                                     let mut trade_ctx = TradeContext {
-                                        current_token: &from,
+                                        current_token: &from_str,
                                         current_amount,
                                         current_price: from_price,
                                         all_prices: &current_prices,
@@ -520,8 +532,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     let mut token_data = Vec::new();
                     for token in &config.target_tokens {
                         if let Some(&current_price) = current_prices.get(token) {
+                            let token_out: TokenOutAccount = match token.parse() {
+                                Ok(t) => t,
+                                Err(_) => continue,
+                            };
                             token_data.push(TokenData {
-                                symbol: token.clone(),
+                                symbol: token_out,
                                 current_rate: ExchangeRate::from_price(
                                     &current_price.to_bigdecimal(),
                                     TOKEN_DECIMALS,
@@ -534,17 +550,18 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     }
 
                     // ポートフォリオデータを構築（TokenPrice で型安全）
-                    let mut predictions_map = HashMap::new();
+                    // TokenOutAccount をキーとして使用
+                    let mut predictions_map: HashMap<TokenOutAccount, TokenPrice> = HashMap::new();
                     for pred in predictions {
-                        // PredictionData は既に TokenPrice を持っているのでそのまま使用
-                        predictions_map.insert(pred.token, pred.predicted_price_24h);
+                        // PredictionData.token は既に TokenOutAccount
+                        predictions_map.insert(pred.token.clone(), pred.predicted_price_24h);
                     }
 
                     // 履歴価格データを構築（簡略版）
                     let historical_prices: Vec<PriceHistory> = config
                         .target_tokens
                         .iter()
-                        .map(|token| {
+                        .filter_map(|token| {
                             let prices = if let Some(data) = price_data.get(token) {
                                 data.iter()
                                     .take(30)
@@ -561,11 +578,11 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                 Vec::new()
                             };
 
-                            PriceHistory {
-                                token: token.clone(),
-                                quote_token: config.quote_token.clone(),
+                            Some(PriceHistory {
+                                token: token.parse().ok()?,
+                                quote_token: config.quote_token.parse().ok()?,
                                 prices,
-                            }
+                            })
                         })
                         .collect();
 
@@ -579,8 +596,10 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     // 現在のホールディングをWalletInfoに変換（TokenAmount）
                     let mut holdings_for_wallet = BTreeMap::new();
                     for (token, amount) in &current_holdings {
-                        // TokenAmountF64 → TokenAmount
-                        holdings_for_wallet.insert(token.clone(), amount.to_bigdecimal());
+                        // String → TokenOutAccount、TokenAmountF64 → TokenAmount
+                        if let Ok(token_out) = token.parse::<TokenOutAccount>() {
+                            holdings_for_wallet.insert(token_out, amount.to_bigdecimal());
+                        }
                     }
 
                     // 総価値を計算（NEAR単位、BigDecimal精度）
@@ -631,7 +650,10 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
                                     // 目標配分に基づいてリバランス
                                     for (token, target_weight) in target_weights {
-                                        if let Some(&current_price) = current_prices.get(&token) {
+                                        // TokenOutAccount → String for HashMap access
+                                        let token_str = token.to_string();
+                                        if let Some(&current_price) = current_prices.get(&token_str)
+                                        {
                                             // 目標価値を計算（NEAR単位）
                                             // 型安全な乗算を使用: NearValueF64 * f64 = NearValueF64
                                             let target_value_near =
@@ -654,7 +676,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             // 現在の保有量と目標量の差を計算
                                             // TODO: トークンごとの decimals を使用する
                                             let current_amount = current_holdings
-                                                .get(&token)
+                                                .get(&token_str)
                                                 .copied()
                                                 .unwrap_or(TokenAmountF64::zero(24));
                                             // 型安全な演算子を使用
@@ -676,8 +698,10 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
                                             if diff_abs > effective_threshold {
                                                 // 保有量の1%以上の差がある場合のみリバランス
-                                                current_holdings
-                                                    .insert(token.clone(), target_amount_limited);
+                                                current_holdings.insert(
+                                                    token_str.clone(),
+                                                    target_amount_limited,
+                                                );
                                                 // 絶対値でコスト計算
                                                 let diff_value_yocto = diff_abs * current_price;
                                                 let diff_value_near = diff_value_yocto.to_near();
@@ -691,7 +715,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                 trades.push(TradeExecution {
                                                     timestamp: current_time,
                                                     from_token: config.quote_token.clone(),
-                                                    to_token: token.clone(),
+                                                    to_token: token_str.clone(),
                                                     amount: diff_abs,
                                                     executed_price: current_price,
                                                     cost: TradingCost {

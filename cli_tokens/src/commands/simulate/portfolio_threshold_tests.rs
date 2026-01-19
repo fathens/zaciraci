@@ -5,11 +5,21 @@ use common::algorithm::portfolio::{
     PortfolioData, execute_portfolio_optimization, needs_rebalancing,
 };
 use common::algorithm::{PriceHistory, PricePoint, TokenData, WalletInfo};
-use common::types::{ExchangeRate, NearValue, TokenAmount, TokenPrice};
+use common::types::{
+    ExchangeRate, NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice,
+};
 use std::collections::{BTreeMap, HashMap};
 
 fn price(v: f64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
+}
+
+fn token_out(s: &str) -> TokenOutAccount {
+    s.parse().unwrap()
+}
+
+fn token_in(s: &str) -> TokenInAccount {
+    s.parse().unwrap()
 }
 
 /// ExchangeRate を price (NEAR/token) から作成するヘルパー
@@ -26,10 +36,10 @@ fn create_test_portfolio_data() -> PortfolioData {
     // current_price = 0.001 NEAR/token
     // 10% リターン → predicted_price = 0.001 * 1.1 = 0.0011
     let mut predictions = HashMap::new();
-    predictions.insert("test.token".to_string(), price(0.001 * 1.1)); // 10%のリターン予測
+    predictions.insert(token_out("test.token"), price(0.001 * 1.1)); // 10%のリターン予測
 
     let tokens = vec![TokenData {
-        symbol: "test.token".to_string(),
+        symbol: "test.token".parse().unwrap(),
         current_rate: rate_from_price(0.001), // 0.001 NEAR/token
         historical_volatility: 0.2,
         liquidity_score: Some(1.0),
@@ -44,8 +54,8 @@ fn create_test_portfolio_data() -> PortfolioData {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         historical_prices.push(PriceHistory {
-            token: "test.token".to_string(),
-            quote_token: "wrap.near".to_string(),
+            token: token_out("test.token"),
+            quote_token: token_in("wrap.near"),
             prices: vec![PricePoint {
                 timestamp: Utc.from_utc_datetime(&date),
                 price: price(0.001 * (1.0 + i as f64 * 0.01)), // わずかな価格変動
@@ -65,7 +75,7 @@ fn create_test_portfolio_data() -> PortfolioData {
 fn create_test_wallet_info() -> WalletInfo {
     WalletInfo {
         holdings: BTreeMap::from([(
-            "test.token".to_string(),
+            token_out("test.token"),
             TokenAmount::from_smallest_units(BigDecimal::from(500000), 18), // 500000 smallest units
         )]),
         total_value: NearValue::from_near(BigDecimal::from(1000)), // 1000 NEAR

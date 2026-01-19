@@ -293,13 +293,18 @@ async fn execute_harvest_transfer(
     let from_amount = actual_transfer_yocto.to_token_amount();
     let to_amount = actual_transfer_yocto.to_token_amount();
 
+    // 型安全なトークン型を使用
+    use crate::ref_finance::token_account::NEAR_TOKEN;
+    let from_token: crate::ref_finance::token_account::TokenInAccount = WNEAR_TOKEN.clone().into();
+    let to_token: crate::ref_finance::token_account::TokenOutAccount = NEAR_TOKEN.clone().into();
+
     let recorder = TradeRecorder::new(period_id);
     recorder
         .record_trade(
             tx_hash, // 実際のトランザクションハッシュを使用
-            "wrap.near".to_string(),
+            &from_token,
             from_amount,
-            "near".to_string(),
+            &to_token,
             to_amount,
         )
         .await?;

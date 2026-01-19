@@ -1,7 +1,10 @@
 use super::execute_with_prediction_provider;
 use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
 use crate::algorithm::types::*;
-use crate::types::{ExchangeRate, NearValue, TokenAmount, TokenPrice, TokenPriceF64};
+use crate::types::{
+    ExchangeRate, NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice,
+    TokenPriceF64,
+};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
@@ -14,7 +17,7 @@ fn price(v: f64) -> TokenPrice {
 
 // テスト用のシンプルなMockPredictionProvider
 struct SimpleMockProvider {
-    price_histories: HashMap<String, PriceHistory>,
+    price_histories: HashMap<TokenOutAccount, PriceHistory>,
 }
 
 impl SimpleMockProvider {
@@ -29,6 +32,8 @@ impl SimpleMockProvider {
         token: &str,
         prices: Vec<(chrono::DateTime<Utc>, f64)>,
     ) -> Self {
+        let token_out: TokenOutAccount = token.parse().unwrap();
+        let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
         let price_points: Vec<PricePoint> = prices
             .into_iter()
             .map(|(timestamp, price)| PricePoint {
@@ -41,10 +46,10 @@ impl SimpleMockProvider {
             .collect();
 
         self.price_histories.insert(
-            token.to_string(),
+            token_out.clone(),
             PriceHistory {
-                token: token.to_string(),
-                quote_token: "wrap.near".to_string(),
+                token: token_out,
+                quote_token,
                 prices: price_points,
             },
         );
@@ -58,18 +63,18 @@ impl PredictionProvider for SimpleMockProvider {
         &self,
         _start_date: chrono::DateTime<Utc>,
         _end_date: chrono::DateTime<Utc>,
-        _quote_token: &str,
+        _quote_token: &TokenInAccount,
     ) -> crate::Result<Vec<TopTokenInfo>> {
         Ok(vec![
             TopTokenInfo {
-                token: "top_token1".to_string(),
+                token: "top_token1".parse().unwrap(),
                 volatility: 0.2,
                 volume_24h: 1000000.0,
                 current_price: TokenPriceF64::from_near_per_token(100.0),
                 decimals: 24,
             },
             TopTokenInfo {
-                token: "top_token2".to_string(),
+                token: "top_token2".parse().unwrap(),
                 volatility: 0.3,
                 volume_24h: 800000.0,
                 current_price: TokenPriceF64::from_near_per_token(50.0),
@@ -82,8 +87,8 @@ impl PredictionProvider for SimpleMockProvider {
 
     async fn get_price_history(
         &self,
-        token: &str,
-        _quote_token: &str,
+        token: &TokenOutAccount,
+        _quote_token: &TokenInAccount,
         _start_date: chrono::DateTime<Utc>,
         _end_date: chrono::DateTime<Utc>,
     ) -> crate::Result<PriceHistory> {
@@ -127,11 +132,11 @@ impl PredictionProvider for SimpleMockProvider {
 
     async fn predict_multiple_tokens(
         &self,
-        tokens: Vec<String>,
-        quote_token: &str,
+        tokens: Vec<TokenOutAccount>,
+        quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
-    ) -> crate::Result<HashMap<String, TokenPredictionResult>> {
+    ) -> crate::Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         let mut results = HashMap::new();
 
         for token in tokens {
@@ -162,22 +167,23 @@ async fn test_execute_with_prediction_provider() {
 
     let current_holdings = vec![
         TokenHolding {
-            token: "token1".to_string(),
+            token: "token1".parse().unwrap(),
             amount: TokenAmount::from_smallest_units(BigDecimal::from(10), 24),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
         },
         TokenHolding {
-            token: "token2".to_string(),
+            token: "token2".parse().unwrap(),
             amount: TokenAmount::from_smallest_units(BigDecimal::from(20), 24),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(50), 24),
         },
     ];
 
+    let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
     let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
     let result = execute_with_prediction_provider(
         &provider,
         current_holdings,
-        "wrap.near",
+        &quote_token,
         7,
         0.05,             // min_profit_threshold
         1.5,              // switch_multiplier
@@ -206,11 +212,12 @@ async fn test_execute_with_prediction_provider_empty_holdings() {
         .with_price_history("top_token2", vec![(current_time, 50.0)]);
     let current_holdings = vec![];
 
+    let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
     let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
     let result = execute_with_prediction_provider(
         &provider,
         current_holdings,
-        "wrap.near",
+        &quote_token,
         7,
         0.05,             // min_profit_threshold
         1.5,              // switch_multiplier
@@ -238,16 +245,17 @@ async fn test_execute_with_prediction_provider_with_top_tokens() {
         .with_price_history("top_token2", vec![(current_time, 50.0)]);
 
     let current_holdings = vec![TokenHolding {
-        token: "other_token".to_string(),
+        token: "other_token".parse().unwrap(),
         amount: TokenAmount::from_smallest_units(BigDecimal::from(10), 24),
         current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(75), 24),
     }];
 
+    let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
     let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
     let result = execute_with_prediction_provider(
         &provider,
         current_holdings,
-        "wrap.near",
+        &quote_token,
         7,
         0.05,             // min_profit_threshold
         1.5,              // switch_multiplier

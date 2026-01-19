@@ -1,4 +1,5 @@
 use crate::logging::*;
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use anyhow::{Context, Result};
 use uuid::Uuid;
 use zaciraci_common::types::TokenAmount;
@@ -39,9 +40,9 @@ impl TradeRecorder {
     pub async fn record_trade(
         &self,
         tx_id: String,
-        from_token: String,
+        from_token: &TokenInAccount,
         from_amount: TokenAmount,
-        to_token: String,
+        to_token: &TokenOutAccount,
         to_amount: TokenAmount,
     ) -> Result<TradeTransaction> {
         let log = DEFAULT.new(o!("function" => "record_trade"));
@@ -54,9 +55,9 @@ impl TradeRecorder {
         let transaction = TradeTransaction::new(
             tx_id.clone(),
             self.batch_id.clone(),
-            from_token.clone(),
+            from_token.to_string(),
             from_amount_bd.clone(),
-            to_token.clone(),
+            to_token.to_string(),
             to_amount_bd.clone(),
             Some(self.evaluation_period_id.clone()),
         );
@@ -91,9 +92,9 @@ impl TradeRecorder {
                 TradeTransaction::new(
                     trade.tx_id,
                     self.batch_id.clone(),
-                    trade.from_token,
+                    trade.from_token.to_string(),
                     trade.from_amount.smallest_units().clone(),
-                    trade.to_token,
+                    trade.to_token.to_string(),
                     trade.to_amount.smallest_units().clone(),
                     Some(self.evaluation_period_id.clone()),
                 )
@@ -124,9 +125,9 @@ impl TradeRecorder {
 #[allow(dead_code)]
 pub struct TradeData {
     pub tx_id: String,
-    pub from_token: String,
+    pub from_token: TokenInAccount,
     pub from_amount: TokenAmount,
-    pub to_token: String,
+    pub to_token: TokenOutAccount,
     pub to_amount: TokenAmount,
 }
 
@@ -134,9 +135,9 @@ impl TradeData {
     #[allow(dead_code)]
     pub fn new(
         tx_id: String,
-        from_token: String,
+        from_token: TokenInAccount,
         from_amount: TokenAmount,
-        to_token: String,
+        to_token: TokenOutAccount,
         to_amount: TokenAmount,
     ) -> Self {
         Self {
@@ -152,6 +153,7 @@ impl TradeData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ref_finance::token_account::TokenAccount;
     use bigdecimal::BigDecimal;
 
     // テスト用定数
@@ -178,12 +180,14 @@ mod tests {
         let batch_id = recorder.get_batch_id().to_string();
 
         let tx_id = format!("test_tx_{}", Uuid::new_v4());
+        let from_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
+        let to_token: TokenOutAccount = "akaia.tkn.near".parse::<TokenAccount>().unwrap().into();
         let result = recorder
             .record_trade(
                 tx_id.clone(),
-                "wrap.near".to_string(),
+                &from_token,
                 token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
-                "akaia.tkn.near".to_string(),
+                &to_token,
                 token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
             )
             .await
@@ -214,16 +218,16 @@ mod tests {
         let trades = vec![
             TradeData::new(
                 format!("test_tx1_{}", Uuid::new_v4()),
-                "wrap.near".to_string(),
+                "wrap.near".parse::<TokenAccount>().unwrap().into(),
                 token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
-                "token1.near".to_string(),
+                "token1.near".parse::<TokenAccount>().unwrap().into(),
                 token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
             ),
             TradeData::new(
                 format!("test_tx2_{}", Uuid::new_v4()),
-                "wrap.near".to_string(),
+                "wrap.near".parse::<TokenAccount>().unwrap().into(),
                 token_amount(2_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 2 wNEAR
-                "token2.near".to_string(),
+                "token2.near".parse::<TokenAccount>().unwrap().into(),
                 token_amount(100_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 100000 tokens
             ),
         ];

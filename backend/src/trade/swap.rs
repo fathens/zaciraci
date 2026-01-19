@@ -8,6 +8,44 @@ use std::collections::BTreeMap;
 use zaciraci_common::algorithm::types::TradingAction;
 use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount};
 
+/// common の TokenOutAccount から backend の TokenInAccount に変換するヘルパー
+fn to_backend_token_in(
+    token: &zaciraci_common::types::TokenOutAccount,
+) -> Result<crate::ref_finance::token_account::TokenInAccount> {
+    let account: crate::ref_finance::token_account::TokenAccount = token
+        .to_string()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
+    Ok(account.into())
+}
+
+/// common の TokenOutAccount から backend の TokenOutAccount に変換するヘルパー
+fn to_backend_token_out(
+    token: &zaciraci_common::types::TokenOutAccount,
+) -> Result<crate::ref_finance::token_account::TokenOutAccount> {
+    let account: crate::ref_finance::token_account::TokenAccount = token
+        .to_string()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
+    Ok(account.into())
+}
+
+/// 文字列をTokenInAccountに変換するヘルパー
+fn parse_token_in(token: &str) -> Result<crate::ref_finance::token_account::TokenInAccount> {
+    let account: crate::ref_finance::token_account::TokenAccount = token
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
+    Ok(account.into())
+}
+
+/// 文字列をTokenOutAccountに変換するヘルパー
+fn parse_token_out(token: &str) -> Result<crate::ref_finance::token_account::TokenOutAccount> {
+    let account: crate::ref_finance::token_account::TokenAccount = token
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
+    Ok(account.into())
+}
+
 /// TradingActionに基づいて単一のアクションを実行する
 #[allow(dead_code)]
 pub async fn execute_single_action<C, W>(
@@ -34,45 +72,39 @@ where
         }
         TradingAction::Sell { token, target } => {
             // token を売却して target を購入
-            info!(log, "executing sell"; "from" => token, "to" => target);
+            info!(log, "executing sell"; "from" => %token, "to" => %target);
 
             // 2段階のswap: token → wrap.near → target
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
+            let wrap_near_in: crate::ref_finance::token_account::TokenInAccount =
+                (*wrap_near).clone().into();
+            let wrap_near_out: crate::ref_finance::token_account::TokenOutAccount =
+                (*wrap_near).clone().into();
 
             // Step 1: token → wrap.near
-            if token != &wrap_near.to_string() {
-                execute_direct_swap(
-                    client,
-                    wallet,
-                    token,
-                    &wrap_near.to_string(),
-                    None,
-                    recorder,
-                )
-                .await?;
+            if token.to_string() != wrap_near.to_string() {
+                let from_token = to_backend_token_in(token)?;
+                execute_direct_swap(client, wallet, &from_token, &wrap_near_out, None, recorder)
+                    .await?;
             }
 
             // Step 2: wrap.near → target
-            if target != &wrap_near.to_string() {
-                execute_direct_swap(
-                    client,
-                    wallet,
-                    &wrap_near.to_string(),
-                    target,
-                    None,
-                    recorder,
-                )
-                .await?;
+            if target.to_string() != wrap_near.to_string() {
+                let to_token = to_backend_token_out(target)?;
+                execute_direct_swap(client, wallet, &wrap_near_in, &to_token, None, recorder)
+                    .await?;
             }
 
-            info!(log, "sell completed"; "from" => token, "to" => target);
+            info!(log, "sell completed"; "from" => %token, "to" => %target);
             Ok(())
         }
         TradingAction::Switch { from, to } => {
             // from から to へ切り替え（直接スワップ）
-            info!(log, "executing switch"; "from" => from, "to" => to);
-            execute_direct_swap(client, wallet, from, to, None, recorder).await?;
-            info!(log, "switch completed"; "from" => from, "to" => to);
+            info!(log, "executing switch"; "from" => %from, "to" => %to);
+            let from_token = to_backend_token_in(from)?;
+            let to_token = to_backend_token_out(to)?;
+            execute_direct_swap(client, wallet, &from_token, &to_token, None, recorder).await?;
+            info!(log, "switch completed"; "from" => %from, "to" => %to);
             Ok(())
         }
         TradingAction::Rebalance { target_weights } => {
@@ -80,7 +112,8 @@ where
             info!(log, "executing rebalance"; "weights" => ?target_weights);
 
             // 1. 現在の保有量を取得（wrap.nearを明示的に追加）
-            let mut tokens: Vec<String> = target_weights.keys().cloned().collect();
+            // TokenOutAccount → String に変換
+            let mut tokens: Vec<String> = target_weights.keys().map(|t| t.to_string()).collect();
             info!(log, "tokens from target_weights"; "tokens" => ?tokens, "count" => tokens.len());
 
             let wrap_near = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
@@ -103,12 +136,21 @@ where
                 return Err(anyhow::anyhow!("Total portfolio value is zero"));
             }
 
+            // 型安全なwrap.nearを事前に準備
+            let wrap_near_token = &crate::ref_finance::token_account::WNEAR_TOKEN;
+            let wrap_near_in: crate::ref_finance::token_account::TokenInAccount =
+                (*wrap_near_token).clone().into();
+            let wrap_near_out: crate::ref_finance::token_account::TokenOutAccount =
+                (*wrap_near_token).clone().into();
+
             // 3. 各トークンのリバランス実行
             // NearValue を使った型安全な計算
             for (token, target_weight) in target_weights.iter() {
+                // TokenOutAccount → String for HashMap access and comparison
+                let token_str = token.to_string();
                 // 現在の保有量を取得
                 let current_balance = current_balances
-                    .get(token)
+                    .get(&token_str)
                     .cloned()
                     .unwrap_or_else(|| TokenAmount::from_smallest_units(BigDecimal::zero(), 24));
 
@@ -117,10 +159,10 @@ where
 
                 // 現在価値を計算（NEAR 単位）- レートを取得して変換
                 let current_value: NearValue =
-                    if let Some(rate) = get_token_exchange_rate(token).await? {
+                    if let Some(rate) = get_token_exchange_rate(&token_str).await? {
                         &current_balance / &rate // TokenAmount / &ExchangeRate = NearValue
                     } else {
-                        warn!(log, "No rate found for token, using zero"; "token" => token);
+                        warn!(log, "No rate found for token, using zero"; "token" => &token_str);
                         NearValue::zero()
                     };
 
@@ -128,7 +170,7 @@ where
                 let value_diff: NearValue = target_value.clone() - current_value.clone();
 
                 info!(log, "rebalancing token";
-                    "token" => token,
+                    "token" => &token_str,
                     "target_weight" => target_weight,
                     "current_balance" => %current_balance,
                     "target_value" => %target_value,
@@ -149,22 +191,21 @@ where
                 // 最小トレードサイズのチェック（総価値の1%未満はスキップ）
                 let min_trade_size: NearValue = &total_value * 0.01;
                 if trade_value.abs() < min_trade_size {
-                    info!(log, "skipping small rebalance"; "token" => token, "trade_value" => %trade_value);
+                    info!(log, "skipping small rebalance"; "token" => &token_str, "trade_value" => %trade_value);
                     continue;
                 }
 
                 // 4. スワップ実行
-                let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-
                 if trade_value > NearValue::zero() {
                     // ポジション増加: wrap.near → token
-                    if token != &wrap_near.to_string() {
-                        info!(log, "increasing position"; "token" => token, "trade_value" => %trade_value);
+                    if token_str != wrap_near_token.to_string() {
+                        info!(log, "increasing position"; "token" => &token_str, "trade_value" => %trade_value);
+                        let to_token = parse_token_out(&token_str)?;
                         execute_direct_swap(
                             client,
                             wallet,
-                            &wrap_near.to_string(),
-                            token,
+                            &wrap_near_in,
+                            &to_token,
                             None,
                             recorder,
                         )
@@ -172,13 +213,14 @@ where
                     }
                 } else if trade_value < NearValue::zero() {
                     // ポジション削減: token → wrap.near
-                    if token != &wrap_near.to_string() {
-                        info!(log, "reducing position"; "token" => token, "trade_value" => %trade_value.abs());
+                    if token_str != wrap_near_token.to_string() {
+                        info!(log, "reducing position"; "token" => &token_str, "trade_value" => %trade_value.abs());
+                        let from_token = parse_token_in(&token_str)?;
                         execute_direct_swap(
                             client,
                             wallet,
-                            token,
-                            &wrap_near.to_string(),
+                            &from_token,
+                            &wrap_near_out,
                             None,
                             recorder,
                         )
@@ -192,44 +234,36 @@ where
         }
         TradingAction::AddPosition { token, weight } => {
             // ポジション追加
-            info!(log, "adding position"; "token" => token, "weight" => weight);
+            info!(log, "adding position"; "token" => %token, "weight" => weight);
 
             // wrap.near → token へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-            if token != &wrap_near.to_string() {
-                execute_direct_swap(
-                    client,
-                    wallet,
-                    &wrap_near.to_string(),
-                    token,
-                    None,
-                    recorder,
-                )
-                .await?;
+            if token.to_string() != wrap_near.to_string() {
+                let wrap_near_in: crate::ref_finance::token_account::TokenInAccount =
+                    (*wrap_near).clone().into();
+                let to_token = to_backend_token_out(token)?;
+                execute_direct_swap(client, wallet, &wrap_near_in, &to_token, None, recorder)
+                    .await?;
             }
 
-            info!(log, "position added"; "token" => token, "weight" => weight);
+            info!(log, "position added"; "token" => %token, "weight" => weight);
             Ok(())
         }
         TradingAction::ReducePosition { token, weight } => {
             // ポジション削減
-            info!(log, "reducing position"; "token" => token, "weight" => weight);
+            info!(log, "reducing position"; "token" => %token, "weight" => weight);
 
             // token → wrap.near へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-            if token != &wrap_near.to_string() {
-                execute_direct_swap(
-                    client,
-                    wallet,
-                    token,
-                    &wrap_near.to_string(),
-                    None,
-                    recorder,
-                )
-                .await?;
+            if token.to_string() != wrap_near.to_string() {
+                let from_token = to_backend_token_in(token)?;
+                let wrap_near_out: crate::ref_finance::token_account::TokenOutAccount =
+                    (*wrap_near).clone().into();
+                execute_direct_swap(client, wallet, &from_token, &wrap_near_out, None, recorder)
+                    .await?;
             }
 
-            info!(log, "position reduced"; "token" => token, "weight" => weight);
+            info!(log, "position reduced"; "token" => %token, "weight" => weight);
             Ok(())
         }
     }
@@ -388,8 +422,8 @@ async fn get_token_exchange_rate(token: &str) -> Result<Option<ExchangeRate>> {
 pub async fn execute_direct_swap<C, W>(
     client: &C,
     wallet: &W,
-    from_token: &str,
-    to_token: &str,
+    from_token: &crate::ref_finance::token_account::TokenInAccount,
+    to_token: &crate::ref_finance::token_account::TokenOutAccount,
     swap_amount: Option<u128>,
     recorder: &TradeRecorder,
 ) -> Result<()>
@@ -408,13 +442,11 @@ where
     ));
     info!(log, "starting direct swap");
 
-    // from_token の残高を取得
-    let from_token_account: crate::ref_finance::token_account::TokenAccount = from_token
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid from_token: {}", e))?;
-    let to_token_account: crate::ref_finance::token_account::TokenAccount = to_token
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid to_token: {}", e))?;
+    // 型安全な TokenAccount に変換
+    let from_token_account: crate::ref_finance::token_account::TokenAccount =
+        from_token.as_account().clone();
+    let to_token_account: crate::ref_finance::token_account::TokenAccount =
+        to_token.as_account().clone();
 
     // from_tokenの残高を取得
     // wrap.nearの場合のみ balances::start を使用（refill/harvest処理が必要な場合があるため）
@@ -477,16 +509,17 @@ where
     }
 
     info!(log, "swap successful";
-        "from" => from_token,
-        "to" => to_token,
+        "from" => %from_token,
+        "to" => %to_token,
         "input" => swap_amount,
         "output" => out,
     );
 
     // トレード記録を保存
     // トークンの decimals を取得して TokenAmount を作成
-    let from_decimals = crate::trade::stats::get_token_decimals(client, from_token).await;
-    let to_decimals = crate::trade::stats::get_token_decimals(client, to_token).await;
+    let from_decimals =
+        crate::trade::stats::get_token_decimals(client, &from_token.to_string()).await;
+    let to_decimals = crate::trade::stats::get_token_decimals(client, &to_token.to_string()).await;
     let from_amount =
         TokenAmount::from_smallest_units(BigDecimal::from(swap_amount), from_decimals);
     let to_amount = TokenAmount::from_smallest_units(BigDecimal::from(out), to_decimals);
@@ -494,9 +527,9 @@ where
     recorder
         .record_trade(
             sent_tx.to_string(),
-            from_token.to_string(),
+            from_token,
             from_amount,
-            to_token.to_string(),
+            to_token,
             to_amount,
         )
         .await?;
