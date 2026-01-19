@@ -702,35 +702,40 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                     token_str.clone(),
                                                     target_amount_limited,
                                                 );
-                                                // 絶対値でコスト計算
+                                                // 絶対値でコスト計算（yoctoNEAR）
                                                 let diff_value_yocto = diff_abs * current_price;
                                                 let diff_value_near = diff_value_yocto.to_near();
                                                 // 型安全な乗算・加算を使用
                                                 let trade_cost = diff_value_near * 0.003; // 0.3%手数料
                                                 total_costs = total_costs + trade_cost;
 
+                                                // ガスコストをyoctoNEARに変換
+                                                let gas_cost_yocto = NearValueF64::from_near(
+                                                    config
+                                                        .gas_cost
+                                                        .to_string()
+                                                        .parse::<f64>()
+                                                        .unwrap_or(0.01),
+                                                )
+                                                .to_yocto();
+
+                                                // TradingCost を YoctoValueF64 で構築
+                                                let trade_cost_yocto = trade_cost.to_yocto();
+                                                let trading_cost = TradingCost {
+                                                    protocol_fee: trade_cost_yocto * 0.7,
+                                                    slippage: trade_cost_yocto * 0.2,
+                                                    gas_fee: gas_cost_yocto,
+                                                    total: trade_cost_yocto,
+                                                };
+
                                                 // TradeExecutionを記録
-                                                // trade_cost は NearValueF64 なので、BigDecimal変換時は .as_f64()
-                                                let trade_cost_f64 = trade_cost.as_f64();
                                                 trades.push(TradeExecution {
                                                     timestamp: current_time,
                                                     from_token: config.quote_token.clone(),
                                                     to_token: token_str.clone(),
                                                     amount: diff_abs,
                                                     executed_price: current_price,
-                                                    cost: TradingCost {
-                                                        protocol_fee: BigDecimal::from_f64(
-                                                            trade_cost_f64 * 0.7,
-                                                        )
-                                                        .unwrap_or_default(),
-                                                        slippage: BigDecimal::from_f64(
-                                                            trade_cost_f64 * 0.2,
-                                                        )
-                                                        .unwrap_or_default(),
-                                                        gas_fee: config.gas_cost.clone(),
-                                                        total: BigDecimal::from_f64(trade_cost_f64)
-                                                            .unwrap_or_default(),
-                                                    },
+                                                    cost: trading_cost,
                                                     portfolio_value_before: total_portfolio_value,
                                                     // 型安全な減算を使用: NearValueF64 - NearValueF64
                                                     portfolio_value_after: total_portfolio_value

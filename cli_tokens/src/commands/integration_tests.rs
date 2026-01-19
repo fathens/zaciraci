@@ -1,11 +1,10 @@
-use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 use crate::commands::simulate::{
     AlgorithmType, DataQualityStats, ExecutionSummary, MultiAlgorithmSimulationResult,
     NearValueF64, PerformanceMetrics, PortfolioValue, SimulationResult, SimulationSummary,
-    TokenAmountF64, TokenPriceF64, TradeExecution, TradingCost,
+    TokenAmountF64, TokenPriceF64, TradeExecution, TradingCost, YoctoValueF64,
 };
 
 /// Create a test simulation result for a specific algorithm
@@ -50,10 +49,10 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             amount: TokenAmountF64::from_smallest_units(500.0, 24),
             executed_price: TokenPriceF64::from_near_per_token(1.2),
             cost: TradingCost {
-                protocol_fee: BigDecimal::from_f64(1.5).unwrap(),
-                slippage: BigDecimal::from_f64(2.0).unwrap(),
-                gas_fee: BigDecimal::from_f64(0.5).unwrap(),
-                total: BigDecimal::from_f64(4.0).unwrap(),
+                protocol_fee: YoctoValueF64::from_yocto(1.5e24),
+                slippage: YoctoValueF64::from_yocto(2.0e24),
+                gas_fee: YoctoValueF64::from_yocto(0.5e24),
+                total: YoctoValueF64::from_yocto(4.0e24),
             },
             reason: "momentum signal".to_string(),
             portfolio_value_before: NearValueF64::from_near(1000.0),
@@ -67,10 +66,10 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
             amount: TokenAmountF64::from_smallest_units(600.0, 24),
             executed_price: TokenPriceF64::from_near_per_token(0.8),
             cost: TradingCost {
-                protocol_fee: BigDecimal::from_f64(1.8).unwrap(),
-                slippage: BigDecimal::from_f64(2.4).unwrap(),
-                gas_fee: BigDecimal::from_f64(0.5).unwrap(),
-                total: BigDecimal::from_f64(4.7).unwrap(),
+                protocol_fee: YoctoValueF64::from_yocto(1.8e24),
+                slippage: YoctoValueF64::from_yocto(2.4e24),
+                gas_fee: YoctoValueF64::from_yocto(0.5e24),
+                total: YoctoValueF64::from_yocto(4.7e24),
             },
             reason: "rebalancing".to_string(),
             portfolio_value_before: NearValueF64::from_near(1100.0),
@@ -82,10 +81,8 @@ fn create_test_simulation_result(algorithm: AlgorithmType, final_value: f64) -> 
     let total_return_abs = final_value - initial_capital;
     let total_costs_f64 = trades
         .iter()
-        .map(|t| &t.cost.total)
-        .fold(BigDecimal::from(0), |acc, x| acc + x)
-        .to_f64()
-        .unwrap_or(0.0);
+        .map(|t| t.cost.total.to_near().as_f64())
+        .sum::<f64>();
 
     SimulationResult {
         config: SimulationSummary {

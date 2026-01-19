@@ -5,9 +5,8 @@ use super::*;
 use crate::commands::simulate::{
     AlgorithmType, DataQualityStats, ExecutionSummary, NearValueF64,
     PerformanceMetrics as SimPerformanceMetrics, SimulationResult, SimulationSummary,
-    TokenAmountF64, TokenPriceF64, TradeExecution, TradingCost,
+    TokenAmountF64, TokenPriceF64, TradeExecution, TradingCost, YoctoValueF64,
 };
-use bigdecimal::BigDecimal;
 
 #[cfg(test)]
 mod unit_tests {
@@ -50,10 +49,10 @@ mod unit_tests {
                 amount: TokenAmountF64::from_smallest_units(100.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(3),
-                    slippage: BigDecimal::from(2),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(6),
+                    protocol_fee: YoctoValueF64::from_yocto(3e24),
+                    slippage: YoctoValueF64::from_yocto(2e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(6e24),
                 },
                 portfolio_value_before: NearValueF64::from_near(1000.0),
                 portfolio_value_after: NearValueF64::from_near(1020.0),
@@ -200,10 +199,10 @@ mod unit_tests {
             amount: TokenAmountF64::from_smallest_units(100.0, 24),
             executed_price: TokenPriceF64::from_near_per_token(1.5),
             cost: TradingCost {
-                protocol_fee: BigDecimal::from(3),
-                slippage: BigDecimal::from(2),
-                gas_fee: BigDecimal::from(1),
-                total: BigDecimal::from(6),
+                protocol_fee: YoctoValueF64::from_yocto(3e24),
+                slippage: YoctoValueF64::from_yocto(2e24),
+                gas_fee: YoctoValueF64::from_yocto(1e24),
+                total: YoctoValueF64::from_yocto(6e24),
             },
             portfolio_value_before: NearValueF64::from_near(1000.0),
             portfolio_value_after: NearValueF64::from_near(1020.0),
@@ -232,10 +231,10 @@ mod unit_tests {
                 amount: TokenAmountF64::from_smallest_units(100.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(3),
-                    slippage: BigDecimal::from(2),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(6),
+                    protocol_fee: YoctoValueF64::from_yocto(3e24),
+                    slippage: YoctoValueF64::from_yocto(2e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(6e24),
                 },
                 portfolio_value_before: NearValueF64::from_near(1000.0),
                 portfolio_value_after: NearValueF64::from_near(1020.0),
@@ -357,10 +356,10 @@ mod phase_4_2_tests {
                 amount: TokenAmountF64::from_smallest_units(100.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(3),
-                    slippage: BigDecimal::from(2),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(6),
+                    protocol_fee: YoctoValueF64::from_yocto(3e24),
+                    slippage: YoctoValueF64::from_yocto(2e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(6e24),
                 },
                 portfolio_value_before: NearValueF64::from_near(1000.0),
                 portfolio_value_after: NearValueF64::from_near(1020.0), // +20 profit
@@ -374,10 +373,10 @@ mod phase_4_2_tests {
                 amount: TokenAmountF64::from_smallest_units(120.0, 24),
                 executed_price: TokenPriceF64::from_near_per_token(0.8),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(4),
-                    slippage: BigDecimal::from(3),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(8),
+                    protocol_fee: YoctoValueF64::from_yocto(4e24),
+                    slippage: YoctoValueF64::from_yocto(3e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(8e24),
                 },
                 portfolio_value_before: NearValueF64::from_near(1020.0),
                 portfolio_value_after: NearValueF64::from_near(990.0), // -30 loss

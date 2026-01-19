@@ -467,12 +467,20 @@ pub enum FeeModel {
     Custom(f64),
 }
 
+/// 取引コスト（yoctoNEAR 単位）
+///
+/// すべてのフィールドは yoctoNEAR 単位で表現される。
+/// f64 の精度で十分なシミュレーション用途に最適化されている。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradingCost {
-    pub protocol_fee: BigDecimal,
-    pub slippage: BigDecimal,
-    pub gas_fee: BigDecimal,
-    pub total: BigDecimal,
+    /// プロトコル手数料（yoctoNEAR）
+    pub protocol_fee: YoctoValueF64,
+    /// スリッページコスト（yoctoNEAR）
+    pub slippage: YoctoValueF64,
+    /// ガス料金（yoctoNEAR）
+    pub gas_fee: YoctoValueF64,
+    /// 総コスト（yoctoNEAR）
+    pub total: YoctoValueF64,
 }
 
 // Trading context struct to reduce function arguments

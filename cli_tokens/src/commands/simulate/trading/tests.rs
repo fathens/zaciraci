@@ -2,7 +2,7 @@ use super::*;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::algorithm::{PredictionData, TradingAction};
-use common::types::{TokenOutAccount, TokenPrice};
+use common::types::{TokenOutAccount, TokenPrice, YoctoValueF64};
 use std::str::FromStr;
 
 fn price(s: &str) -> TokenPrice {
@@ -127,81 +127,80 @@ fn test_bigdecimal_price_calculations() {
 #[test]
 fn test_trading_cost_calculation_zero_value() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
     // ゼロ値でのコスト計算
-    let value = BigDecimal::from(0);
+    let value = YoctoValueF64::zero();
     let fee_model = FeeModel::Realistic;
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap(); // 0.1%
-    let gas_cost = BigDecimal::from(0);
+    let slippage_rate = 0.001; // 0.1%
+    let gas_cost = YoctoValueF64::zero();
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
-    assert_eq!(cost, BigDecimal::from(0));
+    assert!(cost.total.as_f64() == 0.0);
 }
 
 #[test]
 fn test_trading_cost_calculation_positive_value() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
-    // 正の値でのコスト計算
-    let value = BigDecimal::from(1000);
+    // 正の値でのコスト計算（yoctoNEAR 単位）
+    let value = YoctoValueF64::from_yocto(1000.0);
     let fee_model = FeeModel::Realistic; // 0.3%
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap(); // 0.1%
-    let gas_cost = BigDecimal::from(10);
+    let slippage_rate = 0.001; // 0.1%
+    let gas_cost = YoctoValueF64::from_yocto(10.0);
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
     // コストは protocol_fee + slippage + gas
     // protocol_fee = 1000 * 0.003 = 3
     // slippage = 1000 * 0.001 = 1
     // gas = 10
-    // total = 約14 (精度の問題により正確な値は異なる)
-    assert!(cost > BigDecimal::from(13));
-    assert!(cost < BigDecimal::from(15));
+    // total = 14
+    assert!(cost.total.as_f64() > 13.0);
+    assert!(cost.total.as_f64() < 15.0);
 }
 
 #[test]
 fn test_trading_cost_calculation_zero_fee_model() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
     // ゼロ手数料モデルでのテスト
-    let value = BigDecimal::from(1000);
+    let value = YoctoValueF64::from_yocto(1000.0);
     let fee_model = FeeModel::Zero;
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap();
-    let gas_cost = BigDecimal::from(10);
+    let slippage_rate = 0.001;
+    let gas_cost = YoctoValueF64::from_yocto(10.0);
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
     // protocol_fee = 0 (Zero model)
     // slippage = 1000 * 0.001 = 1
     // gas = 10
     // total = 11
-    let expected_cost = BigDecimal::from(11);
-    assert_eq!(cost, expected_cost);
+    assert!((cost.total.as_f64() - 11.0).abs() < 0.001);
 }
 
 #[test]
 fn test_trading_cost_calculation_custom_fee_model() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
     // カスタム手数料モデルでのテスト
-    let value = BigDecimal::from(1000);
+    let value = YoctoValueF64::from_yocto(1000.0);
     let fee_model = FeeModel::Custom(0.005); // 0.5%
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap();
-    let gas_cost = BigDecimal::from(10);
+    let slippage_rate = 0.001;
+    let gas_cost = YoctoValueF64::from_yocto(10.0);
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
     // protocol_fee = 1000 * 0.005 = 5
     // slippage = 1000 * 0.001 = 1
     // gas = 10
-    // total = 約16 (精度の問題により正確な値は異なる)
-    assert!(cost > BigDecimal::from(15));
-    assert!(cost < BigDecimal::from(17));
+    // total = 16
+    assert!(cost.total.as_f64() > 15.0);
+    assert!(cost.total.as_f64() < 17.0);
 }
 
 // 統合テスト用のノート

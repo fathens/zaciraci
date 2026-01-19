@@ -257,6 +257,8 @@ pub fn generate_trades_table_html(trades: &[TradeExecution]) -> String {
         .rev()
         .take(10)
         .map(|trade| {
+            // コストを NEAR 単位で表示（yoctoNEAR から変換）
+            let cost_near = trade.cost.total.to_near().as_f64();
             format!(
                 r#"<tr>
                     <td>{}</td>
@@ -271,7 +273,7 @@ pub fn generate_trades_table_html(trades: &[TradeExecution]) -> String {
                 trade.to_token,
                 trade.amount,
                 trade.executed_price,
-                trade.cost.total,
+                cost_near,
                 trade.reason
             )
         })

@@ -1,7 +1,7 @@
 use super::types::*;
-use super::utils::calculate_trading_cost_by_value_yocto_bd;
+use super::utils::calculate_trading_cost_yocto;
 use anyhow::Result;
-use bigdecimal::{BigDecimal, FromPrimitive};
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use common::algorithm::{PredictionData, TradingAction};
 use common::types::TokenPrice;
@@ -419,40 +419,31 @@ pub fn execute_trading_action(
                 return Ok(None);
             }
 
-            // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
-            // 型安全な変換メソッドを使用
-            let current_amount_bd = ctx.current_amount.to_bigdecimal().smallest_units().clone();
-            let current_price_bd = ctx.current_price.to_bigdecimal().into_bigdecimal();
-            let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
+            // 型安全な演算で取引価値を計算（yoctoNEAR）
+            let trade_value_yocto: YoctoValueF64 = ctx.current_amount * ctx.current_price;
 
-            // ガスコストをBigDecimalで計算（型安全な変換、精度損失なし）
-            let gas_cost_yocto_bd = NearValue::from_near(ctx.config.gas_cost.clone())
-                .to_yocto()
-                .into_bigdecimal();
+            // ガスコストを型安全に取得（yoctoNEAR）
+            let gas_cost_yocto = NearValueF64::from_near(
+                ctx.config
+                    .gas_cost
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.01),
+            )
+            .to_yocto();
 
-            // スリッパレートをBigDecimalで計算（無次元の比率なのでそのまま変換）
-            let slippage_rate_bd =
-                BigDecimal::from_f64(ctx.config.slippage_rate).unwrap_or_default();
-
-            // 取引コストをyoctoNEAR価値ベースで計算（BigDecimal精度）
-            let trade_cost_value_yocto_bd = calculate_trading_cost_by_value_yocto_bd(
-                &trade_value_yocto_bd,
+            // 取引コストを計算（型安全版）
+            let trading_cost = calculate_trading_cost_yocto(
+                trade_value_yocto,
                 &ctx.config.fee_model,
-                &slippage_rate_bd,
-                &gas_cost_yocto_bd,
+                ctx.config.slippage_rate,
+                gas_cost_yocto,
             );
 
-            // コストをトークン数量で表現（BigDecimal精度保持）
-            // current_amount と同じ decimals を使用
+            // コストをトークン数量で表現
             let decimals = ctx.current_amount.decimals();
             let trade_cost = if !ctx.current_price.is_zero() {
-                TokenAmountF64::from_smallest_units(
-                    (&trade_cost_value_yocto_bd / &current_price_bd)
-                        .to_string()
-                        .parse::<f64>()
-                        .unwrap_or(0.0),
-                    decimals,
-                )
+                trading_cost.total.to_amount(ctx.current_price, decimals)
             } else {
                 TokenAmountF64::zero(decimals)
             };
@@ -481,14 +472,7 @@ pub fn execute_trading_action(
                 to_token: target_str,
                 amount: new_amount, // 購入するトークン数量
                 executed_price,     // 購入トークンの価格（無次元比率）
-                cost: TradingCost {
-                    protocol_fee: &trade_cost_value_yocto_bd
-                        * BigDecimal::from_f64(0.7).unwrap_or_default(),
-                    slippage: &trade_cost_value_yocto_bd
-                        * BigDecimal::from_f64(0.2).unwrap_or_default(),
-                    gas_fee: gas_cost_yocto_bd.clone(),
-                    total: trade_cost_value_yocto_bd.clone(),
-                },
+                cost: trading_cost,
                 portfolio_value_before: portfolio_before,
                 portfolio_value_after: portfolio_after,
                 success: true,
@@ -507,40 +491,31 @@ pub fn execute_trading_action(
                 return Ok(None);
             }
 
-            // 取引価値を計算（yoctoNEAR建て、BigDecimal精度保持）
-            // 型安全な変換メソッドを使用
-            let current_amount_bd = ctx.current_amount.to_bigdecimal().smallest_units().clone();
-            let current_price_bd = ctx.current_price.to_bigdecimal().into_bigdecimal();
-            let trade_value_yocto_bd = &current_amount_bd * &current_price_bd;
+            // 型安全な演算で取引価値を計算（yoctoNEAR）
+            let trade_value_yocto: YoctoValueF64 = ctx.current_amount * ctx.current_price;
 
-            // ガスコストをBigDecimalで計算（型安全な変換、精度損失なし）
-            let gas_cost_yocto_bd = NearValue::from_near(ctx.config.gas_cost.clone())
-                .to_yocto()
-                .into_bigdecimal();
+            // ガスコストを型安全に取得（yoctoNEAR）
+            let gas_cost_yocto = NearValueF64::from_near(
+                ctx.config
+                    .gas_cost
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.01),
+            )
+            .to_yocto();
 
-            // スリッパレートをBigDecimalで計算（無次元の比率なのでそのまま変換）
-            let slippage_rate_bd =
-                BigDecimal::from_f64(ctx.config.slippage_rate).unwrap_or_default();
-
-            // 取引コストをyoctoNEAR価値ベースで計算（BigDecimal精度）
-            let trade_cost_value_yocto_bd = calculate_trading_cost_by_value_yocto_bd(
-                &trade_value_yocto_bd,
+            // 取引コストを計算（型安全版）
+            let trading_cost = calculate_trading_cost_yocto(
+                trade_value_yocto,
                 &ctx.config.fee_model,
-                &slippage_rate_bd,
-                &gas_cost_yocto_bd,
+                ctx.config.slippage_rate,
+                gas_cost_yocto,
             );
 
-            // コストをトークン数量で表現（BigDecimal精度保持）
-            // current_amount と同じ decimals を使用
+            // コストをトークン数量で表現
             let decimals = ctx.current_amount.decimals();
             let trade_cost = if !ctx.current_price.is_zero() {
-                TokenAmountF64::from_smallest_units(
-                    (&trade_cost_value_yocto_bd / &current_price_bd)
-                        .to_string()
-                        .parse::<f64>()
-                        .unwrap_or(0.0),
-                    decimals,
-                )
+                trading_cost.total.to_amount(ctx.current_price, decimals)
             } else {
                 TokenAmountF64::zero(decimals)
             };
@@ -569,14 +544,7 @@ pub fn execute_trading_action(
                 to_token: to_str,
                 amount: new_amount, // 購入するトークン数量
                 executed_price,     // 購入トークンの価格（無次元比率）
-                cost: TradingCost {
-                    protocol_fee: &trade_cost_value_yocto_bd
-                        * BigDecimal::from_f64(0.7).unwrap_or_default(),
-                    slippage: &trade_cost_value_yocto_bd
-                        * BigDecimal::from_f64(0.2).unwrap_or_default(),
-                    gas_fee: gas_cost_yocto_bd.clone(),
-                    total: trade_cost_value_yocto_bd.clone(),
-                },
+                cost: trading_cost,
                 portfolio_value_before: portfolio_before,
                 portfolio_value_after: portfolio_after,
                 success: true,
