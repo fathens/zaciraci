@@ -18,3 +18,4 @@ tokio = { workspace = true, features = ["time"] }
 async-trait = "0.1"
 ndarray = { version = "0.15", features = ["serde"] }
 num-traits = { workspace = true }
+near-account-id = { workspace = true }

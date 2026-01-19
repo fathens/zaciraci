@@ -83,20 +83,8 @@ async fn get_values(
         "end" => format!("{}", request.end),
     ));
     info!(log, "start");
-    let quote_token: TokenAccount = match request.quote_token.try_into() {
-        Ok(token) => token,
-        Err(e) => {
-            error!(log, "Failed to parse quote token"; "error" => ?e);
-            return Json(ApiResponse::Error(e.to_string()));
-        }
-    };
-    let base_token: TokenAccount = match request.base_token.try_into() {
-        Ok(token) => token,
-        Err(e) => {
-            error!(log, "Failed to parse base token"; "error" => ?e);
-            return Json(ApiResponse::Error(e.to_string()));
-        }
-    };
+    let quote_token = request.quote_token;
+    let base_token = request.base_token;
     let range = TimeRange {
         start: request.start,
         end: request.end,

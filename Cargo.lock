@@ -4917,6 +4917,7 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "ndarray",
+ "near-account-id",
  "num-traits",
  "once_cell",
  "reqwest",

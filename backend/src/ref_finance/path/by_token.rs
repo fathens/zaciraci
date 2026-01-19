@@ -57,7 +57,7 @@ impl PoolsByToken {
         self.by_in.get(token_in).map(|edges| {
             let mut edges_by_token_out = HashMap::new();
             for edge in edges.iter() {
-                for token_out in edge.pool.tokens().filter(|&t| t != token_in.as_account()) {
+                for token_out in edge.pool.tokens().filter(|&t| t != token_in.inner()) {
                     let token_out: TokenOutAccount = token_out.clone().into();
                     let log = log.new(o!(
                         "token_out" => token_out.to_string(),

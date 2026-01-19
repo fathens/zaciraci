@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn test_token_data_creation() {
         let token = TokenData {
-            symbol: "NEAR".parse().unwrap(),
+            symbol: "near".parse().unwrap(),
             current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("1000000000000000000000000").unwrap(),
                 24,
@@ -542,7 +542,7 @@ mod tests {
             market_cap: Some(NearValue::from_near(BigDecimal::from(1000000))),
         };
 
-        assert_eq!(token.symbol.to_string(), "NEAR");
+        assert_eq!(token.symbol.to_string(), "near");
         assert_eq!(token.current_rate.decimals(), 24);
     }
 
@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn test_token_data_serialization() {
         let token = TokenData {
-            symbol: "NEAR".parse().unwrap(),
+            symbol: "near".parse().unwrap(),
             current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("1000000000000000000000000").unwrap(),
                 24,
@@ -699,7 +699,7 @@ mod tests {
     fn test_exchange_rate_comparison_in_structures() {
         // ExchangeRate 型を含む構造体の比較が正しく動作することを確認
         let token1 = TokenData {
-            symbol: "TEST".parse().unwrap(),
+            symbol: "test.near".parse().unwrap(),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 6),
             historical_volatility: 0.2,
             liquidity_score: None,
@@ -707,7 +707,7 @@ mod tests {
         };
 
         let token2 = TokenData {
-            symbol: "TEST".parse().unwrap(),
+            symbol: "test.near".parse().unwrap(),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 6),
             historical_volatility: 0.2,
             liquidity_score: None,
@@ -715,7 +715,7 @@ mod tests {
         };
 
         let token3 = TokenData {
-            symbol: "TEST".parse().unwrap(),
+            symbol: "test.near".parse().unwrap(),
             current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(200), 6), // 異なるレート
             historical_volatility: 0.2,
             liquidity_score: None,

@@ -38,10 +38,10 @@ impl CachedEdges {
         ));
         debug!(log, "converting to index");
         let token_in = self
-            .get_token_id(token_in.as_account())
+            .get_token_id(token_in.inner())
             .ok_or_else(|| anyhow!("token not found: {:?}", token_in))?;
         let token_out = self
-            .get_token_id(token_out.as_account())
+            .get_token_id(token_out.inner())
             .ok_or_else(|| anyhow!("token not found: {:?}", token_out))?;
         debug!(log, "index";
             "token_in" => token_in.to_string(),

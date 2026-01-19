@@ -34,7 +34,7 @@ pub mod wnear {
         });
 
         let result = client
-            .view_contract(WNEAR_TOKEN.as_id(), METHOD_NAME, &args)
+            .view_contract(WNEAR_TOKEN.as_account_id(), METHOD_NAME, &args)
             .await?;
         let balance: U128 = serde_json::from_slice(&result.result)?;
         Ok(balance.into())
@@ -58,7 +58,7 @@ pub mod wnear {
         let signer = wallet.signer();
 
         client
-            .exec_contract(signer, token.as_id(), METHOD_NAME, &args, amount)
+            .exec_contract(signer, token.as_account_id(), METHOD_NAME, &args, amount)
             .await
     }
 
@@ -84,7 +84,7 @@ pub mod wnear {
         let signer = wallet.signer();
 
         client
-            .exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit)
+            .exec_contract(signer, token.as_account_id(), METHOD_NAME, &args, deposit)
             .await
     }
 }
@@ -114,7 +114,7 @@ pub async fn deposit<C: SendTx, W: Wallet>(
     let signer = wallet.signer();
 
     client
-        .exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit)
+        .exec_contract(signer, token.as_account_id(), METHOD_NAME, &args, deposit)
         .await
 }
 

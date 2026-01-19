@@ -363,8 +363,10 @@ async fn select_top_volatility_tokens(
             // 購入方向のパスを確認（wrap.near → token）
             let buyable_tokens = match graph.update_graph(&wnear_token) {
                 Ok(goals) => {
-                    let token_ids: std::collections::HashSet<_> =
-                        goals.iter().map(|t| t.as_id().to_string()).collect();
+                    let token_ids: std::collections::HashSet<_> = goals
+                        .iter()
+                        .map(|t| t.as_account_id().to_string())
+                        .collect();
                     info!(log, "buyable tokens (wrap.near → token)";
                         "count" => token_ids.len(),
                     );
@@ -411,7 +413,7 @@ async fn select_top_volatility_tokens(
                     Ok(sellable_goals) => {
                         if sellable_goals
                             .iter()
-                            .any(|g| g.as_id() == wnear_out.as_id())
+                            .any(|g| g.as_account_id() == wnear_out.as_account_id())
                         {
                             filtered_tokens.push(token);
 
@@ -777,44 +779,6 @@ async fn execute_trading_actions(
     Ok(summary)
 }
 
-/// common の TokenOutAccount から backend の TokenInAccount に変換するヘルパー
-fn to_backend_token_in(
-    token: &zaciraci_common::types::TokenOutAccount,
-) -> Result<crate::ref_finance::token_account::TokenInAccount> {
-    let account: crate::ref_finance::token_account::TokenAccount = token
-        .to_string()
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
-    Ok(account.into())
-}
-
-/// common の TokenOutAccount から backend の TokenOutAccount に変換するヘルパー
-fn to_backend_token_out(
-    token: &zaciraci_common::types::TokenOutAccount,
-) -> Result<crate::ref_finance::token_account::TokenOutAccount> {
-    let account: crate::ref_finance::token_account::TokenAccount = token
-        .to_string()
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
-    Ok(account.into())
-}
-
-/// 文字列をTokenInAccountに変換するヘルパー
-fn parse_token_in(token: &str) -> Result<crate::ref_finance::token_account::TokenInAccount> {
-    let account: crate::ref_finance::token_account::TokenAccount = token
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
-    Ok(account.into())
-}
-
-/// 文字列をTokenOutAccountに変換するヘルパー
-fn parse_token_out(token: &str) -> Result<crate::ref_finance::token_account::TokenOutAccount> {
-    let account: crate::ref_finance::token_account::TokenAccount = token
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
-    Ok(account.into())
-}
-
 /// 単一の取引アクションを実行
 async fn execute_single_action<C, W>(
     client: &C,
@@ -850,8 +814,9 @@ where
                 (*wrap_near).clone().into();
 
             // Step 1: token → wrap.near
+            // common と backend の TokenAccount は同一型なので直接使用可能
             if token.to_string() != wrap_near.to_string() {
-                let from_token = to_backend_token_in(token)?;
+                let from_token = token.as_in();
                 swap::execute_direct_swap(
                     client,
                     wallet,
@@ -865,8 +830,7 @@ where
 
             // Step 2: wrap.near → target
             if target.to_string() != wrap_near.to_string() {
-                let to_token = to_backend_token_out(target)?;
-                swap::execute_direct_swap(client, wallet, &wrap_near_in, &to_token, None, recorder)
+                swap::execute_direct_swap(client, wallet, &wrap_near_in, target, None, recorder)
                     .await?;
             }
 
@@ -875,12 +839,11 @@ where
         }
         TradingAction::Switch { from, to } => {
             // from から to へ切り替え（直接スワップ）
+            // common と backend の TokenAccount は同一型なので直接使用可能
             info!(log, "executing switch"; "from" => %from, "to" => %to);
 
-            let from_token = to_backend_token_in(from)?;
-            let to_token = to_backend_token_out(to)?;
-            swap::execute_direct_swap(client, wallet, &from_token, &to_token, None, recorder)
-                .await?;
+            let from_token = from.as_in();
+            swap::execute_direct_swap(client, wallet, &from_token, to, None, recorder).await?;
 
             info!(log, "switch completed"; "from" => %from, "to" => %to);
             Ok(())
@@ -1020,7 +983,9 @@ where
                     "token_amount" => token_amount_u128
                 );
 
-                let from_token = parse_token_in(&token)?;
+                let from_token: TokenInAccount = token
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
                 swap::execute_direct_swap(
                     client,
                     wallet,
@@ -1101,7 +1066,7 @@ where
                     "wrap_near_amount" => wrap_near_amount_u128
                 );
 
-                let to_token = match parse_token_out(&token) {
+                let to_token: TokenOutAccount = match token.parse() {
                     Ok(t) => t,
                     Err(e) => {
                         error!(log, "Failed to parse token"; "token" => &token, "error" => %e);
@@ -1151,12 +1116,11 @@ where
             info!(log, "adding position"; "token" => %token, "weight" => weight);
 
             // wrap.near → token へのswap
+            // common と backend の TokenAccount は同一型なので直接使用可能
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token.to_string() != wrap_near.to_string() {
-                let wrap_near_in: crate::ref_finance::token_account::TokenInAccount =
-                    (*wrap_near).clone().into();
-                let to_token = to_backend_token_out(token)?;
-                swap::execute_direct_swap(client, wallet, &wrap_near_in, &to_token, None, recorder)
+                let wrap_near_in: TokenInAccount = (*wrap_near).clone().into();
+                swap::execute_direct_swap(client, wallet, &wrap_near_in, token, None, recorder)
                     .await?;
             }
 
@@ -1165,14 +1129,14 @@ where
         }
         TradingAction::ReducePosition { token, weight } => {
             // ポジション削減
+            // common と backend の TokenAccount は同一型なので直接使用可能
             info!(log, "reducing position"; "token" => %token, "weight" => weight);
 
             // token → wrap.near へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token.to_string() != wrap_near.to_string() {
-                let from_token = to_backend_token_in(token)?;
-                let wrap_near_out: crate::ref_finance::token_account::TokenOutAccount =
-                    (*wrap_near).clone().into();
+                let from_token = token.as_in();
+                let wrap_near_out: TokenOutAccount = (*wrap_near).clone().into();
                 swap::execute_direct_swap(
                     client,
                     wallet,
@@ -1442,7 +1406,9 @@ async fn liquidate_all_positions() -> Result<YoctoAmount> {
         }
 
         // token → wrap.near にスワップ
-        let from_token = parse_token_in(token)?;
+        let from_token: TokenInAccount = token
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
         match swap::execute_direct_swap(
             &client,
             &wallet,

@@ -28,7 +28,7 @@ fn near_value(v: f64) -> NearValue {
 fn test_calculate_expected_return() {
     // price 100 → price 110 は +10% の価格上昇
     let prediction = PredictionData {
-        token: token("TEST"),
+        token: token("test.near"),
         current_price: price(100.0),
         predicted_price_24h: price(110.0),
         timestamp: Utc::now(),
@@ -51,21 +51,21 @@ fn test_rank_tokens_by_momentum() {
     // price が上昇 = 正のリターン
     let predictions = vec![
         PredictionData {
-            token: token("TOKEN1"),
+            token: token("token1"),
             current_price: price(100.0),
             predicted_price_24h: price(110.0), // +10% リターン
             timestamp: Utc::now(),
             confidence: Some("0.7".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
-            token: token("TOKEN2"),
+            token: token("token2"),
             current_price: price(100.0),
             predicted_price_24h: price(120.0), // +20% リターン（最高）
             timestamp: Utc::now(),
             confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
-            token: token("TOKEN3"),
+            token: token("token3"),
             current_price: price(100.0),
             predicted_price_24h: price(105.0), // +5% リターン
             timestamp: Utc::now(),
@@ -77,21 +77,21 @@ fn test_rank_tokens_by_momentum() {
 
     // 全て正のリターンなので3つとも含まれるはず
     assert!(ranked.len() >= 2); // 最低2つは含まれる
-    assert_eq!(ranked[0].0, token("TOKEN2")); // 信頼度調整後も最高リターン
-    assert_eq!(ranked[1].0, token("TOKEN1")); // 2番目
+    assert_eq!(ranked[0].0, token("token2")); // 信頼度調整後も最高リターン
+    assert_eq!(ranked[1].0, token("token1")); // 2番目
 
     // 3番目があるかチェック
     if ranked.len() > 2 {
-        assert_eq!(ranked[2].0, token("TOKEN3"));
+        assert_eq!(ranked[2].0, token("token3"));
     }
 }
 
 #[test]
 fn test_make_trading_decision() {
     let ranked: Vec<(TokenOutAccount, f64, Option<f64>)> = vec![
-        (token("BEST_TOKEN"), 0.2, Some(0.8)),
-        (token("GOOD_TOKEN"), 0.1, Some(0.7)),
-        (token("OK_TOKEN"), 0.08, Some(0.6)), // より高いリターンに調整
+        (token("best-token"), 0.2, Some(0.8)),
+        (token("good-token"), 0.1, Some(0.7)),
+        (token("ok-token"), 0.08, Some(0.6)), // より高いリターンに調整
     ];
 
     let holding_amount = amount_f64(10.0);
@@ -104,7 +104,7 @@ fn test_make_trading_decision() {
 
     // Case 1: Hold when current token is best
     let action = make_trading_decision(
-        &token("BEST_TOKEN"),
+        &token("best-token"),
         0.2,
         &ranked,
         &holding_amount,
@@ -117,7 +117,7 @@ fn test_make_trading_decision() {
 
     // Case 2: Sell when return is below threshold (5%)
     let action = make_trading_decision(
-        &token("BAD_TOKEN"),
+        &token("bad-token"),
         0.02,
         &ranked,
         &holding_amount,
@@ -132,7 +132,7 @@ fn test_make_trading_decision() {
     // 現在のリターン0.05、最良0.2、信頼度0.8、1.5 1.5
     // 0.2 > 0.05 * 1.5 * 0.8 = 0.06 なので 0.2 > 0.06 でSwitch
     let action = make_trading_decision(
-        &token("MEDIUM_TOKEN"),
+        &token("medium-token"),
         0.05,
         &ranked,
         &holding_amount,
@@ -147,7 +147,7 @@ fn test_make_trading_decision() {
     // small_amount * holding_price = 0.5 * 1.0 = 0.5 NEAR < 1 NEAR
     let small_amount = amount_f64(0.5);
     let action = make_trading_decision(
-        &token("BAD_TOKEN"),
+        &token("bad-token"),
         0.02,
         &ranked,
         &small_amount,
@@ -176,7 +176,7 @@ fn test_calculate_volatility() {
 fn test_calculate_expected_return_edge_cases() {
     // ゼロ価格のケース
     let zero_price_prediction = PredictionData {
-        token: token("ZERO"),
+        token: token("zero"),
         current_price: price(0.0),
         predicted_price_24h: price(100.0),
         timestamp: Utc::now(),
@@ -187,7 +187,7 @@ fn test_calculate_expected_return_edge_cases() {
 
     // 負のリターンのケース (price 下落 = 負のリターン)
     let negative_prediction = PredictionData {
-        token: token("NEGATIVE"),
+        token: token("negative"),
         current_price: price(100.0),
         predicted_price_24h: price(80.0), // price 下落 = 負のリターン
         timestamp: Utc::now(),
@@ -205,7 +205,7 @@ fn test_calculate_expected_return_edge_cases() {
 fn test_confidence_adjusted_return() {
     // price 100 → 110 = +10% の価格上昇
     let prediction = PredictionData {
-        token: token("TEST"),
+        token: token("test.near"),
         current_price: price(100.0),
         predicted_price_24h: price(110.0),
         timestamp: Utc::now(),
@@ -220,7 +220,7 @@ fn test_confidence_adjusted_return() {
 
     // 信頼度なしの場合のテスト - same price change as prediction above
     let no_confidence_prediction = PredictionData {
-        token: token("NO_CONF"),
+        token: token("no-conf"),
         current_price: price(100.0),
         predicted_price_24h: price(110.0), // same positive return
         timestamp: Utc::now(),
@@ -240,14 +240,14 @@ fn test_rank_tokens_by_momentum_edge_cases() {
     // 全て負のリターン (price 下落 = 負のリターン)
     let negative_predictions = vec![
         PredictionData {
-            token: token("NEG1"),
+            token: token("neg1"),
             current_price: price(100.0),
             predicted_price_24h: price(80.0), // price 下落 = 負のリターン
             timestamp: Utc::now(),
             confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         },
         PredictionData {
-            token: token("NEG2"),
+            token: token("neg2"),
             current_price: price(100.0),
             predicted_price_24h: price(70.0), // price 下落 = 負のリターン
             timestamp: Utc::now(),
@@ -260,7 +260,7 @@ fn test_rank_tokens_by_momentum_edge_cases() {
     // TOP_N_TOKENS以上のトークン (price 上昇 = 正のリターン)
     let many_predictions: Vec<PredictionData> = (0..10)
         .map(|i| PredictionData {
-            token: format!("TOKEN{}", i).parse().unwrap(),
+            token: format!("token{}", i).parse().unwrap(),
             current_price: price(100.0),
             predicted_price_24h: price(110.0 + i as f64), // price 上昇 = 正のリターン
             timestamp: Utc::now(),
@@ -320,7 +320,7 @@ fn test_momentum_under_changing_volatility_regimes() {
     // 低ボラティリティ期間のデータ
     // price 上昇 = 正のリターン
     let low_vol_predictions = vec![PredictionData {
-        token: token("LOW_VOL_TOKEN"),
+        token: token("low-vol-token"),
         current_price: price(100.0),
         predicted_price_24h: price(103.0), // 3%価格上昇
         timestamp: Utc::now(),
@@ -330,7 +330,7 @@ fn test_momentum_under_changing_volatility_regimes() {
     // 高ボラティリティ期間のデータ
     // price 上昇 = 正のリターン
     let high_vol_predictions = vec![PredictionData {
-        token: token("HIGH_VOL_TOKEN"),
+        token: token("high-vol-token"),
         current_price: price(100.0),
         predicted_price_24h: price(125.0), // 25%価格上昇
         timestamp: Utc::now(),
@@ -360,7 +360,7 @@ fn test_prediction_confidence_degradation() {
     // 同じ価格予測で信頼度が段階的に悪化するケース
     // price 100 → 110 = +10% 価格上昇
     let base_prediction = PredictionData {
-        token: token("DEGRADING_TOKEN"),
+        token: token("degrading-token"),
         current_price: price(100.0),
         predicted_price_24h: price(110.0), // 10%上昇
         timestamp: Utc::now(),
@@ -393,14 +393,14 @@ fn test_market_stress_scenario() {
     // price 上昇 = 正のリターン, price 下落 = 負のリターン
     let stress_predictions = vec![
         PredictionData {
-            token: token("STRESS_TOKEN1"),
+            token: token("stress-token1"),
             current_price: price(100.0),
             predicted_price_24h: price(130.0), // 30%価格上昇
             timestamp: Utc::now(),
             confidence: Some("0.4".parse::<BigDecimal>().unwrap()), // 低信頼度
         },
         PredictionData {
-            token: token("STRESS_TOKEN2"),
+            token: token("stress-token2"),
             current_price: price(100.0),
             predicted_price_24h: price(57.0), // 約43%価格下落
             timestamp: Utc::now(),
@@ -435,7 +435,7 @@ fn test_trading_frequency_cost_impact() {
     // 高頻度取引シナリオ（1日10回）
     // price 上昇 = 正のリターン
     let high_freq_predictions = vec![PredictionData {
-        token: token("HIGH_FREQ_TOKEN"),
+        token: token("high-freq-token"),
         current_price: price(100.0),
         predicted_price_24h: price(102.0), // 2%価格上昇
         timestamp: Utc::now(),
@@ -445,7 +445,7 @@ fn test_trading_frequency_cost_impact() {
     // 低頻度取引シナリオ（週1回）
     // price 上昇 = 正のリターン
     let low_freq_predictions = vec![PredictionData {
-        token: token("LOW_FREQ_TOKEN"),
+        token: token("low-freq-token"),
         current_price: price(100.0),
         predicted_price_24h: price(108.0), // 8%価格上昇
         timestamp: Utc::now(),
@@ -459,7 +459,7 @@ fn test_trading_frequency_cost_impact() {
     let min_trade_value = near_value(1.0); // 1 NEAR
 
     let _high_freq_decision = make_trading_decision(
-        &token("CURRENT_TOKEN"),
+        &token("current-token"),
         0.015, // 1.5%の現在リターン
         &high_freq_ranked,
         &base_amount,
@@ -470,7 +470,7 @@ fn test_trading_frequency_cost_impact() {
     );
 
     let low_freq_decision = make_trading_decision(
-        &token("CURRENT_TOKEN"),
+        &token("current-token"),
         0.01, // より低い現在リターン
         &low_freq_ranked,
         &base_amount,
@@ -523,7 +523,7 @@ fn test_trading_frequency_cost_impact() {
 fn test_partial_fill_scenario() {
     // price 上昇 = 正のリターン
     let predictions = vec![PredictionData {
-        token: token("TARGET_TOKEN"),
+        token: token("target-token"),
         current_price: price(100.0),
         predicted_price_24h: price(115.0), // 15%価格上昇
         timestamp: Utc::now(),
@@ -537,7 +537,7 @@ fn test_partial_fill_scenario() {
     let min_trade_value = near_value(1.0); // 1 NEAR
 
     let full_action = make_trading_decision(
-        &token("CURRENT_TOKEN"),
+        &token("current-token"),
         0.03,
         &ranked,
         &full_amount,
@@ -547,7 +547,7 @@ fn test_partial_fill_scenario() {
         &min_trade_value,
     );
     let partial_action = make_trading_decision(
-        &token("CURRENT_TOKEN"),
+        &token("current-token"),
         0.03,
         &ranked,
         &partial_amount,
@@ -566,10 +566,10 @@ fn test_partial_fill_scenario() {
     // 部分約定でも十分な利益が見込める場合は実行
     match partial_action {
         TradingAction::Switch { from: _, to } => {
-            assert_eq!(to, token("TARGET_TOKEN"));
+            assert_eq!(to, token("target-token"));
         }
         TradingAction::Sell { token: _, target } => {
-            assert_eq!(target, token("TARGET_TOKEN"));
+            assert_eq!(target, token("target-token"));
         }
         TradingAction::Hold => {
             // 部分約定によりリターンが取引コストを下回る場合はHold
@@ -592,7 +592,7 @@ fn test_multi_timeframe_momentum_consistency() {
     // 短期（1時間）と長期（24時間）のシグナルが矛盾する場合
     // price 上昇 = 正のリターン, price 下落 = 負のリターン
     let short_term_prediction = PredictionData {
-        token: token("CONFLICT_TOKEN"),
+        token: token("conflict-token"),
         current_price: price(100.0),
         predicted_price_24h: price(105.0), // 短期上昇
         timestamp: Utc::now(),
@@ -600,7 +600,7 @@ fn test_multi_timeframe_momentum_consistency() {
     };
 
     let long_term_prediction = PredictionData {
-        token: token("CONFLICT_TOKEN"),
+        token: token("conflict-token"),
         current_price: price(100.0),
         predicted_price_24h: price(95.0), // 長期下落
         timestamp: Utc::now(),
@@ -613,7 +613,7 @@ fn test_multi_timeframe_momentum_consistency() {
     let holding_price = price(1.0); // 1 NEAR/token
     let min_trade_value = near_value(1.0); // 1 NEAR
     let short_decision = make_trading_decision(
-        &token("CURRENT_TOKEN"),
+        &token("current-token"),
         0.02,
         &short_ranked,
         &holding_amount,
@@ -626,7 +626,7 @@ fn test_multi_timeframe_momentum_consistency() {
     // 長期シグナルでの判断
     let long_ranked = rank_tokens_by_momentum(vec![long_term_prediction]);
     let long_decision = make_trading_decision(
-        &token("CURRENT_TOKEN"),
+        &token("current-token"),
         0.02,
         &long_ranked,
         &holding_amount,
@@ -664,7 +664,7 @@ fn test_momentum_signal_strength_threshold() {
         let predicted = 100.0 * (1.0 + gross_return);
 
         let prediction = PredictionData {
-            token: format!("THRESHOLD_{}", case_name).parse().unwrap(),
+            token: format!("threshold-{}", case_name).parse().unwrap(),
             current_price: price(current),
             predicted_price_24h: price(predicted),
             timestamp: Utc::now(),
@@ -736,7 +736,7 @@ fn test_minimal_positive_return_filtering() {
     // 取引コスト後に非常に小さな正のリターンになるケース
     // price 上昇 = 正のリターン
     let marginal_prediction = PredictionData {
-        token: token("MARGINAL_TOKEN"),
+        token: token("marginal-token"),
         current_price: price(100.0),
         predicted_price_24h: price(102.7), // 2.7%価格上昇
         timestamp: Utc::now(),
@@ -764,7 +764,7 @@ fn test_negative_return_filtering() {
     // 取引コスト後に負のリターンになるケース
     // price 上昇 = 正のリターンだが、1%では取引コストを賄えない
     let negative_prediction = PredictionData {
-        token: token("NEGATIVE_TOKEN"),
+        token: token("negative-token"),
         current_price: price(100.0),
         predicted_price_24h: price(101.0), // 1%価格上昇だが取引コストで負になる
         timestamp: Utc::now(),

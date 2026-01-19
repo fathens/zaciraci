@@ -1,7 +1,7 @@
 use crate::logging::*;
 use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
@@ -439,15 +439,9 @@ impl PredictionProvider for PredictionService {
         end_date: DateTime<Utc>,
         quote_token: &CommonTokenInAccount,
     ) -> Result<Vec<TopTokenInfo>> {
-        // common の TokenInAccount → backend の TokenInAccount に変換
-        let backend_quote: TokenInAccount = quote_token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid quote token: {}", e))?
-            .into();
-
+        // common と backend の TokenAccount は同一型なので直接使用可能
         let tokens = self
-            .get_tokens_by_volatility(start_date, end_date, &backend_quote)
+            .get_tokens_by_volatility(start_date, end_date, quote_token)
             .await?;
         Ok(tokens
             .into_iter()
@@ -468,20 +462,9 @@ impl PredictionProvider for PredictionService {
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
     ) -> Result<CommonPriceHistory> {
-        // common の型 → backend の型に変換
-        let backend_token: TokenOutAccount = token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?
-            .into();
-        let backend_quote: TokenInAccount = quote_token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid quote token: {}", e))?
-            .into();
-
+        // common と backend の TokenAccount は同一型なので直接使用可能
         let history = self
-            .get_price_history(&backend_token, &backend_quote, start_date, end_date)
+            .get_price_history(token, quote_token, start_date, end_date)
             .await?;
         Ok(CommonPriceHistory {
             token: token.clone(),
@@ -495,31 +478,11 @@ impl PredictionProvider for PredictionService {
         history: &CommonPriceHistory,
         prediction_horizon: usize,
     ) -> Result<TokenPredictionResult> {
-        // CommonPriceHistoryをTokenPriceHistoryに変換
-        let backend_token: TokenOutAccount = history
-            .token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?
-            .into();
-        let backend_quote: TokenInAccount = history
-            .quote_token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid quote token: {}", e))?
-            .into();
+        // common と backend の TokenAccount は同一型なので直接使用可能
         let backend_history = TokenPriceHistory {
-            token: backend_token,
-            quote_token: backend_quote,
-            prices: history
-                .prices
-                .iter()
-                .map(|p| PricePoint {
-                    timestamp: p.timestamp,
-                    price: p.price.clone(),
-                    volume: p.volume.clone(),
-                })
-                .collect(),
+            token: history.token.clone(),
+            quote_token: history.quote_token.clone(),
+            prices: history.prices.clone(),
         };
 
         let prediction = self
@@ -549,21 +512,11 @@ impl PredictionProvider for PredictionService {
         history_days: i64,
         prediction_horizon: usize,
     ) -> Result<HashMap<CommonTokenOutAccount, TokenPredictionResult>> {
-        // common の型 → backend の型に変換
-        let backend_tokens: Vec<TokenOutAccount> = tokens
-            .iter()
-            .filter_map(|t| t.to_string().parse::<TokenAccount>().ok().map(|a| a.into()))
-            .collect();
-        let backend_quote: TokenInAccount = quote_token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid quote token: {}", e))?
-            .into();
-
+        // common と backend の TokenAccount は同一型なので直接使用可能
         let predictions = self
             .predict_multiple_tokens(
-                backend_tokens,
-                &backend_quote,
+                tokens.clone(),
+                quote_token,
                 history_days,
                 prediction_horizon,
             )
@@ -571,15 +524,10 @@ impl PredictionProvider for PredictionService {
 
         let mut result = HashMap::new();
         for (token_key, prediction) in predictions {
-            // backend の TokenOutAccount → common の TokenOutAccount に変換
-            let token_out: CommonTokenOutAccount = token_key
-                .to_string()
-                .parse()
-                .map_err(|e| anyhow::anyhow!("Invalid token in prediction result: {}", e))?;
             result.insert(
-                token_out.clone(),
+                token_key.clone(),
                 TokenPredictionResult {
-                    token: token_out,
+                    token: token_key,
                     quote_token: quote_token.clone(),
                     prediction_time: prediction.prediction_time,
                     predictions: prediction

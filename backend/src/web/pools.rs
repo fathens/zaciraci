@@ -226,10 +226,8 @@ async fn estimate_trade(
 
     let timestamp = request.timestamp;
     let amount_in = request.amount_in.as_yoctonear();
-    let start_token: TokenAccount = request.token_in.try_into().unwrap();
-    let goal_token: TokenAccount = request.token_out.try_into().unwrap();
-    let start = &start_token.into();
-    let goal = &goal_token.into();
+    let start: TokenInAccount = request.token_in.into();
+    let goal: TokenOutAccount = request.token_out.into();
     info!(log, "start";
         "timestamp" => %timestamp,
         "amount_in" => %amount_in,
@@ -295,7 +293,7 @@ async fn estimate_trade(
     let mut amount_outs: Vec<u128> = vec![];
     for i in 0..10 {
         let prev_out = if i > 0 { amount_outs[i - 1] } else { 0 };
-        let v = out_amount(i, prev_out, pools.clone(), amount_in, start, goal);
+        let v = out_amount(i, prev_out, pools.clone(), amount_in, &start, &goal);
         amount_outs.push(v);
     }
     let amount_out = amount_outs.iter().max().unwrap();
@@ -501,7 +499,7 @@ async fn get_volatility_tokens(
         let result = weights
             .into_iter()
             .take(request.limit as usize)
-            .map(|(token, _)| token.into())
+            .map(|(token, _)| token)
             .collect();
 
         let elapsed = start_time.elapsed();

@@ -68,9 +68,9 @@ where
 
             let action = SwapAction {
                 pool_id: pair.pool_id(),
-                token_in: pair.token_in_id().as_id().to_owned(),
+                token_in: pair.token_in_id().as_account_id().to_owned(),
                 amount_in: is_first.then_some(U128(prev_out)),
-                token_out: pair.token_out_id().as_id().to_owned(),
+                token_out: pair.token_out_id().as_account_id().to_owned(),
                 min_amount_out: U128(min_out),
             };
 

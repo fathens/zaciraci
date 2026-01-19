@@ -38,6 +38,7 @@ rand = "0.9"
 humantime = "2.2"
 reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
+near-account-id = { version = "1.1", features = ["serde"] }
 
 [profile]
 

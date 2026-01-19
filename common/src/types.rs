@@ -12,3 +12,4 @@ pub use self::token_types::{ExchangeRate, TokenAmount};
 pub use self::yocto_near::NearUnit;
 #[deprecated(note = "Use TokenPrice, YoctoAmount, YoctoValue instead")]
 pub use self::yocto_near::YoctoNearToken;
+pub use near_account_id::{AccountId, ParseAccountError};

@@ -16,8 +16,8 @@ use crate::api::backend::BackendClient;
 async fn test_backend_api_get_volatility_tokens_success() -> Result<()> {
     let mut server = mockito::Server::new_async().await;
     let mock_tokens = vec![
-        TokenAccount("wrap.near".to_string().into()),
-        TokenAccount("usdc.near".to_string().into()),
+        "wrap.near".parse::<TokenAccount>().unwrap(),
+        "usdc.near".parse::<TokenAccount>().unwrap(),
     ];
     let volatility_response = common::pools::VolatilityTokensResponse {
         tokens: mock_tokens.clone(),
@@ -43,8 +43,8 @@ async fn test_backend_api_get_volatility_tokens_success() -> Result<()> {
     assert!(result.is_ok());
     let tokens = result.unwrap();
     assert_eq!(tokens.len(), 2);
-    assert_eq!(tokens[0].0, "wrap.near".into());
-    assert_eq!(tokens[1].0, "usdc.near".into());
+    assert_eq!(tokens[0].as_str(), "wrap.near");
+    assert_eq!(tokens[1].as_str(), "usdc.near");
 
     Ok(())
 }

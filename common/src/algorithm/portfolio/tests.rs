@@ -37,21 +37,21 @@ fn cap(v: i64) -> NearValue {
 fn create_sample_tokens() -> Vec<TokenInfo> {
     vec![
         TokenInfo {
-            symbol: token_out("TOKEN_A"),
+            symbol: token_out("token-a"),
             current_rate: rate_from_price(0.01),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_B"),
+            symbol: token_out("token-b"),
             current_rate: rate_from_price(0.02),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
             market_cap: Some(cap(500000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_C"),
+            symbol: token_out("token-c"),
             current_rate: rate_from_price(0.005),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
@@ -66,9 +66,9 @@ fn create_sample_predictions() -> BTreeMap<TokenOutAccount, TokenPrice> {
     // current_rate = rate_from_price(0.01) → 0.01 NEAR/token
     // +10% リターン: predicted_price = current_price * 1.1
     let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("TOKEN_A"), price(0.01 * 1.1)); // current=0.01, +10%
-    predictions.insert(token_out("TOKEN_B"), price(0.02 * 1.1)); // current=0.02, +10%
-    predictions.insert(token_out("TOKEN_C"), price(0.005 * 1.05)); // current=0.005, +5%
+    predictions.insert(token_out("token-a"), price(0.01 * 1.1)); // current=0.01, +10%
+    predictions.insert(token_out("token-b"), price(0.02 * 1.1)); // current=0.02, +10%
+    predictions.insert(token_out("token-c"), price(0.005 * 1.05)); // current=0.005, +5%
     predictions
 }
 
@@ -86,7 +86,7 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
         });
     }
     history.push(PriceHistory {
-        token: token_out("TOKEN_A"),
+        token: token_out("token-a"),
         quote_token: token_in("wrap.near"),
         prices: token_a_prices,
     });
@@ -102,7 +102,7 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
         });
     }
     history.push(PriceHistory {
-        token: token_out("TOKEN_B"),
+        token: token_out("token-b"),
         quote_token: token_in("wrap.near"),
         prices: token_b_prices,
     });
@@ -117,7 +117,7 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
         });
     }
     history.push(PriceHistory {
-        token: token_out("TOKEN_C"),
+        token: token_out("token-c"),
         quote_token: token_in("wrap.near"),
         prices: token_c_prices,
     });
@@ -130,11 +130,11 @@ fn create_sample_wallet() -> WalletInfo {
     // トークン数量（smallest_units）: 価格×数量=価値 となるように設定
     // decimals=18 で rate() と一致させる
     holdings.insert(
-        token_out("TOKEN_A"),
+        token_out("token-a"),
         TokenAmount::from_smallest_units(BigDecimal::from(5), 18),
     ); // price=100, value=500 NEAR
     holdings.insert(
-        token_out("TOKEN_B"),
+        token_out("token-b"),
         TokenAmount::from_smallest_units(BigDecimal::from(10), 18),
     ); // price=50, value=500 NEAR
 
@@ -477,7 +477,7 @@ fn test_empty_inputs() {
 #[test]
 fn test_single_token_portfolio() {
     let tokens = vec![TokenInfo {
-        symbol: token_out("SINGLE_TOKEN"),
+        symbol: token_out("single-token"),
         current_rate: rate_from_price(0.01),
         historical_volatility: 0.2,
         liquidity_score: Some(0.8),
@@ -487,7 +487,7 @@ fn test_single_token_portfolio() {
     // rate 減少 = 価格上昇 = 正のリターン
     // +10% リターン: predicted_rate = 100 / 1.1 ≈ 90.9
     let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("SINGLE_TOKEN"), price(1.0 / (100.0 / 1.1)));
+    predictions.insert(token_out("single-token"), price(1.0 / (100.0 / 1.1)));
 
     let expected_returns = calculate_expected_returns(&tokens, &predictions);
     assert_eq!(expected_returns.len(), 1);
@@ -549,9 +549,9 @@ fn test_extreme_predictions() {
     // TOKEN_A: current_price = 1/100 = 0.01, +1000% → predicted_price = 0.01 * 11 = 0.11
     // TOKEN_B: current_price = 1/50 = 0.02, -99.8% → predicted_price = 0.02 * 0.002 = 0.00004
     // TOKEN_C: current_price = 1/200 = 0.005, 変化なし → predicted_price = 0.005
-    predictions.insert(token_out("TOKEN_A"), price(0.01 * 11.0)); // +1000%上昇
-    predictions.insert(token_out("TOKEN_B"), price(0.02 * 0.002)); // 99.8%下落
-    predictions.insert(token_out("TOKEN_C"), price(0.005)); // 変化なし
+    predictions.insert(token_out("token-a"), price(0.01 * 11.0)); // +1000%上昇
+    predictions.insert(token_out("token-b"), price(0.02 * 0.002)); // 99.8%下落
+    predictions.insert(token_out("token-c"), price(0.005)); // 変化なし
 
     let expected_returns = calculate_expected_returns(&tokens, &predictions);
 
@@ -589,9 +589,9 @@ fn test_market_crash_scenario() {
     // 全てのトークンが大幅下落を予測
     // 価格下落 = 負のリターン
     // -50%リターン: predicted_price = current_price * 0.5
-    crash_predictions.insert(token_out("TOKEN_A"), price(0.01 * 0.5)); // -50%
-    crash_predictions.insert(token_out("TOKEN_B"), price(0.02 * 0.5)); // -50%
-    crash_predictions.insert(token_out("TOKEN_C"), price(0.005 * 0.5)); // -50%
+    crash_predictions.insert(token_out("token-a"), price(0.01 * 0.5)); // -50%
+    crash_predictions.insert(token_out("token-b"), price(0.02 * 0.5)); // -50%
+    crash_predictions.insert(token_out("token-c"), price(0.005 * 0.5)); // -50%
 
     let expected_returns = calculate_expected_returns(&tokens, &crash_predictions);
 
@@ -893,21 +893,21 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
     // ケース1: アルファベット順（BTreeMapの自然順序）
     let tokens_alphabetical = vec![
         TokenInfo {
-            symbol: token_out("TOKEN_A"),
+            symbol: token_out("token-a"),
             current_rate: rate_from_price(0.01),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_B"),
+            symbol: token_out("token-b"),
             current_rate: rate_from_price(0.02),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
             market_cap: Some(cap(500000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_C"),
+            symbol: token_out("token-c"),
             current_rate: rate_from_price(0.005),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
@@ -918,21 +918,21 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
     // ケース2: 逆順（BTreeMapで自動的にアルファベット順に並び替えられる）
     let tokens_reverse = vec![
         TokenInfo {
-            symbol: token_out("TOKEN_C"),
+            symbol: token_out("token-c"),
             current_rate: rate_from_price(0.005),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(cap(2000000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_B"),
+            symbol: token_out("token-b"),
             current_rate: rate_from_price(0.02),
             historical_volatility: 0.3,
             liquidity_score: Some(0.7),
             market_cap: Some(cap(500000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_A"),
+            symbol: token_out("token-a"),
             current_rate: rate_from_price(0.01),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
@@ -941,9 +941,9 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("TOKEN_A"), price(110.0)); // +10%
-    predictions.insert(token_out("TOKEN_B"), price(55.0)); // +10%
-    predictions.insert(token_out("TOKEN_C"), price(210.0)); // +5%
+    predictions.insert(token_out("token-a"), price(110.0)); // +10%
+    predictions.insert(token_out("token-b"), price(55.0)); // +10%
+    predictions.insert(token_out("token-c"), price(210.0)); // +5%
 
     // 両ケースで期待リターンを計算
     let returns_alphabetical = calculate_expected_returns(&tokens_alphabetical, &predictions);
@@ -970,7 +970,7 @@ fn test_daily_returns_ordering_consistency() {
     // シナリオ1: TOKEN_A, TOKEN_B, TOKEN_C の順序
     let price_history_scenario1 = vec![
         PriceHistory {
-            token: token_out("TOKEN_A"),
+            token: token_out("token-a"),
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
@@ -986,7 +986,7 @@ fn test_daily_returns_ordering_consistency() {
             ],
         },
         PriceHistory {
-            token: token_out("TOKEN_B"),
+            token: token_out("token-b"),
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
@@ -1006,7 +1006,7 @@ fn test_daily_returns_ordering_consistency() {
     // シナリオ2: TOKEN_B, TOKEN_A の順序（逆順）
     let price_history_scenario2 = vec![
         PriceHistory {
-            token: token_out("TOKEN_B"),
+            token: token_out("token-b"),
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
@@ -1022,7 +1022,7 @@ fn test_daily_returns_ordering_consistency() {
             ],
         },
         PriceHistory {
-            token: token_out("TOKEN_A"),
+            token: token_out("token-a"),
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
@@ -1356,21 +1356,21 @@ fn test_performance_metrics_with_existing_functions() {
 fn test_token_scoring() {
     let tokens = vec![
         TokenInfo {
-            symbol: token_out("HIGH_SHARPE"),
+            symbol: token_out("high-sharpe"),
             current_rate: rate_from_price(0.01),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(cap(5000000)),
         },
         TokenInfo {
-            symbol: token_out("LOW_LIQUIDITY"),
+            symbol: token_out("low-liquidity"),
             current_rate: rate_from_price(0.02),
             historical_volatility: 0.2,
             liquidity_score: Some(0.05), // 低流動性
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("HIGH_VOL"),
+            symbol: token_out("high-vol"),
             current_rate: rate_from_price(0.005),
             historical_volatility: 0.5, // 高ボラティリティ
             liquidity_score: Some(0.7),
@@ -1379,9 +1379,9 @@ fn test_token_scoring() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("HIGH_SHARPE"), price(0.15));
-    predictions.insert(token_out("LOW_LIQUIDITY"), price(0.20));
-    predictions.insert(token_out("HIGH_VOL"), price(0.10));
+    predictions.insert(token_out("high-sharpe"), price(0.15));
+    predictions.insert(token_out("low-liquidity"), price(0.20));
+    predictions.insert(token_out("high-vol"), price(0.10));
 
     let history = create_sample_price_history();
 
@@ -1392,14 +1392,14 @@ fn test_token_scoring() {
     assert!(
         selected
             .iter()
-            .any(|t| t.symbol == token_out("HIGH_SHARPE"))
+            .any(|t| t.symbol == token_out("high-sharpe"))
     );
 
     // LOW_LIQUIDITYは流動性フィルタで除外されるべき
     assert!(
         !selected
             .iter()
-            .any(|t| t.symbol == token_out("LOW_LIQUIDITY"))
+            .any(|t| t.symbol == token_out("low-liquidity"))
     );
 
     // 最大2トークンが選ばれる
@@ -1411,21 +1411,21 @@ fn test_correlation_based_selection() {
     // 相関の高いトークングループを作成
     let tokens = vec![
         TokenInfo {
-            symbol: token_out("TOKEN_A"),
+            symbol: token_out("token-a"),
             current_rate: rate_from_price(0.01),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_B"), // Aと高相関
+            symbol: token_out("token-b"), // Aと高相関
             current_rate: rate_from_price(0.02),
             historical_volatility: 0.2,
             liquidity_score: Some(0.8),
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_C"), // 独立
+            symbol: token_out("token-c"), // 独立
             current_rate: rate_from_price(0.005),
             historical_volatility: 0.15,
             liquidity_score: Some(0.9),
@@ -1434,9 +1434,9 @@ fn test_correlation_based_selection() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("TOKEN_A"), price(0.12));
-    predictions.insert(token_out("TOKEN_B"), price(0.11));
-    predictions.insert(token_out("TOKEN_C"), price(0.10));
+    predictions.insert(token_out("token-a"), price(0.12));
+    predictions.insert(token_out("token-b"), price(0.11));
+    predictions.insert(token_out("token-c"), price(0.10));
 
     // 価格履歴を作成（AとBは同じ動き、Cは独立）
     let base_time = Utc::now() - Duration::days(10);
@@ -1449,8 +1449,8 @@ fn test_correlation_based_selection() {
         let price_c = 200.0 * (1.0 - 0.005 * i as f64); // 逆の動き
 
         history.push(PriceHistory {
-            token: token_out("TOKEN_A"),
-            quote_token: token_in("QUOTE"),
+            token: token_out("token-a"),
+            quote_token: token_in("quote.near"),
             prices: vec![PricePoint {
                 timestamp: time,
                 price: price(price_a),
@@ -1459,8 +1459,8 @@ fn test_correlation_based_selection() {
         });
 
         history.push(PriceHistory {
-            token: token_out("TOKEN_B"),
-            quote_token: token_in("QUOTE"),
+            token: token_out("token-b"),
+            quote_token: token_in("quote.near"),
             prices: vec![PricePoint {
                 timestamp: time,
                 price: price(price_b),
@@ -1469,8 +1469,8 @@ fn test_correlation_based_selection() {
         });
 
         history.push(PriceHistory {
-            token: token_out("TOKEN_C"),
-            quote_token: token_in("QUOTE"),
+            token: token_out("token-c"),
+            quote_token: token_in("quote.near"),
             prices: vec![PricePoint {
                 timestamp: time,
                 price: price(price_c),
@@ -1484,15 +1484,15 @@ fn test_correlation_based_selection() {
 
     // AとCが選ばれるべき（低相関）またはBとCが選ばれるべき
     // AとBの両方は選ばれないべき（高相関）
-    if selected.iter().any(|t| t.symbol == token_out("TOKEN_A")) {
-        assert!(!selected.iter().any(|t| t.symbol == token_out("TOKEN_B")));
+    if selected.iter().any(|t| t.symbol == token_out("token-a")) {
+        assert!(!selected.iter().any(|t| t.symbol == token_out("token-b")));
     }
-    if selected.iter().any(|t| t.symbol == token_out("TOKEN_B")) {
-        assert!(!selected.iter().any(|t| t.symbol == token_out("TOKEN_A")));
+    if selected.iter().any(|t| t.symbol == token_out("token-b")) {
+        assert!(!selected.iter().any(|t| t.symbol == token_out("token-a")));
     }
 
     // TOKEN_Cは必ず選ばれるべき（独立性が高い）
-    assert!(selected.iter().any(|t| t.symbol == token_out("TOKEN_C")));
+    assert!(selected.iter().any(|t| t.symbol == token_out("token-c")));
 }
 
 #[test]
@@ -1526,14 +1526,14 @@ fn test_portfolio_performance_with_token_selection() {
     let tokens = vec![
         // 高品質トークン
         TokenInfo {
-            symbol: token_out("EXCELLENT_1"),
+            symbol: token_out("excellent1"),
             current_rate: rate_from_price(0.01),
             historical_volatility: 0.15,
             liquidity_score: Some(0.95),
             market_cap: Some(cap(10000000)),
         },
         TokenInfo {
-            symbol: token_out("EXCELLENT_2"),
+            symbol: token_out("excellent2"),
             current_rate: rate_from_price(0.005),
             historical_volatility: 0.12,
             liquidity_score: Some(0.92),
@@ -1541,14 +1541,14 @@ fn test_portfolio_performance_with_token_selection() {
         },
         // 中品質トークン
         TokenInfo {
-            symbol: token_out("MEDIUM_1"),
+            symbol: token_out("medium1"),
             current_rate: rate_from_price(0.02),
             historical_volatility: 0.25,
             liquidity_score: Some(0.5),
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("MEDIUM_2"),
+            symbol: token_out("medium2"),
             current_rate: rate_from_price(1.0 / 75.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.4),
@@ -1556,14 +1556,14 @@ fn test_portfolio_performance_with_token_selection() {
         },
         // 低品質トークン
         TokenInfo {
-            symbol: token_out("POOR_1"),
+            symbol: token_out("poor1"),
             current_rate: rate_from_price(0.1),
             historical_volatility: 0.5,
             liquidity_score: Some(0.08), // 低流動性
             market_cap: Some(cap(50000)),
         },
         TokenInfo {
-            symbol: token_out("POOR_2"),
+            symbol: token_out("poor2"),
             current_rate: rate_from_price(0.2),
             historical_volatility: 0.6,
             liquidity_score: Some(0.05), // 非常に低い流動性
@@ -1573,12 +1573,12 @@ fn test_portfolio_performance_with_token_selection() {
 
     // 予測リターン（高品質トークンほど良いリターン）
     let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("EXCELLENT_1"), price(0.20)); // 20%
-    predictions.insert(token_out("EXCELLENT_2"), price(0.18)); // 18%
-    predictions.insert(token_out("MEDIUM_1"), price(0.10)); // 10%
-    predictions.insert(token_out("MEDIUM_2"), price(0.08)); // 8%
-    predictions.insert(token_out("POOR_1"), price(0.05)); // 5%
-    predictions.insert(token_out("POOR_2"), price(0.02)); // 2%
+    predictions.insert(token_out("excellent1"), price(0.20)); // 20%
+    predictions.insert(token_out("excellent2"), price(0.18)); // 18%
+    predictions.insert(token_out("medium1"), price(0.10)); // 10%
+    predictions.insert(token_out("medium2"), price(0.08)); // 8%
+    predictions.insert(token_out("poor1"), price(0.05)); // 5%
+    predictions.insert(token_out("poor2"), price(0.02)); // 2%
 
     // 価格履歴を作成
     let base_time = Utc::now() - Duration::days(30);
@@ -1599,7 +1599,7 @@ fn test_portfolio_performance_with_token_selection() {
         }
         history.push(PriceHistory {
             token: token.symbol.clone(),
-            quote_token: token_in("QUOTE"),
+            quote_token: token_in("quote.near"),
             prices: prices_vec,
         });
     }
@@ -1611,7 +1611,7 @@ fn test_portfolio_performance_with_token_selection() {
     assert!(
         selected
             .iter()
-            .any(|t| t.symbol.to_string().starts_with("EXCELLENT")),
+            .any(|t| t.symbol.to_string().starts_with("excellent")),
         "少なくとも1つの高品質トークンが選ばれるべき"
     );
 
@@ -1619,7 +1619,7 @@ fn test_portfolio_performance_with_token_selection() {
     assert!(
         !selected
             .iter()
-            .any(|t| t.symbol.to_string().starts_with("POOR")),
+            .any(|t| t.symbol.to_string().starts_with("poor")),
         "低品質トークンは選ばれないべき"
     );
 
@@ -1679,28 +1679,28 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
 
     let tokens = vec![
         TokenInfo {
-            symbol: token_out("HIGH_SHARPE"),
+            symbol: token_out("high-sharpe"),
             current_rate: rate_from_price(0.01),
             historical_volatility: 0.1,
             liquidity_score: Some(0.9),
             market_cap: Some(cap(5000000)),
         },
         TokenInfo {
-            symbol: token_out("LOW_QUALITY"),
+            symbol: token_out("low-quality"),
             current_rate: rate_from_price(0.02),
             historical_volatility: 0.8,   // 非常に高いボラティリティ
             liquidity_score: Some(0.05),  // MIN_LIQUIDITY_SCORE以下
             market_cap: Some(cap(10000)), // MIN_MARKET_CAP以下
         },
         TokenInfo {
-            symbol: token_out("MEDIUM"),
+            symbol: token_out("medium.near"),
             current_rate: rate_from_price(1.0 / 75.0),
             historical_volatility: 0.3,
             liquidity_score: Some(0.6),
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("GOOD"),
+            symbol: token_out("good.near"),
             current_rate: rate_from_price(1.0 / 150.0),
             historical_volatility: 0.15,
             liquidity_score: Some(0.8),
@@ -1709,10 +1709,10 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
     ];
 
     let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("HIGH_SHARPE"), price(0.15));
-    predictions.insert(token_out("LOW_QUALITY"), price(0.08));
-    predictions.insert(token_out("MEDIUM"), price(0.10));
-    predictions.insert(token_out("GOOD"), price(0.12));
+    predictions.insert(token_out("high-sharpe"), price(0.15));
+    predictions.insert(token_out("low-quality"), price(0.08));
+    predictions.insert(token_out("medium.near"), price(0.10));
+    predictions.insert(token_out("good.near"), price(0.12));
 
     let wallet = WalletInfo {
         holdings: BTreeMap::new(),
@@ -1744,7 +1744,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         }
         full_history.push(PriceHistory {
             token: token.symbol.clone(),
-            quote_token: token_in("QUOTE"),
+            quote_token: token_in("quote.near"),
             prices: prices_vec,
         });
     }
@@ -1782,7 +1782,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         !result_with_selection
             .optimal_weights
             .weights
-            .contains_key(&token_out("LOW_QUALITY")),
+            .contains_key(&token_out("low-quality")),
         "低品質トークンは選択されないべき"
     );
 
@@ -3170,7 +3170,7 @@ fn test_calculate_current_weights_equivalence() {
     // テストデータを作成
     let tokens = vec![
         TokenInfo {
-            symbol: token_out("TOKEN_A"),
+            symbol: token_out("token-a"),
             current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("1000000000000000000").unwrap(), // 1e18
                 18,
@@ -3180,7 +3180,7 @@ fn test_calculate_current_weights_equivalence() {
             market_cap: Some(cap(1000000)),
         },
         TokenInfo {
-            symbol: token_out("TOKEN_B"),
+            symbol: token_out("token-b"),
             current_rate: ExchangeRate::from_raw_rate(
                 BigDecimal::from_str("500000000000000000").unwrap(), // 0.5e18
                 18,
@@ -3193,11 +3193,11 @@ fn test_calculate_current_weights_equivalence() {
 
     let mut holdings = BTreeMap::new();
     holdings.insert(
-        token_out("TOKEN_A"),
+        token_out("token-a"),
         TokenAmount::from_smallest_units(BigDecimal::from_str("10000000000000000000").unwrap(), 18), // 10e18
     );
     holdings.insert(
-        token_out("TOKEN_B"),
+        token_out("token-b"),
         TokenAmount::from_smallest_units(BigDecimal::from_str("20000000000000000000").unwrap(), 18), // 20e18
     );
 
