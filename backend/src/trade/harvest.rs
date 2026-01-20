@@ -288,8 +288,7 @@ async fn execute_harvest_transfer(
 
     // 5. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
     // wNEAR → NEAR 変換なので、どちらも decimals=24
-    let actual_transfer_yocto =
-        YoctoAmount::from_bigdecimal(BigDecimal::from(actual_transfer_amount));
+    let actual_transfer_yocto = YoctoAmount::from_u128(actual_transfer_amount);
     let from_amount = actual_transfer_yocto.to_token_amount();
     let to_amount = actual_transfer_yocto.to_token_amount();
 

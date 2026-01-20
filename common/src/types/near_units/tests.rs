@@ -940,15 +940,7 @@ fn test_yocto_amount_truncation_behavior() {
     // ブロックチェーン用に整数部を取得
     assert_eq!(amount.to_u128(), 333);
 
-    // ケース4: from_bigdecimal で直接作成
-    let amount = YoctoAmount::from_bigdecimal(BigDecimal::from_str("123.456").unwrap());
-    assert_eq!(
-        amount.as_bigdecimal(),
-        &BigDecimal::from_str("123.456").unwrap()
-    );
-    assert_eq!(amount.to_u128(), 123);
-
-    // ケース5: NearAmount::to_yocto() - 精度を保持
+    // ケース4: NearAmount::to_yocto() - 精度を保持
     let near_amount = NearAmount(BigDecimal::from_str("1.5").unwrap());
     let yocto = near_amount.to_yocto();
     // 1.5 NEAR = 1.5 * 10^24 yoctoNEAR（精度を保持）
@@ -1299,7 +1291,7 @@ fn test_yocto_amount_to_token_amount_zero() {
 #[test]
 fn test_yocto_amount_to_token_amount_fractional() {
     // 小数値を持つ YoctoAmount の変換
-    let yocto_amount = YoctoAmount::from_bigdecimal(BigDecimal::from_str("500.5").unwrap());
+    let yocto_amount = YoctoAmount(BigDecimal::from_str("500.5").unwrap());
     let token_amount = yocto_amount.to_token_amount();
 
     assert_eq!(token_amount.decimals(), 24);
@@ -1314,7 +1306,7 @@ fn test_yocto_amount_to_token_amount_harvest_pattern() {
     // harvest.rs で使われるパターン: wNEAR → NEAR 変換
     // 実際の送金額を YoctoAmount として作成し、TokenAmount に変換
     let actual_transfer = 5_000_000_000_000_000_000_000_000u128; // 5 NEAR
-    let yocto_amount = YoctoAmount::from_bigdecimal(BigDecimal::from(actual_transfer));
+    let yocto_amount = YoctoAmount::from_u128(actual_transfer);
 
     let from_amount = yocto_amount.to_token_amount();
     let to_amount = yocto_amount.to_token_amount();

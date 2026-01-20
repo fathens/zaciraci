@@ -392,11 +392,6 @@ impl YoctoAmount {
         YoctoAmount(BigDecimal::from(value))
     }
 
-    /// BigDecimal から YoctoAmount を作成
-    pub fn from_bigdecimal(value: BigDecimal) -> Self {
-        YoctoAmount(value)
-    }
-
     /// 内部の BigDecimal への参照を取得
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0
