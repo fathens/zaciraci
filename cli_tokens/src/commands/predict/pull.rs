@@ -85,8 +85,8 @@ fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePrediction
         timestamp: point.timestamp,
         price: point.value.clone(),
         confidence: point.confidence_interval.as_ref().map(|ci| {
-            let range = ci.upper.clone().into_bigdecimal() - ci.lower.clone().into_bigdecimal();
-            range / BigDecimal::from(2) / point.value.clone().into_bigdecimal()
+            let range = ci.upper.as_bigdecimal() - ci.lower.as_bigdecimal();
+            range / BigDecimal::from(2) / point.value.as_bigdecimal()
         }),
     }
 }
@@ -273,11 +273,11 @@ pub async fn run(args: PullArgs) -> Result<()> {
     ));
 
     for point in &mut forecast {
-        point.value = restore_value(&point.value.clone().into_bigdecimal(), scale_params);
+        point.value = restore_value(point.value.as_bigdecimal(), scale_params);
         // Also restore confidence intervals if present
         if let Some(ref mut ci) = point.confidence_interval {
-            ci.lower = restore_value(&ci.lower.clone().into_bigdecimal(), scale_params);
-            ci.upper = restore_value(&ci.upper.clone().into_bigdecimal(), scale_params);
+            ci.lower = restore_value(ci.lower.as_bigdecimal(), scale_params);
+            ci.upper = restore_value(ci.upper.as_bigdecimal(), scale_params);
         }
     }
 

@@ -64,13 +64,6 @@ impl TokenPrice {
         &self.0
     }
 
-    /// BigDecimal に変換（消費）
-    ///
-    /// 注意: この値を他の型のコンストラクタに渡さないこと。
-    pub fn into_bigdecimal(self) -> BigDecimal {
-        self.0
-    }
-
     /// f64 に変換（精度損失あり）
     pub fn to_f64(&self) -> f64 {
         self.0.to_f64().unwrap_or(0.0)
@@ -409,11 +402,6 @@ impl YoctoAmount {
         &self.0
     }
 
-    /// BigDecimal に変換
-    pub fn into_bigdecimal(self) -> BigDecimal {
-        self.0
-    }
-
     /// 整数部を u128 として取得（切り捨て）
     ///
     /// ブロックチェーンに送信する際に使用する。
@@ -644,11 +632,6 @@ impl YoctoValue {
         &self.0
     }
 
-    /// BigDecimal に変換（消費）
-    pub fn into_bigdecimal(self) -> BigDecimal {
-        self.0
-    }
-
     /// NEAR 単位に変換
     pub fn to_near(&self) -> NearValue {
         NearValue(&self.0 / BigDecimal::from(YOCTO_PER_NEAR))
@@ -796,11 +779,6 @@ impl NearValue {
     /// 内部の BigDecimal を取得（計算用）
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0
-    }
-
-    /// BigDecimal に変換（消費）
-    pub fn into_bigdecimal(self) -> BigDecimal {
-        self.0
     }
 
     /// yoctoNEAR 単位に変換

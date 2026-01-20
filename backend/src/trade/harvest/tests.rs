@@ -7,7 +7,8 @@ use zaciraci_common::types::{NearValue, YoctoAmount, YoctoValue};
 fn near_to_yocto(near: u64) -> BigDecimal {
     NearValue::from_near(BigDecimal::from(near))
         .to_yocto()
-        .into_bigdecimal()
+        .as_bigdecimal()
+        .clone()
 }
 
 /// NEAR → YoctoAmount 変換のヘルパー（型安全）

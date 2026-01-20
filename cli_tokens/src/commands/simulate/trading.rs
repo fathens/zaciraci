@@ -211,8 +211,7 @@ pub async fn generate_api_predictions(
 
                 // Prepare prediction request with historical data
                 // ZeroShotPredictionRequest は BigDecimal を期待するため変換
-                let values_bd: Vec<_> =
-                    values.iter().map(|p| p.clone().into_bigdecimal()).collect();
+                let values_bd: Vec<_> = values.iter().map(|p| p.as_bigdecimal().clone()).collect();
                 let forecast_until = current_time + prediction_horizon;
                 let prediction_request = ZeroShotPredictionRequest {
                     timestamp: timestamps,

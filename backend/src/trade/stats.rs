@@ -15,8 +15,8 @@
 //!
 //! ## 単位変換（型安全）
 //!
-//! - NEAR → yoctoNEAR: `NearValue::from_near(bd).to_yocto().into_bigdecimal()`
-//! - yoctoNEAR → NEAR: `YoctoValue::from_yocto(bd).to_near().into_bigdecimal()`
+//! - NEAR → yoctoNEAR: `NearValue::from_near(bd).to_yocto().as_bigdecimal()`
+//! - yoctoNEAR → NEAR: `YoctoValue::from_yocto(bd).to_near().as_bigdecimal()`
 
 mod arima;
 
@@ -1983,11 +1983,11 @@ impl SameBaseTokenRates {
                 stats.push(StatsInPeriod {
                     timestamp: current_start,
                     period,
-                    start: start.into_bigdecimal(),
-                    end: end.into_bigdecimal(),
-                    average: average.into_bigdecimal(),
-                    max: max.into_bigdecimal(),
-                    min: min.into_bigdecimal(),
+                    start: start.as_bigdecimal().clone(),
+                    end: end.as_bigdecimal().clone(),
+                    average: average.as_bigdecimal().clone(),
+                    max: max.as_bigdecimal().clone(),
+                    min: min.as_bigdecimal().clone(),
                 });
             }
 

@@ -138,7 +138,7 @@ mod unit_conversion_debug {
 
         for token in &config.target_tokens {
             if let Some(price_point) = price_data.get(token).and_then(|data| data.first()) {
-                let initial_price_yocto = price_point.value.clone().into_bigdecimal();
+                let initial_price_yocto = price_point.value.as_bigdecimal().clone();
                 let initial_price_near = common::units::Units::yocto_to_near(&initial_price_yocto);
                 let token_amount = &initial_per_token / &initial_price_near;
 
@@ -168,7 +168,7 @@ mod unit_conversion_debug {
         let mut total_portfolio_value = BigDecimal::from(0);
         for (token, amount) in &holdings {
             if let Some(price_point) = price_data.get(token).and_then(|data| data.first()) {
-                let price_yocto = price_point.value.clone().into_bigdecimal();
+                let price_yocto = price_point.value.as_bigdecimal().clone();
                 let price_near = common::units::Units::yocto_to_near(&price_yocto);
                 let value = amount * &price_near;
                 total_portfolio_value += &value;

@@ -347,11 +347,11 @@ fn test_confidence_interval_scaling() {
     let mut scaled_forecast = forecast;
 
     for point in &mut scaled_forecast {
-        let scaled_value = point.value.clone().into_bigdecimal() * &scale_factor;
+        let scaled_value = point.value.as_bigdecimal() * &scale_factor;
         point.value = TokenPrice::from_near_per_token(scaled_value);
         if let Some(ref mut ci) = point.confidence_interval {
-            let scaled_lower = ci.lower.clone().into_bigdecimal() * &scale_factor;
-            let scaled_upper = ci.upper.clone().into_bigdecimal() * &scale_factor;
+            let scaled_lower = ci.lower.as_bigdecimal() * &scale_factor;
+            let scaled_upper = ci.upper.as_bigdecimal() * &scale_factor;
             ci.lower = TokenPrice::from_near_per_token(scaled_lower);
             ci.upper = TokenPrice::from_near_per_token(scaled_upper);
         }

@@ -39,8 +39,8 @@ pub fn scale_values(values: &[TokenPrice]) -> ScaleResult {
     let min = values.iter().min().expect("values is not empty").clone();
     let max = values.iter().max().expect("values is not empty").clone();
 
-    let min_bd = min.into_bigdecimal();
-    let max_bd = max.into_bigdecimal();
+    let min_bd = min.as_bigdecimal().clone();
+    let max_bd = max.as_bigdecimal().clone();
 
     let params = ScaleParams {
         original_min: min_bd.clone(),
@@ -57,7 +57,7 @@ pub fn scale_values(values: &[TokenPrice]) -> ScaleResult {
         values
             .iter()
             .map(|v| {
-                let v_bd = v.clone().into_bigdecimal();
+                let v_bd = v.as_bigdecimal().clone();
                 let normalized = (v_bd - &min_bd) / &range;
                 normalized * &target
             })

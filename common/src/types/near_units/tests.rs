@@ -341,13 +341,6 @@ fn test_price_edge_cases() {
 }
 
 #[test]
-fn test_price_into_bigdecimal() {
-    let price = TokenPrice::from_near_per_token(BigDecimal::from(42));
-    let bd = price.into_bigdecimal();
-    assert_eq!(bd, BigDecimal::from(42));
-}
-
-#[test]
 fn test_yocto_amount_scalar_mul() {
     let amount = YoctoAmount::from_u128(100);
     let scaled = amount * 3u128;
@@ -782,27 +775,6 @@ fn test_near_value_to_f64() {
     let value = NearValue::from_near(BigDecimal::from_str("123.456").unwrap());
     let f64_val = value.to_f64();
     assert!((f64_val.as_f64() - 123.456).abs() < 0.001);
-}
-
-#[test]
-fn test_yocto_value_into_bigdecimal() {
-    let value = YoctoValue::from_yocto(BigDecimal::from(12345));
-    let bd = value.into_bigdecimal();
-    assert_eq!(bd, BigDecimal::from(12345));
-}
-
-#[test]
-fn test_near_value_into_bigdecimal() {
-    let value = NearValue::from_near(BigDecimal::from(12345));
-    let bd = value.into_bigdecimal();
-    assert_eq!(bd, BigDecimal::from(12345));
-}
-
-#[test]
-fn test_yocto_amount_into_bigdecimal() {
-    let amount = YoctoAmount::from_u128(12345);
-    let bd = amount.into_bigdecimal();
-    assert_eq!(bd, BigDecimal::from(12345));
 }
 
 #[test]

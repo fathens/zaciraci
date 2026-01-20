@@ -48,7 +48,7 @@ mod data_flow_debug {
         println!("   Raw JSON time: {:?}", values[0].time);
 
         // NEAR単位への変換をテスト
-        let yocto_value = values.clone()[0].value.clone().into_bigdecimal();
+        let yocto_value = values[0].value.as_bigdecimal().clone();
         let near_value = common::units::Units::yocto_to_near(&yocto_value);
         println!("   Converted to NEAR: {:.2e} NEAR", near_value);
 
