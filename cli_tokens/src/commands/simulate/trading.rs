@@ -1,7 +1,6 @@
 use super::types::*;
 use super::utils::calculate_trading_cost_yocto;
 use anyhow::Result;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use common::algorithm::{PredictionData, TradingAction};
 use common::types::TokenPrice;
@@ -211,10 +210,13 @@ pub async fn generate_api_predictions(
                 }
 
                 // Prepare prediction request with historical data
+                // ZeroShotPredictionRequest は BigDecimal を期待するため変換
+                let values_bd: Vec<_> =
+                    values.iter().map(|p| p.clone().into_bigdecimal()).collect();
                 let forecast_until = current_time + prediction_horizon;
                 let prediction_request = ZeroShotPredictionRequest {
                     timestamp: timestamps,
-                    values,
+                    values: values_bd,
                     forecast_until,
                     model_name: model.clone(),
                     model_params: None,
@@ -263,12 +265,11 @@ pub async fn generate_api_predictions(
                                         }
 
                                         // Chronos の予測値は price 形式（NEAR/token）
+                                        // current_price は既に TokenPrice（get_historical_price_data から）
                                         if let Ok(token_out) = token.parse() {
                                             predictions.push(PredictionData {
                                                 token: token_out,
-                                                current_price: TokenPrice::from_near_per_token(
-                                                    current_price.clone(),
-                                                ),
+                                                current_price: current_price.clone(),
                                                 predicted_price_24h:
                                                     TokenPrice::from_near_per_token(
                                                         predicted_value.clone(),
@@ -350,13 +351,16 @@ pub async fn generate_api_predictions(
 }
 
 /// Get historical price data for prediction
+///
+/// 戻り値: (タイムスタンプ, 価格リスト, 現在価格)
+/// 価格は TokenPrice として返される（型安全）
 async fn get_historical_price_data(
     backend_client: &crate::api::backend::BackendClient,
     token: &str,
     quote_token: &str,
     historical_days: i64,
     current_simulation_time: DateTime<Utc>,
-) -> Result<(Vec<DateTime<Utc>>, Vec<BigDecimal>, BigDecimal)> {
+) -> Result<(Vec<DateTime<Utc>>, Vec<TokenPrice>, TokenPrice)> {
     let end_time = current_simulation_time.naive_utc();
     let start_time = end_time - chrono::Duration::days(historical_days);
 
@@ -376,11 +380,9 @@ async fn get_historical_price_data(
         .map(|p| DateTime::from_naive_utc_and_offset(p.time, Utc))
         .collect();
 
-    let values: Vec<BigDecimal> = prices
-        .iter()
-        .map(|p| p.value.clone().into_bigdecimal())
-        .collect();
-    let current_price = prices.last().unwrap().value.clone().into_bigdecimal();
+    // TokenPrice をそのまま使用（BigDecimal への変換は呼び出し元で必要な場合のみ）
+    let values: Vec<TokenPrice> = prices.iter().map(|p| p.value.clone()).collect();
+    let current_price = values.last().unwrap().clone();
 
     Ok((timestamps, values, current_price))
 }

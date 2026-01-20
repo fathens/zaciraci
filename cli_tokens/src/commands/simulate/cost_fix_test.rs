@@ -4,9 +4,8 @@ mod cost_fix_test {
     use super::super::types::FeeModel;
     use super::super::utils::{
         calculate_trading_cost, calculate_trading_cost_by_value,
-        calculate_trading_cost_by_value_yocto, calculate_trading_cost_by_value_yocto_bd,
+        calculate_trading_cost_by_value_yocto,
     };
-    use bigdecimal::{BigDecimal, FromPrimitive};
 
     #[test]
     fn test_cost_calculation_comparison() {
@@ -61,28 +60,6 @@ mod cost_fix_test {
             0.0
         };
 
-        // BigDecimal統一方法（最高精度）
-        let trade_value_yocto_bd = BigDecimal::from_f64(token_amount).unwrap_or_default()
-            * BigDecimal::from_f64(token_price_yocto).unwrap_or_default();
-        let gas_cost_yocto_bd = BigDecimal::from_f64(gas_cost_yocto).unwrap_or_default();
-        let slippage_rate_bd = BigDecimal::from_f64(0.01).unwrap_or_default();
-        let bd_cost_value = calculate_trading_cost_by_value_yocto_bd(
-            &trade_value_yocto_bd,
-            &FeeModel::Realistic,
-            &slippage_rate_bd,
-            &gas_cost_yocto_bd,
-        );
-
-        // BigDecimal方法をトークン数量で表現
-        let bd_cost_tokens = if token_price_yocto > 0.0 {
-            (&bd_cost_value / BigDecimal::from_f64(token_price_yocto).unwrap_or_default())
-                .to_string()
-                .parse::<f64>()
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
-
         println!("\n   📊 Cost Comparison:");
         println!("   Old method (amount-based):");
         println!("     Cost in tokens: {:.2e}", old_cost);
@@ -98,16 +75,6 @@ mod cost_fix_test {
         println!(
             "     Cost in NEAR: {:.6}",
             common::units::Units::yocto_f64_to_near_f64(yocto_cost_value)
-        );
-
-        println!("   BigDecimal precision method:");
-        println!("     Cost in yoctoNEAR: {}", bd_cost_value);
-        println!("     Cost in tokens: {:.2e}", bd_cost_tokens);
-        println!(
-            "     Cost in NEAR: {:.12}",
-            common::units::Units::yocto_f64_to_near_f64(
-                bd_cost_value.to_string().parse::<f64>().unwrap_or(0.0)
-            )
         );
 
         println!("\n   💰 Cost Impact Analysis:");

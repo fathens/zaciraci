@@ -1,27 +1,6 @@
 use super::types::{FeeModel, TradingCost};
-use bigdecimal::{BigDecimal, FromPrimitive};
 use common::stats::ValueAtTime;
 use common::types::YoctoValueF64;
-
-/// 取引コストを計算（yoctoNEAR価値ベース - BigDecimal精度保持）
-pub fn calculate_trading_cost_by_value_yocto_bd(
-    trade_value_yocto: &BigDecimal, // yoctoNEAR建ての取引価値
-    fee_model: &FeeModel,
-    slippage_rate: &BigDecimal,
-    gas_cost_yocto: &BigDecimal, // yoctoNEAR建てのガスコスト
-) -> BigDecimal {
-    let protocol_fee = match fee_model {
-        FeeModel::Realistic => trade_value_yocto * BigDecimal::from_f64(0.003).unwrap_or_default(), // 0.3%
-        FeeModel::Zero => BigDecimal::from(0),
-        FeeModel::Custom(rate) => {
-            trade_value_yocto * BigDecimal::from_f64(*rate).unwrap_or_default()
-        }
-    };
-
-    let slippage_cost = trade_value_yocto * slippage_rate;
-
-    protocol_fee + slippage_cost + gas_cost_yocto
-}
 
 /// 取引コストを計算（yoctoNEAR価値ベース - f64版は後方互換性用）
 pub fn calculate_trading_cost_by_value_yocto(
