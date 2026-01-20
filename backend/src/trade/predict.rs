@@ -449,7 +449,7 @@ impl PredictionProvider for PredictionService {
                 token: t.token.parse().unwrap(),
                 volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
                 volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
-                current_price: t.current_price.to_price_f64(),
+                current_price: t.current_price.to_f64(),
                 decimals: t.decimals,
             })
             .collect())

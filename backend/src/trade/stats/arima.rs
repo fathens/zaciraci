@@ -73,7 +73,10 @@ fn create_lag_features(points: &[Point], lag_count: usize) -> Result<(Vec<Vec<f6
     sorted_points.sort_by_key(|p| p.timestamp);
 
     // rateをf64に変換
-    let rates: Result<Vec<f64>> = sorted_points.iter().map(|p| Ok(p.price.to_f64())).collect();
+    let rates: Result<Vec<f64>> = sorted_points
+        .iter()
+        .map(|p| Ok(p.price.to_f64().as_f64()))
+        .collect();
 
     let rates = rates?;
 
@@ -186,7 +189,10 @@ fn generate_future_features(
     let latest_points = &sorted_points[sorted_points.len() - lag_count..];
 
     // priceをf64に変換
-    let rates: Result<Vec<f64>> = latest_points.iter().map(|p| Ok(p.price.to_f64())).collect();
+    let rates: Result<Vec<f64>> = latest_points
+        .iter()
+        .map(|p| Ok(p.price.to_f64().as_f64()))
+        .collect();
 
     let features = rates?;
 

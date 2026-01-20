@@ -10,7 +10,7 @@ fn test_exchange_rate_to_price() {
     let price = rate.to_price();
 
     // TokenPrice = 10^6 / 5_000_000 = 0.2 NEAR/USDT
-    assert_eq!(price.to_f64(), 0.2);
+    assert_eq!(price.to_f64().as_f64(), 0.2);
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn test_wnear_rate() {
     let price = rate.to_price();
 
     // TokenPrice = 10^24 / 10^24 = 1.0 NEAR/wNEAR
-    assert_eq!(price.to_f64(), 1.0);
+    assert_eq!(price.to_f64().as_f64(), 1.0);
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn test_exchange_rate_wnear_helper() {
 
     // 1 NEAR = 1 wNEAR
     let price = rate.to_price();
-    assert!((price.to_f64() - 1.0).abs() < 0.0001);
+    assert!((price.to_f64().as_f64() - 1.0).abs() < 0.0001);
 }
 
 // =============================================================================
@@ -267,10 +267,10 @@ fn test_db_rate_format_after_migration() {
 
     let price = rate.to_price();
     // TokenPrice ≈ 0.666... NEAR/USDT (1/1.5)
-    assert!((price.to_f64() - 0.666666).abs() < 0.001);
+    assert!((price.to_f64().as_f64() - 0.666666).abs() < 0.001);
 
     // 逆に: 1 USDT = 0.666 NEAR なので 1 NEAR = 1.5 USDT
-    let near_per_usdt = 1.0 / price.to_f64();
+    let near_per_usdt = 1.0 / price.to_f64().as_f64();
     assert!((near_per_usdt - 1.5).abs() < 0.001);
 }
 
@@ -299,7 +299,7 @@ fn test_db_rate_migration_conversion() {
     let price = rate.to_price();
 
     // TokenPrice ≈ 0.66 NEAR/USDT
-    assert!((price.to_f64() - 0.66).abs() < 0.01);
+    assert!((price.to_f64().as_f64() - 0.66).abs() < 0.01);
 }
 
 /// 期待リターンの計算検証
@@ -375,9 +375,9 @@ fn test_predict_rs_data_flow() {
 
     // 検証: TokenPrice は正しい値を保持
     assert!(
-        (predicted_price.to_f64() - 0.2).abs() < 0.001,
+        (predicted_price.to_f64().as_f64() - 0.2).abs() < 0.001,
         "Expected ≈0.2, got {}",
-        predicted_price.to_f64()
+        predicted_price.to_f64().as_f64()
     );
 
     // 期待リターンの計算例
@@ -415,16 +415,16 @@ fn test_decimals_agnostic_rate_storage() {
 
     // 両方とも同じ価格になるべき: 0.666... NEAR/token
     assert!(
-        (price_6.to_f64() - price_18.to_f64()).abs() < 0.001,
+        (price_6.to_f64().as_f64() - price_18.to_f64().as_f64()).abs() < 0.001,
         "Different decimals should yield same price: {} vs {}",
-        price_6.to_f64(),
-        price_18.to_f64()
+        price_6.to_f64().as_f64(),
+        price_18.to_f64().as_f64()
     );
 
     assert!(
-        (price_6.to_f64() - 0.666666).abs() < 0.001,
+        (price_6.to_f64().as_f64() - 0.666666).abs() < 0.001,
         "Expected ≈0.666, got {}",
-        price_6.to_f64()
+        price_6.to_f64().as_f64()
     );
 }
 
@@ -440,9 +440,9 @@ fn test_wnear_rate_with_decimals() {
 
     // 1 wNEAR = 1 NEAR
     assert!(
-        (price.to_f64() - 1.0).abs() < 0.0001,
+        (price.to_f64().as_f64() - 1.0).abs() < 0.0001,
         "wNEAR should be 1:1 with NEAR, got {}",
-        price.to_f64()
+        price.to_f64().as_f64()
     );
 }
 
@@ -469,7 +469,7 @@ fn test_token_amount_div_near_amount() {
 
     // 検証: 1 NEAR = 5 USDT → price = 0.2 NEAR/USDT
     let price = rate.to_price();
-    assert!((price.to_f64() - 0.2).abs() < 0.001);
+    assert!((price.to_f64().as_f64() - 0.2).abs() < 0.001);
 }
 
 /// ゼロ除算テスト
@@ -505,7 +505,7 @@ fn test_wnear_token_amount_div_near_amount() {
 
     // rate.to_price() = 10^24 / 10^24 = 1.0 NEAR/wNEAR
     let price = rate.to_price();
-    assert!((price.to_f64() - 1.0).abs() < 0.0001);
+    assert!((price.to_f64().as_f64() - 1.0).abs() < 0.0001);
 }
 
 /// ラウンドトリップ: TokenAmount → ExchangeRate → TokenAmount

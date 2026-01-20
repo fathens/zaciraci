@@ -45,7 +45,7 @@ mod tests {
         let value_at_time: ValueAtTime = serde_json::from_str(old_json).unwrap();
 
         // 値が正しいことを確認
-        assert_eq!(value_at_time.value.to_f64(), 123.456789);
+        assert_eq!(value_at_time.value.to_f64().as_f64(), 123.456789);
 
         // 再シリアライズして同じ形式になることを確認
         let new_json = serde_json::to_string(&value_at_time).unwrap();

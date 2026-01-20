@@ -325,7 +325,7 @@ async fn load_history_data(history_file: &Path) -> Result<Vec<(DateTime<Utc>, f6
         .map(|v| {
             (
                 DateTime::from_naive_utc_and_offset(v.time, Utc),
-                v.value.to_f64(),
+                v.value.to_f64().as_f64(),
             )
         })
         .collect();
@@ -547,7 +547,9 @@ fn generate_chart(
     if let Some(ref predictions) = chart_data.predictions {
         chart
             .draw_series(LineSeries::new(
-                predictions.iter().map(|p| (p.timestamp, p.value.to_f64())),
+                predictions
+                    .iter()
+                    .map(|p| (p.timestamp, p.value.to_f64().as_f64())),
                 &RED,
             ))
             .map_err(|e| {
@@ -592,13 +594,13 @@ fn calculate_value_range(chart_data: &ChartData) -> Result<(f64, f64)> {
     // Check prediction data
     if let Some(ref predictions) = chart_data.predictions {
         for point in predictions {
-            min_value = min_value.min(point.value.to_f64());
-            max_value = max_value.max(point.value.to_f64());
+            min_value = min_value.min(point.value.to_f64().as_f64());
+            max_value = max_value.max(point.value.to_f64().as_f64());
 
             // Include confidence intervals in range calculation
             if let Some(ref ci) = point.confidence_interval {
-                min_value = min_value.min(ci.lower.to_f64());
-                max_value = max_value.max(ci.upper.to_f64());
+                min_value = min_value.min(ci.lower.to_f64().as_f64());
+                max_value = max_value.max(ci.upper.to_f64().as_f64());
             }
         }
     }
@@ -624,8 +626,8 @@ fn draw_confidence_intervals<DB: DrawingBackend>(
             chart
                 .draw_series(std::iter::once(Rectangle::new(
                     [
-                        (point.timestamp, ci.lower.to_f64()),
-                        (point.timestamp, ci.upper.to_f64()),
+                        (point.timestamp, ci.lower.to_f64().as_f64()),
+                        (point.timestamp, ci.upper.to_f64().as_f64()),
                     ],
                     RGBColor(128, 128, 128).mix(0.3).filled(),
                 )))

@@ -163,8 +163,8 @@ fn test_price_data_calculation_single_point() {
     let price_24h_ago = values.first().map(|v| &v.value).unwrap_or(current_price);
 
     // TokenPrice を f64 に変換して計算
-    let current_f64 = current_price.to_f64();
-    let ago_f64 = price_24h_ago.to_f64();
+    let current_f64 = current_price.to_f64().as_f64();
+    let ago_f64 = price_24h_ago.to_f64().as_f64();
     let price_change_24h = if ago_f64 > 0.0 {
         ((current_f64 - ago_f64) / ago_f64) * 100.0
     } else {
@@ -200,8 +200,8 @@ fn test_price_data_calculation_with_24h_change() {
     };
 
     // TokenPrice を f64 に変換して計算
-    let current_f64 = current_price.to_f64();
-    let ago_f64 = price_24h_ago.to_f64();
+    let current_f64 = current_price.to_f64().as_f64();
+    let ago_f64 = price_24h_ago.to_f64().as_f64();
     let price_change_24h = if ago_f64 > 0.0 {
         ((current_f64 - ago_f64) / ago_f64) * 100.0
     } else {
@@ -234,8 +234,8 @@ fn test_price_data_calculation_with_zero_price() {
     let price_24h_ago = values.first().map(|v| &v.value).unwrap_or(current_price);
 
     // TokenPrice を f64 に変換して計算
-    let current_f64 = current_price.to_f64();
-    let ago_f64 = price_24h_ago.to_f64();
+    let current_f64 = current_price.to_f64().as_f64();
+    let ago_f64 = price_24h_ago.to_f64().as_f64();
     let price_change_24h = if ago_f64 > 0.0 {
         ((current_f64 - ago_f64) / ago_f64) * 100.0
     } else {

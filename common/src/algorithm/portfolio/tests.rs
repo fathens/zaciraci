@@ -1590,7 +1590,7 @@ fn test_portfolio_performance_with_token_selection() {
             let time = base_time + Duration::days(i);
             // シンプルな価格変動
             let price_multiplier = 1.0 + (i as f64 * 0.01);
-            let p = token.current_rate.to_price().to_f64() * price_multiplier;
+            let p = token.current_rate.to_price().to_f64().as_f64() * price_multiplier;
             prices_vec.push(PricePoint {
                 timestamp: time,
                 price: price(p),
@@ -1728,7 +1728,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         let mut prices_vec = Vec::new();
         for i in 0..10 {
             let time = base_time + Duration::days(i);
-            let current = token.current_rate.to_price().to_f64();
+            let current = token.current_rate.to_price().to_f64().as_f64();
             // 各トークンで異なる価格変動パターンを作成
             let p = match idx {
                 0 => current * (1.0 + i as f64 * 0.015), // 高成長

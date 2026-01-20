@@ -69,7 +69,7 @@ pub fn get_prices_at_time(
             .unwrap();
 
         // 価格は無次元比率（yoctoNEAR/smallest_unit = NEAR/token）
-        let price_value = closest_value.value.to_f64();
+        let price_value = closest_value.value.to_f64().as_f64();
         prices.insert(
             token.clone(),
             TokenPriceF64::from_near_per_token(price_value),
@@ -244,5 +244,5 @@ fn find_price_within(
             value_time <= target_time && value_time >= earliest_allowed
         })
         .max_by_key(|v| v.time)
-        .map(|v| TokenPriceF64::from_near_per_token(v.value.to_f64()))
+        .map(|v| TokenPriceF64::from_near_per_token(v.value.to_f64().as_f64()))
 }

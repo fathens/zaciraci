@@ -219,7 +219,11 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         })
         .collect();
 
-    let actual_prices: Vec<f64> = history.prices.iter().map(|p| p.price.to_f64()).collect();
+    let actual_prices: Vec<f64> = history
+        .prices
+        .iter()
+        .map(|p| p.price.to_f64().as_f64())
+        .collect();
 
     for expected_price in &expected_token_prices {
         assert!(

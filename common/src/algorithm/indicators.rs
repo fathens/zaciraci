@@ -207,7 +207,7 @@ pub fn calculate_volatility_from_prices(prices: &[f64]) -> f64 {
 
 /// ValueAtTimeからボラティリティを計算
 pub fn calculate_volatility_from_value_at_time(values: &[ValueAtTime]) -> f64 {
-    let prices: Vec<f64> = values.iter().map(|v| v.value.to_f64()).collect();
+    let prices: Vec<f64> = values.iter().map(|v| v.value.to_f64().as_f64()).collect();
     calculate_volatility_from_prices(&prices)
 }
 

@@ -160,12 +160,8 @@ fn test_zero_division() {
 #[test]
 fn test_price_f64_conversion() {
     let price = TokenPrice::from_near_per_token(BigDecimal::from_str("123.456").unwrap());
-    // to_f64() は直接 f64 を返す
-    let price_f64_raw = price.to_f64();
-    assert!((price_f64_raw - 123.456).abs() < 0.001);
-
-    // to_price_f64() は TokenPriceF64 を返す
-    let price_f64 = price.to_price_f64();
+    // to_f64() は TokenPriceF64 を返す
+    let price_f64 = price.to_f64();
     assert!((price_f64.as_f64() - 123.456).abs() < 0.001);
 
     let back_to_price = price_f64.to_bigdecimal();

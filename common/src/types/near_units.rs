@@ -65,12 +65,7 @@ impl TokenPrice {
     }
 
     /// f64 に変換（精度損失あり）
-    pub fn to_f64(&self) -> f64 {
-        self.0.to_f64().unwrap_or(0.0)
-    }
-
-    /// TokenPriceF64 版に変換（精度損失あり）
-    pub fn to_price_f64(&self) -> TokenPriceF64 {
+    pub fn to_f64(&self) -> TokenPriceF64 {
         TokenPriceF64(self.0.to_f64().unwrap_or(0.0))
     }
 
@@ -90,8 +85,8 @@ impl TokenPrice {
     /// `ExchangeRate` から直接リターンを計算すると符号が逆になる。
     /// `TokenPrice` を使えばこの混乱を防げる。
     pub fn expected_return(&self, predicted: &TokenPrice) -> f64 {
-        let current = self.to_f64();
-        let pred = predicted.to_f64();
+        let current = self.to_f64().as_f64();
+        let pred = predicted.to_f64().as_f64();
         if current == 0.0 {
             return 0.0;
         }

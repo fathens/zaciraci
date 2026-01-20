@@ -90,18 +90,18 @@ fn test_confidence_interval_extraction_with_standard_keys() {
 
     assert!(forecast[0].confidence_interval.is_some());
     let ci0 = forecast[0].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci0.lower.to_f64(), 95.0);
-    assert_eq!(ci0.upper.to_f64(), 105.0);
+    assert_eq!(ci0.lower.to_f64().as_f64(), 95.0);
+    assert_eq!(ci0.upper.to_f64().as_f64(), 105.0);
 
     assert!(forecast[1].confidence_interval.is_some());
     let ci1 = forecast[1].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci1.lower.to_f64(), 105.0);
-    assert_eq!(ci1.upper.to_f64(), 115.0);
+    assert_eq!(ci1.lower.to_f64().as_f64(), 105.0);
+    assert_eq!(ci1.upper.to_f64().as_f64(), 115.0);
 
     assert!(forecast[2].confidence_interval.is_some());
     let ci2 = forecast[2].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci2.lower.to_f64(), 115.0);
-    assert_eq!(ci2.upper.to_f64(), 125.0);
+    assert_eq!(ci2.lower.to_f64().as_f64(), 115.0);
+    assert_eq!(ci2.upper.to_f64().as_f64(), 125.0);
 }
 
 #[test]
@@ -180,12 +180,12 @@ fn test_confidence_interval_extraction_with_quantile_keys() {
     assert_eq!(forecast.len(), 2);
 
     let ci0 = forecast[0].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci0.lower.to_f64(), 90.0);
-    assert_eq!(ci0.upper.to_f64(), 110.0);
+    assert_eq!(ci0.lower.to_f64().as_f64(), 90.0);
+    assert_eq!(ci0.upper.to_f64().as_f64(), 110.0);
 
     let ci1 = forecast[1].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci1.lower.to_f64(), 100.0);
-    assert_eq!(ci1.upper.to_f64(), 120.0);
+    assert_eq!(ci1.lower.to_f64().as_f64(), 100.0);
+    assert_eq!(ci1.upper.to_f64().as_f64(), 120.0);
 }
 
 #[test]
@@ -358,9 +358,9 @@ fn test_confidence_interval_scaling() {
     }
 
     let scaled_point = &scaled_forecast[0];
-    assert_eq!(scaled_point.value.to_f64(), 200.0);
+    assert_eq!(scaled_point.value.to_f64().as_f64(), 200.0);
 
     let scaled_ci = scaled_point.confidence_interval.as_ref().unwrap();
-    assert_eq!(scaled_ci.lower.to_f64(), 190.0);
-    assert_eq!(scaled_ci.upper.to_f64(), 210.0);
+    assert_eq!(scaled_ci.lower.to_f64().as_f64(), 190.0);
+    assert_eq!(scaled_ci.upper.to_f64().as_f64(), 210.0);
 }
