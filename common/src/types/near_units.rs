@@ -245,13 +245,6 @@ impl<'a> std::iter::Sum<&'a TokenPrice> for TokenPrice {
     }
 }
 
-// From<i64> for TokenPrice（ジェネリック制約用）
-impl From<i64> for TokenPrice {
-    fn from(value: i64) -> Self {
-        TokenPrice::from_near_per_token(BigDecimal::from(value))
-    }
-}
-
 // =============================================================================
 // TokenPriceF64（価格）- f64 版
 // =============================================================================

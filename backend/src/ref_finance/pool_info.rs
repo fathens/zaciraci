@@ -15,6 +15,7 @@ use serde_json::{from_slice, json};
 use std::collections::HashMap;
 use std::slice::Iter;
 use std::sync::Arc;
+use zaciraci_common::types::YoctoNearToken;
 
 const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
 
@@ -82,9 +83,16 @@ impl From<PoolInfo> for zaciraci_common::pools::PoolRecord {
                 pool_kind: pool_info.bare.pool_kind,
                 // common と backend の TokenAccount は同一型になったため、変換不要
                 token_account_ids: pool_info.bare.token_account_ids.clone(),
-                amounts: pool_info.bare.amounts.iter().map(|v| v.0.into()).collect(),
+                amounts: pool_info
+                    .bare
+                    .amounts
+                    .iter()
+                    .map(|v| YoctoNearToken::from_yocto(v.0))
+                    .collect(),
                 total_fee: pool_info.bare.total_fee,
-                shares_total_supply: pool_info.bare.shares_total_supply.0.into(),
+                shares_total_supply: YoctoNearToken::from_yocto(
+                    pool_info.bare.shares_total_supply.0,
+                ),
                 amp: pool_info.bare.amp,
             },
             timestamp: pool_info.timestamp,

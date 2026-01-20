@@ -47,18 +47,6 @@ impl YoctoNearToken {
     }
 }
 
-impl From<u128> for YoctoNearToken {
-    fn from(yocto: u128) -> Self {
-        YoctoNearToken::from_yocto(yocto)
-    }
-}
-
-impl From<YoctoNearToken> for u128 {
-    fn from(token: YoctoNearToken) -> Self {
-        token.0
-    }
-}
-
 impl Zero for YoctoNearToken {
     fn zero() -> Self {
         YoctoNearToken(0)
@@ -305,8 +293,8 @@ mod tests {
             YoctoNearToken::one()
         );
         assert_eq!(
-            YoctoNearToken::from(5) * YoctoNearToken::from(2),
-            YoctoNearToken::from(10)
+            YoctoNearToken::from_yocto(5) * YoctoNearToken::from_yocto(2),
+            YoctoNearToken::from_yocto(10)
         );
     }
 
@@ -325,12 +313,12 @@ mod tests {
             YoctoNearToken::zero()
         );
         assert_eq!(
-            YoctoNearToken::from(10) / YoctoNearToken::from(2),
-            YoctoNearToken::from(5)
+            YoctoNearToken::from_yocto(10) / YoctoNearToken::from_yocto(2),
+            YoctoNearToken::from_yocto(5)
         );
         assert_eq!(
-            YoctoNearToken::from(10) / YoctoNearToken::from(3),
-            YoctoNearToken::from(3)
+            YoctoNearToken::from_yocto(10) / YoctoNearToken::from_yocto(3),
+            YoctoNearToken::from_yocto(3)
         );
     }
 

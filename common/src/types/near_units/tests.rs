@@ -58,12 +58,6 @@ fn test_token_price_div_i64() {
 }
 
 #[test]
-fn test_token_price_from_i64() {
-    let price: TokenPrice = 100_i64.into();
-    assert_eq!(price.as_bigdecimal(), &BigDecimal::from(100));
-}
-
-#[test]
 fn test_price_f64_arithmetic() {
     let p1 = TokenPriceF64::from_near_per_token(10.0);
     let p2 = TokenPriceF64::from_near_per_token(3.0);
