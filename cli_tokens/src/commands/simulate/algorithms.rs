@@ -674,8 +674,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                 .get(&token_str)
                                                 .copied()
                                                 .unwrap_or(24);
+                                            // 最大 1000 whole tokens
                                             let max_reasonable_amount =
-                                                TokenAmountF64::from_smallest_units(1e21, decimals);
+                                                TokenAmountF64::from_whole_tokens(1000.0, decimals);
                                             let target_amount_limited =
                                                 if target_amount > max_reasonable_amount {
                                                     max_reasonable_amount
@@ -695,10 +696,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
 
                                             // 相対的な閾値: 現在保有量の1%以上の差でリバランス
                                             let relative_threshold = current_amount * 0.01;
-                                            // 最小絶対閾値（smallest_units で比較）
-                                            let min_threshold = TokenAmountF64::from_smallest_units(
-                                                0.001, decimals,
-                                            );
+                                            // 最小絶対閾値（0.001 whole tokens）
+                                            let min_threshold =
+                                                TokenAmountF64::from_whole_tokens(0.001, decimals);
                                             let effective_threshold =
                                                 if relative_threshold > min_threshold {
                                                     relative_threshold

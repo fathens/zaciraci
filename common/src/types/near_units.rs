@@ -1069,6 +1069,27 @@ impl TokenAmountF64 {
         }
     }
 
+    /// whole tokens 単位から作成
+    ///
+    /// # 例
+    /// ```
+    /// use zaciraci_common::types::TokenAmountF64;
+    ///
+    /// // 100 USDT (decimals=6)
+    /// let usdt = TokenAmountF64::from_whole_tokens(100.0, 6);
+    /// assert!((usdt.as_f64() - 100_000_000.0).abs() < 0.001);
+    ///
+    /// // 1 wNEAR (decimals=24)
+    /// let wnear = TokenAmountF64::from_whole_tokens(1.0, 24);
+    /// assert!((wnear.as_f64() - 1e24).abs() < 1e18);
+    /// ```
+    pub fn from_whole_tokens(whole_tokens: f64, decimals: u8) -> Self {
+        TokenAmountF64 {
+            amount: whole_tokens * 10_f64.powi(decimals as i32),
+            decimals,
+        }
+    }
+
     /// 内部の f64 を取得（計算用）
     pub fn as_f64(&self) -> f64 {
         self.amount
