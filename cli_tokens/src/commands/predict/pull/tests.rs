@@ -4,6 +4,7 @@ use chrono::Utc;
 use common::prediction::{ChronosPredictionResponse, ConfidenceInterval};
 use common::types::TokenPrice;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 #[test]
 fn test_confidence_interval_extraction_with_standard_keys() {
@@ -363,4 +364,89 @@ fn test_confidence_interval_scaling() {
     let scaled_ci = scaled_point.confidence_interval.as_ref().unwrap();
     assert_eq!(scaled_ci.lower.to_f64().as_f64(), 190.0);
     assert_eq!(scaled_ci.upper.to_f64().as_f64(), 210.0);
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_with_confidence() {
+    // convert_to_cache_prediction_point の confidence 計算ロジックをテスト
+    // confidence = (upper - lower) / 2 / value
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: Some(ConfidenceInterval {
+            lower: TokenPrice::from_near_per_token(BigDecimal::from(90)),
+            upper: TokenPrice::from_near_per_token(BigDecimal::from(110)),
+        }),
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    // timestamp と price の検証
+    assert_eq!(cache_point.timestamp, point.timestamp);
+    assert_eq!(cache_point.price, point.value);
+
+    // confidence の計算検証: (110 - 90) / 2 / 100 = 20 / 2 / 100 = 0.1
+    let confidence = cache_point.confidence.unwrap();
+    let expected = BigDecimal::from_str("0.1").unwrap();
+    assert_eq!(confidence, expected);
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_without_confidence() {
+    // 信頼区間がない場合
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: None,
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    assert_eq!(cache_point.timestamp, point.timestamp);
+    assert_eq!(cache_point.price, point.value);
+    assert!(cache_point.confidence.is_none());
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_asymmetric_interval() {
+    // 非対称な信頼区間のテスト
+    // lower=80, upper=130, value=100
+    // range = 130 - 80 = 50
+    // confidence = 50 / 2 / 100 = 0.25
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: Some(ConfidenceInterval {
+            lower: TokenPrice::from_near_per_token(BigDecimal::from(80)),
+            upper: TokenPrice::from_near_per_token(BigDecimal::from(130)),
+        }),
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    let confidence = cache_point.confidence.unwrap();
+    let expected = BigDecimal::from_str("0.25").unwrap();
+    assert_eq!(confidence, expected);
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_small_interval() {
+    // 小さな信頼区間（高精度の予測）
+    // lower=99, upper=101, value=100
+    // range = 101 - 99 = 2
+    // confidence = 2 / 2 / 100 = 0.01
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: Some(ConfidenceInterval {
+            lower: TokenPrice::from_near_per_token(BigDecimal::from(99)),
+            upper: TokenPrice::from_near_per_token(BigDecimal::from(101)),
+        }),
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    let confidence = cache_point.confidence.unwrap();
+    let expected = BigDecimal::from_str("0.01").unwrap();
+    assert_eq!(confidence, expected);
 }

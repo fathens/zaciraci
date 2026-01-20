@@ -184,6 +184,18 @@ impl Mul<BigDecimal> for TokenPrice {
     }
 }
 
+// TokenPrice / スカラー (BigDecimal)
+impl Div<BigDecimal> for TokenPrice {
+    type Output = TokenPrice;
+    fn div(self, scalar: BigDecimal) -> TokenPrice {
+        if scalar.is_zero() {
+            TokenPrice::zero()
+        } else {
+            TokenPrice(self.0 / scalar)
+        }
+    }
+}
+
 // TokenPrice / スカラー (f64)
 impl Div<f64> for TokenPrice {
     type Output = TokenPrice;

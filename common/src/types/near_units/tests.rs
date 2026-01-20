@@ -389,6 +389,28 @@ fn test_price_times_bigdecimal() {
 }
 
 #[test]
+fn test_price_divided_by_bigdecimal() {
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(100));
+
+    // TokenPrice / BigDecimal - 基本的な除算
+    let divided = price.clone() / BigDecimal::from(4);
+    assert_eq!(divided.as_bigdecimal(), &BigDecimal::from(25));
+
+    // 小数スカラーでの除算: 100 / 0.5 = 200
+    let divided_by_half = price.clone() / BigDecimal::from_str("0.5").unwrap();
+    assert_eq!(divided_by_half.as_bigdecimal(), &BigDecimal::from(200));
+
+    // 割り切れない場合（精度を保持）: 100 / 3 = 33.333...
+    let divided_by_three = price.clone() / BigDecimal::from(3);
+    let expected = BigDecimal::from(100) / BigDecimal::from(3);
+    assert_eq!(divided_by_three.as_bigdecimal(), &expected);
+
+    // ゼロ除算は安全にゼロを返す
+    let zero_div = price / BigDecimal::zero();
+    assert!(zero_div.is_zero());
+}
+
+#[test]
 fn test_expected_return() {
     // 上昇ケース: 10 → 12 = 20% リターン
     let current = TokenPrice::from_near_per_token(BigDecimal::from(10));

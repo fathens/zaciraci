@@ -85,8 +85,8 @@ fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePrediction
         timestamp: point.timestamp,
         price: point.value.clone(),
         confidence: point.confidence_interval.as_ref().map(|ci| {
-            let range = ci.upper.as_bigdecimal() - ci.lower.as_bigdecimal();
-            range / BigDecimal::from(2) / point.value.as_bigdecimal()
+            let range = &ci.upper - &ci.lower;
+            range / BigDecimal::from(2) / &point.value
         }),
     }
 }
