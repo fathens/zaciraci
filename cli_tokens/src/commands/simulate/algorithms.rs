@@ -457,6 +457,14 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     // タイムステップ設定
     let time_step = config.rebalance_interval.as_duration();
 
+    // 全ターゲットトークンの decimals を取得
+    let backend_client = BackendClient::new();
+    let mut token_decimals: HashMap<String, u8> = HashMap::new();
+    for token in &config.target_tokens {
+        let decimals = backend_client.get_token_decimals(token).await.unwrap_or(24);
+        token_decimals.insert(token.clone(), decimals);
+    }
+
     let mut current_time = config.start_date;
     let mut portfolio_values = Vec::new();
     let mut trades = Vec::new();
@@ -527,8 +535,6 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                     .await?;
 
                     // TokenDataに変換（型安全な変換メソッドを使用）
-                    // TODO: decimals を実際のトークン情報から取得する（現在はデフォルト 18）
-                    const TOKEN_DECIMALS: u8 = 18;
                     let mut token_data = Vec::new();
                     for token in &config.target_tokens {
                         if let Some(&current_price) = current_prices.get(token) {
@@ -536,11 +542,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                 Ok(t) => t,
                                 Err(_) => continue,
                             };
+                            let decimals = token_decimals.get(token).copied().unwrap_or(24);
                             token_data.push(TokenData {
                                 symbol: token_out,
                                 current_rate: ExchangeRate::from_price(
                                     &current_price.to_bigdecimal(),
-                                    TOKEN_DECIMALS,
+                                    decimals,
                                 ),
                                 historical_volatility: 0.2, // デフォルト値
                                 liquidity_score: Some(0.8),
@@ -663,9 +670,12 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             let target_amount = target_value_yocto / current_price;
 
                                             // 現実的な数量制限を適用
-                                            // TODO: トークンごとの decimals を使用する
+                                            let decimals = token_decimals
+                                                .get(&token_str)
+                                                .copied()
+                                                .unwrap_or(24);
                                             let max_reasonable_amount =
-                                                TokenAmountF64::from_smallest_units(1e21, 24);
+                                                TokenAmountF64::from_smallest_units(1e21, decimals);
                                             let target_amount_limited =
                                                 if target_amount > max_reasonable_amount {
                                                     max_reasonable_amount
@@ -674,11 +684,10 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                                 };
 
                                             // 現在の保有量と目標量の差を計算
-                                            // TODO: トークンごとの decimals を使用する
                                             let current_amount = current_holdings
                                                 .get(&token_str)
                                                 .copied()
-                                                .unwrap_or(TokenAmountF64::zero(24));
+                                                .unwrap_or(TokenAmountF64::zero(decimals));
                                             // 型安全な演算子を使用
                                             let diff_amount =
                                                 target_amount_limited - current_amount;
@@ -687,8 +696,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             // 相対的な閾値: 現在保有量の1%以上の差でリバランス
                                             let relative_threshold = current_amount * 0.01;
                                             // 最小絶対閾値（smallest_units で比較）
-                                            let min_threshold =
-                                                TokenAmountF64::from_smallest_units(0.001, 24);
+                                            let min_threshold = TokenAmountF64::from_smallest_units(
+                                                0.001, decimals,
+                                            );
                                             let effective_threshold =
                                                 if relative_threshold > min_threshold {
                                                     relative_threshold
