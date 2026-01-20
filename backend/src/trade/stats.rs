@@ -1196,11 +1196,15 @@ async fn manage_evaluation_period(
         Some(period) => {
             let now = Utc::now().naive_utc();
             let period_duration = now.signed_duration_since(period.start_time);
+            // period のフィールドを事前に取り出す（clone 不要で move）
+            let period_id = period.period_id;
+            let period_initial_value = period.initial_value;
+            let period_selected_tokens = period.selected_tokens;
 
             if period_duration.num_days() >= evaluation_period_days {
                 // 評価期間終了: 全トークンを売却して新規期間を開始
                 info!(log, "evaluation period ended, starting new period";
-                    "previous_period_id" => %period.period_id,
+                    "previous_period_id" => %period_id,
                     "days_elapsed" => period_duration.num_days()
                 );
 
@@ -1209,18 +1213,20 @@ async fn manage_evaluation_period(
                 info!(log, "liquidated all positions"; "final_balance" => %final_balance);
 
                 // 評価期間のパフォーマンスを計算してログ出力
-                let previous_initial_value = period.initial_value.clone();
-                let final_value = final_balance.as_bigdecimal().clone();
-                let change_amount = &final_value - &previous_initial_value;
-                let change_percentage = if previous_initial_value > BigDecimal::from(0) {
-                    (&change_amount / &previous_initial_value) * BigDecimal::from(100)
+                let initial_value = YoctoValue::from_yocto(period_initial_value);
+                let final_value = final_balance.to_value();
+
+                // 参照同士の演算（clone 不要）
+                let change_amount = &final_value - &initial_value;
+                let change_percentage = if !initial_value.is_zero() {
+                    (&final_value / &initial_value - BigDecimal::from(1)) * BigDecimal::from(100)
                 } else {
                     BigDecimal::from(0)
                 };
 
                 info!(log, "evaluation period performance";
-                    "period_id" => %period.period_id,
-                    "initial_value" => %previous_initial_value,
+                    "period_id" => %period_id,
+                    "initial_value" => %initial_value,
                     "final_value" => %final_value,
                     "change_amount" => %change_amount,
                     "change_percentage" => %format!("{:.2}%", change_percentage)
@@ -1240,7 +1246,8 @@ async fn manage_evaluation_period(
                 }
 
                 // 新規評価期間を作成
-                let new_period = NewEvaluationPeriod::new(final_value.clone(), vec![]);
+                let new_period =
+                    NewEvaluationPeriod::new(final_value.as_bigdecimal().clone(), vec![]);
                 let created_period = new_period.insert_async().await?;
 
                 info!(log, "created new evaluation period";
@@ -1252,23 +1259,21 @@ async fn manage_evaluation_period(
             } else {
                 // 評価期間中: トランザクション記録で判定
                 info!(log, "checking evaluation period status";
-                    "period_id" => %period.period_id,
+                    "period_id" => %period_id,
                     "days_remaining" => evaluation_period_days - period_duration.num_days()
                 );
 
                 // トランザクション記録をチェック
                 use crate::persistence::trade_transaction::TradeTransaction;
                 let transaction_count =
-                    TradeTransaction::count_by_evaluation_period_async(period.period_id.clone())
-                        .await?;
+                    TradeTransaction::count_by_evaluation_period_async(period_id.clone()).await?;
 
                 info!(log, "transaction count for period";
                     "count" => transaction_count,
-                    "period_id" => %period.period_id
+                    "period_id" => %period_id
                 );
 
-                let selected_tokens = period
-                    .selected_tokens
+                let selected_tokens = period_selected_tokens
                     .unwrap_or_default()
                     .into_iter()
                     .flatten()
@@ -1288,7 +1293,7 @@ async fn manage_evaluation_period(
                     );
                 }
 
-                Ok((period.period_id, is_new_period, selected_tokens, None))
+                Ok((period_id, is_new_period, selected_tokens, None))
             }
         }
         None => {

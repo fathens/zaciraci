@@ -824,6 +824,46 @@ fn test_yocto_value_zero_division() {
 }
 
 #[test]
+fn test_yocto_value_ref_sub() {
+    // &YoctoValue - &YoctoValue → YoctoValue
+    let v1 = YoctoValue::from_yocto(BigDecimal::from(1000));
+    let v2 = YoctoValue::from_yocto(BigDecimal::from(300));
+
+    // 参照同士の減算
+    let diff = &v1 - &v2;
+    assert_eq!(diff.as_bigdecimal(), &BigDecimal::from(700));
+
+    // 元の値は変更されていない（借用なので）
+    assert_eq!(v1.as_bigdecimal(), &BigDecimal::from(1000));
+    assert_eq!(v2.as_bigdecimal(), &BigDecimal::from(300));
+}
+
+#[test]
+fn test_yocto_value_ref_div() {
+    // &YoctoValue / &YoctoValue → BigDecimal
+    let v1 = YoctoValue::from_yocto(BigDecimal::from(1000));
+    let v2 = YoctoValue::from_yocto(BigDecimal::from(500));
+
+    // 参照同士の除算
+    let ratio = &v1 / &v2;
+    assert_eq!(ratio, BigDecimal::from(2));
+
+    // 元の値は変更されていない（借用なので）
+    assert_eq!(v1.as_bigdecimal(), &BigDecimal::from(1000));
+    assert_eq!(v2.as_bigdecimal(), &BigDecimal::from(500));
+}
+
+#[test]
+fn test_yocto_value_ref_div_zero() {
+    // &YoctoValue / &YoctoValue (ゼロ除算) → BigDecimal::zero()
+    let v1 = YoctoValue::from_yocto(BigDecimal::from(100));
+    let v2 = YoctoValue::zero();
+
+    let ratio = &v1 / &v2;
+    assert_eq!(ratio, BigDecimal::zero());
+}
+
+#[test]
 fn test_near_value_zero_division() {
     let v1 = NearValue::from_near(BigDecimal::from(100));
     let v2 = NearValue::zero();

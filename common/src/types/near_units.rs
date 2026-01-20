@@ -717,6 +717,26 @@ impl Div<&YoctoValue> for YoctoValue {
     }
 }
 
+// &YoctoValue - &YoctoValue → YoctoValue (参照同士の減算)
+impl Sub<&YoctoValue> for &YoctoValue {
+    type Output = YoctoValue;
+    fn sub(self, other: &YoctoValue) -> YoctoValue {
+        YoctoValue((&self.0) - (&other.0))
+    }
+}
+
+// &YoctoValue / &YoctoValue → BigDecimal (参照同士の除算、比率を返す)
+impl Div<&YoctoValue> for &YoctoValue {
+    type Output = BigDecimal;
+    fn div(self, other: &YoctoValue) -> BigDecimal {
+        if other.0.is_zero() {
+            BigDecimal::zero()
+        } else {
+            (&self.0) / (&other.0)
+        }
+    }
+}
+
 // YoctoValue / TokenPrice = YoctoAmount
 impl Div<TokenPrice> for YoctoValue {
     type Output = YoctoAmount;
