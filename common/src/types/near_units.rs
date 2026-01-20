@@ -1518,8 +1518,7 @@ impl Mul<TokenPriceF64> for TokenAmountF64 {
         // smallest_units → whole tokens → NEAR → yoctoNEAR
         let whole_tokens = self.to_whole();
         let near_value = whole_tokens * price.as_f64();
-        let yocto_value = near_value * YOCTO_PER_NEAR_F64;
-        YoctoValueF64::from_yocto(yocto_value)
+        NearValueF64::from_near(near_value).to_yocto()
     }
 }
 

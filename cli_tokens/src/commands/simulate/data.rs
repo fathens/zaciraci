@@ -69,11 +69,7 @@ pub fn get_prices_at_time(
             .unwrap();
 
         // 価格は無次元比率（yoctoNEAR/smallest_unit = NEAR/token）
-        let price_value = closest_value.value.to_f64().as_f64();
-        prices.insert(
-            token.clone(),
-            TokenPriceF64::from_near_per_token(price_value),
-        );
+        prices.insert(token.clone(), closest_value.value.to_f64());
     }
 
     Ok(prices)
