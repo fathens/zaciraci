@@ -278,7 +278,7 @@ impl TokenRate {
         let retention_days = config::get("TOKEN_RATES_RETENTION_DAYS")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(365);
+            .unwrap_or(90);
 
         info!(log, "cleaning up old records"; "retention_days" => retention_days);
         TokenRate::cleanup_old_records(retention_days).await?;
