@@ -1,5 +1,4 @@
 use super::*;
-use crate::ref_finance::token_account::TokenAccount;
 use std::str::FromStr;
 use zaciraci_common::types::{
     TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount, TokenPrice,
@@ -146,14 +145,7 @@ fn test_describes_no_change() {
 #[test]
 fn test_stats_empty() {
     // 空のポイントリストを持つSameBaseTokenRatesを作成
-    let rates = SameBaseTokenRates {
-        points: Vec::new(),
-        base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
-        quote: "usdt.tether-token.near"
-            .parse::<TokenAccount>()
-            .unwrap()
-            .into(),
-    };
+    let rates = SameBaseTokenRates { points: Vec::new() };
 
     // 1分間の期間で統計を計算
     let stats = rates.aggregate(Duration::minutes(1));
@@ -182,14 +174,7 @@ fn test_stats_single_period() {
         },
     ];
 
-    let rates = SameBaseTokenRates {
-        points,
-        base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
-        quote: "usdt.tether-token.near"
-            .parse::<TokenAccount>()
-            .unwrap()
-            .into(),
-    };
+    let rates = SameBaseTokenRates { points };
 
     // 1分間の期間で統計を計算
     let stats = rates.aggregate(Duration::minutes(1));
@@ -244,14 +229,7 @@ fn test_stats_multiple_periods() {
         },
     ];
 
-    let rates = SameBaseTokenRates {
-        points,
-        base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
-        quote: "usdt.tether-token.near"
-            .parse::<TokenAccount>()
-            .unwrap()
-            .into(),
-    };
+    let rates = SameBaseTokenRates { points };
 
     // 1分間の期間で統計を計算
     let stats = rates.aggregate(Duration::minutes(1));
@@ -319,14 +297,7 @@ fn test_stats_period_boundary() {
         },
     ];
 
-    let rates = SameBaseTokenRates {
-        points,
-        base: "wrap.near".parse::<TokenAccount>().unwrap().into(),
-        quote: "usdt.tether-token.near"
-            .parse::<TokenAccount>()
-            .unwrap()
-            .into(),
-    };
+    let rates = SameBaseTokenRates { points };
 
     // 5分間の期間で統計を計算
     let stats = rates.aggregate(Duration::minutes(5));

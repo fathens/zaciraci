@@ -47,10 +47,6 @@ use zaciraci_common::types::{
 
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
-    #[allow(dead_code)]
-    pub base: TokenOutAccount,
-    #[allow(dead_code)]
-    pub quote: TokenInAccount,
     pub points: Vec<Point>,
 }
 
@@ -745,10 +741,8 @@ async fn execute_trading_actions(
     let log = DEFAULT.new(o!("function" => "execute_trading_actions"));
 
     let mut summary = ExecutionSummary {
-        total: actions.len(),
         success_count: 0,
         failed_count: 0,
-        skipped_count: 0,
     };
 
     // JSONRPCクライアントとウォレットを取得
@@ -1155,12 +1149,8 @@ where
 
 /// 実行サマリー
 struct ExecutionSummary {
-    #[allow(dead_code)]
-    total: usize,
     success_count: usize,
     failed_count: usize,
-    #[allow(dead_code)]
-    skipped_count: usize,
 }
 
 /// ハーベスト判定と実行
@@ -1831,11 +1821,7 @@ impl SameBaseTokenRates {
                         timestamp: r.timestamp,
                     })
                     .collect();
-                Ok(SameBaseTokenRates {
-                    base: base.clone(),
-                    quote: quote.clone(),
-                    points,
-                })
+                Ok(SameBaseTokenRates { points })
             }
             Err(e) => {
                 error!(log, "Failed to get rates"; "error" => ?e);

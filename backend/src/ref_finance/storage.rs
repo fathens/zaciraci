@@ -42,7 +42,7 @@ pub struct AccountBaseInfo {
     pub storage_used: U64,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // そのうち使う
 pub async fn get_account_basic_info<C: ViewContract>(
     client: &C,
     account: &AccountId,
