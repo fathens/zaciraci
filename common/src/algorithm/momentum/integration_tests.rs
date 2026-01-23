@@ -9,11 +9,6 @@ use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
 use std::collections::HashMap;
 
-#[allow(dead_code)]
-fn price(v: f64) -> TokenPrice {
-    TokenPrice::from_near_per_token(BigDecimal::from_f64(v).unwrap())
-}
-
 // テスト用のシンプルなMockPredictionProvider
 struct SimpleMockProvider {
     price_histories: HashMap<TokenOutAccount, PriceHistory>,

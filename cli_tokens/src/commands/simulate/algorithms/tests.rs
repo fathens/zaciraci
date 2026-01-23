@@ -1,26 +1,6 @@
 use super::*;
 use std::str::FromStr;
 
-/// ポートフォリオ価値計算（型安全版）
-///
-/// 型安全な計算: TokenAmountF64 × TokenPriceF64 = YoctoValueF64 → NearValueF64
-#[allow(dead_code)]
-fn calculate_portfolio_value_typed(
-    holdings: &HashMap<String, TokenAmountF64>,
-    prices: &HashMap<String, TokenPriceF64>,
-) -> NearValueF64 {
-    let mut total_value = NearValueF64::zero();
-    for (token, &amount) in holdings {
-        if let Some(&price) = prices.get(token) {
-            // TokenAmountF64 × TokenPriceF64 = YoctoValueF64
-            let value_yocto = amount * price;
-            // YoctoValueF64 → NearValueF64
-            total_value = total_value + value_yocto.to_near();
-        }
-    }
-    total_value
-}
-
 /// レガシー: BigDecimal精度テスト用（スケーリングされた価格形式）
 ///
 /// 注: prices は yoctoNEAR/token 形式で保存されているため 1e24 で除算

@@ -409,7 +409,11 @@ pub fn get(name: &str) -> Result<String> {
     Err(anyhow!("Configuration key not found: {}", name))
 }
 
-#[allow(dead_code)] // This function is not used in the code, but it is needed for tests
+/// テスト用: 設定値を上書きする
+///
+/// 注: `#[cfg(test)]` にすると他クレート(backend等)のテストから参照できないため
+/// `#[doc(hidden)]` で公開している
+#[doc(hidden)]
 pub fn set(name: &str, value: &str) {
     if let Ok(mut store) = CONFIG_STORE.lock() {
         store.insert(name.to_string(), value.to_string());
