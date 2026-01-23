@@ -8,8 +8,7 @@ use zaciraci_common::config;
 pub struct RpcEndpoint {
     pub url: String,
     pub weight: u32,
-    // TODO: エンドポイント毎のリトライ機能を実装する
-    #[allow(dead_code)]
+    /// Maximum retry attempts for this endpoint before trying another
     pub max_retries: u32,
 }
 

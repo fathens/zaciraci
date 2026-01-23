@@ -33,10 +33,12 @@ impl StandardRpcClient {
     }
 
     /// Get a client for the current best endpoint
-    fn get_client(&self) -> Option<(Arc<JsonRpcClient>, String)> {
+    ///
+    /// Returns (client, url, max_retries) tuple
+    fn get_client(&self) -> Option<(Arc<JsonRpcClient>, String, u32)> {
         let endpoint = self.endpoint_pool.next_endpoint()?;
         let client = Arc::new(Self::create_client_with_timeout(&endpoint.url));
-        Some((client, endpoint.url.clone()))
+        Some((client, endpoint.url.clone(), endpoint.max_retries))
     }
 
     /// Create a JsonRpcClient with HTTP timeout configured
@@ -90,9 +92,9 @@ impl StandardRpcClient {
                         JsonRpcServerResponseStatusError::TooManyRequests,
                     ) => {
                         info!(log, "response status error: too many requests");
-                        // Mark endpoint as failed in the pool
+                        // Mark endpoint as failed and switch to next endpoint immediately
                         self.endpoint_pool.mark_failed(endpoint_url);
-                        MaybeRetry::Retry {
+                        MaybeRetry::SwitchEndpoint {
                             err,
                             msg: "too many requests".to_owned(),
                             min_dur: Duration::from_secs(1),
@@ -234,10 +236,11 @@ impl super::RpcClient for StandardRpcClient {
             "retry_limit" => format!("{}", retry_limit),
         ));
         let calc_delay = calc_retry_duration(delay_limit, retry_limit, fluctuation);
-        let mut retry_count = 0;
+        let mut total_retry_count: u16 = 0;
+
+        // Outer loop: endpoint selection
         loop {
-            // Get a fresh client from the endpoint pool on each retry
-            let Some((client, endpoint_url)) = self.get_client() else {
+            let Some((client, endpoint_url, max_retries)) = self.get_client() else {
                 let log = log.new(o!("error" => "no_available_endpoints"));
                 error!(log, "No available endpoints in pool");
                 // Continue retrying - pool may reset failed endpoints
@@ -245,28 +248,66 @@ impl super::RpcClient for StandardRpcClient {
                 continue;
             };
 
-            let log = log.new(o!(
-                "retry_count" => format!("{}", retry_count),
-                "endpoint" => endpoint_url.clone(),
-            ));
-            info!(log, "calling");
-            match self.call_maybe_retry(&client, &endpoint_url, &method).await {
-                MaybeRetry::Through(res) => return res,
-                MaybeRetry::Retry { err, msg, min_dur } => {
-                    retry_count += 1;
-                    if retry_limit < retry_count {
-                        info!(log, "retry limit reached";
+            let mut endpoint_retry_count: u32 = 0;
+
+            // Inner loop: retry on same endpoint
+            loop {
+                let log = log.new(o!(
+                    "total_retry_count" => format!("{}", total_retry_count),
+                    "endpoint_retry_count" => format!("{}", endpoint_retry_count),
+                    "max_retries" => format!("{}", max_retries),
+                    "endpoint" => endpoint_url.clone(),
+                ));
+                info!(log, "calling");
+
+                match self.call_maybe_retry(&client, &endpoint_url, &method).await {
+                    MaybeRetry::Through(res) => return res,
+                    MaybeRetry::Retry { err, msg, min_dur } => {
+                        total_retry_count += 1;
+                        if retry_limit < total_retry_count {
+                            info!(log, "global retry limit reached";
+                                "reason" => msg,
+                            );
+                            return Err(err);
+                        }
+
+                        endpoint_retry_count += 1;
+                        if endpoint_retry_count > max_retries {
+                            // Switch to next endpoint
+                            warn!(log, "endpoint max retries reached, switching endpoint";
+                                "reason" => msg,
+                            );
+                            self.endpoint_pool.mark_failed(&endpoint_url);
+                            break; // Break inner loop to select next endpoint
+                        }
+
+                        // Retry on same endpoint
+                        let delay = calc_delay(total_retry_count).max(min_dur);
+                        info!(log, "retrying on same endpoint";
+                            "delay" => format!("{:?}", delay),
                             "reason" => msg,
                         );
-                        return Err(err);
+                        tokio::time::sleep(delay).await;
                     }
+                    MaybeRetry::SwitchEndpoint { err, msg, min_dur } => {
+                        // Switch to next endpoint immediately (e.g., TooManyRequests)
+                        // Endpoint is already marked as failed in call_maybe_retry
+                        total_retry_count += 1;
+                        if retry_limit < total_retry_count {
+                            info!(log, "global retry limit reached";
+                                "reason" => &msg,
+                            );
+                            return Err(err);
+                        }
 
-                    let delay = calc_delay(retry_count).max(min_dur);
-                    info!(log, "retrying";
-                        "delay" => format!("{:?}", delay),
-                        "reason" => msg,
-                    );
-                    tokio::time::sleep(delay).await;
+                        let delay = calc_delay(total_retry_count).max(min_dur);
+                        warn!(log, "switching to next endpoint";
+                            "delay" => format!("{:?}", delay),
+                            "reason" => msg,
+                        );
+                        tokio::time::sleep(delay).await;
+                        break; // Break inner loop to select next endpoint
+                    }
                 }
             }
         }
@@ -276,6 +317,13 @@ impl super::RpcClient for StandardRpcClient {
 enum MaybeRetry<A, B> {
     Through(A),
     Retry {
+        err: B,
+        msg: String,
+        min_dur: Duration,
+    },
+    /// Switch to next endpoint immediately (e.g., TooManyRequests)
+    /// The endpoint has already been marked as failed
+    SwitchEndpoint {
         err: B,
         msg: String,
         min_dur: Duration,
@@ -307,50 +355,4 @@ fn fluctuate(y: f32, fr: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use assertables::*;
-    use proptest::prelude::*;
-
-    #[test]
-    fn test_calc_retry_duration() {
-        let upper = Duration::from_secs(60);
-        let limit = 128;
-        let retry_dur = calc_retry_duration(upper, limit, 0.0);
-
-        assert_eq!(retry_dur(0), Duration::ZERO);
-        assert_eq!(retry_dur(1), Duration::ZERO);
-        assert_eq!(retry_dur(limit), upper);
-        assert_eq!(retry_dur(limit + 1), Duration::ZERO);
-    }
-
-    proptest! {
-        #[test]
-        fn test_calc_retry_duration_range(retry_count in 2u16..128) {
-            let limit = 128u16;
-            let upper = Duration::from_secs(128);
-            let retry_dur = calc_retry_duration(upper, limit, 0.0);
-
-            assert_gt!(retry_dur(retry_count), Duration::from_secs(retry_count as u64));
-        }
-
-        #[test]
-        fn test_fluctuate_zero_y(fr in 0.0..1_f32) {
-            let v = fluctuate(0.0, fr);
-            assert_eq!(v, 0.0);
-        }
-
-        #[test]
-        fn test_fluctuate_zero_fr(y in 0.0..1000_f32) {
-            let v = fluctuate(y, 0.0);
-            assert_eq!(v, y);
-        }
-
-        #[test]
-        fn test_fluctuate(y in 1.0..1000_f32, fr in 0.01..1_f32) {
-            let v = fluctuate(y, fr);
-            assert_ge!(v, y - y * fr);
-            assert_le!(v, y + y * fr);
-        }
-    }
-}
+mod tests;
