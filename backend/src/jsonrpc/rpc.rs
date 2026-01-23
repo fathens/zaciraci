@@ -218,11 +218,6 @@ impl StandardRpcClient {
 }
 
 impl super::RpcClient for StandardRpcClient {
-    fn server_addr(&self) -> &str {
-        // Return a placeholder since we now use dynamic endpoints
-        "dynamic-endpoint-pool"
-    }
-
     async fn call<M>(&self, method: M) -> MethodCallResult<M::Response, M::Error>
     where
         M: methods::RpcMethod + Send + Sync,

@@ -38,7 +38,6 @@ fn make_token_rate(
 }
 
 /// テスト用ヘルパー: TokenRate を文字列レートで作成
-#[allow(dead_code)]
 fn make_token_rate_str(
     base: TokenOutAccount,
     quote: TokenInAccount,

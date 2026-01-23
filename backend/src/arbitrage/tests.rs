@@ -69,11 +69,6 @@ impl OperationsLog {
     fn contains(&self, s: &str) -> bool {
         self.0.lock().unwrap().iter().any(|log| log.contains(s))
     }
-
-    #[allow(dead_code)]
-    fn get_all(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
-    }
 }
 
 struct MockClient {
@@ -95,11 +90,6 @@ impl MockClient {
             gas_price: 100_000_000, // 0.1 Ggas price
             should_fail_swap: Cell::new(false),
         }
-    }
-
-    #[allow(dead_code)]
-    fn set_swap_failure(&self, should_fail: bool) {
-        self.should_fail_swap.set(should_fail);
     }
 
     fn log_operation(&self, operation: &str) {

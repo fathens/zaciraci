@@ -48,9 +48,6 @@ pub fn new_client() -> StandardNearClient<StandardRpcClient> {
 }
 
 pub trait RpcClient {
-    #[allow(dead_code)]
-    fn server_addr(&self) -> &str;
-
     fn call<M>(
         &self,
         method: M,
