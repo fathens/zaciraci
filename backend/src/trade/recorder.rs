@@ -25,14 +25,6 @@ impl TradeRecorder {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn with_batch_id(batch_id: String, evaluation_period_id: String) -> Self {
-        Self {
-            batch_id,
-            evaluation_period_id,
-        }
-    }
-
     pub fn get_batch_id(&self) -> &str {
         &self.batch_id
     }
@@ -111,13 +103,6 @@ impl TradeRecorder {
         );
 
         Ok(results)
-    }
-
-    #[allow(dead_code)]
-    pub async fn get_batch_transactions(&self) -> Result<Vec<TradeTransaction>> {
-        TradeTransaction::find_by_batch_id_async(self.batch_id.clone())
-            .await
-            .context("Failed to get batch transactions")
     }
 }
 

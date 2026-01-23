@@ -229,25 +229,6 @@ impl TokenRate {
         )
     }
 
-    // データベースに挿入
-    #[allow(dead_code)]
-    pub async fn insert(&self) -> Result<()> {
-        use diesel::RunQueryDsl;
-
-        let new_rate = self.to_new_db();
-        let conn = connection_pool::get().await?;
-
-        conn.interact(move |conn| {
-            diesel::insert_into(token_rates::table)
-                .values(&new_rate)
-                .execute(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        Ok(())
-    }
-
     // 複数レコードを一括挿入
     pub async fn batch_insert(token_rates: &[TokenRate]) -> Result<()> {
         let log = DEFAULT.new(o!(
@@ -433,84 +414,6 @@ impl TokenRate {
         }
 
         Ok(results)
-    }
-
-    // quote トークンとその個数を時間帯で区切って取り出す
-    pub async fn get_quotes_in_time_range(range: &TimeRange) -> Result<Vec<(TokenInAccount, i64)>> {
-        use diesel::QueryDsl;
-        use diesel::dsl::count;
-
-        let log = DEFAULT.new(o!("function" => "get_quotes_in_time_range"));
-        let conn = connection_pool::get().await?;
-
-        let start = range.start;
-        let end = range.end;
-
-        let results = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::timestamp.gt(start))
-                    .filter(token_rates::timestamp.le(end))
-                    .group_by(token_rates::quote_token)
-                    .select((token_rates::quote_token, count(token_rates::quote_token)))
-                    .load::<(String, i64)>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        let quotes = results
-            .into_iter()
-            .filter_map(|(s, c)| match TokenAccount::from_str(&s) {
-                Ok(token) => Some((token.into(), c)),
-                Err(e) => {
-                    error!(log, "Failed to parse token"; "token" => s, "error" => ?e);
-                    None
-                }
-            })
-            .collect();
-
-        Ok(quotes)
-    }
-
-    pub async fn get_bases_in_time_range(
-        range: &TimeRange,
-        quote: &TokenInAccount,
-    ) -> Result<Vec<(TokenOutAccount, i64)>> {
-        use diesel::QueryDsl;
-        use diesel::dsl::count;
-
-        let log = DEFAULT.new(o!("function" => "get_bases_in_time_range"));
-        let conn = connection_pool::get().await?;
-
-        let start = range.start;
-        let end = range.end;
-        let quote_str = quote.to_string();
-
-        let results = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::timestamp.gt(start))
-                    .filter(token_rates::timestamp.le(end))
-                    .filter(token_rates::quote_token.eq(&quote_str))
-                    .group_by(token_rates::base_token)
-                    .select((token_rates::base_token, count(token_rates::base_token)))
-                    .load::<(String, i64)>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        let bases = results
-            .into_iter()
-            .filter_map(|(s, c)| match TokenAccount::from_str(&s) {
-                Ok(token) => Some((token.into(), c)),
-                Err(e) => {
-                    error!(log, "Failed to parse token"; "token" => s, "error" => ?e);
-                    None
-                }
-            })
-            .collect();
-
-        Ok(bases)
     }
 
     /// 時間範囲内のレートを取得

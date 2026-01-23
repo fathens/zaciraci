@@ -18,8 +18,6 @@
 //! - NEAR → yoctoNEAR: `NearValue::from_near(bd).to_yocto().as_bigdecimal()`
 //! - yoctoNEAR → NEAR: `YoctoValue::from_yocto(bd).to_near().as_bigdecimal()`
 
-mod arima;
-
 use crate::Result;
 use crate::config;
 use crate::logging::*;
@@ -33,7 +31,6 @@ use crate::trade::swap;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, Utc};
-use futures_util::future::join_all;
 use near_sdk::AccountId;
 use num_traits::Zero;
 use std::collections::{BTreeMap, HashMap};
@@ -1810,64 +1807,6 @@ fn sqrt_bigdecimal(value: &BigDecimal) -> Result<BigDecimal> {
     Ok(x)
 }
 
-#[allow(dead_code)]
-async fn forcast_rates(
-    range: &TimeRange,
-    period: Duration,
-    target: NaiveDateTime,
-) -> Result<HashMap<TokenOutAccount, BigDecimal>> {
-    let log = DEFAULT.new(o!("function" => "trade::forcast_rates"));
-    info!(log, "start");
-    let quote = get_top_quote_token(range).await?;
-    let bases = get_base_tokens(range, &quote).await?;
-    let ps = bases.iter().map(|base| async {
-        let rates = SameBaseTokenRates::load(&quote, base, range).await?;
-        let result = rates.forcast(period, target).await?;
-        Ok((base.clone(), result))
-    });
-    let rates_by_base = join_all(ps).await;
-    info!(log, "success");
-    rates_by_base.into_iter().collect()
-}
-
-#[allow(dead_code)]
-async fn get_top_quote_token(range: &TimeRange) -> Result<TokenInAccount> {
-    let log = DEFAULT.new(o!("function" => "trade::get_top_quote_token"));
-
-    let quotes = TokenRate::get_quotes_in_time_range(range).await?;
-    let (quote, _) = quotes
-        .iter()
-        .max_by_key(|(_, c)| *c)
-        .ok_or_else(|| anyhow::anyhow!("No quote tokens found in time range"))?;
-
-    info!(log, "success");
-    Ok(quote.clone())
-}
-
-#[allow(dead_code)]
-async fn get_base_tokens(
-    range: &TimeRange,
-    quote: &TokenInAccount,
-) -> Result<Vec<TokenOutAccount>> {
-    let log = DEFAULT.new(o!("function" => "trade::get_base_tokens"));
-
-    let bases = TokenRate::get_bases_in_time_range(range, quote).await?;
-    let max_count = bases
-        .iter()
-        .max_by_key(|(_, c)| *c)
-        .ok_or_else(|| anyhow::anyhow!("No base tokens found in time range"))?
-        .1;
-    let limit = max_count / 2;
-    let tokens = bases
-        .iter()
-        .filter(|(_, c)| *c > limit)
-        .map(|(t, _)| t.clone())
-        .collect();
-
-    info!(log, "success");
-    Ok(tokens)
-}
-
 impl SameBaseTokenRates {
     pub async fn load(
         quote: &TokenInAccount,
@@ -1903,25 +1842,6 @@ impl SameBaseTokenRates {
                 Err(e)
             }
         }
-    }
-
-    #[allow(dead_code)]
-    async fn forcast(&self, period: Duration, target: NaiveDateTime) -> Result<BigDecimal> {
-        let log = DEFAULT.new(o!(
-            "function" => "SameBaseTokenRates::forcast",
-            "period" => format!("{}", period),
-            "target" => format!("{:?}", target),
-        ));
-        info!(log, "start");
-
-        let stats = self.aggregate(period);
-        let _descs = stats.describes();
-
-        // arima モジュールの予測関数を使用して将来の値を予測
-        let result = arima::predict_future_rate(&self.points, target)?;
-
-        info!(log, "success"; "predicted_rate" => %result);
-        Ok(result)
     }
 
     pub fn aggregate(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {

@@ -107,7 +107,7 @@ async fn test_token_rate_single_insert() -> Result<()> {
     // 3. １つインサート
     let timestamp = chrono::Utc::now().naive_utc();
     let token_rate = make_token_rate(base.clone(), quote.clone(), 1000, timestamp);
-    token_rate.insert().await?;
+    TokenRate::batch_insert(std::slice::from_ref(&token_rate)).await?;
 
     // 4. get_latest でインサートしたレコードが返ることを確認
     let result = TokenRate::get_latest(&base, &quote).await?;
