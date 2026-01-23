@@ -1,6 +1,6 @@
 use super::*;
 use crate::types::{NearValue, TokenAmount, TokenOutAccount, TokenPrice};
-use bigdecimal::{FromPrimitive, ToPrimitive};
+use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 
 fn token(s: &str) -> TokenOutAccount {
     s.parse().unwrap()

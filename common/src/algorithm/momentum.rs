@@ -1,8 +1,6 @@
 use crate::Result;
 use crate::types::{NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice};
-use bigdecimal::BigDecimal;
 use chrono::{Duration, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::prediction::PredictionProvider;
@@ -312,33 +310,6 @@ pub async fn filter_by_volatility(
 /// ボラティリティ計算（標準偏差）
 fn calculate_volatility(prices: &[f64]) -> f64 {
     crate::algorithm::calculate_volatility_from_prices(prices)
-}
-
-// ==================== バックテスト ====================
-
-/// バックテストメトリクス
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BacktestMetrics {
-    pub total_return: f64,
-    pub max_drawdown: f64,
-    pub sharpe_ratio: f64,
-    pub win_rate: f64,
-    pub avg_holding_period_hours: f64,
-}
-
-/// バックテストの実行
-pub async fn run_backtest(
-    _historical_data: Vec<String>, // TokenRateは backend固有なのでStringに変更
-    _initial_capital: BigDecimal,
-) -> Result<BacktestMetrics> {
-    // TODO: バックテストロジックの実装
-    Ok(BacktestMetrics {
-        total_return: 0.0,
-        max_drawdown: 0.0,
-        sharpe_ratio: 0.0,
-        win_rate: 0.0,
-        avg_holding_period_hours: 24.0,
-    })
 }
 
 #[cfg(test)]
