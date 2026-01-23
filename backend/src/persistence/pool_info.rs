@@ -15,7 +15,7 @@ use zaciraci_common::config;
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = pool_info)]
 struct DbPoolInfo {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
     pub id: i32,
     pub pool_id: i32,
     pub pool_kind: String,
