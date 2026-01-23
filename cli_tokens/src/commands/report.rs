@@ -216,6 +216,7 @@ pub fn extract_report_data(result: &SimulationResult) -> ReportData {
 
 /// Calculate derived metrics for report generation
 pub fn calculate_report_metrics(data: &ReportData) -> ReportMetrics {
+    let default_config = create_default_report_config();
     let performance_class = if data.performance.total_return_pct >= 0.0 {
         "positive".to_string()
     } else {
@@ -224,7 +225,7 @@ pub fn calculate_report_metrics(data: &ReportData) -> ReportMetrics {
 
     ReportMetrics {
         performance_class,
-        currency_symbol: "wrap.near".to_string(), // TODO: Make configurable
+        currency_symbol: default_config.currency.symbol.clone(),
         chart_data: generate_portfolio_chart_data(&data.portfolio_values),
         trades_html: generate_trades_table_html(&data.trades),
         generation_timestamp: Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
@@ -1237,7 +1238,7 @@ fn generate_individual_algorithm_section(result: &SimulationResult) -> Result<St
         report_data.performance.total_trades,
         report_data.performance.win_rate * 100.0,
         result.config.final_value,
-        "wrap.near", // TODO: Make configurable
+        create_default_report_config().currency.symbol,
         format!("{:?}", result.config.algorithm).to_lowercase()
     ))
 }

@@ -121,7 +121,9 @@ mod unit_tests {
         let metrics = calculate_report_metrics(&report_data);
 
         assert_eq!(metrics.performance_class, "positive");
-        assert_eq!(metrics.currency_symbol, "wrap.near");
+        // Verify currency_symbol is retrieved from default config (not hardcoded)
+        let default_config = create_default_report_config();
+        assert_eq!(metrics.currency_symbol, default_config.currency.symbol);
         assert!(metrics.trades_html.contains("token_a"));
         assert!(metrics.trades_html.contains("token_b"));
         assert!(metrics.generation_timestamp.contains("UTC"));
@@ -131,6 +133,20 @@ mod unit_tests {
         assert_eq!(metrics.chart_data.values.len(), 2);
         assert_eq!(metrics.chart_data.values[0], 1000.0);
         assert_eq!(metrics.chart_data.values[1], 1150.0);
+    }
+
+    #[test]
+    fn test_generate_individual_algorithm_section_uses_config_currency() {
+        let simulation_result = create_test_simulation_result();
+        let html = generate_individual_algorithm_section(&simulation_result).unwrap();
+
+        // Verify the generated HTML contains the currency symbol from config
+        let default_config = create_default_report_config();
+        assert!(
+            html.contains(&default_config.currency.symbol),
+            "Generated HTML should contain currency symbol '{}' from config",
+            default_config.currency.symbol
+        );
     }
 
     #[test]
