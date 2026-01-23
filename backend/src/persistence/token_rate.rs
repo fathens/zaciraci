@@ -92,22 +92,6 @@ impl TokenRate {
         }
     }
 
-    /// 特定の時刻で TokenRate を作成
-    #[allow(dead_code)] // テスト専用
-    pub fn new_with_timestamp(
-        base: TokenOutAccount,
-        quote: TokenInAccount,
-        exchange_rate: ExchangeRate,
-        timestamp: NaiveDateTime,
-    ) -> Self {
-        Self {
-            base,
-            quote,
-            exchange_rate,
-            timestamp,
-        }
-    }
-
     /// DB レコードから変換（decimals を明示的に指定）
     fn from_db_with_decimals(db_rate: DbTokenRate, decimals: u8) -> Result<Self> {
         let base = TokenAccount::from_str(&db_rate.base_token)?.into();
@@ -347,73 +331,6 @@ impl TokenRate {
         } else {
             Ok(None)
         }
-    }
-
-    /// 履歴レコードを取得（新しい順）
-    ///
-    /// NULL decimals があれば RPC で取得して DB を backfill する。
-    #[allow(dead_code)] // テスト専用
-    pub async fn get_history(
-        base: &TokenOutAccount,
-        quote: &TokenInAccount,
-        limit: i64,
-    ) -> Result<Vec<TokenRate>> {
-        use diesel::QueryDsl;
-
-        let base_str = base.to_string();
-        let quote_str = quote.to_string();
-        let conn = connection_pool::get().await?;
-
-        let results = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::base_token.eq(&base_str))
-                    .filter(token_rates::quote_token.eq(&quote_str))
-                    .order(token_rates::timestamp.desc())
-                    .limit(limit)
-                    .load::<DbTokenRate>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        Self::from_db_results_with_backfill(results).await
-    }
-
-    // quoteトークンを指定して対応するすべてのbaseトークンとその最新時刻を取得
-    #[allow(dead_code)] // テスト専用
-    pub async fn get_latests_by_quote(
-        quote: &TokenInAccount,
-    ) -> Result<Vec<(TokenOutAccount, NaiveDateTime)>> {
-        use diesel::QueryDsl;
-        use diesel::dsl::max;
-
-        let quote_str = quote.to_string();
-        let conn = connection_pool::get().await?;
-
-        // 各base_tokenごとに最新のタイムスタンプを取得
-        let latest_timestamps = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::quote_token.eq(&quote_str))
-                    .group_by(token_rates::base_token)
-                    .select((token_rates::base_token, max(token_rates::timestamp)))
-                    .load::<(String, Option<NaiveDateTime>)>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        // 結果をトークンとタイムスタンプのペアに変換
-        let mut results = Vec::new();
-        for (base_token, timestamp_opt) in latest_timestamps {
-            if let Some(timestamp) = timestamp_opt {
-                match TokenAccount::from_str(&base_token) {
-                    Ok(token) => results.push((token.into(), timestamp)),
-                    Err(e) => return Err(anyhow!("Failed to parse token: {:?}", e)),
-                }
-            }
-        }
-
-        Ok(results)
     }
 
     /// 時間範囲内のレートを取得

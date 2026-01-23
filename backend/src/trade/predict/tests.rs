@@ -25,7 +25,12 @@ fn make_token_rate(
     rate_str: &str,
     timestamp: NaiveDateTime,
 ) -> TokenRate {
-    TokenRate::new_with_timestamp(base, quote, make_rate_from_str(rate_str), timestamp)
+    TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate_from_str(rate_str),
+        timestamp,
+    }
 }
 
 // テスト用のヘルパー構造体

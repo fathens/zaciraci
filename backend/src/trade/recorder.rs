@@ -69,70 +69,6 @@ impl TradeRecorder {
 
         Ok(result)
     }
-
-    #[allow(dead_code)] // テスト専用
-    pub async fn record_batch(&self, trades: Vec<TradeData>) -> Result<Vec<TradeTransaction>> {
-        let log = DEFAULT.new(o!("function" => "record_batch"));
-        info!(log, "recording batch of trades";
-            "count" => trades.len(),
-            "batch_id" => %self.batch_id
-        );
-
-        let transactions: Vec<TradeTransaction> = trades
-            .into_iter()
-            .map(|trade| {
-                TradeTransaction::new(
-                    trade.tx_id,
-                    self.batch_id.clone(),
-                    trade.from_token.to_string(),
-                    trade.from_amount.smallest_units().clone(),
-                    trade.to_token.to_string(),
-                    trade.to_amount.smallest_units().clone(),
-                    Some(self.evaluation_period_id.clone()),
-                )
-            })
-            .collect();
-
-        let results = TradeTransaction::insert_batch_async(transactions)
-            .await
-            .context("Failed to insert batch of trade transactions")?;
-
-        info!(log, "successfully recorded trades in batch";
-            "count" => results.len(),
-            "batch_id" => %self.batch_id
-        );
-
-        Ok(results)
-    }
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // テスト専用
-pub struct TradeData {
-    pub tx_id: String,
-    pub from_token: TokenInAccount,
-    pub from_amount: TokenAmount,
-    pub to_token: TokenOutAccount,
-    pub to_amount: TokenAmount,
-}
-
-impl TradeData {
-    #[allow(dead_code)] // テスト専用
-    pub fn new(
-        tx_id: String,
-        from_token: TokenInAccount,
-        from_amount: TokenAmount,
-        to_token: TokenOutAccount,
-        to_amount: TokenAmount,
-    ) -> Self {
-        Self {
-            tx_id,
-            from_token,
-            from_amount,
-            to_token,
-            to_amount,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -185,48 +121,5 @@ mod tests {
         crate::persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
             .await
             .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_batch_recording() {
-        use crate::persistence::evaluation_period::NewEvaluationPeriod;
-
-        // 評価期間を作成（外部キー制約のため）
-        // 初期投資額: 100 NEAR (= 100e24 yocto)
-        let initial_value = BigDecimal::from(100_000_000_000_000_000_000_000_000u128); // 100 NEAR
-        let new_period = NewEvaluationPeriod::new(initial_value, vec![]);
-        let created_period = new_period.insert_async().await.unwrap();
-        let period_id = created_period.period_id;
-
-        let recorder = TradeRecorder::new(period_id);
-
-        let trades = vec![
-            TradeData::new(
-                format!("test_tx1_{}", Uuid::new_v4()),
-                "wrap.near".parse::<TokenAccount>().unwrap().into(),
-                token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
-                "token1.near".parse::<TokenAccount>().unwrap().into(),
-                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
-            ),
-            TradeData::new(
-                format!("test_tx2_{}", Uuid::new_v4()),
-                "wrap.near".parse::<TokenAccount>().unwrap().into(),
-                token_amount(2_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 2 wNEAR
-                "token2.near".parse::<TokenAccount>().unwrap().into(),
-                token_amount(100_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 100000 tokens
-            ),
-        ];
-
-        let tx_ids: Vec<String> = trades.iter().map(|t| t.tx_id.clone()).collect();
-        let results = recorder.record_batch(trades).await.unwrap();
-
-        assert_eq!(results.len(), 2);
-
-        // Cleanup
-        for tx_id in tx_ids {
-            crate::persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
-                .await
-                .unwrap();
-        }
     }
 }
