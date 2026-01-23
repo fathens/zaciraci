@@ -317,9 +317,13 @@ async fn select_top_volatility_tokens(
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
 
-    // 過去7日間のボラティリティトークンを全て取得（DBから）
+    // ボラティリティトークンを全て取得（DBから）
+    let volatility_days = config::get("TRADE_VOLATILITY_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(7);
     let end_date = Utc::now();
-    let start_date = end_date - chrono::Duration::days(7);
+    let start_date = end_date - chrono::Duration::days(volatility_days);
 
     // 型安全な quote_token を準備
     let quote_token: crate::ref_finance::token_account::TokenInAccount =
@@ -512,8 +516,12 @@ where
         let token_str = token.to_string();
 
         // PredictionServiceを使用して価格履歴と予測を取得
+        let price_history_days = config::get("TRADE_PRICE_HISTORY_DAYS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(30);
         let end_date = Utc::now();
-        let start_date = end_date - chrono::Duration::days(30);
+        let start_date = end_date - chrono::Duration::days(price_history_days);
 
         // 型安全なトークンに変換
         let token_out: TokenOutAccount = token.clone().into();
