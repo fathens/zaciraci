@@ -78,6 +78,10 @@
 
 ## 主要な改善項目
 
+### record_rates 間隔調整 ✅
+- 5分間隔 → 15分間隔に変更
+- RPC負荷の軽減
+
 ### 2025-10-10: マルチエンドポイントRPC 完全実装 ✅
 - Phase 1: EndpointPool 基本実装
 - Phase 2a: Rate limit 検知と mark_failed

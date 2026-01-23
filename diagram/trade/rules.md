@@ -144,8 +144,8 @@ flowchart LR
 - そのため、ハーベスト分は自動的に次回の投入額から除外される
 
 **資金管理の実装箇所**:
-- 評価期間管理: `backend/src/trade/stats.rs:1053-1154`
-- ハーベスト判定: `backend/src/trade/harvest.rs:62-138`
+- 評価期間管理: `backend/src/trade/stats.rs` の `manage_evaluation_period()` 関数
+- ハーベスト判定: `backend/src/trade/harvest.rs` の `check_and_harvest()` 関数
 - データベース記録: `backend/src/persistence/evaluation_period.rs`
 
 ### 処理フローチャート
