@@ -3,13 +3,15 @@ use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use once_cell::sync::Lazy;
 use std::sync::{Arc, RwLock};
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct History {
+    #[allow(dead_code)]
     entries: Vec<HistoryEntry>,
 
     pub inputs: Statistics<u128>,
+    #[allow(dead_code)]
     pub outputs: Statistics<u128>,
+    #[allow(dead_code)]
     pub gains: Statistics<u128>,
 }
 

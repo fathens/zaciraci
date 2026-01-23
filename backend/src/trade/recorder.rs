@@ -78,7 +78,7 @@ impl TradeRecorder {
         Ok(result)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // テスト専用
     pub async fn record_batch(&self, trades: Vec<TradeData>) -> Result<Vec<TradeTransaction>> {
         let log = DEFAULT.new(o!("function" => "record_batch"));
         info!(log, "recording batch of trades";
@@ -122,7 +122,7 @@ impl TradeRecorder {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // テスト専用
 pub struct TradeData {
     pub tx_id: String,
     pub from_token: TokenInAccount,
@@ -132,7 +132,7 @@ pub struct TradeData {
 }
 
 impl TradeData {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // テスト専用
     pub fn new(
         tx_id: String,
         from_token: TokenInAccount,

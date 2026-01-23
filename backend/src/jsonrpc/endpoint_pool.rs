@@ -17,7 +17,6 @@ pub struct RpcEndpoint {
 pub struct EndpointPool {
     endpoints: Vec<RpcEndpoint>,
     failed_endpoints: Arc<Mutex<FailedEndpoints>>,
-    #[allow(dead_code)]
     failure_reset_seconds: u64,
 }
 

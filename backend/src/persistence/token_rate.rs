@@ -93,7 +93,7 @@ impl TokenRate {
     }
 
     /// 特定の時刻で TokenRate を作成
-    #[allow(dead_code)]
+    #[allow(dead_code)] // テスト専用
     pub fn new_with_timestamp(
         base: TokenOutAccount,
         quote: TokenInAccount,
@@ -371,7 +371,7 @@ impl TokenRate {
     /// 履歴レコードを取得（新しい順）
     ///
     /// NULL decimals があれば RPC で取得して DB を backfill する。
-    #[allow(dead_code)]
+    #[allow(dead_code)] // テスト専用
     pub async fn get_history(
         base: &TokenOutAccount,
         quote: &TokenInAccount,
@@ -399,7 +399,7 @@ impl TokenRate {
     }
 
     // quoteトークンを指定して対応するすべてのbaseトークンとその最新時刻を取得
-    #[allow(dead_code)]
+    #[allow(dead_code)] // テスト専用
     pub async fn get_latests_by_quote(
         quote: &TokenInAccount,
     ) -> Result<Vec<(TokenOutAccount, NaiveDateTime)>> {

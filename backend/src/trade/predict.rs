@@ -286,7 +286,6 @@ impl PredictionService {
     }
 
     /// 予測結果を変換
-    #[allow(dead_code)]
     fn convert_prediction_result(
         &self,
         result: &PredictionResult,
