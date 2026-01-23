@@ -537,7 +537,7 @@ impl TokenRate {
                     .filter(token_rates::timestamp.le(end))
                     .filter(token_rates::base_token.eq(&base_str))
                     .filter(token_rates::quote_token.eq(&quote_str))
-                    .order_by(token_rates::timestamp)
+                    .order_by(token_rates::timestamp.asc())
                     .load::<DbTokenRate>(conn)
             })
             .await

@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{TokenInAccount, TokenOutAccount, TokenPrice, TokenPriceF64};
+use crate::types::{TokenInAccount, TokenOutAccount, TokenPrice};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{DateTime, Duration, Utc};
@@ -18,17 +18,11 @@ impl MockPredictionProvider {
             top_tokens: vec![
                 TopTokenInfo {
                     token: "token1".parse().unwrap(),
-                    volatility: 0.2,
-                    volume_24h: 1000000.0,
-                    current_price: TokenPriceF64::from_near_per_token(100.0),
-                    decimals: 24,
+                    volatility: BigDecimal::from_f64(0.2).unwrap(),
                 },
                 TopTokenInfo {
                     token: "token2".parse().unwrap(),
-                    volatility: 0.3,
-                    volume_24h: 800000.0,
-                    current_price: TokenPriceF64::from_near_per_token(50.0),
-                    decimals: 24,
+                    volatility: BigDecimal::from_f64(0.3).unwrap(),
                 },
             ],
             price_histories: HashMap::new(),
@@ -172,10 +166,7 @@ mod prediction_tests {
         let expected_token: TokenOutAccount = "token1".parse().unwrap();
         assert_eq!(top_tokens.len(), 1);
         assert_eq!(top_tokens[0].token, expected_token);
-        assert_eq!(
-            top_tokens[0].current_price,
-            TokenPriceF64::from_near_per_token(100.0)
-        );
+        assert_eq!(top_tokens[0].volatility, BigDecimal::from_f64(0.2).unwrap());
     }
 
     #[tokio::test]

@@ -250,8 +250,12 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
 
         let prediction = prediction_provider.predict_price(&history, 24).await?;
 
-        // TokenPriceF64 を TokenPrice に変換
-        let current_price = top_token.current_price.to_bigdecimal();
+        // 価格履歴から現在価格を取得
+        let current_price = history
+            .prices
+            .last()
+            .map(|p| p.price.clone())
+            .unwrap_or_else(TokenPrice::zero);
         if let Some(data) = PredictionData::from_token_prediction(&prediction, current_price) {
             prediction_data.push(data);
         }

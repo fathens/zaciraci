@@ -336,17 +336,11 @@ async fn select_top_volatility_tokens(
         .await
     {
         Ok(top_tokens) => {
-            // TopToken を AccountId に変換
-            let tokens: anyhow::Result<Vec<AccountId>> = top_tokens
+            // TopTokenInfo を AccountId に変換
+            let tokens: Vec<AccountId> = top_tokens
                 .into_iter()
-                .map(|token| {
-                    token
-                        .token
-                        .parse::<AccountId>()
-                        .map_err(|e| anyhow::anyhow!("Failed to parse account ID: {}", e))
-                })
+                .map(|token| token.token.into())
                 .collect();
-            let tokens = tokens?;
 
             if tokens.is_empty() {
                 return Err(anyhow::anyhow!(

@@ -3,7 +3,6 @@ use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
 use crate::algorithm::types::*;
 use crate::types::{
     ExchangeRate, NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice,
-    TokenPriceF64,
 };
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
@@ -68,17 +67,11 @@ impl PredictionProvider for SimpleMockProvider {
         Ok(vec![
             TopTokenInfo {
                 token: "top_token1".parse().unwrap(),
-                volatility: 0.2,
-                volume_24h: 1000000.0,
-                current_price: TokenPriceF64::from_near_per_token(100.0),
-                decimals: 24,
+                volatility: BigDecimal::from_f64(0.2).unwrap(),
             },
             TopTokenInfo {
                 token: "top_token2".parse().unwrap(),
-                volatility: 0.3,
-                volume_24h: 800000.0,
-                current_price: TokenPriceF64::from_near_per_token(50.0),
-                decimals: 24,
+                volatility: BigDecimal::from_f64(0.3).unwrap(),
             },
         ]
         .into_iter()

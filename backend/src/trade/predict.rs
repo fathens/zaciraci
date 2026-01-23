@@ -50,18 +50,6 @@ pub struct PredictedPrice {
     pub confidence: Option<BigDecimal>,
 }
 
-/// トップトークン情報
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TopToken {
-    pub token: String,
-    pub volatility: BigDecimal,
-    pub volume_24h: BigDecimal,
-    /// 現在価格（無次元の価格比率）
-    pub current_price: TokenPrice,
-    /// トークンの小数点桁数
-    pub decimals: u8,
-}
-
 /// 価格予測サービス
 pub struct PredictionService {
     chronos_client: ChronosApiClient,
@@ -85,51 +73,25 @@ impl PredictionService {
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
         quote_token: &TokenInAccount,
-    ) -> Result<Vec<TopToken>> {
+    ) -> Result<Vec<TopTokenInfo>> {
         // 直接データベースからボラティリティ情報を取得
-        let quote_token_account: TokenInAccount = quote_token.clone();
-
         let range = TimeRange {
             start: start_date.naive_utc(),
             end: end_date.naive_utc(),
         };
 
-        let volatility_tokens =
-            TokenRate::get_by_volatility_in_time_range(&range, &quote_token_account)
-                .await
-                .context("Failed to get volatility tokens from database")?;
+        let volatility_tokens = TokenRate::get_by_volatility_in_time_range(&range, quote_token)
+            .await
+            .context("Failed to get volatility tokens from database")?;
 
-        // 全トークンをTopToken形式に変換（limit は呼び出し側で適用）
-        let mut top_tokens = Vec::new();
-        for vol_token in volatility_tokens.into_iter() {
-            // 現在価格と decimals を取得（ExchangeRate から正しく TokenPrice に変換）
-            let (current_price, decimals) = {
-                let base_token = TokenOutAccount::from(vol_token.base.clone());
-                let quote_token = quote_token_account.clone();
-
-                match TokenRate::get_latest(&base_token, &quote_token).await {
-                    Ok(Some(rate)) => {
-                        (rate.exchange_rate.to_price(), rate.exchange_rate.decimals())
-                    }
-                    Ok(None) => {
-                        // ログを後で追加（slogのsetupが必要）
-                        (TokenPrice::zero(), 24) // デフォルト値
-                    }
-                    Err(_e) => {
-                        // ログを後で追加（slogのsetupが必要）
-                        (TokenPrice::zero(), 24) // デフォルト値
-                    }
-                }
-            };
-
-            top_tokens.push(TopToken {
-                token: vol_token.base.to_string(),
+        // 全トークンをTopTokenInfo形式に変換（limit は呼び出し側で適用）
+        let top_tokens = volatility_tokens
+            .into_iter()
+            .map(|vol_token| TopTokenInfo {
+                token: vol_token.base.into(),
                 volatility: vol_token.variance,
-                volume_24h: BigDecimal::from(0), // ボリュームデータは現在利用不可
-                current_price,
-                decimals,
-            });
-        }
+            })
+            .collect();
 
         Ok(top_tokens)
     }
@@ -439,20 +401,8 @@ impl PredictionProvider for PredictionService {
         end_date: DateTime<Utc>,
         quote_token: &CommonTokenInAccount,
     ) -> Result<Vec<TopTokenInfo>> {
-        // common と backend の TokenAccount は同一型なので直接使用可能
-        let tokens = self
-            .get_tokens_by_volatility(start_date, end_date, quote_token)
-            .await?;
-        Ok(tokens
-            .into_iter()
-            .map(|t| TopTokenInfo {
-                token: t.token.parse().unwrap(),
-                volatility: t.volatility.to_string().parse::<f64>().unwrap_or(0.0),
-                volume_24h: t.volume_24h.to_string().parse::<f64>().unwrap_or(0.0),
-                current_price: t.current_price.to_f64(),
-                decimals: t.decimals,
-            })
-            .collect())
+        self.get_tokens_by_volatility(start_date, end_date, quote_token)
+            .await
     }
 
     async fn get_price_history(

@@ -133,14 +133,13 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
 
     // 各トークンの必須フィールドを検証
     for token in &tokens {
-        assert!(!token.token.is_empty(), "Token name should not be empty");
+        assert!(
+            !token.token.to_string().is_empty(),
+            "Token name should not be empty"
+        );
         assert!(
             token.volatility >= BigDecimal::from(0),
             "Volatility should be non-negative"
-        );
-        assert!(
-            token.current_price > price("0"),
-            "Current price should be positive"
         );
     }
 

@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::types::{
     ExchangeRate, NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice,
-    TokenPriceF64,
 };
 
 // ==================== 取引関連型 ====================
@@ -306,12 +305,7 @@ pub struct MarketData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopTokenInfo {
     pub token: TokenOutAccount,
-    pub volatility: f64,
-    pub volume_24h: f64,
-    /// 現在の価格 (NEAR/token)
-    pub current_price: TokenPriceF64,
-    /// トークンの decimals
-    pub decimals: u8,
+    pub volatility: BigDecimal,
 }
 
 #[cfg(test)]
