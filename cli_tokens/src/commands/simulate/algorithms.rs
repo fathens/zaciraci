@@ -461,7 +461,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     let backend_client = BackendClient::new();
     let mut token_decimals: HashMap<String, u8> = HashMap::new();
     for token in &config.target_tokens {
-        let decimals = backend_client.get_token_decimals(token).await.unwrap_or(24);
+        let decimals = backend_client.get_token_decimals(token).await?;
         token_decimals.insert(token.clone(), decimals);
     }
 

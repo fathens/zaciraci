@@ -122,7 +122,7 @@ impl TokenRate {
                     &client,
                     &db_rate.base_token,
                 )
-                .await;
+                .await?;
                 Self::backfill_decimals(&db_rate.base_token, decimals).await?;
                 decimals
             }
@@ -138,6 +138,10 @@ impl TokenRate {
     async fn from_db_results_with_backfill(results: Vec<DbTokenRate>) -> Result<Vec<Self>> {
         use std::collections::HashMap;
 
+        let log = DEFAULT.new(o!(
+            "function" => "from_db_results_with_backfill",
+        ));
+
         // NULL decimals を持つトークンを特定
         let tokens_with_null: HashSet<String> = results
             .iter()
@@ -148,18 +152,19 @@ impl TokenRate {
         // RPC で decimals を取得して backfill
         let mut decimals_map: HashMap<String, u8> = HashMap::new();
         if !tokens_with_null.is_empty() {
-            let log = DEFAULT.new(o!(
-                "function" => "from_db_results_with_backfill",
-                "tokens_with_null_count" => tokens_with_null.len(),
-            ));
-            info!(log, "backfilling decimals for tokens with NULL");
+            info!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
 
             let client = crate::jsonrpc::new_client();
             for token in &tokens_with_null {
-                let decimals =
-                    crate::trade::token_cache::get_token_decimals_cached(&client, token).await;
-                Self::backfill_decimals(token, decimals).await?;
-                decimals_map.insert(token.clone(), decimals);
+                match crate::trade::token_cache::get_token_decimals_cached(&client, token).await {
+                    Ok(decimals) => {
+                        Self::backfill_decimals(token, decimals).await?;
+                        decimals_map.insert(token.clone(), decimals);
+                    }
+                    Err(e) => {
+                        warn!(log, "failed to fetch decimals for backfill"; "token" => token, "error" => %e);
+                    }
+                }
             }
         }
 
@@ -168,7 +173,13 @@ impl TokenRate {
         for db_rate in results {
             let decimals = match db_rate.decimals {
                 Some(d) => d as u8,
-                None => *decimals_map.get(&db_rate.base_token).unwrap_or(&24), // フォールバック（通常到達しない）
+                None => match decimals_map.get(&db_rate.base_token) {
+                    Some(&d) => d,
+                    None => {
+                        warn!(log, "skipping rate: decimals unknown after backfill"; "token" => &db_rate.base_token);
+                        continue;
+                    }
+                },
             };
             rates.push(Self::from_db_with_decimals(db_rate, decimals)?);
         }

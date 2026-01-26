@@ -197,12 +197,20 @@ async fn record_rates() -> Result<()> {
     // TokenAmount / NearAmount → ExchangeRate で型安全に rate を計算
     let rates: Vec<_> = values
         .into_iter()
-        .map(|(base, value)| {
+        .filter_map(|(base, value)| {
             let token_str = base.to_string();
-            let decimals = token_decimals.get(&token_str).copied().unwrap_or(24);
-            let amount = TokenAmount::from_smallest_units(BigDecimal::from(value), decimals);
-            let exchange_rate = &amount / &initial_value;
-            TokenRate::new(base, quote_token.clone(), exchange_rate)
+            match token_decimals.get(&token_str).copied() {
+                Some(decimals) => {
+                    let amount =
+                        TokenAmount::from_smallest_units(BigDecimal::from(value), decimals);
+                    let exchange_rate = &amount / &initial_value;
+                    Some(TokenRate::new(base, quote_token.clone(), exchange_rate))
+                }
+                None => {
+                    warn!(log, "skipping token: decimals unknown"; "token" => &token_str);
+                    None
+                }
+            }
         })
         .collect();
 

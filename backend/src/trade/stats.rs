@@ -646,7 +646,7 @@ where
 
         // トークンの decimals を取得（キャッシュ経由）
         let decimals =
-            crate::trade::token_cache::get_token_decimals_cached(client, &token_str).await;
+            crate::trade::token_cache::get_token_decimals_cached(client, &token_str).await?;
 
         // 市場規模の推定（実際の発行量データを取得）
         let market_cap =
@@ -1746,15 +1746,13 @@ where
     Ok(metadata)
 }
 
-/// トークンの decimals を取得（キャッシュなし、エラー時は 24 を返す）
-pub async fn get_token_decimals<C>(client: &C, token_id: &str) -> u8
+/// トークンの decimals を取得（キャッシュなし）
+pub async fn get_token_decimals<C>(client: &C, token_id: &str) -> Result<u8>
 where
     C: crate::jsonrpc::ViewContract,
 {
-    match get_token_metadata(client, token_id).await {
-        Ok(metadata) => metadata.decimals,
-        Err(_) => 24, // デフォルト値（NEAR ネイティブトークンの decimals）
-    }
+    let metadata = get_token_metadata(client, token_id).await?;
+    Ok(metadata.decimals)
 }
 
 /// BigDecimalで平方根を計算（Newton法による近似）

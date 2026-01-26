@@ -38,7 +38,7 @@ where
             .unwrap_or_default();
 
         // トークンの decimals を取得
-        let decimals = crate::trade::token_cache::get_token_decimals_cached(client, token).await;
+        let decimals = crate::trade::token_cache::get_token_decimals_cached(client, token).await?;
 
         balances.insert(
             token.clone(),
@@ -225,9 +225,10 @@ where
     // トレード記録を保存
     // トークンの decimals を取得して TokenAmount を作成
     let from_decimals =
-        crate::trade::token_cache::get_token_decimals_cached(client, &from_token.to_string()).await;
+        crate::trade::token_cache::get_token_decimals_cached(client, &from_token.to_string())
+            .await?;
     let to_decimals =
-        crate::trade::token_cache::get_token_decimals_cached(client, &to_token.to_string()).await;
+        crate::trade::token_cache::get_token_decimals_cached(client, &to_token.to_string()).await?;
     let from_amount =
         TokenAmount::from_smallest_units(BigDecimal::from(swap_amount), from_decimals);
     let to_amount = TokenAmount::from_smallest_units(BigDecimal::from(out), to_decimals);
