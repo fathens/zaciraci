@@ -86,7 +86,10 @@ impl ChronosApiClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read body: {e}>"));
             return Err(ApiError::Server(format!(
                 "HTTP Error {}: {}",
                 status, error_text
@@ -177,7 +180,10 @@ impl ApiClient for ChronosApiClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read body: {e}>"));
             return Err(ApiError::Server(format!(
                 "HTTP Error {}: {}",
                 status, error_text
@@ -227,7 +233,10 @@ impl PredictionClient for ChronosApiClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read body: {e}>"));
             return Err(ApiError::Server(format!(
                 "HTTP Error {}: {}",
                 status, error_text
