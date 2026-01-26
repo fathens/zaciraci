@@ -35,14 +35,14 @@ static HARVEST_MIN_AMOUNT: Lazy<YoctoAmount> = Lazy::new(|| {
     config::get("HARVEST_MIN_AMOUNT")
         .ok()
         .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "10".parse().unwrap())
+        .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
         .to_yocto()
 });
 static HARVEST_RESERVE_AMOUNT: Lazy<YoctoAmount> = Lazy::new(|| {
     config::get("HARVEST_RESERVE_AMOUNT")
         .ok()
         .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "1".parse().unwrap())
+        .unwrap_or_else(|| "1".parse().expect("valid NearAmount literal"))
         .to_yocto()
 });
 
@@ -50,7 +50,7 @@ fn is_time_to_harvest() -> bool {
     let last = LAST_HARVEST_TIME.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is after UNIX epoch")
         .as_secs();
     now - last > *HARVEST_INTERVAL
 }
@@ -58,7 +58,7 @@ fn is_time_to_harvest() -> bool {
 fn update_last_harvest_time() {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is after UNIX epoch")
         .as_secs();
     LAST_HARVEST_TIME.store(now, Ordering::Relaxed);
 }
@@ -131,7 +131,7 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
             info!(log, "Harvest time interval not met, skipping";
                 "last_harvest_interval_hours" => (std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .expect("system clock is after UNIX epoch")
                     .as_secs() - LAST_HARVEST_TIME.load(Ordering::Relaxed)) / 3600
             );
             return Ok(());

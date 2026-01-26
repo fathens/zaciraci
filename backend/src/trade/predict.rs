@@ -155,7 +155,7 @@ impl PredictionService {
             return Err(anyhow::anyhow!("No price history available for prediction"));
         }
 
-        let last_timestamp = timestamps.last().unwrap();
+        let last_timestamp = timestamps.last().expect("checked non-empty above");
         let forecast_until = *last_timestamp + Duration::hours(prediction_horizon as i64);
 
         // 予測リクエストを作成
@@ -188,7 +188,11 @@ impl PredictionService {
         // 予測結果を変換
         let predictions = self.convert_prediction_result(
             &result,
-            &history.prices.last().unwrap().timestamp,
+            &history
+                .prices
+                .last()
+                .expect("checked non-empty above")
+                .timestamp,
             prediction_horizon,
         )?;
 
@@ -351,7 +355,7 @@ impl PredictionService {
             }
         }
 
-        Err(last_error.unwrap())
+        Err(last_error.expect("loop executed at least once"))
     }
 
     /// 価格予測を実行（リトライ付き）
@@ -387,7 +391,7 @@ impl PredictionService {
             }
         }
 
-        Err(last_error.unwrap())
+        Err(last_error.expect("loop executed at least once"))
     }
 }
 
