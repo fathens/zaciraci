@@ -1350,3 +1350,62 @@ fn test_yocto_value_harvest_calculation_pattern() {
     let harvest_yocto_amount = harvest_amount.to_amount();
     assert_eq!(harvest_yocto_amount.to_u128(), 5u128 * YOCTO_PER_NEAR);
 }
+
+// =============================================================================
+// bigdecimal_from_f64_safe / bigdecimal_to_f64_safe テスト
+// =============================================================================
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "non-finite f64")]
+fn test_near_value_mul_nan_panics_in_debug() {
+    let value = NearValue::from_near(BigDecimal::from(100));
+    let _ = value * f64::NAN;
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "non-finite f64")]
+fn test_near_value_mul_inf_panics_in_debug() {
+    let value = NearValue::from_near(BigDecimal::from(100));
+    let _ = value * f64::INFINITY;
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "non-finite f64")]
+fn test_token_price_mul_nan_panics_in_debug() {
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(10));
+    let _ = price * f64::NAN;
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "non-finite f64")]
+fn test_token_amount_f64_nan_to_bigdecimal_panics_in_debug() {
+    let amount = TokenAmountF64::from_smallest_units(f64::NAN, 6);
+    let _ = amount.to_bigdecimal();
+}
+
+#[test]
+fn test_bigdecimal_to_f64_crate_overflow_behavior() {
+    // BigDecimal::to_f64() はオーバーフロー時に None ではなく Some(Inf) を返す。
+    // bigdecimal_to_f64_safe は is_finite() チェックでこれを捕捉する。
+    let huge = BigDecimal::from_str("1e309").unwrap();
+    let raw = huge.to_f64();
+    assert!(raw.is_some(), "BigDecimal crate returns Some for overflow");
+    assert!(
+        raw.unwrap().is_infinite(),
+        "BigDecimal crate returns Inf, not None"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bigdecimal_to_f64_safe: non-finite conversion")]
+fn test_token_price_to_f64_overflow_panics_in_debug() {
+    // f64 表現範囲外の BigDecimal → to_f64() → bigdecimal_to_f64_safe でパニック
+    let huge = BigDecimal::from_str("1e309").unwrap();
+    let price = TokenPrice(huge);
+    let _ = price.to_f64();
+}

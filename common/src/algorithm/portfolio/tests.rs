@@ -3237,3 +3237,143 @@ fn test_calculate_current_weights_equivalence() {
 
     println!("\n✅ calculate_current_weights equivalence test passed");
 }
+
+// ==================== NaN/Inf 防御テスト ====================
+
+#[test]
+fn test_calculate_daily_returns_zero_price_no_nan() {
+    // ゼロ価格を含む価格データ → NaN/Inf がリターンに含まれないこと
+    let prices = vec![PriceHistory {
+        token: token_out("token-a"),
+        quote_token: token_in("wrap.near"),
+        prices: vec![
+            PricePoint {
+                timestamp: Utc::now() - Duration::days(3),
+                price: price(1.0),
+                volume: None,
+            },
+            PricePoint {
+                timestamp: Utc::now() - Duration::days(2),
+                price: price(0.0), // ゼロ価格
+                volume: None,
+            },
+            PricePoint {
+                timestamp: Utc::now() - Duration::days(1),
+                price: price(2.0),
+                volume: None,
+            },
+            PricePoint {
+                timestamp: Utc::now(),
+                price: price(3.0),
+                volume: None,
+            },
+        ],
+    }];
+
+    let returns = calculate_daily_returns(&prices);
+    assert_eq!(returns.len(), 1, "Should have 1 token");
+
+    let token_returns = &returns[0];
+
+    // 4 価格点のうち prices[1]=0.0 がスキップされ、リターンは 2 件
+    // i=1: prices[0]=1.0>0 → (0.0-1.0)/1.0 = -1.0
+    // i=2: prices[1]=0.0 → スキップ
+    // i=3: prices[2]=2.0>0 → (3.0-2.0)/2.0 = 0.5
+    assert_eq!(
+        token_returns.len(),
+        2,
+        "Zero price should be skipped, expected 2 returns, got {}",
+        token_returns.len()
+    );
+
+    for &r in token_returns {
+        assert!(
+            r.is_finite(),
+            "Expected all returns to be finite, got {}",
+            r
+        );
+    }
+
+    assert!(
+        (token_returns[0] - (-1.0)).abs() < 1e-10,
+        "First return should be -1.0, got {}",
+        token_returns[0]
+    );
+    assert!(
+        (token_returns[1] - 0.5).abs() < 1e-10,
+        "Second return should be 0.5, got {}",
+        token_returns[1]
+    );
+}
+
+#[test]
+fn test_calculate_covariance_single_element_returns_zero() {
+    // 1要素入力 → 0.0 を返す（NaN でない）
+    let returns1 = vec![0.5];
+    let returns2 = vec![0.3];
+
+    let cov = calculate_covariance(&returns1, &returns2);
+    assert_eq!(cov, 0.0, "Single element covariance should be 0.0");
+    assert!(cov.is_finite(), "Covariance should be finite");
+}
+
+#[test]
+fn test_calculate_covariance_empty_returns_zero() {
+    let cov = calculate_covariance(&[], &[]);
+    assert_eq!(cov, 0.0);
+}
+
+#[test]
+fn test_calculate_covariance_two_elements_valid() {
+    // 2要素入力 → 有効な値を返す
+    let returns1 = vec![0.1, 0.2];
+    let returns2 = vec![0.3, 0.4];
+
+    let cov = calculate_covariance(&returns1, &returns2);
+    assert!(cov.is_finite(), "Covariance should be finite, got {}", cov);
+    // 2要素の場合: mean1=0.15, mean2=0.35
+    // cov = ((0.1-0.15)*(0.3-0.35) + (0.2-0.15)*(0.4-0.35)) / (2-1)
+    //     = ((-0.05)*(-0.05) + (0.05)*(0.05)) / 1
+    //     = (0.0025 + 0.0025) / 1 = 0.005
+    assert!((cov - 0.005).abs() < 1e-10, "Expected 0.005, got {}", cov);
+}
+
+#[test]
+fn test_validate_weights_all_valid() {
+    let weights = vec![0.3, 0.5, 0.2];
+    let (validated, had_invalid) = validate_weights(&weights);
+    assert!(!had_invalid);
+    assert_eq!(validated, weights);
+}
+
+#[test]
+fn test_validate_weights_nan_replaced() {
+    let weights = vec![0.3, f64::NAN, 0.2];
+    let (validated, had_invalid) = validate_weights(&weights);
+    assert!(had_invalid);
+    assert_eq!(validated, vec![0.3, 0.0, 0.2]);
+}
+
+#[test]
+fn test_validate_weights_inf_replaced() {
+    let weights = vec![f64::INFINITY, 0.5, f64::NEG_INFINITY];
+    let (validated, had_invalid) = validate_weights(&weights);
+    assert!(had_invalid);
+    assert_eq!(validated, vec![0.0, 0.5, 0.0]);
+}
+
+#[test]
+fn test_validate_weights_negative_replaced() {
+    let weights = vec![0.3, -0.1, 0.2];
+    let (validated, had_invalid) = validate_weights(&weights);
+    assert!(had_invalid);
+    assert_eq!(validated, vec![0.3, 0.0, 0.2]);
+}
+
+#[test]
+fn test_validate_weights_empty() {
+    let weights: Vec<f64> = vec![];
+    let (validated, had_invalid) = validate_weights(&weights);
+    assert!(!had_invalid);
+    assert!(validated.is_empty());
+}

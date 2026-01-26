@@ -882,6 +882,13 @@ where
             for (token, target_weight) in target_weights.iter() {
                 // TokenOutAccount → String for comparison and HashMap access
                 let token_str = token.to_string();
+
+                // weight の有効性確認
+                if !target_weight.is_finite() || *target_weight < 0.0 {
+                    warn!(log, "invalid weight, skipping"; "token" => &token_str, "weight" => *target_weight);
+                    continue;
+                }
+
                 if token_str == wrap_near_str {
                     continue; // wrap.nearは除外
                 }

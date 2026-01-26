@@ -25,6 +25,32 @@ use std::str::FromStr;
 
 use super::token_types::{ExchangeRate, TokenAmount};
 
+/// f64 → BigDecimal 変換。NaN/Infinity の場合はゼロを返し debug_assert で検出。
+fn bigdecimal_from_f64_safe(value: f64) -> BigDecimal {
+    debug_assert!(
+        value.is_finite(),
+        "bigdecimal_from_f64_safe: non-finite f64: {value}"
+    );
+    BigDecimal::from_f64(value).unwrap_or_default()
+}
+
+/// BigDecimal → f64 変換。非有限値（Inf 含む）の場合はゼロを返し debug_assert で検出。
+///
+/// BigDecimal::to_f64() はオーバーフロー時に None ではなく Some(Inf) を返すため、
+/// Some 側でも is_finite() チェックが必要。
+fn bigdecimal_to_f64_safe(value: &BigDecimal) -> f64 {
+    match value.to_f64() {
+        Some(f) if f.is_finite() => f,
+        other => {
+            debug_assert!(
+                false,
+                "bigdecimal_to_f64_safe: non-finite conversion for {value}: {other:?}"
+            );
+            0.0
+        }
+    }
+}
+
 /// 1 NEAR = 10^24 yoctoNEAR
 pub(crate) const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 
@@ -66,7 +92,7 @@ impl TokenPrice {
 
     /// f64 に変換（精度損失あり）
     pub fn to_f64(&self) -> TokenPriceF64 {
-        TokenPriceF64(self.0.to_f64().unwrap_or(0.0))
+        TokenPriceF64(bigdecimal_to_f64_safe(&self.0))
     }
 
     /// 価格がゼロかどうか
@@ -164,7 +190,7 @@ impl Div<&TokenPrice> for TokenPrice {
 impl Mul<f64> for TokenPrice {
     type Output = TokenPrice;
     fn mul(self, scalar: f64) -> TokenPrice {
-        TokenPrice(self.0 * BigDecimal::from_f64(scalar).unwrap_or_default())
+        TokenPrice(self.0 * bigdecimal_from_f64_safe(scalar))
     }
 }
 
@@ -172,7 +198,7 @@ impl Mul<f64> for TokenPrice {
 impl Mul<TokenPrice> for f64 {
     type Output = TokenPrice;
     fn mul(self, price: TokenPrice) -> TokenPrice {
-        TokenPrice(BigDecimal::from_f64(self).unwrap_or_default() * price.0)
+        TokenPrice(bigdecimal_from_f64_safe(self) * price.0)
     }
 }
 
@@ -200,7 +226,7 @@ impl Div<BigDecimal> for TokenPrice {
 impl Div<f64> for TokenPrice {
     type Output = TokenPrice;
     fn div(self, scalar: f64) -> TokenPrice {
-        let divisor = BigDecimal::from_f64(scalar).unwrap_or_default();
+        let divisor = bigdecimal_from_f64_safe(scalar);
         if divisor.is_zero() {
             TokenPrice::zero()
         } else {
@@ -277,7 +303,7 @@ impl TokenPriceF64 {
 
     /// BigDecimal 版に変換（精度は回復しない）
     pub fn to_bigdecimal(&self) -> TokenPrice {
-        TokenPrice(BigDecimal::from_f64(self.0).unwrap_or_default())
+        TokenPrice(bigdecimal_from_f64_safe(self.0))
     }
 
     /// 価格がゼロかどうか
@@ -803,7 +829,7 @@ impl NearValue {
 
     /// f64 版に変換（精度損失あり）
     pub fn to_f64(&self) -> NearValueF64 {
-        NearValueF64(self.0.to_f64().unwrap_or(0.0))
+        NearValueF64(bigdecimal_to_f64_safe(&self.0))
     }
 
     /// 金額がゼロかどうか
@@ -864,14 +890,14 @@ impl Sub<&NearValue> for &NearValue {
 impl Mul<f64> for NearValue {
     type Output = NearValue;
     fn mul(self, rhs: f64) -> NearValue {
-        NearValue(self.0 * BigDecimal::from_f64(rhs).unwrap_or_default())
+        NearValue(self.0 * bigdecimal_from_f64_safe(rhs))
     }
 }
 
 impl Mul<f64> for &NearValue {
     type Output = NearValue;
     fn mul(self, rhs: f64) -> NearValue {
-        NearValue(&self.0 * BigDecimal::from_f64(rhs).unwrap_or_default())
+        NearValue(&self.0 * bigdecimal_from_f64_safe(rhs))
     }
 }
 
@@ -1012,7 +1038,7 @@ impl Mul<TokenPrice> for NearAmount {
 impl Mul<YoctoAmount> for TokenPriceF64 {
     type Output = f64;
     fn mul(self, amount: YoctoAmount) -> f64 {
-        self.0 * amount.0.to_f64().unwrap_or(0.0)
+        self.0 * bigdecimal_to_f64_safe(&amount.0)
     }
 }
 
@@ -1120,10 +1146,7 @@ impl TokenAmountF64 {
 
     /// TokenAmount に変換（精度は回復しない）
     pub fn to_bigdecimal(&self) -> TokenAmount {
-        TokenAmount::from_smallest_units(
-            BigDecimal::from_f64(self.amount).unwrap_or_default(),
-            self.decimals,
-        )
+        TokenAmount::from_smallest_units(bigdecimal_from_f64_safe(self.amount), self.decimals)
     }
 }
 

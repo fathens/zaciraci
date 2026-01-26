@@ -154,8 +154,10 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
 
             let mut token_returns = Vec::new();
             for i in 1..prices.len() {
-                let return_rate = (prices[i].1 - prices[i - 1].1) / prices[i - 1].1;
-                token_returns.push(return_rate);
+                if prices[i - 1].1 > 0.0 {
+                    let return_rate = (prices[i].1 - prices[i - 1].1) / prices[i - 1].1;
+                    token_returns.push(return_rate);
+                }
             }
             returns.push(token_returns);
         }
@@ -190,7 +192,7 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
 
 /// 2つの系列間の共分散を計算
 fn calculate_covariance(returns1: &[f64], returns2: &[f64]) -> f64 {
-    if returns1.len() != returns2.len() || returns1.is_empty() {
+    if returns1.len() != returns2.len() || returns1.len() < 2 {
         return 0.0;
     }
 
@@ -494,6 +496,25 @@ fn calculate_dynamic_risk_adjustment(portfolio_data: &PortfolioData) -> f64 {
             / (HIGH_VOLATILITY_THRESHOLD - LOW_VOLATILITY_THRESHOLD);
         1.4 - (1.4 - 0.7) * ratio
     }
+}
+
+/// weight ベクトルのバリデーション
+///
+/// NaN/Inf/負値を 0.0 に置換する。非有限値が含まれていた場合は `true` を返す。
+pub fn validate_weights(weights: &[f64]) -> (Vec<f64>, bool) {
+    let mut had_invalid = false;
+    let validated = weights
+        .iter()
+        .map(|&w| {
+            if w.is_finite() && w >= 0.0 {
+                w
+            } else {
+                had_invalid = true;
+                0.0
+            }
+        })
+        .collect();
+    (validated, had_invalid)
 }
 
 /// リバランスが必要かチェック
@@ -830,7 +851,14 @@ pub async fn execute_portfolio_optimization(
     let risk_adjustment = calculate_dynamic_risk_adjustment(&portfolio_data);
 
     // 最適ポートフォリオを計算
-    let mut optimal_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+    let raw_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+    let (validated, had_invalid) = validate_weights(&raw_weights);
+    debug_assert!(
+        !had_invalid,
+        "maximize_sharpe_ratio returned non-finite weights: {:?}",
+        raw_weights
+    );
+    let mut optimal_weights = validated;
 
     // 動的リスク調整を適用（積極的/保守的調整）
     for weight in optimal_weights.iter_mut() {
