@@ -179,7 +179,7 @@ pub(crate) async fn run_momentum_timestep_simulation(
 
                     let execution_report = execute_momentum_strategy(
                         token_holdings,
-                        predictions,
+                        &predictions,
                         config.momentum_min_profit_threshold,
                         config.momentum_switch_multiplier,
                         &min_trade_value,

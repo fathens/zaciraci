@@ -73,7 +73,7 @@ fn test_rank_tokens_by_momentum() {
         },
     ];
 
-    let ranked = rank_tokens_by_momentum(predictions);
+    let ranked = rank_tokens_by_momentum(&predictions);
 
     // 全て正のリターンなので3つとも含まれるはず
     assert!(ranked.len() >= 2); // 最低2つは含まれる
@@ -234,7 +234,7 @@ fn test_confidence_adjusted_return() {
 fn test_rank_tokens_by_momentum_edge_cases() {
     // 空のリスト
     let empty_predictions = vec![];
-    let ranked = rank_tokens_by_momentum(empty_predictions);
+    let ranked = rank_tokens_by_momentum(&empty_predictions);
     assert!(ranked.is_empty());
 
     // 全て負のリターン (price 下落 = 負のリターン)
@@ -254,7 +254,7 @@ fn test_rank_tokens_by_momentum_edge_cases() {
             confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
         },
     ];
-    let ranked = rank_tokens_by_momentum(negative_predictions);
+    let ranked = rank_tokens_by_momentum(&negative_predictions);
     assert!(ranked.is_empty()); // 負のリターンはフィルタされる
 
     // TOP_N_TOKENS以上のトークン (price 上昇 = 正のリターン)
@@ -267,7 +267,7 @@ fn test_rank_tokens_by_momentum_edge_cases() {
             confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         })
         .collect();
-    let ranked = rank_tokens_by_momentum(many_predictions);
+    let ranked = rank_tokens_by_momentum(&many_predictions);
     assert_eq!(ranked.len(), TOP_N_TOKENS); // TOP_N_TOKENSに制限される
 }
 
@@ -337,8 +337,8 @@ fn test_momentum_under_changing_volatility_regimes() {
         confidence: Some("0.7".parse::<BigDecimal>().unwrap()), // 信頼度は下がる
     }];
 
-    let low_vol_ranked = rank_tokens_by_momentum(low_vol_predictions);
-    let high_vol_ranked = rank_tokens_by_momentum(high_vol_predictions);
+    let low_vol_ranked = rank_tokens_by_momentum(&low_vol_predictions);
+    let high_vol_ranked = rank_tokens_by_momentum(&high_vol_predictions);
 
     // 低ボラ期間：小さなリターンでも取引コスト後正になる
     assert!(!low_vol_ranked.is_empty());
@@ -408,7 +408,7 @@ fn test_market_stress_scenario() {
         },
     ];
 
-    let ranked = rank_tokens_by_momentum(stress_predictions);
+    let ranked = rank_tokens_by_momentum(&stress_predictions);
 
     // ストレス時は保守的になり、取引対象が減ることを確認
     if !ranked.is_empty() {
@@ -452,8 +452,8 @@ fn test_trading_frequency_cost_impact() {
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
 
-    let high_freq_ranked = rank_tokens_by_momentum(high_freq_predictions);
-    let low_freq_ranked = rank_tokens_by_momentum(low_freq_predictions);
+    let high_freq_ranked = rank_tokens_by_momentum(&high_freq_predictions);
+    let low_freq_ranked = rank_tokens_by_momentum(&low_freq_predictions);
 
     let base_price = price(1.0); // 1 NEAR/token
     let min_trade_value = near_value(1.0); // 1 NEAR
@@ -530,7 +530,7 @@ fn test_partial_fill_scenario() {
         confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
     }];
 
-    let ranked = rank_tokens_by_momentum(predictions);
+    let ranked = rank_tokens_by_momentum(&predictions);
     let full_amount = amount_f64(1000.0);
     let partial_amount = amount_f64(300.0); // 30%のみ約定
     let holding_price = price(1.0); // 1 NEAR/token
@@ -608,7 +608,7 @@ fn test_multi_timeframe_momentum_consistency() {
     };
 
     // 短期シグナルでの判断
-    let short_ranked = rank_tokens_by_momentum(vec![short_term_prediction]);
+    let short_ranked = rank_tokens_by_momentum(&[short_term_prediction]);
     let holding_amount = amount_f64(1000.0);
     let holding_price = price(1.0); // 1 NEAR/token
     let min_trade_value = near_value(1.0); // 1 NEAR
@@ -624,7 +624,7 @@ fn test_multi_timeframe_momentum_consistency() {
     );
 
     // 長期シグナルでの判断
-    let long_ranked = rank_tokens_by_momentum(vec![long_term_prediction]);
+    let long_ranked = rank_tokens_by_momentum(&[long_term_prediction]);
     let long_decision = make_trading_decision(
         &token("current-token"),
         0.02,
@@ -671,7 +671,7 @@ fn test_momentum_signal_strength_threshold() {
             confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
         };
 
-        let ranked = rank_tokens_by_momentum(vec![prediction]);
+        let ranked = rank_tokens_by_momentum(&[prediction]);
 
         if return_level < 0.05 {
             // 閾値以下では取引対象から除外される可能性が高い
@@ -717,7 +717,7 @@ fn test_real_api_prediction_data_confidence_issue() {
 
     // ランキングテスト
     let predictions = vec![api_prediction];
-    let ranked = rank_tokens_by_momentum(predictions);
+    let ranked = rank_tokens_by_momentum(&predictions);
 
     println!("Ranked tokens: {:?}", ranked);
 
@@ -755,7 +755,7 @@ fn test_minimal_positive_return_filtering() {
     assert!(confidence_adjusted < 0.01); // 1%未満
 
     // ランキングに含まれることを確認
-    let ranked = rank_tokens_by_momentum(vec![marginal_prediction]);
+    let ranked = rank_tokens_by_momentum(&[marginal_prediction]);
     assert_eq!(ranked.len(), 1);
 }
 
@@ -782,6 +782,6 @@ fn test_negative_return_filtering() {
     assert!(confidence_adjusted < 0.0);
 
     // ランキングから除外されることを確認
-    let ranked = rank_tokens_by_momentum(vec![negative_prediction]);
+    let ranked = rank_tokens_by_momentum(&[negative_prediction]);
     assert!(ranked.is_empty()); // 負のリターンは除外される
 }

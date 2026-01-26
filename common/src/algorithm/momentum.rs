@@ -50,7 +50,7 @@ pub fn calculate_confidence_adjusted_return(prediction: &PredictionData) -> f64 
 
 /// トークンをモメンタムでランキング
 pub fn rank_tokens_by_momentum(
-    predictions: Vec<PredictionData>,
+    predictions: &[PredictionData],
 ) -> Vec<(TokenOutAccount, f64, Option<f64>)> {
     let mut ranked: Vec<_> = predictions
         .iter()
@@ -143,13 +143,13 @@ pub fn make_trading_decision(
 /// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
 pub async fn execute_momentum_strategy(
     current_holdings: Vec<TokenHolding>,
-    predictions: Vec<PredictionData>,
+    predictions: &[PredictionData],
     min_profit_threshold: f64,
     switch_multiplier: f64,
     min_trade_value: &NearValue,
 ) -> Result<ExecutionReport> {
     // トークンをランキング
-    let ranked = rank_tokens_by_momentum(predictions.clone());
+    let ranked = rank_tokens_by_momentum(predictions);
 
     // 予測データをHashMapに変換（高速検索用）
     let prediction_map: HashMap<TokenOutAccount, &PredictionData> =
@@ -213,7 +213,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     let tokens: Vec<TokenOutAccount> = current_holdings.iter().map(|h| h.token.clone()).collect();
 
     let predictions_map = prediction_provider
-        .predict_multiple_tokens(tokens.clone(), quote_token, history_days, 24)
+        .predict_multiple_tokens(tokens, quote_token, history_days, 24)
         .await?;
 
     // PredictionDataに変換
@@ -238,7 +238,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     // トップトークンの予測を追加
     for top_token in top_tokens {
         // 既に予測済みのトークンはスキップ
-        if tokens.contains(&top_token.token) {
+        if current_holdings.iter().any(|h| h.token == top_token.token) {
             continue;
         }
 
@@ -262,7 +262,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     // 戦略を実行
     execute_momentum_strategy(
         current_holdings,
-        prediction_data,
+        &prediction_data,
         min_profit_threshold,
         switch_multiplier,
         min_trade_value,

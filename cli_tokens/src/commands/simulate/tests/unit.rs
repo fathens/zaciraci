@@ -284,7 +284,7 @@ fn test_rank_tokens_by_momentum() {
         },
     ];
 
-    let ranked = rank_tokens_by_momentum(predictions);
+    let ranked = rank_tokens_by_momentum(&predictions);
 
     // rank_tokens_by_momentum関数は正のリターンのトークンのみフィルタリングし、TOP_N_TOKENS（3個）まで制限
     // 負のリターンのトークンは除外される可能性がある
