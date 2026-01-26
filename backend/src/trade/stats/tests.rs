@@ -739,63 +739,65 @@ fn test_format_decimal_digits() {
     // 整数値のテスト
     assert_eq!(
         "100",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from(100))
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from(100))
     );
 
     // 小数点以下が全て0の値
     let with_zeros = BigDecimal::from(100) + BigDecimal::from_str("0.000000000").unwrap();
     assert_eq!(
         "100",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(with_zeros)
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&with_zeros)
     );
 
     // 小数点以下が1桁の値
     assert_eq!(
         "0.1",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from_str("0.1").unwrap())
     );
 
     // 小数点以下が2桁の値
     assert_eq!(
         "0.12",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from_str("0.12").unwrap())
     );
 
     // 小数点以下が3桁の値
     assert_eq!(
         "0.123",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from_str("0.123").unwrap())
     );
 
     // 小数点以下が4桁の値
     assert_eq!(
         "0.1234",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from_str("0.1234").unwrap())
     );
 
     // 小数点以下が5桁の値
     assert_eq!(
         "0.12345",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.12345").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from_str("0.12345").unwrap())
     );
 
     // 小数点以下が6桁の値
     assert_eq!(
         "0.123456",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.123456").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from_str("0.123456").unwrap())
     );
 
     // 小数点以下が7桁の値
     assert_eq!(
         "0.1234567",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("0.1234567").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(
+            &BigDecimal::from_str("0.1234567").unwrap()
+        )
     );
 
     // 小数点以下が8桁の値
     assert_eq!(
         "0.12345678",
         ListStatsInPeriod::<BigDecimal>::format_decimal(
-            BigDecimal::from_str("0.12345678").unwrap()
+            &BigDecimal::from_str("0.12345678").unwrap()
         )
     );
 
@@ -803,7 +805,7 @@ fn test_format_decimal_digits() {
     assert_eq!(
         "0.123456789",
         ListStatsInPeriod::<BigDecimal>::format_decimal(
-            BigDecimal::from_str("0.123456789").unwrap()
+            &BigDecimal::from_str("0.123456789").unwrap()
         )
     );
 
@@ -811,7 +813,7 @@ fn test_format_decimal_digits() {
     assert_eq!(
         "0.123456789",
         ListStatsInPeriod::<BigDecimal>::format_decimal(
-            BigDecimal::from_str("0.1234567891").unwrap()
+            &BigDecimal::from_str("0.1234567891").unwrap()
         )
     );
 
@@ -819,14 +821,14 @@ fn test_format_decimal_digits() {
     assert_eq!(
         "0.12345",
         ListStatsInPeriod::<BigDecimal>::format_decimal(
-            BigDecimal::from_str("0.12345000").unwrap()
+            &BigDecimal::from_str("0.12345000").unwrap()
         )
     );
 
     // 整数部分あり、小数点以下4桁の値
     assert_eq!(
         "123.4567",
-        ListStatsInPeriod::<BigDecimal>::format_decimal(BigDecimal::from_str("123.4567").unwrap())
+        ListStatsInPeriod::<BigDecimal>::format_decimal(&BigDecimal::from_str("123.4567").unwrap())
     );
 }
 

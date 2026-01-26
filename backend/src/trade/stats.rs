@@ -1865,36 +1865,33 @@ impl SameBaseTokenRates {
                 .collect();
 
             if !rates_in_period.is_empty() {
-                let start = rates_in_period
+                let start_price = &rates_in_period
                     .first()
                     .expect("Rates in period is not empty")
-                    .price
-                    .clone();
-                let end = rates_in_period
+                    .price;
+                let end_price = &rates_in_period
                     .last()
                     .expect("Rates in period is not empty")
-                    .price
-                    .clone();
-                let values: Vec<_> = rates_in_period.iter().map(|p| p.price.clone()).collect();
-                let sum: TokenPrice = values.iter().sum();
-                let count = values.len() as i64;
+                    .price;
+                let sum: TokenPrice = rates_in_period.iter().map(|p| &p.price).sum();
+                let count = rates_in_period.len() as i64;
                 let average = &sum / count;
-                let max = values
+                let max = rates_in_period
                     .iter()
+                    .map(|p| &p.price)
                     .max()
-                    .expect("Values vector is not empty")
-                    .clone();
-                let min = values
+                    .expect("Rates in period is not empty");
+                let min = rates_in_period
                     .iter()
+                    .map(|p| &p.price)
                     .min()
-                    .expect("Values vector is not empty")
-                    .clone();
+                    .expect("Rates in period is not empty");
 
                 stats.push(StatsInPeriod {
                     timestamp: current_start,
                     period,
-                    start: start.as_bigdecimal().clone(),
-                    end: end.as_bigdecimal().clone(),
+                    start: start_price.as_bigdecimal().clone(),
+                    end: end_price.as_bigdecimal().clone(),
                     average: average.as_bigdecimal().clone(),
                     max: max.as_bigdecimal().clone(),
                     min: min.as_bigdecimal().clone(),
@@ -1915,7 +1912,7 @@ where
     U: Add<Output = U> + Sub<Output = U> + Mul<Output = U> + Div<Output = U>,
     U: Zero + PartialOrd + From<i64>,
 {
-    fn format_decimal(value: U) -> String {
+    fn format_decimal(value: &U) -> String {
         let s = value.to_string();
         if s.contains('.') {
             // 小数点以下の末尾の0を削除し、最大9桁まで表示
@@ -1977,17 +1974,17 @@ where
                         "increase"
                     };
                     let change = (diff / p.end.clone()) * 100_i64.into();
-                    let change_str = Self::format_decimal(change);
+                    let change_str = Self::format_decimal(&change);
                     format!(", marking a {change_str} % {dw} {prev}")
                 })
                 .unwrap_or_default();
             let summary = format!(
                 "opened at {start}, closed at {end}, with a high of {max}, a low of {min}, and an average of {ave}",
-                start = Self::format_decimal(stat.start.clone()),
-                end = Self::format_decimal(stat.end.clone()),
-                max = Self::format_decimal(stat.max.clone()),
-                min = Self::format_decimal(stat.min.clone()),
-                ave = Self::format_decimal(stat.average.clone()),
+                start = Self::format_decimal(&stat.start),
+                end = Self::format_decimal(&stat.end),
+                max = Self::format_decimal(&stat.max),
+                min = Self::format_decimal(&stat.min),
+                ave = Self::format_decimal(&stat.average),
             );
             let line = format!("{date}, {summary}{changes}");
             debug!(log, "added line";
