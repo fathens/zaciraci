@@ -143,7 +143,7 @@ where
 }
 
 fn get_quote_token() -> TokenInAccount {
-    WNEAR_TOKEN.clone().into()
+    WNEAR_TOKEN.to_in()
 }
 
 fn get_initial_value() -> NearAmount {

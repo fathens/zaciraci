@@ -524,11 +524,11 @@ async fn get_volatility_tokens(
                     "token" => quote_token_str,
                     "error" => ?e,
                 );
-                WNEAR_TOKEN.clone().into()
+                WNEAR_TOKEN.to_in()
             }
         }
     } else {
-        WNEAR_TOKEN.clone().into()
+        WNEAR_TOKEN.to_in()
     };
     info!(log, "using quote token";
         "token" => format!("{}", quote),

@@ -269,7 +269,7 @@ async fn prepare_funds() -> Result<YoctoAmount> {
     let balance = crate::ref_finance::balances::start(
         &client,
         &wallet,
-        &crate::ref_finance::token_account::WNEAR_TOKEN.clone(),
+        &crate::ref_finance::token_account::WNEAR_TOKEN,
         Some(required_balance),
     )
     .await?;
@@ -320,9 +320,7 @@ async fn select_top_volatility_tokens(
 
     // 型安全な quote_token を準備
     let quote_token: crate::ref_finance::token_account::TokenInAccount =
-        crate::ref_finance::token_account::WNEAR_TOKEN
-            .clone()
-            .into();
+        crate::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
     match prediction_service
         .get_tokens_by_volatility(start_date, end_date, &quote_token)
@@ -347,9 +345,7 @@ async fn select_top_volatility_tokens(
             let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
             let graph = crate::ref_finance::path::graph::TokenGraph::new(pools);
             let wnear_token: crate::ref_finance::token_account::TokenInAccount =
-                crate::ref_finance::token_account::WNEAR_TOKEN
-                    .clone()
-                    .into();
+                crate::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
             // 購入方向のパスを確認（wrap.near → token）
             let buyable_tokens = match graph.update_graph(&wnear_token) {
@@ -386,9 +382,7 @@ async fn select_top_volatility_tokens(
 
             // 売却方向のパスも確認（token → wrap.near）
             let wnear_out: crate::ref_finance::token_account::TokenOutAccount =
-                crate::ref_finance::token_account::WNEAR_TOKEN
-                    .clone()
-                    .into();
+                crate::ref_finance::token_account::WNEAR_TOKEN.to_out();
             let mut filtered_tokens: Vec<AccountId> = Vec::new();
             for token in buyable_filtered {
                 let token_account: crate::ref_finance::token_account::TokenAccount =
@@ -495,9 +489,7 @@ where
     let mut historical_prices = Vec::new();
 
     // 型安全な quote_token をループ外で事前に準備（最適化）
-    let quote_token_in: TokenInAccount = crate::ref_finance::token_account::WNEAR_TOKEN
-        .clone()
-        .into();
+    let quote_token_in: TokenInAccount = crate::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
     for token in tokens {
         let token_str = token.to_string();
@@ -802,10 +794,9 @@ where
 
             // 2段階のswap: token → wrap.near → target
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
-            let wrap_near_in: crate::ref_finance::token_account::TokenInAccount =
-                (*wrap_near).clone().into();
+            let wrap_near_in: crate::ref_finance::token_account::TokenInAccount = wrap_near.to_in();
             let wrap_near_out: crate::ref_finance::token_account::TokenOutAccount =
-                (*wrap_near).clone().into();
+                wrap_near.to_out();
 
             // Step 1: token → wrap.near
             // common と backend の TokenAccount は同一型なので直接使用可能
@@ -960,9 +951,9 @@ where
             // 型安全なwrap.nearを事前に準備
             let wrap_near_token = &crate::ref_finance::token_account::WNEAR_TOKEN;
             let wrap_near_in: crate::ref_finance::token_account::TokenInAccount =
-                (*wrap_near_token).clone().into();
+                wrap_near_token.to_in();
             let wrap_near_out: crate::ref_finance::token_account::TokenOutAccount =
-                (*wrap_near_token).clone().into();
+                wrap_near_token.to_out();
 
             // Phase 1: 全ての売却を実行（token → wrap.near）
             info!(log, "Phase 1: executing sell operations"; "count" => sell_operations.len());
@@ -1120,7 +1111,7 @@ where
             // common と backend の TokenAccount は同一型なので直接使用可能
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token.to_string() != wrap_near.to_string() {
-                let wrap_near_in: TokenInAccount = (*wrap_near).clone().into();
+                let wrap_near_in: TokenInAccount = wrap_near.to_in();
                 swap::execute_direct_swap(client, wallet, &wrap_near_in, token, None, recorder)
                     .await?;
             }
@@ -1137,7 +1128,7 @@ where
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
             if token.to_string() != wrap_near.to_string() {
                 let from_token = token.as_in();
-                let wrap_near_out: TokenOutAccount = (*wrap_near).clone().into();
+                let wrap_near_out: TokenOutAccount = wrap_near.to_out();
                 swap::execute_direct_swap(
                     client,
                     wallet,
@@ -1383,7 +1374,7 @@ async fn liquidate_all_positions() -> Result<YoctoAmount> {
 
     // 型安全なwrap.nearを事前に準備
     let wrap_near_out: crate::ref_finance::token_account::TokenOutAccount =
-        (*wrap_near_token).clone().into();
+        wrap_near_token.to_out();
 
     // 各トークンをwrap.nearに変換
     for token in &tokens_to_liquidate {

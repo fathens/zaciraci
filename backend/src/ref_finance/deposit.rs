@@ -53,12 +53,17 @@ pub mod wnear {
 
         const METHOD_NAME: &str = "near_deposit";
 
-        let token = WNEAR_TOKEN.clone();
         let args = json!({});
         let signer = wallet.signer();
 
         client
-            .exec_contract(signer, token.as_account_id(), METHOD_NAME, &args, amount)
+            .exec_contract(
+                signer,
+                WNEAR_TOKEN.as_account_id(),
+                METHOD_NAME,
+                &args,
+                amount,
+            )
             .await
     }
 
@@ -75,7 +80,6 @@ pub mod wnear {
 
         const METHOD_NAME: &str = "near_withdraw";
 
-        let token = WNEAR_TOKEN.clone();
         let args = json!({
             "amount": U128(amount),
         });
@@ -84,7 +88,13 @@ pub mod wnear {
         let signer = wallet.signer();
 
         client
-            .exec_contract(signer, token.as_account_id(), METHOD_NAME, &args, deposit)
+            .exec_contract(
+                signer,
+                WNEAR_TOKEN.as_account_id(),
+                METHOD_NAME,
+                &args,
+                deposit,
+            )
             .await
     }
 }

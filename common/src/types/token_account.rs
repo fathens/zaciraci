@@ -15,6 +15,14 @@ impl TokenAccount {
     pub fn as_account_id(&self) -> &AccountId {
         &self.0
     }
+
+    pub fn to_in(&self) -> TokenInAccount {
+        TokenInAccount(self.clone())
+    }
+
+    pub fn to_out(&self) -> TokenOutAccount {
+        TokenOutAccount(self.clone())
+    }
 }
 
 impl std::fmt::Display for TokenAccount {

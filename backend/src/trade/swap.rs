@@ -83,7 +83,7 @@ where
         } else {
             // 他のトークンの場合は、wrap.nearとの交換レートを使用して価値を計算
             use crate::persistence::token_rate::TokenRate;
-            use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+            use crate::ref_finance::token_account::TokenOutAccount;
             use near_sdk::AccountId;
 
             let base_token = match token.parse::<AccountId>() {
@@ -93,8 +93,7 @@ where
                     continue;
                 }
             };
-            let quote_token =
-                TokenInAccount::from(crate::ref_finance::token_account::WNEAR_TOKEN.clone());
+            let quote_token = crate::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
             // 最新のレートを取得
             match TokenRate::get_latest(&base_token, &quote_token).await {

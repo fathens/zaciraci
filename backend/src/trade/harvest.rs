@@ -295,8 +295,8 @@ async fn execute_harvest_transfer(
 
     // 型安全なトークン型を使用
     use crate::ref_finance::token_account::NEAR_TOKEN;
-    let from_token: crate::ref_finance::token_account::TokenInAccount = WNEAR_TOKEN.clone().into();
-    let to_token: crate::ref_finance::token_account::TokenOutAccount = NEAR_TOKEN.clone().into();
+    let from_token: crate::ref_finance::token_account::TokenInAccount = WNEAR_TOKEN.to_in();
+    let to_token: crate::ref_finance::token_account::TokenOutAccount = NEAR_TOKEN.to_out();
 
     let recorder = TradeRecorder::new(period_id);
     recorder
