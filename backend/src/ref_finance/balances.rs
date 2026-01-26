@@ -20,17 +20,25 @@ const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
 static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
-    let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| panic!("{}", err));
+    let value = config::get("HARVEST_ACCOUNT_ID").expect("HARVEST_ACCOUNT_ID config is required");
     value
         .parse()
-        .unwrap_or_else(|err| panic!("Failed to parse config `{}`: {}", value, err))
+        .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{value}`: {err}"))
+});
+static TRADE_ACCOUNT_RESERVE: Lazy<u128> = Lazy::new(|| {
+    config::get("TRADE_ACCOUNT_RESERVE")
+        .ok()
+        .and_then(|v| v.parse::<NearAmount>().ok())
+        .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
+        .to_yocto()
+        .to_u128()
 });
 
 fn is_time_to_harvest() -> bool {
     let last = LAST_HARVEST.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is after UNIX epoch")
         .as_secs();
     now - last > INTERVAL_OF_HARVEST
 }
@@ -38,7 +46,7 @@ fn is_time_to_harvest() -> bool {
 fn update_last_harvest() {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is after UNIX epoch")
         .as_secs();
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
@@ -57,7 +65,11 @@ where
         "function" => "balances.start",
     ));
     let required_balance = required_balance.unwrap_or_else(|| {
-        let max = get_history().read().unwrap().inputs.max();
+        let max = get_history()
+            .read()
+            .expect("history lock not poisoned")
+            .inputs
+            .max();
         if max.is_zero() {
             DEFAULT_REQUIRED_BALANCE
         } else {
@@ -136,13 +148,7 @@ where
         let wrapping = want - wrapped_balance;
         let native_balance = client.get_native_amount(account).await?;
 
-        // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
-        let minimum_native_balance: u128 = config::get("TRADE_ACCOUNT_RESERVE")
-            .ok()
-            .and_then(|v| v.parse::<NearAmount>().ok())
-            .unwrap_or_else(|| "10".parse().unwrap())
-            .to_yocto()
-            .to_u128();
+        let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
 
         let log = log.new(o!(
             "native_balance" => format!("{}", native_balance),
@@ -236,12 +242,7 @@ where
         let wrapping = shortage - wrapped_balance;
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance: u128 = config::get("TRADE_ACCOUNT_RESERVE")
-            .ok()
-            .and_then(|v| v.parse::<NearAmount>().ok())
-            .unwrap_or_else(|| "10".parse().unwrap())
-            .to_yocto()
-            .to_u128();
+        let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
 
         let available = native_balance
             .checked_sub(minimum_native_balance)
@@ -311,13 +312,7 @@ where
         "token" => %token,
     );
 
-    // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
-    let minimum_native_balance: u128 = config::get("TRADE_ACCOUNT_RESERVE")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "10".parse().unwrap())
-        .to_yocto()
-        .to_u128();
+    let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
 
     let account = wallet.account_id();
     let before_withdraw = client.get_native_amount(account).await?;
