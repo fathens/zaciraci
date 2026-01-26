@@ -3,6 +3,7 @@ use crate::Result;
 use crate::jsonrpc::sent_tx::StandardSentTx;
 use crate::logging::*;
 use crate::types::gas_price::GasPrice;
+use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
@@ -68,7 +69,10 @@ impl<A: RpcClient> super::AccountInfo for StandardNearClient<A> {
         if let QueryResponseKind::ViewAccount(am) = res.kind {
             Ok(am.amount)
         } else {
-            panic!("View account is not view account")
+            Err(anyhow!(
+                "unexpected RPC response: expected ViewAccount, got {:?}",
+                res.kind
+            ))
         }
     }
 }
@@ -85,7 +89,10 @@ impl<A: RpcClient> AccessKeyInfo for StandardNearClient<A> {
         let res = self.rpc.call(req).await?;
         match res.kind {
             QueryResponseKind::AccessKey(access_key) => Ok(access_key),
-            _ => panic!("unexpected response"),
+            other => Err(anyhow!(
+                "unexpected RPC response: expected AccessKey, got {:?}",
+                other
+            )),
         }
     }
 }
@@ -114,7 +121,10 @@ where
         let res = self.rpc.call(req).await?;
         match res.kind {
             QueryResponseKind::CallResult(r) => Ok(r),
-            _ => panic!("unexpected response"),
+            other => Err(anyhow!(
+                "unexpected RPC response: expected CallResult, got {:?}",
+                other
+            )),
         }
     }
 }
