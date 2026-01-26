@@ -91,7 +91,10 @@ async fn estimate_return(
     })?;
     let n = pool.len();
     if n <= 1 {
-        return Err((StatusCode::BAD_REQUEST, format!("invalid pool size: {n}")));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            crate::ref_finance::errors::Error::InvalidPoolSize(n).to_string(),
+        ));
     }
     let token_in = 0;
     let token_out = n - 1;
@@ -128,7 +131,10 @@ async fn get_return(
     })?;
     let n = pool.len();
     if n <= 1 {
-        return Err((StatusCode::BAD_REQUEST, format!("invalid pool size: {n}")));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            crate::ref_finance::errors::Error::InvalidPoolSize(n).to_string(),
+        ));
     }
     let token_in = 0;
     let token_out = n - 1;
