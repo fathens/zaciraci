@@ -54,7 +54,8 @@ impl TokenGraph {
                 || token_in_str.contains("a0b86991")
                 || token_in_str.contains("wrap.near");
 
-            let edges_by_token_out = pools_by_token.get_groups_by_out(&token_in.clone().into());
+            let token_in_account = token_in.to_in();
+            let edges_by_token_out = pools_by_token.get_groups_by_out(&token_in_account);
 
             for (token_out, edges) in edges_by_token_out.iter() {
                 let token_out_str = token_out.to_string();
@@ -75,7 +76,7 @@ impl TokenGraph {
                     }
                 } else {
                     for edge in at_top.into_iter() {
-                        for &node_out in nodes.get(&token_out.clone().into()).into_iter() {
+                        for &node_out in nodes.get(token_out.inner()).into_iter() {
                             graph.add_edge(node_in, node_out, edge.weight());
                             edges_added += 1;
 
