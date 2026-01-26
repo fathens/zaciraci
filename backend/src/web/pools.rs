@@ -15,6 +15,7 @@ use crate::types::{MicroNear, MilliNear};
 use crate::web::pools::sort::{sort, tokens_with_depth};
 use crate::{jsonrpc, ref_finance, wallet};
 use axum::Json;
+use axum::http::StatusCode;
 use axum::{
     Router,
     extract::{Path, State},
@@ -66,54 +67,94 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         .route(&path("get_volatility_tokens"), post(get_volatility_tokens))
 }
 
-async fn get_all_pools(State(_): State<Arc<AppState>>) -> String {
-    let pools = PoolInfoList::read_from_db(None).await.unwrap();
-    format!("Pools: {}", pools.len())
+async fn get_all_pools(
+    State(_): State<Arc<AppState>>,
+) -> std::result::Result<String, (StatusCode, String)> {
+    let pools = PoolInfoList::read_from_db(None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
+    Ok(format!("Pools: {}", pools.len()))
 }
 
 async fn estimate_return(
     State(_): State<Arc<AppState>>,
     Path((pool_id, amount)): Path<(u32, u128)>,
-) -> String {
-    use crate::ref_finance::errors::Error;
-
-    let pools = PoolInfoList::read_from_db(None).await.unwrap();
-    let pool = pools.get(pool_id).unwrap();
+) -> std::result::Result<String, (StatusCode, String)> {
+    let pools = PoolInfoList::read_from_db(None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
+    let pool = pools.get(pool_id).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("pool {pool_id} not found: {e}"),
+        )
+    })?;
     let n = pool.len();
-    assert!(n > 1, "{}", Error::InvalidPoolSize(n));
+    if n <= 1 {
+        return Err((StatusCode::BAD_REQUEST, format!("invalid pool size: {n}")));
+    }
     let token_in = 0;
     let token_out = n - 1;
     let amount_in = amount;
-    let pair = pool.get_pair(token_in.into(), token_out.into()).unwrap();
-    let amount_out = pair.estimate_return(amount_in).unwrap();
+    let pair = pool
+        .get_pair(token_in.into(), token_out.into())
+        .map_err(|e| (StatusCode::NOT_FOUND, format!("token pair not found: {e}")))?;
+    let amount_out = pair.estimate_return(amount_in).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("estimate error: {e}"),
+        )
+    })?;
     let token_a = pair.token_in_id();
     let token_b = pair.token_out_id();
-    format!("Estimated: {token_a}({amount_in}) -> {token_b}({amount_out})")
+    Ok(format!(
+        "Estimated: {token_a}({amount_in}) -> {token_b}({amount_out})"
+    ))
 }
 
 async fn get_return(
     State(_): State<Arc<AppState>>,
     Path((pool_id, amount)): Path<(u32, u128)>,
-) -> String {
-    use crate::ref_finance::errors::Error;
-
+) -> std::result::Result<String, (StatusCode, String)> {
     let client = jsonrpc::new_client();
-    let pools = PoolInfoList::read_from_db(None).await.unwrap();
-    let pool = pools.get(pool_id).unwrap();
+    let pools = PoolInfoList::read_from_db(None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
+    let pool = pools.get(pool_id).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("pool {pool_id} not found: {e}"),
+        )
+    })?;
     let n = pool.len();
-    assert!(n > 1, "{}", Error::InvalidPoolSize(n));
+    if n <= 1 {
+        return Err((StatusCode::BAD_REQUEST, format!("invalid pool size: {n}")));
+    }
     let token_in = 0;
     let token_out = n - 1;
     let amount_in = amount;
-    let pair = pool.get_pair(token_in.into(), token_out.into()).unwrap();
+    let pair = pool
+        .get_pair(token_in.into(), token_out.into())
+        .map_err(|e| (StatusCode::NOT_FOUND, format!("token pair not found: {e}")))?;
     let token_a = pair.token_in_id();
     let token_b = pair.token_out_id();
-    let amount_out = pair.get_return(&client, amount_in).await.unwrap();
-    format!("Return: {token_a}({amount_in}) -> {token_b}({amount_out})")
+    let amount_out = pair.get_return(&client, amount_in).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("get_return error: {e}"),
+        )
+    })?;
+    Ok(format!(
+        "Return: {token_a}({amount_in}) -> {token_b}({amount_out})"
+    ))
 }
 
-async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
-    let pools = PoolInfoList::read_from_db(None).await.unwrap();
+async fn list_all_tokens(
+    State(_): State<Arc<AppState>>,
+) -> std::result::Result<String, (StatusCode, String)> {
+    let pools = PoolInfoList::read_from_db(None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
     let tokens = ref_finance::path::all_tokens(pools);
     let mut tokens: Vec<_> = tokens.iter().map(|t| t.to_string()).collect();
     tokens.sort();
@@ -121,44 +162,83 @@ async fn list_all_tokens(State(_): State<Arc<AppState>>) -> String {
     for token in tokens {
         result.push_str(&format!("{token}\n"));
     }
-    result
+    Ok(result)
 }
 
 async fn list_returns(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
-) -> String {
-    let pools = PoolInfoList::read_from_db(None).await.unwrap();
+) -> std::result::Result<String, (StatusCode, String)> {
+    let pools = PoolInfoList::read_from_db(None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
     let graph = TokenGraph::new(pools);
-    let amount_in = MilliNear::of(initial_value.replace("_", "").parse().unwrap());
-    let start: TokenAccount = token_account.parse().unwrap();
+    let parsed_value: u32 = initial_value
+        .replace("_", "")
+        .parse()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid amount: {e}")))?;
+    let amount_in = MilliNear::of(parsed_value);
+    let start: TokenAccount = token_account.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid token account: {e}"),
+        )
+    })?;
     let mut sorted_returns = ref_finance::path::sorted_returns(&graph, &start.into(), amount_in)
         .await
-        .unwrap();
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("sorted_returns error: {e}"),
+            )
+        })?;
     sorted_returns.reverse();
 
     let mut result = String::from("from: {token_account}\n");
     for (goal, value, depth) in sorted_returns {
         let rational = Ratio::new(value.to_yocto(), amount_in.to_yocto());
-        let ret = rational.to_f32().unwrap();
+        let ret = rational.to_f32().unwrap_or(f32::NAN);
         result.push_str(&format!("{goal}: {ret}({depth})\n"));
     }
-    result
+    Ok(result)
 }
 
 async fn pick_goals(
     State(_): State<Arc<AppState>>,
     Path((token_account, initial_value)): Path<(String, String)>,
-) -> String {
-    let gas_price = jsonrpc::new_client().get_gas_price(None).await.unwrap();
-    let pools = PoolInfoList::read_from_db(None).await.unwrap();
+) -> std::result::Result<String, (StatusCode, String)> {
+    let gas_price = jsonrpc::new_client()
+        .get_gas_price(None)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("gas price error: {e}"),
+            )
+        })?;
+    let pools = PoolInfoList::read_from_db(None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
     let graph = TokenGraph::new(pools);
-    let amount_in: u32 = initial_value.replace("_", "").parse().unwrap();
-    let start: TokenAccount = token_account.parse().unwrap();
+    let amount_in: u32 = initial_value
+        .replace("_", "")
+        .parse()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid amount: {e}")))?;
+    let start: TokenAccount = token_account.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid token account: {e}"),
+        )
+    })?;
     let goals =
         ref_finance::path::pick_goals(&graph, &start.into(), MilliNear::of(amount_in), gas_price)
             .await
-            .unwrap();
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("pick_goals error: {e}"),
+                )
+            })?;
     let mut result = String::from(&format!("from: {token_account}({amount_in})\n"));
     match goals {
         None => {
@@ -173,32 +253,51 @@ async fn pick_goals(
             }
         }
     }
-    result
+    Ok(result)
 }
 
 async fn run_swap(
     State(_): State<Arc<AppState>>,
     Path((token_in_account, initial_value, token_out_account)): Path<(String, String, String)>,
-) -> String {
+) -> std::result::Result<String, (StatusCode, String)> {
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
-    let pools = PoolInfoList::read_from_db(None).await.unwrap();
+    let pools = PoolInfoList::read_from_db(None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")))?;
     let graph = TokenGraph::new(pools);
-    let amount_in: u128 = initial_value.replace("_", "").parse().unwrap();
-    let start_token: TokenAccount = token_in_account.parse().unwrap();
-    let goal_token: TokenAccount = token_out_account.parse().unwrap();
+    let amount_in: u128 = initial_value
+        .replace("_", "")
+        .parse()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid amount: {e}")))?;
+    let start_token: TokenAccount = token_in_account
+        .parse()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid token_in: {e}")))?;
+    let goal_token: TokenAccount = token_out_account
+        .parse()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid token_out: {e}")))?;
     let start = &start_token.into();
     let goal = &goal_token.into();
 
     let path = ref_finance::path::swap_path(&graph, start, goal)
         .await
-        .unwrap();
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("swap_path error: {e}"),
+            )
+        })?;
     let tokens = ref_finance::swap::gather_token_accounts(&[&path.0]);
     let res = ref_finance::storage::check_and_deposit(&client, &wallet, &tokens)
         .await
-        .unwrap();
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("storage error: {e}"),
+            )
+        })?;
     if res.is_some() {
-        return "no account to deposit".to_string();
+        return Ok("no account to deposit".to_string());
     }
 
     let arg = ref_finance::swap::SwapArg {
@@ -209,10 +308,13 @@ async fn run_swap(
 
     match res {
         Ok((tx_hash, value)) => {
-            let outcome = tx_hash.wait_for_success().await.unwrap();
-            format!("Result: {value:?} ({outcome:?})")
+            let outcome = tx_hash
+                .wait_for_success()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("tx error: {e}")))?;
+            Ok(format!("Result: {value:?} ({outcome:?})"))
         }
-        Err(e) => format!("Error: {e}"),
+        Err(e) => Ok(format!("Error: {e}")),
     }
 }
 
@@ -235,7 +337,10 @@ async fn estimate_trade(
         "goal_token" => %goal,
     );
 
-    let pools = PoolInfoList::read_from_db(Some(timestamp)).await.unwrap();
+    let pools = match PoolInfoList::read_from_db(Some(timestamp)).await {
+        Ok(pools) => pools,
+        Err(e) => return Json(ApiResponse::Error(format!("DB error: {e}"))),
+    };
     fn out_amount(
         iteration_id: usize,
         prev_out: u128,
@@ -243,7 +348,7 @@ async fn estimate_trade(
         amount_in: u128,
         start: &TokenInAccount,
         goal: &TokenOutAccount,
-    ) -> u128 {
+    ) -> std::result::Result<u128, String> {
         let log = DEFAULT.new(o!(
             "function" => "estimate_trade::out_amount",
             "iteration_id" => iteration_id,
@@ -253,11 +358,16 @@ async fn estimate_trade(
             "goal_token" => format!("{goal}"),
         ));
         let graph = TokenGraph::new(pools);
-        if !graph.update_single_path(start, goal).unwrap() {
-            panic!("goal not found");
+        if !graph
+            .update_single_path(start, goal)
+            .map_err(|e| format!("update_single_path error: {e}"))?
+        {
+            return Err("goal not found".to_string());
         }
 
-        let path = graph.get_path(start, goal).unwrap();
+        let path = graph
+            .get_path(start, goal)
+            .map_err(|e| format!("path not found: {e}"))?;
         if log.is_info_enabled() {
             let mut path_info = String::new();
             for token_pair in path.0.iter() {
@@ -273,14 +383,20 @@ async fn estimate_trade(
                 "path" => %path_info,
             );
         }
-        let amount_out = path.calc_value(amount_in).unwrap();
+        let amount_out = path
+            .calc_value(amount_in)
+            .map_err(|e| format!("calc_value error: {e}"))?;
         info!(log, "value calculated";
             "amount_out" => %amount_out,
         );
         if prev_out > 0 {
             let reversed_path = path.reversed();
-            let reversed_prev_out = reversed_path.calc_value(prev_out).unwrap();
-            let reversed_amount_out = reversed_path.calc_value(amount_out).unwrap();
+            let reversed_prev_out = reversed_path
+                .calc_value(prev_out)
+                .map_err(|e| format!("reversed calc_value error: {e}"))?;
+            let reversed_amount_out = reversed_path
+                .calc_value(amount_out)
+                .map_err(|e| format!("reversed calc_value error: {e}"))?;
             info!(log, "reversed value calculated";
                 "prev_out" => %prev_out,
                 "amount_out" => %amount_out,
@@ -288,18 +404,23 @@ async fn estimate_trade(
                 "reversed_amount_out" => %reversed_amount_out,
             );
         }
-        amount_out
+        Ok(amount_out)
     }
     let mut amount_outs: Vec<u128> = vec![];
     for i in 0..10 {
         let prev_out = if i > 0 { amount_outs[i - 1] } else { 0 };
-        let v = out_amount(i, prev_out, pools.clone(), amount_in, &start, &goal);
-        amount_outs.push(v);
+        match out_amount(i, prev_out, pools.clone(), amount_in, &start, &goal) {
+            Ok(v) => amount_outs.push(v),
+            Err(e) => return Json(ApiResponse::Error(e)),
+        }
     }
-    let amount_out = amount_outs.iter().max().unwrap();
+    let amount_out = match amount_outs.iter().max() {
+        Some(v) => *v,
+        None => return Json(ApiResponse::Error("no results computed".to_string())),
+    };
 
     Json(ApiResponse::Success(TradeResponse {
-        amount_out: YoctoNearToken::from_yocto(*amount_out),
+        amount_out: YoctoNearToken::from_yocto(amount_out),
     }))
 }
 
@@ -350,9 +471,13 @@ async fn sort_pools(
     ));
     info!(log, "start");
 
-    let pools = PoolInfoList::read_from_db(Some(request.timestamp))
-        .await
-        .unwrap();
+    let pools = match PoolInfoList::read_from_db(Some(request.timestamp)).await {
+        Ok(pools) => pools,
+        Err(e) => {
+            error!(log, "failed to read pools from DB"; "error" => ?e);
+            return Json(ApiResponse::Error(format!("DB error: {e}")));
+        }
+    };
     let sorted = match sort(pools) {
         Ok(sorted) => sorted
             .iter()
