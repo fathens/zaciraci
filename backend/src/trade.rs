@@ -3,6 +3,7 @@ pub mod predict;
 pub mod recorder;
 pub mod stats;
 pub mod swap;
+pub mod token_cache;
 
 // Re-export algorithm from common crate for backward compatibility
 // pub use zaciraci_common::algorithm;
@@ -17,13 +18,18 @@ use crate::ref_finance::token_account::TokenInAccount;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
-use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use zaciraci_common::types::NearAmount;
 use zaciraci_common::types::TokenAmount;
 
 pub async fn run() {
+    // DB からトークン decimals キャッシュを初期化
+    if let Err(e) = token_cache::load_from_db().await {
+        let log = DEFAULT.new(o!("function" => "run"));
+        error!(log, "failed to load token decimals cache from DB"; "error" => ?e);
+    }
+
     tokio::spawn(run_record_rates());
     tokio::spawn(run_trade());
 }
@@ -178,17 +184,14 @@ async fn record_rates() -> Result<()> {
 
     info!(log, "converting to rates (yocto scale)");
 
-    // 各トークンの decimals を取得
-    let mut token_decimals: HashMap<String, u8> = HashMap::new();
-    for (base, _) in &values {
-        let token_str = base.to_string();
-        if let std::collections::hash_map::Entry::Vacant(e) =
-            token_decimals.entry(token_str.clone())
-        {
-            let decimals = stats::get_token_decimals(client, &token_str).await;
-            e.insert(decimals);
-        }
-    }
+    // 各トークンの decimals を取得（キャッシュ経由、DB 初期化済み）
+    let token_ids: Vec<String> = values
+        .iter()
+        .map(|(base, _)| base.to_string())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let token_decimals = token_cache::ensure_decimals_cached(client, &token_ids).await;
 
     // ExchangeRate を使って TokenRate を構築
     // TokenAmount / NearAmount → ExchangeRate で型安全に rate を計算

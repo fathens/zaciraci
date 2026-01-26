@@ -644,8 +644,9 @@ where
             .parse::<f64>()
             .map_err(|e| anyhow::anyhow!("Failed to convert volatility to f64: {}", e))?;
 
-        // トークンの decimals を取得
-        let decimals = get_token_decimals(client, &token_str).await;
+        // トークンの decimals を取得（キャッシュ経由）
+        let decimals =
+            crate::trade::token_cache::get_token_decimals_cached(client, &token_str).await;
 
         // 市場規模の推定（実際の発行量データを取得）
         let market_cap =

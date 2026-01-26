@@ -38,9 +38,14 @@ pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
     value
 });
 
+/// 全呼び出し元で共有される EndpointPool
+/// 障害エンドポイント情報を共有し、無駄なリトライを削減する
+static SHARED_ENDPOINT_POOL: Lazy<Arc<endpoint_pool::EndpointPool>> =
+    Lazy::new(|| Arc::new(endpoint_pool::EndpointPool::new()));
+
 pub fn new_client() -> StandardNearClient<StandardRpcClient> {
     StandardNearClient::new(&Arc::new(StandardRpcClient::new(
-        Arc::new(endpoint_pool::EndpointPool::new()),
+        Arc::clone(&SHARED_ENDPOINT_POOL),
         128,
         std::time::Duration::from_secs(60),
         0.1,

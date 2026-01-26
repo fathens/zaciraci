@@ -1,4 +1,4 @@
-mod connection_pool;
+pub(crate) mod connection_pool;
 pub mod evaluation_period;
 pub mod pool_info;
 pub mod schema;

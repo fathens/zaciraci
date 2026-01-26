@@ -118,8 +118,11 @@ impl TokenRate {
                 info!(log, "backfilling decimals for token with NULL");
 
                 let client = crate::jsonrpc::new_client();
-                let decimals =
-                    crate::trade::stats::get_token_decimals(&client, &db_rate.base_token).await;
+                let decimals = crate::trade::token_cache::get_token_decimals_cached(
+                    &client,
+                    &db_rate.base_token,
+                )
+                .await;
                 Self::backfill_decimals(&db_rate.base_token, decimals).await?;
                 decimals
             }
@@ -153,7 +156,8 @@ impl TokenRate {
 
             let client = crate::jsonrpc::new_client();
             for token in &tokens_with_null {
-                let decimals = crate::trade::stats::get_token_decimals(&client, token).await;
+                let decimals =
+                    crate::trade::token_cache::get_token_decimals_cached(&client, token).await;
                 Self::backfill_decimals(token, decimals).await?;
                 decimals_map.insert(token.clone(), decimals);
             }
