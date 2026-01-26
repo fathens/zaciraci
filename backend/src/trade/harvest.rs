@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zaciraci_common::types::{NearAmount, YoctoAmount, YoctoValue};
 
 // ハーベスト関連のstatic変数
+// NOTE: LAST_HARVEST_TIME は cron 逐次実行のみからアクセスされるため Relaxed で十分。
+// 並行化する場合は compare_exchange による排他制御が必要。
 static LAST_HARVEST_TIME: AtomicU64 = AtomicU64::new(0);
 static HARVEST_INTERVAL: Lazy<u64> = Lazy::new(|| {
     config::get("HARVEST_INTERVAL_SECONDS")
