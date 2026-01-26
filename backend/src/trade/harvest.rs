@@ -95,7 +95,7 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
 
     if current_value > harvest_threshold {
         // YoctoValue - &YoctoValue = YoctoValue
-        let excess = current_value.clone() - &harvest_threshold;
+        let excess = current_value - &harvest_threshold;
         info!(log, "Harvest threshold exceeded, executing harvest";
             "threshold" => %harvest_threshold,
             "excess" => %excess
@@ -103,8 +103,7 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
 
         // 10%の利益確定（余剰分の10%をハーベスト）
         // &YoctoValue * BigDecimal = YoctoValue
-        let excess_value = current_value - &harvest_threshold;
-        let harvest_value = &excess_value * BigDecimal::new(1.into(), 1); // 10% = 0.1
+        let harvest_value = &excess * BigDecimal::new(1.into(), 1); // 10% = 0.1
 
         // 価値を送金数量に変換（NEAR は価値=数量）
         let harvest_amount = harvest_value.to_amount();
