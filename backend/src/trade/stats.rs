@@ -1594,7 +1594,7 @@ fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
     }
 
     // 平均取引量を計算
-    let sum: BigDecimal = volumes.iter().map(|v| (*v).clone()).sum();
+    let sum: BigDecimal = volumes.iter().fold(BigDecimal::zero(), |acc, v| acc + *v);
     let count = BigDecimal::from(volumes.len() as u64);
     let avg_volume = &sum / &count;
 
