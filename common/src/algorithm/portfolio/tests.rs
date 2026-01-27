@@ -3503,48 +3503,33 @@ fn test_issue3_optimization_convergence_accuracy() {
     }
 }
 
-/// Issue 4: 年率リターンが単利で計算されていることを検証
+/// Issue 4: PortfolioMetrics.daily_return が日次リターンをそのまま保持することを検証
+/// [修正済み] 年率化を廃止し、日次リターンをそのまま格納する
 #[test]
-fn test_issue4_annualized_return_uses_simple_not_compound() {
-    // portfolio.rs:920 の計算を再現
+fn test_issue4_daily_return_stored_without_annualization() {
+    // PortfolioMetrics.daily_return は portfolio_return をそのまま格納する
+    // 年率化（単利 *365 や複利 powf(365)）は行わない
     let daily_return: f64 = 0.01; // 1%/日
-    let annualized_simple = daily_return * 365.0; // 現在の計算
-    let annualized_compound = (1.0_f64 + daily_return).powf(365.0) - 1.0; // 正しい計算
 
-    println!("Daily return:          {daily_return}");
-    println!("Annualized (simple):   {annualized_simple:.4}");
-    println!("Annualized (compound): {annualized_compound:.4}");
-    println!(
-        "Ratio (compound/simple): {:.2}x",
-        annualized_compound / annualized_simple
-    );
+    // 旧実装の問題を参考として記録:
+    // 単利 (daily * 365 = 3.65) は複利 (36.78) と10倍の差があり、
+    // 負の日次リターンでは -100% 未満の不可能な値が出る。
+    // → 年率化自体を廃止し、日次リターンをそのまま保持する方針に変更。
 
-    // 現在の実装は単利 (3.65) であり、複利 (37.78) と大きく異なる
-    assert!(
-        (annualized_simple - 3.65).abs() < 0.01,
-        "単利年率 = daily * 365"
-    );
-    assert!(
-        annualized_compound > annualized_simple * 5.0,
-        "複利は単利の5倍以上: compound={annualized_compound:.2}, simple={annualized_simple:.2}"
-    );
+    let metrics = PortfolioMetrics {
+        cumulative_return: daily_return,
+        daily_return,
+        volatility: 0.02,
+        sharpe_ratio: 0.5,
+        sortino_ratio: 0.5,
+        max_drawdown: 0.0,
+        calmar_ratio: 0.0,
+        turnover_rate: 0.1,
+    };
 
-    // 負のリターンで不可能な値が出る
-    let negative_daily: f64 = -0.01;
-    let negative_simple = negative_daily * 365.0; // -3.65 (不可能: -100%未満)
-    let negative_compound = (1.0_f64 + negative_daily).powf(365.0) - 1.0; // -0.974
-
-    println!("Negative daily:    {negative_daily}");
-    println!("Simple annual:     {negative_simple:.4} (不可能な値)");
-    println!("Compound annual:   {negative_compound:.4}");
-
-    assert!(
-        negative_simple < -1.0,
-        "単利では-100%未満の不可能な値が出る: {negative_simple}"
-    );
-    assert!(
-        negative_compound > -1.0,
-        "複利では-100%より大きい正当な値: {negative_compound}"
+    assert_eq!(
+        metrics.daily_return, daily_return,
+        "daily_return は日次リターンそのもの"
     );
 }
 

@@ -218,7 +218,7 @@ pub struct PortfolioWeights {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioMetrics {
     pub cumulative_return: f64,
-    pub annualized_return: f64,
+    pub daily_return: f64,
     pub volatility: f64,
     pub sharpe_ratio: f64,
     pub sortino_ratio: f64,

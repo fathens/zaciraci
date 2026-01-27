@@ -919,7 +919,7 @@ pub async fn execute_portfolio_optimization(
 
     let expected_metrics = PortfolioMetrics {
         cumulative_return: portfolio_return,
-        annualized_return: (1.0 + portfolio_return).powf(365.0) - 1.0,
+        daily_return: portfolio_return,
         volatility: portfolio_vol * 365.0_f64.sqrt(),
         sharpe_ratio,
         sortino_ratio: sharpe_ratio, // 簡略化

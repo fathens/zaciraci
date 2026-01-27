@@ -714,6 +714,16 @@ where
         "sharpe_ratio" => execution_report.optimal_weights.sharpe_ratio
     );
 
+    info!(log, "portfolio metrics";
+        "daily_return" => execution_report.expected_metrics.daily_return,
+        "volatility" => execution_report.expected_metrics.volatility,
+        "sharpe_ratio" => execution_report.expected_metrics.sharpe_ratio,
+        "sortino_ratio" => execution_report.expected_metrics.sortino_ratio,
+        "max_drawdown" => execution_report.expected_metrics.max_drawdown,
+        "calmar_ratio" => execution_report.expected_metrics.calmar_ratio,
+        "turnover_rate" => execution_report.expected_metrics.turnover_rate
+    );
+
     for (token, weight) in &execution_report.optimal_weights.weights {
         info!(log, "optimal weight";
             "token" => %token,
