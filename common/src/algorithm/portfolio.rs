@@ -254,6 +254,12 @@ pub fn maximize_sharpe_ratio(
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
 
+    // 全トークンの期待リターンが同一の場合、グリッドサーチは無意味（全反復が同じ target_return）
+    // 等配分が最小分散解の良い近似なので early return
+    if (max_return - min_return).abs() < 1e-12 {
+        return best_weights;
+    }
+
     // グリッドサーチで最適化
     for i in 0..50 {
         let target_return = min_return + (max_return - min_return) * i as f64 / 49.0;
@@ -990,7 +996,7 @@ pub async fn execute_portfolio_optimization(
     let expected_metrics = PortfolioMetrics {
         cumulative_return: portfolio_return,
         daily_return: portfolio_return,
-        volatility: portfolio_vol * 365.0_f64.sqrt(),
+        volatility: portfolio_vol,
         sharpe_ratio,
         sortino_ratio,
         max_drawdown,
