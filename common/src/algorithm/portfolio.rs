@@ -689,19 +689,21 @@ pub fn select_optimal_tokens(
         })
         .collect();
 
-    if filtered_tokens.is_empty() {
-        // フィルタ条件が厳しすぎる場合は全トークンから選択
-        return tokens.iter().take(max_tokens).cloned().collect();
-    }
+    // フィルタ条件が厳しすぎる場合は全トークンを候補にする
+    let scoring_tokens: Vec<&TokenData> = if filtered_tokens.is_empty() {
+        tokens.iter().collect()
+    } else {
+        filtered_tokens
+    };
 
     // 全トークンのボラティリティを収集
-    let all_volatilities: Vec<f64> = filtered_tokens
+    let all_volatilities: Vec<f64> = scoring_tokens
         .iter()
         .map(|t| t.historical_volatility)
         .collect();
 
     // スコアリング
-    let mut scored_tokens: Vec<(TokenScore, &TokenData)> = filtered_tokens
+    let mut scored_tokens: Vec<(TokenScore, &TokenData)> = scoring_tokens
         .iter()
         .map(|&token| {
             let prediction = predictions.get(&token.symbol);
