@@ -589,19 +589,7 @@ fn calculate_individual_sharpe(
     if let Some(prices) = token_prices
         && prices.len() > 1
     {
-        // 日次リターンを計算
-        let mut returns = Vec::new();
-        for i in 1..prices.len() {
-            let price_current = prices[i].price.to_string().parse::<f64>().unwrap_or(0.0);
-            let price_prev = prices[i - 1]
-                .price
-                .to_string()
-                .parse::<f64>()
-                .unwrap_or(1.0);
-            if price_prev > 0.0 {
-                returns.push((price_current - price_prev) / price_prev);
-            }
-        }
+        let returns = calculate_returns_from_prices(prices);
 
         if !returns.is_empty() {
             let volatility = calculate_std_dev(&returns);
@@ -829,7 +817,7 @@ fn calculate_returns_from_prices(prices: &[PricePoint]) -> Vec<f64> {
             .price
             .to_string()
             .parse::<f64>()
-            .unwrap_or(1.0);
+            .unwrap_or(0.0);
         if price_prev > 0.0 {
             returns.push((price_current - price_prev) / price_prev);
         }
