@@ -3618,33 +3618,38 @@ fn test_issue8_apply_constraints_final_normalization() {
     }
 }
 
-/// Issue 9: calculate_covariance が異なる長さのリターン系列で 0.0 を返すことを検証
+/// Issue 9: calculate_covariance が異なる長さのリターン系列を末尾トリミングで処理することを検証
+/// [修正済み] 短い方の長さに合わせて末尾（最新データ）を優先
 #[test]
-fn test_issue9_covariance_length_mismatch_returns_zero() {
+fn test_issue9_covariance_length_mismatch_trims_to_shorter() {
     // 同じ傾向の系列だが長さが異なる
     let returns1 = vec![0.01, 0.02, -0.01, 0.03, 0.01];
-    let returns2 = vec![0.01, 0.02, -0.01]; // 短い
+    let returns2 = vec![0.01, 0.02, -0.01]; // 短い（3要素）
 
     let cov = calculate_covariance(&returns1, &returns2);
 
-    // 現状: 長さ不一致で 0.0 を返す
+    // 修正後: 末尾3要素 [-0.01, 0.03, 0.01] と [0.01, 0.02, -0.01] で計算
     println!("Covariance with mismatched lengths: {cov}");
-    assert_eq!(cov, 0.0, "長さ不一致のとき0.0が返る（偽のゼロ共分散）");
+    assert!(cov.is_finite(), "有限な共分散が返る");
 
-    // 同じ長さなら正しい正の共分散を返す
-    let returns2_same_len = vec![0.01, 0.02, -0.01, 0.03, 0.01]; // 同一データ
-    let cov_same = calculate_covariance(&returns1, &returns2_same_len);
-    println!("Covariance with same lengths: {cov_same}");
+    // 同一データなら正の共分散
+    let returns2_same = vec![0.01, 0.02, -0.01, 0.03, 0.01];
+    let cov_same = calculate_covariance(&returns1, &returns2_same);
     assert!(cov_same > 0.0, "同一データの共分散は正: {cov_same}");
+
+    // 長さ1以下なら 0.0
+    let too_short = vec![0.01];
+    assert_eq!(calculate_covariance(&returns1, &too_short), 0.0);
 }
 
-/// Issue 10: 価格履歴の長さ不一致で相関が 0.0 になることを検証
+/// Issue 10: 価格履歴の長さ不一致でも正しい相関が計算されることを検証
+/// [修正済み] 短い方の長さに合わせて末尾（最新データ）を優先
 #[test]
-fn test_issue10_correlation_length_mismatch_false_uncorrelated() {
+fn test_issue10_correlation_length_mismatch_trims_to_shorter() {
     let base_time = Utc::now() - Duration::days(10);
 
-    // token-a: 10日分のデータ
-    // token-b: 5日分のデータ（同じ動き）
+    // token-a: 10日分のデータ（線形上昇）
+    // token-b: 5日分のデータ（同じ線形上昇）
     let history = vec![
         PriceHistory {
             token: token_out("token-a"),
@@ -3672,42 +3677,12 @@ fn test_issue10_correlation_length_mismatch_false_uncorrelated() {
 
     let corr = calculate_token_correlation("token-a", "token-b", &history);
 
-    // 現状: リターン系列の長さが異なるため 0.0 を返す
-    println!("Correlation (mismatched lengths): {corr}");
-    assert_eq!(
-        corr, 0.0,
-        "データ長不一致で偽の0.0相関（実際は同じ動きなので高相関のはず）"
+    // 修正後: 短い方に合わせてトリミングし、同じ動きなら高相関
+    println!("Correlation (mismatched lengths, trimmed): {corr}");
+    assert!(
+        corr > 0.9,
+        "同じ動きのトークンはデータ長が違っても高相関: {corr}"
     );
-
-    // 同じ長さならの相関を確認
-    let history_same_len = vec![
-        PriceHistory {
-            token: token_out("token-a"),
-            quote_token: token_in("wrap.near"),
-            prices: (0..5)
-                .map(|i| PricePoint {
-                    timestamp: base_time + Duration::days(i),
-                    price: price(100.0 + i as f64),
-                    volume: None,
-                })
-                .collect(),
-        },
-        PriceHistory {
-            token: token_out("token-b"),
-            quote_token: token_in("wrap.near"),
-            prices: (0..5)
-                .map(|i| PricePoint {
-                    timestamp: base_time + Duration::days(i),
-                    price: price(100.0 + i as f64), // 同じ動き
-                    volume: None,
-                })
-                .collect(),
-        },
-    ];
-
-    let corr_same = calculate_token_correlation("token-a", "token-b", &history_same_len);
-    println!("Correlation (same lengths): {corr_same}");
-    assert!(corr_same > 0.9, "同じ長さ＋同じ動きなら高相関: {corr_same}");
 }
 
 /// Issue 6: generate_rebalance_actions が個別の AddPosition/ReducePosition を生成しないことを検証

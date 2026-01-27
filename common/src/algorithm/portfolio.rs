@@ -191,22 +191,26 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
 }
 
 /// 2つの系列間の共分散を計算
+///
+/// 長さが異なる場合は末尾（最新データ）を優先してトリミングする。
 fn calculate_covariance(returns1: &[f64], returns2: &[f64]) -> f64 {
-    if returns1.len() != returns2.len() || returns1.len() < 2 {
+    let min_len = returns1.len().min(returns2.len());
+    if min_len < 2 {
         return 0.0;
     }
 
-    let mean1: f64 = returns1.iter().sum::<f64>() / returns1.len() as f64;
-    let mean2: f64 = returns2.iter().sum::<f64>() / returns2.len() as f64;
+    // 末尾（最新データ）を優先: 長い方の先頭を切り詰める
+    let r1 = &returns1[returns1.len() - min_len..];
+    let r2 = &returns2[returns2.len() - min_len..];
 
-    let covariance: f64 = returns1
-        .iter()
-        .zip(returns2.iter())
-        .map(|(&r1, &r2)| (r1 - mean1) * (r2 - mean2))
+    let mean1: f64 = r1.iter().sum::<f64>() / min_len as f64;
+    let mean2: f64 = r2.iter().sum::<f64>() / min_len as f64;
+
+    r1.iter()
+        .zip(r2.iter())
+        .map(|(&v1, &v2)| (v1 - mean1) * (v2 - mean2))
         .sum::<f64>()
-        / (returns1.len() - 1) as f64;
-
-    covariance
+        / (min_len - 1) as f64
 }
 
 /// ポートフォリオリターンを計算
@@ -777,13 +781,18 @@ fn calculate_token_correlation(
         let returns1 = calculate_returns_from_prices(p1);
         let returns2 = calculate_returns_from_prices(p2);
 
-        if returns1.len() == returns2.len() && !returns1.is_empty() {
-            let std1 = calculate_std_dev(&returns1);
-            let std2 = calculate_std_dev(&returns2);
+        // 長さが異なる場合は末尾（最新データ）を優先してトリミング
+        let min_len = returns1.len().min(returns2.len());
+        if min_len >= 2 {
+            let r1 = &returns1[returns1.len() - min_len..];
+            let r2 = &returns2[returns2.len() - min_len..];
+
+            let std1 = calculate_std_dev(r1);
+            let std2 = calculate_std_dev(r2);
 
             // 標準偏差が0の場合は相関を0とする
             if std1 > 0.0 && std2 > 0.0 {
-                let correlation = calculate_covariance(&returns1, &returns2) / (std1 * std2);
+                let correlation = calculate_covariance(r1, r2) / (std1 * std2);
                 // 相関係数を-1から1の範囲にクリップ
                 return correlation.clamp(-1.0, 1.0);
             }
