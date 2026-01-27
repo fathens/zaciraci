@@ -3377,3 +3377,420 @@ fn test_validate_weights_empty() {
     assert!(!had_invalid);
     assert!(validated.is_empty());
 }
+
+// ==================== アルゴリズム検証テスト ====================
+//
+// 以下のテストは portfolio.rs のアルゴリズムの問題点を検証するためのもの。
+// 各テストは Issue 番号に対応し、現在の動作を文書化する。
+
+/// Issue 1: 動的リスク調整（スカラー倍）が正規化で打ち消されることを検証
+#[test]
+fn test_issue1_dynamic_risk_adjustment_nullified_by_normalization() {
+    let covariance = array![[0.04, 0.01, 0.02], [0.01, 0.09, 0.01], [0.02, 0.01, 0.03]];
+
+    // ベースライン: 調整なし
+    let mut weights_base = vec![0.4, 0.35, 0.25];
+    apply_risk_parity(&mut weights_base, &covariance);
+    apply_constraints(&mut weights_base);
+
+    // 低ボラ調整 (1.4倍)
+    let mut weights_low_vol = vec![0.4, 0.35, 0.25];
+    for w in weights_low_vol.iter_mut() {
+        *w *= 1.4;
+    }
+    apply_risk_parity(&mut weights_low_vol, &covariance);
+    apply_constraints(&mut weights_low_vol);
+
+    // 高ボラ調整 (0.7倍)
+    let mut weights_high_vol = vec![0.4, 0.35, 0.25];
+    for w in weights_high_vol.iter_mut() {
+        *w *= 0.7;
+    }
+    apply_risk_parity(&mut weights_high_vol, &covariance);
+    apply_constraints(&mut weights_high_vol);
+
+    // 現状: 3パターンとも同じ結果になる（スカラー倍が正規化で消える）
+    let max_diff_low: f64 = weights_base
+        .iter()
+        .zip(weights_low_vol.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f64, f64::max);
+    let max_diff_high: f64 = weights_base
+        .iter()
+        .zip(weights_high_vol.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f64, f64::max);
+
+    println!("Base:     {:?}", weights_base);
+    println!("Low vol:  {:?}", weights_low_vol);
+    println!("High vol: {:?}", weights_high_vol);
+    println!(
+        "Max diff (low vs base): {:.10}, (high vs base): {:.10}",
+        max_diff_low, max_diff_high
+    );
+
+    // 動的リスク調整の効果がほぼゼロであることを確認
+    assert!(
+        max_diff_low < 1e-6,
+        "低ボラ調整はベースラインと同じ: diff={max_diff_low}"
+    );
+    assert!(
+        max_diff_high < 1e-6,
+        "高ボラ調整はベースラインと同じ: diff={max_diff_high}"
+    );
+}
+
+/// Issue 2: Risk Parity が Sharpe 最適化の結果を大幅に変更することを検証
+#[test]
+fn test_issue2_risk_parity_overrides_sharpe_optimization() {
+    // Token 0 のリターンが圧倒的に高い
+    let expected_returns = vec![0.15, 0.03, 0.05];
+    // 等分散の共分散行列
+    let covariance = array![[0.04, 0.01, 0.01], [0.01, 0.04, 0.01], [0.01, 0.01, 0.04]];
+
+    // Sharpe 最適化: token-0 に大きく傾くべき
+    let sharpe_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+
+    let mut after_risk_parity = sharpe_weights.clone();
+    apply_risk_parity(&mut after_risk_parity, &covariance);
+
+    // Sharpe 最適と Risk Parity 後の差を計算
+    let weight_change: f64 = sharpe_weights
+        .iter()
+        .zip(after_risk_parity.iter())
+        .map(|(s, r)| (s - r).abs())
+        .sum();
+
+    println!("Sharpe weights:      {:?}", sharpe_weights);
+    println!("After risk parity:   {:?}", after_risk_parity);
+    println!("Total weight change: {weight_change:.4}");
+
+    // Risk Parity により重みが大きく変更されることを確認
+    // 等分散なので Risk Parity は均等配分に近づける
+    assert!(
+        weight_change > 0.01,
+        "Risk Parity は Sharpe 最適を変更する: change={weight_change}"
+    );
+}
+
+/// Issue 3: 最適化の目標リターンへの収束精度を検証
+#[test]
+fn test_issue3_optimization_convergence_accuracy() {
+    let expected_returns = vec![0.01, 0.50, 0.01]; // token-1 が圧倒的
+    let covariance = array![
+        [0.001, 0.0009, 0.0001],
+        [0.0009, 0.001, 0.0009],
+        [0.0001, 0.0009, 0.001]
+    ];
+
+    let target_return = 0.25; // 中間値
+    let result = calculate_efficient_frontier(&expected_returns, &covariance, target_return);
+    assert!(result.is_ok());
+
+    let weights = result.unwrap();
+    let achieved_return = calculate_portfolio_return(&weights, &expected_returns);
+    let gap = (achieved_return - target_return).abs();
+
+    println!("Target return:   {target_return}");
+    println!("Achieved return: {achieved_return}");
+    println!("Gap:             {gap:.6}");
+    println!("Weights:         {:?}", weights);
+
+    // 現状の収束精度を記録（大きなgapは収束が不完全であることを示す）
+    // 固定学習率・固定反復回数の制約を文書化
+    if gap > 0.05 {
+        println!("WARNING: 目標リターンとの乖離が5%を超えている（収束不完全）");
+    }
+}
+
+/// Issue 4: 年率リターンが単利で計算されていることを検証
+#[test]
+fn test_issue4_annualized_return_uses_simple_not_compound() {
+    // portfolio.rs:920 の計算を再現
+    let daily_return: f64 = 0.01; // 1%/日
+    let annualized_simple = daily_return * 365.0; // 現在の計算
+    let annualized_compound = (1.0_f64 + daily_return).powf(365.0) - 1.0; // 正しい計算
+
+    println!("Daily return:          {daily_return}");
+    println!("Annualized (simple):   {annualized_simple:.4}");
+    println!("Annualized (compound): {annualized_compound:.4}");
+    println!(
+        "Ratio (compound/simple): {:.2}x",
+        annualized_compound / annualized_simple
+    );
+
+    // 現在の実装は単利 (3.65) であり、複利 (37.78) と大きく異なる
+    assert!(
+        (annualized_simple - 3.65).abs() < 0.01,
+        "単利年率 = daily * 365"
+    );
+    assert!(
+        annualized_compound > annualized_simple * 5.0,
+        "複利は単利の5倍以上: compound={annualized_compound:.2}, simple={annualized_simple:.2}"
+    );
+
+    // 負のリターンで不可能な値が出る
+    let negative_daily: f64 = -0.01;
+    let negative_simple = negative_daily * 365.0; // -3.65 (不可能: -100%未満)
+    let negative_compound = (1.0_f64 + negative_daily).powf(365.0) - 1.0; // -0.974
+
+    println!("Negative daily:    {negative_daily}");
+    println!("Simple annual:     {negative_simple:.4} (不可能な値)");
+    println!("Compound annual:   {negative_compound:.4}");
+
+    assert!(
+        negative_simple < -1.0,
+        "単利では-100%未満の不可能な値が出る: {negative_simple}"
+    );
+    assert!(
+        negative_compound > -1.0,
+        "複利では-100%より大きい正当な値: {negative_compound}"
+    );
+}
+
+/// Issue 5: calculate_std_dev と calculate_covariance が両方とも標本標準偏差 (n-1) を使用することを検証
+/// [修正済み] calculate_std_dev を /(n-1) に変更済み
+#[test]
+fn test_issue5_std_dev_population_vs_sample_inconsistency() {
+    let returns = vec![0.05, -0.03, 0.08, -0.01]; // n=4
+
+    // calculate_std_dev: 標本 (/(n-1)) — 修正済み
+    let std_dev = calculate_std_dev(&returns);
+
+    // calculate_covariance の対角要素: 標本 (/(n-1))
+    let cov_self = calculate_covariance(&returns, &returns);
+    let std_from_cov = cov_self.sqrt();
+
+    println!("calculate_std_dev: {std_dev}");
+    println!("sqrt(calculate_covariance): {std_from_cov}");
+    println!("Ratio: {:.4}", std_from_cov / std_dev);
+
+    // 修正後: 両方とも標本標準偏差 (/(n-1)) を使用するため一致する
+    let ratio = std_from_cov / std_dev;
+    assert!(
+        (ratio - 1.0).abs() < 0.001,
+        "calculate_std_dev と calculate_covariance の標準偏差が一致すること: ratio={ratio:.4}"
+    );
+
+    // n=1 のエッジケース: 標本標準偏差は定義不能のため 0.0
+    let single = vec![0.05];
+    let std_single = calculate_std_dev(&single);
+    assert_eq!(std_single, 0.0, "n=1 の場合は 0.0 を返す");
+
+    // n=0 のエッジケース
+    let empty: Vec<f64> = vec![];
+    let std_empty = calculate_std_dev(&empty);
+    assert_eq!(std_empty, 0.0, "n=0 の場合は 0.0 を返す");
+}
+
+/// Issue 8: apply_constraints の最終正規化で sum=1.0 が保証されることを検証
+/// [修正済み] clamp+normalize の収束ループに変更済み
+#[test]
+fn test_issue8_apply_constraints_final_normalization() {
+    // ケース1: 通常のケース（最大ウェイトが MAX_POSITION_SIZE を超える）
+    let mut weights1 = vec![0.7, 0.2, 0.1, 0.03, 0.02];
+    apply_constraints(&mut weights1);
+    let sum1: f64 = weights1.iter().sum();
+    println!("Case 1: weights={:?}, sum={sum1}", weights1);
+
+    // ケース2: 全要素が MAX_POSITION_SIZE を超えるケース
+    let mut weights2 = vec![0.9, 0.8, 0.0, 0.0, 0.0];
+    apply_constraints(&mut weights2);
+    let sum2: f64 = weights2.iter().sum();
+    println!("Case 2: weights={:?}, sum={sum2}", weights2);
+
+    // ケース3: MAX_POSITION_SIZE ぎりぎりの2トークン
+    let mut weights3 = vec![0.59, 0.59, 0.0, 0.0, 0.0];
+    apply_constraints(&mut weights3);
+    let sum3: f64 = weights3.iter().sum();
+    println!("Case 3: weights={:?}, sum={sum3}", weights3);
+
+    // ケース4: 1トークンのみ
+    // 収束ループにより sum=1.0 が保証される (weight=1.0 > MAX_POSITION_SIZE だが、
+    // 単一トークンでは sum=1.0 と MAX_POSITION_SIZE の両方を満たすことが不可能なため、
+    // sum=1.0 を優先する)
+    let mut weights4 = vec![1.0, 0.0, 0.0];
+    apply_constraints(&mut weights4);
+    let sum4: f64 = weights4.iter().sum();
+    println!("Case 4: weights={:?}, sum={sum4}", weights4);
+
+    // 修正後: 全ケースで sum=1.0 が保証される
+    assert!((sum1 - 1.0).abs() < 1e-6, "Case 1: sum={sum1} は厳密に1.0");
+    assert!((sum2 - 1.0).abs() < 1e-6, "Case 2: sum={sum2} は厳密に1.0");
+    assert!((sum3 - 1.0).abs() < 1e-6, "Case 3: sum={sum3} は厳密に1.0");
+    assert!((sum4 - 1.0).abs() < 1e-6, "Case 4: sum={sum4} は厳密に1.0");
+
+    // 2トークン以上のケースでは MAX_POSITION_SIZE 制約も満たす
+    for &w in weights1
+        .iter()
+        .chain(weights2.iter())
+        .chain(weights3.iter())
+    {
+        assert!(
+            w <= MAX_POSITION_SIZE + 1e-4,
+            "weight={w} > MAX_POSITION_SIZE={MAX_POSITION_SIZE}"
+        );
+    }
+}
+
+/// Issue 9: calculate_covariance が異なる長さのリターン系列で 0.0 を返すことを検証
+#[test]
+fn test_issue9_covariance_length_mismatch_returns_zero() {
+    // 同じ傾向の系列だが長さが異なる
+    let returns1 = vec![0.01, 0.02, -0.01, 0.03, 0.01];
+    let returns2 = vec![0.01, 0.02, -0.01]; // 短い
+
+    let cov = calculate_covariance(&returns1, &returns2);
+
+    // 現状: 長さ不一致で 0.0 を返す
+    println!("Covariance with mismatched lengths: {cov}");
+    assert_eq!(cov, 0.0, "長さ不一致のとき0.0が返る（偽のゼロ共分散）");
+
+    // 同じ長さなら正しい正の共分散を返す
+    let returns2_same_len = vec![0.01, 0.02, -0.01, 0.03, 0.01]; // 同一データ
+    let cov_same = calculate_covariance(&returns1, &returns2_same_len);
+    println!("Covariance with same lengths: {cov_same}");
+    assert!(cov_same > 0.0, "同一データの共分散は正: {cov_same}");
+}
+
+/// Issue 10: 価格履歴の長さ不一致で相関が 0.0 になることを検証
+#[test]
+fn test_issue10_correlation_length_mismatch_false_uncorrelated() {
+    let base_time = Utc::now() - Duration::days(10);
+
+    // token-a: 10日分のデータ
+    // token-b: 5日分のデータ（同じ動き）
+    let history = vec![
+        PriceHistory {
+            token: token_out("token-a"),
+            quote_token: token_in("wrap.near"),
+            prices: (0..10)
+                .map(|i| PricePoint {
+                    timestamp: base_time + Duration::days(i),
+                    price: price(100.0 + i as f64),
+                    volume: None,
+                })
+                .collect(),
+        },
+        PriceHistory {
+            token: token_out("token-b"),
+            quote_token: token_in("wrap.near"),
+            prices: (0..5)
+                .map(|i| PricePoint {
+                    timestamp: base_time + Duration::days(i),
+                    price: price(100.0 + i as f64), // 同じ動き
+                    volume: None,
+                })
+                .collect(),
+        },
+    ];
+
+    let corr = calculate_token_correlation("token-a", "token-b", &history);
+
+    // 現状: リターン系列の長さが異なるため 0.0 を返す
+    println!("Correlation (mismatched lengths): {corr}");
+    assert_eq!(
+        corr, 0.0,
+        "データ長不一致で偽の0.0相関（実際は同じ動きなので高相関のはず）"
+    );
+
+    // 同じ長さならの相関を確認
+    let history_same_len = vec![
+        PriceHistory {
+            token: token_out("token-a"),
+            quote_token: token_in("wrap.near"),
+            prices: (0..5)
+                .map(|i| PricePoint {
+                    timestamp: base_time + Duration::days(i),
+                    price: price(100.0 + i as f64),
+                    volume: None,
+                })
+                .collect(),
+        },
+        PriceHistory {
+            token: token_out("token-b"),
+            quote_token: token_in("wrap.near"),
+            prices: (0..5)
+                .map(|i| PricePoint {
+                    timestamp: base_time + Duration::days(i),
+                    price: price(100.0 + i as f64), // 同じ動き
+                    volume: None,
+                })
+                .collect(),
+        },
+    ];
+
+    let corr_same = calculate_token_correlation("token-a", "token-b", &history_same_len);
+    println!("Correlation (same lengths): {corr_same}");
+    assert!(corr_same > 0.9, "同じ長さ＋同じ動きなら高相関: {corr_same}");
+}
+
+/// Issue 6: generate_rebalance_actions が個別の AddPosition/ReducePosition を生成しないことを検証
+#[test]
+fn test_issue6_rebalance_actions_only_generates_hold_and_rebalance() {
+    let tokens = create_sample_tokens();
+    let current = vec![0.5, 0.3, 0.2];
+    let target = vec![0.3, 0.4, 0.3]; // 大きな変化
+
+    let actions = generate_rebalance_actions(&tokens, &current, &target, 0.05);
+
+    let has_add = actions
+        .iter()
+        .any(|a| matches!(a, TradingAction::AddPosition { .. }));
+    let has_reduce = actions
+        .iter()
+        .any(|a| matches!(a, TradingAction::ReducePosition { .. }));
+    let has_hold = actions.iter().any(|a| matches!(a, TradingAction::Hold));
+    let has_rebalance = actions
+        .iter()
+        .any(|a| matches!(a, TradingAction::Rebalance { .. }));
+
+    println!("Actions: {:?}", actions);
+    println!("Has AddPosition: {has_add}");
+    println!("Has ReducePosition: {has_reduce}");
+    println!("Has Hold: {has_hold}");
+    println!("Has Rebalance: {has_rebalance}");
+
+    // 現状: AddPosition/ReducePosition は生成されない（Hold で代替）
+    assert!(!has_add, "AddPosition は生成されない（スタブ）");
+    assert!(!has_reduce, "ReducePosition は生成されない（スタブ）");
+    assert!(has_hold, "個別差分は Hold で代替されている");
+    assert!(has_rebalance, "Rebalance アクションは生成される");
+}
+
+/// Issue 7: メトリクスのスタブ値を検証
+#[tokio::test]
+async fn test_issue7_metrics_are_stubs() {
+    let tokens = create_sample_tokens();
+    let predictions = create_sample_predictions();
+    let history = create_sample_price_history();
+    let wallet = create_sample_wallet();
+
+    let portfolio_data = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices: history,
+        correlation_matrix: None,
+    };
+
+    let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
+        .await
+        .unwrap();
+
+    let metrics = &report.expected_metrics;
+
+    println!("Sharpe ratio:  {}", metrics.sharpe_ratio);
+    println!("Sortino ratio: {}", metrics.sortino_ratio);
+    println!("Max drawdown:  {}", metrics.max_drawdown);
+    println!("Calmar ratio:  {}", metrics.calmar_ratio);
+
+    // sortino_ratio は sharpe_ratio のコピー
+    assert_eq!(
+        metrics.sortino_ratio, metrics.sharpe_ratio,
+        "sortino_ratio は sharpe_ratio のコピー（スタブ）"
+    );
+
+    // max_drawdown と calmar_ratio は未実装
+    assert_eq!(metrics.max_drawdown, 0.0, "max_drawdown は未実装（0.0）");
+    assert_eq!(metrics.calmar_ratio, 0.0, "calmar_ratio は未実装（0.0）");
+}

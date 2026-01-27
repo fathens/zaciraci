@@ -191,16 +191,16 @@ pub fn calculate_volatility_from_prices(prices: &[f64]) -> f64 {
         }
     }
 
-    if returns.is_empty() {
+    if returns.len() < 2 {
         return 0.0;
     }
 
     // 平均リターン
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
 
-    // 標準偏差
+    // 標準偏差（標本標準偏差: n-1）
     let variance: f64 =
-        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
 
     variance.sqrt()
 }

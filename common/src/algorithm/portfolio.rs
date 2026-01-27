@@ -442,20 +442,21 @@ pub fn apply_constraints(weights: &mut [f64]) {
         }
     }
 
-    // 最終的な制約チェック
-    for w in weights.iter_mut() {
-        *w = w.clamp(0.0, MAX_POSITION_SIZE);
-    }
-
-    // 最終正規化
-    let sum: f64 = weights.iter().sum();
-    if sum > 0.0 {
+    // 最終的な制約チェックと正規化（収束ループ）
+    // clamp と normalize を繰り返し、両方の制約を同時に満たす
+    for _ in 0..10 {
         for w in weights.iter_mut() {
-            *w /= sum;
-            // 正規化後も最大ポジションサイズを再チェック（浮動小数点誤差対策）
-            if *w > MAX_POSITION_SIZE {
-                *w = MAX_POSITION_SIZE;
+            *w = w.clamp(0.0, MAX_POSITION_SIZE);
+        }
+        let sum: f64 = weights.iter().sum();
+        if sum > 0.0 {
+            for w in weights.iter_mut() {
+                *w /= sum;
             }
+        }
+        // 全要素が MAX_POSITION_SIZE 以内なら収束
+        if weights.iter().all(|&w| w <= MAX_POSITION_SIZE + 1e-10) {
+            break;
         }
     }
 }
@@ -593,12 +594,13 @@ fn calculate_individual_sharpe(
 
 /// 標準偏差を計算
 fn calculate_std_dev(values: &[f64]) -> f64 {
-    if values.is_empty() {
+    if values.len() < 2 {
         return 0.0;
     }
 
     let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+    let variance =
+        values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
 
     variance.sqrt()
 }
@@ -917,7 +919,7 @@ pub async fn execute_portfolio_optimization(
 
     let expected_metrics = PortfolioMetrics {
         cumulative_return: portfolio_return,
-        annualized_return: portfolio_return * 365.0,
+        annualized_return: (1.0 + portfolio_return).powf(365.0) - 1.0,
         volatility: portfolio_vol * 365.0_f64.sqrt(),
         sharpe_ratio,
         sortino_ratio: sharpe_ratio, // 簡略化
