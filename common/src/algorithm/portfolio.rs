@@ -175,9 +175,10 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     let mut covariance = Array2::zeros((n, n));
 
     for i in 0..n {
-        for j in 0..n {
+        for j in i..n {
             let cov = calculate_covariance(&daily_returns[i], &daily_returns[j]);
             covariance[[i, j]] = cov;
+            covariance[[j, i]] = cov;
         }
     }
 
