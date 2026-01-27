@@ -3383,94 +3383,130 @@ fn test_validate_weights_empty() {
 // 以下のテストは portfolio.rs のアルゴリズムの問題点を検証するためのもの。
 // 各テストは Issue 番号に対応し、現在の動作を文書化する。
 
-/// Issue 1: 動的リスク調整（スカラー倍）が正規化で打ち消されることを検証
+/// Issue 1: 動的リスク調整が期待リターンの scaling を通じて weight に影響することを検証
 #[test]
-fn test_issue1_dynamic_risk_adjustment_nullified_by_normalization() {
+fn test_issue1_dynamic_risk_adjustment_affects_weights() {
+    // 異なるリターンのトークン + 非対称な共分散
+    let expected_returns = vec![0.15, 0.03, 0.05];
     let covariance = array![[0.04, 0.01, 0.02], [0.01, 0.09, 0.01], [0.02, 0.01, 0.03]];
 
-    // ベースライン: 調整なし
-    let mut weights_base = vec![0.4, 0.35, 0.25];
-    apply_risk_parity(&mut weights_base, &covariance);
-    apply_constraints(&mut weights_base);
+    // 高ボラ: risk_adjustment = 0.7 → 期待リターンを縮小
+    let adjusted_high_vol: Vec<f64> = expected_returns.iter().map(|&r| r * 0.7).collect();
+    let weights_high_vol = maximize_sharpe_ratio(&adjusted_high_vol, &covariance);
 
-    // 低ボラ調整 (1.4倍)
-    let mut weights_low_vol = vec![0.4, 0.35, 0.25];
-    for w in weights_low_vol.iter_mut() {
-        *w *= 1.4;
-    }
-    apply_risk_parity(&mut weights_low_vol, &covariance);
-    apply_constraints(&mut weights_low_vol);
+    // 通常: risk_adjustment = 1.0 → そのまま
+    let weights_normal = maximize_sharpe_ratio(&expected_returns, &covariance);
 
-    // 高ボラ調整 (0.7倍)
-    let mut weights_high_vol = vec![0.4, 0.35, 0.25];
-    for w in weights_high_vol.iter_mut() {
-        *w *= 0.7;
-    }
-    apply_risk_parity(&mut weights_high_vol, &covariance);
-    apply_constraints(&mut weights_high_vol);
+    // 低ボラ: risk_adjustment = 1.4 → 期待リターンを拡大
+    let adjusted_low_vol: Vec<f64> = expected_returns.iter().map(|&r| r * 1.4).collect();
+    let weights_low_vol = maximize_sharpe_ratio(&adjusted_low_vol, &covariance);
 
-    // 現状: 3パターンとも同じ結果になる（スカラー倍が正規化で消える）
-    let max_diff_low: f64 = weights_base
+    println!("High vol weights: {:?}", weights_high_vol);
+    println!("Normal weights:   {:?}", weights_normal);
+    println!("Low vol weights:  {:?}", weights_low_vol);
+
+    // 各パターンで weight が異なることを確認
+    let diff_high_normal: f64 = weights_high_vol
         .iter()
-        .zip(weights_low_vol.iter())
+        .zip(weights_normal.iter())
         .map(|(a, b)| (a - b).abs())
-        .fold(0.0_f64, f64::max);
-    let max_diff_high: f64 = weights_base
+        .sum();
+    let diff_low_normal: f64 = weights_low_vol
         .iter()
-        .zip(weights_high_vol.iter())
+        .zip(weights_normal.iter())
         .map(|(a, b)| (a - b).abs())
-        .fold(0.0_f64, f64::max);
+        .sum();
 
-    println!("Base:     {:?}", weights_base);
-    println!("Low vol:  {:?}", weights_low_vol);
-    println!("High vol: {:?}", weights_high_vol);
     println!(
-        "Max diff (low vs base): {:.10}, (high vs base): {:.10}",
-        max_diff_low, max_diff_high
+        "Diff (high vs normal): {:.6}, (low vs normal): {:.6}",
+        diff_high_normal, diff_low_normal
     );
 
-    // 動的リスク調整の効果がほぼゼロであることを確認
+    // リスク調整が weight に実際に影響を与えている（正規化で消えない）
     assert!(
-        max_diff_low < 1e-6,
-        "低ボラ調整はベースラインと同じ: diff={max_diff_low}"
+        diff_high_normal > 1e-6,
+        "高ボラ調整は通常と異なる weight を生成すべき: diff={diff_high_normal}"
     );
     assert!(
-        max_diff_high < 1e-6,
-        "高ボラ調整はベースラインと同じ: diff={max_diff_high}"
+        diff_low_normal > 1e-6,
+        "低ボラ調整は通常と異なる weight を生成すべき: diff={diff_low_normal}"
     );
 }
 
-/// Issue 2: Risk Parity が Sharpe 最適化の結果を大幅に変更することを検証
+/// Issue 2: Sharpe-RP ブレンドが risk_adjustment に連動した alpha で変化することを検証
 #[test]
-fn test_issue2_risk_parity_overrides_sharpe_optimization() {
-    // Token 0 のリターンが圧倒的に高い
+fn test_issue2_sharpe_rp_blend_varies_with_alpha() {
     let expected_returns = vec![0.15, 0.03, 0.05];
-    // 等分散の共分散行列
     let covariance = array![[0.04, 0.01, 0.01], [0.01, 0.04, 0.01], [0.01, 0.01, 0.04]];
+    let n = expected_returns.len();
 
-    // Sharpe 最適化: token-0 に大きく傾くべき
-    let sharpe_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+    // Sharpe weights
+    let w_sharpe = maximize_sharpe_ratio(&expected_returns, &covariance);
 
-    let mut after_risk_parity = sharpe_weights.clone();
-    apply_risk_parity(&mut after_risk_parity, &covariance);
+    // RP weights（等配分から開始）
+    let mut w_rp = vec![1.0 / n as f64; n];
+    apply_risk_parity(&mut w_rp, &covariance);
 
-    // Sharpe 最適と Risk Parity 後の差を計算
-    let weight_change: f64 = sharpe_weights
+    // alpha 計算のテスト: risk_adjustment → alpha のマッピング
+    let test_cases = vec![
+        (0.7_f64, 0.7_f64, "高ボラ"),
+        (1.05_f64, 0.8_f64, "中ボラ"),
+        (1.4_f64, 0.9_f64, "低ボラ"),
+    ];
+
+    let mut blended_results = Vec::new();
+
+    for (risk_adj, expected_alpha, label) in &test_cases {
+        let alpha = ((risk_adj - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+
+        // alpha が期待値と一致
+        assert!(
+            (alpha - expected_alpha).abs() < 1e-10,
+            "{label}: alpha={alpha}, expected={expected_alpha}"
+        );
+
+        // alpha が [0.7, 0.9] の範囲内
+        assert!(
+            (0.7..=0.9).contains(&alpha),
+            "{label}: alpha={alpha} は [0.7, 0.9] の範囲外"
+        );
+
+        // ブレンド
+        let blended: Vec<f64> = w_sharpe
+            .iter()
+            .zip(w_rp.iter())
+            .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+            .collect();
+
+        println!("{label}: alpha={alpha:.2}, weights={:?}", blended);
+        blended_results.push(blended);
+    }
+
+    // 異なる risk_adjustment で異なるブレンド結果が得られる
+    let diff_high_low: f64 = blended_results[0]
         .iter()
-        .zip(after_risk_parity.iter())
-        .map(|(s, r)| (s - r).abs())
+        .zip(blended_results[2].iter())
+        .map(|(a, b)| (a - b).abs())
         .sum();
 
-    println!("Sharpe weights:      {:?}", sharpe_weights);
-    println!("After risk parity:   {:?}", after_risk_parity);
-    println!("Total weight change: {weight_change:.4}");
+    println!("Diff (high vol vs low vol): {diff_high_low:.6}");
 
-    // Risk Parity により重みが大きく変更されることを確認
-    // 等分散なので Risk Parity は均等配分に近づける
     assert!(
-        weight_change > 0.01,
-        "Risk Parity は Sharpe 最適を変更する: change={weight_change}"
+        diff_high_low > 1e-6,
+        "高ボラと低ボラで異なるブレンド結果が得られるべき: diff={diff_high_low}"
     );
+
+    // Sharpe weights が常に支配的（alpha >= 0.7）
+    for (i, blended) in blended_results.iter().enumerate() {
+        for (j, _) in blended.iter().enumerate() {
+            let sharpe_contrib = test_cases[i].1 * w_sharpe[j];
+            let rp_contrib = (1.0 - test_cases[i].1) * w_rp[j];
+            assert!(
+                sharpe_contrib >= rp_contrib || w_sharpe[j] < w_rp[j],
+                "Sharpe が支配的であるべき: token={j}, sharpe_contrib={sharpe_contrib}, rp_contrib={rp_contrib}"
+            );
+        }
+    }
 }
 
 /// Issue 3: 最適化の目標リターンへの収束精度を検証

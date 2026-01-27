@@ -873,23 +873,37 @@ pub async fn execute_portfolio_optimization(
     // 動的リスク調整係数を計算
     let risk_adjustment = calculate_dynamic_risk_adjustment(&portfolio_data);
 
-    // 最適ポートフォリオを計算
-    let raw_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+    // Issue 1: 期待リターンにリスク調整を適用（高ボラ時は期待リターン縮小）
+    let adjusted_returns: Vec<f64> = expected_returns
+        .iter()
+        .map(|&r| r * risk_adjustment)
+        .collect();
+
+    // Sharpe 最適化（リスク調整済みリターンを使用）
+    let raw_weights = maximize_sharpe_ratio(&adjusted_returns, &covariance);
     let (validated, had_invalid) = validate_weights(&raw_weights);
     debug_assert!(
         !had_invalid,
         "maximize_sharpe_ratio returned non-finite weights: {:?}",
         raw_weights
     );
-    let mut optimal_weights = validated;
+    let w_sharpe = validated;
 
-    // 動的リスク調整を適用（積極的/保守的調整）
-    for weight in optimal_weights.iter_mut() {
-        *weight *= risk_adjustment;
-    }
+    // Issue 2: Risk Parity を独立に計算（等配分から開始）
+    let n = w_sharpe.len();
+    let mut w_rp = vec![1.0 / n as f64; n];
+    apply_risk_parity(&mut w_rp, &covariance);
 
-    // リスクパリティ調整（オプション）
-    apply_risk_parity(&mut optimal_weights, &covariance);
+    // risk_adjustment 連動 alpha でブレンド（範囲 [0.7, 0.9]）
+    // risk_adjustment: 0.7 (高ボラ) → 1.4 (低ボラ)
+    // alpha: 0.7 (RP補助) → 0.9 (Sharpe主導)
+    let alpha = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+
+    let mut optimal_weights: Vec<f64> = w_sharpe
+        .iter()
+        .zip(w_rp.iter())
+        .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+        .collect();
 
     // 制約を適用
     apply_constraints(&mut optimal_weights);
