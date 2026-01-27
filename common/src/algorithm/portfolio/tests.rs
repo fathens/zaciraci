@@ -3546,7 +3546,6 @@ fn test_issue4_daily_return_stored_without_annualization() {
     // → 年率化自体を廃止し、日次リターンをそのまま保持する方針に変更。
 
     let metrics = PortfolioMetrics {
-        cumulative_return: daily_return,
         daily_return,
         volatility: 0.02,
         sharpe_ratio: 0.5,

@@ -984,7 +984,6 @@ pub async fn execute_portfolio_optimization(
     };
 
     let expected_metrics = PortfolioMetrics {
-        cumulative_return: portfolio_return,
         daily_return: portfolio_return,
         volatility: portfolio_vol,
         sharpe_ratio,
