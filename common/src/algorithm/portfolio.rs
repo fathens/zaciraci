@@ -484,9 +484,7 @@ pub fn apply_constraints(weights: &mut [f64]) {
 }
 
 /// 市場ボラティリティに基づく動的リスク調整
-fn calculate_dynamic_risk_adjustment(historical_prices: &[PriceHistory]) -> f64 {
-    let daily_returns = calculate_daily_returns(historical_prices);
-
+fn calculate_dynamic_risk_adjustment(daily_returns: &[Vec<f64>]) -> f64 {
     if daily_returns.is_empty() {
         return 1.0; // デフォルト（調整なし）
     }
@@ -867,7 +865,7 @@ pub async fn execute_portfolio_optimization(
     let covariance = calculate_covariance_matrix(&daily_returns);
 
     // 動的リスク調整係数を計算（選択後トークンのボラティリティに基づく）
-    let risk_adjustment = calculate_dynamic_risk_adjustment(&selected_price_histories);
+    let risk_adjustment = calculate_dynamic_risk_adjustment(&daily_returns);
 
     // Issue 1: 期待リターンにリスク調整を適用（高ボラ時は期待リターン縮小）
     let adjusted_returns: Vec<f64> = expected_returns
