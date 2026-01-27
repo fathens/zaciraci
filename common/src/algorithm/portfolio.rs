@@ -113,56 +113,14 @@ pub fn calculate_expected_returns(
 /// 注意: 価格データは比率（Price型）として保存されている。リターン計算は相対値なので単位に依存しない。
 ///
 /// **重要**: この関数は入力されたhistorical_pricesの順序を保持します。
-/// BTreeMapを使用して決定的な処理を行いますが、結果の順序は入力順序に従います。
+/// 重複トークンがある場合は最初の出現のみを使用します。
 pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f64>> {
-    let mut token_prices: BTreeMap<String, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
-
-    // トークン別に価格データをグループ化
-    for price_data in historical_prices {
-        for price_point in &price_data.prices {
-            // Price型（比率）をf64に変換
-            let price_f64 = price_point.price.to_string().parse::<f64>().unwrap_or(0.0);
-            token_prices
-                .entry(price_data.token.to_string())
-                .or_default()
-                .push((price_point.timestamp, price_f64));
-        }
-    }
-
-    // 入力順序を保持: 元の配列から重複を除いたトークン順序を取得
-    let unique_tokens: Vec<String> = {
-        let mut seen = std::collections::HashSet::new();
-        historical_prices
-            .iter()
-            .filter_map(|p| {
-                let token_str = p.token.to_string();
-                if seen.insert(token_str.clone()) {
-                    Some(token_str)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    };
-
-    // 入力順序でリターンを計算
-    let mut returns = Vec::new();
-    for token in unique_tokens {
-        if let Some(mut prices) = token_prices.get(&token).cloned() {
-            prices.sort_by_key(|&(timestamp, _)| timestamp);
-
-            let mut token_returns = Vec::new();
-            for i in 1..prices.len() {
-                if prices[i - 1].1 > 0.0 {
-                    let return_rate = (prices[i].1 - prices[i - 1].1) / prices[i - 1].1;
-                    token_returns.push(return_rate);
-                }
-            }
-            returns.push(token_returns);
-        }
-    }
-
-    returns
+    let mut seen = std::collections::HashSet::new();
+    historical_prices
+        .iter()
+        .filter(|p| seen.insert(p.token.to_string()))
+        .map(|p| calculate_returns_from_prices(&p.prices))
+        .collect()
 }
 
 /// 共分散行列を計算
@@ -809,11 +767,20 @@ fn calculate_token_correlation(
 }
 
 /// 価格からリターンを計算
+///
+/// 入力をタイムスタンプ昇順にソートしてからリターンを計算する。
 fn calculate_returns_from_prices(prices: &[PricePoint]) -> Vec<f64> {
+    if prices.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut sorted: Vec<&PricePoint> = prices.iter().collect();
+    sorted.sort_by_key(|p| p.timestamp);
+
     let mut returns = Vec::new();
-    for i in 1..prices.len() {
-        let price_current = prices[i].price.to_string().parse::<f64>().unwrap_or(0.0);
-        let price_prev = prices[i - 1]
+    for i in 1..sorted.len() {
+        let price_current = sorted[i].price.to_string().parse::<f64>().unwrap_or(0.0);
+        let price_prev = sorted[i - 1]
             .price
             .to_string()
             .parse::<f64>()
