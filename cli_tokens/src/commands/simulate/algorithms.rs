@@ -592,7 +592,6 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                         tokens: token_data,
                         predictions: predictions_map.into_iter().collect(),
                         historical_prices,
-                        correlation_matrix: None,
                     };
 
                     // 現在のホールディングをWalletInfoに変換（TokenAmount）

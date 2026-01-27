@@ -17,7 +17,6 @@ pub struct PortfolioData {
     /// 予測価格（TokenPrice: NEAR/token）
     pub predictions: BTreeMap<TokenOutAccount, TokenPrice>,
     pub historical_prices: Vec<PriceHistory>,
-    pub correlation_matrix: Option<Array2<f64>>,
 }
 
 /// ポートフォリオ実行レポート

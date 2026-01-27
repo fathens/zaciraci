@@ -432,7 +432,6 @@ fn test_execute_portfolio_optimization() {
         tokens,
         predictions,
         historical_prices,
-        correlation_matrix: None,
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1753,7 +1752,6 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: full_history,
-        correlation_matrix: None,
     };
 
     // トークン選択ありで最適化を実行
@@ -2374,7 +2372,6 @@ fn create_high_volatility_portfolio_data() -> super::PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        correlation_matrix: None,
     }
 }
 
@@ -2394,7 +2391,6 @@ fn create_low_volatility_portfolio_data() -> super::PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        correlation_matrix: None,
     }
 }
 
@@ -2523,7 +2519,6 @@ async fn test_enhanced_portfolio_performance() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        correlation_matrix: None,
     };
 
     // 空のウォレット（初期状態）
@@ -2733,7 +2728,6 @@ async fn test_baseline_vs_enhanced_comparison() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        correlation_matrix: None,
     };
 
     let wallet = WalletInfo {
@@ -3762,7 +3756,6 @@ async fn test_issue7_metrics_computed_from_indicators() {
         tokens,
         predictions,
         historical_prices: history,
-        correlation_matrix: None,
     };
 
     let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)

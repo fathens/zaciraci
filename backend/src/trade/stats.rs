@@ -657,7 +657,6 @@ where
         tokens: token_data,
         predictions,
         historical_prices,
-        correlation_matrix: None,
     };
 
     // yoctoNEARからNEARに変換（型安全、BigDecimal精度維持）
