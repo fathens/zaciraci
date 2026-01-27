@@ -338,6 +338,22 @@ mod tests {
     }
 
     #[test]
+    fn test_token_account_to_in() {
+        let token: TokenAccount = "wrap.near".parse().unwrap();
+        let token_in = token.to_in();
+        assert_eq!(token_in.inner(), &token);
+        assert_eq!(token_in.inner().as_str(), "wrap.near");
+    }
+
+    #[test]
+    fn test_token_account_to_out() {
+        let token: TokenAccount = "wrap.near".parse().unwrap();
+        let token_out = token.to_out();
+        assert_eq!(token_out.inner(), &token);
+        assert_eq!(token_out.inner().as_str(), "wrap.near");
+    }
+
+    #[test]
     fn test_token_in_account_from_account_id() {
         let account_id: AccountId = "wrap.near".parse().unwrap();
         let token_in = TokenInAccount::from(account_id.clone());
