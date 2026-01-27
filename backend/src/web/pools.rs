@@ -374,7 +374,7 @@ async fn estimate_trade(
         let path = graph
             .get_path(start, goal)
             .map_err(|e| format!("path not found: {e}"))?;
-        if log.is_info_enabled() {
+        if log.is_debug_enabled() {
             let mut path_info = String::new();
             for token_pair in path.0.iter() {
                 let line = format!(
@@ -385,14 +385,14 @@ async fn estimate_trade(
                 );
                 path_info.push_str(&line);
             }
-            info!(log, "path found";
+            debug!(log, "path found";
                 "path" => %path_info,
             );
         }
         let amount_out = path
             .calc_value(amount_in)
             .map_err(|e| format!("calc_value error: {e}"))?;
-        info!(log, "value calculated";
+        debug!(log, "value calculated";
             "amount_out" => %amount_out,
         );
         if prev_out > 0 {
@@ -403,7 +403,7 @@ async fn estimate_trade(
             let reversed_amount_out = reversed_path
                 .calc_value(amount_out)
                 .map_err(|e| format!("reversed calc_value error: {e}"))?;
-            info!(log, "reversed value calculated";
+            debug!(log, "reversed value calculated";
                 "prev_out" => %prev_out,
                 "amount_out" => %amount_out,
                 "reversed_prev_out" => %reversed_prev_out,
@@ -451,7 +451,7 @@ async fn get_pool_records(
         match res {
             Ok(Some(pool)) => pools.push(pool.into()),
             Ok(None) => {
-                info!(log, "pool not found"; "pool_id" => %pool_id.0);
+                trace!(log, "pool not found"; "pool_id" => %pool_id.0);
             }
             Err(e) => {
                 error!(log, "failed to get pool";
@@ -462,7 +462,7 @@ async fn get_pool_records(
             }
         }
     }
-    info!(log, "finished");
+    trace!(log, "finished");
     Json(ApiResponse::Success(PoolRecordsResponse { pools }))
 }
 
@@ -498,7 +498,7 @@ async fn sort_pools(
         }
     };
     let res = SortPoolsResponse { pools: sorted };
-    info!(log, "finished");
+    trace!(log, "finished");
     Json(ApiResponse::Success(res))
 }
 
@@ -530,7 +530,7 @@ async fn get_volatility_tokens(
     } else {
         WNEAR_TOKEN.to_in()
     };
-    info!(log, "using quote token";
+    trace!(log, "using quote token";
         "token" => format!("{}", quote),
     );
 
@@ -547,11 +547,11 @@ async fn get_volatility_tokens(
             let log = log.clone();
             let quote = quote.clone();
             tokio::spawn(async move {
-                info!(log, "start volatility calculation";
+                trace!(log, "start volatility calculation";
                     "quote" => format!("{}", &quote),
                 );
                 let result = TokenRate::get_by_volatility_in_time_range(&range, &quote).await;
-                info!(log, "volatility calculation completed");
+                trace!(log, "volatility calculation completed");
                 result
             })
         };
@@ -561,11 +561,11 @@ async fn get_volatility_tokens(
             let timestamp = request.end;
             let log = log.clone();
             tokio::spawn(async move {
-                info!(log, "start depth calculation");
+                trace!(log, "start depth calculation");
                 let result = PoolInfoList::read_from_db(Some(timestamp))
                     .await
                     .and_then(|pools| tokens_with_depth(pools, (&quote, ONE_NEAR)));
-                info!(log, "depth calculation completed");
+                trace!(log, "depth calculation completed");
                 result
             })
         };
@@ -600,7 +600,7 @@ async fn get_volatility_tokens(
         };
 
         let elapsed = start_time.elapsed();
-        info!(log, "parallel computation completed";
+        trace!(log, "parallel computation completed";
             "elapsed_ms" => elapsed.as_millis(),
             "elapsed_secs" => elapsed.as_secs_f64(),
         );
@@ -610,7 +610,7 @@ async fn get_volatility_tokens(
 
     let tokens = {
         let start_time = Instant::now();
-        info!(log, "sort tokens";
+        trace!(log, "sort tokens";
             "count" => format!("{}", vols.len()),
         );
         let mut weights: Vec<_> = vols
@@ -634,7 +634,7 @@ async fn get_volatility_tokens(
             .collect();
 
         let elapsed = start_time.elapsed();
-        info!(log, "tokens part completed";
+        trace!(log, "tokens part completed";
             "elapsed_ms" => elapsed.as_millis(),
             "elapsed_secs" => elapsed.as_secs_f64(),
         );

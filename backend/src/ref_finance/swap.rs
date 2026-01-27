@@ -46,7 +46,7 @@ where
         "initial" => arg.initial_in,
         "min_out" => arg.min_out,
     ));
-    info!(log, "building swap actions");
+    trace!(log, "building swap actions");
     if path.is_empty() {
         return Ok((Vec::new(), arg.initial_in));
     }
@@ -83,7 +83,7 @@ where
             Ok(next_out)
         })?;
 
-    info!(log, "finished building swap actions";
+    trace!(log, "finished building swap actions";
         o!("estimated_total_out" => format!("{:?}", out)),
     );
     Ok((actions, out))
@@ -105,7 +105,7 @@ where
         "initial" => arg.initial_in,
         "min_out" => arg.min_out,
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     let (actions, out) = build_swap_actions(path, arg)?;
 

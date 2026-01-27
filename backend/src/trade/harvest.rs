@@ -74,7 +74,7 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
         match crate::persistence::evaluation_period::EvaluationPeriod::get_latest_async().await? {
             Some(period) => period,
             None => {
-                debug!(log, "No evaluation period found, skipping harvest");
+                trace!(log, "No evaluation period found, skipping harvest");
                 return Ok(());
             }
         };
@@ -83,7 +83,7 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
     let initial_value = YoctoValue::from_yocto(latest_period.initial_value);
     let current_value = current_portfolio_value;
 
-    info!(log, "Portfolio value check";
+    debug!(log, "Portfolio value check";
         "initial_value" => %initial_value,
         "current_value" => %current_value,
         "period_id" => %latest_period.period_id
@@ -114,14 +114,14 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
 
         // YoctoAmount < YoctoAmount
         if harvest_amount < *min_harvest_amount {
-            info!(log, "Harvest amount below minimum threshold, skipping";
+            trace!(log, "Harvest amount below minimum threshold, skipping";
                 "harvest_amount" => %harvest_amount,
                 "min_amount" => %min_harvest_amount
             );
             return Ok(());
         }
 
-        info!(log, "Executing harvest";
+        debug!(log, "Executing harvest";
             "amount" => %harvest_amount,
             "target_account" => %harvest_account,
             "harvest_value" => %harvest_value
@@ -129,7 +129,7 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
 
         // ハーベスト時間条件もチェック
         if !is_time_to_harvest() {
-            info!(log, "Harvest time interval not met, skipping";
+            trace!(log, "Harvest time interval not met, skipping";
                 "last_harvest_interval_hours" => (std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("system clock is after UNIX epoch")
@@ -146,7 +146,7 @@ pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()
     } else {
         // YoctoValue / YoctoValue = BigDecimal（比率）
         let current_percentage = (current_value / initial_value) * BigDecimal::from(100);
-        debug!(log, "Portfolio value below harvest threshold";
+        trace!(log, "Portfolio value below harvest threshold";
             "current_percentage" => %current_percentage
         );
     }
@@ -163,7 +163,7 @@ async fn execute_harvest_transfer(
     use crate::jsonrpc::{AccountInfo, SendTx};
     use crate::ref_finance::{deposit, token_account::WNEAR_TOKEN};
 
-    info!(log, "Starting harvest transfer execution";
+    debug!(log, "Starting harvest transfer execution";
         "target" => %target_account,
         "amount" => %harvest_amount
     );
@@ -175,7 +175,7 @@ async fn execute_harvest_transfer(
     let client = crate::jsonrpc::new_client();
     let wallet = crate::wallet::new_wallet();
 
-    info!(log, "Executing harvest sequence";
+    trace!(log, "Executing harvest sequence";
         "step" => "1_withdraw_from_ref_finance",
         "amount" => %harvest_amount_u128
     );
@@ -193,7 +193,7 @@ async fn execute_harvest_transfer(
         return Err(anyhow::anyhow!("Harvest failed at withdrawal step: {}", e));
     }
 
-    info!(log, "Executing harvest sequence";
+    trace!(log, "Executing harvest sequence";
         "step" => "2_unwrap_to_native_near",
         "amount" => %harvest_amount_u128
     );
@@ -212,7 +212,7 @@ async fn execute_harvest_transfer(
         return Err(anyhow::anyhow!("Harvest failed at unwrap step: {}", e));
     }
 
-    info!(log, "Executing harvest sequence";
+    trace!(log, "Executing harvest sequence";
         "step" => "3_transfer_to_target",
         "target" => %target_account,
         "amount" => %harvest_amount_u128
@@ -229,7 +229,7 @@ async fn execute_harvest_transfer(
     let available_for_transfer = if current_native_balance > reserve_amount_u128 {
         current_native_balance - reserve_amount_u128
     } else {
-        info!(log, "Insufficient balance for harvest transfer after reserve";
+        trace!(log, "Insufficient balance for harvest transfer after reserve";
             "current_balance" => current_native_balance,
             "reserve_amount" => reserve_amount_u128
         );
@@ -239,7 +239,7 @@ async fn execute_harvest_transfer(
     // 実際の送金額は予定額と送金可能額の小さい方
     let actual_transfer_amount = harvest_amount_u128.min(available_for_transfer);
 
-    info!(log, "Executing harvest sequence";
+    trace!(log, "Executing harvest sequence";
         "step" => "3_transfer_to_target",
         "target" => %target_account,
         "planned_amount" => %harvest_amount_u128,

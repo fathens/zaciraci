@@ -76,7 +76,7 @@ where
             max
         }
     });
-    info!(log, "Starting balances";
+    trace!(log, "Starting balances";
         "required_balance" => %required_balance,
     );
 
@@ -84,7 +84,7 @@ where
     // via ensure_ref_storage_setup, so we skip it here to reduce RPC calls
 
     let deposited_wnear = balance_of_start_token(client, wallet, token).await?;
-    info!(log, "comparing";
+    trace!(log, "comparing";
         "deposited_wnear" => ?deposited_wnear,
         "required_balance" => ?required_balance,
     );
@@ -142,7 +142,7 @@ where
     let log = log.new(o!(
         "wrapped_balance" => format!("{}", wrapped_balance),
     ));
-    debug!(log, "checking");
+    trace!(log, "checking");
 
     let actual_wrapping = if wrapped_balance < want {
         let wrapping = want - wrapped_balance;
@@ -155,13 +155,13 @@ where
             "wrapping" => format!("{}", wrapping),
             "minimum_native_balance" => format!("{}", minimum_native_balance),
         ));
-        debug!(log, "checking");
+        trace!(log, "checking");
         let available = native_balance
             .checked_sub(minimum_native_balance)
             .unwrap_or_default();
 
         let amount = if available < wrapping {
-            info!(log, "insufficient balance, using maximum available";
+            debug!(log, "insufficient balance, using maximum available";
                 "available" => %available,
                 "wanted" => %wrapping,
             );
@@ -171,7 +171,7 @@ where
         };
 
         if amount > 0 {
-            info!(log, "wrapping";
+            trace!(log, "wrapping";
                 "amount" => %amount,
             );
             deposit::wnear::wrap(client, wallet, amount)
@@ -186,7 +186,7 @@ where
 
     let total_deposit = wrapped_balance + actual_wrapping;
     if total_deposit > 0 {
-        info!(log, "refilling";
+        debug!(log, "refilling";
             "amount" => %total_deposit,
         );
         deposit::deposit(client, wallet, &WNEAR_TOKEN, total_deposit)
@@ -194,7 +194,7 @@ where
             .wait_for_success()
             .await?;
     } else {
-        info!(log, "no amount to deposit")
+        trace!(log, "no amount to deposit")
     }
     Ok(())
 }
@@ -215,13 +215,13 @@ where
     // REF Finance に既にデポジット済みの残高を確認
     let deposited_balance = balance_of_start_token(client, wallet, &WNEAR_TOKEN).await?;
 
-    info!(log, "checking existing balances";
+    trace!(log, "checking existing balances";
         "deposited_in_ref" => %deposited_balance,
         "required" => %amount
     );
 
     if deposited_balance >= amount {
-        info!(
+        trace!(
             log,
             "sufficient balance already deposited, no action needed"
         );
@@ -234,7 +234,7 @@ where
     // wrap.near の現在残高を確認
     let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
 
-    info!(log, "current wrap.near balance"; "wrapped_balance" => %wrapped_balance);
+    trace!(log, "current wrap.near balance"; "wrapped_balance" => %wrapped_balance);
 
     // 不足分を wrap.near から調達
     if wrapped_balance < shortage {
@@ -259,7 +259,7 @@ where
         };
 
         if actual_wrapping > 0 {
-            info!(log, "wrapping NEAR to wrap.near"; "amount" => %actual_wrapping);
+            trace!(log, "wrapping NEAR to wrap.near"; "amount" => %actual_wrapping);
             deposit::wnear::wrap(client, wallet, actual_wrapping)
                 .await?
                 .wait_for_success()
@@ -277,7 +277,7 @@ where
     // 不足分と実際の残高の少ない方をデポジット
     let deposit_amount = shortage.min(final_wrapped_balance);
 
-    info!(log, "depositing wrap.near to REF Finance";
+    trace!(log, "depositing wrap.near to REF Finance";
         "shortage" => %shortage,
         "available" => %final_wrapped_balance,
         "depositing" => %deposit_amount
@@ -327,7 +327,7 @@ where
     };
     let native_balance = before_withdraw + added;
     let upper = required << 7; // 128倍
-    info!(log, "checking";
+    trace!(log, "checking";
         "native_balance" => %native_balance,
         "upper" => %upper,
     );

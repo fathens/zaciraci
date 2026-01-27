@@ -81,7 +81,7 @@ impl TokenGraph {
                             edges_added += 1;
 
                             if is_important_pair {
-                                info!(log, "edge added";
+                                trace!(log, "edge added";
                                     "token_in" => token_in_str.as_str(),
                                     "token_out" => token_out_str.as_str(),
                                     "weight" => format!("{:?}", edge.weight()),
@@ -93,7 +93,7 @@ impl TokenGraph {
             }
         }
 
-        info!(log, "graph construction complete";
+        trace!(log, "graph construction complete";
             "nodes" => nodes.len(),
             "edges_added" => edges_added,
             "edges_skipped" => edges_skipped,
@@ -112,7 +112,7 @@ impl TokenGraph {
             "start" => format!("{:?}", start),
             "goal" => format!("{:?}", goal),
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let out = self.graph.update_path(start, Some(goal.clone()))?;
         Ok(out.contains(goal))
@@ -123,7 +123,7 @@ impl TokenGraph {
             "function" => "TokenGraph::update_graph",
             "start" => format!("{:?}", start),
         ));
-        info!(log, "find goals from start");
+        trace!(log, "find goals from start");
 
         let outs = self.graph.update_path(start, None)?;
         let mut goals = Vec::new();
@@ -132,12 +132,12 @@ impl TokenGraph {
                 .graph
                 .update_path(&goal.as_in(), Some(start.as_out()))?;
             if reversed.is_empty() {
-                info!(log, "no reversed path found"; "goal" => %goal);
+                trace!(log, "no reversed path found"; "goal" => %goal);
             } else {
                 goals.push(goal.clone());
             }
         }
-        info!(log, "goals found";
+        trace!(log, "goals found";
             "outs.count" => %outs.len(),
             "goals.count" => %goals.len(),
         );
@@ -278,7 +278,7 @@ where
         if goal.is_none() {
             let cached = self.cached_path.read().unwrap();
             if let Some(path_to_outs) = cached.get(start) {
-                info!(log, "cache hit, returning cached result"; "outs_count" => path_to_outs.len());
+                trace!(log, "cache hit, returning cached result"; "outs_count" => path_to_outs.len());
                 return Ok(path_to_outs.keys().cloned().collect());
             }
         }
@@ -291,7 +291,7 @@ where
         };
         trace!(log, "finding by dijkstra"; "from" => ?from, "to" => ?to);
         let goals = algo::dijkstra(&self.graph, from, to, |e| *e.weight());
-        info!(log, "dijkstra complete"; "reachable_count" => goals.len());
+        trace!(log, "dijkstra complete"; "reachable_count" => goals.len());
 
         let finder = GraphPath {
             graph: &self.graph,
@@ -308,7 +308,7 @@ where
             }
         }
         if path_to_outs.is_empty() {
-            info!(log, "no path found");
+            trace!(log, "no path found");
         } else {
             self.cached_path
                 .write()

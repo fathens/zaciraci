@@ -31,7 +31,7 @@ pub async fn check_bounds<C: ViewContract>(client: &C) -> Result<StorageBalanceB
         .await?;
 
     let bounds: StorageBalanceBounds = serde_json::from_slice(&result.result)?;
-    info!(log, "bounds"; "min" => ?bounds.min, "max" => ?bounds.max);
+    trace!(log, "bounds"; "min" => ?bounds.min, "max" => ?bounds.max);
     Ok(bounds)
 }
 
@@ -51,7 +51,7 @@ pub async fn get_account_basic_info<C: ViewContract>(
         "function" => "get_account_basic_info",
         "account" => format!("{}", account),
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "get_account_basic_info";
     let args = json!({
@@ -103,12 +103,12 @@ pub async fn balance_of<C: ViewContract>(
 
     let balance: Option<StorageBalance> = serde_json::from_slice(&result.result)?;
     if let Some(b) = &balance {
-        info!(log, "balance";
+        trace!(log, "balance";
             "total" => ?b.total,
             "available" => ?b.available,
         );
     } else {
-        info!(log, "no balance");
+        trace!(log, "no balance");
     }
     Ok(balance)
 }
@@ -137,7 +137,7 @@ pub async fn check_deposits<C: ViewContract>(
     let used = total - available;
     let per_token = (used - bounds.min.0) / deposits.len() as u128;
 
-    info!(log, "checking deposits";
+    trace!(log, "checking deposits";
         "total" => total,
         "available" => available,
         "used" => used,
@@ -149,7 +149,7 @@ pub async fn check_deposits<C: ViewContract>(
         .filter(|&token| !deposits.contains_key(token))
         .collect();
     let more_needed = mores.len() as u128 * per_token;
-    info!(log, "missing token deposits"; "more_needed" => more_needed);
+    debug!(log, "missing token deposits"; "more_needed" => more_needed);
     if more_needed <= available {
         return Ok(Some((vec![], 0)));
     }
@@ -233,14 +233,14 @@ where
     let log = DEFAULT.new(o!("function" => "storage::ensure_ref_storage_setup"));
     let account = wallet.account_id();
 
-    info!(log, "checking REF Finance storage setup"; "account" => %account, "token_count" => tokens.len());
+    trace!(log, "checking REF Finance storage setup"; "account" => %account, "token_count" => tokens.len());
 
     // 1. storage_balance_of でアカウント状態を確認
     let maybe_balance = balance_of(client, account).await?;
 
     // 2. 未登録または不足している場合は storage_deposit を実行
     if maybe_balance.is_none() {
-        info!(
+        trace!(
             log,
             "account not registered, performing initial storage deposit"
         );
@@ -252,9 +252,9 @@ where
             .wait_for_success()
             .await?;
 
-        info!(log, "initial storage deposit completed"; "amount" => min_deposit);
+        trace!(log, "initial storage deposit completed"; "amount" => min_deposit);
     } else {
-        info!(log, "account already registered");
+        trace!(log, "account already registered");
     }
 
     // 3. トークンを一括登録（未登録のもののみ）
@@ -270,7 +270,7 @@ where
             .collect();
 
         if !unregistered_tokens.is_empty() {
-            info!(log, "registering unregistered tokens";
+            trace!(log, "registering unregistered tokens";
                 "total" => tokens.len(),
                 "already_registered" => tokens.len() - unregistered_tokens.len(),
                 "to_register" => unregistered_tokens.len()
@@ -279,9 +279,9 @@ where
                 .await?
                 .wait_for_success()
                 .await?;
-            info!(log, "tokens registered successfully"; "count" => unregistered_tokens.len());
+            trace!(log, "tokens registered successfully"; "count" => unregistered_tokens.len());
         } else {
-            info!(log, "all tokens already registered"; "count" => tokens.len());
+            trace!(log, "all tokens already registered"; "count" => tokens.len());
         }
     }
 

@@ -292,7 +292,7 @@ impl PoolInfo {
             "token_in" => token_in.as_usize(),
             "token_out" => token_out.as_usize(),
         ));
-        info!(log, "start");
+        trace!(log, "start");
         if token_in.as_index() == token_out.as_index() {
             return Err(Error::SwapSameToken.into());
         }
@@ -308,7 +308,7 @@ impl PoolInfo {
         let amount_with_fee = amount_in * BigDecimal::from(FEE_DIVISOR - self.bare.total_fee);
         let result = &amount_with_fee * out_balance
             / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
-        info!(log, "finish"; "value" => %result);
+        trace!(log, "finish"; "value" => %result);
         result.to_u128().ok_or_else(|| Error::Overflow.into())
     }
 
@@ -324,7 +324,7 @@ impl PoolInfo {
             "pool_id" => self.id,
             "amount_in" => amount_in,
         ));
-        info!(log, "start");
+        trace!(log, "start");
         let method_name = "get_return";
 
         let args = json!({
@@ -342,7 +342,7 @@ impl PoolInfo {
 
         let raw = result.result;
         let value: U128 = from_slice(&raw)?;
-        info!(log, "finish"; "value" => %value.0);
+        trace!(log, "finish"; "value" => %value.0);
         Ok(value.into())
     }
 }

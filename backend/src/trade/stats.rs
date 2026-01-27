@@ -113,7 +113,7 @@ pub async fn start() -> Result<()> {
     let available_funds: YoctoAmount = if is_new_period {
         if let Some(balance) = liquidated_balance {
             // 清算が行われた場合: 清算後の残高をそのまま使用
-            info!(log, "Using liquidated balance for new period"; "available_funds" => %balance);
+            debug!(log, "Using liquidated balance for new period"; "available_funds" => %balance);
             if balance.is_zero() {
                 info!(log, "no funds available after liquidation");
                 return Ok(());
@@ -122,7 +122,7 @@ pub async fn start() -> Result<()> {
         } else {
             // 初回起動: NEAR -> wrap.near 変換
             let funds = prepare_funds().await?;
-            info!(log, "Prepared funds for new period"; "available_funds" => %funds);
+            debug!(log, "Prepared funds for new period"; "available_funds" => %funds);
 
             if funds.is_zero() {
                 info!(log, "no funds available for trading");
@@ -133,7 +133,7 @@ pub async fn start() -> Result<()> {
         }
     } else {
         // 評価期間中: 既存トークンを継続使用、追加の資金準備は不要
-        info!(log, "continuing evaluation period, skipping prepare_funds");
+        debug!(log, "continuing evaluation period, skipping prepare_funds");
         YoctoAmount::zero() // available_funds は使用されない
     };
 
@@ -155,7 +155,7 @@ pub async fn start() -> Result<()> {
                 .await
             {
                 Ok(_) => {
-                    info!(log, "updated selected tokens in database"; "count" => tokens.len());
+                    debug!(log, "updated selected tokens in database"; "count" => tokens.len());
                 }
                 Err(e) => {
                     error!(log, "failed to update selected tokens"; "error" => ?e);
@@ -172,7 +172,7 @@ pub async fn start() -> Result<()> {
             .collect()
     };
 
-    info!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
+    debug!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
 
     if selected_tokens.is_empty() {
         info!(log, "no tokens selected for trading");
@@ -189,26 +189,26 @@ pub async fn start() -> Result<()> {
         .filter_map(|t| t.as_str().parse().ok())
         .collect();
 
-    info!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
+    debug!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
     crate::ref_finance::storage::ensure_ref_storage_setup(&client, &wallet, &token_accounts)
         .await?;
-    info!(log, "REF Finance storage setup completed");
+    debug!(log, "REF Finance storage setup completed");
 
     // Step 5: 投資額全額を REF Finance にデポジット (新規期間のみ)
     if is_new_period {
-        info!(log, "depositing initial investment to REF Finance"; "amount" => %available_funds);
+        debug!(log, "depositing initial investment to REF Finance"; "amount" => %available_funds);
         crate::ref_finance::balances::deposit_wrap_near_to_ref(
             &client,
             &wallet,
             available_funds.to_u128(),
         )
         .await?;
-        info!(log, "initial investment deposited to REF Finance");
+        debug!(log, "initial investment deposited to REF Finance");
     }
 
     // Step 6: ポートフォリオ戦略決定と実行
     // 新規期間も評価期間中も予測ベースの最適化を実行
-    info!(log, "executing portfolio optimization";
+    debug!(log, "executing portfolio optimization";
         "is_new_period" => is_new_period,
         "token_count" => selected_tokens.len()
     );
@@ -290,7 +290,7 @@ async fn prepare_funds() -> Result<YoctoAmount> {
         ));
     }
 
-    info!(log, "prepared funds";
+    debug!(log, "prepared funds";
         "account" => %account_id,
         "wrap_near_balance" => balance,
         "available_funds" => %available_funds
@@ -339,7 +339,7 @@ async fn select_top_volatility_tokens(
                 ));
             }
 
-            info!(log, "selected tokens from prediction service"; "count" => tokens.len());
+            debug!(log, "selected tokens from prediction service"; "count" => tokens.len());
 
             // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
             let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
@@ -354,7 +354,7 @@ async fn select_top_volatility_tokens(
                         .iter()
                         .map(|t| t.as_account_id().to_string())
                         .collect();
-                    info!(log, "buyable tokens (wrap.near → token)";
+                    trace!(log, "buyable tokens (wrap.near → token)";
                         "count" => token_ids.len(),
                     );
                     token_ids
@@ -375,7 +375,7 @@ async fn select_top_volatility_tokens(
                 .filter(|token| buyable_tokens.contains(&token.to_string()))
                 .collect();
 
-            info!(log, "tokens after buyability filtering";
+            debug!(log, "tokens after buyability filtering";
                 "original_count" => original_count,
                 "buyable_count" => buyable_filtered.len(),
             );
@@ -404,15 +404,15 @@ async fn select_top_volatility_tokens(
 
                             // 必要な数に達したら即座に終了
                             if filtered_tokens.len() >= limit {
-                                info!(log, "reached required token count, stopping early"; "count" => limit);
+                                trace!(log, "reached required token count, stopping early"; "count" => limit);
                                 break;
                             }
                         } else {
-                            info!(log, "token not sellable to wrap.near, skipping"; "token" => %token);
+                            trace!(log, "token not sellable to wrap.near, skipping"; "token" => %token);
                         }
                     }
                     Err(_) => {
-                        info!(log, "failed to check sellability, skipping"; "token" => %token);
+                        trace!(log, "failed to check sellability, skipping"; "token" => %token);
                     }
                 }
             }
@@ -437,7 +437,7 @@ async fn select_top_volatility_tokens(
                 );
             }
 
-            info!(log, "tokens after liquidity filtering";
+            debug!(log, "tokens after liquidity filtering";
                 "original_count" => original_count,
                 "filtered_count" => filtered_tokens.len(),
                 "required_count" => limit,
@@ -611,7 +611,7 @@ where
         // price 形式なので、予測価格 > 現在価格 = 正のリターン
         let expected_price_return_pct = current_price.expected_return(&predicted_price) * 100.0;
 
-        info!(log, "token prediction";
+        trace!(log, "token prediction";
             "token" => %token,
             "current_price" => %current_price,
             "predicted_price" => %predicted_price,
@@ -666,11 +666,11 @@ where
     // 既存ポジションの取得（評価期間中のみ）
     let holdings = if is_new_period {
         // 新規期間: ポジションなし
-        info!(log, "new evaluation period, starting with empty holdings");
+        debug!(log, "new evaluation period, starting with empty holdings");
         BTreeMap::new()
     } else {
         // 評価期間中: 既存のポジションを取得
-        info!(
+        debug!(
             log,
             "continuing evaluation period, loading current holdings"
         );
@@ -683,7 +683,7 @@ where
         let mut holdings_typed = BTreeMap::new();
         for (token, amount) in current_balances {
             if !amount.is_zero() {
-                info!(log, "loaded existing position"; "token" => &token, "amount" => %amount);
+                trace!(log, "loaded existing position"; "token" => &token, "amount" => %amount);
                 if let Ok(token_out) = token.parse::<zaciraci_common::types::TokenOutAccount>() {
                     holdings_typed.insert(token_out, amount);
                 }
@@ -725,7 +725,7 @@ where
     );
 
     for (token, weight) in &execution_report.optimal_weights.weights {
-        info!(log, "optimal weight";
+        trace!(log, "optimal weight";
             "token" => %token,
             "weight" => weight,
             "percentage" => format!("{:.2}%", weight * 100.0)
@@ -754,7 +754,7 @@ async fn execute_trading_actions(
 
     // TradeRecorderを作成（バッチIDで関連取引をグループ化）
     let recorder = TradeRecorder::new(period_id.clone());
-    info!(log, "created trade recorder";
+    trace!(log, "created trade recorder";
         "batch_id" => recorder.get_batch_id(),
         "period_id" => %period_id
     );
@@ -795,12 +795,12 @@ where
     match action {
         TradingAction::Hold => {
             // HODLなので何もしない
-            info!(log, "holding position");
+            trace!(log, "holding position");
             Ok(())
         }
         TradingAction::Sell { token, target } => {
             // token を売却して target を購入
-            info!(log, "executing sell"; "from" => %token, "to" => %target);
+            debug!(log, "executing sell"; "from" => %token, "to" => %target);
 
             // 2段階のswap: token → wrap.near → target
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
@@ -829,23 +829,23 @@ where
                     .await?;
             }
 
-            info!(log, "sell completed"; "from" => %token, "to" => %target);
+            debug!(log, "sell completed"; "from" => %token, "to" => %target);
             Ok(())
         }
         TradingAction::Switch { from, to } => {
             // from から to へ切り替え（直接スワップ）
             // common と backend の TokenAccount は同一型なので直接使用可能
-            info!(log, "executing switch"; "from" => %from, "to" => %to);
+            debug!(log, "executing switch"; "from" => %from, "to" => %to);
 
             let from_token = from.as_in();
             swap::execute_direct_swap(client, wallet, &from_token, to, None, recorder).await?;
 
-            info!(log, "switch completed"; "from" => %from, "to" => %to);
+            debug!(log, "switch completed"; "from" => %from, "to" => %to);
             Ok(())
         }
         TradingAction::Rebalance { target_weights } => {
             // ポートフォリオのリバランス
-            info!(log, "executing rebalance"; "weights" => ?target_weights);
+            debug!(log, "executing rebalance"; "weights" => ?target_weights);
 
             // 現在の保有量を取得（wrap.nearを明示的に追加）
             // TokenOutAccount → String に変換
@@ -853,12 +853,12 @@ where
             let wrap_near = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
             if !tokens.contains(&wrap_near) {
                 tokens.push(wrap_near.clone());
-                info!(
+                trace!(
                     log,
                     "added wrap.near to balance query for total value calculation"
                 );
             }
-            info!(log, "tokens list for balance query"; "tokens" => ?tokens, "count" => tokens.len());
+            trace!(log, "tokens list for balance query"; "tokens" => ?tokens, "count" => tokens.len());
 
             let current_balances =
                 crate::trade::swap::get_current_portfolio_balances(client, wallet, &tokens).await?;
@@ -923,7 +923,7 @@ where
                 // 差分を計算（wrap.near単位）
                 let diff_wrap_near: NearValue = &target_value_wrap_near - &current_value_wrap_near;
 
-                info!(log, "rebalancing: token analysis";
+                trace!(log, "rebalancing: token analysis";
                     "token" => &token_str,
                     "current_value_wrap_near" => %current_value_wrap_near,
                     "target_value_wrap_near" => %target_value_wrap_near,
@@ -966,7 +966,7 @@ where
                 wrap_near_token.to_out();
 
             // Phase 1: 全ての売却を実行（token → wrap.near）
-            info!(log, "Phase 1: executing sell operations"; "count" => sell_operations.len());
+            debug!(log, "Phase 1: executing sell operations"; "count" => sell_operations.len());
             for (token, wrap_near_value, exchange_rate) in sell_operations {
                 // wrap.near価値をトークン数量に変換
                 // NearValue * ExchangeRate = TokenAmount
@@ -979,7 +979,7 @@ where
                     .parse::<u128>()
                     .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
 
-                info!(log, "selling token";
+                trace!(log, "selling token";
                     "token" => &token,
                     "wrap_near_value" => %wrap_near_value,
                     "token_amount" => token_amount_u128
@@ -1011,7 +1011,7 @@ where
                     .unwrap_or_default()
             };
 
-            info!(log, "Phase 1 completed, checking available wrap.near";
+            debug!(log, "Phase 1 completed, checking available wrap.near";
                 "available_wrap_near" => %available_wrap_near
             );
 
@@ -1025,7 +1025,7 @@ where
                 .map(|(_, value)| value.clone())
                 .fold(NearValue::zero(), |acc, v| acc + v);
 
-            info!(log, "Phase 2 purchase amount analysis";
+            debug!(log, "Phase 2 purchase amount analysis";
                 "total_buy_value" => %total_buy_value,
                 "available_wrap_near_value" => %available_wrap_near_value
             );
@@ -1035,7 +1035,7 @@ where
                 if total_buy_value > available_wrap_near_value {
                     // 比率を計算して調整（型安全な除算演算子を使用）
                     let ratio = &available_wrap_near_value / &total_buy_value;
-                    info!(log, "Adjusting purchase amounts to fit available balance";
+                    debug!(log, "Adjusting purchase amounts to fit available balance";
                         "adjustment_factor" => %ratio
                     );
 
@@ -1048,7 +1048,7 @@ where
                 };
 
             // Phase 2: 全ての購入を実行（wrap.near → token）
-            info!(log, "Phase 2: executing buy operations"; "count" => adjusted_buy_operations.len());
+            debug!(log, "Phase 2: executing buy operations"; "count" => adjusted_buy_operations.len());
 
             let mut phase2_success = 0;
             let mut phase2_failed = 0;
@@ -1063,7 +1063,7 @@ where
                     continue;
                 }
 
-                info!(log, "buying token";
+                trace!(log, "buying token";
                     "token" => &token,
                     "wrap_near_amount" => wrap_near_amount_u128
                 );
@@ -1088,7 +1088,7 @@ where
                 .await
                 {
                     Ok(_) => {
-                        info!(log, "purchase completed successfully"; "token" => &token);
+                        trace!(log, "purchase completed successfully"; "token" => &token);
                         phase2_success += 1;
                     }
                     Err(e) => {
@@ -1115,7 +1115,7 @@ where
         }
         TradingAction::AddPosition { token, weight } => {
             // ポジション追加
-            info!(log, "adding position"; "token" => %token, "weight" => weight);
+            debug!(log, "adding position"; "token" => %token, "weight" => weight);
 
             // wrap.near → token へのswap
             // common と backend の TokenAccount は同一型なので直接使用可能
@@ -1126,13 +1126,13 @@ where
                     .await?;
             }
 
-            info!(log, "position added"; "token" => %token, "weight" => weight);
+            debug!(log, "position added"; "token" => %token, "weight" => weight);
             Ok(())
         }
         TradingAction::ReducePosition { token, weight } => {
             // ポジション削減
             // common と backend の TokenAccount は同一型なので直接使用可能
-            info!(log, "reducing position"; "token" => %token, "weight" => weight);
+            debug!(log, "reducing position"; "token" => %token, "weight" => weight);
 
             // token → wrap.near へのswap
             let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
@@ -1150,7 +1150,7 @@ where
                 .await?;
             }
 
-            info!(log, "position reduced"; "token" => %token, "weight" => weight);
+            debug!(log, "position reduced"; "token" => %token, "weight" => weight);
             Ok(())
         }
     }
@@ -1256,7 +1256,7 @@ async fn manage_evaluation_period(
                 Ok((created_period.period_id, true, vec![], Some(final_balance)))
             } else {
                 // 評価期間中: トランザクション記録で判定
-                info!(log, "checking evaluation period status";
+                debug!(log, "checking evaluation period status";
                     "period_id" => %period_id,
                     "days_remaining" => evaluation_period_days - period_duration.num_days()
                 );
@@ -1266,7 +1266,7 @@ async fn manage_evaluation_period(
                 let transaction_count =
                     TradeTransaction::count_by_evaluation_period_async(period_id.clone()).await?;
 
-                info!(log, "transaction count for period";
+                debug!(log, "transaction count for period";
                     "count" => transaction_count,
                     "period_id" => %period_id
                 );
@@ -1281,12 +1281,12 @@ async fn manage_evaluation_period(
                 let is_new_period = transaction_count == 0;
 
                 if is_new_period {
-                    info!(
+                    debug!(
                         log,
                         "no transactions found in period, treating as new period"
                     );
                 } else {
-                    info!(log, "continuing evaluation period with existing positions";
+                    debug!(log, "continuing evaluation period with existing positions";
                         "transaction_count" => transaction_count
                     );
                 }
@@ -1349,13 +1349,13 @@ async fn liquidate_all_positions() -> Result<YoctoAmount> {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<String>>();
-            info!(log, "evaluation period selected tokens";
+            trace!(log, "evaluation period selected tokens";
                   "period_id" => &period.period_id,
                   "selected_tokens" => ?selected_tokens);
             period.period_id
         }
         None => {
-            info!(log, "no evaluation period found, nothing to liquidate");
+            debug!(log, "no evaluation period found, nothing to liquidate");
             return Ok(YoctoAmount::zero());
         }
     };
@@ -1370,7 +1370,7 @@ async fn liquidate_all_positions() -> Result<YoctoAmount> {
     let tokens_to_liquidate = filter_tokens_to_liquidate(&deposits, wrap_near_token);
 
     if tokens_to_liquidate.is_empty() {
-        info!(log, "no tokens to liquidate");
+        debug!(log, "no tokens to liquidate");
         // wrap.nearの残高を返す
         let wrap_near = &crate::ref_finance::token_account::WNEAR_TOKEN;
         let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
@@ -1388,7 +1388,7 @@ async fn liquidate_all_positions() -> Result<YoctoAmount> {
 
     // 各トークンをwrap.nearに変換
     for token in &tokens_to_liquidate {
-        info!(log, "liquidating token"; "token" => token);
+        trace!(log, "liquidating token"; "token" => token);
 
         // トークンの残高を再確認（取得時点から変更がある可能性を考慮）
         let token_account: crate::ref_finance::token_account::TokenAccount = token
@@ -1404,7 +1404,7 @@ async fn liquidate_all_positions() -> Result<YoctoAmount> {
             .unwrap_or_default();
 
         if balance == 0 {
-            info!(log, "token balance became zero, skipping"; "token" => token);
+            trace!(log, "token balance became zero, skipping"; "token" => token);
             continue;
         }
 
@@ -1423,7 +1423,7 @@ async fn liquidate_all_positions() -> Result<YoctoAmount> {
         .await
         {
             Ok(_) => {
-                info!(log, "successfully liquidated token"; "token" => token);
+                trace!(log, "successfully liquidated token"; "token" => token);
             }
             Err(e) => {
                 error!(log, "failed to liquidate token"; "token" => token, "error" => ?e);
@@ -1817,10 +1817,10 @@ impl SameBaseTokenRates {
             "start" => format!("{:?}", range.start),
             "end" => format!("{:?}", range.end),
         ));
-        info!(log, "start");
+        trace!(log, "start");
         match TokenRate::get_rates_in_time_range(range, base, quote).await {
             Ok(rates) => {
-                info!(log, "loaded rates"; "rates_count" => rates.len());
+                trace!(log, "loaded rates"; "rates_count" => rates.len());
                 let points = rates
                     .iter()
                     .map(|r| Point {
@@ -1843,7 +1843,7 @@ impl SameBaseTokenRates {
             "rates_count" => self.points.len(),
             "period" => format!("{}", period),
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         if self.points.is_empty() {
             return ListStatsInPeriod(Vec::new());
@@ -1911,7 +1911,7 @@ impl SameBaseTokenRates {
             current_start = current_end;
         }
 
-        info!(log, "success"; "stats_count" => stats.len());
+        trace!(log, "success"; "stats_count" => stats.len());
         ListStatsInPeriod(stats)
     }
 }
@@ -1963,7 +1963,7 @@ where
             "function" => "ListStatsInPeriod::describes",
             "stats_count" => self.0.len(),
         ));
-        info!(log, "start");
+        trace!(log, "start");
         let mut lines = Vec::new();
         let mut prev = None;
         for stat in self.0.iter() {
@@ -1997,13 +1997,13 @@ where
                 ave = Self::format_decimal(&stat.average),
             );
             let line = format!("{date}, {summary}{changes}");
-            debug!(log, "added line";
+            trace!(log, "added line";
                 "line" => &line,
             );
             lines.push(line);
             prev = Some(stat);
         }
-        info!(log, "success";
+        trace!(log, "success";
            "lines_count" => lines.len(),
         );
         lines

@@ -16,7 +16,7 @@ use near_primitives::types::Balance;
 use num_integer::Roots;
 use num_traits::{One, Zero, one, zero};
 use preview::{Preview, PreviewList};
-use slog::info;
+use slog::trace;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -100,7 +100,7 @@ where
         "total_amount" => format!("{:?}", total_amount),
         "gas_price" => format!("{:?}", gas_price),
     ));
-    info!(log, "start");
+    trace!(log, "start");
 
     let min_input = one();
     let ave_input = {
@@ -131,7 +131,7 @@ where
     let result = search_best_path(min_input, ave_input, total_amount, do_pick, |a| {
         a.total_gain
     })?;
-    info!(log, "finish");
+    trace!(log, "finish");
     Ok(result.map(|a| Arc::into_inner(a).expect("should be unwrapped")))
 }
 
@@ -153,7 +153,7 @@ where
         "amount" => format!("{:?}", amount),
         "limit" => limit
     ));
-    info!(log, "start");
+    trace!(log, "start");
 
     let list = graph.list_returns(amount.into(), start, goals)?;
     let mut goals = vec![];
@@ -194,7 +194,7 @@ where
         "average" => format!("{:?}", average),
         "max" => format!("{:?}", max)
     ));
-    info!(log, "start");
+    trace!(log, "start");
 
     #[derive(Debug, Clone)]
     struct InnerError(Arc<anyhow::Error>);
@@ -312,7 +312,7 @@ where
         }
     }
 
-    info!(log, "finish";
+    trace!(log, "finish";
         "a" => format!("{:?}", in_a),
         "b" => format!("{:?}", in_b),
         "c" => format!("{:?}", in_c)

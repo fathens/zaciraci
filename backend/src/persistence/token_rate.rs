@@ -115,7 +115,7 @@ impl TokenRate {
                     "function" => "from_db_with_backfill",
                     "base_token" => db_rate.base_token.clone(),
                 ));
-                info!(log, "backfilling decimals for token with NULL");
+                trace!(log, "backfilling decimals for token with NULL");
 
                 let client = crate::jsonrpc::new_client();
                 let decimals = crate::trade::token_cache::get_token_decimals_cached(
@@ -152,7 +152,7 @@ impl TokenRate {
         // RPC で decimals を取得して backfill
         let mut decimals_map: HashMap<String, u8> = HashMap::new();
         if !tokens_with_null.is_empty() {
-            info!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
+            trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
 
             let client = crate::jsonrpc::new_client();
             for token in &tokens_with_null {
@@ -196,7 +196,7 @@ impl TokenRate {
             "base_token" => base_token.to_string(),
             "decimals" => decimals,
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let conn = connection_pool::get().await?;
         let base_token = base_token.to_string();
@@ -214,7 +214,7 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        info!(log, "finish"; "updated_count" => updated_count);
+        trace!(log, "finish"; "updated_count" => updated_count);
         Ok(updated_count)
     }
 
@@ -260,7 +260,7 @@ impl TokenRate {
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(90);
 
-        info!(log, "cleaning up old records"; "retention_days" => retention_days);
+        trace!(log, "cleaning up old records"; "retention_days" => retention_days);
         TokenRate::cleanup_old_records(retention_days).await?;
 
         info!(log, "finish");
@@ -276,7 +276,7 @@ impl TokenRate {
             "function" => "cleanup_old_records",
             "retention_days" => retention_days,
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let conn = connection_pool::get().await?;
 
@@ -293,7 +293,7 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        info!(log, "finish"; "deleted_count" => deleted_count, "cutoff_date" => %cutoff_date);
+        trace!(log, "finish"; "deleted_count" => deleted_count, "cutoff_date" => %cutoff_date);
         Ok(())
     }
 
@@ -395,7 +395,7 @@ impl TokenRate {
             "range.start" => range_start.to_string(),
             "range.end" => range_end.to_string(),
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let conn = connection_pool::get().await?;
 

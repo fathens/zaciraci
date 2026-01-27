@@ -91,7 +91,7 @@ where
 
         match (next - now).to_std() {
             Ok(wait) => {
-                info!(log, "waiting for next execution";
+                debug!(log, "waiting for next execution";
                     "wait_seconds" => wait.as_secs(),
                     "next_time" => %next
                 );
@@ -159,21 +159,21 @@ async fn record_rates() -> Result<()> {
     let quote_token = &get_quote_token();
     let initial_value = get_initial_value();
 
-    info!(log, "recording rates";
+    trace!(log, "recording rates";
         "quote_token" => %quote_token,
         "initial_value" => %initial_value,
     );
 
     let client = &jsonrpc::new_client();
 
-    info!(log, "loading pools");
+    trace!(log, "loading pools");
     let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
     pools.write_to_db().await?;
 
-    info!(log, "updating graph");
+    trace!(log, "updating graph");
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
     let goals = graph.update_graph(quote_token)?;
-    info!(log, "found targets"; "goals" => %goals.len());
+    trace!(log, "found targets"; "goals" => %goals.len());
     // NearAmount → YoctoAmount → u128 に変換して list_values に渡す
     let initial_yocto = initial_value.to_yocto().to_u128();
     let values = graph.list_values(initial_yocto, quote_token, &goals)?;
@@ -182,7 +182,7 @@ async fn record_rates() -> Result<()> {
         "num_values" => values.len().to_string(),
     ));
 
-    info!(log, "converting to rates (yocto scale)");
+    trace!(log, "converting to rates (yocto scale)");
 
     // 各トークンの decimals を取得（キャッシュ経由、DB 初期化済み）
     let token_ids: Vec<String> = values
@@ -214,10 +214,10 @@ async fn record_rates() -> Result<()> {
         })
         .collect();
 
-    info!(log, "inserting rates");
+    trace!(log, "inserting rates");
     TokenRate::batch_insert(&rates).await?;
 
-    info!(log, "success");
+    debug!(log, "success");
     Ok(())
 }
 

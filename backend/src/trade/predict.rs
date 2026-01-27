@@ -222,7 +222,7 @@ impl PredictionService {
 
         // トークンを10個ずつのバッチに分割して処理
         for (batch_index, batch) in tokens.chunks(batch_size).enumerate() {
-            info!(log, "Processing batch";
+            debug!(log, "Processing batch";
                 "batch_index" => batch_index,
                 "batch_size" => batch.len()
             );
@@ -231,7 +231,7 @@ impl PredictionService {
             // 注: バッチ間では並列化せず、バッチ内のトークンも順次処理する
             // これによりChronosサービスへの同時リクエスト数を制限
             for (token_index, token) in batch.iter().enumerate() {
-                info!(log, "Processing token";
+                trace!(log, "Processing token";
                     "batch_index" => batch_index,
                     "token_index" => token_index,
                     "token" => %token
@@ -259,7 +259,7 @@ impl PredictionService {
                 {
                     Ok(prediction) => {
                         all_predictions.insert(token.clone(), prediction);
-                        info!(log, "Successfully predicted price";
+                        trace!(log, "Successfully predicted price";
                             "token" => %token
                         );
                     }
@@ -330,7 +330,7 @@ impl PredictionService {
 
         for attempt in 0..=self.max_retries {
             if attempt > 0 {
-                info!(log, "Retrying get_price_history";
+                trace!(log, "Retrying get_price_history";
                     "token" => %token,
                     "attempt" => attempt,
                     "max_retries" => self.max_retries
@@ -369,7 +369,7 @@ impl PredictionService {
 
         for attempt in 0..=self.max_retries {
             if attempt > 0 {
-                info!(log, "Retrying predict_price";
+                trace!(log, "Retrying predict_price";
                     "token" => %history.token,
                     "attempt" => attempt,
                     "max_retries" => self.max_retries

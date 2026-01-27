@@ -45,7 +45,7 @@ where
             TokenAmount::from_smallest_units(BigDecimal::from(balance), decimals),
         );
 
-        info!(log, "retrieved balance"; "token" => token, "balance" => balance, "decimals" => decimals);
+        trace!(log, "retrieved balance"; "token" => token, "balance" => balance, "decimals" => decimals);
     }
 
     Ok(balances)
@@ -120,7 +120,7 @@ where
         }
     }
 
-    info!(log, "calculated total portfolio value"; "total_value" => %total_value);
+    trace!(log, "calculated total portfolio value"; "total_value" => %total_value);
     Ok(total_value)
 }
 
@@ -146,7 +146,7 @@ where
         "from" => format!("{}", from_token),
         "to" => format!("{}", to_token)
     ));
-    info!(log, "starting direct swap");
+    debug!(log, "starting direct swap");
 
     // 型安全な TokenAccount に変換
     let from_token_account: crate::ref_finance::token_account::TokenAccount =

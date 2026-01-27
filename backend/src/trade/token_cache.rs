@@ -26,7 +26,7 @@ struct TokenDecimalsRow {
 /// 起動時に DB から全トークンの decimals を一括ロード (1 SQL クエリ)
 pub async fn load_from_db() -> crate::Result<()> {
     let log = DEFAULT.new(o!("function" => "token_cache::load_from_db"));
-    info!(log, "loading token decimals from DB");
+    trace!(log, "loading token decimals from DB");
 
     let conn = connection_pool::get().await?;
 
@@ -74,7 +74,7 @@ where
         "function" => "token_cache::get_token_decimals_cached",
         "token_id" => token_id.to_owned(),
     ));
-    info!(log, "cache miss, fetching decimals via RPC");
+    debug!(log, "cache miss, fetching decimals via RPC");
 
     let decimals = super::stats::get_token_decimals(client, token_id).await?;
 
@@ -113,11 +113,11 @@ where
     }
 
     if missing.is_empty() {
-        info!(log, "all tokens found in cache"; "cached" => result.len());
+        trace!(log, "all tokens found in cache"; "cached" => result.len());
         return result;
     }
 
-    info!(log, "fetching missing decimals via RPC";
+    debug!(log, "fetching missing decimals via RPC";
         "cached" => result.len(),
         "missing" => missing.len()
     );
@@ -159,7 +159,7 @@ where
         }
     }
 
-    info!(log, "decimals cache updated"; "total" => result.len());
+    trace!(log, "decimals cache updated"; "total" => result.len());
     result
 }
 
