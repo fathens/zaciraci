@@ -54,7 +54,7 @@ pub fn get_base_url() -> String {
     config::get("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/api".to_string())
 }
 
-pub async fn find_model(base_url: &str, name: String) -> Result<Model> {
+pub async fn find_model(base_url: &str, name: &str) -> Result<Model> {
     let log = DEFAULT.new(o!("function" => "find_model"));
     info!(log, "Finding model");
     let models = list_models(base_url).await?;
@@ -91,7 +91,7 @@ impl Client {
         }
     }
 
-    pub async fn new_by_name(name: String, base_url: String) -> Result<Self> {
+    pub async fn new_by_name(name: &str, base_url: String) -> Result<Self> {
         let model = find_model(&base_url, name).await?;
         Ok(Self::new(model.name, base_url))
     }
@@ -99,13 +99,8 @@ impl Client {
     pub async fn chat(&self, messages: Vec<Message>) -> Result<String> {
         let log = DEFAULT.new(o!("function" => "chat"));
         info!(log, "Chatting");
-        let response = chat::chat(
-            &self.client,
-            self.base_url.clone(),
-            self.model.clone(),
-            messages,
-        )
-        .await?;
+        let response =
+            chat::chat(&self.client, &self.base_url, self.model.clone(), messages).await?;
         Ok(response.message.content)
     }
 
@@ -114,7 +109,7 @@ impl Client {
         info!(log, "Generating");
         let response = generate::generate(
             &self.client,
-            self.base_url.clone(),
+            &self.base_url,
             self.model.clone(),
             prompt,
             images,

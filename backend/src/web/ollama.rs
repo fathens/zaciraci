@@ -42,7 +42,7 @@ async fn chat(State(_): State<Arc<AppState>>, Json(request): Json<ChatRequest>) 
     ));
     info!(log, "start");
 
-    let client = match ollama::Client::new_by_name(request.model_name, get_base_url()).await {
+    let client = match ollama::Client::new_by_name(&request.model_name, get_base_url()).await {
         Ok(client) => client,
         Err(err) => {
             info!(log, "Failed to create client"; "error" => ?err);
@@ -70,7 +70,7 @@ async fn generate(State(_): State<Arc<AppState>>, Json(request): Json<GenerateRe
     let prompt = request.prompt;
     let images = request.images;
 
-    let client = match ollama::Client::new_by_name(request.model_name, get_base_url()).await {
+    let client = match ollama::Client::new_by_name(&request.model_name, get_base_url()).await {
         Ok(client) => client,
         Err(err) => {
             info!(log, "Failed to create client"; "error" => ?err);

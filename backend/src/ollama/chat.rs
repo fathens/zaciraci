@@ -28,7 +28,7 @@ pub struct Response {
 
 pub async fn chat(
     client: &reqwest::Client,
-    base_url: String,
+    base_url: &str,
     model: ModelName,
     messages: Vec<Message>,
 ) -> Result<Response> {
@@ -39,7 +39,7 @@ pub async fn chat(
         messages,
         stream: false,
     };
-    let url = base_url + "/chat";
+    let url = format!("{}/chat", base_url);
     let response = client.post(&url).json(&request).send().await?;
     let response: Response = response.json().await?;
     Ok(response)
@@ -61,9 +61,7 @@ mod tests {
             role: "user".to_string(),
             content: "Hello, world!".to_string(),
         }];
-        let response = chat(&client, base_url.clone(), model, messages)
-            .await
-            .unwrap();
+        let response = chat(&client, &base_url, model, messages).await.unwrap();
         debug!(log, "response = {response:#?}");
     }
 }
