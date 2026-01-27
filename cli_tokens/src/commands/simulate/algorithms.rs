@@ -457,13 +457,8 @@ pub(crate) async fn run_portfolio_optimization_simulation(
     // タイムステップ設定
     let time_step = config.rebalance_interval.as_duration();
 
-    // 全ターゲットトークンの decimals を取得
-    let backend_client = BackendClient::new();
-    let mut token_decimals: HashMap<String, u8> = HashMap::new();
-    for token in &config.target_tokens {
-        let decimals = backend_client.get_token_decimals(token).await?;
-        token_decimals.insert(token.clone(), decimals);
-    }
+    // Token decimals のローカルキャッシュ（リバランス時に遅延取得）
+    let mut decimals_cache = super::token_decimals_cache::TokenDecimalsCache::new();
 
     let mut current_time = config.start_date;
     let mut portfolio_values = Vec::new();
@@ -542,7 +537,7 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                 Ok(t) => t,
                                 Err(_) => continue,
                             };
-                            let decimals = token_decimals.get(token).copied().unwrap_or(24);
+                            let decimals = decimals_cache.resolve(&backend_client, token).await?;
                             token_data.push(TokenData {
                                 symbol: token_out,
                                 current_rate: ExchangeRate::from_price(
@@ -670,10 +665,9 @@ pub(crate) async fn run_portfolio_optimization_simulation(
                                             let target_amount = target_value_yocto / current_price;
 
                                             // 現実的な数量制限を適用
-                                            let decimals = token_decimals
-                                                .get(&token_str)
-                                                .copied()
-                                                .unwrap_or(24);
+                                            let decimals = decimals_cache
+                                                .resolve(&backend_client, &token_str)
+                                                .await?;
                                             // 最大 1000 whole tokens
                                             let max_reasonable_amount =
                                                 TokenAmountF64::from_whole_tokens(1000.0, decimals);

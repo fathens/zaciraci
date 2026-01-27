@@ -1,6 +1,7 @@
 pub mod algorithms;
 pub mod data;
 pub mod metrics;
+pub mod token_decimals_cache;
 pub mod trading;
 pub mod types;
 pub mod utils;

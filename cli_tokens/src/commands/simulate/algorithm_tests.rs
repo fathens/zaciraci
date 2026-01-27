@@ -265,6 +265,41 @@ mod algorithm_integration_tests {
         }
     }
 
+    /// リバランス未発生のポートフォリオシミュレーションはバックエンド接続不要であることを検証
+    #[tokio::test]
+    async fn test_portfolio_no_rebalance_succeeds_without_backend() {
+        // 1時間の短期間（rebalance_interval=1d よりはるかに短い）→ リバランスなし → decimals 取得なし
+        let start_date = DateTime::parse_from_rfc3339("2024-08-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_date = DateTime::parse_from_rfc3339("2024-08-01T01:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let tokens = vec!["token_a".to_string(), "token_b".to_string()];
+        let config = create_test_config(
+            AlgorithmType::Portfolio,
+            start_date,
+            end_date,
+            tokens.clone(),
+        );
+
+        let price_data =
+            create_mock_price_data(&["token_a", "token_b"], start_date, end_date, 100.0, 0.05);
+
+        let result = crate::commands::simulate::algorithms::run_portfolio_optimization_simulation(
+            &config,
+            &price_data,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "No-rebalance simulation must not require backend: {:?}",
+            result.err()
+        );
+    }
+
     #[test]
     fn test_simulation_config_builder() {
         let start_date = Utc::now();
