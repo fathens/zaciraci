@@ -2320,7 +2320,7 @@ fn test_revert_to_original_behavior() {
 fn test_dynamic_risk_adjustment() {
     // 高ボラティリティ環境のテスト
     let high_vol_data = create_high_volatility_portfolio_data();
-    let adjustment = super::calculate_dynamic_risk_adjustment(&high_vol_data);
+    let adjustment = super::calculate_dynamic_risk_adjustment(&high_vol_data.historical_prices);
     assert!(
         adjustment < 1.0,
         "高ボラティリティ時はリスクを抑制すべき: {}",
@@ -2334,7 +2334,7 @@ fn test_dynamic_risk_adjustment() {
 
     // 低ボラティリティ環境のテスト
     let low_vol_data = create_low_volatility_portfolio_data();
-    let adjustment = super::calculate_dynamic_risk_adjustment(&low_vol_data);
+    let adjustment = super::calculate_dynamic_risk_adjustment(&low_vol_data.historical_prices);
     // 実際の計算結果に基づいて期待値を調整
     assert!(
         adjustment >= 0.7,
@@ -2350,11 +2350,11 @@ fn test_dynamic_risk_adjustment() {
     println!("Dynamic risk adjustment tests passed");
     println!(
         "High volatility adjustment: {:.3}",
-        super::calculate_dynamic_risk_adjustment(&high_vol_data)
+        super::calculate_dynamic_risk_adjustment(&high_vol_data.historical_prices)
     );
     println!(
         "Low volatility adjustment: {:.3}",
-        super::calculate_dynamic_risk_adjustment(&low_vol_data)
+        super::calculate_dynamic_risk_adjustment(&low_vol_data.historical_prices)
     );
 }
 
