@@ -1,7 +1,10 @@
+pub mod execution;
 pub mod harvest;
+pub mod market_data;
 pub mod predict;
+pub mod rate_stats;
 pub mod recorder;
-pub mod stats;
+pub mod strategy;
 pub mod swap;
 pub mod token_cache;
 
@@ -64,7 +67,7 @@ async fn run_trade() {
     info!(log, "initializing auto trade cron job");
 
     let schedule = get_cron_schedule("TRADE_CRON_SCHEDULE", DEFAULT_CRON);
-    cronjob(schedule, stats::start, "auto_trade").await;
+    cronjob(schedule, strategy::start, "auto_trade").await;
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)

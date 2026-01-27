@@ -76,7 +76,7 @@ where
     ));
     debug!(log, "cache miss, fetching decimals via RPC");
 
-    let decimals = super::stats::get_token_decimals(client, token_id).await?;
+    let decimals = super::market_data::get_token_decimals(client, token_id).await?;
 
     // 3. 成功時のみキャッシュに保存
     {
@@ -129,7 +129,7 @@ where
         .map(|token_id| {
             let log = log.clone();
             async move {
-                match super::stats::get_token_decimals(client, &token_id).await {
+                match super::market_data::get_token_decimals(client, &token_id).await {
                     Ok(d) => (token_id, Some(d)),
                     Err(e) => {
                         warn!(log, "failed to fetch decimals via RPC"; "token_id" => &token_id, "error" => %e);

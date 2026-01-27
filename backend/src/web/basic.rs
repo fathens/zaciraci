@@ -63,7 +63,7 @@ async fn token_decimals(
     Path(token_id): Path<String>,
 ) -> Result<String, (StatusCode, String)> {
     let client = jsonrpc::new_client();
-    let decimals = crate::trade::stats::get_token_decimals(&client, &token_id)
+    let decimals = crate::trade::market_data::get_token_decimals(&client, &token_id)
         .await
         .map_err(|e| {
             (

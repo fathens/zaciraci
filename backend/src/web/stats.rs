@@ -2,7 +2,7 @@ use super::AppState;
 use crate::logging::*;
 use crate::{
     persistence::TimeRange, ref_finance::token_account::TokenAccount,
-    trade::stats::SameBaseTokenRates,
+    trade::rate_stats::SameBaseTokenRates,
 };
 use axum::{
     Router,
