@@ -112,7 +112,7 @@ impl RefPoolInfo {
             "function" => "batch_insert",
             "pool_infos" => pool_infos.len(),
         ));
-        info!(log, "start");
+        trace!(log, "start");
         use diesel::RunQueryDsl;
 
         if pool_infos.is_empty() {
@@ -139,10 +139,10 @@ impl RefPoolInfo {
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(10);
 
-        info!(log, "cleaning up old records"; "retention_count" => retention_count);
+        trace!(log, "cleaning up old records"; "retention_count" => retention_count);
         RefPoolInfo::cleanup_old_records(retention_count).await?;
 
-        info!(log, "finish");
+        trace!(log, "finish");
         Ok(())
     }
 
@@ -155,7 +155,7 @@ impl RefPoolInfo {
             "function" => "cleanup_old_records",
             "retention_count" => retention_count,
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let retention_count_i64 = retention_count as i64;
         let conn = connection_pool::get().await?;
@@ -180,7 +180,7 @@ impl RefPoolInfo {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        info!(log, "finish"; "deleted_count" => deleted_count);
+        trace!(log, "finish"; "deleted_count" => deleted_count);
         Ok(())
     }
 

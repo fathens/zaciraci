@@ -15,7 +15,7 @@ impl TradeRecorder {
     pub fn new(evaluation_period_id: String) -> Self {
         let batch_id = Uuid::new_v4().to_string();
         let log = DEFAULT.new(o!("function" => "TradeRecorder::new"));
-        info!(log, "created new trade recorder";
+        trace!(log, "created new trade recorder";
             "batch_id" => %batch_id,
             "period_id" => %evaluation_period_id
         );
@@ -59,7 +59,7 @@ impl TradeRecorder {
             .await
             .with_context(|| format!("Failed to insert trade transaction: {}", tx_id))?;
 
-        info!(log, "successfully recorded trade";
+        debug!(log, "successfully recorded trade";
             "from_amount" => %from_amount_bd,
             "from_token" => %from_token,
             "to_amount" => %to_amount_bd,

@@ -26,7 +26,7 @@ pub mod wnear {
             "function" => "balance_of",
             "account" => format!("{}", account),
         ));
-        info!(log, "entered");
+        trace!(log, "entered");
 
         const METHOD_NAME: &str = "ft_balance_of";
         let args = json!({
@@ -49,7 +49,7 @@ pub mod wnear {
             "function" => "wrap_near",
             "amount" => amount,
         ));
-        info!(log, "wrapping native token");
+        trace!(log, "wrapping native token");
 
         const METHOD_NAME: &str = "near_deposit";
 
@@ -76,7 +76,7 @@ pub mod wnear {
             "function" => "unwrap_near",
             "amount" => amount,
         ));
-        info!(log, "unwrapping native token");
+        trace!(log, "unwrapping native token");
 
         const METHOD_NAME: &str = "near_withdraw";
 
@@ -110,7 +110,7 @@ pub async fn deposit<C: SendTx, W: Wallet>(
         "token" => format!("{}", token),
         "amount" => amount,
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "ft_transfer_call";
 
@@ -136,7 +136,7 @@ pub async fn get_deposits<C: ViewContract>(
         "function" => "get_deposits",
         "account" => format!("{}", account),
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "get_deposits";
     let args = json!({
@@ -148,7 +148,7 @@ pub async fn get_deposits<C: ViewContract>(
         .await?;
 
     let deposits: HashMap<TokenAccount, U128> = serde_json::from_slice(&result.result)?;
-    info!(log, "deposits"; "deposits" => ?deposits);
+    trace!(log, "deposits"; "deposits" => ?deposits);
     Ok(deposits)
 }
 
@@ -163,7 +163,7 @@ pub async fn withdraw<C: SendTx, W: Wallet>(
         "token" => format!("{}", token),
         "amount" => amount,
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "withdraw";
 
@@ -190,7 +190,7 @@ pub async fn register_tokens<C: SendTx, W: Wallet>(
         "function" => "register_tokens",
         "tokens" => format!("{:?}", tokens),
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "register_tokens";
     let args = json!({
@@ -214,7 +214,7 @@ pub async fn unregister_tokens<C: SendTx, W: Wallet>(
         "function" => "unregister_tokens",
         "tokens" => format!("{:?}", tokens),
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "unregister_tokens";
     let args = json!({

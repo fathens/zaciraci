@@ -142,7 +142,7 @@ impl<A: RpcClient> TxInfo for StandardNearClient<A> {
             "tx_hash" => format!("{}", tx_hash),
             "wait_until" => format!("{:?}", wait_until),
         ));
-        info!(log, "asking for transaction status");
+        debug!(log, "asking for transaction status");
         let req = methods::tx::RpcTransactionStatusRequest {
             transaction_info: methods::tx::TransactionInfo::TransactionId {
                 tx_hash: tx_hash.to_owned(),
@@ -151,7 +151,7 @@ impl<A: RpcClient> TxInfo for StandardNearClient<A> {
             wait_until,
         };
         let res = self.rpc.call(req).await?;
-        info!(log, "Transaction status";
+        debug!(log, "Transaction status";
             "status" => format!("{:?}", res.final_execution_status),
         );
         Ok(res)

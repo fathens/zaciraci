@@ -22,11 +22,6 @@ async fn main() {
 
     let log = DEFAULT.new(o!("function" => "main"));
     info!(log, "Starting up");
-    debug!(log, "log level check");
-    trace!(log, "log level check");
-    error!(log, "log level check");
-    warn!(log, "log level check");
-    crit!(log, "log level check");
 
     let base = wallet::new_wallet().derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();

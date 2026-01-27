@@ -52,7 +52,7 @@ impl PoolsByToken {
             "function" => "group_by_out",
             "token_in" => token_in.to_string(),
         ));
-        info!(log, "finding edges");
+        trace!(log, "finding edges");
 
         self.by_in.get(token_in).map(|edges| {
             let mut edges_by_token_out = HashMap::new();
@@ -71,7 +71,7 @@ impl PoolsByToken {
                             })
                             .push(Arc::clone(edge))
                             .expect("should be same path"),
-                        Err(e) => info!(log, "no edge found"; "error" => %e),
+                        Err(e) => trace!(log, "no edge found"; "error" => %e),
                     }
                 }
             }

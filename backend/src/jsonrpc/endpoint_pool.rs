@@ -86,7 +86,7 @@ impl EndpointPool {
 
         let selected = self.weighted_random_select(&available);
         if let Some(ep) = selected {
-            info!(log, "endpoint selected";
+            trace!(log, "endpoint selected";
                 "url" => &ep.url,
                 "weight" => ep.weight,
                 "available_count" => available.len()

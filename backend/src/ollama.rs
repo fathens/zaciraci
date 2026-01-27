@@ -56,7 +56,7 @@ pub fn get_base_url() -> String {
 
 pub async fn find_model(base_url: &str, name: &str) -> Result<Model> {
     let log = DEFAULT.new(o!("function" => "find_model"));
-    info!(log, "Finding model");
+    trace!(log, "Finding model");
     let models = list_models(base_url).await?;
     for model in models.models {
         if model.name.0 == name {
@@ -68,7 +68,7 @@ pub async fn find_model(base_url: &str, name: &str) -> Result<Model> {
 
 pub async fn list_models(base_url: &str) -> Result<Models> {
     let log = DEFAULT.new(o!("function" => "list_models"));
-    info!(log, "Listing models");
+    trace!(log, "Listing models");
     let url = base_url.to_string() + "/tags";
     let response = reqwest::get(&url).await?;
     let models: Models = response.json().await?;
@@ -98,7 +98,7 @@ impl Client {
 
     pub async fn chat(&self, messages: Vec<Message>) -> Result<String> {
         let log = DEFAULT.new(o!("function" => "chat"));
-        info!(log, "Chatting");
+        trace!(log, "Chatting");
         let response =
             chat::chat(&self.client, &self.base_url, self.model.clone(), messages).await?;
         Ok(response.message.content)
@@ -106,7 +106,7 @@ impl Client {
 
     pub async fn generate(&self, prompt: String, images: Vec<Image>) -> Result<String> {
         let log = DEFAULT.new(o!("function" => "generate"));
-        info!(log, "Generating");
+        trace!(log, "Generating");
         let response = generate::generate(
             &self.client,
             &self.base_url,

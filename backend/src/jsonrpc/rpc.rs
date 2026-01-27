@@ -79,11 +79,11 @@ impl StandardRpcClient {
             "server" => endpoint_url.to_owned(),
             "method" => method.method_name().to_owned(),
         ));
-        info!(log, "calling");
+        debug!(log, "calling");
         let res = client.call(method).await;
         match res {
             Ok(res) => {
-                info!(log, "success");
+                trace!(log, "success");
                 MaybeRetry::Through(Ok(res))
             }
             Err(err) => match &err {
@@ -91,7 +91,7 @@ impl StandardRpcClient {
                     JsonRpcServerError::ResponseStatusError(
                         JsonRpcServerResponseStatusError::TooManyRequests,
                     ) => {
-                        info!(log, "response status error: too many requests");
+                        debug!(log, "response status error: too many requests");
                         // Mark endpoint as failed and switch to next endpoint immediately
                         self.endpoint_pool.mark_failed(endpoint_url);
                         MaybeRetry::SwitchEndpoint {
@@ -101,17 +101,17 @@ impl StandardRpcClient {
                         }
                     }
                     JsonRpcServerError::RequestValidationError(validation_err) => {
-                        info!(log, "server error: request validation error"; "error" => format!("{:?}", validation_err));
+                        debug!(log, "server error: request validation error"; "error" => format!("{:?}", validation_err));
                         MaybeRetry::Through(Err(err)) // リクエスト自体が無効なのでリトライしない
                     }
                     JsonRpcServerError::HandlerError(_) => {
-                        info!(log, "server error: handler error");
+                        debug!(log, "server error: handler error");
                         // ハンドラーエラーの内容によってはリトライ可能かもしれないが、
                         // 基本的にはアプリケーションロジックのエラーなのでリトライしない
                         MaybeRetry::Through(Err(err))
                     }
                     JsonRpcServerError::InternalError { info } => {
-                        info!(log, "server error: internal error"; "error_info" => format!("{:?}", info));
+                        debug!(log, "server error: internal error"; "error_info" => format!("{:?}", info));
                         // サーバー側の一時的な問題である可能性が高いのでリトライする
                         MaybeRetry::Retry {
                             err,
@@ -120,7 +120,7 @@ impl StandardRpcClient {
                         }
                     }
                     JsonRpcServerError::NonContextualError(non_contextual_err) => {
-                        info!(log, "server error: non contextual error"; "error" => format!("{:?}", non_contextual_err));
+                        debug!(log, "server error: non contextual error"; "error" => format!("{:?}", non_contextual_err));
                         // 詳細不明なエラーだが、サーバー側の問題の可能性もあるので慎重にリトライ
                         MaybeRetry::Retry {
                             err,
@@ -131,12 +131,12 @@ impl StandardRpcClient {
                     JsonRpcServerError::ResponseStatusError(status_err) => {
                         match status_err {
                             JsonRpcServerResponseStatusError::Unauthorized => {
-                                info!(log, "server error: unauthorized");
+                                debug!(log, "server error: unauthorized");
                                 // 認証エラーはリトライしても解決しない
                                 MaybeRetry::Through(Err(err))
                             }
                             _ => {
-                                info!(log, "server error: response status error (other)"; "status_error" => format!("{:?}", status_err));
+                                debug!(log, "server error: response status error (other)"; "status_error" => format!("{:?}", status_err));
                                 // 5xx系のエラーはサーバー側の問題の可能性が高いのでリトライ
                                 let status = match status_err {
                                     JsonRpcServerResponseStatusError::Unexpected { status } => {
@@ -163,7 +163,7 @@ impl StandardRpcClient {
                 JsonRpcError::TransportError(transport_err) => match transport_err {
                     RpcTransportError::SendError(send_err) => match send_err {
                         JsonRpcTransportSendError::PayloadSendError(e) => {
-                            info!(log, "transport error: payload send error"; "error" => format!("{:?}", e));
+                            debug!(log, "transport error: payload send error"; "error" => format!("{:?}", e));
                             MaybeRetry::Retry {
                                 err,
                                 msg: "payload send error".to_owned(),
@@ -171,20 +171,20 @@ impl StandardRpcClient {
                             }
                         }
                         JsonRpcTransportSendError::PayloadSerializeError(serialize_err) => {
-                            info!(log, "transport error: payload serialize error"; "error" => format!("{:?}", serialize_err));
+                            debug!(log, "transport error: payload serialize error"; "error" => format!("{:?}", serialize_err));
                             // シリアライズエラーはクライアント側の問題なのでリトライしない
                             MaybeRetry::Through(Err(err))
                         }
                     },
                     RpcTransportError::RecvError(recv_err) => match recv_err {
                         JsonRpcTransportRecvError::UnexpectedServerResponse(response) => {
-                            info!(log, "transport error: unexpected server response"; "response" => format!("{:?}", response));
+                            debug!(log, "transport error: unexpected server response"; "response" => format!("{:?}", response));
                             // 予期しないレスポンス形式はリトライしても解決しにくい
                             MaybeRetry::Through(Err(err))
                         }
                         JsonRpcTransportRecvError::PayloadRecvError(recv_error) => {
                             let msg = recv_error.to_string();
-                            info!(log, "transport error: payload receive error"; "error" => format!("{:?}", recv_error));
+                            debug!(log, "transport error: payload receive error"; "error" => format!("{:?}", recv_error));
                             // ネットワーク一時障害の可能性が高い
                             MaybeRetry::Retry {
                                 err,
@@ -194,7 +194,7 @@ impl StandardRpcClient {
                         }
                         JsonRpcTransportRecvError::PayloadParseError(parse_error) => {
                             let msg = format!("{:?}", parse_error);
-                            info!(log, "transport error: payload parse error"; "error" => format!("{:?}", parse_error));
+                            debug!(log, "transport error: payload parse error"; "error" => format!("{:?}", parse_error));
                             // サーバー負荷による一時的な不完全レスポンスの可能性
                             MaybeRetry::Retry {
                                 err,
@@ -204,7 +204,7 @@ impl StandardRpcClient {
                         }
                         JsonRpcTransportRecvError::ResponseParseError(response_parse_error) => {
                             let msg = response_parse_error.to_string();
-                            info!(log, "transport error: response parse error"; "error" => format!("{:?}", response_parse_error));
+                            debug!(log, "transport error: response parse error"; "error" => format!("{:?}", response_parse_error));
                             // サーバー側の一時的な問題の可能性
                             MaybeRetry::Retry {
                                 err,
@@ -265,7 +265,7 @@ impl super::RpcClient for StandardRpcClient {
                     MaybeRetry::Retry { err, msg, min_dur } => {
                         total_retry_count += 1;
                         if retry_limit < total_retry_count {
-                            info!(log, "global retry limit reached";
+                            warn!(log, "global retry limit reached";
                                 "reason" => msg,
                             );
                             return Err(err);
@@ -283,7 +283,7 @@ impl super::RpcClient for StandardRpcClient {
 
                         // Retry on same endpoint
                         let delay = calc_delay(total_retry_count).max(min_dur);
-                        info!(log, "retrying on same endpoint";
+                        debug!(log, "retrying on same endpoint";
                             "delay" => format!("{:?}", delay),
                             "reason" => msg,
                         );
@@ -294,7 +294,7 @@ impl super::RpcClient for StandardRpcClient {
                         // Endpoint is already marked as failed in call_maybe_retry
                         total_retry_count += 1;
                         if retry_limit < total_retry_count {
-                            info!(log, "global retry limit reached";
+                            warn!(log, "global retry limit reached";
                                 "reason" => &msg,
                             );
                             return Err(err);
