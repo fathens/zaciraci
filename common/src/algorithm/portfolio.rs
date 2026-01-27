@@ -290,8 +290,10 @@ pub fn calculate_efficient_frontier(
     // 初期解: 等配分
     let mut weights = vec![1.0 / n as f64; n];
 
-    // 制約付き最適化（簡略版）
+    // 制約付き最適化（収束判定付き）
     for _ in 0..MAX_OPTIMIZATION_ITERATIONS {
+        let prev_weights = weights.clone();
+
         weights =
             optimize_weights_step(&weights, expected_returns, covariance_matrix, target_return);
 
@@ -304,6 +306,16 @@ pub fn calculate_efficient_frontier(
             for w in weights.iter_mut() {
                 *w /= sum;
             }
+        }
+
+        // 収束判定: weight変化量が十分小さければ早期終了
+        let max_change = weights
+            .iter()
+            .zip(prev_weights.iter())
+            .map(|(w, pw)| (w - pw).abs())
+            .fold(0.0_f64, f64::max);
+        if max_change < 1e-6 {
+            break;
         }
     }
 
@@ -926,14 +938,49 @@ pub async fn execute_portfolio_optimization(
         sharpe_ratio,
     };
 
+    // ポートフォリオレベルの日次リターン系列を構築
+    let min_return_len = daily_returns.iter().map(|r| r.len()).min().unwrap_or(0);
+    let portfolio_daily_returns: Vec<f64> = if min_return_len > 0 && !optimal_weights.is_empty() {
+        (0..min_return_len)
+            .map(|day| {
+                optimal_weights
+                    .iter()
+                    .zip(daily_returns.iter())
+                    .map(|(w, returns)| w * returns[day])
+                    .sum()
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    let daily_risk_free = RISK_FREE_RATE / 365.0;
+    let sortino_ratio = super::calculate_sortino_ratio(&portfolio_daily_returns, daily_risk_free);
+
+    let cumulative_values: Vec<f64> = {
+        let mut vals = Vec::with_capacity(portfolio_daily_returns.len() + 1);
+        vals.push(1.0);
+        for &r in &portfolio_daily_returns {
+            vals.push(vals.last().unwrap() * (1.0 + r));
+        }
+        vals
+    };
+    let max_drawdown = super::calculate_max_drawdown(&cumulative_values);
+
+    let calmar_ratio = if max_drawdown > 0.0 {
+        portfolio_return / max_drawdown
+    } else {
+        0.0
+    };
+
     let expected_metrics = PortfolioMetrics {
         cumulative_return: portfolio_return,
         daily_return: portfolio_return,
         volatility: portfolio_vol * 365.0_f64.sqrt(),
         sharpe_ratio,
-        sortino_ratio: sharpe_ratio, // 簡略化
-        max_drawdown: 0.0,           // 将来実装
-        calmar_ratio: 0.0,           // 将来実装
+        sortino_ratio,
+        max_drawdown,
+        calmar_ratio,
         turnover_rate: calculate_turnover_rate(&current_weights, &optimal_weights),
     };
 
@@ -1014,11 +1061,15 @@ fn generate_rebalance_actions(
         let weight_diff = target_weights[i] - current_weights[i];
         if weight_diff.abs() > rebalance_threshold {
             if weight_diff > 0.0 {
-                // AddPosition equivalent using Hold for now
-                actions.push(TradingAction::Hold);
+                actions.push(TradingAction::AddPosition {
+                    token: token.symbol.clone(),
+                    weight: target_weights[i],
+                });
             } else if current_weights[i] > 0.0 {
-                // ReducePosition equivalent using Hold for now
-                actions.push(TradingAction::Hold);
+                actions.push(TradingAction::ReducePosition {
+                    token: token.symbol.clone(),
+                    weight: target_weights[i],
+                });
             }
         }
     }
