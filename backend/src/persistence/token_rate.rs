@@ -22,8 +22,8 @@ struct DbTokenRate {
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
-    pub decimals: Option<i16>,
     pub timestamp: NaiveDateTime,
+    pub decimals: Option<i16>,
 }
 
 // データベース挿入用モデル（ExchangeRate から構築）
@@ -33,8 +33,8 @@ struct NewDbTokenRate {
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
-    pub decimals: Option<i16>,
     pub timestamp: NaiveDateTime,
+    pub decimals: Option<i16>,
 }
 
 impl NewDbTokenRate {

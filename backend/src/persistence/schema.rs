@@ -48,8 +48,8 @@ diesel::table! {
         base_token -> Varchar,
         quote_token -> Varchar,
         rate -> Numeric,
-        decimals -> Nullable<Int2>,
         timestamp -> Timestamp,
+        decimals -> Nullable<Int2>,
     }
 }
 
