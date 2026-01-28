@@ -171,7 +171,6 @@ async fn test_predict_command_with_base_dir() -> Result<()> {
     let args = KickArgs {
         token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
         output: PathBuf::from("predictions"),
-        model: None,
         start_pct: 0.0,
         end_pct: 100.0,
         forecast_ratio: 10.0,

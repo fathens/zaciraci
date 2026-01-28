@@ -60,13 +60,6 @@ pub struct KickArgs {
     pub output: PathBuf,
 
     #[clap(
-        short,
-        long,
-        help = "Prediction model (defaults to server's default model if not specified)"
-    )]
-    pub model: Option<String>,
-
-    #[clap(
         long,
         default_value = "0.0",
         help = "Start percentage of time range (0.0-100.0)"
@@ -138,11 +131,6 @@ pub async fn run(args: KickArgs) -> Result<()> {
 
     // Prepare output directory
     let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-    let _model_name = args
-        .model
-        .as_ref()
-        .unwrap_or(&"chronos_default".to_string())
-        .clone();
 
     // Show progress
     let pb = ProgressBar::new_spinner();
