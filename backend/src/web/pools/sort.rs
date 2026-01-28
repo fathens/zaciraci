@@ -76,7 +76,7 @@ fn average_depth(rates: &HashMap<TokenAccount, BigDecimal>, pool: &Arc<PoolInfo>
 }
 
 pub fn sort(pools: Arc<PoolInfoList>) -> Result<Vec<Arc<PoolInfo>>> {
-    let quote = WNEAR_TOKEN.clone().into();
+    let quote = WNEAR_TOKEN.to_in();
     let graph = TokenGraph::new(Arc::clone(&pools));
     let outs = graph.update_graph(&quote)?;
     let rates = make_rates((&quote, ONE_NEAR), &graph, &outs)?;

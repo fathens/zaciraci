@@ -6,6 +6,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
+// =============================================================================
+// 型安全な単位型（common::types からの re-export）
+// =============================================================================
+//
+// シミュレーションコードでは以下の型を使用する：
+// - TokenPriceF64: 価格（NEAR/token）
+// - TokenAmountF64: トークン数量
+// - YoctoValueF64: 金額（yoctoNEAR）- 内部計算用
+// - NearValueF64: 金額（NEAR）- 表示・保存用
+//
+// 演算:
+// - TokenAmountF64 × TokenPriceF64 = YoctoValueF64
+// - YoctoValueF64.to_near() → NearValueF64
+
+pub use common::types::{
+    NearValue, NearValueF64, TokenAmountF64, TokenPriceF64, YoctoAmount, YoctoValueF64,
+};
+
 // Trading related structures
 #[derive(Debug, Clone, PartialEq)]
 pub enum TradingDecision {
@@ -31,14 +49,17 @@ pub struct TokenOpportunity {
 // Immutable data structures for better functional programming
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImmutablePortfolio {
-    pub holdings: HashMap<String, f64>,
-    pub cash_balance: f64,
+    /// トークン別保有量（smallest_unit）
+    pub holdings: HashMap<String, TokenAmountF64>,
+    /// 現金残高（NEAR）
+    pub cash_balance: NearValueF64,
     pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MarketSnapshot {
-    pub prices: HashMap<String, f64>,
+    /// 価格マップ（yoctoNEAR/smallest_unit = NEAR/token）
+    pub prices: HashMap<String, TokenPriceF64>,
     pub timestamp: DateTime<Utc>,
     pub data_quality: DataQuality,
 }
@@ -56,7 +77,8 @@ pub struct PortfolioTransition {
     pub from: ImmutablePortfolio,
     pub to: ImmutablePortfolio,
     pub action: TradingDecision,
-    pub cost: f64,
+    /// 取引コスト（yoctoNEAR）
+    pub cost: YoctoValueF64,
     pub reason: String,
 }
 
@@ -366,7 +388,10 @@ impl std::str::FromStr for RebalanceInterval {
 
 impl MarketSnapshot {
     /// Create a new MarketSnapshot from price data
-    pub fn new(prices: HashMap<String, f64>) -> Self {
+    ///
+    /// # Arguments
+    /// * `prices` - 価格マップ（無次元比率）
+    pub fn new(prices: HashMap<String, TokenPriceF64>) -> Self {
         let data_quality = if prices.len() >= 2 {
             DataQuality::High
         } else if prices.len() == 1 {
@@ -387,30 +412,34 @@ impl MarketSnapshot {
         matches!(self.data_quality, DataQuality::High | DataQuality::Medium)
     }
 
-    /// Get price for a specific token
-    pub fn get_price(&self, token: &str) -> Option<f64> {
+    /// Get price for a specific token（無次元比率）
+    pub fn get_price(&self, token: &str) -> Option<TokenPriceF64> {
         self.prices.get(token).copied()
     }
 
     /// Create MarketSnapshot from price data at a specific time
+    ///
+    /// 返される価格は無次元比率（yoctoNEAR/smallest_unit = NEAR/token）
     pub fn from_price_data(
         price_data: &HashMap<String, Vec<common::stats::ValueAtTime>>,
         timestamp: DateTime<Utc>,
     ) -> Result<Self> {
-        let mut prices = HashMap::new();
+        let mut prices: HashMap<String, TokenPriceF64> = HashMap::new();
 
         for (token, data_points) in price_data {
             // Find the closest price point to the target timestamp
             if let Some(closest_point) = data_points.iter().min_by_key(|point| {
                 (DateTime::<Utc>::from_naive_utc_and_offset(point.time, Utc) - timestamp).abs()
             }) {
+                // 価格は無次元比率として取得
+                let price_value = closest_point
+                    .value
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
                 prices.insert(
                     token.clone(),
-                    closest_point
-                        .value
-                        .to_string()
-                        .parse::<f64>()
-                        .unwrap_or(0.0),
+                    TokenPriceF64::from_near_per_token(price_value),
                 );
             }
         }
@@ -438,12 +467,20 @@ pub enum FeeModel {
     Custom(f64),
 }
 
+/// 取引コスト（yoctoNEAR 単位）
+///
+/// すべてのフィールドは yoctoNEAR 単位で表現される。
+/// f64 の精度で十分なシミュレーション用途に最適化されている。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradingCost {
-    pub protocol_fee: BigDecimal,
-    pub slippage: BigDecimal,
-    pub gas_fee: BigDecimal,
-    pub total: BigDecimal,
+    /// プロトコル手数料（yoctoNEAR）
+    pub protocol_fee: YoctoValueF64,
+    /// スリッページコスト（yoctoNEAR）
+    pub slippage: YoctoValueF64,
+    /// ガス料金（yoctoNEAR）
+    pub gas_fee: YoctoValueF64,
+    /// 総コスト（yoctoNEAR）
+    pub total: YoctoValueF64,
 }
 
 // Trading context struct to reduce function arguments
@@ -540,28 +577,43 @@ pub struct SimulationSummary {
     pub start_date: DateTime<Utc>,
     pub end_date: DateTime<Utc>,
     pub algorithm: AlgorithmType,
-    pub initial_capital: f64,
-    pub final_value: f64,
-    pub total_return: f64,
+    /// 初期資金（NEAR）
+    pub initial_capital: NearValueF64,
+    /// 最終価値（NEAR）
+    pub final_value: NearValueF64,
+    /// 総リターン（NEAR）
+    pub total_return: NearValueF64,
     pub duration_days: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
-    pub total_return: f64,
+    /// 総リターン（NEAR）
+    pub total_return: NearValueF64,
+    /// 年率リターン（比率）
     pub annualized_return: f64,
+    /// 総リターン率（%）
     pub total_return_pct: f64,
+    /// ボラティリティ（比率）
     pub volatility: f64,
-    pub max_drawdown: f64,
+    /// 最大ドローダウン（NEAR）
+    pub max_drawdown: NearValueF64,
+    /// 最大ドローダウン率（%）
     pub max_drawdown_pct: f64,
+    /// シャープレシオ
     pub sharpe_ratio: f64,
+    /// ソルティノレシオ
     pub sortino_ratio: f64,
     pub total_trades: usize,
     pub winning_trades: usize,
     pub losing_trades: usize,
+    /// 勝率（比率）
     pub win_rate: f64,
+    /// プロフィットファクター（比率）
     pub profit_factor: f64,
-    pub total_costs: f64,
+    /// 総コスト（NEAR）
+    pub total_costs: NearValueF64,
+    /// コスト比率（%）
     pub cost_ratio: f64,
     pub simulation_days: i64,
     pub active_trading_days: i64,
@@ -572,11 +624,15 @@ pub struct TradeExecution {
     pub timestamp: DateTime<Utc>,
     pub from_token: String,
     pub to_token: String,
-    pub amount: f64,
-    pub executed_price: f64,
+    /// 取引数量（smallest_unit）
+    pub amount: TokenAmountF64,
+    /// 約定価格（無次元比率）
+    pub executed_price: TokenPriceF64,
     pub cost: TradingCost,
-    pub portfolio_value_before: f64,
-    pub portfolio_value_after: f64,
+    /// 取引前のポートフォリオ価値（NEAR）
+    pub portfolio_value_before: NearValueF64,
+    /// 取引後のポートフォリオ価値（NEAR）
+    pub portfolio_value_after: NearValueF64,
     pub success: bool,
     pub reason: String,
 }
@@ -584,10 +640,14 @@ pub struct TradeExecution {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioValue {
     pub timestamp: DateTime<Utc>,
-    pub total_value: f64,
-    pub holdings: HashMap<String, f64>,
-    pub cash_balance: f64,
-    pub unrealized_pnl: f64,
+    /// 総ポートフォリオ価値（NEAR）
+    pub total_value: NearValueF64,
+    /// トークン別保有価値（NEAR）
+    pub holdings: HashMap<String, NearValueF64>,
+    /// 現金残高（NEAR）
+    pub cash_balance: NearValueF64,
+    /// 未実現損益（NEAR）
+    pub unrealized_pnl: NearValueF64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -595,9 +655,12 @@ pub struct ExecutionSummary {
     pub total_trades: usize,
     pub successful_trades: usize,
     pub failed_trades: usize,
+    /// 成功率（比率）
     pub success_rate: f64,
-    pub total_cost: f64,
-    pub avg_cost_per_trade: f64,
+    /// 総コスト（NEAR）
+    pub total_cost: NearValueF64,
+    /// 取引あたりの平均コスト（NEAR）
+    pub avg_cost_per_trade: NearValueF64,
 }
 
 // Trait implementations

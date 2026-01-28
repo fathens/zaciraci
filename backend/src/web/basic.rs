@@ -7,6 +7,7 @@ use crate::wallet::Wallet;
 use axum::{
     Router,
     extract::{Path, State},
+    http::StatusCode,
     routing::get,
 };
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
             "/native_token/transfer/{receiver}/{amount}",
             get(native_token_transfer),
         )
+        .route("/token/{token_id}/decimals", get(token_decimals))
 }
 
 async fn native_token_balance(State(_): State<Arc<AppState>>) -> String {
@@ -54,4 +56,20 @@ async fn native_token_transfer(
             format!("Error: {err}")
         }
     }
+}
+
+async fn token_decimals(
+    State(_): State<Arc<AppState>>,
+    Path(token_id): Path<String>,
+) -> Result<String, (StatusCode, String)> {
+    let client = jsonrpc::new_client();
+    let decimals = crate::trade::market_data::get_token_decimals(&client, &token_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get decimals: {e}"),
+            )
+        })?;
+    Ok(decimals.to_string())
 }

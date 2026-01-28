@@ -4,12 +4,14 @@
 //! - ポートフォリオ価値の計算テスト
 //! - 利益率・損失率の統合計算
 
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 use super::super::metrics::calculate_performance_metrics;
 use super::super::*;
+
+// Import newtype wrappers
+use super::super::{NearValueF64, TokenAmountF64, TokenPriceF64, YoctoValueF64};
 
 // Note: generate_mock_price_data function is not available in simulate module
 // This test has been commented out as it depends on non-existent functionality
@@ -22,22 +24,20 @@ fn create_test_trade(
     portfolio_value_after: f64,
     cost: f64,
 ) -> TradeExecution {
-    use std::str::FromStr;
-
     TradeExecution {
         timestamp: Utc::now(),
         from_token: "token_a".to_string(),
         to_token: "token_b".to_string(),
-        amount: 100.0,
-        executed_price: 1.0,
+        amount: TokenAmountF64::from_smallest_units(100.0, 24),
+        executed_price: TokenPriceF64::from_near_per_token(1.0),
         cost: TradingCost {
-            protocol_fee: BigDecimal::from_str("0.0").unwrap(),
-            slippage: BigDecimal::from_str("0.0").unwrap(),
-            gas_fee: BigDecimal::from_str("0.0").unwrap(),
-            total: BigDecimal::from_str(&cost.to_string()).unwrap(),
+            protocol_fee: YoctoValueF64::zero(),
+            slippage: YoctoValueF64::zero(),
+            gas_fee: YoctoValueF64::zero(),
+            total: YoctoValueF64::from_yocto(cost * 1e24), // コストを yoctoNEAR に変換
         },
-        portfolio_value_before,
-        portfolio_value_after,
+        portfolio_value_before: NearValueF64::from_near(portfolio_value_before),
+        portfolio_value_after: NearValueF64::from_near(portfolio_value_after),
         success: true,
         reason: "Test trade".to_string(),
     }
@@ -48,10 +48,15 @@ fn create_portfolio_value(timestamp: DateTime<Utc>, total_value: f64) -> Portfol
     PortfolioValue {
         timestamp,
         holdings: HashMap::new(),
-        total_value,
-        cash_balance: 0.0,
-        unrealized_pnl: 0.0,
+        total_value: NearValueF64::from_near(total_value),
+        cash_balance: NearValueF64::zero(),
+        unrealized_pnl: NearValueF64::zero(),
     }
+}
+
+/// Helper function to create a NearValueF64 for testing
+fn nv(value: f64) -> NearValueF64 {
+    NearValueF64::from_near(value)
 }
 
 #[test]
@@ -70,11 +75,11 @@ fn test_profit_factor_calculation_only_profits() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        1350.0,
+        nv(1000.0),
+        nv(1350.0),
         &portfolio_values,
         &trades,
-        50.0,
+        nv(50.0),
         start_date,
         end_date,
     )
@@ -103,11 +108,11 @@ fn test_profit_factor_calculation_only_losses() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        800.0,
+        nv(1000.0),
+        nv(800.0),
         &portfolio_values,
         &trades,
-        30.0,
+        nv(30.0),
         start_date,
         end_date,
     )
@@ -137,11 +142,11 @@ fn test_profit_factor_calculation_mixed_trades() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        1100.0,
+        nv(1000.0),
+        nv(1100.0),
         &portfolio_values,
         &trades,
-        30.0,
+        nv(30.0),
         start_date,
         end_date,
     )
@@ -165,11 +170,11 @@ fn test_profit_factor_calculation_no_trades() {
     let start_date = Utc::now() - chrono::Duration::days(30);
     let end_date = Utc::now();
     let metrics = calculate_performance_metrics(
-        1000.0,
-        1000.0,
+        nv(1000.0),
+        nv(1000.0),
         &portfolio_values,
         &trades,
-        0.0,
+        nv(0.0),
         start_date,
         end_date,
     )
@@ -191,17 +196,17 @@ fn test_performance_metrics_calculation() {
     let portfolio_values = vec![
         PortfolioValue {
             timestamp: Utc::now(),
-            total_value: initial_value,
-            cash_balance: initial_value,
+            total_value: NearValueF64::from_near(initial_value),
+            cash_balance: NearValueF64::from_near(initial_value),
             holdings: HashMap::new(),
-            unrealized_pnl: 0.0,
+            unrealized_pnl: NearValueF64::zero(),
         },
         PortfolioValue {
             timestamp: Utc::now(),
-            total_value: final_value,
-            cash_balance: 0.0,
+            total_value: NearValueF64::from_near(final_value),
+            cash_balance: NearValueF64::zero(),
             holdings: HashMap::new(),
-            unrealized_pnl: 100.0,
+            unrealized_pnl: NearValueF64::from_near(100.0),
         },
     ];
 
@@ -211,17 +216,17 @@ fn test_performance_metrics_calculation() {
     let start_date = Utc::now() - chrono::Duration::days(simulation_days);
     let end_date = Utc::now();
     let performance = calculate_performance_metrics(
-        initial_value,
-        final_value,
+        nv(initial_value),
+        nv(final_value),
         &portfolio_values,
         &trades,
-        0.0,
+        nv(0.0),
         start_date,
         end_date,
     )
     .unwrap();
 
-    assert_eq!(performance.total_return, 100.0); // 100 profit amount
+    assert_eq!(performance.total_return, nv(100.0)); // 100 profit amount
     assert_eq!(performance.total_trades, 0);
     assert_eq!(performance.simulation_days, 30);
 }

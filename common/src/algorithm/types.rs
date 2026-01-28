@@ -3,6 +3,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+use crate::types::{
+    ExchangeRate, NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice,
+};
+
 // ==================== 取引関連型 ====================
 
 /// 取引の種類
@@ -13,34 +17,21 @@ pub enum TradeType {
     Swap,
 }
 
-/// 取引実行結果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TradeExecution {
-    pub trade_type: TradeType,
-    pub token_in: String,
-    pub token_out: String,
-    pub amount_in: BigDecimal,
-    pub amount_out: BigDecimal,
-    pub timestamp: DateTime<Utc>,
-    pub cost: BigDecimal,
-    pub success: bool,
-}
-
 // ==================== 共通価格データ ====================
 
 /// 価格ポイント
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricePoint {
     pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
+    pub price: TokenPrice,
     pub volume: Option<BigDecimal>,
 }
 
 /// 価格履歴データ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceHistory {
-    pub token: String,
-    pub quote_token: String,
+    pub token: TokenOutAccount,
+    pub quote_token: TokenInAccount,
     pub prices: Vec<PricePoint>,
 }
 
@@ -49,38 +40,51 @@ pub struct PriceHistory {
 /// 統合トークン情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenData {
-    pub symbol: String,
-    pub current_price: BigDecimal,
+    /// トークン名
+    pub symbol: TokenOutAccount,
+    /// 現在の交換レート（tokens_smallest / NEAR + decimals）
+    pub current_rate: ExchangeRate,
     pub historical_volatility: f64,
     pub liquidity_score: Option<f64>,
-    pub market_cap: Option<f64>,
-    pub decimals: Option<u8>,
+    /// 時価総額（NearValue: NEAR 単位）
+    pub market_cap: Option<NearValue>,
 }
 
 /// トークン保有情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenHolding {
-    pub token: String,
-    pub amount: BigDecimal,
-    pub current_price: BigDecimal,
+    /// トークン名
+    pub token: TokenOutAccount,
+    /// 保有量（TokenAmount: smallest_units + decimals）
+    pub amount: TokenAmount,
+    /// 現在の交換レート
+    pub current_rate: ExchangeRate,
 }
 
 // ==================== 予測データ ====================
 
+/// NEAR トークンの標準 decimals（wNEAR など）
+pub const DEFAULT_DECIMALS: u8 = 24;
+
 /// 予測価格
+///
+/// Chronos API から返される予測値は price 形式（NEAR/token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
-    pub price: BigDecimal,
+    /// 予測価格（NEAR/token）
+    pub price: TokenPrice,
     pub confidence: Option<BigDecimal>,
 }
 
 /// 予測データを格納する構造体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionData {
-    pub token: String,
-    pub current_price: BigDecimal,
-    pub predicted_price_24h: BigDecimal,
+    pub token: TokenOutAccount,
+    /// 現在の価格（NEAR/token）
+    pub current_price: TokenPrice,
+    /// 24時間後の予測価格（NEAR/token）
+    pub predicted_price_24h: TokenPrice,
     pub timestamp: DateTime<Utc>,
     pub confidence: Option<BigDecimal>,
 }
@@ -88,8 +92,8 @@ pub struct PredictionData {
 /// トークン予測結果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPredictionResult {
-    pub token: String,
-    pub quote_token: String,
+    pub token: TokenOutAccount,
+    pub quote_token: TokenInAccount,
     pub prediction_time: DateTime<Utc>,
     pub predictions: Vec<PredictedPrice>,
 }
@@ -113,17 +117,23 @@ pub enum TradingAction {
     /// トークンを保持
     Hold,
     /// トークンを売却して別のトークンに切り替え
-    Sell { token: String, target: String },
+    Sell {
+        token: TokenOutAccount,
+        target: TokenOutAccount,
+    },
     /// あるトークンから別のトークンへ切り替え
-    Switch { from: String, to: String },
+    Switch {
+        from: TokenOutAccount,
+        to: TokenOutAccount,
+    },
     /// ポートフォリオリバランス
     Rebalance {
-        target_weights: BTreeMap<String, f64>,
+        target_weights: BTreeMap<TokenOutAccount, f64>,
     },
     /// ポジション追加
-    AddPosition { token: String, weight: f64 },
+    AddPosition { token: TokenOutAccount, weight: f64 },
     /// ポジション削減
-    ReducePosition { token: String, weight: f64 },
+    ReducePosition { token: TokenOutAccount, weight: f64 },
 }
 
 // ==================== アルゴリズム実行結果 ====================
@@ -197,7 +207,7 @@ impl ExecutionReport {
 /// ポートフォリオの重み
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioWeights {
-    pub weights: BTreeMap<String, f64>,
+    pub weights: BTreeMap<TokenOutAccount, f64>,
     pub timestamp: DateTime<Utc>,
     pub expected_return: f64,
     pub expected_volatility: f64,
@@ -207,8 +217,7 @@ pub struct PortfolioWeights {
 /// ポートフォリオメトリクス
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioMetrics {
-    pub cumulative_return: f64,
-    pub annualized_return: f64,
+    pub daily_return: f64,
     pub volatility: f64,
     pub sharpe_ratio: f64,
     pub sortino_ratio: f64,
@@ -220,9 +229,12 @@ pub struct PortfolioMetrics {
 /// ウォレット情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletInfo {
-    pub holdings: BTreeMap<String, f64>,
-    pub total_value: f64,
-    pub cash_balance: f64,
+    /// トークン保有量（TokenAmount: smallest_units + decimals）
+    pub holdings: BTreeMap<TokenOutAccount, TokenAmount>,
+    /// 総価値（NEAR単位、BigDecimal精度）
+    pub total_value: NearValue,
+    /// 現金残高（NEAR単位、BigDecimal精度）
+    pub cash_balance: NearValue,
 }
 
 // ==================== トレンド分析関連 ====================
@@ -247,7 +259,7 @@ pub enum TrendStrength {
 /// トレンド分析結果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrendAnalysis {
-    pub token: String,
+    pub token: TokenOutAccount,
     pub direction: TrendDirection,
     pub strength: TrendStrength,
     pub slope: f64,
@@ -280,9 +292,9 @@ pub struct TechnicalIndicators {
 /// 統合市場データ
 #[derive(Debug, Clone)]
 pub struct MarketData {
-    pub tokens: HashMap<String, TokenData>,
-    pub predictions: HashMap<String, PredictionData>,
-    pub price_histories: HashMap<String, PriceHistory>,
+    pub tokens: HashMap<TokenOutAccount, TokenData>,
+    pub predictions: HashMap<TokenOutAccount, PredictionData>,
+    pub price_histories: HashMap<TokenOutAccount, PriceHistory>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -291,16 +303,18 @@ pub struct MarketData {
 /// トップトークン情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopTokenInfo {
-    pub token: String,
-    pub volatility: f64,
-    pub volume_24h: f64,
-    pub current_price: f64,
+    pub token: TokenOutAccount,
+    pub volatility: BigDecimal,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    fn token_out(s: &str) -> TokenOutAccount {
+        s.parse().unwrap()
+    }
 
     // ==================== TradingAction のテスト ====================
 
@@ -313,13 +327,13 @@ mod tests {
     #[test]
     fn test_trading_action_sell() {
         let action = TradingAction::Sell {
-            token: "token1".to_string(),
-            target: "token2".to_string(),
+            token: "token1".parse().unwrap(),
+            target: "token2".parse().unwrap(),
         };
         match action {
             TradingAction::Sell { token, target } => {
-                assert_eq!(token, "token1");
-                assert_eq!(target, "token2");
+                assert_eq!(token.to_string(), "token1");
+                assert_eq!(target.to_string(), "token2");
             }
             _ => panic!("Expected Sell action"),
         }
@@ -328,8 +342,8 @@ mod tests {
     #[test]
     fn test_trading_action_rebalance() {
         let mut weights = BTreeMap::new();
-        weights.insert("token1".to_string(), 0.5);
-        weights.insert("token2".to_string(), 0.5);
+        weights.insert(token_out("token1"), 0.5);
+        weights.insert(token_out("token2"), 0.5);
 
         let action = TradingAction::Rebalance {
             target_weights: weights.clone(),
@@ -338,7 +352,7 @@ mod tests {
         match action {
             TradingAction::Rebalance { target_weights } => {
                 assert_eq!(target_weights.len(), 2);
-                assert_eq!(target_weights.get("token1"), Some(&0.5));
+                assert_eq!(target_weights.get(&token_out("token1")), Some(&0.5));
             }
             _ => panic!("Expected Rebalance action"),
         }
@@ -411,24 +425,29 @@ mod tests {
 
     #[test]
     fn test_prediction_data_creation() {
+        let token: TokenOutAccount = "test.tkn.near".parse().unwrap();
         let prediction = PredictionData {
-            token: "test.tkn.near".to_string(),
-            current_price: BigDecimal::from_str("1.0").unwrap(),
-            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            token: token.clone(),
+            current_price: TokenPrice::from_near_per_token(BigDecimal::from_str("100.0").unwrap()),
+            predicted_price_24h: TokenPrice::from_near_per_token(
+                BigDecimal::from_str("120.0").unwrap(),
+            ),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.85").unwrap()),
         };
 
-        assert_eq!(prediction.token, "test.tkn.near");
+        assert_eq!(prediction.token, token);
         assert!(prediction.confidence.is_some());
     }
 
     #[test]
     fn test_prediction_data_without_confidence() {
         let prediction = PredictionData {
-            token: "test.tkn.near".to_string(),
-            current_price: BigDecimal::from_str("1.0").unwrap(),
-            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            token: "test.tkn.near".parse().unwrap(),
+            current_price: TokenPrice::from_near_per_token(BigDecimal::from_str("100.0").unwrap()),
+            predicted_price_24h: TokenPrice::from_near_per_token(
+                BigDecimal::from_str("120.0").unwrap(),
+            ),
             timestamp: Utc::now(),
             confidence: None,
         };
@@ -506,16 +525,18 @@ mod tests {
     #[test]
     fn test_token_data_creation() {
         let token = TokenData {
-            symbol: "NEAR".to_string(),
-            current_price: BigDecimal::from_str("5.0").unwrap(),
+            symbol: "near".parse().unwrap(),
+            current_rate: ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("1000000000000000000000000").unwrap(),
+                24,
+            ),
             historical_volatility: 0.3,
             liquidity_score: Some(0.8),
-            market_cap: Some(1000000.0),
-            decimals: Some(24),
+            market_cap: Some(NearValue::from_near(BigDecimal::from(1000000))),
         };
 
-        assert_eq!(token.symbol, "NEAR");
-        assert_eq!(token.decimals, Some(24));
+        assert_eq!(token.symbol.to_string(), "near");
+        assert_eq!(token.current_rate.decimals(), 24);
     }
 
     // ==================== シリアライゼーションのテスト ====================
@@ -531,9 +552,11 @@ mod tests {
     #[test]
     fn test_prediction_data_serialization() {
         let prediction = PredictionData {
-            token: "test".to_string(),
-            current_price: BigDecimal::from_str("1.0").unwrap(),
-            predicted_price_24h: BigDecimal::from_str("1.2").unwrap(),
+            token: "test".parse().unwrap(),
+            current_price: TokenPrice::from_near_per_token(BigDecimal::from_str("100.0").unwrap()),
+            predicted_price_24h: TokenPrice::from_near_per_token(
+                BigDecimal::from_str("120.0").unwrap(),
+            ),
             timestamp: Utc::now(),
             confidence: Some(BigDecimal::from_str("0.9").unwrap()),
         };
@@ -541,5 +564,158 @@ mod tests {
         let serialized = serde_json::to_string(&prediction).unwrap();
         let deserialized: PredictionData = serde_json::from_str(&serialized).unwrap();
         assert_eq!(prediction.token, deserialized.token);
+    }
+
+    // ==================== PricePoint のテスト ====================
+
+    #[test]
+    fn test_price_point_creation() {
+        let price_point = PricePoint {
+            timestamp: Utc::now(),
+            price: TokenPrice::from_near_per_token(BigDecimal::from_str("123.456").unwrap()),
+            volume: Some(BigDecimal::from(1000)),
+        };
+
+        assert_eq!(
+            price_point.price,
+            TokenPrice::from_near_per_token(BigDecimal::from_str("123.456").unwrap())
+        );
+        assert!(price_point.volume.is_some());
+    }
+
+    #[test]
+    fn test_price_point_serialization() {
+        let price_point = PricePoint {
+            timestamp: Utc::now(),
+            price: TokenPrice::from_near_per_token(BigDecimal::from_str("999.123456789").unwrap()),
+            volume: Some(BigDecimal::from(5000)),
+        };
+
+        let serialized = serde_json::to_string(&price_point).unwrap();
+        let deserialized: PricePoint = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(price_point.price, deserialized.price);
+        assert_eq!(price_point.volume, deserialized.volume);
+    }
+
+    #[test]
+    fn test_price_point_serialization_without_volume() {
+        let price_point = PricePoint {
+            timestamp: Utc::now(),
+            price: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+            volume: None,
+        };
+
+        let serialized = serde_json::to_string(&price_point).unwrap();
+        let deserialized: PricePoint = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(price_point.price, deserialized.price);
+        assert!(deserialized.volume.is_none());
+    }
+
+    // ==================== TokenData のシリアライゼーションテスト ====================
+
+    #[test]
+    fn test_token_data_serialization() {
+        let token = TokenData {
+            symbol: "near".parse().unwrap(),
+            current_rate: ExchangeRate::from_raw_rate(
+                BigDecimal::from_str("1000000000000000000000000").unwrap(),
+                24,
+            ),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.8),
+            market_cap: Some(NearValue::from_near(BigDecimal::from(1000000))),
+        };
+
+        let serialized = serde_json::to_string(&token).unwrap();
+        let deserialized: TokenData = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(token.symbol, deserialized.symbol);
+        assert_eq!(token.current_rate, deserialized.current_rate);
+        assert_eq!(
+            token.historical_volatility,
+            deserialized.historical_volatility
+        );
+    }
+
+    // ==================== PriceHistory のテスト ====================
+
+    #[test]
+    fn test_price_history_serialization() {
+        let history = PriceHistory {
+            token: "test.token".parse().unwrap(),
+            quote_token: "wrap.near".parse().unwrap(),
+            prices: vec![
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+                    volume: Some(BigDecimal::from(1000)),
+                },
+                PricePoint {
+                    timestamp: Utc::now(),
+                    price: TokenPrice::from_near_per_token(BigDecimal::from(110)),
+                    volume: Some(BigDecimal::from(2000)),
+                },
+            ],
+        };
+
+        let serialized = serde_json::to_string(&history).unwrap();
+        let deserialized: PriceHistory = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(history.token, deserialized.token);
+        assert_eq!(history.prices.len(), deserialized.prices.len());
+        assert_eq!(history.prices[0].price, deserialized.prices[0].price);
+    }
+
+    // ==================== TokenPrice 型のJSON形式テスト ====================
+
+    #[test]
+    fn test_token_price_json_format() {
+        // TokenPrice 型が正しくJSONにシリアライズされることを確認
+        let price = TokenPrice::from_near_per_token(BigDecimal::from_str("123.456789").unwrap());
+        let json = serde_json::to_string(&price).unwrap();
+
+        // BigDecimal単体のシリアライズ形式と比較
+        let bd = BigDecimal::from_str("123.456789").unwrap();
+        let bd_json = serde_json::to_string(&bd).unwrap();
+
+        // TokenPrice と BigDecimal は同じJSON形式でシリアライズされることを確認
+        assert_eq!(json, bd_json);
+
+        // デシリアライズの往復確認
+        let deserialized: TokenPrice = serde_json::from_str(&json).unwrap();
+        assert_eq!(price, deserialized);
+    }
+
+    #[test]
+    fn test_exchange_rate_comparison_in_structures() {
+        // ExchangeRate 型を含む構造体の比較が正しく動作することを確認
+        let token1 = TokenData {
+            symbol: "test.near".parse().unwrap(),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 6),
+            historical_volatility: 0.2,
+            liquidity_score: None,
+            market_cap: None,
+        };
+
+        let token2 = TokenData {
+            symbol: "test.near".parse().unwrap(),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 6),
+            historical_volatility: 0.2,
+            liquidity_score: None,
+            market_cap: None,
+        };
+
+        let token3 = TokenData {
+            symbol: "test.near".parse().unwrap(),
+            current_rate: ExchangeRate::from_raw_rate(BigDecimal::from(200), 6), // 異なるレート
+            historical_volatility: 0.2,
+            liquidity_score: None,
+            market_cap: None,
+        };
+
+        assert_eq!(token1.current_rate, token2.current_rate);
+        assert_ne!(token1.current_rate, token3.current_rate);
     }
 }

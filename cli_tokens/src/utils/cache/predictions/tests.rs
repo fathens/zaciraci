@@ -2,12 +2,24 @@ use super::*;
 use bigdecimal::BigDecimal;
 use crate::models::prediction::{PredictionFileData, PredictionMetadata, PredictionPoint, PredictionResults};
 use chrono::{DateTime, Utc};
+use common::types::TokenPrice;
 use std::env;
+use std::str::FromStr;
 use tempfile::tempdir;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use serial_test::serial;
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Create TokenPrice from string for tests
+fn price(s: &str) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
+}
+
+/// Create TokenPrice from integer for tests
+fn price_from_int(n: i64) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from(n))
+}
 
 /// Setup test environment with unique base directory
 fn setup_test_env() -> tempfile::TempDir {
@@ -38,12 +50,12 @@ fn create_sample_prediction_data() -> PredictionFileData {
             predictions: vec![
                 PredictionPoint {
                     timestamp: now,
-                    price: BigDecimal::from(100),
+                    price: price_from_int(100),
                     confidence: Some("0.8".parse().unwrap()),
                 },
                 PredictionPoint {
                     timestamp: now + chrono::Duration::hours(1),
-                    price: BigDecimal::from(105),
+                    price: price_from_int(105),
                     confidence: Some("0.75".parse().unwrap()),
                 },
             ],
@@ -334,17 +346,17 @@ async fn test_simulation_cache_pattern() {
     sample_data.prediction_results.predictions = vec![
         PredictionPoint {
             timestamp: pred_start,
-            price: BigDecimal::from(1000),
+            price: price_from_int(1000),
             confidence: Some("0.8".parse().unwrap()),
         },
         PredictionPoint {
             timestamp: pred_start + chrono::Duration::hours(6),
-            price: BigDecimal::from(1050),
+            price: price_from_int(1050),
             confidence: Some("0.75".parse().unwrap()),
         },
         PredictionPoint {
             timestamp: pred_end,
-            price: BigDecimal::from(1100),
+            price: price_from_int(1100),
             confidence: Some("0.7".parse().unwrap()),
         },
     ];
@@ -394,7 +406,7 @@ async fn test_simulation_cache_pattern() {
     for prediction in &loaded_data.prediction_results.predictions {
         assert!(prediction.timestamp >= pred_start);
         assert!(prediction.timestamp <= pred_end);
-        assert!(prediction.price > BigDecimal::from(0));
+        assert!(prediction.price > price_from_int(0));
     }
 }
 
@@ -535,17 +547,17 @@ async fn test_real_cache_file_format() {
             predictions: vec![
                 PredictionPoint {
                     timestamp: params.pred_start,
-                    price: "40362765115318.08".parse().unwrap(),  // Real price format from actual cache
+                    price: price("40362765115318.08"),  // Real price format from actual cache
                     confidence: Some("0.8".parse().unwrap()),
                 },
                 PredictionPoint {
                     timestamp: params.pred_start + chrono::Duration::hours(6),
-                    price: "40500000000000.0".parse().unwrap(),
+                    price: price("40500000000000.0"),
                     confidence: Some("0.75".parse().unwrap()),
                 },
                 PredictionPoint {
                     timestamp: params.pred_end,
-                    price: "40700000000000.0".parse().unwrap(),
+                    price: price("40700000000000.0"),
                     confidence: Some("0.7".parse().unwrap()),
                 },
             ],

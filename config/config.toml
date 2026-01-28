@@ -84,6 +84,10 @@ cron_schedule = "0 0 0 * * *"
 prediction_max_retries = 2
 # リトライ間の待機時間（秒、デフォルト: 5）
 prediction_retry_delay_seconds = 5
+# 価格予測に使用する履歴期間（日数、デフォルト: 30日）
+price_history_days = 30
+# ボラティリティ計算に使用する期間（日数、デフォルト: 7日）
+volatility_days = 7
 
 [cron]
 # record_rates の初期値

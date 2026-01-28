@@ -15,7 +15,7 @@ const ONE_NEAR: u128 = 10_u128.pow(24);
 const ONE_MILLINEAR: u128 = 10_u128.pow(21);
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct YoctoNearToken(pub u128);
+pub struct YoctoNearToken(u128);
 
 impl YoctoNearToken {
     pub fn from_near(near: BigDecimal) -> Self {
@@ -44,18 +44,6 @@ impl YoctoNearToken {
 
     pub fn as_yoctonear(&self) -> u128 {
         self.0
-    }
-}
-
-impl From<u128> for YoctoNearToken {
-    fn from(yocto: u128) -> Self {
-        YoctoNearToken::from_yocto(yocto)
-    }
-}
-
-impl From<YoctoNearToken> for u128 {
-    fn from(token: YoctoNearToken) -> Self {
-        token.0
     }
 }
 
@@ -305,8 +293,8 @@ mod tests {
             YoctoNearToken::one()
         );
         assert_eq!(
-            YoctoNearToken::from(5) * YoctoNearToken::from(2),
-            YoctoNearToken::from(10)
+            YoctoNearToken::from_yocto(5) * YoctoNearToken::from_yocto(2),
+            YoctoNearToken::from_yocto(10)
         );
     }
 
@@ -325,12 +313,12 @@ mod tests {
             YoctoNearToken::zero()
         );
         assert_eq!(
-            YoctoNearToken::from(10) / YoctoNearToken::from(2),
-            YoctoNearToken::from(5)
+            YoctoNearToken::from_yocto(10) / YoctoNearToken::from_yocto(2),
+            YoctoNearToken::from_yocto(5)
         );
         assert_eq!(
-            YoctoNearToken::from(10) / YoctoNearToken::from(3),
-            YoctoNearToken::from(3)
+            YoctoNearToken::from_yocto(10) / YoctoNearToken::from_yocto(3),
+            YoctoNearToken::from_yocto(3)
         );
     }
 

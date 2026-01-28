@@ -46,7 +46,7 @@ impl<A: TxInfo> SentTx for StandardSentTx<A> {
             "account" => format!("{}", self.account),
         ));
 
-        info!(
+        debug!(
             log,
             "starting client-side polling for transaction completion"
         );
@@ -135,7 +135,7 @@ impl<A: TxInfo> SentTx for StandardSentTx<A> {
             MAX_ATTEMPTS,
             MAX_ATTEMPTS as u64 * POLL_INTERVAL.as_secs()
         );
-        info!(log, "{}", err_msg);
+        warn!(log, "{}", err_msg);
         bail!(err_msg)
     }
 }

@@ -66,7 +66,7 @@ impl Add<EdgeWeight> for EdgeWeight {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     fn weight(d: u128, n: u128) -> EdgeWeight {

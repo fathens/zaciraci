@@ -4,6 +4,7 @@ use chrono::Utc;
 use std::path::PathBuf;
 
 use common::prediction::{ConfidenceInterval, PredictionPoint};
+use common::types::TokenPrice;
 
 // === parse_size テスト ===
 
@@ -222,17 +223,17 @@ fn test_calculate_time_range_predictions_only() {
     let predictions = vec![
         PredictionPoint {
             timestamp: now,
-            value: BigDecimal::from(100),
+            value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
             confidence_interval: None,
         },
         PredictionPoint {
             timestamp: future1,
-            value: BigDecimal::from(105),
+            value: TokenPrice::from_near_per_token(BigDecimal::from(105)),
             confidence_interval: None,
         },
         PredictionPoint {
             timestamp: future2,
-            value: BigDecimal::from(110),
+            value: TokenPrice::from_near_per_token(BigDecimal::from(110)),
             confidence_interval: None,
         },
     ];
@@ -261,12 +262,12 @@ fn test_calculate_time_range_combined() {
     let predictions = vec![
         PredictionPoint {
             timestamp: now,
-            value: BigDecimal::from(100),
+            value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
             confidence_interval: None,
         },
         PredictionPoint {
             timestamp: future,
-            value: BigDecimal::from(105),
+            value: TokenPrice::from_near_per_token(BigDecimal::from(105)),
             confidence_interval: None,
         },
     ];
@@ -328,18 +329,18 @@ fn test_calculate_value_range_with_confidence_intervals() {
     let predictions = vec![
         PredictionPoint {
             timestamp: now,
-            value: BigDecimal::from(100),
+            value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
             confidence_interval: Some(ConfidenceInterval {
-                lower: BigDecimal::from(80),
-                upper: BigDecimal::from(120),
+                lower: TokenPrice::from_near_per_token(BigDecimal::from(80)),
+                upper: TokenPrice::from_near_per_token(BigDecimal::from(120)),
             }),
         },
         PredictionPoint {
             timestamp: now,
-            value: BigDecimal::from(110),
+            value: TokenPrice::from_near_per_token(BigDecimal::from(110)),
             confidence_interval: Some(ConfidenceInterval {
-                lower: BigDecimal::from(90),
-                upper: BigDecimal::from(130),
+                lower: TokenPrice::from_near_per_token(BigDecimal::from(90)),
+                upper: TokenPrice::from_near_per_token(BigDecimal::from(130)),
             }),
         },
     ];

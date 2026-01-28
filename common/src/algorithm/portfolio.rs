@@ -1,10 +1,10 @@
 use crate::Result;
-use bigdecimal::BigDecimal;
+use crate::types::{NearValue, TokenOutAccount, TokenPrice};
+use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::str::FromStr;
 
 use super::types::*;
 
@@ -14,9 +14,14 @@ use super::types::*;
 #[derive(Debug, Clone)]
 pub struct PortfolioData {
     pub tokens: Vec<TokenData>,
-    pub predictions: BTreeMap<String, f64>,
+    /// 予測価格（TokenPrice: NEAR/token）
+    pub predictions: BTreeMap<TokenOutAccount, TokenPrice>,
     pub historical_prices: Vec<PriceHistory>,
-    pub correlation_matrix: Option<Array2<f64>>,
+    /// 予測精度に基づく信頼度 [0.0, 1.0]
+    /// - Some(1.0): 予測が非常に正確 → Sharpe を信頼
+    /// - Some(0.0): 予測が不正確 → RP に退避
+    /// - None: データ不足 → 従来通り（後方互換）
+    pub prediction_confidence: Option<f64>,
 }
 
 /// ポートフォリオ実行レポート
@@ -63,8 +68,10 @@ const REGULARIZATION_FACTOR: f64 = 1e-6;
 /// 最小流動性スコア
 const MIN_LIQUIDITY_SCORE: f64 = 0.1;
 
-/// 最小市場規模
-const MIN_MARKET_CAP: f64 = 10000.0;
+/// 最小市場規模（10,000 NEAR）
+fn min_market_cap() -> NearValue {
+    NearValue::from_near(BigDecimal::from(10000))
+}
 
 /// 動的リスク調整の閾値
 const HIGH_VOLATILITY_THRESHOLD: f64 = 0.3; // 30%
@@ -73,30 +80,37 @@ const LOW_VOLATILITY_THRESHOLD: f64 = 0.1; // 10%
 /// 最大相関閾値
 const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
 
+/// 予測精度が低い場合の alpha 下限値
+/// confidence=0.0 のとき alpha はこの値まで下がる（Sharpe/RP 等配分に近づく）
+pub const PREDICTION_ALPHA_FLOOR: f64 = 0.5;
+
 // ==================== コア計算関数 ====================
 
 /// 期待リターンを計算
-/// 注意: current_priceとpredicted_priceは両方ともyoctoNEAR単位で比較
+///
+/// # 注意
+/// rate = tokens/NEAR（1 NEAR あたりのトークン数）は価格の逆数。
+/// rate が上がる = 価格が下がる なので、符号を反転させる。
+///
+/// - rate 上昇 → 価格下落 → 保有価値減少 → 負のリターン
+/// - rate 下降 → 価格上昇 → 保有価値増加 → 正のリターン
+///
+/// `TokenPrice.expected_return()` を使用して符号の間違いを防ぐ。
 pub fn calculate_expected_returns(
     tokens: &[TokenInfo],
-    predictions: &BTreeMap<String, f64>,
+    predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
 ) -> Vec<f64> {
     tokens
         .iter()
         .map(|token| {
-            if let Some(&predicted_price) = predictions.get(&token.symbol) {
-                // current_priceはBigDecimal(yoctoNEAR)、predicted_priceはf64(yoctoNEAR)
-                let current = token
-                    .current_price
-                    .to_string()
-                    .parse::<f64>()
-                    .unwrap_or(0.0);
-                if current != 0.0 {
-                    // 両方ともyoctoNEAR単位なので直接比較可能
-                    (predicted_price - current) / current
-                } else {
-                    0.0
+            if let Some(predicted_price) = predictions.get(&token.symbol) {
+                let current_price = token.current_rate.to_price();
+                if current_price.is_zero() || predicted_price.is_zero() {
+                    return 0.0;
                 }
+
+                // TokenPrice.expected_return() で直接計算（型安全）
+                current_price.expected_return(predicted_price)
             } else {
                 0.0
             }
@@ -105,56 +119,17 @@ pub fn calculate_expected_returns(
 }
 
 /// 日次リターンを計算
-/// 注意: 価格データはyoctoNEAR単位で保存されているため、リターン計算では単位変換不要
+/// 注意: 価格データは比率（Price型）として保存されている。リターン計算は相対値なので単位に依存しない。
 ///
 /// **重要**: この関数は入力されたhistorical_pricesの順序を保持します。
-/// BTreeMapを使用して決定的な処理を行いますが、結果の順序は入力順序に従います。
+/// 重複トークンがある場合は最初の出現のみを使用します。
 pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f64>> {
-    let mut token_prices: BTreeMap<String, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
-
-    // トークン別に価格データをグループ化
-    for price_data in historical_prices {
-        for price_point in &price_data.prices {
-            // 価格はyoctoNEAR単位のBigDecimalとして保存されている
-            let price_f64 = price_point.price.to_string().parse::<f64>().unwrap_or(0.0);
-            token_prices
-                .entry(price_data.token.clone())
-                .or_default()
-                .push((price_point.timestamp, price_f64));
-        }
-    }
-
-    // 入力順序を保持: 元の配列から重複を除いたトークン順序を取得
-    let unique_tokens: Vec<String> = {
-        let mut seen = std::collections::HashSet::new();
-        historical_prices
-            .iter()
-            .filter_map(|p| {
-                if seen.insert(p.token.clone()) {
-                    Some(p.token.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    };
-
-    // 入力順序でリターンを計算
-    let mut returns = Vec::new();
-    for token in unique_tokens {
-        if let Some(mut prices) = token_prices.get(&token).cloned() {
-            prices.sort_by_key(|&(timestamp, _)| timestamp);
-
-            let mut token_returns = Vec::new();
-            for i in 1..prices.len() {
-                let return_rate = (prices[i].1 - prices[i - 1].1) / prices[i - 1].1;
-                token_returns.push(return_rate);
-            }
-            returns.push(token_returns);
-        }
-    }
-
-    returns
+    let mut seen = std::collections::HashSet::new();
+    historical_prices
+        .iter()
+        .filter(|p| seen.insert(p.token.to_string()))
+        .map(|p| calculate_returns_from_prices(&p.prices))
+        .collect()
 }
 
 /// 共分散行列を計算
@@ -167,9 +142,10 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     let mut covariance = Array2::zeros((n, n));
 
     for i in 0..n {
-        for j in 0..n {
+        for j in i..n {
             let cov = calculate_covariance(&daily_returns[i], &daily_returns[j]);
             covariance[[i, j]] = cov;
+            covariance[[j, i]] = cov;
         }
     }
 
@@ -182,22 +158,26 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
 }
 
 /// 2つの系列間の共分散を計算
+///
+/// 長さが異なる場合は末尾（最新データ）を優先してトリミングする。
 fn calculate_covariance(returns1: &[f64], returns2: &[f64]) -> f64 {
-    if returns1.len() != returns2.len() || returns1.is_empty() {
+    let min_len = returns1.len().min(returns2.len());
+    if min_len < 2 {
         return 0.0;
     }
 
-    let mean1: f64 = returns1.iter().sum::<f64>() / returns1.len() as f64;
-    let mean2: f64 = returns2.iter().sum::<f64>() / returns2.len() as f64;
+    // 末尾（最新データ）を優先: 長い方の先頭を切り詰める
+    let r1 = &returns1[returns1.len() - min_len..];
+    let r2 = &returns2[returns2.len() - min_len..];
 
-    let covariance: f64 = returns1
-        .iter()
-        .zip(returns2.iter())
-        .map(|(&r1, &r2)| (r1 - mean1) * (r2 - mean2))
+    let mean1: f64 = r1.iter().sum::<f64>() / min_len as f64;
+    let mean2: f64 = r2.iter().sum::<f64>() / min_len as f64;
+
+    r1.iter()
+        .zip(r2.iter())
+        .map(|(&v1, &v2)| (v1 - mean1) * (v2 - mean2))
         .sum::<f64>()
-        / (returns1.len() - 1) as f64;
-
-    covariance
+        / (min_len - 1) as f64
 }
 
 /// ポートフォリオリターンを計算
@@ -241,6 +221,12 @@ pub fn maximize_sharpe_ratio(
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
 
+    // 全トークンの期待リターンが同一の場合、グリッドサーチは無意味（全反復が同じ target_return）
+    // 等配分が最小分散解の良い近似なので early return
+    if (max_return - min_return).abs() < 1e-12 {
+        return best_weights;
+    }
+
     // グリッドサーチで最適化
     for i in 0..50 {
         let target_return = min_return + (max_return - min_return) * i as f64 / 49.0;
@@ -277,8 +263,10 @@ pub fn calculate_efficient_frontier(
     // 初期解: 等配分
     let mut weights = vec![1.0 / n as f64; n];
 
-    // 制約付き最適化（簡略版）
+    // 制約付き最適化（収束判定付き）
     for _ in 0..MAX_OPTIMIZATION_ITERATIONS {
+        let prev_weights = weights.clone();
+
         weights =
             optimize_weights_step(&weights, expected_returns, covariance_matrix, target_return);
 
@@ -291,6 +279,16 @@ pub fn calculate_efficient_frontier(
             for w in weights.iter_mut() {
                 *w /= sum;
             }
+        }
+
+        // 収束判定: weight変化量が十分小さければ早期終了
+        let max_change = weights
+            .iter()
+            .zip(prev_weights.iter())
+            .map(|(w, pw)| (w - pw).abs())
+            .fold(0.0_f64, f64::max);
+        if max_change < 1e-6 {
+            break;
         }
     }
 
@@ -433,28 +431,27 @@ pub fn apply_constraints(weights: &mut [f64]) {
         }
     }
 
-    // 最終的な制約チェック
-    for w in weights.iter_mut() {
-        *w = w.clamp(0.0, MAX_POSITION_SIZE);
-    }
-
-    // 最終正規化
-    let sum: f64 = weights.iter().sum();
-    if sum > 0.0 {
+    // 最終的な制約チェックと正規化（収束ループ）
+    // clamp と normalize を繰り返し、両方の制約を同時に満たす
+    for _ in 0..10 {
         for w in weights.iter_mut() {
-            *w /= sum;
-            // 正規化後も最大ポジションサイズを再チェック（浮動小数点誤差対策）
-            if *w > MAX_POSITION_SIZE {
-                *w = MAX_POSITION_SIZE;
+            *w = w.clamp(0.0, MAX_POSITION_SIZE);
+        }
+        let sum: f64 = weights.iter().sum();
+        if sum > 0.0 {
+            for w in weights.iter_mut() {
+                *w /= sum;
             }
+        }
+        // 全要素が MAX_POSITION_SIZE 以内なら収束
+        if weights.iter().all(|&w| w <= MAX_POSITION_SIZE + 1e-10) {
+            break;
         }
     }
 }
 
 /// 市場ボラティリティに基づく動的リスク調整
-fn calculate_dynamic_risk_adjustment(portfolio_data: &PortfolioData) -> f64 {
-    let daily_returns = calculate_daily_returns(&portfolio_data.historical_prices);
-
+fn calculate_dynamic_risk_adjustment(daily_returns: &[Vec<f64>]) -> f64 {
     if daily_returns.is_empty() {
         return 1.0; // デフォルト（調整なし）
     }
@@ -487,6 +484,25 @@ fn calculate_dynamic_risk_adjustment(portfolio_data: &PortfolioData) -> f64 {
             / (HIGH_VOLATILITY_THRESHOLD - LOW_VOLATILITY_THRESHOLD);
         1.4 - (1.4 - 0.7) * ratio
     }
+}
+
+/// weight ベクトルのバリデーション
+///
+/// NaN/Inf/負値を 0.0 に置換する。非有限値が含まれていた場合は `true` を返す。
+pub fn validate_weights(weights: &[f64]) -> (Vec<f64>, bool) {
+    let mut had_invalid = false;
+    let validated = weights
+        .iter()
+        .map(|&w| {
+            if w.is_finite() && w >= 0.0 {
+                w
+            } else {
+                had_invalid = true;
+                0.0
+            }
+        })
+        .collect();
+    (validated, had_invalid)
 }
 
 /// リバランスが必要かチェック
@@ -538,19 +554,7 @@ fn calculate_individual_sharpe(
     if let Some(prices) = token_prices
         && prices.len() > 1
     {
-        // 日次リターンを計算
-        let mut returns = Vec::new();
-        for i in 1..prices.len() {
-            let price_current = prices[i].price.to_string().parse::<f64>().unwrap_or(0.0);
-            let price_prev = prices[i - 1]
-                .price
-                .to_string()
-                .parse::<f64>()
-                .unwrap_or(1.0);
-            if price_prev > 0.0 {
-                returns.push((price_current - price_prev) / price_prev);
-            }
-        }
+        let returns = calculate_returns_from_prices(prices);
 
         if !returns.is_empty() {
             let volatility = calculate_std_dev(&returns);
@@ -565,12 +569,13 @@ fn calculate_individual_sharpe(
 
 /// 標準偏差を計算
 fn calculate_std_dev(values: &[f64]) -> f64 {
-    if values.is_empty() {
+    if values.len() < 2 {
         return 0.0;
     }
 
     let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+    let variance =
+        values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
 
     variance.sqrt()
 }
@@ -578,11 +583,21 @@ fn calculate_std_dev(values: &[f64]) -> f64 {
 /// トークンのスコアを計算
 fn calculate_token_score(
     token: &TokenData,
-    prediction: Option<&f64>,
+    prediction: Option<&TokenPrice>,
     historical_prices: &[PriceHistory],
     all_volatilities: &[f64],
 ) -> TokenScore {
-    let expected_return = prediction.copied().unwrap_or(0.0);
+    // 予測価格から期待リターンを計算
+    let expected_return = if let Some(predicted_price) = prediction {
+        let current_price = token.current_rate.to_price();
+        if current_price.is_zero() || predicted_price.is_zero() {
+            0.0
+        } else {
+            current_price.expected_return(predicted_price)
+        }
+    } else {
+        0.0
+    };
     let sharpe = calculate_individual_sharpe(token, historical_prices, expected_return);
     let liquidity = token.liquidity_score.unwrap_or(0.0);
     let confidence = 0.5; // デフォルト信頼度
@@ -607,7 +622,7 @@ fn calculate_token_score(
     let composite = sharpe.max(0.0) * 0.4 + liquidity * 0.2 + confidence * 0.2 + vol_rank * 0.2;
 
     TokenScore {
-        token: token.symbol.clone(),
+        token: token.symbol.to_string(),
         sharpe_ratio: sharpe,
         liquidity_score: liquidity,
         prediction_confidence: confidence,
@@ -619,38 +634,41 @@ fn calculate_token_score(
 /// 最適なトークンを選択
 pub fn select_optimal_tokens(
     tokens: &[TokenData],
-    predictions: &BTreeMap<String, f64>,
+    predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
     historical_prices: &[PriceHistory],
     max_tokens: usize,
 ) -> Vec<TokenData> {
     // フィルタリング: 最小要件を満たすトークンのみ
+    let min_cap = min_market_cap();
     let filtered_tokens: Vec<&TokenData> = tokens
         .iter()
         .filter(|t| {
             // 実際のデータ構造に合わせたフィルタリング条件
             // market_capがNoneの場合は流動性スコアのみでフィルタ
             let liquidity_ok = t.liquidity_score.unwrap_or(0.0) >= MIN_LIQUIDITY_SCORE;
-            let market_cap_ok = match t.market_cap {
-                Some(cap) => cap >= MIN_MARKET_CAP,
+            let market_cap_ok = match &t.market_cap {
+                Some(cap) => cap >= &min_cap,
                 None => true, // market_capがNoneの場合はスキップ
             };
             liquidity_ok && market_cap_ok
         })
         .collect();
 
-    if filtered_tokens.is_empty() {
-        // フィルタ条件が厳しすぎる場合は全トークンから選択
-        return tokens.iter().take(max_tokens).cloned().collect();
-    }
+    // フィルタ条件が厳しすぎる場合は全トークンを候補にする
+    let scoring_tokens: Vec<&TokenData> = if filtered_tokens.is_empty() {
+        tokens.iter().collect()
+    } else {
+        filtered_tokens
+    };
 
     // 全トークンのボラティリティを収集
-    let all_volatilities: Vec<f64> = filtered_tokens
+    let all_volatilities: Vec<f64> = scoring_tokens
         .iter()
         .map(|t| t.historical_volatility)
         .collect();
 
     // スコアリング
-    let mut scored_tokens: Vec<(TokenScore, &TokenData)> = filtered_tokens
+    let mut scored_tokens: Vec<(TokenScore, &TokenData)> = scoring_tokens
         .iter()
         .map(|&token| {
             let prediction = predictions.get(&token.symbol);
@@ -693,8 +711,8 @@ fn select_uncorrelated_tokens(
         let mut correlations = Vec::new();
         for selected_token in &selected {
             let correlation = calculate_token_correlation(
-                &token.symbol,
-                &selected_token.symbol,
+                &token.symbol.to_string(),
+                &selected_token.symbol.to_string(),
                 historical_prices,
             );
             correlations.push(correlation.abs());
@@ -724,11 +742,11 @@ fn calculate_token_correlation(
     // トークンの価格履歴を取得
     let prices1 = historical_prices
         .iter()
-        .find(|p| p.token == token1)
+        .find(|p| p.token.to_string() == token1)
         .map(|p| &p.prices);
     let prices2 = historical_prices
         .iter()
-        .find(|p| p.token == token2)
+        .find(|p| p.token.to_string() == token2)
         .map(|p| &p.prices);
 
     if let (Some(p1), Some(p2)) = (prices1, prices2) {
@@ -736,13 +754,18 @@ fn calculate_token_correlation(
         let returns1 = calculate_returns_from_prices(p1);
         let returns2 = calculate_returns_from_prices(p2);
 
-        if returns1.len() == returns2.len() && !returns1.is_empty() {
-            let std1 = calculate_std_dev(&returns1);
-            let std2 = calculate_std_dev(&returns2);
+        // 長さが異なる場合は末尾（最新データ）を優先してトリミング
+        let min_len = returns1.len().min(returns2.len());
+        if min_len >= 2 {
+            let r1 = &returns1[returns1.len() - min_len..];
+            let r2 = &returns2[returns2.len() - min_len..];
+
+            let std1 = calculate_std_dev(r1);
+            let std2 = calculate_std_dev(r2);
 
             // 標準偏差が0の場合は相関を0とする
             if std1 > 0.0 && std2 > 0.0 {
-                let correlation = calculate_covariance(&returns1, &returns2) / (std1 * std2);
+                let correlation = calculate_covariance(r1, r2) / (std1 * std2);
                 // 相関係数を-1から1の範囲にクリップ
                 return correlation.clamp(-1.0, 1.0);
             }
@@ -753,15 +776,24 @@ fn calculate_token_correlation(
 }
 
 /// 価格からリターンを計算
+///
+/// 入力をタイムスタンプ昇順にソートしてからリターンを計算する。
 fn calculate_returns_from_prices(prices: &[PricePoint]) -> Vec<f64> {
+    if prices.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut sorted: Vec<&PricePoint> = prices.iter().collect();
+    sorted.sort_by_key(|p| p.timestamp);
+
     let mut returns = Vec::new();
-    for i in 1..prices.len() {
-        let price_current = prices[i].price.to_string().parse::<f64>().unwrap_or(0.0);
-        let price_prev = prices[i - 1]
+    for i in 1..sorted.len() {
+        let price_current = sorted[i].price.to_string().parse::<f64>().unwrap_or(0.0);
+        let price_prev = sorted[i - 1]
             .price
             .to_string()
             .parse::<f64>()
-            .unwrap_or(1.0);
+            .unwrap_or(0.0);
         if price_prev > 0.0 {
             returns.push((price_current - price_prev) / price_prev);
         }
@@ -786,11 +818,11 @@ pub async fn execute_portfolio_optimization(
     );
 
     // 選択されたトークンのみでポートフォリオを構築
-    let selected_predictions: BTreeMap<String, f64> = portfolio_data
+    let selected_predictions: BTreeMap<TokenOutAccount, TokenPrice> = portfolio_data
         .predictions
         .iter()
         .filter(|(symbol, _)| selected_tokens.iter().any(|t| &t.symbol == *symbol))
-        .map(|(k, v)| (k.clone(), *v))
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
     // 期待リターンを計算
@@ -808,19 +840,52 @@ pub async fn execute_portfolio_optimization(
     let daily_returns = calculate_daily_returns(&selected_price_histories);
     let covariance = calculate_covariance_matrix(&daily_returns);
 
-    // 動的リスク調整係数を計算
-    let risk_adjustment = calculate_dynamic_risk_adjustment(&portfolio_data);
+    // 動的リスク調整係数を計算（選択後トークンのボラティリティに基づく）
+    let risk_adjustment = calculate_dynamic_risk_adjustment(&daily_returns);
 
-    // 最適ポートフォリオを計算
-    let mut optimal_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+    // Issue 1: 期待リターンにリスク調整を適用（高ボラ時は期待リターン縮小）
+    let adjusted_returns: Vec<f64> = expected_returns
+        .iter()
+        .map(|&r| r * risk_adjustment)
+        .collect();
 
-    // 動的リスク調整を適用（積極的/保守的調整）
-    for weight in optimal_weights.iter_mut() {
-        *weight *= risk_adjustment;
-    }
+    // Sharpe 最適化（リスク調整済みリターンを使用）
+    let raw_weights = maximize_sharpe_ratio(&adjusted_returns, &covariance);
+    let (validated, had_invalid) = validate_weights(&raw_weights);
+    debug_assert!(
+        !had_invalid,
+        "maximize_sharpe_ratio returned non-finite weights: {:?}",
+        raw_weights
+    );
+    let w_sharpe = validated;
 
-    // リスクパリティ調整（オプション）
-    apply_risk_parity(&mut optimal_weights, &covariance);
+    // Issue 2: Risk Parity を独立に計算（等配分から開始）
+    let n = w_sharpe.len();
+    let mut w_rp = vec![1.0 / n as f64; n];
+    apply_risk_parity(&mut w_rp, &covariance);
+
+    // risk_adjustment 連動 alpha_vol でブレンド（範囲 [0.7, 0.9]）
+    // risk_adjustment: 0.7 (高ボラ) → 1.4 (低ボラ)
+    // alpha_vol: 0.7 (RP補助) → 0.9 (Sharpe主導)
+    let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+
+    // prediction_confidence で alpha を調整
+    // confidence が低い → alpha を PREDICTION_ALPHA_FLOOR (0.5) まで下げる
+    // confidence が高い → alpha_vol をそのまま維持
+    // None → 従来通り alpha_vol を使用（後方互換）
+    let alpha = match portfolio_data.prediction_confidence {
+        Some(confidence) => {
+            let floor = PREDICTION_ALPHA_FLOOR;
+            (floor + (alpha_vol - floor) * confidence).clamp(floor, 0.9)
+        }
+        None => alpha_vol,
+    };
+
+    let mut optimal_weights: Vec<f64> = w_sharpe
+        .iter()
+        .zip(w_rp.iter())
+        .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+        .collect();
 
     // 制約を適用
     apply_constraints(&mut optimal_weights);
@@ -854,7 +919,7 @@ pub async fn execute_portfolio_optimization(
     };
 
     // 重みをBTreeMapに変換（順序安定化のため）
-    let weight_map: BTreeMap<String, f64> = selected_tokens
+    let weight_map: BTreeMap<TokenOutAccount, f64> = selected_tokens
         .iter()
         .zip(optimal_weights.iter())
         .filter(|&(_, weight)| *weight > 0.0)
@@ -869,14 +934,48 @@ pub async fn execute_portfolio_optimization(
         sharpe_ratio,
     };
 
+    // ポートフォリオレベルの日次リターン系列を構築
+    let min_return_len = daily_returns.iter().map(|r| r.len()).min().unwrap_or(0);
+    let portfolio_daily_returns: Vec<f64> = if min_return_len > 0 && !optimal_weights.is_empty() {
+        (0..min_return_len)
+            .map(|day| {
+                optimal_weights
+                    .iter()
+                    .zip(daily_returns.iter())
+                    .map(|(w, returns)| w * returns[day])
+                    .sum()
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    let daily_risk_free = RISK_FREE_RATE / 365.0;
+    let sortino_ratio = super::calculate_sortino_ratio(&portfolio_daily_returns, daily_risk_free);
+
+    let cumulative_values: Vec<f64> = {
+        let mut vals = Vec::with_capacity(portfolio_daily_returns.len() + 1);
+        vals.push(1.0);
+        for &r in &portfolio_daily_returns {
+            vals.push(vals.last().unwrap() * (1.0 + r));
+        }
+        vals
+    };
+    let max_drawdown = super::calculate_max_drawdown(&cumulative_values);
+
+    let calmar_ratio = if max_drawdown > 0.0 {
+        portfolio_return / max_drawdown
+    } else {
+        0.0
+    };
+
     let expected_metrics = PortfolioMetrics {
-        cumulative_return: portfolio_return,
-        annualized_return: portfolio_return * 365.0,
-        volatility: portfolio_vol * 365.0_f64.sqrt(),
+        daily_return: portfolio_return,
+        volatility: portfolio_vol,
         sharpe_ratio,
-        sortino_ratio: sharpe_ratio, // 簡略化
-        max_drawdown: 0.0,           // 将来実装
-        calmar_ratio: 0.0,           // 将来実装
+        sortino_ratio,
+        max_drawdown,
+        calmar_ratio,
         turnover_rate: calculate_turnover_rate(&current_weights, &optimal_weights),
     };
 
@@ -890,59 +989,46 @@ pub async fn execute_portfolio_optimization(
 }
 
 /// 現在の重みを計算
-/// 注意: price_f64はyoctoNEAR単位、holdingはトークン数量、total_valueは総NEAR単位の値
+/// 型安全: holdingsはTokenAmount（smallest_units + decimals）、total_valueはNearValue（NEAR単位）
 fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
-
-    // BigDecimalで高精度計算を実行
-    let total_value_bd = BigDecimal::from_str(&wallet.total_value.to_string()).unwrap_or_default();
-    let yocto_per_near = "1000000000000000000000000".parse::<BigDecimal>().unwrap(); // 10^24
+    let total_value = &wallet.total_value;
 
     for (i, token) in tokens.iter().enumerate() {
-        if let Some(&holding) = wallet.holdings.get(&token.symbol) {
-            // f64のholdingを直接BigDecimalに変換（精度を保つため）
-            // 科学的記数法の値も正確に扱える
-            let holding_bd = BigDecimal::from_str(&holding.to_string()).unwrap_or_default();
+        if let Some(holding) = wallet.holdings.get(&token.symbol) {
+            // TokenAmount / &ExchangeRate = NearValue トレイトを使用
+            // holding の decimals と current_rate の decimals は一致している必要がある
+            let value_near = holding / &token.current_rate;
 
-            // 価格も完全にBigDecimalで処理
-            let price_bd = &token.current_price; // yoctoNEAR単位
-
-            // 価値をyoctoNEAR単位で計算 (BigDecimal同士の乗算)
-            let value_yocto_bd = price_bd * &holding_bd;
-
-            // yoctoNEARからNEARに変換 (高精度)
-            let value_near_bd = &value_yocto_bd / &yocto_per_near;
-
-            // 重みを計算 (BigDecimal)
-            if total_value_bd > BigDecimal::from(0) {
-                let weight_bd = &value_near_bd / &total_value_bd;
-                // 最終的にf64に変換（必要最小限のみ）
-                weights[i] = weight_bd.to_string().parse::<f64>().unwrap_or(0.0);
+            // &NearValue / &NearValue = BigDecimal
+            if !total_value.is_zero() {
+                let weight = &value_near / total_value;
+                weights[i] = weight.to_f64().unwrap_or(0.0);
             }
 
             // デバッグ用ログ (テスト時のみ)
             #[cfg(test)]
             {
-                let value_near_f64 = value_near_bd.to_string().parse::<f64>().unwrap_or(0.0);
+                let value_near_f64 = value_near.to_f64();
                 println!(
-                    "Token {}: price={}, holding={}, value_near={:.6}, weight={:.6}%",
+                    "Token {}: rate={}, holding={}, value_near={:.6}, weight={:.6}%",
                     token.symbol,
-                    price_bd,
-                    holding_bd,
-                    value_near_f64,
+                    token.current_rate,
+                    holding,
+                    value_near_f64.as_f64(),
                     weights[i] * 100.0
                 );
 
-                if value_near_f64 > 100.0 {
+                if value_near_f64.as_f64() > 100.0 {
                     // 100 NEAR以上の場合は警告
                     println!(
                         "WARNING: Token {} has unusually high value: {:.6} NEAR",
-                        token.symbol, value_near_f64
+                        token.symbol,
+                        value_near_f64.as_f64()
                     );
-                    println!("  Price (BigDecimal): {}", price_bd);
-                    println!("  Holdings (BigDecimal): {}", holding_bd);
-                    println!("  Value (yocto): {}", value_yocto_bd);
-                    println!("  Value (NEAR): {}", value_near_bd);
+                    println!("  Rate: {}", token.current_rate);
+                    println!("  Holdings: {}", holding);
+                    println!("  Value (NEAR): {}", value_near);
                     println!("  Weight: {:.6}%", weights[i] * 100.0);
                 }
             }
@@ -970,11 +1056,15 @@ fn generate_rebalance_actions(
         let weight_diff = target_weights[i] - current_weights[i];
         if weight_diff.abs() > rebalance_threshold {
             if weight_diff > 0.0 {
-                // AddPosition equivalent using Hold for now
-                actions.push(TradingAction::Hold);
+                actions.push(TradingAction::AddPosition {
+                    token: token.symbol.clone(),
+                    weight: target_weights[i],
+                });
             } else if current_weights[i] > 0.0 {
-                // ReducePosition equivalent using Hold for now
-                actions.push(TradingAction::Hold);
+                actions.push(TradingAction::ReducePosition {
+                    token: token.symbol.clone(),
+                    weight: target_weights[i],
+                });
             }
         }
     }

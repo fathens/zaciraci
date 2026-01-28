@@ -10,14 +10,7 @@ const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
 pub fn new_wallet() -> StandardWallet {
-    let log = DEFAULT.new(o!("function" => "wallet::new_wallet"));
-    match StandardWallet::new_from_config() {
-        Ok(wallet) => wallet,
-        Err(err) => {
-            error!(log, "Failed to create wallet"; "error" => format!("{:?}", err));
-            panic!("Failed to create wallet: {:?}", err)
-        }
-    }
+    StandardWallet::new_from_config().expect("Failed to create wallet from config")
 }
 
 pub trait Wallet {

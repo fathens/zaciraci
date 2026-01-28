@@ -3,6 +3,11 @@ use bigdecimal::BigDecimal;
 use chrono::{NaiveDateTime, Utc};
 use common::algorithm::calculate_volatility_score;
 use common::stats::ValueAtTime;
+use common::types::TokenPrice;
+
+fn price(v: i32) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from(v))
+}
 
 #[test]
 fn test_calculate_volatility_score_empty_data() {
@@ -15,7 +20,7 @@ fn test_calculate_volatility_score_empty_data() {
 fn test_calculate_volatility_score_single_value() {
     let values = vec![ValueAtTime {
         time: Utc::now().naive_utc(),
-        value: BigDecimal::from(100),
+        value: price(100),
     }];
     let result = calculate_volatility_score(&values, true);
     assert_eq!(result, 0.0);
@@ -28,15 +33,15 @@ fn test_calculate_volatility_score_stable_prices() {
     let values = vec![
         ValueAtTime {
             time: base_time,
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(1),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(2),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
     ];
     let result = calculate_volatility_score(&values, true);
@@ -50,19 +55,19 @@ fn test_calculate_volatility_score_with_changes() {
     let values = vec![
         ValueAtTime {
             time: base_time,
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(1),
-            value: BigDecimal::from(110), // +10%
+            value: price(110), // +10%
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(2),
-            value: BigDecimal::from(90), // -18.18%
+            value: price(90), // -18.18%
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(3),
-            value: BigDecimal::from(105), // +16.67%
+            value: price(105), // +16.67%
         },
     ];
     let result = calculate_volatility_score(&values, true);
@@ -78,11 +83,11 @@ fn test_calculate_volatility_score_with_zero_prices() {
     let values = vec![
         ValueAtTime {
             time: base_time,
-            value: BigDecimal::from(0),
+            value: price(0),
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(1),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
     ];
     let result = calculate_volatility_score(&values, true);
@@ -97,19 +102,19 @@ fn test_calculate_volatility_score_high_volatility() {
     let values = vec![
         ValueAtTime {
             time: base_time,
-            value: BigDecimal::from(100),
+            value: price(100),
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(1),
-            value: BigDecimal::from(200), // +100%
+            value: price(200), // +100%
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(2),
-            value: BigDecimal::from(50), // -75%
+            value: price(50), // -75%
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(3),
-            value: BigDecimal::from(150), // +200%
+            value: price(150), // +200%
         },
     ];
     let result = calculate_volatility_score(&values, true);
@@ -149,22 +154,26 @@ fn test_price_data_calculation_single_point() {
         NaiveDateTime::parse_from_str("2024-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
     let values = vec![ValueAtTime {
         time: base_time,
-        value: BigDecimal::from(150),
+        value: price(150),
     }];
 
     // Test single price point
-    let default_price = BigDecimal::from(0);
+    let default_price = TokenPrice::zero();
     let current_price = values.last().map(|v| &v.value).unwrap_or(&default_price);
     let price_24h_ago = values.first().map(|v| &v.value).unwrap_or(current_price);
-    let price_change_24h = if price_24h_ago > &BigDecimal::from(0) {
-        ((current_price - price_24h_ago) / price_24h_ago) * BigDecimal::from(100)
+
+    // TokenPrice を f64 に変換して計算
+    let current_f64 = current_price.to_f64().as_f64();
+    let ago_f64 = price_24h_ago.to_f64().as_f64();
+    let price_change_24h = if ago_f64 > 0.0 {
+        ((current_f64 - ago_f64) / ago_f64) * 100.0
     } else {
-        BigDecimal::from(0)
+        0.0
     };
     let volatility_score = calculate_volatility_score(&values, true);
 
-    assert_eq!(current_price, &BigDecimal::from(150));
-    assert_eq!(price_change_24h, BigDecimal::from(0)); // No change with single point
+    assert_eq!(current_price, &price(150));
+    assert_eq!(price_change_24h, 0.0); // No change with single point
     assert_eq!(volatility_score, 0.0); // No volatility with single point
 }
 
@@ -178,11 +187,11 @@ fn test_price_data_calculation_with_24h_change() {
     for i in 0..25 {
         values.push(ValueAtTime {
             time: base_time + chrono::Duration::hours(i as i64),
-            value: BigDecimal::from(100 + (i * 2)), // Increasing by 2 each hour
+            value: price(100 + (i * 2)), // Increasing by 2 each hour
         });
     }
 
-    let default_price = BigDecimal::from(0);
+    let default_price = TokenPrice::zero();
     let current_price = values.last().map(|v| &v.value).unwrap_or(&default_price);
     let price_24h_ago = if values.len() > 24 {
         &values[values.len() - 24].value
@@ -190,18 +199,19 @@ fn test_price_data_calculation_with_24h_change() {
         values.first().map(|v| &v.value).unwrap_or(current_price)
     };
 
-    let price_change_24h = if price_24h_ago > &BigDecimal::from(0) {
-        ((current_price - price_24h_ago) / price_24h_ago) * BigDecimal::from(100)
+    // TokenPrice を f64 に変換して計算
+    let current_f64 = current_price.to_f64().as_f64();
+    let ago_f64 = price_24h_ago.to_f64().as_f64();
+    let price_change_24h = if ago_f64 > 0.0 {
+        ((current_f64 - ago_f64) / ago_f64) * 100.0
     } else {
-        BigDecimal::from(0)
+        0.0
     };
 
-    assert_eq!(current_price, &BigDecimal::from(148)); // 100 + (24 * 2)
-    assert_eq!(price_24h_ago, &BigDecimal::from(102)); // Value 24 hours ago: 100 + (1 * 2)
-    let expected_change = (&BigDecimal::from(148) - &BigDecimal::from(102))
-        / &BigDecimal::from(102)
-        * &BigDecimal::from(100); // About 45.1%
-    assert_eq!(price_change_24h, expected_change);
+    assert_eq!(current_price, &price(148)); // 100 + (24 * 2)
+    assert_eq!(price_24h_ago, &price(102)); // Value 24 hours ago: 100 + (1 * 2)
+    let expected_change = ((148.0 - 102.0) / 102.0) * 100.0; // About 45.1%
+    assert!((price_change_24h - expected_change).abs() < 0.0001);
 }
 
 #[test]
@@ -211,24 +221,28 @@ fn test_price_data_calculation_with_zero_price() {
     let values = [
         ValueAtTime {
             time: base_time,
-            value: BigDecimal::from(0), // Zero price 24h ago
+            value: price(0), // Zero price 24h ago
         },
         ValueAtTime {
             time: base_time + chrono::Duration::hours(1),
-            value: BigDecimal::from(100),
+            value: price(100),
         },
     ];
 
-    let default_price = BigDecimal::from(0);
+    let default_price = TokenPrice::zero();
     let current_price = values.last().map(|v| &v.value).unwrap_or(&default_price);
     let price_24h_ago = values.first().map(|v| &v.value).unwrap_or(current_price);
-    let price_change_24h = if price_24h_ago > &BigDecimal::from(0) {
-        ((current_price - price_24h_ago) / price_24h_ago) * BigDecimal::from(100)
+
+    // TokenPrice を f64 に変換して計算
+    let current_f64 = current_price.to_f64().as_f64();
+    let ago_f64 = price_24h_ago.to_f64().as_f64();
+    let price_change_24h = if ago_f64 > 0.0 {
+        ((current_f64 - ago_f64) / ago_f64) * 100.0
     } else {
-        BigDecimal::from(0)
+        0.0
     };
 
-    assert_eq!(current_price, &BigDecimal::from(100));
-    assert_eq!(price_24h_ago, &BigDecimal::from(0));
-    assert_eq!(price_change_24h, BigDecimal::from(0)); // Should be 0 when dividing by zero price
+    assert_eq!(current_price, &price(100));
+    assert_eq!(price_24h_ago, &price(0));
+    assert_eq!(price_change_24h, 0.0); // Should be 0 when dividing by zero price
 }

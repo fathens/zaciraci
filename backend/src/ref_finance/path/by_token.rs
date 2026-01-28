@@ -17,7 +17,7 @@ impl PoolsByToken {
         for pool in pool_list.iter().filter(|pool| pool.is_simple()) {
             for token in pool.tokens() {
                 by_in
-                    .entry(token.clone().into())
+                    .entry(token.to_in())
                     .or_insert_with(Vec::new)
                     .push(edge::same_pool::CachedEdges::new(Arc::clone(pool)));
             }
@@ -29,7 +29,7 @@ impl PoolsByToken {
     }
 
     pub fn tokens(&self) -> Vec<TokenAccount> {
-        self.by_in.keys().cloned().map(|ta| ta.into()).collect()
+        self.by_in.keys().map(|ta| ta.inner().clone()).collect()
     }
 
     pub fn get_groups_by_out(&self, token_in: &TokenInAccount) -> Arc<EdgesByToken> {
@@ -52,13 +52,13 @@ impl PoolsByToken {
             "function" => "group_by_out",
             "token_in" => token_in.to_string(),
         ));
-        info!(log, "finding edges");
+        trace!(log, "finding edges");
 
         self.by_in.get(token_in).map(|edges| {
             let mut edges_by_token_out = HashMap::new();
             for edge in edges.iter() {
-                for token_out in edge.pool.tokens().filter(|&t| t != token_in.as_account()) {
-                    let token_out: TokenOutAccount = token_out.clone().into();
+                for token_out in edge.pool.tokens().filter(|&t| t != token_in.inner()) {
+                    let token_out: TokenOutAccount = token_out.to_out();
                     let log = log.new(o!(
                         "token_out" => token_out.to_string(),
                     ));
@@ -71,7 +71,7 @@ impl PoolsByToken {
                             })
                             .push(Arc::clone(edge))
                             .expect("should be same path"),
-                        Err(e) => info!(log, "no edge found"; "error" => %e),
+                        Err(e) => trace!(log, "no edge found"; "error" => %e),
                     }
                 }
             }

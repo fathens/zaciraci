@@ -8,7 +8,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::NaiveDateTime;
 use futures_util::future::join_all;
-use near_primitives::account::id::ParseAccountError;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
@@ -16,6 +15,7 @@ use serde_json::{from_slice, json};
 use std::collections::HashMap;
 use std::slice::Iter;
 use std::sync::Arc;
+use zaciraci_common::types::YoctoNearToken;
 
 const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
 
@@ -51,17 +51,11 @@ pub struct PoolInfo {
     pub timestamp: NaiveDateTime,
 }
 
-impl TryFrom<zaciraci_common::pools::PoolRecord> for PoolInfo {
-    type Error = ParseAccountError;
-
-    fn try_from(
-        record: zaciraci_common::pools::PoolRecord,
-    ) -> std::result::Result<Self, Self::Error> {
-        let mut token_account_ids = Vec::new();
-        for token_account in record.bare.token_account_ids.iter() {
-            token_account_ids.push(token_account.clone().try_into()?);
-        }
-        Ok(PoolInfo {
+impl From<zaciraci_common::pools::PoolRecord> for PoolInfo {
+    fn from(record: zaciraci_common::pools::PoolRecord) -> Self {
+        // common と backend の TokenAccount は同一型になったため、変換不要
+        let token_account_ids = record.bare.token_account_ids;
+        PoolInfo {
             id: record.id.into(),
             bare: PoolInfoBared {
                 pool_kind: record.bare.pool_kind,
@@ -77,7 +71,7 @@ impl TryFrom<zaciraci_common::pools::PoolRecord> for PoolInfo {
                 amp: record.bare.amp,
             },
             timestamp: record.timestamp,
-        })
+        }
     }
 }
 
@@ -87,15 +81,18 @@ impl From<PoolInfo> for zaciraci_common::pools::PoolRecord {
             id: pool_info.id.into(),
             bare: zaciraci_common::pools::PoolBared {
                 pool_kind: pool_info.bare.pool_kind,
-                token_account_ids: pool_info
+                // common と backend の TokenAccount は同一型になったため、変換不要
+                token_account_ids: pool_info.bare.token_account_ids.clone(),
+                amounts: pool_info
                     .bare
-                    .token_account_ids
+                    .amounts
                     .iter()
-                    .map(|v| v.clone().into())
+                    .map(|v| YoctoNearToken::from_yocto(v.0))
                     .collect(),
-                amounts: pool_info.bare.amounts.iter().map(|v| v.0.into()).collect(),
                 total_fee: pool_info.bare.total_fee,
-                shares_total_supply: pool_info.bare.shares_total_supply.0.into(),
+                shares_total_supply: YoctoNearToken::from_yocto(
+                    pool_info.bare.shares_total_supply.0,
+                ),
                 amp: pool_info.bare.amp,
             },
             timestamp: pool_info.timestamp,
@@ -295,7 +292,7 @@ impl PoolInfo {
             "token_in" => token_in.as_usize(),
             "token_out" => token_out.as_usize(),
         ));
-        info!(log, "start");
+        trace!(log, "start");
         if token_in.as_index() == token_out.as_index() {
             return Err(Error::SwapSameToken.into());
         }
@@ -311,7 +308,7 @@ impl PoolInfo {
         let amount_with_fee = amount_in * BigDecimal::from(FEE_DIVISOR - self.bare.total_fee);
         let result = &amount_with_fee * out_balance
             / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
-        info!(log, "finish"; "value" => %result);
+        trace!(log, "finish"; "value" => %result);
         result.to_u128().ok_or_else(|| Error::Overflow.into())
     }
 
@@ -327,14 +324,14 @@ impl PoolInfo {
             "pool_id" => self.id,
             "amount_in" => amount_in,
         ));
-        info!(log, "start");
+        trace!(log, "start");
         let method_name = "get_return";
 
         let args = json!({
             "pool_id": self.id,
-            "token_in": token_in.as_id(),
+            "token_in": token_in.as_account_id(),
             "amount_in": U128::from(amount_in),
-            "token_out": token_out.as_id(),
+            "token_out": token_out.as_account_id(),
         })
         .to_string();
         debug!(log, "request_json"; "value" => %args);
@@ -345,7 +342,7 @@ impl PoolInfo {
 
         let raw = result.result;
         let value: U128 = from_slice(&raw)?;
-        info!(log, "finish"; "value" => %value.0);
+        trace!(log, "finish"; "value" => %value.0);
         Ok(value.into())
     }
 }

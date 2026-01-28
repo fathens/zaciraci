@@ -6,7 +6,7 @@ use crate::ref_finance;
 use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::preview::Preview;
 use crate::ref_finance::pool_info::TokenPath;
-use crate::ref_finance::token_account::{TokenInAccount, WNEAR_TOKEN};
+use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::types::MicroNear;
 use crate::wallet;
 use anyhow::bail;
@@ -84,10 +84,8 @@ where
 {
     let log = DEFAULT.new(o!("function" => "single_loop"));
 
-    let token = WNEAR_TOKEN.clone();
-
-    let balance = ref_finance::balances::start(client, wallet, &token, None).await?;
-    let start: &TokenInAccount = &token.into();
+    let balance = ref_finance::balances::start(client, wallet, &WNEAR_TOKEN, None).await?;
+    let start = WNEAR_TOKEN.to_in();
     let start_balance = MicroNear::from_yocto(balance);
     info!(log, "start";
         "start.token" => ?start,
@@ -99,10 +97,10 @@ where
 
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let gas_price = client.get_gas_price(None).await?;
-    let previews = ref_finance::path::pick_previews(&graph, start, start_balance, gas_price)?;
+    let previews = ref_finance::path::pick_previews(&graph, &start, start_balance, gas_price)?;
 
     if let Some(previews) = previews {
-        let (pre_path, tokens) = previews.into_with_path(&graph, start).await?;
+        let (pre_path, tokens) = previews.into_with_path(&graph, &start).await?;
 
         let res = ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
         if res.is_none() {
@@ -137,6 +135,9 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
 
 async fn swap_each<A, C, W>(
     client: &C,

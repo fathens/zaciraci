@@ -4,9 +4,8 @@ mod cost_fix_test {
     use super::super::types::FeeModel;
     use super::super::utils::{
         calculate_trading_cost, calculate_trading_cost_by_value,
-        calculate_trading_cost_by_value_yocto, calculate_trading_cost_by_value_yocto_bd,
+        calculate_trading_cost_by_value_yocto,
     };
-    use bigdecimal::{BigDecimal, FromPrimitive};
 
     #[test]
     fn test_cost_calculation_comparison() {
@@ -61,28 +60,6 @@ mod cost_fix_test {
             0.0
         };
 
-        // BigDecimal統一方法（最高精度）
-        let trade_value_yocto_bd = BigDecimal::from_f64(token_amount).unwrap_or_default()
-            * BigDecimal::from_f64(token_price_yocto).unwrap_or_default();
-        let gas_cost_yocto_bd = BigDecimal::from_f64(gas_cost_yocto).unwrap_or_default();
-        let slippage_rate_bd = BigDecimal::from_f64(0.01).unwrap_or_default();
-        let bd_cost_value = calculate_trading_cost_by_value_yocto_bd(
-            &trade_value_yocto_bd,
-            &FeeModel::Realistic,
-            &slippage_rate_bd,
-            &gas_cost_yocto_bd,
-        );
-
-        // BigDecimal方法をトークン数量で表現
-        let bd_cost_tokens = if token_price_yocto > 0.0 {
-            (&bd_cost_value / BigDecimal::from_f64(token_price_yocto).unwrap_or_default())
-                .to_string()
-                .parse::<f64>()
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
-
         println!("\n   📊 Cost Comparison:");
         println!("   Old method (amount-based):");
         println!("     Cost in tokens: {:.2e}", old_cost);
@@ -98,16 +75,6 @@ mod cost_fix_test {
         println!(
             "     Cost in NEAR: {:.6}",
             common::units::Units::yocto_f64_to_near_f64(yocto_cost_value)
-        );
-
-        println!("   BigDecimal precision method:");
-        println!("     Cost in yoctoNEAR: {}", bd_cost_value);
-        println!("     Cost in tokens: {:.2e}", bd_cost_tokens);
-        println!(
-            "     Cost in NEAR: {:.12}",
-            common::units::Units::yocto_f64_to_near_f64(
-                bd_cost_value.to_string().parse::<f64>().unwrap_or(0.0)
-            )
         );
 
         println!("\n   💰 Cost Impact Analysis:");
@@ -138,6 +105,87 @@ mod cost_fix_test {
         println!("   注意: 実際の問題はTradingCostの記録部分にありました");
 
         println!("✅ Cost fix test passed - new method produces reasonable costs");
+    }
+
+    /// 現在の計算方法のバグを検出するテスト
+    /// decimals=24 の場合は偶然正しいが、decimals=6 の場合は10^18倍の誤差がある
+    #[test]
+    fn test_trade_value_calculation_bug_detection() {
+        use common::types::{TokenAmountF64, TokenPriceF64, YoctoValueF64};
+
+        // decimals=24 (wNEAR) の場合
+        let amount_24 = TokenAmountF64::from_smallest_units(1e24, 24); // 1 wNEAR
+        let price = TokenPriceF64::from_near_per_token(1.0); // 1 NEAR/wNEAR
+
+        // 型安全な演算
+        let correct_value: YoctoValueF64 = amount_24 * price;
+        println!(
+            "decimals=24: correct value = {} yoctoNEAR",
+            correct_value.as_f64()
+        );
+
+        // 現在のバグ計算（smallest_units × price）
+        let buggy_value_24 = 1e24 * 1.0; // smallest_units × NEAR/token
+        println!("decimals=24: buggy value = {}", buggy_value_24);
+
+        // decimals=24 の場合は偶然一致
+        assert!((correct_value.as_f64() - buggy_value_24).abs() < 1e10);
+
+        // decimals=6 (USDT) の場合
+        let amount_6 = TokenAmountF64::from_smallest_units(1e6, 6); // 1 USDT
+        let price_usdt = TokenPriceF64::from_near_per_token(0.2); // 0.2 NEAR/USDT
+
+        // 型安全な演算
+        let correct_value_6: YoctoValueF64 = amount_6 * price_usdt;
+        println!(
+            "decimals=6: correct value = {} yoctoNEAR",
+            correct_value_6.as_f64()
+        );
+
+        // 現在のバグ計算
+        let buggy_value_6 = 1e6 * 0.2; // smallest_units × NEAR/token
+        println!("decimals=6: buggy value = {}", buggy_value_6);
+
+        // decimals=6 の場合は 10^18 倍の誤差がある！
+        let ratio = correct_value_6.as_f64() / buggy_value_6;
+        println!("decimals=6: ratio (correct/buggy) = {}", ratio);
+        assert!(ratio > 1e17, "Expected huge discrepancy for decimals=6");
+    }
+
+    /// TradingCost の計算が型安全な演算と一致することを確認
+    #[test]
+    fn test_trading_cost_uses_type_safe_calculation() {
+        use common::types::{NearValueF64, TokenAmountF64, TokenPriceF64, YoctoValueF64};
+
+        // USDT シナリオ (decimals=6)
+        let amount = TokenAmountF64::from_smallest_units(100e6, 6); // 100 USDT
+        let price = TokenPriceF64::from_near_per_token(0.2); // 0.2 NEAR/USDT
+        let gas_cost = NearValueF64::from_near(0.01); // 0.01 NEAR
+
+        // 型安全な演算で取引価値を計算
+        let trade_value: YoctoValueF64 = amount * price;
+        println!(
+            "Trade value: {} yoctoNEAR ({} NEAR)",
+            trade_value.as_f64(),
+            trade_value.to_near().as_f64()
+        );
+
+        // コスト計算（f64版）
+        let slippage_rate = 0.01;
+        let cost = calculate_trading_cost_by_value_yocto(
+            trade_value.as_f64(),
+            &FeeModel::Realistic,
+            slippage_rate,
+            gas_cost.to_yocto().as_f64(),
+        );
+
+        // コストが取引価値の合理的な割合であることを確認
+        let cost_pct = cost / trade_value.as_f64() * 100.0;
+        println!("Cost: {} yoctoNEAR ({:.2}% of trade value)", cost, cost_pct);
+        assert!(
+            cost_pct > 0.0 && cost_pct < 5.0,
+            "Cost should be 0-5% of trade value"
+        );
     }
 
     #[test]

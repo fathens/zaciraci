@@ -83,6 +83,8 @@ pub struct ExternalServicesConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct TradeConfig {
+    #[serde(default = "default_trade_enabled")]
+    pub enabled: bool,
     #[serde(default = "default_initial_investment")]
     pub initial_investment: u32,
     #[serde(default = "default_top_tokens")]
@@ -97,6 +99,10 @@ pub struct TradeConfig {
     pub prediction_max_retries: u32,
     #[serde(default = "default_prediction_retry_delay_seconds")]
     pub prediction_retry_delay_seconds: u64,
+    #[serde(default = "default_price_history_days")]
+    pub price_history_days: u32,
+    #[serde(default = "default_volatility_days")]
+    pub volatility_days: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,6 +184,9 @@ fn default_ollama_base_url() -> String {
 fn default_ollama_model() -> String {
     "llama2".to_string()
 }
+fn default_trade_enabled() -> bool {
+    false
+}
 fn default_initial_investment() -> u32 {
     100
 }
@@ -198,6 +207,12 @@ fn default_prediction_max_retries() -> u32 {
 }
 fn default_prediction_retry_delay_seconds() -> u64 {
     5
+}
+fn default_price_history_days() -> u32 {
+    30
+}
+fn default_volatility_days() -> u32 {
+    7
 }
 fn default_record_rates_initial_value() -> u32 {
     100
@@ -260,6 +275,7 @@ impl Default for ExternalServicesConfig {
 impl Default for TradeConfig {
     fn default() -> Self {
         Self {
+            enabled: default_trade_enabled(),
             initial_investment: default_initial_investment(),
             top_tokens: default_top_tokens(),
             evaluation_days: default_evaluation_days(),
@@ -267,6 +283,8 @@ impl Default for TradeConfig {
             cron_schedule: default_cron_schedule(),
             prediction_max_retries: default_prediction_max_retries(),
             prediction_retry_delay_seconds: default_prediction_retry_delay_seconds(),
+            price_history_days: default_price_history_days(),
+            volatility_days: default_volatility_days(),
         }
     }
 }
@@ -359,6 +377,8 @@ pub fn get(name: &str) -> Result<String> {
         "TRADE_PREDICTION_RETRY_DELAY_SECONDS" => {
             Some(CONFIG.trade.prediction_retry_delay_seconds.to_string())
         }
+        "TRADE_PRICE_HISTORY_DAYS" => Some(CONFIG.trade.price_history_days.to_string()),
+        "TRADE_VOLATILITY_DAYS" => Some(CONFIG.trade.volatility_days.to_string()),
         "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
         "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
         "TOKEN_RATES_RETENTION_DAYS" => Some(CONFIG.cron.token_rates_retention_days.to_string()),
@@ -389,7 +409,11 @@ pub fn get(name: &str) -> Result<String> {
     Err(anyhow!("Configuration key not found: {}", name))
 }
 
-#[allow(dead_code)] // This function is not used in the code, but it is needed for tests
+/// テスト用: 設定値を上書きする
+///
+/// 注: `#[cfg(test)]` にすると他クレート(backend等)のテストから参照できないため
+/// `#[doc(hidden)]` で公開している
+#[doc(hidden)]
 pub fn set(name: &str, value: &str) {
     if let Ok(mut store) = CONFIG_STORE.lock() {
         store.insert(name.to_string(), value.to_string());
@@ -490,6 +514,12 @@ fn merge_config(base: &mut Config, local: Config) {
     }
     if local.trade.prediction_retry_delay_seconds != default_prediction_retry_delay_seconds() {
         base.trade.prediction_retry_delay_seconds = local.trade.prediction_retry_delay_seconds;
+    }
+    if local.trade.price_history_days != default_price_history_days() {
+        base.trade.price_history_days = local.trade.price_history_days;
+    }
+    if local.trade.volatility_days != default_volatility_days() {
+        base.trade.volatility_days = local.trade.volatility_days;
     }
 
     // Cron

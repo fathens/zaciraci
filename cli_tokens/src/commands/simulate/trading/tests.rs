@@ -2,7 +2,16 @@ use super::*;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::algorithm::{PredictionData, TradingAction};
+use common::types::{TokenOutAccount, TokenPrice, YoctoValueF64};
 use std::str::FromStr;
+
+fn price(s: &str) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
+}
+
+fn token(s: &str) -> TokenOutAccount {
+    s.parse().unwrap()
+}
 
 // Note: trading.rsの関数は外部API(Chronos)への依存が多いため、
 // ここではロジックとデータ構造のユニットテストのみを実施します。
@@ -18,13 +27,13 @@ fn test_trading_action_execution_structure() {
     }
 
     let sell = TradingAction::Sell {
-        token: "token1.near".to_string(),
-        target: "token2.near".to_string(),
+        token: token("token1.near"),
+        target: token("token2.near"),
     };
     match sell {
-        TradingAction::Sell { token, target } => {
-            assert_eq!(token, "token1.near");
-            assert_eq!(target, "token2.near");
+        TradingAction::Sell { token: t, target } => {
+            assert_eq!(t, token("token1.near"));
+            assert_eq!(target, token("token2.near"));
         }
         _ => panic!("Expected Sell action"),
     }
@@ -33,21 +42,21 @@ fn test_trading_action_execution_structure() {
 #[test]
 fn test_prediction_data_structure() {
     let prediction = PredictionData {
-        token: "test.tkn.near".to_string(),
-        current_price: BigDecimal::from_str("1.5").unwrap(),
-        predicted_price_24h: BigDecimal::from_str("1.8").unwrap(),
+        token: token("test.tkn.near"),
+        current_price: price("1.5"),
+        predicted_price_24h: price("1.8"),
         timestamp: Utc::now(),
         confidence: Some(BigDecimal::from_str("0.85").unwrap()),
     };
 
-    assert_eq!(prediction.token, "test.tkn.near");
+    assert_eq!(prediction.token, token("test.tkn.near"));
     assert_eq!(
-        prediction.current_price,
-        BigDecimal::from_str("1.5").unwrap()
+        prediction.current_price.as_bigdecimal(),
+        price("1.5").as_bigdecimal()
     );
     assert_eq!(
-        prediction.predicted_price_24h,
-        BigDecimal::from_str("1.8").unwrap()
+        prediction.predicted_price_24h.as_bigdecimal(),
+        price("1.8").as_bigdecimal()
     );
     assert!(prediction.confidence.is_some());
 }
@@ -118,81 +127,80 @@ fn test_bigdecimal_price_calculations() {
 #[test]
 fn test_trading_cost_calculation_zero_value() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
     // ゼロ値でのコスト計算
-    let value = BigDecimal::from(0);
+    let value = YoctoValueF64::zero();
     let fee_model = FeeModel::Realistic;
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap(); // 0.1%
-    let gas_cost = BigDecimal::from(0);
+    let slippage_rate = 0.001; // 0.1%
+    let gas_cost = YoctoValueF64::zero();
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
-    assert_eq!(cost, BigDecimal::from(0));
+    assert!(cost.total.as_f64() == 0.0);
 }
 
 #[test]
 fn test_trading_cost_calculation_positive_value() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
-    // 正の値でのコスト計算
-    let value = BigDecimal::from(1000);
+    // 正の値でのコスト計算（yoctoNEAR 単位）
+    let value = YoctoValueF64::from_yocto(1000.0);
     let fee_model = FeeModel::Realistic; // 0.3%
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap(); // 0.1%
-    let gas_cost = BigDecimal::from(10);
+    let slippage_rate = 0.001; // 0.1%
+    let gas_cost = YoctoValueF64::from_yocto(10.0);
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
     // コストは protocol_fee + slippage + gas
     // protocol_fee = 1000 * 0.003 = 3
     // slippage = 1000 * 0.001 = 1
     // gas = 10
-    // total = 約14 (精度の問題により正確な値は異なる)
-    assert!(cost > BigDecimal::from(13));
-    assert!(cost < BigDecimal::from(15));
+    // total = 14
+    assert!(cost.total.as_f64() > 13.0);
+    assert!(cost.total.as_f64() < 15.0);
 }
 
 #[test]
 fn test_trading_cost_calculation_zero_fee_model() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
     // ゼロ手数料モデルでのテスト
-    let value = BigDecimal::from(1000);
+    let value = YoctoValueF64::from_yocto(1000.0);
     let fee_model = FeeModel::Zero;
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap();
-    let gas_cost = BigDecimal::from(10);
+    let slippage_rate = 0.001;
+    let gas_cost = YoctoValueF64::from_yocto(10.0);
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
     // protocol_fee = 0 (Zero model)
     // slippage = 1000 * 0.001 = 1
     // gas = 10
     // total = 11
-    let expected_cost = BigDecimal::from(11);
-    assert_eq!(cost, expected_cost);
+    assert!((cost.total.as_f64() - 11.0).abs() < 0.001);
 }
 
 #[test]
 fn test_trading_cost_calculation_custom_fee_model() {
     use crate::commands::simulate::types::FeeModel;
+    use crate::commands::simulate::utils::calculate_trading_cost_yocto;
 
     // カスタム手数料モデルでのテスト
-    let value = BigDecimal::from(1000);
+    let value = YoctoValueF64::from_yocto(1000.0);
     let fee_model = FeeModel::Custom(0.005); // 0.5%
-    let slippage_rate = BigDecimal::from_str("0.001").unwrap();
-    let gas_cost = BigDecimal::from(10);
+    let slippage_rate = 0.001;
+    let gas_cost = YoctoValueF64::from_yocto(10.0);
 
-    let cost =
-        calculate_trading_cost_by_value_yocto_bd(&value, &fee_model, &slippage_rate, &gas_cost);
+    let cost = calculate_trading_cost_yocto(value, &fee_model, slippage_rate, gas_cost);
 
     // protocol_fee = 1000 * 0.005 = 5
     // slippage = 1000 * 0.001 = 1
     // gas = 10
-    // total = 約16 (精度の問題により正確な値は異なる)
-    assert!(cost > BigDecimal::from(15));
-    assert!(cost < BigDecimal::from(17));
+    // total = 16
+    assert!(cost.total.as_f64() > 15.0);
+    assert!(cost.total.as_f64() < 17.0);
 }
 
 // 統合テスト用のノート

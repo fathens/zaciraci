@@ -2,7 +2,9 @@ use super::*;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use common::prediction::{ChronosPredictionResponse, ConfidenceInterval};
+use common::types::TokenPrice;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 #[test]
 fn test_confidence_interval_extraction_with_standard_keys() {
@@ -65,8 +67,8 @@ fn test_confidence_interval_extraction_with_standard_keys() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i].clone(),
-                                    upper: upper_values[i].clone(),
+                                    lower: TokenPrice::from_near_per_token(lower_values[i].clone()),
+                                    upper: TokenPrice::from_near_per_token(upper_values[i].clone()),
                                 })
                             } else {
                                 None
@@ -78,7 +80,7 @@ fn test_confidence_interval_extraction_with_standard_keys() {
 
             PredictionPoint {
                 timestamp,
-                value,
+                value: TokenPrice::from_near_per_token(value),
                 confidence_interval,
             }
         })
@@ -89,18 +91,18 @@ fn test_confidence_interval_extraction_with_standard_keys() {
 
     assert!(forecast[0].confidence_interval.is_some());
     let ci0 = forecast[0].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci0.lower, BigDecimal::from(95));
-    assert_eq!(ci0.upper, BigDecimal::from(105));
+    assert_eq!(ci0.lower.to_f64().as_f64(), 95.0);
+    assert_eq!(ci0.upper.to_f64().as_f64(), 105.0);
 
     assert!(forecast[1].confidence_interval.is_some());
     let ci1 = forecast[1].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci1.lower, BigDecimal::from(105));
-    assert_eq!(ci1.upper, BigDecimal::from(115));
+    assert_eq!(ci1.lower.to_f64().as_f64(), 105.0);
+    assert_eq!(ci1.upper.to_f64().as_f64(), 115.0);
 
     assert!(forecast[2].confidence_interval.is_some());
     let ci2 = forecast[2].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci2.lower, BigDecimal::from(115));
-    assert_eq!(ci2.upper, BigDecimal::from(125));
+    assert_eq!(ci2.lower.to_f64().as_f64(), 115.0);
+    assert_eq!(ci2.upper.to_f64().as_f64(), 125.0);
 }
 
 #[test]
@@ -156,8 +158,8 @@ fn test_confidence_interval_extraction_with_quantile_keys() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i].clone(),
-                                    upper: upper_values[i].clone(),
+                                    lower: TokenPrice::from_near_per_token(lower_values[i].clone()),
+                                    upper: TokenPrice::from_near_per_token(upper_values[i].clone()),
                                 })
                             } else {
                                 None
@@ -169,7 +171,7 @@ fn test_confidence_interval_extraction_with_quantile_keys() {
 
             PredictionPoint {
                 timestamp,
-                value,
+                value: TokenPrice::from_near_per_token(value),
                 confidence_interval,
             }
         })
@@ -179,12 +181,12 @@ fn test_confidence_interval_extraction_with_quantile_keys() {
     assert_eq!(forecast.len(), 2);
 
     let ci0 = forecast[0].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci0.lower, BigDecimal::from(90));
-    assert_eq!(ci0.upper, BigDecimal::from(110));
+    assert_eq!(ci0.lower.to_f64().as_f64(), 90.0);
+    assert_eq!(ci0.upper.to_f64().as_f64(), 110.0);
 
     let ci1 = forecast[1].confidence_interval.as_ref().unwrap();
-    assert_eq!(ci1.lower, BigDecimal::from(100));
-    assert_eq!(ci1.upper, BigDecimal::from(120));
+    assert_eq!(ci1.lower.to_f64().as_f64(), 100.0);
+    assert_eq!(ci1.upper.to_f64().as_f64(), 120.0);
 }
 
 #[test]
@@ -222,8 +224,8 @@ fn test_confidence_interval_extraction_no_intervals() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i].clone(),
-                                    upper: upper_values[i].clone(),
+                                    lower: TokenPrice::from_near_per_token(lower_values[i].clone()),
+                                    upper: TokenPrice::from_near_per_token(upper_values[i].clone()),
                                 })
                             } else {
                                 None
@@ -235,7 +237,7 @@ fn test_confidence_interval_extraction_no_intervals() {
 
             PredictionPoint {
                 timestamp,
-                value,
+                value: TokenPrice::from_near_per_token(value),
                 confidence_interval,
             }
         })
@@ -303,8 +305,8 @@ fn test_confidence_interval_extraction_mismatched_lengths() {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(ConfidenceInterval {
-                                    lower: lower_values[i].clone(),
-                                    upper: upper_values[i].clone(),
+                                    lower: TokenPrice::from_near_per_token(lower_values[i].clone()),
+                                    upper: TokenPrice::from_near_per_token(upper_values[i].clone()),
                                 })
                             } else {
                                 None
@@ -316,7 +318,7 @@ fn test_confidence_interval_extraction_mismatched_lengths() {
 
             PredictionPoint {
                 timestamp,
-                value,
+                value: TokenPrice::from_near_per_token(value),
                 confidence_interval,
             }
         })
@@ -332,16 +334,12 @@ fn test_confidence_interval_extraction_mismatched_lengths() {
 
 #[test]
 fn test_confidence_interval_scaling() {
-    let mut confidence_intervals = HashMap::new();
-    confidence_intervals.insert("lower".to_string(), vec![BigDecimal::from(95)]);
-    confidence_intervals.insert("upper".to_string(), vec![BigDecimal::from(105)]);
-
     let forecast = vec![PredictionPoint {
         timestamp: Utc::now(),
-        value: BigDecimal::from(100),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
         confidence_interval: Some(ConfidenceInterval {
-            lower: BigDecimal::from(95),
-            upper: BigDecimal::from(105),
+            lower: TokenPrice::from_near_per_token(BigDecimal::from(95)),
+            upper: TokenPrice::from_near_per_token(BigDecimal::from(105)),
         }),
     }];
 
@@ -350,17 +348,105 @@ fn test_confidence_interval_scaling() {
     let mut scaled_forecast = forecast;
 
     for point in &mut scaled_forecast {
-        point.value *= &scale_factor;
+        let scaled_value = point.value.as_bigdecimal() * &scale_factor;
+        point.value = TokenPrice::from_near_per_token(scaled_value);
         if let Some(ref mut ci) = point.confidence_interval {
-            ci.lower *= &scale_factor;
-            ci.upper *= &scale_factor;
+            let scaled_lower = ci.lower.as_bigdecimal() * &scale_factor;
+            let scaled_upper = ci.upper.as_bigdecimal() * &scale_factor;
+            ci.lower = TokenPrice::from_near_per_token(scaled_lower);
+            ci.upper = TokenPrice::from_near_per_token(scaled_upper);
         }
     }
 
     let scaled_point = &scaled_forecast[0];
-    assert_eq!(scaled_point.value, BigDecimal::from(200));
+    assert_eq!(scaled_point.value.to_f64().as_f64(), 200.0);
 
     let scaled_ci = scaled_point.confidence_interval.as_ref().unwrap();
-    assert_eq!(scaled_ci.lower, BigDecimal::from(190));
-    assert_eq!(scaled_ci.upper, BigDecimal::from(210));
+    assert_eq!(scaled_ci.lower.to_f64().as_f64(), 190.0);
+    assert_eq!(scaled_ci.upper.to_f64().as_f64(), 210.0);
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_with_confidence() {
+    // convert_to_cache_prediction_point の confidence 計算ロジックをテスト
+    // confidence = (upper - lower) / 2 / value
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: Some(ConfidenceInterval {
+            lower: TokenPrice::from_near_per_token(BigDecimal::from(90)),
+            upper: TokenPrice::from_near_per_token(BigDecimal::from(110)),
+        }),
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    // timestamp と price の検証
+    assert_eq!(cache_point.timestamp, point.timestamp);
+    assert_eq!(cache_point.price, point.value);
+
+    // confidence の計算検証: (110 - 90) / 2 / 100 = 20 / 2 / 100 = 0.1
+    let confidence = cache_point.confidence.unwrap();
+    let expected = BigDecimal::from_str("0.1").unwrap();
+    assert_eq!(confidence, expected);
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_without_confidence() {
+    // 信頼区間がない場合
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: None,
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    assert_eq!(cache_point.timestamp, point.timestamp);
+    assert_eq!(cache_point.price, point.value);
+    assert!(cache_point.confidence.is_none());
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_asymmetric_interval() {
+    // 非対称な信頼区間のテスト
+    // lower=80, upper=130, value=100
+    // range = 130 - 80 = 50
+    // confidence = 50 / 2 / 100 = 0.25
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: Some(ConfidenceInterval {
+            lower: TokenPrice::from_near_per_token(BigDecimal::from(80)),
+            upper: TokenPrice::from_near_per_token(BigDecimal::from(130)),
+        }),
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    let confidence = cache_point.confidence.unwrap();
+    let expected = BigDecimal::from_str("0.25").unwrap();
+    assert_eq!(confidence, expected);
+}
+
+#[test]
+fn test_convert_to_cache_prediction_point_small_interval() {
+    // 小さな信頼区間（高精度の予測）
+    // lower=99, upper=101, value=100
+    // range = 101 - 99 = 2
+    // confidence = 2 / 2 / 100 = 0.01
+    let point = PredictionPoint {
+        timestamp: Utc::now(),
+        value: TokenPrice::from_near_per_token(BigDecimal::from(100)),
+        confidence_interval: Some(ConfidenceInterval {
+            lower: TokenPrice::from_near_per_token(BigDecimal::from(99)),
+            upper: TokenPrice::from_near_per_token(BigDecimal::from(101)),
+        }),
+    };
+
+    let cache_point = convert_to_cache_prediction_point(&point);
+
+    let confidence = cache_point.confidence.unwrap();
+    let expected = BigDecimal::from_str("0.01").unwrap();
+    assert_eq!(confidence, expected);
 }

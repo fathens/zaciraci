@@ -27,17 +27,14 @@
 - Storage Deposit 一括セットアップ
 - マルチエンドポイントRPC 完全実装（Phase 1, 2a, 2b）
 - リトライロジックのバグ修正
-
-#### ⏳ 優先度: 高
-1. record_rates 間隔調整（5分→15分）
-2. BigDecimal 変換の網羅チェック
+- record_rates 間隔調整（5分→15分）
+- BigDecimal 変換の網羅チェック完了（to_bigint() パターンで統一済み）
 
 ## 🚀 次のステップ
 
 1. **運用監視**: 次回cron実行でStorage Deposit実装の効果確認
-2. **RPC負荷軽減**: record_rates間隔を15分に調整
-3. **コード品質**: BigDecimal変換箇所の網羅的チェック
-4. **機能拡張**: 追加の取引戦略実装（Momentum、TrendFollowing）
+2. **機能拡張**: 追加の取引戦略実装（Momentum、TrendFollowing）
+3. **RPC改善**: マルチエンドポイントRPC Phase 3-4（レイテンシベース選択、監視機能）
 
 ## 📖 設定パラメータ
 

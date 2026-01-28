@@ -26,7 +26,7 @@ pub mod wnear {
             "function" => "balance_of",
             "account" => format!("{}", account),
         ));
-        info!(log, "entered");
+        trace!(log, "entered");
 
         const METHOD_NAME: &str = "ft_balance_of";
         let args = json!({
@@ -34,7 +34,7 @@ pub mod wnear {
         });
 
         let result = client
-            .view_contract(WNEAR_TOKEN.as_id(), METHOD_NAME, &args)
+            .view_contract(WNEAR_TOKEN.as_account_id(), METHOD_NAME, &args)
             .await?;
         let balance: U128 = serde_json::from_slice(&result.result)?;
         Ok(balance.into())
@@ -49,16 +49,21 @@ pub mod wnear {
             "function" => "wrap_near",
             "amount" => amount,
         ));
-        info!(log, "wrapping native token");
+        trace!(log, "wrapping native token");
 
         const METHOD_NAME: &str = "near_deposit";
 
-        let token = WNEAR_TOKEN.clone();
         let args = json!({});
         let signer = wallet.signer();
 
         client
-            .exec_contract(signer, token.as_id(), METHOD_NAME, &args, amount)
+            .exec_contract(
+                signer,
+                WNEAR_TOKEN.as_account_id(),
+                METHOD_NAME,
+                &args,
+                amount,
+            )
             .await
     }
 
@@ -71,11 +76,10 @@ pub mod wnear {
             "function" => "unwrap_near",
             "amount" => amount,
         ));
-        info!(log, "unwrapping native token");
+        trace!(log, "unwrapping native token");
 
         const METHOD_NAME: &str = "near_withdraw";
 
-        let token = WNEAR_TOKEN.clone();
         let args = json!({
             "amount": U128(amount),
         });
@@ -84,7 +88,13 @@ pub mod wnear {
         let signer = wallet.signer();
 
         client
-            .exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit)
+            .exec_contract(
+                signer,
+                WNEAR_TOKEN.as_account_id(),
+                METHOD_NAME,
+                &args,
+                deposit,
+            )
             .await
     }
 }
@@ -100,7 +110,7 @@ pub async fn deposit<C: SendTx, W: Wallet>(
         "token" => format!("{}", token),
         "amount" => amount,
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "ft_transfer_call";
 
@@ -114,7 +124,7 @@ pub async fn deposit<C: SendTx, W: Wallet>(
     let signer = wallet.signer();
 
     client
-        .exec_contract(signer, token.as_id(), METHOD_NAME, &args, deposit)
+        .exec_contract(signer, token.as_account_id(), METHOD_NAME, &args, deposit)
         .await
 }
 
@@ -126,7 +136,7 @@ pub async fn get_deposits<C: ViewContract>(
         "function" => "get_deposits",
         "account" => format!("{}", account),
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "get_deposits";
     let args = json!({
@@ -138,7 +148,7 @@ pub async fn get_deposits<C: ViewContract>(
         .await?;
 
     let deposits: HashMap<TokenAccount, U128> = serde_json::from_slice(&result.result)?;
-    info!(log, "deposits"; "deposits" => ?deposits);
+    trace!(log, "deposits"; "deposits" => ?deposits);
     Ok(deposits)
 }
 
@@ -153,7 +163,7 @@ pub async fn withdraw<C: SendTx, W: Wallet>(
         "token" => format!("{}", token),
         "amount" => amount,
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "withdraw";
 
@@ -180,7 +190,7 @@ pub async fn register_tokens<C: SendTx, W: Wallet>(
         "function" => "register_tokens",
         "tokens" => format!("{:?}", tokens),
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "register_tokens";
     let args = json!({
@@ -204,7 +214,7 @@ pub async fn unregister_tokens<C: SendTx, W: Wallet>(
         "function" => "unregister_tokens",
         "tokens" => format!("{:?}", tokens),
     ));
-    info!(log, "entered");
+    trace!(log, "entered");
 
     const METHOD_NAME: &str = "unregister_tokens";
     let args = json!({

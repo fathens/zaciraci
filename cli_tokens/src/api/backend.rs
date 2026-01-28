@@ -61,6 +61,35 @@ impl BackendClient {
         }
     }
 
+    /// トークンの decimals を取得
+    pub async fn get_token_decimals(&self, token_id: &str) -> Result<u8> {
+        let url = format!("{}/token/{}/decimals", self.base_url, token_id);
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context(format!("Failed to send request to {}", url))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error body".to_string());
+            return Err(anyhow::anyhow!("HTTP Error {}: {}", status, error_text));
+        }
+
+        let text = response
+            .text()
+            .await
+            .context("Failed to get response text")?;
+        let decimals: u8 = text
+            .parse()
+            .context(format!("Failed to parse decimals: {}", text))?;
+        Ok(decimals)
+    }
+
     pub async fn get_price_history(
         &self,
         quote_token: &str,

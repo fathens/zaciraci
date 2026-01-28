@@ -8,7 +8,7 @@ use zaciraci_common::config;
 pub struct RpcEndpoint {
     pub url: String,
     pub weight: u32,
-    #[allow(dead_code)]
+    /// Maximum retry attempts for this endpoint before trying another
     pub max_retries: u32,
 }
 
@@ -17,7 +17,6 @@ pub struct RpcEndpoint {
 pub struct EndpointPool {
     endpoints: Vec<RpcEndpoint>,
     failed_endpoints: Arc<Mutex<FailedEndpoints>>,
-    #[allow(dead_code)]
     failure_reset_seconds: u64,
 }
 
@@ -87,7 +86,7 @@ impl EndpointPool {
 
         let selected = self.weighted_random_select(&available);
         if let Some(ep) = selected {
-            info!(log, "endpoint selected";
+            trace!(log, "endpoint selected";
                 "url" => &ep.url,
                 "weight" => ep.weight,
                 "available_count" => available.len()

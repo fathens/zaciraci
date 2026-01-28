@@ -3,10 +3,10 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::commands::simulate::{
-    AlgorithmType, DataQualityStats, ExecutionSummary, PerformanceMetrics as SimPerformanceMetrics,
-    SimulationResult, SimulationSummary, TradeExecution, TradingCost,
+    AlgorithmType, DataQualityStats, ExecutionSummary, NearValueF64,
+    PerformanceMetrics as SimPerformanceMetrics, SimulationResult, SimulationSummary,
+    TokenAmountF64, TokenPriceF64, TradeExecution, TradingCost, YoctoValueF64,
 };
-use bigdecimal::BigDecimal;
 
 #[cfg(test)]
 mod unit_tests {
@@ -18,18 +18,18 @@ mod unit_tests {
                 start_date: Utc::now(),
                 end_date: Utc::now(),
                 algorithm: AlgorithmType::Momentum,
-                initial_capital: 1000.0,
-                final_value: 1150.0,
+                initial_capital: NearValueF64::from_near(1000.0),
+                final_value: NearValueF64::from_near(1150.0),
                 duration_days: 10,
-                total_return: 150.0,
+                total_return: NearValueF64::from_near(150.0),
             },
             performance: SimPerformanceMetrics {
-                total_return: 0.15,
+                total_return: NearValueF64::from_near(150.0),
                 annualized_return: 5.475,
                 total_return_pct: 15.0,
                 volatility: 0.2,
-                max_drawdown: -0.05,
-                max_drawdown_pct: -5.0,
+                max_drawdown: NearValueF64::from_near(50.0),
+                max_drawdown_pct: 5.0,
                 sharpe_ratio: 0.75,
                 sortino_ratio: 0.85,
                 total_trades: 5,
@@ -37,7 +37,7 @@ mod unit_tests {
                 losing_trades: 2,
                 win_rate: 0.6,
                 profit_factor: 1.5,
-                total_costs: 15.0,
+                total_costs: NearValueF64::from_near(15.0),
                 cost_ratio: 1.3,
                 simulation_days: 10,
                 active_trading_days: 8,
@@ -46,16 +46,16 @@ mod unit_tests {
                 timestamp: Utc::now(),
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
-                amount: 100.0,
-                executed_price: 1.5,
+                amount: TokenAmountF64::from_smallest_units(100.0, 24),
+                executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(3),
-                    slippage: BigDecimal::from(2),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(6),
+                    protocol_fee: YoctoValueF64::from_yocto(3e24),
+                    slippage: YoctoValueF64::from_yocto(2e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(6e24),
                 },
-                portfolio_value_before: 1000.0,
-                portfolio_value_after: 1020.0,
+                portfolio_value_before: NearValueF64::from_near(1000.0),
+                portfolio_value_after: NearValueF64::from_near(1020.0),
                 success: true,
                 reason: "Test trade".to_string(),
             }],
@@ -63,20 +63,20 @@ mod unit_tests {
                 PortfolioValue {
                     timestamp: Utc::now(),
                     holdings: HashMap::new(),
-                    total_value: 1000.0,
-                    cash_balance: 1000.0,
-                    unrealized_pnl: 0.0,
+                    total_value: NearValueF64::from_near(1000.0),
+                    cash_balance: NearValueF64::from_near(1000.0),
+                    unrealized_pnl: NearValueF64::zero(),
                 },
                 PortfolioValue {
                     timestamp: Utc::now(),
                     holdings: {
                         let mut h = HashMap::new();
-                        h.insert("token_b".to_string(), 150.0);
+                        h.insert("token_b".to_string(), NearValueF64::from_near(150.0));
                         h
                     },
-                    total_value: 1150.0,
-                    cash_balance: 850.0,
-                    unrealized_pnl: 150.0,
+                    total_value: NearValueF64::from_near(1150.0),
+                    cash_balance: NearValueF64::from_near(850.0),
+                    unrealized_pnl: NearValueF64::from_near(150.0),
                 },
             ],
             execution_summary: ExecutionSummary {
@@ -84,8 +84,8 @@ mod unit_tests {
                 successful_trades: 1,
                 failed_trades: 0,
                 success_rate: 1.0,
-                total_cost: 6.0,
-                avg_cost_per_trade: 6.0,
+                total_cost: NearValueF64::from_near(6.0),
+                avg_cost_per_trade: NearValueF64::from_near(6.0),
             },
             data_quality: DataQualityStats {
                 total_timesteps: 10,
@@ -121,7 +121,9 @@ mod unit_tests {
         let metrics = calculate_report_metrics(&report_data);
 
         assert_eq!(metrics.performance_class, "positive");
-        assert_eq!(metrics.currency_symbol, "wrap.near");
+        // Verify currency_symbol is retrieved from default config (not hardcoded)
+        let default_config = create_default_report_config();
+        assert_eq!(metrics.currency_symbol, default_config.currency.symbol);
         assert!(metrics.trades_html.contains("token_a"));
         assert!(metrics.trades_html.contains("token_b"));
         assert!(metrics.generation_timestamp.contains("UTC"));
@@ -134,11 +136,25 @@ mod unit_tests {
     }
 
     #[test]
+    fn test_generate_individual_algorithm_section_uses_config_currency() {
+        let simulation_result = create_test_simulation_result();
+        let html = generate_individual_algorithm_section(&simulation_result).unwrap();
+
+        // Verify the generated HTML contains the currency symbol from config
+        let default_config = create_default_report_config();
+        assert!(
+            html.contains(&default_config.currency.symbol),
+            "Generated HTML should contain currency symbol '{}' from config",
+            default_config.currency.symbol
+        );
+    }
+
+    #[test]
     fn test_calculate_report_metrics_negative_return() {
         let mut simulation_result = create_test_simulation_result();
         // Make performance negative
         simulation_result.performance.total_return_pct = -10.0;
-        simulation_result.config.final_value = 900.0;
+        simulation_result.config.final_value = NearValueF64::from_near(900.0);
 
         let report_data = extract_report_data(&simulation_result);
         let metrics = calculate_report_metrics(&report_data);
@@ -154,18 +170,18 @@ mod unit_tests {
                     .unwrap()
                     .with_timezone(&Utc),
                 holdings: HashMap::new(),
-                total_value: 1000.0,
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
+                total_value: NearValueF64::from_near(1000.0),
+                cash_balance: NearValueF64::from_near(1000.0),
+                unrealized_pnl: NearValueF64::zero(),
             },
             PortfolioValue {
                 timestamp: chrono::DateTime::parse_from_rfc3339("2024-01-02T00:00:00Z")
                     .unwrap()
                     .with_timezone(&Utc),
                 holdings: HashMap::new(),
-                total_value: 1100.0,
-                cash_balance: 1100.0,
-                unrealized_pnl: 100.0,
+                total_value: NearValueF64::from_near(1100.0),
+                cash_balance: NearValueF64::from_near(1100.0),
+                unrealized_pnl: NearValueF64::from_near(100.0),
             },
         ];
 
@@ -196,16 +212,16 @@ mod unit_tests {
                 .with_timezone(&Utc),
             from_token: "token_a".to_string(),
             to_token: "token_b".to_string(),
-            amount: 100.0,
-            executed_price: 1.5,
+            amount: TokenAmountF64::from_smallest_units(100.0, 24),
+            executed_price: TokenPriceF64::from_near_per_token(1.5),
             cost: TradingCost {
-                protocol_fee: BigDecimal::from(3),
-                slippage: BigDecimal::from(2),
-                gas_fee: BigDecimal::from(1),
-                total: BigDecimal::from(6),
+                protocol_fee: YoctoValueF64::from_yocto(3e24),
+                slippage: YoctoValueF64::from_yocto(2e24),
+                gas_fee: YoctoValueF64::from_yocto(1e24),
+                total: YoctoValueF64::from_yocto(6e24),
             },
-            portfolio_value_before: 1000.0,
-            portfolio_value_after: 1020.0,
+            portfolio_value_before: NearValueF64::from_near(1000.0),
+            portfolio_value_after: NearValueF64::from_near(1020.0),
             success: true,
             reason: "Test trade".to_string(),
         }];
@@ -214,7 +230,8 @@ mod unit_tests {
 
         assert!(html.contains("token_a → token_b"));
         assert!(html.contains("2024-01-01 12:00"));
-        assert!(html.contains("100.0000"));
+        // TokenAmountF64 の Display は "100 (decimals=24)" 形式
+        assert!(html.contains("100"));
         assert!(html.contains("1.500000"));
         assert!(html.contains("6.0000"));
         assert!(html.contains("Test trade"));
@@ -227,16 +244,16 @@ mod unit_tests {
                 timestamp: Utc::now(),
                 from_token: format!("token_{}", i),
                 to_token: format!("token_{}", i + 1),
-                amount: 100.0,
-                executed_price: 1.5,
+                amount: TokenAmountF64::from_smallest_units(100.0, 24),
+                executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(3),
-                    slippage: BigDecimal::from(2),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(6),
+                    protocol_fee: YoctoValueF64::from_yocto(3e24),
+                    slippage: YoctoValueF64::from_yocto(2e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(6e24),
                 },
-                portfolio_value_before: 1000.0,
-                portfolio_value_after: 1020.0,
+                portfolio_value_before: NearValueF64::from_near(1000.0),
+                portfolio_value_after: NearValueF64::from_near(1020.0),
                 success: true,
                 reason: "Test trade".to_string(),
             })
@@ -352,16 +369,16 @@ mod phase_4_2_tests {
                 timestamp: Utc::now(),
                 from_token: "token_a".to_string(),
                 to_token: "token_b".to_string(),
-                amount: 100.0,
-                executed_price: 1.5,
+                amount: TokenAmountF64::from_smallest_units(100.0, 24),
+                executed_price: TokenPriceF64::from_near_per_token(1.5),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(3),
-                    slippage: BigDecimal::from(2),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(6),
+                    protocol_fee: YoctoValueF64::from_yocto(3e24),
+                    slippage: YoctoValueF64::from_yocto(2e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(6e24),
                 },
-                portfolio_value_before: 1000.0,
-                portfolio_value_after: 1020.0, // +20 profit
+                portfolio_value_before: NearValueF64::from_near(1000.0),
+                portfolio_value_after: NearValueF64::from_near(1020.0), // +20 profit
                 success: true,
                 reason: "Profitable trade".to_string(),
             },
@@ -369,16 +386,16 @@ mod phase_4_2_tests {
                 timestamp: Utc::now(),
                 from_token: "token_b".to_string(),
                 to_token: "token_c".to_string(),
-                amount: 120.0,
-                executed_price: 0.8,
+                amount: TokenAmountF64::from_smallest_units(120.0, 24),
+                executed_price: TokenPriceF64::from_near_per_token(0.8),
                 cost: TradingCost {
-                    protocol_fee: BigDecimal::from(4),
-                    slippage: BigDecimal::from(3),
-                    gas_fee: BigDecimal::from(1),
-                    total: BigDecimal::from(8),
+                    protocol_fee: YoctoValueF64::from_yocto(4e24),
+                    slippage: YoctoValueF64::from_yocto(3e24),
+                    gas_fee: YoctoValueF64::from_yocto(1e24),
+                    total: YoctoValueF64::from_yocto(8e24),
                 },
-                portfolio_value_before: 1020.0,
-                portfolio_value_after: 990.0, // -30 loss
+                portfolio_value_before: NearValueF64::from_near(1020.0),
+                portfolio_value_after: NearValueF64::from_near(990.0), // -30 loss
                 success: true,
                 reason: "Losing trade".to_string(),
             },

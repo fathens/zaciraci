@@ -5,39 +5,44 @@ use common::algorithm::indicators::calculate_max_drawdown;
 
 /// Calculate comprehensive performance metrics
 pub fn calculate_performance_metrics(
-    initial_value: f64,
-    final_value: f64,
+    initial_value: NearValueF64,
+    final_value: NearValueF64,
     portfolio_values: &[PortfolioValue],
     trades: &[TradeExecution],
-    total_costs: f64,
+    total_costs: NearValueF64,
     start_date: DateTime<Utc>,
     end_date: DateTime<Utc>,
 ) -> Result<PerformanceMetrics> {
     let duration = end_date - start_date;
     let duration_days = duration.num_days();
 
+    // 型安全な減算演算子を使用（NearValueF64 - NearValueF64 = NearValueF64）
     let total_return = final_value - initial_value;
-    let total_return_pct = if initial_value > 0.0 {
+
+    // 比率計算（NearValueF64 / NearValueF64 = f64）
+    let total_return_pct = if initial_value.is_positive() {
         (total_return / initial_value) * 100.0
     } else {
         0.0
     };
 
     // Calculate annualized return
+    // 型安全な除算を使用: NearValueF64 / NearValueF64 = f64
     let years = duration_days as f64 / 365.25;
-    let annualized_return = if years > 0.0 && initial_value > 0.0 {
+    let annualized_return = if years > 0.0 && initial_value.is_positive() {
         ((final_value / initial_value).powf(1.0 / years) - 1.0) * 100.0
     } else {
         0.0
     };
 
     // Calculate volatility from portfolio values
+    // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64, NearValueF64 / NearValueF64 = f64
     let returns: Vec<f64> = portfolio_values
         .windows(2)
         .map(|window| {
             let prev = window[0].total_value;
             let curr = window[1].total_value;
-            if prev > 0.0 {
+            if prev.is_positive() {
                 (curr - prev) / prev
             } else {
                 0.0
@@ -48,17 +53,22 @@ pub fn calculate_performance_metrics(
     let volatility = calculate_volatility(&returns) * 100.0; // Convert to percentage
 
     // Calculate maximum drawdown
+    // 型安全な演算子を使用: NearValueF64 の比較・減算・除算
     let mut peak = initial_value;
     let mut max_drawdown = 0.0;
-    let mut max_drawdown_value = 0.0;
+    let mut max_drawdown_value = NearValueF64::zero();
 
     for portfolio_value in portfolio_values {
         let value = portfolio_value.total_value;
         if value > peak {
             peak = value;
         }
-        let drawdown = peak - value;
-        let drawdown_pct = if peak > 0.0 { drawdown / peak } else { 0.0 };
+        let drawdown = peak - value; // NearValueF64
+        let drawdown_pct = if peak.is_positive() {
+            drawdown / peak // NearValueF64 / NearValueF64 = f64
+        } else {
+            0.0
+        };
 
         if drawdown > max_drawdown_value {
             max_drawdown_value = drawdown;
@@ -131,7 +141,8 @@ pub fn calculate_performance_metrics(
     // Trade analysis
     let trade_metrics = analyze_trades(trades);
 
-    let cost_ratio = if initial_value > 0.0 {
+    // 型安全な除算を使用: NearValueF64 / NearValueF64 = f64
+    let cost_ratio = if initial_value.is_positive() {
         (total_costs / initial_value) * 100.0
     } else {
         0.0
@@ -169,17 +180,33 @@ pub fn calculate_performance_metrics_legacy(
     trades: &[TradeExecution],
     duration_days: i64,
 ) -> PerformanceMetrics {
-    let total_return = (final_value - initial_value) / initial_value;
+    // 絶対値としての total_return
+    let total_return = NearValueF64::from_near(final_value - initial_value);
+    // 比率としての total_return（パーセント計算用）
+    let total_return_ratio = if initial_value > 0.0 {
+        (final_value - initial_value) / initial_value
+    } else {
+        0.0
+    };
     let annualized_return = if duration_days > 0 {
-        total_return * 365.0 / duration_days as f64
+        total_return_ratio * 365.0 / duration_days as f64
     } else {
         0.0
     };
 
     // ボラティリティ計算
+    // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64, NearValueF64 / NearValueF64 = f64
     let returns: Vec<f64> = portfolio_values
         .windows(2)
-        .map(|w| (w[1].total_value - w[0].total_value) / w[0].total_value)
+        .map(|w| {
+            let prev = w[0].total_value;
+            let curr = w[1].total_value;
+            if prev.is_positive() {
+                (curr - prev) / prev
+            } else {
+                0.0
+            }
+        })
         .collect();
 
     let volatility = if returns.len() > 1 {
@@ -192,21 +219,38 @@ pub fn calculate_performance_metrics_legacy(
     };
 
     // ドローダウン計算
-    let portfolio_values_f64: Vec<f64> = portfolio_values.iter().map(|pv| pv.total_value).collect();
-    let max_drawdown = calculate_max_drawdown(&portfolio_values_f64);
+    let portfolio_values_f64: Vec<f64> = portfolio_values
+        .iter()
+        .map(|pv| pv.total_value.as_f64())
+        .collect();
+    let max_drawdown_ratio = calculate_max_drawdown(&portfolio_values_f64);
+    // 絶対値としての max_drawdown を計算
+    let mut peak = initial_value;
+    let mut max_drawdown_value = 0.0;
+    for value in &portfolio_values_f64 {
+        if *value > peak {
+            peak = *value;
+        }
+        let drawdown = peak - value;
+        if drawdown > max_drawdown_value {
+            max_drawdown_value = drawdown;
+        }
+    }
 
     // 取引分析
-    let mut total_profit = 0.0;
-    let mut total_loss = 0.0;
+    // 型安全な累積: NearValueF64 で管理
+    let mut total_profit = NearValueF64::zero();
+    let mut total_loss = NearValueF64::zero();
     let mut winning_trades_count = 0;
 
     for trade in trades {
+        // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64
         let profit_loss = trade.portfolio_value_after - trade.portfolio_value_before;
-        if profit_loss > 0.0 {
-            total_profit += profit_loss;
+        if profit_loss.is_positive() {
+            total_profit = total_profit + profit_loss;
             winning_trades_count += 1;
-        } else if profit_loss < 0.0 {
-            total_loss += -profit_loss; // 損失は正の値として計算
+        } else if !profit_loss.is_zero() {
+            total_loss = total_loss + profit_loss.abs(); // 損失は正の値として計算
         }
     }
 
@@ -217,10 +261,10 @@ pub fn calculate_performance_metrics_legacy(
         winning_trades_count as f64 / trades.len() as f64
     };
 
-    // プロフィットファクター = 総利益 / 総損失
-    let profit_factor = if total_loss > 0.0 {
+    // プロフィットファクター = 総利益 / 総損失 (NearValueF64 / NearValueF64 = f64)
+    let profit_factor = if total_loss.is_positive() {
         total_profit / total_loss
-    } else if total_profit > 0.0 {
+    } else if total_profit.is_positive() {
         // 損失がない場合は無限大を表す大きな値
         f64::MAX
     } else {
@@ -228,13 +272,14 @@ pub fn calculate_performance_metrics_legacy(
         0.0
     };
 
-    let total_costs = trades
+    let total_costs_f64: f64 = trades
         .iter()
         .map(|t| t.cost.total.to_string().parse::<f64>().unwrap_or(0.0))
-        .sum::<f64>();
+        .sum();
+    let total_costs = NearValueF64::from_near(total_costs_f64);
 
     let cost_ratio = if final_value > 0.0 {
-        total_costs / final_value * 100.0
+        total_costs_f64 / final_value * 100.0
     } else {
         0.0
     };
@@ -265,10 +310,10 @@ pub fn calculate_performance_metrics_legacy(
     PerformanceMetrics {
         total_return,
         annualized_return,
-        total_return_pct: total_return * 100.0,
+        total_return_pct: total_return_ratio * 100.0,
         volatility,
-        max_drawdown,
-        max_drawdown_pct: max_drawdown * 100.0,
+        max_drawdown: NearValueF64::from_near(max_drawdown_value),
+        max_drawdown_pct: max_drawdown_ratio * 100.0,
         sharpe_ratio,
         sortino_ratio: sharpe_ratio, // 暫定的にシャープレシオと同じ
         total_trades: trades.len(),
@@ -310,51 +355,61 @@ pub fn analyze_trades(trades: &[TradeExecution]) -> TradeAnalysis {
         };
     }
 
-    let mut total_profit = 0.0;
-    let mut total_loss = 0.0;
+    // 型安全な累積: NearValueF64 で管理
+    let mut total_profit = NearValueF64::zero();
+    let mut total_loss = NearValueF64::zero();
     let mut winning_trades = 0;
     let mut losing_trades = 0;
-    let mut wins = Vec::new();
-    let mut losses = Vec::new();
+    let mut largest_win = NearValueF64::zero();
+    let mut largest_loss = NearValueF64::zero();
 
     for trade in trades {
+        // 型安全な演算子を使用: NearValueF64 - NearValueF64 = NearValueF64
         let pnl = trade.portfolio_value_after - trade.portfolio_value_before;
 
-        if pnl > 0.0 {
-            total_profit += pnl;
+        if pnl.is_positive() {
+            total_profit = total_profit + pnl;
             winning_trades += 1;
-            wins.push(pnl);
-        } else if pnl < 0.0 {
-            total_loss += -pnl; // Store as positive value
+            if pnl > largest_win {
+                largest_win = pnl;
+            }
+        } else if !pnl.is_zero() {
+            let loss_abs = pnl.abs(); // Store as positive value
+            total_loss = total_loss + loss_abs;
             losing_trades += 1;
-            losses.push(-pnl);
+            if loss_abs > largest_loss {
+                largest_loss = loss_abs;
+            }
         }
     }
 
     let win_rate = (winning_trades as f64 / trades.len() as f64) * 100.0;
 
-    let profit_factor = if total_loss > 0.0 {
+    // NearValueF64 / NearValueF64 = f64 (比率)
+    let profit_factor = if total_loss.is_positive() {
         total_profit / total_loss
-    } else if total_profit > 0.0 {
+    } else if total_profit.is_positive() {
         f64::INFINITY
     } else {
         0.0
     };
 
-    let avg_win = if !wins.is_empty() {
-        wins.iter().sum::<f64>() / wins.len() as f64
+    // 平均値は合計 / 回数で計算 (NearValueF64 * f64 = NearValueF64 → f64)
+    let avg_win = if winning_trades > 0 {
+        total_profit / NearValueF64::from_near(winning_trades as f64)
     } else {
         0.0
     };
 
-    let avg_loss = if !losses.is_empty() {
-        losses.iter().sum::<f64>() / losses.len() as f64
+    let avg_loss = if losing_trades > 0 {
+        total_loss / NearValueF64::from_near(losing_trades as f64)
     } else {
         0.0
     };
 
-    let largest_win = wins.iter().fold(0.0f64, |a, &b| a.max(b));
-    let largest_loss = losses.iter().fold(0.0f64, |a, &b| a.max(b));
+    // largest_win/loss は型安全な比較で取得済み - f64 に変換
+    let largest_win = largest_win / NearValueF64::from_near(1.0);
+    let largest_loss = largest_loss / NearValueF64::from_near(1.0);
 
     TradeAnalysis {
         winning_trades,
@@ -393,7 +448,7 @@ pub fn calculate_rolling_statistics(
     }
 
     for window in portfolio_values.windows(window_size) {
-        let values: Vec<f64> = window.iter().map(|pv| pv.total_value).collect();
+        let values: Vec<f64> = window.iter().map(|pv| pv.total_value.as_f64()).collect();
         let mean = values.iter().sum::<f64>() / values.len() as f64;
         let volatility = calculate_volatility(&values);
 
@@ -435,7 +490,10 @@ pub fn calculate_correlation_matrix(
 
     for pv in portfolio_values {
         for (token, value) in &pv.holdings {
-            token_series.entry(token.clone()).or_default().push(*value);
+            token_series
+                .entry(token.clone())
+                .or_default()
+                .push(value.as_f64());
         }
     }
 
@@ -541,15 +599,17 @@ pub fn calculate_max_drawdown_duration(portfolio_values: &[PortfolioValue]) -> i
         return 0;
     }
 
+    // 型安全な比較を使用: NearValueF64 の PartialOrd
     let mut peak_value = portfolio_values[0].total_value;
     let mut peak_time = portfolio_values[0].timestamp;
     let mut max_duration = 0i64;
     let mut current_drawdown_start: Option<DateTime<Utc>> = None;
 
     for pv in portfolio_values.iter().skip(1) {
-        if pv.total_value > peak_value {
+        let current_value = pv.total_value;
+        if current_value > peak_value {
             // New peak reached
-            peak_value = pv.total_value;
+            peak_value = current_value;
             peak_time = pv.timestamp;
 
             // End of drawdown period
@@ -558,7 +618,7 @@ pub fn calculate_max_drawdown_duration(portfolio_values: &[PortfolioValue]) -> i
                 max_duration = max_duration.max(duration);
                 current_drawdown_start = None;
             }
-        } else if pv.total_value < peak_value && current_drawdown_start.is_none() {
+        } else if current_value < peak_value && current_drawdown_start.is_none() {
             // Start of drawdown period
             current_drawdown_start = Some(peak_time);
         }
@@ -582,46 +642,38 @@ mod tests {
 
     const MAX_SHARPE_RATIO: f64 = 999.99;
 
+    /// Helper function to create a NearValueF64 for testing
+    fn nv(value: f64) -> NearValueF64 {
+        NearValueF64::from_near(value)
+    }
+
+    /// Helper function to create a PortfolioValue for testing
+    fn pv(timestamp: DateTime<Utc>, total_value: f64) -> PortfolioValue {
+        PortfolioValue {
+            timestamp,
+            total_value: NearValueF64::from_near(total_value),
+            holdings: HashMap::new(),
+            cash_balance: NearValueF64::from_near(total_value),
+            unrealized_pnl: NearValueF64::zero(),
+        }
+    }
+
     #[test]
     fn test_sharpe_ratio_normal_case() {
         // Normal volatility case
         let portfolio_values = vec![
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-                total_value: 1010.0,
-                holdings: HashMap::new(),
-                cash_balance: 1010.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
-                total_value: 1005.0,
-                holdings: HashMap::new(),
-                cash_balance: 1005.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
-                total_value: 1020.0,
-                holdings: HashMap::new(),
-                cash_balance: 1020.0,
-                unrealized_pnl: 0.0,
-            },
+            pv(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 1000.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 1010.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(), 1005.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(), 1020.0),
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1020.0,
+            nv(1000.0),
+            nv(1020.0),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
         )
@@ -639,35 +691,17 @@ mod tests {
     fn test_sharpe_ratio_zero_volatility() {
         // Perfect consistency - no volatility
         let portfolio_values = vec![
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
+            pv(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 1000.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 1000.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(), 1000.0),
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1000.0,
+            nv(1000.0),
+            nv(1000.0),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         )
@@ -681,42 +715,27 @@ mod tests {
     fn test_sharpe_ratio_extremely_low_volatility() {
         // Nearly constant values - extremely low volatility
         let portfolio_values = vec![
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-                total_value: 1000.00001,
-                holdings: HashMap::new(),
-                cash_balance: 1000.00001,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
-                total_value: 1000.00002,
-                holdings: HashMap::new(),
-                cash_balance: 1000.00002,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
-                total_value: 1000.00003,
-                holdings: HashMap::new(),
-                cash_balance: 1000.00003,
-                unrealized_pnl: 0.0,
-            },
+            pv(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 1000.0),
+            pv(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                1000.00001,
+            ),
+            pv(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                1000.00002,
+            ),
+            pv(
+                Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                1000.00003,
+            ),
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1000.00003,
+            nv(1000.0),
+            nv(1000.00003),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
         )
@@ -730,40 +749,25 @@ mod tests {
     fn test_sharpe_ratio_positive_return_zero_volatility() {
         // Constant positive growth with perfect consistency
         let portfolio_values = vec![
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-                total_value: 1100.0,
-                holdings: HashMap::new(),
-                cash_balance: 1100.0,
-                unrealized_pnl: 0.0,
-            },
+            pv(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 1000.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 1100.0),
         ];
 
         // Create constant returns by adding the same value
         let mut values = portfolio_values.clone();
         for i in 2..10 {
-            values.push(PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0).unwrap(),
-                total_value: 1100.0, // Keep constant after initial jump
-                holdings: HashMap::new(),
-                cash_balance: 1100.0,
-                unrealized_pnl: 0.0,
-            });
+            values.push(pv(
+                Utc.with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0).unwrap(),
+                1100.0, // Keep constant after initial jump
+            ));
         }
 
         let result = calculate_performance_metrics(
-            1000.0,
-            1100.0,
+            nv(1000.0),
+            nv(1100.0),
             &values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
         )
@@ -778,40 +782,25 @@ mod tests {
     fn test_sharpe_ratio_negative_return_zero_volatility() {
         // Constant negative return with zero volatility
         let portfolio_values = vec![
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-                total_value: 900.0,
-                holdings: HashMap::new(),
-                cash_balance: 900.0,
-                unrealized_pnl: 0.0,
-            },
+            pv(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 1000.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 900.0),
         ];
 
         // Keep constant after initial drop
         let mut values = portfolio_values.clone();
         for i in 2..10 {
-            values.push(PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0).unwrap(),
-                total_value: 900.0,
-                holdings: HashMap::new(),
-                cash_balance: 900.0,
-                unrealized_pnl: 0.0,
-            });
+            values.push(pv(
+                Utc.with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0).unwrap(),
+                900.0,
+            ));
         }
 
         let result = calculate_performance_metrics(
-            1000.0,
-            900.0,
+            nv(1000.0),
+            nv(900.0),
             &values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
         )
@@ -826,35 +815,20 @@ mod tests {
     fn test_sharpe_ratio_handles_extreme_values() {
         // Test that extreme calculated values are properly capped
         let portfolio_values = vec![
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-                total_value: 2000.0, // 100% gain in one day
-                holdings: HashMap::new(),
-                cash_balance: 2000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
-                total_value: 2000.0000001, // Then nearly constant
-                holdings: HashMap::new(),
-                cash_balance: 2000.0000001,
-                unrealized_pnl: 0.0,
-            },
+            pv(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 1000.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 2000.0), // 100% gain in one day
+            pv(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                2000.0000001, // Then nearly constant
+            ),
         ];
 
         let result = calculate_performance_metrics(
-            1000.0,
-            2000.0000001,
+            nv(1000.0),
+            nv(2000.0000001),
             &portfolio_values,
             &[],
-            0.0,
+            nv(0.0),
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         )
@@ -869,20 +843,8 @@ mod tests {
     fn test_legacy_sharpe_ratio_calculation() {
         // Test legacy function also handles edge cases properly
         let portfolio_values = vec![
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
-            PortfolioValue {
-                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-                total_value: 1000.0,
-                holdings: HashMap::new(),
-                cash_balance: 1000.0,
-                unrealized_pnl: 0.0,
-            },
+            pv(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 1000.0),
+            pv(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 1000.0),
         ];
 
         let result =

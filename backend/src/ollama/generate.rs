@@ -29,7 +29,7 @@ pub struct Response {
 
 pub async fn generate(
     client: &reqwest::Client,
-    base_url: String,
+    base_url: &str,
     model: ModelName,
     prompt: String,
     images: Vec<Image>,
@@ -42,7 +42,7 @@ pub async fn generate(
         stream: false,
         images,
     };
-    let url = base_url + "/generate";
+    let url = format!("{}/generate", base_url);
     let response = client.post(&url).json(&request).send().await?;
     let response: Response = response.json().await?;
     Ok(response)
@@ -62,7 +62,7 @@ mod tests {
         let model = ModelName("gemma3:12b".to_string());
         let prompt = "say something".to_string();
         let images = vec![];
-        let response = generate(&client, base_url, model, prompt, images)
+        let response = generate(&client, &base_url, model, prompt, images)
             .await
             .unwrap();
         debug!(log, "response = {response:#?}");

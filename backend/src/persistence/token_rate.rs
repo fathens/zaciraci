@@ -8,22 +8,25 @@ use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use std::collections::HashSet;
 use std::str::FromStr;
 use zaciraci_common::config;
+use zaciraci_common::types::ExchangeRate;
 
-// データベース用モデル
+// データベース用モデル（読み込み用）
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = token_rates)]
 struct DbTokenRate {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
     pub id: i32,
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
+    pub decimals: Option<i16>,
 }
 
-// データベース挿入用モデル
+// データベース挿入用モデル（ExchangeRate から構築）
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = token_rates)]
 struct NewDbTokenRate {
@@ -31,6 +34,25 @@ struct NewDbTokenRate {
     pub quote_token: String,
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
+    pub decimals: Option<i16>,
+}
+
+impl NewDbTokenRate {
+    /// ExchangeRate から挿入用モデルを作成
+    fn from_exchange_rate(
+        base: &TokenOutAccount,
+        quote: &TokenInAccount,
+        exchange_rate: &ExchangeRate,
+        timestamp: NaiveDateTime,
+    ) -> Self {
+        Self {
+            base_token: base.to_string(),
+            quote_token: quote.to_string(),
+            rate: exchange_rate.raw_rate().clone(),
+            decimals: Some(exchange_rate.decimals() as i16),
+            timestamp,
+        }
+    }
 }
 
 // ボラティリティ計算結果用の一時的な構造体
@@ -50,82 +72,160 @@ pub struct TokenVolatility {
 }
 
 // アプリケーションロジック用モデル
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct TokenRate {
     pub base: TokenOutAccount,
     pub quote: TokenInAccount,
-    pub rate: BigDecimal,
+    pub exchange_rate: ExchangeRate,
     pub timestamp: NaiveDateTime,
 }
 
 // 相互変換の実装
 impl TokenRate {
-    // 新しいTokenRateインスタンスを現在時刻で作成
-    pub fn new(base: TokenOutAccount, quote: TokenInAccount, rate: BigDecimal) -> Self {
+    /// 新しい TokenRate を作成（ExchangeRate 使用）
+    pub fn new(base: TokenOutAccount, quote: TokenInAccount, exchange_rate: ExchangeRate) -> Self {
         Self {
             base,
             quote,
-            rate,
+            exchange_rate,
             timestamp: chrono::Utc::now().naive_utc(),
         }
     }
 
-    // 特定の時刻でTokenRateインスタンスを作成
-    #[allow(dead_code)]
-    pub fn new_with_timestamp(
-        base: TokenOutAccount,
-        quote: TokenInAccount,
-        rate: BigDecimal,
-        timestamp: NaiveDateTime,
-    ) -> Self {
-        Self {
-            base,
-            quote,
-            rate,
-            timestamp,
-        }
-    }
-
-    // DBオブジェクトから変換
-    fn from_db(db_rate: DbTokenRate) -> Result<Self> {
+    /// DB レコードから変換（decimals を明示的に指定）
+    fn from_db_with_decimals(db_rate: DbTokenRate, decimals: u8) -> Result<Self> {
         let base = TokenAccount::from_str(&db_rate.base_token)?.into();
         let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
+        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
 
         Ok(Self {
             base,
             quote,
-            rate: db_rate.rate,
+            exchange_rate,
             timestamp: db_rate.timestamp,
         })
     }
 
-    // NewDbTokenRateに変換
-    fn to_new_db(&self) -> NewDbTokenRate {
-        NewDbTokenRate {
-            base_token: self.base.to_string(),
-            quote_token: self.quote.to_string(),
-            rate: self.rate.clone(),
-            timestamp: self.timestamp,
-        }
+    /// 単一の DB レコードを変換し、NULL decimals があれば RPC で取得して backfill
+    async fn from_db_with_backfill(db_rate: DbTokenRate) -> Result<Self> {
+        let decimals = match db_rate.decimals {
+            Some(d) => d as u8,
+            None => {
+                let log = DEFAULT.new(o!(
+                    "function" => "from_db_with_backfill",
+                    "base_token" => db_rate.base_token.clone(),
+                ));
+                trace!(log, "backfilling decimals for token with NULL");
+
+                let client = crate::jsonrpc::new_client();
+                let decimals = crate::trade::token_cache::get_token_decimals_cached(
+                    &client,
+                    &db_rate.base_token,
+                )
+                .await?;
+                Self::backfill_decimals(&db_rate.base_token, decimals).await?;
+                decimals
+            }
+        };
+        Self::from_db_with_decimals(db_rate, decimals)
     }
 
-    // データベースに挿入
-    #[allow(dead_code)]
-    pub async fn insert(&self) -> Result<()> {
-        use diesel::RunQueryDsl;
+    /// 複数の DB レコードを変換し、NULL decimals があれば RPC で取得して backfill
+    ///
+    /// 1. NULL decimals を持つトークンを特定
+    /// 2. RPC で decimals を取得して DB を backfill
+    /// 3. 正しい decimals で全レコードを変換
+    async fn from_db_results_with_backfill(results: Vec<DbTokenRate>) -> Result<Vec<Self>> {
+        use std::collections::HashMap;
 
-        let new_rate = self.to_new_db();
+        let log = DEFAULT.new(o!(
+            "function" => "from_db_results_with_backfill",
+        ));
+
+        // NULL decimals を持つトークンを特定
+        let tokens_with_null: HashSet<String> = results
+            .iter()
+            .filter(|r| r.decimals.is_none())
+            .map(|r| r.base_token.clone())
+            .collect();
+
+        // RPC で decimals を取得して backfill
+        let mut decimals_map: HashMap<String, u8> = HashMap::new();
+        if !tokens_with_null.is_empty() {
+            trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
+
+            let client = crate::jsonrpc::new_client();
+            for token in &tokens_with_null {
+                match crate::trade::token_cache::get_token_decimals_cached(&client, token).await {
+                    Ok(decimals) => {
+                        Self::backfill_decimals(token, decimals).await?;
+                        decimals_map.insert(token.clone(), decimals);
+                    }
+                    Err(e) => {
+                        warn!(log, "failed to fetch decimals for backfill"; "token" => token, "error" => %e);
+                    }
+                }
+            }
+        }
+
+        // 正しい decimals で変換
+        let mut rates = Vec::with_capacity(results.len());
+        for db_rate in results {
+            let decimals = match db_rate.decimals {
+                Some(d) => d as u8,
+                None => match decimals_map.get(&db_rate.base_token) {
+                    Some(&d) => d,
+                    None => {
+                        warn!(log, "skipping rate: decimals unknown after backfill"; "token" => &db_rate.base_token);
+                        continue;
+                    }
+                },
+            };
+            rates.push(Self::from_db_with_decimals(db_rate, decimals)?);
+        }
+
+        Ok(rates)
+    }
+
+    /// 指定トークンの全レコードに decimals を設定
+    pub async fn backfill_decimals(base_token: &str, decimals: u8) -> Result<usize> {
+        use diesel::sql_types::{SmallInt, Text};
+
+        let log = DEFAULT.new(o!(
+            "function" => "backfill_decimals",
+            "base_token" => base_token.to_string(),
+            "decimals" => decimals,
+        ));
+        trace!(log, "start");
+
         let conn = connection_pool::get().await?;
+        let base_token = base_token.to_string();
+        let decimals_i16 = decimals as i16;
 
-        conn.interact(move |conn| {
-            diesel::insert_into(token_rates::table)
-                .values(&new_rate)
+        let updated_count = conn
+            .interact(move |conn| {
+                diesel::sql_query(
+                    "UPDATE token_rates SET decimals = $1 WHERE base_token = $2 AND decimals IS NULL",
+                )
+                .bind::<SmallInt, _>(decimals_i16)
+                .bind::<Text, _>(&base_token)
                 .execute(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        Ok(())
+        trace!(log, "finish"; "updated_count" => updated_count);
+        Ok(updated_count)
+    }
+
+    /// NewDbTokenRate に変換
+    fn to_new_db(&self) -> NewDbTokenRate {
+        NewDbTokenRate::from_exchange_rate(
+            &self.base,
+            &self.quote,
+            &self.exchange_rate,
+            self.timestamp,
+        )
     }
 
     // 複数レコードを一括挿入
@@ -158,9 +258,9 @@ impl TokenRate {
         let retention_days = config::get("TOKEN_RATES_RETENTION_DAYS")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(365);
+            .unwrap_or(90);
 
-        info!(log, "cleaning up old records"; "retention_days" => retention_days);
+        trace!(log, "cleaning up old records"; "retention_days" => retention_days);
         TokenRate::cleanup_old_records(retention_days).await?;
 
         info!(log, "finish");
@@ -176,7 +276,7 @@ impl TokenRate {
             "function" => "cleanup_old_records",
             "retention_days" => retention_days,
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let conn = connection_pool::get().await?;
 
@@ -193,12 +293,13 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        info!(log, "finish"; "deleted_count" => deleted_count, "cutoff_date" => %cutoff_date);
+        trace!(log, "finish"; "deleted_count" => deleted_count, "cutoff_date" => %cutoff_date);
         Ok(())
     }
 
-    // 最新のレートを取得
-    #[allow(dead_code)]
+    /// 最新のレートを取得
+    ///
+    /// NULL decimals があれば RPC で取得して DB を backfill する。
     pub async fn get_latest(
         base: &TokenOutAccount,
         quote: &TokenInAccount,
@@ -241,155 +342,15 @@ impl TokenRate {
                 .await
                 .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-            Ok(Some(TokenRate::from_db(result)?))
+            Ok(Some(TokenRate::from_db_with_backfill(result).await?))
         } else {
             Ok(None)
         }
     }
 
-    // 履歴レコードを取得（新しい順）
-    #[allow(dead_code)]
-    pub async fn get_history(
-        base: &TokenOutAccount,
-        quote: &TokenInAccount,
-        limit: i64,
-    ) -> Result<Vec<TokenRate>> {
-        use diesel::QueryDsl;
-
-        let base_str = base.to_string();
-        let quote_str = quote.to_string();
-        let conn = connection_pool::get().await?;
-
-        let results = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::base_token.eq(&base_str))
-                    .filter(token_rates::quote_token.eq(&quote_str))
-                    .order(token_rates::timestamp.desc())
-                    .limit(limit)
-                    .load::<DbTokenRate>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        results.into_iter().map(TokenRate::from_db).collect()
-    }
-
-    // quoteトークンを指定して対応するすべてのbaseトークンとその最新時刻を取得
-    #[allow(dead_code)]
-    pub async fn get_latests_by_quote(
-        quote: &TokenInAccount,
-    ) -> Result<Vec<(TokenOutAccount, NaiveDateTime)>> {
-        use diesel::QueryDsl;
-        use diesel::dsl::max;
-
-        let quote_str = quote.to_string();
-        let conn = connection_pool::get().await?;
-
-        // 各base_tokenごとに最新のタイムスタンプを取得
-        let latest_timestamps = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::quote_token.eq(&quote_str))
-                    .group_by(token_rates::base_token)
-                    .select((token_rates::base_token, max(token_rates::timestamp)))
-                    .load::<(String, Option<NaiveDateTime>)>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        // 結果をトークンとタイムスタンプのペアに変換
-        let mut results = Vec::new();
-        for (base_token, timestamp_opt) in latest_timestamps {
-            if let Some(timestamp) = timestamp_opt {
-                match TokenAccount::from_str(&base_token) {
-                    Ok(token) => results.push((token.into(), timestamp)),
-                    Err(e) => return Err(anyhow!("Failed to parse token: {:?}", e)),
-                }
-            }
-        }
-
-        Ok(results)
-    }
-
-    // quote トークンとその個数を時間帯で区切って取り出す
-    pub async fn get_quotes_in_time_range(range: &TimeRange) -> Result<Vec<(TokenInAccount, i64)>> {
-        use diesel::QueryDsl;
-        use diesel::dsl::count;
-
-        let log = DEFAULT.new(o!("function" => "get_quotes_in_time_range"));
-        let conn = connection_pool::get().await?;
-
-        let start = range.start;
-        let end = range.end;
-
-        let results = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::timestamp.gt(start))
-                    .filter(token_rates::timestamp.le(end))
-                    .group_by(token_rates::quote_token)
-                    .select((token_rates::quote_token, count(token_rates::quote_token)))
-                    .load::<(String, i64)>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        let quotes = results
-            .into_iter()
-            .filter_map(|(s, c)| match TokenAccount::from_str(&s) {
-                Ok(token) => Some((token.into(), c)),
-                Err(e) => {
-                    error!(log, "Failed to parse token"; "token" => s, "error" => ?e);
-                    None
-                }
-            })
-            .collect();
-
-        Ok(quotes)
-    }
-
-    pub async fn get_bases_in_time_range(
-        range: &TimeRange,
-        quote: &TokenInAccount,
-    ) -> Result<Vec<(TokenOutAccount, i64)>> {
-        use diesel::QueryDsl;
-        use diesel::dsl::count;
-
-        let log = DEFAULT.new(o!("function" => "get_bases_in_time_range"));
-        let conn = connection_pool::get().await?;
-
-        let start = range.start;
-        let end = range.end;
-        let quote_str = quote.to_string();
-
-        let results = conn
-            .interact(move |conn| {
-                token_rates::table
-                    .filter(token_rates::timestamp.gt(start))
-                    .filter(token_rates::timestamp.le(end))
-                    .filter(token_rates::quote_token.eq(&quote_str))
-                    .group_by(token_rates::base_token)
-                    .select((token_rates::base_token, count(token_rates::base_token)))
-                    .load::<(String, i64)>(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        let bases = results
-            .into_iter()
-            .filter_map(|(s, c)| match TokenAccount::from_str(&s) {
-                Ok(token) => Some((token.into(), c)),
-                Err(e) => {
-                    error!(log, "Failed to parse token"; "token" => s, "error" => ?e);
-                    None
-                }
-            })
-            .collect();
-
-        Ok(bases)
-    }
-
+    /// 時間範囲内のレートを取得
+    ///
+    /// NULL decimals があれば RPC で取得して DB を backfill する。
     pub async fn get_rates_in_time_range(
         range: &TimeRange,
         base: &TokenOutAccount,
@@ -411,13 +372,13 @@ impl TokenRate {
                     .filter(token_rates::timestamp.le(end))
                     .filter(token_rates::base_token.eq(&base_str))
                     .filter(token_rates::quote_token.eq(&quote_str))
-                    .order_by(token_rates::timestamp)
+                    .order_by(token_rates::timestamp.asc())
                     .load::<DbTokenRate>(conn)
             })
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        results.into_iter().map(TokenRate::from_db).collect()
+        Self::from_db_results_with_backfill(results).await
     }
 
     // ボラティリティ（変動率）の高い順にトークンペアを取得
@@ -434,7 +395,7 @@ impl TokenRate {
             "range.start" => range_start.to_string(),
             "range.end" => range_end.to_string(),
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let conn = connection_pool::get().await?;
 

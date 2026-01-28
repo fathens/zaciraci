@@ -2,6 +2,7 @@ use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
+use common::types::TokenPrice;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -18,6 +19,7 @@ use crate::utils::{
     cache::{PredictionCacheParams, save_prediction_result},
     config::Config,
     file::{file_exists, sanitize_filename, write_json_file},
+    scaling::restore_value,
 };
 use common::api::chronos::ChronosApiClient;
 use common::cache::CacheOutput;
@@ -83,8 +85,8 @@ fn convert_to_cache_prediction_point(point: &PredictionPoint) -> CachePrediction
         timestamp: point.timestamp,
         price: point.value.clone(),
         confidence: point.confidence_interval.as_ref().map(|ci| {
-            // Use average of lower and upper bounds as confidence score
-            (ci.upper.clone() - ci.lower.clone()) / BigDecimal::from(2) / point.value.clone()
+            let range = &ci.upper - &ci.lower;
+            range / BigDecimal::from(2) / &point.value
         }),
     }
 }
@@ -244,8 +246,8 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
                             if i < lower_values.len() && i < upper_values.len() {
                                 Some(common::prediction::ConfidenceInterval {
-                                    lower: lower_values[i].clone(),
-                                    upper: upper_values[i].clone(),
+                                    lower: TokenPrice::from_near_per_token(lower_values[i].clone()),
+                                    upper: TokenPrice::from_near_per_token(upper_values[i].clone()),
                                 })
                             } else {
                                 None
@@ -257,30 +259,25 @@ pub async fn run(args: PullArgs) -> Result<()> {
 
             PredictionPoint {
                 timestamp,
-                value,
+                value: TokenPrice::from_near_per_token(value),
                 confidence_interval,
             }
         })
         .collect();
 
-    // Restore original scale if values were scaled down
-    if let Some(scale_factor) = task_info.params.scale_factor {
-        pb.set_message(format!(
-            "📊 Restoring values to original scale (factor: {:.2e})",
-            scale_factor
-        ));
+    // Restore original scale using scale params
+    let scale_params = &task_info.params.scale_params;
+    pb.set_message(format!(
+        "📊 Restoring values to original scale (range: {} - {})",
+        scale_params.original_min, scale_params.original_max
+    ));
 
-        let scale_bd: BigDecimal = scale_factor
-            .to_string()
-            .parse()
-            .unwrap_or_else(|_| BigDecimal::from(1));
-        for point in &mut forecast {
-            point.value = point.value.clone() * scale_bd.clone();
-            // Also scale confidence intervals if present
-            if let Some(ref mut ci) = point.confidence_interval {
-                ci.lower = ci.lower.clone() * scale_bd.clone();
-                ci.upper = ci.upper.clone() * scale_bd.clone();
-            }
+    for point in &mut forecast {
+        point.value = restore_value(point.value.as_bigdecimal(), scale_params);
+        // Also restore confidence intervals if present
+        if let Some(ref mut ci) = point.confidence_interval {
+            ci.lower = restore_value(ci.lower.as_bigdecimal(), scale_params);
+            ci.upper = restore_value(ci.upper.as_bigdecimal(), scale_params);
         }
     }
 

@@ -3,10 +3,35 @@ use crate::Result;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDateTime, Utc};
 use serial_test::serial;
 use std::str::FromStr;
 use zaciraci_common::prediction::{ChronosPredictionResponse, PredictionResult};
+use zaciraci_common::types::{ExchangeRate, TokenPrice};
+
+fn price(s: &str) -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
+}
+
+/// テスト用ヘルパー: 文字列から ExchangeRate を作成 (decimals = 24)
+fn make_rate_from_str(s: &str) -> ExchangeRate {
+    ExchangeRate::from_raw_rate(BigDecimal::from_str(s).unwrap(), 24)
+}
+
+/// テスト用ヘルパー: TokenRate を簡潔に作成
+fn make_token_rate(
+    base: TokenOutAccount,
+    quote: TokenInAccount,
+    rate_str: &str,
+    timestamp: NaiveDateTime,
+) -> TokenRate {
+    TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate_from_str(rate_str),
+        timestamp,
+    }
+}
 
 // テスト用のヘルパー構造体
 struct TestFixture {
@@ -44,10 +69,10 @@ impl TestFixture {
                 let price_variation = (hour as f64 * 0.1).sin() * volatility_factor;
                 let price = base_price + price_variation;
 
-                let rate = TokenRate::new_with_timestamp(
+                let rate = make_token_rate(
                     token.clone(),
                     self.quote_token.clone(),
-                    BigDecimal::from_str(&format!("{:.4}", price)).unwrap(),
+                    &format!("{:.4}", price),
                     now - chrono::Duration::hours(hour),
                 );
                 rates.push(rate);
@@ -64,10 +89,10 @@ impl TestFixture {
 
         for (i, price) in prices.iter().enumerate() {
             let timestamp = now - chrono::Duration::hours((prices.len() - i - 1) as i64);
-            let rate = TokenRate::new_with_timestamp(
+            let rate = make_token_rate(
                 token.clone(),
                 self.quote_token.clone(),
-                BigDecimal::from_str(&price.to_string()).unwrap(),
+                &price.to_string(),
                 timestamp,
             );
             rates.push(rate);
@@ -100,7 +125,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
     let end_date = Utc::now();
 
     let result = service
-        .get_tokens_by_volatility(start_date, end_date, "wrap.near")
+        .get_tokens_by_volatility(start_date, end_date, &fixture.quote_token)
         .await;
 
     assert!(result.is_ok(), "get_tokens_by_volatility should succeed");
@@ -113,14 +138,13 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
 
     // 各トークンの必須フィールドを検証
     for token in &tokens {
-        assert!(!token.token.is_empty(), "Token name should not be empty");
+        assert!(
+            !token.token.to_string().is_empty(),
+            "Token name should not be empty"
+        );
         assert!(
             token.volatility >= BigDecimal::from(0),
             "Volatility should be non-negative"
-        );
-        assert!(
-            token.current_price > BigDecimal::from(0),
-            "Current price should be positive"
         );
     }
 
@@ -158,15 +182,15 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
     let end_date = Utc::now();
 
     let result = service
-        .get_price_history("price_test.near", "wrap.near", start_date, end_date)
+        .get_price_history(&test_token, &fixture.quote_token, start_date, end_date)
         .await;
 
     assert!(result.is_ok(), "get_price_history should succeed");
     let history = result.unwrap();
 
     // データ整合性の検証
-    assert_eq!(history.token, "price_test.near");
-    assert_eq!(history.quote_token, "wrap.near");
+    assert_eq!(history.token, test_token);
+    assert_eq!(history.quote_token, fixture.quote_token);
     assert_eq!(
         history.prices.len(),
         expected_prices.len(),
@@ -183,20 +207,36 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         );
     }
 
-    // 価格値の検証（順序は保証されないため、含まれているかをチェック）
+    // 価格値の検証
+    // 挿入時: ExchangeRate::from_raw_rate(rate, 24) として保存
+    // 読み込み時: exchange_rate.to_price() = 10^24 / rate として TokenPrice に変換
+    // 相対的な順序と変換の整合性を確認
+    let yocto_per_near = BigDecimal::from_str("1000000000000000000000000").unwrap();
+    let expected_token_prices: Vec<f64> = expected_prices
+        .iter()
+        .map(|rate| {
+            let rate_bd = BigDecimal::from_str(&rate.to_string()).unwrap();
+            (&yocto_per_near / rate_bd)
+                .to_string()
+                .parse::<f64>()
+                .unwrap()
+        })
+        .collect();
+
     let actual_prices: Vec<f64> = history
         .prices
         .iter()
-        .map(|p| p.price.to_string().parse::<f64>().unwrap())
+        .map(|p| p.price.to_f64().as_f64())
         .collect();
 
-    for expected_price in &expected_prices {
+    for expected_price in &expected_token_prices {
         assert!(
             actual_prices
                 .iter()
-                .any(|&p| (p - expected_price).abs() < 0.0001),
-            "Expected price {} should be present in history",
-            expected_price
+                .any(|&p| ((p - expected_price) / expected_price).abs() < 0.01),
+            "Expected TokenPrice {} should be present in history (actual: {:?})",
+            expected_price,
+            actual_prices
         );
     }
 
@@ -238,9 +278,10 @@ async fn test_convert_prediction_result() {
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
     assert_eq!(preds.len(), 3);
-    assert_eq!(preds[0].price, "1.2".parse::<BigDecimal>().unwrap());
-    assert_eq!(preds[1].price, "1.3".parse::<BigDecimal>().unwrap());
-    assert_eq!(preds[2].price, "1.4".parse::<BigDecimal>().unwrap());
+    // price フィールドで比較（forecast_values は price 形式 NEAR/token）
+    assert_eq!(preds[0].price, price("1.2"));
+    assert_eq!(preds[1].price, price("1.3"));
+    assert_eq!(preds[2].price, price("1.4"));
 
     // タイムスタンプが1時間ずつ増加していることを確認
     assert_eq!(preds[1].timestamp - preds[0].timestamp, Duration::hours(1));
@@ -263,23 +304,32 @@ async fn test_error_handling_comprehensive() -> Result<()> {
         ("token with unicode: ❌", "Token with unicode"),
     ];
 
-    for (invalid_token, description) in invalid_tokens {
-        let result = service
-            .get_tokens_by_volatility(start_date, end_date, invalid_token)
-            .await;
+    for (invalid_token_str, description) in invalid_tokens {
+        // 無効なトークン名はパースに失敗するはず
+        let parse_result = invalid_token_str.parse::<TokenAccount>();
 
-        assert!(result.is_err(), "{} should cause an error", description);
+        if let Ok(token) = parse_result {
+            let invalid_token: TokenInAccount = token.into();
+            let result = service
+                .get_tokens_by_volatility(start_date, end_date, &invalid_token)
+                .await;
 
-        let error = result.unwrap_err();
-        let error_msg = error.to_string();
-        assert!(
-            error_msg.contains("Failed to parse quote token")
-                || error_msg.contains("parse")
-                || error_msg.contains("invalid"),
-            "Error message should indicate parsing failure for {}: {}",
-            description,
-            error_msg
-        );
+            assert!(result.is_err(), "{} should cause an error", description);
+
+            let error = result.unwrap_err();
+            let error_msg = error.to_string();
+            assert!(
+                error_msg.contains("Failed to parse quote token")
+                    || error_msg.contains("parse")
+                    || error_msg.contains("invalid"),
+                "Error message should indicate parsing failure for {}: {}",
+                description,
+                error_msg
+            );
+        } else {
+            // パースに失敗した場合は、それ自体がエラーハンドリングのテスト成功
+            println!("{} failed to parse as expected", description);
+        }
     }
 
     Ok(())
@@ -290,9 +340,11 @@ async fn test_error_handling_comprehensive() -> Result<()> {
 async fn test_empty_price_history() {
     let service = PredictionService::new("http://localhost:8000".to_string());
 
+    let test_token: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
+    let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
     let history = TokenPriceHistory {
-        token: "test.near".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: test_token,
+        quote_token,
         prices: vec![],
     };
 
@@ -310,13 +362,15 @@ async fn test_empty_price_history() {
 // データ構造のシリアライゼーションテスト
 #[test]
 fn test_token_prediction_serialization_roundtrip() {
+    let test_token: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
+    let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
     let prediction = TokenPrediction {
-        token: "test.near".to_string(),
-        quote_token: "wrap.near".to_string(),
+        token: test_token,
+        quote_token,
         prediction_time: Utc::now(),
         predictions: vec![PredictedPrice {
             timestamp: Utc::now(),
-            price: BigDecimal::from_str("1.5").unwrap(),
+            price: price("1.5"),
             confidence: Some(BigDecimal::from_str("0.85").unwrap()),
         }],
     };
@@ -329,8 +383,11 @@ fn test_token_prediction_serialization_roundtrip() {
         serde_json::from_str(&json).expect("Should deserialize successfully");
 
     // 完全性の検証
-    assert_eq!(deserialized.token, prediction.token);
-    assert_eq!(deserialized.quote_token, prediction.quote_token);
+    assert_eq!(deserialized.token.to_string(), prediction.token.to_string());
+    assert_eq!(
+        deserialized.quote_token.to_string(),
+        prediction.quote_token.to_string()
+    );
     assert_eq!(deserialized.prediction_time, prediction.prediction_time);
     assert_eq!(deserialized.predictions.len(), prediction.predictions.len());
 
@@ -364,10 +421,10 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
         for hour in 1..=6 {
             let price = base_price + (hour as f64 * 0.1);
-            let rate = TokenRate::new_with_timestamp(
+            let rate = make_token_rate(
                 base_token.clone(),
                 fixture.quote_token.clone(),
-                BigDecimal::from_str(&format!("{:.3}", price)).unwrap(),
+                &format!("{:.3}", price),
                 now - chrono::Duration::hours(hour),
             );
             all_rates.push(rate);
@@ -383,25 +440,29 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
     // バッチ処理の動作確認
     let mut successful_retrievals = 0;
-    for token in &tokens {
+    for token_name in &tokens {
+        let token: TokenOutAccount = token_name.parse::<TokenAccount>().unwrap().into();
         let result = service
-            .get_price_history(token, "wrap.near", start_date, end_date)
+            .get_price_history(&token, &fixture.quote_token, start_date, end_date)
             .await;
 
         if result.is_ok() {
             let history = result.unwrap();
-            assert_eq!(history.token, *token, "Token name should match");
-            assert_eq!(history.quote_token, "wrap.near", "Quote token should match");
+            assert_eq!(history.token, token, "Token name should match");
+            assert_eq!(
+                history.quote_token, fixture.quote_token,
+                "Quote token should match"
+            );
             assert!(
                 !history.prices.is_empty(),
                 "Should have price data for {}",
-                token
+                token_name
             );
 
             // 価格データの妥当性確認
             for price_point in &history.prices {
                 assert!(
-                    price_point.price > BigDecimal::from(0),
+                    price_point.price.as_bigdecimal() > &BigDecimal::from(0),
                     "Price should be positive"
                 );
             }
@@ -440,14 +501,14 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
     let service = PredictionService::new("http://localhost:8000".to_string());
 
     // 存在するトークンと存在しないトークンを混在させる
-    let tokens = vec![
-        "existing.near".to_string(),
-        "nonexistent1.near".to_string(), // このトークンは履歴データがない
-        "nonexistent2.near".to_string(), // このトークンも履歴データがない
+    let tokens: Vec<TokenOutAccount> = vec![
+        "existing.near".parse::<TokenAccount>().unwrap().into(),
+        "nonexistent1.near".parse::<TokenAccount>().unwrap().into(), // このトークンは履歴データがない
+        "nonexistent2.near".parse::<TokenAccount>().unwrap().into(), // このトークンも履歴データがない
     ];
 
     let _result = service
-        .predict_multiple_tokens(tokens, "wrap.near", 1, 24)
+        .predict_multiple_tokens(tokens, &fixture.quote_token, 1, 24)
         .await;
 
     // 存在しないトークンの価格履歴取得は失敗するが、
@@ -471,16 +532,17 @@ async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
     clean_test_tokens().await?;
 
     let service = PredictionService::new("http://localhost:8000".to_string());
+    let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
 
     // 存在しないトークンのみ
-    let tokens = vec![
-        "nonexistent1.near".to_string(),
-        "nonexistent2.near".to_string(),
-        "nonexistent3.near".to_string(),
+    let tokens: Vec<TokenOutAccount> = vec![
+        "nonexistent1.near".parse::<TokenAccount>().unwrap().into(),
+        "nonexistent2.near".parse::<TokenAccount>().unwrap().into(),
+        "nonexistent3.near".parse::<TokenAccount>().unwrap().into(),
     ];
 
     let result = service
-        .predict_multiple_tokens(tokens, "wrap.near", 1, 24)
+        .predict_multiple_tokens(tokens, &quote_token, 1, 24)
         .await;
 
     // 全てのトークンで価格履歴が見つからないため、エラーになるはず
@@ -522,10 +584,11 @@ async fn test_retry_configuration() {
 async fn test_empty_token_list() -> Result<()> {
     // 空のトークンリストを渡した場合
     let service = PredictionService::new("http://localhost:8000".to_string());
-    let tokens: Vec<String> = vec![];
+    let tokens: Vec<TokenOutAccount> = vec![];
+    let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
 
     let result = service
-        .predict_multiple_tokens(tokens, "wrap.near", 1, 24)
+        .predict_multiple_tokens(tokens, &quote_token, 1, 24)
         .await;
 
     // 空のリストでは、全てのトークンが失敗したことになる
@@ -548,7 +611,7 @@ fn test_price_point_validation() {
     let now = Utc::now();
     let price_point = PricePoint {
         timestamp: now,
-        price: BigDecimal::from_str("1.5").unwrap(),
+        price: price("1.5"),
         volume: Some(BigDecimal::from_str("1000.0").unwrap()),
     };
 
@@ -565,22 +628,16 @@ fn test_price_point_validation() {
 #[serial]
 async fn test_invalid_quote_token() -> Result<()> {
     // 無効なquote_tokenでエラーハンドリングをテスト
-    let service = PredictionService::new("http://localhost:8000".to_string());
+    // TokenInAccount に変換する前にパースエラーが発生するため、
+    // このテストは型システムによって無効な入力が防止されることを確認する
 
-    let start_date = Utc::now() - Duration::days(1);
-    let end_date = Utc::now();
+    let invalid_token_str = "invalid token name";
+    let parse_result = invalid_token_str.parse::<TokenAccount>();
 
-    let result = service
-        .get_tokens_by_volatility(start_date, end_date, "invalid token name")
-        .await;
-
-    assert!(result.is_err(), "Should fail with invalid quote_token");
+    // 無効なトークン名はパースに失敗するはず
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to parse quote token"),
-        "Error should mention quote token parsing"
+        parse_result.is_err(),
+        "Invalid token name should fail to parse"
     );
 
     Ok(())

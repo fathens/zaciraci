@@ -44,12 +44,12 @@ mod data_flow_debug {
         let values = history_file.price_history.values;
 
         println!("🔍 Real Data Flow Debug:");
-        println!("   Raw JSON value: {}", values[0].value);
+        println!("   Raw JSON value: {}", values[0].value.to_f64());
         println!("   Raw JSON time: {:?}", values[0].time);
 
         // NEAR単位への変換をテスト
-        let yocto_value = &values.clone()[0].value;
-        let near_value = common::units::Units::yocto_to_near(yocto_value);
+        let yocto_value = values[0].value.as_bigdecimal().clone();
+        let near_value = common::units::Units::yocto_to_near(&yocto_value);
         println!("   Converted to NEAR: {:.2e} NEAR", near_value);
 
         // get_prices_at_timeの動作をテスト
@@ -68,7 +68,7 @@ mod data_flow_debug {
 
         // 値が同じことを確認（f64からBigDecimalへの変換のため精度の問題があるかもしれない）
         let returned_as_bigdecimal = returned_price.to_string().parse::<BigDecimal>().unwrap();
-        let diff = (&returned_as_bigdecimal - yocto_value).abs();
+        let diff = (&returned_as_bigdecimal - &yocto_value).abs();
         assert!(
             diff < "0.01".parse::<BigDecimal>().unwrap(),
             "Values should be approximately equal"
@@ -77,10 +77,11 @@ mod data_flow_debug {
         // 問題：この値を使った時の初期ポートフォリオ計算
         let initial_capital = BigDecimal::from(1000); // NEAR
         let initial_per_token = &initial_capital / BigDecimal::from(2); // 2つのトークンを想定
-        let initial_price_near = common::units::Units::yocto_f64_to_near_f64(*returned_price)
-            .to_string()
-            .parse::<BigDecimal>()
-            .unwrap();
+        let initial_price_near =
+            common::units::Units::yocto_f64_to_near_f64(returned_price.as_f64())
+                .to_string()
+                .parse::<BigDecimal>()
+                .unwrap();
         let token_amount = &initial_per_token / &initial_price_near;
 
         println!("   💰 Portfolio Calculation:");

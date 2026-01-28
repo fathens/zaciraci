@@ -1,5 +1,4 @@
 use anyhow::Result;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -15,9 +14,11 @@ use crate::utils::{
     cache::get_price_history_dir,
     config::Config,
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
+    scaling::scale_values,
 };
 use common::api::chronos::ChronosApiClient;
 use common::prediction::ZeroShotPredictionRequest;
+use common::types::TokenPrice;
 
 /// Find the latest history file in the given directory
 async fn find_latest_history_file(dir: &Path) -> Result<Option<PathBuf>> {
@@ -265,31 +266,15 @@ pub async fn run(args: KickArgs) -> Result<()> {
         (input_duration.num_milliseconds() as f64 * (args.forecast_ratio / 100.0)) as i64;
     let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
 
-    // Scale down values if they are too large to prevent numerical issues
-    let max_value = values.iter().cloned().max().unwrap_or(BigDecimal::from(0));
-    let mut scaled_values = values.clone();
-    let one_million = BigDecimal::from(1_000_000);
-    let scale_factor = if max_value > one_million {
-        let max_value_f64: f64 = max_value.to_string().parse().unwrap_or(0.0);
-        pb.set_message(format!(
-            "⚠️ Scaling down large values (max: {:.2e}) for numerical stability",
-            max_value_f64
-        ));
+    // Scale values to 0-1,000,000 range using min-max normalization
+    let scale_result = scale_values(&values);
+    let scaled_values = scale_result.values;
+    let scale_params = scale_result.params;
 
-        // Scale values to be between 0 and 1
-        for value in &mut scaled_values {
-            *value = value.clone() / max_value.clone();
-        }
-
-        pb.set_message(format!(
-            "📊 Values scaled down by factor of {:.2e} for numerical stability",
-            max_value_f64
-        ));
-
-        Some(max_value_f64)
-    } else {
-        None
-    };
+    pb.set_message(format!(
+        "📊 Values scaled to 0-1,000,000 range (original: {} - {})",
+        scale_params.original_min, scale_params.original_max
+    ));
 
     pb.set_message(format!(
         "📊 Input period: {:.1} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
@@ -319,7 +304,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
             start_pct: args.start_pct,
             end_pct: args.end_pct,
             forecast_ratio: args.forecast_ratio,
-            scale_factor,
+            scale_params,
         },
     );
 
@@ -352,7 +337,7 @@ fn extract_quote_token_from_path(token_file: &Path) -> Option<String> {
 
 async fn load_history_data(
     history_file: &PathBuf,
-) -> Result<(Vec<DateTime<Utc>>, Vec<BigDecimal>)> {
+) -> Result<(Vec<DateTime<Utc>>, Vec<TokenPrice>)> {
     let content = fs::read_to_string(history_file).await?;
     let history_data: HistoryFileData = serde_json::from_str(&content)?;
 
@@ -366,7 +351,7 @@ async fn load_history_data(
         .iter()
         .map(|v| DateTime::from_naive_utc_and_offset(v.time, Utc))
         .collect();
-    let values: Vec<BigDecimal> = history_data
+    let values: Vec<TokenPrice> = history_data
         .price_history
         .values
         .iter()

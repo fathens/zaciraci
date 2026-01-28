@@ -54,7 +54,8 @@ impl TokenGraph {
                 || token_in_str.contains("a0b86991")
                 || token_in_str.contains("wrap.near");
 
-            let edges_by_token_out = pools_by_token.get_groups_by_out(&token_in.clone().into());
+            let token_in_account = token_in.to_in();
+            let edges_by_token_out = pools_by_token.get_groups_by_out(&token_in_account);
 
             for (token_out, edges) in edges_by_token_out.iter() {
                 let token_out_str = token_out.to_string();
@@ -75,12 +76,12 @@ impl TokenGraph {
                     }
                 } else {
                     for edge in at_top.into_iter() {
-                        for &node_out in nodes.get(&token_out.clone().into()).into_iter() {
+                        for &node_out in nodes.get(token_out.inner()).into_iter() {
                             graph.add_edge(node_in, node_out, edge.weight());
                             edges_added += 1;
 
                             if is_important_pair {
-                                info!(log, "edge added";
+                                trace!(log, "edge added";
                                     "token_in" => token_in_str.as_str(),
                                     "token_out" => token_out_str.as_str(),
                                     "weight" => format!("{:?}", edge.weight()),
@@ -92,7 +93,7 @@ impl TokenGraph {
             }
         }
 
-        info!(log, "graph construction complete";
+        trace!(log, "graph construction complete";
             "nodes" => nodes.len(),
             "edges_added" => edges_added,
             "edges_skipped" => edges_skipped,
@@ -111,7 +112,7 @@ impl TokenGraph {
             "start" => format!("{:?}", start),
             "goal" => format!("{:?}", goal),
         ));
-        info!(log, "start");
+        trace!(log, "start");
 
         let out = self.graph.update_path(start, Some(goal.clone()))?;
         Ok(out.contains(goal))
@@ -122,7 +123,7 @@ impl TokenGraph {
             "function" => "TokenGraph::update_graph",
             "start" => format!("{:?}", start),
         ));
-        info!(log, "find goals from start");
+        trace!(log, "find goals from start");
 
         let outs = self.graph.update_path(start, None)?;
         let mut goals = Vec::new();
@@ -131,12 +132,12 @@ impl TokenGraph {
                 .graph
                 .update_path(&goal.as_in(), Some(start.as_out()))?;
             if reversed.is_empty() {
-                info!(log, "no reversed path found"; "goal" => %goal);
+                trace!(log, "no reversed path found"; "goal" => %goal);
             } else {
                 goals.push(goal.clone());
             }
         }
-        info!(log, "goals found";
+        trace!(log, "goals found";
             "outs.count" => %outs.len(),
             "goals.count" => %goals.len(),
         );
@@ -277,7 +278,7 @@ where
         if goal.is_none() {
             let cached = self.cached_path.read().unwrap();
             if let Some(path_to_outs) = cached.get(start) {
-                info!(log, "cache hit, returning cached result"; "outs_count" => path_to_outs.len());
+                trace!(log, "cache hit, returning cached result"; "outs_count" => path_to_outs.len());
                 return Ok(path_to_outs.keys().cloned().collect());
             }
         }
@@ -290,24 +291,7 @@ where
         };
         trace!(log, "finding by dijkstra"; "from" => ?from, "to" => ?to);
         let goals = algo::dijkstra(&self.graph, from, to, |e| *e.weight());
-
-        // Dijkstra の結果を分析
-        let reachable_tokens: Vec<String> = goals
-            .keys()
-            .filter_map(|&idx| self.graph.node_weight(idx))
-            .map(|n| n.to_string())
-            .collect();
-
-        let important_reachable: Vec<&str> = reachable_tokens
-            .iter()
-            .filter(|t| t.contains("akaia") || t.contains("a0b86991") || t.contains("wrap.near"))
-            .map(|s| s.as_str())
-            .collect();
-
-        info!(log, "dijkstra complete";
-            "reachable_count" => goals.len(),
-            "important_reachable" => format!("{:?}", important_reachable),
-        );
+        trace!(log, "dijkstra complete"; "reachable_count" => goals.len());
 
         let finder = GraphPath {
             graph: &self.graph,
@@ -324,7 +308,7 @@ where
             }
         }
         if path_to_outs.is_empty() {
-            info!(log, "no path found");
+            trace!(log, "no path found");
         } else {
             self.cached_path
                 .write()

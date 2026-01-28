@@ -26,12 +26,30 @@ diesel::table! {
 }
 
 diesel::table! {
+    prediction_records (id) {
+        id -> Int4,
+        evaluation_period_id -> Varchar,
+        token -> Varchar,
+        quote_token -> Varchar,
+        predicted_price -> Numeric,
+        prediction_time -> Timestamp,
+        target_time -> Timestamp,
+        actual_price -> Nullable<Numeric>,
+        mape -> Nullable<Float8>,
+        absolute_error -> Nullable<Numeric>,
+        evaluated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     token_rates (id) {
         id -> Int4,
         base_token -> Varchar,
         quote_token -> Varchar,
         rate -> Numeric,
         timestamp -> Timestamp,
+        decimals -> Nullable<Int2>,
     }
 }
 
@@ -43,7 +61,6 @@ diesel::table! {
         from_amount -> Numeric,
         to_token -> Varchar,
         to_amount -> Numeric,
-        price_yocto_near -> Numeric,
         timestamp -> Timestamp,
         evaluation_period_id -> Nullable<Varchar>,
     }
@@ -52,6 +69,7 @@ diesel::table! {
 diesel::allow_tables_to_appear_in_same_query!(
     evaluation_periods,
     pool_info,
+    prediction_records,
     token_rates,
     trade_transactions,
 );

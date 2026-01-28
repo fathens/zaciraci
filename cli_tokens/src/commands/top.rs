@@ -113,7 +113,7 @@ pub async fn run(args: TopArgs) -> Result<()> {
     // Save each token to individual file
     let quote_token = args.quote_token.as_deref().unwrap_or("wrap.near");
     for (i, token) in tokens.iter().enumerate() {
-        println!("Saving {} ({}/{})", token.0, i + 1, tokens.len());
+        println!("Saving {} ({}/{})", token, i + 1, tokens.len());
 
         let file_data = TokenFileData {
             metadata: FileMetadata {
@@ -122,14 +122,14 @@ pub async fn run(args: TopArgs) -> Result<()> {
                 end_date: end_date.format("%Y-%m-%d").to_string(),
                 quote_token: Some(quote_token.to_string()),
             },
-            token: token.0.to_string(),
+            token: token.to_string(),
         };
 
         // Create quote_token subdirectory
         let quote_dir = output_dir.join(sanitize_filename(quote_token));
         ensure_directory_exists(&quote_dir)?;
 
-        let filename = format!("{}.json", sanitize_filename(&token.0));
+        let filename = format!("{}.json", sanitize_filename(&token.to_string()));
         let file_path = quote_dir.join(filename);
 
         write_json_file(&file_path, &file_data).await?;

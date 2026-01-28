@@ -5,13 +5,13 @@ use crate::logging::*;
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
-use crate::types::MilliNear;
 use crate::wallet::Wallet;
 use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
+use zaciraci_common::types::NearAmount;
 
 const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
 #[cfg(test)]
@@ -20,17 +20,25 @@ const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
 static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
-    let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| panic!("{}", err));
+    let value = config::get("HARVEST_ACCOUNT_ID").expect("HARVEST_ACCOUNT_ID config is required");
     value
         .parse()
-        .unwrap_or_else(|err| panic!("Failed to parse config `{}`: {}", value, err))
+        .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{value}`: {err}"))
+});
+static TRADE_ACCOUNT_RESERVE: Lazy<u128> = Lazy::new(|| {
+    config::get("TRADE_ACCOUNT_RESERVE")
+        .ok()
+        .and_then(|v| v.parse::<NearAmount>().ok())
+        .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
+        .to_yocto()
+        .to_u128()
 });
 
 fn is_time_to_harvest() -> bool {
     let last = LAST_HARVEST.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is after UNIX epoch")
         .as_secs();
     now - last > INTERVAL_OF_HARVEST
 }
@@ -38,7 +46,7 @@ fn is_time_to_harvest() -> bool {
 fn update_last_harvest() {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock is after UNIX epoch")
         .as_secs();
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
@@ -57,14 +65,18 @@ where
         "function" => "balances.start",
     ));
     let required_balance = required_balance.unwrap_or_else(|| {
-        let max = get_history().read().unwrap().inputs.max();
+        let max = get_history()
+            .read()
+            .expect("history lock not poisoned")
+            .inputs
+            .max();
         if max.is_zero() {
             DEFAULT_REQUIRED_BALANCE
         } else {
             max
         }
     });
-    info!(log, "Starting balances";
+    trace!(log, "Starting balances";
         "required_balance" => %required_balance,
     );
 
@@ -72,7 +84,7 @@ where
     // via ensure_ref_storage_setup, so we skip it here to reduce RPC calls
 
     let deposited_wnear = balance_of_start_token(client, wallet, token).await?;
-    info!(log, "comparing";
+    trace!(log, "comparing";
         "deposited_wnear" => ?deposited_wnear,
         "required_balance" => ?required_balance,
     );
@@ -130,31 +142,26 @@ where
     let log = log.new(o!(
         "wrapped_balance" => format!("{}", wrapped_balance),
     ));
-    debug!(log, "checking");
+    trace!(log, "checking");
 
     let actual_wrapping = if wrapped_balance < want {
         let wrapping = want - wrapped_balance;
         let native_balance = client.get_native_amount(account).await?;
 
-        // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
-        let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
-            .ok()
-            .and_then(|v| v.parse::<u128>().ok())
-            .map(|v| MilliNear::from_near(v).to_yocto())
-            .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+        let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
 
         let log = log.new(o!(
             "native_balance" => format!("{}", native_balance),
             "wrapping" => format!("{}", wrapping),
             "minimum_native_balance" => format!("{}", minimum_native_balance),
         ));
-        debug!(log, "checking");
+        trace!(log, "checking");
         let available = native_balance
             .checked_sub(minimum_native_balance)
             .unwrap_or_default();
 
         let amount = if available < wrapping {
-            info!(log, "insufficient balance, using maximum available";
+            debug!(log, "insufficient balance, using maximum available";
                 "available" => %available,
                 "wanted" => %wrapping,
             );
@@ -164,7 +171,7 @@ where
         };
 
         if amount > 0 {
-            info!(log, "wrapping";
+            trace!(log, "wrapping";
                 "amount" => %amount,
             );
             deposit::wnear::wrap(client, wallet, amount)
@@ -179,7 +186,7 @@ where
 
     let total_deposit = wrapped_balance + actual_wrapping;
     if total_deposit > 0 {
-        info!(log, "refilling";
+        debug!(log, "refilling";
             "amount" => %total_deposit,
         );
         deposit::deposit(client, wallet, &WNEAR_TOKEN, total_deposit)
@@ -187,7 +194,7 @@ where
             .wait_for_success()
             .await?;
     } else {
-        info!(log, "no amount to deposit")
+        trace!(log, "no amount to deposit")
     }
     Ok(())
 }
@@ -208,13 +215,13 @@ where
     // REF Finance に既にデポジット済みの残高を確認
     let deposited_balance = balance_of_start_token(client, wallet, &WNEAR_TOKEN).await?;
 
-    info!(log, "checking existing balances";
+    trace!(log, "checking existing balances";
         "deposited_in_ref" => %deposited_balance,
         "required" => %amount
     );
 
     if deposited_balance >= amount {
-        info!(
+        trace!(
             log,
             "sufficient balance already deposited, no action needed"
         );
@@ -227,7 +234,7 @@ where
     // wrap.near の現在残高を確認
     let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
 
-    info!(log, "current wrap.near balance"; "wrapped_balance" => %wrapped_balance);
+    trace!(log, "current wrap.near balance"; "wrapped_balance" => %wrapped_balance);
 
     // 不足分を wrap.near から調達
     if wrapped_balance < shortage {
@@ -235,11 +242,7 @@ where
         let wrapping = shortage - wrapped_balance;
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
-            .ok()
-            .and_then(|v| v.parse::<u128>().ok())
-            .map(|v| MilliNear::from_near(v).to_yocto())
-            .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+        let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
 
         let available = native_balance
             .checked_sub(minimum_native_balance)
@@ -256,7 +259,7 @@ where
         };
 
         if actual_wrapping > 0 {
-            info!(log, "wrapping NEAR to wrap.near"; "amount" => %actual_wrapping);
+            trace!(log, "wrapping NEAR to wrap.near"; "amount" => %actual_wrapping);
             deposit::wnear::wrap(client, wallet, actual_wrapping)
                 .await?
                 .wait_for_success()
@@ -274,7 +277,7 @@ where
     // 不足分と実際の残高の少ない方をデポジット
     let deposit_amount = shortage.min(final_wrapped_balance);
 
-    info!(log, "depositing wrap.near to REF Finance";
+    trace!(log, "depositing wrap.near to REF Finance";
         "shortage" => %shortage,
         "available" => %final_wrapped_balance,
         "depositing" => %deposit_amount
@@ -309,12 +312,7 @@ where
         "token" => %token,
     );
 
-    // アカウント保護額を環境変数から取得（デフォルト10 NEAR）
-    let minimum_native_balance = config::get("TRADE_ACCOUNT_RESERVE")
-        .ok()
-        .and_then(|v| v.parse::<u128>().ok())
-        .map(|v| MilliNear::from_near(v).to_yocto())
-        .unwrap_or_else(|| MilliNear::from_near(10).to_yocto());
+    let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
 
     let account = wallet.account_id();
     let before_withdraw = client.get_native_amount(account).await?;
@@ -329,7 +327,7 @@ where
     };
     let native_balance = before_withdraw + added;
     let upper = required << 7; // 128倍
-    info!(log, "checking";
+    trace!(log, "checking";
         "native_balance" => %native_balance,
         "upper" => %upper,
     );

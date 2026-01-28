@@ -27,7 +27,7 @@ async fn list_model_names() -> String {
     let models = match ollama::list_models(&get_base_url()).await {
         Ok(models) => models,
         Err(err) => {
-            info!(log, "Failed to list models"; "error" => ?err);
+            warn!(log, "Failed to list models"; "error" => ?err);
             return "[]".to_string();
         }
     };
@@ -40,12 +40,12 @@ async fn chat(State(_): State<Arc<AppState>>, Json(request): Json<ChatRequest>) 
         "function" => "chat",
         "model_name" => format!("{}", request.model_name),
     ));
-    info!(log, "start");
+    warn!(log, "start");
 
-    let client = match ollama::Client::new_by_name(request.model_name, get_base_url()).await {
+    let client = match ollama::Client::new_by_name(&request.model_name, get_base_url()).await {
         Ok(client) => client,
         Err(err) => {
-            info!(log, "Failed to create client"; "error" => ?err);
+            warn!(log, "Failed to create client"; "error" => ?err);
             return err.to_string();
         }
     };
@@ -53,7 +53,7 @@ async fn chat(State(_): State<Arc<AppState>>, Json(request): Json<ChatRequest>) 
     let res = match client.chat(request.messages).await {
         Ok(response) => response,
         Err(err) => {
-            info!(log, "Failed to chat"; "error" => ?err);
+            warn!(log, "Failed to chat"; "error" => ?err);
             err.to_string()
         }
     };
@@ -65,15 +65,15 @@ async fn generate(State(_): State<Arc<AppState>>, Json(request): Json<GenerateRe
         "function" => "generate",
         "model_name" => format!("{}", request.model_name),
     ));
-    info!(log, "start");
+    warn!(log, "start");
 
     let prompt = request.prompt;
     let images = request.images;
 
-    let client = match ollama::Client::new_by_name(request.model_name, get_base_url()).await {
+    let client = match ollama::Client::new_by_name(&request.model_name, get_base_url()).await {
         Ok(client) => client,
         Err(err) => {
-            info!(log, "Failed to create client"; "error" => ?err);
+            warn!(log, "Failed to create client"; "error" => ?err);
             return err.to_string();
         }
     };
@@ -81,7 +81,7 @@ async fn generate(State(_): State<Arc<AppState>>, Json(request): Json<GenerateRe
     let res = match client.generate(prompt, images).await {
         Ok(response) => response,
         Err(err) => {
-            info!(log, "Failed to generate"; "error" => ?err);
+            warn!(log, "Failed to generate"; "error" => ?err);
             err.to_string()
         }
     };

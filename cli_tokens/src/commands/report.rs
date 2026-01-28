@@ -193,8 +193,9 @@ pub fn extract_report_data(result: &SimulationResult) -> ReportData {
             start_date: result.config.start_date,
             end_date: result.config.end_date,
             algorithm: format!("{:?}", result.config.algorithm),
-            initial_capital: result.config.initial_capital,
-            final_value: result.config.final_value,
+            // NearValueF64 から f64 への変換（レポート表示用）
+            initial_capital: result.config.initial_capital.as_f64(),
+            final_value: result.config.final_value.as_f64(),
         },
         performance: PerformanceMetrics {
             total_return_pct: result.performance.total_return_pct,
@@ -205,7 +206,8 @@ pub fn extract_report_data(result: &SimulationResult) -> ReportData {
             win_rate: result.performance.win_rate,
             active_trading_days: result.performance.active_trading_days as usize,
             simulation_days: result.performance.simulation_days as usize,
-            total_costs: result.performance.total_costs,
+            // NearValueF64 から f64 への変換（レポート表示用）
+            total_costs: result.performance.total_costs.as_f64(),
         },
         trades: result.trades.clone(),
         portfolio_values: result.portfolio_values.clone(),
@@ -214,6 +216,7 @@ pub fn extract_report_data(result: &SimulationResult) -> ReportData {
 
 /// Calculate derived metrics for report generation
 pub fn calculate_report_metrics(data: &ReportData) -> ReportMetrics {
+    let default_config = create_default_report_config();
     let performance_class = if data.performance.total_return_pct >= 0.0 {
         "positive".to_string()
     } else {
@@ -222,7 +225,7 @@ pub fn calculate_report_metrics(data: &ReportData) -> ReportMetrics {
 
     ReportMetrics {
         performance_class,
-        currency_symbol: "wrap.near".to_string(), // TODO: Make configurable
+        currency_symbol: default_config.currency.symbol.clone(),
         chart_data: generate_portfolio_chart_data(&data.portfolio_values),
         trades_html: generate_trades_table_html(&data.trades),
         generation_timestamp: Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
@@ -236,7 +239,7 @@ pub fn generate_portfolio_chart_data(values: &[PortfolioValue]) -> ChartData {
         .map(|pv| format!("'{}'", pv.timestamp.format("%m/%d")))
         .collect();
 
-    let chart_values: Vec<f64> = values.iter().map(|pv| pv.total_value).collect();
+    let chart_values: Vec<f64> = values.iter().map(|pv| pv.total_value.as_f64()).collect();
 
     ChartData {
         labels,
@@ -255,6 +258,8 @@ pub fn generate_trades_table_html(trades: &[TradeExecution]) -> String {
         .rev()
         .take(10)
         .map(|trade| {
+            // コストを NEAR 単位で表示（yoctoNEAR から変換）
+            let cost_near = trade.cost.total.to_near().as_f64();
             format!(
                 r#"<tr>
                     <td>{}</td>
@@ -269,7 +274,7 @@ pub fn generate_trades_table_html(trades: &[TradeExecution]) -> String {
                 trade.to_token,
                 trade.amount,
                 trade.executed_price,
-                trade.cost.total,
+                cost_near,
                 trade.reason
             )
         })
@@ -363,7 +368,7 @@ pub fn analyze_trades(trades: &[TradeExecution]) -> TradeAnalysis {
 
     let trade_pnls: Vec<f64> = trades
         .iter()
-        .map(|t| t.portfolio_value_after - t.portfolio_value_before)
+        .map(|t| t.portfolio_value_after.as_f64() - t.portfolio_value_before.as_f64())
         .collect();
 
     TradeAnalysis {
@@ -396,8 +401,8 @@ fn calculate_daily_returns(portfolio_values: &[PortfolioValue]) -> Vec<f64> {
     portfolio_values
         .windows(2)
         .map(|window| {
-            let prev_value = window[0].total_value;
-            let curr_value = window[1].total_value;
+            let prev_value = window[0].total_value.as_f64();
+            let curr_value = window[1].total_value.as_f64();
             if prev_value != 0.0 {
                 (curr_value - prev_value) / prev_value
             } else {
@@ -1233,7 +1238,7 @@ fn generate_individual_algorithm_section(result: &SimulationResult) -> Result<St
         report_data.performance.total_trades,
         report_data.performance.win_rate * 100.0,
         result.config.final_value,
-        "wrap.near", // TODO: Make configurable
+        create_default_report_config().currency.symbol,
         format!("{:?}", result.config.algorithm).to_lowercase()
     ))
 }
@@ -1431,128 +1436,4 @@ fn generate_comparison_chart_script(results: &[SimulationResult]) -> Result<Stri
 }
 
 #[cfg(test)]
-mod comparison_chart_tests {
-    use super::*;
-    use crate::commands::simulate::{
-        AlgorithmType, DataQualityStats, ExecutionSummary, PerformanceMetrics, PortfolioValue,
-        SimulationResult, SimulationSummary, TradeExecution,
-    };
-    use chrono::{DateTime, Utc};
-
-    fn create_test_simulation_result(
-        algorithm: AlgorithmType,
-        values: Vec<f64>,
-    ) -> SimulationResult {
-        let start_date = DateTime::from_naive_utc_and_offset(
-            chrono::NaiveDate::from_ymd_opt(2025, 8, 10)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
-            Utc,
-        );
-        let end_date = DateTime::from_naive_utc_and_offset(
-            chrono::NaiveDate::from_ymd_opt(2025, 8, 20)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
-            Utc,
-        );
-
-        let portfolio_values: Vec<PortfolioValue> = values
-            .iter()
-            .enumerate()
-            .map(|(i, &value)| PortfolioValue {
-                timestamp: start_date + chrono::Duration::days(i as i64),
-                total_value: value,
-                cash_balance: 0.0,
-                holdings: std::collections::HashMap::new(),
-                unrealized_pnl: value - 1000.0,
-            })
-            .collect();
-
-        SimulationResult {
-            config: SimulationSummary {
-                start_date,
-                end_date,
-                algorithm,
-                initial_capital: 1000.0,
-                final_value: values.last().copied().unwrap_or(1000.0),
-                total_return: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0 * 100.0,
-                duration_days: 10,
-            },
-            performance: PerformanceMetrics {
-                total_return: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0 * 100.0,
-                annualized_return: 0.1,
-                total_return_pct: (values.last().copied().unwrap_or(1000.0) - 1000.0) / 1000.0
-                    * 100.0,
-                volatility: 0.2,
-                max_drawdown: -50.0,
-                max_drawdown_pct: -5.0,
-                sharpe_ratio: 1.5,
-                sortino_ratio: 2.0,
-                total_trades: 5,
-                winning_trades: 3,
-                losing_trades: 2,
-                win_rate: 0.6,
-                profit_factor: 1.2,
-                total_costs: 10.0,
-                cost_ratio: 0.01,
-                simulation_days: 10,
-                active_trading_days: 8,
-            },
-            trades: Vec::<TradeExecution>::new(),
-            portfolio_values,
-            execution_summary: ExecutionSummary {
-                total_trades: 5,
-                successful_trades: 5,
-                failed_trades: 0,
-                success_rate: 1.0,
-                total_cost: 10.0,
-                avg_cost_per_trade: 2.0,
-            },
-            data_quality: DataQualityStats {
-                total_timesteps: 100,
-                skipped_timesteps: 0,
-                data_coverage_percentage: 100.0,
-                longest_gap_hours: 0,
-                gap_events: Vec::new(),
-            },
-        }
-    }
-
-    #[test]
-    fn test_get_algorithm_colors() {
-        let colors = get_algorithm_colors();
-        assert_eq!(colors.len(), 3);
-        assert_eq!(colors[0].0, "Momentum");
-        assert_eq!(colors[1].0, "Portfolio");
-        assert_eq!(colors[2].0, "TrendFollowing");
-    }
-
-    #[test]
-    fn test_extract_common_labels() {
-        let results = vec![
-            create_test_simulation_result(AlgorithmType::Momentum, vec![1000.0, 1100.0, 1200.0]),
-            create_test_simulation_result(AlgorithmType::Portfolio, vec![1000.0, 1150.0, 1250.0]),
-        ];
-
-        let labels = extract_common_labels(&results);
-        assert!(!labels.is_empty());
-        // Labels should be date formatted strings
-        assert!(labels[0].contains("08/10"));
-    }
-
-    #[test]
-    fn test_create_chart_dataset() {
-        let colors = get_algorithm_colors();
-        let result =
-            create_test_simulation_result(AlgorithmType::Momentum, vec![1000.0, 1100.0, 1200.0]);
-
-        let dataset = create_chart_dataset(&result, 0, &colors).unwrap();
-        assert!(dataset.contains("Momentum"));
-        assert!(dataset.contains("rgb(255, 99, 132)")); // Momentum color
-        assert!(dataset.contains("1000"));
-        assert!(dataset.contains("1100"));
-        assert!(dataset.contains("1200"));
-    }
-}
+mod comparison_chart_tests;

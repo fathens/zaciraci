@@ -191,26 +191,23 @@ pub fn calculate_volatility_from_prices(prices: &[f64]) -> f64 {
         }
     }
 
-    if returns.is_empty() {
+    if returns.len() < 2 {
         return 0.0;
     }
 
     // 平均リターン
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
 
-    // 標準偏差
+    // 標準偏差（標本標準偏差: n-1）
     let variance: f64 =
-        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
 
     variance.sqrt()
 }
 
 /// ValueAtTimeからボラティリティを計算
 pub fn calculate_volatility_from_value_at_time(values: &[ValueAtTime]) -> f64 {
-    let prices: Vec<f64> = values
-        .iter()
-        .map(|v| v.value.to_string().parse::<f64>().unwrap_or(0.0))
-        .collect();
+    let prices: Vec<f64> = values.iter().map(|v| v.value.to_f64().as_f64()).collect();
     calculate_volatility_from_prices(&prices)
 }
 

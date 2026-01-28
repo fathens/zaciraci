@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::utils::scaling::ScaleParams;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskInfo {
     pub task_id: String,
@@ -21,8 +23,7 @@ pub struct PredictionParams {
     pub start_pct: f64,
     pub end_pct: f64,
     pub forecast_ratio: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scale_factor: Option<f64>,
+    pub scale_params: ScaleParams,
 }
 
 impl TaskInfo {

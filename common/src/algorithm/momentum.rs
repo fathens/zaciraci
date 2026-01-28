@@ -1,7 +1,6 @@
 use crate::Result;
-use bigdecimal::BigDecimal;
+use crate::types::{NearValue, TokenAmount, TokenInAccount, TokenOutAccount, TokenPrice};
 use chrono::{Duration, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::prediction::PredictionProvider;
@@ -21,26 +20,16 @@ const MAX_SLIPPAGE: f64 = 0.02;
 // ==================== コアアルゴリズム ====================
 
 /// 予測リターンを計算（取引コスト考慮）
-/// 注意: current_priceとpredicted_price_24hは両方ともyoctoNEAR単位
+///
+/// `TokenPrice.expected_return()` を使用して符号の間違いを防ぐ。
 pub fn calculate_expected_return(prediction: &PredictionData) -> f64 {
-    // current_priceとpredicted_price_24hは両方ともyoctoNEAR単位のBigDecimal
-    let current = prediction
-        .current_price
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(0.0);
-    let predicted = prediction
-        .predicted_price_24h
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(0.0);
-
-    if current == 0.0 {
+    if prediction.current_price.is_zero() || prediction.predicted_price_24h.is_zero() {
         return 0.0;
     }
 
-    // 両方ともyoctoNEAR単位なので直接比較可能
-    let raw_return = (predicted - current) / current;
+    let raw_return = prediction
+        .current_price
+        .expected_return(&prediction.predicted_price_24h);
 
     // 取引コストを考慮
     adjust_for_trading_costs(raw_return)
@@ -61,8 +50,8 @@ pub fn calculate_confidence_adjusted_return(prediction: &PredictionData) -> f64 
 
 /// トークンをモメンタムでランキング
 pub fn rank_tokens_by_momentum(
-    predictions: Vec<PredictionData>,
-) -> Vec<(String, f64, Option<f64>)> {
+    predictions: &[PredictionData],
+) -> Vec<(TokenOutAccount, f64, Option<f64>)> {
     let mut ranked: Vec<_> = predictions
         .iter()
         .map(|p| {
@@ -84,14 +73,27 @@ pub fn rank_tokens_by_momentum(
 }
 
 /// 取引判断ロジック（改善版）
+///
+/// # 引数
+///
+/// * `current_token` - 現在保有しているトークン
+/// * `current_return` - 現在のトークンの期待リターン率（無次元）
+/// * `ranked_tokens` - ランキングされたトークン（トークン, 期待リターン率, 信頼度）
+/// * `holding_amount` - 保有量（TokenAmount）
+/// * `holding_price` - 保有トークンの価格（TokenPrice: NEAR/token）
+/// * `min_profit_threshold` - 最小利益閾値（無次元、例: 0.05 = 5%）
+/// * `switch_multiplier` - スイッチ判定の乗数（無次元）
+/// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
+#[allow(clippy::too_many_arguments)]
 pub fn make_trading_decision(
-    current_token: &str,
+    current_token: &TokenOutAccount,
     current_return: f64,
-    ranked_tokens: &[(String, f64, Option<f64>)],
-    holding_amount: &BigDecimal,
+    ranked_tokens: &[(TokenOutAccount, f64, Option<f64>)],
+    holding_amount: &TokenAmount,
+    holding_price: &TokenPrice,
     min_profit_threshold: f64,
     switch_multiplier: f64,
-    min_trade_amount: f64,
+    min_trade_value: &NearValue,
 ) -> TradingAction {
     // 空の場合はHold
     if ranked_tokens.is_empty() {
@@ -101,20 +103,21 @@ pub fn make_trading_decision(
     let best_token = &ranked_tokens[0];
 
     // 現在のトークンが最良の場合はHold
-    if best_token.0 == current_token {
+    if &best_token.0 == current_token {
         return TradingAction::Hold;
     }
 
-    // 保有額が最小取引額以下の場合はHold
-    let amount = holding_amount.to_string().parse::<f64>().unwrap_or(0.0);
-    if amount < min_trade_amount {
+    // 保有価値が最小取引価値以下の場合はHold
+    // TokenAmount × TokenPrice = NearValue（型安全な変換）
+    let holding_value: NearValue = holding_amount * holding_price;
+    if &holding_value < min_trade_value {
         return TradingAction::Hold;
     }
 
     // 現在のトークンの期待リターンが閾値以下
     if current_return < min_profit_threshold {
         return TradingAction::Sell {
-            token: current_token.to_string(),
+            token: current_token.clone(),
             target: best_token.0.clone(),
         };
     }
@@ -123,7 +126,7 @@ pub fn make_trading_decision(
     let confidence_factor = best_token.2.unwrap_or(0.5);
     if best_token.1 > current_return * switch_multiplier * confidence_factor {
         return TradingAction::Switch {
-            from: current_token.to_string(),
+            from: current_token.clone(),
             to: best_token.0.clone(),
         };
     }
@@ -134,18 +137,22 @@ pub fn make_trading_decision(
 // ==================== 実行フロー ====================
 
 /// モメンタム戦略の実行（改善版）
+///
+/// # 引数
+///
+/// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
 pub async fn execute_momentum_strategy(
     current_holdings: Vec<TokenHolding>,
-    predictions: Vec<PredictionData>,
+    predictions: &[PredictionData],
     min_profit_threshold: f64,
     switch_multiplier: f64,
-    min_trade_amount: f64,
+    min_trade_value: &NearValue,
 ) -> Result<ExecutionReport> {
     // トークンをランキング
-    let ranked = rank_tokens_by_momentum(predictions.clone());
+    let ranked = rank_tokens_by_momentum(predictions);
 
     // 予測データをHashMapに変換（高速検索用）
-    let prediction_map: HashMap<String, &PredictionData> =
+    let prediction_map: HashMap<TokenOutAccount, &PredictionData> =
         predictions.iter().map(|p| (p.token.clone(), p)).collect();
 
     // 各保有トークンについて判断
@@ -159,14 +166,18 @@ pub async fn execute_momentum_strategy(
             0.0
         };
 
+        // ExchangeRate → TokenPrice に変換
+        let holding_price = holding.current_rate.to_price();
+
         let action = make_trading_decision(
             &holding.token,
             current_return,
             &ranked,
             &holding.amount,
+            &holding_price,
             min_profit_threshold,
             switch_multiplier,
-            min_trade_amount,
+            min_trade_value,
         );
 
         if action != TradingAction::Hold {
@@ -185,20 +196,24 @@ pub async fn execute_momentum_strategy(
 }
 
 /// PredictionProviderを使用した戦略実行
+///
+/// # 引数
+///
+/// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
 pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     prediction_provider: &P,
     current_holdings: Vec<TokenHolding>,
-    quote_token: &str,
+    quote_token: &TokenInAccount,
     history_days: i64,
     min_profit_threshold: f64,
     switch_multiplier: f64,
-    min_trade_amount: f64,
+    min_trade_value: &NearValue,
 ) -> Result<ExecutionReport> {
     // 保有トークンの予測を取得
-    let tokens: Vec<String> = current_holdings.iter().map(|h| h.token.clone()).collect();
+    let tokens: Vec<TokenOutAccount> = current_holdings.iter().map(|h| h.token.clone()).collect();
 
     let predictions_map = prediction_provider
-        .predict_multiple_tokens(tokens.clone(), quote_token, history_days, 24)
+        .predict_multiple_tokens(tokens, quote_token, history_days, 24)
         .await?;
 
     // PredictionDataに変換
@@ -206,7 +221,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     for holding in &current_holdings {
         if let Some(prediction) = predictions_map.get(&holding.token)
             && let Some(data) =
-                PredictionData::from_token_prediction(prediction, holding.current_price.clone())
+                PredictionData::from_token_prediction(prediction, holding.current_rate.to_price())
         {
             prediction_data.push(data);
         }
@@ -223,7 +238,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     // トップトークンの予測を追加
     for top_token in top_tokens {
         // 既に予測済みのトークンはスキップ
-        if tokens.contains(&top_token.token) {
+        if current_holdings.iter().any(|h| h.token == top_token.token) {
             continue;
         }
 
@@ -233,10 +248,13 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
 
         let prediction = prediction_provider.predict_price(&history, 24).await?;
 
-        if let Some(data) = PredictionData::from_token_prediction(
-            &prediction,
-            BigDecimal::from(top_token.current_price as i64),
-        ) {
+        // 価格履歴から現在価格を取得
+        let current_price = history
+            .prices
+            .last()
+            .map(|p| p.price.clone())
+            .unwrap_or_else(TokenPrice::zero);
+        if let Some(data) = PredictionData::from_token_prediction(&prediction, current_price) {
             prediction_data.push(data);
         }
     }
@@ -244,10 +262,10 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     // 戦略を実行
     execute_momentum_strategy(
         current_holdings,
-        prediction_data,
+        &prediction_data,
         min_profit_threshold,
         switch_multiplier,
-        min_trade_amount,
+        min_trade_value,
     )
     .await
 }
@@ -294,286 +312,8 @@ fn calculate_volatility(prices: &[f64]) -> f64 {
     crate::algorithm::calculate_volatility_from_prices(prices)
 }
 
-// ==================== バックテスト ====================
-
-/// バックテストメトリクス
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BacktestMetrics {
-    pub total_return: f64,
-    pub max_drawdown: f64,
-    pub sharpe_ratio: f64,
-    pub win_rate: f64,
-    pub avg_holding_period_hours: f64,
-}
-
-/// バックテストの実行
-pub async fn run_backtest(
-    _historical_data: Vec<String>, // TokenRateは backend固有なのでStringに変更
-    _initial_capital: BigDecimal,
-) -> Result<BacktestMetrics> {
-    // TODO: バックテストロジックの実装
-    Ok(BacktestMetrics {
-        total_return: 0.0,
-        max_drawdown: 0.0,
-        sharpe_ratio: 0.0,
-        win_rate: 0.0,
-        avg_holding_period_hours: 24.0,
-    })
-}
-
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
-mod integration_tests {
-    use super::execute_with_prediction_provider;
-    use crate::algorithm::prediction::{PredictionProvider, TokenPredictionResult};
-    use crate::algorithm::types::*;
-    use async_trait::async_trait;
-    use bigdecimal::{BigDecimal, FromPrimitive};
-    use chrono::{Duration, Utc};
-    use std::collections::HashMap;
-
-    // テスト用のシンプルなMockPredictionProvider
-    struct SimpleMockProvider {
-        price_histories: HashMap<String, PriceHistory>,
-    }
-
-    impl SimpleMockProvider {
-        fn new() -> Self {
-            Self {
-                price_histories: HashMap::new(),
-            }
-        }
-
-        fn with_price_history(
-            mut self,
-            token: &str,
-            prices: Vec<(chrono::DateTime<Utc>, f64)>,
-        ) -> Self {
-            let price_points: Vec<PricePoint> = prices
-                .into_iter()
-                .map(|(timestamp, price)| PricePoint {
-                    timestamp,
-                    price: BigDecimal::from_f64(price).unwrap_or_default(),
-                    volume: None,
-                })
-                .collect();
-
-            self.price_histories.insert(
-                token.to_string(),
-                PriceHistory {
-                    token: token.to_string(),
-                    quote_token: "wrap.near".to_string(),
-                    prices: price_points,
-                },
-            );
-            self
-        }
-    }
-
-    #[async_trait]
-    impl PredictionProvider for SimpleMockProvider {
-        async fn get_tokens_by_volatility(
-            &self,
-            _start_date: chrono::DateTime<Utc>,
-            _end_date: chrono::DateTime<Utc>,
-            _quote_token: &str,
-        ) -> crate::Result<Vec<TopTokenInfo>> {
-            Ok(vec![
-                TopTokenInfo {
-                    token: "top_token1".to_string(),
-                    volatility: 0.2,
-                    volume_24h: 1000000.0,
-                    current_price: 100.0,
-                },
-                TopTokenInfo {
-                    token: "top_token2".to_string(),
-                    volatility: 0.3,
-                    volume_24h: 800000.0,
-                    current_price: 50.0,
-                },
-            ]
-            .into_iter()
-            .collect())
-        }
-
-        async fn get_price_history(
-            &self,
-            token: &str,
-            _quote_token: &str,
-            _start_date: chrono::DateTime<Utc>,
-            _end_date: chrono::DateTime<Utc>,
-        ) -> crate::Result<PriceHistory> {
-            self.price_histories
-                .get(token)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("No price history found for token: {}", token))
-        }
-
-        async fn predict_price(
-            &self,
-            history: &PriceHistory,
-            prediction_horizon: usize,
-        ) -> crate::Result<TokenPredictionResult> {
-            let last_price = history
-                .prices
-                .last()
-                .map(|p| p.price.to_string().parse::<f64>().unwrap_or(100.0))
-                .unwrap_or(100.0);
-            let prediction_time = Utc::now();
-            let mut predictions = Vec::new();
-
-            for i in 1..=prediction_horizon {
-                let timestamp = prediction_time + Duration::hours(i as i64);
-                let price = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap();
-                predictions.push(PredictedPrice {
-                    timestamp,
-                    price,
-                    confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
-                });
-            }
-
-            Ok(TokenPredictionResult {
-                token: history.token.clone(),
-                quote_token: history.quote_token.clone(),
-                prediction_time,
-                predictions,
-            })
-        }
-
-        async fn predict_multiple_tokens(
-            &self,
-            tokens: Vec<String>,
-            quote_token: &str,
-            history_days: i64,
-            prediction_horizon: usize,
-        ) -> crate::Result<HashMap<String, TokenPredictionResult>> {
-            let mut results = HashMap::new();
-
-            for token in tokens {
-                let end_date = Utc::now();
-                let start_date = end_date - Duration::days(history_days);
-
-                if let Ok(history) = self
-                    .get_price_history(&token, quote_token, start_date, end_date)
-                    .await
-                    && let Ok(prediction) = self.predict_price(&history, prediction_horizon).await
-                {
-                    results.insert(token, prediction);
-                }
-            }
-
-            Ok(results)
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_with_prediction_provider() {
-        let current_time = Utc::now();
-        let provider = SimpleMockProvider::new()
-            .with_price_history("token1", vec![(current_time, 100.0)])
-            .with_price_history("token2", vec![(current_time, 50.0)])
-            .with_price_history("top_token1", vec![(current_time, 100.0)])
-            .with_price_history("top_token2", vec![(current_time, 50.0)]);
-
-        let current_holdings = vec![
-            TokenHolding {
-                token: "token1".to_string(),
-                amount: BigDecimal::from(10),
-                current_price: BigDecimal::from(100),
-            },
-            TokenHolding {
-                token: "token2".to_string(),
-                amount: BigDecimal::from(20),
-                current_price: BigDecimal::from(50),
-            },
-        ];
-
-        let result = execute_with_prediction_provider(
-            &provider,
-            current_holdings,
-            "wrap.near",
-            7,
-            0.05, // min_profit_threshold
-            1.5,  // switch_multiplier
-            1.0,  // min_trade_amount
-        )
-        .await;
-
-        match result {
-            Ok(report) => {
-                // レポートの基本的な構造を確認
-                assert_eq!(report.timestamp.date_naive(), Utc::now().date_naive());
-                println!("Generated {} actions", report.actions.len());
-                println!("Expected return: {:?}", report.expected_return);
-            }
-            Err(e) => {
-                panic!("Test failed with error: {}", e);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_with_prediction_provider_empty_holdings() {
-        let current_time = Utc::now();
-        let provider = SimpleMockProvider::new()
-            .with_price_history("top_token1", vec![(current_time, 100.0)])
-            .with_price_history("top_token2", vec![(current_time, 50.0)]);
-        let current_holdings = vec![];
-
-        let result = execute_with_prediction_provider(
-            &provider,
-            current_holdings,
-            "wrap.near",
-            7,
-            0.05, // min_profit_threshold
-            1.5,  // switch_multiplier
-            1.0,  // min_trade_amount
-        )
-        .await;
-
-        match result {
-            Ok(report) => {
-                // 空の保有でも実行できることを確認
-                assert_eq!(report.total_trades, 0);
-                assert_eq!(report.actions.len(), 0);
-            }
-            Err(e) => {
-                panic!("Test failed with error: {}", e);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_with_prediction_provider_with_top_tokens() {
-        let current_time = Utc::now();
-        let provider = SimpleMockProvider::new()
-            .with_price_history("top_token1", vec![(current_time, 100.0)])
-            .with_price_history("top_token2", vec![(current_time, 50.0)]);
-
-        let current_holdings = vec![TokenHolding {
-            token: "other_token".to_string(),
-            amount: BigDecimal::from(10),
-            current_price: BigDecimal::from(75),
-        }];
-
-        let result = execute_with_prediction_provider(
-            &provider,
-            current_holdings,
-            "wrap.near",
-            7,
-            0.05, // min_profit_threshold
-            1.5,  // switch_multiplier
-            1.0,  // min_trade_amount
-        )
-        .await;
-
-        // トップトークンの情報も取得されることを確認
-        assert!(result.is_ok());
-        let report = result.unwrap();
-
-        // レポートが生成されることを確認
-        assert!(report.expected_return.is_some() || report.expected_return.is_none());
-    }
-}
+mod integration_tests;

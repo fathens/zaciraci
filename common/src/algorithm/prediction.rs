@@ -1,6 +1,6 @@
 use crate::Result;
+use crate::types::{TokenInAccount, TokenOutAccount, TokenPrice};
 use async_trait::async_trait;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -17,14 +17,14 @@ pub trait PredictionProvider: Send + Sync {
         &self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        quote_token: &str,
+        quote_token: &TokenInAccount,
     ) -> Result<Vec<TopTokenInfo>>;
 
     /// 指定トークンの価格履歴を取得
     async fn get_price_history(
         &self,
-        token: &str,
-        quote_token: &str,
+        token: &TokenOutAccount,
+        quote_token: &TokenInAccount,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
     ) -> Result<PriceHistory>;
@@ -39,11 +39,11 @@ pub trait PredictionProvider: Send + Sync {
     /// 複数トークンの価格予測を実行
     async fn predict_multiple_tokens(
         &self,
-        tokens: Vec<String>,
-        quote_token: &str,
+        tokens: Vec<TokenOutAccount>,
+        quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
-    ) -> Result<HashMap<String, TokenPredictionResult>>;
+    ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>>;
 }
 
 /// PredictionDataへの変換（momentum.rsから移動）
@@ -51,7 +51,7 @@ impl crate::algorithm::PredictionData {
     /// TokenPredictionResultから変換
     pub fn from_token_prediction(
         prediction: &TokenPredictionResult,
-        current_price: BigDecimal,
+        current_price: TokenPrice,
     ) -> Option<Self> {
         use chrono::Duration;
 

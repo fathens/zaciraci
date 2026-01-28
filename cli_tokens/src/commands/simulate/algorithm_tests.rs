@@ -4,6 +4,7 @@ mod algorithm_integration_tests {
     use bigdecimal::{BigDecimal, FromPrimitive};
     use chrono::{DateTime, Duration, Utc};
     use common::stats::ValueAtTime;
+    use common::types::TokenPrice;
     use std::collections::HashMap;
 
     /// Test data generator for algorithm testing
@@ -34,7 +35,9 @@ mod algorithm_integration_tests {
 
                 values.push(ValueAtTime {
                     time: current_date.naive_utc(),
-                    value: BigDecimal::from_f64(price).unwrap_or_default(),
+                    value: TokenPrice::from_near_per_token(
+                        BigDecimal::from_f64(price).unwrap_or_default(),
+                    ),
                 });
             }
 
@@ -260,6 +263,41 @@ mod algorithm_integration_tests {
                 "Timestamps should be sequential"
             );
         }
+    }
+
+    /// リバランス未発生のポートフォリオシミュレーションはバックエンド接続不要であることを検証
+    #[tokio::test]
+    async fn test_portfolio_no_rebalance_succeeds_without_backend() {
+        // 1時間の短期間（rebalance_interval=1d よりはるかに短い）→ リバランスなし → decimals 取得なし
+        let start_date = DateTime::parse_from_rfc3339("2024-08-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_date = DateTime::parse_from_rfc3339("2024-08-01T01:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let tokens = vec!["token_a".to_string(), "token_b".to_string()];
+        let config = create_test_config(
+            AlgorithmType::Portfolio,
+            start_date,
+            end_date,
+            tokens.clone(),
+        );
+
+        let price_data =
+            create_mock_price_data(&["token_a", "token_b"], start_date, end_date, 100.0, 0.05);
+
+        let result = crate::commands::simulate::algorithms::run_portfolio_optimization_simulation(
+            &config,
+            &price_data,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "No-rebalance simulation must not require backend: {:?}",
+            result.err()
+        );
     }
 
     #[test]
