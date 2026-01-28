@@ -1,8 +1,9 @@
 # 予測精度トラッキングシステム
 
 ## 概要
-Chronos AI による価格予測の精度を自動的にトラッキングする。
+Chronos AI による価格予測の精度を自動的にトラッキングし、ポートフォリオ最適化にフィードバックする。
 予測時に prediction_records テーブルへ INSERT し、24時間後の次回実行時に実績価格と比較して精度指標（MAPE）を算出する。
+算出された rolling MAPE は prediction_confidence に変換され、Sharpe/RP ブレンド係数（alpha）を動的に調整する。
 
 ## データベース設計
 
@@ -108,7 +109,31 @@ CREATE INDEX idx_prediction_records_evaluated ON prediction_records(evaluated_at
          │
          │ 直近 N 件の evaluated レコード
          ▼
-    rolling MAPE (ログ出力)
+    rolling MAPE (%)
+         │
+         │ mape_to_confidence()
+         │ MAPE ≤ 5% → 1.0, ≥ 20% → 0.0 (線形補間)
+         ▼
+    prediction_confidence [0.0, 1.0]
+         │
+         │ PortfolioData.prediction_confidence
+         ▼
+┌─────────────────────────────────┐
+│ execute_portfolio_optimization  │
+│                                 │
+│ alpha_vol: ボラティリティ由来   │
+│   0.7 (高ボラ) → 0.9 (低ボラ)  │
+│                                 │
+│ alpha = floor + (alpha_vol      │
+│         - floor) * confidence   │
+│                                 │
+│ floor = 0.5 (PREDICTION_ALPHA_ │
+│               FLOOR)            │
+│                                 │
+│ confidence=1.0 → alpha=alpha_vol│
+│ confidence=0.0 → alpha=0.5     │
+│ None → alpha=alpha_vol (後方互換)│
+└─────────────────────────────────┘
 ```
 
 ## カラム詳細
@@ -154,3 +179,67 @@ CREATE INDEX idx_prediction_records_evaluated ON prediction_records(evaluated_at
 | `PREDICTION_ACCURACY_WINDOW` | 10 | rolling MAPE 算出に使う直近レコード数 |
 | `PREDICTION_ACCURACY_MIN_SAMPLES` | 3 | 評価結果を返す最小レコード数 |
 | `PREDICTION_EVAL_TOLERANCE_MINUTES` | 30 | 実績価格検索の時間窓（±分） |
+
+## prediction_confidence による alpha 調整
+
+rolling MAPE を `mape_to_confidence()` で信頼度スコアに変換し、ポートフォリオ最適化の Sharpe/RP ブレンド係数（alpha）を動的に調整する。
+
+### MAPE → confidence 変換
+
+```
+confidence = ((MAPE_POOR - mape) / (MAPE_POOR - MAPE_EXCELLENT)).clamp(0.0, 1.0)
+```
+
+| MAPE | confidence | 意味 |
+|------|-----------|------|
+| ≤ 5% | 1.0 | 予測が非常に正確 → Sharpe を信頼 |
+| 12.5% | 0.5 | 中程度 |
+| ≥ 20% | 0.0 | 予測が不正確 → RP に退避 |
+
+定数: `MAPE_EXCELLENT_THRESHOLD = 5.0`, `MAPE_POOR_THRESHOLD = 20.0`
+
+### alpha 計算
+
+```
+alpha_vol: ボラティリティベース [0.7, 0.9]
+alpha = floor + (alpha_vol - floor) * confidence
+floor = PREDICTION_ALPHA_FLOOR (0.5)
+```
+
+| 予測精度 | ボラティリティ | alpha | 動作 |
+|---------|-------------|-------|------|
+| 高 (conf=1.0) | 低 | 0.9 | Sharpe 主導 |
+| 高 (conf=1.0) | 高 | 0.7 | RP 補助 |
+| データなし | 任意 | 0.7-0.9 | 従来通り（後方互換） |
+| 低 (conf=0.0) | 任意 | 0.5 | Sharpe/RP 等配分（最大防御） |
+
+### ソースファイル
+
+| ファイル | 内容 |
+|---------|------|
+| `backend/src/trade/prediction_accuracy.rs` | `mape_to_confidence()`, 閾値定数 |
+| `backend/src/trade/strategy.rs` | MAPE → confidence 変換、PortfolioData への設定 |
+| `common/src/algorithm/portfolio.rs` | `PREDICTION_ALPHA_FLOOR`, alpha 計算 |
+
+## Web API
+
+### GET /stats/prediction_mape
+
+直近の rolling MAPE を取得する。
+
+**クエリパラメータ:**
+
+| パラメータ | デフォルト | 説明 |
+|-----------|-----------|------|
+| `window` | 10 | 直近レコード数 |
+| `min_samples` | 3 | 最小サンプル数（未満の場合 `rolling_mape = null`） |
+
+**レスポンス:**
+
+```json
+{
+  "rolling_mape": 8.45,
+  "sample_count": 10,
+  "window": 10
+}
+```
