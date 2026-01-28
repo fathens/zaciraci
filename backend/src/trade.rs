@@ -2,6 +2,7 @@ pub mod execution;
 pub mod harvest;
 pub mod market_data;
 pub mod predict;
+pub mod prediction_accuracy;
 pub mod rate_stats;
 pub mod recorder;
 pub mod strategy;

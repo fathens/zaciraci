@@ -198,6 +198,7 @@ pub async fn start() -> Result<()> {
         &selected_tokens,
         available_funds.to_u128(),
         is_new_period,
+        &period_id,
         &client,
         &wallet,
     )
@@ -450,6 +451,7 @@ async fn execute_portfolio_strategy<C, W>(
     tokens: &[AccountId],
     available_funds: u128,
     is_new_period: bool,
+    period_id: &str,
     client: &C,
     wallet: &W,
 ) -> Result<Vec<TradingAction>>
@@ -470,6 +472,10 @@ where
 
     // 型安全な quote_token をループ外で事前に準備（最適化）
     let quote_token_in: TokenInAccount = crate::ref_finance::token_account::WNEAR_TOKEN.to_in();
+
+    // 過去の予測を Chronos 待ちの間に並行評価
+    let eval_handle =
+        tokio::spawn(async { super::prediction_accuracy::evaluate_pending_predictions().await });
 
     for token in tokens {
         let token_str = token.to_string();
@@ -631,6 +637,29 @@ where
             liquidity_score: Some(liquidity_score),
             market_cap: Some(market_cap),
         });
+    }
+
+    // 評価タスクの結果を取得
+    match eval_handle.await {
+        Ok(Ok(Some(mape))) => {
+            info!(log, "prediction accuracy"; "rolling_mape" => format!("{:.2}%", mape));
+        }
+        Ok(Ok(None)) => {
+            debug!(log, "prediction accuracy: insufficient data");
+        }
+        Ok(Err(e)) => {
+            warn!(log, "prediction evaluation failed"; "error" => ?e);
+        }
+        Err(e) => {
+            warn!(log, "prediction evaluation task panicked"; "error" => ?e);
+        }
+    }
+
+    // 今回の予測を DB に記録（失敗しても取引は続行）
+    if let Err(e) =
+        super::prediction_accuracy::record_predictions(period_id, &predictions, "wrap.near").await
+    {
+        warn!(log, "failed to record predictions"; "error" => ?e);
     }
 
     let portfolio_data = PortfolioData {
