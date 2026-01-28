@@ -12,6 +12,22 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::types::TokenPrice;
 
+/// MAPE の閾値: これ以下なら予測が非常に正確（confidence = 1.0）
+const MAPE_EXCELLENT_THRESHOLD: f64 = 5.0;
+
+/// MAPE の閾値: これ以上なら予測が不正確（confidence = 0.0）
+const MAPE_POOR_THRESHOLD: f64 = 20.0;
+
+/// MAPE を prediction_confidence [0.0, 1.0] に変換する。
+///
+/// - MAPE ≤ EXCELLENT (5%) → 1.0（予測が正確 → Sharpe を信頼）
+/// - MAPE ≥ POOR (20%) → 0.0（予測が不正確 → RP に退避）
+/// - 中間値は線形補間
+pub fn mape_to_confidence(mape: f64) -> f64 {
+    ((MAPE_POOR_THRESHOLD - mape) / (MAPE_POOR_THRESHOLD - MAPE_EXCELLENT_THRESHOLD))
+        .clamp(0.0, 1.0)
+}
+
 /// 予測結果を prediction_records テーブルに記録する。
 ///
 /// 呼び出し元: execute_portfolio_strategy()
@@ -205,4 +221,59 @@ async fn get_actual_price_at(
         .min_by_key(|r| (r.timestamp - target_time).num_seconds().unsigned_abs());
 
     Ok(closest.map(|r| r.exchange_rate.to_price()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- mape_to_confidence ---
+
+    #[test]
+    fn test_mape_to_confidence_excellent() {
+        // MAPE ≤ EXCELLENT(5%) → confidence = 1.0
+        assert_eq!(mape_to_confidence(0.0), 1.0);
+        assert_eq!(mape_to_confidence(3.0), 1.0);
+        assert_eq!(mape_to_confidence(5.0), 1.0);
+    }
+
+    #[test]
+    fn test_mape_to_confidence_poor() {
+        // MAPE ≥ POOR(20%) → confidence = 0.0
+        assert_eq!(mape_to_confidence(20.0), 0.0);
+        assert_eq!(mape_to_confidence(50.0), 0.0);
+        assert_eq!(mape_to_confidence(100.0), 0.0);
+    }
+
+    #[test]
+    fn test_mape_to_confidence_midpoint() {
+        // MAPE = 12.5% → (20-12.5)/(20-5) = 0.5
+        let c = mape_to_confidence(12.5);
+        assert!((c - 0.5).abs() < 1e-10, "expected 0.5, got {c}");
+    }
+
+    #[test]
+    fn test_mape_to_confidence_linear_interpolation() {
+        // 10% → (20-10)/(20-5) = 10/15 ≈ 0.667
+        let c10 = mape_to_confidence(10.0);
+        assert!((c10 - 2.0 / 3.0).abs() < 1e-10);
+
+        // 15% → (20-15)/(20-5) = 5/15 ≈ 0.333
+        let c15 = mape_to_confidence(15.0);
+        assert!((c15 - 1.0 / 3.0).abs() < 1e-10);
+
+        // 単調減少
+        assert!(c10 > c15);
+    }
+
+    #[test]
+    fn test_mape_to_confidence_monotonically_decreasing() {
+        let mut prev = mape_to_confidence(0.0);
+        for i in 1..=30 {
+            let mape = i as f64;
+            let curr = mape_to_confidence(mape);
+            assert!(curr <= prev, "not monotonic at MAPE={mape}");
+            prev = curr;
+        }
+    }
 }

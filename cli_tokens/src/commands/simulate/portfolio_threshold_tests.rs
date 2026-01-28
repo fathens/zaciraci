@@ -68,6 +68,7 @@ fn create_test_portfolio_data() -> PortfolioData {
         tokens,
         predictions: predictions.into_iter().collect(),
         historical_prices,
+        prediction_confidence: None,
     }
 }
 

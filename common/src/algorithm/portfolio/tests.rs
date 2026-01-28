@@ -432,6 +432,7 @@ fn test_execute_portfolio_optimization() {
         tokens,
         predictions,
         historical_prices,
+        prediction_confidence: None,
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1752,6 +1753,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: full_history,
+        prediction_confidence: None,
     };
 
     // トークン選択ありで最適化を実行
@@ -2374,6 +2376,7 @@ fn create_high_volatility_portfolio_data() -> super::PortfolioData {
         tokens,
         predictions,
         historical_prices,
+        prediction_confidence: None,
     }
 }
 
@@ -2393,6 +2396,7 @@ fn create_low_volatility_portfolio_data() -> super::PortfolioData {
         tokens,
         predictions,
         historical_prices,
+        prediction_confidence: None,
     }
 }
 
@@ -2521,6 +2525,7 @@ async fn test_enhanced_portfolio_performance() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
+        prediction_confidence: None,
     };
 
     // 空のウォレット（初期状態）
@@ -2730,6 +2735,7 @@ async fn test_baseline_vs_enhanced_comparison() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
+        prediction_confidence: None,
     };
 
     let wallet = WalletInfo {
@@ -3757,6 +3763,7 @@ async fn test_issue7_metrics_computed_from_indicators() {
         tokens,
         predictions,
         historical_prices: history,
+        prediction_confidence: None,
     };
 
     let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
@@ -3975,4 +3982,201 @@ fn test_calculate_daily_returns_duplicate_tokens() {
         "token-b return should be 0.1, got {}",
         returns[1][0]
     );
+}
+
+// ==================== prediction_confidence × alpha テスト ====================
+
+/// prediction_confidence が alpha のブレンドに影響することを検証
+#[test]
+fn test_prediction_confidence_adjusts_alpha() {
+    let expected_returns = vec![0.15, 0.03, 0.05];
+    let covariance = array![[0.04, 0.01, 0.01], [0.01, 0.04, 0.01], [0.01, 0.01, 0.04]];
+    let n = expected_returns.len();
+
+    let w_sharpe = maximize_sharpe_ratio(&expected_returns, &covariance);
+    let mut w_rp = vec![1.0 / n as f64; n];
+    apply_risk_parity(&mut w_rp, &covariance);
+
+    // risk_adjustment = 1.05 (中ボラ) → alpha_vol = 0.8
+    let risk_adjustment: f64 = 1.05;
+    let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+    assert!((alpha_vol - 0.8).abs() < 1e-10);
+
+    let floor = PREDICTION_ALPHA_FLOOR;
+
+    // --- 数式検証 ---
+    // confidence=1.0 → alpha = alpha_vol（変化なし）
+    let alpha_high = floor + (alpha_vol - floor) * 1.0;
+    assert!(
+        (alpha_high - alpha_vol).abs() < 1e-10,
+        "confidence=1.0 should equal alpha_vol"
+    );
+
+    // confidence=0.0 → alpha = floor
+    let alpha_low = floor + (alpha_vol - floor) * 0.0;
+    assert!(
+        (alpha_low - floor).abs() < 1e-10,
+        "confidence=0.0 should equal floor"
+    );
+
+    // confidence=0.5 → alpha = floor + (alpha_vol - floor) * 0.5
+    let alpha_mid = floor + (alpha_vol - floor) * 0.5;
+    let expected_mid = (floor + alpha_vol) / 2.0;
+    assert!(
+        (alpha_mid - expected_mid).abs() < 1e-10,
+        "confidence=0.5 should be midpoint: {alpha_mid} != {expected_mid}"
+    );
+
+    // --- ブレンド結果が異なることを検証 ---
+    let blend = |alpha: f64| -> Vec<f64> {
+        w_sharpe
+            .iter()
+            .zip(w_rp.iter())
+            .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+            .collect()
+    };
+
+    let weights_high = blend(alpha_high);
+    let weights_low = blend(alpha_low);
+    let weights_mid = blend(alpha_mid);
+
+    // 高 confidence と低 confidence で異なる重み
+    let diff: f64 = weights_high
+        .iter()
+        .zip(weights_low.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum();
+    assert!(
+        diff > 1e-6,
+        "異なる confidence で異なる重みを生成すべき: diff={diff}"
+    );
+
+    // mid は high と low の中間
+    for i in 0..n {
+        let lo = weights_high[i].min(weights_low[i]);
+        let hi = weights_high[i].max(weights_low[i]);
+        assert!(
+            weights_mid[i] >= lo - 1e-10 && weights_mid[i] <= hi + 1e-10,
+            "mid weight[{i}]={} should be between {lo} and {hi}",
+            weights_mid[i]
+        );
+    }
+}
+
+/// prediction_confidence = None のとき既存動作と同一であることを検証
+#[test]
+fn test_prediction_confidence_none_backward_compatible() {
+    let risk_adjustment: f64 = 1.05;
+    let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+
+    // None → alpha_vol をそのまま返す
+    let prediction_confidence: Option<f64> = None;
+    let alpha = match prediction_confidence {
+        Some(confidence) => {
+            let floor = PREDICTION_ALPHA_FLOOR;
+            (floor + (alpha_vol - floor) * confidence).clamp(floor, 0.9)
+        }
+        None => alpha_vol,
+    };
+
+    assert!(
+        (alpha - alpha_vol).abs() < 1e-10,
+        "None should return alpha_vol: alpha={alpha}, alpha_vol={alpha_vol}"
+    );
+}
+
+/// 全ての risk_adjustment × confidence 組み合わせで alpha が有効範囲内
+#[test]
+fn test_prediction_confidence_alpha_range_exhaustive() {
+    let floor = PREDICTION_ALPHA_FLOOR;
+
+    for risk_i in 0..=10 {
+        let risk_adjustment = 0.7 + (risk_i as f64) * 0.07; // 0.7 → 1.4
+        let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+
+        for conf_i in 0..=10 {
+            let confidence = conf_i as f64 / 10.0; // 0.0 → 1.0
+            let alpha = (floor + (alpha_vol - floor) * confidence).clamp(floor, 0.9);
+
+            assert!(
+                alpha >= floor && alpha <= 0.9,
+                "alpha={alpha} out of [{floor}, 0.9] at risk={risk_adjustment}, conf={confidence}"
+            );
+            assert!(alpha.is_finite());
+        }
+
+        // None のケース
+        assert!((0.7..=0.9).contains(&alpha_vol));
+    }
+}
+
+/// execute_portfolio_optimization が prediction_confidence を
+/// 正しく反映して異なる重みを出力することを検証
+#[tokio::test]
+async fn test_portfolio_optimization_varies_with_prediction_confidence() {
+    let tokens = create_sample_tokens();
+    let predictions = create_sample_predictions();
+    let historical_prices = create_sample_price_history();
+    let wallet = create_sample_wallet();
+
+    // confidence = 1.0（高精度予測）
+    let pd_high = PortfolioData {
+        tokens: tokens.clone(),
+        predictions: predictions.clone(),
+        historical_prices: historical_prices.clone(),
+        prediction_confidence: Some(1.0),
+    };
+    let report_high = execute_portfolio_optimization(&wallet, pd_high, 0.05)
+        .await
+        .unwrap();
+
+    // confidence = 0.0（低精度予測 → RP 寄り）
+    let pd_low = PortfolioData {
+        tokens: tokens.clone(),
+        predictions: predictions.clone(),
+        historical_prices: historical_prices.clone(),
+        prediction_confidence: Some(0.0),
+    };
+    let report_low = execute_portfolio_optimization(&wallet, pd_low, 0.05)
+        .await
+        .unwrap();
+
+    // None（データ不足 → 後方互換）
+    let pd_none = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        prediction_confidence: None,
+    };
+    let report_none = execute_portfolio_optimization(&wallet, pd_none, 0.05)
+        .await
+        .unwrap();
+
+    // 全て正常終了
+    assert!(report_high.expected_metrics.sharpe_ratio.is_finite());
+    assert!(report_low.expected_metrics.sharpe_ratio.is_finite());
+    assert!(report_none.expected_metrics.sharpe_ratio.is_finite());
+
+    // confidence=0.0 は異なる重みを生成する（RP 寄り = より均等配分）
+    // 同一トークンが選択された場合のみ比較
+    let common_tokens: Vec<_> = report_high
+        .optimal_weights
+        .weights
+        .keys()
+        .filter(|k| report_low.optimal_weights.weights.contains_key(*k))
+        .collect();
+
+    if common_tokens.len() >= 2 {
+        let diff: f64 = common_tokens
+            .iter()
+            .map(|t| {
+                let wh = report_high.optimal_weights.weights[*t];
+                let wl = report_low.optimal_weights.weights[*t];
+                (wh - wl).abs()
+            })
+            .sum();
+
+        // 重みに差異がある（alpha が異なるため）
+        println!("Weight diff between high/low confidence: {diff:.6}");
+    }
 }

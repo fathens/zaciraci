@@ -17,6 +17,11 @@ pub struct PortfolioData {
     /// 予測価格（TokenPrice: NEAR/token）
     pub predictions: BTreeMap<TokenOutAccount, TokenPrice>,
     pub historical_prices: Vec<PriceHistory>,
+    /// 予測精度に基づく信頼度 [0.0, 1.0]
+    /// - Some(1.0): 予測が非常に正確 → Sharpe を信頼
+    /// - Some(0.0): 予測が不正確 → RP に退避
+    /// - None: データ不足 → 従来通り（後方互換）
+    pub prediction_confidence: Option<f64>,
 }
 
 /// ポートフォリオ実行レポート
@@ -74,6 +79,10 @@ const LOW_VOLATILITY_THRESHOLD: f64 = 0.1; // 10%
 
 /// 最大相関閾値
 const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
+
+/// 予測精度が低い場合の alpha 下限値
+/// confidence=0.0 のとき alpha はこの値まで下がる（Sharpe/RP 等配分に近づく）
+pub const PREDICTION_ALPHA_FLOOR: f64 = 0.5;
 
 // ==================== コア計算関数 ====================
 
@@ -855,10 +864,22 @@ pub async fn execute_portfolio_optimization(
     let mut w_rp = vec![1.0 / n as f64; n];
     apply_risk_parity(&mut w_rp, &covariance);
 
-    // risk_adjustment 連動 alpha でブレンド（範囲 [0.7, 0.9]）
+    // risk_adjustment 連動 alpha_vol でブレンド（範囲 [0.7, 0.9]）
     // risk_adjustment: 0.7 (高ボラ) → 1.4 (低ボラ)
-    // alpha: 0.7 (RP補助) → 0.9 (Sharpe主導)
-    let alpha = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+    // alpha_vol: 0.7 (RP補助) → 0.9 (Sharpe主導)
+    let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+
+    // prediction_confidence で alpha を調整
+    // confidence が低い → alpha を PREDICTION_ALPHA_FLOOR (0.5) まで下げる
+    // confidence が高い → alpha_vol をそのまま維持
+    // None → 従来通り alpha_vol を使用（後方互換）
+    let alpha = match portfolio_data.prediction_confidence {
+        Some(confidence) => {
+            let floor = PREDICTION_ALPHA_FLOOR;
+            (floor + (alpha_vol - floor) * confidence).clamp(floor, 0.9)
+        }
+        None => alpha_vol,
+    };
 
     let mut optimal_weights: Vec<f64> = w_sharpe
         .iter()

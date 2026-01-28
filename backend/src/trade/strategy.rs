@@ -639,21 +639,29 @@ where
         });
     }
 
-    // 評価タスクの結果を取得
-    match eval_handle.await {
+    // 評価タスクの結果を取得し prediction_confidence に変換
+    let prediction_confidence: Option<f64> = match eval_handle.await {
         Ok(Ok(Some(mape))) => {
-            info!(log, "prediction accuracy"; "rolling_mape" => format!("{:.2}%", mape));
+            let confidence = super::prediction_accuracy::mape_to_confidence(mape);
+            info!(log, "prediction accuracy";
+                "rolling_mape" => format!("{:.2}%", mape),
+                "prediction_confidence" => format!("{:.3}", confidence)
+            );
+            Some(confidence)
         }
         Ok(Ok(None)) => {
             debug!(log, "prediction accuracy: insufficient data");
+            None
         }
         Ok(Err(e)) => {
             warn!(log, "prediction evaluation failed"; "error" => ?e);
+            None
         }
         Err(e) => {
             warn!(log, "prediction evaluation task panicked"; "error" => ?e);
+            None
         }
-    }
+    };
 
     // 今回の予測を DB に記録（失敗しても取引は続行）
     if let Err(e) =
@@ -666,6 +674,7 @@ where
         tokens: token_data,
         predictions,
         historical_prices,
+        prediction_confidence,
     };
 
     // yoctoNEARからNEARに変換（型安全、BigDecimal精度維持）
