@@ -1,263 +1,125 @@
-use super::traits::{ApiClient, PredictionClient};
-use super::{ApiClientConfig, ApiError};
-use crate::{
-    ApiResponse,
-    prediction::{AsyncPredictionResponse, PredictionResult, ZeroShotPredictionRequest},
-};
-use async_trait::async_trait;
-use reqwest::Client;
+use crate::prediction::ChronosPredictionResponse;
+use bigdecimal::BigDecimal;
+use chrono::{DateTime, Duration, Utc};
+use std::collections::HashMap;
 
-pub struct ChronosApiClient {
-    client: Client,
-    config: ApiClientConfig,
+/// Chronos 予測ライブラリのラッパー
+pub struct ChronosPredictor {
+    time_budget_secs: Option<f64>,
 }
 
-impl ChronosApiClient {
-    /// 従来の互換性のためのコンストラクタ
-    pub fn new(base_url: String) -> Self {
-        Self::new_with_config(ApiClientConfig::new(base_url))
-    }
-
-    /// 設定を指定するコンストラクタ
-    pub fn new_with_config(config: ApiClientConfig) -> Self {
+impl ChronosPredictor {
+    pub fn new() -> Self {
         Self {
-            client: Client::new(),
-            config,
+            time_budget_secs: None,
         }
     }
 
-    /// 予測が完了するまでポーリング
-    pub async fn poll_prediction_until_complete(
-        &self,
-        prediction_id: &str,
-    ) -> Result<PredictionResult, ApiError> {
-        let max_attempts = 720; // 最大720回試行 (約1時間)
-        let poll_interval = std::time::Duration::from_secs(5);
-
-        for attempt in 1..=max_attempts {
-            let result = self.get_prediction_status(prediction_id).await?;
-
-            match result.status.as_str() {
-                "completed" => {
-                    // Removed verbose output: "✅ Prediction completed successfully"
-                    return Ok(result);
-                }
-                "failed" => {
-                    let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
-                    return Err(ApiError::Server(format!(
-                        "Prediction failed: {}",
-                        error_msg
-                    )));
-                }
-                "running" | "pending" => {
-                    // Removed verbose progress output
-                }
-                status => {
-                    println!("❓ Unknown status: {}", status);
-                }
-            }
-
-            if attempt < max_attempts {
-                tokio::time::sleep(poll_interval).await;
-            }
-        }
-
-        Err(ApiError::Timeout(format!(
-            "Prediction timed out after {} attempts",
-            max_attempts
-        )))
+    pub fn with_time_budget(mut self, secs: f64) -> Self {
+        self.time_budget_secs = Some(secs);
+        self
     }
 
-    /// 予測ステータスを取得
-    pub async fn get_prediction_status(
+    /// 価格予測を実行
+    ///
+    /// `timestamps` と `values` は履歴データ、`horizon` は予測ステップ数。
+    /// 内部で同期関数 `chronos_predictor::predict()` を `spawn_blocking` でラップして呼び出す。
+    pub async fn predict_price(
         &self,
-        prediction_id: &str,
-    ) -> Result<PredictionResult, ApiError> {
-        let path = format!("/api/v1/prediction_status/{}", prediction_id);
-        let url = format!("{}{}", self.base_url(), path);
+        timestamps: Vec<DateTime<Utc>>,
+        values: Vec<BigDecimal>,
+        horizon: usize,
+    ) -> anyhow::Result<ChronosPredictionResponse> {
+        let input = chronos_predictor::PredictionInput {
+            timestamps: timestamps.iter().map(|t| t.naive_utc()).collect(),
+            values: values.clone(),
+            horizon,
+            time_budget_secs: self.time_budget_secs,
+        };
 
-        let response = self
-            .client
-            .get(&url)
-            .timeout(self.config.timeout)
-            .send()
+        let result = tokio::task::spawn_blocking(move || chronos_predictor::predict(&input))
             .await
-            .map_err(|e| ApiError::Network(e.to_string()))?;
+            .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
+            .map_err(|e| anyhow::anyhow!("chronos_predictor::predict failed: {}", e))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("<failed to read body: {e}>"));
-            return Err(ApiError::Server(format!(
-                "HTTP Error {}: {}",
-                status, error_text
-            )));
-        }
-
-        // Get the response body as text first for debugging
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
-
-        // Log the response text for debugging (removed to reduce output noise)
-
-        // Parse the response text directly as PredictionResult
-        let result: PredictionResult = serde_json::from_str(&response_text).map_err(|e| {
-            ApiError::Parse(format!(
-                "Error decoding response body: {}. Response: {}",
-                e, response_text
-            ))
-        })?;
-
-        Ok(result)
+        self.convert_result(result, &timestamps, horizon)
     }
 
-    /// 従来のAPIとの互換性のため
-    pub async fn predict_zero_shot(
+    /// ForecastResult を ChronosPredictionResponse に変換
+    fn convert_result(
         &self,
-        request: ZeroShotPredictionRequest,
-    ) -> Result<AsyncPredictionResponse, ApiError> {
-        self.predict(request).await
+        result: chronos_predictor::ForecastResult,
+        input_timestamps: &[DateTime<Utc>],
+        horizon: usize,
+    ) -> anyhow::Result<ChronosPredictionResponse> {
+        // 入力タイムスタンプの間隔を推定
+        let interval = estimate_interval(input_timestamps);
+
+        // 最後のタイムスタンプから forecast_timestamp を生成
+        let last_ts = input_timestamps
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("Empty input timestamps"))?;
+
+        let forecast_timestamps: Vec<DateTime<Utc>> = (1..=horizon)
+            .map(|i| *last_ts + interval * i as i32)
+            .collect();
+
+        // confidence_intervals を構築
+        let confidence_intervals = match (result.lower_bound, result.upper_bound) {
+            (Some(lower), Some(upper)) => {
+                let mut map = HashMap::new();
+                map.insert("lower_10".to_string(), lower);
+                map.insert("upper_90".to_string(), upper);
+                Some(map)
+            }
+            _ => None,
+        };
+
+        Ok(ChronosPredictionResponse {
+            forecast_timestamp: forecast_timestamps,
+            forecast_values: result.forecast_values,
+            model_name: result.model_name,
+            confidence_intervals,
+            metrics: None,
+        })
     }
 }
 
-#[async_trait]
-impl ApiClient for ChronosApiClient {
-    type Config = ApiClientConfig;
-
-    fn new(config: Self::Config) -> Self {
-        Self::new_with_config(config)
-    }
-
-    fn base_url(&self) -> &str {
-        &self.config.base_url
-    }
-
-    async fn health_check(&self) -> Result<(), ApiError> {
-        let response = self
-            .client
-            .get(format!("{}/health", self.base_url()))
-            .timeout(self.config.timeout)
-            .send()
-            .await
-            .map_err(|e| ApiError::Network(e.to_string()))?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(ApiError::Server(format!(
-                "Health check failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn request<T, R>(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<T>,
-    ) -> Result<ApiResponse<R, String>, ApiError>
-    where
-        T: serde::Serialize + Send,
-        R: serde::de::DeserializeOwned + Send + std::fmt::Debug + Clone,
-    {
-        let url = format!("{}{}", self.base_url(), path);
-        let mut request = self.client.request(method, &url);
-
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
-
-        let response = request
-            .timeout(self.config.timeout)
-            .send()
-            .await
-            .map_err(|e| ApiError::Network(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("<failed to read body: {e}>"));
-            return Err(ApiError::Server(format!(
-                "HTTP Error {}: {}",
-                status, error_text
-            )));
-        }
-
-        // Get the response body as text first for debugging
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
-
-        // Log the response text for debugging (removed to reduce output noise)
-
-        // Try to parse the response text
-        let api_response: ApiResponse<R, String> =
-            serde_json::from_str(&response_text).map_err(|e| {
-                ApiError::Parse(format!(
-                    "Error decoding response body: {}. Response: {}",
-                    e, response_text
-                ))
-            })?;
-
-        Ok(api_response)
+impl Default for ChronosPredictor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-#[async_trait]
-impl PredictionClient for ChronosApiClient {
-    type PredictionRequest = ZeroShotPredictionRequest;
-    type PredictionResponse = AsyncPredictionResponse;
-
-    async fn predict(
-        &self,
-        request: Self::PredictionRequest,
-    ) -> Result<Self::PredictionResponse, ApiError> {
-        // Create the request directly without using the generic request method
-        let url = format!("{}/api/v1/predict_zero_shot_async", self.base_url());
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .timeout(self.config.timeout)
-            .send()
-            .await
-            .map_err(|e| ApiError::Network(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("<failed to read body: {e}>"));
-            return Err(ApiError::Server(format!(
-                "HTTP Error {}: {}",
-                status, error_text
-            )));
-        }
-
-        // Get the response body as text first for debugging
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| ApiError::Network(format!("Failed to get response text: {}", e)))?;
-
-        // Try to parse the response text directly to AsyncPredictionResponse
-        let prediction_response: Self::PredictionResponse = serde_json::from_str(&response_text)
-            .map_err(|e| {
-                ApiError::Parse(format!(
-                    "Error decoding response body: {}. Response: {}",
-                    e, response_text
-                ))
-            })?;
-
-        Ok(prediction_response)
+/// 入力タイムスタンプの平均間隔を推定
+fn estimate_interval(timestamps: &[DateTime<Utc>]) -> Duration {
+    if timestamps.len() < 2 {
+        return Duration::hours(1); // デフォルト1時間
     }
+
+    let total_duration = timestamps
+        .last()
+        .unwrap()
+        .signed_duration_since(*timestamps.first().unwrap());
+    let num_intervals = (timestamps.len() - 1) as i64;
+
+    Duration::milliseconds(total_duration.num_milliseconds() / num_intervals)
+}
+
+/// forecast_until と入力データの間隔から horizon を計算するユーティリティ
+pub fn calculate_horizon(timestamps: &[DateTime<Utc>], forecast_until: DateTime<Utc>) -> usize {
+    if timestamps.is_empty() {
+        return 1;
+    }
+
+    let interval = estimate_interval(timestamps);
+    let last_ts = timestamps.last().unwrap();
+    let remaining = forecast_until.signed_duration_since(*last_ts);
+
+    if interval.num_milliseconds() <= 0 {
+        return 1;
+    }
+
+    let horizon = remaining.num_milliseconds() / interval.num_milliseconds();
+    std::cmp::max(1, horizon as usize)
 }

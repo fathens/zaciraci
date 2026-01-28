@@ -1,13 +1,10 @@
-//! 外部API（Backend、Chronos）との連携テスト
+//! 外部API（Backend）との連携テスト
 //! - モックサーバーを使用したAPIレスポンステスト
 //! - エラーハンドリング
 //! - データ形式の互換性
 
 use anyhow::Result;
-use bigdecimal::BigDecimal;
-use chrono::Utc;
 use common::ApiResponse;
-use common::api::chronos::ChronosApiClient;
 use common::types::{TokenAccount, TokenPrice};
 
 use crate::api::backend::BackendClient;
@@ -34,8 +31,8 @@ async fn test_backend_api_get_volatility_tokens_success() -> Result<()> {
         .await;
 
     let client = BackendClient::new_with_url(server.url());
-    let start_date = Utc::now();
-    let end_date = Utc::now();
+    let start_date = chrono::Utc::now();
+    let end_date = chrono::Utc::now();
     let result = client
         .get_volatility_tokens(start_date, end_date, 10, None, None)
         .await;
@@ -64,8 +61,8 @@ async fn test_backend_api_get_volatility_tokens_error() -> Result<()> {
         .await;
 
     let client = BackendClient::new_with_url(server.url());
-    let start_date = Utc::now();
-    let end_date = Utc::now();
+    let start_date = chrono::Utc::now();
+    let end_date = chrono::Utc::now();
     let result = client
         .get_volatility_tokens(start_date, end_date, 10, None, None)
         .await;
@@ -76,180 +73,6 @@ async fn test_backend_api_get_volatility_tokens_error() -> Result<()> {
             .unwrap_err()
             .to_string()
             .contains("Database connection failed")
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_chronos_api_predict_zero_shot_success() -> Result<()> {
-    let mut server = mockito::Server::new_async().await;
-    let mock_response = common::prediction::AsyncPredictionResponse {
-        task_id: "pred_123".to_string(),
-        status: "pending".to_string(),
-        message: "Task started".to_string(),
-    };
-
-    // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
-    let _mock = server
-        .mock("POST", "/api/v1/predict_zero_shot_async")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(serde_json::to_string(&mock_response).unwrap())
-        .create_async()
-        .await;
-
-    let client = ChronosApiClient::new(server.url());
-    let request = common::prediction::ZeroShotPredictionRequest {
-        timestamp: vec![Utc::now()],
-        values: vec![BigDecimal::from(1)],
-        forecast_until: Utc::now(),
-        model_name: None,
-        model_params: None,
-    };
-
-    let result = client.predict_zero_shot(request).await;
-
-    assert!(result.is_ok());
-    let response = result.unwrap();
-    assert_eq!(response.task_id, "pred_123");
-    assert_eq!(response.status, "pending");
-    assert_eq!(response.message, "Task started");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_chronos_api_predict_zero_shot_error() -> Result<()> {
-    let mut server = mockito::Server::new_async().await;
-
-    // エラーの場合はHTTPステータスコードでエラーを返す
-    let _mock = server
-        .mock("POST", "/api/v1/predict_zero_shot_async")
-        .with_status(500)
-        .with_header("content-type", "application/json")
-        .with_body("Internal Server Error")
-        .create_async()
-        .await;
-
-    let client = ChronosApiClient::new(server.url());
-    let request = common::prediction::ZeroShotPredictionRequest {
-        timestamp: vec![Utc::now()],
-        values: vec![BigDecimal::from(1)],
-        forecast_until: Utc::now(),
-        model_name: None,
-        model_params: None,
-    };
-
-    let result = client.predict_zero_shot(request).await;
-
-    assert!(result.is_err());
-    let error = result.unwrap_err().to_string();
-    assert!(error.contains("500") || error.contains("HTTP Error"));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_chronos_api_get_prediction_status() -> Result<()> {
-    let mut server = mockito::Server::new_async().await;
-    let mock_response = common::prediction::PredictionResult {
-        task_id: "pred_123".to_string(),
-        status: "completed".to_string(),
-        progress: Some(BigDecimal::from(100)),
-        message: Some("Prediction completed".to_string()),
-        result: None,
-        error: None,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-    };
-
-    // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
-    let _mock = server
-        .mock("GET", "/api/v1/prediction_status/pred_123")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(serde_json::to_string(&mock_response).unwrap())
-        .create_async()
-        .await;
-
-    let client = ChronosApiClient::new(server.url());
-    let result = client.get_prediction_status("pred_123").await;
-
-    assert!(result.is_ok());
-    let response = result.unwrap();
-    assert_eq!(response.task_id, "pred_123");
-    assert_eq!(response.status, "completed");
-    assert!(response.progress.is_some());
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_chronos_api_poll_prediction_until_complete() -> Result<()> {
-    let mut server = mockito::Server::new_async().await;
-    let completed_response = common::prediction::PredictionResult {
-        task_id: "pred_123".to_string(),
-        status: "completed".to_string(),
-        progress: Some(BigDecimal::from(100)),
-        message: Some("Prediction completed".to_string()),
-        result: None,
-        error: None,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-    };
-
-    // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
-    let _mock = server
-        .mock("GET", "/api/v1/prediction_status/pred_123")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(serde_json::to_string(&completed_response).unwrap())
-        .create_async()
-        .await;
-
-    let client = ChronosApiClient::new(server.url());
-    let result = client.poll_prediction_until_complete("pred_123").await;
-
-    assert!(result.is_ok());
-    let response = result.unwrap();
-    assert_eq!(response.status, "completed");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_chronos_api_poll_prediction_failed() -> Result<()> {
-    let mut server = mockito::Server::new_async().await;
-    let failed_response = common::prediction::PredictionResult {
-        task_id: "pred_123".to_string(),
-        status: "failed".to_string(),
-        progress: Some(BigDecimal::from(0)),
-        message: Some("Prediction failed".to_string()),
-        result: None,
-        error: Some("Model training failed".to_string()),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-    };
-
-    // 実際のAPIは直接レスポンスを返す（ApiResponseラッパーなし）
-    let _mock = server
-        .mock("GET", "/api/v1/prediction_status/pred_123")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(serde_json::to_string(&failed_response).unwrap())
-        .create_async()
-        .await;
-
-    let client = ChronosApiClient::new(server.url());
-    let result = client.poll_prediction_until_complete("pred_123").await;
-
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Prediction failed")
     );
 
     Ok(())

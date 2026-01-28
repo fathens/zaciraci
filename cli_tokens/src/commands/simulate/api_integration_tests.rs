@@ -5,8 +5,8 @@ use crate::commands::simulate::{AlgorithmType, FeeModel, RebalanceInterval, Simu
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
 use common::algorithm::PredictionData;
-use common::api::chronos::ChronosApiClient;
-use common::prediction::{ChronosPredictionResponse, ZeroShotPredictionRequest};
+use common::api::chronos::ChronosPredictor;
+use common::prediction::ChronosPredictionResponse;
 use common::stats::ValueAtTime;
 use common::types::{TokenOutAccount, TokenPrice};
 use mockito::{Mock, ServerGuard};
@@ -407,14 +407,7 @@ mod regression_tests {
     #[test]
     fn test_required_imports() {
         // これらの型が存在することを確認
-        let _ = ChronosApiClient::new("http://test".to_string());
-        let _ = ZeroShotPredictionRequest {
-            timestamp: vec![],
-            values: vec![],
-            forecast_until: Utc::now(),
-            model_name: None,
-            model_params: None,
-        };
+        let _ = ChronosPredictor::new();
     }
 
     /// run_momentum_timestep_simulationがasyncであることを確認

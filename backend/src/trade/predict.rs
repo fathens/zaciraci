@@ -12,9 +12,7 @@ use zaciraci_common::algorithm::prediction::{
     PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
     TokenPredictionResult, TopTokenInfo,
 };
-use zaciraci_common::api::chronos::ChronosApiClient;
-use zaciraci_common::api::traits::PredictionClient;
-use zaciraci_common::prediction::{PredictionResult, ZeroShotPredictionRequest};
+use zaciraci_common::api::chronos::{ChronosPredictor, calculate_horizon};
 use zaciraci_common::types::{
     TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount, TokenPrice,
 };
@@ -41,7 +39,7 @@ pub struct TokenPrediction {
 
 /// 予測価格
 ///
-/// Chronos API から返される予測値は price 形式（NEAR/token）。
+/// Chronos ライブラリから返される予測値は price 形式（NEAR/token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
@@ -52,16 +50,16 @@ pub struct PredictedPrice {
 
 /// 価格予測サービス
 pub struct PredictionService {
-    chronos_client: ChronosApiClient,
+    predictor: ChronosPredictor,
     pub(crate) max_retries: u32,
     pub(crate) retry_delay_seconds: u64,
 }
 
 impl PredictionService {
-    pub fn new(chronos_url: String) -> Self {
+    pub fn new() -> Self {
         let config = zaciraci_common::config::config();
         Self {
-            chronos_client: ChronosApiClient::new(chronos_url),
+            predictor: ChronosPredictor::new(),
             max_retries: config.trade.prediction_max_retries,
             retry_delay_seconds: config.trade.prediction_retry_delay_seconds,
         }
@@ -143,7 +141,6 @@ impl PredictionService {
         let log = DEFAULT.new(o!("function" => "predict_price"));
 
         // 履歴データを予測用フォーマットに変換
-        // BigDecimalを直接使用（ChronosAPIはJSON経由で数値を受け取るため）
         let values: Vec<BigDecimal> = history
             .prices
             .iter()
@@ -158,43 +155,22 @@ impl PredictionService {
         let last_timestamp = timestamps.last().expect("checked non-empty above");
         let forecast_until = *last_timestamp + Duration::hours(prediction_horizon as i64);
 
-        // 予測リクエストを作成
-        let request = ZeroShotPredictionRequest {
-            timestamp: timestamps,
-            values,
-            forecast_until,
-            model_name: Some("chronos_default".to_string()),
-            model_params: None,
-        };
+        // horizon を計算
+        let horizon = calculate_horizon(&timestamps, forecast_until);
 
-        // 非同期予測を開始
-        let async_response = self
-            .chronos_client
-            .predict(request)
-            .await
-            .context("Failed to start prediction")?;
-
-        info!(log, "Prediction started";
-            "task_id" => %async_response.task_id
+        info!(log, "Starting prediction";
+            "horizon" => horizon
         );
 
-        // 予測完了まで待機
-        let result = self
-            .chronos_client
-            .poll_prediction_until_complete(&async_response.task_id)
+        // ライブラリを直接呼び出し
+        let chronos_response = self
+            .predictor
+            .predict_price(timestamps, values, horizon)
             .await
-            .context("Failed to get prediction result")?;
+            .context("Failed to execute prediction")?;
 
         // 予測結果を変換
-        let predictions = self.convert_prediction_result(
-            &result,
-            &history
-                .prices
-                .last()
-                .expect("checked non-empty above")
-                .timestamp,
-            prediction_horizon,
-        )?;
+        let predictions = self.convert_prediction_result(&chronos_response, prediction_horizon)?;
 
         Ok(TokenPrediction {
             token: history.token.clone(),
@@ -228,8 +204,6 @@ impl PredictionService {
             );
 
             // バッチ内の各トークンを順次処理
-            // 注: バッチ間では並列化せず、バッチ内のトークンも順次処理する
-            // これによりChronosサービスへの同時リクエスト数を制限
             for (token_index, token) in batch.iter().enumerate() {
                 trace!(log, "Processing token";
                     "batch_index" => batch_index,
@@ -292,24 +266,25 @@ impl PredictionService {
     /// 予測結果を変換
     fn convert_prediction_result(
         &self,
-        result: &PredictionResult,
-        last_timestamp: &DateTime<Utc>,
+        chronos_response: &zaciraci_common::prediction::ChronosPredictionResponse,
         horizon: usize,
     ) -> Result<Vec<PredictedPrice>> {
-        let chronos_response = result.result.as_ref().context("No prediction result")?;
-
         let predicted_prices: Vec<PredictedPrice> = chronos_response
             .forecast_values
             .iter()
             .take(horizon)
             .enumerate()
             .map(|(i, price_value)| {
-                let timestamp = *last_timestamp + Duration::hours((i + 1) as i64);
+                let timestamp = chronos_response
+                    .forecast_timestamp
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(Utc::now);
                 PredictedPrice {
                     timestamp,
                     // forecast_values は price 形式（NEAR/token）
                     price: TokenPrice::from_near_per_token(price_value.clone()),
-                    confidence: None, // 信頼度は将来実装
+                    confidence: None,
                 }
             })
             .collect();

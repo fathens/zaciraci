@@ -1,5 +1,5 @@
 pub mod kick;
-pub mod pull;
+mod pull;
 
 use clap::{Parser, Subcommand};
 
@@ -12,15 +12,12 @@ pub struct PredictCommand {
 
 #[derive(Subcommand)]
 pub enum PredictSubcommand {
-    /// Start an async prediction task and exit
+    /// Execute prediction and save results
     Kick(kick::KickArgs),
-    /// Poll for prediction results
-    Pull(pull::PullArgs),
 }
 
 pub async fn run(command: PredictCommand) -> anyhow::Result<()> {
     match command.subcommand {
         PredictSubcommand::Kick(args) => kick::run(args).await,
-        PredictSubcommand::Pull(args) => pull::run(args).await,
     }
 }

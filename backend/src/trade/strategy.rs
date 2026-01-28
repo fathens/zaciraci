@@ -38,7 +38,9 @@ use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{ExchangeRate, NearAmount, TokenPrice, YoctoAmount, YoctoValue};
+use zaciraci_common::types::{
+    ExchangeRate, NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue,
+};
 
 use super::execution::{
     execute_trading_actions, liquidate_all_positions, manage_evaluation_period,
@@ -118,10 +120,7 @@ pub async fn start() -> Result<()> {
     };
 
     // Step 3: PredictionServiceの初期化
-    let chronos_url =
-        std::env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
-
-    let prediction_service = PredictionService::new(chronos_url);
+    let prediction_service = PredictionService::new();
 
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
@@ -677,42 +676,66 @@ where
         prediction_confidence,
     };
 
-    // yoctoNEARからNEARに変換（型安全、BigDecimal精度維持）
-    let total_value_near = YoctoValue::from_yocto(BigDecimal::from(available_funds)).to_near();
-
-    // 既存ポジションの取得（評価期間中のみ）
-    let holdings = if is_new_period {
-        // 新規期間: ポジションなし
+    // 既存ポジションの取得と WalletInfo の構築
+    let wallet_info = if is_new_period {
+        // 新規期間: ポジションなし、available_funds を総価値として使用
         debug!(log, "new evaluation period, starting with empty holdings");
-        BTreeMap::new()
+        let total_value_near = YoctoValue::from_yocto(BigDecimal::from(available_funds)).to_near();
+        WalletInfo {
+            holdings: BTreeMap::new(),
+            total_value: total_value_near.clone(),
+            cash_balance: total_value_near,
+        }
     } else {
-        // 評価期間中: 既存のポジションを取得
+        // 評価期間中: 既存のポジションを取得し、実際のポートフォリオ価値を計算
         debug!(
             log,
             "continuing evaluation period, loading current holdings"
         );
-        let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        // wrap.near を含めて全残高を取得
+        let wnear_str = crate::ref_finance::token_account::WNEAR_TOKEN.to_string();
+        let mut token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        if !token_strs.contains(&wnear_str) {
+            token_strs.push(wnear_str.clone());
+        }
         let current_balances =
             swap::get_current_portfolio_balances(client, wallet, &token_strs).await?;
 
-        // get_current_portfolio_balances は TokenAmount を返すので、ゼロを除外するだけ
-        // String → TokenOutAccount に変換
+        // 実際のポートフォリオ総価値を計算
+        let total_value_near =
+            swap::calculate_total_portfolio_value(client, wallet, &current_balances).await?;
+
+        // wrap.near の残高を cash_balance として使用
+        let cash_balance_near = current_balances
+            .get(&wnear_str)
+            .map(|amount| {
+                let rate = ExchangeRate::wnear();
+                amount / &rate
+            })
+            .unwrap_or_else(NearValue::zero);
+
+        debug!(log, "portfolio value calculated";
+            "total_value" => %total_value_near, "cash_balance" => %cash_balance_near);
+
+        // holdings には投資対象トークンのみ（wrap.near は除外）
         let mut holdings_typed = BTreeMap::new();
-        for (token, amount) in current_balances {
+        for (token, amount) in &current_balances {
+            if token == &wnear_str {
+                continue;
+            }
             if !amount.is_zero() {
-                trace!(log, "loaded existing position"; "token" => &token, "amount" => %amount);
+                trace!(log, "loaded existing position"; "token" => token, "amount" => %amount);
                 if let Ok(token_out) = token.parse::<zaciraci_common::types::TokenOutAccount>() {
-                    holdings_typed.insert(token_out, amount);
+                    holdings_typed.insert(token_out, amount.clone());
                 }
             }
         }
-        holdings_typed
-    };
 
-    let wallet_info = WalletInfo {
-        holdings,
-        total_value: total_value_near.clone(),
-        cash_balance: total_value_near,
+        WalletInfo {
+            holdings: holdings_typed,
+            total_value: total_value_near,
+            cash_balance: cash_balance_near,
+        }
     };
 
     // ポートフォリオ最適化の実行
