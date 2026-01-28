@@ -1,5 +1,4 @@
 pub mod kick;
-mod pull;
 
 use clap::{Parser, Subcommand};
 

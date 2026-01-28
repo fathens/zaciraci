@@ -209,9 +209,6 @@ mod unit_conversion_debug {
         unsafe {
             std::env::set_var("BACKEND_URL", &server_url);
         }
-        unsafe {
-            std::env::set_var("CHRONOS_URL", &server_url);
-        }
 
         // 小さいが有効な価格での初期ポートフォリオ作成をテスト（1.67e-19 NEAR）
         let config = SimulationConfig {
@@ -298,9 +295,6 @@ mod unit_conversion_debug {
         unsafe {
             std::env::set_var("BACKEND_URL", &server_url);
         }
-        unsafe {
-            std::env::set_var("CHRONOS_URL", &server_url);
-        }
 
         // 合理的な価格範囲でのポートフォリオ作成をテスト
         let config = SimulationConfig {
@@ -386,9 +380,6 @@ mod unit_conversion_debug {
         // 環境変数を設定してモックサーバーを使用
         unsafe {
             std::env::set_var("BACKEND_URL", &server_url);
-        }
-        unsafe {
-            std::env::set_var("CHRONOS_URL", &server_url);
         }
 
         // 制限を超える極端に小さい価格でのテスト

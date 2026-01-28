@@ -102,14 +102,6 @@ mod tests {
     /// API呼び出しが失敗した場合のフォールバック処理を確認
     #[tokio::test]
     async fn test_generate_api_predictions_fallback_on_error() {
-        // 無効なURLを設定してエラーを発生させる
-        unsafe {
-            std::env::set_var("CHRONOS_URL", "http://invalid-url:9999");
-        }
-        unsafe {
-            std::env::set_var("BACKEND_URL", "http://invalid-url:9999");
-        }
-
         let backend_client = BackendClient::new_with_url("http://invalid-url:9999".to_string());
 
         let target_tokens = vec!["test_token".to_string()];
@@ -134,14 +126,6 @@ mod tests {
         assert!(result.is_err());
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("Failed to get historical data for token test_token"));
-
-        // 環境変数をクリーンアップ
-        unsafe {
-            std::env::remove_var("CHRONOS_URL");
-        }
-        unsafe {
-            std::env::remove_var("BACKEND_URL");
-        }
     }
 
     /// 複数トークンの予測生成をテスト
@@ -149,13 +133,6 @@ mod tests {
     async fn test_generate_api_predictions_multiple_tokens() {
         let (server, _, _) = setup_mock_server().await;
         let server_url = server.url();
-
-        unsafe {
-            std::env::set_var("CHRONOS_URL", &server_url);
-        }
-        unsafe {
-            std::env::set_var("BACKEND_URL", &server_url);
-        }
 
         let backend_client = BackendClient::new_with_url(server_url.clone());
 
@@ -185,13 +162,6 @@ mod tests {
         let error_message = result.unwrap_err().to_string();
         // モックサーバーは501エラーを返すので、履歴データ取得に失敗する
         assert!(error_message.contains("Failed to get historical data"));
-
-        unsafe {
-            std::env::remove_var("CHRONOS_URL");
-        }
-        unsafe {
-            std::env::remove_var("BACKEND_URL");
-        }
     }
 
     /// 予測データの構造が正しいことを確認

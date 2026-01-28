@@ -65,7 +65,6 @@ max_attempts = 10
 
 [external_services]
 # 外部サービスURL
-chronos_url = "http://localhost:8000"
 ollama_base_url = "http://localhost:11434"
 ollama_model = "llama2"
 
