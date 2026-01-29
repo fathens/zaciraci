@@ -257,6 +257,12 @@ where
             for (token, wrap_near_value, exchange_rate) in sell_operations {
                 // wrap.near価値をトークン数量に変換
                 // NearValue * ExchangeRate = TokenAmount
+                // NOTE: 理論上、decimals が非常に小さく高価なトークン（例: decimals=0, 価格 > 1 NEAR/token）の場合、
+                // smallest_units < 1 となり to_bigint() でゼロに切り捨てられる可能性がある。
+                // ただし、NEAR エコシステムの標準は decimals=18〜24 であり、
+                // REF Finance で取引可能なトークンは実質的に全て decimals≥6 のため、
+                // このケースは発生しない。
+                // 参考: test_small_rate_scaling_issue (execution/tests.rs:413)
                 let token_amount: TokenAmount = &wrap_near_value * &exchange_rate;
                 let token_amount_u128 = token_amount
                     .smallest_units()
@@ -344,6 +350,10 @@ where
                 // NearValue → YoctoValue → YoctoAmount → u128 に変換
                 let wrap_near_amount_u128 = wrap_near_value.to_yocto().to_amount().to_u128();
 
+                // NOTE: wrap_near_amount_u128 == 0 は、調整後の値が 10^-24 NEAR 未満の場合に発生。
+                // これは available_wrap_near が total_buy_value の 10^-24 未満の場合であり、
+                // 実質的に残高がゼロに等しい状況。そのような状況ではリバランス自体が意味をなさないため、
+                // スキップして継続する現在の実装で問題ない。
                 if wrap_near_amount_u128 == 0 {
                     error!(log, "Failed to convert purchase amount to u128"; "token" => &token);
                     phase2_failed += 1;
@@ -391,6 +401,12 @@ where
             );
 
             // Phase 2で全ての購入が失敗した場合のみエラーを返す
+            // NOTE: 部分失敗（phase2_success > 0 && phase2_failed > 0）の場合も Ok を返す設計。
+            // 理由:
+            // 1. 次回のクーロン実行で、現在のポートフォリオ残高から再計算してリバランスが試行される
+            // 2. failed_count はログに出力されるが、ExecutionSummary としてアクションには使われていない
+            // 3. 部分的にリバランスされた状態でも、次回実行で自然に修正される
+            // 将来的にアラートやメトリクス収集が必要になった場合は、この条件の見直しを検討する。
             if phase2_success == 0 && phase2_failed > 0 {
                 return Err(anyhow::anyhow!(
                     "All Phase 2 purchases failed ({} failed)",
