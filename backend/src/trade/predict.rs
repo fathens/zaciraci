@@ -5,7 +5,7 @@ use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zaciraci_common::algorithm::prediction::{
@@ -152,8 +152,9 @@ impl PredictionService {
             return Err(anyhow::anyhow!("No price history available for prediction"));
         }
 
-        let last_timestamp = timestamps.last().expect("checked non-empty above");
-        let forecast_until = *last_timestamp + Duration::hours(prediction_horizon as i64);
+        // 最後のデータタイムスタンプを保持（時間経過の基準点）
+        let last_data_timestamp = *timestamps.last().expect("checked non-empty above");
+        let forecast_until = last_data_timestamp + Duration::hours(prediction_horizon as i64);
 
         info!(log, "Starting prediction";
             "forecast_until" => %forecast_until
@@ -173,8 +174,12 @@ impl PredictionService {
             "model_count" => chronos_response.model_count.unwrap_or(0)
         );
 
-        // 予測結果を変換
-        let predictions = self.convert_prediction_result(&chronos_response, prediction_horizon)?;
+        // 予測結果を変換（最後のデータタイムスタンプを渡す）
+        let predictions = self.convert_prediction_result(
+            &chronos_response,
+            prediction_horizon,
+            last_data_timestamp,
+        )?;
 
         Ok(TokenPrediction {
             token: history.token.clone(),
@@ -268,10 +273,13 @@ impl PredictionService {
     }
 
     /// 予測結果を変換
+    ///
+    /// `last_data_timestamp`: 履歴データの最後のタイムスタンプ（時間経過の基準点）
     fn convert_prediction_result(
         &self,
         chronos_response: &zaciraci_common::prediction::ChronosPredictionResponse,
         horizon: usize,
+        last_data_timestamp: DateTime<Utc>,
     ) -> Result<Vec<PredictedPrice>> {
         // 信頼区間を取得（あれば）
         let lower_bounds = chronos_response
@@ -289,21 +297,25 @@ impl PredictionService {
             .take(horizon)
             .enumerate()
             .map(|(i, price_value)| {
-                let timestamp = chronos_response
+                let forecast_ts = chronos_response
                     .forecast_timestamp
                     .get(i)
                     .copied()
                     .unwrap_or_else(Utc::now);
 
-                // 信頼区間から confidence を計算
+                // 予測までの時間経過を計算
+                let time_ahead = forecast_ts.signed_duration_since(last_data_timestamp);
+
+                // 信頼区間から confidence を計算（時間経過を考慮）
                 let confidence = Self::calculate_confidence_from_interval(
                     price_value,
                     lower_bounds.and_then(|lb| lb.get(i)),
                     upper_bounds.and_then(|ub| ub.get(i)),
+                    time_ahead,
                 );
 
                 PredictedPrice {
-                    timestamp,
+                    timestamp: forecast_ts,
                     // forecast_values は price 形式（NEAR/token）
                     price: TokenPrice::from_near_per_token(price_value.clone()),
                     confidence,
@@ -314,15 +326,24 @@ impl PredictionService {
         Ok(predicted_prices)
     }
 
-    /// 信頼区間から confidence を計算
+    /// 信頼区間から confidence を計算（時間経過で正規化）
     ///
-    /// 予測値に対する信頼区間の相対的な幅から信頼度を算出:
-    /// - 幅が狭い（5%以下）→ confidence ≈ 1.0
-    /// - 幅が広い（40%以上）→ confidence ≈ 0.0
+    /// 信頼区間の幅は時間経過の平方根に比例してスケールされる。
+    /// この関数は相対幅から変動係数（CV）を逆算し、CVからconfidenceを計算する。
+    ///
+    /// 統計的根拠:
+    /// - 信頼区間幅 = 2.56 × σ × sqrt(時間経過)  （80%信頼区間）
+    /// - 相対幅 = 2.56 × CV × sqrt(時間経過)
+    /// - CV = 相対幅 / (2.56 × sqrt(時間経過))
+    ///
+    /// CVからconfidenceへの変換:
+    /// - CV ≤ 3% → confidence = 1.0 (非常に安定)
+    /// - CV ≥ 15% → confidence = 0.0 (非常に不安定)
     fn calculate_confidence_from_interval(
         forecast: &BigDecimal,
         lower: Option<&BigDecimal>,
         upper: Option<&BigDecimal>,
+        time_ahead: TimeDelta,
     ) -> Option<BigDecimal> {
         use bigdecimal::ToPrimitive;
 
@@ -343,11 +364,18 @@ impl PredictionService {
         // 予測値に対する相対的な幅を計算
         let relative_width = interval_width / forecast_f64;
 
-        // 5%〜40%の範囲で線形補間（5%以下→1.0, 40%以上→0.0）
-        const MIN_WIDTH: f64 = 0.05;
-        const MAX_WIDTH: f64 = 0.40;
-        let confidence =
-            1.0 - ((relative_width - MIN_WIDTH) / (MAX_WIDTH - MIN_WIDTH)).clamp(0.0, 1.0);
+        // 時間経過から CV を逆算（1時間を基準単位とする）
+        let hours = time_ahead.num_minutes() as f64 / 60.0;
+        let time_factor = hours.max(1.0).sqrt();
+        // 80%信頼区間の場合: 2.56 = 2 × 1.28
+        let cv = relative_width / (2.56 * time_factor);
+
+        // CV から confidence を計算
+        // CV ≤ 3% → confidence = 1.0 (非常に安定)
+        // CV ≥ 15% → confidence = 0.0 (非常に不安定)
+        const MIN_CV: f64 = 0.03;
+        const MAX_CV: f64 = 0.15;
+        let confidence = 1.0 - ((cv - MIN_CV) / (MAX_CV - MIN_CV)).clamp(0.0, 1.0);
 
         Some(BigDecimal::try_from(confidence).unwrap_or_else(|_| BigDecimal::from(0)))
     }

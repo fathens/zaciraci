@@ -3,7 +3,7 @@ use crate::Result;
 use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use serial_test::serial;
 use std::str::FromStr;
 use zaciraci_common::prediction::ChronosPredictionResponse;
@@ -233,6 +233,7 @@ async fn test_convert_prediction_result() {
     let service = PredictionService::new();
 
     let now = Utc::now();
+    let last_data_timestamp = now; // 最後のデータタイムスタンプ
     let chronos_response = ChronosPredictionResponse {
         forecast_timestamp: vec![
             now + Duration::hours(1),
@@ -254,7 +255,7 @@ async fn test_convert_prediction_result() {
         model_count: Some(3),
     };
 
-    let predictions = service.convert_prediction_result(&chronos_response, 3);
+    let predictions = service.convert_prediction_result(&chronos_response, 3, last_data_timestamp);
 
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
@@ -582,4 +583,171 @@ async fn test_invalid_quote_token() -> Result<()> {
     );
 
     Ok(())
+}
+
+/// 時間ベースの confidence 計算をテスト
+///
+/// 同じ CV（変動係数）を持つ予測は、時間経過に関係なく同じ confidence を持つべき
+#[test]
+fn test_confidence_time_normalization() {
+    // CV = 5% の場合の信頼区間幅を計算
+    // 相対幅 = 2.56 × CV × sqrt(時間)
+    // CV = 5% = 0.05 のとき:
+    // - 1時間先: 相対幅 = 2.56 × 0.05 × sqrt(1) = 0.128 (12.8%)
+    // - 24時間先: 相対幅 = 2.56 × 0.05 × sqrt(24) ≈ 0.627 (62.7%)
+
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+
+    // 1時間先: 相対幅 12.8%
+    let lower_1h = BigDecimal::from_str("93.6").unwrap(); // 100 - 6.4
+    let upper_1h = BigDecimal::from_str("106.4").unwrap(); // 100 + 6.4
+    let time_1h = TimeDelta::hours(1);
+
+    let conf_1h = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower_1h),
+        Some(&upper_1h),
+        time_1h,
+    )
+    .unwrap();
+
+    // 24時間先: 相対幅 62.7%
+    let lower_24h = BigDecimal::from_str("68.65").unwrap(); // 100 - 31.35
+    let upper_24h = BigDecimal::from_str("131.35").unwrap(); // 100 + 31.35
+    let time_24h = TimeDelta::hours(24);
+
+    let conf_24h = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower_24h),
+        Some(&upper_24h),
+        time_24h,
+    )
+    .unwrap();
+
+    // 両方とも CV = 5% なので、confidence は同じはず
+    // CV = 5% のとき: (0.05 - 0.03) / (0.15 - 0.03) = 0.02 / 0.12 ≈ 0.167
+    // confidence ≈ 1.0 - 0.167 ≈ 0.833
+    let expected_confidence = 0.833;
+    let tolerance = 0.05;
+
+    let conf_1h_f64: f64 = conf_1h.to_string().parse().unwrap();
+    let conf_24h_f64: f64 = conf_24h.to_string().parse().unwrap();
+
+    assert!(
+        (conf_1h_f64 - expected_confidence).abs() < tolerance,
+        "1h confidence {} should be close to {}",
+        conf_1h_f64,
+        expected_confidence
+    );
+    assert!(
+        (conf_24h_f64 - expected_confidence).abs() < tolerance,
+        "24h confidence {} should be close to {}",
+        conf_24h_f64,
+        expected_confidence
+    );
+    assert!(
+        (conf_1h_f64 - conf_24h_f64).abs() < tolerance,
+        "1h ({}) and 24h ({}) confidence should be similar for same CV",
+        conf_1h_f64,
+        conf_24h_f64
+    );
+}
+
+/// 異なる CV での confidence 境界値をテスト
+#[test]
+fn test_confidence_cv_boundaries() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let time_1h = TimeDelta::hours(1);
+
+    // CV = 3% (MIN_CV) → confidence = 1.0
+    // 相対幅 = 2.56 × 0.03 × sqrt(1) = 0.0768 (7.68%)
+    let lower_3pct = BigDecimal::from_str("96.16").unwrap();
+    let upper_3pct = BigDecimal::from_str("103.84").unwrap();
+
+    let conf_3pct = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower_3pct),
+        Some(&upper_3pct),
+        time_1h,
+    )
+    .unwrap();
+
+    let conf_3pct_f64: f64 = conf_3pct.to_string().parse().unwrap();
+    assert!(
+        conf_3pct_f64 >= 0.99,
+        "CV=3% should give confidence ≈ 1.0, got {}",
+        conf_3pct_f64
+    );
+
+    // CV = 15% (MAX_CV) → confidence = 0.0
+    // 相対幅 = 2.56 × 0.15 × sqrt(1) = 0.384 (38.4%)
+    let lower_15pct = BigDecimal::from_str("80.8").unwrap();
+    let upper_15pct = BigDecimal::from_str("119.2").unwrap();
+
+    let conf_15pct = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower_15pct),
+        Some(&upper_15pct),
+        time_1h,
+    )
+    .unwrap();
+
+    let conf_15pct_f64: f64 = conf_15pct.to_string().parse().unwrap();
+    assert!(
+        conf_15pct_f64 <= 0.01,
+        "CV=15% should give confidence ≈ 0.0, got {}",
+        conf_15pct_f64
+    );
+}
+
+/// 信頼区間がない場合は None を返す
+#[test]
+fn test_confidence_none_when_no_interval() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let time_1h = TimeDelta::hours(1);
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        None,
+        Some(&BigDecimal::from_str("110.0").unwrap()),
+        time_1h,
+    );
+    assert!(result.is_none(), "Should return None when lower is missing");
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&BigDecimal::from_str("90.0").unwrap()),
+        None,
+        time_1h,
+    );
+    assert!(result.is_none(), "Should return None when upper is missing");
+}
+
+/// 予測値がゼロまたは負の場合は None を返す
+#[test]
+fn test_confidence_none_when_forecast_invalid() {
+    let lower = BigDecimal::from_str("90.0").unwrap();
+    let upper = BigDecimal::from_str("110.0").unwrap();
+    let time_1h = TimeDelta::hours(1);
+
+    let zero_forecast = BigDecimal::from_str("0.0").unwrap();
+    let result = PredictionService::calculate_confidence_from_interval(
+        &zero_forecast,
+        Some(&lower),
+        Some(&upper),
+        time_1h,
+    );
+    assert!(result.is_none(), "Should return None when forecast is zero");
+
+    let neg_forecast = BigDecimal::from_str("-10.0").unwrap();
+    let result = PredictionService::calculate_confidence_from_interval(
+        &neg_forecast,
+        Some(&lower),
+        Some(&upper),
+        time_1h,
+    );
+    assert!(
+        result.is_none(),
+        "Should return None when forecast is negative"
+    );
 }
