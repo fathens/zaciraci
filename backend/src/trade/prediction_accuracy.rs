@@ -18,6 +18,48 @@ const DEFAULT_MAPE_EXCELLENT: f64 = 5.0;
 /// MAPE の閾値デフォルト値: これ以上なら予測が不正確（confidence = 0.0）
 const DEFAULT_MAPE_POOR: f64 = 20.0;
 
+/// 評価済みレコードの保持日数デフォルト値
+const DEFAULT_RECORD_RETENTION_DAYS: i64 = 30;
+
+/// 未評価レコードの保持日数デフォルト値
+const DEFAULT_UNEVALUATED_RETENTION_DAYS: i64 = 20;
+
+/// 古い prediction_records を削除する。
+///
+/// 呼び出し元: evaluate_pending_predictions() の最後
+/// タイミング: 評価完了後
+///
+/// 削除対象:
+/// - 評価済みレコード: evaluated_at から PREDICTION_RECORD_RETENTION_DAYS 日以上経過
+/// - 未評価レコード: target_time から PREDICTION_UNEVALUATED_RETENTION_DAYS 日以上経過
+pub async fn cleanup_old_records() -> Result<(usize, usize)> {
+    let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
+
+    let retention_days: i64 = config::get("PREDICTION_RECORD_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_RECORD_RETENTION_DAYS);
+
+    let unevaluated_retention_days: i64 = config::get("PREDICTION_UNEVALUATED_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_UNEVALUATED_RETENTION_DAYS);
+
+    let (evaluated_deleted, unevaluated_deleted) =
+        PredictionRecord::delete_old_records(retention_days, unevaluated_retention_days).await?;
+
+    if evaluated_deleted > 0 || unevaluated_deleted > 0 {
+        info!(log, "cleaned up old prediction records";
+            "evaluated_deleted" => evaluated_deleted,
+            "unevaluated_deleted" => unevaluated_deleted,
+            "retention_days" => retention_days,
+            "unevaluated_retention_days" => unevaluated_retention_days
+        );
+    }
+
+    Ok((evaluated_deleted, unevaluated_deleted))
+}
+
 /// MAPE を prediction_confidence [0.0, 1.0] に変換する（内部用）。
 ///
 /// - MAPE ≤ excellent → 1.0（予測が正確 → Sharpe を信頼）
@@ -177,6 +219,11 @@ pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
 
     if evaluated_count > 0 {
         info!(log, "evaluation complete"; "evaluated" => evaluated_count);
+    }
+
+    // 古いレコードを削除（エラーは警告のみで続行）
+    if let Err(e) = cleanup_old_records().await {
+        warn!(log, "failed to cleanup old records"; "error" => %e);
     }
 
     // 直近 N 件の評価済みレコードから rolling MAPE を算出
