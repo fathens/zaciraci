@@ -7,6 +7,7 @@ mod unit_conversion_debug {
     use common::stats::ValueAtTime;
     use common::types::TokenPrice;
     use mockito::{Mock, ServerGuard};
+    use serial_test::serial;
     use std::collections::HashMap;
 
     /// テスト用のモックサーバーセットアップ（トークン名をパラメータで指定可能）
@@ -199,6 +200,7 @@ mod unit_conversion_debug {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_momentum_price_validation() {
         // モックサーバーをセットアップ
         let (_server, _backend_mock, _chronos_predict_mock, _chronos_result_mock) =
@@ -285,6 +287,7 @@ mod unit_conversion_debug {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_momentum_reasonable_price_range() {
         // モックサーバーをセットアップ
         let (_server, _backend_mock, _chronos_predict_mock, _chronos_result_mock) =
@@ -371,6 +374,7 @@ mod unit_conversion_debug {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_extremely_small_price_rejection() {
         // モックサーバーをセットアップ
         let (_server, _backend_mock, _chronos_predict_mock, _chronos_result_mock) =

@@ -565,8 +565,10 @@ pub fn config() -> &'static Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_toml_default_values() {
         // 環境変数が設定されていない場合はTOMLのデフォルト値が使われる
         unsafe {
@@ -577,6 +579,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_backward_compatibility_with_env_vars() {
         // 環境変数が設定されている場合は環境変数の値が使われる
         unsafe {
@@ -590,6 +593,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_store_priority() {
         // CONFIG_STOREの値が最優先
         const TEST_KEY: &str = "RUST_LOG_FORMAT";
@@ -610,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_boolean_config() {
         unsafe {
             std::env::remove_var("USE_MAINNET");
@@ -619,6 +624,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_numeric_config() {
         unsafe {
             std::env::remove_var("TRADE_TOP_TOKENS");
@@ -628,6 +634,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_priority_order() {
         // 優先順位の完全検証: CONFIG_STORE > 環境変数 > TOML > デフォルト
         const TEST_KEY: &str = "OLLAMA_BASE_URL";

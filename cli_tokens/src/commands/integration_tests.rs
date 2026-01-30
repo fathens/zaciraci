@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
+use serial_test::serial;
+
 use crate::commands::simulate::{
     AlgorithmType, DataQualityStats, ExecutionSummary, MultiAlgorithmSimulationResult,
     NearValueF64, PerformanceMetrics, PortfolioValue, SimulationResult, SimulationSummary,
@@ -260,6 +262,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_simulate_output_structure_compatibility() {
         // This test verifies that the JSON structure output by simulate
         // matches exactly what report expects to read

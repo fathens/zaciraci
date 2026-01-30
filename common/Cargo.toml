@@ -20,3 +20,6 @@ ndarray = { version = "0.15", features = ["serde"] }
 num-traits = { workspace = true }
 near-account-id = { workspace = true }
 predictor = { workspace = true }
+
+[dev-dependencies]
+serial_test = "3.1"
