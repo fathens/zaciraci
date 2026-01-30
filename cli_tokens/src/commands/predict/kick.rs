@@ -255,39 +255,23 @@ pub async fn run(args: KickArgs) -> Result<()> {
 
     // Convert ChronosPredictionResponse to Vec<PredictionPoint>
     let forecast: Vec<PredictionPoint> = chronos_response
-        .forecast_timestamp
+        .forecast
         .iter()
-        .zip(chronos_response.forecast_values.iter())
-        .enumerate()
-        .map(|(i, (timestamp, value))| {
-            let confidence_interval =
-                chronos_response
-                    .confidence_intervals
-                    .as_ref()
-                    .and_then(|intervals| {
-                        let lower_key = intervals
-                            .keys()
-                            .find(|k| k.contains("lower") || k.contains("0.025"));
-                        let upper_key = intervals
-                            .keys()
-                            .find(|k| k.contains("upper") || k.contains("0.975"));
-
-                        if let (Some(lower_key), Some(upper_key)) = (lower_key, upper_key) {
-                            let lower_values = intervals.get(lower_key)?;
-                            let upper_values = intervals.get(upper_key)?;
-
-                            if i < lower_values.len() && i < upper_values.len() {
-                                Some(common::prediction::ConfidenceInterval {
-                                    lower: TokenPrice::from_near_per_token(lower_values[i].clone()),
-                                    upper: TokenPrice::from_near_per_token(upper_values[i].clone()),
-                                })
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    });
+        .map(|(timestamp, value)| {
+            let confidence_interval = chronos_response
+                .lower_bound
+                .as_ref()
+                .and_then(|lb| lb.get(timestamp))
+                .zip(
+                    chronos_response
+                        .upper_bound
+                        .as_ref()
+                        .and_then(|ub| ub.get(timestamp)),
+                )
+                .map(|(lower, upper)| common::prediction::ConfidenceInterval {
+                    lower: TokenPrice::from_near_per_token(lower.clone()),
+                    upper: TokenPrice::from_near_per_token(upper.clone()),
+                });
 
             PredictionPoint {
                 timestamp: *timestamp,

@@ -1,7 +1,7 @@
 use crate::prediction::ChronosPredictionResponse;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, TimeDelta, Utc};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 /// Chronos 予測ライブラリのラッパー
 pub struct ChronosPredictor;
@@ -53,34 +53,35 @@ impl ChronosPredictor {
         &self,
         result: predictor::ForecastResult,
     ) -> anyhow::Result<ChronosPredictionResponse> {
-        // BTreeMap から Vec に変換
-        let (forecast_timestamps, forecast_values): (Vec<_>, Vec<_>) = result
+        // NaiveDateTime → DateTime<Utc> に変換
+        let forecast = result
             .forecast_values
             .into_iter()
             .map(|(ts, val)| (DateTime::from_naive_utc_and_offset(ts, Utc), val))
-            .unzip();
+            .collect();
 
-        // confidence_intervals を構築
-        let confidence_intervals = match (result.lower_bound, result.upper_bound) {
-            (Some(lower), Some(upper)) => {
-                let lower_vals: Vec<_> = lower.values().cloned().collect();
-                let upper_vals: Vec<_> = upper.values().cloned().collect();
-                let mut map = HashMap::new();
-                map.insert("lower_10".to_string(), lower_vals);
-                map.insert("upper_90".to_string(), upper_vals);
-                Some(map)
-            }
-            _ => None,
-        };
+        let lower_bound = result.lower_bound.map(|bound| {
+            bound
+                .into_iter()
+                .map(|(ts, val)| (DateTime::from_naive_utc_and_offset(ts, Utc), val))
+                .collect()
+        });
+
+        let upper_bound = result.upper_bound.map(|bound| {
+            bound
+                .into_iter()
+                .map(|(ts, val)| (DateTime::from_naive_utc_and_offset(ts, Utc), val))
+                .collect()
+        });
 
         Ok(ChronosPredictionResponse {
-            forecast_timestamp: forecast_timestamps,
-            forecast_values,
+            forecast,
+            lower_bound,
+            upper_bound,
             model_name: result.model_name,
-            confidence_intervals,
-            strategy_name: Some(result.strategy_name),
-            processing_time_secs: Some(result.processing_time_secs),
-            model_count: Some(result.model_count),
+            strategy_name: result.strategy_name,
+            processing_time_secs: result.processing_time_secs,
+            model_count: result.model_count,
         })
     }
 }

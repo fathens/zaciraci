@@ -76,9 +76,8 @@ async fn save_to_cache(
     //       CLI は Backend API から price (NEAR/token) を取得して Chronos に送信するため、
     //       Chronos の予測値も price 形式になっている
     let cache_predictions: Vec<CachePredictionPoint> = forecast_data
-        .forecast_timestamp
+        .forecast
         .iter()
-        .zip(forecast_data.forecast_values.iter())
         .map(|(timestamp, price_value)| {
             // price_value は price 形式（NEAR/token）
             CachePredictionPoint {
@@ -210,7 +209,7 @@ pub async fn generate_api_predictions(
                     .await
                 {
                     Ok(chronos_result) => {
-                        if let Some(predicted_value) = chronos_result.forecast_values.last() {
+                        if let Some(predicted_value) = chronos_result.forecast.values().last() {
                             // Save to cache
                             let cache_params = PredictionCacheParams {
                                 model_name,

@@ -1,22 +1,26 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::types::TokenPrice;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChronosPredictionResponse {
-    pub forecast_timestamp: Vec<DateTime<Utc>>,
-    pub forecast_values: Vec<BigDecimal>,
+    /// 予測値（タイムスタンプ → 価格）
+    pub forecast: BTreeMap<DateTime<Utc>, BigDecimal>,
+    /// 下限信頼区間（10パーセンタイル）
+    pub lower_bound: Option<BTreeMap<DateTime<Utc>, BigDecimal>>,
+    /// 上限信頼区間（90パーセンタイル）
+    pub upper_bound: Option<BTreeMap<DateTime<Utc>, BigDecimal>>,
+    /// 使用されたモデル名
     pub model_name: String,
-    pub confidence_intervals: Option<HashMap<String, Vec<BigDecimal>>>,
     /// 選択された予測戦略名
-    pub strategy_name: Option<String>,
+    pub strategy_name: String,
     /// 予測処理にかかった時間（秒）
-    pub processing_time_secs: Option<f64>,
+    pub processing_time_secs: f64,
     /// 使用されたモデル数
-    pub model_count: Option<usize>,
+    pub model_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

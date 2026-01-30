@@ -169,9 +169,9 @@ impl PredictionService {
 
         debug!(log, "Prediction completed";
             "model" => &chronos_response.model_name,
-            "strategy" => chronos_response.strategy_name.as_deref().unwrap_or("unknown"),
-            "processing_time_secs" => chronos_response.processing_time_secs.unwrap_or(0.0),
-            "model_count" => chronos_response.model_count.unwrap_or(0)
+            "strategy" => &chronos_response.strategy_name,
+            "processing_time_secs" => chronos_response.processing_time_secs,
+            "model_count" => chronos_response.model_count
         );
 
         // 予測結果を変換（最後のデータタイムスタンプを渡す）
@@ -281,42 +281,29 @@ impl PredictionService {
         horizon: usize,
         last_data_timestamp: DateTime<Utc>,
     ) -> Result<Vec<PredictedPrice>> {
-        // 信頼区間を取得（あれば）
-        let lower_bounds = chronos_response
-            .confidence_intervals
-            .as_ref()
-            .and_then(|ci| ci.get("lower_10"));
-        let upper_bounds = chronos_response
-            .confidence_intervals
-            .as_ref()
-            .and_then(|ci| ci.get("upper_90"));
-
         let predicted_prices: Vec<PredictedPrice> = chronos_response
-            .forecast_values
+            .forecast
             .iter()
             .take(horizon)
-            .enumerate()
-            .map(|(i, price_value)| {
-                let forecast_ts = chronos_response
-                    .forecast_timestamp
-                    .get(i)
-                    .copied()
-                    .unwrap_or_else(Utc::now);
-
+            .map(|(forecast_ts, price_value)| {
                 // 予測までの時間経過を計算
                 let time_ahead = forecast_ts.signed_duration_since(last_data_timestamp);
 
                 // 信頼区間から confidence を計算（時間経過を考慮）
-                let confidence = Self::calculate_confidence_from_interval(
-                    price_value,
-                    lower_bounds.and_then(|lb| lb.get(i)),
-                    upper_bounds.and_then(|ub| ub.get(i)),
-                    time_ahead,
-                );
+                let lower = chronos_response
+                    .lower_bound
+                    .as_ref()
+                    .and_then(|lb| lb.get(forecast_ts));
+                let upper = chronos_response
+                    .upper_bound
+                    .as_ref()
+                    .and_then(|ub| ub.get(forecast_ts));
+                let confidence =
+                    Self::calculate_confidence_from_interval(price_value, lower, upper, time_ahead);
 
                 PredictedPrice {
-                    timestamp: forecast_ts,
-                    // forecast_values は price 形式（NEAR/token）
+                    timestamp: *forecast_ts,
+                    // forecast は price 形式（NEAR/token）
                     price: TokenPrice::from_near_per_token(price_value.clone()),
                     confidence,
                 }

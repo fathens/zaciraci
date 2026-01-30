@@ -243,24 +243,28 @@ mod tests {
     /// モックされたChronos APIレスポンスの処理をテスト
     #[tokio::test]
     async fn test_chronos_api_response_processing() {
+        let now = Utc::now();
         // Chronos APIのレスポンスをシミュレート
         let chronos_response = ChronosPredictionResponse {
-            forecast_timestamp: vec![
-                Utc::now() + Duration::hours(1),
-                Utc::now() + Duration::hours(2),
-            ],
-            forecast_values: vec![BigDecimal::from(105), BigDecimal::from(110)],
+            forecast: [
+                (now + Duration::hours(1), BigDecimal::from(105)),
+                (now + Duration::hours(2), BigDecimal::from(110)),
+            ]
+            .into_iter()
+            .collect(),
+            lower_bound: None,
+            upper_bound: None,
             model_name: "chronos_default".to_string(),
-            confidence_intervals: Some(HashMap::new()),
-            strategy_name: Some("ensemble".to_string()),
-            processing_time_secs: Some(2.0),
-            model_count: Some(5),
+            strategy_name: "ensemble".to_string(),
+            processing_time_secs: 2.0,
+            model_count: 5,
         };
 
         // 最初の予測値を取得
         let predicted_price_24h = chronos_response
-            .forecast_values
-            .first()
+            .forecast
+            .values()
+            .next()
             .cloned()
             .unwrap_or(BigDecimal::from(100));
 

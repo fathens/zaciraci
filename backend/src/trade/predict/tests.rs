@@ -235,23 +235,20 @@ async fn test_convert_prediction_result() {
     let now = Utc::now();
     let last_data_timestamp = now; // 最後のデータタイムスタンプ
     let chronos_response = ChronosPredictionResponse {
-        forecast_timestamp: vec![
-            now + Duration::hours(1),
-            now + Duration::hours(2),
-            now + Duration::hours(3),
-            now + Duration::hours(4),
-        ],
-        forecast_values: vec![
-            "1.2".parse().unwrap(),
-            "1.3".parse().unwrap(),
-            "1.4".parse().unwrap(),
-            "1.5".parse().unwrap(),
-        ],
+        forecast: [
+            (now + Duration::hours(1), "1.2".parse().unwrap()),
+            (now + Duration::hours(2), "1.3".parse().unwrap()),
+            (now + Duration::hours(3), "1.4".parse().unwrap()),
+            (now + Duration::hours(4), "1.5".parse().unwrap()),
+        ]
+        .into_iter()
+        .collect(),
+        lower_bound: None,
+        upper_bound: None,
         model_name: "chronos-t5-large".to_string(),
-        confidence_intervals: None,
-        strategy_name: Some("ensemble".to_string()),
-        processing_time_secs: Some(1.5),
-        model_count: Some(3),
+        strategy_name: "ensemble".to_string(),
+        processing_time_secs: 1.5,
+        model_count: 3,
     };
 
     let predictions = service.convert_prediction_result(&chronos_response, 3, last_data_timestamp);
