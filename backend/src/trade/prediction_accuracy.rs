@@ -12,20 +12,19 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::types::TokenPrice;
 
-/// MAPE の閾値: これ以下なら予測が非常に正確（confidence = 1.0）
-const MAPE_EXCELLENT_THRESHOLD: f64 = 5.0;
+/// MAPE の閾値デフォルト値: これ以下なら予測が非常に正確（confidence = 1.0）
+const DEFAULT_MAPE_EXCELLENT: f64 = 5.0;
 
-/// MAPE の閾値: これ以上なら予測が不正確（confidence = 0.0）
-const MAPE_POOR_THRESHOLD: f64 = 20.0;
+/// MAPE の閾値デフォルト値: これ以上なら予測が不正確（confidence = 0.0）
+const DEFAULT_MAPE_POOR: f64 = 20.0;
 
-/// MAPE を prediction_confidence [0.0, 1.0] に変換する。
+/// MAPE を prediction_confidence [0.0, 1.0] に変換する（内部用）。
 ///
-/// - MAPE ≤ EXCELLENT (5%) → 1.0（予測が正確 → Sharpe を信頼）
-/// - MAPE ≥ POOR (20%) → 0.0（予測が不正確 → RP に退避）
+/// - MAPE ≤ excellent → 1.0（予測が正確 → Sharpe を信頼）
+/// - MAPE ≥ poor → 0.0（予測が不正確 → RP に退避）
 /// - 中間値は線形補間
-pub fn mape_to_confidence(mape: f64) -> f64 {
-    ((MAPE_POOR_THRESHOLD - mape) / (MAPE_POOR_THRESHOLD - MAPE_EXCELLENT_THRESHOLD))
-        .clamp(0.0, 1.0)
+fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
+    ((poor - mape) / (poor - excellent)).clamp(0.0, 1.0)
 }
 
 /// 予測結果を prediction_records テーブルに記録する。
@@ -67,10 +66,10 @@ pub async fn record_predictions(
 /// 呼び出し元: execute_portfolio_strategy() 内で tokio::spawn
 /// タイミング: Chronos API 予測取得と並行実行
 ///
-/// 戻り値: Option<f64>
-///   - Some(mape): 評価済み >= MIN_SAMPLES なら直近 N 件の平均 MAPE
+/// 戻り値: Option<(f64, f64)>
+///   - Some((rolling_mape, confidence)): 評価済み >= MIN_SAMPLES なら直近 N 件の平均 MAPE と confidence
 ///   - None: データ不足
-pub async fn evaluate_pending_predictions() -> Result<Option<f64>> {
+pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
     let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
 
     let tolerance_minutes: i64 = config::get("PREDICTION_EVAL_TOLERANCE_MINUTES")
@@ -196,11 +195,28 @@ pub async fn evaluate_pending_predictions() -> Result<Option<f64>> {
     }
 
     let rolling_mape: f64 = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
+
+    // 環境変数からしきい値を取得
+    let mape_excellent: f64 = config::get("PREDICTION_MAPE_EXCELLENT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAPE_EXCELLENT);
+
+    let mape_poor: f64 = config::get("PREDICTION_MAPE_POOR")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAPE_POOR);
+
+    // rolling MAPE から confidence に変換
+    let confidence = mape_to_confidence(rolling_mape, mape_excellent, mape_poor);
+
     info!(log, "rolling MAPE calculated";
         "rolling_mape" => format!("{:.2}%", rolling_mape),
+        "confidence" => format!("{:.3}", confidence),
+        "thresholds" => format!("excellent={}, poor={}", mape_excellent, mape_poor),
         "sample_count" => mape_values.len());
 
-    Ok(Some(rolling_mape))
+    Ok(Some((rolling_mape, confidence)))
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。
@@ -227,39 +243,44 @@ async fn get_actual_price_at(
 mod tests {
     use super::*;
 
+    // デフォルト値を使用したテスト用ヘルパー
+    fn confidence_with_defaults(mape: f64) -> f64 {
+        mape_to_confidence(mape, DEFAULT_MAPE_EXCELLENT, DEFAULT_MAPE_POOR)
+    }
+
     // --- mape_to_confidence ---
 
     #[test]
     fn test_mape_to_confidence_excellent() {
         // MAPE ≤ EXCELLENT(5%) → confidence = 1.0
-        assert_eq!(mape_to_confidence(0.0), 1.0);
-        assert_eq!(mape_to_confidence(3.0), 1.0);
-        assert_eq!(mape_to_confidence(5.0), 1.0);
+        assert_eq!(confidence_with_defaults(0.0), 1.0);
+        assert_eq!(confidence_with_defaults(3.0), 1.0);
+        assert_eq!(confidence_with_defaults(5.0), 1.0);
     }
 
     #[test]
     fn test_mape_to_confidence_poor() {
         // MAPE ≥ POOR(20%) → confidence = 0.0
-        assert_eq!(mape_to_confidence(20.0), 0.0);
-        assert_eq!(mape_to_confidence(50.0), 0.0);
-        assert_eq!(mape_to_confidence(100.0), 0.0);
+        assert_eq!(confidence_with_defaults(20.0), 0.0);
+        assert_eq!(confidence_with_defaults(50.0), 0.0);
+        assert_eq!(confidence_with_defaults(100.0), 0.0);
     }
 
     #[test]
     fn test_mape_to_confidence_midpoint() {
         // MAPE = 12.5% → (20-12.5)/(20-5) = 0.5
-        let c = mape_to_confidence(12.5);
+        let c = confidence_with_defaults(12.5);
         assert!((c - 0.5).abs() < 1e-10, "expected 0.5, got {c}");
     }
 
     #[test]
     fn test_mape_to_confidence_linear_interpolation() {
         // 10% → (20-10)/(20-5) = 10/15 ≈ 0.667
-        let c10 = mape_to_confidence(10.0);
+        let c10 = confidence_with_defaults(10.0);
         assert!((c10 - 2.0 / 3.0).abs() < 1e-10);
 
         // 15% → (20-15)/(20-5) = 5/15 ≈ 0.333
-        let c15 = mape_to_confidence(15.0);
+        let c15 = confidence_with_defaults(15.0);
         assert!((c15 - 1.0 / 3.0).abs() < 1e-10);
 
         // 単調減少
@@ -268,12 +289,31 @@ mod tests {
 
     #[test]
     fn test_mape_to_confidence_monotonically_decreasing() {
-        let mut prev = mape_to_confidence(0.0);
+        let mut prev = confidence_with_defaults(0.0);
         for i in 1..=30 {
             let mape = i as f64;
-            let curr = mape_to_confidence(mape);
+            let curr = confidence_with_defaults(mape);
             assert!(curr <= prev, "not monotonic at MAPE={mape}");
             prev = curr;
         }
+    }
+
+    #[test]
+    fn test_mape_to_confidence_custom_thresholds() {
+        // カスタムしきい値: excellent=3.0, poor=15.0
+        let excellent = 3.0;
+        let poor = 15.0;
+
+        // MAPE ≤ excellent → 1.0
+        assert_eq!(mape_to_confidence(0.0, excellent, poor), 1.0);
+        assert_eq!(mape_to_confidence(3.0, excellent, poor), 1.0);
+
+        // MAPE ≥ poor → 0.0
+        assert_eq!(mape_to_confidence(15.0, excellent, poor), 0.0);
+        assert_eq!(mape_to_confidence(20.0, excellent, poor), 0.0);
+
+        // 中間値: MAPE = 9.0 → (15-9)/(15-3) = 6/12 = 0.5
+        let c = mape_to_confidence(9.0, excellent, poor);
+        assert!((c - 0.5).abs() < 1e-10, "expected 0.5, got {c}");
     }
 }

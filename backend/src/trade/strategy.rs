@@ -638,10 +638,9 @@ where
         });
     }
 
-    // 評価タスクの結果を取得し prediction_confidence に変換
+    // 評価タスクの結果を取得（mape と confidence のタプル）
     let prediction_confidence: Option<f64> = match eval_handle.await {
-        Ok(Ok(Some(mape))) => {
-            let confidence = super::prediction_accuracy::mape_to_confidence(mape);
+        Ok(Ok(Some((mape, confidence)))) => {
             info!(log, "prediction accuracy";
                 "rolling_mape" => format!("{:.2}%", mape),
                 "prediction_confidence" => format!("{:.3}", confidence)
