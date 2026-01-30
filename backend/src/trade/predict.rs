@@ -166,6 +166,13 @@ impl PredictionService {
             .await
             .context("Failed to execute prediction")?;
 
+        debug!(log, "Prediction completed";
+            "model" => &chronos_response.model_name,
+            "strategy" => chronos_response.strategy_name.as_deref().unwrap_or("unknown"),
+            "processing_time_secs" => chronos_response.processing_time_secs.unwrap_or(0.0),
+            "model_count" => chronos_response.model_count.unwrap_or(0)
+        );
+
         // 予測結果を変換
         let predictions = self.convert_prediction_result(&chronos_response, prediction_horizon)?;
 
@@ -266,6 +273,16 @@ impl PredictionService {
         chronos_response: &zaciraci_common::prediction::ChronosPredictionResponse,
         horizon: usize,
     ) -> Result<Vec<PredictedPrice>> {
+        // 信頼区間を取得（あれば）
+        let lower_bounds = chronos_response
+            .confidence_intervals
+            .as_ref()
+            .and_then(|ci| ci.get("lower_10"));
+        let upper_bounds = chronos_response
+            .confidence_intervals
+            .as_ref()
+            .and_then(|ci| ci.get("upper_90"));
+
         let predicted_prices: Vec<PredictedPrice> = chronos_response
             .forecast_values
             .iter()
@@ -277,16 +294,62 @@ impl PredictionService {
                     .get(i)
                     .copied()
                     .unwrap_or_else(Utc::now);
+
+                // 信頼区間から confidence を計算
+                let confidence = Self::calculate_confidence_from_interval(
+                    price_value,
+                    lower_bounds.and_then(|lb| lb.get(i)),
+                    upper_bounds.and_then(|ub| ub.get(i)),
+                );
+
                 PredictedPrice {
                     timestamp,
                     // forecast_values は price 形式（NEAR/token）
                     price: TokenPrice::from_near_per_token(price_value.clone()),
-                    confidence: None,
+                    confidence,
                 }
             })
             .collect();
 
         Ok(predicted_prices)
+    }
+
+    /// 信頼区間から confidence を計算
+    ///
+    /// 予測値に対する信頼区間の相対的な幅から信頼度を算出:
+    /// - 幅が狭い（5%以下）→ confidence ≈ 1.0
+    /// - 幅が広い（40%以上）→ confidence ≈ 0.0
+    fn calculate_confidence_from_interval(
+        forecast: &BigDecimal,
+        lower: Option<&BigDecimal>,
+        upper: Option<&BigDecimal>,
+    ) -> Option<BigDecimal> {
+        use bigdecimal::ToPrimitive;
+
+        let (lower, upper) = match (lower, upper) {
+            (Some(l), Some(u)) => (l, u),
+            _ => return None,
+        };
+
+        let forecast_f64 = forecast.to_f64()?;
+        if forecast_f64 <= 0.0 {
+            return None;
+        }
+
+        let lower_f64 = lower.to_f64()?;
+        let upper_f64 = upper.to_f64()?;
+        let interval_width = upper_f64 - lower_f64;
+
+        // 予測値に対する相対的な幅を計算
+        let relative_width = interval_width / forecast_f64;
+
+        // 5%〜40%の範囲で線形補間（5%以下→1.0, 40%以上→0.0）
+        const MIN_WIDTH: f64 = 0.05;
+        const MAX_WIDTH: f64 = 0.40;
+        let confidence =
+            1.0 - ((relative_width - MIN_WIDTH) / (MAX_WIDTH - MIN_WIDTH)).clamp(0.0, 1.0);
+
+        Some(BigDecimal::try_from(confidence).unwrap_or_else(|_| BigDecimal::from(0)))
     }
 
     /// 価格履歴を取得（リトライ付き）

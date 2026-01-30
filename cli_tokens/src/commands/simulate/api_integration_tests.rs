@@ -260,6 +260,9 @@ mod tests {
                 );
                 m
             }),
+            strategy_name: Some("ensemble".to_string()),
+            processing_time_secs: Some(2.0),
+            model_count: Some(5),
         };
 
         // 最初の予測値を取得

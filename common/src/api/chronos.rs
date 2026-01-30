@@ -79,6 +79,9 @@ impl ChronosPredictor {
             model_name: result.model_name,
             confidence_intervals,
             metrics: None,
+            strategy_name: Some(result.strategy_name),
+            processing_time_secs: Some(result.processing_time_secs),
+            model_count: Some(result.model_count),
         })
     }
 }

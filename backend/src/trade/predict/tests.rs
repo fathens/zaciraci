@@ -249,6 +249,9 @@ async fn test_convert_prediction_result() {
         model_name: "chronos-t5-large".to_string(),
         confidence_intervals: None,
         metrics: None,
+        strategy_name: Some("ensemble".to_string()),
+        processing_time_secs: Some(1.5),
+        model_count: Some(3),
     };
 
     let predictions = service.convert_prediction_result(&chronos_response, 3);
