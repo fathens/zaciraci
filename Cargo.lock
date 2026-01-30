@@ -24,6 +24,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "analyzer"
+version = "0.1.3"
+source = "git+https://github.com/fathens/zcrc-chronos-rs#d9308bf019e5c6b089031c84108f3ae055813bac"
+dependencies = [
+ "chrono",
+ "common",
+ "num-complex",
+ "rustfft",
+ "statrs",
+ "tracing",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -562,101 +575,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chronos-analyzer"
-version = "0.1.1"
-source = "git+https://github.com/fathens/zcrc-chronos-rs#d092cf1fd7ff62309a0519fdb878f15aa05adc6f"
-dependencies = [
- "chrono",
- "chronos-core",
- "num-complex",
- "rustfft",
- "statrs",
- "tracing",
-]
-
-[[package]]
-name = "chronos-core"
-version = "0.1.1"
-source = "git+https://github.com/fathens/zcrc-chronos-rs#d092cf1fd7ff62309a0519fdb878f15aa05adc6f"
-dependencies = [
- "bigdecimal",
- "chrono",
- "num-traits",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 2.0.17",
- "tracing",
-]
-
-[[package]]
-name = "chronos-models"
-version = "0.1.1"
-source = "git+https://github.com/fathens/zcrc-chronos-rs#d092cf1fd7ff62309a0519fdb878f15aa05adc6f"
-dependencies = [
- "augurs",
- "chrono",
- "chronos-core",
- "thiserror 2.0.17",
- "tracing",
-]
-
-[[package]]
-name = "chronos-normalize"
-version = "0.1.1"
-source = "git+https://github.com/fathens/zcrc-chronos-rs#d092cf1fd7ff62309a0519fdb878f15aa05adc6f"
-dependencies = [
- "bigdecimal",
- "chrono",
- "chronos-core",
- "tracing",
-]
-
-[[package]]
-name = "chronos-predictor"
-version = "0.1.1"
-source = "git+https://github.com/fathens/zcrc-chronos-rs#d092cf1fd7ff62309a0519fdb878f15aa05adc6f"
-dependencies = [
- "bigdecimal",
- "chrono",
- "chronos-analyzer",
- "chronos-core",
- "chronos-models",
- "chronos-normalize",
- "chronos-selector",
- "chronos-trainer",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tracing",
-]
-
-[[package]]
-name = "chronos-selector"
-version = "0.1.1"
-source = "git+https://github.com/fathens/zcrc-chronos-rs#d092cf1fd7ff62309a0519fdb878f15aa05adc6f"
-dependencies = [
- "chrono",
- "chronos-analyzer",
- "chronos-core",
- "tracing",
-]
-
-[[package]]
-name = "chronos-trainer"
-version = "0.1.1"
-source = "git+https://github.com/fathens/zcrc-chronos-rs#d092cf1fd7ff62309a0519fdb878f15aa05adc6f"
-dependencies = [
- "chrono",
- "chronos-core",
- "chronos-models",
- "chronos-selector",
- "rayon",
- "thiserror 2.0.17",
- "tracing",
-]
-
-[[package]]
 name = "clap"
 version = "4.5.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -741,6 +659,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "common"
+version = "0.1.3"
+source = "git+https://github.com/fathens/zcrc-chronos-rs#d9308bf019e5c6b089031c84108f3ae055813bac"
+dependencies = [
+ "bigdecimal",
+ "chrono",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]
@@ -1077,9 +1010,9 @@ dependencies = [
 
 [[package]]
 name = "diesel"
-version = "2.3.3"
+version = "2.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e7624a3bb9fffd82fff016be9a7f163d20e5a89eb8d28f9daaa6b30fff37500"
+checksum = "d9b6c2fc184a6fb6ebcf5f9a5e3bbfa84d8fd268cdfcce4ed508979a6259494d"
 dependencies = [
  "bigdecimal",
  "bitflags 2.10.0",
@@ -2310,6 +2243,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "models"
+version = "0.1.3"
+source = "git+https://github.com/fathens/zcrc-chronos-rs#d9308bf019e5c6b089031c84108f3ae055813bac"
+dependencies = [
+ "augurs",
+ "chrono",
+ "common",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
 name = "nalgebra"
 version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2668,6 +2613,17 @@ checksum = "133a293baa70b78db8c4325753ca8012f84e67de6c84c013960722a937985615"
 dependencies = [
  "borsh",
  "serde",
+]
+
+[[package]]
+name = "normalize"
+version = "0.1.3"
+source = "git+https://github.com/fathens/zcrc-chronos-rs#d9308bf019e5c6b089031c84108f3ae055813bac"
+dependencies = [
+ "bigdecimal",
+ "chrono",
+ "common",
+ "tracing",
 ]
 
 [[package]]
@@ -3070,6 +3026,25 @@ checksum = "72dd2d6d381dfb73a193c7fca536518d7caee39fc8503f74e7dc0be0531b425c"
 dependencies = [
  "predicates-core",
  "termtree",
+]
+
+[[package]]
+name = "predictor"
+version = "0.1.3"
+source = "git+https://github.com/fathens/zcrc-chronos-rs#d9308bf019e5c6b089031c84108f3ae055813bac"
+dependencies = [
+ "analyzer",
+ "bigdecimal",
+ "chrono",
+ "common",
+ "models",
+ "normalize",
+ "selector",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tracing",
+ "trainer",
 ]
 
 [[package]]
@@ -3604,6 +3579,17 @@ checksum = "cc1f0cbffaac4852523ce30d8bd3c5cdc873501d96ff467ca09b6767bb8cd5c0"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "selector"
+version = "0.1.3"
+source = "git+https://github.com/fathens/zcrc-chronos-rs#d9308bf019e5c6b089031c84108f3ae055813bac"
+dependencies = [
+ "analyzer",
+ "chrono",
+ "common",
+ "tracing",
 ]
 
 [[package]]
@@ -4533,6 +4519,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "trainer"
+version = "0.1.3"
+source = "git+https://github.com/fathens/zcrc-chronos-rs#d9308bf019e5c6b089031c84108f3ae055813bac"
+dependencies = [
+ "chrono",
+ "common",
+ "models",
+ "rayon",
+ "selector",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
 name = "transpose"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5228,11 +5228,11 @@ dependencies = [
  "base64 0.22.1",
  "bigdecimal",
  "chrono",
- "chronos-predictor",
  "ndarray",
  "near-account-id",
  "num-traits",
  "once_cell",
+ "predictor",
  "reqwest",
  "serde",
  "serde_json",

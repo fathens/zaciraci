@@ -17,7 +17,7 @@ use crate::utils::{
     cache::{PredictionCacheParams, get_price_history_dir, save_prediction_result},
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
 };
-use common::api::chronos::{ChronosPredictor, calculate_horizon};
+use common::api::chronos::ChronosPredictor;
 use common::cache::CacheOutput;
 use common::prediction::{PredictionPoint, TokenPredictionResult};
 use common::types::TokenPrice;
@@ -236,14 +236,11 @@ pub async fn run(args: KickArgs) -> Result<()> {
         (input_duration.num_milliseconds() as f64 * (args.forecast_ratio / 100.0)) as i64;
     let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
 
-    // Calculate horizon from timestamps interval
-    let horizon = calculate_horizon(&timestamps, forecast_until);
-
     pb.set_message(format!(
-        "Input period: {:.1} days, forecast ratio: {:.1}%, horizon: {} steps",
+        "Input period: {:.1} days, forecast ratio: {:.1}%, forecast until: {}",
         input_duration.num_hours() as f64 / 24.0,
         args.forecast_ratio,
-        horizon,
+        forecast_until.format("%Y-%m-%d %H:%M"),
     ));
 
     // Convert TokenPrice values to BigDecimal for the predictor
@@ -253,7 +250,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
     // Execute prediction directly
     pb.set_message("Executing prediction...");
     let chronos_response = predictor
-        .predict_price(timestamps.clone(), values_bd, horizon)
+        .predict_price(timestamps.clone(), values_bd, forecast_until)
         .await?;
 
     // Convert ChronosPredictionResponse to Vec<PredictionPoint>

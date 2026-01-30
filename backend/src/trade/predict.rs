@@ -12,7 +12,7 @@ use zaciraci_common::algorithm::prediction::{
     PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
     TokenPredictionResult, TopTokenInfo,
 };
-use zaciraci_common::api::chronos::{ChronosPredictor, calculate_horizon};
+use zaciraci_common::api::chronos::ChronosPredictor;
 use zaciraci_common::types::{
     TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount, TokenPrice,
 };
@@ -155,17 +155,14 @@ impl PredictionService {
         let last_timestamp = timestamps.last().expect("checked non-empty above");
         let forecast_until = *last_timestamp + Duration::hours(prediction_horizon as i64);
 
-        // horizon を計算
-        let horizon = calculate_horizon(&timestamps, forecast_until);
-
         info!(log, "Starting prediction";
-            "horizon" => horizon
+            "forecast_until" => %forecast_until
         );
 
         // ライブラリを直接呼び出し
         let chronos_response = self
             .predictor
-            .predict_price(timestamps, values, horizon)
+            .predict_price(timestamps, values, forecast_until)
             .await
             .context("Failed to execute prediction")?;
 

@@ -130,7 +130,7 @@ pub async fn generate_api_predictions(
     model: Option<String>,
     verbose: bool,
 ) -> Result<Vec<PredictionData>> {
-    use common::api::chronos::{ChronosPredictor, calculate_horizon};
+    use common::api::chronos::ChronosPredictor;
 
     let mut predictions = Vec::new();
 
@@ -206,11 +206,10 @@ pub async fn generate_api_predictions(
                 // Convert to BigDecimal for predictor
                 let values_bd: Vec<_> = values.iter().map(|p| p.as_bigdecimal().clone()).collect();
                 let forecast_until = current_time + prediction_horizon;
-                let horizon = calculate_horizon(&timestamps, forecast_until);
 
                 // Execute prediction directly via library
                 match predictor
-                    .predict_price(timestamps, values_bd, horizon)
+                    .predict_price(timestamps, values_bd, forecast_until)
                     .await
                 {
                     Ok(chronos_result) => {
