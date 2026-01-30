@@ -336,10 +336,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
         },
         prediction_results: PredictionResults {
             predictions: cache_predictions,
-            model_metrics: chronos_response
-                .metrics
-                .as_ref()
-                .map(|metrics| serde_json::to_value(metrics).unwrap_or(serde_json::Value::Null)),
+            model_metrics: None,
         },
     };
 

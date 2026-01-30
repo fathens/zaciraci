@@ -252,14 +252,6 @@ mod tests {
             forecast_values: vec![BigDecimal::from(105), BigDecimal::from(110)],
             model_name: "chronos_default".to_string(),
             confidence_intervals: Some(HashMap::new()),
-            metrics: Some({
-                let mut m = HashMap::new();
-                m.insert(
-                    "confidence".to_string(),
-                    "0.85".parse::<BigDecimal>().unwrap(),
-                );
-                m
-            }),
             strategy_name: Some("ensemble".to_string()),
             processing_time_secs: Some(2.0),
             model_count: Some(5),
@@ -273,16 +265,6 @@ mod tests {
             .unwrap_or(BigDecimal::from(100));
 
         assert_eq!(predicted_price_24h, BigDecimal::from(105));
-
-        // 信頼度を取得
-        let confidence = chronos_response
-            .metrics
-            .as_ref()
-            .and_then(|m| m.get("confidence"))
-            .cloned()
-            .unwrap_or("0.7".parse().unwrap());
-
-        assert_eq!(confidence, "0.85".parse::<BigDecimal>().unwrap());
     }
 
     /// run_momentum_timestep_simulation関数がAPI予測を使用することを確認

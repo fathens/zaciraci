@@ -11,7 +11,6 @@ pub struct ChronosPredictionResponse {
     pub forecast_values: Vec<BigDecimal>,
     pub model_name: String,
     pub confidence_intervals: Option<HashMap<String, Vec<BigDecimal>>>,
-    pub metrics: Option<HashMap<String, BigDecimal>>,
     /// 選択された予測戦略名
     pub strategy_name: Option<String>,
     /// 予測処理にかかった時間（秒）

@@ -102,10 +102,7 @@ async fn save_to_cache(
         },
         prediction_results: PredictionResults {
             predictions: cache_predictions,
-            model_metrics: forecast_data
-                .metrics
-                .as_ref()
-                .map(|metrics| serde_json::to_value(metrics).unwrap_or(serde_json::Value::Null)),
+            model_metrics: None,
         },
     };
 
@@ -240,11 +237,7 @@ pub async fn generate_api_predictions(
                                         predicted_value.clone(),
                                     ),
                                     timestamp: current_time,
-                                    confidence: chronos_result
-                                        .metrics
-                                        .as_ref()
-                                        .and_then(|m| m.get("confidence"))
-                                        .cloned(),
+                                    confidence: None,
                                 });
                             }
                             if verbose {
