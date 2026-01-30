@@ -9,6 +9,7 @@ mod unit_conversion_debug {
     use mockito::{Mock, ServerGuard};
     use serial_test::serial;
     use std::collections::HashMap;
+    use tempfile::TempDir;
 
     /// テスト用のモックサーバーセットアップ（トークン名をパラメータで指定可能）
     async fn setup_mock_server_for_token(token_name: &str) -> (ServerGuard, Mock, Mock, Mock) {
@@ -207,9 +208,13 @@ mod unit_conversion_debug {
             setup_mock_server_for_token("nearai.aidols.near").await;
         let server_url = _server.url();
 
+        // テスト用の一時ディレクトリを作成
+        let temp_dir = TempDir::new().unwrap();
+
         // 環境変数を設定してモックサーバーを使用
         unsafe {
             std::env::set_var("BACKEND_URL", &server_url);
+            std::env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
         }
 
         // 小さいが有効な価格での初期ポートフォリオ作成をテスト（1.67e-19 NEAR）
@@ -294,9 +299,13 @@ mod unit_conversion_debug {
             setup_mock_server_for_token("good_token").await;
         let server_url = _server.url();
 
+        // テスト用の一時ディレクトリを作成
+        let temp_dir = TempDir::new().unwrap();
+
         // 環境変数を設定してモックサーバーを使用
         unsafe {
             std::env::set_var("BACKEND_URL", &server_url);
+            std::env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
         }
 
         // 合理的な価格範囲でのポートフォリオ作成をテスト
@@ -381,9 +390,13 @@ mod unit_conversion_debug {
             setup_mock_server().await;
         let server_url = _server.url();
 
+        // テスト用の一時ディレクトリを作成
+        let temp_dir = TempDir::new().unwrap();
+
         // 環境変数を設定してモックサーバーを使用
         unsafe {
             std::env::set_var("BACKEND_URL", &server_url);
+            std::env::set_var("CLI_TOKENS_BASE_DIR", temp_dir.path());
         }
 
         // 制限を超える極端に小さい価格でのテスト
