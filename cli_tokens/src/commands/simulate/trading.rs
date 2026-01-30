@@ -199,15 +199,16 @@ pub async fn generate_api_predictions(
                     ));
                 }
 
-                // Convert to BigDecimal for predictor
-                let values_bd: Vec<_> = values.iter().map(|p| p.as_bigdecimal().clone()).collect();
+                // Convert to BTreeMap for predictor
+                let data: std::collections::BTreeMap<_, _> = timestamps
+                    .iter()
+                    .zip(values.iter())
+                    .map(|(ts, v)| (*ts, v.as_bigdecimal().clone()))
+                    .collect();
                 let forecast_until = current_time + prediction_horizon;
 
                 // Execute prediction directly via library
-                match predictor
-                    .predict_price(timestamps, values_bd, forecast_until)
-                    .await
-                {
+                match predictor.predict_price(data, forecast_until).await {
                     Ok(chronos_result) => {
                         if let Some(predicted_value) = chronos_result.forecast.values().last() {
                             // Save to cache

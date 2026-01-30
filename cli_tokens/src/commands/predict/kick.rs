@@ -243,15 +243,17 @@ pub async fn run(args: KickArgs) -> Result<()> {
         forecast_until.format("%Y-%m-%d %H:%M"),
     ));
 
-    // Convert TokenPrice values to BigDecimal for the predictor
-    let values_bd: Vec<bigdecimal::BigDecimal> =
-        values.iter().map(|v| v.as_bigdecimal().clone()).collect();
+    // Convert to BTreeMap for the predictor
+    let data: std::collections::BTreeMap<chrono::DateTime<chrono::Utc>, bigdecimal::BigDecimal> =
+        timestamps
+            .iter()
+            .zip(values.iter())
+            .map(|(ts, v)| (*ts, v.as_bigdecimal().clone()))
+            .collect();
 
     // Execute prediction directly
     pb.set_message("Executing prediction...");
-    let chronos_response = predictor
-        .predict_price(timestamps.clone(), values_bd, forecast_until)
-        .await?;
+    let chronos_response = predictor.predict_price(data, forecast_until).await?;
 
     // Convert ChronosPredictionResponse to Vec<PredictionPoint>
     let forecast: Vec<PredictionPoint> = chronos_response

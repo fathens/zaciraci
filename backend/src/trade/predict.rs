@@ -140,20 +140,19 @@ impl PredictionService {
     ) -> Result<TokenPrediction> {
         let log = DEFAULT.new(o!("function" => "predict_price"));
 
-        // 履歴データを予測用フォーマットに変換
-        let values: Vec<BigDecimal> = history
+        // 履歴データを予測用フォーマットに変換（1回の collect で BTreeMap 構築）
+        let data: std::collections::BTreeMap<DateTime<Utc>, BigDecimal> = history
             .prices
             .iter()
-            .map(|p| p.price.as_bigdecimal().clone())
+            .map(|p| (p.timestamp, p.price.as_bigdecimal().clone()))
             .collect();
-        let timestamps: Vec<DateTime<Utc>> = history.prices.iter().map(|p| p.timestamp).collect();
 
-        if values.is_empty() {
+        if data.is_empty() {
             return Err(anyhow::anyhow!("No price history available for prediction"));
         }
 
         // 最後のデータタイムスタンプを保持（時間経過の基準点）
-        let last_data_timestamp = *timestamps.last().expect("checked non-empty above");
+        let last_data_timestamp = *data.keys().last().expect("checked non-empty above");
         let forecast_until = last_data_timestamp + Duration::hours(prediction_horizon as i64);
 
         info!(log, "Starting prediction";
@@ -163,7 +162,7 @@ impl PredictionService {
         // ライブラリを直接呼び出し
         let chronos_response = self
             .predictor
-            .predict_price(timestamps, values, forecast_until)
+            .predict_price(data, forecast_until)
             .await
             .context("Failed to execute prediction")?;
 
