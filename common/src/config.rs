@@ -101,6 +101,8 @@ pub struct TradeConfig {
     pub price_history_days: u32,
     #[serde(default = "default_volatility_days")]
     pub volatility_days: u32,
+    #[serde(default = "default_unwrap_on_stop")]
+    pub unwrap_on_stop: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,6 +211,9 @@ fn default_price_history_days() -> u32 {
 fn default_volatility_days() -> u32 {
     7
 }
+fn default_unwrap_on_stop() -> bool {
+    false
+}
 fn default_record_rates_initial_value() -> u32 {
     100
 }
@@ -279,6 +284,7 @@ impl Default for TradeConfig {
             prediction_retry_delay_seconds: default_prediction_retry_delay_seconds(),
             price_history_days: default_price_history_days(),
             volatility_days: default_volatility_days(),
+            unwrap_on_stop: default_unwrap_on_stop(),
         }
     }
 }
@@ -372,6 +378,7 @@ pub fn get(name: &str) -> Result<String> {
         }
         "TRADE_PRICE_HISTORY_DAYS" => Some(CONFIG.trade.price_history_days.to_string()),
         "TRADE_VOLATILITY_DAYS" => Some(CONFIG.trade.volatility_days.to_string()),
+        "TRADE_UNWRAP_ON_STOP" => Some(CONFIG.trade.unwrap_on_stop.to_string()),
         "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
         "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
         "TOKEN_RATES_RETENTION_DAYS" => Some(CONFIG.cron.token_rates_retention_days.to_string()),
@@ -510,6 +517,9 @@ fn merge_config(base: &mut Config, local: Config) {
     }
     if local.trade.volatility_days != default_volatility_days() {
         base.trade.volatility_days = local.trade.volatility_days;
+    }
+    if local.trade.unwrap_on_stop != default_unwrap_on_stop() {
+        base.trade.unwrap_on_stop = local.trade.unwrap_on_stop;
     }
 
     // Cron
