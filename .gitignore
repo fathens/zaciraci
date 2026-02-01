@@ -2,3 +2,5 @@
 !.github/
 !.gitignore
 target/
+cobertura.xml
+config/config.local.toml

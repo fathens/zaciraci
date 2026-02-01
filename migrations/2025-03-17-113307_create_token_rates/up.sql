@@ -1,0 +1,8 @@
+-- Your SQL goes here
+CREATE TABLE token_rates (
+  id SERIAL PRIMARY KEY,
+  base_token VARCHAR NOT NULL,
+  quote_token VARCHAR NOT NULL,
+  rate NUMERIC NOT NULL,
+  timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

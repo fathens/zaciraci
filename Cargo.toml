@@ -1,16 +1,21 @@
-[package]
-name = "zaciraci"
-version = "1.0.0"
+[workspace]
+members = [
+    "backend",
+    "common",
+    "cli_tokens",
+]
+resolver = "3"
+
+[workspace.package]
+version = "1.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.44", features = ["full"] }
-axum = "0.8"
 once_cell = "1.21"
 async-once-cell = "0.5"
-cron = "0.15"
 chrono = "0.4"
 bigdecimal = { version = "0.4", features = ["serde"] }
 num-bigint = "0.4"
@@ -22,26 +27,30 @@ slog-async = "2.8"
 slog-term = "2.9"
 slog-json = "2.6"
 slog-envlogger = "2.2"
-near-gas = "0.3"
-near-sdk = "5.9"
-near-jsonrpc-client = "0.16"
-near-jsonrpc-primitives = "0.29"
-near-primitives = "0.29"
-near-crypto = "0.29"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-petgraph = "0.7"
-slipped10 = "0.4"
-bip39 = { version = "2.1", features = ["rand"] }
+toml = "0.8"
 bs58 = "0.5"
-ed25519-dalek = { version = "2", default-features = false }
+futures = "0.3"
 futures-util = "0.3"
 rayon = "1.10"
 rand = "0.9"
 humantime = "2.2"
+reqwest = { version = "0.12", features = ["json"] }
+base64 = "0.22"
+near-account-id = { version = "1.1", features = ["serde"] }
+predictor = { git = "https://github.com/fathens/zcrc-chronos-rs" }
 
-[dev-dependencies]
-assertables = "9.5"
-proptest = "1.6"
-serial_test = "3.2"
-tokio = { version = "1.0", features = ["full"] }
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
+
+# 開発依存関係はワークスペースレベルでは未対応のため削除

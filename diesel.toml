@@ -1,0 +1,2 @@
+[print_schema]
+file = "backend/src/persistence/schema.rs"

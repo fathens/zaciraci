@@ -1,19 +1,48 @@
-FROM rust:1.85.0-bookworm AS builder
-ARG CARGO_BUILD_ARGS
+FROM rust:1.91.0-bookworm AS base
 
-RUN apt update && apt install -y clang
+RUN cargo install sccache
+RUN cargo install cargo-chef
 
+ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
+
+FROM base AS planner
 WORKDIR /app
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build ${CARGO_BUILD_ARGS}
+COPY common common
+COPY backend backend
+COPY cli_tokens cli_tokens
 
-COPY src src
-RUN touch src/main.rs
-RUN cargo build ${CARGO_BUILD_ARGS}
-RUN if [ "x$RUST_BACKTRACE" == "x0"]; then strip target/*/zaciraci -o main; else cp target/*/zaciraci main; fi
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo chef prepare --recipe-path recipe.json
+
+FROM base AS builder
+ARG CARGO_BUILD_ARGS
+ARG GIT_COMMIT_HASH=unknown
+
+ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
+
+WORKDIR /app
+
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json
+
+COPY Cargo.toml .
+COPY Cargo.lock .
+COPY common common
+COPY backend backend
+COPY cli_tokens cli_tokens
+
+RUN cargo clean
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo build ${CARGO_BUILD_ARGS} -p zaciraci-backend
+
+RUN cp target/*/zaciraci-backend main
 
 FROM debian:bookworm-slim
 WORKDIR /app

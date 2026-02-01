@@ -1,0 +1,14 @@
+pub(crate) mod connection_pool;
+pub mod evaluation_period;
+pub mod pool_info;
+pub mod prediction_record;
+pub mod schema;
+pub mod token_rate;
+pub mod trade_transaction;
+
+use chrono::NaiveDateTime;
+
+pub struct TimeRange {
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
+}

@@ -4,8 +4,28 @@ on: [push]
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres_test
+          POSTGRES_PASSWORD: postgres_test
+          POSTGRES_DB: postgres_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
+
+      # システム依存ライブラリのインストール
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -19,9 +39,44 @@ jobs:
 
       - uses: r7kamura/rust-problem-matchers@v1
 
+      - name: Install diesel CLI
+        run: cargo install diesel_cli --no-default-features --features postgres
+
+      - name: Run database migrations
+        run: diesel migration run
+        env:
+          DATABASE_URL: postgres://postgres_test:postgres_test@localhost:5433/postgres_test
+
       - name: Check format
         continue-on-error: true
-        run: cargo fmt --all -- --check
+        run: |
+          output=$(cargo fmt --all -- --check 2>&1) || true
+          
+          echo "$output"
+          
+          if echo "$output" | grep -q "Diff in "; then
+            current_file=""
+            diff_content=""
+          
+            echo "$output" | while IFS= read -r line; do
+              if [[ $line == "Diff in "* ]]; then
+                if [[ -n "$current_file" && -n "$diff_content" ]]; then
+                  diff_escaped=$(echo "$diff_content" | sed ':a;N;$!ba;s/\n/%0A/g')
+                  echo "::warning file=$current_file::$diff_escaped"
+                fi
+          
+                current_file=$(echo "$line" | sed -E 's/Diff in (.*?):.*/\1/')
+                diff_content=" "
+              elif [[ -n "$current_file" ]]; then
+                diff_content="$diff_content"$'\n'"$line"
+              fi
+            done
+          
+            if [[ -n "$current_file" && -n "$diff_content" ]]; then
+              diff_escaped=$(echo "$diff_content" | sed ':a;N;$!ba;s/\n/%0A/g')
+              echo "::warning file=$current_file::$diff_escaped"
+            fi
+          fi
 
       - name: Check clippy
         continue-on-error: true
