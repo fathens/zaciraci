@@ -12,20 +12,97 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use zaciraci_common::types::TokenPrice;
 
-/// MAPE の閾値: これ以下なら予測が非常に正確（confidence = 1.0）
-const MAPE_EXCELLENT_THRESHOLD: f64 = 5.0;
+/// MAPE の閾値デフォルト値: これ以下なら予測が非常に正確（confidence = 1.0）
+const DEFAULT_MAPE_EXCELLENT: f64 = 3.0;
 
-/// MAPE の閾値: これ以上なら予測が不正確（confidence = 0.0）
-const MAPE_POOR_THRESHOLD: f64 = 20.0;
+/// MAPE の閾値デフォルト値: これ以上なら予測が不正確（confidence = 0.0）
+const DEFAULT_MAPE_POOR: f64 = 15.0;
 
-/// MAPE を prediction_confidence [0.0, 1.0] に変換する。
+/// 評価済みレコードの保持日数デフォルト値
+const DEFAULT_RECORD_RETENTION_DAYS: i64 = 30;
+
+/// 未評価レコードの保持日数デフォルト値
+const DEFAULT_UNEVALUATED_RETENTION_DAYS: i64 = 20;
+
+/// 古い prediction_records を削除する。
 ///
-/// - MAPE ≤ EXCELLENT (5%) → 1.0（予測が正確 → Sharpe を信頼）
-/// - MAPE ≥ POOR (20%) → 0.0（予測が不正確 → RP に退避）
+/// 呼び出し元: evaluate_pending_predictions() の最後
+/// タイミング: 評価完了後
+///
+/// 削除対象:
+/// - 評価済みレコード: evaluated_at から PREDICTION_RECORD_RETENTION_DAYS 日以上経過
+/// - 未評価レコード: target_time から PREDICTION_UNEVALUATED_RETENTION_DAYS 日以上経過
+pub async fn cleanup_old_records() -> Result<(usize, usize)> {
+    let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
+
+    let retention_days: i64 = config::get("PREDICTION_RECORD_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_RECORD_RETENTION_DAYS);
+
+    let unevaluated_retention_days: i64 = config::get("PREDICTION_UNEVALUATED_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_UNEVALUATED_RETENTION_DAYS);
+
+    let (evaluated_deleted, unevaluated_deleted) =
+        PredictionRecord::delete_old_records(retention_days, unevaluated_retention_days).await?;
+
+    if evaluated_deleted > 0 || unevaluated_deleted > 0 {
+        info!(log, "cleaned up old prediction records";
+            "evaluated_deleted" => evaluated_deleted,
+            "unevaluated_deleted" => unevaluated_deleted,
+            "retention_days" => retention_days,
+            "unevaluated_retention_days" => unevaluated_retention_days
+        );
+    }
+
+    Ok((evaluated_deleted, unevaluated_deleted))
+}
+
+/// MAPE を prediction_confidence [0.0, 1.0] に変換する（内部用）。
+///
+/// - MAPE ≤ excellent → 1.0（予測が正確 → Sharpe を信頼）
+/// - MAPE ≥ poor → 0.0（予測が不正確 → RP に退避）
 /// - 中間値は線形補間
-pub fn mape_to_confidence(mape: f64) -> f64 {
-    ((MAPE_POOR_THRESHOLD - mape) / (MAPE_POOR_THRESHOLD - MAPE_EXCELLENT_THRESHOLD))
-        .clamp(0.0, 1.0)
+fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
+    ((poor - mape) / (poor - excellent)).clamp(0.0, 1.0)
+}
+
+/// 方向正解を判定: 予測と実際の変化方向が一致すれば true
+fn is_direction_correct(
+    prev_actual: &BigDecimal,
+    predicted: &BigDecimal,
+    actual: &BigDecimal,
+) -> bool {
+    let predicted_change = predicted - prev_actual;
+    let actual_change = actual - prev_actual;
+
+    // 両方の変化が同じ符号（または両方ゼロ）
+    (predicted_change >= BigDecimal::zero()) == (actual_change >= BigDecimal::zero())
+}
+
+/// 複合スコア: MAPE と方向正解率を組み合わせ
+fn calculate_composite_confidence(
+    rolling_mape: f64,
+    hit_rate: Option<f64>, // None = 方向データ不足
+    mape_excellent: f64,
+    mape_poor: f64,
+) -> f64 {
+    let mape_confidence = mape_to_confidence(rolling_mape, mape_excellent, mape_poor);
+
+    match hit_rate {
+        Some(hr) => {
+            // 方向正解率: 50% = ランダム → 0.0, 100% → 1.0
+            let direction_confidence = ((hr - 0.5) * 2.0).clamp(0.0, 1.0);
+            // 重み付け合成（MAPE 60%, 方向 40%）
+            0.6 * mape_confidence + 0.4 * direction_confidence
+        }
+        None => {
+            // 方向データ不足時は MAPE のみ使用
+            mape_confidence
+        }
+    }
 }
 
 /// 予測結果を prediction_records テーブルに記録する。
@@ -67,10 +144,10 @@ pub async fn record_predictions(
 /// 呼び出し元: execute_portfolio_strategy() 内で tokio::spawn
 /// タイミング: Chronos API 予測取得と並行実行
 ///
-/// 戻り値: Option<f64>
-///   - Some(mape): 評価済み >= MIN_SAMPLES なら直近 N 件の平均 MAPE
+/// 戻り値: Option<(f64, f64)>
+///   - Some((rolling_mape, confidence)): 評価済み >= MIN_SAMPLES なら直近 N 件の平均 MAPE と confidence
 ///   - None: データ不足
-pub async fn evaluate_pending_predictions() -> Result<Option<f64>> {
+pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
     let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
 
     let tolerance_minutes: i64 = config::get("PREDICTION_EVAL_TOLERANCE_MINUTES")
@@ -81,12 +158,12 @@ pub async fn evaluate_pending_predictions() -> Result<Option<f64>> {
     let window: i64 = config::get("PREDICTION_ACCURACY_WINDOW")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
+        .unwrap_or(20);
 
     let min_samples: usize = config::get("PREDICTION_ACCURACY_MIN_SAMPLES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(3);
+        .unwrap_or(5);
 
     // 未評価 & target_time 経過済みのレコードを取得
     let pending = PredictionRecord::get_pending_evaluations().await?;
@@ -180,15 +257,21 @@ pub async fn evaluate_pending_predictions() -> Result<Option<f64>> {
         info!(log, "evaluation complete"; "evaluated" => evaluated_count);
     }
 
-    // 直近 N 件の評価済みレコードから rolling MAPE を算出
+    // 古いレコードを削除（エラーは警告のみで続行）
+    if let Err(e) = cleanup_old_records().await {
+        warn!(log, "failed to cleanup old records"; "error" => %e);
+    }
+
+    // 直近 N 件の評価済みレコードから rolling MAPE と方向正解率を算出
     let recent = PredictionRecord::get_recent_evaluated(window).await?;
 
     if recent.len() < min_samples {
-        debug!(log, "insufficient samples for rolling MAPE";
+        debug!(log, "insufficient samples for rolling metrics";
             "available" => recent.len(), "required" => min_samples);
         return Ok(None);
     }
 
+    // MAPE の収集
     let mape_values: Vec<f64> = recent.iter().filter_map(|r| r.mape).collect();
 
     if mape_values.len() < min_samples {
@@ -196,11 +279,71 @@ pub async fn evaluate_pending_predictions() -> Result<Option<f64>> {
     }
 
     let rolling_mape: f64 = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
-    info!(log, "rolling MAPE calculated";
-        "rolling_mape" => format!("{:.2}%", rolling_mape),
-        "sample_count" => mape_values.len());
 
-    Ok(Some(rolling_mape))
+    // 方向正解率の計算（各レコードについて前レコードを参照）
+    let mut direction_correct_count = 0usize;
+    let mut direction_total_count = 0usize;
+
+    for record in &recent {
+        // actual_price と predicted_price が必要
+        let Some(actual) = &record.actual_price else {
+            continue;
+        };
+
+        // 前のレコードを取得
+        let prev = match PredictionRecord::get_previous_evaluated(&record.token, record.target_time)
+            .await
+        {
+            Ok(Some(p)) => p,
+            Ok(None) => continue, // 前レコードなし（初回など）
+            Err(e) => {
+                debug!(log, "failed to get previous record"; "error" => %e);
+                continue;
+            }
+        };
+
+        let Some(prev_actual) = prev.actual_price else {
+            continue;
+        };
+
+        // 方向判定
+        if is_direction_correct(&prev_actual, &record.predicted_price, actual) {
+            direction_correct_count += 1;
+        }
+        direction_total_count += 1;
+    }
+
+    // hit_rate 計算（十分なサンプルがあれば）
+    let hit_rate = if direction_total_count >= min_samples {
+        Some(direction_correct_count as f64 / direction_total_count as f64)
+    } else {
+        None
+    };
+
+    // 環境変数からしきい値を取得
+    let mape_excellent: f64 = config::get("PREDICTION_MAPE_EXCELLENT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAPE_EXCELLENT);
+
+    let mape_poor: f64 = config::get("PREDICTION_MAPE_POOR")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAPE_POOR);
+
+    // 複合 confidence 計算
+    let confidence =
+        calculate_composite_confidence(rolling_mape, hit_rate, mape_excellent, mape_poor);
+
+    info!(log, "prediction accuracy calculated";
+        "rolling_mape" => format!("{:.2}%", rolling_mape),
+        "hit_rate" => hit_rate.map(|h| format!("{:.1}%", h * 100.0)),
+        "direction_samples" => direction_total_count,
+        "confidence" => format!("{:.3}", confidence),
+        "thresholds" => format!("excellent={}, poor={}", mape_excellent, mape_poor),
+    );
+
+    Ok(Some((rolling_mape, confidence)))
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。
@@ -227,53 +370,159 @@ async fn get_actual_price_at(
 mod tests {
     use super::*;
 
+    // デフォルト値を使用したテスト用ヘルパー
+    fn confidence_with_defaults(mape: f64) -> f64 {
+        mape_to_confidence(mape, DEFAULT_MAPE_EXCELLENT, DEFAULT_MAPE_POOR)
+    }
+
     // --- mape_to_confidence ---
 
     #[test]
     fn test_mape_to_confidence_excellent() {
-        // MAPE ≤ EXCELLENT(5%) → confidence = 1.0
-        assert_eq!(mape_to_confidence(0.0), 1.0);
-        assert_eq!(mape_to_confidence(3.0), 1.0);
-        assert_eq!(mape_to_confidence(5.0), 1.0);
+        // MAPE ≤ EXCELLENT(3%) → confidence = 1.0
+        assert_eq!(confidence_with_defaults(0.0), 1.0);
+        assert_eq!(confidence_with_defaults(2.0), 1.0);
+        assert_eq!(confidence_with_defaults(3.0), 1.0);
     }
 
     #[test]
     fn test_mape_to_confidence_poor() {
-        // MAPE ≥ POOR(20%) → confidence = 0.0
-        assert_eq!(mape_to_confidence(20.0), 0.0);
-        assert_eq!(mape_to_confidence(50.0), 0.0);
-        assert_eq!(mape_to_confidence(100.0), 0.0);
+        // MAPE ≥ POOR(15%) → confidence = 0.0
+        assert_eq!(confidence_with_defaults(15.0), 0.0);
+        assert_eq!(confidence_with_defaults(20.0), 0.0);
+        assert_eq!(confidence_with_defaults(100.0), 0.0);
     }
 
     #[test]
     fn test_mape_to_confidence_midpoint() {
-        // MAPE = 12.5% → (20-12.5)/(20-5) = 0.5
-        let c = mape_to_confidence(12.5);
+        // MAPE = 9.0% → (15-9)/(15-3) = 6/12 = 0.5
+        let c = confidence_with_defaults(9.0);
         assert!((c - 0.5).abs() < 1e-10, "expected 0.5, got {c}");
     }
 
     #[test]
     fn test_mape_to_confidence_linear_interpolation() {
-        // 10% → (20-10)/(20-5) = 10/15 ≈ 0.667
-        let c10 = mape_to_confidence(10.0);
-        assert!((c10 - 2.0 / 3.0).abs() < 1e-10);
+        // 6% → (15-6)/(15-3) = 9/12 = 0.75
+        let c6 = confidence_with_defaults(6.0);
+        assert!((c6 - 0.75).abs() < 1e-10);
 
-        // 15% → (20-15)/(20-5) = 5/15 ≈ 0.333
-        let c15 = mape_to_confidence(15.0);
-        assert!((c15 - 1.0 / 3.0).abs() < 1e-10);
+        // 12% → (15-12)/(15-3) = 3/12 = 0.25
+        let c12 = confidence_with_defaults(12.0);
+        assert!((c12 - 0.25).abs() < 1e-10);
 
         // 単調減少
-        assert!(c10 > c15);
+        assert!(c6 > c12);
     }
 
     #[test]
     fn test_mape_to_confidence_monotonically_decreasing() {
-        let mut prev = mape_to_confidence(0.0);
+        let mut prev = confidence_with_defaults(0.0);
         for i in 1..=30 {
             let mape = i as f64;
-            let curr = mape_to_confidence(mape);
+            let curr = confidence_with_defaults(mape);
             assert!(curr <= prev, "not monotonic at MAPE={mape}");
             prev = curr;
         }
+    }
+
+    #[test]
+    fn test_mape_to_confidence_custom_thresholds() {
+        // カスタムしきい値: excellent=5.0, poor=20.0
+        let excellent = 5.0;
+        let poor = 20.0;
+
+        // MAPE ≤ excellent → 1.0
+        assert_eq!(mape_to_confidence(0.0, excellent, poor), 1.0);
+        assert_eq!(mape_to_confidence(5.0, excellent, poor), 1.0);
+
+        // MAPE ≥ poor → 0.0
+        assert_eq!(mape_to_confidence(20.0, excellent, poor), 0.0);
+        assert_eq!(mape_to_confidence(30.0, excellent, poor), 0.0);
+
+        // 中間値: MAPE = 12.5 → (20-12.5)/(20-5) = 7.5/15 = 0.5
+        let c = mape_to_confidence(12.5, excellent, poor);
+        assert!((c - 0.5).abs() < 1e-10, "expected 0.5, got {c}");
+    }
+
+    // --- is_direction_correct ---
+
+    #[test]
+    fn test_is_direction_correct() {
+        let prev = BigDecimal::from(100);
+
+        // 両方上昇 → true
+        assert!(is_direction_correct(
+            &prev,
+            &BigDecimal::from(110),
+            &BigDecimal::from(105)
+        ));
+
+        // 予測上昇、実際下落 → false
+        assert!(!is_direction_correct(
+            &prev,
+            &BigDecimal::from(110),
+            &BigDecimal::from(95)
+        ));
+
+        // 両方下落 → true
+        assert!(is_direction_correct(
+            &prev,
+            &BigDecimal::from(90),
+            &BigDecimal::from(95)
+        ));
+
+        // 変化なし → true
+        assert!(is_direction_correct(
+            &prev,
+            &BigDecimal::from(100),
+            &BigDecimal::from(100)
+        ));
+
+        // 予測下落、実際上昇 → false
+        assert!(!is_direction_correct(
+            &prev,
+            &BigDecimal::from(90),
+            &BigDecimal::from(105)
+        ));
+    }
+
+    // --- calculate_composite_confidence ---
+
+    #[test]
+    fn test_calculate_composite_confidence() {
+        // MAPE のみ（方向データなし）- デフォルトしきい値 (3.0, 15.0) で計算
+        let c1 = calculate_composite_confidence(9.0, None, 3.0, 15.0);
+        // MAPE = 9.0 → (15-9)/(15-3) = 0.5
+        assert!((c1 - 0.5).abs() < 0.01);
+
+        // MAPE + 高い hit_rate (80%)
+        let c2 = calculate_composite_confidence(9.0, Some(0.8), 3.0, 15.0);
+        // mape_confidence = 0.5
+        // direction_confidence = (0.8 - 0.5) * 2.0 = 0.6
+        // composite = 0.6 * 0.5 + 0.4 * 0.6 = 0.3 + 0.24 = 0.54
+        assert!((c2 - 0.54).abs() < 0.01);
+        assert!(c2 > c1);
+
+        // MAPE + 低い hit_rate (50% = ランダム)
+        let c3 = calculate_composite_confidence(9.0, Some(0.5), 3.0, 15.0);
+        // mape_confidence = 0.5
+        // direction_confidence = (0.5 - 0.5) * 2.0 = 0.0
+        // composite = 0.6 * 0.5 + 0.4 * 0.0 = 0.3
+        assert!((c3 - 0.3).abs() < 0.01);
+        assert!(c3 < c1);
+
+        // 完璧なケース: MAPE 優秀 + 100% 方向正解
+        let c4 = calculate_composite_confidence(2.0, Some(1.0), 3.0, 15.0);
+        // mape_confidence = 1.0 (MAPE ≤ excellent)
+        // direction_confidence = (1.0 - 0.5) * 2.0 = 1.0
+        // composite = 0.6 * 1.0 + 0.4 * 1.0 = 1.0
+        assert!((c4 - 1.0).abs() < 0.01);
+
+        // 最悪ケース: MAPE 不良 + 50% 方向（ランダム）
+        let c5 = calculate_composite_confidence(15.0, Some(0.5), 3.0, 15.0);
+        // mape_confidence = 0.0 (MAPE ≥ poor)
+        // direction_confidence = 0.0
+        // composite = 0.0
+        assert!((c5 - 0.0).abs() < 0.01);
     }
 }

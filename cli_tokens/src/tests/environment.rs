@@ -4,6 +4,7 @@
 //! - コマンド間でのディレクトリ共有
 
 use anyhow::Result;
+use serial_test::serial;
 use std::env;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -13,6 +14,7 @@ use crate::commands::predict::kick::KickArgs;
 use crate::commands::top::TopArgs;
 
 #[test]
+#[serial]
 fn test_base_dir_environment_variable() {
     // Test default behavior (no environment variable)
     unsafe {
@@ -35,6 +37,7 @@ fn test_base_dir_environment_variable() {
 }
 
 #[test]
+#[serial]
 fn test_path_construction_with_base_dir() {
     // Test path construction with different base directories
     let test_cases = vec![
@@ -64,6 +67,7 @@ fn test_path_construction_with_base_dir() {
 }
 
 #[test]
+#[serial]
 fn test_history_file_path_construction() {
     // Test history file path construction logic similar to predict command
     unsafe {
@@ -91,6 +95,7 @@ fn test_history_file_path_construction() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_top_command_with_base_dir() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path().to_str().unwrap();
@@ -127,6 +132,7 @@ async fn test_top_command_with_base_dir() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_history_command_with_base_dir() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path().to_str().unwrap();
@@ -159,6 +165,7 @@ async fn test_history_command_with_base_dir() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_predict_command_with_base_dir() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path().to_str().unwrap();
@@ -171,7 +178,6 @@ async fn test_predict_command_with_base_dir() -> Result<()> {
     let args = KickArgs {
         token_file: PathBuf::from("tokens/wrap.near/sample.token.near.json"),
         output: PathBuf::from("predictions"),
-        model: None,
         start_pct: 0.0,
         end_pct: 100.0,
         forecast_ratio: 10.0,
@@ -202,6 +208,7 @@ async fn test_predict_command_with_base_dir() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_commands_without_base_dir() -> Result<()> {
     // Ensure environment variable is not set
     unsafe {
@@ -220,6 +227,7 @@ async fn test_commands_without_base_dir() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_environment_variable_precedence() {
     // Test that environment variable takes precedence over default
     unsafe {

@@ -5,8 +5,8 @@ use crate::commands::simulate::{AlgorithmType, FeeModel, RebalanceInterval, Simu
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
 use common::algorithm::PredictionData;
-use common::api::chronos::ChronosApiClient;
-use common::prediction::{ChronosPredictionResponse, ZeroShotPredictionRequest};
+use common::api::chronos::ChronosPredictor;
+use common::prediction::ChronosPredictionResponse;
 use common::stats::ValueAtTime;
 use common::types::{TokenOutAccount, TokenPrice};
 use mockito::{Mock, ServerGuard};
@@ -102,14 +102,6 @@ mod tests {
     /// API呼び出しが失敗した場合のフォールバック処理を確認
     #[tokio::test]
     async fn test_generate_api_predictions_fallback_on_error() {
-        // 無効なURLを設定してエラーを発生させる
-        unsafe {
-            std::env::set_var("CHRONOS_URL", "http://invalid-url:9999");
-        }
-        unsafe {
-            std::env::set_var("BACKEND_URL", "http://invalid-url:9999");
-        }
-
         let backend_client = BackendClient::new_with_url("http://invalid-url:9999".to_string());
 
         let target_tokens = vec!["test_token".to_string()];
@@ -134,14 +126,6 @@ mod tests {
         assert!(result.is_err());
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("Failed to get historical data for token test_token"));
-
-        // 環境変数をクリーンアップ
-        unsafe {
-            std::env::remove_var("CHRONOS_URL");
-        }
-        unsafe {
-            std::env::remove_var("BACKEND_URL");
-        }
     }
 
     /// 複数トークンの予測生成をテスト
@@ -149,13 +133,6 @@ mod tests {
     async fn test_generate_api_predictions_multiple_tokens() {
         let (server, _, _) = setup_mock_server().await;
         let server_url = server.url();
-
-        unsafe {
-            std::env::set_var("CHRONOS_URL", &server_url);
-        }
-        unsafe {
-            std::env::set_var("BACKEND_URL", &server_url);
-        }
 
         let backend_client = BackendClient::new_with_url(server_url.clone());
 
@@ -185,13 +162,6 @@ mod tests {
         let error_message = result.unwrap_err().to_string();
         // モックサーバーは501エラーを返すので、履歴データ取得に失敗する
         assert!(error_message.contains("Failed to get historical data"));
-
-        unsafe {
-            std::env::remove_var("CHRONOS_URL");
-        }
-        unsafe {
-            std::env::remove_var("BACKEND_URL");
-        }
     }
 
     /// 予測データの構造が正しいことを確認
@@ -273,43 +243,32 @@ mod tests {
     /// モックされたChronos APIレスポンスの処理をテスト
     #[tokio::test]
     async fn test_chronos_api_response_processing() {
+        let now = Utc::now();
         // Chronos APIのレスポンスをシミュレート
         let chronos_response = ChronosPredictionResponse {
-            forecast_timestamp: vec![
-                Utc::now() + Duration::hours(1),
-                Utc::now() + Duration::hours(2),
-            ],
-            forecast_values: vec![BigDecimal::from(105), BigDecimal::from(110)],
+            forecast: [
+                (now + Duration::hours(1), BigDecimal::from(105)),
+                (now + Duration::hours(2), BigDecimal::from(110)),
+            ]
+            .into_iter()
+            .collect(),
+            lower_bound: None,
+            upper_bound: None,
             model_name: "chronos_default".to_string(),
-            confidence_intervals: Some(HashMap::new()),
-            metrics: Some({
-                let mut m = HashMap::new();
-                m.insert(
-                    "confidence".to_string(),
-                    "0.85".parse::<BigDecimal>().unwrap(),
-                );
-                m
-            }),
+            strategy_name: "ensemble".to_string(),
+            processing_time_secs: 2.0,
+            model_count: 5,
         };
 
         // 最初の予測値を取得
         let predicted_price_24h = chronos_response
-            .forecast_values
-            .first()
+            .forecast
+            .values()
+            .next()
             .cloned()
             .unwrap_or(BigDecimal::from(100));
 
         assert_eq!(predicted_price_24h, BigDecimal::from(105));
-
-        // 信頼度を取得
-        let confidence = chronos_response
-            .metrics
-            .as_ref()
-            .and_then(|m| m.get("confidence"))
-            .cloned()
-            .unwrap_or("0.7".parse().unwrap());
-
-        assert_eq!(confidence, "0.85".parse::<BigDecimal>().unwrap());
     }
 
     /// run_momentum_timestep_simulation関数がAPI予測を使用することを確認
@@ -407,14 +366,7 @@ mod regression_tests {
     #[test]
     fn test_required_imports() {
         // これらの型が存在することを確認
-        let _ = ChronosApiClient::new("http://test".to_string());
-        let _ = ZeroShotPredictionRequest {
-            timestamp: vec![],
-            values: vec![],
-            forecast_until: Utc::now(),
-            model_name: None,
-            model_params: None,
-        };
+        let _ = ChronosPredictor::new();
     }
 
     /// run_momentum_timestep_simulationがasyncであることを確認

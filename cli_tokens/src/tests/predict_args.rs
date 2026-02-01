@@ -17,13 +17,12 @@ fn test_kick_args_values() {
     let default_args = KickArgs {
         token_file: PathBuf::from("test.json"),
         output: PathBuf::from("predictions"),
-        model: None,
+
         start_pct: 0.0,
         end_pct: 100.0,
         forecast_ratio: 10.0,
     };
     assert_eq!(default_args.output, PathBuf::from("predictions"));
-    assert_eq!(default_args.model, None);
     assert_eq!(default_args.start_pct, 0.0);
     assert_eq!(default_args.end_pct, 100.0);
     assert_eq!(default_args.forecast_ratio, 10.0);
@@ -32,14 +31,12 @@ fn test_kick_args_values() {
     let custom_args = KickArgs {
         token_file: PathBuf::from("custom/token.json"),
         output: PathBuf::from("custom_output"),
-        model: Some("chronos_bolt".to_string()),
         start_pct: 25.0,
         end_pct: 75.0,
         forecast_ratio: 50.0,
     };
     assert_eq!(custom_args.token_file, PathBuf::from("custom/token.json"));
     assert_eq!(custom_args.output, PathBuf::from("custom_output"));
-    assert_eq!(custom_args.model, Some("chronos_bolt".to_string()));
     assert_eq!(custom_args.start_pct, 25.0);
     assert_eq!(custom_args.end_pct, 75.0);
     assert_eq!(custom_args.forecast_ratio, 50.0);
@@ -62,7 +59,7 @@ fn test_start_pct_end_pct_validation_valid_values() {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: None,
+
             start_pct: start,
             end_pct: end,
             forecast_ratio: 10.0,
@@ -90,7 +87,7 @@ fn test_start_pct_end_pct_validation_invalid_values() {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: None,
+
             start_pct: start,
             end_pct: end,
             forecast_ratio: 10.0,
@@ -113,32 +110,6 @@ fn test_start_pct_end_pct_validation_invalid_values() {
 // === その他のオプションテスト ===
 
 #[test]
-fn test_model_option_values() {
-    // 異なるモデル名のテスト
-    let models = vec![
-        "server_default",
-        "chronos_bolt",
-        "autogluon",
-        "statistical",
-        "custom_model_name",
-    ];
-
-    for model in models {
-        let args = KickArgs {
-            token_file: PathBuf::from("test.json"),
-            output: PathBuf::from("predictions"),
-            model: Some(model.to_string()),
-            start_pct: 0.0,
-            end_pct: 100.0,
-            forecast_ratio: 10.0,
-        };
-
-        assert_eq!(args.model, Some(model.to_string()));
-        assert!(args.model.is_some());
-    }
-}
-
-#[test]
 fn test_output_path_variations() {
     // 異なる出力パスのテスト
     let output_paths = vec![
@@ -153,7 +124,7 @@ fn test_output_path_variations() {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from(output_path),
-            model: None,
+
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
@@ -178,7 +149,7 @@ fn test_token_file_path_variations() {
         let args = KickArgs {
             token_file: PathBuf::from(token_file),
             output: PathBuf::from("predictions"),
-            model: None,
+
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: 10.0,
@@ -205,7 +176,7 @@ fn test_extreme_percentage_values() {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: None,
+
             start_pct: start,
             end_pct: end,
             forecast_ratio: 10.0,
@@ -228,7 +199,7 @@ fn test_forecast_ratio_default_value() {
     let args = KickArgs {
         token_file: PathBuf::from("test.json"),
         output: PathBuf::from("predictions"),
-        model: None,
+
         start_pct: 0.0,
         end_pct: 100.0,
         forecast_ratio: 10.0,
@@ -245,7 +216,7 @@ fn test_forecast_ratio_validation_valid_values() {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: None,
+
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: ratio,
@@ -370,7 +341,7 @@ async fn test_forecast_ratio_validation_errors() {
         let args = KickArgs {
             token_file: PathBuf::from("test.json"),
             output: PathBuf::from("predictions"),
-            model: None,
+
             start_pct: 0.0,
             end_pct: 100.0,
             forecast_ratio: invalid_ratio,

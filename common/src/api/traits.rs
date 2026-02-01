@@ -25,18 +25,6 @@ pub trait ApiClient {
         R: serde::de::DeserializeOwned + Send + std::fmt::Debug + Clone;
 }
 
-/// 予測APIクライアントの共通インターフェース
-#[async_trait]
-pub trait PredictionClient: ApiClient {
-    type PredictionRequest: serde::Serialize + Send + std::fmt::Debug + Clone;
-    type PredictionResponse: serde::de::DeserializeOwned + Send + std::fmt::Debug + Clone;
-
-    async fn predict(
-        &self,
-        request: Self::PredictionRequest,
-    ) -> Result<Self::PredictionResponse, ApiError>;
-}
-
 /// データ取得APIクライアントの共通インターフェース
 #[async_trait]
 pub trait DataClient: ApiClient {

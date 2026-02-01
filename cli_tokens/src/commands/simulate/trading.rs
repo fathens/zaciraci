@@ -76,9 +76,8 @@ async fn save_to_cache(
     //       CLI は Backend API から price (NEAR/token) を取得して Chronos に送信するため、
     //       Chronos の予測値も price 形式になっている
     let cache_predictions: Vec<CachePredictionPoint> = forecast_data
-        .forecast_timestamp
+        .forecast
         .iter()
-        .zip(forecast_data.forecast_values.iter())
         .map(|(timestamp, price_value)| {
             // price_value は price 形式（NEAR/token）
             CachePredictionPoint {
@@ -102,10 +101,7 @@ async fn save_to_cache(
         },
         prediction_results: PredictionResults {
             predictions: cache_predictions,
-            model_metrics: forecast_data
-                .metrics
-                .as_ref()
-                .map(|metrics| serde_json::to_value(metrics).unwrap_or(serde_json::Value::Null)),
+            model_metrics: None,
         },
     };
 
@@ -119,7 +115,7 @@ async fn save_to_cache(
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Generate predictions using Chronos API
+/// Generate predictions using Chronos library
 pub async fn generate_api_predictions(
     backend_client: &crate::api::backend::BackendClient,
     target_tokens: &[String],
@@ -130,21 +126,15 @@ pub async fn generate_api_predictions(
     model: Option<String>,
     verbose: bool,
 ) -> Result<Vec<PredictionData>> {
-    use common::api::chronos::ChronosApiClient;
-    use common::prediction::ZeroShotPredictionRequest;
-    use std::env;
+    use common::api::chronos::ChronosPredictor;
 
     let mut predictions = Vec::new();
 
-    // Check for Chronos URL configuration
-    let chronos_url =
-        env::var("CHRONOS_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+    let predictor = ChronosPredictor::new();
 
     if verbose {
-        println!("🔮 Using Chronos prediction service at {}", chronos_url);
+        println!("Using Chronos prediction library (direct)");
     }
-
-    let chronos_client = ChronosApiClient::new(chronos_url);
 
     for token in target_tokens {
         // Calculate prediction window
@@ -177,9 +167,9 @@ pub async fn generate_api_predictions(
             }
             Err(e) => {
                 if verbose {
-                    println!("⚠️ Failed to check cache for {}: {}", token, e);
+                    println!("Failed to check cache for {}: {}", token, e);
                 }
-                // Continue with API fetch
+                // Continue with prediction
             }
         }
 
@@ -197,7 +187,7 @@ pub async fn generate_api_predictions(
                 if timestamps.len() < 10 {
                     if verbose {
                         println!(
-                            "⚠️ Insufficient historical data for {}: {} points",
+                            "Insufficient historical data for {}: {} points",
                             token,
                             timestamps.len()
                         );
@@ -209,124 +199,69 @@ pub async fn generate_api_predictions(
                     ));
                 }
 
-                // Prepare prediction request with historical data
-                // ZeroShotPredictionRequest は BigDecimal を期待するため変換
-                let values_bd: Vec<_> = values.iter().map(|p| p.as_bigdecimal().clone()).collect();
+                // Convert to BTreeMap for predictor
+                let data: std::collections::BTreeMap<_, _> = timestamps
+                    .iter()
+                    .zip(values.iter())
+                    .map(|(ts, v)| (*ts, v.as_bigdecimal().clone()))
+                    .collect();
                 let forecast_until = current_time + prediction_horizon;
-                let prediction_request = ZeroShotPredictionRequest {
-                    timestamp: timestamps,
-                    values: values_bd,
-                    forecast_until,
-                    model_name: model.clone(),
-                    model_params: None,
-                };
 
-                // Submit prediction and wait for completion
-                match chronos_client.predict_zero_shot(prediction_request).await {
-                    Ok(async_response) => {
-                        if verbose {
-                            println!(
-                                "📝 Submitted prediction for {}: {}",
-                                token, async_response.task_id
-                            );
-                        }
+                // Execute prediction directly via library
+                match predictor.predict_price(data, forecast_until).await {
+                    Ok(chronos_result) => {
+                        if let Some(predicted_value) = chronos_result.forecast.values().last() {
+                            // Save to cache
+                            let cache_params = PredictionCacheParams {
+                                model_name,
+                                quote_token,
+                                base_token: token,
+                                hist_start,
+                                hist_end,
+                                pred_start,
+                                pred_end,
+                            };
 
-                        // Poll for completion
-                        match chronos_client
-                            .poll_prediction_until_complete(&async_response.task_id)
-                            .await
-                        {
-                            Ok(result) => {
-                                // Extract prediction from result
-                                if let Some(chronos_result) = &result.result {
-                                    if let Some(predicted_value) =
-                                        chronos_result.forecast_values.last()
-                                    {
-                                        // Save to cache before creating PredictionData
-                                        let cache_params = PredictionCacheParams {
-                                            model_name,
-                                            quote_token,
-                                            base_token: token,
-                                            hist_start,
-                                            hist_end,
-                                            pred_start,
-                                            pred_end,
-                                        };
-
-                                        if let Err(e) =
-                                            save_to_cache(&cache_params, chronos_result).await
-                                        {
-                                            println!(
-                                                "⚠️ Failed to save prediction to cache: {}",
-                                                e
-                                            );
-                                            // Continue anyway, don't fail the simulation
-                                        }
-
-                                        // Chronos の予測値は price 形式（NEAR/token）
-                                        // current_price は既に TokenPrice（get_historical_price_data から）
-                                        if let Ok(token_out) = token.parse() {
-                                            predictions.push(PredictionData {
-                                                token: token_out,
-                                                current_price: current_price.clone(),
-                                                predicted_price_24h:
-                                                    TokenPrice::from_near_per_token(
-                                                        predicted_value.clone(),
-                                                    ),
-                                                timestamp: current_time,
-                                                confidence: chronos_result
-                                                    .metrics
-                                                    .as_ref()
-                                                    .and_then(|m| m.get("confidence"))
-                                                    .cloned(),
-                                            });
-                                        }
-                                        if verbose {
-                                            println!(
-                                                "✅ Got prediction for {}: {:.4} -> {:.4}",
-                                                token, current_price, predicted_value
-                                            );
-                                        }
-                                    } else {
-                                        if verbose {
-                                            println!(
-                                                "⚠️ No forecast values returned for {}",
-                                                token
-                                            );
-                                        }
-                                        return Err(anyhow::anyhow!(
-                                            "No forecast values returned for token {}",
-                                            token
-                                        ));
-                                    }
-                                } else {
-                                    if verbose {
-                                        println!("⚠️ No prediction result returned for {}", token);
-                                    }
-                                    return Err(anyhow::anyhow!(
-                                        "No prediction result returned for token {}",
-                                        token
-                                    ));
-                                }
+                            if let Err(e) = save_to_cache(&cache_params, &chronos_result).await
+                                && verbose
+                            {
+                                println!("Failed to save prediction to cache: {}", e);
                             }
-                            Err(e) => {
-                                if verbose {
-                                    println!("❌ Prediction failed for {}: {}", token, e);
-                                }
-                                return Err(anyhow::anyhow!(
-                                    "Prediction failed for token {}: {}",
-                                    token,
-                                    e
-                                ));
+
+                            // Chronos の予測値は price 形式（NEAR/token）
+                            if let Ok(token_out) = token.parse() {
+                                predictions.push(PredictionData {
+                                    token: token_out,
+                                    current_price: current_price.clone(),
+                                    predicted_price_24h: TokenPrice::from_near_per_token(
+                                        predicted_value.clone(),
+                                    ),
+                                    timestamp: current_time,
+                                    confidence: None,
+                                });
                             }
+                            if verbose {
+                                println!(
+                                    "Got prediction for {}: {:.4} -> {:.4}",
+                                    token, current_price, predicted_value
+                                );
+                            }
+                        } else {
+                            if verbose {
+                                println!("No forecast values returned for {}", token);
+                            }
+                            return Err(anyhow::anyhow!(
+                                "No forecast values returned for token {}",
+                                token
+                            ));
                         }
                     }
                     Err(e) => {
                         if verbose {
-                            println!("❌ Failed to submit prediction for {}: {}", token, e);
+                            println!("Prediction failed for {}: {}", token, e);
                         }
                         return Err(anyhow::anyhow!(
-                            "Failed to submit prediction for token {}: {}",
+                            "Prediction failed for token {}: {}",
                             token,
                             e
                         ));
@@ -335,7 +270,7 @@ pub async fn generate_api_predictions(
             }
             Err(e) => {
                 if verbose {
-                    println!("⚠️ Failed to get historical data for {}: {}", token, e);
+                    println!("Failed to get historical data for {}: {}", token, e);
                 }
                 return Err(anyhow::anyhow!(
                     "Failed to get historical data for token {}: {}",

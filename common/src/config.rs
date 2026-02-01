@@ -73,8 +73,6 @@ pub struct RpcSettings {
 
 #[derive(Debug, Deserialize)]
 pub struct ExternalServicesConfig {
-    #[serde(default = "default_chronos_url")]
-    pub chronos_url: String,
     #[serde(default = "default_ollama_base_url")]
     pub ollama_base_url: String,
     #[serde(default = "default_ollama_model")]
@@ -175,9 +173,6 @@ fn default_failure_reset_seconds() -> u64 {
 fn default_max_attempts() -> u32 {
     10
 }
-fn default_chronos_url() -> String {
-    "http://localhost:8000".to_string()
-}
 fn default_ollama_base_url() -> String {
     "http://localhost:11434".to_string()
 }
@@ -265,7 +260,6 @@ impl Default for RpcSettings {
 impl Default for ExternalServicesConfig {
     fn default() -> Self {
         Self {
-            chronos_url: default_chronos_url(),
             ollama_base_url: default_ollama_base_url(),
             ollama_model: default_ollama_model(),
         }
@@ -365,7 +359,6 @@ pub fn get(name: &str) -> Result<String> {
             }
         }
         "ROOT_HDPATH" => Some(CONFIG.wallet.root_hdpath.clone()),
-        "CHRONOS_URL" => Some(CONFIG.external_services.chronos_url.clone()),
         "OLLAMA_BASE_URL" => Some(CONFIG.external_services.ollama_base_url.clone()),
         "OLLAMA_MODEL" => Some(CONFIG.external_services.ollama_model.clone()),
         "TRADE_INITIAL_INVESTMENT" => Some(CONFIG.trade.initial_investment.to_string()),
@@ -483,9 +476,6 @@ fn merge_config(base: &mut Config, local: Config) {
     }
 
     // External services
-    if local.external_services.chronos_url != default_chronos_url() {
-        base.external_services.chronos_url = local.external_services.chronos_url;
-    }
     if local.external_services.ollama_base_url != default_ollama_base_url() {
         base.external_services.ollama_base_url = local.external_services.ollama_base_url;
     }
@@ -575,8 +565,10 @@ pub fn config() -> &'static Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_toml_default_values() {
         // 環境変数が設定されていない場合はTOMLのデフォルト値が使われる
         unsafe {
@@ -587,6 +579,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_backward_compatibility_with_env_vars() {
         // 環境変数が設定されている場合は環境変数の値が使われる
         unsafe {
@@ -600,6 +593,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_store_priority() {
         // CONFIG_STOREの値が最優先
         const TEST_KEY: &str = "RUST_LOG_FORMAT";
@@ -620,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_boolean_config() {
         unsafe {
             std::env::remove_var("USE_MAINNET");
@@ -629,6 +624,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_numeric_config() {
         unsafe {
             std::env::remove_var("TRADE_TOP_TOKENS");
@@ -638,6 +634,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_priority_order() {
         // 優先順位の完全検証: CONFIG_STORE > 環境変数 > TOML > デフォルト
         const TEST_KEY: &str = "OLLAMA_BASE_URL";

@@ -120,4 +120,70 @@ impl PredictionRecord {
 
         Ok(results)
     }
+
+    /// 同一トークンの直前の評価済みレコードを取得
+    pub async fn get_previous_evaluated(
+        token: &str,
+        before_target_time: NaiveDateTime,
+    ) -> Result<Option<DbPredictionRecord>> {
+        let conn = connection_pool::get().await?;
+        let token = token.to_string();
+
+        let result = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::token.eq(&token))
+                    .filter(prediction_records::evaluated_at.is_not_null())
+                    .filter(prediction_records::target_time.lt(before_target_time))
+                    .order_by(prediction_records::target_time.desc())
+                    .first::<DbPredictionRecord>(conn)
+                    .optional()
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(result)
+    }
+
+    /// 古いレコードを削除
+    ///
+    /// - 評価済みレコード: evaluated_at から retention_days 日以上経過したもの
+    /// - 未評価レコード: target_time から unevaluated_retention_days 日以上経過したもの
+    ///
+    /// 戻り値: (評価済み削除数, 未評価削除数)
+    pub async fn delete_old_records(
+        retention_days: i64,
+        unevaluated_retention_days: i64,
+    ) -> Result<(usize, usize)> {
+        let conn = connection_pool::get().await?;
+        let now = chrono::Utc::now().naive_utc();
+
+        let evaluated_cutoff = now - chrono::Duration::days(retention_days);
+        let unevaluated_cutoff = now - chrono::Duration::days(unevaluated_retention_days);
+
+        let (evaluated_deleted, unevaluated_deleted) = conn
+            .interact(move |conn| {
+                // 評価済みの古いレコードを削除
+                let evaluated_deleted = diesel::delete(
+                    prediction_records::table
+                        .filter(prediction_records::evaluated_at.is_not_null())
+                        .filter(prediction_records::evaluated_at.lt(evaluated_cutoff)),
+                )
+                .execute(conn)?;
+
+                // 未評価で target_time が古いレコードを削除（評価できなかったもの）
+                let unevaluated_deleted = diesel::delete(
+                    prediction_records::table
+                        .filter(prediction_records::evaluated_at.is_null())
+                        .filter(prediction_records::target_time.lt(unevaluated_cutoff)),
+                )
+                .execute(conn)?;
+
+                Ok::<_, diesel::result::Error>((evaluated_deleted, unevaluated_deleted))
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok((evaluated_deleted, unevaluated_deleted))
+    }
 }

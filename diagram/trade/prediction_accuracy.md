@@ -170,7 +170,28 @@ CREATE INDEX idx_prediction_records_evaluated ON prediction_records(evaluated_at
   mape = 3.45                    ← |1.5 - 1.45| / 1.45 * 100
   absolute_error = 0.050000      ← |1.5 - 1.45|
   evaluated_at = 2026-01-28 00:00:05
+
+状態 3: DELETE（保持期間経過後）
+  評価済みレコード: evaluated_at から 30 日以上経過 → 削除
+  未評価レコード: target_time から 20 日以上経過 → 削除
 ```
+
+## レコードのクリーンアップ
+
+`evaluate_pending_predictions()` の評価完了後に `cleanup_old_records()` が呼び出され、古いレコードを自動削除する。
+
+```
+evaluate_pending_predictions()
+    ├── 未評価レコードを評価
+    ├── cleanup_old_records()  ← 評価後に呼び出し
+    │   ├── 評価済み: evaluated_at < NOW - RETENTION_DAYS → DELETE
+    │   └── 未評価: target_time < NOW - UNEVALUATED_RETENTION_DAYS → DELETE
+    └── rolling MAPE を算出して返却
+```
+
+未評価レコードの保持期間が短い理由:
+- target_time から 20 日経過しても評価できない = 実績データ欠損
+- 評価不能なレコードを早めに削除してテーブルを軽量化
 
 ## 設定パラメータ
 
@@ -179,6 +200,10 @@ CREATE INDEX idx_prediction_records_evaluated ON prediction_records(evaluated_at
 | `PREDICTION_ACCURACY_WINDOW` | 10 | rolling MAPE 算出に使う直近レコード数 |
 | `PREDICTION_ACCURACY_MIN_SAMPLES` | 3 | 評価結果を返す最小レコード数 |
 | `PREDICTION_EVAL_TOLERANCE_MINUTES` | 30 | 実績価格検索の時間窓（±分） |
+| `PREDICTION_MAPE_EXCELLENT` | 5.0 | MAPE ≤ この値 → confidence = 1.0 |
+| `PREDICTION_MAPE_POOR` | 20.0 | MAPE ≥ この値 → confidence = 0.0 |
+| `PREDICTION_RECORD_RETENTION_DAYS` | 30 | 評価済みレコードの保持日数 |
+| `PREDICTION_UNEVALUATED_RETENTION_DAYS` | 20 | 未評価レコードの保持日数 |
 
 ## prediction_confidence による alpha 調整
 
@@ -196,7 +221,8 @@ confidence = ((MAPE_POOR - mape) / (MAPE_POOR - MAPE_EXCELLENT)).clamp(0.0, 1.0)
 | 12.5% | 0.5 | 中程度 |
 | ≥ 20% | 0.0 | 予測が不正確 → RP に退避 |
 
-定数: `MAPE_EXCELLENT_THRESHOLD = 5.0`, `MAPE_POOR_THRESHOLD = 20.0`
+デフォルト値: `DEFAULT_MAPE_EXCELLENT = 5.0`, `DEFAULT_MAPE_POOR = 20.0`
+環境変数 `PREDICTION_MAPE_EXCELLENT`, `PREDICTION_MAPE_POOR` で上書き可能
 
 ### alpha 計算
 

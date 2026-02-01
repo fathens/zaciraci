@@ -1,56 +1,26 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::types::TokenPrice;
 
-// フロントエンドの予測モデルを再利用
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZeroShotPredictionRequest {
-    pub timestamp: Vec<DateTime<Utc>>,
-    pub values: Vec<BigDecimal>,
-    pub forecast_until: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_params: Option<HashMap<String, serde_json::Value>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictionResponse {
-    pub id: String,
-    pub status: String,
-    pub forecast: Option<Vec<PredictionPoint>>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AsyncPredictionResponse {
-    pub task_id: String,
-    pub status: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictionResult {
-    pub task_id: String,
-    pub status: String,
-    pub progress: Option<BigDecimal>,
-    pub message: Option<String>,
-    pub result: Option<ChronosPredictionResponse>,
-    pub error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChronosPredictionResponse {
-    pub forecast_timestamp: Vec<DateTime<Utc>>,
-    pub forecast_values: Vec<BigDecimal>,
+    /// 予測値（タイムスタンプ → 価格）
+    pub forecast: BTreeMap<DateTime<Utc>, BigDecimal>,
+    /// 下限信頼区間（10パーセンタイル）
+    pub lower_bound: Option<BTreeMap<DateTime<Utc>, BigDecimal>>,
+    /// 上限信頼区間（90パーセンタイル）
+    pub upper_bound: Option<BTreeMap<DateTime<Utc>, BigDecimal>>,
+    /// 使用されたモデル名
     pub model_name: String,
-    pub confidence_intervals: Option<HashMap<String, Vec<BigDecimal>>>,
-    pub metrics: Option<HashMap<String, BigDecimal>>,
+    /// 選択された予測戦略名
+    pub strategy_name: String,
+    /// 予測処理にかかった時間（秒）
+    pub processing_time_secs: f64,
+    /// 使用されたモデル数
+    pub model_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

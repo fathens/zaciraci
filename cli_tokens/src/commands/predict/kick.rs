@@ -7,17 +7,19 @@ use tokio::fs;
 
 use crate::models::{
     history::HistoryFileData,
-    task::{PredictionParams, TaskInfo},
+    prediction::{
+        PredictionFileData, PredictionMetadata, PredictionPoint as CachePredictionPoint,
+        PredictionResults,
+    },
     token::TokenFileData,
 };
 use crate::utils::{
-    cache::get_price_history_dir,
-    config::Config,
+    cache::{PredictionCacheParams, get_price_history_dir, save_prediction_result},
     file::{ensure_directory_exists, file_exists, sanitize_filename, write_json_file},
-    scaling::scale_values,
 };
-use common::api::chronos::ChronosApiClient;
-use common::prediction::ZeroShotPredictionRequest;
+use common::api::chronos::ChronosPredictor;
+use common::cache::CacheOutput;
+use common::prediction::{PredictionPoint, TokenPredictionResult};
 use common::types::TokenPrice;
 
 /// Find the latest history file in the given directory
@@ -49,20 +51,13 @@ async fn find_latest_history_file(dir: &Path) -> Result<Option<PathBuf>> {
 }
 
 #[derive(Parser)]
-#[clap(about = "Start an async prediction task and exit")]
+#[clap(about = "Execute prediction and save results")]
 pub struct KickArgs {
     #[clap(help = "Token file path (e.g., tokens/wrap.near.json)")]
     pub token_file: PathBuf,
 
     #[clap(short, long, default_value = "predictions", help = "Output directory")]
     pub output: PathBuf,
-
-    #[clap(
-        short,
-        long,
-        help = "Prediction model (defaults to server's default model if not specified)"
-    )]
-    pub model: Option<String>,
 
     #[clap(
         long,
@@ -116,8 +111,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
         ));
     }
 
-    let config = Config::from_env();
-    let chronos_client = ChronosApiClient::new(config.chronos_url);
+    let predictor = ChronosPredictor::new();
 
     // Read token file
     if !file_exists(&args.token_file).await {
@@ -135,32 +129,8 @@ pub async fn run(args: KickArgs) -> Result<()> {
         .or_else(|| token_data.metadata.quote_token.clone())
         .unwrap_or_else(|| "wrap.near".to_string());
 
-    // Prepare output directory with model name
+    // Prepare output directory
     let base_dir = std::env::var("CLI_TOKENS_BASE_DIR").unwrap_or_else(|_| ".".to_string());
-    let model_name = args
-        .model
-        .as_ref()
-        .unwrap_or(&"chronos_default".to_string())
-        .clone();
-
-    // For now, we'll save task files in a temporary location
-    // The actual prediction results will go to the structured directory
-    let task_dir = PathBuf::from(&base_dir).join(".tasks").join(&args.output);
-    ensure_directory_exists(&task_dir)?;
-
-    let task_file = task_dir.join(format!(
-        "{}_{}.task.json",
-        sanitize_filename(&token_data.token),
-        sanitize_filename(&model_name)
-    ));
-
-    // Check if task file already exists
-    if file_exists(&task_file).await {
-        return Err(anyhow::anyhow!(
-            "Task file already exists: {:?}. Please remove it first or use a different model name",
-            task_file
-        ));
-    }
 
     // Show progress
     let pb = ProgressBar::new_spinner();
@@ -229,7 +199,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
         values = filtered_values;
 
         pb.set_message(format!(
-            "📊 Using {:.1}%-{:.1}% time range ({} of {} data points, from {} to {})",
+            "Using {:.1}%-{:.1}% time range ({} of {} data points, from {} to {})",
             args.start_pct,
             args.end_pct,
             timestamps.len(),
@@ -238,7 +208,7 @@ pub async fn run(args: KickArgs) -> Result<()> {
             end_time.format("%Y-%m-%d %H:%M")
         ));
     } else {
-        pb.set_message(format!("📊 Using all {} data points", total_len));
+        pb.set_message(format!("Using all {} data points", total_len));
     }
 
     // Check if we have enough data after filtering
@@ -266,61 +236,135 @@ pub async fn run(args: KickArgs) -> Result<()> {
         (input_duration.num_milliseconds() as f64 * (args.forecast_ratio / 100.0)) as i64;
     let forecast_until = *latest_timestamp + Duration::milliseconds(forecast_duration_ms);
 
-    // Scale values to 0-1,000,000 range using min-max normalization
-    let scale_result = scale_values(&values);
-    let scaled_values = scale_result.values;
-    let scale_params = scale_result.params;
-
     pb.set_message(format!(
-        "📊 Values scaled to 0-1,000,000 range (original: {} - {})",
-        scale_params.original_min, scale_params.original_max
-    ));
-
-    pb.set_message(format!(
-        "📊 Input period: {:.1} days, forecast ratio: {:.1}%, forecast duration: {:.1} hours",
+        "Input period: {:.1} days, forecast ratio: {:.1}%, forecast until: {}",
         input_duration.num_hours() as f64 / 24.0,
         args.forecast_ratio,
-        Duration::milliseconds(forecast_duration_ms).num_hours() as f64
+        forecast_until.format("%Y-%m-%d %H:%M"),
     ));
 
-    let prediction_request = ZeroShotPredictionRequest {
-        timestamp: timestamps,
-        values: scaled_values,
-        forecast_until,
-        model_name: args.model.clone(),
-        model_params: None,
+    // Convert to BTreeMap for the predictor
+    let data: std::collections::BTreeMap<chrono::DateTime<chrono::Utc>, bigdecimal::BigDecimal> =
+        timestamps
+            .iter()
+            .zip(values.iter())
+            .map(|(ts, v)| (*ts, v.as_bigdecimal().clone()))
+            .collect();
+
+    // Execute prediction directly
+    pb.set_message("Executing prediction...");
+    let chronos_response = predictor.predict_price(data, forecast_until).await?;
+
+    // Convert ChronosPredictionResponse to Vec<PredictionPoint>
+    let forecast: Vec<PredictionPoint> = chronos_response
+        .forecast
+        .iter()
+        .map(|(timestamp, value)| {
+            let confidence_interval = chronos_response
+                .lower_bound
+                .as_ref()
+                .and_then(|lb| lb.get(timestamp))
+                .zip(
+                    chronos_response
+                        .upper_bound
+                        .as_ref()
+                        .and_then(|ub| ub.get(timestamp)),
+                )
+                .map(|(lower, upper)| common::prediction::ConfidenceInterval {
+                    lower: TokenPrice::from_near_per_token(lower.clone()),
+                    upper: TokenPrice::from_near_per_token(upper.clone()),
+                });
+
+            PredictionPoint {
+                timestamp: *timestamp,
+                value: TokenPrice::from_near_per_token(value.clone()),
+                confidence_interval,
+            }
+        })
+        .collect();
+
+    // Determine history and prediction periods
+    let hist_start = *earliest_timestamp;
+    let hist_end = *latest_timestamp;
+    let pred_start = forecast
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("No forecast data available"))?
+        .timestamp;
+    let pred_end = forecast
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("No forecast data available"))?
+        .timestamp;
+
+    // Convert to cache prediction points
+    let cache_predictions: Vec<CachePredictionPoint> = forecast
+        .iter()
+        .map(|point| CachePredictionPoint {
+            timestamp: point.timestamp,
+            price: point.value.clone(),
+            confidence: point.confidence_interval.as_ref().map(|ci| {
+                let range = &ci.upper - &ci.lower;
+                range / bigdecimal::BigDecimal::from(2) / &point.value
+            }),
+        })
+        .collect();
+
+    // Create structured prediction file data
+    let prediction_file_data = PredictionFileData {
+        metadata: PredictionMetadata {
+            generated_at: Utc::now(),
+            model_name: chronos_response.model_name.clone(),
+            base_token: token_data.token.clone(),
+            quote_token: quote_token.clone(),
+            history_start: hist_start.format("%Y-%m-%d").to_string(),
+            history_end: hist_end.format("%Y-%m-%d").to_string(),
+            prediction_start: pred_start.format("%Y-%m-%d").to_string(),
+            prediction_end: pred_end.format("%Y-%m-%d").to_string(),
+        },
+        prediction_results: PredictionResults {
+            predictions: cache_predictions,
+            model_metrics: None,
+        },
     };
 
-    // Execute prediction (start async task)
-    pb.set_message("Starting prediction task...");
-    let prediction_response = chronos_client.predict_zero_shot(prediction_request).await?;
+    // Create cache parameters
+    let cache_params = PredictionCacheParams {
+        model_name: &chronos_response.model_name,
+        quote_token: &quote_token,
+        base_token: &token_data.token,
+        hist_start,
+        hist_end,
+        pred_start,
+        pred_end,
+    };
 
-    // Create and save task info
-    let task_info = TaskInfo::new(
-        prediction_response.task_id.clone(),
-        args.token_file.clone(),
-        args.model.clone(),
-        PredictionParams {
-            start_pct: args.start_pct,
-            end_pct: args.end_pct,
-            forecast_ratio: args.forecast_ratio,
-            scale_params,
-        },
+    // Save results using structured cache
+    pb.set_message("Saving prediction results to structured cache...");
+    save_prediction_result(&cache_params, &prediction_file_data).await?;
+    CacheOutput::prediction_cached(
+        &token_data.token,
+        prediction_file_data.prediction_results.predictions.len(),
     );
 
-    write_json_file(&task_file, &task_info).await?;
+    // Also save the legacy format for backward compatibility
+    let output_dir = PathBuf::from(&base_dir).join(&args.output).join("temp");
+    ensure_directory_exists(&output_dir)?;
+    let prediction_file = output_dir.join(format!("{}.json", sanitize_filename(&token_data.token)));
+
+    let prediction_result = TokenPredictionResult {
+        token: token_data.token.clone(),
+        prediction_id: format!("local-{}", Utc::now().timestamp()),
+        predicted_values: forecast,
+        accuracy_metrics: None,
+        chart_svg: None,
+    };
+    write_json_file(&prediction_file, &prediction_result).await?;
 
     pb.finish_with_message(format!(
-        "✅ Prediction task started for token: {} (task_id: {}, saved to {:?})",
-        token_data.token, prediction_response.task_id, task_file
+        "Prediction completed for token: {} (model: {}, {} forecast points)",
+        token_data.token,
+        chronos_response.model_name,
+        prediction_result.predicted_values.len()
     ));
-
-    println!("\nTo retrieve results, run:");
-    println!(
-        "  cli_tokens predict pull {} --output {}",
-        args.token_file.display(),
-        args.output.display()
-    );
 
     Ok(())
 }
