@@ -121,6 +121,30 @@ impl PredictionRecord {
         Ok(results)
     }
 
+    /// 同一トークンの直前の評価済みレコードを取得
+    pub async fn get_previous_evaluated(
+        token: &str,
+        before_target_time: NaiveDateTime,
+    ) -> Result<Option<DbPredictionRecord>> {
+        let conn = connection_pool::get().await?;
+        let token = token.to_string();
+
+        let result = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::token.eq(&token))
+                    .filter(prediction_records::evaluated_at.is_not_null())
+                    .filter(prediction_records::target_time.lt(before_target_time))
+                    .order_by(prediction_records::target_time.desc())
+                    .first::<DbPredictionRecord>(conn)
+                    .optional()
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(result)
+    }
+
     /// 古いレコードを削除
     ///
     /// - 評価済みレコード: evaluated_at から retention_days 日以上経過したもの
