@@ -81,7 +81,7 @@ fn test_prediction_data_negative_return() {
 
     let expected_return = (&predicted_price - &current_price) / &current_price;
 
-    assert!(expected_return < BigDecimal::from(0));
+    assert!(expected_return < 0);
 }
 
 #[test]
@@ -119,9 +119,9 @@ fn test_bigdecimal_price_calculations() {
 
     assert!(sum > price1);
     assert!(sum > price2);
-    assert!(diff > BigDecimal::from(0));
-    assert!(product > BigDecimal::from(0));
-    assert!(quotient > BigDecimal::from(1));
+    assert!(diff > 0);
+    assert!(product > 0);
+    assert!(quotient > 1);
 }
 
 #[test]

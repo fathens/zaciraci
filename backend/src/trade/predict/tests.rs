@@ -134,10 +134,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
             !token.token.to_string().is_empty(),
             "Token name should not be empty"
         );
-        assert!(
-            token.volatility >= BigDecimal::from(0),
-            "Volatility should be non-negative"
-        );
+        assert!(token.volatility >= 0, "Volatility should be non-negative");
     }
 
     for i in 1..tokens.len() {

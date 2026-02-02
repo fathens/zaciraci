@@ -75,10 +75,7 @@ fn test_bigdecimal_division_precision() {
 
     let result = balance / rate;
 
-    assert!(
-        result > BigDecimal::from(0),
-        "Division should produce positive result"
-    );
+    assert!(result > 0, "Division should produce positive result");
 }
 
 #[test]

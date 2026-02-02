@@ -319,7 +319,7 @@ mod tests {
             Ok(config) => {
                 // Verify that the config has the expected structure
                 assert!(!config.target_tokens.is_empty() || config.target_tokens.is_empty()); // Allow empty for this test
-                assert!(config.initial_capital > bigdecimal::BigDecimal::from(0));
+                assert!(config.initial_capital > 0);
                 println!("✅ Config validation successful - structure is compatible");
             }
             Err(e) => {

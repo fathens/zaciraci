@@ -16,7 +16,7 @@ fn test_price_arithmetic() {
 
     // 除算（比率を返す）
     let ratio = p1.clone() / p2.clone();
-    assert!(ratio > BigDecimal::from(3) && ratio < BigDecimal::from(4));
+    assert!(ratio > 3 && ratio < 4);
 
     // スカラー乗算
     let scaled = p1.clone() * 2.0;
@@ -258,7 +258,7 @@ fn test_near_value_arithmetic() {
 
     // 除算（比率を返す）
     let ratio = v1.clone() / v2.clone();
-    assert!(ratio > BigDecimal::from(3) && ratio < BigDecimal::from(4));
+    assert!(ratio > 3 && ratio < 4);
 
     // NearValue / TokenPrice = NearAmount
     let price = TokenPrice::from_near_per_token(BigDecimal::from(2));
