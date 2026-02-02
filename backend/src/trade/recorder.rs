@@ -44,15 +44,16 @@ impl TradeRecorder {
         let from_amount_bd = from_amount.smallest_units().clone();
         let to_amount_bd = to_amount.smallest_units().clone();
 
-        let transaction = TradeTransaction::new(
-            tx_id.clone(),
-            self.batch_id.clone(),
-            from_token.to_string(),
-            from_amount_bd.clone(),
-            to_token.to_string(),
-            to_amount_bd.clone(),
-            Some(self.evaluation_period_id.clone()),
-        );
+        let transaction = TradeTransaction {
+            tx_id: tx_id.clone(),
+            trade_batch_id: self.batch_id.clone(),
+            from_token: from_token.to_string(),
+            from_amount: from_amount_bd.clone(),
+            to_token: to_token.to_string(),
+            to_amount: to_amount_bd.clone(),
+            timestamp: chrono::Utc::now().naive_utc(),
+            evaluation_period_id: Some(self.evaluation_period_id.clone()),
+        };
 
         let result = transaction
             .insert_async()

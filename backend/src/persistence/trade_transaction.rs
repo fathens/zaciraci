@@ -21,28 +21,6 @@ pub struct TradeTransaction {
 }
 
 impl TradeTransaction {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        tx_id: String,
-        trade_batch_id: String,
-        from_token: String,
-        from_amount: BigDecimal,
-        to_token: String,
-        to_amount: BigDecimal,
-        evaluation_period_id: Option<String>,
-    ) -> Self {
-        Self {
-            tx_id,
-            trade_batch_id,
-            from_token,
-            from_amount,
-            to_token,
-            to_amount,
-            timestamp: chrono::Utc::now().naive_utc(),
-            evaluation_period_id,
-        }
-    }
-
     pub fn insert(&self, conn: &mut PgConnection) -> QueryResult<TradeTransaction> {
         diesel::insert_into(trade_transactions::table)
             .values(self)

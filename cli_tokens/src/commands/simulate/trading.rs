@@ -16,28 +16,11 @@ use crate::utils::cache::{
 };
 use common::cache::CacheOutput;
 
-#[allow(clippy::too_many_arguments)]
 /// Try to load prediction from cache
 async fn try_load_from_cache(
-    token: &str,
-    quote_token: &str,
-    model_name: &str,
-    hist_start: DateTime<Utc>,
-    hist_end: DateTime<Utc>,
-    pred_start: DateTime<Utc>,
-    pred_end: DateTime<Utc>,
+    cache_params: &PredictionCacheParams<'_>,
 ) -> Result<Option<PredictionData>> {
-    let cache_params = PredictionCacheParams {
-        model_name,
-        quote_token,
-        base_token: token,
-        hist_start,
-        hist_end,
-        pred_start,
-        pred_end,
-    };
-
-    if let Some(cache_path) = check_prediction_cache(&cache_params).await? {
+    if let Some(cache_path) = check_prediction_cache(cache_params).await? {
         let cached_data = load_prediction_data(&cache_path).await?;
 
         // Convert cached prediction to PredictionData
@@ -52,12 +35,13 @@ async fn try_load_from_cache(
 
             // キャッシュには TokenPrice として保存されているのでそのまま使用
             return Ok(Some(PredictionData {
-                token: token
+                token: cache_params
+                    .base_token
                     .parse()
                     .map_err(|e| anyhow::anyhow!("Invalid token: {:?}", e))?,
                 current_price,
                 predicted_price_24h: last_prediction.price.clone(),
-                timestamp: pred_start,
+                timestamp: cache_params.pred_start,
                 confidence: last_prediction.confidence.clone(),
             }));
         }
@@ -114,17 +98,11 @@ async fn save_to_cache(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Generate predictions using Chronos library
 pub async fn generate_api_predictions(
     backend_client: &crate::api::backend::BackendClient,
     target_tokens: &[String],
-    quote_token: &str,
-    current_time: DateTime<Utc>,
-    historical_days: i64,
-    prediction_horizon: chrono::Duration,
-    model: Option<String>,
-    verbose: bool,
+    params: &PredictionGenerationParams,
 ) -> Result<Vec<PredictionData>> {
     use common::api::chronos::ChronosPredictor;
 
@@ -132,31 +110,31 @@ pub async fn generate_api_predictions(
 
     let predictor = ChronosPredictor::new();
 
-    if verbose {
+    if params.verbose {
         println!("Using Chronos prediction library (direct)");
     }
 
     for token in target_tokens {
         // Calculate prediction window
-        let pred_start = current_time;
-        let pred_end = current_time + prediction_horizon;
-        let hist_start = current_time - chrono::Duration::days(historical_days);
-        let hist_end = current_time;
+        let pred_start = params.current_time;
+        let pred_end = params.current_time + params.prediction_horizon;
+        let hist_start = params.current_time - chrono::Duration::days(params.historical_days);
+        let hist_end = params.current_time;
 
-        let model_name = model.as_deref().unwrap_or("chronos_default");
+        let model_name = params.model.as_deref().unwrap_or("chronos_default");
 
-        // Try to load from cache first
-        match try_load_from_cache(
-            token,
-            quote_token,
+        let cache_params = PredictionCacheParams {
             model_name,
+            quote_token: &params.quote_token,
+            base_token: token,
             hist_start,
             hist_end,
             pred_start,
             pred_end,
-        )
-        .await
-        {
+        };
+
+        // Try to load from cache first
+        match try_load_from_cache(&cache_params).await {
             Ok(Some(cached_prediction)) => {
                 CacheOutput::prediction_cache_hit(token);
                 predictions.push(cached_prediction);
@@ -166,7 +144,7 @@ pub async fn generate_api_predictions(
                 CacheOutput::prediction_cache_miss(token);
             }
             Err(e) => {
-                if verbose {
+                if params.verbose {
                     println!("Failed to check cache for {}: {}", token, e);
                 }
                 // Continue with prediction
@@ -177,15 +155,15 @@ pub async fn generate_api_predictions(
         match get_historical_price_data(
             backend_client,
             token,
-            quote_token,
-            historical_days,
-            current_time,
+            &params.quote_token,
+            params.historical_days,
+            params.current_time,
         )
         .await
         {
             Ok((timestamps, values, current_price)) => {
                 if timestamps.len() < 10 {
-                    if verbose {
+                    if params.verbose {
                         println!(
                             "Insufficient historical data for {}: {} points",
                             token,
@@ -205,25 +183,15 @@ pub async fn generate_api_predictions(
                     .zip(values.iter())
                     .map(|(ts, v)| (*ts, v.as_bigdecimal().clone()))
                     .collect();
-                let forecast_until = current_time + prediction_horizon;
+                let forecast_until = params.current_time + params.prediction_horizon;
 
                 // Execute prediction directly via library
                 match predictor.predict_price(data, forecast_until).await {
                     Ok(chronos_result) => {
                         if let Some(predicted_value) = chronos_result.forecast.values().last() {
                             // Save to cache
-                            let cache_params = PredictionCacheParams {
-                                model_name,
-                                quote_token,
-                                base_token: token,
-                                hist_start,
-                                hist_end,
-                                pred_start,
-                                pred_end,
-                            };
-
                             if let Err(e) = save_to_cache(&cache_params, &chronos_result).await
-                                && verbose
+                                && params.verbose
                             {
                                 println!("Failed to save prediction to cache: {}", e);
                             }
@@ -236,18 +204,18 @@ pub async fn generate_api_predictions(
                                     predicted_price_24h: TokenPrice::from_near_per_token(
                                         predicted_value.clone(),
                                     ),
-                                    timestamp: current_time,
+                                    timestamp: params.current_time,
                                     confidence: None,
                                 });
                             }
-                            if verbose {
+                            if params.verbose {
                                 println!(
                                     "Got prediction for {}: {:.4} -> {:.4}",
                                     token, current_price, predicted_value
                                 );
                             }
                         } else {
-                            if verbose {
+                            if params.verbose {
                                 println!("No forecast values returned for {}", token);
                             }
                             return Err(anyhow::anyhow!(
@@ -257,7 +225,7 @@ pub async fn generate_api_predictions(
                         }
                     }
                     Err(e) => {
-                        if verbose {
+                        if params.verbose {
                             println!("Prediction failed for {}: {}", token, e);
                         }
                         return Err(anyhow::anyhow!(
@@ -269,7 +237,7 @@ pub async fn generate_api_predictions(
                 }
             }
             Err(e) => {
-                if verbose {
+                if params.verbose {
                     println!("Failed to get historical data for {}: {}", token, e);
                 }
                 return Err(anyhow::anyhow!(

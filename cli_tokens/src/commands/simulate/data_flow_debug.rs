@@ -1,6 +1,5 @@
 #[cfg(test)]
-#[allow(clippy::module_inception)]
-mod data_flow_debug {
+mod tests {
     use super::super::data::get_prices_at_time;
     use bigdecimal::BigDecimal;
     use chrono::{DateTime, Utc};
