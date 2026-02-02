@@ -112,7 +112,7 @@ pub(crate) fn calculate_volatility_from_history(history: &PriceHistory) -> Resul
     }
 
     // 負の分散は無効
-    if variance < BigDecimal::from(0) {
+    if variance.sign() == bigdecimal::num_bigint::Sign::Minus {
         return Err(anyhow::anyhow!("Invalid negative variance"));
     }
 
@@ -341,7 +341,7 @@ pub(crate) fn sqrt_bigdecimal(value: &BigDecimal) -> Result<BigDecimal> {
         return Ok(BigDecimal::from(0));
     }
 
-    if *value < BigDecimal::from(0) {
+    if value.sign() == bigdecimal::num_bigint::Sign::Minus {
         return Err(anyhow::anyhow!(
             "Cannot calculate square root of negative number"
         ));

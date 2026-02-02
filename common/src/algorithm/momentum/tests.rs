@@ -1,4 +1,5 @@
 use super::*;
+use crate::algorithm::types::TradingDecisionParams;
 use crate::types::{NearValue, TokenAmount, TokenOutAccount, TokenPrice};
 use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 
@@ -98,9 +99,11 @@ fn test_make_trading_decision() {
     let holding_price = price(1.0); // 1 NEAR/token として計算
 
     // デフォルトパラメータ
-    let min_profit_threshold = 0.05;
-    let switch_multiplier = 1.5;
-    let min_trade_value = near_value(1.0); // 1 NEAR
+    let params = TradingDecisionParams {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_value: near_value(1.0), // 1 NEAR
+    };
 
     // Case 1: Hold when current token is best
     let action = make_trading_decision(
@@ -109,9 +112,7 @@ fn test_make_trading_decision() {
         &ranked,
         &holding_amount,
         &holding_price,
-        min_profit_threshold,
-        switch_multiplier,
-        &min_trade_value,
+        &params,
     );
     assert_eq!(action, TradingAction::Hold);
 
@@ -122,9 +123,7 @@ fn test_make_trading_decision() {
         &ranked,
         &holding_amount,
         &holding_price,
-        min_profit_threshold,
-        switch_multiplier,
-        &min_trade_value,
+        &params,
     );
     assert!(matches!(action, TradingAction::Sell { .. }));
 
@@ -137,9 +136,7 @@ fn test_make_trading_decision() {
         &ranked,
         &holding_amount,
         &holding_price,
-        min_profit_threshold,
-        switch_multiplier,
-        &min_trade_value,
+        &params,
     );
     assert!(matches!(action, TradingAction::Switch { .. }));
 
@@ -152,9 +149,7 @@ fn test_make_trading_decision() {
         &ranked,
         &small_amount,
         &holding_price,
-        min_profit_threshold,
-        switch_multiplier,
-        &min_trade_value,
+        &params,
     );
     assert_eq!(action, TradingAction::Hold);
 }
@@ -456,7 +451,11 @@ fn test_trading_frequency_cost_impact() {
     let low_freq_ranked = rank_tokens_by_momentum(&low_freq_predictions);
 
     let base_price = price(1.0); // 1 NEAR/token
-    let min_trade_value = near_value(1.0); // 1 NEAR
+    let params = TradingDecisionParams {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_value: near_value(1.0), // 1 NEAR
+    };
 
     let _high_freq_decision = make_trading_decision(
         &token("current-token"),
@@ -464,9 +463,7 @@ fn test_trading_frequency_cost_impact() {
         &high_freq_ranked,
         &base_amount,
         &base_price,
-        0.05,
-        1.5,
-        &min_trade_value,
+        &params,
     );
 
     let low_freq_decision = make_trading_decision(
@@ -475,9 +472,7 @@ fn test_trading_frequency_cost_impact() {
         &low_freq_ranked,
         &base_amount,
         &base_price,
-        0.05,
-        1.5,
-        &min_trade_value,
+        &params,
     );
 
     // 高頻度取引では小さなリターンでHold
@@ -534,7 +529,11 @@ fn test_partial_fill_scenario() {
     let full_amount = amount_f64(1000.0);
     let partial_amount = amount_f64(300.0); // 30%のみ約定
     let holding_price = price(1.0); // 1 NEAR/token
-    let min_trade_value = near_value(1.0); // 1 NEAR
+    let params = TradingDecisionParams {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_value: near_value(1.0), // 1 NEAR
+    };
 
     let full_action = make_trading_decision(
         &token("current-token"),
@@ -542,9 +541,7 @@ fn test_partial_fill_scenario() {
         &ranked,
         &full_amount,
         &holding_price,
-        0.05,
-        1.5,
-        &min_trade_value,
+        &params,
     );
     let partial_action = make_trading_decision(
         &token("current-token"),
@@ -552,9 +549,7 @@ fn test_partial_fill_scenario() {
         &ranked,
         &partial_amount,
         &holding_price,
-        0.05,
-        1.5,
-        &min_trade_value,
+        &params,
     );
 
     // フル約定時はSwitchまたはSell
@@ -611,16 +606,18 @@ fn test_multi_timeframe_momentum_consistency() {
     let short_ranked = rank_tokens_by_momentum(&[short_term_prediction]);
     let holding_amount = amount_f64(1000.0);
     let holding_price = price(1.0); // 1 NEAR/token
-    let min_trade_value = near_value(1.0); // 1 NEAR
+    let params = TradingDecisionParams {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_value: near_value(1.0), // 1 NEAR
+    };
     let short_decision = make_trading_decision(
         &token("current-token"),
         0.02,
         &short_ranked,
         &holding_amount,
         &holding_price,
-        0.05,
-        1.5,
-        &min_trade_value,
+        &params,
     );
 
     // 長期シグナルでの判断
@@ -631,9 +628,7 @@ fn test_multi_timeframe_momentum_consistency() {
         &long_ranked,
         &holding_amount,
         &holding_price,
-        0.05,
-        1.5,
-        &min_trade_value,
+        &params,
     );
 
     // 短期では取引機会あり（またはSell）

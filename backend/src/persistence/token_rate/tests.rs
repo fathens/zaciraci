@@ -391,7 +391,7 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // nearの分散が最も小さい
     assert!(
-        results[2].variance > BigDecimal::from(0),
+        results[2].variance > 0,
         "NEAR variance should be greater than 0"
     );
 
@@ -452,7 +452,7 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // 分散値が0より大きいことを確認
     assert!(
-        btc_result.variance > BigDecimal::from(0),
+        btc_result.variance > 0,
         "BTC variance should be greater than 0, got {}",
         btc_result.variance
     );
@@ -540,7 +540,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // 範囲内のデータだけが考慮されていることを確認（最大値1500、最小値1000）
     assert!(
-        boundary_results[0].variance > BigDecimal::from(0),
+        boundary_results[0].variance > 0,
         "Variance should be greater than 0"
     );
 
@@ -582,14 +582,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     let eth_volatility = same_volatility_results[0].variance.clone();
     let btc_volatility = same_volatility_results[1].variance.clone();
 
-    assert!(
-        eth_volatility > BigDecimal::from(0),
-        "ETH variance should be greater than 0"
-    );
-    assert!(
-        btc_volatility > BigDecimal::from(0),
-        "BTC variance should be greater than 0"
-    );
+    assert!(eth_volatility > 0, "ETH variance should be greater than 0");
+    assert!(btc_volatility > 0, "BTC variance should be greater than 0");
 
     // クリーンアップ
     clean_table().await?;
@@ -632,7 +626,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         "Only btc.token should remain"
     );
     assert!(
-        btc_result.variance > BigDecimal::from(0),
+        btc_result.variance > 0,
         "BTC variance should be greater than 0"
     );
 
@@ -705,7 +699,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // quote1のデータだけが考慮されていることを確認（最大値150、最小値100）
     assert!(
-        quote_filter_results[0].variance > BigDecimal::from(0),
+        quote_filter_results[0].variance > 0,
         "Variance should be greater than 0"
     );
 
@@ -762,7 +756,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // base2のみが結果に含まれることを確認（最大値15、最小値5）
     assert!(
-        mixed_rates_results[0].variance > BigDecimal::from(0),
+        mixed_rates_results[0].variance > 0,
         "Variance should be greater than 0"
     );
 
@@ -817,7 +811,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // rate_difference = MAX(rate) - MIN(rate) = 1500 - 1000 = 500
     assert!(
-        normal_results[0].variance > BigDecimal::from(0),
+        normal_results[0].variance > 0,
         "Variance should be greater than 0"
     );
 
@@ -848,7 +842,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - 10 = 90
     assert!(
-        positive_results[0].variance > BigDecimal::from(0),
+        positive_results[0].variance > 0,
         "Variance should be greater than 0"
     );
 

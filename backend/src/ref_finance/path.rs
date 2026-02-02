@@ -12,7 +12,6 @@ use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAc
 use crate::types::gas_price::GasPrice;
 use crate::types::{MicroNear, MilliNear};
 use graph::TokenGraph;
-use near_primitives::types::Balance;
 use num_integer::Roots;
 use num_traits::{One, Zero, one, zero};
 use preview::{Preview, PreviewList};
@@ -56,7 +55,7 @@ pub async fn pick_goals(
     start: &TokenInAccount,
     total_amount: MilliNear,
     gas_price: GasPrice,
-) -> Result<Option<Vec<Preview<Balance>>>> {
+) -> Result<Option<Vec<Preview<u128>>>> {
     let previews = pick_previews(graph, start, MicroNear::from_milli(total_amount), gas_price)?;
 
     const REPEAT: usize = 3;

@@ -32,7 +32,7 @@ use crate::trade::swap;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
-use near_sdk::AccountId;
+use near_sdk::{AccountId, NearToken};
 use std::collections::BTreeMap;
 use zaciraci_common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
@@ -179,7 +179,7 @@ pub async fn start() -> Result<()> {
         crate::ref_finance::balances::deposit_wrap_near_to_ref(
             &client,
             &wallet,
-            available_funds.to_u128(),
+            NearToken::from_yoctonear(available_funds.to_u128()),
         )
         .await?;
         debug!(log, "initial investment deposited to REF Finance");
@@ -244,7 +244,7 @@ async fn prepare_funds() -> Result<YoctoAmount> {
 
     // 必要な wrap.near 残高として投資額を設定（NEAR -> wrap.near変換）
     // アカウントには10 NEARを残し、それ以外を wrap.near に変換
-    let required_balance = target_investment.to_u128();
+    let required_balance = NearToken::from_yoctonear(target_investment.to_u128());
     let account_id = wallet.account_id();
     let balance = crate::ref_finance::balances::start(
         &client,
@@ -256,7 +256,7 @@ async fn prepare_funds() -> Result<YoctoAmount> {
 
     // wrap.near の全額が投資可能
     // 設定された投資額と実際の残高の小さい方を使用
-    let balance_amount = YoctoAmount::from_u128(balance);
+    let balance_amount = YoctoAmount::from_u128(balance.as_yoctonear());
     let available_funds = if balance_amount < target_investment {
         balance_amount
     } else {
@@ -266,13 +266,13 @@ async fn prepare_funds() -> Result<YoctoAmount> {
     if available_funds.is_zero() {
         return Err(anyhow::anyhow!(
             "Insufficient wrap.near balance for trading: {} yoctoNEAR",
-            balance
+            balance.as_yoctonear()
         ));
     }
 
     debug!(log, "prepared funds";
         "account" => %account_id,
-        "wrap_near_balance" => balance,
+        "wrap_near_balance" => balance.as_yoctonear(),
         "available_funds" => %available_funds
     );
 

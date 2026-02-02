@@ -3,6 +3,7 @@ use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
 use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+use near_sdk::NearToken;
 use near_sdk::json_types::{U64, U128};
 use serde_json::json;
 use serial_test::serial;
@@ -12,7 +13,12 @@ use std::sync::{Arc, Mutex, Once};
 static INIT: Once = Once::new();
 
 // Test constant for storage deposit amount
-const DEFAULT_DEPOSIT: Balance = 100_000_000_000_000_000_000_000; // 0.1 NEAR
+const DEFAULT_DEPOSIT: u128 = 100_000_000_000_000_000_000_000; // 0.1 NEAR
+
+// Helper to get MINIMUM_NATIVE_BALANCE as u128 for tests
+fn min_native_balance() -> u128 {
+    MINIMUM_NATIVE_BALANCE.as_yoctonear()
+}
 
 struct MockWallet {
     account_id: AccountId,
@@ -69,9 +75,9 @@ impl OperationsLog {
 }
 
 struct MockClient {
-    native_amount: Cell<Balance>,
-    wnear_amount: Cell<Balance>,
-    wnear_deposited: Cell<Balance>,
+    native_amount: Cell<u128>,
+    wnear_amount: Cell<u128>,
+    wnear_deposited: Cell<u128>,
     operations_log: OperationsLog,
     should_fail_near_deposit: Cell<bool>,
     should_fail_ft_transfer: Cell<bool>,
@@ -80,7 +86,7 @@ struct MockClient {
 unsafe impl Sync for MockClient {}
 
 impl MockClient {
-    fn new(native: Balance, wnear: Balance, deposited: Balance) -> Self {
+    fn new(native: u128, wnear: u128, deposited: u128) -> Self {
         Self {
             native_amount: Cell::new(native),
             wnear_amount: Cell::new(wnear),
@@ -105,9 +111,9 @@ impl MockClient {
 }
 
 impl AccountInfo for MockClient {
-    async fn get_native_amount(&self, _account: &AccountId) -> Result<Balance> {
+    async fn get_native_amount(&self, _account: &AccountId) -> Result<NearToken> {
         self.log_operation("get_native_amount");
-        Ok(self.native_amount.get())
+        Ok(NearToken::from_yoctonear(self.native_amount.get()))
     }
 }
 
@@ -118,7 +124,7 @@ impl SendTx for MockClient {
         &self,
         _signer: &InMemorySigner,
         _receiver: &AccountId,
-        _amount: Balance,
+        _amount: NearToken,
     ) -> Result<Self::Output> {
         self.log_operation("transfer_native_token");
         Ok(MockSentTx { should_fail: false })
@@ -130,19 +136,20 @@ impl SendTx for MockClient {
         _receiver: &AccountId,
         method_name: &str,
         args: T,
-        deposit: Balance,
+        deposit: NearToken,
     ) -> Result<Self::Output>
     where
         T: Sized + serde::Serialize,
     {
         self.log_operation(&format!("exec_contract: {method_name}"));
+        let deposit_yocto = deposit.as_yoctonear();
         let should_fail = match method_name {
             "near_deposit" => {
                 if !self.should_fail_near_deposit.get() {
                     self.native_amount
-                        .set(self.native_amount.get().saturating_sub(deposit));
+                        .set(self.native_amount.get().saturating_sub(deposit_yocto));
                     self.wnear_amount
-                        .set(self.wnear_amount.get().saturating_add(deposit));
+                        .set(self.wnear_amount.get().saturating_add(deposit_yocto));
                 }
                 self.should_fail_near_deposit.get()
             }
@@ -150,7 +157,7 @@ impl SendTx for MockClient {
                 if !self.should_fail_ft_transfer.get() {
                     let args_str = serde_json::to_string(&args)?;
                     let args_value: serde_json::Value = serde_json::from_str(&args_str)?;
-                    let amount: Balance = args_value["amount"]
+                    let amount: u128 = args_value["amount"]
                         .as_str()
                         .and_then(|s| s.parse().ok())
                         .unwrap_or_default();
@@ -164,7 +171,7 @@ impl SendTx for MockClient {
             "withdraw" => {
                 let args_str = serde_json::to_string(&args)?;
                 let args_value: serde_json::Value = serde_json::from_str(&args_str)?;
-                let amount: Balance = args_value["amount"]
+                let amount: u128 = args_value["amount"]
                     .as_str()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or_default();
@@ -255,8 +262,8 @@ impl SentTx for MockSentTx {
         Ok(ExecutionOutcomeView {
             logs: vec![],
             receipt_ids: vec![],
-            gas_burnt: 0,
-            tokens_burnt: 0,
+            gas_burnt: near_primitives::types::Gas::from_gas(0),
+            tokens_burnt: NearToken::from_yoctonear(0),
             executor_id: AccountId::try_from("test.near".to_string())?,
             status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
             metadata: near_primitives::views::ExecutionMetadataView {
@@ -271,13 +278,14 @@ impl SentTx for MockSentTx {
 async fn test_start() {
     initialize();
 
-    let client = MockClient::new(DEFAULT_REQUIRED_BALANCE << 5, 0, 0);
+    let required_balance = DEFAULT_REQUIRED_BALANCE.as_yoctonear();
+    let client = MockClient::new(required_balance << 5, 0, 0);
     let wallet = MockWallet::new();
 
     let result = start(&client, &wallet, &WNEAR_TOKEN, None).await;
     let balance = result.unwrap();
     // refill が実行されるため、refill後の残高が返される
-    assert_eq!(balance, DEFAULT_REQUIRED_BALANCE);
+    assert_eq!(balance.as_yoctonear(), required_balance);
 
     assert!(
         client
@@ -291,14 +299,21 @@ async fn test_start() {
 async fn test_harvest_with_sufficient_balance() {
     initialize();
 
-    let required = 1_000_000;
+    let required = 1_000_000u128;
     let native_balance = required << 5;
     let client = MockClient::new(native_balance, 0, 0);
     let wallet = MockWallet::new();
 
     LAST_HARVEST.store(0, Ordering::Relaxed);
 
-    let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
+    let result = harvest(
+        &client,
+        &wallet,
+        &WNEAR_TOKEN,
+        NearToken::from_yoctonear(1000),
+        NearToken::from_yoctonear(required),
+    )
+    .await;
     assert!(result.is_ok());
 
     assert!(client.operations_log.contains("get_native_amount"));
@@ -308,12 +323,19 @@ async fn test_harvest_with_sufficient_balance() {
 async fn test_harvest_with_insufficient_balance() {
     initialize();
 
-    let required = 1_000_000;
+    let required = 1_000_000u128;
     let native_balance = required << 3;
     let client = MockClient::new(native_balance, 0, 0);
     let wallet = MockWallet::new();
 
-    let result = harvest(&client, &wallet, &WNEAR_TOKEN, 1000, required).await;
+    let result = harvest(
+        &client,
+        &wallet,
+        &WNEAR_TOKEN,
+        NearToken::from_yoctonear(1000),
+        NearToken::from_yoctonear(required),
+    )
+    .await;
     assert!(result.is_ok());
 
     assert!(client.operations_log.contains("get_native_amount"));
@@ -352,11 +374,11 @@ fn test_update_last_harvest() {
 async fn test_refill_with_sufficient_wrapped_balance() {
     initialize();
 
-    let want = 1_000_000;
+    let want = 1_000_000u128;
     let client = MockClient::new(want << 1, want << 1, want << 1);
     let wallet = MockWallet::new();
 
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -375,7 +397,7 @@ async fn test_refill_with_sufficient_native_balance() {
     let client = MockClient::new(want << 2, 0, 0);
     let wallet = MockWallet::new();
 
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -391,11 +413,11 @@ async fn test_refill_with_sufficient_native_balance() {
 async fn test_refill_with_insufficient_native_balance() {
     initialize();
 
-    let want = 1_000_000;
-    let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
+    let want = 1_000_000u128;
+    let client = MockClient::new(min_native_balance(), 0, 0);
     let wallet = MockWallet::new();
 
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -413,9 +435,9 @@ async fn test_refill_scenarios() {
     let want = NearToken::from_near(2).as_yoctonear();
 
     // Case 1: Wrapped残高が十分ある
-    let client = MockClient::new(want + MINIMUM_NATIVE_BALANCE, want, 0);
+    let client = MockClient::new(want + min_native_balance(), want, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -426,9 +448,9 @@ async fn test_refill_scenarios() {
     assert!(!client.operations_log.contains("near_deposit"));
 
     // Case 2: Native残高が十分ある
-    let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+    let client = MockClient::new(want * 2 + min_native_balance(), 0, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -446,8 +468,8 @@ async fn test_refill_edge_cases() {
     let wallet = MockWallet::new();
 
     // Case 1: want値が0の場合
-    let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
-    let result = refill(&client, &wallet, 0).await;
+    let client = MockClient::new(min_native_balance(), 0, 0);
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(0)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -461,7 +483,7 @@ async fn test_refill_edge_cases() {
     // Case 2: want値が非常に大きい場合
     let want = u128::MAX;
     let client = MockClient::new(want, 0, 0);
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -473,17 +495,17 @@ async fn test_refill_edge_cases() {
     assert!(client.operations_log.contains("ft_transfer_call"));
 
     // Case 3: ネイティブ残高がちょうど MINIMUM_NATIVE_BALANCE の場合
-    let want = 1_000_000;
-    let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
+    let want = 1_000_000u128;
+    let client = MockClient::new(min_native_balance(), 0, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(client.operations_log.contains("get_native_amount"));
 
     // Case 4: MINIMUM_NATIVE_BALANCEより少し多いnative残高
-    let client = MockClient::new(MINIMUM_NATIVE_BALANCE + 1, 0, 0);
-    let result = refill(&client, &wallet, want).await;
+    let client = MockClient::new(min_native_balance() + 1, 0, 0);
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -497,10 +519,10 @@ async fn test_refill_edge_cases() {
 async fn test_refill_transaction_order() {
     initialize();
 
-    let want = 1_000_000;
-    let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+    let want = 1_000_000u128;
+    let client = MockClient::new(want * 2 + min_native_balance(), 0, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     // 操作の順序を確認
@@ -537,11 +559,11 @@ async fn test_refill_transaction_order() {
 async fn test_refill_error_recovery() {
     initialize();
 
-    let want = 1_000_000;
-    let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+    let want = 1_000_000u128;
+    let client = MockClient::new(want * 2 + min_native_balance(), 0, 0);
     client.set_near_deposit_failure(true);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_err());
 
     assert!(
@@ -552,9 +574,9 @@ async fn test_refill_error_recovery() {
     assert!(client.operations_log.contains("near_deposit"));
     assert!(!client.operations_log.contains("ft_transfer_call"));
 
-    let client = MockClient::new(want * 2 + MINIMUM_NATIVE_BALANCE, 0, 0);
+    let client = MockClient::new(want * 2 + min_native_balance(), 0, 0);
     client.set_ft_transfer_failure(true);
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_err());
 
     assert!(
@@ -571,9 +593,14 @@ async fn test_refill_boundary_conditions() {
     initialize();
 
     // Case 1: want値がMINIMUM_NATIVE_BALANCEと同じ
-    let client = MockClient::new(MINIMUM_NATIVE_BALANCE * 3, 0, 0);
+    let client = MockClient::new(min_native_balance() * 3, 0, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, MINIMUM_NATIVE_BALANCE).await;
+    let result = refill(
+        &client,
+        &wallet,
+        NearToken::from_yoctonear(min_native_balance()),
+    )
+    .await;
     assert!(result.is_ok());
 
     assert!(
@@ -585,10 +612,10 @@ async fn test_refill_boundary_conditions() {
     assert!(client.operations_log.contains("ft_transfer_call"));
 
     // Case 2: Native残高がwant + MINIMUM_NATIVE_BALANCEちょうど
-    let want = 1_000_000;
-    let client = MockClient::new(want + MINIMUM_NATIVE_BALANCE, 0, 0);
+    let want = 1_000_000u128;
+    let client = MockClient::new(want + min_native_balance(), 0, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -605,10 +632,10 @@ async fn test_refill_overflow_conditions() {
     initialize();
 
     // Case 1: want値が非常に大きく、Native残高との加算でオーバーフローする可能性
-    let want = u128::MAX - MINIMUM_NATIVE_BALANCE + 1;
+    let want = u128::MAX - min_native_balance() + 1;
     let client = MockClient::new(u128::MAX, 0, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -620,12 +647,12 @@ async fn test_refill_overflow_conditions() {
     assert!(client.operations_log.contains("ft_transfer_call"));
 
     // Case 2: Native残高とWrapped残高の合計が要求額に満たない
-    let want = 1_000_000;
-    let native = want / 2 + MINIMUM_NATIVE_BALANCE;
+    let want = 1_000_000u128;
+    let native = want / 2 + min_native_balance();
     let wrapped = want / 4;
     let client = MockClient::new(native, wrapped, wrapped);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -642,12 +669,12 @@ async fn test_refill_combined_balances() {
     initialize();
 
     // Case 1: wrapped残高とnative残高の合計が要求額を満たす
-    let want = 1_000_000;
+    let want = 1_000_000u128;
     let wrapped = want / 2;
-    let native = want / 2 + MINIMUM_NATIVE_BALANCE;
+    let native = want / 2 + min_native_balance();
     let client = MockClient::new(native, wrapped, wrapped);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -658,12 +685,12 @@ async fn test_refill_combined_balances() {
     assert!(client.operations_log.contains("get_native_amount"));
 
     // Case 2: wrapped残高が一部あり、native残高から補充
-    let want = 1_000_000;
+    let want = 1_000_000u128;
     let wrapped = want / 4;
-    let native = want + MINIMUM_NATIVE_BALANCE;
+    let native = want + min_native_balance();
     let client = MockClient::new(native, wrapped, wrapped);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -683,17 +710,17 @@ async fn test_refill_minimum_balances() {
     initialize();
 
     // Case 1: ちょうどMINIMUM_NATIVE_BALANCEのnative残高
-    let want = 1_000;
-    let client = MockClient::new(MINIMUM_NATIVE_BALANCE, 0, 0);
+    let want = 1_000u128;
+    let client = MockClient::new(min_native_balance(), 0, 0);
     let wallet = MockWallet::new();
-    let result = refill(&client, &wallet, want).await;
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(client.operations_log.contains("get_native_amount"));
 
     // Case 2: MINIMUM_NATIVE_BALANCEより少し多いnative残高
-    let client = MockClient::new(MINIMUM_NATIVE_BALANCE + 1, 0, 0);
-    let result = refill(&client, &wallet, want).await;
+    let client = MockClient::new(min_native_balance() + 1, 0, 0);
+    let result = refill(&client, &wallet, NearToken::from_yoctonear(want)).await;
     assert!(result.is_ok());
 
     assert!(
@@ -707,7 +734,7 @@ async fn test_refill_minimum_balances() {
 #[serial(harvest)]
 async fn test_start_boundary_values() {
     initialize();
-    let required_balance = DEFAULT_REQUIRED_BALANCE;
+    let required_balance = DEFAULT_REQUIRED_BALANCE.as_yoctonear();
 
     // Just below 128x
     let client = MockClient::new(0, required_balance * 127, required_balance * 127);
@@ -746,7 +773,7 @@ async fn test_start_boundary_values() {
 #[serial(harvest)]
 async fn test_start_exact_upper() {
     initialize();
-    let required_balance = DEFAULT_REQUIRED_BALANCE;
+    let required_balance = DEFAULT_REQUIRED_BALANCE.as_yoctonear();
 
     // Exactly 128x
     let client = MockClient::new(
@@ -781,7 +808,7 @@ async fn test_start_exact_upper() {
 #[serial(harvest)]
 async fn test_start_harvest_time_condition() {
     initialize();
-    let required_balance = DEFAULT_REQUIRED_BALANCE;
+    let required_balance = DEFAULT_REQUIRED_BALANCE.as_yoctonear();
 
     // Set balance above 128x to meet the balance condition
     let client = MockClient::new(

@@ -5,15 +5,16 @@ async fn test_trade_transaction_crud() {
     let batch_id = uuid::Uuid::new_v4().to_string();
     let tx_id = format!("test_tx_{}", uuid::Uuid::new_v4());
 
-    let transaction = TradeTransaction::new(
-        tx_id.clone(),
-        batch_id.clone(),
-        "wrap.near".to_string(),
-        BigDecimal::from(1000000000000000000000000i128), // 1 NEAR
-        "akaia.tkn.near".to_string(),
-        BigDecimal::from(50000000000000000000000i128),
-        None, // evaluation_period_id
-    );
+    let transaction = TradeTransaction {
+        tx_id: tx_id.clone(),
+        trade_batch_id: batch_id.clone(),
+        from_token: "wrap.near".to_string(),
+        from_amount: BigDecimal::from(1000000000000000000000000i128), // 1 NEAR
+        to_token: "akaia.tkn.near".to_string(),
+        to_amount: BigDecimal::from(50000000000000000000000i128),
+        timestamp: chrono::Utc::now().naive_utc(),
+        evaluation_period_id: None,
+    };
 
     let result = transaction.insert_async().await.unwrap();
     assert_eq!(result.tx_id, tx_id);
@@ -52,15 +53,16 @@ async fn test_count_by_evaluation_period() {
         let tx_id = format!("test_tx_count_{}_{}", i, uuid::Uuid::new_v4());
         tx_ids.push(tx_id.clone());
 
-        let transaction = TradeTransaction::new(
+        let transaction = TradeTransaction {
             tx_id,
-            batch_id.clone(),
-            "wrap.near".to_string(),
-            BigDecimal::from(1000000000000000000000000i128),
-            "akaia.tkn.near".to_string(),
-            BigDecimal::from(50000000000000000000000i128),
-            Some(period_id.clone()),
-        );
+            trade_batch_id: batch_id.clone(),
+            from_token: "wrap.near".to_string(),
+            from_amount: BigDecimal::from(1000000000000000000000000i128),
+            to_token: "akaia.tkn.near".to_string(),
+            to_amount: BigDecimal::from(50000000000000000000000i128),
+            timestamp: chrono::Utc::now().naive_utc(),
+            evaluation_period_id: Some(period_id.clone()),
+        };
 
         transaction.insert_async().await.unwrap();
     }
@@ -99,15 +101,16 @@ async fn test_transaction_with_evaluation_period_id() {
     let tx_id = format!("test_tx_period_{}", uuid::Uuid::new_v4());
 
     // evaluation_period_id付きトランザクションを作成
-    let transaction = TradeTransaction::new(
-        tx_id.clone(),
-        batch_id.clone(),
-        "wrap.near".to_string(),
-        BigDecimal::from(1000000000000000000000000i128),
-        "akaia.tkn.near".to_string(),
-        BigDecimal::from(50000000000000000000000i128),
-        Some(period_id.clone()),
-    );
+    let transaction = TradeTransaction {
+        tx_id: tx_id.clone(),
+        trade_batch_id: batch_id.clone(),
+        from_token: "wrap.near".to_string(),
+        from_amount: BigDecimal::from(1000000000000000000000000i128),
+        to_token: "akaia.tkn.near".to_string(),
+        to_amount: BigDecimal::from(50000000000000000000000i128),
+        timestamp: chrono::Utc::now().naive_utc(),
+        evaluation_period_id: Some(period_id.clone()),
+    };
 
     let result = transaction.insert_async().await.unwrap();
     assert_eq!(result.tx_id, tx_id);

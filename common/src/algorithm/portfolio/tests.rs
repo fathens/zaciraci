@@ -3156,7 +3156,7 @@ fn calculate_current_weights_original(tokens: &[TokenInfo], wallet: &WalletInfo)
             };
 
             // 重みを計算 (BigDecimal)
-            if total_value_bd > BigDecimal::from(0) {
+            if total_value_bd > 0 {
                 let weight_bd = &value_near_bd / &total_value_bd;
                 // 最終的にf64に変換（必要最小限のみ）
                 weights[i] = weight_bd.to_string().parse::<f64>().unwrap_or(0.0);

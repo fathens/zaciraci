@@ -6,16 +6,15 @@ use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::wallet::Wallet;
-use near_primitives::types::Balance;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 use zaciraci_common::types::NearAmount;
 
-const DEFAULT_REQUIRED_BALANCE: Balance = NearToken::from_near(1).as_yoctonear();
+static DEFAULT_REQUIRED_BALANCE: Lazy<NearToken> = Lazy::new(|| NearToken::from_near(1));
 #[cfg(test)]
-const MINIMUM_NATIVE_BALANCE: Balance = NearToken::from_near(1).as_yoctonear(); // テスト用の定数
+const MINIMUM_NATIVE_BALANCE: NearToken = NearToken::from_near(1); // テスト用の定数
 const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
@@ -25,13 +24,14 @@ static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{value}`: {err}"))
 });
-static TRADE_ACCOUNT_RESERVE: Lazy<u128> = Lazy::new(|| {
-    config::get("TRADE_ACCOUNT_RESERVE")
+static TRADE_ACCOUNT_RESERVE: Lazy<NearToken> = Lazy::new(|| {
+    let yocto = config::get("TRADE_ACCOUNT_RESERVE")
         .ok()
         .and_then(|v| v.parse::<NearAmount>().ok())
         .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
         .to_yocto()
-        .to_u128()
+        .to_u128();
+    NearToken::from_yoctonear(yocto)
 });
 
 fn is_time_to_harvest() -> bool {
@@ -51,12 +51,17 @@ fn update_last_harvest() {
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
+/// 128倍を計算するヘルパー関数
+fn multiply_by_128(token: NearToken) -> NearToken {
+    NearToken::from_yoctonear(token.as_yoctonear() << 7)
+}
+
 pub async fn start<C, W>(
     client: &C,
     wallet: &W,
     token: &TokenAccount,
-    required_balance: Option<Balance>,
-) -> Result<Balance>
+    required_balance: Option<NearToken>,
+) -> Result<NearToken>
 where
     C: AccountInfo + SendTx + ViewContract,
     W: Wallet,
@@ -71,13 +76,13 @@ where
             .inputs
             .max();
         if max.is_zero() {
-            DEFAULT_REQUIRED_BALANCE
+            *DEFAULT_REQUIRED_BALANCE
         } else {
-            max
+            NearToken::from_yoctonear(max)
         }
     });
     trace!(log, "Starting balances";
-        "required_balance" => %required_balance,
+        "required_balance" => required_balance.as_yoctonear(),
     );
 
     // Note: storage deposit check is now performed once in trade::start
@@ -85,23 +90,25 @@ where
 
     let deposited_wnear = balance_of_start_token(client, wallet, token).await?;
     trace!(log, "comparing";
-        "deposited_wnear" => ?deposited_wnear,
-        "required_balance" => ?required_balance,
+        "deposited_wnear" => deposited_wnear.as_yoctonear(),
+        "required_balance" => required_balance.as_yoctonear(),
     );
 
     if deposited_wnear < required_balance {
-        refill(client, wallet, required_balance - deposited_wnear).await?;
+        let shortage = required_balance.saturating_sub(deposited_wnear);
+        refill(client, wallet, shortage).await?;
         // refill後の残高を再取得して返す
         let new_balance = balance_of_start_token(client, wallet, token).await?;
         Ok(new_balance)
     } else {
-        let upper = required_balance << 7; // 128倍
+        let upper = multiply_by_128(required_balance); // 128倍
         if upper < deposited_wnear {
+            let withdraw_amount = deposited_wnear.saturating_sub(upper);
             match harvest(
                 client,
                 wallet,
                 &WNEAR_TOKEN,
-                deposited_wnear - upper,
+                withdraw_amount,
                 required_balance,
             )
             .await
@@ -118,61 +125,60 @@ async fn balance_of_start_token<C, W>(
     client: &C,
     wallet: &W,
     token: &TokenAccount,
-) -> Result<Balance>
+) -> Result<NearToken>
 where
     C: ViewContract,
     W: Wallet,
 {
     let account = wallet.account_id();
     let deposits = deposit::get_deposits(client, account).await?;
-    Ok(deposits.get(token).map(|u| u.0).unwrap_or_default())
+    let yocto = deposits.get(token).map(|u| u.0).unwrap_or_default();
+    Ok(NearToken::from_yoctonear(yocto))
 }
 
-async fn refill<C, W>(client: &C, wallet: &W, want: Balance) -> Result<()>
+async fn refill<C, W>(client: &C, wallet: &W, want: NearToken) -> Result<()>
 where
     C: AccountInfo + ViewContract + SendTx,
     W: Wallet,
 {
     let log = DEFAULT.new(o!(
         "function" => "balances.refill",
-        "want" => format!("{}", want),
+        "want" => want.as_yoctonear(),
     ));
     let account = wallet.account_id();
     let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
     let log = log.new(o!(
-        "wrapped_balance" => format!("{}", wrapped_balance),
+        "wrapped_balance" => wrapped_balance.as_yoctonear(),
     ));
     trace!(log, "checking");
 
     let actual_wrapping = if wrapped_balance < want {
-        let wrapping = want - wrapped_balance;
+        let wrapping = want.saturating_sub(wrapped_balance);
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
+        let minimum_native_balance = *TRADE_ACCOUNT_RESERVE;
 
         let log = log.new(o!(
-            "native_balance" => format!("{}", native_balance),
-            "wrapping" => format!("{}", wrapping),
-            "minimum_native_balance" => format!("{}", minimum_native_balance),
+            "native_balance" => native_balance.as_yoctonear(),
+            "wrapping" => wrapping.as_yoctonear(),
+            "minimum_native_balance" => minimum_native_balance.as_yoctonear(),
         ));
         trace!(log, "checking");
-        let available = native_balance
-            .checked_sub(minimum_native_balance)
-            .unwrap_or_default();
+        let available = native_balance.saturating_sub(minimum_native_balance);
 
         let amount = if available < wrapping {
             debug!(log, "insufficient balance, using maximum available";
-                "available" => %available,
-                "wanted" => %wrapping,
+                "available" => available.as_yoctonear(),
+                "wanted" => wrapping.as_yoctonear(),
             );
             available
         } else {
             wrapping
         };
 
-        if amount > 0 {
+        if amount.as_yoctonear() > 0 {
             trace!(log, "wrapping";
-                "amount" => %amount,
+                "amount" => amount.as_yoctonear(),
             );
             deposit::wnear::wrap(client, wallet, amount)
                 .await?
@@ -181,13 +187,13 @@ where
         }
         amount
     } else {
-        0
+        NearToken::from_yoctonear(0)
     };
 
-    let total_deposit = wrapped_balance + actual_wrapping;
-    if total_deposit > 0 {
+    let total_deposit = wrapped_balance.saturating_add(actual_wrapping);
+    if total_deposit.as_yoctonear() > 0 {
         debug!(log, "refilling";
-            "amount" => %total_deposit,
+            "amount" => total_deposit.as_yoctonear(),
         );
         deposit::deposit(client, wallet, &WNEAR_TOKEN, total_deposit)
             .await?
@@ -200,14 +206,14 @@ where
 }
 
 /// 投資額全額を REF Finance にデポジット（初期ポートフォリオ構築用）
-pub async fn deposit_wrap_near_to_ref<C, W>(client: &C, wallet: &W, amount: Balance) -> Result<()>
+pub async fn deposit_wrap_near_to_ref<C, W>(client: &C, wallet: &W, amount: NearToken) -> Result<()>
 where
     C: AccountInfo + ViewContract + SendTx,
     W: Wallet,
 {
     let log = DEFAULT.new(o!(
         "function" => "deposit_wrap_near_to_ref",
-        "amount" => format!("{}", amount),
+        "amount" => amount.as_yoctonear(),
     ));
 
     let account = wallet.account_id();
@@ -216,8 +222,8 @@ where
     let deposited_balance = balance_of_start_token(client, wallet, &WNEAR_TOKEN).await?;
 
     trace!(log, "checking existing balances";
-        "deposited_in_ref" => %deposited_balance,
-        "required" => %amount
+        "deposited_in_ref" => deposited_balance.as_yoctonear(),
+        "required" => amount.as_yoctonear()
     );
 
     if deposited_balance >= amount {
@@ -229,37 +235,35 @@ where
     }
 
     // 不足分を計算
-    let shortage = amount - deposited_balance;
+    let shortage = amount.saturating_sub(deposited_balance);
 
     // wrap.near の現在残高を確認
     let wrapped_balance = deposit::wnear::balance_of(client, account).await?;
 
-    trace!(log, "current wrap.near balance"; "wrapped_balance" => %wrapped_balance);
+    trace!(log, "current wrap.near balance"; "wrapped_balance" => wrapped_balance.as_yoctonear());
 
     // 不足分を wrap.near から調達
     if wrapped_balance < shortage {
         // さらに NEAR を wrap する必要がある
-        let wrapping = shortage - wrapped_balance;
+        let wrapping = shortage.saturating_sub(wrapped_balance);
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
+        let minimum_native_balance = *TRADE_ACCOUNT_RESERVE;
 
-        let available = native_balance
-            .checked_sub(minimum_native_balance)
-            .unwrap_or_default();
+        let available = native_balance.saturating_sub(minimum_native_balance);
 
         let actual_wrapping = if available < wrapping {
             info!(log, "insufficient balance, wrapping maximum available";
-                "available" => %available,
-                "wanted" => %wrapping,
+                "available" => available.as_yoctonear(),
+                "wanted" => wrapping.as_yoctonear(),
             );
             available
         } else {
             wrapping
         };
 
-        if actual_wrapping > 0 {
-            trace!(log, "wrapping NEAR to wrap.near"; "amount" => %actual_wrapping);
+        if actual_wrapping.as_yoctonear() > 0 {
+            trace!(log, "wrapping NEAR to wrap.near"; "amount" => actual_wrapping.as_yoctonear());
             deposit::wnear::wrap(client, wallet, actual_wrapping)
                 .await?
                 .wait_for_success()
@@ -270,17 +274,21 @@ where
     // wrap.near の最終残高を確認して、デポジット可能な量を決定
     let final_wrapped_balance = deposit::wnear::balance_of(client, account).await?;
 
-    if final_wrapped_balance == 0 {
+    if final_wrapped_balance.as_yoctonear() == 0 {
         return Err(anyhow::anyhow!("No wrap.near balance available to deposit"));
     }
 
     // 不足分と実際の残高の少ない方をデポジット
-    let deposit_amount = shortage.min(final_wrapped_balance);
+    let deposit_amount = if shortage < final_wrapped_balance {
+        shortage
+    } else {
+        final_wrapped_balance
+    };
 
     trace!(log, "depositing wrap.near to REF Finance";
-        "shortage" => %shortage,
-        "available" => %final_wrapped_balance,
-        "depositing" => %deposit_amount
+        "shortage" => shortage.as_yoctonear(),
+        "available" => final_wrapped_balance.as_yoctonear(),
+        "depositing" => deposit_amount.as_yoctonear()
     );
 
     deposit::deposit(client, wallet, &WNEAR_TOKEN, deposit_amount)
@@ -288,7 +296,7 @@ where
         .wait_for_success()
         .await?;
 
-    info!(log, "deposit completed successfully"; "deposited" => %deposit_amount);
+    info!(log, "deposit completed successfully"; "deposited" => deposit_amount.as_yoctonear());
     Ok(())
 }
 
@@ -296,8 +304,8 @@ pub async fn harvest<C, W>(
     client: &C,
     wallet: &W,
     token: &TokenAccount,
-    withdraw: Balance,
-    required: Balance,
+    withdraw: NearToken,
+    required: NearToken,
 ) -> Result<()>
 where
     C: AccountInfo + SendTx,
@@ -305,14 +313,14 @@ where
 {
     let log = DEFAULT.new(o!(
         "function" => "balances.harvest",
-        "withdraw" => format!("{}", withdraw),
-        "required" => format!("{}", required),
+        "withdraw" => withdraw.as_yoctonear(),
+        "required" => required.as_yoctonear(),
     ));
     info!(log, "withdrawing";
         "token" => %token,
     );
 
-    let minimum_native_balance: u128 = *TRADE_ACCOUNT_RESERVE;
+    let minimum_native_balance = *TRADE_ACCOUNT_RESERVE;
 
     let account = wallet.account_id();
     let before_withdraw = client.get_native_amount(account).await?;
@@ -323,20 +331,20 @@ where
             .await?;
         withdraw
     } else {
-        0
+        NearToken::from_yoctonear(0)
     };
-    let native_balance = before_withdraw + added;
-    let upper = required << 7; // 128倍
+    let native_balance = before_withdraw.saturating_add(added);
+    let upper = multiply_by_128(required); // 128倍
     trace!(log, "checking";
-        "native_balance" => %native_balance,
-        "upper" => %upper,
+        "native_balance" => native_balance.as_yoctonear(),
+        "upper" => upper.as_yoctonear(),
     );
     if upper < native_balance && is_time_to_harvest() {
-        let amount = native_balance - upper;
+        let amount = native_balance.saturating_sub(upper);
         let target = &*HARVEST_ACCOUNT;
         info!(log, "harvesting";
             "target" => %target,
-            "amount" => %amount,
+            "amount" => amount.as_yoctonear(),
         );
         let signer = wallet.signer();
         client

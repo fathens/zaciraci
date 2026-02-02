@@ -11,11 +11,11 @@ use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
 use near_primitives::action::{Action, FunctionCallAction, TransferAction};
 use near_primitives::hash::CryptoHash;
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
-use near_primitives::types::{AccountId, Balance, BlockId, Finality};
+use near_primitives::types::{BlockId, Finality};
 use near_primitives::views::{
     AccessKeyView, BlockView, CallResult, QueryRequest, TxExecutionStatus,
 };
-use near_sdk::Gas;
+use near_sdk::{AccountId, NearToken};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -58,7 +58,7 @@ impl<A: RpcClient> super::GasInfo for StandardNearClient<A> {
 }
 
 impl<A: RpcClient> super::AccountInfo for StandardNearClient<A> {
-    async fn get_native_amount(&self, account: &AccountId) -> Result<Balance> {
+    async fn get_native_amount(&self, account: &AccountId) -> Result<NearToken> {
         let req = methods::query::RpcQueryRequest {
             block_reference: Finality::Final.into(),
             request: QueryRequest::ViewAccount {
@@ -165,13 +165,13 @@ impl<A: RpcClient> SendTx for StandardNearClient<A> {
         &self,
         signer: &InMemorySigner,
         receiver: &AccountId,
-        amount: Balance,
+        amount: NearToken,
     ) -> Result<Self::Output> {
         let log = DEFAULT.new(o!(
             "function" => "transfer_native_token",
             "signer" => format!("{}", signer.account_id),
             "receiver" => format!("{}", receiver),
-            "amount" => amount,
+            "amount" => amount.as_yoctonear(),
         ));
         info!(log, "transferring native token");
         let action = Action::Transfer(TransferAction { deposit: amount });
@@ -185,7 +185,7 @@ impl<A: RpcClient> SendTx for StandardNearClient<A> {
         receiver: &AccountId,
         method_name: &str,
         args: T,
-        deposit: Balance,
+        deposit: NearToken,
     ) -> Result<Self::Output>
     where
         T: Sized + serde::Serialize,
@@ -195,7 +195,7 @@ impl<A: RpcClient> SendTx for StandardNearClient<A> {
             "signer" => format!("{}", signer.account_id),
             "receiver" => format!("{}", receiver),
             "method_name" => format!("{}", method_name),
-            "deposit" => deposit,
+            "deposit" => deposit.as_yoctonear(),
         ));
         info!(log, "executing contract");
 
@@ -203,7 +203,7 @@ impl<A: RpcClient> SendTx for StandardNearClient<A> {
             FunctionCallAction {
                 method_name: method_name.to_string(),
                 args: serde_json::to_vec(&args)?,
-                gas: Gas::from_tgas(300).as_gas(),
+                gas: near_primitives::types::Gas::from_teragas(300),
                 deposit,
             }
             .into(),

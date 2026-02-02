@@ -378,7 +378,7 @@ fn test_calculate_volatility_from_history() {
     };
     let volatility = calculate_volatility_from_history(&history_with_change).unwrap();
     assert!(
-        volatility > BigDecimal::from(0),
+        volatility > 0,
         "Price changes should result in positive volatility"
     );
 
@@ -406,7 +406,7 @@ fn test_calculate_volatility_from_history() {
     };
     let volatility = calculate_volatility_from_history(&history_with_zero).unwrap();
     assert!(
-        volatility >= BigDecimal::from(0),
+        volatility >= 0,
         "Should calculate volatility skipping zero prices, got: {}",
         volatility
     );

@@ -1,6 +1,5 @@
 #[cfg(test)]
-#[allow(clippy::module_inception)]
-mod unit_conversion_debug {
+mod tests {
     use super::super::{AlgorithmType, FeeModel, RebalanceInterval, SimulationConfig};
     use bigdecimal::BigDecimal;
     use chrono::{DateTime, Duration, Utc};
