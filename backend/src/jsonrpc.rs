@@ -3,6 +3,9 @@ mod near_client;
 mod rpc;
 mod sent_tx;
 
+#[cfg(test)]
+mod near_compat_tests;
+
 use crate::Result;
 use crate::config;
 use crate::jsonrpc::near_client::StandardNearClient;
