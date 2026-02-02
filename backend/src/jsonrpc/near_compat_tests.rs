@@ -7,6 +7,7 @@ use near_crypto::{InMemorySigner, KeyType};
 use near_primitives::action::{Action, FunctionCallAction, TransferAction};
 use near_primitives::transaction::{SignedTransaction, Transaction, TransactionV0};
 use near_primitives::types::AccountId;
+use near_sdk::NearToken;
 use near_sdk::json_types::U128;
 use serde_json::json;
 
@@ -85,7 +86,7 @@ fn test_transaction_creation() {
 
     // Create transfer action
     let transfer_action = Action::Transfer(TransferAction {
-        deposit: 1_000_000_000_000_000_000_000_000, // 1 NEAR
+        deposit: NearToken::from_yoctonear(1_000_000_000_000_000_000_000_000), // 1 NEAR
     });
 
     // Create function call action
@@ -93,8 +94,8 @@ fn test_transaction_creation() {
         FunctionCallAction {
             method_name: "test_method".to_string(),
             args: serde_json::to_vec(&json!({"key": "value"})).unwrap(),
-            gas: 300_000_000_000_000, // 300 TGas
-            deposit: 1,               // 1 yoctoNEAR for payable methods
+            gas: near_primitives::types::Gas::from_teragas(300), // 300 TGas
+            deposit: NearToken::from_yoctonear(1),               // 1 yoctoNEAR for payable methods
         }
         .into(),
     );

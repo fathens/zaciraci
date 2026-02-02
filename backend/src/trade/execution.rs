@@ -12,6 +12,7 @@ use crate::trade::{recorder::TradeRecorder, swap};
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use near_sdk::NearToken;
 use std::collections::HashMap;
 use zaciraci_common::algorithm::types::TradingAction;
 use zaciraci_common::types::*;
@@ -800,8 +801,9 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
     );
 
     // 1. REF Finance から wrap.near を withdraw
+    let wnear_token = NearToken::from_yoctonear(wnear_balance);
     trace!(log, "withdrawing wrap.near from REF Finance"; "amount" => wnear_balance);
-    let withdraw_tx = deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, wnear_balance).await?;
+    let withdraw_tx = deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, wnear_token).await?;
     if let Err(e) = withdraw_tx.wait_for_success().await {
         error!(log, "failed to withdraw from REF Finance"; "error" => %e);
         return Err(anyhow::anyhow!("Withdraw failed: {}", e));
@@ -809,7 +811,7 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
 
     // 2. wrap.near を NEAR に unwrap
     trace!(log, "unwrapping wrap.near to NEAR"; "amount" => wnear_balance);
-    let unwrap_tx = deposit::wnear::unwrap(&client, &wallet, wnear_balance).await?;
+    let unwrap_tx = deposit::wnear::unwrap(&client, &wallet, wnear_token).await?;
     if let Err(e) = unwrap_tx.wait_for_success().await {
         error!(log, "failed to unwrap NEAR"; "error" => %e);
         return Err(anyhow::anyhow!("Unwrap failed: {}", e));
@@ -817,24 +819,25 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
 
     // 3. NEAR を HARVEST_ACCOUNT_ID に送金（HARVEST_RESERVE_AMOUNT を残す）
     let current_native_balance = client.get_native_amount(account).await?;
+    let reserve_amount_token = NearToken::from_yoctonear(reserve_amount_u128);
 
-    let available_for_transfer = if current_native_balance > reserve_amount_u128 {
-        current_native_balance - reserve_amount_u128
+    let available_for_transfer = if current_native_balance > reserve_amount_token {
+        current_native_balance.saturating_sub(reserve_amount_token)
     } else {
         info!(log, "insufficient balance for transfer after reserve";
-            "current_balance" => current_native_balance,
+            "current_balance" => current_native_balance.as_yoctonear(),
             "reserve_amount" => reserve_amount_u128
         );
         return Ok(());
     };
 
-    if available_for_transfer == 0 {
+    if available_for_transfer.as_yoctonear() == 0 {
         info!(log, "no NEAR available for transfer after reserve");
         return Ok(());
     }
 
     trace!(log, "transferring NEAR to harvest account";
-        "amount" => available_for_transfer,
+        "amount" => available_for_transfer.as_yoctonear(),
         "target" => %harvest_account
     );
 
@@ -854,7 +857,7 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
     };
 
     info!(log, "unwrap and transfer completed";
-        "transferred_amount" => available_for_transfer,
+        "transferred_amount" => available_for_transfer.as_yoctonear(),
         "target_account" => %harvest_account,
         "tx_hash" => %tx_hash
     );

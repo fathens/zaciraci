@@ -5,9 +5,10 @@ use crate::wallet::Wallet;
 use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
-use near_primitives::types::{Balance, BlockId};
+use near_primitives::types::BlockId;
 use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
 use near_sdk::AccountId;
+use near_sdk::NearToken;
 use near_sdk::json_types::U128;
 use serde_json::json;
 use std::cell::Cell;
@@ -72,8 +73,8 @@ impl OperationsLog {
 }
 
 struct MockClient {
-    native_amount: Cell<Balance>,
-    wnear_deposited: Cell<Balance>,
+    native_amount: Cell<u128>,
+    wnear_deposited: Cell<u128>,
     operations_log: OperationsLog,
     gas_price: u128,
     should_fail_swap: Cell<bool>,
@@ -82,7 +83,7 @@ struct MockClient {
 unsafe impl Sync for MockClient {}
 
 impl MockClient {
-    fn new(native: Balance, deposited: Balance) -> Self {
+    fn new(native: u128, deposited: u128) -> Self {
         Self {
             native_amount: Cell::new(native),
             wnear_deposited: Cell::new(deposited),
@@ -98,16 +99,18 @@ impl MockClient {
 }
 
 impl jsonrpc::AccountInfo for MockClient {
-    async fn get_native_amount(&self, _account: &AccountId) -> crate::Result<Balance> {
+    async fn get_native_amount(&self, _account: &AccountId) -> crate::Result<NearToken> {
         self.log_operation("get_native_amount");
-        Ok(self.native_amount.get())
+        Ok(NearToken::from_yoctonear(self.native_amount.get()))
     }
 }
 
 impl jsonrpc::GasInfo for MockClient {
     async fn get_gas_price(&self, _block: Option<BlockId>) -> crate::Result<GasPrice> {
         self.log_operation("get_gas_price");
-        Ok(GasPrice::from_balance(self.gas_price))
+        Ok(GasPrice::from_balance(NearToken::from_yoctonear(
+            self.gas_price,
+        )))
     }
 }
 
@@ -118,7 +121,7 @@ impl jsonrpc::SendTx for MockClient {
         &self,
         _signer: &InMemorySigner,
         _receiver: &AccountId,
-        _amount: Balance,
+        _amount: NearToken,
     ) -> crate::Result<Self::Output> {
         self.log_operation("transfer_native_token");
         Ok(MockSentTx {
@@ -133,7 +136,7 @@ impl jsonrpc::SendTx for MockClient {
         _receiver: &AccountId,
         method_name: &str,
         _args: T,
-        _deposit: Balance,
+        _deposit: NearToken,
     ) -> crate::Result<Self::Output>
     where
         T: Sized + serde::Serialize,
@@ -232,8 +235,8 @@ impl jsonrpc::SentTx for MockSentTx {
         Ok(ExecutionOutcomeView {
             logs: vec![],
             receipt_ids: vec![],
-            gas_burnt: 0,
-            tokens_burnt: 0,
+            gas_burnt: near_primitives::types::Gas::from_gas(0),
+            tokens_burnt: NearToken::from_yoctonear(0),
             executor_id: AccountId::try_from("test.near".to_string())?,
             status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
             metadata: near_primitives::views::ExecutionMetadataView {
@@ -333,7 +336,7 @@ async fn test_mock_client_basic() {
 
     // get_native_amount のテスト
     let balance = client.get_native_amount(wallet.account_id()).await.unwrap();
-    assert_eq!(balance, native_balance);
+    assert_eq!(balance.as_yoctonear(), native_balance);
     assert!(client.operations_log.contains("get_native_amount"));
 
     // get_gas_price のテスト

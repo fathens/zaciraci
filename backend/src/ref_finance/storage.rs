@@ -4,8 +4,8 @@ use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{CONTRACT_ADDRESS, deposit};
 use crate::wallet::Wallet;
-use near_primitives::types::AccountId;
 use near_sdk::json_types::{U64, U128};
+use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -69,7 +69,7 @@ pub async fn get_account_basic_info<C: ViewContract>(
 pub async fn deposit<C: SendTx, W: Wallet>(
     client: &C,
     wallet: &W,
-    value: u128,
+    value: NearToken,
     registration_only: bool,
 ) -> Result<C::Output> {
     let log = DEFAULT.new(o!("function" => "storage::deposit"));
@@ -79,7 +79,7 @@ pub async fn deposit<C: SendTx, W: Wallet>(
     });
     let signer = wallet.signer();
     info!(log, "depositing";
-        "value" => value,
+        "value" => value.as_yoctonear(),
         "signer" => ?signer.account_id,
     );
 
@@ -202,7 +202,7 @@ where
     }
     if more > 0 {
         info!(log, "needing more deposit"; "more" => more);
-        deposit(client, wallet, more, false)
+        deposit(client, wallet, NearToken::from_yoctonear(more), false)
             .await?
             .wait_for_success()
             .await?;
@@ -247,10 +247,15 @@ where
         let bounds = check_bounds(client).await?;
         let min_deposit = bounds.min.0;
 
-        deposit(client, wallet, min_deposit, false)
-            .await?
-            .wait_for_success()
-            .await?;
+        deposit(
+            client,
+            wallet,
+            NearToken::from_yoctonear(min_deposit),
+            false,
+        )
+        .await?
+        .wait_for_success()
+        .await?;
 
         trace!(log, "initial storage deposit completed"; "amount" => min_deposit);
     } else {
@@ -297,6 +302,7 @@ mod tests {
     use near_crypto::InMemorySigner;
     use near_primitives::transaction::Action;
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+    use near_sdk::NearToken;
     use std::cell::Cell;
     use std::collections::HashMap;
 
@@ -377,8 +383,8 @@ mod tests {
             Ok(ExecutionOutcomeView {
                 logs: vec![],
                 receipt_ids: vec![],
-                gas_burnt: 0,
-                tokens_burnt: 0,
+                gas_burnt: near_primitives::types::Gas::from_gas(0),
+                tokens_burnt: NearToken::from_yoctonear(0),
                 executor_id: AccountId::try_from("test.near".to_string())?,
                 status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
                 metadata: near_primitives::views::ExecutionMetadataView {
@@ -469,7 +475,7 @@ mod tests {
             &self,
             _signer: &InMemorySigner,
             _receiver: &AccountId,
-            _amount: near_primitives::types::Balance,
+            _amount: NearToken,
         ) -> Result<Self::Output> {
             Ok(MockSentTx { should_fail: false })
         }
@@ -480,7 +486,7 @@ mod tests {
             _receiver: &AccountId,
             method_name: &str,
             _args: T,
-            _deposit: near_primitives::types::Balance,
+            _deposit: NearToken,
         ) -> Result<Self::Output>
         where
             T: Sized + serde::Serialize,
@@ -561,7 +567,7 @@ mod tests {
     async fn test_storage_deposit() {
         let client = MockStorageClient::new_unregistered();
         let wallet = MockWallet::new();
-        let deposit_amount = 1_000_000_000_000_000_000_000u128;
+        let deposit_amount = NearToken::from_yoctonear(1_000_000_000_000_000_000_000);
 
         let result = deposit(&client, &wallet, deposit_amount, false).await;
         assert!(result.is_ok());

@@ -10,6 +10,7 @@ use axum::{
     http::StatusCode,
     routing::get,
 };
+use near_sdk::NearToken;
 use std::sync::Arc;
 
 pub fn add_route(app: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
@@ -42,13 +43,13 @@ async fn native_token_transfer(
     Path((receiver, amount)): Path<(String, String)>,
 ) -> String {
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
-    let amount = MicroNear::of(amount_micro).to_yocto();
+    let amount_yocto = MicroNear::of(amount_micro).to_yocto();
     let receiver = receiver.parse().unwrap();
     let wallet = wallet::new_wallet();
     let signer = wallet.signer();
     let client = jsonrpc::new_client();
     let res = client
-        .transfer_native_token(signer, &receiver, amount)
+        .transfer_native_token(signer, &receiver, NearToken::from_yoctonear(amount_yocto))
         .await;
     match res {
         Ok(_) => "OK".to_owned(),

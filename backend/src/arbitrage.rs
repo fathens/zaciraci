@@ -11,7 +11,6 @@ use crate::types::MicroNear;
 use crate::wallet;
 use anyhow::bail;
 use humantime::parse_duration;
-use near_primitives::types::Balance;
 use once_cell::sync::Lazy;
 use std::time::Duration;
 
@@ -86,10 +85,11 @@ where
 
     let balance = ref_finance::balances::start(client, wallet, &WNEAR_TOKEN, None).await?;
     let start = WNEAR_TOKEN.to_in();
-    let start_balance = MicroNear::from_yocto(balance);
+    let balance_yocto = balance.as_yoctonear();
+    let start_balance = MicroNear::from_yocto(balance_yocto);
     info!(log, "start";
         "start.token" => ?start,
-        "start.balance" => ?balance,
+        "start.balance" => balance_yocto,
         "start.balance_in_micro" => ?start_balance,
     );
 
@@ -146,21 +146,21 @@ async fn swap_each<A, C, W>(
     path: TokenPath,
 ) -> crate::Result<()>
 where
-    A: Into<Balance> + Copy,
+    A: Into<u128> + Copy,
     C: jsonrpc::SendTx,
     <C as jsonrpc::SendTx>::Output: std::fmt::Display,
     W: wallet::Wallet,
 {
     let log = DEFAULT.new(o!(
         "function" => "swap_each",
-        "preview.output_value" => format!("{}", preview.output_value),
-        "preview.gain" => format!("{}", preview.gain),
+        "preview.output_value" => preview.output_value,
+        "preview.gain" => preview.gain,
         "path.len" => format!("{}", path.len()),
     ));
 
     let arg = ref_finance::swap::SwapArg {
         initial_in: preview.input_value.into(),
-        min_out: preview.output_value - preview.gain,
+        min_out: preview.output_value.saturating_sub(preview.gain),
     };
     let swap_result = ref_finance::swap::run_swap(client, wallet, &path.0, arg).await;
 

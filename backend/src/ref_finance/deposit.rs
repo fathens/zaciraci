@@ -4,9 +4,8 @@ use crate::logging::*;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::wallet::Wallet;
-use near_primitives::types::Balance;
-use near_sdk::AccountId;
 use near_sdk::json_types::U128;
+use near_sdk::{AccountId, NearToken};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -16,12 +15,11 @@ pub mod wnear {
     use crate::logging::*;
     use crate::ref_finance::token_account::WNEAR_TOKEN;
     use crate::wallet::Wallet;
-    use near_primitives::types::Balance;
-    use near_sdk::AccountId;
     use near_sdk::json_types::U128;
+    use near_sdk::{AccountId, NearToken};
     use serde_json::json;
 
-    pub async fn balance_of<C: ViewContract>(client: &C, account: &AccountId) -> Result<Balance> {
+    pub async fn balance_of<C: ViewContract>(client: &C, account: &AccountId) -> Result<NearToken> {
         let log = DEFAULT.new(o!(
             "function" => "balance_of",
             "account" => format!("{}", account),
@@ -37,17 +35,17 @@ pub mod wnear {
             .view_contract(WNEAR_TOKEN.as_account_id(), METHOD_NAME, &args)
             .await?;
         let balance: U128 = serde_json::from_slice(&result.result)?;
-        Ok(balance.into())
+        Ok(NearToken::from_yoctonear(balance.0))
     }
 
     pub async fn wrap<C: SendTx, W: Wallet>(
         client: &C,
         wallet: &W,
-        amount: Balance,
+        amount: NearToken,
     ) -> Result<C::Output> {
         let log = DEFAULT.new(o!(
             "function" => "wrap_near",
-            "amount" => amount,
+            "amount" => amount.as_yoctonear(),
         ));
         trace!(log, "wrapping native token");
 
@@ -70,21 +68,21 @@ pub mod wnear {
     pub async fn unwrap<C: SendTx, W: Wallet>(
         client: &C,
         wallet: &W,
-        amount: Balance,
+        amount: NearToken,
     ) -> Result<C::Output> {
         let log = DEFAULT.new(o!(
             "function" => "unwrap_near",
-            "amount" => amount,
+            "amount" => amount.as_yoctonear(),
         ));
         trace!(log, "unwrapping native token");
 
         const METHOD_NAME: &str = "near_withdraw";
 
         let args = json!({
-            "amount": U128(amount),
+            "amount": U128(amount.as_yoctonear()),
         });
 
-        let deposit = 1; // minimum deposit
+        let deposit = NearToken::from_yoctonear(1); // minimum deposit
         let signer = wallet.signer();
 
         client
@@ -103,12 +101,12 @@ pub async fn deposit<C: SendTx, W: Wallet>(
     client: &C,
     wallet: &W,
     token: &TokenAccount,
-    amount: Balance,
+    amount: NearToken,
 ) -> Result<C::Output> {
     let log = DEFAULT.new(o!(
         "function" => "deposit",
         "token" => format!("{}", token),
-        "amount" => amount,
+        "amount" => amount.as_yoctonear(),
     ));
     trace!(log, "entered");
 
@@ -116,11 +114,11 @@ pub async fn deposit<C: SendTx, W: Wallet>(
 
     let args = json!({
         "receiver_id": CONTRACT_ADDRESS.clone(),
-        "amount": U128(amount),
+        "amount": U128(amount.as_yoctonear()),
         "msg": "",
     });
 
-    let deposit = 1; // minimum deposit
+    let deposit = NearToken::from_yoctonear(1); // minimum deposit
     let signer = wallet.signer();
 
     client
@@ -156,12 +154,12 @@ pub async fn withdraw<C: SendTx, W: Wallet>(
     client: &C,
     wallet: &W,
     token: &TokenAccount,
-    amount: Balance,
+    amount: NearToken,
 ) -> Result<C::Output> {
     let log = DEFAULT.new(o!(
         "function" => "withdraw",
         "token" => format!("{}", token),
-        "amount" => amount,
+        "amount" => amount.as_yoctonear(),
     ));
     trace!(log, "entered");
 
@@ -169,11 +167,11 @@ pub async fn withdraw<C: SendTx, W: Wallet>(
 
     let args = json!({
         "token_id": token,
-        "amount": U128(amount),
+        "amount": U128(amount.as_yoctonear()),
         "skip_unwrap_near": false,
     });
 
-    let deposit = 1; // minimum deposit
+    let deposit = NearToken::from_yoctonear(1); // minimum deposit
     let signer = wallet.signer();
 
     client
@@ -197,7 +195,7 @@ pub async fn register_tokens<C: SendTx, W: Wallet>(
         "token_ids": tokens
     });
 
-    let deposit = 1; // minimum deposit
+    let deposit = NearToken::from_yoctonear(1); // minimum deposit
     let signer = wallet.signer();
 
     client
@@ -221,7 +219,7 @@ pub async fn unregister_tokens<C: SendTx, W: Wallet>(
         "token_ids": tokens
     });
 
-    let deposit = 1; // minimum deposit
+    let deposit = NearToken::from_yoctonear(1); // minimum deposit
     let signer = wallet.signer();
 
     client
@@ -238,6 +236,7 @@ mod tests {
     use near_crypto::InMemorySigner;
     use near_primitives::transaction::Action;
     use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+    use near_sdk::NearToken;
     use std::cell::Cell;
     use std::sync::{Arc, Mutex};
 
@@ -317,8 +316,8 @@ mod tests {
             Ok(ExecutionOutcomeView {
                 logs: vec![],
                 receipt_ids: vec![],
-                gas_burnt: 0,
-                tokens_burnt: 0,
+                gas_burnt: near_primitives::types::Gas::from_gas(0),
+                tokens_burnt: NearToken::from_yoctonear(0),
                 executor_id: AccountId::try_from("test.near".to_string())?,
                 status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
                 metadata: near_primitives::views::ExecutionMetadataView {
@@ -331,7 +330,7 @@ mod tests {
 
     // Comprehensive MockClient for deposit tests
     struct MockDepositClient {
-        wnear_balance: Cell<Balance>,
+        wnear_balance: Cell<u128>,
         deposits: HashMap<TokenAccount, U128>,
         last_method: Arc<Mutex<Option<String>>>,
         should_fail: Cell<bool>,
@@ -340,7 +339,7 @@ mod tests {
     unsafe impl Sync for MockDepositClient {}
 
     impl MockDepositClient {
-        fn new(wnear_balance: Balance) -> Self {
+        fn new(wnear_balance: u128) -> Self {
             Self {
                 wnear_balance: Cell::new(wnear_balance),
                 deposits: HashMap::new(),
@@ -384,7 +383,7 @@ mod tests {
             &self,
             _signer: &InMemorySigner,
             _receiver: &AccountId,
-            _amount: Balance,
+            _amount: NearToken,
         ) -> Result<Self::Output> {
             Ok(MockSentTx { should_fail: false })
         }
@@ -395,7 +394,7 @@ mod tests {
             _receiver: &AccountId,
             method_name: &str,
             _args: T,
-            _deposit: Balance,
+            _deposit: NearToken,
         ) -> Result<Self::Output>
         where
             T: Sized + serde::Serialize,
@@ -425,7 +424,7 @@ mod tests {
         let result = wnear::balance_of(&client, &account).await;
         assert!(result.is_ok());
         let balance = result.unwrap();
-        assert_eq!(balance, expected_balance);
+        assert_eq!(balance.as_yoctonear(), expected_balance);
     }
 
     // Test: wnear::wrap
@@ -433,7 +432,7 @@ mod tests {
     async fn test_wnear_wrap() {
         let client = MockDepositClient::new(0);
         let wallet = MockWallet::new();
-        let amount = 1_000_000_000_000_000_000_000_000u128;
+        let amount = NearToken::from_yoctonear(1_000_000_000_000_000_000_000_000);
 
         let result = wnear::wrap(&client, &wallet, amount).await;
         assert!(result.is_ok());
@@ -447,7 +446,7 @@ mod tests {
     async fn test_wnear_unwrap() {
         let client = MockDepositClient::new(1_000_000_000_000_000_000_000_000);
         let wallet = MockWallet::new();
-        let amount = 500_000_000_000_000_000_000_000u128;
+        let amount = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
 
         let result = wnear::unwrap(&client, &wallet, amount).await;
         assert!(result.is_ok());
@@ -462,7 +461,7 @@ mod tests {
         let client = MockDepositClient::new(0);
         let wallet = MockWallet::new();
         let token: TokenAccount = WNEAR_TOKEN.clone();
-        let amount = 1_000_000_000_000_000_000_000_000u128;
+        let amount = NearToken::from_yoctonear(1_000_000_000_000_000_000_000_000);
 
         let result = deposit(&client, &wallet, &token, amount).await;
         assert!(result.is_ok());
@@ -480,7 +479,7 @@ mod tests {
 
         let client = MockDepositClient::new(0).with_deposits(deposits);
         let wallet = MockWallet::new();
-        let amount = 500_000_000_000_000_000_000_000u128;
+        let amount = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
 
         let result = withdraw(&client, &wallet, &token, amount).await;
         assert!(result.is_ok());
