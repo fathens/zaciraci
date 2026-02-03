@@ -3,6 +3,7 @@ use crate::types::{NearValue, TokenOutAccount, TokenPrice};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -132,21 +133,30 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
         .collect()
 }
 
-/// 共分散行列を計算
+/// 共分散行列を計算（rayon による並列化）
 pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     let n = daily_returns.len();
     if n == 0 {
         return Array2::zeros((0, 0));
     }
 
-    let mut covariance = Array2::zeros((n, n));
+    // 上三角行列のインデックスペア (i, j) where i <= j を生成
+    let pairs: Vec<(usize, usize)> = (0..n).flat_map(|i| (i..n).map(move |j| (i, j))).collect();
 
-    for i in 0..n {
-        for j in i..n {
+    // 並列で共分散を計算
+    let covariances: Vec<(usize, usize, f64)> = pairs
+        .par_iter()
+        .map(|&(i, j)| {
             let cov = calculate_covariance(&daily_returns[i], &daily_returns[j]);
-            covariance[[i, j]] = cov;
-            covariance[[j, i]] = cov;
-        }
+            (i, j, cov)
+        })
+        .collect();
+
+    // 結果を行列に格納
+    let mut covariance = Array2::zeros((n, n));
+    for (i, j, cov) in covariances {
+        covariance[[i, j]] = cov;
+        covariance[[j, i]] = cov;
     }
 
     // 正則化（数値安定性のため）
@@ -198,7 +208,7 @@ pub fn calculate_portfolio_std(weights: &[f64], covariance_matrix: &Array2<f64>)
 
 // ==================== 最適化アルゴリズム ====================
 
-/// シャープレシオを最大化する最適ポートフォリオを計算
+/// シャープレシオを最大化する最適ポートフォリオを計算（rayon による並列化）
 pub fn maximize_sharpe_ratio(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
@@ -208,8 +218,7 @@ pub fn maximize_sharpe_ratio(
         return vec![];
     }
 
-    let mut best_weights = vec![1.0 / n as f64; n];
-    let mut best_sharpe = f64::NEG_INFINITY;
+    let default_weights = vec![1.0 / n as f64; n];
 
     // 目標リターンの範囲を設定
     let min_return = expected_returns
@@ -224,29 +233,36 @@ pub fn maximize_sharpe_ratio(
     // 全トークンの期待リターンが同一の場合、グリッドサーチは無意味（全反復が同じ target_return）
     // 等配分が最小分散解の良い近似なので early return
     if (max_return - min_return).abs() < 1e-12 {
-        return best_weights;
+        return default_weights;
     }
 
-    // グリッドサーチで最適化
-    for i in 0..50 {
-        let target_return = min_return + (max_return - min_return) * i as f64 / 49.0;
+    // グリッドサーチを並列化
+    let results: Vec<_> = (0..50)
+        .into_par_iter()
+        .filter_map(|i| {
+            let target_return = min_return + (max_return - min_return) * i as f64 / 49.0;
 
-        if let Ok(weights) =
-            calculate_efficient_frontier(expected_returns, covariance_matrix, target_return)
-        {
-            let portfolio_return = calculate_portfolio_return(&weights, expected_returns);
-            let portfolio_std = calculate_portfolio_std(&weights, covariance_matrix);
+            if let Ok(weights) =
+                calculate_efficient_frontier(expected_returns, covariance_matrix, target_return)
+            {
+                let portfolio_return = calculate_portfolio_return(&weights, expected_returns);
+                let portfolio_std = calculate_portfolio_std(&weights, covariance_matrix);
 
-            let sharpe = (portfolio_return - RISK_FREE_RATE / 365.0) / portfolio_std;
-
-            if sharpe > best_sharpe && portfolio_std > 0.0 {
-                best_sharpe = sharpe;
-                best_weights = weights;
+                if portfolio_std > 0.0 {
+                    let sharpe = (portfolio_return - RISK_FREE_RATE / 365.0) / portfolio_std;
+                    return Some((sharpe, weights));
+                }
             }
-        }
-    }
+            None
+        })
+        .collect();
 
-    best_weights
+    // 最良の結果を選択
+    results
+        .into_iter()
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, weights)| weights)
+        .unwrap_or(default_weights)
 }
 
 /// 効率的フロンティア上の最適ポートフォリオを計算
@@ -689,15 +705,69 @@ pub fn select_optimal_tokens(
     select_uncorrelated_tokens(scored_tokens, historical_prices, max_tokens)
 }
 
-/// 相関の低いトークンを選択
+/// 相関の低いトークンを選択（最適化版）
+///
+/// 改善点:
+/// 1. HashMap で価格履歴をインデックス化 (O(m) → O(1) ルックアップ)
+/// 2. 日次リターンを事前計算してキャッシュ
 fn select_uncorrelated_tokens(
     scored_tokens: Vec<(TokenScore, &TokenData)>,
     historical_prices: &[PriceHistory],
     max_tokens: usize,
 ) -> Vec<TokenData> {
+    use std::collections::HashMap;
+
     if scored_tokens.is_empty() {
         return Vec::new();
     }
+
+    // 1. 価格履歴を HashMap でインデックス化（O(1) ルックアップ）
+    let price_index: HashMap<String, &PriceHistory> = historical_prices
+        .iter()
+        .map(|p| (p.token.to_string(), p))
+        .collect();
+
+    // 2. 日次リターンを事前計算してキャッシュ
+    let returns_cache: HashMap<String, Vec<f64>> = price_index
+        .iter()
+        .map(|(token, price_history)| {
+            let returns = calculate_returns_from_prices(&price_history.prices);
+            (token.clone(), returns)
+        })
+        .collect();
+
+    // キャッシュを使った相関計算
+    let calculate_correlation_cached = |token1: &str, token2: &str| -> f64 {
+        let returns1 = match returns_cache.get(token1) {
+            Some(r) => r,
+            None => return 0.0,
+        };
+        let returns2 = match returns_cache.get(token2) {
+            Some(r) => r,
+            None => return 0.0,
+        };
+
+        // 長さが異なる場合は末尾（最新データ）を優先してトリミング
+        let min_len = returns1.len().min(returns2.len());
+        if min_len < 2 {
+            return 0.0;
+        }
+
+        let r1 = &returns1[returns1.len() - min_len..];
+        let r2 = &returns2[returns2.len() - min_len..];
+
+        // トリミング後のスライスで標準偏差を計算
+        let std1 = calculate_std_dev(r1);
+        let std2 = calculate_std_dev(r2);
+
+        // 標準偏差が0の場合は相関を0とする
+        if std1 <= 0.0 || std2 <= 0.0 {
+            return 0.0;
+        }
+
+        let correlation = calculate_covariance(r1, r2) / (std1 * std2);
+        correlation.clamp(-1.0, 1.0)
+    };
 
     // 最高スコアのトークンを最初に選択
     let mut selected = vec![scored_tokens[0].1.clone()];
@@ -707,16 +777,15 @@ fn select_uncorrelated_tokens(
             break;
         }
 
-        // 既存選択トークンとの平均相関を計算
-        let mut correlations = Vec::new();
-        for selected_token in &selected {
-            let correlation = calculate_token_correlation(
-                &token.symbol.to_string(),
-                &selected_token.symbol.to_string(),
-                historical_prices,
-            );
-            correlations.push(correlation.abs());
-        }
+        let token_str = token.symbol.to_string();
+
+        // 既存選択トークンとの平均相関を計算（キャッシュ使用）
+        let correlations: Vec<f64> = selected
+            .iter()
+            .map(|selected_token| {
+                calculate_correlation_cached(&token_str, &selected_token.symbol.to_string()).abs()
+            })
+            .collect();
 
         let avg_correlation = if !correlations.is_empty() {
             correlations.iter().sum::<f64>() / correlations.len() as f64
@@ -731,48 +800,6 @@ fn select_uncorrelated_tokens(
     }
 
     selected
-}
-
-/// 2つのトークン間の相関を計算
-fn calculate_token_correlation(
-    token1: &str,
-    token2: &str,
-    historical_prices: &[PriceHistory],
-) -> f64 {
-    // トークンの価格履歴を取得
-    let prices1 = historical_prices
-        .iter()
-        .find(|p| p.token.to_string() == token1)
-        .map(|p| &p.prices);
-    let prices2 = historical_prices
-        .iter()
-        .find(|p| p.token.to_string() == token2)
-        .map(|p| &p.prices);
-
-    if let (Some(p1), Some(p2)) = (prices1, prices2) {
-        // 日次リターンを計算
-        let returns1 = calculate_returns_from_prices(p1);
-        let returns2 = calculate_returns_from_prices(p2);
-
-        // 長さが異なる場合は末尾（最新データ）を優先してトリミング
-        let min_len = returns1.len().min(returns2.len());
-        if min_len >= 2 {
-            let r1 = &returns1[returns1.len() - min_len..];
-            let r2 = &returns2[returns2.len() - min_len..];
-
-            let std1 = calculate_std_dev(r1);
-            let std2 = calculate_std_dev(r2);
-
-            // 標準偏差が0の場合は相関を0とする
-            if std1 > 0.0 && std2 > 0.0 {
-                let correlation = calculate_covariance(r1, r2) / (std1 * std2);
-                // 相関係数を-1から1の範囲にクリップ
-                return correlation.clamp(-1.0, 1.0);
-            }
-        }
-    }
-
-    0.0
 }
 
 /// 価格からリターンを計算

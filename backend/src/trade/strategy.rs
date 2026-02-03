@@ -26,12 +26,13 @@ use crate::Result;
 use crate::config;
 use crate::logging::*;
 use crate::persistence::evaluation_period::EvaluationPeriod;
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::trade::predict::PredictionService;
 use crate::trade::swap;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use futures::stream::{self, StreamExt};
 use near_sdk::{AccountId, NearToken};
 use std::collections::BTreeMap;
 use zaciraci_common::algorithm::{
@@ -464,10 +465,8 @@ where
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
     // ポートフォリオデータの準備
-    let mut token_data = Vec::new();
     let mut predictions: BTreeMap<zaciraci_common::types::TokenOutAccount, TokenPrice> =
         BTreeMap::new();
-    let mut historical_prices = Vec::new();
 
     // 型安全な quote_token をループ外で事前に準備（最適化）
     let quote_token_in: TokenInAccount = crate::ref_finance::token_account::WNEAR_TOKEN.to_in();
@@ -476,158 +475,215 @@ where
     let eval_handle =
         tokio::spawn(async { super::prediction_accuracy::evaluate_pending_predictions().await });
 
-    for token in tokens {
-        let token_str = token.to_string();
+    // 設定を事前に取得
+    let price_history_days = config::get("TRADE_PRICE_HISTORY_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(30);
 
-        // PredictionServiceを使用して価格履歴と予測を取得
-        let price_history_days = config::get("TRADE_PRICE_HISTORY_DAYS")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(30);
-        let end_date = Utc::now();
-        let start_date = end_date - chrono::Duration::days(price_history_days);
+    // 1. predict_multiple_tokens() を使用してバッチ履歴取得 + 予測を並行実行
+    let token_out_list: Vec<TokenOutAccount> = tokens.iter().map(|t| t.clone().into()).collect();
+    let batch_predictions = prediction_service
+        .predict_multiple_tokens(
+            token_out_list.clone(),
+            &quote_token_in,
+            price_history_days,
+            24,
+        )
+        .await?;
 
-        // 型安全なトークンに変換
-        let token_out: TokenOutAccount = token.clone().into();
+    debug!(log, "batch predictions completed"; "count" => batch_predictions.len());
 
-        // 価格履歴の取得
-        let history = match prediction_service
-            .get_price_history(&token_out, &quote_token_in, start_date, end_date)
-            .await
-        {
-            Ok(hist) => {
-                // PredictionServiceのTokenPriceHistoryをcommonのPriceHistoryに変換
-                // backend の Token*Account → common の Token*Account に変換
-                zaciraci_common::algorithm::types::PriceHistory {
-                    token: hist
-                        .token
-                        .to_string()
-                        .parse()
-                        .map_err(|e| anyhow::anyhow!("Invalid token in price history: {}", e))?,
-                    quote_token: hist.quote_token.to_string().parse().map_err(|e| {
-                        anyhow::anyhow!("Invalid quote token in price history: {}", e)
-                    })?,
-                    prices: hist
-                        .prices
-                        .into_iter()
-                        .map(|p| zaciraci_common::algorithm::types::PricePoint {
-                            timestamp: p.timestamp,
-                            price: p.price,
-                            volume: p.volume,
-                        })
-                        .collect(),
-                }
+    // 2. 並行実行数を設定から取得
+    let concurrency = zaciraci_common::config::config()
+        .trade
+        .prediction_concurrency as usize;
+
+    // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
+    let end_date = Utc::now();
+    let start_date = end_date - chrono::Duration::days(price_history_days);
+
+    // 4. 各トークンの追加データを並行取得（流動性スコア、市場規模、decimals）
+    // TokenData 用のデータを構築
+    struct TokenProcessingData {
+        token_out: TokenOutAccount,
+        prediction: Option<crate::trade::predict::TokenPrediction>,
+    }
+
+    let processing_data: Vec<_> = token_out_list
+        .iter()
+        .map(|token_out| TokenProcessingData {
+            token_out: token_out.clone(),
+            prediction: batch_predictions.get(token_out).cloned(),
+        })
+        .collect();
+
+    // 5. 価格履歴を並行取得
+    let history_futures: Vec<_> = processing_data
+        .into_iter()
+        .map(|data| {
+            let log = log.clone();
+            let quote_token_in = quote_token_in.clone();
+            async move {
+                let token_str = data.token_out.to_string();
+
+                // 価格履歴の取得
+                let history_result = prediction_service
+                    .get_price_history(&data.token_out, &quote_token_in, start_date, end_date)
+                    .await;
+
+                let history = match history_result {
+                    Ok(hist) => {
+                        // backend の TokenPriceHistory → common の PriceHistory に変換
+                        let token_parsed = hist.token.to_string().parse().ok()?;
+                        let quote_parsed = hist.quote_token.to_string().parse().ok()?;
+                        zaciraci_common::algorithm::types::PriceHistory {
+                            token: token_parsed,
+                            quote_token: quote_parsed,
+                            prices: hist
+                                .prices
+                                .into_iter()
+                                .map(|p| zaciraci_common::algorithm::types::PricePoint {
+                                    timestamp: p.timestamp,
+                                    price: p.price,
+                                    volume: p.volume,
+                                })
+                                .collect(),
+                        }
+                    }
+                    Err(e) => {
+                        error!(log, "failed to get price history for token"; "token" => %token_str, "error" => ?e);
+                        return None;
+                    }
+                };
+
+                // 現在価格を履歴から取得
+                let current_price = history.prices.last()?.price.clone();
+
+                // 予測価格を取得
+                let predicted_price = data
+                    .prediction
+                    .as_ref()
+                    .and_then(|p| p.predictions.first())
+                    .map(|p| p.price.clone())?;
+
+                // ボラティリティの計算
+                let volatility = calculate_volatility_from_history(&history).ok()?;
+                let volatility_f64 = volatility.to_string().parse::<f64>().ok()?;
+
+                Some((
+                    data.token_out,
+                    history,
+                    current_price,
+                    predicted_price,
+                    volatility_f64,
+                    token_str,
+                ))
             }
-            Err(e) => {
-                error!(log, "failed to get price history for token"; "token" => %token, "error" => ?e);
-                return Err(anyhow::anyhow!(
-                    "Failed to get price history for token {}: {}",
-                    token,
-                    e
-                ));
-            }
-        };
+        })
+        .collect();
 
-        // 現在価格を履歴から取得（TokenPrice: NEAR/token 単位）
-        let current_price = if let Some(latest_price) = history.prices.last() {
-            latest_price.price.clone()
-        } else {
-            error!(log, "no price data available for token"; "token" => %token);
-            return Err(anyhow::anyhow!(
-                "No price data available for token {}",
-                token
-            ));
-        };
+    // 並行実行（concurrency で制限）
+    let results: Vec<_> = stream::iter(history_futures)
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
 
-        // PredictionServiceの形式に合わせてhistoryを再構築
-        // common の Token*Account → backend の Token*Account に変換
-        let predict_token: TokenOutAccount = history
-            .token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?
-            .into();
-        let predict_quote: TokenInAccount = history
-            .quote_token
-            .to_string()
-            .parse::<TokenAccount>()
-            .map_err(|e| anyhow::anyhow!("Invalid quote token: {}", e))?
-            .into();
-        let predict_history = crate::trade::predict::TokenPriceHistory {
-            token: predict_token,
-            quote_token: predict_quote,
-            prices: history
-                .prices
-                .iter()
-                .map(|p| crate::trade::predict::PricePoint {
-                    timestamp: p.timestamp,
-                    price: p.price.clone(),
-                    volume: p.volume.clone(),
-                })
-                .collect(),
-        };
+    // 6. 流動性スコア、decimals、市場規模を取得
+    // client への参照を持つため、チャンク単位で並行処理
+    let token_intermediate_data: Vec<_> = results.into_iter().flatten().collect();
+    let mut final_results = Vec::with_capacity(token_intermediate_data.len());
 
-        // 予測の取得（TokenPrice: NEAR/token 単位）
-        let predicted_price = match prediction_service.predict_price(&predict_history, 24).await {
-            Ok(pred) => {
-                // 最初の予測値を返却値として使用
-                pred.predictions
-                    .first()
-                    .map(|p| p.price.clone())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("No prediction values returned for token {}", token)
-                    })?
-            }
-            Err(e) => {
-                error!(log, "failed to get prediction for token"; "token" => %token, "error" => ?e);
-                return Err(anyhow::anyhow!(
-                    "Failed to get prediction for token {}: {}",
-                    token,
-                    e
-                ));
-            }
-        };
+    // チャンク単位で処理（concurrency 個ずつ）
+    for chunk in token_intermediate_data.chunks(concurrency) {
+        // このチャンク内の全トークンに対して並行実行
+        let chunk_futures: Vec<_> = chunk
+            .iter()
+            .map(
+                |(token_out, history, current_price, predicted_price, volatility_f64, token_str)| {
+                    let token_out = token_out.clone();
+                    let history = history.clone();
+                    let current_price = current_price.clone();
+                    let predicted_price = predicted_price.clone();
+                    let volatility_f64 = *volatility_f64;
+                    let token_str = token_str.clone();
+                    let log = log.clone();
+                    async move {
+                        // 流動性スコアの計算（プール情報 + 取引量ベース）
+                        let liquidity_score =
+                            calculate_enhanced_liquidity_score(client, &token_str, &history).await;
 
-        // 予測価格を TokenPrice で保存（型安全）
-        // history.token は既に TokenOutAccount なので直接使用
+                        // トークンの decimals を取得（キャッシュ経由）
+                        let decimals = match crate::trade::token_cache::get_token_decimals_cached(
+                            client,
+                            &token_str,
+                        )
+                        .await
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                warn!(log, "failed to get decimals"; "token" => %token_str, "error" => ?e);
+                                return None;
+                            }
+                        };
+
+                        // 市場規模の推定（実際の発行量データを取得）
+                        let market_cap =
+                            estimate_market_cap_async(client, &token_str, &current_price, decimals)
+                                .await;
+
+                        Some((
+                            token_out,
+                            history,
+                            current_price,
+                            predicted_price,
+                            volatility_f64,
+                            liquidity_score,
+                            market_cap,
+                            decimals,
+                        ))
+                    }
+                },
+            )
+            .collect();
+
+        // チャンク内を並行実行
+        let chunk_results = futures::future::join_all(chunk_futures).await;
+        final_results.extend(chunk_results.into_iter().flatten());
+    }
+
+    // 7. 結果を集約
+    let mut token_data = Vec::new();
+    let mut historical_prices = Vec::new();
+
+    for (
+        token_out,
+        history,
+        current_price,
+        predicted_price,
+        volatility_f64,
+        liquidity_score,
+        market_cap,
+        decimals,
+    ) in final_results
+    {
+        // 予測価格を保存
         predictions.insert(history.token.clone(), predicted_price.clone());
 
         // 相対リターンの計算（expected_return メソッドを使用）
-        // price 形式なので、予測価格 > 現在価格 = 正のリターン
         let expected_price_return_pct = current_price.expected_return(&predicted_price) * 100.0;
 
         trace!(log, "token prediction";
-            "token" => %token,
+            "token" => %token_out,
             "current_price" => %current_price,
             "predicted_price" => %predicted_price,
             "expected_price_return_pct" => format!("{:.2}%", expected_price_return_pct)
         );
 
-        // ボラティリティの計算
-        let volatility = calculate_volatility_from_history(&history)?;
-
-        // 流動性スコアの計算（プール情報 + 取引量ベース）
-        let liquidity_score =
-            calculate_enhanced_liquidity_score(client, &token_str, &history).await;
-
-        // TokenData 用に symbol を先に取得（history の所有権移動前）
+        // TokenData 用に symbol を先に取得
         let symbol_for_token_data = history.token.clone();
 
         historical_prices.push(history);
-
-        // BigDecimalをf64に変換（外部構造体の制約のため）
-        let volatility_f64 = volatility
-            .to_string()
-            .parse::<f64>()
-            .map_err(|e| anyhow::anyhow!("Failed to convert volatility to f64: {}", e))?;
-
-        // トークンの decimals を取得（キャッシュ経由）
-        let decimals =
-            crate::trade::token_cache::get_token_decimals_cached(client, &token_str).await?;
-
-        // 市場規模の推定（実際の発行量データを取得）
-        let market_cap =
-            estimate_market_cap_async(client, &token_str, &current_price, decimals).await;
 
         token_data.push(TokenData {
             symbol: symbol_for_token_data,
@@ -636,6 +692,13 @@ where
             liquidity_score: Some(liquidity_score),
             market_cap: Some(market_cap),
         });
+    }
+
+    // トークンが一つも処理できなかった場合はエラー
+    if token_data.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Failed to process any tokens for portfolio strategy"
+        ));
     }
 
     // 評価タスクの結果を取得（mape と confidence のタプル）

@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use futures::stream::{self, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use zaciraci_common::config;
@@ -150,22 +151,48 @@ impl TokenRate {
             .map(|r| r.base_token.clone())
             .collect();
 
-        // RPC で decimals を取得して backfill
+        // RPC で decimals を並行取得して backfill
         let mut decimals_map: HashMap<String, u8> = HashMap::new();
         if !tokens_with_null.is_empty() {
             trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
 
             let client = crate::jsonrpc::new_client();
-            for token in &tokens_with_null {
-                match crate::trade::token_cache::get_token_decimals_cached(&client, token).await {
-                    Ok(decimals) => {
-                        Self::backfill_decimals(token, decimals).await?;
-                        decimals_map.insert(token.clone(), decimals);
+
+            // 並行実行数（設定から取得、デフォルト8）
+            let concurrency = zaciraci_common::config::config()
+                .trade
+                .prediction_concurrency as usize;
+
+            // 全トークンの decimals を並行取得
+            let results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())
+                .map(|token| {
+                    let client = &client;
+                    let log = log.clone();
+                    async move {
+                        match crate::trade::token_cache::get_token_decimals_cached(client, &token)
+                            .await
+                        {
+                            Ok(decimals) => {
+                                // backfill は並行で実行
+                                if let Err(e) = Self::backfill_decimals(&token, decimals).await {
+                                    warn!(log, "failed to backfill decimals"; "token" => &token, "error" => %e);
+                                }
+                                Some((token, decimals))
+                            }
+                            Err(e) => {
+                                warn!(log, "failed to fetch decimals for backfill"; "token" => &token, "error" => %e);
+                                None
+                            }
+                        }
                     }
-                    Err(e) => {
-                        warn!(log, "failed to fetch decimals for backfill"; "token" => token, "error" => %e);
-                    }
-                }
+                })
+                .buffer_unordered(concurrency)
+                .collect()
+                .await;
+
+            // 結果を decimals_map に収集
+            for result in results.into_iter().flatten() {
+                decimals_map.insert(result.0, result.1);
             }
         }
 

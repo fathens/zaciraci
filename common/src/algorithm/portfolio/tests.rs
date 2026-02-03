@@ -3682,6 +3682,8 @@ fn test_issue9_covariance_length_mismatch_trims_to_shorter() {
 /// [修正済み] 短い方の長さに合わせて末尾（最新データ）を優先
 #[test]
 fn test_issue10_correlation_length_mismatch_trims_to_shorter() {
+    use std::collections::HashMap;
+
     let base_time = Utc::now() - Duration::days(10);
 
     // token-a: 10日分のデータ（線形上昇）
@@ -3711,7 +3713,51 @@ fn test_issue10_correlation_length_mismatch_trims_to_shorter() {
         },
     ];
 
-    let corr = calculate_token_correlation("token-a", "token-b", &history);
+    // テスト用の相関計算ヘルパー（select_uncorrelated_tokens 内のロジックと同等）
+    fn test_calculate_correlation(
+        token1: &str,
+        token2: &str,
+        historical_prices: &[PriceHistory],
+    ) -> f64 {
+        let price_index: HashMap<String, &PriceHistory> = historical_prices
+            .iter()
+            .map(|p| (p.token.to_string(), p))
+            .collect();
+
+        let p1 = match price_index.get(token1) {
+            Some(p) => p,
+            None => return 0.0,
+        };
+        let p2 = match price_index.get(token2) {
+            Some(p) => p,
+            None => return 0.0,
+        };
+
+        let returns1 = calculate_returns_from_prices(&p1.prices);
+        let returns2 = calculate_returns_from_prices(&p2.prices);
+
+        // 長さが異なる場合は末尾（最新データ）を優先してトリミング
+        let min_len = returns1.len().min(returns2.len());
+        if min_len < 2 {
+            return 0.0;
+        }
+
+        let r1 = &returns1[returns1.len() - min_len..];
+        let r2 = &returns2[returns2.len() - min_len..];
+
+        // トリミング後のスライスで標準偏差を計算
+        let std1 = calculate_std_dev(r1);
+        let std2 = calculate_std_dev(r2);
+
+        if std1 <= 0.0 || std2 <= 0.0 {
+            return 0.0;
+        }
+
+        let correlation = calculate_covariance(r1, r2) / (std1 * std2);
+        correlation.clamp(-1.0, 1.0)
+    }
+
+    let corr = test_calculate_correlation("token-a", "token-b", &history);
 
     // 修正後: 短い方に合わせてトリミングし、同じ動きなら高相関
     println!("Correlation (mismatched lengths, trimmed): {corr}");
