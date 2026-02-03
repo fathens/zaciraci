@@ -8,14 +8,15 @@ use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use zaciraci_common::config;
 use zaciraci_common::types::ExchangeRate;
 
 // データベース用モデル（読み込み用）
-#[derive(Debug, Clone, Queryable, Selectable)]
+#[derive(Debug, Clone, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = token_rates)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 struct DbTokenRate {
     #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
     pub id: i32,
@@ -379,6 +380,60 @@ impl TokenRate {
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
         Self::from_db_results_with_backfill(results).await
+    }
+
+    /// 複数トークンの価格履歴を一括取得
+    ///
+    /// N個のトークンに対して1回のDBクエリで履歴を取得し、トークンごとのHashMapとして返す。
+    /// NULL decimals があれば RPC で取得して DB を backfill する。
+    pub async fn get_rates_for_multiple_tokens(
+        tokens: &[String],
+        quote: &TokenInAccount,
+        range: &TimeRange,
+    ) -> Result<HashMap<String, Vec<TokenRate>>> {
+        use diesel::sql_types::{Array, Text, Timestamp};
+
+        if tokens.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let conn = connection_pool::get().await?;
+
+        let tokens_vec = tokens.to_vec();
+        let quote_str = quote.to_string();
+        let start = range.start;
+        let end = range.end;
+
+        let results: Vec<DbTokenRate> = conn
+            .interact(move |conn| {
+                diesel::sql_query(
+                    "SELECT id, base_token, quote_token, rate, timestamp, decimals
+                     FROM token_rates
+                     WHERE base_token = ANY($1)
+                       AND quote_token = $2
+                       AND timestamp > $3
+                       AND timestamp <= $4
+                     ORDER BY base_token, timestamp ASC",
+                )
+                .bind::<Array<Text>, _>(&tokens_vec)
+                .bind::<Text, _>(&quote_str)
+                .bind::<Timestamp, _>(start)
+                .bind::<Timestamp, _>(end)
+                .load::<DbTokenRate>(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        // backfill 処理して TokenRate に変換
+        let rates = Self::from_db_results_with_backfill(results).await?;
+
+        // トークンごとに分割
+        let mut map: HashMap<String, Vec<TokenRate>> = HashMap::new();
+        for rate in rates {
+            map.entry(rate.base.to_string()).or_default().push(rate);
+        }
+
+        Ok(map)
     }
 
     // ボラティリティ（変動率）の高い順にトークンペアを取得

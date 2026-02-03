@@ -1070,3 +1070,111 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial]
+async fn test_get_rates_for_multiple_tokens() -> Result<()> {
+    use crate::persistence::TimeRange;
+
+    clean_table().await?;
+
+    // テスト用トークン
+    let base1: TokenOutAccount = TokenAccount::from_str("token1.near")?.into();
+    let base2: TokenOutAccount = TokenAccount::from_str("token2.near")?.into();
+    let base3: TokenOutAccount = TokenAccount::from_str("token3.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+
+    let now = chrono::Utc::now().naive_utc();
+    let one_hour_ago = now - chrono::Duration::hours(1);
+
+    // 各トークンに2件ずつデータを挿入
+    let rates = vec![
+        make_token_rate(base1.clone(), quote.clone(), 100, one_hour_ago),
+        make_token_rate(base1.clone(), quote.clone(), 110, now),
+        make_token_rate(base2.clone(), quote.clone(), 200, one_hour_ago),
+        make_token_rate(base2.clone(), quote.clone(), 220, now),
+        make_token_rate(base3.clone(), quote.clone(), 300, one_hour_ago),
+        make_token_rate(base3.clone(), quote.clone(), 330, now),
+    ];
+    TokenRate::batch_insert(&rates).await?;
+
+    let time_range = TimeRange {
+        start: one_hour_ago - chrono::Duration::minutes(1),
+        end: now + chrono::Duration::minutes(1),
+    };
+
+    // 2トークンのみ取得
+    let tokens = vec!["token1.near".to_string(), "token2.near".to_string()];
+    let result = TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range).await?;
+
+    assert_eq!(result.len(), 2, "Should return 2 tokens");
+    assert!(result.contains_key("token1.near"), "Should contain token1");
+    assert!(result.contains_key("token2.near"), "Should contain token2");
+    assert!(
+        !result.contains_key("token3.near"),
+        "Should not contain token3"
+    );
+
+    // 各トークンに2件のデータがあることを確認
+    assert_eq!(result["token1.near"].len(), 2);
+    assert_eq!(result["token2.near"].len(), 2);
+
+    // 時系列順（昇順）であることを確認
+    assert!(result["token1.near"][0].timestamp < result["token1.near"][1].timestamp);
+
+    clean_table().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
+    use crate::persistence::TimeRange;
+
+    clean_table().await?;
+
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let time_range = TimeRange {
+        start: now - chrono::Duration::hours(1),
+        end: now,
+    };
+
+    // 存在しないトークン
+    let tokens = vec![
+        "nonexistent1.near".to_string(),
+        "nonexistent2.near".to_string(),
+    ];
+    let result = TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range).await?;
+
+    assert!(
+        result.is_empty(),
+        "Should return empty map for nonexistent tokens"
+    );
+
+    clean_table().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
+    use crate::persistence::TimeRange;
+
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let time_range = TimeRange {
+        start: now - chrono::Duration::hours(1),
+        end: now,
+    };
+
+    // 空のトークンリスト
+    let tokens: Vec<String> = vec![];
+    let result = TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range).await?;
+
+    assert!(result.is_empty(), "Should return empty map for empty input");
+
+    Ok(())
+}

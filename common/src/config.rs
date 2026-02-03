@@ -103,6 +103,8 @@ pub struct TradeConfig {
     pub volatility_days: u32,
     #[serde(default = "default_unwrap_on_stop")]
     pub unwrap_on_stop: bool,
+    #[serde(default = "default_prediction_concurrency")]
+    pub prediction_concurrency: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +216,9 @@ fn default_volatility_days() -> u32 {
 fn default_unwrap_on_stop() -> bool {
     false
 }
+fn default_prediction_concurrency() -> u32 {
+    8 // DB接続プール(16)の半分
+}
 fn default_record_rates_initial_value() -> u32 {
     100
 }
@@ -285,6 +290,7 @@ impl Default for TradeConfig {
             price_history_days: default_price_history_days(),
             volatility_days: default_volatility_days(),
             unwrap_on_stop: default_unwrap_on_stop(),
+            prediction_concurrency: default_prediction_concurrency(),
         }
     }
 }
@@ -520,6 +526,9 @@ fn merge_config(base: &mut Config, local: Config) {
     }
     if local.trade.unwrap_on_stop != default_unwrap_on_stop() {
         base.trade.unwrap_on_stop = local.trade.unwrap_on_stop;
+    }
+    if local.trade.prediction_concurrency != default_prediction_concurrency() {
+        base.trade.prediction_concurrency = local.trade.prediction_concurrency;
     }
 
     // Cron

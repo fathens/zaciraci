@@ -744,3 +744,133 @@ fn test_confidence_none_when_forecast_invalid() {
         "Should return None when forecast is negative"
     );
 }
+
+#[tokio::test]
+#[serial]
+async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
+    clean_test_tokens().await?;
+
+    let fixture = TestFixture::new();
+
+    // 5トークン分のテストデータを準備
+    let tokens: Vec<TokenOutAccount> = (1..=5)
+        .map(|i| {
+            format!("parallel_test{}.near", i)
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into()
+        })
+        .collect();
+
+    for (i, token) in tokens.iter().enumerate() {
+        let base_price = 1.0 + i as f64 * 0.5;
+        let prices: Vec<f64> = (0..10).map(|j| base_price + j as f64 * 0.1).collect();
+        fixture.setup_price_history(token, &prices).await?;
+    }
+
+    let service = PredictionService::new();
+
+    // 並行処理で予測実行
+    let start = std::time::Instant::now();
+    let result = service
+        .predict_multiple_tokens(tokens.clone(), &fixture.quote_token, 1, 24)
+        .await;
+    let duration = start.elapsed();
+
+    assert!(
+        result.is_ok(),
+        "Parallel prediction should succeed: {:?}",
+        result.err()
+    );
+    let predictions = result.unwrap();
+
+    // 全トークンの予測が成功していることを確認
+    assert_eq!(
+        predictions.len(),
+        tokens.len(),
+        "All tokens should have predictions"
+    );
+
+    println!(
+        "Parallel prediction for {} tokens completed in {:?}",
+        tokens.len(),
+        duration
+    );
+
+    clean_test_tokens().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_prediction_concurrency_config() {
+    let config = zaciraci_common::config::config();
+    assert!(
+        config.trade.prediction_concurrency >= 1,
+        "prediction_concurrency should be at least 1"
+    );
+    assert!(
+        config.trade.prediction_concurrency <= 32,
+        "prediction_concurrency should be reasonable (<=32)"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
+    use crate::persistence::TimeRange;
+    use crate::persistence::token_rate::TokenRate;
+
+    clean_test_tokens().await?;
+
+    let fixture = TestFixture::new();
+
+    // 3トークン分のテストデータを準備
+    let tokens: Vec<TokenOutAccount> = (1..=3)
+        .map(|i| {
+            format!("batch_history{}.near", i)
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into()
+        })
+        .collect();
+
+    for token in &tokens {
+        let prices = vec![1.0, 1.1, 1.05, 1.12, 1.15];
+        fixture.setup_price_history(token, &prices).await?;
+    }
+
+    // バッチ履歴取得の機能を直接テスト
+    let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+    let range = TimeRange {
+        start: (Utc::now() - Duration::hours(10)).naive_utc(),
+        end: Utc::now().naive_utc(),
+    };
+
+    let histories_map =
+        TokenRate::get_rates_for_multiple_tokens(&token_strs, &fixture.quote_token, &range).await?;
+
+    // 全トークンの履歴が取得できることを確認
+    assert_eq!(
+        histories_map.len(),
+        tokens.len(),
+        "All tokens should have price histories"
+    );
+
+    // 各トークンに価格データがあることを確認
+    for token_str in &token_strs {
+        assert!(
+            histories_map.contains_key(token_str),
+            "Should contain {}",
+            token_str
+        );
+        assert!(
+            !histories_map[token_str].is_empty(),
+            "Should have price data for {}",
+            token_str
+        );
+    }
+
+    clean_test_tokens().await?;
+    Ok(())
+}
