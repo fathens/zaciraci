@@ -111,8 +111,6 @@ pub struct TradeConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct CronConfig {
-    #[serde(default = "default_record_rates_initial_value")]
-    pub record_rates_initial_value: u32,
     #[serde(default = "default_pool_info_retention_count")]
     pub pool_info_retention_count: u32,
     #[serde(default = "default_token_rates_retention_days")]
@@ -224,9 +222,6 @@ fn default_prediction_concurrency() -> u32 {
 fn default_min_pool_liquidity() -> u32 {
     100 // 100 NEAR
 }
-fn default_record_rates_initial_value() -> u32 {
-    100
-}
 fn default_pool_info_retention_count() -> u32 {
     10
 }
@@ -304,7 +299,6 @@ impl Default for TradeConfig {
 impl Default for CronConfig {
     fn default() -> Self {
         Self {
-            record_rates_initial_value: default_record_rates_initial_value(),
             pool_info_retention_count: default_pool_info_retention_count(),
             token_rates_retention_days: default_token_rates_retention_days(),
         }
@@ -392,7 +386,6 @@ pub fn get(name: &str) -> Result<String> {
         "TRADE_VOLATILITY_DAYS" => Some(CONFIG.trade.volatility_days.to_string()),
         "TRADE_UNWRAP_ON_STOP" => Some(CONFIG.trade.unwrap_on_stop.to_string()),
         "TRADE_MIN_POOL_LIQUIDITY" => Some(CONFIG.trade.min_pool_liquidity.to_string()),
-        "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
         "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
         "TOKEN_RATES_RETENTION_DAYS" => Some(CONFIG.cron.token_rates_retention_days.to_string()),
         "HARVEST_ACCOUNT_ID" => {
@@ -542,9 +535,6 @@ fn merge_config(base: &mut Config, local: Config) {
     }
 
     // Cron
-    if local.cron.record_rates_initial_value != default_record_rates_initial_value() {
-        base.cron.record_rates_initial_value = local.cron.record_rates_initial_value;
-    }
     if local.cron.pool_info_retention_count != default_pool_info_retention_count() {
         base.cron.pool_info_retention_count = local.cron.pool_info_retention_count;
     }

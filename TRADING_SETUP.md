@@ -37,9 +37,6 @@ TRADE_INITIAL_INVESTMENT=100
 # 選定するトップボラティリティトークン数
 TRADE_TOP_TOKENS=10
 
-# 価格記録の初期値（ミリNEAR単位）
-CRON_RECORD_RATES_INITIAL_VALUE=100
-
 # トレード実行スケジュール（cron形式）
 TRADE_CRON_SCHEDULE="0 0 0 * * *"  # デフォルト: 毎日午前0時
 # 例:
