@@ -4226,3 +4226,233 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
         println!("Weight diff between high/low confidence: {diff:.6}");
     }
 }
+
+// ==================== 並行/並列処理の結果一貫性テスト ====================
+
+/// 共分散行列計算が rayon 並列化後も決定的な結果を返すことを検証
+#[test]
+fn test_covariance_matrix_parallel_determinism() {
+    // 同じ入力に対して複数回計算し、結果が一致することを確認
+    let daily_returns = vec![
+        vec![0.01, 0.02, -0.01, 0.03, 0.01, 0.02, -0.005, 0.015],
+        vec![0.02, 0.01, -0.02, 0.02, 0.03, 0.01, -0.01, 0.02],
+        vec![-0.01, 0.03, 0.01, -0.01, 0.02, 0.03, 0.01, -0.02],
+        vec![0.015, -0.01, 0.02, 0.01, -0.01, 0.02, 0.015, 0.01],
+    ];
+
+    // 10回計算して全て同じ結果であることを確認
+    let results: Vec<_> = (0..10)
+        .map(|_| calculate_covariance_matrix(&daily_returns))
+        .collect();
+
+    for (i, result) in results.iter().enumerate().skip(1) {
+        for row in 0..result.nrows() {
+            for col in 0..result.ncols() {
+                let diff = (result[[row, col]] - results[0][[row, col]]).abs();
+                assert!(
+                    diff < 1e-15,
+                    "Iteration {i}: covariance[{row},{col}] differs by {diff}"
+                );
+            }
+        }
+    }
+}
+
+/// Sharpe最適化が rayon 並列化後も決定的な結果を返すことを検証
+#[test]
+fn test_maximize_sharpe_ratio_parallel_determinism() {
+    let expected_returns = vec![0.05, 0.08, 0.03, 0.06, 0.04];
+    let daily_returns = vec![
+        vec![0.01, 0.02, -0.01, 0.03, 0.01],
+        vec![0.02, 0.01, -0.02, 0.02, 0.03],
+        vec![-0.01, 0.03, 0.01, -0.01, 0.02],
+        vec![0.015, -0.01, 0.02, 0.01, -0.01],
+        vec![0.02, 0.01, 0.01, -0.01, 0.03],
+    ];
+    let covariance = calculate_covariance_matrix(&daily_returns);
+
+    // 10回計算して全て同じ結果であることを確認
+    let results: Vec<_> = (0..10)
+        .map(|_| maximize_sharpe_ratio(&expected_returns, &covariance))
+        .collect();
+
+    for (i, result) in results.iter().enumerate().skip(1) {
+        for (j, &weight) in result.iter().enumerate() {
+            let diff = (weight - results[0][j]).abs();
+            assert!(diff < 1e-10, "Iteration {i}: weight[{j}] differs by {diff}");
+        }
+    }
+}
+
+/// select_uncorrelated_tokens の HashMap キャッシュが正しく機能することを検証
+#[test]
+fn test_select_uncorrelated_tokens_cache_correctness() {
+    let base_time = Utc::now() - Duration::days(30);
+
+    // 5つのトークンを作成
+    let tokens = (0..5)
+        .map(|i| TokenData {
+            symbol: token_out(&format!("token-{}", i)),
+            current_rate: rate_from_price(0.01 + i as f64 * 0.001),
+            historical_volatility: 0.1 + i as f64 * 0.05,
+            liquidity_score: Some(0.8 - i as f64 * 0.1),
+            market_cap: Some(cap(100000)),
+        })
+        .collect::<Vec<_>>();
+
+    // 価格履歴を作成（相関の異なるパターン）
+    let historical_prices: Vec<PriceHistory> = (0..5)
+        .map(|i| {
+            let multiplier = if i % 2 == 0 { 1.0 } else { -1.0 }; // 偶数は正相関、奇数は負相関
+            PriceHistory {
+                token: token_out(&format!("token-{}", i)),
+                quote_token: token_in("wrap.near"),
+                prices: (0..20)
+                    .map(|day| PricePoint {
+                        timestamp: base_time + Duration::days(day),
+                        price: price(100.0 + multiplier * (day as f64 * 0.5)),
+                        volume: None,
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
+    // select_optimal_tokens を通じて select_uncorrelated_tokens をテスト
+    let predictions: BTreeMap<TokenOutAccount, TokenPrice> = tokens
+        .iter()
+        .map(|t| (t.symbol.clone(), price(110.0)))
+        .collect();
+
+    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5);
+
+    // 少なくとも1つのトークンが選択されることを確認
+    assert!(
+        !selected.is_empty(),
+        "At least one token should be selected"
+    );
+
+    // 同じ入力で複数回実行して結果が一貫することを確認
+    for _ in 0..5 {
+        let selected_again = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5);
+        assert_eq!(
+            selected.len(),
+            selected_again.len(),
+            "Same input should produce same number of selected tokens"
+        );
+        for (s1, s2) in selected.iter().zip(selected_again.iter()) {
+            assert_eq!(
+                s1.symbol, s2.symbol,
+                "Same input should select same tokens in same order"
+            );
+        }
+    }
+}
+
+/// 相関キャッシュが異なる長さの価格履歴を正しく処理することを検証
+#[test]
+fn test_correlation_cache_handles_different_lengths() {
+    let base_time = Utc::now() - Duration::days(30);
+
+    // 異なる長さの価格履歴を持つトークン
+    let tokens = vec![
+        TokenData {
+            symbol: token_out("token-long"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.15,
+            liquidity_score: Some(0.9),
+            market_cap: Some(cap(100000)),
+        },
+        TokenData {
+            symbol: token_out("token-short"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.15,
+            liquidity_score: Some(0.8),
+            market_cap: Some(cap(100000)),
+        },
+    ];
+
+    // 長い価格履歴（30日分）
+    let long_prices: Vec<PricePoint> = (0..30)
+        .map(|day| PricePoint {
+            timestamp: base_time + Duration::days(day),
+            price: price(100.0 + day as f64 * 0.5),
+            volume: None,
+        })
+        .collect();
+
+    // 短い価格履歴（10日分、同じパターン）
+    let short_prices: Vec<PricePoint> = (0..10)
+        .map(|day| PricePoint {
+            timestamp: base_time + Duration::days(day),
+            price: price(100.0 + day as f64 * 0.5),
+            volume: None,
+        })
+        .collect();
+
+    let historical_prices = vec![
+        PriceHistory {
+            token: token_out("token-long"),
+            quote_token: token_in("wrap.near"),
+            prices: long_prices,
+        },
+        PriceHistory {
+            token: token_out("token-short"),
+            quote_token: token_in("wrap.near"),
+            prices: short_prices,
+        },
+    ];
+
+    let predictions: BTreeMap<TokenOutAccount, TokenPrice> = tokens
+        .iter()
+        .map(|t| (t.symbol.clone(), price(110.0)))
+        .collect();
+
+    // 異なる長さでもパニックせずに処理できることを確認
+    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 2);
+
+    // 両方のトークンが候補として考慮される
+    assert!(!selected.is_empty(), "Should select at least one token");
+}
+
+/// 大量のトークンでの並行処理が正しく動作することを検証
+#[test]
+fn test_covariance_matrix_large_input() {
+    // 20トークン分のデータを生成
+    let n = 20;
+    let days = 50;
+
+    let daily_returns: Vec<Vec<f64>> = (0..n)
+        .map(|i| {
+            (0..days)
+                .map(|d| {
+                    // 疑似ランダムだが決定的な値を生成
+                    let seed = (i * 1000 + d) as f64;
+                    (seed * 0.618).sin() * 0.05
+                })
+                .collect()
+        })
+        .collect();
+
+    let covariance = calculate_covariance_matrix(&daily_returns);
+
+    // 行列サイズが正しいこと
+    assert_eq!(covariance.nrows(), n);
+    assert_eq!(covariance.ncols(), n);
+
+    // 対称行列であること
+    for i in 0..n {
+        for j in 0..n {
+            let diff = (covariance[[i, j]] - covariance[[j, i]]).abs();
+            assert!(diff < 1e-15, "Matrix should be symmetric at [{i},{j}]");
+        }
+    }
+
+    // 対角要素が正（分散は非負）であること
+    for i in 0..n {
+        assert!(
+            covariance[[i, i]] > 0.0,
+            "Diagonal element [{i},{i}] should be positive"
+        );
+    }
+}
