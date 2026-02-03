@@ -67,7 +67,8 @@ const MAX_OPTIMIZATION_ITERATIONS: usize = 100;
 const REGULARIZATION_FACTOR: f64 = 1e-6;
 
 /// 最小流動性スコア
-const MIN_LIQUIDITY_SCORE: f64 = 0.1;
+/// スコア 0.5 = プール流動性 >= TRADE_MIN_POOL_LIQUIDITY 基準額
+const MIN_LIQUIDITY_SCORE: f64 = 0.5;
 
 /// 最小市場規模（10,000 NEAR）
 fn min_market_cap() -> NearValue {

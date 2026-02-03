@@ -151,10 +151,14 @@ fn get_quote_token() -> TokenInAccount {
 }
 
 fn get_initial_value() -> NearAmount {
-    config::get("CRON_RECORD_RATES_INITIAL_VALUE")
+    // config からフィルタ基準を取得し、10% でレート計算（スリッページ最大9%を保証）
+    let min_pool = config::get("TRADE_MIN_POOL_LIQUIDITY")
         .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| "100".parse().unwrap())
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(100);
+
+    let rate_calc_amount = (min_pool / 10).max(1);
+    rate_calc_amount.to_string().parse().unwrap()
 }
 
 async fn record_rates() -> Result<()> {
@@ -228,6 +232,7 @@ async fn record_rates() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_get_cron_schedule_uses_default_when_env_not_set() {
@@ -269,5 +274,35 @@ mod tests {
         unsafe {
             std::env::remove_var("TEST_CRON_INVALID");
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_initial_value_default() {
+        // デフォルト: 100 NEAR → 10% = 10 NEAR
+        unsafe {
+            std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
+        }
+        zaciraci_common::config::set("TRADE_MIN_POOL_LIQUIDITY", "100");
+        let value = get_initial_value();
+        assert_eq!(value.to_string(), "10 NEAR");
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_initial_value_custom() {
+        // 200 NEAR → 10% = 20 NEAR
+        zaciraci_common::config::set("TRADE_MIN_POOL_LIQUIDITY", "200");
+        let value = get_initial_value();
+        assert_eq!(value.to_string(), "20 NEAR");
+    }
+
+    #[test]
+    #[serial]
+    fn test_get_initial_value_min_1() {
+        // 5 NEAR → 10% = 0 → max(1) = 1 NEAR
+        zaciraci_common::config::set("TRADE_MIN_POOL_LIQUIDITY", "5");
+        let value = get_initial_value();
+        assert_eq!(value.to_string(), "1 NEAR");
     }
 }

@@ -105,6 +105,8 @@ pub struct TradeConfig {
     pub unwrap_on_stop: bool,
     #[serde(default = "default_prediction_concurrency")]
     pub prediction_concurrency: u32,
+    #[serde(default = "default_min_pool_liquidity")]
+    pub min_pool_liquidity: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,6 +221,9 @@ fn default_unwrap_on_stop() -> bool {
 fn default_prediction_concurrency() -> u32 {
     8 // DB接続プール(16)の半分
 }
+fn default_min_pool_liquidity() -> u32 {
+    100 // 100 NEAR
+}
 fn default_record_rates_initial_value() -> u32 {
     100
 }
@@ -291,6 +296,7 @@ impl Default for TradeConfig {
             volatility_days: default_volatility_days(),
             unwrap_on_stop: default_unwrap_on_stop(),
             prediction_concurrency: default_prediction_concurrency(),
+            min_pool_liquidity: default_min_pool_liquidity(),
         }
     }
 }
@@ -385,6 +391,7 @@ pub fn get(name: &str) -> Result<String> {
         "TRADE_PRICE_HISTORY_DAYS" => Some(CONFIG.trade.price_history_days.to_string()),
         "TRADE_VOLATILITY_DAYS" => Some(CONFIG.trade.volatility_days.to_string()),
         "TRADE_UNWRAP_ON_STOP" => Some(CONFIG.trade.unwrap_on_stop.to_string()),
+        "TRADE_MIN_POOL_LIQUIDITY" => Some(CONFIG.trade.min_pool_liquidity.to_string()),
         "RECORD_RATES_INITIAL_VALUE" => Some(CONFIG.cron.record_rates_initial_value.to_string()),
         "POOL_INFO_RETENTION_COUNT" => Some(CONFIG.cron.pool_info_retention_count.to_string()),
         "TOKEN_RATES_RETENTION_DAYS" => Some(CONFIG.cron.token_rates_retention_days.to_string()),
@@ -529,6 +536,9 @@ fn merge_config(base: &mut Config, local: Config) {
     }
     if local.trade.prediction_concurrency != default_prediction_concurrency() {
         base.trade.prediction_concurrency = local.trade.prediction_concurrency;
+    }
+    if local.trade.min_pool_liquidity != default_min_pool_liquidity() {
+        base.trade.min_pool_liquidity = local.trade.min_pool_liquidity;
     }
 
     // Cron
@@ -683,6 +693,32 @@ mod tests {
         }
         unsafe {
             std::env::remove_var(TEST_KEY);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_trade_min_pool_liquidity_default() {
+        unsafe {
+            std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
+        }
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove("TRADE_MIN_POOL_LIQUIDITY");
+        }
+        let result = get("TRADE_MIN_POOL_LIQUIDITY").unwrap();
+        assert_eq!(result, "100");
+    }
+
+    #[test]
+    #[serial]
+    fn test_trade_min_pool_liquidity_from_env() {
+        unsafe {
+            std::env::set_var("TRADE_MIN_POOL_LIQUIDITY", "200");
+        }
+        let result = get("TRADE_MIN_POOL_LIQUIDITY").unwrap();
+        assert_eq!(result, "200");
+        unsafe {
+            std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
         }
     }
 }
