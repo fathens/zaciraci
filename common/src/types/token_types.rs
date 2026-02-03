@@ -284,5 +284,24 @@ impl Div<&NearAmount> for &TokenAmount {
     }
 }
 
+/// ExchangeRate × BigDecimal = ExchangeRate
+///
+/// レートに係数を掛ける（スリッページ補正など）。
+impl Mul<BigDecimal> for ExchangeRate {
+    type Output = ExchangeRate;
+
+    fn mul(self, rhs: BigDecimal) -> ExchangeRate {
+        ExchangeRate::from_raw_rate(self.raw_rate * rhs, self.decimals)
+    }
+}
+
+impl Mul<&BigDecimal> for ExchangeRate {
+    type Output = ExchangeRate;
+
+    fn mul(self, rhs: &BigDecimal) -> ExchangeRate {
+        ExchangeRate::from_raw_rate(self.raw_rate * rhs, self.decimals)
+    }
+}
+
 #[cfg(test)]
 mod tests;

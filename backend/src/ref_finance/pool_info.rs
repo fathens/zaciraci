@@ -163,6 +163,16 @@ impl TokenPair {
         }
     }
 
+    /// 入力側のプールサイズを取得
+    pub fn amount_in(&self) -> Result<u128> {
+        self.pool.amount(self.token_in.as_index())
+    }
+
+    /// 出力側のプールサイズを取得
+    pub fn amount_out(&self) -> Result<u128> {
+        self.pool.amount(self.token_out.as_index())
+    }
+
     pub fn estimate_normal_return(&self) -> Result<(u128, u128)> {
         let balance_in = self.pool.amount(self.token_in.as_index())?;
         if balance_in == 0 {

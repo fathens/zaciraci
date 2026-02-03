@@ -162,6 +162,9 @@ fn get_initial_value() -> NearAmount {
 }
 
 async fn record_rates() -> Result<()> {
+    use crate::persistence::token_rate::{SwapPath, SwapPoolInfo};
+    use crate::ref_finance::pool_info::TokenPairLike;
+
     let log = DEFAULT.new(o!("function" => "record_rates"));
 
     let quote_token = &get_quote_token();
@@ -182,9 +185,9 @@ async fn record_rates() -> Result<()> {
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
     let goals = graph.update_graph(quote_token)?;
     trace!(log, "found targets"; "goals" => %goals.len());
-    // NearAmount → YoctoAmount → u128 に変換して list_values に渡す
+    // NearAmount → YoctoAmount → u128 に変換して list_values_with_path に渡す
     let initial_yocto = initial_value.to_yocto().to_u128();
-    let values = graph.list_values(initial_yocto, quote_token, &goals)?;
+    let values = graph.list_values_with_path(initial_yocto, quote_token, &goals)?;
 
     let log = log.new(o!(
         "num_values" => values.len().to_string(),
@@ -195,7 +198,7 @@ async fn record_rates() -> Result<()> {
     // 各トークンの decimals を取得（キャッシュ経由、DB 初期化済み）
     let token_ids: Vec<String> = values
         .iter()
-        .map(|(base, _)| base.to_string())
+        .map(|(base, _, _)| base.to_string())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -203,16 +206,44 @@ async fn record_rates() -> Result<()> {
 
     // ExchangeRate を使って TokenRate を構築
     // TokenAmount / NearAmount → ExchangeRate で型安全に rate を計算
+    // rate_calc_near: レート計算に使用した NEAR 量を記録
+    let rate_calc_near = initial_value.to_i64();
     let rates: Vec<_> = values
         .into_iter()
-        .filter_map(|(base, value)| {
+        .filter_map(|(base, value, path)| {
             let token_str = base.to_string();
             match token_decimals.get(&token_str).copied() {
                 Some(decimals) => {
                     let amount =
                         TokenAmount::from_smallest_units(BigDecimal::from(value), decimals);
                     let exchange_rate = &amount / &initial_value;
-                    Some(TokenRate::new(base, quote_token.clone(), exchange_rate))
+
+                    // パス情報を SwapPath に変換
+                    let swap_path = SwapPath {
+                        pools: path
+                            .0
+                            .iter()
+                            .filter_map(|pair| {
+                                let amount_in = pair.amount_in().ok()?;
+                                let amount_out = pair.amount_out().ok()?;
+                                Some(SwapPoolInfo {
+                                    pool_id: pair.pool_id(),
+                                    token_in_idx: pair.token_in.as_index().as_u8(),
+                                    token_out_idx: pair.token_out.as_index().as_u8(),
+                                    amount_in: amount_in.to_string(),
+                                    amount_out: amount_out.to_string(),
+                                })
+                            })
+                            .collect(),
+                    };
+
+                    Some(TokenRate::new_with_path(
+                        base,
+                        quote_token.clone(),
+                        exchange_rate,
+                        rate_calc_near,
+                        swap_path,
+                    ))
                 }
                 None => {
                     warn!(log, "skipping token: decimals unknown"; "token" => &token_str);

@@ -2,7 +2,7 @@
 use crate::Result;
 use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
-use crate::persistence::token_rate::TokenRate;
+use crate::persistence::token_rate::{SwapPath, SwapPoolInfo, TokenRate};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
@@ -34,6 +34,8 @@ fn make_token_rate(
         quote,
         exchange_rate: make_rate(rate),
         timestamp,
+        rate_calc_near: 10,
+        swap_path: None,
     }
 }
 
@@ -49,6 +51,8 @@ fn make_token_rate_str(
         quote,
         exchange_rate: make_rate_str(rate),
         timestamp,
+        rate_calc_near: 10,
+        swap_path: None,
     }
 }
 
@@ -1177,4 +1181,167 @@ async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
     assert!(result.is_empty(), "Should return empty map for empty input");
 
     Ok(())
+}
+
+#[test]
+fn test_to_spot_rate_without_path() {
+    // swap_path が None の場合、元のレートがそのまま返る
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    let token_rate = make_token_rate(base, quote, 1000, timestamp);
+    let spot_rate = token_rate.to_spot_rate();
+
+    assert_eq!(
+        spot_rate.raw_rate(),
+        token_rate.exchange_rate.raw_rate(),
+        "Spot rate should equal original rate when swap_path is None"
+    );
+}
+
+#[test]
+fn test_to_spot_rate_with_path() {
+    // swap_path がある場合、補正されたレートが返る
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // プールサイズ: 10,000 NEAR = 10^28 yocto
+    // rate_calc_near: 10 NEAR
+    // 補正係数: 1 + (10 * 10^24) / (10 * 10^27) = 1.001 (+0.1%)
+    let pool_amount_yocto = "10000000000000000000000000000"; // 10,000 NEAR in yocto
+    let swap_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 123,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: pool_amount_yocto.to_string(),
+            amount_out: "5000000000000000000000000000".to_string(), // 5,000 NEAR in yocto
+        }],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10, // 10 NEAR
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // 補正係数: 1 + (10 * 10^24) / (10^28) = 1 + 10^-3 = 1.001
+    // 期待値: 1000 * 1.001 = 1001
+    let expected = BigDecimal::from_str("1001").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Spot rate should be corrected by slippage factor"
+    );
+}
+
+#[test]
+fn test_to_spot_rate_with_small_pool() {
+    // 小さいプールの場合、補正が大きくなる
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // プールサイズ: 100 NEAR = 10^26 yocto
+    // rate_calc_near: 10 NEAR
+    // 補正係数: 1 + (10 * 10^24) / (10^26) = 1.1 (+10%)
+    let pool_amount_yocto = "100000000000000000000000000"; // 100 NEAR in yocto
+    let swap_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 456,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: pool_amount_yocto.to_string(),
+            amount_out: "50000000000000000000000000".to_string(), // 50 NEAR in yocto
+        }],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10, // 10 NEAR
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // 補正係数: 1 + (10 * 10^24) / (10^26) = 1.1
+    // 期待値: 1000 * 1.1 = 1100
+    let expected = BigDecimal::from_str("1100").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Spot rate should be corrected by larger slippage factor for small pool"
+    );
+}
+
+#[test]
+fn test_to_spot_rate_with_empty_pools() {
+    // pools が空の場合、元のレートがそのまま返る
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    let swap_path = SwapPath { pools: vec![] };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    assert_eq!(
+        spot_rate.raw_rate(),
+        token_rate.exchange_rate.raw_rate(),
+        "Spot rate should equal original rate when pools is empty"
+    );
+}
+
+#[test]
+fn test_to_spot_rate_with_zero_pool_amount() {
+    // プールサイズが 0 の場合、元のレートがそのまま返る
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    let swap_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 789,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "0".to_string(),
+            amount_out: "1000".to_string(),
+        }],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    assert_eq!(
+        spot_rate.raw_rate(),
+        token_rate.exchange_rate.raw_rate(),
+        "Spot rate should equal original rate when pool amount is zero"
+    );
 }

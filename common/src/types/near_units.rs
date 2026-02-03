@@ -568,6 +568,14 @@ impl NearAmount {
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
+
+    /// 整数部を i64 として取得（切り捨て）
+    ///
+    /// PostgreSQL BIGINT (signed i64) との互換性を保つため i64 を使用。
+    /// NearAmount 最大値 ≈ 3.4 × 10^14 は i64 最大値より十分小さいため安全。
+    pub fn to_i64(&self) -> i64 {
+        self.0.to_i64().unwrap_or(0)
+    }
 }
 
 impl FromStr for NearAmount {

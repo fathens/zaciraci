@@ -30,6 +30,8 @@ fn make_token_rate(
         quote,
         exchange_rate: make_rate_from_str(rate_str),
         timestamp,
+        rate_calc_near: 10,
+        swap_path: None,
     }
 }
 

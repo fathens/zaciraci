@@ -5,14 +5,37 @@ use crate::persistence::connection_pool;
 use crate::persistence::schema::token_rates;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, Zero};
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use futures::stream::{self, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use zaciraci_common::config;
 use zaciraci_common::types::ExchangeRate;
+
+/// スワップパス内の個々のプール情報
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SwapPoolInfo {
+    /// プールID
+    pub pool_id: u32,
+    /// 入力トークンのインデックス
+    pub token_in_idx: u8,
+    /// 出力トークンのインデックス
+    pub token_out_idx: u8,
+    /// 入力側プールサイズ（yocto 単位の文字列）
+    pub amount_in: String,
+    /// 出力側プールサイズ（yocto 単位の文字列）
+    pub amount_out: String,
+}
+
+/// スワップパス全体の情報（マルチホップ対応）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SwapPath {
+    /// パス内の全プール情報
+    pub pools: Vec<SwapPoolInfo>,
+}
 
 // データベース用モデル（読み込み用）
 #[derive(Debug, Clone, Queryable, Selectable, QueryableByName)]
@@ -26,6 +49,10 @@ struct DbTokenRate {
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
     pub decimals: Option<i16>,
+    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
+    pub rate_calc_near: i64,
+    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
+    pub swap_path: Option<serde_json::Value>,
 }
 
 // データベース挿入用モデル（ExchangeRate から構築）
@@ -37,6 +64,8 @@ struct NewDbTokenRate {
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
     pub decimals: Option<i16>,
+    pub rate_calc_near: i64,
+    pub swap_path: Option<serde_json::Value>,
 }
 
 impl NewDbTokenRate {
@@ -46,6 +75,8 @@ impl NewDbTokenRate {
         quote: &TokenInAccount,
         exchange_rate: &ExchangeRate,
         timestamp: NaiveDateTime,
+        rate_calc_near: i64,
+        swap_path: Option<&SwapPath>,
     ) -> Self {
         Self {
             base_token: base.to_string(),
@@ -53,6 +84,8 @@ impl NewDbTokenRate {
             rate: exchange_rate.raw_rate().clone(),
             decimals: Some(exchange_rate.decimals() as i16),
             timestamp,
+            rate_calc_near,
+            swap_path: swap_path.map(|p| serde_json::to_value(p).unwrap()),
         }
     }
 }
@@ -80,17 +113,46 @@ pub struct TokenRate {
     pub quote: TokenInAccount,
     pub exchange_rate: ExchangeRate,
     pub timestamp: NaiveDateTime,
+    pub rate_calc_near: i64,
+    /// スワップパス情報（プールサイズを含む）
+    pub swap_path: Option<SwapPath>,
 }
 
 // 相互変換の実装
 impl TokenRate {
     /// 新しい TokenRate を作成（ExchangeRate 使用）
-    pub fn new(base: TokenOutAccount, quote: TokenInAccount, exchange_rate: ExchangeRate) -> Self {
+    #[allow(dead_code)] // テストで使用
+    pub fn new(
+        base: TokenOutAccount,
+        quote: TokenInAccount,
+        exchange_rate: ExchangeRate,
+        rate_calc_near: i64,
+    ) -> Self {
         Self {
             base,
             quote,
             exchange_rate,
             timestamp: chrono::Utc::now().naive_utc(),
+            rate_calc_near,
+            swap_path: None,
+        }
+    }
+
+    /// 新しい TokenRate を作成（スワップパス情報付き）
+    pub fn new_with_path(
+        base: TokenOutAccount,
+        quote: TokenInAccount,
+        exchange_rate: ExchangeRate,
+        rate_calc_near: i64,
+        swap_path: SwapPath,
+    ) -> Self {
+        Self {
+            base,
+            quote,
+            exchange_rate,
+            timestamp: chrono::Utc::now().naive_utc(),
+            rate_calc_near,
+            swap_path: Some(swap_path),
         }
     }
 
@@ -99,12 +161,17 @@ impl TokenRate {
         let base = TokenAccount::from_str(&db_rate.base_token)?.into();
         let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
         let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
+        let swap_path = db_rate
+            .swap_path
+            .and_then(|v| serde_json::from_value(v).ok());
 
         Ok(Self {
             base,
             quote,
             exchange_rate,
             timestamp: db_rate.timestamp,
+            rate_calc_near: db_rate.rate_calc_near,
+            swap_path,
         })
     }
 
@@ -253,6 +320,8 @@ impl TokenRate {
             &self.quote,
             &self.exchange_rate,
             self.timestamp,
+            self.rate_calc_near,
+            self.swap_path.as_ref(),
         )
     }
 
@@ -434,7 +503,7 @@ impl TokenRate {
         let results: Vec<DbTokenRate> = conn
             .interact(move |conn| {
                 diesel::sql_query(
-                    "SELECT id, base_token, quote_token, rate, timestamp, decimals
+                    "SELECT id, base_token, quote_token, rate, timestamp, decimals, rate_calc_near, swap_path
                      FROM token_rates
                      WHERE base_token = ANY($1)
                        AND quote_token = $2
@@ -524,6 +593,30 @@ impl TokenRate {
             .collect();
 
         Ok(volatility_results)
+    }
+
+    /// スポットレートに補正（最初のプールを使用）
+    ///
+    /// スリッページの影響を除去し、スポットレートを推定する。
+    /// 補正式: r_spot = r_actual × (1 + Δx / x)
+    /// - Δx = rate_calc_near（入力量）
+    /// - x = 入力側プールサイズ
+    ///
+    /// swap_path が None の場合は補正なしで元のレートを返す。
+    #[allow(dead_code)] // 将来使用予定
+    pub fn to_spot_rate(&self) -> ExchangeRate {
+        if let Some(path) = &self.swap_path
+            && let Some(first_pool) = path.pools.first()
+            && let Ok(pool_amount) = first_pool.amount_in.parse::<BigDecimal>()
+            && !pool_amount.is_zero()
+        {
+            // rate_calc_near は NEAR 単位で記録されているため、yocto に変換
+            // (1 NEAR = 10^24 yocto)
+            let delta_x = BigDecimal::from(self.rate_calc_near) * BigDecimal::from(10_u128.pow(24));
+            let correction = (&pool_amount + &delta_x) / &pool_amount;
+            return self.exchange_rate.clone() * correction;
+        }
+        self.exchange_rate.clone()
     }
 }
 
