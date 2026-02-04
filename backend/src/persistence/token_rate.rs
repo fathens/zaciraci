@@ -616,6 +616,11 @@ impl TokenRate {
     /// # Arguments
     /// * `rates` - 時系列昇順（古い → 新しい）のレート配列
     /// * `index` - フォールバックを探すレートのインデックス
+    ///
+    /// # Note
+    /// この関数は O(n) の計算量を持ち、n 個のレートに対して呼び出すと O(n²) になる。
+    /// 大量のレートを処理する場合は `precompute_fallback_indices()` を使用して事前計算を行うこと。
+    #[cfg(test)] // テストでのみ使用（本番は precompute_fallback_indices を使用）
     pub fn find_fallback_path(rates: &[TokenRate], index: usize) -> Option<&SwapPath> {
         let rate = rates.get(index)?;
 
@@ -626,6 +631,32 @@ impl TokenRate {
 
         // index より後ろ（自分より新しい）のレートから、最初に見つかる swap_path を返す
         rates[index + 1..].iter().find_map(|r| r.swap_path.as_ref())
+    }
+
+    /// フォールバック swap_path のインデックスを事前計算（O(n)）
+    ///
+    /// 各レートに対して「自分より新しくもっとも古い」swap_path を持つインデックスを返す。
+    /// 自身が swap_path を持つ場合は None。
+    ///
+    /// # Arguments
+    /// * `rates` - 時系列昇順（古い → 新しい）のレート配列
+    ///
+    /// # Returns
+    /// 各インデックスに対応するフォールバックインデックスの配列
+    pub fn precompute_fallback_indices(rates: &[TokenRate]) -> Vec<Option<usize>> {
+        let mut fallbacks = vec![None; rates.len()];
+        let mut last_path_idx: Option<usize> = None;
+
+        // 新しい方から古い方へスキャン
+        for i in (0..rates.len()).rev() {
+            if rates[i].swap_path.is_some() {
+                last_path_idx = Some(i);
+                fallbacks[i] = None; // 自身が持つ場合は不要
+            } else {
+                fallbacks[i] = last_path_idx;
+            }
+        }
+        fallbacks
     }
 
     /// スポットレートに補正（フォールバック付き）

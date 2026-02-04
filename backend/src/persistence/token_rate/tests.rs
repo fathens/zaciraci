@@ -1680,3 +1680,522 @@ fn test_find_fallback_path_all_none() {
         assert!(fallback.is_none(), "No fallback when all paths are None");
     }
 }
+
+/// precompute_fallback_indices のテスト：基本ケース
+/// find_fallback_path と同じ結果を返すことを確認
+#[test]
+fn test_precompute_fallback_indices_basic() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(),
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // 時系列順（古い → 新しい）のレート
+    // r0: swap_path=None       → フォールバック=r2 (index=2)
+    // r1: swap_path=None       → フォールバック=r2 (index=2)
+    // r2: swap_path=Some(200)  → フォールバック=None
+    // r3: swap_path=None       → フォールバック=r4 (index=4)
+    // r4: swap_path=Some(400)  → フォールバック=None
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(4),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(3),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: Some(make_path(200)),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: Some(make_path(400)),
+        },
+    ];
+
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates);
+
+    assert_eq!(fallbacks.len(), 5);
+    assert_eq!(fallbacks[0], Some(2), "r0 should fallback to r2");
+    assert_eq!(fallbacks[1], Some(2), "r1 should fallback to r2");
+    assert_eq!(fallbacks[2], None, "r2 has own path, no fallback");
+    assert_eq!(fallbacks[3], Some(4), "r3 should fallback to r4");
+    assert_eq!(fallbacks[4], None, "r4 has own path, no fallback");
+
+    // find_fallback_path と同じ結果を返すことを確認
+    for (i, &fallback_idx) in fallbacks.iter().enumerate() {
+        let from_linear = TokenRate::find_fallback_path(&rates, i);
+        let from_precompute = fallback_idx
+            .and_then(|idx| rates.get(idx))
+            .and_then(|r| r.swap_path.as_ref());
+        assert_eq!(
+            from_linear, from_precompute,
+            "precompute should match linear search at index {}",
+            i
+        );
+    }
+}
+
+/// precompute_fallback_indices のテスト：全て None のケース
+#[test]
+fn test_precompute_fallback_indices_all_none() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+    ];
+
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates);
+
+    assert_eq!(fallbacks.len(), 3);
+    for (i, fallback) in fallbacks.iter().enumerate() {
+        assert!(
+            fallback.is_none(),
+            "No fallback when all paths are None at index {}",
+            i
+        );
+    }
+}
+
+/// precompute_fallback_indices のテスト：全て Some のケース
+#[test]
+fn test_precompute_fallback_indices_all_some() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(),
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: Some(make_path(100)),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: Some(make_path(200)),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: Some(make_path(300)),
+        },
+    ];
+
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates);
+
+    assert_eq!(fallbacks.len(), 3);
+    for (i, fallback) in fallbacks.iter().enumerate() {
+        assert!(
+            fallback.is_none(),
+            "No fallback needed when rate has own path at index {}",
+            i
+        );
+    }
+}
+
+/// precompute_fallback_indices のテスト：空の配列
+#[test]
+fn test_precompute_fallback_indices_empty() {
+    let rates: Vec<TokenRate> = vec![];
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates);
+    assert!(fallbacks.is_empty());
+}
+
+/// precompute_fallback_indices のテスト：単一要素
+#[test]
+fn test_precompute_fallback_indices_single() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    // swap_path なし → フォールバックなし（後続がない）
+    let rates_none = vec![TokenRate {
+        base: base.clone(),
+        quote: quote.clone(),
+        exchange_rate: make_rate(1000),
+        timestamp: now,
+        rate_calc_near: 10,
+        swap_path: None,
+    }];
+
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates_none);
+    assert_eq!(fallbacks.len(), 1);
+    assert!(fallbacks[0].is_none());
+
+    // swap_path あり → フォールバック不要
+    let rates_some = vec![TokenRate {
+        base: base.clone(),
+        quote: quote.clone(),
+        exchange_rate: make_rate(1000),
+        timestamp: now,
+        rate_calc_near: 10,
+        swap_path: Some(SwapPath {
+            pools: vec![SwapPoolInfo {
+                pool_id: 100,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(),
+                amount_out: "50000000000000000000000000".to_string(),
+            }],
+        }),
+    }];
+
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates_some);
+    assert_eq!(fallbacks.len(), 1);
+    assert!(fallbacks[0].is_none());
+}
+
+/// precompute_fallback_indices のテスト：先頭のみ swap_path がある場合
+/// 先頭要素は自身が path を持つのでフォールバック不要、
+/// 後続の要素は全てフォールバックなし（先頭より前に path がない）
+#[test]
+fn test_precompute_fallback_indices_first_only() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(),
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // r0: swap_path=Some → フォールバック不要
+    // r1: swap_path=None → フォールバックなし（r0より後ろに path がない）
+    // r2: swap_path=None → フォールバックなし
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: Some(make_path(100)),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+    ];
+
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates);
+
+    assert_eq!(fallbacks.len(), 3);
+    assert_eq!(fallbacks[0], None, "r0 has own path, no fallback");
+    assert_eq!(fallbacks[1], None, "r1 has no newer path to fallback to");
+    assert_eq!(fallbacks[2], None, "r2 has no newer path to fallback to");
+
+    // find_fallback_path と一致することを確認
+    for (i, &fallback_idx) in fallbacks.iter().enumerate() {
+        let from_linear = TokenRate::find_fallback_path(&rates, i);
+        let from_precompute = fallback_idx
+            .and_then(|idx| rates.get(idx))
+            .and_then(|r| r.swap_path.as_ref());
+        assert_eq!(from_linear, from_precompute);
+    }
+}
+
+/// precompute_fallback_indices のテスト：末尾のみ swap_path がある場合
+/// 全ての先行要素が末尾にフォールバックする
+#[test]
+fn test_precompute_fallback_indices_last_only() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(),
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // r0: swap_path=None → r2 にフォールバック
+    // r1: swap_path=None → r2 にフォールバック
+    // r2: swap_path=Some → フォールバック不要
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: Some(make_path(300)),
+        },
+    ];
+
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates);
+
+    assert_eq!(fallbacks.len(), 3);
+    assert_eq!(fallbacks[0], Some(2), "r0 should fallback to r2");
+    assert_eq!(fallbacks[1], Some(2), "r1 should fallback to r2");
+    assert_eq!(fallbacks[2], None, "r2 has own path, no fallback");
+
+    // find_fallback_path と一致することを確認
+    for (i, &fallback_idx) in fallbacks.iter().enumerate() {
+        let from_linear = TokenRate::find_fallback_path(&rates, i);
+        let from_precompute = fallback_idx
+            .and_then(|idx| rates.get(idx))
+            .and_then(|r| r.swap_path.as_ref());
+        assert_eq!(from_linear, from_precompute);
+    }
+}
+
+/// 速度比較テスト: precompute_fallback_indices (O(n)) vs find_fallback_path の全呼び出し (O(n²))
+/// 大量データでの実行時間を比較し、precompute が明らかに高速であることを確認
+#[test]
+fn test_precompute_fallback_indices_performance() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(),
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // 1000件のレートを生成（10件に1件 swap_path あり）
+    let n = 1000;
+    let rates: Vec<TokenRate> = (0..n)
+        .map(|i| TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000 + i as i64),
+            timestamp: now - chrono::Duration::minutes(n as i64 - i as i64),
+            rate_calc_near: 10,
+            swap_path: if i % 10 == 9 {
+                Some(make_path(i as u32))
+            } else {
+                None
+            },
+        })
+        .collect();
+
+    // O(n) の事前計算
+    let start_precompute = std::time::Instant::now();
+    let fallbacks = TokenRate::precompute_fallback_indices(&rates);
+    let precompute_duration = start_precompute.elapsed();
+
+    // O(n²) の線形検索（全要素に対して find_fallback_path を呼び出し）
+    let start_linear = std::time::Instant::now();
+    let linear_results: Vec<Option<&SwapPath>> = (0..rates.len())
+        .map(|i| TokenRate::find_fallback_path(&rates, i))
+        .collect();
+    let linear_duration = start_linear.elapsed();
+
+    // 結果が一致することを確認
+    for i in 0..rates.len() {
+        let from_precompute = fallbacks[i]
+            .and_then(|idx| rates.get(idx))
+            .and_then(|r| r.swap_path.as_ref());
+        assert_eq!(
+            linear_results[i], from_precompute,
+            "Results should match at index {}",
+            i
+        );
+    }
+
+    // 事前計算が線形検索より高速であることを確認
+    // 注: CI環境での変動を考慮し、10倍以上の差を期待
+    // n=1000 の場合: O(n²) ≈ 500,000 比較 vs O(n) ≈ 1,000
+    assert!(
+        precompute_duration < linear_duration,
+        "precompute ({:?}) should be faster than linear search ({:?})",
+        precompute_duration,
+        linear_duration
+    );
+
+    // 実運用での信頼性のため、少なくとも2倍は高速であることを確認
+    // （CI環境でのキャッシュ効果等を考慮した保守的な閾値）
+    let speedup = linear_duration.as_nanos() as f64 / precompute_duration.as_nanos() as f64;
+    assert!(
+        speedup >= 2.0,
+        "precompute should be at least 2x faster, but speedup was only {:.2}x",
+        speedup
+    );
+}
+
+/// 大規模データでのスケーラビリティテスト
+/// データ量が10倍になっても処理時間が線形に増加することを確認
+#[test]
+fn test_precompute_fallback_indices_scalability() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(),
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    let generate_rates = |n: usize| -> Vec<TokenRate> {
+        (0..n)
+            .map(|i| TokenRate {
+                base: base.clone(),
+                quote: quote.clone(),
+                exchange_rate: make_rate(1000 + i as i64),
+                timestamp: now - chrono::Duration::seconds(n as i64 - i as i64),
+                rate_calc_near: 10,
+                swap_path: if i % 10 == 9 {
+                    Some(make_path(i as u32))
+                } else {
+                    None
+                },
+            })
+            .collect()
+    };
+
+    // ウォームアップ（JIT/キャッシュの影響を軽減）
+    let warmup_rates = generate_rates(100);
+    let _ = TokenRate::precompute_fallback_indices(&warmup_rates);
+
+    // 小規模 (n=500)
+    let small_rates = generate_rates(500);
+    let start_small = std::time::Instant::now();
+    for _ in 0..10 {
+        let _ = TokenRate::precompute_fallback_indices(&small_rates);
+    }
+    let small_duration = start_small.elapsed();
+
+    // 大規模 (n=5000, 10倍)
+    let large_rates = generate_rates(5000);
+    let start_large = std::time::Instant::now();
+    for _ in 0..10 {
+        let _ = TokenRate::precompute_fallback_indices(&large_rates);
+    }
+    let large_duration = start_large.elapsed();
+
+    // O(n) アルゴリズムなので、データ量が10倍になっても処理時間は約10倍程度のはず
+    // 多少のオーバーヘッドを考慮して20倍以下であることを確認
+    let ratio = large_duration.as_nanos() as f64 / small_duration.as_nanos() as f64;
+    assert!(
+        ratio <= 20.0,
+        "Processing time should scale linearly (ratio should be ~10x for 10x data), but was {:.2}x",
+        ratio
+    );
+}

@@ -118,11 +118,15 @@ impl PredictionService {
 
         // TokenRateをPricePointに変換（スポットレート補正適用）
         // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
+        // フォールバックインデックスを事前計算（O(n)）して O(n²) → O(n) に改善
+        let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
         let price_points: Vec<PricePoint> = rates
             .iter()
             .enumerate()
             .map(|(i, rate)| {
-                let fallback_path = TokenRate::find_fallback_path(&rates, i);
+                let fallback_path = fallback_indices[i]
+                    .and_then(|idx| rates.get(idx))
+                    .and_then(|r| r.swap_path.as_ref());
                 PricePoint {
                     timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
                     price: rate.to_spot_rate_with_fallback(fallback_path).to_price(),
@@ -241,6 +245,8 @@ impl PredictionService {
                 async move {
                     // TokenPriceHistory を構築（スポットレート補正適用）
                     // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
+                    // フォールバックインデックスを事前計算（O(n)）して O(n²) → O(n) に改善
+                    let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
                     let history = TokenPriceHistory {
                         token: token.clone(),
                         quote_token: quote_token.clone(),
@@ -248,7 +254,9 @@ impl PredictionService {
                             .iter()
                             .enumerate()
                             .map(|(i, r)| {
-                                let fallback_path = TokenRate::find_fallback_path(&rates, i);
+                                let fallback_path = fallback_indices[i]
+                                    .and_then(|idx| rates.get(idx))
+                                    .and_then(|rate| rate.swap_path.as_ref());
                                 PricePoint {
                                     timestamp: DateTime::from_naive_utc_and_offset(
                                         r.timestamp,
