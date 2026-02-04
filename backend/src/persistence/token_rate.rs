@@ -659,21 +659,47 @@ impl TokenRate {
         fallbacks
     }
 
-    /// スポットレートに補正（フォールバック付き）
+    /// スポットレートに補正（フォールバック付き、マルチホップ対応）
     ///
     /// swap_path が None の場合、提供された fallback_path を使用して補正。
     /// swap_path も fallback_path もない場合は補正なしで元のレートを返す。
+    ///
+    /// 補正式（マルチホップ）:
+    /// ```text
+    /// correction = Π(1 + Δx_i / x_i)
+    ///
+    /// where:
+    ///   Δx_0 = rate_calc_near (yocto 変換後)
+    ///   Δx_{i+1} = Δx_i × (amount_out_i / amount_in_i)
+    /// ```
     pub fn to_spot_rate_with_fallback(&self, fallback_path: Option<&SwapPath>) -> ExchangeRate {
         let path = self.swap_path.as_ref().or(fallback_path);
         if let Some(path) = path
-            && let Some(first_pool) = path.pools.first()
-            && let Ok(pool_amount) = first_pool.amount_in.parse::<BigDecimal>()
-            && !pool_amount.is_zero()
+            && !path.pools.is_empty()
         {
             // rate_calc_near は NEAR 単位で記録されているため、yocto に変換
             // (1 NEAR = 10^24 yocto)
             let delta_x = BigDecimal::from(self.rate_calc_near) * BigDecimal::from(10_u128.pow(24));
-            let correction = (&pool_amount + &delta_x) / &pool_amount;
+
+            let mut correction = BigDecimal::from(1);
+            let mut current_delta = delta_x;
+
+            for pool in &path.pools {
+                if let Ok(pool_amount) = pool.amount_in.parse::<BigDecimal>()
+                    && !pool_amount.is_zero()
+                {
+                    // 各プールで補正を積算: correction *= (1 + Δx / x)
+                    correction *= (&pool_amount + &current_delta) / &pool_amount;
+
+                    // 次のホップの入力は現在のホップの出力に比例
+                    if let Ok(amount_out) = pool.amount_out.parse::<BigDecimal>() {
+                        current_delta = &amount_out * &current_delta / &pool_amount;
+                    }
+                    // amount_out のパースに失敗した場合は current_delta を維持
+                    // （次のプールでも同じ delta を使用）
+                }
+            }
+
             return self.exchange_rate.clone() * correction;
         }
         self.exchange_rate.clone()

@@ -2199,3 +2199,331 @@ fn test_precompute_fallback_indices_scalability() {
         ratio
     );
 }
+
+// ===========================================================================
+// マルチホップ補正テスト
+// ===========================================================================
+
+/// シングルホップ: 従来の動作と同一結果を確認
+#[test]
+fn test_to_spot_rate_multihop_single_hop_same_as_before() {
+    // シングルホップの場合、マルチホップ実装と従来実装は同じ結果を返すべき
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // プールサイズ: 10,000 NEAR = 10^28 yocto
+    // rate_calc_near: 10 NEAR
+    // 補正係数: 1 + (10 * 10^24) / (10^28) = 1.001
+    let swap_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 123,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "10000000000000000000000000000".to_string(), // 10,000 NEAR in yocto
+            amount_out: "5000000000000000000000000000".to_string(), // 5,000 NEAR in yocto
+        }],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // 補正係数: 1 + (10 * 10^24) / (10^28) = 1.001
+    // 期待値: 1000 * 1.001 = 1001
+    let expected = BigDecimal::from_str("1001").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Single hop should produce same result as before (1001)"
+    );
+}
+
+/// 2ホップ: 補正係数が積算されることを確認
+#[test]
+fn test_to_spot_rate_multihop_two_hops() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // 2ホップスワップ:
+    // Hop1: NEAR -> TokenA
+    //   - pool_amount_in: 100 NEAR = 10^26 yocto
+    //   - pool_amount_out: 200 TokenA
+    //   - Δx_0 = 10 NEAR = 10^25 yocto
+    //   - 補正1: 1 + 10^25 / 10^26 = 1.1
+    //   - Δx_1 = 10^25 * (200 / 100) = 2 * 10^25 (相対的なスケール)
+    //
+    // Hop2: TokenA -> TokenB
+    //   - pool_amount_in: 1000 = 10^3
+    //   - pool_amount_out: 500
+    //   - 補正2: 1 + Δx_1 / 10^3
+    //
+    // 簡略化のため、同じスケールで計算:
+    // Hop1: in=100, out=200, Δx=10 → correction1 = 1.1, Δx'=10*200/100=20
+    // Hop2: in=1000, out=500, Δx'=20 → correction2 = 1.02
+    // 総補正 = 1.1 * 1.02 = 1.122
+    let swap_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 1,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
+                amount_out: "200000000000000000000000000".to_string(), // 200 単位
+            },
+            SwapPoolInfo {
+                pool_id: 2,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "1000000000000000000000000000".to_string(), // 1000 NEAR in yocto
+                amount_out: "500000000000000000000000000".to_string(), // 500 単位
+            },
+        ],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10, // 10 NEAR
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // 計算:
+    // Δx_0 = 10 * 10^24 yocto
+    // Hop1: pool_in = 100 * 10^24, correction1 = (100 + 10) / 100 = 1.1
+    //       Δx_1 = 10 * 10^24 * (200 / 100) = 20 * 10^24
+    // Hop2: pool_in = 1000 * 10^24, correction2 = (1000 + 20) / 1000 = 1.02
+    // 総補正 = 1.1 * 1.02 = 1.122
+    // 期待値: 1000 * 1.122 = 1122
+    let expected = BigDecimal::from_str("1122").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Two hop correction should be 1.1 * 1.02 = 1.122, so 1000 * 1.122 = 1122"
+    );
+}
+
+/// 3ホップ以上: 累積補正の確認
+#[test]
+fn test_to_spot_rate_multihop_three_hops() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // 3ホップスワップ:
+    // Hop1: in=100, out=100 (1:1) → correction1 = 1.1, Δx'=10
+    // Hop2: in=100, out=100 (1:1) → correction2 = 1.1, Δx''=10
+    // Hop3: in=100, out=100 (1:1) → correction3 = 1.1
+    // 総補正 = 1.1^3 = 1.331
+    let swap_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 1,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
+                amount_out: "100000000000000000000000000".to_string(),
+            },
+            SwapPoolInfo {
+                pool_id: 2,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(),
+                amount_out: "100000000000000000000000000".to_string(),
+            },
+            SwapPoolInfo {
+                pool_id: 3,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(),
+                amount_out: "100000000000000000000000000".to_string(),
+            },
+        ],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // 1.1^3 = 1.331
+    // 1000 * 1.331 = 1331
+    let expected = BigDecimal::from_str("1331").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Three hop correction should be 1.1^3 = 1.331, so 1000 * 1.331 = 1331"
+    );
+}
+
+/// amount_out パース失敗時: 安全にフォールバック（current_delta を維持）
+#[test]
+fn test_to_spot_rate_multihop_amount_out_parse_failure() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // Hop1 の amount_out が不正な場合、Δx は維持される
+    // Hop1: in=100, out=invalid → correction1 = 1.1, Δx'=Δx (10)
+    // Hop2: in=100, out=100 → correction2 = 1.1
+    // 総補正 = 1.1 * 1.1 = 1.21
+    let swap_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 1,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(),
+                amount_out: "invalid_number".to_string(), // 不正な値
+            },
+            SwapPoolInfo {
+                pool_id: 2,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(),
+                amount_out: "100000000000000000000000000".to_string(),
+            },
+        ],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // パース失敗時は Δx を維持するので、両ホップとも同じ Δx で補正
+    // 1.1 * 1.1 = 1.21
+    // 1000 * 1.21 = 1210
+    let expected = BigDecimal::from_str("1210").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "When amount_out parse fails, Δx should be maintained. 1.1 * 1.1 = 1.21"
+    );
+}
+
+/// amount_in パース失敗時: そのプールの補正をスキップ
+#[test]
+fn test_to_spot_rate_multihop_amount_in_parse_failure() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // Hop1 の amount_in が不正な場合、そのプールの補正はスキップ
+    // Hop1: in=invalid → スキップ
+    // Hop2: in=100, out=100 → correction = 1.1
+    // 総補正 = 1.1
+    let swap_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 1,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "invalid_number".to_string(), // 不正な値
+                amount_out: "100000000000000000000000000".to_string(),
+            },
+            SwapPoolInfo {
+                pool_id: 2,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(),
+                amount_out: "100000000000000000000000000".to_string(),
+            },
+        ],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // Hop1 はスキップ、Hop2 のみ補正: 1.1
+    // 1000 * 1.1 = 1100
+    let expected = BigDecimal::from_str("1100").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "When amount_in parse fails, that pool should be skipped. Only hop2: 1.1"
+    );
+}
+
+/// マルチホップでフォールバックパスを使用する場合
+#[test]
+fn test_to_spot_rate_multihop_with_fallback() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // swap_path なしのレート
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: None,
+    };
+
+    // フォールバック用の2ホップパス
+    // Hop1: in=100, out=200 → correction1 = 1.1, Δx'=20
+    // Hop2: in=1000, out=500 → correction2 = 1.02
+    // 総補正 = 1.122
+    let fallback_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 1,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".to_string(),
+                amount_out: "200000000000000000000000000".to_string(),
+            },
+            SwapPoolInfo {
+                pool_id: 2,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "1000000000000000000000000000".to_string(),
+                amount_out: "500000000000000000000000000".to_string(),
+            },
+        ],
+    };
+
+    let spot_rate = token_rate.to_spot_rate_with_fallback(Some(&fallback_path));
+
+    // 1000 * 1.122 = 1122
+    let expected = BigDecimal::from_str("1122").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Multihop fallback should work: 1.1 * 1.02 = 1.122"
+    );
+}
