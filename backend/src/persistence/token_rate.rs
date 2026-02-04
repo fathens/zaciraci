@@ -603,9 +603,38 @@ impl TokenRate {
     /// - x = 入力側プールサイズ
     ///
     /// swap_path が None の場合は補正なしで元のレートを返す。
-    #[allow(dead_code)] // 将来使用予定
+    #[allow(dead_code)] // テストで使用
     pub fn to_spot_rate(&self) -> ExchangeRate {
-        if let Some(path) = &self.swap_path
+        self.to_spot_rate_with_fallback(None)
+    }
+
+    /// 指定インデックスのレートに対するフォールバック swap_path を検索
+    ///
+    /// 「自分より新しくもっとも古い」swap_path を返す。
+    /// 自身が swap_path を持つ場合、または見つからない場合は None を返す。
+    ///
+    /// # Arguments
+    /// * `rates` - 時系列昇順（古い → 新しい）のレート配列
+    /// * `index` - フォールバックを探すレートのインデックス
+    pub fn find_fallback_path(rates: &[TokenRate], index: usize) -> Option<&SwapPath> {
+        let rate = rates.get(index)?;
+
+        // 自身が swap_path を持つ場合はフォールバック不要
+        if rate.swap_path.is_some() {
+            return None;
+        }
+
+        // index より後ろ（自分より新しい）のレートから、最初に見つかる swap_path を返す
+        rates[index + 1..].iter().find_map(|r| r.swap_path.as_ref())
+    }
+
+    /// スポットレートに補正（フォールバック付き）
+    ///
+    /// swap_path が None の場合、提供された fallback_path を使用して補正。
+    /// swap_path も fallback_path もない場合は補正なしで元のレートを返す。
+    pub fn to_spot_rate_with_fallback(&self, fallback_path: Option<&SwapPath>) -> ExchangeRate {
+        let path = self.swap_path.as_ref().or(fallback_path);
+        if let Some(path) = path
             && let Some(first_pool) = path.pools.first()
             && let Ok(pool_amount) = first_pool.amount_in.parse::<BigDecimal>()
             && !pool_amount.is_zero()

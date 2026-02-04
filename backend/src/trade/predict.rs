@@ -116,13 +116,18 @@ impl PredictionService {
             .await
             .context("Failed to get price history from database")?;
 
-        // TokenRateをPricePointに変換（ExchangeRate から正しく TokenPrice に変換）
+        // TokenRateをPricePointに変換（スポットレート補正適用）
+        // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
         let price_points: Vec<PricePoint> = rates
-            .into_iter()
-            .map(|rate| PricePoint {
-                timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                price: rate.exchange_rate.to_price(),
-                volume: None, // ボリュームデータは現在利用不可
+            .iter()
+            .enumerate()
+            .map(|(i, rate)| {
+                let fallback_path = TokenRate::find_fallback_path(&rates, i);
+                PricePoint {
+                    timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
+                    price: rate.to_spot_rate_with_fallback(fallback_path).to_price(),
+                    volume: None,
+                }
             })
             .collect();
 
@@ -234,16 +239,24 @@ impl PredictionService {
                 let log = log.clone();
                 let quote_token = quote_token.clone();
                 async move {
-                    // TokenPriceHistory を構築
+                    // TokenPriceHistory を構築（スポットレート補正適用）
+                    // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
                     let history = TokenPriceHistory {
                         token: token.clone(),
                         quote_token: quote_token.clone(),
                         prices: rates
-                            .into_iter()
-                            .map(|r| PricePoint {
-                                timestamp: DateTime::from_naive_utc_and_offset(r.timestamp, Utc),
-                                price: r.exchange_rate.to_price(),
-                                volume: None,
+                            .iter()
+                            .enumerate()
+                            .map(|(i, r)| {
+                                let fallback_path = TokenRate::find_fallback_path(&rates, i);
+                                PricePoint {
+                                    timestamp: DateTime::from_naive_utc_and_offset(
+                                        r.timestamp,
+                                        Utc,
+                                    ),
+                                    price: r.to_spot_rate_with_fallback(fallback_path).to_price(),
+                                    volume: None,
+                                }
                             })
                             .collect(),
                     };

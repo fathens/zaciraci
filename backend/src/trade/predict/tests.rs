@@ -1,6 +1,6 @@
 use super::*;
 use crate::Result;
-use crate::persistence::token_rate::TokenRate;
+use crate::persistence::token_rate::{SwapPath, SwapPoolInfo, TokenRate};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
@@ -875,4 +875,113 @@ async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
 
     clean_test_tokens().await?;
     Ok(())
+}
+
+/// スポットレート補正付きの価格履歴テスト用ヘルパー
+fn make_token_rate_with_path(
+    base: TokenOutAccount,
+    quote: TokenInAccount,
+    rate_str: &str,
+    timestamp: NaiveDateTime,
+    swap_path: Option<SwapPath>,
+) -> TokenRate {
+    TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate_from_str(rate_str),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path,
+    }
+}
+
+/// swap_path 付きレートでスポットレート補正が適用されることを確認
+#[test]
+fn test_spot_rate_correction_with_path() {
+    let base: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
+    let quote: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
+    let timestamp = Utc::now().naive_utc();
+
+    // プールサイズ: 100 NEAR = 10^26 yocto
+    // rate_calc_near: 10 NEAR
+    // 補正係数: 1 + (10 * 10^24) / (10^26) = 1.1 (+10%)
+    let swap_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 123,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    let rate = make_token_rate_with_path(base, quote, "1.0", timestamp, Some(swap_path));
+
+    // スポットレート補正を適用
+    let spot_rate = rate.to_spot_rate_with_fallback(None);
+    let price = spot_rate.to_price();
+
+    // 補正後のレート: 1.0 * 1.1 = 1.1
+    // price = yocto_per_near / rate = 10^24 / 1.1 ≈ 9.09... × 10^23
+    // 元のレート 1.0 の price = 10^24
+    // 補正後は price が小さくなる（レートが大きくなるため）
+    let original_rate = make_rate_from_str("1.0");
+    let original_price = original_rate.to_price();
+
+    assert!(
+        price.as_bigdecimal() < original_price.as_bigdecimal(),
+        "Spot-corrected price should be less than original (rate increased): {} < {}",
+        price.as_bigdecimal(),
+        original_price.as_bigdecimal()
+    );
+}
+
+/// swap_path なしのレートにフォールバックが適用されることを確認
+#[test]
+fn test_spot_rate_correction_with_fallback() {
+    let base: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
+    let quote: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
+    let now = Utc::now().naive_utc();
+
+    // フォールバック用 swap_path（補正係数 1.1）
+    let fallback_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 456,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // swap_path なしのレート
+    let rate_without_path = make_token_rate_with_path(
+        base.clone(),
+        quote.clone(),
+        "1.0",
+        now - chrono::Duration::hours(1),
+        None,
+    );
+
+    // フォールバックを使用して補正
+    let spot_rate = rate_without_path.to_spot_rate_with_fallback(Some(&fallback_path));
+    let price_with_fallback = spot_rate.to_price();
+
+    // フォールバックなしの場合（補正なし）
+    let price_without_fallback = rate_without_path
+        .to_spot_rate_with_fallback(None)
+        .to_price();
+
+    // フォールバック使用時は価格が異なる（補正が適用される）
+    assert_ne!(
+        price_with_fallback.as_bigdecimal(),
+        price_without_fallback.as_bigdecimal(),
+        "Price should differ when fallback is used"
+    );
+
+    // フォールバック使用時は価格が小さい（レートが大きくなるため）
+    assert!(
+        price_with_fallback.as_bigdecimal() < price_without_fallback.as_bigdecimal(),
+        "Price with fallback should be less than without"
+    );
 }

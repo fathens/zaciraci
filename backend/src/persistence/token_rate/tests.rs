@@ -1345,3 +1345,338 @@ fn test_to_spot_rate_with_zero_pool_amount() {
         "Spot rate should equal original rate when pool amount is zero"
     );
 }
+
+#[test]
+fn test_to_spot_rate_with_fallback_uses_fallback() {
+    // swap_path が None の場合、フォールバックパスを使用して補正される
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // swap_path なしのレート
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10, // 10 NEAR
+        swap_path: None,
+    };
+
+    // フォールバック用の swap_path
+    // プールサイズ: 100 NEAR = 10^26 yocto
+    // 補正係数: 1 + (10 * 10^24) / (10^26) = 1.1 (+10%)
+    let fallback_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 456,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    let spot_rate = token_rate.to_spot_rate_with_fallback(Some(&fallback_path));
+
+    // 補正係数: 1.1
+    // 期待値: 1000 * 1.1 = 1100
+    let expected = BigDecimal::from_str("1100").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Spot rate should be corrected using fallback path"
+    );
+}
+
+#[test]
+fn test_to_spot_rate_with_fallback_prefers_own_path() {
+    // 自身の swap_path がある場合、フォールバックは使用されない
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // プールサイズ: 10,000 NEAR = 10^28 yocto (補正係数 1.001)
+    let own_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 123,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "10000000000000000000000000000".to_string(), // 10,000 NEAR in yocto
+            amount_out: "5000000000000000000000000000".to_string(),
+        }],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: Some(own_path),
+    };
+
+    // フォールバック（補正係数 1.1）- 使用されないはず
+    let fallback_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 456,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    let spot_rate = token_rate.to_spot_rate_with_fallback(Some(&fallback_path));
+
+    // 自身のパスで補正 (1.001): 1000 * 1.001 = 1001
+    let expected = BigDecimal::from_str("1001").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Spot rate should use own path, not fallback"
+    );
+}
+
+#[test]
+fn test_to_spot_rate_with_fallback_no_fallback() {
+    // swap_path が None でフォールバックもない場合、元のレートが返る
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: None,
+    };
+
+    let spot_rate = token_rate.to_spot_rate_with_fallback(None);
+
+    assert_eq!(
+        spot_rate.raw_rate(),
+        token_rate.exchange_rate.raw_rate(),
+        "Spot rate should equal original rate when no path and no fallback"
+    );
+}
+
+/// find_fallback_path のロジックをテスト
+/// 「自分より新しくもっとも古い」swap_path を返すことを確認
+#[test]
+fn test_find_fallback_path_returns_nearest_newer() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    // 異なる pool_id を持つ swap_path を作成（区別できるように）
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(),
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // 時系列順（古い → 新しい）のレート
+    // r0: 4時間前, swap_path=None
+    // r1: 3時間前, swap_path=None
+    // r2: 2時間前, swap_path=Some(pool_id=200)  ← r0, r1 のフォールバック
+    // r3: 1時間前, swap_path=None
+    // r4: 今,      swap_path=Some(pool_id=400)  ← r3 のフォールバック
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(4),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(3),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: Some(make_path(200)),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: Some(make_path(400)),
+        },
+    ];
+
+    // 各レートに対してフォールバックを検索
+    // find_fallback_path: 自分より新しくもっとも古い swap_path を返す
+    for (i, _rate) in rates.iter().enumerate() {
+        let fallback = TokenRate::find_fallback_path(&rates, i);
+
+        match i {
+            0 | 1 => {
+                // r0, r1 → r2 (pool_id=200) がフォールバック
+                assert!(fallback.is_some(), "r{} should have fallback", i);
+                assert_eq!(
+                    fallback.unwrap().pools[0].pool_id,
+                    200,
+                    "r{} should use r2's path (pool_id=200)",
+                    i
+                );
+            }
+            2 => {
+                // r2 は自身が swap_path を持つのでフォールバック不要（None を返す）
+                assert!(fallback.is_none(), "r2 has own path, no fallback needed");
+            }
+            3 => {
+                // r3 → r4 (pool_id=400) がフォールバック
+                assert!(fallback.is_some(), "r3 should have fallback");
+                assert_eq!(
+                    fallback.unwrap().pools[0].pool_id,
+                    400,
+                    "r3 should use r4's path (pool_id=400)"
+                );
+            }
+            4 => {
+                // r4 は自身が swap_path を持つのでフォールバック不要
+                assert!(fallback.is_none(), "r4 has own path, no fallback needed");
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// 自分が swap_path を持つ場合、フォールバックではなく自分の path が使われることを確認
+#[test]
+fn test_spot_rate_uses_own_path_not_fallback() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    // 異なる補正係数を持つ swap_path を作成
+    // 自身の path: 100 NEAR → 補正係数 1.1 (+10%)
+    let own_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 100,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // フォールバック候補の path: 1000 NEAR → 補正係数 1.01 (+1%)
+    let fallback_candidate_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 200,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "1000000000000000000000000000".to_string(), // 1000 NEAR
+            amount_out: "500000000000000000000000000".to_string(),
+        }],
+    };
+
+    // 時系列順のレート配列
+    // r0: swap_path=own_path (100)
+    // r1: swap_path=fallback_candidate_path (200) ← これがフォールバック候補だが使われない
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: Some(own_path.clone()),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: Some(fallback_candidate_path),
+        },
+    ];
+
+    // r0 のフォールバックを検索 → 自身が path を持つので None
+    let fallback = TokenRate::find_fallback_path(&rates, 0);
+    assert!(
+        fallback.is_none(),
+        "find_fallback_path should return None when rate has own path"
+    );
+
+    // スポットレートを計算
+    let spot_rate = rates[0].to_spot_rate_with_fallback(fallback);
+
+    // 自身の path (100 NEAR) で補正されるので、補正係数は 1.1
+    // 1000 * 1.1 = 1100
+    let expected = BigDecimal::from_str("1100").unwrap();
+    assert_eq!(
+        spot_rate.raw_rate(),
+        &expected,
+        "Should use own path (1.1 correction), not fallback (1.01 correction)"
+    );
+
+    // 比較: もしフォールバック (1000 NEAR, 補正係数 1.01) を使った場合
+    // 1000 * 1.01 = 1010 になるはず
+    let wrong_rate = BigDecimal::from_str("1010").unwrap();
+    assert_ne!(
+        spot_rate.raw_rate(),
+        &wrong_rate,
+        "Should NOT be 1010 (fallback's correction)"
+    );
+}
+
+/// 全てのレートが swap_path を持たない場合、フォールバックは None
+#[test]
+fn test_find_fallback_path_all_none() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+    ];
+
+    for i in 0..rates.len() {
+        let fallback = TokenRate::find_fallback_path(&rates, i);
+        assert!(fallback.is_none(), "No fallback when all paths are None");
+    }
+}
