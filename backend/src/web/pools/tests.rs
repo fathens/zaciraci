@@ -54,7 +54,7 @@ fn test_log_depth_typical_values() {
 
         // 負の値にならないことを確認
         assert!(
-            log_depth >= BigDecimal::from(0),
+            log_depth >= 0,
             "深度{}で負の対数値が発生: {}",
             depth,
             log_depth
@@ -74,13 +74,13 @@ fn test_log_depth_edge_cases() {
     let tiny_depth = BigDecimal::from_str("1e-10").unwrap();
     let log_tiny = current_log_depth_calculation(&tiny_depth);
     println!("極小深度: log({} + 1) = {}", tiny_depth, log_tiny);
-    assert!(log_tiny >= BigDecimal::from(0));
+    assert!(log_tiny >= 0);
 
     // 非常に大きな値
     let huge_depth = BigDecimal::from_str("1e50").unwrap();
     let log_huge = current_log_depth_calculation(&huge_depth);
     println!("極大深度: log({} + 1) = {}", huge_depth, log_huge);
-    assert!(log_huge > BigDecimal::from(0));
+    assert!(log_huge > 0);
 }
 
 #[test]
@@ -135,10 +135,10 @@ fn test_improved_calculate_log_depth() {
         println!("  改善版log_depth: {}", log_depth);
 
         // 負の値にならないことを確認
-        assert!(log_depth >= BigDecimal::from(0));
+        assert!(log_depth >= 0);
 
         // 合理的な上限値を確認
-        assert!(log_depth <= BigDecimal::from(200));
+        assert!(log_depth <= 200);
     }
 
     // 精度テスト: 小数点以下の桁数が制限されていることを確認
@@ -193,12 +193,12 @@ fn test_calculate_volatility_weight() {
         );
 
         // 基本的な制約
-        assert!(weight >= BigDecimal::from(0)); // 非負
+        assert!(weight >= 0); // 非負
 
         // 高分散・高深度の組み合わせで最大値になることを確認
         if var_str == "100.0" && dep_str == "100.0" {
             // これが最も高いスコアになるはず
-            assert!(weight > BigDecimal::from(10));
+            assert!(weight > 10);
         }
     }
 }
@@ -252,7 +252,7 @@ fn test_volatility_weight_edge_cases() {
         "極小値: variance={}, depth={} → weight={}",
         tiny_variance, tiny_depth, weight_tiny
     );
-    assert!(weight_tiny >= BigDecimal::from(0));
+    assert!(weight_tiny >= 0);
 
     // 非常に大きな値
     let huge_variance = BigDecimal::from_str("1e50").unwrap();
@@ -262,7 +262,7 @@ fn test_volatility_weight_edge_cases() {
         "極大値: variance={}, depth={} → weight={}",
         huge_variance, huge_depth, weight_huge
     );
-    assert!(weight_huge >= BigDecimal::from(0));
+    assert!(weight_huge >= 0);
     assert!(weight_huge < BigDecimal::from_str("1e100").unwrap()); // 合理的な上限
 
     // f64範囲を超える値
@@ -273,7 +273,7 @@ fn test_volatility_weight_edge_cases() {
         "f64超過: variance={}, depth={} → weight={}",
         beyond_f64_variance, beyond_f64_depth, weight_beyond
     );
-    assert!(weight_beyond >= BigDecimal::from(0));
+    assert!(weight_beyond >= 0);
 }
 
 #[test]

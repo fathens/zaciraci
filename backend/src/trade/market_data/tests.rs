@@ -378,7 +378,7 @@ fn test_calculate_volatility_from_history() {
     };
     let volatility = calculate_volatility_from_history(&history_with_change).unwrap();
     assert!(
-        volatility > BigDecimal::from(0),
+        volatility > 0,
         "Price changes should result in positive volatility"
     );
 
@@ -406,8 +406,29 @@ fn test_calculate_volatility_from_history() {
     };
     let volatility = calculate_volatility_from_history(&history_with_zero).unwrap();
     assert!(
-        volatility >= BigDecimal::from(0),
+        volatility >= 0,
         "Should calculate volatility skipping zero prices, got: {}",
         volatility
     );
+}
+
+#[test]
+fn test_liquidity_score_calculation_formula() {
+    // 流動性スコアの数学的検証
+    // score = ratio / (1 + ratio) where ratio = liquidity / threshold
+
+    // liquidity == threshold の場合: ratio = 1 → score = 0.5
+    let ratio: f64 = 1.0;
+    let score: f64 = ratio / (1.0 + ratio);
+    assert!((score - 0.5_f64).abs() < 0.001);
+
+    // liquidity == 2 * threshold の場合: ratio = 2 → score = 0.667
+    let ratio: f64 = 2.0;
+    let score: f64 = ratio / (1.0 + ratio);
+    assert!((score - 0.667_f64).abs() < 0.001);
+
+    // liquidity == 0.5 * threshold の場合: ratio = 0.5 → score = 0.333
+    let ratio: f64 = 0.5;
+    let score: f64 = ratio / (1.0 + ratio);
+    assert!((score - 0.333_f64).abs() < 0.001);
 }

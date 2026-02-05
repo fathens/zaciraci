@@ -3,6 +3,7 @@ use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::trade::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
+use near_sdk::NearToken;
 use std::collections::BTreeMap;
 use zaciraci_common::types::{NearValue, TokenAmount};
 
@@ -156,25 +157,28 @@ where
 
     // from_tokenの残高を取得
     // wrap.nearの場合のみ balances::start を使用（refill/harvest処理が必要な場合があるため）
+    let swap_amount_token = swap_amount.map(NearToken::from_yoctonear);
     let balance = if from_token_account == *crate::ref_finance::token_account::WNEAR_TOKEN {
-        crate::ref_finance::balances::start(client, wallet, &from_token_account, swap_amount)
+        crate::ref_finance::balances::start(client, wallet, &from_token_account, swap_amount_token)
             .await?
     } else {
         // その他のトークンは直接 get_deposits で残高を取得
         let account = wallet.account_id();
         let deposits = crate::ref_finance::deposit::get_deposits(client, account).await?;
-        deposits
+        let yocto = deposits
             .get(&from_token_account)
             .map(|u| u.0)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        NearToken::from_yoctonear(yocto)
     };
 
-    if balance == 0 {
+    if balance.as_yoctonear() == 0 {
         return Err(anyhow::anyhow!("No balance for token: {}", from_token));
     }
 
     // swap_amountが指定されていない場合は残高の全額、指定されている場合は指定金額を使用
-    let swap_amount = swap_amount.unwrap_or(balance).min(balance);
+    let balance_yocto = balance.as_yoctonear();
+    let swap_amount = swap_amount.unwrap_or(balance_yocto).min(balance_yocto);
 
     // プールデータを読み込み
     let pools = crate::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;

@@ -109,6 +109,31 @@ pub type TrendTradingAction = TradingAction;
 /// TokenInfo を TokenData で統一
 pub type TokenInfo = TokenData;
 
+// ==================== 取引判断パラメータ ====================
+
+/// 取引判断のためのパラメータ
+///
+/// `make_trading_decision` に渡す設定パラメータをまとめた構造体。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradingDecisionParams {
+    /// 最小利益閾値（無次元、例: 0.05 = 5%）
+    pub min_profit_threshold: f64,
+    /// スイッチ判定の乗数（無次元）
+    pub switch_multiplier: f64,
+    /// 最小取引価値（NearValue: NEAR 単位）
+    pub min_trade_value: NearValue,
+}
+
+impl Default for TradingDecisionParams {
+    fn default() -> Self {
+        Self {
+            min_profit_threshold: 0.05,
+            switch_multiplier: 1.5,
+            min_trade_value: NearValue::from_near(BigDecimal::from(1)),
+        }
+    }
+}
+
 // ==================== 取引アクション ====================
 
 /// 統合取引アクション

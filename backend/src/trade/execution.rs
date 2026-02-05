@@ -12,6 +12,7 @@ use crate::trade::{recorder::TradeRecorder, swap};
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use near_sdk::NearToken;
 use std::collections::HashMap;
 use zaciraci_common::algorithm::types::TradingAction;
 use zaciraci_common::types::*;
@@ -528,6 +529,19 @@ pub(crate) async fn manage_evaluation_period(
                     info!(log, "trade disabled, not starting new period";
                         "final_balance" => %final_balance
                     );
+
+                    // TRADE_UNWRAP_ON_STOP が有効な場合、wrap.near を NEAR に戻して送金
+                    let unwrap_on_stop = config::get("TRADE_UNWRAP_ON_STOP")
+                        .map(|v| v.to_lowercase() == "true")
+                        .unwrap_or(false);
+
+                    if unwrap_on_stop {
+                        info!(log, "unwrap_on_stop enabled, executing unwrap and transfer");
+                        if let Err(e) = unwrap_and_transfer_wnear(&log).await {
+                            error!(log, "failed to unwrap and transfer"; "error" => %e);
+                        }
+                    }
+
                     // 空の period_id を返して停止を通知
                     return Ok((String::new(), false, vec![], Some(final_balance)));
                 }
@@ -730,6 +744,125 @@ pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
 
     info!(log, "liquidation complete"; "final_wrap_near_balance" => %final_balance);
     Ok(final_balance)
+}
+
+/// 評価期間終了時に wrap.near を NEAR に戻して HARVEST_ACCOUNT_ID に送金
+///
+/// 処理フロー:
+/// 1. REF Finance から wrap.near を withdraw
+/// 2. wrap.near を NEAR に unwrap
+/// 3. NEAR を HARVEST_ACCOUNT_ID に送金（HARVEST_RESERVE_AMOUNT を残す）
+async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
+    use crate::jsonrpc::{AccountInfo, SendTx, SentTx};
+    use crate::ref_finance::{deposit, token_account::WNEAR_TOKEN};
+    use zaciraci_common::types::{NearAmount, YoctoAmount};
+
+    // HARVEST_ACCOUNT_ID を取得（未設定の場合はスキップ）
+    let harvest_account_id = match config::get("HARVEST_ACCOUNT_ID") {
+        Ok(id) if !id.is_empty() => id,
+        _ => {
+            info!(
+                log,
+                "HARVEST_ACCOUNT_ID not set, skipping unwrap and transfer"
+            );
+            return Ok(());
+        }
+    };
+
+    let harvest_account: near_sdk::AccountId = harvest_account_id
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid HARVEST_ACCOUNT_ID: {}", e))?;
+
+    // HARVEST_RESERVE_AMOUNT を取得
+    let reserve_amount: YoctoAmount = config::get("HARVEST_RESERVE_AMOUNT")
+        .ok()
+        .and_then(|v| v.parse::<NearAmount>().ok())
+        .unwrap_or_else(|| "1".parse().expect("valid NearAmount literal"))
+        .to_yocto();
+    let reserve_amount_u128: u128 = reserve_amount.to_u128();
+
+    let client = crate::jsonrpc::new_client();
+    let wallet = crate::wallet::new_wallet();
+    let account = wallet.account_id();
+
+    // REF Finance 内の wrap.near 残高を取得
+    let deposits = deposit::get_deposits(&client, account).await?;
+    let wnear_balance = deposits.get(&WNEAR_TOKEN).map(|u| u.0).unwrap_or_default();
+
+    if wnear_balance == 0 {
+        info!(log, "no wrap.near balance in REF Finance, skipping");
+        return Ok(());
+    }
+
+    info!(log, "starting unwrap and transfer";
+        "wnear_balance" => wnear_balance,
+        "target_account" => %harvest_account,
+        "reserve_amount" => reserve_amount_u128
+    );
+
+    // 1. REF Finance から wrap.near を withdraw
+    let wnear_token = NearToken::from_yoctonear(wnear_balance);
+    trace!(log, "withdrawing wrap.near from REF Finance"; "amount" => wnear_balance);
+    let withdraw_tx = deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, wnear_token).await?;
+    if let Err(e) = withdraw_tx.wait_for_success().await {
+        error!(log, "failed to withdraw from REF Finance"; "error" => %e);
+        return Err(anyhow::anyhow!("Withdraw failed: {}", e));
+    }
+
+    // 2. wrap.near を NEAR に unwrap
+    trace!(log, "unwrapping wrap.near to NEAR"; "amount" => wnear_balance);
+    let unwrap_tx = deposit::wnear::unwrap(&client, &wallet, wnear_token).await?;
+    if let Err(e) = unwrap_tx.wait_for_success().await {
+        error!(log, "failed to unwrap NEAR"; "error" => %e);
+        return Err(anyhow::anyhow!("Unwrap failed: {}", e));
+    }
+
+    // 3. NEAR を HARVEST_ACCOUNT_ID に送金（HARVEST_RESERVE_AMOUNT を残す）
+    let current_native_balance = client.get_native_amount(account).await?;
+    let reserve_amount_token = NearToken::from_yoctonear(reserve_amount_u128);
+
+    let available_for_transfer = if current_native_balance > reserve_amount_token {
+        current_native_balance.saturating_sub(reserve_amount_token)
+    } else {
+        info!(log, "insufficient balance for transfer after reserve";
+            "current_balance" => current_native_balance.as_yoctonear(),
+            "reserve_amount" => reserve_amount_u128
+        );
+        return Ok(());
+    };
+
+    if available_for_transfer.as_yoctonear() == 0 {
+        info!(log, "no NEAR available for transfer after reserve");
+        return Ok(());
+    }
+
+    trace!(log, "transferring NEAR to harvest account";
+        "amount" => available_for_transfer.as_yoctonear(),
+        "target" => %harvest_account
+    );
+
+    let signer = wallet.signer();
+    let sent_tx = client
+        .transfer_native_token(signer, &harvest_account, available_for_transfer)
+        .await?;
+
+    let tx_outcome = sent_tx.wait_for_executed().await?;
+    let tx_hash = match tx_outcome {
+        near_primitives::views::FinalExecutionOutcomeViewEnum::FinalExecutionOutcome(view) => {
+            view.transaction_outcome.id.to_string()
+        }
+        near_primitives::views::FinalExecutionOutcomeViewEnum::FinalExecutionOutcomeWithReceipt(
+            view,
+        ) => view.final_outcome.transaction_outcome.id.to_string(),
+    };
+
+    info!(log, "unwrap and transfer completed";
+        "transferred_amount" => available_for_transfer.as_yoctonear(),
+        "target_account" => %harvest_account,
+        "tx_hash" => %tx_hash
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]

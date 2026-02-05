@@ -483,6 +483,25 @@ pub struct TradingCost {
     pub total: YoctoValueF64,
 }
 
+/// 予測生成のためのパラメータ
+///
+/// `generate_api_predictions` に渡す設定パラメータをまとめた構造体。
+#[derive(Debug, Clone)]
+pub struct PredictionGenerationParams {
+    /// Quote トークン（通常 wrap.near）
+    pub quote_token: String,
+    /// 現在時刻
+    pub current_time: DateTime<Utc>,
+    /// 過去データ期間（日数）
+    pub historical_days: i64,
+    /// 予測期間
+    pub prediction_horizon: chrono::Duration,
+    /// 予測モデル（None の場合はデフォルト）
+    pub model: Option<String>,
+    /// 詳細出力フラグ
+    pub verbose: bool,
+}
+
 // Trading context struct to reduce function arguments
 #[derive(Debug)]
 pub struct TradingContext<'a> {

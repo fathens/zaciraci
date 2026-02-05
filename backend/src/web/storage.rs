@@ -9,6 +9,7 @@ use axum::{
     extract::{Path, State},
     routing::get,
 };
+use near_sdk::NearToken;
 use std::sync::Arc;
 
 fn path(sub: &str) -> String {
@@ -40,7 +41,13 @@ async fn storage_deposit_min(State(_): State<Arc<AppState>>) -> String {
     let wallet = wallet::new_wallet();
     let bounds = ref_finance::storage::check_bounds(&client).await.unwrap();
     let value = bounds.min.0;
-    let res = crate::ref_finance::storage::deposit(&client, &wallet, value, true).await;
+    let res = crate::ref_finance::storage::deposit(
+        &client,
+        &wallet,
+        NearToken::from_yoctonear(value),
+        true,
+    )
+    .await;
     match res {
         Ok(_) => format!("Deposited: {value}"),
         Err(e) => format!("Error: {e}"),
@@ -51,7 +58,13 @@ async fn storage_deposit(State(_): State<Arc<AppState>>, Path(amount): Path<Stri
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
     let amount: u128 = amount.replace("_", "").parse().unwrap();
-    let res = crate::ref_finance::storage::deposit(&client, &wallet, amount, false).await;
+    let res = crate::ref_finance::storage::deposit(
+        &client,
+        &wallet,
+        NearToken::from_yoctonear(amount),
+        false,
+    )
+    .await;
     match res {
         Ok(_) => format!("Deposited: {amount}"),
         Err(e) => format!("Error: {e}"),
@@ -99,11 +112,17 @@ async fn deposit_token(
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
-    let amount = MicroNear::of(amount_micro).to_yocto();
+    let amount_yocto = MicroNear::of(amount_micro).to_yocto();
     let token = token_account.parse().unwrap();
-    let res = ref_finance::deposit::deposit(&client, &wallet, &token, amount).await;
+    let res = ref_finance::deposit::deposit(
+        &client,
+        &wallet,
+        &token,
+        NearToken::from_yoctonear(amount_yocto),
+    )
+    .await;
     match res {
-        Ok(_) => format!("Deposited: {amount}"),
+        Ok(_) => format!("Deposited: {amount_yocto}"),
         Err(e) => format!("Error: {e}"),
     }
 }
@@ -115,11 +134,17 @@ async fn withdraw_token(
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
-    let amount = MicroNear::of(amount_micro).to_yocto();
+    let amount_yocto = MicroNear::of(amount_micro).to_yocto();
     let token = token_account.parse().unwrap();
-    let res = ref_finance::deposit::withdraw(&client, &wallet, &token, amount).await;
+    let res = ref_finance::deposit::withdraw(
+        &client,
+        &wallet,
+        &token,
+        NearToken::from_yoctonear(amount_yocto),
+    )
+    .await;
     match res {
-        Ok(_) => format!("Withdrawn: {amount}"),
+        Ok(_) => format!("Withdrawn: {amount_yocto}"),
         Err(e) => format!("Error: {e}"),
     }
 }
@@ -128,13 +153,14 @@ async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<St
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
-    let amount = MicroNear::of(amount_micro).to_yocto();
+    let amount_yocto = MicroNear::of(amount_micro).to_yocto();
+    let amount_token = NearToken::from_yoctonear(amount_yocto);
     let account = wallet.account_id();
     let before = ref_finance::deposit::wnear::balance_of(&client, account)
         .await
         .unwrap();
     let call = async {
-        ref_finance::deposit::wnear::wrap(&client, &wallet, amount)
+        ref_finance::deposit::wnear::wrap(&client, &wallet, amount_token)
             .await?
             .wait_for_success()
             .await
@@ -144,7 +170,11 @@ async fn wrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<St
             let after = ref_finance::deposit::wnear::balance_of(&client, account)
                 .await
                 .unwrap();
-            format!("Wrapped: {amount}\n{before}\n{after}")
+            format!(
+                "Wrapped: {amount_yocto}\n{}\n{}",
+                before.as_yoctonear(),
+                after.as_yoctonear()
+            )
         }
         Err(err) => format!("Error: {err}"),
     }
@@ -154,13 +184,14 @@ async fn unwrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<
     let client = jsonrpc::new_client();
     let wallet = wallet::new_wallet();
     let amount_micro: u64 = amount.replace("_", "").parse().unwrap();
-    let amount = MicroNear::of(amount_micro).to_yocto();
+    let amount_yocto = MicroNear::of(amount_micro).to_yocto();
+    let amount_token = NearToken::from_yoctonear(amount_yocto);
     let account = wallet.account_id();
     let before = ref_finance::deposit::wnear::balance_of(&client, account)
         .await
         .unwrap();
     let call = async {
-        ref_finance::deposit::wnear::unwrap(&client, &wallet, amount)
+        ref_finance::deposit::wnear::unwrap(&client, &wallet, amount_token)
             .await?
             .wait_for_success()
             .await
@@ -170,7 +201,11 @@ async fn unwrap_native_token(State(_): State<Arc<AppState>>, Path(amount): Path<
             let after = ref_finance::deposit::wnear::balance_of(&client, account)
                 .await
                 .unwrap();
-            format!("Unwrapped: {amount}\n{before}\n{after}")
+            format!(
+                "Unwrapped: {amount_yocto}\n{}\n{}",
+                before.as_yoctonear(),
+                after.as_yoctonear()
+            )
         }
         Err(err) => format!("Error: {err}"),
     }

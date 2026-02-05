@@ -227,11 +227,7 @@ pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
         }
 
         let diff = predicted_bd - actual_bd;
-        let absolute_error = if diff < BigDecimal::from(0) {
-            -diff.clone()
-        } else {
-            diff.clone()
-        };
+        let absolute_error = diff.abs();
         let mape_bd = &absolute_error / actual_bd * BigDecimal::from(100);
         let mape: f64 = mape_bd.to_string().parse().unwrap_or(f64::MAX);
 

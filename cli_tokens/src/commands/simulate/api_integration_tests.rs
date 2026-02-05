@@ -1,6 +1,7 @@
 use crate::api::backend::BackendClient;
 use crate::commands::simulate::algorithms::run_momentum_timestep_simulation;
 use crate::commands::simulate::trading::generate_api_predictions;
+use crate::commands::simulate::types::PredictionGenerationParams;
 use crate::commands::simulate::{AlgorithmType, FeeModel, RebalanceInterval, SimulationConfig};
 use bigdecimal::{BigDecimal, FromPrimitive};
 use chrono::{Duration, Utc};
@@ -75,23 +76,17 @@ mod tests {
         let backend_client = BackendClient::new_with_url("http://test-server:9999".to_string());
 
         let target_tokens = vec!["test_token".to_string()];
-        let quote_token = "wrap.near";
-        let current_time = Utc::now();
-        let historical_days = 30;
-        let prediction_horizon = Duration::hours(24);
+        let params = PredictionGenerationParams {
+            quote_token: "wrap.near".to_string(),
+            current_time: Utc::now(),
+            historical_days: 30,
+            prediction_horizon: Duration::hours(24),
+            model: None,
+            verbose: false,
+        };
 
         // API呼び出しをテスト（失敗してもフォールバック処理で続行）
-        let result = generate_api_predictions(
-            &backend_client,
-            &target_tokens,
-            quote_token,
-            current_time,
-            historical_days,
-            prediction_horizon,
-            None,
-            false, // verbose
-        )
-        .await;
+        let result = generate_api_predictions(&backend_client, &target_tokens, &params).await;
 
         // エラーが発生した場合、関数はエラーを返すことを確認
         assert!(result.is_err());
@@ -105,23 +100,17 @@ mod tests {
         let backend_client = BackendClient::new_with_url("http://invalid-url:9999".to_string());
 
         let target_tokens = vec!["test_token".to_string()];
-        let quote_token = "wrap.near";
-        let current_time = Utc::now();
-        let historical_days = 30;
-        let prediction_horizon = Duration::hours(24);
+        let params = PredictionGenerationParams {
+            quote_token: "wrap.near".to_string(),
+            current_time: Utc::now(),
+            historical_days: 30,
+            prediction_horizon: Duration::hours(24),
+            model: None,
+            verbose: false,
+        };
 
         // API呼び出しが失敗してもフォールバック処理で続行
-        let result = generate_api_predictions(
-            &backend_client,
-            &target_tokens,
-            quote_token,
-            current_time,
-            historical_days,
-            prediction_horizon,
-            None,
-            false, // verbose
-        )
-        .await;
+        let result = generate_api_predictions(&backend_client, &target_tokens, &params).await;
 
         assert!(result.is_err());
         let error_message = result.unwrap_err().to_string();
@@ -141,22 +130,16 @@ mod tests {
             "token2".to_string(),
             "token3".to_string(),
         ];
-        let quote_token = "wrap.near";
-        let current_time = Utc::now();
-        let historical_days = 30;
-        let prediction_horizon = Duration::hours(24);
+        let params = PredictionGenerationParams {
+            quote_token: "wrap.near".to_string(),
+            current_time: Utc::now(),
+            historical_days: 30,
+            prediction_horizon: Duration::hours(24),
+            model: None,
+            verbose: false,
+        };
 
-        let result = generate_api_predictions(
-            &backend_client,
-            &target_tokens,
-            quote_token,
-            current_time,
-            historical_days,
-            prediction_horizon,
-            None,
-            false, // verbose
-        )
-        .await;
+        let result = generate_api_predictions(&backend_client, &target_tokens, &params).await;
 
         assert!(result.is_err());
         let error_message = result.unwrap_err().to_string();
@@ -192,51 +175,45 @@ mod tests {
     async fn test_generate_api_predictions_with_different_models() {
         let backend_client = BackendClient::new_with_url("http://test-server:9999".to_string());
         let target_tokens = vec!["test_token".to_string()];
-        let quote_token = "wrap.near";
         let current_time = Utc::now();
-        let historical_days = 30;
-        let prediction_horizon = Duration::hours(24);
 
         // デフォルトモデル（None）でテスト
-        let result_default = generate_api_predictions(
-            &backend_client,
-            &target_tokens,
-            quote_token,
+        let params_default = PredictionGenerationParams {
+            quote_token: "wrap.near".to_string(),
             current_time,
-            historical_days,
-            prediction_horizon,
-            None,
-            false, // verbose
-        )
-        .await;
+            historical_days: 30,
+            prediction_horizon: Duration::hours(24),
+            model: None,
+            verbose: false,
+        };
+        let result_default =
+            generate_api_predictions(&backend_client, &target_tokens, &params_default).await;
         assert!(result_default.is_err());
 
         // 特定のモデルを指定してテスト
-        let result_chronos = generate_api_predictions(
-            &backend_client,
-            &target_tokens,
-            quote_token,
+        let params_chronos = PredictionGenerationParams {
+            quote_token: "wrap.near".to_string(),
             current_time,
-            historical_days,
-            prediction_horizon,
-            Some("chronos_default".to_string()),
-            false, // verbose
-        )
-        .await;
+            historical_days: 30,
+            prediction_horizon: Duration::hours(24),
+            model: Some("chronos_default".to_string()),
+            verbose: false,
+        };
+        let result_chronos =
+            generate_api_predictions(&backend_client, &target_tokens, &params_chronos).await;
         assert!(result_chronos.is_err());
 
         // 別のモデルを指定してテスト
-        let result_fast = generate_api_predictions(
-            &backend_client,
-            &target_tokens,
-            quote_token,
+        let params_fast = PredictionGenerationParams {
+            quote_token: "wrap.near".to_string(),
             current_time,
-            historical_days,
-            prediction_horizon,
-            Some("fast_statistical".to_string()),
-            false, // verbose
-        )
-        .await;
+            historical_days: 30,
+            prediction_horizon: Duration::hours(24),
+            model: Some("fast_statistical".to_string()),
+            verbose: false,
+        };
+        let result_fast =
+            generate_api_predictions(&backend_client, &target_tokens, &params_fast).await;
         assert!(result_fast.is_err());
     }
 
@@ -343,23 +320,17 @@ mod regression_tests {
         // 関数の存在を確認するために呼び出しを試みる
         let backend_client = BackendClient::new_with_url("http://test".to_string());
         let target_tokens = vec![];
-        let quote_token = "wrap.near";
-        let current_time = Utc::now();
-        let historical_days = 30;
-        let prediction_horizon = Duration::hours(24);
+        let params = PredictionGenerationParams {
+            quote_token: "wrap.near".to_string(),
+            current_time: Utc::now(),
+            historical_days: 30,
+            prediction_horizon: Duration::hours(24),
+            model: None,
+            verbose: false,
+        };
 
         // 関数が存在し、呼び出し可能であることを確認
-        let _ = generate_api_predictions(
-            &backend_client,
-            &target_tokens,
-            quote_token,
-            current_time,
-            historical_days,
-            prediction_horizon,
-            None,
-            false, // verbose
-        )
-        .await;
+        let _ = generate_api_predictions(&backend_client, &target_tokens, &params).await;
     }
 
     /// API関連のインポートが存在することを確認

@@ -4,9 +4,8 @@ use crate::ref_finance::pool_info::{TokenPair, TokenPairLike};
 use crate::ref_finance::token_account::TokenAccount;
 use crate::wallet::Wallet;
 use crate::{Result, jsonrpc};
-use near_primitives::types::Balance;
-use near_sdk::AccountId;
 use near_sdk::json_types::U128;
+use near_sdk::{AccountId, NearToken};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -31,12 +30,12 @@ const METHOD_NAME: &str = "swap";
 
 #[derive(Debug, Clone)]
 pub struct SwapArg {
-    pub initial_in: Balance,
-    pub min_out: Balance,
+    pub initial_in: u128,
+    pub min_out: u128,
 }
 
 /// パスに沿って複数のスワップアクションを生成する関数
-fn build_swap_actions<T>(path: &[T], arg: SwapArg) -> Result<(Vec<SwapAction>, Balance)>
+fn build_swap_actions<T>(path: &[T], arg: SwapArg) -> Result<(Vec<SwapAction>, u128)>
 where
     T: TokenPairLike,
 {
@@ -57,7 +56,7 @@ where
     let mut actions = Vec::new();
     let out = path
         .iter()
-        .try_fold(arg.initial_in, |prev_out, pair| -> Result<Balance> {
+        .try_fold(arg.initial_in, |prev_out, pair| -> Result<u128> {
             let is_first = pair.pool_id() == first_id;
             let min_out = if pair.pool_id() == last_id {
                 arg.min_out
@@ -94,7 +93,7 @@ pub async fn run_swap<A, W>(
     wallet: &W,
     path: &[TokenPair],
     arg: SwapArg,
-) -> Result<(A::Output, Balance)>
+) -> Result<(A::Output, u128)>
 where
     A: jsonrpc::SendTx,
     W: Wallet,
@@ -113,7 +112,7 @@ where
         "actions": actions,
     });
 
-    let deposit = 1;
+    let deposit = NearToken::from_yoctonear(1);
     let signer = wallet.signer();
 
     let tx_hash = client

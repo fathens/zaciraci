@@ -1,6 +1,5 @@
 #[cfg(test)]
-#[allow(clippy::module_inception)]
-mod cost_fix_test {
+mod tests {
     use super::super::types::FeeModel;
     use super::super::utils::{
         calculate_trading_cost, calculate_trading_cost_by_value,

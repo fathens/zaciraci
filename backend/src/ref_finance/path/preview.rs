@@ -5,7 +5,6 @@ use crate::ref_finance::pool_info::{TokenPairLike, TokenPath};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::gas_price::GasPrice;
 use near_gas::NearGas;
-use near_primitives::types::Balance;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Preview<M> {
@@ -13,13 +12,13 @@ pub struct Preview<M> {
     pub input_value: M,
     pub token: TokenOutAccount,
     pub depth: usize,
-    pub output_value: Balance,
-    pub gain: Balance,
+    pub output_value: u128,
+    pub gain: u128,
 }
 
 impl<M> Preview<M>
 where
-    M: Into<Balance> + Copy,
+    M: Into<u128> + Copy,
 {
     const HEAD: NearGas = NearGas::from_ggas(2700);
     const BY_STEP: NearGas = NearGas::from_ggas(2600);
@@ -29,7 +28,7 @@ where
         input_value: M,
         token: TokenOutAccount,
         depth: usize,
-        output_value: Balance,
+        output_value: u128,
     ) -> Self {
         let gain = Self::gain(gas_price, depth, input_value, output_value);
         Preview {
@@ -47,7 +46,7 @@ where
         gas as u128 * gas_price.to_balance()
     }
 
-    fn gain(gas_price: GasPrice, depth: usize, input_value: M, output_value: Balance) -> u128 {
+    fn gain(gas_price: GasPrice, depth: usize, input_value: M, output_value: u128) -> u128 {
         let input_value = input_value.into();
         if output_value <= input_value {
             return 0;
@@ -133,6 +132,7 @@ mod tests {
     use super::*;
     use crate::ref_finance::token_account::{TokenAccount, TokenOutAccount};
     use crate::types::{MicroNear, MilliNear};
+    use near_sdk::NearToken;
 
     fn token_out(token: &str) -> TokenOutAccount {
         let token: TokenAccount = token.parse().unwrap();
@@ -141,7 +141,7 @@ mod tests {
 
     const HEAD: u128 = MicroNear::of(270).to_yocto();
     const BY_STEP: u128 = MicroNear::of(260).to_yocto();
-    const MIN_GAS_PRICE: GasPrice = GasPrice::from_balance(100_000_000);
+    const MIN_GAS_PRICE: GasPrice = GasPrice::from_balance(NearToken::from_yoctonear(100_000_000));
 
     #[test]
     fn test_preview_cost() {

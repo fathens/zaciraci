@@ -3,6 +3,9 @@ mod near_client;
 mod rpc;
 mod sent_tx;
 
+#[cfg(test)]
+mod near_compat_tests;
+
 use crate::Result;
 use crate::config;
 use crate::jsonrpc::near_client::StandardNearClient;
@@ -14,12 +17,12 @@ use near_jsonrpc_client::{MethodCallResult, methods};
 use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
 use near_primitives::action::Action;
 use near_primitives::hash::CryptoHash;
-use near_primitives::types::{Balance, BlockId};
+use near_primitives::types::BlockId;
 use near_primitives::views::{
     AccessKeyView, BlockView, CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
     TxExecutionStatus,
 };
-use near_sdk::AccountId;
+use near_sdk::{AccountId, NearToken};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -72,7 +75,7 @@ pub trait GasInfo {
 }
 
 pub trait AccountInfo {
-    async fn get_native_amount(&self, account: &AccountId) -> Result<Balance>;
+    async fn get_native_amount(&self, account: &AccountId) -> Result<NearToken>;
 }
 
 pub trait AccessKeyInfo {
@@ -106,7 +109,7 @@ pub trait SendTx {
         &self,
         signer: &InMemorySigner,
         receiver: &AccountId,
-        amount: Balance,
+        amount: NearToken,
     ) -> Result<Self::Output>;
 
     async fn exec_contract<T>(
@@ -115,7 +118,7 @@ pub trait SendTx {
         receiver: &AccountId,
         method_name: &str,
         args: T,
-        deposit: Balance,
+        deposit: NearToken,
     ) -> Result<Self::Output>
     where
         T: Sized + serde::Serialize;

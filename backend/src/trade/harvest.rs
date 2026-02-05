@@ -5,7 +5,7 @@ use crate::logging::*;
 use crate::trade::recorder::TradeRecorder;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
-use near_sdk::AccountId;
+use near_sdk::{AccountId, NearToken};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 use zaciraci_common::types::{NearAmount, YoctoAmount, YoctoValue};
@@ -181,8 +181,9 @@ async fn execute_harvest_transfer(
     );
 
     // 1. ref_finance depositからwrap.nearを引き出し
+    let harvest_amount_token = NearToken::from_yoctonear(harvest_amount_u128);
     let withdraw_tx =
-        deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, harvest_amount_u128).await?;
+        deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, harvest_amount_token).await?;
 
     let withdraw_result = withdraw_tx.wait_for_success().await;
     if let Err(e) = withdraw_result {
@@ -199,7 +200,7 @@ async fn execute_harvest_transfer(
     );
 
     // 2. wrap.nearをNEARに変換（unwrap）
-    let unwrap_tx = deposit::wnear::unwrap(&client, &wallet, harvest_amount_u128).await?;
+    let unwrap_tx = deposit::wnear::unwrap(&client, &wallet, harvest_amount_token).await?;
 
     let unwrap_result = unwrap_tx.wait_for_success().await;
     if let Err(e) = unwrap_result {
@@ -224,29 +225,34 @@ async fn execute_harvest_transfer(
 
     // 保護額をu128に変換
     let reserve_amount_u128: u128 = HARVEST_RESERVE_AMOUNT.to_u128();
+    let reserve_amount_token = NearToken::from_yoctonear(reserve_amount_u128);
 
     // 送金可能額 = 現在残高 - 保護額
-    let available_for_transfer = if current_native_balance > reserve_amount_u128 {
-        current_native_balance - reserve_amount_u128
+    let available_for_transfer = if current_native_balance > reserve_amount_token {
+        current_native_balance.saturating_sub(reserve_amount_token)
     } else {
         trace!(log, "Insufficient balance for harvest transfer after reserve";
-            "current_balance" => current_native_balance,
+            "current_balance" => current_native_balance.as_yoctonear(),
             "reserve_amount" => reserve_amount_u128
         );
         return Ok(()); // 保護額を下回る場合は送金をスキップ
     };
 
     // 実際の送金額は予定額と送金可能額の小さい方
-    let actual_transfer_amount = harvest_amount_u128.min(available_for_transfer);
+    let actual_transfer_amount = if harvest_amount_token < available_for_transfer {
+        harvest_amount_token
+    } else {
+        available_for_transfer
+    };
 
     trace!(log, "Executing harvest sequence";
         "step" => "3_transfer_to_target",
         "target" => %target_account,
-        "planned_amount" => %harvest_amount_u128,
-        "available_for_transfer" => %available_for_transfer,
-        "actual_transfer_amount" => %actual_transfer_amount,
-        "current_native_balance" => %current_native_balance,
-        "reserve_amount" => %reserve_amount_u128
+        "planned_amount" => harvest_amount_u128,
+        "available_for_transfer" => available_for_transfer.as_yoctonear(),
+        "actual_transfer_amount" => actual_transfer_amount.as_yoctonear(),
+        "current_native_balance" => current_native_balance.as_yoctonear(),
+        "reserve_amount" => reserve_amount_u128
     );
 
     // 実際の送金実行
@@ -289,7 +295,7 @@ async fn execute_harvest_transfer(
 
     // 5. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
     // wNEAR → NEAR 変換なので、どちらも decimals=24
-    let actual_transfer_yocto = YoctoAmount::from_u128(actual_transfer_amount);
+    let actual_transfer_yocto = YoctoAmount::from_u128(actual_transfer_amount.as_yoctonear());
     let from_amount = actual_transfer_yocto.to_token_amount();
     let to_amount = actual_transfer_yocto.to_token_amount();
 

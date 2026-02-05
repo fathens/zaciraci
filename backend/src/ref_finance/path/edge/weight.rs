@@ -38,6 +38,8 @@ impl Ord for EdgeWeight {
     }
 }
 
+// NOTE: f64 を含むため、PartialOrd を先に実装し Ord がそれを使う設計
+// NaN の場合は Equal として扱う
 #[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd for EdgeWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -54,6 +56,8 @@ impl Default for EdgeWeight {
     }
 }
 
+// NOTE: グラフ経路計算用。エッジ重みの累積は乗算で行う（レートの合成）
+// petgraph が Add trait を使用するため、Add で乗算を実装
 #[allow(clippy::suspicious_arithmetic_impl)]
 impl Add<EdgeWeight> for EdgeWeight {
     type Output = Self;

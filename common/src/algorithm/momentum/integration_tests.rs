@@ -167,17 +167,14 @@ async fn test_execute_with_prediction_provider() {
     ];
 
     let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
-    let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
-    let result = execute_with_prediction_provider(
-        &provider,
-        current_holdings,
-        &quote_token,
-        7,
-        0.05,             // min_profit_threshold
-        1.5,              // switch_multiplier
-        &min_trade_value, // min_trade_value
-    )
-    .await;
+    let params = TradingDecisionParams {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_value: NearValue::from_near(BigDecimal::from(1)), // 1 NEAR
+    };
+    let result =
+        execute_with_prediction_provider(&provider, current_holdings, &quote_token, 7, &params)
+            .await;
 
     match result {
         Ok(report) => {
@@ -201,17 +198,14 @@ async fn test_execute_with_prediction_provider_empty_holdings() {
     let current_holdings = vec![];
 
     let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
-    let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
-    let result = execute_with_prediction_provider(
-        &provider,
-        current_holdings,
-        &quote_token,
-        7,
-        0.05,             // min_profit_threshold
-        1.5,              // switch_multiplier
-        &min_trade_value, // min_trade_value
-    )
-    .await;
+    let params = TradingDecisionParams {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_value: NearValue::from_near(BigDecimal::from(1)), // 1 NEAR
+    };
+    let result =
+        execute_with_prediction_provider(&provider, current_holdings, &quote_token, 7, &params)
+            .await;
 
     match result {
         Ok(report) => {
@@ -239,17 +233,14 @@ async fn test_execute_with_prediction_provider_with_top_tokens() {
     }];
 
     let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
-    let min_trade_value = NearValue::from_near(BigDecimal::from(1)); // 1 NEAR
-    let result = execute_with_prediction_provider(
-        &provider,
-        current_holdings,
-        &quote_token,
-        7,
-        0.05,             // min_profit_threshold
-        1.5,              // switch_multiplier
-        &min_trade_value, // min_trade_value
-    )
-    .await;
+    let params = TradingDecisionParams {
+        min_profit_threshold: 0.05,
+        switch_multiplier: 1.5,
+        min_trade_value: NearValue::from_near(BigDecimal::from(1)), // 1 NEAR
+    };
+    let result =
+        execute_with_prediction_provider(&provider, current_holdings, &quote_token, 7, &params)
+            .await;
 
     // トップトークンの情報も取得されることを確認
     assert!(result.is_ok());

@@ -112,7 +112,7 @@ pub(crate) fn calculate_volatility_from_history(history: &PriceHistory) -> Resul
     }
 
     // 負の分散は無効
-    if variance < BigDecimal::from(0) {
+    if variance.sign() == bigdecimal::num_bigint::Sign::Minus {
         return Err(anyhow::anyhow!("Invalid negative variance"));
     }
 
@@ -147,13 +147,23 @@ async fn calculate_pool_liquidity_score<C>(client: &C, token_id: &str) -> f64
 where
     C: crate::jsonrpc::ViewContract,
 {
+    use zaciraci_common::config;
+
     let ref_exchange_account = crate::ref_finance::CONTRACT_ADDRESS.clone();
+
+    // config から設定取得（デフォルト 100 NEAR）
+    let min_pool_liquidity_near: u32 = config::get("TRADE_MIN_POOL_LIQUIDITY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+
+    let high_liquidity_threshold = (min_pool_liquidity_near as u128) * 10u128.pow(24);
 
     // プールで利用可能な流動性を取得
     match get_token_pool_liquidity(client, &ref_exchange_account, token_id).await {
         Ok(liquidity_amount) => {
-            // 流動性をスコアに変換（10^25 yoctoNEAR を高流動性の基準とする）
-            let high_liquidity_threshold = 10u128.pow(25); // 10 NEAR相当
+            // 流動性をスコアに変換
+            // score = 0.5 のとき liquidity == threshold
             let liquidity_ratio = liquidity_amount as f64 / high_liquidity_threshold as f64;
 
             // シグモイド的変換で 0.0-1.0 にマッピング
@@ -341,7 +351,7 @@ pub(crate) fn sqrt_bigdecimal(value: &BigDecimal) -> Result<BigDecimal> {
         return Ok(BigDecimal::from(0));
     }
 
-    if *value < BigDecimal::from(0) {
+    if value.sign() == bigdecimal::num_bigint::Sign::Minus {
         return Err(anyhow::anyhow!(
             "Cannot calculate square root of negative number"
         ));

@@ -87,10 +87,11 @@ prediction_retry_delay_seconds = 5
 price_history_days = 30
 # ボラティリティ計算に使用する期間（日数、デフォルト: 7日）
 volatility_days = 7
+# トレード停止時に wrap.near を NEAR に戻して HARVEST_ACCOUNT_ID に送金するか（デフォルト: false）
+unwrap_on_stop = false
 
 [cron]
-# record_rates の初期値
-record_rates_initial_value = 100
+# 設定は [trade] セクションの min_pool_liquidity に統合
 
 [harvest]
 # ハーベスト設定

@@ -359,7 +359,7 @@ mod rebalance_tests {
 
         // Adjustment factor would be >= 1
         let adjustment_factor = &available_wrap_near / &total_buy_amount;
-        assert!(adjustment_factor >= BigDecimal::from(1));
+        assert!(adjustment_factor >= 1);
 
         // In this case, we use the original amounts
         let adjusted_operations = if total_buy_amount > available_wrap_near {

@@ -81,19 +81,14 @@ pub fn rank_tokens_by_momentum(
 /// * `ranked_tokens` - ランキングされたトークン（トークン, 期待リターン率, 信頼度）
 /// * `holding_amount` - 保有量（TokenAmount）
 /// * `holding_price` - 保有トークンの価格（TokenPrice: NEAR/token）
-/// * `min_profit_threshold` - 最小利益閾値（無次元、例: 0.05 = 5%）
-/// * `switch_multiplier` - スイッチ判定の乗数（無次元）
-/// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
-#[allow(clippy::too_many_arguments)]
+/// * `params` - 取引判断パラメータ（最小利益閾値、スイッチ乗数、最小取引価値）
 pub fn make_trading_decision(
     current_token: &TokenOutAccount,
     current_return: f64,
     ranked_tokens: &[(TokenOutAccount, f64, Option<f64>)],
     holding_amount: &TokenAmount,
     holding_price: &TokenPrice,
-    min_profit_threshold: f64,
-    switch_multiplier: f64,
-    min_trade_value: &NearValue,
+    params: &TradingDecisionParams,
 ) -> TradingAction {
     // 空の場合はHold
     if ranked_tokens.is_empty() {
@@ -110,12 +105,12 @@ pub fn make_trading_decision(
     // 保有価値が最小取引価値以下の場合はHold
     // TokenAmount × TokenPrice = NearValue（型安全な変換）
     let holding_value: NearValue = holding_amount * holding_price;
-    if &holding_value < min_trade_value {
+    if holding_value < params.min_trade_value {
         return TradingAction::Hold;
     }
 
     // 現在のトークンの期待リターンが閾値以下
-    if current_return < min_profit_threshold {
+    if current_return < params.min_profit_threshold {
         return TradingAction::Sell {
             token: current_token.clone(),
             target: best_token.0.clone(),
@@ -124,7 +119,7 @@ pub fn make_trading_decision(
 
     // より良いトークンが存在する場合（信頼度も考慮）
     let confidence_factor = best_token.2.unwrap_or(0.5);
-    if best_token.1 > current_return * switch_multiplier * confidence_factor {
+    if best_token.1 > current_return * params.switch_multiplier * confidence_factor {
         return TradingAction::Switch {
             from: current_token.clone(),
             to: best_token.0.clone(),
@@ -140,13 +135,11 @@ pub fn make_trading_decision(
 ///
 /// # 引数
 ///
-/// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
+/// * `params` - 取引判断パラメータ
 pub async fn execute_momentum_strategy(
     current_holdings: Vec<TokenHolding>,
     predictions: &[PredictionData],
-    min_profit_threshold: f64,
-    switch_multiplier: f64,
-    min_trade_value: &NearValue,
+    params: &TradingDecisionParams,
 ) -> Result<ExecutionReport> {
     // トークンをランキング
     let ranked = rank_tokens_by_momentum(predictions);
@@ -175,9 +168,7 @@ pub async fn execute_momentum_strategy(
             &ranked,
             &holding.amount,
             &holding_price,
-            min_profit_threshold,
-            switch_multiplier,
-            min_trade_value,
+            params,
         );
 
         if action != TradingAction::Hold {
@@ -199,15 +190,13 @@ pub async fn execute_momentum_strategy(
 ///
 /// # 引数
 ///
-/// * `min_trade_value` - 最小取引価値（NearValue: NEAR 単位）
+/// * `params` - 取引判断パラメータ
 pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     prediction_provider: &P,
     current_holdings: Vec<TokenHolding>,
     quote_token: &TokenInAccount,
     history_days: i64,
-    min_profit_threshold: f64,
-    switch_multiplier: f64,
-    min_trade_value: &NearValue,
+    params: &TradingDecisionParams,
 ) -> Result<ExecutionReport> {
     // 保有トークンの予測を取得
     let tokens: Vec<TokenOutAccount> = current_holdings.iter().map(|h| h.token.clone()).collect();
@@ -260,14 +249,7 @@ pub async fn execute_with_prediction_provider<P: PredictionProvider>(
     }
 
     // 戦略を実行
-    execute_momentum_strategy(
-        current_holdings,
-        &prediction_data,
-        min_profit_threshold,
-        switch_multiplier,
-        min_trade_value,
-    )
-    .await
+    execute_momentum_strategy(current_holdings, &prediction_data, params).await
 }
 
 // ==================== 改善機能 ====================
