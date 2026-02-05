@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, TimeDelta, Utc};
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zaciraci_common::algorithm::prediction::{
@@ -115,13 +116,22 @@ impl PredictionService {
             .await
             .context("Failed to get price history from database")?;
 
-        // TokenRateをPricePointに変換（ExchangeRate から正しく TokenPrice に変換）
+        // TokenRateをPricePointに変換（スポットレート補正適用）
+        // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
+        // フォールバックインデックスを事前計算（O(n)）して O(n²) → O(n) に改善
+        let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
         let price_points: Vec<PricePoint> = rates
-            .into_iter()
-            .map(|rate| PricePoint {
-                timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                price: rate.exchange_rate.to_price(),
-                volume: None, // ボリュームデータは現在利用不可
+            .iter()
+            .enumerate()
+            .map(|(i, rate)| {
+                let fallback_path = fallback_indices[i]
+                    .and_then(|idx| rates.get(idx))
+                    .and_then(|r| r.swap_path.as_ref());
+                PricePoint {
+                    timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
+                    price: rate.to_spot_rate_with_fallback(fallback_path).to_price(),
+                    volume: None,
+                }
             })
             .collect();
 
@@ -188,7 +198,7 @@ impl PredictionService {
         })
     }
 
-    /// 複数トークンの価格予測を実行（10個ずつのバッチで処理）
+    /// 複数トークンの価格予測を実行（バッチ履歴取得 + 予測の並行化）
     pub async fn predict_multiple_tokens(
         &self,
         tokens: Vec<TokenOutAccount>,
@@ -200,60 +210,87 @@ impl PredictionService {
 
         let end_date = Utc::now();
         let start_date = end_date - Duration::days(history_days);
-        let batch_size = 10;
+        let range = TimeRange {
+            start: start_date.naive_utc(),
+            end: end_date.naive_utc(),
+        };
 
-        let mut all_predictions = HashMap::new();
+        // 1. 全トークンの履歴を一括取得（1回のDBクエリ）
+        let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let histories_map =
+            TokenRate::get_rates_for_multiple_tokens(&token_strs, quote_token, &range)
+                .await
+                .context("Failed to batch fetch price histories")?;
 
-        // トークンを10個ずつのバッチに分割して処理
-        for (batch_index, batch) in tokens.chunks(batch_size).enumerate() {
-            debug!(log, "Processing batch";
-                "batch_index" => batch_index,
-                "batch_size" => batch.len()
-            );
+        info!(log, "Fetched price histories";
+            "requested" => tokens.len(),
+            "fetched" => histories_map.len()
+        );
 
-            // バッチ内の各トークンを順次処理
-            for (token_index, token) in batch.iter().enumerate() {
-                trace!(log, "Processing token";
-                    "batch_index" => batch_index,
-                    "token_index" => token_index,
-                    "token" => %token
-                );
+        // 2. 設定から並行実行数を取得
+        let concurrency = zaciraci_common::config::config()
+            .trade
+            .prediction_concurrency as usize;
 
-                // 価格履歴を取得（リトライあり）
-                let history = match self
-                    .get_price_history_with_retry(token, quote_token, start_date, end_date, &log)
-                    .await
-                {
-                    Ok(h) => h,
-                    Err(e) => {
-                        warn!(log, "Failed to get price history after retries, skipping token";
-                            "token" => %token,
-                            "error" => %e
-                        );
-                        continue;
-                    }
-                };
+        // 3. 予測を並行実行
+        let results: Vec<_> = stream::iter(tokens.clone())
+            .filter_map(|token| {
+                let token_str = token.to_string();
+                let rates = histories_map.get(&token_str).cloned();
+                async move { rates.map(|r| (token, r)) }
+            })
+            .map(|(token, rates)| {
+                let log = log.clone();
+                let quote_token = quote_token.clone();
+                async move {
+                    // TokenPriceHistory を構築（スポットレート補正適用）
+                    // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
+                    // フォールバックインデックスを事前計算（O(n)）して O(n²) → O(n) に改善
+                    let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
+                    let history = TokenPriceHistory {
+                        token: token.clone(),
+                        quote_token: quote_token.clone(),
+                        prices: rates
+                            .iter()
+                            .enumerate()
+                            .map(|(i, r)| {
+                                let fallback_path = fallback_indices[i]
+                                    .and_then(|idx| rates.get(idx))
+                                    .and_then(|rate| rate.swap_path.as_ref());
+                                PricePoint {
+                                    timestamp: DateTime::from_naive_utc_and_offset(
+                                        r.timestamp,
+                                        Utc,
+                                    ),
+                                    price: r.to_spot_rate_with_fallback(fallback_path).to_price(),
+                                    volume: None,
+                                }
+                            })
+                            .collect(),
+                    };
 
-                // 価格予測を実行（リトライあり）
-                match self
-                    .predict_price_with_retry(&history, prediction_horizon, &log)
-                    .await
-                {
-                    Ok(prediction) => {
-                        all_predictions.insert(token.clone(), prediction);
-                        trace!(log, "Successfully predicted price";
-                            "token" => %token
-                        );
-                    }
-                    Err(e) => {
-                        warn!(log, "Failed to predict price after retries, skipping token";
-                            "token" => %token,
-                            "error" => %e
-                        );
+                    // 予測実行（リトライあり）
+                    match self
+                        .predict_price_with_retry(&history, prediction_horizon, &log)
+                        .await
+                    {
+                        Ok(prediction) => (token, Some(prediction)),
+                        Err(e) => {
+                            warn!(log, "Failed to predict"; "token" => %token, "error" => %e);
+                            (token, None)
+                        }
                     }
                 }
-            }
-        }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        // 4. 結果を収集
+        let all_predictions: HashMap<_, _> = results
+            .into_iter()
+            .filter_map(|(token, pred)| pred.map(|p| (token, p)))
+            .collect();
 
         // 全てのトークンが失敗した場合はエラーを返す
         if all_predictions.is_empty() {
@@ -263,7 +300,7 @@ impl PredictionService {
             ));
         }
 
-        info!(log, "Successfully predicted prices";
+        info!(log, "Prediction completed";
             "successful" => all_predictions.len(),
             "total" => tokens.len()
         );
@@ -364,47 +401,6 @@ impl PredictionService {
         let confidence = 1.0 - ((cv - MIN_CV) / (MAX_CV - MIN_CV)).clamp(0.0, 1.0);
 
         Some(BigDecimal::try_from(confidence).unwrap_or_else(|_| BigDecimal::from(0)))
-    }
-
-    /// 価格履歴を取得（リトライ付き）
-    async fn get_price_history_with_retry(
-        &self,
-        token: &TokenOutAccount,
-        quote_token: &TokenInAccount,
-        start_date: DateTime<Utc>,
-        end_date: DateTime<Utc>,
-        log: &slog::Logger,
-    ) -> Result<TokenPriceHistory> {
-        let mut last_error = None;
-
-        for attempt in 0..=self.max_retries {
-            if attempt > 0 {
-                trace!(log, "Retrying get_price_history";
-                    "token" => %token,
-                    "attempt" => attempt,
-                    "max_retries" => self.max_retries
-                );
-                tokio::time::sleep(tokio::time::Duration::from_secs(self.retry_delay_seconds))
-                    .await;
-            }
-
-            match self
-                .get_price_history(token, quote_token, start_date, end_date)
-                .await
-            {
-                Ok(history) => return Ok(history),
-                Err(e) => {
-                    warn!(log, "Failed to get price history";
-                        "token" => %token,
-                        "attempt" => attempt,
-                        "error" => %e
-                    );
-                    last_error = Some(e);
-                }
-            }
-        }
-
-        Err(last_error.expect("loop executed at least once"))
     }
 
     /// 価格予測を実行（リトライ付き）

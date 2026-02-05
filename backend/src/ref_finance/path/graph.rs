@@ -231,6 +231,48 @@ impl TokenGraph {
             .extend(self.get_path(&goal.as_in(), &start.as_out())?.0);
         Ok(path)
     }
+
+    /// 各トークンの推定値とパス情報を取得
+    ///
+    /// list_values と同様だが、各トークンのスワップパス情報も返す。
+    pub fn list_values_with_path(
+        &self,
+        initial: u128,
+        start: &TokenInAccount,
+        goals: &[TokenOutAccount],
+    ) -> Result<Vec<(TokenOutAccount, u128, TokenPath)>> {
+        let log = DEFAULT.new(o!(
+            "function" => "TokenGraph::list_values_with_path",
+            "initial" => initial,
+            "start" => format!("{:?}", start),
+        ));
+
+        let mut values = Vec::new();
+        for goal in goals.iter() {
+            match self.get_path(start, goal) {
+                Ok(path) => match path.calc_value(initial) {
+                    Ok(value) => {
+                        values.push((goal.clone(), value, path));
+                    }
+                    Err(e) => {
+                        error!(log, "failed to estimate value";
+                            "goal" => %goal,
+                            "error" => %e,
+                        );
+                    }
+                },
+                Err(e) => {
+                    error!(log, "failed to get path";
+                        "start" => %start,
+                        "goal" => %goal,
+                        "error" => %e,
+                    );
+                }
+            }
+        }
+        values.sort_by_key(|(_, value, _)| std::cmp::Reverse(*value));
+        Ok(values)
+    }
 }
 
 type PathToOut<O, N> = HashMap<O, Vec<N>>;

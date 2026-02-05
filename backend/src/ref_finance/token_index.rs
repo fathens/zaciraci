@@ -6,6 +6,10 @@ impl TokenIndex {
         self.0
     }
 
+    pub fn as_u8(&self) -> u8 {
+        self.0 as u8
+    }
+
     pub fn max(self, other: Self) -> Self {
         if self.0 > other.0 { self } else { other }
     }

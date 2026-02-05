@@ -50,6 +50,8 @@ diesel::table! {
         rate -> Numeric,
         timestamp -> Timestamp,
         decimals -> Nullable<Int2>,
+        rate_calc_near -> Int8,
+        swap_path -> Nullable<Jsonb>,
     }
 }
 

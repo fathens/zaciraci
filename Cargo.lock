@@ -25,8 +25,8 @@ dependencies = [
 
 [[package]]
 name = "analyzer"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "chrono",
  "common",
@@ -665,8 +665,8 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -2262,12 +2262,13 @@ dependencies = [
 
 [[package]]
 name = "models"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "augurs",
  "chrono",
  "common",
+ "rayon",
  "scaler",
  "thiserror 2.0.18",
  "tracing",
@@ -2643,8 +2644,8 @@ dependencies = [
 
 [[package]]
 name = "normalize"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -3056,8 +3057,8 @@ dependencies = [
 
 [[package]]
 name = "predictor"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "analyzer",
  "bigdecimal",
@@ -3513,8 +3514,8 @@ dependencies = [
 
 [[package]]
 name = "scaler"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "common",
 ]
@@ -3617,8 +3618,8 @@ dependencies = [
 
 [[package]]
 name = "selector"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "analyzer",
  "chrono",
@@ -4557,8 +4558,8 @@ dependencies = [
 
 [[package]]
 name = "trainer"
-version = "0.1.4"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.4#66fae364ca74b593befebb17c976f3896eba0463"
+version = "0.1.5"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
 dependencies = [
  "chrono",
  "common",
@@ -5283,6 +5284,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "predictor",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",

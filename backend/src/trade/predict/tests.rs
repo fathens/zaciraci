@@ -1,6 +1,6 @@
 use super::*;
 use crate::Result;
-use crate::persistence::token_rate::TokenRate;
+use crate::persistence::token_rate::{SwapPath, SwapPoolInfo, TokenRate};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
@@ -30,6 +30,8 @@ fn make_token_rate(
         quote,
         exchange_rate: make_rate_from_str(rate_str),
         timestamp,
+        rate_calc_near: 10,
+        swap_path: None,
     }
 }
 
@@ -742,5 +744,244 @@ fn test_confidence_none_when_forecast_invalid() {
     assert!(
         result.is_none(),
         "Should return None when forecast is negative"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
+    clean_test_tokens().await?;
+
+    let fixture = TestFixture::new();
+
+    // 5トークン分のテストデータを準備
+    let tokens: Vec<TokenOutAccount> = (1..=5)
+        .map(|i| {
+            format!("parallel_test{}.near", i)
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into()
+        })
+        .collect();
+
+    for (i, token) in tokens.iter().enumerate() {
+        let base_price = 1.0 + i as f64 * 0.5;
+        let prices: Vec<f64> = (0..10).map(|j| base_price + j as f64 * 0.1).collect();
+        fixture.setup_price_history(token, &prices).await?;
+    }
+
+    let service = PredictionService::new();
+
+    // 並行処理で予測実行
+    let start = std::time::Instant::now();
+    let result = service
+        .predict_multiple_tokens(tokens.clone(), &fixture.quote_token, 1, 24)
+        .await;
+    let duration = start.elapsed();
+
+    assert!(
+        result.is_ok(),
+        "Parallel prediction should succeed: {:?}",
+        result.err()
+    );
+    let predictions = result.unwrap();
+
+    // 全トークンの予測が成功していることを確認
+    assert_eq!(
+        predictions.len(),
+        tokens.len(),
+        "All tokens should have predictions"
+    );
+
+    println!(
+        "Parallel prediction for {} tokens completed in {:?}",
+        tokens.len(),
+        duration
+    );
+
+    clean_test_tokens().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_prediction_concurrency_config() {
+    let config = zaciraci_common::config::config();
+    assert!(
+        config.trade.prediction_concurrency >= 1,
+        "prediction_concurrency should be at least 1"
+    );
+    assert!(
+        config.trade.prediction_concurrency <= 32,
+        "prediction_concurrency should be reasonable (<=32)"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
+    use crate::persistence::TimeRange;
+    use crate::persistence::token_rate::TokenRate;
+
+    clean_test_tokens().await?;
+
+    let fixture = TestFixture::new();
+
+    // 3トークン分のテストデータを準備
+    let tokens: Vec<TokenOutAccount> = (1..=3)
+        .map(|i| {
+            format!("batch_history{}.near", i)
+                .parse::<TokenAccount>()
+                .unwrap()
+                .into()
+        })
+        .collect();
+
+    for token in &tokens {
+        let prices = vec![1.0, 1.1, 1.05, 1.12, 1.15];
+        fixture.setup_price_history(token, &prices).await?;
+    }
+
+    // バッチ履歴取得の機能を直接テスト
+    let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+    let range = TimeRange {
+        start: (Utc::now() - Duration::hours(10)).naive_utc(),
+        end: Utc::now().naive_utc(),
+    };
+
+    let histories_map =
+        TokenRate::get_rates_for_multiple_tokens(&token_strs, &fixture.quote_token, &range).await?;
+
+    // 全トークンの履歴が取得できることを確認
+    assert_eq!(
+        histories_map.len(),
+        tokens.len(),
+        "All tokens should have price histories"
+    );
+
+    // 各トークンに価格データがあることを確認
+    for token_str in &token_strs {
+        assert!(
+            histories_map.contains_key(token_str),
+            "Should contain {}",
+            token_str
+        );
+        assert!(
+            !histories_map[token_str].is_empty(),
+            "Should have price data for {}",
+            token_str
+        );
+    }
+
+    clean_test_tokens().await?;
+    Ok(())
+}
+
+/// スポットレート補正付きの価格履歴テスト用ヘルパー
+fn make_token_rate_with_path(
+    base: TokenOutAccount,
+    quote: TokenInAccount,
+    rate_str: &str,
+    timestamp: NaiveDateTime,
+    swap_path: Option<SwapPath>,
+) -> TokenRate {
+    TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate_from_str(rate_str),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path,
+    }
+}
+
+/// swap_path 付きレートでスポットレート補正が適用されることを確認
+#[test]
+fn test_spot_rate_correction_with_path() {
+    let base: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
+    let quote: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
+    let timestamp = Utc::now().naive_utc();
+
+    // プールサイズ: 100 NEAR = 10^26 yocto
+    // rate_calc_near: 10 NEAR
+    // 補正係数: 1 + (10 * 10^24) / (10^26) = 1.1 (+10%)
+    let swap_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 123,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    let rate = make_token_rate_with_path(base, quote, "1.0", timestamp, Some(swap_path));
+
+    // スポットレート補正を適用
+    let spot_rate = rate.to_spot_rate_with_fallback(None);
+    let price = spot_rate.to_price();
+
+    // 補正後のレート: 1.0 * 1.1 = 1.1
+    // price = yocto_per_near / rate = 10^24 / 1.1 ≈ 9.09... × 10^23
+    // 元のレート 1.0 の price = 10^24
+    // 補正後は price が小さくなる（レートが大きくなるため）
+    let original_rate = make_rate_from_str("1.0");
+    let original_price = original_rate.to_price();
+
+    assert!(
+        price.as_bigdecimal() < original_price.as_bigdecimal(),
+        "Spot-corrected price should be less than original (rate increased): {} < {}",
+        price.as_bigdecimal(),
+        original_price.as_bigdecimal()
+    );
+}
+
+/// swap_path なしのレートにフォールバックが適用されることを確認
+#[test]
+fn test_spot_rate_correction_with_fallback() {
+    let base: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
+    let quote: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
+    let now = Utc::now().naive_utc();
+
+    // フォールバック用 swap_path（補正係数 1.1）
+    let fallback_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 456,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
+            amount_out: "50000000000000000000000000".to_string(),
+        }],
+    };
+
+    // swap_path なしのレート
+    let rate_without_path = make_token_rate_with_path(
+        base.clone(),
+        quote.clone(),
+        "1.0",
+        now - chrono::Duration::hours(1),
+        None,
+    );
+
+    // フォールバックを使用して補正
+    let spot_rate = rate_without_path.to_spot_rate_with_fallback(Some(&fallback_path));
+    let price_with_fallback = spot_rate.to_price();
+
+    // フォールバックなしの場合（補正なし）
+    let price_without_fallback = rate_without_path
+        .to_spot_rate_with_fallback(None)
+        .to_price();
+
+    // フォールバック使用時は価格が異なる（補正が適用される）
+    assert_ne!(
+        price_with_fallback.as_bigdecimal(),
+        price_without_fallback.as_bigdecimal(),
+        "Price should differ when fallback is used"
+    );
+
+    // フォールバック使用時は価格が小さい（レートが大きくなるため）
+    assert!(
+        price_with_fallback.as_bigdecimal() < price_without_fallback.as_bigdecimal(),
+        "Price with fallback should be less than without"
     );
 }

@@ -91,8 +91,7 @@ volatility_days = 7
 unwrap_on_stop = false
 
 [cron]
-# record_rates の初期値
-record_rates_initial_value = 100
+# 設定は [trade] セクションの min_pool_liquidity に統合
 
 [harvest]
 # ハーベスト設定
