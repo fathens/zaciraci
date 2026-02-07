@@ -1,4 +1,3 @@
-pub mod momentum;
 pub mod portfolio;
 pub mod prediction;
 pub mod types;
