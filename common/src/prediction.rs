@@ -55,6 +55,7 @@ pub struct AccuracyMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_traits::ToPrimitive;
     use std::str::FromStr;
 
     #[test]
@@ -66,7 +67,7 @@ mod tests {
         let point: PredictionPoint = serde_json::from_str(old_json).unwrap();
 
         // 値が正しいことを確認
-        assert_eq!(point.value.to_f64().as_f64(), 123.456789);
+        assert_eq!(point.value.as_bigdecimal().to_f64().unwrap(), 123.456789);
 
         // 再シリアライズして同じ形式になることを確認
         let new_json = serde_json::to_string(&point).unwrap();
@@ -82,10 +83,10 @@ mod tests {
         let point: PredictionPoint = serde_json::from_str(old_json).unwrap();
 
         // 値が正しいことを確認
-        assert_eq!(point.value.to_f64().as_f64(), 100.0);
+        assert_eq!(point.value.as_bigdecimal().to_f64().unwrap(), 100.0);
         let ci = point.confidence_interval.as_ref().unwrap();
-        assert_eq!(ci.lower.to_f64().as_f64(), 95.0);
-        assert_eq!(ci.upper.to_f64().as_f64(), 105.0);
+        assert_eq!(ci.lower.as_bigdecimal().to_f64().unwrap(), 95.0);
+        assert_eq!(ci.upper.as_bigdecimal().to_f64().unwrap(), 105.0);
 
         // 再シリアライズして同じ形式になることを確認
         let new_json = serde_json::to_string(&point).unwrap();
@@ -109,20 +110,10 @@ mod tests {
         let deserialized: PredictionPoint = serde_json::from_str(&json).unwrap();
 
         assert_eq!(original.timestamp, deserialized.timestamp);
-        assert_eq!(original.value.to_f64(), deserialized.value.to_f64());
+        assert_eq!(original.value, deserialized.value);
         assert_eq!(
-            original
-                .confidence_interval
-                .as_ref()
-                .unwrap()
-                .lower
-                .to_f64(),
-            deserialized
-                .confidence_interval
-                .as_ref()
-                .unwrap()
-                .lower
-                .to_f64()
+            original.confidence_interval.as_ref().unwrap().lower,
+            deserialized.confidence_interval.as_ref().unwrap().lower
         );
     }
 
@@ -135,7 +126,14 @@ mod tests {
 
         assert_eq!(result.token, "test.near");
         assert_eq!(result.predicted_values.len(), 1);
-        assert_eq!(result.predicted_values[0].value.to_f64().as_f64(), 100.0);
+        assert_eq!(
+            result.predicted_values[0]
+                .value
+                .as_bigdecimal()
+                .to_f64()
+                .unwrap(),
+            100.0
+        );
 
         // 再シリアライズ
         let new_json = serde_json::to_string(&result).unwrap();

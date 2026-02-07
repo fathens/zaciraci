@@ -30,15 +30,6 @@ NEAR プロトコルでは：
 | `ExchangeRate` | BigDecimal + decimals | tokens_smallest/NEAR | DB保存、計算 |
 | `TokenPrice` | BigDecimal | NEAR/token | 比較、リターン計算 |
 
-### f64 版（シミュレーション用）
-
-| 型 | 内部表現 | 意味 |
-|---|---|---|
-| `TokenPriceF64` | f64 | 価格 NEAR/token（高速計算用） |
-| `TokenAmountF64` | f64 | トークン量 |
-| `YoctoValueF64` | f64 | yoctoNEAR 金額 |
-| `NearValueF64` | f64 | NEAR 金額 |
-
 ## 型の詳細
 
 ### ExchangeRate

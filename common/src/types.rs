@@ -3,10 +3,7 @@ pub mod token_account;
 pub mod token_types;
 pub mod yocto_near;
 
-pub use self::near_units::{
-    NearAmount, NearValue, NearValueF64, TokenAmountF64, TokenPrice, TokenPriceF64, YoctoAmount,
-    YoctoValue, YoctoValueF64,
-};
+pub use self::near_units::{NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
 pub use self::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 pub use self::token_types::{ExchangeRate, TokenAmount};
 pub use self::yocto_near::NearUnit;
