@@ -10,8 +10,7 @@ WORKDIR /app
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY common common
-COPY backend backend
+COPY crates crates
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
@@ -32,8 +31,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY common common
-COPY backend backend
+COPY crates crates
 
 RUN cargo clean
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
