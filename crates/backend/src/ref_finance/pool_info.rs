@@ -7,7 +7,6 @@ use crate::ref_finance::{CONTRACT_ADDRESS, errors::Error};
 use anyhow::{Context, Result, anyhow, bail};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::NaiveDateTime;
-use common::types::YoctoNearToken;
 use futures_util::future::join_all;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
@@ -49,55 +48,6 @@ pub struct PoolInfo {
     pub id: u32,
     pub bare: PoolInfoBared,
     pub timestamp: NaiveDateTime,
-}
-
-impl From<common::pools::PoolRecord> for PoolInfo {
-    fn from(record: common::pools::PoolRecord) -> Self {
-        // common と backend の TokenAccount は同一型になったため、変換不要
-        let token_account_ids = record.bare.token_account_ids;
-        PoolInfo {
-            id: record.id.into(),
-            bare: PoolInfoBared {
-                pool_kind: record.bare.pool_kind,
-                token_account_ids,
-                amounts: record
-                    .bare
-                    .amounts
-                    .iter()
-                    .map(|v| U128::from(v.as_yoctonear()))
-                    .collect(),
-                total_fee: record.bare.total_fee,
-                shares_total_supply: U128::from(record.bare.shares_total_supply.as_yoctonear()),
-                amp: record.bare.amp,
-            },
-            timestamp: record.timestamp,
-        }
-    }
-}
-
-impl From<PoolInfo> for common::pools::PoolRecord {
-    fn from(pool_info: PoolInfo) -> Self {
-        common::pools::PoolRecord {
-            id: pool_info.id.into(),
-            bare: common::pools::PoolBared {
-                pool_kind: pool_info.bare.pool_kind,
-                // common と backend の TokenAccount は同一型になったため、変換不要
-                token_account_ids: pool_info.bare.token_account_ids.clone(),
-                amounts: pool_info
-                    .bare
-                    .amounts
-                    .iter()
-                    .map(|v| YoctoNearToken::from_yocto(v.0))
-                    .collect(),
-                total_fee: pool_info.bare.total_fee,
-                shares_total_supply: YoctoNearToken::from_yocto(
-                    pool_info.bare.shares_total_supply.0,
-                ),
-                amp: pool_info.bare.amp,
-            },
-            timestamp: pool_info.timestamp,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,14 +105,6 @@ impl TokenPair {
         }
     }
 
-    pub fn reversed(&self) -> Self {
-        Self {
-            pool: self.pool.clone(),
-            token_in: self.token_out.as_index().into(),
-            token_out: self.token_in.as_index().into(),
-        }
-    }
-
     /// 入力側のプールサイズを取得
     pub fn amount_in(&self) -> Result<u128> {
         self.pool.amount(self.token_in.as_index())
@@ -185,17 +127,6 @@ impl TokenPair {
             .pool
             .estimate_return(self.token_in, in_value, self.token_out)?;
         Ok((in_value, out_value))
-    }
-
-    pub async fn get_return<C: ViewContract>(&self, client: &C, amount_in: u128) -> Result<u128> {
-        self.pool
-            .get_return(
-                client,
-                self.pool.token(self.token_in.as_index())?.into(),
-                amount_in,
-                self.pool.token(self.token_out.as_index())?.into(),
-            )
-            .await
     }
 }
 
@@ -316,40 +247,6 @@ impl PoolInfo {
             / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
         trace!(log, "finish"; "value" => %result);
         result.to_u128().ok_or_else(|| Error::Overflow.into())
-    }
-
-    async fn get_return<C: ViewContract>(
-        &self,
-        client: &C,
-        token_in: TokenInAccount,
-        amount_in: u128,
-        token_out: TokenOutAccount,
-    ) -> Result<u128> {
-        let log = DEFAULT.new(o!(
-            "function" => "get_return",
-            "pool_id" => self.id,
-            "amount_in" => amount_in,
-        ));
-        trace!(log, "start");
-        let method_name = "get_return";
-
-        let args = json!({
-            "pool_id": self.id,
-            "token_in": token_in.as_account_id(),
-            "amount_in": U128::from(amount_in),
-            "token_out": token_out.as_account_id(),
-        })
-        .to_string();
-        debug!(log, "request_json"; "value" => %args);
-
-        let result = client
-            .view_contract(&CONTRACT_ADDRESS, method_name, &args)
-            .await?;
-
-        let raw = result.result;
-        let value: U128 = from_slice(&raw)?;
-        trace!(log, "finish"; "value" => %value.0);
-        Ok(value.into())
     }
 }
 
