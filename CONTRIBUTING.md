@@ -184,10 +184,11 @@ fn test_example() {
 Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRust製のフルスタックWebアプリケーションです。
 
 ### ワークスペース構成
-- **backend**: Axum ベースのREST APIサーバー（NEAR ブロックチェーン連携、裁定取引計算、データベース操作）
-- **frontend**: Dioxus ベースのWebAssemblyフロントエンド（取引インターフェース、プール可視化、AI予測）
-- **common**: バックエンドとフロントエンドで共有される型、設定、ユーティリティ
-- **../zcrc-chronos**: Chronos時系列予測APIサーバー（フロントエンドから予測リクエストを受信）
+
+すべてのクレートは `crates/` ディレクトリ配下に配置する。新しいクレートを追加する場合も `crates/<クレート名>/` に作成し、ルートの `Cargo.toml` の `workspace.members` に登録すること。
+
+- **crates/backend**: バックグラウンドタスクサーバー（NEAR ブロックチェーン連携、裁定取引計算、データベース操作）
+- **crates/common**: バックエンドと他クレートで共有される型、設定、ユーティリティ
 
 ### 主要コンポーネント
 - **裁定取引エンジン** (`backend/src/arbitrage.rs`, `backend/src/trade/`): 取引アルゴリズムとARIMA統計分析
