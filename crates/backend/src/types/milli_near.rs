@@ -109,14 +109,6 @@ impl Div<MilliNear> for MilliNear {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bigdecimal::BigDecimal;
-    use common::types::YoctoNearToken;
-
-    #[test]
-    fn test_by_yocto_near() {
-        let one = YoctoNearToken::from_yocto(MilliNear::one().to_yocto());
-        assert_eq!(one.as_millinear(), BigDecimal::from(1));
-    }
 
     #[test]
     fn test_milli_near_transform() {

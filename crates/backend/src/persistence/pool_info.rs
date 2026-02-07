@@ -88,24 +88,6 @@ impl RefPoolInfo {
         })
     }
 
-    // データベースに挿入
-    pub async fn insert(&self) -> Result<()> {
-        use diesel::RunQueryDsl;
-
-        let new_pool = self.to_new_db()?;
-        let conn = connection_pool::get().await?;
-
-        conn.interact(move |conn| {
-            diesel::insert_into(pool_info::table)
-                .values(&new_pool)
-                .execute(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        Ok(())
-    }
-
     // 複数レコードを一括挿入
     pub async fn batch_insert(pool_infos: &[Arc<RefPoolInfo>]) -> Result<()> {
         let log = DEFAULT.new(o!(
@@ -264,30 +246,6 @@ impl RefPoolInfo {
             pool_infos.push(RefPoolInfo::from_db(db_pool)?);
         }
         Ok(pool_infos)
-    }
-
-    // データベースIDによる取得
-    pub async fn get(id: i32) -> Result<Option<RefPoolInfo>> {
-        use diesel::ExpressionMethods;
-        use diesel::QueryDsl;
-
-        let conn = connection_pool::get().await?;
-
-        let result = conn
-            .interact(move |conn| {
-                pool_info::table
-                    .filter(pool_info::id.eq(&id))
-                    .first(conn)
-                    .optional()
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        if let Some(db_pool) = result {
-            Ok(Some(RefPoolInfo::from_db(db_pool)?))
-        } else {
-            Ok(None)
-        }
     }
 }
 

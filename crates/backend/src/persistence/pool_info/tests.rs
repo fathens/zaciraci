@@ -24,34 +24,6 @@ fn create_test_pool_info() -> RefPoolInfo {
 
 #[tokio::test]
 #[serial(pool_info)]
-async fn test_pool_info_insert() -> Result<()> {
-    let pool_info = create_test_pool_info();
-    pool_info.insert().await?;
-
-    // データベースから取得して値を確認
-    let retrieved = RefPoolInfo::get_latest(123).await?;
-    assert!(retrieved.is_some());
-
-    let retrieved = retrieved.unwrap();
-    assert_eq!(retrieved.id, 123);
-    assert_eq!(retrieved.bare.pool_kind, "STABLE_SWAP");
-    assert_eq!(retrieved.bare.token_account_ids.len(), 2);
-    // TokenAccountはタプル構造体なのでDisplayを使って文字列比較
-    assert_eq!(
-        retrieved.bare.token_account_ids[0].to_string(),
-        "token1.near"
-    );
-    assert_eq!(retrieved.bare.amounts.len(), 2);
-    assert_eq!(retrieved.bare.amounts[0].0, 1000000);
-    assert_eq!(retrieved.bare.total_fee, 30);
-    assert_eq!(retrieved.bare.shares_total_supply.0, 5000000);
-    assert_eq!(retrieved.bare.amp, 100);
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial(pool_info)]
 async fn test_pool_info_batch_insert() -> Result<()> {
     let mut pool_info1 = create_test_pool_info();
     pool_info1.id = 124;
@@ -84,10 +56,21 @@ async fn test_pool_info_batch_insert() -> Result<()> {
 #[tokio::test]
 #[serial(pool_info)]
 async fn test_pool_info_latest() -> Result<()> {
+    use diesel::RunQueryDsl;
+
     let mut pool_info = create_test_pool_info();
     pool_info.id = 126;
     pool_info.bare.pool_kind = "STABLE_SWAP".to_string();
-    pool_info.insert().await?;
+
+    let new_pool = pool_info.to_new_db()?;
+    let conn = connection_pool::get().await?;
+    conn.interact(move |conn| {
+        diesel::insert_into(pool_info::table)
+            .values(&new_pool)
+            .execute(conn)
+    })
+    .await
+    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
     // 1秒待機して新しいタイムスタンプでデータを更新
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -95,7 +78,16 @@ async fn test_pool_info_latest() -> Result<()> {
     let mut updated_pool_info = pool_info.clone();
     updated_pool_info.bare.pool_kind = "WEIGHTED_SWAP".to_string();
     updated_pool_info.timestamp = chrono::Utc::now().naive_utc();
-    updated_pool_info.insert().await?;
+
+    let new_pool = updated_pool_info.to_new_db()?;
+    let conn = connection_pool::get().await?;
+    conn.interact(move |conn| {
+        diesel::insert_into(pool_info::table)
+            .values(&new_pool)
+            .execute(conn)
+    })
+    .await
+    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
     // 最新のデータを取得
     let retrieved = RefPoolInfo::get_latest(126).await?;
@@ -104,59 +96,6 @@ async fn test_pool_info_latest() -> Result<()> {
     let retrieved = retrieved.unwrap();
     assert_eq!(retrieved.id, 126);
     assert_eq!(retrieved.bare.pool_kind, "WEIGHTED_SWAP");
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial(pool_info)]
-async fn test_pool_info_get_by_id() -> Result<()> {
-    // まず直接データベースにクエリを実行してテーブルをクリアする
-    use diesel::RunQueryDsl;
-
-    let conn = connection_pool::get().await?;
-    conn.interact(|conn| diesel::delete(pool_info::table).execute(conn))
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-    // テスト用のデータを作成して挿入
-    let pool_info = create_test_pool_info();
-    pool_info.insert().await?;
-
-    // IDを取得するため直接データベースに問い合わせる
-    let conn = connection_pool::get().await?;
-    let result = conn
-        .interact(|conn| {
-            use diesel::dsl::max;
-            pool_info::table
-                .select(max(pool_info::id))
-                .first::<Option<i32>>(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-    let db_id = result.unwrap();
-
-    // そのIDを使ってget関数でデータを取得
-    let result = RefPoolInfo::get(db_id).await?;
-    assert!(
-        result.is_some(),
-        "ID {}のプールが見つかりませんでした",
-        db_id
-    );
-
-    let result = result.unwrap();
-
-    // 元のデータと一致することを確認
-    assert_eq!(result.id, 123);
-    assert_eq!(result.bare.pool_kind, "STABLE_SWAP");
-    assert_eq!(result.bare.token_account_ids.len(), 2);
-    assert_eq!(result.bare.token_account_ids[0].to_string(), "token1.near");
-    assert_eq!(result.bare.amounts.len(), 2);
-    assert_eq!(result.bare.amounts[0].0, 1000000);
-    assert_eq!(result.bare.total_fee, 30);
-    assert_eq!(result.bare.shares_total_supply.0, 5000000);
-    assert_eq!(result.bare.amp, 100);
 
     Ok(())
 }

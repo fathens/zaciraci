@@ -115,17 +115,6 @@ impl Div<MicroNear> for MicroNear {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bigdecimal::BigDecimal;
-    use common::types::YoctoNearToken;
-
-    #[test]
-    fn test_by_yocto_near() {
-        let one = YoctoNearToken::from_yocto(MicroNear::one().to_yocto());
-        assert_eq!(
-            one.as_millinear(),
-            BigDecimal::from(1) / BigDecimal::from(1000)
-        );
-    }
 
     #[test]
     fn test_micro_near_transform() {
