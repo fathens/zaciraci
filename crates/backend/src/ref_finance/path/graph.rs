@@ -102,7 +102,7 @@ impl TokenGraph {
         CachedPath::new(graph, nodes)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn update_single_path(
         &self,
         start: &TokenInAccount,
@@ -152,16 +152,6 @@ impl TokenGraph {
         goals: &[TokenOutAccount],
     ) -> Result<Vec<(TokenOutAccount, u128)>> {
         self.list_estimated_values(initial, start, goals, true)
-    }
-
-    #[allow(dead_code)]
-    pub fn list_values(
-        &self,
-        initial: u128,
-        start: &TokenInAccount,
-        goals: &[TokenOutAccount],
-    ) -> Result<Vec<(TokenOutAccount, u128)>> {
-        self.list_estimated_values(initial, start, goals, false)
     }
 
     fn list_estimated_values(

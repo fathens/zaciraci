@@ -19,9 +19,6 @@ pub enum Error {
     OutOfIndexOfTokens(TokenIndex),
     #[error("Different length of tokens: {0} and {1}")]
     DifferentLengthOfTokens(usize, usize),
-    #[error("Invalid pool size: {0}")]
-    #[allow(dead_code)]
-    InvalidPoolSize(usize),
     #[error("Unmatched token path: (0) and (1)")]
     UnmatchedTokenPath(
         (TokenInAccount, TokenOutAccount),

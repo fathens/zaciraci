@@ -206,11 +206,6 @@ impl TokenPath {
         self.0.len()
     }
 
-    #[allow(dead_code)]
-    pub fn reversed(&self) -> Self {
-        Self(self.0.iter().rev().map(|p| p.reversed()).collect())
-    }
-
     pub fn calc_value(&self, initial: u128) -> Result<u128> {
         if initial == 0 {
             return Ok(0);
@@ -367,11 +362,6 @@ impl PoolInfoList {
         let mut list = src_list;
         list.sort_by_key(|v| v.id);
         PoolInfoList { list, by_id }
-    }
-
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.list.len()
     }
 
     pub fn iter(&self) -> Iter<'_, Arc<PoolInfo>> {

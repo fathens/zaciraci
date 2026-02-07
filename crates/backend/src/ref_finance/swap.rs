@@ -1,7 +1,6 @@
 use crate::logging::*;
 use crate::ref_finance::CONTRACT_ADDRESS;
 use crate::ref_finance::pool_info::{TokenPair, TokenPairLike};
-use crate::ref_finance::token_account::TokenAccount;
 use crate::wallet::Wallet;
 use crate::{Result, jsonrpc};
 use near_sdk::json_types::U128;
@@ -120,20 +119,6 @@ where
         .await?;
 
     Ok((tx_hash, out))
-}
-
-#[allow(dead_code)]
-pub fn gather_token_accounts(pairs_list: &[&[TokenPair]]) -> Vec<TokenAccount> {
-    let mut tokens = Vec::new();
-    for pairs in pairs_list.iter() {
-        for pair in pairs.iter() {
-            tokens.push(pair.token_in_id().into());
-            tokens.push(pair.token_out_id().into());
-        }
-    }
-    tokens.sort();
-    tokens.dedup();
-    tokens
 }
 
 #[cfg(test)]

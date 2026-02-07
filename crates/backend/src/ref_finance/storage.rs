@@ -4,7 +4,9 @@ use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{CONTRACT_ADDRESS, deposit};
 use crate::wallet::Wallet;
-use near_sdk::json_types::{U64, U128};
+#[cfg(test)]
+use near_sdk::json_types::U64;
+use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
@@ -35,6 +37,7 @@ pub async fn check_bounds<C: ViewContract>(client: &C) -> Result<StorageBalanceB
     Ok(bounds)
 }
 
+#[cfg(test)]
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct AccountBaseInfo {
@@ -42,7 +45,7 @@ pub struct AccountBaseInfo {
     pub storage_used: U64,
 }
 
-#[allow(dead_code)] // そのうち使う
+#[cfg(test)]
 pub async fn get_account_basic_info<C: ViewContract>(
     client: &C,
     account: &AccountId,

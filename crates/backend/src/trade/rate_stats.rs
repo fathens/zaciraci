@@ -2,33 +2,35 @@
 //!
 //! トークンの価格レートを期間ごとに集計し、統計情報を提供する。
 
-use crate::Result;
+#[cfg(test)]
 use crate::logging::*;
-use crate::persistence::TimeRange;
-use crate::persistence::token_rate::TokenRate;
+#[cfg(test)]
 use bigdecimal::BigDecimal;
+#[cfg(test)]
 use chrono::{Duration, NaiveDateTime};
+#[cfg(test)]
 use common::types::TokenPrice;
+#[cfg(test)]
 use num_traits::Zero;
+#[cfg(test)]
 use std::fmt::Display;
+#[cfg(test)]
 use std::ops::{Add, Div, Mul, Sub};
 
-use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
-
-#[allow(dead_code)]
+#[cfg(test)]
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
     pub points: Vec<Point>,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 #[derive(Clone)]
 pub struct Point {
     pub price: TokenPrice,
     pub timestamp: NaiveDateTime,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub struct StatsInPeriod<U> {
     pub timestamp: NaiveDateTime,
     pub period: Duration,
@@ -39,43 +41,11 @@ pub struct StatsInPeriod<U> {
     pub max: U,
     pub min: U,
 }
-#[allow(dead_code)]
+#[cfg(test)]
 pub struct ListStatsInPeriod<U>(pub Vec<StatsInPeriod<U>>);
 
-#[allow(dead_code)]
+#[cfg(test)]
 impl SameBaseTokenRates {
-    pub async fn load(
-        quote: &TokenInAccount,
-        base: &TokenOutAccount,
-        range: &TimeRange,
-    ) -> Result<Self> {
-        let log = DEFAULT.new(o!(
-            "function" => "SameBaseTokenRates::load",
-            "base" => base.to_string(),
-            "quote" => quote.to_string(),
-            "start" => format!("{:?}", range.start),
-            "end" => format!("{:?}", range.end),
-        ));
-        trace!(log, "start");
-        match TokenRate::get_rates_in_time_range(range, base, quote).await {
-            Ok(rates) => {
-                trace!(log, "loaded rates"; "rates_count" => rates.len());
-                let points = rates
-                    .iter()
-                    .map(|r| Point {
-                        price: r.exchange_rate.to_price(),
-                        timestamp: r.timestamp,
-                    })
-                    .collect();
-                Ok(SameBaseTokenRates { points })
-            }
-            Err(e) => {
-                error!(log, "Failed to get rates"; "error" => ?e);
-                Err(e)
-            }
-        }
-    }
-
     pub fn aggregate(&self, period: Duration) -> ListStatsInPeriod<BigDecimal> {
         let log = DEFAULT.new(o!(
             "function" => "SameBaseTokenRates::aggregate",
@@ -155,13 +125,13 @@ impl SameBaseTokenRates {
     }
 }
 
+#[cfg(test)]
 impl<U> ListStatsInPeriod<U>
 where
     U: Clone + Display,
     U: Add<Output = U> + Sub<Output = U> + Mul<Output = U> + Div<Output = U>,
     U: Zero + PartialOrd + From<i64>,
 {
-    #[allow(dead_code)]
     fn format_decimal(value: &U) -> String {
         let s = value.to_string();
         if s.contains('.') {
@@ -198,7 +168,6 @@ where
         }
     }
 
-    #[allow(dead_code)]
     pub fn describes(&self) -> Vec<String> {
         let log = DEFAULT.new(o!(
             "function" => "ListStatsInPeriod::describes",
