@@ -4,6 +4,7 @@ use crate::persistence::token_rate::{SwapPath, SwapPoolInfo, TokenRate};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
+use num_traits::ToPrimitive;
 use serial_test::serial;
 use std::str::FromStr;
 use zaciraci_common::prediction::ChronosPredictionResponse;
@@ -208,7 +209,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
     let actual_prices: Vec<f64> = history
         .prices
         .iter()
-        .map(|p| p.price.to_f64().as_f64())
+        .map(|p| p.price.as_bigdecimal().to_f64().unwrap())
         .collect();
 
     for expected_price in &expected_token_prices {

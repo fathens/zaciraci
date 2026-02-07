@@ -99,6 +99,7 @@ fn test_filter_tokens_to_liquidate_only_wrap_near() {
 // Rebalance logic tests
 mod rebalance_tests {
     use bigdecimal::BigDecimal;
+    use num_traits::ToPrimitive;
     use std::str::FromStr;
     use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount};
 
@@ -217,14 +218,14 @@ mod rebalance_tests {
         let token_a_diff = &token_a_target - &token_a_current;
 
         // f64 は 0.4 を正確に表現できないため、tolerance-based で比較
-        let target_a_f64 = token_a_target.to_f64().as_f64();
+        let target_a_f64 = token_a_target.as_bigdecimal().to_f64().unwrap();
         assert!(
             (target_a_f64 - 120.0).abs() < 0.0001,
             "Token A target should be ~120 NEAR, got {}",
             target_a_f64
         );
 
-        let diff_a_f64 = token_a_diff.to_f64().as_f64();
+        let diff_a_f64 = token_a_diff.as_bigdecimal().to_f64().unwrap();
         assert!(
             (diff_a_f64 - (-80.0)).abs() < 0.0001,
             "Token A diff should be ~-80 NEAR, got {}",
@@ -238,14 +239,14 @@ mod rebalance_tests {
         let token_b_target = &total_value * token_b_weight;
         let token_b_diff = &token_b_target - &token_b_current;
 
-        let target_b_f64 = token_b_target.to_f64().as_f64();
+        let target_b_f64 = token_b_target.as_bigdecimal().to_f64().unwrap();
         assert!(
             (target_b_f64 - 180.0).abs() < 0.0001,
             "Token B target should be ~180 NEAR, got {}",
             target_b_f64
         );
 
-        let diff_b_f64 = token_b_diff.to_f64().as_f64();
+        let diff_b_f64 = token_b_diff.as_bigdecimal().to_f64().unwrap();
         assert!(
             (diff_b_f64 - 80.0).abs() < 0.0001,
             "Token B diff should be ~80 NEAR, got {}",
@@ -254,8 +255,8 @@ mod rebalance_tests {
         assert!(token_b_diff > NearValue::zero()); // Need to buy
 
         // Verify balance: sell amount ~= buy amount (within tolerance)
-        let sell_amount = token_a_diff.abs().to_f64().as_f64();
-        let buy_amount = token_b_diff.to_f64().as_f64();
+        let sell_amount = token_a_diff.abs().as_bigdecimal().to_f64().unwrap();
+        let buy_amount = token_b_diff.as_bigdecimal().to_f64().unwrap();
         assert!(
             (sell_amount - buy_amount).abs() < 0.0001,
             "Sell and buy amounts should match: sell={}, buy={}",
