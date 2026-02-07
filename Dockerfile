@@ -10,9 +10,7 @@ WORKDIR /app
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY common common
-COPY backend backend
-COPY cli_tokens cli_tokens
+COPY crates crates
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
@@ -33,16 +31,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY common common
-COPY backend backend
-COPY cli_tokens cli_tokens
+COPY crates crates
 
 RUN cargo clean
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
-    cargo build ${CARGO_BUILD_ARGS} -p zaciraci-backend
+    cargo build ${CARGO_BUILD_ARGS} -p backend
 
-RUN cp target/*/zaciraci-backend main
+RUN cp target/*/backend main
 
 FROM debian:bookworm-slim
 WORKDIR /app

@@ -1,8 +1,7 @@
 [workspace]
 members = [
-    "backend",
-    "common",
-    "cli_tokens",
+    "crates/backend",
+    "crates/common",
 ]
 resolver = "3"
 

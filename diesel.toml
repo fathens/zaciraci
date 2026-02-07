@@ -1,2 +1,2 @@
 [print_schema]
-file = "backend/src/persistence/schema.rs"
+file = "crates/backend/src/persistence/schema.rs"
