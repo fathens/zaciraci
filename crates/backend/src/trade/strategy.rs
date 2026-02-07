@@ -32,16 +32,14 @@ use crate::trade::swap;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
-use futures::stream::{self, StreamExt};
-use near_sdk::{AccountId, NearToken};
-use std::collections::BTreeMap;
-use zaciraci_common::algorithm::{
+use common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{TokenData, TradingAction, WalletInfo},
 };
-use zaciraci_common::types::{
-    ExchangeRate, NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue,
-};
+use common::types::{ExchangeRate, NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
+use futures::stream::{self, StreamExt};
+use near_sdk::{AccountId, NearToken};
+use std::collections::BTreeMap;
 
 use super::execution::{
     execute_trading_actions, liquidate_all_positions, manage_evaluation_period,
@@ -465,8 +463,7 @@ where
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
     // ポートフォリオデータの準備
-    let mut predictions: BTreeMap<zaciraci_common::types::TokenOutAccount, TokenPrice> =
-        BTreeMap::new();
+    let mut predictions: BTreeMap<common::types::TokenOutAccount, TokenPrice> = BTreeMap::new();
 
     // 型安全な quote_token をループ外で事前に準備（最適化）
     let quote_token_in: TokenInAccount = crate::ref_finance::token_account::WNEAR_TOKEN.to_in();
@@ -495,9 +492,7 @@ where
     debug!(log, "batch predictions completed"; "count" => batch_predictions.len());
 
     // 2. 並行実行数を設定から取得
-    let concurrency = zaciraci_common::config::config()
-        .trade
-        .prediction_concurrency as usize;
+    let concurrency = common::config::config().trade.prediction_concurrency as usize;
 
     // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
     let end_date = Utc::now();
@@ -537,13 +532,13 @@ where
                         // backend の TokenPriceHistory → common の PriceHistory に変換
                         let token_parsed = hist.token.to_string().parse().ok()?;
                         let quote_parsed = hist.quote_token.to_string().parse().ok()?;
-                        zaciraci_common::algorithm::types::PriceHistory {
+                        common::algorithm::types::PriceHistory {
                             token: token_parsed,
                             quote_token: quote_parsed,
                             prices: hist
                                 .prices
                                 .into_iter()
-                                .map(|p| zaciraci_common::algorithm::types::PricePoint {
+                                .map(|p| common::algorithm::types::PricePoint {
                                     timestamp: p.timestamp,
                                     price: p.price,
                                     volume: p.volume,
@@ -787,7 +782,7 @@ where
             }
             if !amount.is_zero() {
                 trace!(log, "loaded existing position"; "token" => token, "amount" => %amount);
-                if let Ok(token_out) = token.parse::<zaciraci_common::types::TokenOutAccount>() {
+                if let Ok(token_out) = token.parse::<common::types::TokenOutAccount>() {
                     holdings_typed.insert(token_out, amount.clone());
                 }
             }

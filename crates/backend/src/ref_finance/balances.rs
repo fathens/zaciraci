@@ -6,11 +6,11 @@ use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::{TokenAccount, WNEAR_TOKEN};
 use crate::wallet::Wallet;
+use common::types::NearAmount;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
-use zaciraci_common::types::NearAmount;
 
 static DEFAULT_REQUIRED_BALANCE: Lazy<NearToken> = Lazy::new(|| NearToken::from_near(1));
 #[cfg(test)]

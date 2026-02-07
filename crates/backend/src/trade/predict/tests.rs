@@ -4,11 +4,11 @@ use crate::persistence::token_rate::{SwapPath, SwapPoolInfo, TokenRate};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
+use common::prediction::ChronosPredictionResponse;
+use common::types::{ExchangeRate, TokenPrice};
 use num_traits::ToPrimitive;
 use serial_test::serial;
 use std::str::FromStr;
-use zaciraci_common::prediction::ChronosPredictionResponse;
-use zaciraci_common::types::{ExchangeRate, TokenPrice};
 
 fn price(s: &str) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
@@ -550,7 +550,7 @@ async fn test_empty_token_list() -> Result<()> {
 
 #[test]
 fn test_price_point_validation() {
-    use zaciraci_common::algorithm::types::PricePoint;
+    use common::algorithm::types::PricePoint;
 
     let now = Utc::now();
     let price_point = PricePoint {
@@ -807,7 +807,7 @@ async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_prediction_concurrency_config() {
-    let config = zaciraci_common::config::config();
+    let config = common::config::config();
     assert!(
         config.trade.prediction_concurrency >= 1,
         "prediction_concurrency should be at least 1"

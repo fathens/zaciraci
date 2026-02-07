@@ -1,8 +1,8 @@
 use crate::logging::*;
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use anyhow::{Context, Result};
+use common::types::TokenAmount;
 use uuid::Uuid;
-use zaciraci_common::types::TokenAmount;
 
 use crate::persistence::trade_transaction::TradeTransaction;
 

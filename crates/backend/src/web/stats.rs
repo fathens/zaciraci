@@ -12,10 +12,10 @@ use axum::{
 };
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
+use common::ApiResponse;
+use common::stats::{DescribesRequest, GetValuesRequest, GetValuesResponse, ValueAtTime};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use zaciraci_common::ApiResponse;
-use zaciraci_common::stats::{DescribesRequest, GetValuesRequest, GetValuesResponse, ValueAtTime};
 
 fn path(sub: &str) -> String {
     format!("/stats/{sub}")

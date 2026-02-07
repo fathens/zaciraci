@@ -1,10 +1,10 @@
 [package]
-name = "zaciraci-backend"
+name = "backend"
 version = "1.0.0"
 edition = "2024"
 
 [dependencies]
-zaciraci-common = { path = "../common" }
+common = { path = "../common" }
 axum = "0.8"
 async-trait = "0.1"
 tower-http = { version = "0.6", features = ["cors"] }

@@ -4,7 +4,7 @@
 
 ### アルゴリズム
 - **使用アルゴリズム**: Portfolio
-- **実装場所**: `zaciraci_common::algorithm::portfolio`
+- **実装場所**: `common::algorithm::portfolio`
 
 ### 評価頻度
 - **設定項目**: `TRADE_EVALUATION_DAYS`

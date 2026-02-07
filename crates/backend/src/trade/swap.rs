@@ -3,9 +3,9 @@ use crate::jsonrpc::SentTx;
 use crate::logging::*;
 use crate::trade::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
+use common::types::{NearValue, TokenAmount};
 use near_sdk::NearToken;
 use std::collections::BTreeMap;
-use zaciraci_common::types::{NearValue, TokenAmount};
 
 /// ポートフォリオ全体の現在残高を取得（TokenAmount: smallest_units + decimals）
 pub async fn get_current_portfolio_balances<C, W>(
@@ -65,7 +65,7 @@ where
         + crate::jsonrpc::GasInfo,
     W: crate::wallet::Wallet,
 {
-    use zaciraci_common::types::ExchangeRate;
+    use common::types::ExchangeRate;
 
     let log = DEFAULT.new(o!("function" => "calculate_total_portfolio_value"));
     let mut total_value = NearValue::zero();

@@ -116,7 +116,7 @@ impl Div<MicroNear> for MicroNear {
 mod tests {
     use super::*;
     use bigdecimal::BigDecimal;
-    use zaciraci_common::types::YoctoNearToken;
+    use common::types::YoctoNearToken;
 
     #[test]
     fn test_by_yocto_near() {

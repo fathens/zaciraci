@@ -1,7 +1,7 @@
+use common::config;
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use zaciraci_common::config;
 
 /// RPC endpoint configuration
 #[derive(Debug, Clone)]

@@ -5,10 +5,10 @@ use crate::logging::*;
 use crate::trade::recorder::TradeRecorder;
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
+use common::types::{NearAmount, YoctoAmount, YoctoValue};
 use near_sdk::{AccountId, NearToken};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
-use zaciraci_common::types::{NearAmount, YoctoAmount, YoctoValue};
 
 // ハーベスト関連のstatic変数
 // NOTE: LAST_HARVEST_TIME は cron 逐次実行のみからアクセスされるため Relaxed で十分。

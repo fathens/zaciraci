@@ -1,6 +1,7 @@
 use super::*;
 use crate::ref_finance::path::edge::EdgeWeight;
 use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairId, TokenPairLike};
+use common::types::YoctoNearToken;
 use num_traits::one;
 use petgraph::Graph;
 use petgraph::algo::dijkstra;
@@ -10,7 +11,6 @@ use std::fmt::Debug;
 use std::ops::Add;
 use std::panic;
 use std::sync::Arc;
-use zaciraci_common::types::YoctoNearToken;
 
 #[derive(Default, PartialOrd, Eq, Hash, Copy, Clone)]
 struct Edge<'a> {

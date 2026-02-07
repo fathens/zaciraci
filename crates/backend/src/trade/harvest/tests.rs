@@ -1,7 +1,7 @@
 use super::*;
 use crate::config;
 use bigdecimal::BigDecimal;
-use zaciraci_common::types::{NearValue, YoctoAmount, YoctoValue};
+use common::types::{NearValue, YoctoAmount, YoctoValue};
 
 /// NEAR → yoctoNEAR 変換のヘルパー（型安全）
 fn near_to_yocto(near: u64) -> BigDecimal {

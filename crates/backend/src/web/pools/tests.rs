@@ -1,8 +1,8 @@
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use common::pools::{SortPoolsRequest, SortPoolsResponse};
 use num_traits::ToPrimitive;
 use std::str::FromStr;
-use zaciraci_common::pools::{SortPoolsRequest, SortPoolsResponse};
 
 fn current_log_depth_calculation(depth: &BigDecimal) -> BigDecimal {
     let depth_plus_one = depth + BigDecimal::from(1);

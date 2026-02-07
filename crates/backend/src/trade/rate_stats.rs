@@ -8,10 +8,10 @@ use crate::persistence::TimeRange;
 use crate::persistence::token_rate::TokenRate;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDateTime};
+use common::types::TokenPrice;
 use num_traits::Zero;
 use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Sub};
-use zaciraci_common::types::TokenPrice;
 
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 

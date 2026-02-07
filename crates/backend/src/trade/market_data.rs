@@ -5,10 +5,10 @@
 
 use crate::Result;
 use bigdecimal::BigDecimal;
+use common::algorithm::types::PriceHistory;
+use common::types::*;
 use num_traits::Zero;
 use std::str::FromStr;
-use zaciraci_common::algorithm::types::PriceHistory;
-use zaciraci_common::types::*;
 
 /// トークンメタデータ（NEP-148 準拠）
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -147,7 +147,7 @@ async fn calculate_pool_liquidity_score<C>(client: &C, token_id: &str) -> f64
 where
     C: crate::jsonrpc::ViewContract,
 {
-    use zaciraci_common::config;
+    use common::config;
 
     let ref_exchange_account = crate::ref_finance::CONTRACT_ADDRESS.clone();
 

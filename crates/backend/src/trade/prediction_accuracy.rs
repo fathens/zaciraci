@@ -7,10 +7,10 @@ use crate::persistence::token_rate::TokenRate;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use bigdecimal::BigDecimal;
 use chrono::{NaiveDateTime, Utc};
+use common::types::TokenPrice;
 use num_traits::Zero;
 use std::collections::BTreeMap;
 use std::str::FromStr;
-use zaciraci_common::types::TokenPrice;
 
 /// MAPE の閾値デフォルト値: これ以下なら予測が非常に正確（confidence = 1.0）
 const DEFAULT_MAPE_EXCELLENT: f64 = 3.0;

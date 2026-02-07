@@ -9,8 +9,8 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
-pub use zaciraci_common::ollama::Image;
-pub use zaciraci_common::ollama::Message;
+pub use common::ollama::Image;
+pub use common::ollama::Message;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Models {

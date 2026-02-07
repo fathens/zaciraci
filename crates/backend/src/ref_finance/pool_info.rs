@@ -7,6 +7,7 @@ use crate::ref_finance::{CONTRACT_ADDRESS, errors::Error};
 use anyhow::{Context, Result, anyhow, bail};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::NaiveDateTime;
+use common::types::YoctoNearToken;
 use futures_util::future::join_all;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
@@ -15,7 +16,6 @@ use serde_json::{from_slice, json};
 use std::collections::HashMap;
 use std::slice::Iter;
 use std::sync::Arc;
-use zaciraci_common::types::YoctoNearToken;
 
 const POOL_KIND_SIMPLE: &str = "SIMPLE_POOL";
 
@@ -51,8 +51,8 @@ pub struct PoolInfo {
     pub timestamp: NaiveDateTime,
 }
 
-impl From<zaciraci_common::pools::PoolRecord> for PoolInfo {
-    fn from(record: zaciraci_common::pools::PoolRecord) -> Self {
+impl From<common::pools::PoolRecord> for PoolInfo {
+    fn from(record: common::pools::PoolRecord) -> Self {
         // common と backend の TokenAccount は同一型になったため、変換不要
         let token_account_ids = record.bare.token_account_ids;
         PoolInfo {
@@ -75,11 +75,11 @@ impl From<zaciraci_common::pools::PoolRecord> for PoolInfo {
     }
 }
 
-impl From<PoolInfo> for zaciraci_common::pools::PoolRecord {
+impl From<PoolInfo> for common::pools::PoolRecord {
     fn from(pool_info: PoolInfo) -> Self {
-        zaciraci_common::pools::PoolRecord {
+        common::pools::PoolRecord {
             id: pool_info.id.into(),
-            bare: zaciraci_common::pools::PoolBared {
+            bare: common::pools::PoolBared {
                 pool_kind: pool_info.bare.pool_kind,
                 // common と backend の TokenAccount は同一型になったため、変換不要
                 token_account_ids: pool_info.bare.token_account_ids.clone(),

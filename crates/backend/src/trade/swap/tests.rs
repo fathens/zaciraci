@@ -1,9 +1,9 @@
 use bigdecimal::BigDecimal;
+use common::algorithm::types::TradingAction;
+use common::types::TokenOutAccount;
 use num_traits::Zero;
 use std::collections::BTreeMap;
 use std::str::FromStr;
-use zaciraci_common::algorithm::types::TradingAction;
-use zaciraci_common::types::TokenOutAccount;
 
 fn token_out(s: &str) -> TokenOutAccount {
     s.parse().unwrap()
@@ -24,7 +24,7 @@ fn test_trading_action_hold() {
     }
 }
 
-fn token(s: &str) -> zaciraci_common::types::TokenOutAccount {
+fn token(s: &str) -> common::types::TokenOutAccount {
     s.parse().unwrap()
 }
 

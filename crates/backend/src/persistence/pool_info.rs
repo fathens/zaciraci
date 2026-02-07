@@ -6,10 +6,10 @@ use crate::persistence::schema::pool_info;
 use crate::ref_finance::pool_info::{PoolInfo as RefPoolInfo, PoolInfoBared};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
+use common::config;
 use diesel::prelude::*;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-use zaciraci_common::config;
 
 // データベース用モデル
 #[derive(Debug, Clone, Queryable, Selectable)]

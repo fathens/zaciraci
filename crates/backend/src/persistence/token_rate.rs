@@ -7,13 +7,13 @@ use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAc
 use anyhow::anyhow;
 use bigdecimal::{BigDecimal, Zero};
 use chrono::NaiveDateTime;
+use common::config;
+use common::types::ExchangeRate;
 use diesel::prelude::*;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
-use zaciraci_common::config;
-use zaciraci_common::types::ExchangeRate;
 
 /// スワップパス内の個々のプール情報
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -226,9 +226,7 @@ impl TokenRate {
             let client = crate::jsonrpc::new_client();
 
             // 並行実行数（設定から取得、デフォルト8）
-            let concurrency = zaciraci_common::config::config()
-                .trade
-                .prediction_concurrency as usize;
+            let concurrency = common::config::config().trade.prediction_concurrency as usize;
 
             // 全トークンの decimals を並行取得
             let results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())

@@ -6,17 +6,17 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, TimeDelta, Utc};
-use futures::stream::{self, StreamExt};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use zaciraci_common::algorithm::prediction::{
+use common::algorithm::prediction::{
     PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
     TokenPredictionResult, TopTokenInfo,
 };
-use zaciraci_common::api::chronos::ChronosPredictor;
-use zaciraci_common::types::{
+use common::api::chronos::ChronosPredictor;
+use common::types::{
     TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount, TokenPrice,
 };
+use futures::stream::{self, StreamExt};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// トークンの価格履歴
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ pub struct TokenPriceHistory {
 }
 
 // 共通クレートのPricePointを使用
-pub use zaciraci_common::algorithm::types::PricePoint;
+pub use common::algorithm::types::PricePoint;
 
 /// 予測結果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ pub struct PredictionService {
 
 impl PredictionService {
     pub fn new() -> Self {
-        let config = zaciraci_common::config::config();
+        let config = common::config::config();
         Self {
             predictor: ChronosPredictor::new(),
             max_retries: config.trade.prediction_max_retries,
@@ -228,9 +228,7 @@ impl PredictionService {
         );
 
         // 2. 設定から並行実行数を取得
-        let concurrency = zaciraci_common::config::config()
-            .trade
-            .prediction_concurrency as usize;
+        let concurrency = common::config::config().trade.prediction_concurrency as usize;
 
         // 3. 予測を並行実行
         let results: Vec<_> = stream::iter(tokens.clone())
@@ -313,7 +311,7 @@ impl PredictionService {
     /// `last_data_timestamp`: 履歴データの最後のタイムスタンプ（時間経過の基準点）
     fn convert_prediction_result(
         &self,
-        chronos_response: &zaciraci_common::prediction::ChronosPredictionResponse,
+        chronos_response: &common::prediction::ChronosPredictionResponse,
         horizon: usize,
         last_data_timestamp: DateTime<Utc>,
     ) -> Result<Vec<PredictedPrice>> {

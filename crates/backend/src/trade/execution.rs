@@ -12,10 +12,10 @@ use crate::trade::{recorder::TradeRecorder, swap};
 use crate::wallet::Wallet;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use common::algorithm::types::TradingAction;
+use common::types::*;
 use near_sdk::NearToken;
 use std::collections::HashMap;
-use zaciraci_common::algorithm::types::TradingAction;
-use zaciraci_common::types::*;
 
 /// 実行サマリー
 pub(crate) struct ExecutionSummary {
@@ -755,7 +755,7 @@ pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
 async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
     use crate::jsonrpc::{AccountInfo, SendTx, SentTx};
     use crate::ref_finance::{deposit, token_account::WNEAR_TOKEN};
-    use zaciraci_common::types::{NearAmount, YoctoAmount};
+    use common::types::{NearAmount, YoctoAmount};
 
     // HARVEST_ACCOUNT_ID を取得（未設定の場合はスキップ）
     let harvest_account_id = match config::get("HARVEST_ACCOUNT_ID") {

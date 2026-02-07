@@ -99,9 +99,9 @@ fn test_filter_tokens_to_liquidate_only_wrap_near() {
 // Rebalance logic tests
 mod rebalance_tests {
     use bigdecimal::BigDecimal;
+    use common::types::{ExchangeRate, NearValue, TokenAmount};
     use num_traits::ToPrimitive;
     use std::str::FromStr;
-    use zaciraci_common::types::{ExchangeRate, NearValue, TokenAmount};
 
     #[test]
     fn test_rebalance_calculations_sell_only() {

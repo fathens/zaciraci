@@ -7,10 +7,10 @@ use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAc
 use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::{NaiveDateTime, SubsecRound};
+use common::types::ExchangeRate;
 use diesel::RunQueryDsl;
 use serial_test::serial;
 use std::str::FromStr;
-use zaciraci_common::types::ExchangeRate;
 
 /// テスト用ヘルパー: BigDecimal からデフォルト decimals (24) の ExchangeRate を作成
 fn make_rate(value: i64) -> ExchangeRate {

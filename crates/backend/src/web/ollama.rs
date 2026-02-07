@@ -7,8 +7,8 @@ use axum::{
     extract::{Json, State},
     routing::{get, post},
 };
+use common::ollama::{ChatRequest, GenerateRequest};
 use std::sync::Arc;
-use zaciraci_common::ollama::{ChatRequest, GenerateRequest};
 
 fn path(sub: &str) -> String {
     format!("/ollama/{sub}")

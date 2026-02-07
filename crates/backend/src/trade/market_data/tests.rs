@@ -1,8 +1,8 @@
 use super::*;
-use std::str::FromStr;
-use zaciraci_common::types::{
+use common::types::{
     TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount,
 };
+use std::str::FromStr;
 
 fn price_from_int(v: i64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from(v))
@@ -11,7 +11,7 @@ fn price_from_int(v: i64) -> TokenPrice {
 #[test]
 fn test_calculate_liquidity_score() {
     use chrono::Utc;
-    use zaciraci_common::algorithm::types::{PriceHistory, PricePoint};
+    use common::algorithm::types::{PriceHistory, PricePoint};
 
     // ケース1: 取引量データなし
     let history_no_volume = PriceHistory {
@@ -205,10 +205,10 @@ async fn test_calculate_enhanced_liquidity_score() {
     let client = MockClient;
 
     // テスト用の取引履歴（中程度の取引量）
-    let history = zaciraci_common::algorithm::types::PriceHistory {
+    let history = common::algorithm::types::PriceHistory {
         token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
         quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
-        prices: vec![zaciraci_common::algorithm::types::PricePoint {
+        prices: vec![common::algorithm::types::PricePoint {
             timestamp: chrono::Utc::now(),
             price: price_from_int(100),
             volume: Some(BigDecimal::from(5u128 * 10u128.pow(24))), // 5 NEAR相当の取引量
@@ -310,7 +310,7 @@ fn test_sqrt_bigdecimal() {
 #[test]
 fn test_calculate_volatility_from_history() {
     use chrono::Utc;
-    use zaciraci_common::algorithm::types::{PriceHistory, PricePoint};
+    use common::algorithm::types::{PriceHistory, PricePoint};
 
     // ケース1: データポイントが不足
     let history_insufficient = PriceHistory {

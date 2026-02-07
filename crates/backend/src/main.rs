@@ -12,7 +12,7 @@ mod wallet;
 mod web;
 
 use crate::logging::*;
-pub use zaciraci_common::config;
+pub use common::config;
 
 type Result<T> = anyhow::Result<T>;
 

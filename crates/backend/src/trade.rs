@@ -10,7 +10,7 @@ pub mod swap;
 pub mod token_cache;
 
 // Re-export algorithm from common crate for backward compatibility
-// pub use zaciraci_common::algorithm;
+// pub use common::algorithm;
 
 use crate::Result;
 use crate::config;
@@ -22,10 +22,10 @@ use crate::ref_finance::token_account::TokenInAccount;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
 use bigdecimal::BigDecimal;
 use chrono::Utc as TZ;
+use common::types::NearAmount;
+use common::types::TokenAmount;
 use std::future::Future;
 use std::sync::Arc;
-use zaciraci_common::types::NearAmount;
-use zaciraci_common::types::TokenAmount;
 
 pub async fn run() {
     // DB からトークン decimals キャッシュを初期化
@@ -314,7 +314,7 @@ mod tests {
         unsafe {
             std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
         }
-        zaciraci_common::config::set("TRADE_MIN_POOL_LIQUIDITY", "100");
+        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "100");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "10 NEAR");
     }
@@ -323,7 +323,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_custom() {
         // 200 NEAR → 10% = 20 NEAR
-        zaciraci_common::config::set("TRADE_MIN_POOL_LIQUIDITY", "200");
+        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "200");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "20 NEAR");
     }
@@ -332,7 +332,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_min_1() {
         // 5 NEAR → 10% = 0 → max(1) = 1 NEAR
-        zaciraci_common::config::set("TRADE_MIN_POOL_LIQUIDITY", "5");
+        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "5");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "1 NEAR");
     }
