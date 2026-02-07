@@ -4529,7 +4529,6 @@ dependencies = [
  "once_cell",
  "predictor",
  "rayon",
- "reqwest",
  "serde",
  "serde_json",
  "serial_test",
