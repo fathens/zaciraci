@@ -58,16 +58,6 @@ src/
 **重要**: `println!` マクロの使用は禁止です。適切なログマクロを使用してください。
 - **例外**: テストコード（`#[cfg(test)]`モジュールや`tests.rs`ファイル）では、デバッグ出力として`println!`の使用を許可します。
 
-#### フロントエンド（frontend/）
-- `log` クレートを使用
-- インポート不要（グローバルに利用可能）
-- 使用例:
-  ```rust
-  log::debug!("デバッグ情報: {}", value);
-  log::info!("処理完了: データ正規化");
-  log::error!("エラー発生: {:?}", error);
-  ```
-
 #### バックエンド（backend/）
 - `slog` 構造化ログライブラリを使用
 - `use crate::logging::*;` でインポート
@@ -194,7 +184,6 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 - **裁定取引エンジン** (`backend/src/arbitrage.rs`, `backend/src/trade/`): 取引アルゴリズムとARIMA統計分析
 - **REF Finance連携** (`backend/src/ref_finance/`): NEAR DeFiプロトコル連携（プール分析、スワップ、残高管理）
 - **データベース層** (`backend/src/persistence/`): Diesel ORMを使用したPostgreSQL連携
-- **AI統合** (`backend/src/ollama/`, `frontend/src/ollama.rs`): ローカルLLMによる取引予測と分析
 - **Webインターフェース** (`backend/src/web/`, `frontend/src/`): REST APIとリアクティブWeb UI
 
 ## 開発環境セットアップ
@@ -219,7 +208,6 @@ cd run_local
 - `PG_DSN`: PostgreSQL接続文字列
 - `USE_MAINNET`: NEAR mainnet/testnet切り替え
 - `ROOT_MNEMONIC`, `ROOT_ACCOUNT_ID`: NEARウォレット設定
-- `OLLAMA_BASE_URL`, `OLLAMA_MODEL`: AIモデル設定
 - `RUST_LOG`: ログレベル設定
 
 ### データベース環境
@@ -263,4 +251,4 @@ dx build --release
 - データベーススキーマ変更にはDieselを使用
 - `diesel migration run` でマイグレーションを実行
 - `diesel migration generate <name>` で新しいマイグレーションを作成
-- スキーマは `src/persistence/schema.rs` で定義
+- スキーマは `crates/backend/src/persistence/schema.rs` で定義
