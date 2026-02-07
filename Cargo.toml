@@ -2,7 +2,6 @@
 members = [
     "backend",
     "common",
-    "cli_tokens",
 ]
 resolver = "3"
 
