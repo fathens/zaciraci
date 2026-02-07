@@ -49,9 +49,7 @@ struct DbTokenRate {
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
     pub decimals: Option<i16>,
-    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
     pub rate_calc_near: i64,
-    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
     pub swap_path: Option<serde_json::Value>,
 }
 
