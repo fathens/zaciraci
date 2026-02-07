@@ -122,6 +122,7 @@ where
     Ok((tx_hash, out))
 }
 
+#[allow(dead_code)]
 pub fn gather_token_accounts(pairs_list: &[&[TokenPair]]) -> Vec<TokenAccount> {
     let mut tokens = Vec::new();
     for pairs in pairs_list.iter() {

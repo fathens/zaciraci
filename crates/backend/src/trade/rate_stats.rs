@@ -15,17 +15,20 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct SameBaseTokenRates {
     pub points: Vec<Point>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Point {
     pub price: TokenPrice,
     pub timestamp: NaiveDateTime,
 }
 
+#[allow(dead_code)]
 pub struct StatsInPeriod<U> {
     pub timestamp: NaiveDateTime,
     pub period: Duration,
@@ -36,8 +39,10 @@ pub struct StatsInPeriod<U> {
     pub max: U,
     pub min: U,
 }
+#[allow(dead_code)]
 pub struct ListStatsInPeriod<U>(pub Vec<StatsInPeriod<U>>);
 
+#[allow(dead_code)]
 impl SameBaseTokenRates {
     pub async fn load(
         quote: &TokenInAccount,
@@ -156,6 +161,7 @@ where
     U: Add<Output = U> + Sub<Output = U> + Mul<Output = U> + Div<Output = U>,
     U: Zero + PartialOrd + From<i64>,
 {
+    #[allow(dead_code)]
     fn format_decimal(value: &U) -> String {
         let s = value.to_string();
         if s.contains('.') {
@@ -192,6 +198,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub fn describes(&self) -> Vec<String> {
         let log = DEFAULT.new(o!(
             "function" => "ListStatsInPeriod::describes",

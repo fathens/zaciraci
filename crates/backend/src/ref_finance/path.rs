@@ -22,11 +22,13 @@ use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
 
+#[allow(dead_code)]
 pub fn all_tokens(pools: Arc<PoolInfoList>) -> Vec<TokenAccount> {
     let by_tokens = by_token::PoolsByToken::new(pools);
     by_tokens.tokens()
 }
 
+#[allow(dead_code)]
 pub async fn sorted_returns(
     graph: &TokenGraph,
     start: &TokenInAccount,
@@ -50,6 +52,7 @@ pub async fn swap_path(
     graph.get_path_with_return(start, goal)
 }
 
+#[allow(dead_code)]
 pub async fn pick_goals(
     graph: &TokenGraph,
     start: &TokenInAccount,
@@ -72,6 +75,7 @@ pub async fn pick_goals(
     Ok(result)
 }
 
+#[allow(dead_code)]
 const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
 
 fn rate_average<M: Into<u128>>(min: M, max: M) -> u128 {

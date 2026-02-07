@@ -12,7 +12,6 @@ chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 once_cell = { workspace = true }
-base64 = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 async-trait = "0.1"
 ndarray = { version = "0.15", features = ["serde"] }

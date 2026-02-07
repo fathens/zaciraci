@@ -103,6 +103,7 @@ impl<M> PreviewList<M>
 where
     M: Copy,
 {
+    #[allow(dead_code)]
     pub fn convert<F, D>(&self, converter: F) -> PreviewList<D>
     where
         F: Fn(M) -> D,

@@ -206,6 +206,7 @@ impl TokenPath {
         self.0.len()
     }
 
+    #[allow(dead_code)]
     pub fn reversed(&self) -> Self {
         Self(self.0.iter().rev().map(|p| p.reversed()).collect())
     }
@@ -368,6 +369,7 @@ impl PoolInfoList {
         PoolInfoList { list, by_id }
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.list.len()
     }

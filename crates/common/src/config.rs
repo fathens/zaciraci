@@ -71,13 +71,8 @@ pub struct RpcSettings {
     pub max_attempts: u32,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ExternalServicesConfig {
-    #[serde(default = "default_ollama_base_url")]
-    pub ollama_base_url: String,
-    #[serde(default = "default_ollama_model")]
-    pub ollama_model: String,
-}
+#[derive(Debug, Deserialize, Default)]
+pub struct ExternalServicesConfig {}
 
 #[derive(Debug, Deserialize)]
 pub struct TradeConfig {
@@ -177,12 +172,6 @@ fn default_failure_reset_seconds() -> u64 {
 fn default_max_attempts() -> u32 {
     10
 }
-fn default_ollama_base_url() -> String {
-    "http://localhost:11434".to_string()
-}
-fn default_ollama_model() -> String {
-    "llama2".to_string()
-}
 fn default_trade_enabled() -> bool {
     false
 }
@@ -263,15 +252,6 @@ impl Default for RpcSettings {
         Self {
             failure_reset_seconds: default_failure_reset_seconds(),
             max_attempts: default_max_attempts(),
-        }
-    }
-}
-
-impl Default for ExternalServicesConfig {
-    fn default() -> Self {
-        Self {
-            ollama_base_url: default_ollama_base_url(),
-            ollama_model: default_ollama_model(),
         }
     }
 }
@@ -371,8 +351,6 @@ pub fn get(name: &str) -> Result<String> {
             }
         }
         "ROOT_HDPATH" => Some(CONFIG.wallet.root_hdpath.clone()),
-        "OLLAMA_BASE_URL" => Some(CONFIG.external_services.ollama_base_url.clone()),
-        "OLLAMA_MODEL" => Some(CONFIG.external_services.ollama_model.clone()),
         "TRADE_INITIAL_INVESTMENT" => Some(CONFIG.trade.initial_investment.to_string()),
         "TRADE_TOP_TOKENS" => Some(CONFIG.trade.top_tokens.to_string()),
         "TRADE_EVALUATION_DAYS" => Some(CONFIG.trade.evaluation_days.to_string()),
@@ -488,14 +466,6 @@ fn merge_config(base: &mut Config, local: Config) {
         base.rpc.settings.max_attempts = local.rpc.settings.max_attempts;
     }
 
-    // External services
-    if local.external_services.ollama_base_url != default_ollama_base_url() {
-        base.external_services.ollama_base_url = local.external_services.ollama_base_url;
-    }
-    if local.external_services.ollama_model != default_ollama_model() {
-        base.external_services.ollama_model = local.external_services.ollama_model;
-    }
-
     // Trade
     if local.trade.initial_investment != default_initial_investment() {
         base.trade.initial_investment = local.trade.initial_investment;
@@ -588,31 +558,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_toml_default_values() {
-        // 環境変数が設定されていない場合はTOMLのデフォルト値が使われる
-        unsafe {
-            std::env::remove_var("OLLAMA_BASE_URL");
-        }
-        let result = get("OLLAMA_BASE_URL").unwrap();
-        assert_eq!(result, "http://localhost:11434");
-    }
-
-    #[test]
-    #[serial]
-    fn test_backward_compatibility_with_env_vars() {
-        // 環境変数が設定されている場合は環境変数の値が使われる
-        unsafe {
-            std::env::set_var("OLLAMA_MODEL", "test-model");
-        }
-        let result = get("OLLAMA_MODEL").unwrap();
-        assert_eq!(result, "test-model");
-        unsafe {
-            std::env::remove_var("OLLAMA_MODEL");
-        }
-    }
-
-    #[test]
-    #[serial]
     fn test_config_store_priority() {
         // CONFIG_STOREの値が最優先
         const TEST_KEY: &str = "RUST_LOG_FORMAT";
@@ -656,26 +601,29 @@ mod tests {
     #[serial]
     fn test_priority_order() {
         // 優先順位の完全検証: CONFIG_STORE > 環境変数 > TOML > デフォルト
-        const TEST_KEY: &str = "OLLAMA_BASE_URL";
+        const TEST_KEY: &str = "TRADE_TOP_TOKENS";
 
         // Step 1: TOML/デフォルトのみ (最低優先度)
         unsafe {
             std::env::remove_var(TEST_KEY);
         }
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove(TEST_KEY);
+        }
         let result = get(TEST_KEY).unwrap();
-        assert_eq!(result, "http://localhost:11434"); // config.toml または default
+        assert_eq!(result, "10"); // config.toml または default
 
         // Step 2: 環境変数追加 (TOML より優先)
         unsafe {
-            std::env::set_var(TEST_KEY, "http://env-url:1111");
+            std::env::set_var(TEST_KEY, "99");
         }
         let result = get(TEST_KEY).unwrap();
-        assert_eq!(result, "http://env-url:1111");
+        assert_eq!(result, "99");
 
         // Step 3: CONFIG_STORE 追加 (環境変数より優先)
-        set(TEST_KEY, "http://store-url:2222");
+        set(TEST_KEY, "42");
         let result = get(TEST_KEY).unwrap();
-        assert_eq!(result, "http://store-url:2222");
+        assert_eq!(result, "42");
 
         // Cleanup
         if let Ok(mut store) = CONFIG_STORE.lock() {
