@@ -11,6 +11,7 @@ use near_sdk::AccountId;
 use near_sdk::NearToken;
 use near_sdk::json_types::U128;
 use serde_json::json;
+use serial_test::serial;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex, Once};
 
@@ -262,6 +263,7 @@ fn test_is_needed_default() {
 }
 
 #[test]
+#[serial(arbitrage_config)]
 fn test_is_needed_behavior() {
     // is_needed() 関数の動作確認
     // config::get が "true" を返す場合は true、それ以外は false を返す
@@ -326,6 +328,7 @@ fn test_duration_config_parsing() {
 }
 
 #[tokio::test]
+#[serial(arbitrage_config)]
 async fn test_mock_client_basic() {
     initialize();
 
@@ -346,6 +349,7 @@ async fn test_mock_client_basic() {
 }
 
 #[tokio::test]
+#[serial(arbitrage_config)]
 async fn test_mock_client_view_contract() {
     initialize();
 
