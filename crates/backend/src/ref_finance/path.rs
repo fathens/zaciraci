@@ -7,10 +7,8 @@ use super::pool_info::TokenPath;
 use crate::Result;
 use crate::logging::*;
 use crate::ref_finance::history;
-use crate::ref_finance::pool_info::PoolInfoList;
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::types::gas_price::GasPrice;
-use crate::types::{MicroNear, MilliNear};
 use graph::TokenGraph;
 use num_integer::Roots;
 use num_traits::{One, Zero, one, zero};
@@ -22,26 +20,6 @@ use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::Arc;
 
-pub fn all_tokens(pools: Arc<PoolInfoList>) -> Vec<TokenAccount> {
-    let by_tokens = by_token::PoolsByToken::new(pools);
-    by_tokens.tokens()
-}
-
-pub async fn sorted_returns(
-    graph: &TokenGraph,
-    start: &TokenInAccount,
-    initial: MilliNear,
-) -> Result<Vec<(TokenOutAccount, MilliNear, usize)>> {
-    let goals = graph.update_graph(start)?;
-    let returns = graph.list_returns(initial.to_yocto(), start, &goals)?;
-    let mut in_milli = vec![];
-    for (k, v) in returns.iter() {
-        let depth = graph.get_path_with_return(start, k)?.len();
-        in_milli.push((k.clone(), MilliNear::from_yocto(*v), depth));
-    }
-    Ok(in_milli)
-}
-
 pub async fn swap_path(
     graph: &TokenGraph,
     start: &TokenInAccount,
@@ -49,30 +27,6 @@ pub async fn swap_path(
 ) -> Result<TokenPath> {
     graph.get_path_with_return(start, goal)
 }
-
-pub async fn pick_goals(
-    graph: &TokenGraph,
-    start: &TokenInAccount,
-    total_amount: MilliNear,
-    gas_price: GasPrice,
-) -> Result<Option<Vec<Preview<u128>>>> {
-    let previews = pick_previews(graph, start, MicroNear::from_milli(total_amount), gas_price)?;
-
-    const REPEAT: usize = 3;
-
-    let result = previews
-        .filter(|previews| {
-            let total_gain = previews.total_gain * REPEAT as u128;
-            total_gain >= MIN_GAIN
-        })
-        .into_iter()
-        .map(|previews| previews.convert(|m| m.to_yocto()).list)
-        .next();
-
-    Ok(result)
-}
-
-const MIN_GAIN: u128 = MilliNear::of(1).to_yocto();
 
 fn rate_average<M: Into<u128>>(min: M, max: M) -> u128 {
     let min = min.into();

@@ -49,9 +49,7 @@ struct DbTokenRate {
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
     pub decimals: Option<i16>,
-    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
     pub rate_calc_near: i64,
-    #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
     pub swap_path: Option<serde_json::Value>,
 }
 
@@ -120,24 +118,6 @@ pub struct TokenRate {
 
 // 相互変換の実装
 impl TokenRate {
-    /// 新しい TokenRate を作成（ExchangeRate 使用）
-    #[allow(dead_code)] // テストで使用
-    pub fn new(
-        base: TokenOutAccount,
-        quote: TokenInAccount,
-        exchange_rate: ExchangeRate,
-        rate_calc_near: i64,
-    ) -> Self {
-        Self {
-            base,
-            quote,
-            exchange_rate,
-            timestamp: chrono::Utc::now().naive_utc(),
-            rate_calc_near,
-            swap_path: None,
-        }
-    }
-
     /// 新しい TokenRate を作成（スワップパス情報付き）
     pub fn new_with_path(
         base: TokenOutAccount,
@@ -601,7 +581,7 @@ impl TokenRate {
     /// - x = 入力側プールサイズ
     ///
     /// swap_path が None の場合は補正なしで元のレートを返す。
-    #[allow(dead_code)] // テストで使用
+    #[cfg(test)]
     pub fn to_spot_rate(&self) -> ExchangeRate {
         self.to_spot_rate_with_fallback(None)
     }

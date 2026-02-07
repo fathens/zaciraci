@@ -3,13 +3,11 @@
 mod arbitrage;
 mod jsonrpc;
 mod logging;
-mod ollama;
 mod persistence;
 mod ref_finance;
 mod trade;
 mod types;
 mod wallet;
-mod web;
 
 use crate::logging::*;
 pub use common::config;
@@ -29,5 +27,5 @@ async fn main() {
 
     tokio::spawn(trade::run());
     tokio::spawn(arbitrage::run());
-    web::run().await;
+    tokio::signal::ctrl_c().await.ok();
 }
