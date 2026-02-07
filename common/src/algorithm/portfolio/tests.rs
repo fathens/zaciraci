@@ -367,39 +367,35 @@ fn test_calculate_sortino_ratio() {
     let returns = vec![0.05, -0.02, 0.08, -0.01, 0.03, 0.06, -0.03];
     let risk_free_rate = 0.02;
 
-    let sortino = crate::algorithm::calculate_sortino_ratio(&returns, risk_free_rate);
+    let sortino = super::calculate_sortino_ratio(&returns, risk_free_rate);
 
     // ソルティノレシオは有限の正の値
     assert!(sortino.is_finite());
     assert!(sortino > 0.0);
 
     // 空のリターンの場合
-    assert_eq!(
-        crate::algorithm::calculate_sortino_ratio(&[], risk_free_rate),
-        0.0
-    );
+    assert_eq!(super::calculate_sortino_ratio(&[], risk_free_rate), 0.0);
 
     // 全て正のリターンの場合（下方偏差が0）
     let positive_returns = vec![0.05, 0.03, 0.08, 0.06];
-    let sortino_positive =
-        crate::algorithm::calculate_sortino_ratio(&positive_returns, risk_free_rate);
+    let sortino_positive = super::calculate_sortino_ratio(&positive_returns, risk_free_rate);
     assert_eq!(sortino_positive, 0.0); // 下方偏差が0なのでソルティノレシオも0
 }
 
 #[test]
 fn test_calculate_max_drawdown() {
     let cumulative_returns = vec![100.0, 110.0, 90.0, 120.0, 80.0, 150.0];
-    let max_dd = crate::algorithm::calculate_max_drawdown(&cumulative_returns);
+    let max_dd = super::calculate_max_drawdown(&cumulative_returns);
 
     // 120から80への下落が最大: (120-80)/120 = 33.33%
     assert!((max_dd - 0.3333333333333333).abs() < 0.001);
 
     // 単調増加の場合
     let increasing = vec![100.0, 110.0, 120.0, 130.0];
-    assert_eq!(crate::algorithm::calculate_max_drawdown(&increasing), 0.0);
+    assert_eq!(super::calculate_max_drawdown(&increasing), 0.0);
 
     // 空配列の場合
-    assert_eq!(crate::algorithm::calculate_max_drawdown(&[]), 0.0);
+    assert_eq!(super::calculate_max_drawdown(&[]), 0.0);
 }
 
 #[test]
@@ -1328,7 +1324,7 @@ fn test_performance_metrics_with_existing_functions() {
         cumulative_returns.push(next_value);
     }
 
-    let max_drawdown = crate::algorithm::calculate_max_drawdown(&cumulative_returns);
+    let max_drawdown = super::calculate_max_drawdown(&cumulative_returns);
     assert!(max_drawdown >= 0.0);
 
     // カルマーレシオ（年化リターン / 最大ドローダウン）
@@ -1341,8 +1337,7 @@ fn test_performance_metrics_with_existing_functions() {
     assert!(calmar_ratio.is_finite() || calmar_ratio == f64::INFINITY);
 
     // ソルティノレシオ（既存関数使用）
-    let sortino_ratio =
-        crate::algorithm::calculate_sortino_ratio(&portfolio_returns, RISK_FREE_RATE / 252.0);
+    let sortino_ratio = super::calculate_sortino_ratio(&portfolio_returns, RISK_FREE_RATE / 252.0);
     assert!(sortino_ratio >= 0.0);
 
     // ポートフォリオの安定性指標

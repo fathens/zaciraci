@@ -291,7 +291,27 @@ pub async fn filter_by_volatility(
 
 /// ボラティリティ計算（標準偏差）
 fn calculate_volatility(prices: &[f64]) -> f64 {
-    crate::algorithm::calculate_volatility_from_prices(prices)
+    if prices.len() < 2 {
+        return 0.0;
+    }
+
+    let mut returns = Vec::new();
+    for i in 1..prices.len() {
+        if prices[i - 1] != 0.0 {
+            let r = (prices[i] - prices[i - 1]) / prices[i - 1];
+            returns.push(r);
+        }
+    }
+
+    if returns.len() < 2 {
+        return 0.0;
+    }
+
+    let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
+    let variance: f64 =
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
+
+    variance.sqrt()
 }
 
 #[cfg(test)]

@@ -979,7 +979,7 @@ pub async fn execute_portfolio_optimization(
     };
 
     let daily_risk_free = RISK_FREE_RATE / 365.0;
-    let sortino_ratio = super::calculate_sortino_ratio(&portfolio_daily_returns, daily_risk_free);
+    let sortino_ratio = calculate_sortino_ratio(&portfolio_daily_returns, daily_risk_free);
 
     let cumulative_values: Vec<f64> = {
         let mut vals = Vec::with_capacity(portfolio_daily_returns.len() + 1);
@@ -989,7 +989,7 @@ pub async fn execute_portfolio_optimization(
         }
         vals
     };
-    let max_drawdown = super::calculate_max_drawdown(&cumulative_values);
+    let max_drawdown = calculate_max_drawdown(&cumulative_values);
 
     let calmar_ratio = if max_drawdown > 0.0 {
         portfolio_return / max_drawdown
@@ -1103,6 +1103,58 @@ fn generate_rebalance_actions(
     }
 
     actions
+}
+
+/// ソルティノレシオを計算
+fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
+    if returns.is_empty() {
+        return 0.0;
+    }
+
+    let mean_return: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
+    let excess_return = mean_return - risk_free_rate;
+
+    let downside_returns: Vec<f64> = returns
+        .iter()
+        .map(|&r| (r - risk_free_rate).min(0.0))
+        .collect();
+
+    let downside_deviation = if downside_returns.is_empty() {
+        0.0
+    } else {
+        let variance: f64 =
+            downside_returns.iter().map(|r| r.powi(2)).sum::<f64>() / downside_returns.len() as f64;
+        variance.sqrt()
+    };
+
+    if downside_deviation == 0.0 {
+        0.0
+    } else {
+        excess_return / downside_deviation
+    }
+}
+
+/// 最大ドローダウンを計算
+fn calculate_max_drawdown(cumulative_returns: &[f64]) -> f64 {
+    if cumulative_returns.is_empty() {
+        return 0.0;
+    }
+
+    let mut peak = cumulative_returns[0];
+    let mut max_drawdown = 0.0;
+
+    for &value in cumulative_returns.iter().skip(1) {
+        if value > peak {
+            peak = value;
+        }
+
+        let drawdown = (peak - value) / peak;
+        if drawdown > max_drawdown {
+            max_drawdown = drawdown;
+        }
+    }
+
+    max_drawdown
 }
 
 #[cfg(test)]
