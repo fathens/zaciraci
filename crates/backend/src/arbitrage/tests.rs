@@ -193,13 +193,6 @@ impl jsonrpc::ViewContract for MockClient {
                 });
                 serde_json::to_vec(&account_info)?
             }
-            "get_account_basic_info" => {
-                let account_info = json!({
-                    "near_amount": U128(100_000_000_000_000_000_000_000u128),
-                    "storage_used": near_sdk::json_types::U64(0),
-                });
-                serde_json::to_vec(&account_info)?
-            }
             _ => {
                 let balance = U128(0);
                 serde_json::to_vec(&balance)?

@@ -4,8 +4,6 @@ use crate::logging::*;
 use crate::ref_finance::token_account::TokenAccount;
 use crate::ref_finance::{CONTRACT_ADDRESS, deposit};
 use crate::wallet::Wallet;
-#[cfg(test)]
-use near_sdk::json_types::U64;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
@@ -35,38 +33,6 @@ pub async fn check_bounds<C: ViewContract>(client: &C) -> Result<StorageBalanceB
     let bounds: StorageBalanceBounds = serde_json::from_slice(&result.result)?;
     trace!(log, "bounds"; "min" => ?bounds.min, "max" => ?bounds.max);
     Ok(bounds)
-}
-
-#[cfg(test)]
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub struct AccountBaseInfo {
-    pub near_amount: U128,
-    pub storage_used: U64,
-}
-
-#[cfg(test)]
-pub async fn get_account_basic_info<C: ViewContract>(
-    client: &C,
-    account: &AccountId,
-) -> Result<Option<AccountBaseInfo>> {
-    let log = DEFAULT.new(o!(
-        "function" => "get_account_basic_info",
-        "account" => format!("{}", account),
-    ));
-    trace!(log, "entered");
-
-    const METHOD_NAME: &str = "get_account_basic_info";
-    let args = json!({
-        "account_id": account,
-    });
-
-    let result = client
-        .view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args)
-        .await?;
-
-    let basic_info: Option<AccountBaseInfo> = serde_json::from_slice(&result.result)?;
-    Ok(basic_info)
 }
 
 pub async fn deposit<C: SendTx, W: Wallet>(
@@ -403,7 +369,6 @@ mod tests {
         storage_balance: std::cell::RefCell<Option<StorageBalance>>,
         storage_bounds: StorageBalanceBounds,
         deposits: HashMap<TokenAccount, U128>,
-        account_basic_info: Option<AccountBaseInfo>,
         should_fail_deposit: Cell<bool>,
     }
 
@@ -418,7 +383,6 @@ mod tests {
                     max: None,
                 },
                 deposits: HashMap::new(),
-                account_basic_info: None,
                 should_fail_deposit: Cell::new(false),
             }
         }
@@ -431,18 +395,12 @@ mod tests {
                     max: None,
                 },
                 deposits: HashMap::new(),
-                account_basic_info: None,
                 should_fail_deposit: Cell::new(false),
             }
         }
 
         fn with_deposits(mut self, deposits: HashMap<TokenAccount, U128>) -> Self {
             self.deposits = deposits;
-            self
-        }
-
-        fn with_basic_info(mut self, info: AccountBaseInfo) -> Self {
-            self.account_basic_info = Some(info);
             self
         }
     }
@@ -461,7 +419,6 @@ mod tests {
                 "storage_balance_of" => serde_json::to_vec(&*self.storage_balance.borrow())?,
                 "storage_balance_bounds" => serde_json::to_vec(&self.storage_bounds)?,
                 "get_deposits" => serde_json::to_vec(&self.deposits)?,
-                "get_account_basic_info" => serde_json::to_vec(&self.account_basic_info)?,
                 _ => serde_json::to_vec(&serde_json::Value::Null)?,
             };
             Ok(CallResult {
@@ -544,25 +501,6 @@ mod tests {
         assert!(result.is_ok());
         let returned_balance = result.unwrap();
         assert!(returned_balance.is_none());
-    }
-
-    // Test: get_account_basic_info
-    #[tokio::test]
-    async fn test_get_account_basic_info() {
-        let info = AccountBaseInfo {
-            near_amount: U128(5_000_000_000_000_000_000_000_000),
-            storage_used: U64(1000),
-        };
-        let client = MockStorageClient::new_unregistered().with_basic_info(info);
-        let account: AccountId = "test.near".parse().unwrap();
-
-        let result = get_account_basic_info(&client, &account).await;
-        assert!(result.is_ok());
-        let returned_info = result.unwrap();
-        assert!(returned_info.is_some());
-        let i = returned_info.unwrap();
-        assert_eq!(i.near_amount.0, 5_000_000_000_000_000_000_000_000);
-        assert_eq!(i.storage_used.0, 1000);
     }
 
     // Test: storage_deposit
