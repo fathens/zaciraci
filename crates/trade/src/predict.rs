@@ -2,48 +2,14 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, TimeDelta, Utc};
-use common::algorithm::prediction::{
-    PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
-    TokenPredictionResult, TopTokenInfo,
-};
+use common::algorithm::prediction::{PredictionProvider, TopTokenInfo};
+use common::algorithm::types::{PredictedPrice, PriceHistory, PricePoint, TokenPredictionResult};
 use common::api::chronos::ChronosPredictor;
 use common::types::{TimeRange, TokenInAccount, TokenOutAccount, TokenPrice};
 use futures::stream::{self, StreamExt};
 use logging::*;
 use persistence::token_rate::TokenRate;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-/// トークンの価格履歴
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenPriceHistory {
-    pub token: TokenOutAccount,
-    pub quote_token: TokenInAccount,
-    pub prices: Vec<PricePoint>,
-}
-
-// 共通クレートのPricePointを使用
-use common::algorithm::types::PricePoint;
-
-/// 予測結果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenPrediction {
-    pub token: TokenOutAccount,
-    pub quote_token: TokenInAccount,
-    pub prediction_time: DateTime<Utc>,
-    pub predictions: Vec<PredictedPrice>,
-}
-
-/// 予測価格
-///
-/// Chronos ライブラリから返される予測値は price 形式（NEAR/token）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictedPrice {
-    pub timestamp: DateTime<Utc>,
-    /// 予測価格（NEAR/token）
-    pub price: TokenPrice,
-    pub confidence: Option<BigDecimal>,
-}
 
 /// 価格予測サービス
 pub struct PredictionService {
@@ -104,7 +70,7 @@ impl PredictionService {
         quote_token: &TokenInAccount,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-    ) -> Result<TokenPriceHistory> {
+    ) -> Result<PriceHistory> {
         // 直接データベースから価格履歴を取得
         let base_token: TokenOutAccount = token.clone();
         let quote_token_account: TokenInAccount = quote_token.clone();
@@ -143,7 +109,7 @@ impl PredictionService {
             })
             .collect();
 
-        Ok(TokenPriceHistory {
+        Ok(PriceHistory {
             token: token.clone(),
             quote_token: quote_token.clone(),
             prices: price_points,
@@ -153,9 +119,9 @@ impl PredictionService {
     /// 価格予測を実行
     pub async fn predict_price(
         &self,
-        history: &TokenPriceHistory,
+        history: &PriceHistory,
         prediction_horizon: usize,
-    ) -> Result<TokenPrediction> {
+    ) -> Result<TokenPredictionResult> {
         let log = DEFAULT.new(o!("function" => "predict_price"));
 
         // 履歴データを予測用フォーマットに変換（1回の collect で BTreeMap 構築）
@@ -198,7 +164,7 @@ impl PredictionService {
             last_data_timestamp,
         )?;
 
-        Ok(TokenPrediction {
+        Ok(TokenPredictionResult {
             token: history.token.clone(),
             quote_token: history.quote_token.clone(),
             prediction_time: Utc::now(),
@@ -213,7 +179,7 @@ impl PredictionService {
         quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
-    ) -> Result<HashMap<TokenOutAccount, TokenPrediction>> {
+    ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         let log = DEFAULT.new(o!("function" => "predict_multiple_tokens"));
 
         let end_date = Utc::now();
@@ -258,7 +224,7 @@ impl PredictionService {
                     // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
                     // フォールバックインデックスを事前計算（O(n)）して O(n²) → O(n) に改善
                     let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
-                    let history = TokenPriceHistory {
+                    let history = PriceHistory {
                         token: token.clone(),
                         quote_token: quote_token.clone(),
                         prices: rates
@@ -328,7 +294,7 @@ impl PredictionService {
         horizon: usize,
         last_data_timestamp: DateTime<Utc>,
     ) -> Result<Vec<PredictedPrice>> {
-        let predicted_prices: Vec<PredictedPrice> = chronos_response
+        let predicted_prices: Vec<_> = chronos_response
             .forecast
             .iter()
             .take(horizon)
@@ -417,10 +383,10 @@ impl PredictionService {
     /// 価格予測を実行（リトライ付き）
     async fn predict_price_with_retry(
         &self,
-        history: &TokenPriceHistory,
+        history: &PriceHistory,
         prediction_horizon: usize,
         log: &slog::Logger,
-    ) -> Result<TokenPrediction> {
+    ) -> Result<TokenPredictionResult> {
         let mut last_error = None;
 
         for attempt in 0..=self.max_retries {
@@ -452,6 +418,7 @@ impl PredictionService {
 }
 
 // PredictionProviderトレイトの実装
+// 型が common の型と同一になったため、直接委譲するだけ
 #[async_trait]
 impl PredictionProvider for PredictionService {
     async fn get_tokens_by_volatility(
@@ -470,48 +437,17 @@ impl PredictionProvider for PredictionService {
         quote_token: &TokenInAccount,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-    ) -> Result<CommonPriceHistory> {
-        // common と backend の TokenAccount は同一型なので直接使用可能
-        let history = self
-            .get_price_history(token, quote_token, start_date, end_date)
-            .await?;
-        Ok(CommonPriceHistory {
-            token: token.clone(),
-            quote_token: quote_token.clone(),
-            prices: history.prices,
-        })
+    ) -> Result<PriceHistory> {
+        self.get_price_history(token, quote_token, start_date, end_date)
+            .await
     }
 
     async fn predict_price(
         &self,
-        history: &CommonPriceHistory,
+        history: &PriceHistory,
         prediction_horizon: usize,
     ) -> Result<TokenPredictionResult> {
-        // common と backend の TokenAccount は同一型なので直接使用可能
-        let backend_history = TokenPriceHistory {
-            token: history.token.clone(),
-            quote_token: history.quote_token.clone(),
-            prices: history.prices.clone(),
-        };
-
-        let prediction = self
-            .predict_price(&backend_history, prediction_horizon)
-            .await?;
-
-        Ok(TokenPredictionResult {
-            token: history.token.clone(),
-            quote_token: history.quote_token.clone(),
-            prediction_time: prediction.prediction_time,
-            predictions: prediction
-                .predictions
-                .into_iter()
-                .map(|p| CommonPredictedPrice {
-                    timestamp: p.timestamp,
-                    price: p.price,
-                    confidence: p.confidence.clone(),
-                })
-                .collect(),
-        })
+        self.predict_price(history, prediction_horizon).await
     }
 
     async fn predict_multiple_tokens(
@@ -521,38 +457,8 @@ impl PredictionProvider for PredictionService {
         history_days: i64,
         prediction_horizon: usize,
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
-        // common と backend の TokenAccount は同一型なので直接使用可能
-        let predictions = self
-            .predict_multiple_tokens(
-                tokens.clone(),
-                quote_token,
-                history_days,
-                prediction_horizon,
-            )
-            .await?;
-
-        let mut result = HashMap::new();
-        for (token_key, prediction) in predictions {
-            result.insert(
-                token_key.clone(),
-                TokenPredictionResult {
-                    token: token_key,
-                    quote_token: quote_token.clone(),
-                    prediction_time: prediction.prediction_time,
-                    predictions: prediction
-                        .predictions
-                        .into_iter()
-                        .map(|p| CommonPredictedPrice {
-                            timestamp: p.timestamp,
-                            price: p.price,
-                            confidence: p.confidence.clone(),
-                        })
-                        .collect(),
-                },
-            );
-        }
-
-        Ok(result)
+        self.predict_multiple_tokens(tokens, quote_token, history_days, prediction_horizon)
+            .await
     }
 }
 

@@ -500,7 +500,7 @@ where
     // TokenData 用のデータを構築
     struct TokenProcessingData {
         token_out: TokenOutAccount,
-        prediction: Option<crate::predict::TokenPrediction>,
+        prediction: Option<common::algorithm::types::TokenPredictionResult>,
     }
 
     let processing_data: Vec<_> = token_out_list
@@ -526,24 +526,7 @@ where
                     .await;
 
                 let history = match history_result {
-                    Ok(hist) => {
-                        // backend の TokenPriceHistory → common の PriceHistory に変換
-                        let token_parsed = hist.token.to_string().parse().ok()?;
-                        let quote_parsed = hist.quote_token.to_string().parse().ok()?;
-                        common::algorithm::types::PriceHistory {
-                            token: token_parsed,
-                            quote_token: quote_parsed,
-                            prices: hist
-                                .prices
-                                .into_iter()
-                                .map(|p| common::algorithm::types::PricePoint {
-                                    timestamp: p.timestamp,
-                                    price: p.price,
-                                    volume: p.volume,
-                                })
-                                .collect(),
-                        }
-                    }
+                    Ok(hist) => hist,
                     Err(e) => {
                         error!(log, "failed to get price history for token"; "token" => %token_str, "error" => ?e);
                         return None;

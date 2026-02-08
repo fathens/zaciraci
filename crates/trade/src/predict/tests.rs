@@ -323,7 +323,7 @@ async fn test_empty_price_history() {
 
     let test_token: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
-    let history = TokenPriceHistory {
+    let history = PriceHistory {
         token: test_token,
         quote_token,
         prices: vec![],
@@ -344,7 +344,7 @@ async fn test_empty_price_history() {
 fn test_token_prediction_serialization_roundtrip() {
     let test_token: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
-    let prediction = TokenPrediction {
+    let prediction = TokenPredictionResult {
         token: test_token,
         quote_token,
         prediction_time: Utc::now(),
@@ -356,7 +356,7 @@ fn test_token_prediction_serialization_roundtrip() {
     };
 
     let json = serde_json::to_string(&prediction).expect("Should serialize successfully");
-    let deserialized: TokenPrediction =
+    let deserialized: TokenPredictionResult =
         serde_json::from_str(&json).expect("Should deserialize successfully");
 
     assert_eq!(deserialized.token.to_string(), prediction.token.to_string());
