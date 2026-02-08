@@ -187,7 +187,7 @@ where
     let swap_amount = swap_amount.unwrap_or(balance_yocto).min(balance_yocto);
 
     // プールデータを読み込み
-    let pools = blockchain::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
+    let pools = persistence::pool_info::read_from_db(None).await?;
     let graph = blockchain::ref_finance::path::graph::TokenGraph::new(pools);
 
     // パス検索用のトークンを準備

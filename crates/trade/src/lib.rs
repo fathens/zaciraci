@@ -178,7 +178,7 @@ fn get_initial_value() -> NearAmount {
 }
 
 async fn record_rates() -> Result<()> {
-    use blockchain::ref_finance::pool_info::TokenPairLike;
+    use dex::TokenPairLike;
     use persistence::token_rate::{SwapPath, SwapPoolInfo};
 
     let log = DEFAULT.new(o!("function" => "record_rates"));
@@ -194,8 +194,8 @@ async fn record_rates() -> Result<()> {
     let client = &jsonrpc::new_client();
 
     trace!(log, "loading pools");
-    let pools = ref_finance::pool_info::PoolInfoList::read_from_node(client).await?;
-    pools.write_to_db().await?;
+    let pools = ref_finance::pool_info::read_pools_from_node(client).await?;
+    persistence::pool_info::write_to_db(&pools).await?;
 
     trace!(log, "updating graph");
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));

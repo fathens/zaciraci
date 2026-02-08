@@ -5,7 +5,6 @@
 
 use logging::*;
 use once_cell::sync::Lazy;
-use persistence::connection_pool;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
@@ -13,41 +12,17 @@ use tokio::sync::RwLock;
 static TOKEN_DECIMALS_CACHE: Lazy<RwLock<HashMap<String, u8>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// DB クエリ結果用の構造体
-#[derive(Debug, Clone, diesel::QueryableByName)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
-struct TokenDecimalsRow {
-    #[diesel(sql_type = diesel::sql_types::Text)]
-    base_token: String,
-    #[diesel(sql_type = diesel::sql_types::SmallInt)]
-    decimals: i16,
-}
-
 /// 起動時に DB から全トークンの decimals を一括ロード (1 SQL クエリ)
 pub async fn load_from_db() -> crate::Result<()> {
     let log = DEFAULT.new(o!("function" => "token_cache::load_from_db"));
     trace!(log, "loading token decimals from DB");
 
-    let conn = connection_pool::get().await?;
+    let decimals_map = persistence::token_rate::get_all_decimals().await?;
 
-    let rows: Vec<TokenDecimalsRow> = conn
-        .interact(|conn| {
-            use diesel::RunQueryDsl;
-            diesel::sql_query(
-                "SELECT DISTINCT ON (base_token) base_token, decimals \
-                 FROM token_rates \
-                 WHERE decimals IS NOT NULL \
-                 ORDER BY base_token, timestamp DESC",
-            )
-            .load::<TokenDecimalsRow>(conn)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
-
-    let count = rows.len();
+    let count = decimals_map.len();
     let mut cache = TOKEN_DECIMALS_CACHE.write().await;
-    for row in rows {
-        cache.insert(row.base_token, row.decimals as u8);
+    for (token_id, decimals) in decimals_map {
+        cache.insert(token_id, decimals);
     }
 
     info!(log, "loaded token decimals from DB"; "count" => count);

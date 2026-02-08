@@ -1,12 +1,12 @@
 use super::*;
-use crate::ref_finance::token_account::TokenAccount;
+use common::types::TokenAccount;
+use dex::PoolInfoBared;
 use near_sdk::json_types::U128;
 use serial_test::serial;
 use std::str::FromStr;
 use std::sync::Arc;
 
-fn create_test_pool_info() -> RefPoolInfo {
-    // TokenAccountはタプル構造体なので、FromStrを使ってAccountIdから作成
+fn create_test_pool_info() -> PoolInfo {
     let token1 = TokenAccount::from_str("token1.near").unwrap();
     let token2 = TokenAccount::from_str("token2.near").unwrap();
 
@@ -19,7 +19,7 @@ fn create_test_pool_info() -> RefPoolInfo {
         amp: 100,
     };
 
-    RefPoolInfo::new(123, bare, chrono::Utc::now().naive_utc())
+    PoolInfo::new(123, bare, chrono::Utc::now().naive_utc())
 }
 
 #[tokio::test]
@@ -32,11 +32,11 @@ async fn test_pool_info_batch_insert() -> Result<()> {
     pool_info2.id = 125;
     pool_info2.bare.pool_kind = "WEIGHTED_SWAP".to_string();
 
-    RefPoolInfo::batch_insert(&[Arc::new(pool_info1), Arc::new(pool_info2)]).await?;
+    batch_insert(&[Arc::new(pool_info1), Arc::new(pool_info2)]).await?;
 
     // データベースから取得して値を確認
-    let retrieved1 = RefPoolInfo::get_latest(124).await?;
-    let retrieved2 = RefPoolInfo::get_latest(125).await?;
+    let retrieved1 = get_latest(124).await?;
+    let retrieved2 = get_latest(125).await?;
 
     assert!(retrieved1.is_some());
     assert!(retrieved2.is_some());
@@ -62,7 +62,7 @@ async fn test_pool_info_latest() -> Result<()> {
     pool_info.id = 126;
     pool_info.bare.pool_kind = "STABLE_SWAP".to_string();
 
-    let new_pool = pool_info.to_new_db()?;
+    let new_pool = to_new_db(&pool_info)?;
     let conn = connection_pool::get().await?;
     conn.interact(move |conn| {
         diesel::insert_into(pool_info::table)
@@ -79,7 +79,7 @@ async fn test_pool_info_latest() -> Result<()> {
     updated_pool_info.bare.pool_kind = "WEIGHTED_SWAP".to_string();
     updated_pool_info.timestamp = chrono::Utc::now().naive_utc();
 
-    let new_pool = updated_pool_info.to_new_db()?;
+    let new_pool = to_new_db(&updated_pool_info)?;
     let conn = connection_pool::get().await?;
     conn.interact(move |conn| {
         diesel::insert_into(pool_info::table)
@@ -90,7 +90,7 @@ async fn test_pool_info_latest() -> Result<()> {
     .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
     // 最新のデータを取得
-    let retrieved = RefPoolInfo::get_latest(126).await?;
+    let retrieved = get_latest(126).await?;
     assert!(retrieved.is_some());
 
     let retrieved = retrieved.unwrap();
@@ -109,14 +109,8 @@ async fn test_pool_info_get_latest_before() -> Result<()> {
 
     let conn = connection_pool::get().await?;
 
-    // 通常のトランザクションを開始
     match conn
-        .interact(|conn| {
-            conn.transaction(|conn| {
-                // データベーステーブルをクリーンアップ
-                diesel::delete(pool_info::table).execute(conn)
-            })
-        })
+        .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
         .await
     {
         Ok(Ok(_)) => {}
@@ -124,44 +118,36 @@ async fn test_pool_info_get_latest_before() -> Result<()> {
         Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
     };
 
-    // テストデータの作成
     let timestamp1 = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
     let timestamp2 = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S")?;
     let timestamp3 = NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S")?;
 
-    // プールIDを設定
     let pool_id_1: u32 = 1;
     let pool_id_2: u32 = 2;
 
-    // テストデータを作成
     let test_pool_info = create_test_pool_info();
 
-    // プールID 1 のデータを3つ作成（異なるタイムスタンプで）
     let mut pool_info1 = test_pool_info.clone();
-    pool_info1.id = pool_id_1; // プールID 1に設定
+    pool_info1.id = pool_id_1;
     pool_info1.timestamp = timestamp1;
 
     let mut pool_info2 = test_pool_info.clone();
-    pool_info2.id = pool_id_1; // プールID 1に設定
+    pool_info2.id = pool_id_1;
     pool_info2.timestamp = timestamp2;
 
     let mut pool_info3 = test_pool_info.clone();
-    pool_info3.id = pool_id_1; // プールID 1に設定
+    pool_info3.id = pool_id_1;
     pool_info3.timestamp = timestamp3;
 
-    // プールID 2 のデータを1つ作成
     let mut pool_info4 = test_pool_info.clone();
-    pool_info4.id = pool_id_2; // プールID 2に設定
+    pool_info4.id = pool_id_2;
     pool_info4.timestamp = timestamp2;
 
-    // データをデータベースに挿入
-    let new_db1 = pool_info1.to_new_db()?;
-    let new_db2 = pool_info2.to_new_db()?;
-    let new_db3 = pool_info3.to_new_db()?;
-    let new_db4 = pool_info4.to_new_db()?;
+    let new_db1 = to_new_db(&pool_info1)?;
+    let new_db2 = to_new_db(&pool_info2)?;
+    let new_db3 = to_new_db(&pool_info3)?;
+    let new_db4 = to_new_db(&pool_info4)?;
 
-    // データベースに挿入
-    // トランザクション内で実行（テスト内でのみ有効）
     match conn
         .interact(move |conn| {
             conn.transaction(|conn| {
@@ -177,8 +163,7 @@ async fn test_pool_info_get_latest_before() -> Result<()> {
         Err(e) => return Err(anyhow!("DB error: {}", e)),
     };
 
-    // テストケース1: プールID 1、timestamp2より前の最新データを取得（timestamp1が返されるはず）
-    let result1 = RefPoolInfo::get_latest_before(pool_id_1, timestamp2).await?;
+    let result1 = get_latest_before(pool_id_1, timestamp2).await?;
     assert!(
         result1.is_some(),
         "timestamp2より前のデータが見つかりませんでした"
@@ -189,8 +174,7 @@ async fn test_pool_info_get_latest_before() -> Result<()> {
         "timestamp1が返されるべきです"
     );
 
-    // テストケース2: プールID 1、timestamp3より前の最新データを取得（timestamp2が返されるはず）
-    let result2 = RefPoolInfo::get_latest_before(pool_id_1, timestamp3).await?;
+    let result2 = get_latest_before(pool_id_1, timestamp3).await?;
     assert!(
         result2.is_some(),
         "timestamp3より前のデータが見つかりませんでした"
@@ -201,15 +185,13 @@ async fn test_pool_info_get_latest_before() -> Result<()> {
         "timestamp2が返されるべきです"
     );
 
-    // テストケース3: プールID 1、timestamp1より前のデータを取得（存在しないのでNoneが返されるはず）
-    let result3 = RefPoolInfo::get_latest_before(pool_id_1, timestamp1).await?;
+    let result3 = get_latest_before(pool_id_1, timestamp1).await?;
     assert!(
         result3.is_none(),
         "timestamp1より前のデータが存在するべきではありません"
     );
 
-    // テストケース4: 存在しないプールIDでデータを取得（Noneが返されるはず）
-    let result4 = RefPoolInfo::get_latest_before(pool_id_2, timestamp2).await?;
+    let result4 = get_latest_before(pool_id_2, timestamp2).await?;
     assert!(
         result4.is_none(),
         "存在しないプールIDのデータが見つかりました"
@@ -225,10 +207,8 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
     use diesel::Connection;
     use diesel::prelude::*;
 
-    // データベース接続を取得
     let conn = connection_pool::get().await?;
 
-    // 通常のトランザクションを開始してテーブルをクリーンアップ
     match conn
         .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
         .await
@@ -238,48 +218,40 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
         Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
     };
 
-    // テストデータに使用するタイムスタンプを定義
     let timestamp1 = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
     let timestamp2 = NaiveDateTime::parse_from_str("2023-01-02 00:00:00", "%Y-%m-%d %H:%M:%S")?;
     let timestamp3 = NaiveDateTime::parse_from_str("2023-01-03 00:00:00", "%Y-%m-%d %H:%M:%S")?;
     let timestamp4 = NaiveDateTime::parse_from_str("2023-01-04 00:00:00", "%Y-%m-%d %H:%M:%S")?;
 
-    // プールIDを設定
     let pool_id_1: u32 = 1;
     let pool_id_2: u32 = 2;
     let pool_id_3: u32 = 3;
 
-    // テストデータのベースを作成
     let test_pool_info = create_test_pool_info();
 
-    // 異なるプールIDと異なるタイムスタンプでテストデータを作成
     let mut pool_infos = Vec::new();
 
-    // プールID 1のデータ (timestamp1, timestamp3)
     let mut pool_info1_1 = test_pool_info.clone();
     pool_info1_1.id = pool_id_1;
     pool_info1_1.timestamp = timestamp1;
-    pool_infos.push(pool_info1_1.to_new_db()?);
+    pool_infos.push(to_new_db(&pool_info1_1)?);
 
     let mut pool_info1_3 = test_pool_info.clone();
     pool_info1_3.id = pool_id_1;
     pool_info1_3.timestamp = timestamp3;
-    pool_infos.push(pool_info1_3.to_new_db()?);
+    pool_infos.push(to_new_db(&pool_info1_3)?);
 
-    // プールID 2のデータ (timestamp2)
     let mut pool_info2_2 = test_pool_info.clone();
     pool_info2_2.id = pool_id_2;
     pool_info2_2.timestamp = timestamp2;
-    pool_infos.push(pool_info2_2.to_new_db()?);
+    pool_infos.push(to_new_db(&pool_info2_2)?);
 
-    // プールID 3のデータ (timestamp4) - 指定期間外のデータ
     let mut pool_info3_4 = test_pool_info.clone();
     pool_info3_4.id = pool_id_3;
     pool_info3_4.timestamp = timestamp4;
-    pool_infos.push(pool_info3_4.to_new_db()?);
+    pool_infos.push(to_new_db(&pool_info3_4)?);
 
     pool_infos.reverse();
-    // データベースに挿入
     match conn
         .interact(move |conn| {
             conn.transaction(|conn| {
@@ -295,28 +267,24 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
         Err(e) => return Err(anyhow!("DB error: {}", e)),
     };
 
-    // テストケース1: timestamp1からtimestamp3までの期間のユニークなプール情報を取得
-    let results = RefPoolInfo::get_all_unique_between(TimeRange {
+    let results = get_all_unique_between(TimeRange {
         start: timestamp1,
         end: timestamp3,
     })
     .await?;
 
-    // プールID 1と2が含まれていることを確認
     assert_eq!(
         results,
         vec![pool_info1_3.clone(), pool_info2_2.clone()],
         "プールID 1と2が含まれていません"
     );
 
-    // 期間外のテストケース2: timestamp2からtimestamp4までの期間のユニークなプール情報を取得
-    let results2 = RefPoolInfo::get_all_unique_between(TimeRange {
+    let results2 = get_all_unique_between(TimeRange {
         start: timestamp2,
         end: timestamp4,
     })
     .await?;
 
-    // プールID 1, 2, 3の情報が取得されるはず（3件）
     assert_eq!(
         results2,
         vec![
@@ -327,8 +295,7 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
         "プールIDユニークなデータは3件あるはずです"
     );
 
-    // テストケース3: 範囲内にデータがない場合
-    let empty_results = RefPoolInfo::get_all_unique_between(TimeRange {
+    let empty_results = get_all_unique_between(TimeRange {
         start: NaiveDateTime::parse_from_str("2022-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
         end: NaiveDateTime::parse_from_str("2022-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap(),
     })
@@ -338,8 +305,7 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
         "データがない期間では空の配列が返されるべきです"
     );
 
-    // テストケース4: 1-2 の範囲のユニークなプール情報を取得
-    let results4 = RefPoolInfo::get_all_unique_between(TimeRange {
+    let results4 = get_all_unique_between(TimeRange {
         start: timestamp1,
         end: timestamp2,
     })
@@ -360,10 +326,8 @@ async fn test_cleanup_old_records() -> Result<()> {
     use diesel::Connection;
     use diesel::prelude::*;
 
-    // データベース接続を取得
     let conn = connection_pool::get().await?;
 
-    // テーブルをクリーンアップ
     match conn
         .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
         .await
@@ -373,7 +337,6 @@ async fn test_cleanup_old_records() -> Result<()> {
         Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
     };
 
-    // テストデータに使用するタイムスタンプを定義（1秒ごとに15個）
     let base_time = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
     let pool_id_1: u32 = 100;
     let pool_id_2: u32 = 200;
@@ -381,23 +344,20 @@ async fn test_cleanup_old_records() -> Result<()> {
     let test_pool_info = create_test_pool_info();
     let mut pool_infos = Vec::new();
 
-    // プールID 100 のデータを15個作成（timestamp が異なる）
     for i in 0..15 {
         let mut pool_info = test_pool_info.clone();
         pool_info.id = pool_id_1;
         pool_info.timestamp = base_time + chrono::Duration::seconds(i);
-        pool_infos.push(pool_info.to_new_db()?);
+        pool_infos.push(to_new_db(&pool_info)?);
     }
 
-    // プールID 200 のデータを5個作成
     for i in 0..5 {
         let mut pool_info = test_pool_info.clone();
         pool_info.id = pool_id_2;
         pool_info.timestamp = base_time + chrono::Duration::seconds(i);
-        pool_infos.push(pool_info.to_new_db()?);
+        pool_infos.push(to_new_db(&pool_info)?);
     }
 
-    // データベースに挿入
     match conn
         .interact(move |conn| {
             conn.transaction(|conn| {
@@ -413,10 +373,8 @@ async fn test_cleanup_old_records() -> Result<()> {
         Err(e) => return Err(anyhow!("DB error: {}", e)),
     };
 
-    // クリーンアップ実行（保持数10）
-    RefPoolInfo::cleanup_old_records(10).await?;
+    cleanup_old_records(10).await?;
 
-    // pool_id 100 のレコード数を確認（10件残っているはず）
     let conn = connection_pool::get().await?;
     let count_pool_1 = conn
         .interact(move |conn| {
@@ -434,7 +392,6 @@ async fn test_cleanup_old_records() -> Result<()> {
         "プールID 100 のレコード数は10件であるべきです"
     );
 
-    // pool_id 200 のレコード数を確認（5件のまま残っているはず）
     let conn = connection_pool::get().await?;
     let count_pool_2 = conn
         .interact(move |conn| {
@@ -452,7 +409,6 @@ async fn test_cleanup_old_records() -> Result<()> {
         "プールID 200 のレコード数は5件のままであるべきです"
     );
 
-    // pool_id 100 の最新のレコードのタイムスタンプを確認（timestamp14が最新であるべき）
     let conn = connection_pool::get().await?;
     let latest_timestamp = conn
         .interact(move |conn| {
@@ -471,7 +427,6 @@ async fn test_cleanup_old_records() -> Result<()> {
         "最新のタイムスタンプは14秒後であるべきです"
     );
 
-    // pool_id 100 の最古のレコードのタイムスタンプを確認（timestamp5が最古であるべき）
     let conn = connection_pool::get().await?;
     let oldest_timestamp = conn
         .interact(move |conn| {

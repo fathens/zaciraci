@@ -321,8 +321,7 @@ async fn select_top_volatility_tokens(
             debug!(log, "selected tokens from prediction service"; "count" => tokens.len());
 
             // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
-            let pools =
-                blockchain::ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
+            let pools = persistence::pool_info::read_from_db(None).await?;
             let graph = blockchain::ref_finance::path::graph::TokenGraph::new(pools);
             let wnear_token: blockchain::ref_finance::token_account::TokenInAccount =
                 blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();

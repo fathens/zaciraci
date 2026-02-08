@@ -687,5 +687,40 @@ impl TokenRate {
     }
 }
 
+/// DB クエリ結果用の構造体（get_all_decimals 用）
+#[derive(Debug, Clone, diesel::QueryableByName)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+struct TokenDecimalsRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    base_token: String,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    decimals: i16,
+}
+
+/// token_rates テーブルから全トークンの最新 decimals を一括取得
+pub async fn get_all_decimals() -> Result<HashMap<String, u8>> {
+    let conn = connection_pool::get().await?;
+
+    let rows: Vec<TokenDecimalsRow> = conn
+        .interact(|conn| {
+            use diesel::RunQueryDsl;
+            diesel::sql_query(
+                "SELECT DISTINCT ON (base_token) base_token, decimals \
+                 FROM token_rates \
+                 WHERE decimals IS NOT NULL \
+                 ORDER BY base_token, timestamp DESC",
+            )
+            .load::<TokenDecimalsRow>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let mut result = HashMap::with_capacity(rows.len());
+    for row in rows {
+        result.insert(row.base_token, row.decimals as u8);
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests;

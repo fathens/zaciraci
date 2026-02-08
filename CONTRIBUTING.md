@@ -179,6 +179,7 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 
 - **crates/backend**: バイナリオーケストレータ（main.rs のみ。各クレートを起動する）
 - **crates/common**: 共有される型、設定、ユーティリティ
+- **crates/dex**: DEX ドメイン型（PoolInfo、TokenPair、TokenPath 等）
 - **crates/logging**: slog 構造化ロギング
 - **crates/persistence**: DB接続・スキーマ・データアクセス（Diesel ORM / PostgreSQL）
 - **crates/blockchain**: NEAR ブロックチェーン連携（JSON-RPC、REF Finance、ウォレット）

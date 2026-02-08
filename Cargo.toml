@@ -4,6 +4,7 @@ members = [
     "crates/backend",
     "crates/blockchain",
     "crates/common",
+    "crates/dex",
     "crates/logging",
     "crates/persistence",
     "crates/trade",

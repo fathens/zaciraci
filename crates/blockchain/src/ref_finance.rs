@@ -4,11 +4,9 @@ pub mod errors;
 mod history;
 pub mod path;
 pub mod pool_info;
-pub mod pool_info_db;
 pub mod storage;
 pub mod swap;
 pub mod token_account;
-mod token_index;
 
 use logging::*;
 use near_sdk::AccountId;

@@ -1,0 +1,17 @@
+[package]
+name = "dex"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+logging = { path = "../logging" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+near-sdk = { version = "5.24", features = ["non-contract-usage"] }
+bigdecimal = { workspace = true }
+num-bigint = { workspace = true }
+slog = { workspace = true }

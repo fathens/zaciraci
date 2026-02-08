@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 common = { path = "../common" }
+dex = { path = "../dex" }
 logging = { path = "../logging" }
+persistence = { path = "../persistence" }
 blockchain = { path = "../blockchain" }
 anyhow = { workspace = true }
 tokio = { workspace = true }

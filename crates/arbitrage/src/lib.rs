@@ -3,13 +3,13 @@
 use blockchain::jsonrpc;
 use blockchain::jsonrpc::SentTx;
 use blockchain::ref_finance;
-use blockchain::ref_finance::errors::Error;
 use blockchain::ref_finance::path::preview::Preview;
-use blockchain::ref_finance::pool_info::TokenPath;
 use blockchain::ref_finance::token_account::WNEAR_TOKEN;
 use blockchain::types::MicroNear;
 use blockchain::wallet;
 use common::config;
+use dex::TokenPath;
+use dex::errors::Error;
 use logging::*;
 
 use anyhow::bail;
@@ -98,7 +98,7 @@ where
         "start.balance_in_micro" => ?start_balance,
     );
 
-    let pools = ref_finance::pool_info::PoolInfoList::read_from_db(None).await?;
+    let pools = persistence::pool_info::read_from_db(None).await?;
 
     let graph = ref_finance::path::graph::TokenGraph::new(pools);
     let gas_price = client.get_gas_price(None).await?;
