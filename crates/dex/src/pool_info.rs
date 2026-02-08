@@ -5,7 +5,6 @@ use anyhow::Result;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::NaiveDateTime;
 use common::types::TokenAccount;
-use logging::*;
 use near_sdk::json_types::U128;
 use num_bigint::Sign::NoSign;
 use serde::{Deserialize, Serialize};
@@ -110,21 +109,11 @@ impl PoolInfo {
         amount_in: u128,
         token_out: TokenOut,
     ) -> Result<u128> {
-        let log = DEFAULT.new(o!(
-            "function" => "estimate_return",
-            "pool_id" => self.id,
-            "amount_in" => amount_in,
-            "token_in" => token_in.as_usize(),
-            "token_out" => token_out.as_usize(),
-        ));
-        trace!(log, "start");
         if token_in.as_index() == token_out.as_index() {
             return Err(Error::SwapSameToken.into());
         }
         let in_balance = BigDecimal::from(self.amount(token_in.as_index())?);
-        trace!(log, "in_balance"; "value" => %in_balance);
         let out_balance = BigDecimal::from(self.amount(token_out.as_index())?);
-        trace!(log, "out_balance"; "value" => %out_balance);
         let amount_in = BigDecimal::from(amount_in);
         if in_balance.sign() <= NoSign || out_balance.sign() <= NoSign || amount_in.sign() <= NoSign
         {
@@ -133,7 +122,6 @@ impl PoolInfo {
         let amount_with_fee = amount_in * BigDecimal::from(FEE_DIVISOR - self.bare.total_fee);
         let result = &amount_with_fee * out_balance
             / (BigDecimal::from(FEE_DIVISOR) * in_balance + &amount_with_fee);
-        trace!(log, "finish"; "value" => %result);
         result.to_u128().ok_or_else(|| Error::Overflow.into())
     }
 }

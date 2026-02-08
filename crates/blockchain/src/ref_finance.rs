@@ -1,6 +1,5 @@
 pub mod balances;
 pub mod deposit;
-pub mod errors;
 mod history;
 pub mod path;
 pub mod pool_info;

@@ -1,6 +1,6 @@
 use super::*;
 use crate::ref_finance::path::edge::EdgeWeight;
-use crate::ref_finance::pool_info::{PoolInfo, PoolInfoList, TokenPairId, TokenPairLike};
+use dex::{PoolInfo, PoolInfoList, TokenPairId, TokenPairLike};
 use near_sdk::NearToken;
 use petgraph::Graph;
 use petgraph::algo::dijkstra;

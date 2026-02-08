@@ -1,7 +1,7 @@
 use crate::ref_finance::CONTRACT_ADDRESS;
-use crate::ref_finance::pool_info::{TokenPair, TokenPairLike};
 use crate::wallet::Wallet;
 use crate::{Result, jsonrpc};
+use dex::{TokenPair, TokenPairLike};
 use logging::*;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};

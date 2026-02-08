@@ -6,8 +6,7 @@ use logging::*;
 use serde_json::{from_slice, json};
 use std::sync::Arc;
 
-// Re-export types from dex for backward compatibility
-pub use dex::*;
+use dex::pool_info::{PoolInfo, PoolInfoBared, PoolInfoList};
 
 pub async fn read_pools_from_node<C: ViewContract>(client: &C) -> Result<Arc<PoolInfoList>> {
     let log = DEFAULT.new(o!("function" => "read_pools_from_node"));

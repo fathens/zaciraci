@@ -1,9 +1,9 @@
 use crate::Result;
 use crate::ref_finance;
 use crate::ref_finance::path::graph::TokenGraph;
-use crate::ref_finance::pool_info::{TokenPairLike, TokenPath};
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use crate::types::gas_price::GasPrice;
+use dex::{TokenPairLike, TokenPath};
 use near_gas::NearGas;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

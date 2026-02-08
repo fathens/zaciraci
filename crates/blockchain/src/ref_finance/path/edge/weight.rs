@@ -1,4 +1,4 @@
-use crate::ref_finance::pool_info::TokenPairId;
+use dex::TokenPairId;
 use num_traits::{one, zero};
 use std::cmp::Ordering;
 use std::ops::Add;

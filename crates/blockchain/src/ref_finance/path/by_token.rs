@@ -1,6 +1,6 @@
 use crate::ref_finance::path::edge;
-use crate::ref_finance::pool_info::PoolInfoList;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
+use dex::PoolInfoList;
 use logging::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

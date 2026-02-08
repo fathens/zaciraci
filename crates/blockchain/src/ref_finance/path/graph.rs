@@ -1,11 +1,10 @@
 use crate::Result;
-use crate::ref_finance::errors::Error;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
-use crate::ref_finance::pool_info::PoolInfoList;
-use crate::ref_finance::pool_info::TokenPath;
 use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
+use dex::errors::Error;
+use dex::{PoolInfoList, TokenPath};
 use logging::*;
 use petgraph::algo;
 use petgraph::graph::NodeIndex;

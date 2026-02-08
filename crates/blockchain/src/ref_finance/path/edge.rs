@@ -1,4 +1,4 @@
-use crate::ref_finance::pool_info::TokenPair;
+use dex::TokenPair;
 use logging::*;
 use std::sync::{Arc, Mutex};
 
