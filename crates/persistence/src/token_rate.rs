@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 /// token decimals を非同期取得するコールバック型
-pub type GetDecimalsFn = dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u8>> + Send + '_>>
+pub type GetDecimalsFn = dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<u8>> + Send + '_>>
     + Send
     + Sync;
 
