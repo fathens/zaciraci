@@ -76,3 +76,67 @@ impl From<TokenIndex> for TokenOut {
         TokenOut(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_index_from_usize() {
+        let idx = TokenIndex::from(5);
+        assert_eq!(idx.as_usize(), 5);
+        assert_eq!(idx.as_u8(), 5);
+    }
+
+    #[test]
+    fn test_token_index_display() {
+        let idx = TokenIndex::from(42);
+        assert_eq!(format!("{idx}"), "42");
+    }
+
+    #[test]
+    fn test_token_index_max() {
+        let a = TokenIndex::from(3);
+        let b = TokenIndex::from(7);
+        assert_eq!(a.max(b), b);
+        assert_eq!(b.max(a), b);
+        assert_eq!(a.max(a), a);
+    }
+
+    #[test]
+    fn test_token_index_ord() {
+        let a = TokenIndex::from(1);
+        let b = TokenIndex::from(2);
+        assert!(a < b);
+        assert!(b > a);
+        assert_eq!(a, TokenIndex::from(1));
+    }
+
+    #[test]
+    fn test_token_in_from_usize() {
+        let token_in = TokenIn::from(3);
+        assert_eq!(token_in.as_usize(), 3);
+        assert_eq!(token_in.as_index(), TokenIndex::from(3));
+    }
+
+    #[test]
+    fn test_token_in_from_token_index() {
+        let idx = TokenIndex::from(5);
+        let token_in = TokenIn::from(idx);
+        assert_eq!(token_in.as_index(), idx);
+    }
+
+    #[test]
+    fn test_token_out_from_usize() {
+        let token_out = TokenOut::from(2);
+        assert_eq!(token_out.as_usize(), 2);
+        assert_eq!(token_out.as_index(), TokenIndex::from(2));
+    }
+
+    #[test]
+    fn test_token_out_from_token_index() {
+        let idx = TokenIndex::from(7);
+        let token_out = TokenOut::from(idx);
+        assert_eq!(token_out.as_index(), idx);
+    }
+}

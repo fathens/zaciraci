@@ -121,3 +121,6 @@ impl TokenPath {
 }
 
 pub const FEE_DIVISOR: u32 = 10_000;
+
+#[cfg(test)]
+mod tests;

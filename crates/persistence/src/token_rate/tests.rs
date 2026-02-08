@@ -2552,3 +2552,39 @@ fn test_to_spot_rate_multihop_with_fallback() {
         "Multihop fallback should work: 1.1 * 1.02 = 1.122"
     );
 }
+
+#[tokio::test]
+#[serial]
+async fn test_get_all_decimals() -> Result<()> {
+    clean_table().await?;
+
+    let base_a: TokenOutAccount = TokenAccount::from_str("token_a.near")?.into();
+    let base_b: TokenOutAccount = TokenAccount::from_str("token_b.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+    let now = chrono::Utc::now().naive_utc();
+
+    // decimals=24 のレートを2トークン分挿入
+    let rates = vec![
+        make_token_rate(base_a.clone(), quote.clone(), 100, now),
+        make_token_rate(base_b.clone(), quote.clone(), 200, now),
+    ];
+    TokenRate::batch_insert(&rates).await?;
+
+    let decimals = super::get_all_decimals().await?;
+    assert_eq!(decimals.get("token_a.near"), Some(&24u8));
+    assert_eq!(decimals.get("token_b.near"), Some(&24u8));
+
+    clean_table().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_get_all_decimals_empty_table() -> Result<()> {
+    clean_table().await?;
+
+    let decimals = super::get_all_decimals().await?;
+    assert!(decimals.is_empty());
+
+    Ok(())
+}
