@@ -3836,7 +3836,6 @@ dependencies = [
  "chrono",
  "common 1.0.0",
  "cron",
- "deadpool-diesel",
  "diesel",
  "futures",
  "futures-util",

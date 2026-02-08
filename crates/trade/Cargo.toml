@@ -33,7 +33,6 @@ humantime = { workspace = true }
 reqwest = { workspace = true }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 diesel = { version = "2.2", features = ["postgres", "numeric", "chrono", "serde_json"] }
-deadpool-diesel = { version = "0.6", features = ["postgres"] }
 
 [dev-dependencies]
 assertables = "9.5"
