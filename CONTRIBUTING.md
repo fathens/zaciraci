@@ -58,16 +58,6 @@ src/
 **重要**: `println!` マクロの使用は禁止です。適切なログマクロを使用してください。
 - **例外**: テストコード（`#[cfg(test)]`モジュールや`tests.rs`ファイル）では、デバッグ出力として`println!`の使用を許可します。
 
-#### フロントエンド（frontend/）
-- `log` クレートを使用
-- インポート不要（グローバルに利用可能）
-- 使用例:
-  ```rust
-  log::debug!("デバッグ情報: {}", value);
-  log::info!("処理完了: データ正規化");
-  log::error!("エラー発生: {:?}", error);
-  ```
-
 #### バックエンド（backend/）
 - `slog` 構造化ログライブラリを使用
 - `use crate::logging::*;` でインポート
@@ -181,20 +171,19 @@ fn test_example() {
 
 ## プロジェクトアーキテクチャ
 
-Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRust製のフルスタックWebアプリケーションです。
+Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRust製のアプリケーションです。
 
 ### ワークスペース構成
-- **backend**: Axum ベースのREST APIサーバー（NEAR ブロックチェーン連携、裁定取引計算、データベース操作）
-- **frontend**: Dioxus ベースのWebAssemblyフロントエンド（取引インターフェース、プール可視化、AI予測）
-- **common**: バックエンドとフロントエンドで共有される型、設定、ユーティリティ
-- **../zcrc-chronos**: Chronos時系列予測APIサーバー（フロントエンドから予測リクエストを受信）
+
+すべてのクレートは `crates/` ディレクトリ配下に配置する。新しいクレートを追加する場合も `crates/<クレート名>/` に作成し、ルートの `Cargo.toml` の `workspace.members` に登録すること。
+
+- **crates/backend**: バックグラウンドタスクサーバー（NEAR ブロックチェーン連携、裁定取引計算、データベース操作）
+- **crates/common**: バックエンドと他クレートで共有される型、設定、ユーティリティ
 
 ### 主要コンポーネント
 - **裁定取引エンジン** (`backend/src/arbitrage.rs`, `backend/src/trade/`): 取引アルゴリズムとARIMA統計分析
 - **REF Finance連携** (`backend/src/ref_finance/`): NEAR DeFiプロトコル連携（プール分析、スワップ、残高管理）
 - **データベース層** (`backend/src/persistence/`): Diesel ORMを使用したPostgreSQL連携
-- **AI統合** (`backend/src/ollama/`, `frontend/src/ollama.rs`): ローカルLLMによる取引予測と分析
-- **Webインターフェース** (`backend/src/web/`, `frontend/src/`): REST APIとリアクティブWeb UI
 
 ## 開発環境セットアップ
 
@@ -209,8 +198,6 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 cd run_local
 ./run.sh
 
-# バックエンドは http://localhost:8080 で起動
-# フロントエンド開発は別途 trunk serve を使用
 ```
 
 ### 環境変数設定
@@ -218,7 +205,6 @@ cd run_local
 - `PG_DSN`: PostgreSQL接続文字列
 - `USE_MAINNET`: NEAR mainnet/testnet切り替え
 - `ROOT_MNEMONIC`, `ROOT_ACCOUNT_ID`: NEARウォレット設定
-- `OLLAMA_BASE_URL`, `OLLAMA_MODEL`: AIモデル設定
 - `RUST_LOG`: ログレベル設定
 
 ### データベース環境
@@ -244,22 +230,8 @@ cd run_test
 PG_DSN=postgres://postgres_test:postgres_test@localhost:5433/postgres_test cargo test -- --nocapture
 ```
 
-### フロントエンド開発
-フロントエンドはDioxusを使用したWebAssemblyアプリケーション:
-```bash
-cd frontend
-
-# 開発サーバー起動（ホットリロード有効）
-dx serve --package zaciraci-frontend --port 8088 --platform web
-
-# ビルド（リリース用）
-dx build --release
-```
-
-**注意**: このプロジェクトでは `dx` コマンドを使用します。`trunk` ではありません。
-
 ### データベースマイグレーション
 - データベーススキーマ変更にはDieselを使用
 - `diesel migration run` でマイグレーションを実行
 - `diesel migration generate <name>` で新しいマイグレーションを作成
-- スキーマは `src/persistence/schema.rs` で定義
+- スキーマは `crates/backend/src/persistence/schema.rs` で定義
