@@ -47,20 +47,33 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "approx"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f2a05fd1bd10b2527e20a2cd32d8873d115b8b39fe219ee25f42a8aca6ba278"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "arbitrage"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "assertables",
+ "blockchain",
+ "common 1.0.0",
+ "humantime",
+ "logging",
+ "mockito",
+ "near-crypto",
+ "near-primitives",
+ "near-sdk",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "slog",
+ "tokio",
 ]
 
 [[package]]
@@ -79,38 +92,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51d03449bb8ca2cc2ef70869af31463d1ae5ccc8fa3e334b307203fbf815207e"
 dependencies = [
  "rustversion",
-]
-
-[[package]]
-name = "argmin"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "523c0b5258fa1fb9072748b7306fb0db1625cf235ec6da4d05de2560ef56f882"
-dependencies = [
- "anyhow",
- "argmin-math",
- "instant",
- "num-traits",
- "paste",
- "rand 0.8.5",
- "rand_xoshiro",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "argmin-math"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8798ca7447753fcb3dd98d9095335b1564812a68c6e7c3d1926e1d5cf094e37"
-dependencies = [
- "anyhow",
- "cfg-if 1.0.4",
- "ndarray",
- "num-complex",
- "num-integer",
- "num-traits",
- "rand 0.8.5",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -190,7 +171,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_distr",
  "roots",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -203,7 +184,7 @@ dependencies = [
  "augurs-core",
  "distrs",
  "stlrs",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -217,55 +198,12 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 name = "backend"
 version = "1.0.0"
 dependencies = [
- "anyhow",
- "assertables",
- "async-once-cell",
- "async-trait",
- "base64 0.22.1",
- "bigdecimal",
- "bip39",
- "bs58 0.5.1",
- "chrono",
- "common 1.0.0",
- "cron",
- "deadpool-diesel",
- "diesel",
- "ed25519-dalek",
- "futures",
- "futures-util",
- "humantime",
- "linfa",
- "linfa-linear",
- "mockito",
- "ndarray",
- "near-crypto",
- "near-gas",
- "near-jsonrpc-client",
- "near-jsonrpc-primitives",
- "near-primitives",
- "near-sdk",
- "num-bigint 0.4.6",
- "num-integer",
- "num-rational 0.4.2",
- "num-traits",
- "once_cell",
- "petgraph",
- "proptest",
- "rand 0.9.2",
- "rayon",
- "reqwest",
- "serde",
- "serde_json",
- "serial_test",
- "slipped10",
+ "arbitrage",
+ "blockchain",
+ "logging",
  "slog",
- "slog-async",
- "slog-envlogger",
- "slog-json",
- "slog-term",
- "thiserror 2.0.18",
  "tokio",
- "uuid",
+ "trade",
 ]
 
 [[package]]
@@ -374,6 +312,54 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "blockchain"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "assertables",
+ "async-once-cell",
+ "async-trait",
+ "base64 0.22.1",
+ "bigdecimal",
+ "bip39",
+ "bs58 0.5.1",
+ "chrono",
+ "common 1.0.0",
+ "deadpool-diesel",
+ "diesel",
+ "ed25519-dalek",
+ "futures",
+ "futures-util",
+ "humantime",
+ "logging",
+ "mockito",
+ "near-crypto",
+ "near-gas",
+ "near-jsonrpc-client",
+ "near-jsonrpc-primitives",
+ "near-primitives",
+ "near-sdk",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-rational 0.4.2",
+ "num-traits",
+ "once_cell",
+ "persistence",
+ "petgraph",
+ "proptest",
+ "rand 0.9.2",
+ "rayon",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "slipped10",
+ "slog",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -511,7 +497,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -532,7 +518,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "toml",
 ]
@@ -1572,15 +1558,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "instant"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
-dependencies = [
- "cfg-if 1.0.4",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1685,46 +1662,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
-name = "linfa"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56f9097edc7c89d03d526efbacf6d90914e3a8fa53bd56c2d1489e3a90819370"
-dependencies = [
- "approx 0.4.0",
- "ndarray",
- "num-traits",
- "rand 0.8.5",
- "sprs",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "linfa-linalg"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56e7562b41c8876d3367897067013bb2884cc78e6893f092ecd26b305176ac82"
-dependencies = [
- "ndarray",
- "num-traits",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "linfa-linear"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7be4e4dbd8c0bb7522438e3660a6f1c730b7093e61836573d0729b7dae3a7c9b"
-dependencies = [
- "argmin",
- "argmin-math",
- "linfa",
- "linfa-linalg",
- "ndarray",
- "num-traits",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1751,6 +1688,19 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "logging"
+version = "1.0.0"
+dependencies = [
+ "common 1.0.0",
+ "once_cell",
+ "slog",
+ "slog-async",
+ "slog-envlogger",
+ "slog-json",
+ "slog-term",
+]
 
 [[package]]
 name = "lstsq"
@@ -1835,7 +1785,7 @@ dependencies = [
  "common 0.1.5",
  "rayon",
  "scaler",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -1845,7 +1795,7 @@ version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26aecdf64b707efd1310e3544d709c5c0ac61c13756046aaaba41be5c4f66a3b"
 dependencies = [
- "approx 0.5.1",
+ "approx",
  "matrixmultiply",
  "nalgebra-macros",
  "num-complex",
@@ -1891,7 +1841,6 @@ version = "0.15.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb12d4e967ec485a5f71c6311fe28158e9d6f4bc4a447b474184d0f91a8fa32"
 dependencies = [
- "approx 0.4.0",
  "matrixmultiply",
  "num-complex",
  "num-integer",
@@ -1943,7 +1892,7 @@ checksum = "1765fbfda84d4618fc0bd6763639d1b33073580c22eb4b59aa23995da087b686"
 dependencies = [
  "anyhow",
  "json_comments",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -1970,7 +1919,7 @@ dependencies = [
  "serde",
  "serde_json",
  "subtle",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2008,7 +1957,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2025,7 +1974,7 @@ dependencies = [
  "near-time",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "time",
 ]
 
@@ -2045,7 +1994,7 @@ dependencies = [
  "serde_repr",
  "serde_yaml",
  "strum 0.24.1",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2085,7 +2034,7 @@ dependencies = [
  "smallvec",
  "smart-default",
  "strum 0.24.1",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
  "zstd",
 ]
@@ -2111,7 +2060,7 @@ dependencies = [
  "serde_repr",
  "serde_with",
  "sha2 0.10.9",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2411,6 +2360,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "persistence"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "bigdecimal",
+ "chrono",
+ "common 1.0.0",
+ "deadpool-diesel",
+ "diesel",
+ "futures",
+ "logging",
+ "num-traits",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "slog",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "petgraph"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2487,7 +2458,7 @@ dependencies = [
  "selector",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
  "trainer",
 ]
@@ -2653,15 +2624,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
 dependencies = [
  "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_xoshiro"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f97cdb2a36ed4183de61b2f824cc45c9f1037f28afe0a322e9fff4c108b5aaa"
-dependencies = [
- "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -3239,7 +3201,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c99284beb21666094ba2b75bbceda012e610f5479dfcc2d6e2426f53197ffd95"
 dependencies = [
- "approx 0.5.1",
+ "approx",
  "num-complex",
  "num-traits",
  "paste",
@@ -3384,18 +3346,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sprs"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88bab60b0a18fb9b3e0c26e92796b3c3a278bf5fa4880f5ad5cc3bdfb843d0b1"
-dependencies = [
- "ndarray",
- "num-complex",
- "num-traits",
- "smallvec",
-]
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3413,7 +3363,7 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a3fe7c28c6512e766b0874335db33c94ad7b8f9054228ae1c2abd47ce7d335e"
 dependencies = [
- "approx 0.5.1",
+ "approx",
  "nalgebra",
  "num-traits",
  "rand 0.8.5",
@@ -3583,31 +3533,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.18",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -3895,6 +3825,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "trade"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "assertables",
+ "async-trait",
+ "bigdecimal",
+ "blockchain",
+ "chrono",
+ "common 1.0.0",
+ "cron",
+ "deadpool-diesel",
+ "diesel",
+ "futures",
+ "futures-util",
+ "humantime",
+ "logging",
+ "mockito",
+ "near-crypto",
+ "near-primitives",
+ "near-sdk",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-rational 0.4.2",
+ "num-traits",
+ "once_cell",
+ "persistence",
+ "proptest",
+ "rand 0.9.2",
+ "rayon",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "slog",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "trainer"
 version = "0.1.5"
 source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
@@ -3904,7 +3874,7 @@ dependencies = [
  "models",
  "rayon",
  "selector",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 

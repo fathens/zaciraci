@@ -1,0 +1,13 @@
+[package]
+name = "logging"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+once_cell = { workspace = true }
+slog = { workspace = true }
+slog-async = { workspace = true }
+slog-term = { workspace = true }
+slog-json = { workspace = true }
+slog-envlogger = { workspace = true }

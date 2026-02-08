@@ -1,7 +1,12 @@
 [workspace]
 members = [
+    "crates/arbitrage",
     "crates/backend",
+    "crates/blockchain",
     "crates/common",
+    "crates/logging",
+    "crates/persistence",
+    "crates/trade",
 ]
 resolver = "3"
 
