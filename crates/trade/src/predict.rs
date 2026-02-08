@@ -8,12 +8,12 @@ use common::algorithm::prediction::{
     TokenPredictionResult, TopTokenInfo,
 };
 use common::api::chronos::ChronosPredictor;
+use common::types::TimeRange;
 use common::types::{
     TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount, TokenPrice,
 };
 use futures::stream::{self, StreamExt};
 use logging::*;
-use persistence::TimeRange;
 use persistence::token_rate::TokenRate;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -7,6 +7,7 @@ use anyhow::anyhow;
 use bigdecimal::BigDecimal;
 use chrono::{NaiveDateTime, SubsecRound};
 use common::types::ExchangeRate;
+use common::types::TimeRange;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use diesel::RunQueryDsl;
 use serial_test::serial;
@@ -143,7 +144,7 @@ async fn test_token_rate_single_insert() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_token_rate_batch_insert_history() -> Result<()> {
-    use crate::TimeRange;
+    use common::types::TimeRange;
 
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -232,7 +233,7 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_token_rate_different_pairs() -> Result<()> {
-    use crate::TimeRange;
+    use common::types::TimeRange;
 
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -356,7 +357,7 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     TokenRate::batch_insert(&rates).await?;
 
     // 5. 時間範囲を設定
-    let time_range = crate::TimeRange {
+    let time_range = TimeRange {
         start: two_hours_ago - chrono::Duration::minutes(5), // 少し余裕を持たせる
         end: now + chrono::Duration::minutes(5),             // 少し余裕を持たせる
     };
@@ -514,7 +515,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     let just_after_range = now - chrono::Duration::seconds(1); // 範囲終了直前
 
     // 3. 時間範囲を設定
-    let time_range = crate::TimeRange {
+    let time_range = TimeRange {
         start: two_hours_ago,
         end: now,
     };
@@ -798,7 +799,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
     let two_hours_ago = now - chrono::Duration::hours(2);
 
     // 3. 時間範囲を設定
-    let time_range = crate::TimeRange {
+    let time_range = TimeRange {
         start: two_hours_ago,
         end: now,
     };
@@ -904,7 +905,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_cleanup_old_records() -> Result<()> {
-    use crate::TimeRange;
+    use common::types::TimeRange;
 
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -1097,7 +1098,7 @@ async fn test_cleanup_old_records() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_get_rates_for_multiple_tokens() -> Result<()> {
-    use crate::TimeRange;
+    use common::types::TimeRange;
 
     clean_table().await?;
 
@@ -1154,7 +1155,7 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
-    use crate::TimeRange;
+    use common::types::TimeRange;
 
     clean_table().await?;
 
@@ -1187,7 +1188,7 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
-    use crate::TimeRange;
+    use common::types::TimeRange;
 
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
     let now = chrono::Utc::now().naive_utc();

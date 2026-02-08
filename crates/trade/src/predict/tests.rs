@@ -826,7 +826,7 @@ async fn test_prediction_concurrency_config() {
 #[tokio::test]
 #[serial]
 async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
-    use persistence::TimeRange;
+    use common::types::TimeRange;
     use persistence::token_rate::TokenRate;
 
     clean_test_tokens().await?;

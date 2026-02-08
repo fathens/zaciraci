@@ -1,11 +1,11 @@
 use crate::Result;
-use crate::TimeRange;
 use crate::connection_pool;
 use crate::schema::token_rates;
 use anyhow::anyhow;
 use bigdecimal::{BigDecimal, Zero};
 use chrono::NaiveDateTime;
 use common::config;
+use common::types::TimeRange;
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount};
 use diesel::prelude::*;
 use futures::stream::{self, StreamExt};
