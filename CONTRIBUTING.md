@@ -171,7 +171,7 @@ fn test_example() {
 
 ## プロジェクトアーキテクチャ
 
-Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRust製のフルスタックWebアプリケーションです。
+Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRust製のアプリケーションです。
 
 ### ワークスペース構成
 
@@ -184,7 +184,6 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 - **裁定取引エンジン** (`backend/src/arbitrage.rs`, `backend/src/trade/`): 取引アルゴリズムとARIMA統計分析
 - **REF Finance連携** (`backend/src/ref_finance/`): NEAR DeFiプロトコル連携（プール分析、スワップ、残高管理）
 - **データベース層** (`backend/src/persistence/`): Diesel ORMを使用したPostgreSQL連携
-- **Webインターフェース** (`backend/src/web/`, `frontend/src/`): REST APIとリアクティブWeb UI
 
 ## 開発環境セットアップ
 
@@ -199,8 +198,6 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 cd run_local
 ./run.sh
 
-# バックエンドは http://localhost:8080 で起動
-# フロントエンド開発は別途 trunk serve を使用
 ```
 
 ### 環境変数設定
@@ -232,20 +229,6 @@ cd run_test
 # テスト用データベースでテスト実行
 PG_DSN=postgres://postgres_test:postgres_test@localhost:5433/postgres_test cargo test -- --nocapture
 ```
-
-### フロントエンド開発
-フロントエンドはDioxusを使用したWebAssemblyアプリケーション:
-```bash
-cd frontend
-
-# 開発サーバー起動（ホットリロード有効）
-dx serve --package zaciraci-frontend --port 8088 --platform web
-
-# ビルド（リリース用）
-dx build --release
-```
-
-**注意**: このプロジェクトでは `dx` コマンドを使用します。`trunk` ではありません。
 
 ### データベースマイグレーション
 - データベーススキーマ変更にはDieselを使用
