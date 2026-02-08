@@ -19,7 +19,7 @@ pub enum Error {
     OutOfIndexOfTokens(TokenIndex),
     #[error("Different length of tokens: {0} and {1}")]
     DifferentLengthOfTokens(usize, usize),
-    #[error("Unmatched token path: (0) and (1)")]
+    #[error("Unmatched token path: {0:?} and {1:?}")]
     UnmatchedTokenPath(
         (TokenInAccount, TokenOutAccount),
         (TokenInAccount, TokenOutAccount),
