@@ -177,13 +177,19 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 
 すべてのクレートは `crates/` ディレクトリ配下に配置する。新しいクレートを追加する場合も `crates/<クレート名>/` に作成し、ルートの `Cargo.toml` の `workspace.members` に登録すること。
 
-- **crates/backend**: バックグラウンドタスクサーバー（NEAR ブロックチェーン連携、裁定取引計算、データベース操作）
-- **crates/common**: バックエンドと他クレートで共有される型、設定、ユーティリティ
+- **crates/backend**: バイナリオーケストレータ（main.rs のみ。各クレートを起動する）
+- **crates/common**: 共有される型、設定、ユーティリティ
+- **crates/logging**: slog 構造化ロギング
+- **crates/persistence**: DB接続・スキーマ・データアクセス（Diesel ORM / PostgreSQL）
+- **crates/blockchain**: NEAR ブロックチェーン連携（JSON-RPC、REF Finance、ウォレット）
+- **crates/trade**: ポートフォリオベース自動取引エンジン
+- **crates/arbitrage**: 裁定取引エンジン
 
 ### 主要コンポーネント
-- **裁定取引エンジン** (`backend/src/arbitrage.rs`, `backend/src/trade/`): 取引アルゴリズムとARIMA統計分析
-- **REF Finance連携** (`backend/src/ref_finance/`): NEAR DeFiプロトコル連携（プール分析、スワップ、残高管理）
-- **データベース層** (`backend/src/persistence/`): Diesel ORMを使用したPostgreSQL連携
+- **裁定取引エンジン** (`crates/arbitrage/`): 裁定取引アルゴリズム
+- **取引エンジン** (`crates/trade/`): ポートフォリオ戦略、ARIMA統計分析、予測精度評価
+- **REF Finance連携** (`crates/blockchain/src/ref_finance/`): NEAR DeFiプロトコル連携（プール分析、スワップ、残高管理）
+- **データベース層** (`crates/persistence/`): Diesel ORMを使用したPostgreSQL連携
 
 ## 開発環境セットアップ
 
