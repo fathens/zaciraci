@@ -27,7 +27,7 @@ pub struct TokenPriceHistory {
 }
 
 // 共通クレートのPricePointを使用
-pub use common::algorithm::types::PricePoint;
+use common::algorithm::types::PricePoint;
 
 /// 予測結果
 #[derive(Debug, Clone, Serialize, Deserialize)]

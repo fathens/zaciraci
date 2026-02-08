@@ -1,5 +1,5 @@
 use crate::Result;
-pub use deadpool_diesel::postgres::Pool;
+use deadpool_diesel::postgres::Pool;
 use deadpool_diesel::{Manager, ManagerConfig, RecyclingMethod};
 use once_cell::sync::Lazy;
 
