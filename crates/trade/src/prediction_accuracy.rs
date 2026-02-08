@@ -1,10 +1,10 @@
 use crate::Result;
 use bigdecimal::BigDecimal;
-use blockchain::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use chrono::{NaiveDateTime, Utc};
 use common::config;
 use common::types::TimeRange;
 use common::types::TokenPrice;
+use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use logging::*;
 use num_traits::Zero;
 use persistence::prediction_record::{NewPredictionRecord, PredictionRecord};

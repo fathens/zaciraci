@@ -28,7 +28,7 @@ where
     let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
 
     for token in tokens {
-        let token_account: blockchain::ref_finance::token_account::TokenAccount = token
+        let token_account: common::types::TokenAccount = token
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
 
@@ -83,7 +83,7 @@ where
             total_value = total_value + value;
         } else {
             // 他のトークンの場合は、wrap.nearとの交換レートを使用して価値を計算
-            use blockchain::ref_finance::token_account::TokenOutAccount;
+            use common::types::TokenOutAccount;
             use near_sdk::AccountId;
             use persistence::token_rate::TokenRate;
 
@@ -130,8 +130,8 @@ where
 pub async fn execute_direct_swap<C, W>(
     client: &C,
     wallet: &W,
-    from_token: &blockchain::ref_finance::token_account::TokenInAccount,
-    to_token: &blockchain::ref_finance::token_account::TokenOutAccount,
+    from_token: &common::types::TokenInAccount,
+    to_token: &common::types::TokenOutAccount,
     swap_amount: Option<u128>,
     recorder: &TradeRecorder,
 ) -> Result<()>
@@ -151,10 +151,8 @@ where
     debug!(log, "starting direct swap");
 
     // 型安全な TokenAccount に変換
-    let from_token_account: blockchain::ref_finance::token_account::TokenAccount =
-        from_token.inner().clone();
-    let to_token_account: blockchain::ref_finance::token_account::TokenAccount =
-        to_token.inner().clone();
+    let from_token_account: common::types::TokenAccount = from_token.inner().clone();
+    let to_token_account: common::types::TokenAccount = to_token.inner().clone();
 
     // from_tokenの残高を取得
     // wrap.nearの場合のみ balances::start を使用（refill/harvest処理が必要な場合があるため）
@@ -191,10 +189,8 @@ where
     let graph = blockchain::ref_finance::path::graph::TokenGraph::new(pools);
 
     // パス検索用のトークンを準備
-    let start: blockchain::ref_finance::token_account::TokenInAccount =
-        from_token_account.clone().into();
-    let goal: blockchain::ref_finance::token_account::TokenOutAccount =
-        to_token_account.clone().into();
+    let start: common::types::TokenInAccount = from_token_account.clone().into();
+    let goal: common::types::TokenOutAccount = to_token_account.clone().into();
 
     // from_tokenを起点としてグラフを更新（流動性のあるトークンのみ含める）
     graph

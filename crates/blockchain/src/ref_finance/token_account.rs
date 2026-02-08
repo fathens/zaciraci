@@ -1,8 +1,6 @@
 use crate::jsonrpc::IS_MAINNET;
+use common::types::TokenAccount;
 use once_cell::sync::Lazy;
-
-// common クレートから TokenAccount 型を re-export
-pub use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 
 pub static WNEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
     let id = if *IS_MAINNET {
@@ -19,7 +17,7 @@ pub static NEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| "near".parse().unwrap()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::types::AccountId;
+    use common::types::{AccountId, TokenInAccount, TokenOutAccount};
     use std::str::FromStr;
 
     #[test]

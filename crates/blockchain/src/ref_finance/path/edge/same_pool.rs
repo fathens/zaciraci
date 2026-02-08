@@ -1,6 +1,7 @@
 use super::*;
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
+use common::types::TokenAccount;
+use common::types::{TokenInAccount, TokenOutAccount};
 use dex::{PoolInfo, TokenIn, TokenIndex, TokenOut};
 use std::collections::HashMap;
 

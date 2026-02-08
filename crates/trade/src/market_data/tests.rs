@@ -1,7 +1,5 @@
 use super::*;
-use common::types::{
-    TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount,
-};
+use common::types::{TokenInAccount, TokenOutAccount};
 use std::str::FromStr;
 
 fn price_from_int(v: i64) -> TokenPrice {
@@ -15,8 +13,8 @@ fn test_calculate_liquidity_score() {
 
     // ケース1: 取引量データなし
     let history_no_volume = PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -35,8 +33,8 @@ fn test_calculate_liquidity_score() {
 
     // ケース2: 小さい取引量
     let history_small_volume = PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -59,8 +57,8 @@ fn test_calculate_liquidity_score() {
 
     // ケース3: 大きい取引量
     let history_large_volume = PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -206,8 +204,8 @@ async fn test_calculate_enhanced_liquidity_score() {
 
     // テスト用の取引履歴（中程度の取引量）
     let history = common::algorithm::types::PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![common::algorithm::types::PricePoint {
             timestamp: chrono::Utc::now(),
             price: price_from_int(100),
@@ -314,8 +312,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース1: データポイントが不足
     let history_insufficient = PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![PricePoint {
             timestamp: Utc::now(),
             price: price_from_int(100),
@@ -327,8 +325,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース2: 価格変動なし
     let history_no_change = PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -356,8 +354,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース3: 価格変動あり
     let history_with_change = PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),
@@ -384,8 +382,8 @@ fn test_calculate_volatility_from_history() {
 
     // ケース4: ゼロ価格を含む（スキップされるべき）
     let history_with_zero = PriceHistory {
-        token: "test.token".parse::<CommonTokenOutAccount>().unwrap(),
-        quote_token: "wrap.near".parse::<CommonTokenInAccount>().unwrap(),
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
         prices: vec![
             PricePoint {
                 timestamp: Utc::now(),

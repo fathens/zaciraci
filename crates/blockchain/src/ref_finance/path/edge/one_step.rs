@@ -1,5 +1,5 @@
 use super::*;
-use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
+use common::types::{TokenInAccount, TokenOutAccount};
 use dex::TokenPairLike;
 use dex::errors::Error;
 use std::cmp::Ordering;

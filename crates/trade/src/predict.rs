@@ -1,17 +1,13 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
-use blockchain::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use chrono::{DateTime, Duration, TimeDelta, Utc};
 use common::algorithm::prediction::{
     PredictedPrice as CommonPredictedPrice, PredictionProvider, PriceHistory as CommonPriceHistory,
     TokenPredictionResult, TopTokenInfo,
 };
 use common::api::chronos::ChronosPredictor;
-use common::types::TimeRange;
-use common::types::{
-    TokenInAccount as CommonTokenInAccount, TokenOutAccount as CommonTokenOutAccount, TokenPrice,
-};
+use common::types::{TimeRange, TokenInAccount, TokenOutAccount, TokenPrice};
 use futures::stream::{self, StreamExt};
 use logging::*;
 use persistence::token_rate::TokenRate;
@@ -462,7 +458,7 @@ impl PredictionProvider for PredictionService {
         &self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        quote_token: &CommonTokenInAccount,
+        quote_token: &TokenInAccount,
     ) -> Result<Vec<TopTokenInfo>> {
         self.get_tokens_by_volatility(start_date, end_date, quote_token)
             .await
@@ -470,8 +466,8 @@ impl PredictionProvider for PredictionService {
 
     async fn get_price_history(
         &self,
-        token: &CommonTokenOutAccount,
-        quote_token: &CommonTokenInAccount,
+        token: &TokenOutAccount,
+        quote_token: &TokenInAccount,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
     ) -> Result<CommonPriceHistory> {
@@ -520,11 +516,11 @@ impl PredictionProvider for PredictionService {
 
     async fn predict_multiple_tokens(
         &self,
-        tokens: Vec<CommonTokenOutAccount>,
-        quote_token: &CommonTokenInAccount,
+        tokens: Vec<TokenOutAccount>,
+        quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
-    ) -> Result<HashMap<CommonTokenOutAccount, TokenPredictionResult>> {
+    ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         // common と backend の TokenAccount は同一型なので直接使用可能
         let predictions = self
             .predict_multiple_tokens(

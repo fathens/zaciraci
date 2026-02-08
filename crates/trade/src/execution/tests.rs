@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_filter_tokens_to_liquidate_excludes_wrap_near() {
-    use blockchain::ref_finance::token_account::TokenAccount;
+    use common::types::TokenAccount;
     use near_sdk::json_types::U128;
     use std::collections::HashMap;
 
@@ -22,7 +22,7 @@ fn test_filter_tokens_to_liquidate_excludes_wrap_near() {
 
 #[test]
 fn test_filter_tokens_to_liquidate_excludes_zero_balance() {
-    use blockchain::ref_finance::token_account::TokenAccount;
+    use common::types::TokenAccount;
     use near_sdk::json_types::U128;
     use std::collections::HashMap;
 
@@ -43,7 +43,7 @@ fn test_filter_tokens_to_liquidate_excludes_zero_balance() {
 
 #[test]
 fn test_filter_tokens_to_liquidate_includes_tokens_with_balance() {
-    use blockchain::ref_finance::token_account::TokenAccount;
+    use common::types::TokenAccount;
     use near_sdk::json_types::U128;
     use std::collections::HashMap;
 
@@ -69,7 +69,7 @@ fn test_filter_tokens_to_liquidate_includes_tokens_with_balance() {
 
 #[test]
 fn test_filter_tokens_to_liquidate_empty_deposits() {
-    use blockchain::ref_finance::token_account::TokenAccount;
+    use common::types::TokenAccount;
     use std::collections::HashMap;
 
     let wrap_near: TokenAccount = "wrap.near".parse().unwrap();
@@ -82,7 +82,7 @@ fn test_filter_tokens_to_liquidate_empty_deposits() {
 
 #[test]
 fn test_filter_tokens_to_liquidate_only_wrap_near() {
-    use blockchain::ref_finance::token_account::TokenAccount;
+    use common::types::TokenAccount;
     use near_sdk::json_types::U128;
     use std::collections::HashMap;
 

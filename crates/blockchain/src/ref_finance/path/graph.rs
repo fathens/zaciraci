@@ -1,8 +1,9 @@
 use crate::Result;
 use crate::ref_finance::path::by_token::PoolsByToken;
 use crate::ref_finance::path::edge::EdgeWeight;
-use crate::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use anyhow::anyhow;
+use common::types::TokenAccount;
+use common::types::{TokenInAccount, TokenOutAccount};
 use dex::errors::Error;
 use dex::{PoolInfoList, TokenPath};
 use logging::*;

@@ -4,7 +4,7 @@ use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::SentTx;
 use blockchain::wallet::Wallet;
 use common::config;
-use common::types::{NearAmount, YoctoAmount, YoctoValue};
+use common::types::{NearAmount, TokenInAccount, TokenOutAccount, YoctoAmount, YoctoValue};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
 use once_cell::sync::Lazy;
@@ -301,8 +301,8 @@ async fn execute_harvest_transfer(
 
     // 型安全なトークン型を使用
     use blockchain::ref_finance::token_account::NEAR_TOKEN;
-    let from_token: blockchain::ref_finance::token_account::TokenInAccount = WNEAR_TOKEN.to_in();
-    let to_token: blockchain::ref_finance::token_account::TokenOutAccount = NEAR_TOKEN.to_out();
+    let from_token: TokenInAccount = WNEAR_TOKEN.to_in();
+    let to_token: TokenOutAccount = NEAR_TOKEN.to_out();
 
     let recorder = TradeRecorder::new(period_id);
     recorder

@@ -5,8 +5,8 @@ pub mod preview;
 
 use crate::Result;
 use crate::ref_finance::history;
-use crate::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use crate::types::gas_price::GasPrice;
+use common::types::{TokenInAccount, TokenOutAccount};
 use dex::TokenPath;
 use graph::TokenGraph;
 use logging::*;

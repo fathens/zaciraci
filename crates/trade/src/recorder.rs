@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use blockchain::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use common::types::TokenAmount;
+use common::types::{TokenInAccount, TokenOutAccount};
 use logging::*;
 use uuid::Uuid;
 
@@ -76,7 +76,7 @@ impl TradeRecorder {
 mod tests {
     use super::*;
     use bigdecimal::BigDecimal;
-    use blockchain::ref_finance::token_account::TokenAccount;
+    use common::types::TokenAccount;
 
     // テスト用定数
     const WNEAR_DECIMALS: u8 = 24;

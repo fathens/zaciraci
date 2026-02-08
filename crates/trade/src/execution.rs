@@ -6,7 +6,6 @@
 use crate::Result;
 use crate::{recorder::TradeRecorder, swap};
 use bigdecimal::BigDecimal;
-use blockchain::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use blockchain::wallet::Wallet;
 use chrono::Utc;
 use common::algorithm::types::TradingAction;
@@ -92,10 +91,8 @@ where
 
             // 2段階のswap: token → wrap.near → target
             let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
-            let wrap_near_in: blockchain::ref_finance::token_account::TokenInAccount =
-                wrap_near.to_in();
-            let wrap_near_out: blockchain::ref_finance::token_account::TokenOutAccount =
-                wrap_near.to_out();
+            let wrap_near_in: TokenInAccount = wrap_near.to_in();
+            let wrap_near_out: TokenOutAccount = wrap_near.to_out();
 
             // Step 1: token → wrap.near
             // common と backend の TokenAccount は同一型なので直接使用可能
@@ -185,9 +182,9 @@ where
                 // 現在の価値（wrap.near換算）を計算
                 let current_value_wrap_near: NearValue = match current_amount {
                     Some(amount) if !amount.is_zero() => {
-                        let token_out: blockchain::ref_finance::token_account::TokenOutAccount =
+                        let token_out: TokenOutAccount =
                             token_str.parse::<near_sdk::AccountId>()?.into();
-                        let quote_in: blockchain::ref_finance::token_account::TokenInAccount =
+                        let quote_in: TokenInAccount =
                             wrap_near_str.parse::<near_sdk::AccountId>()?.into();
 
                         let get_decimals = crate::make_get_decimals();
@@ -225,9 +222,9 @@ where
 
                 if diff_wrap_near < zero && diff_wrap_near.abs() >= min_trade_size {
                     // 売却が必要
-                    let token_out: blockchain::ref_finance::token_account::TokenOutAccount =
+                    let token_out: TokenOutAccount =
                         token_str.parse::<near_sdk::AccountId>()?.into();
-                    let quote_in: blockchain::ref_finance::token_account::TokenInAccount =
+                    let quote_in: TokenInAccount =
                         wrap_near_str.parse::<near_sdk::AccountId>()?.into();
 
                     let get_decimals = crate::make_get_decimals();
@@ -252,10 +249,8 @@ where
 
             // 型安全なwrap.nearを事前に準備
             let wrap_near_token = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
-            let wrap_near_in: blockchain::ref_finance::token_account::TokenInAccount =
-                wrap_near_token.to_in();
-            let wrap_near_out: blockchain::ref_finance::token_account::TokenOutAccount =
-                wrap_near_token.to_out();
+            let wrap_near_in: TokenInAccount = wrap_near_token.to_in();
+            let wrap_near_out: TokenOutAccount = wrap_near_token.to_out();
 
             // Phase 1: 全ての売却を実行（token → wrap.near）
             debug!(log, "Phase 1: executing sell operations"; "count" => sell_operations.len());
@@ -302,7 +297,7 @@ where
                 let account = wallet.account_id();
                 let deposits =
                     blockchain::ref_finance::deposit::get_deposits(client, account).await?;
-                let wrap_near_account: blockchain::ref_finance::token_account::TokenAccount =
+                let wrap_near_account: TokenAccount =
                     wrap_near_str.parse::<near_sdk::AccountId>()?.into();
                 deposits
                     .get(&wrap_near_account)
@@ -624,11 +619,8 @@ pub(crate) async fn manage_evaluation_period(
 ///
 /// wrap.nearとゼロ残高のトークンを除外し、清算すべきトークンのリストを返す
 pub(crate) fn filter_tokens_to_liquidate(
-    deposits: &HashMap<
-        blockchain::ref_finance::token_account::TokenAccount,
-        near_sdk::json_types::U128,
-    >,
-    wrap_near_token: &blockchain::ref_finance::token_account::TokenAccount,
+    deposits: &HashMap<TokenAccount, near_sdk::json_types::U128>,
+    wrap_near_token: &TokenAccount,
 ) -> Vec<String> {
     deposits
         .iter()
@@ -694,15 +686,14 @@ pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
     let recorder = TradeRecorder::new(period_id);
 
     // 型安全なwrap.nearを事前に準備
-    let wrap_near_out: blockchain::ref_finance::token_account::TokenOutAccount =
-        wrap_near_token.to_out();
+    let wrap_near_out: TokenOutAccount = wrap_near_token.to_out();
 
     // 各トークンをwrap.nearに変換
     for token in &tokens_to_liquidate {
         trace!(log, "liquidating token"; "token" => token);
 
         // トークンの残高を再確認（取得時点から変更がある可能性を考慮）
-        let token_account: blockchain::ref_finance::token_account::TokenAccount = token
+        let token_account: TokenAccount = token
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
 

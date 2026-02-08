@@ -26,7 +26,6 @@ use crate::Result;
 use crate::predict::PredictionService;
 use crate::swap;
 use bigdecimal::BigDecimal;
-use blockchain::ref_finance::token_account::{TokenInAccount, TokenOutAccount};
 use blockchain::wallet::Wallet;
 use chrono::Utc;
 use common::algorithm::{
@@ -35,6 +34,7 @@ use common::algorithm::{
 };
 use common::config;
 use common::types::{ExchangeRate, NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
+use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use futures::stream::{self, StreamExt};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
@@ -162,7 +162,7 @@ pub async fn start() -> Result<()> {
     let wallet = blockchain::wallet::new_wallet();
 
     // トークンを TokenAccount に変換
-    let token_accounts: Vec<blockchain::ref_finance::token_account::TokenAccount> = selected_tokens
+    let token_accounts: Vec<TokenAccount> = selected_tokens
         .iter()
         .filter_map(|t| t.as_str().parse().ok())
         .collect();
@@ -298,8 +298,7 @@ async fn select_top_volatility_tokens(
     let start_date = end_date - chrono::Duration::days(volatility_days);
 
     // 型安全な quote_token を準備
-    let quote_token: blockchain::ref_finance::token_account::TokenInAccount =
-        blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
+    let quote_token: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
     match prediction_service
         .get_tokens_by_volatility(start_date, end_date, &quote_token)
@@ -323,7 +322,7 @@ async fn select_top_volatility_tokens(
             // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
             let pools = persistence::pool_info::read_from_db(None).await?;
             let graph = blockchain::ref_finance::path::graph::TokenGraph::new(pools);
-            let wnear_token: blockchain::ref_finance::token_account::TokenInAccount =
+            let wnear_token: TokenInAccount =
                 blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
             // 購入方向のパスを確認（wrap.near → token）
@@ -360,17 +359,15 @@ async fn select_top_volatility_tokens(
             );
 
             // 売却方向のパスも確認（token → wrap.near）
-            let wnear_out: blockchain::ref_finance::token_account::TokenOutAccount =
+            let wnear_out: TokenOutAccount =
                 blockchain::ref_finance::token_account::WNEAR_TOKEN.to_out();
             let mut filtered_tokens: Vec<AccountId> = Vec::new();
             for token in buyable_filtered {
-                let token_account: blockchain::ref_finance::token_account::TokenAccount =
-                    match token.to_string().parse() {
-                        Ok(t) => t,
-                        Err(_) => continue,
-                    };
-                let token_in: blockchain::ref_finance::token_account::TokenInAccount =
-                    token_account.into();
+                let token_account: TokenAccount = match token.to_string().parse() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let token_in: TokenInAccount = token_account.into();
 
                 // token から wrap.near へのパスが存在するか確認
                 match graph.update_graph(&token_in) {

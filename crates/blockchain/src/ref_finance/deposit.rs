@@ -1,8 +1,8 @@
 use crate::Result;
 use crate::jsonrpc::{SendTx, ViewContract};
 use crate::ref_finance::CONTRACT_ADDRESS;
-use crate::ref_finance::token_account::TokenAccount;
 use crate::wallet::Wallet;
+use common::types::TokenAccount;
 use logging::*;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};

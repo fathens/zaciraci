@@ -1,10 +1,10 @@
 use super::*;
 use crate::Result;
 use bigdecimal::BigDecimal;
-use blockchain::ref_finance::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use common::prediction::ChronosPredictionResponse;
 use common::types::{ExchangeRate, TokenPrice};
+use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use num_traits::ToPrimitive;
 use persistence::token_rate::{SwapPath, SwapPoolInfo, TokenRate};
 use serial_test::serial;
