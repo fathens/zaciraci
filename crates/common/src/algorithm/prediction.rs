@@ -47,7 +47,7 @@ pub trait PredictionProvider: Send + Sync {
 }
 
 /// PredictionDataへの変換（momentum.rsから移動）
-impl crate::algorithm::PredictionData {
+impl crate::algorithm::types::PredictionData {
     /// TokenPredictionResultから変換
     pub fn from_token_prediction(
         prediction: &TokenPredictionResult,

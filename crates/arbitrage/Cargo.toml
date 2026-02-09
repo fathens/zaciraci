@@ -1,0 +1,27 @@
+[package]
+name = "arbitrage"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+dex = { path = "../dex" }
+logging = { path = "../logging" }
+persistence = { path = "../persistence" }
+blockchain = { path = "../blockchain" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+once_cell = { workspace = true }
+humantime = { workspace = true }
+slog = { workspace = true }
+near-sdk = { version = "5.24", features = ["non-contract-usage"] }
+
+[dev-dependencies]
+assertables = "9.5"
+serial_test = "3.2"
+tokio = { version = "1.0", features = ["full"] }
+mockito = "1.0"
+near-crypto = "0.34"
+near-primitives = "0.34"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

@@ -1,0 +1,42 @@
+[package]
+name = "trade"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+dex = { path = "../dex" }
+logging = { path = "../logging" }
+persistence = { path = "../persistence" }
+blockchain = { path = "../blockchain" }
+async-trait = "0.1"
+anyhow = { workspace = true }
+near-primitives = "0.34"
+near-crypto = "0.34"
+tokio = { workspace = true }
+once_cell = { workspace = true }
+cron = "0.15"
+chrono = { workspace = true }
+bigdecimal = { workspace = true }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+num-rational = { workspace = true }
+num-integer = { workspace = true }
+slog = { workspace = true }
+near-sdk = { version = "5.24", features = ["non-contract-usage"] }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+futures = { workspace = true }
+futures-util = { workspace = true }
+rayon = { workspace = true }
+rand = { workspace = true }
+humantime = { workspace = true }
+reqwest = { workspace = true }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+[dev-dependencies]
+assertables = "9.5"
+proptest = "1.6"
+serial_test = "3.2"
+tokio = { version = "1.0", features = ["full"] }
+mockito = "1.0"

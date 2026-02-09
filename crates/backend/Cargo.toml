@@ -1,58 +1,12 @@
 [package]
 name = "backend"
-version = "1.0.0"
+version.workspace = true
 edition = "2024"
 
 [dependencies]
-common = { path = "../common" }
-async-trait = "0.1"
-anyhow = { workspace = true }
-thiserror = { workspace = true }
+logging = { path = "../logging" }
+blockchain = { path = "../blockchain" }
+trade = { path = "../trade" }
+arbitrage = { path = "../arbitrage" }
 tokio = { workspace = true }
-once_cell = { workspace = true }
-async-once-cell = { workspace = true }
-cron = "0.15"
-chrono = { workspace = true }
-bigdecimal = { workspace = true }
-num-bigint = { workspace = true }
-num-traits = { workspace = true }
-num-rational = { workspace = true }
-num-integer = { workspace = true }
-diesel = { version = "2.2", features = ["postgres", "numeric", "chrono", "serde_json"] }
-deadpool-diesel = { version = "0.6", features = ["postgres"] }
 slog = { workspace = true }
-slog-async = { workspace = true }
-slog-term = { workspace = true }
-slog-json = { workspace = true }
-slog-envlogger = { workspace = true }
-near-gas = "0.3.4"
-near-sdk = { version = "5.24", features = ["non-contract-usage"] }
-near-jsonrpc-client = "0.20"
-near-jsonrpc-primitives = "0.34"
-near-primitives = "0.34"
-near-crypto = "0.34"
-serde_json = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-petgraph = "0.7"
-slipped10 = "0.4"
-bip39 = { version = "2.1", features = ["rand"] }
-bs58 = { workspace = true }
-ed25519-dalek = { version = "2", default-features = false }
-futures = { workspace = true }
-futures-util = { workspace = true }
-rayon = { workspace = true }
-rand = { workspace = true }
-humantime = { workspace = true }
-reqwest = { workspace = true }
-base64 = { workspace = true }
-linfa = "0.7"
-linfa-linear = "0.7"
-ndarray = { version = "0.15", features = ["serde"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
-
-[dev-dependencies]
-assertables = "9.5"
-proptest = "1.6"
-serial_test = "3.2"
-tokio = { version = "1.0", features = ["full"] }
-mockito = "1.0"
