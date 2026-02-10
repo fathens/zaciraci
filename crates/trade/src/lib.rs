@@ -304,43 +304,29 @@ mod tests {
 
     #[test]
     fn test_get_cron_schedule_uses_env_value() {
-        // SAFETY: テスト専用の環境変数名を使用しているため競合しない
-        unsafe {
-            std::env::set_var("TEST_CRON_VALID", "0 */30 * * * *");
-        }
+        let _env_guard = common::config::EnvGuard::set("TEST_CRON_VALID", "0 */30 * * * *");
         let schedule = get_cron_schedule("TEST_CRON_VALID", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();
         assert_eq!((second - first).num_minutes(), 30); // 環境変数の値が使われる
-        unsafe {
-            std::env::remove_var("TEST_CRON_VALID");
-        }
     }
 
     #[test]
     fn test_get_cron_schedule_fallback_on_invalid_env() {
-        // SAFETY: テスト専用の環境変数名を使用しているため競合しない
-        unsafe {
-            std::env::set_var("TEST_CRON_INVALID", "invalid cron");
-        }
+        let _env_guard = common::config::EnvGuard::set("TEST_CRON_INVALID", "invalid cron");
         let schedule = get_cron_schedule("TEST_CRON_INVALID", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();
         assert_eq!((second - first).num_minutes(), 15); // デフォルトにフォールバック
-        unsafe {
-            std::env::remove_var("TEST_CRON_INVALID");
-        }
     }
 
     #[test]
     #[serial]
     fn test_get_initial_value_default() {
         // デフォルト: 100 NEAR → 10% = 10 NEAR
-        unsafe {
-            std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
-        }
+        let _env_guard = common::config::EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
         let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "100");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "10 NEAR");
