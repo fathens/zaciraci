@@ -151,7 +151,7 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 }
 
 /// Apply CLI parameters to the config system
-fn apply_config(cli: &Cli) {
+pub(crate) fn apply_config(cli: &Cli) {
     common::config::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
     common::config::set("TRADE_VOLATILITY_DAYS", &cli.volatility_days.to_string());
     common::config::set(
@@ -165,4 +165,70 @@ fn apply_config(cli: &Cli) {
     common::config::set("TRADE_INITIAL_INVESTMENT", &cli.initial_capital.to_string());
     // Disable actual trading
     common::config::set("TRADE_ENABLED", "false");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn make_cli(start: &str, end: &str) -> Cli {
+        Cli {
+            start_date: start.to_string(),
+            end_date: end.to_string(),
+            initial_capital: 100.0,
+            top_tokens: 10,
+            volatility_days: 7,
+            price_history_days: 30,
+            rebalance_threshold: 0.1,
+            rebalance_interval_days: 1,
+            output: PathBuf::from("test.json"),
+            sweep: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn run_simulation_rejects_start_after_end() {
+        let cli = make_cli("2025-06-15", "2025-06-01");
+        let err = run_simulation(&cli).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("start-date must be before end-date"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn apply_config_sets_expected_values() {
+        let cli = Cli {
+            start_date: "2025-01-01".to_string(),
+            end_date: "2025-12-31".to_string(),
+            initial_capital: 500.0,
+            top_tokens: 20,
+            volatility_days: 14,
+            price_history_days: 60,
+            rebalance_threshold: 0.25,
+            rebalance_interval_days: 3,
+            output: PathBuf::from("test.json"),
+            sweep: None,
+        };
+
+        apply_config(&cli);
+
+        assert_eq!(common::config::get("TRADE_TOP_TOKENS").unwrap(), "20");
+        assert_eq!(common::config::get("TRADE_VOLATILITY_DAYS").unwrap(), "14");
+        assert_eq!(
+            common::config::get("TRADE_PRICE_HISTORY_DAYS").unwrap(),
+            "60"
+        );
+        assert_eq!(
+            common::config::get("PORTFOLIO_REBALANCE_THRESHOLD").unwrap(),
+            "0.25"
+        );
+        assert_eq!(
+            common::config::get("TRADE_INITIAL_INVESTMENT").unwrap(),
+            "500"
+        );
+        assert_eq!(common::config::get("TRADE_ENABLED").unwrap(), "false");
+    }
 }
