@@ -15,17 +15,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static DEFAULT_REQUIRED_BALANCE: Lazy<NearToken> = Lazy::new(|| NearToken::from_near(1));
 #[cfg(test)]
-const MINIMUM_NATIVE_BALANCE: NearToken = NearToken::from_near(1); // テスト用の定数
-const INTERVAL_OF_HARVEST: u64 = 24 * 60 * 60;
+const MINIMUM_NATIVE_BALANCE: NearToken = NearToken::from_near(1);
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
-static HARVEST_ACCOUNT: Lazy<AccountId> = Lazy::new(|| {
+
+fn harvest_account() -> AccountId {
     let value = config::get("HARVEST_ACCOUNT_ID").expect("HARVEST_ACCOUNT_ID config is required");
     value
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{value}`: {err}"))
-});
-static TRADE_ACCOUNT_RESERVE: Lazy<NearToken> = Lazy::new(|| {
+}
+
+fn trade_account_reserve() -> NearToken {
     let yocto = config::get("TRADE_ACCOUNT_RESERVE")
         .ok()
         .and_then(|v| v.parse::<NearAmount>().ok())
@@ -33,7 +34,14 @@ static TRADE_ACCOUNT_RESERVE: Lazy<NearToken> = Lazy::new(|| {
         .to_yocto()
         .to_u128();
     NearToken::from_yoctonear(yocto)
-});
+}
+
+fn harvest_interval() -> u64 {
+    config::get("HARVEST_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(86400)
+}
 
 fn is_time_to_harvest() -> bool {
     let last = LAST_HARVEST.load(Ordering::Relaxed);
@@ -41,7 +49,7 @@ fn is_time_to_harvest() -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock is after UNIX epoch")
         .as_secs();
-    now - last > INTERVAL_OF_HARVEST
+    now - last > harvest_interval()
 }
 
 fn update_last_harvest() {
@@ -157,7 +165,7 @@ where
         let wrapping = want.saturating_sub(wrapped_balance);
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance = *TRADE_ACCOUNT_RESERVE;
+        let minimum_native_balance = trade_account_reserve();
 
         let log = log.new(o!(
             "native_balance" => native_balance.as_yoctonear(),
@@ -249,7 +257,7 @@ where
         let wrapping = shortage.saturating_sub(wrapped_balance);
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance = *TRADE_ACCOUNT_RESERVE;
+        let minimum_native_balance = trade_account_reserve();
 
         let available = native_balance.saturating_sub(minimum_native_balance);
 
@@ -321,7 +329,7 @@ where
         "token" => %token,
     );
 
-    let minimum_native_balance = *TRADE_ACCOUNT_RESERVE;
+    let minimum_native_balance = trade_account_reserve();
 
     let account = wallet.account_id();
     let before_withdraw = client.get_native_amount(account).await?;
@@ -342,7 +350,7 @@ where
     );
     if upper < native_balance && is_time_to_harvest() {
         let amount = native_balance.saturating_sub(upper);
-        let target = &*HARVEST_ACCOUNT;
+        let target = &harvest_account();
         info!(log, "harvesting";
             "target" => %target,
             "amount" => amount.as_yoctonear(),

@@ -20,9 +20,9 @@ static INIT: Once = Once::new();
 fn initialize() {
     INIT.call_once(|| {
         config::set("ARBITRAGE_NEEDED", "true");
-        config::set("TOKEN_NOT_FOUND_WAIT", "1s");
-        config::set("OTHER_ERROR_WAIT", "1s");
-        config::set("PREVIEW_NOT_FOUND_WAIT", "1s");
+        config::set("ARBITRAGE_TOKEN_NOT_FOUND_WAIT", "1s");
+        config::set("ARBITRAGE_OTHER_ERROR_WAIT", "1s");
+        config::set("ARBITRAGE_PREVIEW_NOT_FOUND_WAIT", "1s");
     });
 }
 

@@ -49,8 +49,8 @@ fn test_harvest_reserve_amount_custom() {
 fn test_harvest_min_amount_default() {
     // HARVEST_MIN_AMOUNTのデフォルト値テスト
     let expected = near_to_yocto_amount(10);
-    let actual = &*HARVEST_MIN_AMOUNT;
-    assert_eq!(*actual, expected);
+    let actual = harvest_min_amount();
+    assert_eq!(actual, expected);
 }
 
 #[test]
