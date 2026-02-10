@@ -341,7 +341,7 @@ mod tests {
         unsafe {
             std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
         }
-        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "100");
+        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "100");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "10 NEAR");
     }
@@ -350,7 +350,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_custom() {
         // 200 NEAR → 10% = 20 NEAR
-        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "200");
+        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "200");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "20 NEAR");
     }
@@ -359,7 +359,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_min_1() {
         // 5 NEAR → 10% = 0 → max(1) = 1 NEAR
-        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "5");
+        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "5");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "1 NEAR");
     }
