@@ -1,6 +1,7 @@
 use super::*;
 use bigdecimal::BigDecimal;
-use chrono::{TimeZone, Utc};
+use chrono::{NaiveDate, TimeZone, Utc};
+use serial_test::serial;
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -548,4 +549,266 @@ async fn multiple_actions_applied_sequentially() {
     assert!(state.holdings.contains_key(TOKEN_B));
     // Two add_position trades (Hold doesn't generate trades)
     assert_eq!(state.trades.len(), 2);
+}
+
+// ===========================================================================
+// DB Integration Tests
+// ===========================================================================
+//
+// These tests require a running PostgreSQL at localhost:5433 (test DB).
+// They use #[serial(token_rates)] to avoid parallel mutation of the
+// token_rates table.
+
+/// WNEAR quote account (depends on USE_MAINNET; defaults to wrap.testnet)
+fn wnear_quote() -> common::types::TokenInAccount {
+    blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in()
+}
+
+/// Seed timestamp within 24h of `integration_sim_day()`
+fn seed_ts() -> chrono::NaiveDateTime {
+    NaiveDate::from_ymd_opt(2026, 2, 9)
+        .unwrap()
+        .and_hms_opt(6, 0, 0)
+        .unwrap()
+}
+
+/// Simulation timestamp used by integration tests
+fn integration_sim_day() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 2, 9, 12, 0, 0).unwrap()
+}
+
+const INT_TOKEN_A: &str = "test-token-a.testnet";
+const INT_TOKEN_A_DECIMALS: u8 = 6;
+
+const INT_TOKEN_B: &str = "test-token-b.testnet";
+const INT_TOKEN_B_DECIMALS: u8 = 6;
+
+/// Delete all records with timestamp < now() from token_rates
+async fn cleanup_token_rates() -> anyhow::Result<()> {
+    TokenRate::cleanup_old_records(0).await?;
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    Ok(())
+}
+
+/// Insert a single token rate record into the DB
+async fn seed_rate(
+    base: &str,
+    raw_rate: BigDecimal,
+    decimals: u8,
+    timestamp: chrono::NaiveDateTime,
+) -> anyhow::Result<()> {
+    let token_rate = TokenRate {
+        base: base.parse().unwrap(),
+        quote: wnear_quote(),
+        exchange_rate: ExchangeRate::from_raw_rate(raw_rate, decimals),
+        timestamp,
+        rate_calc_near: 10,
+        swap_path: None,
+    };
+    TokenRate::batch_insert(&[token_rate]).await?;
+    Ok(())
+}
+
+/// Clean table, seed rates, and reload token decimals cache
+async fn setup_integration(tokens: &[(&str, BigDecimal, u8)]) -> anyhow::Result<()> {
+    cleanup_token_rates().await?;
+    for (base, rate, decimals) in tokens {
+        seed_rate(base, rate.clone(), *decimals, seed_ts()).await?;
+    }
+    trade::token_cache::load_from_db().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(token_rates)]
+async fn integration_add_position_with_db_rate() -> anyhow::Result<()> {
+    setup_integration(&[(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS)]).await?;
+
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = DbRateProvider;
+
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(INT_TOKEN_A),
+        weight: 0.5,
+    }];
+    state
+        .apply_actions(&actions, integration_sim_day(), &provider)
+        .await?;
+
+    assert!(state.cash_balance < NEAR_100, "cash should decrease");
+    assert!(
+        state.holdings.contains_key(INT_TOKEN_A),
+        "should hold token A"
+    );
+    assert!(state.holdings[INT_TOKEN_A] > 0, "amount should be positive");
+    assert_eq!(state.trades.len(), 1);
+    assert_eq!(state.trades[0].action, "add_position");
+
+    cleanup_token_rates().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(token_rates)]
+async fn integration_sell_with_db_rate() -> anyhow::Result<()> {
+    setup_integration(&[(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS)]).await?;
+
+    let mut state = PortfolioState::new(NEAR_50);
+    state.holdings.insert(INT_TOKEN_A.to_string(), 1_000_000); // 1 token
+
+    let provider = DbRateProvider;
+    let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+
+    let actions = vec![TradingAction::Sell {
+        token: token_out(INT_TOKEN_A),
+        target: wnear_str.parse().unwrap(),
+    }];
+    state
+        .apply_actions(&actions, integration_sim_day(), &provider)
+        .await?;
+
+    assert!(
+        !state.holdings.contains_key(INT_TOKEN_A),
+        "token A should be sold"
+    );
+    assert!(state.cash_balance > NEAR_50, "cash should increase");
+    assert_eq!(state.trades.len(), 1);
+    assert_eq!(state.trades[0].action, "sell");
+
+    cleanup_token_rates().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(token_rates)]
+async fn integration_rebalance_with_db_rate() -> anyhow::Result<()> {
+    setup_integration(&[
+        (INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS),
+        (INT_TOKEN_B, rate_6d(), INT_TOKEN_B_DECIMALS),
+    ])
+    .await?;
+
+    let mut state = PortfolioState::new(0);
+    state.holdings.insert(INT_TOKEN_A.to_string(), 2_000_000); // 2 tokens = 2 NEAR
+
+    let provider = DbRateProvider;
+
+    let mut target_weights = BTreeMap::new();
+    target_weights.insert(token_out(INT_TOKEN_A), 0.5);
+    target_weights.insert(token_out(INT_TOKEN_B), 0.5);
+
+    let actions = vec![TradingAction::Rebalance { target_weights }];
+    state
+        .apply_actions(&actions, integration_sim_day(), &provider)
+        .await?;
+
+    assert!(
+        state.holdings.contains_key(INT_TOKEN_A),
+        "should still hold A"
+    );
+    assert!(
+        state.holdings.contains_key(INT_TOKEN_B),
+        "should now hold B"
+    );
+    assert!(state.holdings[INT_TOKEN_A] < 2_000_000, "A should decrease");
+    assert!(state.holdings[INT_TOKEN_B] > 0, "B should increase");
+    assert!(state.trades.len() >= 2, "should have sell and buy trades");
+
+    cleanup_token_rates().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(token_rates)]
+async fn integration_calculate_total_value_with_db() -> anyhow::Result<()> {
+    setup_integration(&[(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS)]).await?;
+
+    let mut state = PortfolioState::new(NEAR_50);
+    state.holdings.insert(INT_TOKEN_A.to_string(), 1_000_000); // 1 token = 1 NEAR
+
+    let provider = DbRateProvider;
+    let value = state
+        .calculate_total_value_near(integration_sim_day(), &provider)
+        .await?;
+
+    // 50 NEAR cash + 1 token (1 NEAR) = 51 NEAR
+    assert!((value - 51.0).abs() < 0.1, "expected ~51 NEAR, got {value}");
+
+    cleanup_token_rates().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(token_rates)]
+async fn integration_record_snapshot_with_db() -> anyhow::Result<()> {
+    setup_integration(&[(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS)]).await?;
+
+    let mut state = PortfolioState::new(NEAR_50);
+    state.holdings.insert(INT_TOKEN_A.to_string(), 1_000_000);
+
+    let provider = DbRateProvider;
+    state
+        .record_snapshot(integration_sim_day(), &provider)
+        .await?;
+
+    assert_eq!(state.snapshots.len(), 1);
+    assert!(
+        (state.snapshots[0].total_value_near - 51.0).abs() < 0.1,
+        "expected ~51 NEAR, got {}",
+        state.snapshots[0].total_value_near
+    );
+    assert_eq!(state.snapshots[0].holdings[INT_TOKEN_A], 1_000_000);
+    assert_eq!(state.snapshots[0].cash_balance, NEAR_50);
+
+    cleanup_token_rates().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(token_rates)]
+async fn integration_multiple_day_simulation() -> anyhow::Result<()> {
+    let day1_ts = NaiveDate::from_ymd_opt(2026, 2, 8)
+        .unwrap()
+        .and_hms_opt(6, 0, 0)
+        .unwrap();
+    let day2_ts = seed_ts(); // 2026-02-09T06:00:00
+
+    cleanup_token_rates().await?;
+    seed_rate(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS, day1_ts).await?;
+    seed_rate(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS, day2_ts).await?;
+    trade::token_cache::load_from_db().await?;
+
+    let provider = DbRateProvider;
+    let mut state = PortfolioState::new(NEAR_100);
+
+    // Day 1: Add position (50% of 100 NEAR)
+    let day1 = Utc.with_ymd_and_hms(2026, 2, 8, 12, 0, 0).unwrap();
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(INT_TOKEN_A),
+        weight: 0.5,
+    }];
+    state.apply_actions(&actions, day1, &provider).await?;
+    state.record_snapshot(day1, &provider).await?;
+
+    assert!(state.holdings.contains_key(INT_TOKEN_A));
+    let holdings_after_day1 = state.holdings[INT_TOKEN_A];
+
+    // Day 2: Reduce position by 50%
+    let day2 = integration_sim_day();
+    let actions = vec![TradingAction::ReducePosition {
+        token: token_out(INT_TOKEN_A),
+        weight: 0.5,
+    }];
+    state.apply_actions(&actions, day2, &provider).await?;
+    state.record_snapshot(day2, &provider).await?;
+
+    assert!(
+        state.holdings[INT_TOKEN_A] < holdings_after_day1,
+        "holdings should decrease after reduce"
+    );
+    assert_eq!(state.snapshots.len(), 2);
+    assert_eq!(state.trades.len(), 2); // 1 add + 1 reduce
+
+    cleanup_token_rates().await?;
+    Ok(())
 }

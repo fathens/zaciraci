@@ -3360,6 +3360,7 @@ dependencies = [
  "persistence",
  "serde",
  "serde_json",
+ "serial_test",
  "slog",
  "tokio",
  "trade",
