@@ -724,28 +724,16 @@ mod tests {
     fn test_config_store_priority() {
         // CONFIG_STOREの値が最優先
         const TEST_KEY: &str = "RUST_LOG_FORMAT";
-        unsafe {
-            std::env::set_var(TEST_KEY, "env-value");
-        }
-        set(TEST_KEY, "store-value");
+        let _env_guard = EnvGuard::set(TEST_KEY, "env-value");
+        let _config_guard = ConfigGuard::new(TEST_KEY, "store-value");
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "store-value");
-
-        // Cleanup
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
-        unsafe {
-            std::env::remove_var(TEST_KEY);
-        }
     }
 
     #[test]
     #[serial]
     fn test_boolean_config() {
-        unsafe {
-            std::env::remove_var("USE_MAINNET");
-        }
+        let _env_guard = EnvGuard::remove("USE_MAINNET");
         let result = get("USE_MAINNET").unwrap();
         assert_eq!(result, "true");
     }
@@ -753,9 +741,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_numeric_config() {
-        unsafe {
-            std::env::remove_var("TRADE_TOP_TOKENS");
-        }
+        let _env_guard = EnvGuard::remove("TRADE_TOP_TOKENS");
         let result = get("TRADE_TOP_TOKENS").unwrap();
         assert_eq!(result, "10");
     }
@@ -766,16 +752,12 @@ mod tests {
         // 優先順位の完全検証: CONFIG_STORE > DB > 環境変数 > TOML > デフォルト
         const TEST_KEY: &str = "TRADE_TOP_TOKENS";
 
+        // Guard で全レイヤーの状態を保存。Drop 時に復元。
+        let _db_guard = DbStoreGuard::new();
+        let _env_guard = EnvGuard::remove(TEST_KEY);
+        remove(TEST_KEY);
+
         // Step 1: TOML/デフォルトのみ (最低優先度)
-        unsafe {
-            std::env::remove_var(TEST_KEY);
-        }
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
-        if let Ok(mut store) = DB_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "10"); // config.toml または default
 
@@ -787,38 +769,21 @@ mod tests {
         assert_eq!(result, "99");
 
         // Step 3: DB_STORE 追加 (環境変数より優先)
-        if let Ok(mut store) = DB_STORE.lock() {
-            store.insert(TEST_KEY.to_string(), "77".to_string());
-        }
+        load_db_config(HashMap::from([(TEST_KEY.to_string(), "77".to_string())]));
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "77");
 
         // Step 4: CONFIG_STORE 追加 (DB_STORE より優先)
-        set(TEST_KEY, "42");
+        let _config_guard = ConfigGuard::new(TEST_KEY, "42");
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "42");
-
-        // Cleanup
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
-        if let Ok(mut store) = DB_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
-        unsafe {
-            std::env::remove_var(TEST_KEY);
-        }
     }
 
     #[test]
     #[serial]
     fn test_trade_min_pool_liquidity_default() {
-        unsafe {
-            std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
-        }
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove("TRADE_MIN_POOL_LIQUIDITY");
-        }
+        let _env_guard = EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
+        remove("TRADE_MIN_POOL_LIQUIDITY");
         let result = get("TRADE_MIN_POOL_LIQUIDITY").unwrap();
         assert_eq!(result, "100");
     }
@@ -826,14 +791,9 @@ mod tests {
     #[test]
     #[serial]
     fn test_trade_min_pool_liquidity_from_env() {
-        unsafe {
-            std::env::set_var("TRADE_MIN_POOL_LIQUIDITY", "200");
-        }
+        let _env_guard = EnvGuard::set("TRADE_MIN_POOL_LIQUIDITY", "200");
         let result = get("TRADE_MIN_POOL_LIQUIDITY").unwrap();
         assert_eq!(result, "200");
-        unsafe {
-            std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
-        }
     }
 
     /// Step 1: 新規キーのデフォルト値テスト
@@ -854,13 +814,15 @@ mod tests {
             ("HARVEST_BALANCE_MULTIPLIER", "128"),
         ];
 
+        let _env_guards: Vec<_> = keys_and_defaults
+            .iter()
+            .map(|(key, _)| EnvGuard::remove(key))
+            .collect();
+        for (key, _) in &keys_and_defaults {
+            remove(key);
+        }
+
         for (key, expected) in &keys_and_defaults {
-            unsafe {
-                std::env::remove_var(key);
-            }
-            if let Ok(mut store) = CONFIG_STORE.lock() {
-                store.remove(*key);
-            }
             let result = get(key).unwrap();
             assert_eq!(result, *expected, "key={key}");
         }
@@ -869,12 +831,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_rpc_endpoints_json() {
-        unsafe {
-            std::env::remove_var("RPC_ENDPOINTS");
-        }
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove("RPC_ENDPOINTS");
-        }
+        let _env_guard = EnvGuard::remove("RPC_ENDPOINTS");
+        remove("RPC_ENDPOINTS");
         // RPC_ENDPOINTS はデフォルトで空配列なので None→Err になるか、
         // TOML に設定があれば JSON 文字列が返る
         let result = get("RPC_ENDPOINTS");
@@ -890,19 +848,13 @@ mod tests {
     #[serial]
     fn test_new_config_keys_config_store_override() {
         // CONFIG_STORE で上書きした場合に新規キーも優先されることを確認
-        set("PORTFOLIO_REBALANCE_THRESHOLD", "0.05");
+        let _guard1 = ConfigGuard::new("PORTFOLIO_REBALANCE_THRESHOLD", "0.05");
         let result = get("PORTFOLIO_REBALANCE_THRESHOLD").unwrap();
         assert_eq!(result, "0.05");
 
-        set("HARVEST_BALANCE_MULTIPLIER", "256");
+        let _guard2 = ConfigGuard::new("HARVEST_BALANCE_MULTIPLIER", "256");
         let result = get("HARVEST_BALANCE_MULTIPLIER").unwrap();
         assert_eq!(result, "256");
-
-        // Cleanup
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove("PORTFOLIO_REBALANCE_THRESHOLD");
-            store.remove("HARVEST_BALANCE_MULTIPLIER");
-        }
     }
 
     #[test]
@@ -910,12 +862,9 @@ mod tests {
     fn test_db_store_overrides_env() {
         // DB_STORE が環境変数より優先されること
         const TEST_KEY: &str = "TRADE_TOP_TOKENS";
-        unsafe {
-            std::env::set_var(TEST_KEY, "env_val");
-        }
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
+        let _env_guard = EnvGuard::set(TEST_KEY, "env_val");
+        let _db_guard = DbStoreGuard::new();
+        remove(TEST_KEY);
 
         load_db_config(HashMap::from([(
             TEST_KEY.to_string(),
@@ -923,14 +872,6 @@ mod tests {
         )]));
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "db_val");
-
-        // Cleanup
-        if let Ok(mut store) = DB_STORE.lock() {
-            store.clear();
-        }
-        unsafe {
-            std::env::remove_var(TEST_KEY);
-        }
     }
 
     #[test]
@@ -938,28 +879,23 @@ mod tests {
     fn test_config_store_overrides_db_store() {
         // CONFIG_STORE が DB_STORE より優先されること
         const TEST_KEY: &str = "TRADE_TOP_TOKENS";
+        let _db_guard = DbStoreGuard::new();
         load_db_config(HashMap::from([(
             TEST_KEY.to_string(),
             "db_val".to_string(),
         )]));
-        set(TEST_KEY, "store_val");
+        let _config_guard = ConfigGuard::new(TEST_KEY, "store_val");
 
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "store_val");
-
-        // Cleanup
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
-        if let Ok(mut store) = DB_STORE.lock() {
-            store.clear();
-        }
     }
 
     #[test]
     #[serial]
     fn test_load_db_config_replaces_previous() {
         // load_db_config を再度呼ぶと前の値が置き換えられること
+        let _db_guard = DbStoreGuard::new();
+
         load_db_config(HashMap::from([
             ("KEY_A".to_string(), "val_a".to_string()),
             ("KEY_B".to_string(), "val_b".to_string()),
@@ -974,11 +910,6 @@ mod tests {
         )]));
         assert_eq!(get("KEY_A").unwrap(), "new_val_a");
         assert!(get("KEY_B").is_err());
-
-        // Cleanup
-        if let Ok(mut store) = DB_STORE.lock() {
-            store.clear();
-        }
     }
 
     #[test]
@@ -986,23 +917,16 @@ mod tests {
     fn test_db_store_empty_falls_through() {
         // DB_STORE が空の場合は環境変数にフォールスルー
         const TEST_KEY: &str = "TRADE_TOP_TOKENS";
-        if let Ok(mut store) = CONFIG_STORE.lock() {
-            store.remove(TEST_KEY);
-        }
+        let _db_guard = DbStoreGuard::new();
+        let _env_guard = EnvGuard::set(TEST_KEY, "env_val");
+        remove(TEST_KEY);
+
         if let Ok(mut store) = DB_STORE.lock() {
             store.clear();
-        }
-        unsafe {
-            std::env::set_var(TEST_KEY, "env_val");
         }
 
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "env_val");
-
-        // Cleanup
-        unsafe {
-            std::env::remove_var(TEST_KEY);
-        }
     }
 
     // =========================================================================
