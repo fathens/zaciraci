@@ -2,7 +2,7 @@ use crate::cli::Cli;
 use crate::mock_client::SimulationClient;
 use crate::mock_wallet::SimulationWallet;
 use crate::output::SimulationResult;
-use crate::portfolio_state::PortfolioState;
+use crate::portfolio_state::{DbRateProvider, PortfolioState};
 use anyhow::Result;
 use chrono::{DateTime, NaiveTime, TimeZone, Utc};
 use logging::*;
@@ -121,13 +121,14 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 
         // Step 3: Apply actions to portfolio state
         {
+            let rate_provider = DbRateProvider;
             let mut state = portfolio.lock().await;
-            if let Err(e) = state.apply_actions(&actions, sim_day).await {
+            if let Err(e) = state.apply_actions(&actions, sim_day, &rate_provider).await {
                 warn!(log, "failed to apply actions"; "date" => %current_date, "error" => ?e);
             }
 
             // Step 4: Record snapshot
-            if let Err(e) = state.record_snapshot(sim_day).await {
+            if let Err(e) = state.record_snapshot(sim_day, &rate_provider).await {
                 warn!(log, "failed to record snapshot"; "date" => %current_date, "error" => ?e);
             }
         }

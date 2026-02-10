@@ -8,6 +8,39 @@ use persistence::token_rate::TokenRate;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+/// Abstraction for token rate and decimals lookups.
+/// Allows injecting mock implementations for testing.
+pub trait RateProvider: Send + Sync {
+    fn get_rate(
+        &self,
+        token: &TokenOutAccount,
+        sim_day: DateTime<Utc>,
+    ) -> impl std::future::Future<Output = Option<ExchangeRate>> + Send;
+
+    fn get_decimals(&self, token_id: &str) -> impl std::future::Future<Output = u8> + Send;
+}
+
+/// Production RateProvider that queries the database via TokenRate
+/// and retrieves decimals via trade::make_get_decimals().
+pub struct DbRateProvider;
+
+impl RateProvider for DbRateProvider {
+    async fn get_rate(
+        &self,
+        token: &TokenOutAccount,
+        sim_day: DateTime<Utc>,
+    ) -> Option<ExchangeRate> {
+        let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
+        let get_decimals_fn = trade::make_get_decimals();
+        get_rate_at_date(token, &wnear_in, sim_day, &get_decimals_fn).await
+    }
+
+    async fn get_decimals(&self, token_id: &str) -> u8 {
+        let get_decimals_fn = trade::make_get_decimals();
+        get_decimals_fn(token_id).await.unwrap_or(24)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioSnapshot {
     pub timestamp: DateTime<Utc>,
@@ -54,6 +87,7 @@ impl PortfolioState {
         &mut self,
         actions: &[TradingAction],
         sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
     ) -> Result<()> {
         let log = DEFAULT.new(o!("function" => "apply_actions"));
 
@@ -63,21 +97,24 @@ impl PortfolioState {
                     // no-op
                 }
                 TradingAction::Rebalance { target_weights } => {
-                    self.apply_rebalance(target_weights, sim_day, &log).await?;
+                    self.apply_rebalance(target_weights, sim_day, rate_provider, &log)
+                        .await?;
                 }
                 TradingAction::AddPosition { token, weight } => {
-                    self.apply_add_position(token, *weight, sim_day, &log)
+                    self.apply_add_position(token, *weight, sim_day, rate_provider, &log)
                         .await?;
                 }
                 TradingAction::ReducePosition { token, weight } => {
-                    self.apply_reduce_position(token, *weight, sim_day, &log)
+                    self.apply_reduce_position(token, *weight, sim_day, rate_provider, &log)
                         .await?;
                 }
                 TradingAction::Sell { token, target } => {
-                    self.apply_sell(token, target, sim_day, &log).await?;
+                    self.apply_sell(token, target, sim_day, rate_provider, &log)
+                        .await?;
                 }
                 TradingAction::Switch { from, to } => {
-                    self.apply_switch(from, to, sim_day, &log).await?;
+                    self.apply_switch(from, to, sim_day, rate_provider, &log)
+                        .await?;
                 }
             }
         }
@@ -86,8 +123,14 @@ impl PortfolioState {
     }
 
     /// Record a daily portfolio snapshot
-    pub async fn record_snapshot(&mut self, sim_day: DateTime<Utc>) -> Result<()> {
-        let total_value = self.calculate_total_value_near(sim_day).await?;
+    pub async fn record_snapshot(
+        &mut self,
+        sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
+    ) -> Result<()> {
+        let total_value = self
+            .calculate_total_value_near(sim_day, rate_provider)
+            .await?;
 
         self.snapshots.push(PortfolioSnapshot {
             timestamp: sim_day,
@@ -100,16 +143,17 @@ impl PortfolioState {
     }
 
     /// Calculate total portfolio value in NEAR (as f64)
-    pub async fn calculate_total_value_near(&self, sim_day: DateTime<Utc>) -> Result<f64> {
+    pub async fn calculate_total_value_near(
+        &self,
+        sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
+    ) -> Result<f64> {
         let yocto_per_near: f64 = 1e24;
 
         // Cash portion (wrap.near)
         let mut total = self.cash_balance as f64 / yocto_per_near;
 
         // Holdings
-        let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-        let get_decimals = trade::make_get_decimals();
-
         for (token_id, amount) in &self.holdings {
             if *amount == 0 {
                 continue;
@@ -120,9 +164,9 @@ impl PortfolioState {
                 Err(_) => continue,
             };
 
-            match get_rate_at_date(&token_out, &wnear_in, sim_day, &get_decimals).await {
+            match rate_provider.get_rate(&token_out, sim_day).await {
                 Some(rate) => {
-                    let decimals = self.decimals.get(token_id).copied().unwrap_or(24);
+                    let decimals = rate_provider.get_decimals(token_id).await;
                     let token_amount = common::types::TokenAmount::from_smallest_units(
                         BigDecimal::from(*amount),
                         decimals,
@@ -148,15 +192,17 @@ impl PortfolioState {
         &mut self,
         target_weights: &BTreeMap<TokenOutAccount, f64>,
         sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
         log: &slog::Logger,
     ) -> Result<()> {
-        let total_value_yocto = self.calculate_total_value_yocto(sim_day).await?;
+        let total_value_yocto = self
+            .calculate_total_value_yocto(sim_day, rate_provider)
+            .await?;
         if total_value_yocto == 0 {
             return Ok(());
         }
 
         let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
-        let get_decimals = trade::make_get_decimals();
 
         // First pass: sell excess holdings back to cash
         for (token_out, target_weight) in target_weights {
@@ -167,14 +213,14 @@ impl PortfolioState {
 
             let target_value_yocto = (total_value_yocto as f64 * target_weight) as u128;
             let current_value_yocto = self
-                .token_value_yocto(&token_str, sim_day, &get_decimals)
+                .token_value_yocto(&token_str, sim_day, rate_provider)
                 .await;
 
             if current_value_yocto > target_value_yocto {
                 // Sell excess
                 let excess_yocto = current_value_yocto - target_value_yocto;
                 let sell_amount = self
-                    .yocto_to_token_amount(&token_str, excess_yocto, sim_day, &get_decimals)
+                    .yocto_to_token_amount(&token_str, excess_yocto, sim_day, rate_provider)
                     .await;
 
                 let current = self.holdings.get(&token_str).copied().unwrap_or(0);
@@ -204,7 +250,7 @@ impl PortfolioState {
 
             let target_value_yocto = (total_value_yocto as f64 * target_weight) as u128;
             let current_value_yocto = self
-                .token_value_yocto(&token_str, sim_day, &get_decimals)
+                .token_value_yocto(&token_str, sim_day, rate_provider)
                 .await;
 
             if target_value_yocto > current_value_yocto {
@@ -215,7 +261,7 @@ impl PortfolioState {
                 }
 
                 let buy_amount = self
-                    .yocto_to_token_amount(&token_str, buy_yocto, sim_day, &get_decimals)
+                    .yocto_to_token_amount(&token_str, buy_yocto, sim_day, rate_provider)
                     .await;
 
                 if buy_amount > 0 {
@@ -242,6 +288,7 @@ impl PortfolioState {
         token: &TokenOutAccount,
         weight: f64,
         sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
         log: &slog::Logger,
     ) -> Result<()> {
         let token_str = token.to_string();
@@ -250,9 +297,8 @@ impl PortfolioState {
             return Ok(());
         }
 
-        let get_decimals = trade::make_get_decimals();
         let buy_amount = self
-            .yocto_to_token_amount(&token_str, buy_yocto, sim_day, &get_decimals)
+            .yocto_to_token_amount(&token_str, buy_yocto, sim_day, rate_provider)
             .await;
 
         if buy_amount > 0 {
@@ -277,6 +323,7 @@ impl PortfolioState {
         token: &TokenOutAccount,
         weight: f64,
         sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
         log: &slog::Logger,
     ) -> Result<()> {
         let token_str = token.to_string();
@@ -286,9 +333,8 @@ impl PortfolioState {
             return Ok(());
         }
 
-        let get_decimals = trade::make_get_decimals();
         let sell_yocto = self
-            .token_amount_to_yocto(&token_str, sell_amount, sim_day, &get_decimals)
+            .token_amount_to_yocto(&token_str, sell_amount, sim_day, rate_provider)
             .await;
 
         if sell_yocto > 0 {
@@ -313,13 +359,12 @@ impl PortfolioState {
         token: &TokenOutAccount,
         target: &TokenOutAccount,
         sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
         log: &slog::Logger,
     ) -> Result<()> {
         let token_str = token.to_string();
         let target_str = target.to_string();
         let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
-
-        let get_decimals = trade::make_get_decimals();
 
         // Step 1: sell token -> cash
         let current = self.holdings.get(&token_str).copied().unwrap_or(0);
@@ -328,7 +373,7 @@ impl PortfolioState {
         }
 
         let sell_yocto = self
-            .token_amount_to_yocto(&token_str, current, sim_day, &get_decimals)
+            .token_amount_to_yocto(&token_str, current, sim_day, rate_provider)
             .await;
         self.holdings.remove(&token_str);
         self.cash_balance += sell_yocto;
@@ -344,7 +389,7 @@ impl PortfolioState {
         // Step 2: cash -> target (if target is not wrap.near)
         if target_str != wnear_str {
             let buy_amount = self
-                .yocto_to_token_amount(&target_str, sell_yocto, sim_day, &get_decimals)
+                .yocto_to_token_amount(&target_str, sell_yocto, sim_day, rate_provider)
                 .await;
             if buy_amount > 0 {
                 self.cash_balance -= sell_yocto;
@@ -369,11 +414,11 @@ impl PortfolioState {
         from: &TokenOutAccount,
         to: &TokenOutAccount,
         sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
         log: &slog::Logger,
     ) -> Result<()> {
         let from_str = from.to_string();
         let to_str = to.to_string();
-        let get_decimals = trade::make_get_decimals();
 
         let current = self.holdings.get(&from_str).copied().unwrap_or(0);
         if current == 0 {
@@ -382,12 +427,12 @@ impl PortfolioState {
 
         // Convert from -> yocto -> to
         let yocto_value = self
-            .token_amount_to_yocto(&from_str, current, sim_day, &get_decimals)
+            .token_amount_to_yocto(&from_str, current, sim_day, rate_provider)
             .await;
         self.holdings.remove(&from_str);
 
         let buy_amount = self
-            .yocto_to_token_amount(&to_str, yocto_value, sim_day, &get_decimals)
+            .yocto_to_token_amount(&to_str, yocto_value, sim_day, rate_provider)
             .await;
         if buy_amount > 0 {
             *self.holdings.entry(to_str.clone()).or_insert(0) += buy_amount;
@@ -406,8 +451,11 @@ impl PortfolioState {
     }
 
     /// Calculate total portfolio value in yoctoNEAR
-    async fn calculate_total_value_yocto(&self, sim_day: DateTime<Utc>) -> Result<u128> {
-        let get_decimals = trade::make_get_decimals();
+    async fn calculate_total_value_yocto(
+        &self,
+        sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
+    ) -> Result<u128> {
         let mut total = self.cash_balance;
 
         for (token_id, amount) in &self.holdings {
@@ -415,33 +463,32 @@ impl PortfolioState {
                 continue;
             }
             total += self
-                .token_amount_to_yocto(token_id, *amount, sim_day, &get_decimals)
+                .token_amount_to_yocto(token_id, *amount, sim_day, rate_provider)
                 .await;
         }
 
         Ok(total)
     }
 
-    /// Convert token amount to yoctoNEAR using DB rates
+    /// Convert token amount to yoctoNEAR using rates from provider
     async fn token_amount_to_yocto(
         &self,
         token_id: &str,
         amount: u128,
         sim_day: DateTime<Utc>,
-        get_decimals: &persistence::token_rate::GetDecimalsFn,
+        rate_provider: &(impl RateProvider + ?Sized),
     ) -> u128 {
-        let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         let token_out: TokenOutAccount = match token_id.parse() {
             Ok(t) => t,
             Err(_) => return 0,
         };
 
-        match get_rate_at_date(&token_out, &wnear_in, sim_day, get_decimals).await {
+        match rate_provider.get_rate(&token_out, sim_day).await {
             Some(rate) => {
                 if rate.is_zero() {
                     return 0;
                 }
-                let decimals = self.decimals.get(token_id).copied().unwrap_or(24);
+                let decimals = rate_provider.get_decimals(token_id).await;
                 let token_amount = common::types::TokenAmount::from_smallest_units(
                     BigDecimal::from(amount),
                     decimals,
@@ -459,21 +506,20 @@ impl PortfolioState {
         }
     }
 
-    /// Convert yoctoNEAR to token amount using DB rates
+    /// Convert yoctoNEAR to token amount using rates from provider
     async fn yocto_to_token_amount(
         &self,
         token_id: &str,
         yocto: u128,
         sim_day: DateTime<Utc>,
-        get_decimals: &persistence::token_rate::GetDecimalsFn,
+        rate_provider: &(impl RateProvider + ?Sized),
     ) -> u128 {
-        let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         let token_out: TokenOutAccount = match token_id.parse() {
             Ok(t) => t,
             Err(_) => return 0,
         };
 
-        match get_rate_at_date(&token_out, &wnear_in, sim_day, get_decimals).await {
+        match rate_provider.get_rate(&token_out, sim_day).await {
             Some(rate) => {
                 if rate.is_zero() {
                     return 0;
@@ -495,13 +541,13 @@ impl PortfolioState {
         &self,
         token_id: &str,
         sim_day: DateTime<Utc>,
-        get_decimals: &persistence::token_rate::GetDecimalsFn,
+        rate_provider: &(impl RateProvider + ?Sized),
     ) -> u128 {
         let amount = self.holdings.get(token_id).copied().unwrap_or(0);
         if amount == 0 {
             return 0;
         }
-        self.token_amount_to_yocto(token_id, amount, sim_day, get_decimals)
+        self.token_amount_to_yocto(token_id, amount, sim_day, rate_provider)
             .await
     }
 }
@@ -529,22 +575,4 @@ async fn get_rate_at_date(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn new_sets_initial_capital() {
-        let state = PortfolioState::new(100_000_000_000_000_000_000_000_000); // 100 NEAR
-        assert_eq!(state.cash_balance, 100_000_000_000_000_000_000_000_000);
-        assert!(state.holdings.is_empty());
-        assert!(state.decimals.is_empty());
-        assert!(state.snapshots.is_empty());
-        assert!(state.trades.is_empty());
-    }
-
-    #[test]
-    fn new_zero_capital() {
-        let state = PortfolioState::new(0);
-        assert_eq!(state.cash_balance, 0);
-    }
-}
+mod tests;
