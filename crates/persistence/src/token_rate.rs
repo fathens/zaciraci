@@ -87,7 +87,7 @@ impl NewDbTokenRate {
             decimals: Some(exchange_rate.decimals() as i16),
             timestamp,
             rate_calc_near,
-            swap_path: swap_path.map(|p| serde_json::to_value(p).unwrap()),
+            swap_path: swap_path.and_then(|p| serde_json::to_value(p).ok()),
         }
     }
 }
@@ -207,7 +207,10 @@ impl TokenRate {
             trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
 
             // 並行実行数（設定から取得、デフォルト8）
-            let concurrency = common::config::config().trade.prediction_concurrency as usize;
+            let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(8);
 
             // 全トークンの decimals を並行取得
             let fetch_results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())

@@ -1,5 +1,6 @@
 use super::*;
 use common::types::{TokenInAccount, TokenOutAccount};
+use serial_test::serial;
 use std::str::FromStr;
 
 fn price_from_int(v: i64) -> TokenPrice {
@@ -429,4 +430,94 @@ fn test_liquidity_score_calculation_formula() {
     let ratio: f64 = 0.5;
     let score: f64 = ratio / (1.0 + ratio);
     assert!((score - 0.333_f64).abs() < 0.001);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_enhanced_liquidity_score_weight_override() {
+    // CONFIG_STORE で重みを変更したときにスコアが変化することを検証
+    struct MockClient;
+    impl blockchain::jsonrpc::ViewContract for MockClient {
+        async fn view_contract<T>(
+            &self,
+            _receiver: &near_sdk::AccountId,
+            method_name: &str,
+            _args: &T,
+        ) -> crate::Result<near_primitives::views::CallResult>
+        where
+            T: ?Sized + serde::Serialize + Sync,
+        {
+            match method_name {
+                "ft_balance_of" => {
+                    let balance = (100u128 * 10u128.pow(24)).to_string();
+                    Ok(near_primitives::views::CallResult {
+                        result: serde_json::to_vec(&balance).unwrap(),
+                        logs: vec![],
+                    })
+                }
+                _ => Err(anyhow::anyhow!("Unexpected method: {}", method_name)),
+            }
+        }
+    }
+
+    let client = MockClient;
+    // volume_score ≈ 0.1 (小さい取引量) vs pool_score ≈ 0.5 (100 NEAR/100 NEAR threshold)
+    // → 重みを変えるとスコアが変化する
+    let history = common::algorithm::types::PriceHistory {
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
+        prices: vec![common::algorithm::types::PricePoint {
+            timestamp: chrono::Utc::now(),
+            price: price_from_int(100),
+            volume: Some(BigDecimal::from(1000u64)), // 非常に小さい取引量
+        }],
+    };
+
+    // デフォルト重み (volume=0.6, pool=0.4) でスコア計算
+    let score_default = calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
+
+    // volume 寄りから pool 寄りに変更 (volume=0.1, pool=0.9)
+    let _guard1 = common::config::ConfigGuard::new("LIQUIDITY_VOLUME_WEIGHT", "0.1");
+    let _guard2 = common::config::ConfigGuard::new("LIQUIDITY_POOL_WEIGHT", "0.9");
+    let score_pool_heavy =
+        calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
+
+    // pool_score > volume_score なので、pool 寄りの重みではスコアが上がるはず
+    assert!(
+        score_pool_heavy > score_default,
+        "Pool-heavy weights should increase score (pool_score > volume_score): default={}, pool_heavy={}",
+        score_default,
+        score_pool_heavy
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_pool_liquidity_error_default_score_override() {
+    // RPC エラー時のデフォルトスコアが CONFIG_STORE で変更可能なことを検証
+    struct FailingClient;
+    impl blockchain::jsonrpc::ViewContract for FailingClient {
+        async fn view_contract<T>(
+            &self,
+            _receiver: &near_sdk::AccountId,
+            _method_name: &str,
+            _args: &T,
+        ) -> crate::Result<near_primitives::views::CallResult>
+        where
+            T: ?Sized + serde::Serialize + Sync,
+        {
+            Err(anyhow::anyhow!("RPC error"))
+        }
+    }
+
+    let client = FailingClient;
+
+    // デフォルト (0.3)
+    let score_default = calculate_pool_liquidity_score(&client, "test.token").await;
+    assert!((score_default - 0.3).abs() < 0.001);
+
+    // オーバーライド (0.5)
+    let _guard = common::config::ConfigGuard::new("LIQUIDITY_ERROR_DEFAULT_SCORE", "0.5");
+    let score_custom = calculate_pool_liquidity_score(&client, "test.token").await;
+    assert!((score_custom - 0.5).abs() < 0.001);
 }

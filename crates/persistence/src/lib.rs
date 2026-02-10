@@ -1,5 +1,6 @@
 #![deny(warnings)]
 
+pub mod config_store;
 pub mod connection_pool;
 pub mod evaluation_period;
 pub mod pool_info;

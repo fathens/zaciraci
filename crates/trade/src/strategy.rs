@@ -490,7 +490,10 @@ where
     debug!(log, "batch predictions completed"; "count" => batch_predictions.len());
 
     // 2. 並行実行数を設定から取得
-    let concurrency = common::config::config().trade.prediction_concurrency as usize;
+    let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
 
     // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
     let end_date = Utc::now();
@@ -780,7 +783,10 @@ where
     let execution_report = execute_portfolio_optimization(
         &wallet_info,
         portfolio_data,
-        0.1, // rebalance threshold
+        config::get("PORTFOLIO_REBALANCE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.1),
     )
     .await?;
 

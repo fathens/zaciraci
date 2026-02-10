@@ -26,11 +26,18 @@ impl Default for PredictionService {
 
 impl PredictionService {
     pub fn new() -> Self {
-        let config = common::config::config();
+        let max_retries = common::config::get("TRADE_PREDICTION_MAX_RETRIES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2);
+        let retry_delay_seconds = common::config::get("TRADE_PREDICTION_RETRY_DELAY_SECONDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
         Self {
             predictor: ChronosPredictor::new(),
-            max_retries: config.trade.prediction_max_retries,
-            retry_delay_seconds: config.trade.prediction_retry_delay_seconds,
+            max_retries,
+            retry_delay_seconds,
         }
     }
 
@@ -207,7 +214,10 @@ impl PredictionService {
         );
 
         // 2. 設定から並行実行数を取得
-        let concurrency = common::config::config().trade.prediction_concurrency as usize;
+        let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(8);
 
         // 3. 予測を並行実行
         let results: Vec<_> = stream::iter(tokens.clone())

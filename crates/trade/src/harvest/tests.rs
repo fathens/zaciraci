@@ -49,8 +49,8 @@ fn test_harvest_reserve_amount_custom() {
 fn test_harvest_min_amount_default() {
     // HARVEST_MIN_AMOUNTのデフォルト値テスト
     let expected = near_to_yocto_amount(10);
-    let actual = &*HARVEST_MIN_AMOUNT;
-    assert_eq!(*actual, expected);
+    let actual = harvest_min_amount();
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn test_yocto_near_conversion() {
 #[test]
 fn test_harvest_reserve_amount_parsing() {
     // 無効な設定値の場合のフォールバック動作テスト
-    config::set("HARVEST_RESERVE_AMOUNT", "invalid");
+    let _guard = config::ConfigGuard::new("HARVEST_RESERVE_AMOUNT", "invalid");
 
     let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
     let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
@@ -83,7 +83,7 @@ fn test_harvest_reserve_amount_parsing() {
 #[test]
 fn test_harvest_account_parsing() {
     // HARVEST_ACCOUNT_IDの正常なパース動作テスト
-    config::set("HARVEST_ACCOUNT_ID", "test.near");
+    let _guard = config::ConfigGuard::new("HARVEST_ACCOUNT_ID", "test.near");
 
     let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|_| "harvest.near".to_string());
     let parsed_account = value.parse::<AccountId>();

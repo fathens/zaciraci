@@ -20,9 +20,9 @@ static INIT: Once = Once::new();
 fn initialize() {
     INIT.call_once(|| {
         config::set("ARBITRAGE_NEEDED", "true");
-        config::set("TOKEN_NOT_FOUND_WAIT", "1s");
-        config::set("OTHER_ERROR_WAIT", "1s");
-        config::set("PREVIEW_NOT_FOUND_WAIT", "1s");
+        config::set("ARBITRAGE_TOKEN_NOT_FOUND_WAIT", "1s");
+        config::set("ARBITRAGE_OTHER_ERROR_WAIT", "1s");
+        config::set("ARBITRAGE_PREVIEW_NOT_FOUND_WAIT", "1s");
     });
 }
 
@@ -262,7 +262,7 @@ fn test_is_needed_behavior() {
     // config::get が "true" を返す場合は true、それ以外は false を返す
 
     // "true" の場合
-    config::set("ARBITRAGE_NEEDED", "true");
+    let _guard = config::ConfigGuard::new("ARBITRAGE_NEEDED", "true");
     let value = config::get("ARBITRAGE_NEEDED").unwrap();
     assert_eq!(value, "true");
     let parsed = value.parse::<bool>().unwrap();

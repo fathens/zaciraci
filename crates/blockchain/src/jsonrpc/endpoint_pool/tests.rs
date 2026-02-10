@@ -1,4 +1,5 @@
 use super::*;
+use serial_test::serial;
 
 #[test]
 fn test_endpoint_pool_creation() {
@@ -176,4 +177,28 @@ fn test_all_endpoints_failed_resets() {
     if let Ok(failed) = pool.failed_endpoints.lock() {
         assert!(failed.failures.is_empty());
     }
+}
+
+#[test]
+#[serial]
+fn test_rpc_endpoints_json_roundtrip() {
+    // JSON 文字列 → Vec<config::RpcEndpoint> → JSON → 再パース → 一致確認
+    let original = r#"[{"url":"http://rpc1","weight":10,"max_retries":3},{"url":"http://rpc2","weight":20,"max_retries":5}]"#;
+
+    let _guard = common::config::ConfigGuard::new("RPC_ENDPOINTS", original);
+
+    let json_str = common::config::get("RPC_ENDPOINTS").unwrap();
+    let parsed: Vec<common::config::RpcEndpoint> = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed[0].url, "http://rpc1");
+    assert_eq!(parsed[0].weight, 10);
+    assert_eq!(parsed[1].url, "http://rpc2");
+    assert_eq!(parsed[1].max_retries, 5);
+
+    // 再シリアライズして再パースしても一致
+    let reserialized = serde_json::to_string(&parsed).unwrap();
+    let reparsed: Vec<common::config::RpcEndpoint> = serde_json::from_str(&reserialized).unwrap();
+    assert_eq!(reparsed.len(), parsed.len());
+    assert_eq!(reparsed[0].url, parsed[0].url);
+    assert_eq!(reparsed[1].url, parsed[1].url);
 }

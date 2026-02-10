@@ -14,28 +14,27 @@ use logging::*;
 
 use anyhow::bail;
 use humantime::parse_duration;
-use once_cell::sync::Lazy;
 use std::time::Duration;
 
 type Result<T> = anyhow::Result<T>;
 
-static TOKEN_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
-    config::get("TOKEN_NOT_FOUND_WAIT")
+fn token_not_found_wait() -> Duration {
+    config::get("ARBITRAGE_TOKEN_NOT_FOUND_WAIT")
         .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(1)) // デフォルト: 1秒
-});
+        .unwrap_or_else(|_| Duration::from_secs(1))
+}
 
-static OTHER_ERROR_WAIT: Lazy<Duration> = Lazy::new(|| {
-    config::get("OTHER_ERROR_WAIT")
+fn other_error_wait() -> Duration {
+    config::get("ARBITRAGE_OTHER_ERROR_WAIT")
         .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(30)) // デフォルト: 30秒
-});
+        .unwrap_or_else(|_| Duration::from_secs(30))
+}
 
-static PREVIEW_NOT_FOUND_WAIT: Lazy<Duration> = Lazy::new(|| {
-    config::get("PREVIEW_NOT_FOUND_WAIT")
+fn preview_not_found_wait() -> Duration {
+    config::get("ARBITRAGE_PREVIEW_NOT_FOUND_WAIT")
         .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(10)) // デフォルト: 10秒
-});
+        .unwrap_or_else(|_| Duration::from_secs(10))
+}
 
 fn is_needed() -> bool {
     config::get("ARBITRAGE_NEEDED")
@@ -61,19 +60,15 @@ pub async fn run() {
                 if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>()
                     && WNEAR_TOKEN.to_string().eq(name)
                 {
-                    info!(
-                        log,
-                        "token not found, retrying after {:?}", *TOKEN_NOT_FOUND_WAIT
-                    );
-                    tokio::time::sleep(*TOKEN_NOT_FOUND_WAIT).await;
+                    let wait = token_not_found_wait();
+                    info!(log, "token not found, retrying after {:?}", wait);
+                    tokio::time::sleep(wait).await;
                     continue;
                 }
                 // その他のエラーは長めの待機
-                warn!(
-                    log,
-                    "non-jsonrpc error, retrying after {:?}", *OTHER_ERROR_WAIT
-                );
-                tokio::time::sleep(*OTHER_ERROR_WAIT).await;
+                let wait = other_error_wait();
+                warn!(log, "non-jsonrpc error, retrying after {:?}", wait);
+                tokio::time::sleep(wait).await;
                 continue;
             }
         }
@@ -135,7 +130,7 @@ where
         );
     } else {
         info!(log, "previews not found");
-        tokio::time::sleep(*PREVIEW_NOT_FOUND_WAIT).await;
+        tokio::time::sleep(preview_not_found_wait()).await;
     }
 
     Ok(())

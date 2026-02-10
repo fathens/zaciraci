@@ -341,13 +341,13 @@ fn test_is_time_to_harvest() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    LAST_HARVEST.store(now - INTERVAL_OF_HARVEST - 1, Ordering::Relaxed);
+    LAST_HARVEST.store(now - harvest_interval() - 1, Ordering::Relaxed);
     assert!(is_time_to_harvest());
-    LAST_HARVEST.store(now - INTERVAL_OF_HARVEST, Ordering::Relaxed);
+    LAST_HARVEST.store(now - harvest_interval(), Ordering::Relaxed);
     assert!(!is_time_to_harvest());
-    LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 1, Ordering::Relaxed);
+    LAST_HARVEST.store(now - harvest_interval() + 1, Ordering::Relaxed);
     assert!(!is_time_to_harvest());
-    LAST_HARVEST.store(now - INTERVAL_OF_HARVEST + 2, Ordering::Relaxed);
+    LAST_HARVEST.store(now - harvest_interval() + 2, Ordering::Relaxed);
     assert!(!is_time_to_harvest());
 }
 
@@ -751,7 +751,7 @@ async fn test_start_boundary_values() {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
-            - INTERVAL_OF_HARVEST
+            - harvest_interval()
             - 1,
         Ordering::Relaxed,
     );
@@ -782,7 +782,7 @@ async fn test_start_exact_upper() {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
-            - INTERVAL_OF_HARVEST
+            - harvest_interval()
             - 1,
         Ordering::Relaxed,
     );
@@ -811,13 +811,13 @@ async fn test_start_harvest_time_condition() {
     );
     let wallet = MockWallet::new();
 
-    // Set last harvest time to 12 hours ago (less than INTERVAL_OF_HARVEST)
+    // Set last harvest time to 12 hours ago (less than harvest_interval())
     LAST_HARVEST.store(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
-            - INTERVAL_OF_HARVEST / 2, // 12 hours ago
+            - harvest_interval() / 2, // 12 hours ago
         Ordering::Relaxed,
     );
 
@@ -836,4 +836,23 @@ async fn test_start_harvest_time_condition() {
             .operations_log
             .contains("view_contract: get_deposits")
     );
+}
+
+#[test]
+#[serial(harvest)]
+fn test_multiply_by_balance_multiplier_default() {
+    // デフォルト乗数 128
+    let one_near = NearToken::from_yoctonear(10u128.pow(24));
+    let result = multiply_by_balance_multiplier(one_near);
+    assert_eq!(result.as_yoctonear(), 128 * 10u128.pow(24));
+}
+
+#[test]
+#[serial(harvest)]
+fn test_multiply_by_balance_multiplier_override() {
+    // CONFIG_STORE で乗数を変更
+    let _guard = common::config::ConfigGuard::new("HARVEST_BALANCE_MULTIPLIER", "64");
+    let one_near = NearToken::from_yoctonear(10u128.pow(24));
+    let result = multiply_by_balance_multiplier(one_near);
+    assert_eq!(result.as_yoctonear(), 64 * 10u128.pow(24));
 }

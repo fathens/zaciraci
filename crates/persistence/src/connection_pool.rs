@@ -17,7 +17,10 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
         recycling_method: RecyclingMethod::Fast,
     };
     let mgr = Manager::from_config(dsn, deadpool_diesel::Runtime::Tokio1, mgr_config);
-    Pool::builder(mgr).max_size(max_size).build().unwrap()
+    Pool::builder(mgr)
+        .max_size(max_size)
+        .build()
+        .expect("Failed to build database connection pool")
 });
 
 pub async fn get() -> Result<Client> {

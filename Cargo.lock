@@ -203,6 +203,7 @@ dependencies = [
  "arbitrage",
  "blockchain",
  "logging",
+ "persistence",
  "slog",
  "tokio",
  "trade",

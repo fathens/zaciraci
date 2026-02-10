@@ -812,15 +812,26 @@ async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_prediction_concurrency_config() {
-    let config = common::config::config();
+    let concurrency: u32 = common::config::get("TRADE_PREDICTION_CONCURRENCY")
+        .unwrap()
+        .parse()
+        .unwrap();
     assert!(
-        config.trade.prediction_concurrency >= 1,
+        concurrency >= 1,
         "prediction_concurrency should be at least 1"
     );
     assert!(
-        config.trade.prediction_concurrency <= 32,
+        concurrency <= 32,
         "prediction_concurrency should be reasonable (<=32)"
     );
+
+    // CONFIG_STORE オーバーライドテスト
+    let _guard = common::config::ConfigGuard::new("TRADE_PREDICTION_CONCURRENCY", "4");
+    let overridden: u32 = common::config::get("TRADE_PREDICTION_CONCURRENCY")
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(overridden, 4);
 }
 
 #[tokio::test]

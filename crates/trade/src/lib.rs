@@ -128,11 +128,19 @@ where
                         Err(_) => break, // 時刻が過去になった場合は即座に実行
                     };
 
-                    // 最大1分間sleep（残り時間が1分未満なら残り時間）
-                    let sleep_duration = remaining.min(std::time::Duration::from_secs(60));
+                    // 最大sleep秒数（設定可能、デフォルト60秒）
+                    let max_sleep = config::get("CRON_MAX_SLEEP_SECONDS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(60);
+                    let sleep_duration = remaining.min(std::time::Duration::from_secs(max_sleep));
 
-                    // 長時間待機の場合は定期的にログを出力（5分以上待機時のみ）
-                    if remaining.as_secs() > 300 {
+                    // 長時間待機の場合は定期的にログを出力
+                    let log_threshold = config::get("CRON_LOG_THRESHOLD_SECONDS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(300);
+                    if remaining.as_secs() > log_threshold {
                         debug!(log, "still waiting for next execution";
                             "remaining_seconds" => remaining.as_secs(),
                             "next_time" => %next
@@ -141,6 +149,9 @@ where
 
                     tokio::time::sleep(sleep_duration).await;
                 }
+
+                // タスク実行前に DB から設定をリロード
+                persistence::config_store::reload_to_config().await.ok();
 
                 let exec_log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
                 info!(exec_log, "executing scheduled task");
@@ -293,44 +304,30 @@ mod tests {
 
     #[test]
     fn test_get_cron_schedule_uses_env_value() {
-        // SAFETY: テスト専用の環境変数名を使用しているため競合しない
-        unsafe {
-            std::env::set_var("TEST_CRON_VALID", "0 */30 * * * *");
-        }
+        let _env_guard = common::config::EnvGuard::set("TEST_CRON_VALID", "0 */30 * * * *");
         let schedule = get_cron_schedule("TEST_CRON_VALID", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();
         assert_eq!((second - first).num_minutes(), 30); // 環境変数の値が使われる
-        unsafe {
-            std::env::remove_var("TEST_CRON_VALID");
-        }
     }
 
     #[test]
     fn test_get_cron_schedule_fallback_on_invalid_env() {
-        // SAFETY: テスト専用の環境変数名を使用しているため競合しない
-        unsafe {
-            std::env::set_var("TEST_CRON_INVALID", "invalid cron");
-        }
+        let _env_guard = common::config::EnvGuard::set("TEST_CRON_INVALID", "invalid cron");
         let schedule = get_cron_schedule("TEST_CRON_INVALID", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();
         assert_eq!((second - first).num_minutes(), 15); // デフォルトにフォールバック
-        unsafe {
-            std::env::remove_var("TEST_CRON_INVALID");
-        }
     }
 
     #[test]
     #[serial]
     fn test_get_initial_value_default() {
         // デフォルト: 100 NEAR → 10% = 10 NEAR
-        unsafe {
-            std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
-        }
-        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "100");
+        let _env_guard = common::config::EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
+        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "100");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "10 NEAR");
     }
@@ -339,7 +336,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_custom() {
         // 200 NEAR → 10% = 20 NEAR
-        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "200");
+        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "200");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "20 NEAR");
     }
@@ -348,7 +345,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_min_1() {
         // 5 NEAR → 10% = 0 → max(1) = 1 NEAR
-        common::config::set("TRADE_MIN_POOL_LIQUIDITY", "5");
+        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "5");
         let value = get_initial_value();
         assert_eq!(value.to_string(), "1 NEAR");
     }
