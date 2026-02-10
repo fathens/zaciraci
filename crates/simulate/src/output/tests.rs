@@ -1,7 +1,9 @@
 use super::*;
-use crate::portfolio_state::PortfolioSnapshot;
-use chrono::Utc;
+use crate::cli::Cli;
+use crate::portfolio_state::{PortfolioSnapshot, PortfolioState, TradeRecord};
+use chrono::{TimeZone, Utc};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 fn make_snapshot(total_value_near: f64) -> PortfolioSnapshot {
     PortfolioSnapshot {
@@ -198,4 +200,115 @@ fn performance_total_return_loss() {
         (perf.total_return - (-0.2)).abs() < 1e-10,
         "expected -20% return"
     );
+}
+
+// --- SimulationResult::from_state ---
+
+fn make_cli(start: &str, end: &str) -> Cli {
+    Cli {
+        start_date: start.to_string(),
+        end_date: end.to_string(),
+        initial_capital: 100.0,
+        top_tokens: 10,
+        volatility_days: 7,
+        price_history_days: 30,
+        rebalance_threshold: 0.1,
+        rebalance_interval_days: 1,
+        output: PathBuf::from("test.json"),
+        sweep: None,
+    }
+}
+
+#[test]
+fn from_state_maps_trades_correctly() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let ts = Utc.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap();
+
+    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    state.trades.push(TradeRecord {
+        timestamp: ts,
+        action: "buy".to_string(),
+        token: "usdt.tether-token.near".to_string(),
+        amount: 1_000_000,
+        price_near: 0.5,
+    });
+    state.trades.push(TradeRecord {
+        timestamp: ts,
+        action: "sell".to_string(),
+        token: "usdt.tether-token.near".to_string(),
+        amount: 500_000,
+        price_near: 0.25,
+    });
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.trades.len(), 2);
+    assert_eq!(result.trades[0].action, "buy");
+    assert_eq!(result.trades[0].token, "usdt.tether-token.near");
+    assert_eq!(result.trades[0].amount, 1_000_000);
+    assert!((result.trades[0].price - 0.5).abs() < 1e-10);
+    assert_eq!(result.trades[1].action, "sell");
+    assert_eq!(result.trades[1].amount, 500_000);
+}
+
+#[test]
+fn from_state_maps_snapshots_to_portfolio_values() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let ts = Utc.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap();
+
+    let cash_yocto = 50_000_000_000_000_000_000_000_000u128; // 50 NEAR
+    let mut holdings = BTreeMap::new();
+    holdings.insert("token.near".to_string(), 999u128);
+
+    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    state.snapshots.push(PortfolioSnapshot {
+        timestamp: ts,
+        total_value_near: 105.0,
+        holdings: holdings.clone(),
+        cash_balance: cash_yocto,
+    });
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.portfolio_values.len(), 1);
+    assert!((result.portfolio_values[0].total_value - 105.0).abs() < 1e-10);
+    assert_eq!(result.portfolio_values[0].holdings["token.near"], 999);
+    assert!((result.portfolio_values[0].cash_balance - 50.0).abs() < 1e-10);
+}
+
+#[test]
+fn from_state_config_reflects_cli_params() {
+    let cli = Cli {
+        start_date: "2025-03-01".to_string(),
+        end_date: "2025-03-31".to_string(),
+        initial_capital: 200.0,
+        top_tokens: 5,
+        volatility_days: 14,
+        price_history_days: 60,
+        rebalance_threshold: 0.2,
+        rebalance_interval_days: 3,
+        output: PathBuf::from("out.json"),
+        sweep: None,
+    };
+    let state = PortfolioState::new(200_000_000_000_000_000_000_000_000);
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.config.start_date, "2025-03-01");
+    assert_eq!(result.config.end_date, "2025-03-31");
+    assert!((result.config.initial_capital - 200.0).abs() < 1e-10);
+    assert_eq!(result.config.parameters.top_tokens, 5);
+    assert_eq!(result.config.parameters.volatility_days, 14);
+    assert_eq!(result.config.parameters.price_history_days, 60);
+    assert!((result.config.parameters.rebalance_threshold - 0.2).abs() < 1e-10);
+    assert_eq!(result.config.parameters.rebalance_interval_days, 3);
+}
+
+#[test]
+fn from_state_empty_state() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert!(result.trades.is_empty());
+    assert!(result.portfolio_values.is_empty());
+    assert_eq!(result.performance.total_return, 0.0);
+    assert_eq!(result.performance.sharpe_ratio, 0.0);
 }
