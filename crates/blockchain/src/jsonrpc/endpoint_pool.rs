@@ -26,16 +26,15 @@ struct FailedEndpoints {
 }
 
 impl EndpointPool {
-    /// Create a new EndpointPool from TOML configuration
+    /// Create a new EndpointPool from configuration
     pub fn new() -> Self {
-        let cfg = config::config();
-
-        let mut endpoints: Vec<RpcEndpoint> = cfg
-            .rpc
-            .endpoints
-            .iter()
+        let mut endpoints: Vec<RpcEndpoint> = config::get("RPC_ENDPOINTS")
+            .ok()
+            .and_then(|json| serde_json::from_str::<Vec<common::config::RpcEndpoint>>(&json).ok())
+            .unwrap_or_default()
+            .into_iter()
             .map(|ep| RpcEndpoint {
-                url: ep.url.clone(),
+                url: ep.url,
                 weight: ep.weight,
                 max_retries: ep.max_retries,
             })
@@ -43,7 +42,11 @@ impl EndpointPool {
 
         // If no endpoints in config, use defaults based on network
         if endpoints.is_empty() {
-            let default_url = if cfg.network.use_mainnet {
+            let use_mainnet = config::get("USE_MAINNET")
+                .ok()
+                .and_then(|v| v.parse::<bool>().ok())
+                .unwrap_or(true);
+            let default_url = if use_mainnet {
                 "https://rpc.mainnet.near.org"
             } else {
                 "https://rpc.testnet.near.org"
@@ -55,7 +58,10 @@ impl EndpointPool {
             });
         }
 
-        let failure_reset_seconds = cfg.rpc.settings.failure_reset_seconds;
+        let failure_reset_seconds = config::get("RPC_FAILURE_RESET_SECONDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(300);
 
         Self {
             endpoints,
