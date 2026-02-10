@@ -783,7 +783,10 @@ where
     let execution_report = execute_portfolio_optimization(
         &wallet_info,
         portfolio_data,
-        0.1, // rebalance threshold
+        config::get("PORTFOLIO_REBALANCE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.1),
     )
     .await?;
 

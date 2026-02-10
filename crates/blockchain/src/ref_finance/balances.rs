@@ -60,9 +60,13 @@ fn update_last_harvest() {
     LAST_HARVEST.store(now, Ordering::Relaxed);
 }
 
-/// 128倍を計算するヘルパー関数
-fn multiply_by_128(token: NearToken) -> NearToken {
-    NearToken::from_yoctonear(token.as_yoctonear() << 7)
+/// 残高上限乗数を適用するヘルパー関数
+fn multiply_by_balance_multiplier(token: NearToken) -> NearToken {
+    let multiplier: u128 = config::get("HARVEST_BALANCE_MULTIPLIER")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(128);
+    NearToken::from_yoctonear(token.as_yoctonear().saturating_mul(multiplier))
 }
 
 pub async fn start<C, W>(
@@ -110,7 +114,7 @@ where
         let new_balance = balance_of_start_token(client, wallet, token).await?;
         Ok(new_balance)
     } else {
-        let upper = multiply_by_128(required_balance); // 128倍
+        let upper = multiply_by_balance_multiplier(required_balance); // 乗数倍
         if upper < deposited_wnear {
             let withdraw_amount = deposited_wnear.saturating_sub(upper);
             match harvest(
@@ -343,7 +347,7 @@ where
         NearToken::from_yoctonear(0)
     };
     let native_balance = before_withdraw.saturating_add(added);
-    let upper = multiply_by_128(required); // 128倍
+    let upper = multiply_by_balance_multiplier(required); // 乗数倍
     trace!(log, "checking";
         "native_balance" => native_balance.as_yoctonear(),
         "upper" => upper.as_yoctonear(),

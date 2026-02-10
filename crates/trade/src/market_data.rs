@@ -137,8 +137,16 @@ where
     // 2. REF Financeプール流動性スコア
     let pool_score = calculate_pool_liquidity_score(client, token_id).await;
 
-    // 3. 両方のスコアを重み付き平均で統合（取引量60%, プール40%）
-    let combined_score = volume_score * 0.6 + pool_score * 0.4;
+    // 3. 両方のスコアを重み付き平均で統合
+    let volume_weight = common::config::get("LIQUIDITY_VOLUME_WEIGHT")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.6);
+    let pool_weight = common::config::get("LIQUIDITY_POOL_WEIGHT")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.4);
+    let combined_score = volume_score * volume_weight + pool_score * pool_weight;
     combined_score.clamp(0.0, 1.0)
 }
 
@@ -170,7 +178,10 @@ where
             let normalized_score = liquidity_ratio / (1.0 + liquidity_ratio);
             normalized_score.clamp(0.0, 1.0)
         }
-        Err(_) => 0.3, // エラー時はデフォルト値
+        Err(_) => common::config::get("LIQUIDITY_ERROR_DEFAULT_SCORE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.3),
     }
 }
 

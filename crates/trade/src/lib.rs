@@ -128,11 +128,19 @@ where
                         Err(_) => break, // 時刻が過去になった場合は即座に実行
                     };
 
-                    // 最大1分間sleep（残り時間が1分未満なら残り時間）
-                    let sleep_duration = remaining.min(std::time::Duration::from_secs(60));
+                    // 最大sleep秒数（設定可能、デフォルト60秒）
+                    let max_sleep = config::get("CRON_MAX_SLEEP_SECONDS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(60);
+                    let sleep_duration = remaining.min(std::time::Duration::from_secs(max_sleep));
 
-                    // 長時間待機の場合は定期的にログを出力（5分以上待機時のみ）
-                    if remaining.as_secs() > 300 {
+                    // 長時間待機の場合は定期的にログを出力
+                    let log_threshold = config::get("CRON_LOG_THRESHOLD_SECONDS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(300);
+                    if remaining.as_secs() > log_threshold {
                         debug!(log, "still waiting for next execution";
                             "remaining_seconds" => remaining.as_secs(),
                             "next_time" => %next
