@@ -57,7 +57,11 @@ where
 
     let min_input = one();
     let ave_input = {
-        let ave = history::get_history().read().unwrap().inputs.average();
+        let ave = history::get_history()
+            .read()
+            .expect("history lock is read-only; poisoning is impossible")
+            .inputs
+            .average();
         if ave.is_zero() {
             rate_average(min_input, total_amount).into()
         } else {

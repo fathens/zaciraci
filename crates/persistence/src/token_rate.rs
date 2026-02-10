@@ -87,7 +87,7 @@ impl NewDbTokenRate {
             decimals: Some(exchange_rate.decimals() as i16),
             timestamp,
             rate_calc_near,
-            swap_path: swap_path.map(|p| serde_json::to_value(p).unwrap()),
+            swap_path: swap_path.and_then(|p| serde_json::to_value(p).ok()),
         }
     }
 }

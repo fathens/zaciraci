@@ -73,7 +73,7 @@ where
     let required_balance = required_balance.unwrap_or_else(|| {
         let max = get_history()
             .read()
-            .expect("history lock not poisoned")
+            .expect("history lock is read-only; poisoning is impossible")
             .inputs
             .max();
         if max.is_zero() {
