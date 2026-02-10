@@ -241,3 +241,6 @@ fn calculate_max_drawdown(snapshots: &[crate::portfolio_state::PortfolioSnapshot
 
     max_dd
 }
+
+#[cfg(test)]
+mod tests;

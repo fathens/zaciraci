@@ -188,3 +188,6 @@ fn print_summary_table(result: &SweepResult) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

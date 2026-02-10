@@ -56,3 +56,57 @@ impl Cli {
             .map_err(|e| anyhow::anyhow!("Invalid end-date '{}': {}", self.end_date, e))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_cli(start: &str, end: &str) -> Cli {
+        Cli {
+            start_date: start.to_string(),
+            end_date: end.to_string(),
+            initial_capital: 100.0,
+            top_tokens: 10,
+            volatility_days: 7,
+            price_history_days: 30,
+            rebalance_threshold: 0.1,
+            rebalance_interval_days: 1,
+            output: PathBuf::from("test.json"),
+            sweep: None,
+        }
+    }
+
+    #[test]
+    fn parse_valid_start_date() {
+        let cli = make_cli("2025-06-01", "2025-12-31");
+        let date = cli.parse_start_date().unwrap();
+        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2025, 6, 1).unwrap());
+    }
+
+    #[test]
+    fn parse_valid_end_date() {
+        let cli = make_cli("2025-06-01", "2025-12-31");
+        let date = cli.parse_end_date().unwrap();
+        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    }
+
+    #[test]
+    fn parse_invalid_start_date() {
+        let cli = make_cli("not-a-date", "2025-12-31");
+        let err = cli.parse_start_date().unwrap_err();
+        assert!(err.to_string().contains("Invalid start-date"));
+    }
+
+    #[test]
+    fn parse_invalid_end_date() {
+        let cli = make_cli("2025-06-01", "31-12-2025");
+        let err = cli.parse_end_date().unwrap_err();
+        assert!(err.to_string().contains("Invalid end-date"));
+    }
+
+    #[test]
+    fn parse_empty_date() {
+        let cli = make_cli("", "2025-12-31");
+        assert!(cli.parse_start_date().is_err());
+    }
+}
