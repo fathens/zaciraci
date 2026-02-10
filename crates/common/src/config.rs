@@ -470,6 +470,85 @@ impl Drop for ConfigGuard {
     }
 }
 
+/// テスト用: DB_STORE 全体を保存し、Drop 時に復元する RAII ガード。
+#[doc(hidden)]
+pub struct DbStoreGuard {
+    previous: HashMap<String, String>,
+}
+
+impl Default for DbStoreGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DbStoreGuard {
+    pub fn new() -> Self {
+        let previous = if let Ok(store) = DB_STORE.lock() {
+            store.clone()
+        } else {
+            HashMap::new()
+        };
+        Self { previous }
+    }
+}
+
+impl Drop for DbStoreGuard {
+    fn drop(&mut self) {
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.clear();
+            store.extend(std::mem::take(&mut self.previous));
+        }
+    }
+}
+
+/// テスト用: 環境変数を設定し、Drop 時に元に戻す RAII ガード。
+#[doc(hidden)]
+pub struct EnvGuard {
+    key: String,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    /// 環境変数を `value` に設定する。Drop 時に元の値に復元される。
+    pub fn set(key: &str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: テスト専用。#[serial] で排他制御されている前提。
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self {
+            key: key.to_string(),
+            previous,
+        }
+    }
+
+    /// 環境変数を削除する。Drop 時に元の値に復元される。
+    pub fn remove(key: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: テスト専用。#[serial] で排他制御されている前提。
+        unsafe {
+            std::env::remove_var(key);
+        }
+        Self {
+            key: key.to_string(),
+            previous,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: テスト専用。#[serial] で排他制御されている前提。
+        unsafe {
+            match &self.previous {
+                Some(prev) => std::env::set_var(&self.key, prev),
+                None => std::env::remove_var(&self.key),
+            }
+        }
+    }
+}
+
 fn get_from_store(name: &str) -> Option<String> {
     if let Ok(store) = CONFIG_STORE.lock() {
         store.get(name).cloned()
@@ -924,5 +1003,205 @@ mod tests {
         unsafe {
             std::env::remove_var(TEST_KEY);
         }
+    }
+
+    // =========================================================================
+    // remove / ConfigGuard / DbStoreGuard / EnvGuard のユニットテスト
+    // =========================================================================
+
+    #[test]
+    #[serial]
+    fn test_remove_existing_key() {
+        set("TEST_REMOVE_KEY", "value");
+        assert_eq!(get_from_store("TEST_REMOVE_KEY"), Some("value".to_string()));
+
+        remove("TEST_REMOVE_KEY");
+        assert_eq!(get_from_store("TEST_REMOVE_KEY"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_remove_nonexistent_key() {
+        // 存在しないキーの remove はパニックしない
+        remove("TEST_REMOVE_NONEXISTENT_KEY_12345");
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_guard_restores_previous_value() {
+        set("TEST_GUARD_KEY", "original");
+
+        {
+            let _guard = ConfigGuard::new("TEST_GUARD_KEY", "temporary");
+            assert_eq!(
+                get_from_store("TEST_GUARD_KEY"),
+                Some("temporary".to_string())
+            );
+        }
+        // guard が drop → 元の値に復元
+        assert_eq!(
+            get_from_store("TEST_GUARD_KEY"),
+            Some("original".to_string())
+        );
+
+        // Cleanup
+        remove("TEST_GUARD_KEY");
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_guard_removes_when_no_previous() {
+        // キーが存在しない状態で guard を作成
+        remove("TEST_GUARD_NEW_KEY");
+        assert_eq!(get_from_store("TEST_GUARD_NEW_KEY"), None);
+
+        {
+            let _guard = ConfigGuard::new("TEST_GUARD_NEW_KEY", "temporary");
+            assert_eq!(
+                get_from_store("TEST_GUARD_NEW_KEY"),
+                Some("temporary".to_string())
+            );
+        }
+        // guard が drop → キー自体が削除される
+        assert_eq!(get_from_store("TEST_GUARD_NEW_KEY"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_guard_nested() {
+        remove("TEST_GUARD_NEST");
+
+        {
+            let _g1 = ConfigGuard::new("TEST_GUARD_NEST", "first");
+            {
+                let _g2 = ConfigGuard::new("TEST_GUARD_NEST", "second");
+                assert_eq!(
+                    get_from_store("TEST_GUARD_NEST"),
+                    Some("second".to_string())
+                );
+            }
+            // g2 drop → "first" に復元
+            assert_eq!(get_from_store("TEST_GUARD_NEST"), Some("first".to_string()));
+        }
+        // g1 drop → キー削除
+        assert_eq!(get_from_store("TEST_GUARD_NEST"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_db_store_guard_restores_state() {
+        // DB_STORE に初期データを入れる
+        load_db_config(HashMap::from([
+            ("DB_KEY_A".to_string(), "a".to_string()),
+            ("DB_KEY_B".to_string(), "b".to_string()),
+        ]));
+
+        {
+            let _guard = DbStoreGuard::new();
+            // guard 作成後に DB_STORE を変更
+            load_db_config(HashMap::from([("DB_KEY_C".to_string(), "c".to_string())]));
+            assert_eq!(get_from_db_store("DB_KEY_C"), Some("c".to_string()));
+            assert_eq!(get_from_db_store("DB_KEY_A"), None);
+        }
+        // guard drop → 元の状態に復元
+        assert_eq!(get_from_db_store("DB_KEY_A"), Some("a".to_string()));
+        assert_eq!(get_from_db_store("DB_KEY_B"), Some("b".to_string()));
+        assert_eq!(get_from_db_store("DB_KEY_C"), None);
+
+        // Cleanup
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.clear();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_db_store_guard_restores_empty() {
+        // DB_STORE が空の状態から開始
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.clear();
+        }
+
+        {
+            let _guard = DbStoreGuard::new();
+            load_db_config(HashMap::from([("DB_TEMP".to_string(), "temp".to_string())]));
+            assert_eq!(get_from_db_store("DB_TEMP"), Some("temp".to_string()));
+        }
+        // guard drop → 空に復元
+        assert_eq!(get_from_db_store("DB_TEMP"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_guard_set_restores_previous() {
+        const KEY: &str = "TEST_ENV_GUARD_SET";
+        unsafe {
+            std::env::set_var(KEY, "original");
+        }
+
+        {
+            let _guard = EnvGuard::set(KEY, "temporary");
+            assert_eq!(std::env::var(KEY).unwrap(), "temporary");
+        }
+        // guard drop → 元の値に復元
+        assert_eq!(std::env::var(KEY).unwrap(), "original");
+
+        // Cleanup
+        unsafe {
+            std::env::remove_var(KEY);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_guard_set_removes_when_no_previous() {
+        const KEY: &str = "TEST_ENV_GUARD_NEW";
+        unsafe {
+            std::env::remove_var(KEY);
+        }
+
+        {
+            let _guard = EnvGuard::set(KEY, "temporary");
+            assert_eq!(std::env::var(KEY).unwrap(), "temporary");
+        }
+        // guard drop → 環境変数が削除される
+        assert!(std::env::var(KEY).is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_guard_remove_restores_previous() {
+        const KEY: &str = "TEST_ENV_GUARD_REMOVE";
+        unsafe {
+            std::env::set_var(KEY, "original");
+        }
+
+        {
+            let _guard = EnvGuard::remove(KEY);
+            assert!(std::env::var(KEY).is_err());
+        }
+        // guard drop → 元の値に復元
+        assert_eq!(std::env::var(KEY).unwrap(), "original");
+
+        // Cleanup
+        unsafe {
+            std::env::remove_var(KEY);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_guard_remove_noop_when_no_previous() {
+        const KEY: &str = "TEST_ENV_GUARD_REMOVE_NOOP";
+        unsafe {
+            std::env::remove_var(KEY);
+        }
+
+        {
+            let _guard = EnvGuard::remove(KEY);
+            assert!(std::env::var(KEY).is_err());
+        }
+        // guard drop → 何もしない（元から無かった）
+        assert!(std::env::var(KEY).is_err());
     }
 }
