@@ -43,6 +43,7 @@ pub trait PredictionProvider: Send + Sync {
         quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
+        end_date: DateTime<Utc>,
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>>;
 }
 

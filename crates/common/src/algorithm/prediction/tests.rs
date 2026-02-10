@@ -121,6 +121,7 @@ impl PredictionProvider for MockPredictionProvider {
         quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
+        _end_date: DateTime<Utc>,
     ) -> crate::Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         let mut results = HashMap::new();
 
@@ -253,7 +254,7 @@ mod prediction_tests {
         let tokens = vec![token1.clone(), token2.clone()];
         let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
         let predictions = provider
-            .predict_multiple_tokens(tokens, &quote_token, 7, 24)
+            .predict_multiple_tokens(tokens, &quote_token, 7, 24, Utc::now())
             .await
             .unwrap();
 

@@ -124,7 +124,7 @@ pub async fn start() -> Result<()> {
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
         // 新規期間: 新しくトークンを選定
-        let tokens = select_top_volatility_tokens(&prediction_service).await?;
+        let tokens = select_top_volatility_tokens(&prediction_service, Utc::now()).await?;
 
         // 選定したトークンをデータベースに保存
         if !tokens.is_empty() {
@@ -199,6 +199,7 @@ pub async fn start() -> Result<()> {
         &period_id,
         &client,
         &wallet,
+        Utc::now(),
     )
     .await
     {
@@ -279,8 +280,9 @@ async fn prepare_funds() -> Result<YoctoAmount> {
 }
 
 /// トップボラティリティトークンの選定 (PredictionServiceを使用)
-async fn select_top_volatility_tokens(
+pub async fn select_top_volatility_tokens(
     prediction_service: &PredictionService,
+    end_date: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "select_top_volatility_tokens"));
 
@@ -294,7 +296,6 @@ async fn select_top_volatility_tokens(
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(7);
-    let end_date = Utc::now();
     let start_date = end_date - chrono::Duration::days(volatility_days);
 
     // 型安全な quote_token を準備
@@ -441,7 +442,8 @@ async fn select_top_volatility_tokens(
 /// # 内部の単位
 /// * 価格: Price型（無次元比率）をスケーリング（× 10^24）してu128に格納
 /// * 予測: 同じスケーリング済みf64値
-async fn execute_portfolio_strategy<C, W>(
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_portfolio_strategy<C, W>(
     prediction_service: &PredictionService,
     tokens: &[AccountId],
     available_funds: u128,
@@ -449,6 +451,7 @@ async fn execute_portfolio_strategy<C, W>(
     period_id: &str,
     client: &C,
     wallet: &W,
+    end_date: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<TradingAction>>
 where
     C: blockchain::jsonrpc::ViewContract
@@ -484,6 +487,7 @@ where
             &quote_token_in,
             price_history_days,
             24,
+            end_date,
         )
         .await?;
 
@@ -496,7 +500,6 @@ where
         .unwrap_or(8);
 
     // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
-    let end_date = Utc::now();
     let start_date = end_date - chrono::Duration::days(price_history_days);
 
     // 4. 各トークンの追加データを並行取得（流動性スコア、市場規模、decimals）

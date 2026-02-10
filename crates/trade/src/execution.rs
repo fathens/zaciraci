@@ -17,7 +17,7 @@ use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use std::collections::HashMap;
 
 /// 実行サマリー
-pub(crate) struct ExecutionSummary {
+pub struct ExecutionSummary {
     pub success_count: usize,
     pub failed_count: usize,
 }
