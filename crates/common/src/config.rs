@@ -54,7 +54,7 @@ pub struct RpcConfig {
     pub settings: RpcSettings,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, serde::Serialize, Clone)]
 pub struct RpcEndpoint {
     pub url: String,
     #[serde(default = "default_weight")]
@@ -380,6 +380,24 @@ pub fn get(name: &str) -> Result<String> {
         "ARBITRAGE_TOKEN_NOT_FOUND_WAIT" => Some(CONFIG.arbitrage.token_not_found_wait.clone()),
         "ARBITRAGE_OTHER_ERROR_WAIT" => Some(CONFIG.arbitrage.other_error_wait.clone()),
         "ARBITRAGE_PREVIEW_NOT_FOUND_WAIT" => Some(CONFIG.arbitrage.preview_not_found_wait.clone()),
+        "TRADE_PREDICTION_CONCURRENCY" => Some(CONFIG.trade.prediction_concurrency.to_string()),
+        "RPC_ENDPOINTS" => {
+            let json = serde_json::to_string(&CONFIG.rpc.endpoints).ok();
+            if json.as_deref() == Some("[]") {
+                None
+            } else {
+                json
+            }
+        }
+        "RPC_FAILURE_RESET_SECONDS" => Some(CONFIG.rpc.settings.failure_reset_seconds.to_string()),
+        "RPC_MAX_ATTEMPTS" => Some(CONFIG.rpc.settings.max_attempts.to_string()),
+        "PORTFOLIO_REBALANCE_THRESHOLD" => Some("0.1".to_string()),
+        "LIQUIDITY_VOLUME_WEIGHT" => Some("0.6".to_string()),
+        "LIQUIDITY_POOL_WEIGHT" => Some("0.4".to_string()),
+        "LIQUIDITY_ERROR_DEFAULT_SCORE" => Some("0.3".to_string()),
+        "CRON_MAX_SLEEP_SECONDS" => Some("60".to_string()),
+        "CRON_LOG_THRESHOLD_SECONDS" => Some("300".to_string()),
+        "HARVEST_BALANCE_MULTIPLIER" => Some("128".to_string()),
         "RUST_LOG_FORMAT" => Some(CONFIG.logging.rust_log_format.clone()),
         _ => None,
     };
@@ -657,6 +675,75 @@ mod tests {
         assert_eq!(result, "200");
         unsafe {
             std::env::remove_var("TRADE_MIN_POOL_LIQUIDITY");
+        }
+    }
+
+    /// Step 1: 新規キーのデフォルト値テスト
+    #[test]
+    #[serial]
+    fn test_new_config_keys_defaults() {
+        // 環境変数と CONFIG_STORE をクリア
+        let keys_and_defaults = [
+            ("TRADE_PREDICTION_CONCURRENCY", "8"),
+            ("RPC_FAILURE_RESET_SECONDS", "300"),
+            ("RPC_MAX_ATTEMPTS", "10"),
+            ("PORTFOLIO_REBALANCE_THRESHOLD", "0.1"),
+            ("LIQUIDITY_VOLUME_WEIGHT", "0.6"),
+            ("LIQUIDITY_POOL_WEIGHT", "0.4"),
+            ("LIQUIDITY_ERROR_DEFAULT_SCORE", "0.3"),
+            ("CRON_MAX_SLEEP_SECONDS", "60"),
+            ("CRON_LOG_THRESHOLD_SECONDS", "300"),
+            ("HARVEST_BALANCE_MULTIPLIER", "128"),
+        ];
+
+        for (key, expected) in &keys_and_defaults {
+            unsafe {
+                std::env::remove_var(key);
+            }
+            if let Ok(mut store) = CONFIG_STORE.lock() {
+                store.remove(*key);
+            }
+            let result = get(key).unwrap();
+            assert_eq!(result, *expected, "key={key}");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_rpc_endpoints_json() {
+        unsafe {
+            std::env::remove_var("RPC_ENDPOINTS");
+        }
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove("RPC_ENDPOINTS");
+        }
+        // RPC_ENDPOINTS はデフォルトで空配列なので None→Err になるか、
+        // TOML に設定があれば JSON 文字列が返る
+        let result = get("RPC_ENDPOINTS");
+        if let Ok(json_str) = result {
+            // 有効な JSON であること
+            let parsed: std::result::Result<Vec<RpcEndpoint>, _> = serde_json::from_str(&json_str);
+            assert!(parsed.is_ok(), "RPC_ENDPOINTS should be valid JSON array");
+        }
+        // 空配列の場合は Err が返って OK
+    }
+
+    #[test]
+    #[serial]
+    fn test_new_config_keys_config_store_override() {
+        // CONFIG_STORE で上書きした場合に新規キーも優先されることを確認
+        set("PORTFOLIO_REBALANCE_THRESHOLD", "0.05");
+        let result = get("PORTFOLIO_REBALANCE_THRESHOLD").unwrap();
+        assert_eq!(result, "0.05");
+
+        set("HARVEST_BALANCE_MULTIPLIER", "256");
+        let result = get("HARVEST_BALANCE_MULTIPLIER").unwrap();
+        assert_eq!(result, "256");
+
+        // Cleanup
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove("PORTFOLIO_REBALANCE_THRESHOLD");
+            store.remove("HARVEST_BALANCE_MULTIPLIER");
         }
     }
 }
