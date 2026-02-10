@@ -496,11 +496,8 @@ impl PortfolioState {
                 let near_value = &token_amount / &rate;
                 // NearValue -> yoctoNEAR
                 let yocto = near_value.to_yocto();
-                yocto
-                    .as_bigdecimal()
-                    .to_string()
-                    .parse::<u128>()
-                    .unwrap_or(0)
+                use num_traits::ToPrimitive;
+                yocto.as_bigdecimal().to_u128().unwrap_or(0)
             }
             None => 0,
         }
