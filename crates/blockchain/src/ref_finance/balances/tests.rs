@@ -851,7 +851,7 @@ fn test_multiply_by_balance_multiplier_default() {
 #[serial(harvest)]
 fn test_multiply_by_balance_multiplier_override() {
     // CONFIG_STORE で乗数を変更
-    common::config::set("HARVEST_BALANCE_MULTIPLIER", "64");
+    let _guard = common::config::ConfigGuard::new("HARVEST_BALANCE_MULTIPLIER", "64");
     let one_near = NearToken::from_yoctonear(10u128.pow(24));
     let result = multiply_by_balance_multiplier(one_near);
     assert_eq!(result.as_yoctonear(), 64 * 10u128.pow(24));

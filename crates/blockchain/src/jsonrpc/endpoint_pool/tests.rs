@@ -185,7 +185,7 @@ fn test_rpc_endpoints_json_roundtrip() {
     // JSON 文字列 → Vec<config::RpcEndpoint> → JSON → 再パース → 一致確認
     let original = r#"[{"url":"http://rpc1","weight":10,"max_retries":3},{"url":"http://rpc2","weight":20,"max_retries":5}]"#;
 
-    common::config::set("RPC_ENDPOINTS", original);
+    let _guard = common::config::ConfigGuard::new("RPC_ENDPOINTS", original);
 
     let json_str = common::config::get("RPC_ENDPOINTS").unwrap();
     let parsed: Vec<common::config::RpcEndpoint> = serde_json::from_str(&json_str).unwrap();

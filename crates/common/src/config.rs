@@ -433,6 +433,43 @@ pub fn set(name: &str, value: &str) {
     }
 }
 
+/// テスト用: 設定値を CONFIG_STORE から削除する
+#[doc(hidden)]
+pub fn remove(name: &str) {
+    if let Ok(mut store) = CONFIG_STORE.lock() {
+        store.remove(name);
+    }
+}
+
+/// テスト用: CONFIG_STORE に値をセットし、Drop 時に自動で元に戻す RAII ガード。
+///
+/// テストが途中で panic しても確実にクリーンアップされる。
+#[doc(hidden)]
+pub struct ConfigGuard {
+    key: String,
+    previous: Option<String>,
+}
+
+impl ConfigGuard {
+    pub fn new(key: &str, value: &str) -> Self {
+        let previous = get_from_store(key);
+        set(key, value);
+        Self {
+            key: key.to_string(),
+            previous,
+        }
+    }
+}
+
+impl Drop for ConfigGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(prev) => set(&self.key, prev),
+            None => remove(&self.key),
+        }
+    }
+}
+
 fn get_from_store(name: &str) -> Option<String> {
     if let Ok(store) = CONFIG_STORE.lock() {
         store.get(name).cloned()

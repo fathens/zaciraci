@@ -826,7 +826,7 @@ async fn test_prediction_concurrency_config() {
     );
 
     // CONFIG_STORE オーバーライドテスト
-    common::config::set("TRADE_PREDICTION_CONCURRENCY", "4");
+    let _guard = common::config::ConfigGuard::new("TRADE_PREDICTION_CONCURRENCY", "4");
     let overridden: u32 = common::config::get("TRADE_PREDICTION_CONCURRENCY")
         .unwrap()
         .parse()

@@ -477,8 +477,8 @@ async fn test_enhanced_liquidity_score_weight_override() {
     let score_default = calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
 
     // volume 寄りから pool 寄りに変更 (volume=0.1, pool=0.9)
-    common::config::set("LIQUIDITY_VOLUME_WEIGHT", "0.1");
-    common::config::set("LIQUIDITY_POOL_WEIGHT", "0.9");
+    let _guard1 = common::config::ConfigGuard::new("LIQUIDITY_VOLUME_WEIGHT", "0.1");
+    let _guard2 = common::config::ConfigGuard::new("LIQUIDITY_POOL_WEIGHT", "0.9");
     let score_pool_heavy =
         calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
 
@@ -517,7 +517,7 @@ async fn test_pool_liquidity_error_default_score_override() {
     assert!((score_default - 0.3).abs() < 0.001);
 
     // オーバーライド (0.5)
-    common::config::set("LIQUIDITY_ERROR_DEFAULT_SCORE", "0.5");
+    let _guard = common::config::ConfigGuard::new("LIQUIDITY_ERROR_DEFAULT_SCORE", "0.5");
     let score_custom = calculate_pool_liquidity_score(&client, "test.token").await;
     assert!((score_custom - 0.5).abs() < 0.001);
 }
