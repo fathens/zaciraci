@@ -157,6 +157,9 @@ impl ViewContract for SimulationClient {
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 pub struct MockSentTx;
 
 impl std::fmt::Display for MockSentTx {

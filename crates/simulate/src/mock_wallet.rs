@@ -32,3 +32,21 @@ impl Wallet for SimulationWallet {
         &self.signer
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wallet_account_id_is_sim_near() {
+        let wallet = SimulationWallet::new();
+        assert_eq!(wallet.account_id().as_str(), "sim.near");
+    }
+
+    #[test]
+    fn wallet_signer_does_not_panic() {
+        let wallet = SimulationWallet::new();
+        // Ensure signer is accessible without panicking
+        let _ = wallet.signer();
+    }
+}
