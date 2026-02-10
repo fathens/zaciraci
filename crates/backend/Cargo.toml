@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 logging = { path = "../logging" }
 blockchain = { path = "../blockchain" }
+persistence = { path = "../persistence" }
 trade = { path = "../trade" }
 arbitrage = { path = "../arbitrage" }
 tokio = { workspace = true }

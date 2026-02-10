@@ -150,6 +150,9 @@ where
                     tokio::time::sleep(sleep_duration).await;
                 }
 
+                // タスク実行前に DB から設定をリロード
+                persistence::config_store::reload_to_config().await.ok();
+
                 let exec_log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
                 info!(exec_log, "executing scheduled task");
 
