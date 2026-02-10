@@ -317,6 +317,9 @@ static CONFIG: Lazy<Config> = Lazy::new(|| {
 static CONFIG_STORE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+static DB_STORE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
 pub fn get(name: &str) -> Result<String> {
     // Priority 1: CONFIG_STORE (runtime overrides)
     if let Some(value) = get_from_store(name) {
@@ -326,14 +329,22 @@ pub fn get(name: &str) -> Result<String> {
         return Ok(value);
     }
 
-    // Priority 2: Environment variables (for backward compatibility)
+    // Priority 2: DB_STORE (database config)
+    if let Some(value) = get_from_db_store(name) {
+        if value.is_empty() {
+            return Err(anyhow!("{} is empty", name));
+        }
+        return Ok(value);
+    }
+
+    // Priority 3: Environment variables (for backward compatibility)
     if let Ok(val) = std::env::var(name)
         && !val.is_empty()
     {
         return Ok(val);
     }
 
-    // Priority 3: TOML config
+    // Priority 4: TOML config
     let toml_value = match name {
         "USE_MAINNET" => Some(CONFIG.network.use_mainnet.to_string()),
         "ROOT_ACCOUNT_ID" => {
@@ -427,6 +438,24 @@ fn get_from_store(name: &str) -> Option<String> {
         store.get(name).cloned()
     } else {
         None
+    }
+}
+
+fn get_from_db_store(name: &str) -> Option<String> {
+    if let Ok(store) = DB_STORE.lock() {
+        store.get(name).cloned()
+    } else {
+        None
+    }
+}
+
+/// DB から取得した設定を DB_STORE にロードする
+///
+/// 既存の DB_STORE を全て置き換える（リロード動作）。
+pub fn load_db_config(configs: HashMap<String, String>) {
+    if let Ok(mut store) = DB_STORE.lock() {
+        store.clear();
+        store.extend(configs);
     }
 }
 
@@ -618,7 +647,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_priority_order() {
-        // 優先順位の完全検証: CONFIG_STORE > 環境変数 > TOML > デフォルト
+        // 優先順位の完全検証: CONFIG_STORE > DB > 環境変数 > TOML > デフォルト
         const TEST_KEY: &str = "TRADE_TOP_TOKENS";
 
         // Step 1: TOML/デフォルトのみ (最低優先度)
@@ -626,6 +655,9 @@ mod tests {
             std::env::remove_var(TEST_KEY);
         }
         if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove(TEST_KEY);
+        }
+        if let Ok(mut store) = DB_STORE.lock() {
             store.remove(TEST_KEY);
         }
         let result = get(TEST_KEY).unwrap();
@@ -638,13 +670,23 @@ mod tests {
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "99");
 
-        // Step 3: CONFIG_STORE 追加 (環境変数より優先)
+        // Step 3: DB_STORE 追加 (環境変数より優先)
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.insert(TEST_KEY.to_string(), "77".to_string());
+        }
+        let result = get(TEST_KEY).unwrap();
+        assert_eq!(result, "77");
+
+        // Step 4: CONFIG_STORE 追加 (DB_STORE より優先)
         set(TEST_KEY, "42");
         let result = get(TEST_KEY).unwrap();
         assert_eq!(result, "42");
 
         // Cleanup
         if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove(TEST_KEY);
+        }
+        if let Ok(mut store) = DB_STORE.lock() {
             store.remove(TEST_KEY);
         }
         unsafe {
@@ -744,6 +786,106 @@ mod tests {
         if let Ok(mut store) = CONFIG_STORE.lock() {
             store.remove("PORTFOLIO_REBALANCE_THRESHOLD");
             store.remove("HARVEST_BALANCE_MULTIPLIER");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_db_store_overrides_env() {
+        // DB_STORE が環境変数より優先されること
+        const TEST_KEY: &str = "TRADE_TOP_TOKENS";
+        unsafe {
+            std::env::set_var(TEST_KEY, "env_val");
+        }
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove(TEST_KEY);
+        }
+
+        load_db_config(HashMap::from([(
+            TEST_KEY.to_string(),
+            "db_val".to_string(),
+        )]));
+        let result = get(TEST_KEY).unwrap();
+        assert_eq!(result, "db_val");
+
+        // Cleanup
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.clear();
+        }
+        unsafe {
+            std::env::remove_var(TEST_KEY);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_store_overrides_db_store() {
+        // CONFIG_STORE が DB_STORE より優先されること
+        const TEST_KEY: &str = "TRADE_TOP_TOKENS";
+        load_db_config(HashMap::from([(
+            TEST_KEY.to_string(),
+            "db_val".to_string(),
+        )]));
+        set(TEST_KEY, "store_val");
+
+        let result = get(TEST_KEY).unwrap();
+        assert_eq!(result, "store_val");
+
+        // Cleanup
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove(TEST_KEY);
+        }
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.clear();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_db_config_replaces_previous() {
+        // load_db_config を再度呼ぶと前の値が置き換えられること
+        load_db_config(HashMap::from([
+            ("KEY_A".to_string(), "val_a".to_string()),
+            ("KEY_B".to_string(), "val_b".to_string()),
+        ]));
+        assert_eq!(get("KEY_A").unwrap(), "val_a");
+        assert_eq!(get("KEY_B").unwrap(), "val_b");
+
+        // 再ロード: KEY_A は更新、KEY_B は消える
+        load_db_config(HashMap::from([(
+            "KEY_A".to_string(),
+            "new_val_a".to_string(),
+        )]));
+        assert_eq!(get("KEY_A").unwrap(), "new_val_a");
+        assert!(get("KEY_B").is_err());
+
+        // Cleanup
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.clear();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_db_store_empty_falls_through() {
+        // DB_STORE が空の場合は環境変数にフォールスルー
+        const TEST_KEY: &str = "TRADE_TOP_TOKENS";
+        if let Ok(mut store) = CONFIG_STORE.lock() {
+            store.remove(TEST_KEY);
+        }
+        if let Ok(mut store) = DB_STORE.lock() {
+            store.clear();
+        }
+        unsafe {
+            std::env::set_var(TEST_KEY, "env_val");
+        }
+
+        let result = get(TEST_KEY).unwrap();
+        assert_eq!(result, "env_val");
+
+        // Cleanup
+        unsafe {
+            std::env::remove_var(TEST_KEY);
         }
     }
 }

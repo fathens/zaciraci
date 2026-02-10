@@ -1,6 +1,28 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    config_store (instance_id, key) {
+        instance_id -> Varchar,
+        key -> Varchar,
+        value -> Text,
+        description -> Nullable<Text>,
+        updated_at -> Timestamp,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    config_store_history (id) {
+        id -> Int4,
+        instance_id -> Varchar,
+        key -> Varchar,
+        old_value -> Nullable<Text>,
+        new_value -> Text,
+        changed_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     evaluation_periods (id) {
         id -> Int4,
         period_id -> Varchar,
@@ -69,6 +91,8 @@ diesel::table! {
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
+    config_store,
+    config_store_history,
     evaluation_periods,
     pool_info,
     prediction_records,
