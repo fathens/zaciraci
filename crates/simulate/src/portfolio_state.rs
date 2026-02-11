@@ -65,7 +65,8 @@ pub struct PortfolioState {
     pub cash_balance: u128,
     /// token_id -> amount in smallest units
     pub holdings: BTreeMap<String, u128>,
-    /// token_id -> decimals
+    /// token_id -> decimals (used by mock_client tests)
+    #[allow(dead_code)]
     pub decimals: HashMap<String, u8>,
     /// daily snapshots
     pub snapshots: Vec<PortfolioSnapshot>,
@@ -131,6 +132,86 @@ impl PortfolioState {
         }
 
         Ok(())
+    }
+
+    /// Execute a simulated swap, updating holdings, cash_balance, cost_basis, and realized_pnl.
+    ///
+    /// Called by SimulationClient::exec_contract when a swap is detected.
+    pub fn execute_simulated_swap(
+        &mut self,
+        from_token: &str,
+        from_amount: u128,
+        to_token: &str,
+        to_amount: u128,
+    ) {
+        let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+
+        // Deduct from source
+        if from_token == wnear_str {
+            self.cash_balance = self.cash_balance.saturating_sub(from_amount);
+        } else {
+            let current = self.holdings.get(from_token).copied().unwrap_or(0);
+            let actual_deduct = from_amount.min(current);
+            if actual_deduct > 0 {
+                *self.holdings.entry(from_token.to_string()).or_insert(0) -= actual_deduct;
+
+                // Calculate realized P&L for the sold portion
+                let total_holding = current; // before deduction
+                let total_cost = self.cost_basis.get(from_token).copied().unwrap_or(0);
+
+                let cost_of_sold = if actual_deduct == total_holding {
+                    total_cost
+                } else if total_holding > 0 {
+                    total_cost
+                        .checked_mul(actual_deduct)
+                        .map(|v| v / total_holding)
+                        .unwrap_or_else(|| (total_cost / total_holding) * actual_deduct)
+                } else {
+                    0
+                };
+
+                // For sell side, we need the NEAR value of what we sold.
+                // If to_token is WNEAR, to_amount is the NEAR proceeds.
+                // Otherwise, we use from_amount's proportional cost as a rough estimate.
+                let sell_proceeds_yocto = if to_token == wnear_str {
+                    to_amount
+                } else {
+                    // Token-to-token swap: use cost_of_sold as baseline (no P&L from this leg)
+                    cost_of_sold
+                };
+
+                let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
+                self.realized_pnl += pnl;
+                *self
+                    .realized_pnl_by_token
+                    .entry(from_token.to_string())
+                    .or_insert(0) += pnl;
+
+                if let Some(basis) = self.cost_basis.get_mut(from_token) {
+                    *basis = basis.saturating_sub(cost_of_sold);
+                }
+
+                // Clean up if position is fully closed
+                let remaining = self.holdings.get(from_token).copied().unwrap_or(0);
+                if remaining == 0 {
+                    self.cost_basis.remove(from_token);
+                    self.holdings.remove(from_token);
+                }
+            }
+        }
+
+        // Add to destination
+        if to_token == wnear_str {
+            self.cash_balance += to_amount;
+        } else {
+            *self.holdings.entry(to_token.to_string()).or_insert(0) += to_amount;
+            // Track cost basis: the NEAR value of what we spent
+            if from_token == wnear_str {
+                *self.cost_basis.entry(to_token.to_string()).or_insert(0) += from_amount;
+            }
+            // For token-to-token swaps via NEAR intermediary, the cost is tracked
+            // by the two individual swap legs (token->NEAR, NEAR->token)
+        }
     }
 
     /// Record a daily portfolio snapshot

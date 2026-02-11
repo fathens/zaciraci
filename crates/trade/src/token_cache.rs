@@ -29,6 +29,17 @@ pub async fn load_from_db() -> crate::Result<()> {
     Ok(())
 }
 
+/// キャッシュから decimals を同期的に取得（RPC フォールバックなし）
+///
+/// キャッシュに存在しない場合は None を返す。
+/// シミュレーション等、非同期 RPC を呼べない文脈で使用。
+pub fn get_cached_decimals(token_id: &str) -> Option<u8> {
+    TOKEN_DECIMALS_CACHE
+        .try_read()
+        .ok()
+        .and_then(|cache| cache.get(token_id).copied())
+}
+
 /// 単一トークンの decimals を取得 (キャッシュ優先、ミス時のみ RPC)
 ///
 /// RPC 失敗時はエラーを返し、キャッシュには保存しない。

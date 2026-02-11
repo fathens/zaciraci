@@ -1,6 +1,8 @@
 use crate::portfolio_state::PortfolioState;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
+use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
+use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
 use near_primitives::types::BlockId;
@@ -21,6 +23,77 @@ impl SimulationClient {
         Self {
             portfolio,
             initial_native,
+        }
+    }
+}
+
+impl SimulationClient {
+    /// Calculate swap output amount using DB rates.
+    /// Converts token_in -> NEAR -> token_out using latest exchange rates.
+    async fn calculate_swap_output(
+        &self,
+        token_in: &str,
+        amount_in: u128,
+        token_out: &str,
+    ) -> u128 {
+        use bigdecimal::BigDecimal;
+        use common::types::{TokenAmount, TokenOutAccount, YoctoValue};
+        use num_traits::ToPrimitive;
+
+        let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+        let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
+        let get_decimals = trade::make_get_decimals();
+
+        // token_in -> NEAR value
+        let near_value = if token_in == wnear_str {
+            // wrap.near is already NEAR
+            YoctoValue::from_yocto(BigDecimal::from(amount_in)).to_near()
+        } else {
+            let token_in_out: TokenOutAccount = match token_in.parse() {
+                Ok(t) => t,
+                Err(_) => return 0,
+            };
+
+            let rate = match persistence::token_rate::TokenRate::get_latest(
+                &token_in_out,
+                &wnear_in,
+                &get_decimals,
+            )
+            .await
+            {
+                Ok(Some(r)) => r.exchange_rate,
+                _ => return 0,
+            };
+
+            let decimals_in = get_decimals(token_in).await.unwrap_or(24);
+            let token_amount =
+                TokenAmount::from_smallest_units(BigDecimal::from(amount_in), decimals_in);
+            &token_amount / &rate
+        };
+
+        // NEAR value -> token_out amount
+        if token_out == wnear_str {
+            // Convert NearValue to yoctoNEAR
+            near_value.to_yocto().as_bigdecimal().to_u128().unwrap_or(0)
+        } else {
+            let token_out_account: TokenOutAccount = match token_out.parse() {
+                Ok(t) => t,
+                Err(_) => return 0,
+            };
+
+            let rate = match persistence::token_rate::TokenRate::get_latest(
+                &token_out_account,
+                &wnear_in,
+                &get_decimals,
+            )
+            .await
+            {
+                Ok(Some(r)) => r.exchange_rate,
+                _ => return 0,
+            };
+
+            let token_amount = &near_value * &rate;
+            token_amount.smallest_units().to_u128().unwrap_or(0)
         }
     }
 }
@@ -55,13 +128,57 @@ impl SendTx for SimulationClient {
         &self,
         _signer: &InMemorySigner,
         _receiver: &AccountId,
-        _method_name: &str,
-        _args: T,
+        method_name: &str,
+        args: T,
         _deposit: NearToken,
     ) -> anyhow::Result<Self::Output>
     where
         T: Sized + serde::Serialize,
     {
+        let log = DEFAULT.new(o!("function" => "SimulationClient::exec_contract"));
+
+        if method_name == "swap" {
+            // Parse swap actions from args
+            let args_value = serde_json::to_value(&args)?;
+            if let Some(actions_array) = args_value.get("actions") {
+                let swap_actions: Vec<SwapAction> = serde_json::from_value(actions_array.clone())?;
+
+                if !swap_actions.is_empty() {
+                    let first = &swap_actions[0];
+                    let last = &swap_actions[swap_actions.len() - 1];
+
+                    let token_in = first.token_in.to_string();
+                    let amount_in = first.amount_in.map(|a| a.0).unwrap_or(0);
+                    let token_out = last.token_out.to_string();
+
+                    if amount_in > 0 {
+                        // Calculate output amount using DB rates via NEAR conversion
+                        let amount_out = self
+                            .calculate_swap_output(&token_in, amount_in, &token_out)
+                            .await;
+
+                        if amount_out > 0 {
+                            let mut state = self.portfolio.lock().await;
+                            state.execute_simulated_swap(
+                                &token_in, amount_in, &token_out, amount_out,
+                            );
+
+                            trace!(log, "simulated swap";
+                                "token_in" => &token_in,
+                                "amount_in" => amount_in,
+                                "token_out" => &token_out,
+                                "amount_out" => amount_out
+                            );
+                        } else {
+                            warn!(log, "swap output is zero, skipping";
+                                "token_in" => &token_in, "token_out" => &token_out
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(MockSentTx)
     }
 
@@ -78,7 +195,7 @@ impl SendTx for SimulationClient {
 impl ViewContract for SimulationClient {
     async fn view_contract<T>(
         &self,
-        _receiver: &AccountId,
+        receiver: &AccountId,
         method_name: &str,
         _args: &T,
     ) -> anyhow::Result<CallResult>
@@ -108,10 +225,9 @@ impl ViewContract for SimulationClient {
                 serde_json::to_vec(&deposits)?
             }
             "ft_metadata" => {
-                let state = self.portfolio.lock().await;
-                // Try to find the token decimals from portfolio state
-                // Default to 24 if not found
-                let decimals = state.decimals.values().next().copied().unwrap_or(24);
+                // Look up decimals for the specific token (receiver)
+                let receiver_str = receiver.to_string();
+                let decimals = trade::token_cache::get_cached_decimals(&receiver_str).unwrap_or(24);
                 let metadata = json!({
                     "spec": "ft-1.0.0",
                     "name": "SimToken",
