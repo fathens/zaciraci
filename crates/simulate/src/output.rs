@@ -38,6 +38,10 @@ pub struct PerformanceMetrics {
     pub sortino_ratio: f64,
     pub max_drawdown: f64,
     pub win_rate: f64,
+    pub final_balance_near: f64,
+    pub total_realized_pnl_near: f64,
+    pub trade_count: usize,
+    pub liquidation_count: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,6 +51,7 @@ pub struct TradeEntry {
     pub token: String,
     pub amount: u128,
     pub price: f64,
+    pub realized_pnl: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,6 +60,9 @@ pub struct PortfolioValueEntry {
     pub total_value: f64,
     pub holdings: BTreeMap<String, u128>,
     pub cash_balance: f64,
+    pub daily_pnl_near: f64,
+    pub daily_pnl_pct: f64,
+    pub cumulative_realized_pnl_near: f64,
 }
 
 impl SimulationResult {
@@ -81,21 +89,52 @@ impl SimulationResult {
                 token: t.token.clone(),
                 amount: t.amount,
                 price: t.price_near,
+                realized_pnl: t.realized_pnl_near,
             })
             .collect();
 
-        let portfolio_values: Vec<PortfolioValueEntry> = state
-            .snapshots
+        let portfolio_values: Vec<PortfolioValueEntry> = {
+            let mut values = Vec::with_capacity(state.snapshots.len());
+            let mut prev_value = cli.initial_capital;
+            for s in &state.snapshots {
+                let daily_pnl_near = s.total_value_near - prev_value;
+                let daily_pnl_pct = if prev_value > 0.0 {
+                    daily_pnl_near / prev_value
+                } else {
+                    0.0
+                };
+                values.push(PortfolioValueEntry {
+                    timestamp: s.timestamp.to_rfc3339(),
+                    total_value: s.total_value_near,
+                    holdings: s.holdings.clone(),
+                    cash_balance: s.cash_balance as f64 / 1e24,
+                    daily_pnl_near,
+                    daily_pnl_pct,
+                    cumulative_realized_pnl_near: s.realized_pnl_near,
+                });
+                prev_value = s.total_value_near;
+            }
+            values
+        };
+
+        let trade_count = state
+            .trades
             .iter()
-            .map(|s| PortfolioValueEntry {
-                timestamp: s.timestamp.to_rfc3339(),
-                total_value: s.total_value_near,
-                holdings: s.holdings.clone(),
-                cash_balance: s.cash_balance as f64 / 1e24,
-            })
-            .collect();
+            .filter(|t| t.action != "liquidation")
+            .count();
+        let liquidation_count = state
+            .trades
+            .iter()
+            .filter(|t| t.action == "liquidation")
+            .count();
 
-        let performance = calculate_performance(cli.initial_capital, &state.snapshots);
+        let performance = calculate_performance(
+            cli.initial_capital,
+            &state.snapshots,
+            state.realized_pnl,
+            trade_count,
+            liquidation_count,
+        );
 
         Ok(Self {
             config,
@@ -115,6 +154,9 @@ impl SimulationResult {
 fn calculate_performance(
     initial_capital: f64,
     snapshots: &[crate::portfolio_state::PortfolioSnapshot],
+    realized_pnl: i128,
+    trade_count: usize,
+    liquidation_count: usize,
 ) -> PerformanceMetrics {
     if snapshots.is_empty() {
         return PerformanceMetrics {
@@ -124,6 +166,10 @@ fn calculate_performance(
             sortino_ratio: 0.0,
             max_drawdown: 0.0,
             win_rate: 0.0,
+            final_balance_near: initial_capital,
+            total_realized_pnl_near: realized_pnl as f64 / 1e24,
+            trade_count,
+            liquidation_count,
         };
     }
 
@@ -177,6 +223,10 @@ fn calculate_performance(
         sortino_ratio,
         max_drawdown,
         win_rate,
+        final_balance_near: final_value,
+        total_realized_pnl_near: realized_pnl as f64 / 1e24,
+        trade_count,
+        liquidation_count,
     }
 }
 

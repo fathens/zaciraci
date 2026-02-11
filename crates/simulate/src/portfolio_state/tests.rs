@@ -551,6 +551,333 @@ async fn multiple_actions_applied_sequentially() {
     assert_eq!(state.trades.len(), 2);
 }
 
+// ---------------------------------------------------------------------------
+// Cost basis tracking
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cost_basis_tracks_buy() {
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = provider_with_a();
+
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(TOKEN_A),
+        weight: 0.5,
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    // Cost basis should be set to the buy amount in yocto
+    assert!(
+        state.cost_basis.contains_key(TOKEN_A),
+        "cost_basis should track TOKEN_A"
+    );
+    let expected_cost = NEAR_100 - state.cash_balance; // what was spent
+    assert_eq!(
+        state.cost_basis[TOKEN_A], expected_cost,
+        "cost_basis should equal spent amount"
+    );
+}
+
+#[tokio::test]
+async fn cost_basis_average_on_multiple_buys() {
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = provider_with_a();
+
+    // Buy 1: 30% of 100 NEAR
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(TOKEN_A),
+        weight: 0.3,
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+    let cost_after_first = state.cost_basis[TOKEN_A];
+
+    // Buy 2: 30% of remaining
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(TOKEN_A),
+        weight: 0.3,
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    // Total cost should be sum of both buys
+    assert!(
+        state.cost_basis[TOKEN_A] > cost_after_first,
+        "cost_basis should increase after second buy"
+    );
+    let total_spent = NEAR_100 - state.cash_balance;
+    assert_eq!(
+        state.cost_basis[TOKEN_A], total_spent,
+        "cost_basis should equal total spent"
+    );
+}
+
+#[tokio::test]
+async fn cost_basis_cleared_on_full_sell() {
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = provider_with_a();
+
+    // Buy token A
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(TOKEN_A),
+        weight: 0.5,
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+    assert!(state.cost_basis.contains_key(TOKEN_A));
+
+    // Sell all of token A
+    let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let actions = vec![TradingAction::Sell {
+        token: token_out(TOKEN_A),
+        target: wnear_str.parse().unwrap(),
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    // Cost basis should be cleared
+    assert!(
+        !state.cost_basis.contains_key(TOKEN_A),
+        "cost_basis should be removed after full sell"
+    );
+}
+
+#[tokio::test]
+async fn realized_pnl_partial_sell() {
+    // Use 6-decimal token for precision
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = provider_with_ab();
+
+    // Buy 1 TOKEN_B (1_000_000 units, 6 decimals) for ~1 NEAR
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(TOKEN_B),
+        weight: 0.5,
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    let cost_before = state.cost_basis[TOKEN_B];
+    let holding_before = state.holdings[TOKEN_B];
+
+    // Reduce 50%
+    let actions = vec![TradingAction::ReducePosition {
+        token: token_out(TOKEN_B),
+        weight: 0.5,
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    // Cost basis should be approximately halved
+    let cost_after = state.cost_basis.get(TOKEN_B).copied().unwrap_or(0);
+    let expected_remaining_cost = cost_before / 2;
+    let tolerance = cost_before / 100; // 1% tolerance
+    assert!(
+        (cost_after as i128 - expected_remaining_cost as i128).unsigned_abs() < tolerance,
+        "cost should be ~halved: {} vs expected ~{}",
+        cost_after,
+        expected_remaining_cost
+    );
+
+    // Holdings should be halved
+    let holding_after = state.holdings[TOKEN_B];
+    assert_eq!(
+        holding_after,
+        holding_before / 2,
+        "holdings should be halved"
+    );
+
+    // Trade should have realized_pnl_near set
+    let sell_trade = state
+        .trades
+        .iter()
+        .find(|t| t.action == "reduce_position")
+        .unwrap();
+    assert!(
+        sell_trade.realized_pnl_near.is_some(),
+        "reduce_position should have realized_pnl"
+    );
+}
+
+#[tokio::test]
+async fn realized_pnl_by_token_separate() {
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = provider_with_ab();
+
+    // Buy both tokens
+    let actions = vec![
+        TradingAction::AddPosition {
+            token: token_out(TOKEN_A),
+            weight: 0.25,
+        },
+        TradingAction::AddPosition {
+            token: token_out(TOKEN_B),
+            weight: 0.25,
+        },
+    ];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    // Sell token A to WNEAR
+    let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let actions = vec![TradingAction::Sell {
+        token: token_out(TOKEN_A),
+        target: wnear_str.parse().unwrap(),
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    // Only TOKEN_A should have realized P&L
+    assert!(
+        state.realized_pnl_by_token.contains_key(TOKEN_A),
+        "TOKEN_A should have realized P&L"
+    );
+    // TOKEN_B should not have realized P&L yet (not sold)
+    assert!(
+        !state.realized_pnl_by_token.contains_key(TOKEN_B),
+        "TOKEN_B should not have realized P&L yet"
+    );
+}
+
+#[tokio::test]
+async fn snapshot_includes_realized_pnl() {
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = provider_with_a();
+
+    // First snapshot: no trades yet
+    state.record_snapshot(sim_day(), &provider).await.unwrap();
+    assert!(
+        (state.snapshots[0].realized_pnl_near - 0.0).abs() < 1e-10,
+        "initial snapshot should have 0 realized P&L"
+    );
+
+    // Buy and sell to generate realized P&L
+    let actions = vec![TradingAction::AddPosition {
+        token: token_out(TOKEN_A),
+        weight: 0.5,
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let actions = vec![TradingAction::Sell {
+        token: token_out(TOKEN_A),
+        target: wnear_str.parse().unwrap(),
+    }];
+    state
+        .apply_actions(&actions, sim_day(), &provider)
+        .await
+        .unwrap();
+
+    state.record_snapshot(sim_day(), &provider).await.unwrap();
+
+    // Second snapshot should record the realized P&L
+    assert_eq!(state.snapshots.len(), 2);
+    // The realized P&L is the same value as state.realized_pnl converted to NEAR
+    let expected = state.realized_pnl as f64 / 1e24;
+    assert!(
+        (state.snapshots[1].realized_pnl_near - expected).abs() < 1e-10,
+        "snapshot realized_pnl_near {} should equal {}",
+        state.snapshots[1].realized_pnl_near,
+        expected
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Liquidation
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn liquidate_all_sells_everything() {
+    let mut state = PortfolioState::new(0);
+    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    state.holdings.insert(TOKEN_B.to_string(), 1_000_000);
+    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50); // cost = 50 NEAR
+    state
+        .cost_basis
+        .insert(TOKEN_B.to_string(), 1_000_000_000_000_000_000_000_000); // cost = 1 NEAR
+
+    let provider = provider_with_ab();
+    state.liquidate_all(sim_day(), &provider).await.unwrap();
+
+    assert!(
+        state.holdings.is_empty() || state.holdings.values().all(|&v| v == 0),
+        "all holdings should be sold"
+    );
+    assert!(state.cash_balance > 0, "cash should increase");
+}
+
+#[tokio::test]
+async fn liquidate_all_records_liquidation_trades() {
+    let mut state = PortfolioState::new(0);
+    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50);
+    let provider = provider_with_a();
+
+    state.liquidate_all(sim_day(), &provider).await.unwrap();
+
+    assert!(!state.trades.is_empty(), "should have liquidation trades");
+    assert_eq!(
+        state.trades[0].action, "liquidation",
+        "action should be liquidation"
+    );
+}
+
+#[tokio::test]
+async fn liquidate_all_empty_portfolio_noop() {
+    let mut state = PortfolioState::new(NEAR_100);
+    let provider = provider_with_a();
+
+    state.liquidate_all(sim_day(), &provider).await.unwrap();
+
+    assert!(state.trades.is_empty(), "no trades for empty portfolio");
+    assert_eq!(state.cash_balance, NEAR_100, "cash unchanged");
+}
+
+#[tokio::test]
+async fn liquidate_all_computes_pnl() {
+    let mut state = PortfolioState::new(0);
+    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    // Cost basis = 50 NEAR (bought at 1:1)
+    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50);
+
+    let provider = provider_with_a();
+    state.liquidate_all(sim_day(), &provider).await.unwrap();
+
+    // With 1:1 rate, selling 50 NEAR worth of tokens should yield ~0 P&L
+    assert!(
+        state.trades[0].realized_pnl_near.is_some(),
+        "liquidation should have P&L"
+    );
+    // P&L should be close to 0 (bought and sold at same rate)
+    let pnl = state.trades[0].realized_pnl_near.unwrap();
+    assert!(
+        pnl.abs() < 1.0,
+        "P&L should be near zero for same-rate trade, got {}",
+        pnl
+    );
+}
+
 // ===========================================================================
 // DB Integration Tests
 // ===========================================================================

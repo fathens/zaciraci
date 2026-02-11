@@ -138,6 +138,21 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
         day_count += 1;
     }
 
+    // Liquidate all remaining holdings
+    {
+        let rate_provider = DbRateProvider;
+        let mut state = portfolio.lock().await;
+
+        let end_day: DateTime<Utc> =
+            Utc.from_utc_datetime(&end_date.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap()));
+        if let Err(e) = state.liquidate_all(end_day, &rate_provider).await {
+            warn!(log, "failed to liquidate"; "error" => ?e);
+        }
+        if let Err(e) = state.record_snapshot(end_day, &rate_provider).await {
+            warn!(log, "failed to record final snapshot"; "error" => ?e);
+        }
+    }
+
     // Build result
     let state = portfolio.lock().await;
     let result = SimulationResult::from_state(cli, &state)?;

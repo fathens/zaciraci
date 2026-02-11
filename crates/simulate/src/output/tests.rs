@@ -11,6 +11,7 @@ fn make_snapshot(total_value_near: f64) -> PortfolioSnapshot {
         total_value_near,
         holdings: BTreeMap::new(),
         cash_balance: 0,
+        realized_pnl_near: 0.0,
     }
 }
 
@@ -147,7 +148,7 @@ fn max_drawdown_multiple_drawdowns() {
 
 #[test]
 fn performance_empty_snapshots() {
-    let perf = calculate_performance(100.0, &[]);
+    let perf = calculate_performance(100.0, &[], 0, 0, 0);
     assert_eq!(perf.total_return, 0.0);
     assert_eq!(perf.annualized_return, 0.0);
     assert_eq!(perf.sharpe_ratio, 0.0);
@@ -159,7 +160,7 @@ fn performance_empty_snapshots() {
 #[test]
 fn performance_single_snapshot() {
     let snapshots = vec![make_snapshot(110.0)];
-    let perf = calculate_performance(100.0, &snapshots);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0);
     assert!(
         (perf.total_return - 0.1).abs() < 1e-10,
         "expected 10% return"
@@ -169,7 +170,7 @@ fn performance_single_snapshot() {
 #[test]
 fn performance_zero_initial_capital() {
     let snapshots = vec![make_snapshot(100.0)];
-    let perf = calculate_performance(0.0, &snapshots);
+    let perf = calculate_performance(0.0, &snapshots, 0, 0, 0);
     assert_eq!(perf.total_return, 0.0);
     assert_eq!(perf.annualized_return, 0.0);
 }
@@ -184,7 +185,7 @@ fn performance_win_rate() {
         make_snapshot(110.0), // down
         make_snapshot(120.0), // up
     ];
-    let perf = calculate_performance(100.0, &snapshots);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0);
     assert!(
         (perf.win_rate - 0.6).abs() < 1e-10,
         "expected 60% win rate, got {}",
@@ -195,7 +196,7 @@ fn performance_win_rate() {
 #[test]
 fn performance_total_return_loss() {
     let snapshots = vec![make_snapshot(80.0)];
-    let perf = calculate_performance(100.0, &snapshots);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0);
     assert!(
         (perf.total_return - (-0.2)).abs() < 1e-10,
         "expected -20% return"
@@ -231,6 +232,7 @@ fn from_state_maps_trades_correctly() {
         token: "usdt.tether-token.near".to_string(),
         amount: 1_000_000,
         price_near: 0.5,
+        realized_pnl_near: None,
     });
     state.trades.push(TradeRecord {
         timestamp: ts,
@@ -238,6 +240,7 @@ fn from_state_maps_trades_correctly() {
         token: "usdt.tether-token.near".to_string(),
         amount: 500_000,
         price_near: 0.25,
+        realized_pnl_near: Some(0.1),
     });
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
@@ -265,6 +268,7 @@ fn from_state_maps_snapshots_to_portfolio_values() {
         total_value_near: 105.0,
         holdings: holdings.clone(),
         cash_balance: cash_yocto,
+        realized_pnl_near: 0.0,
     });
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
@@ -311,4 +315,94 @@ fn from_state_empty_state() {
     assert!(result.portfolio_values.is_empty());
     assert_eq!(result.performance.total_return, 0.0);
     assert_eq!(result.performance.sharpe_ratio, 0.0);
+}
+
+// --- daily P&L ---
+
+#[test]
+fn portfolio_value_entry_daily_pnl() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let ts1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+    let ts2 = Utc.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap();
+
+    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    state.snapshots.push(PortfolioSnapshot {
+        timestamp: ts1,
+        total_value_near: 105.0,
+        holdings: BTreeMap::new(),
+        cash_balance: 0,
+        realized_pnl_near: 0.0,
+    });
+    state.snapshots.push(PortfolioSnapshot {
+        timestamp: ts2,
+        total_value_near: 110.0,
+        holdings: BTreeMap::new(),
+        cash_balance: 0,
+        realized_pnl_near: 2.5,
+    });
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    // Day 1: 105 - 100 (initial) = +5
+    assert!(
+        (result.portfolio_values[0].daily_pnl_near - 5.0).abs() < 1e-10,
+        "day1 pnl: {}",
+        result.portfolio_values[0].daily_pnl_near
+    );
+    assert!(
+        (result.portfolio_values[0].daily_pnl_pct - 0.05).abs() < 1e-10,
+        "day1 pct: {}",
+        result.portfolio_values[0].daily_pnl_pct
+    );
+    // Day 2: 110 - 105 = +5
+    assert!(
+        (result.portfolio_values[1].daily_pnl_near - 5.0).abs() < 1e-10,
+        "day2 pnl: {}",
+        result.portfolio_values[1].daily_pnl_near
+    );
+    // cumulative realized pnl
+    assert!(
+        (result.portfolio_values[1].cumulative_realized_pnl_near - 2.5).abs() < 1e-10,
+        "cum pnl: {}",
+        result.portfolio_values[1].cumulative_realized_pnl_near
+    );
+}
+
+// --- performance new fields ---
+
+#[test]
+fn performance_includes_new_fields() {
+    let snapshots = vec![make_snapshot(110.0)];
+    let realized_pnl: i128 = 5_000_000_000_000_000_000_000_000; // 5 NEAR
+    let perf = calculate_performance(100.0, &snapshots, realized_pnl, 10, 3);
+    assert!(
+        (perf.final_balance_near - 110.0).abs() < 1e-10,
+        "final balance: {}",
+        perf.final_balance_near
+    );
+    assert!(
+        (perf.total_realized_pnl_near - 5.0).abs() < 1e-10,
+        "realized pnl: {}",
+        perf.total_realized_pnl_near
+    );
+    assert_eq!(perf.trade_count, 10);
+    assert_eq!(perf.liquidation_count, 3);
+}
+
+#[test]
+fn from_state_maps_realized_pnl_on_trade() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let ts = Utc.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap();
+
+    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    state.trades.push(TradeRecord {
+        timestamp: ts,
+        action: "sell".to_string(),
+        token: "token.near".to_string(),
+        amount: 1_000_000,
+        price_near: 1.0,
+        realized_pnl_near: Some(0.5),
+    });
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.trades[0].realized_pnl, Some(0.5));
 }

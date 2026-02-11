@@ -47,6 +47,7 @@ pub struct PortfolioSnapshot {
     pub total_value_near: f64,
     pub holdings: BTreeMap<String, u128>,
     pub cash_balance: u128,
+    pub realized_pnl_near: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,7 @@ pub struct TradeRecord {
     pub token: String,
     pub amount: u128,
     pub price_near: f64,
+    pub realized_pnl_near: Option<f64>,
 }
 
 pub struct PortfolioState {
@@ -69,6 +71,12 @@ pub struct PortfolioState {
     pub snapshots: Vec<PortfolioSnapshot>,
     /// trade history
     pub trades: Vec<TradeRecord>,
+    /// token_id -> total acquisition cost in yoctoNEAR
+    pub cost_basis: BTreeMap<String, u128>,
+    /// cumulative realized P&L in yoctoNEAR (signed)
+    pub realized_pnl: i128,
+    /// token_id -> cumulative realized P&L in yoctoNEAR (signed)
+    pub realized_pnl_by_token: BTreeMap<String, i128>,
 }
 
 impl PortfolioState {
@@ -79,6 +87,9 @@ impl PortfolioState {
             decimals: HashMap::new(),
             snapshots: Vec::new(),
             trades: Vec::new(),
+            cost_basis: BTreeMap::new(),
+            realized_pnl: 0,
+            realized_pnl_by_token: BTreeMap::new(),
         }
     }
 
@@ -137,6 +148,7 @@ impl PortfolioState {
             total_value_near: total_value,
             holdings: self.holdings.clone(),
             cash_balance: self.cash_balance,
+            realized_pnl_near: self.realized_pnl as f64 / 1e24,
         });
 
         Ok(())
@@ -229,12 +241,15 @@ impl PortfolioState {
                     *self.holdings.entry(token_str.clone()).or_insert(0) -= actual_sell;
                     self.cash_balance += excess_yocto;
 
+                    let pnl_near = self.record_sell_pnl(&token_str, actual_sell, excess_yocto);
+
                     self.trades.push(TradeRecord {
                         timestamp: sim_day,
                         action: "sell".to_string(),
                         token: token_str.clone(),
                         amount: actual_sell,
                         price_near: excess_yocto as f64 / 1e24,
+                        realized_pnl_near: Some(pnl_near),
                     });
                     trace!(log, "rebalance sell"; "token" => &token_str, "amount" => actual_sell);
                 }
@@ -267,6 +282,7 @@ impl PortfolioState {
                 if buy_amount > 0 {
                     self.cash_balance -= buy_yocto;
                     *self.holdings.entry(token_str.clone()).or_insert(0) += buy_amount;
+                    *self.cost_basis.entry(token_str.clone()).or_insert(0) += buy_yocto;
 
                     self.trades.push(TradeRecord {
                         timestamp: sim_day,
@@ -274,6 +290,7 @@ impl PortfolioState {
                         token: token_str.clone(),
                         amount: buy_amount,
                         price_near: buy_yocto as f64 / 1e24,
+                        realized_pnl_near: None,
                     });
                     trace!(log, "rebalance buy"; "token" => &token_str, "amount" => buy_amount);
                 }
@@ -304,6 +321,7 @@ impl PortfolioState {
         if buy_amount > 0 {
             self.cash_balance -= buy_yocto;
             *self.holdings.entry(token_str.clone()).or_insert(0) += buy_amount;
+            *self.cost_basis.entry(token_str.clone()).or_insert(0) += buy_yocto;
 
             self.trades.push(TradeRecord {
                 timestamp: sim_day,
@@ -311,6 +329,7 @@ impl PortfolioState {
                 token: token_str.clone(),
                 amount: buy_amount,
                 price_near: buy_yocto as f64 / 1e24,
+                realized_pnl_near: None,
             });
             trace!(log, "add position"; "token" => &token_str, "amount" => buy_amount);
         }
@@ -341,12 +360,15 @@ impl PortfolioState {
             *self.holdings.entry(token_str.clone()).or_insert(0) -= sell_amount;
             self.cash_balance += sell_yocto;
 
+            let pnl_near = self.record_sell_pnl(&token_str, sell_amount, sell_yocto);
+
             self.trades.push(TradeRecord {
                 timestamp: sim_day,
                 action: "reduce_position".to_string(),
                 token: token_str.clone(),
                 amount: sell_amount,
                 price_near: sell_yocto as f64 / 1e24,
+                realized_pnl_near: Some(pnl_near),
             });
             trace!(log, "reduce position"; "token" => &token_str, "amount" => sell_amount);
         }
@@ -378,12 +400,15 @@ impl PortfolioState {
         self.holdings.remove(&token_str);
         self.cash_balance += sell_yocto;
 
+        let pnl_near = self.record_sell_pnl(&token_str, current, sell_yocto);
+
         self.trades.push(TradeRecord {
             timestamp: sim_day,
             action: "sell".to_string(),
             token: token_str.clone(),
             amount: current,
             price_near: sell_yocto as f64 / 1e24,
+            realized_pnl_near: Some(pnl_near),
         });
 
         // Step 2: cash -> target (if target is not wrap.near)
@@ -394,6 +419,7 @@ impl PortfolioState {
             if buy_amount > 0 {
                 self.cash_balance -= sell_yocto;
                 *self.holdings.entry(target_str.clone()).or_insert(0) += buy_amount;
+                *self.cost_basis.entry(target_str.clone()).or_insert(0) += sell_yocto;
 
                 self.trades.push(TradeRecord {
                     timestamp: sim_day,
@@ -401,6 +427,7 @@ impl PortfolioState {
                     token: target_str.clone(),
                     amount: buy_amount,
                     price_near: sell_yocto as f64 / 1e24,
+                    realized_pnl_near: None,
                 });
             }
         }
@@ -431,11 +458,14 @@ impl PortfolioState {
             .await;
         self.holdings.remove(&from_str);
 
+        let pnl_near = self.record_sell_pnl(&from_str, current, yocto_value);
+
         let buy_amount = self
             .yocto_to_token_amount(&to_str, yocto_value, sim_day, rate_provider)
             .await;
         if buy_amount > 0 {
             *self.holdings.entry(to_str.clone()).or_insert(0) += buy_amount;
+            *self.cost_basis.entry(to_str.clone()).or_insert(0) += yocto_value;
         }
 
         self.trades.push(TradeRecord {
@@ -444,9 +474,103 @@ impl PortfolioState {
             token: format!("{} -> {}", from_str, to_str),
             amount: current,
             price_near: yocto_value as f64 / 1e24,
+            realized_pnl_near: Some(pnl_near),
         });
 
         trace!(log, "switch"; "from" => &from_str, "to" => &to_str);
+        Ok(())
+    }
+
+    /// Record realized P&L for a sell operation using average cost basis method.
+    /// Returns the realized P&L in NEAR (f64).
+    fn record_sell_pnl(
+        &mut self,
+        token_id: &str,
+        sell_amount: u128,
+        sell_proceeds_yocto: u128,
+    ) -> f64 {
+        let total_holding = self.holdings.get(token_id).copied().unwrap_or(0) + sell_amount;
+        let total_cost = self.cost_basis.get(token_id).copied().unwrap_or(0);
+
+        // Average cost basis: cost_of_sold = total_cost * sell_amount / total_holding
+        let cost_of_sold = if sell_amount == total_holding {
+            // Full sell: no rounding needed
+            total_cost
+        } else if total_holding > 0 {
+            // Use checked_mul to detect overflow, fallback to division-first
+            total_cost
+                .checked_mul(sell_amount)
+                .map(|v| v / total_holding)
+                .unwrap_or_else(|| (total_cost / total_holding) * sell_amount)
+        } else {
+            0
+        };
+
+        let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
+
+        // Update cost basis (subtract the sold portion)
+        if let Some(basis) = self.cost_basis.get_mut(token_id) {
+            *basis = basis.saturating_sub(cost_of_sold);
+        }
+
+        // Accumulate realized P&L
+        self.realized_pnl += pnl;
+        *self
+            .realized_pnl_by_token
+            .entry(token_id.to_string())
+            .or_insert(0) += pnl;
+
+        // Clean up cost_basis if position is fully closed
+        let remaining = self.holdings.get(token_id).copied().unwrap_or(0);
+        if remaining == 0 {
+            self.cost_basis.remove(token_id);
+        }
+
+        pnl as f64 / 1e24
+    }
+
+    /// Liquidate all holdings by selling everything back to WNEAR.
+    pub async fn liquidate_all(
+        &mut self,
+        sim_day: DateTime<Utc>,
+        rate_provider: &(impl RateProvider + ?Sized),
+    ) -> Result<()> {
+        let log = DEFAULT.new(o!("function" => "liquidate_all"));
+
+        let tokens: Vec<(String, u128)> = self
+            .holdings
+            .iter()
+            .filter(|&(_, &amount)| amount > 0)
+            .map(|(k, &v)| (k.clone(), v))
+            .collect();
+
+        for (token_id, amount) in tokens {
+            let sell_yocto = self
+                .token_amount_to_yocto(&token_id, amount, sim_day, rate_provider)
+                .await;
+
+            if sell_yocto == 0 {
+                warn!(log, "no rate for liquidation, skipping"; "token" => &token_id);
+                continue;
+            }
+
+            self.holdings.remove(&token_id);
+            self.cash_balance += sell_yocto;
+
+            let pnl_near = self.record_sell_pnl(&token_id, amount, sell_yocto);
+
+            self.trades.push(TradeRecord {
+                timestamp: sim_day,
+                action: "liquidation".to_string(),
+                token: token_id.clone(),
+                amount,
+                price_near: sell_yocto as f64 / 1e24,
+                realized_pnl_near: Some(pnl_near),
+            });
+
+            trace!(log, "liquidated"; "token" => &token_id, "amount" => amount, "proceeds" => sell_yocto as f64 / 1e24);
+        }
+
         Ok(())
     }
 
