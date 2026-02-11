@@ -44,7 +44,6 @@ pub struct SweepResult {
 pub struct SweepEntry {
     pub parameters: SweepParameters,
     pub total_return: f64,
-    pub annualized_return: f64,
     pub sharpe_ratio: f64,
     pub sortino_ratio: f64,
     pub max_drawdown: f64,
@@ -93,7 +92,6 @@ pub async fn run_sweep(base_cli: &Cli, sweep_config_path: &Path) -> Result<()> {
                         rebalance_interval_days: params.rebalance_interval_days,
                     },
                     total_return: result.performance.total_return,
-                    annualized_return: result.performance.annualized_return,
                     sharpe_ratio: result.performance.sharpe_ratio,
                     sortino_ratio: result.performance.sortino_ratio,
                     max_drawdown: result.performance.max_drawdown,
@@ -164,31 +162,29 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
 
 fn print_summary_table(result: &SweepResult) {
     println!(
-        "\n{:<8} {:<8} {:<8} {:<10} {:<10} {:>10} {:>12} {:>10} {:>10} {:>12} {:>10}",
+        "\n{:<8} {:<8} {:<8} {:<10} {:<10} {:>10} {:>10} {:>10} {:>12} {:>10}",
         "TopTok",
         "VolDays",
         "HistDays",
         "RebThresh",
         "RebIntv",
         "Return%",
-        "Ann.Return%",
         "Sharpe",
         "MaxDD%",
         "FinalBal",
         "RealPnL"
     );
-    println!("{}", "-".repeat(118));
+    println!("{}", "-".repeat(106));
 
     for entry in &result.results {
         println!(
-            "{:<8} {:<8} {:<8} {:<10.2} {:<10} {:>10.2} {:>12.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
+            "{:<8} {:<8} {:<8} {:<10.2} {:<10} {:>10.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
             entry.parameters.top_tokens,
             entry.parameters.volatility_days,
             entry.parameters.price_history_days,
             entry.parameters.rebalance_threshold,
             entry.parameters.rebalance_interval_days,
             entry.total_return * 100.0,
-            entry.annualized_return * 100.0,
             entry.sharpe_ratio,
             entry.max_drawdown * 100.0,
             entry.final_balance_near,

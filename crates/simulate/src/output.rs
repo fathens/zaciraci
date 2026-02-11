@@ -33,7 +33,6 @@ pub struct SimulationParameters {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
     pub total_return: f64,
-    pub annualized_return: f64,
     pub sharpe_ratio: f64,
     pub sortino_ratio: f64,
     pub max_drawdown: f64,
@@ -134,6 +133,7 @@ impl SimulationResult {
             state.realized_pnl,
             trade_count,
             liquidation_count,
+            cli.rebalance_interval_days,
         );
 
         Ok(Self {
@@ -157,11 +157,11 @@ fn calculate_performance(
     realized_pnl: i128,
     trade_count: usize,
     liquidation_count: usize,
+    rebalance_interval_days: i64,
 ) -> PerformanceMetrics {
     if snapshots.is_empty() {
         return PerformanceMetrics {
             total_return: 0.0,
-            annualized_return: 0.0,
             sharpe_ratio: 0.0,
             sortino_ratio: 0.0,
             max_drawdown: 0.0,
@@ -180,45 +180,36 @@ fn calculate_performance(
         0.0
     };
 
-    // Calculate daily returns
-    let mut daily_returns: Vec<f64> = Vec::new();
+    // Calculate per-period returns
+    let mut period_returns: Vec<f64> = Vec::new();
     let mut prev_value = initial_capital;
     for snapshot in snapshots {
         if prev_value > 0.0 {
-            let daily_ret = (snapshot.total_value_near - prev_value) / prev_value;
-            daily_returns.push(daily_ret);
+            let ret = (snapshot.total_value_near - prev_value) / prev_value;
+            period_returns.push(ret);
         }
         prev_value = snapshot.total_value_near;
     }
 
-    // Annualized return
-    let num_days = snapshots.len() as f64;
-    let annualized_return = if num_days > 0.0 && final_value > 0.0 && initial_capital > 0.0 {
-        (final_value / initial_capital).powf(365.0 / num_days) - 1.0
-    } else {
-        0.0
-    };
-
     // Sharpe ratio (assuming risk-free rate = 0)
-    let sharpe_ratio = calculate_sharpe_ratio(&daily_returns);
+    let sharpe_ratio = calculate_sharpe_ratio(&period_returns, rebalance_interval_days);
 
     // Sortino ratio
-    let sortino_ratio = calculate_sortino_ratio(&daily_returns);
+    let sortino_ratio = calculate_sortino_ratio(&period_returns, rebalance_interval_days);
 
     // Max drawdown
     let max_drawdown = calculate_max_drawdown(snapshots);
 
     // Win rate
-    let winning_days = daily_returns.iter().filter(|&&r| r > 0.0).count();
-    let win_rate = if daily_returns.is_empty() {
+    let winning_periods = period_returns.iter().filter(|&&r| r > 0.0).count();
+    let win_rate = if period_returns.is_empty() {
         0.0
     } else {
-        winning_days as f64 / daily_returns.len() as f64
+        winning_periods as f64 / period_returns.len() as f64
     };
 
     PerformanceMetrics {
         total_return,
-        annualized_return,
         sharpe_ratio,
         sortino_ratio,
         max_drawdown,
@@ -230,7 +221,7 @@ fn calculate_performance(
     }
 }
 
-fn calculate_sharpe_ratio(returns: &[f64]) -> f64 {
+fn calculate_sharpe_ratio(returns: &[f64], interval_days: i64) -> f64 {
     if returns.len() < 2 {
         return 0.0;
     }
@@ -243,12 +234,13 @@ fn calculate_sharpe_ratio(returns: &[f64]) -> f64 {
     if std_dev == 0.0 {
         0.0
     } else {
-        // Annualize: multiply by sqrt(365)
-        (mean / std_dev) * 365.0_f64.sqrt()
+        // Annualize: multiply by sqrt(periods_per_year)
+        let periods_per_year = 365.0 / interval_days as f64;
+        (mean / std_dev) * periods_per_year.sqrt()
     }
 }
 
-fn calculate_sortino_ratio(returns: &[f64]) -> f64 {
+fn calculate_sortino_ratio(returns: &[f64], interval_days: i64) -> f64 {
     if returns.len() < 2 {
         return 0.0;
     }
@@ -265,7 +257,8 @@ fn calculate_sortino_ratio(returns: &[f64]) -> f64 {
     if downside_dev == 0.0 {
         0.0
     } else {
-        (mean / downside_dev) * 365.0_f64.sqrt()
+        let periods_per_year = 365.0 / interval_days as f64;
+        (mean / downside_dev) * periods_per_year.sqrt()
     }
 }
 

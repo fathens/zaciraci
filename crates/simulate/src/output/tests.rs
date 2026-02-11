@@ -19,25 +19,25 @@ fn make_snapshot(total_value_near: f64) -> PortfolioSnapshot {
 
 #[test]
 fn sharpe_ratio_empty_returns() {
-    assert_eq!(calculate_sharpe_ratio(&[]), 0.0);
+    assert_eq!(calculate_sharpe_ratio(&[], 1), 0.0);
 }
 
 #[test]
 fn sharpe_ratio_single_return() {
-    assert_eq!(calculate_sharpe_ratio(&[0.01]), 0.0);
+    assert_eq!(calculate_sharpe_ratio(&[0.01], 1), 0.0);
 }
 
 #[test]
 fn sharpe_ratio_zero_returns() {
     // All zero returns → std_dev = 0 → sharpe = 0
     let returns = vec![0.0; 10];
-    assert_eq!(calculate_sharpe_ratio(&returns), 0.0);
+    assert_eq!(calculate_sharpe_ratio(&returns, 1), 0.0);
 }
 
 #[test]
 fn sharpe_ratio_positive_returns() {
     let returns = vec![0.01, 0.02, 0.015, 0.005, 0.03];
-    let result = calculate_sharpe_ratio(&returns);
+    let result = calculate_sharpe_ratio(&returns, 1);
     assert!(
         result > 0.0,
         "positive mean returns should yield positive sharpe"
@@ -47,10 +47,22 @@ fn sharpe_ratio_positive_returns() {
 #[test]
 fn sharpe_ratio_negative_returns() {
     let returns = vec![-0.01, -0.02, -0.015, -0.005, -0.03];
-    let result = calculate_sharpe_ratio(&returns);
+    let result = calculate_sharpe_ratio(&returns, 1);
     assert!(
         result < 0.0,
         "negative mean returns should yield negative sharpe"
+    );
+}
+
+#[test]
+fn sharpe_ratio_interval_scaling() {
+    let returns = vec![0.01, 0.02, 0.015, 0.005, 0.03];
+    let daily = calculate_sharpe_ratio(&returns, 1);
+    let weekly = calculate_sharpe_ratio(&returns, 7);
+    // With larger interval, fewer periods per year → smaller annualization factor
+    assert!(
+        daily > weekly,
+        "daily interval should produce higher sharpe than weekly: {daily} vs {weekly}"
     );
 }
 
@@ -58,25 +70,25 @@ fn sharpe_ratio_negative_returns() {
 
 #[test]
 fn sortino_ratio_empty_returns() {
-    assert_eq!(calculate_sortino_ratio(&[]), 0.0);
+    assert_eq!(calculate_sortino_ratio(&[], 1), 0.0);
 }
 
 #[test]
 fn sortino_ratio_single_return() {
-    assert_eq!(calculate_sortino_ratio(&[0.01]), 0.0);
+    assert_eq!(calculate_sortino_ratio(&[0.01], 1), 0.0);
 }
 
 #[test]
 fn sortino_ratio_all_positive() {
     // No downside deviation → sortino = 0
     let returns = vec![0.01, 0.02, 0.03];
-    assert_eq!(calculate_sortino_ratio(&returns), 0.0);
+    assert_eq!(calculate_sortino_ratio(&returns, 1), 0.0);
 }
 
 #[test]
 fn sortino_ratio_mixed_returns() {
     let returns = vec![0.01, -0.02, 0.03, -0.01, 0.02];
-    let result = calculate_sortino_ratio(&returns);
+    let result = calculate_sortino_ratio(&returns, 1);
     // Mean is positive, some downside → finite positive sortino
     assert!(result > 0.0);
 }
@@ -84,7 +96,7 @@ fn sortino_ratio_mixed_returns() {
 #[test]
 fn sortino_ratio_all_negative() {
     let returns = vec![-0.01, -0.02, -0.03];
-    let result = calculate_sortino_ratio(&returns);
+    let result = calculate_sortino_ratio(&returns, 1);
     assert!(
         result < 0.0,
         "all-negative returns should yield negative sortino"
@@ -148,9 +160,8 @@ fn max_drawdown_multiple_drawdowns() {
 
 #[test]
 fn performance_empty_snapshots() {
-    let perf = calculate_performance(100.0, &[], 0, 0, 0);
+    let perf = calculate_performance(100.0, &[], 0, 0, 0, 1);
     assert_eq!(perf.total_return, 0.0);
-    assert_eq!(perf.annualized_return, 0.0);
     assert_eq!(perf.sharpe_ratio, 0.0);
     assert_eq!(perf.sortino_ratio, 0.0);
     assert_eq!(perf.max_drawdown, 0.0);
@@ -160,7 +171,7 @@ fn performance_empty_snapshots() {
 #[test]
 fn performance_single_snapshot() {
     let snapshots = vec![make_snapshot(110.0)];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1);
     assert!(
         (perf.total_return - 0.1).abs() < 1e-10,
         "expected 10% return"
@@ -170,9 +181,8 @@ fn performance_single_snapshot() {
 #[test]
 fn performance_zero_initial_capital() {
     let snapshots = vec![make_snapshot(100.0)];
-    let perf = calculate_performance(0.0, &snapshots, 0, 0, 0);
+    let perf = calculate_performance(0.0, &snapshots, 0, 0, 0, 1);
     assert_eq!(perf.total_return, 0.0);
-    assert_eq!(perf.annualized_return, 0.0);
 }
 
 #[test]
@@ -185,7 +195,7 @@ fn performance_win_rate() {
         make_snapshot(110.0), // down
         make_snapshot(120.0), // up
     ];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1);
     assert!(
         (perf.win_rate - 0.6).abs() < 1e-10,
         "expected 60% win rate, got {}",
@@ -196,7 +206,7 @@ fn performance_win_rate() {
 #[test]
 fn performance_total_return_loss() {
     let snapshots = vec![make_snapshot(80.0)];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1);
     assert!(
         (perf.total_return - (-0.2)).abs() < 1e-10,
         "expected -20% return"
@@ -373,7 +383,7 @@ fn portfolio_value_entry_daily_pnl() {
 fn performance_includes_new_fields() {
     let snapshots = vec![make_snapshot(110.0)];
     let realized_pnl: i128 = 5_000_000_000_000_000_000_000_000; // 5 NEAR
-    let perf = calculate_performance(100.0, &snapshots, realized_pnl, 10, 3);
+    let perf = calculate_performance(100.0, &snapshots, realized_pnl, 10, 3, 1);
     assert!(
         (perf.final_balance_near - 110.0).abs() < 1e-10,
         "final balance: {}",
