@@ -226,8 +226,16 @@ impl ViewContract for SimulationClient {
             }
             "ft_metadata" => {
                 // Look up decimals for the specific token (receiver)
+                // Try global cache first, fall back to portfolio state decimals
                 let receiver_str = receiver.to_string();
-                let decimals = trade::token_cache::get_cached_decimals(&receiver_str).unwrap_or(24);
+                let decimals = trade::token_cache::get_cached_decimals(&receiver_str)
+                    .or_else(|| {
+                        self.portfolio
+                            .try_lock()
+                            .ok()
+                            .and_then(|state| state.decimals.get(&receiver_str).copied())
+                    })
+                    .unwrap_or(24);
                 let metadata = json!({
                     "spec": "ft-1.0.0",
                     "name": "SimToken",
