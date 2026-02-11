@@ -135,7 +135,10 @@ async fn test_check_and_harvest_no_evaluation_period() {
 
     // check_and_harvestは早期リターンするはず（評価期間がない場合）
     // エラーが出ないことを確認
-    let result = check_and_harvest(current_portfolio_value).await;
+    // Use real client/wallet for this test (harvest doesn't use them if no period exists)
+    let client = blockchain::jsonrpc::new_client();
+    let wallet = blockchain::wallet::new_wallet();
+    let result = check_and_harvest(&client, &wallet, current_portfolio_value).await;
 
     // データベースが使えない環境ではテストをスキップ
     if result.is_err() {

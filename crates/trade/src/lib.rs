@@ -84,7 +84,16 @@ async fn run_trade() {
     info!(log, "initializing auto trade cron job");
 
     let schedule = get_cron_schedule("TRADE_CRON_SCHEDULE", DEFAULT_CRON);
-    cronjob(schedule, strategy::start, "auto_trade").await;
+    cronjob(
+        schedule,
+        || async {
+            let client = blockchain::jsonrpc::new_client();
+            let wallet = blockchain::wallet::new_wallet();
+            strategy::start(&client, &wallet, chrono::Utc::now()).await
+        },
+        "auto_trade",
+    )
+    .await;
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)

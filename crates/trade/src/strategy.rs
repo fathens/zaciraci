@@ -26,8 +26,8 @@ use crate::Result;
 use crate::predict::PredictionService;
 use crate::swap;
 use bigdecimal::BigDecimal;
+use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
 use blockchain::wallet::Wallet;
-use chrono::Utc;
 use common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{TokenData, TradingAction, WalletInfo},
@@ -40,6 +40,7 @@ use logging::*;
 use near_sdk::{AccountId, NearToken};
 use persistence::evaluation_period::EvaluationPeriod;
 use std::collections::BTreeMap;
+use std::fmt::Display;
 
 use super::execution::{
     execute_trading_actions, liquidate_all_positions, manage_evaluation_period,
@@ -49,7 +50,16 @@ use super::market_data::{
     estimate_market_cap_async,
 };
 
-pub async fn start() -> Result<()> {
+pub async fn start<C, W>(
+    client: &C,
+    wallet: &W,
+    current_time: chrono::DateTime<chrono::Utc>,
+) -> Result<()>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + blockchain::jsonrpc::SentTx,
+    W: Wallet,
+{
     let log = DEFAULT.new(o!("function" => "trade::start"));
 
     info!(log, "starting portfolio-based trading strategy");
@@ -62,7 +72,7 @@ pub async fn start() -> Result<()> {
     // Step 1: 評価期間のチェックと管理（清算が必要な場合は先に実行）
     // 初回起動時は available_funds=0 で呼び出し、後で prepare_funds() で資金準備
     let (period_id, is_new_period, existing_tokens, liquidated_balance) =
-        manage_evaluation_period(YoctoAmount::zero()).await?;
+        manage_evaluation_period(client, wallet, current_time, YoctoAmount::zero()).await?;
     info!(log, "evaluation period status";
         "period_id" => %period_id,
         "is_new_period" => is_new_period,
@@ -85,7 +95,7 @@ pub async fn start() -> Result<()> {
         } else {
             // 評価期間中: 清算して終了
             info!(log, "trade disabled, liquidating positions");
-            let _ = liquidate_all_positions().await?;
+            let _ = liquidate_all_positions(client, wallet).await?;
             return Ok(());
         }
     }
@@ -102,7 +112,7 @@ pub async fn start() -> Result<()> {
             balance
         } else {
             // 初回起動: NEAR -> wrap.near 変換
-            let funds = prepare_funds().await?;
+            let funds = prepare_funds(client, wallet).await?;
             debug!(log, "Prepared funds for new period"; "available_funds" => %funds);
 
             if funds.is_zero() {
@@ -124,7 +134,7 @@ pub async fn start() -> Result<()> {
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
         // 新規期間: 新しくトークンを選定
-        let tokens = select_top_volatility_tokens(&prediction_service, Utc::now()).await?;
+        let tokens = select_top_volatility_tokens(&prediction_service, current_time).await?;
 
         // 選定したトークンをデータベースに保存
         if !tokens.is_empty() {
@@ -158,9 +168,6 @@ pub async fn start() -> Result<()> {
     }
 
     // Step 4.5: REF Finance のストレージセットアップを確認・実行
-    let client = blockchain::jsonrpc::new_client();
-    let wallet = blockchain::wallet::new_wallet();
-
     // トークンを TokenAccount に変換
     let token_accounts: Vec<TokenAccount> = selected_tokens
         .iter()
@@ -168,7 +175,7 @@ pub async fn start() -> Result<()> {
         .collect();
 
     debug!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
-    blockchain::ref_finance::storage::ensure_ref_storage_setup(&client, &wallet, &token_accounts)
+    blockchain::ref_finance::storage::ensure_ref_storage_setup(client, wallet, &token_accounts)
         .await?;
     debug!(log, "REF Finance storage setup completed");
 
@@ -176,8 +183,8 @@ pub async fn start() -> Result<()> {
     if is_new_period {
         debug!(log, "depositing initial investment to REF Finance"; "amount" => %available_funds);
         blockchain::ref_finance::balances::deposit_wrap_near_to_ref(
-            &client,
-            &wallet,
+            client,
+            wallet,
             NearToken::from_yoctonear(available_funds.to_u128()),
         )
         .await?;
@@ -197,9 +204,9 @@ pub async fn start() -> Result<()> {
         available_funds.to_u128(),
         is_new_period,
         &period_id,
-        &client,
-        &wallet,
-        Utc::now(),
+        client,
+        wallet,
+        current_time,
     )
     .await
     {
@@ -215,25 +222,32 @@ pub async fn start() -> Result<()> {
     );
 
     // 実際の取引実行
-    let executed_actions =
-        execute_trading_actions(&report, available_funds.to_u128(), period_id.clone()).await?;
+    let executed_actions = execute_trading_actions(
+        client,
+        wallet,
+        &report,
+        available_funds.to_u128(),
+        period_id.clone(),
+    )
+    .await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
     // Step 7: ハーベスト判定と実行
     // YoctoAmount → YoctoValue（NEAR は数量=価値）
-    check_and_harvest(available_funds.to_value()).await?;
+    check_and_harvest(client, wallet, available_funds.to_value()).await?;
 
     info!(log, "success");
     Ok(())
 }
 
 /// 資金準備 (NEAR -> wrap.near 変換)
-async fn prepare_funds() -> Result<YoctoAmount> {
+async fn prepare_funds<C, W>(client: &C, wallet: &W) -> Result<YoctoAmount>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + blockchain::jsonrpc::SentTx,
+    W: Wallet,
+{
     let log = DEFAULT.new(o!("function" => "prepare_funds"));
-
-    // JSONRPCクライアントとウォレットを取得
-    let client = blockchain::jsonrpc::new_client();
-    let wallet = blockchain::wallet::new_wallet();
 
     // 初期投資額の設定値を取得（NEAR単位で入力、yoctoNEARに変換）
     let target_investment: YoctoAmount = config::get("TRADE_INITIAL_INVESTMENT")
@@ -247,8 +261,8 @@ async fn prepare_funds() -> Result<YoctoAmount> {
     let required_balance = NearToken::from_yoctonear(target_investment.to_u128());
     let account_id = wallet.account_id();
     let balance = blockchain::ref_finance::balances::start(
-        &client,
-        &wallet,
+        client,
+        wallet,
         &blockchain::ref_finance::token_account::WNEAR_TOKEN,
         Some(required_balance),
     )
@@ -823,9 +837,18 @@ where
 }
 
 /// ハーベスト判定と実行
-async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()> {
+async fn check_and_harvest<C, W>(
+    client: &C,
+    wallet: &W,
+    current_portfolio_value: YoctoValue,
+) -> Result<()>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + blockchain::jsonrpc::SentTx,
+    W: Wallet,
+{
     // 実際のハーベスト機能を呼び出す
     // 注: 評価期間中は available_funds = 0 が渡されるため、ハーベスト判定はスキップされる
     // 評価期間終了時（清算後）のみ、liquidated_balance が渡され、ハーベスト判定が実行される
-    crate::harvest::check_and_harvest(current_portfolio_value).await
+    crate::harvest::check_and_harvest(client, wallet, current_portfolio_value).await
 }
