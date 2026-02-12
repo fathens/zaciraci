@@ -349,16 +349,40 @@ impl PortfolioState {
     }
 }
 
-/// Get the exchange rate closest to (but not after) the given date
+/// Default lookback window for rate queries (24 hours).
+const DEFAULT_RATE_LOOKBACK_HOURS: i64 = 24;
+
+/// Get the exchange rate closest to (but not after) the given date.
+///
+/// Searches within a lookback window ending at `sim_day`. The window size
+/// defaults to [`DEFAULT_RATE_LOOKBACK_HOURS`]; use
+/// [`get_rate_at_date_with_lookback`] to customise.
 pub(crate) async fn get_rate_at_date(
     token_out: &TokenOutAccount,
     wnear_in: &common::types::TokenInAccount,
     sim_day: DateTime<Utc>,
     get_decimals: &persistence::token_rate::GetDecimalsFn,
 ) -> Option<ExchangeRate> {
-    // Use a time range ending at sim_day, look back 24 hours for the latest rate
+    get_rate_at_date_with_lookback(
+        token_out,
+        wnear_in,
+        sim_day,
+        get_decimals,
+        DEFAULT_RATE_LOOKBACK_HOURS,
+    )
+    .await
+}
+
+/// Like [`get_rate_at_date`], but with a configurable lookback window.
+pub(crate) async fn get_rate_at_date_with_lookback(
+    token_out: &TokenOutAccount,
+    wnear_in: &common::types::TokenInAccount,
+    sim_day: DateTime<Utc>,
+    get_decimals: &persistence::token_rate::GetDecimalsFn,
+    lookback_hours: i64,
+) -> Option<ExchangeRate> {
     let range = common::types::TimeRange {
-        start: (sim_day - chrono::Duration::hours(24)).naive_utc(),
+        start: (sim_day - chrono::Duration::hours(lookback_hours)).naive_utc(),
         end: sim_day.naive_utc(),
     };
 
