@@ -118,46 +118,19 @@ impl PortfolioState {
 
             *self.holdings.entry(from_token.to_string()).or_insert(0) -= actual_deduct;
 
-            // Calculate realized P&L for the sold portion
-            let total_holding = current; // before deduction
-            let total_cost = self.cost_basis.get(from_token).copied().unwrap_or(0);
-
-            let cost_of_sold = if actual_deduct == total_holding {
-                total_cost
-            } else if total_holding > 0 {
-                total_cost
-                    .checked_mul(actual_deduct)
-                    .map(|v| v / total_holding)
-                    .unwrap_or_else(|| (total_cost / total_holding) * actual_deduct)
-            } else {
-                0
-            };
-
-            // For sell side, we need the NEAR value of what we sold.
+            // Determine sell proceeds for P&L calculation.
             // If to_token is WNEAR, to_amount is the NEAR proceeds.
-            // Otherwise, we use from_amount's proportional cost as a rough estimate.
+            // For token-to-token swaps, use cost basis as proceeds (0 P&L).
             let sell_proceeds_yocto = if to_token == wnear_str {
                 to_amount
             } else {
-                // Token-to-token swap: use cost_of_sold as baseline (no P&L from this leg)
-                cost_of_sold
+                self.average_cost_of_sold(from_token, actual_deduct, current)
             };
 
-            let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
-            self.realized_pnl += pnl;
-            *self
-                .realized_pnl_by_token
-                .entry(from_token.to_string())
-                .or_insert(0) += pnl;
+            self.record_sell_pnl(from_token, actual_deduct, sell_proceeds_yocto);
 
-            if let Some(basis) = self.cost_basis.get_mut(from_token) {
-                *basis = basis.saturating_sub(cost_of_sold);
-            }
-
-            // Clean up if position is fully closed
-            let remaining = self.holdings.get(from_token).copied().unwrap_or(0);
-            if remaining == 0 {
-                self.cost_basis.remove(from_token);
+            // Clean up holdings if position is fully closed
+            if self.holdings.get(from_token).copied().unwrap_or(0) == 0 {
                 self.holdings.remove(from_token);
             }
         }
@@ -246,6 +219,23 @@ impl PortfolioState {
         Ok(total)
     }
 
+    /// Compute the cost of the sold portion using average cost basis method.
+    ///
+    /// `total_holding` is the holding amount *before* the sell (including `sell_amount`).
+    fn average_cost_of_sold(&self, token_id: &str, sell_amount: u128, total_holding: u128) -> u128 {
+        let total_cost = self.cost_basis.get(token_id).copied().unwrap_or(0);
+        if sell_amount == total_holding {
+            total_cost
+        } else if total_holding > 0 {
+            total_cost
+                .checked_mul(sell_amount)
+                .map(|v| v / total_holding)
+                .unwrap_or_else(|| (total_cost / total_holding) * sell_amount)
+        } else {
+            0
+        }
+    }
+
     /// Record realized P&L for a sell operation using average cost basis method.
     /// Returns the realized P&L in NEAR (f64).
     fn record_sell_pnl(
@@ -255,21 +245,7 @@ impl PortfolioState {
         sell_proceeds_yocto: u128,
     ) -> f64 {
         let total_holding = self.holdings.get(token_id).copied().unwrap_or(0) + sell_amount;
-        let total_cost = self.cost_basis.get(token_id).copied().unwrap_or(0);
-
-        // Average cost basis: cost_of_sold = total_cost * sell_amount / total_holding
-        let cost_of_sold = if sell_amount == total_holding {
-            // Full sell: no rounding needed
-            total_cost
-        } else if total_holding > 0 {
-            // Use checked_mul to detect overflow, fallback to division-first
-            total_cost
-                .checked_mul(sell_amount)
-                .map(|v| v / total_holding)
-                .unwrap_or_else(|| (total_cost / total_holding) * sell_amount)
-        } else {
-            0
-        };
+        let cost_of_sold = self.average_cost_of_sold(token_id, sell_amount, total_holding);
 
         let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
 
