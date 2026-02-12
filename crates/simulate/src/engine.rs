@@ -31,8 +31,16 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
         warn!(log, "failed to load token decimals cache"; "error" => ?e);
     }
 
-    // Convert initial capital NEAR -> yoctoNEAR
-    let initial_capital_yocto = (cli.initial_capital * 1e24) as u128;
+    // Convert initial capital NEAR -> yoctoNEAR (via BigDecimal for precision)
+    let initial_capital_yocto = {
+        use bigdecimal::BigDecimal;
+        use num_traits::ToPrimitive;
+        use std::str::FromStr;
+        let capital = BigDecimal::from_str(&cli.initial_capital.to_string())
+            .unwrap_or_else(|_| BigDecimal::from(cli.initial_capital as i64));
+        let yocto_per_near = BigDecimal::from(10u128.pow(24));
+        (&capital * &yocto_per_near).to_u128().unwrap_or(0)
+    };
 
     // Initialize portfolio state
     let portfolio = Arc::new(Mutex::new(PortfolioState::new(initial_capital_yocto)));
