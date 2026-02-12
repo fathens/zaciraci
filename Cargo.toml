@@ -9,6 +9,7 @@ members = [
     "crates/persistence",
     "crates/simulate",
     "crates/trade",
+    "crates/web",
 ]
 resolver = "3"
 
