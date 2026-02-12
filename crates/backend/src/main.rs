@@ -18,6 +18,6 @@ async fn main() {
 
     tokio::spawn(trade::run());
     tokio::spawn(arbitrage::run());
-    tokio::spawn(web::serve("[::]:50051"));
+    tokio::spawn(web::serve(50051));
     tokio::signal::ctrl_c().await.ok();
 }
