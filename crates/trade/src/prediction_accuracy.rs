@@ -365,7 +365,7 @@ async fn get_actual_price_at(
         .into_iter()
         .min_by_key(|r| (r.timestamp - target_time).num_seconds().unsigned_abs());
 
-    Ok(closest.map(|r| r.exchange_rate.to_price()))
+    Ok(closest.map(|r| r.to_spot_rate().to_price()))
 }
 
 #[cfg(test)]

@@ -103,10 +103,11 @@ where
                     // TokenAmount / &ExchangeRate = NearValue トレイトを使用
                     // TokenRate は既に正しい ExchangeRate を持っている
                     // decimals は DB backfill 時に設定済み
-                    if rate.exchange_rate.is_zero() {
+                    let spot = rate.to_spot_rate();
+                    if spot.is_zero() {
                         warn!(log, "Rate is zero for token"; "token" => token);
                     } else {
-                        let token_value = amount / &rate.exchange_rate;
+                        let token_value = amount / &spot;
                         total_value = total_value + token_value;
                     }
                 }

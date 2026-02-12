@@ -202,7 +202,7 @@ where
                         .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token_str))?;
 
                         // TokenAmount / &ExchangeRate = NearValue トレイトを使用
-                        amount / &rate.exchange_rate
+                        amount / &rate.to_spot_rate()
                     }
                     _ => NearValue::zero(),
                 };
@@ -244,7 +244,7 @@ where
                     sell_operations.push((
                         token_str.clone(),
                         diff_wrap_near.abs(),
-                        rate.exchange_rate.clone(),
+                        rate.to_spot_rate(),
                     ));
                 } else if diff_wrap_near > zero && diff_wrap_near >= min_trade_size {
                     // 購入が必要
