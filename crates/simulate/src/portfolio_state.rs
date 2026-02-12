@@ -388,8 +388,8 @@ pub(crate) async fn get_rate_at_date_with_lookback(
 
     match TokenRate::get_rates_in_time_range(&range, token_out, wnear_in, get_decimals).await {
         Ok(rates) if !rates.is_empty() => {
-            // Return the last (most recent) rate
-            Some(rates.last().unwrap().exchange_rate.clone())
+            // Return the last (most recent) rate, corrected to spot rate
+            TokenRate::latest_spot_rate(&rates)
         }
         _ => None,
     }
