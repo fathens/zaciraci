@@ -4576,6 +4576,7 @@ dependencies = [
  "persistence",
  "prost",
  "prost-types",
+ "serial_test",
  "slog",
  "tokio",
  "tokio-stream",

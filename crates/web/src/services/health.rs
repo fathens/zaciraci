@@ -22,3 +22,20 @@ impl HealthService for HealthServiceImpl {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_check_returns_healthy_when_db_available() {
+        let svc = HealthServiceImpl;
+        let response = svc
+            .check(Request::new(HealthCheckRequest {}))
+            .await
+            .unwrap();
+        let resp = response.into_inner();
+        assert!(resp.healthy);
+        assert_eq!(resp.database_status, "connected");
+    }
+}

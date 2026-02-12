@@ -101,3 +101,6 @@ impl ConfigService for ConfigServiceImpl {
         Ok(Response::new(DeleteConfigResponse {}))
     }
 }
+
+#[cfg(test)]
+mod tests;
