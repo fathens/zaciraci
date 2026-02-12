@@ -1,0 +1,13 @@
+syntax = "proto3";
+package zaciraci.v1;
+
+service HealthService {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string database_status = 2;
+}

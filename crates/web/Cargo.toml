@@ -9,6 +9,7 @@ persistence = { path = "../persistence" }
 logging = { path = "../logging" }
 
 tonic = "0.14"
+tonic-prost = "0.14"
 tonic-web = "0.14"
 tonic-reflection = "0.14"
 prost = "0.14"
@@ -18,7 +19,7 @@ tokio-stream = "0.1"
 slog = { workspace = true }
 
 [build-dependencies]
-tonic-build = "0.14"
+tonic-prost-build = "0.14"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
