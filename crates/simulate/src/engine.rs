@@ -37,8 +37,15 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     // Initialize portfolio state
     let portfolio = Arc::new(Mutex::new(PortfolioState::new(initial_capital_yocto)));
 
+    // Shared simulation date (updated each iteration, read by SimulationClient)
+    let sim_day_shared = Arc::new(Mutex::new(Utc::now()));
+
     // Create mock client and wallet
-    let sim_client = SimulationClient::new(Arc::clone(&portfolio), initial_capital_yocto);
+    let sim_client = SimulationClient::new(
+        Arc::clone(&portfolio),
+        initial_capital_yocto,
+        Arc::clone(&sim_day_shared),
+    );
     let sim_wallet = SimulationWallet::new();
 
     info!(log, "starting simulation";
@@ -55,6 +62,9 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     while current_date <= end_date {
         let sim_day = Utc
             .from_utc_datetime(&current_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()));
+
+        // Update shared simulation date so SimulationClient uses correct rates
+        *sim_day_shared.lock().await = sim_day;
 
         info!(log, "simulation day"; "date" => %current_date, "day" => day_count);
 

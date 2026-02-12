@@ -368,7 +368,7 @@ impl PortfolioState {
 }
 
 /// Get the exchange rate closest to (but not after) the given date
-async fn get_rate_at_date(
+pub(crate) async fn get_rate_at_date(
     token_out: &TokenOutAccount,
     wnear_in: &common::types::TokenInAccount,
     sim_day: DateTime<Utc>,

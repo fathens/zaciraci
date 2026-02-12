@@ -1,7 +1,8 @@
-use crate::portfolio_state::PortfolioState;
+use crate::portfolio_state::{self, PortfolioState};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
+use chrono::{DateTime, Utc};
 use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
@@ -16,20 +17,26 @@ use tokio::sync::Mutex;
 pub struct SimulationClient {
     portfolio: Arc<Mutex<PortfolioState>>,
     initial_native: u128,
+    sim_day: Arc<Mutex<DateTime<Utc>>>,
 }
 
 impl SimulationClient {
-    pub fn new(portfolio: Arc<Mutex<PortfolioState>>, initial_native: u128) -> Self {
+    pub fn new(
+        portfolio: Arc<Mutex<PortfolioState>>,
+        initial_native: u128,
+        sim_day: Arc<Mutex<DateTime<Utc>>>,
+    ) -> Self {
         Self {
             portfolio,
             initial_native,
+            sim_day,
         }
     }
 }
 
 impl SimulationClient {
-    /// Calculate swap output amount using DB rates.
-    /// Converts token_in -> NEAR -> token_out using latest exchange rates.
+    /// Calculate swap output amount using DB rates at the current simulation date.
+    /// Converts token_in -> NEAR -> token_out using date-based exchange rates.
     async fn calculate_swap_output(
         &self,
         token_in: &str,
@@ -43,6 +50,7 @@ impl SimulationClient {
         let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         let get_decimals = trade::make_get_decimals();
+        let sim_day = *self.sim_day.lock().await;
 
         // token_in -> NEAR value
         let near_value = if token_in == wnear_str {
@@ -54,15 +62,16 @@ impl SimulationClient {
                 Err(_) => return 0,
             };
 
-            let rate = match persistence::token_rate::TokenRate::get_latest(
+            let rate = match portfolio_state::get_rate_at_date(
                 &token_in_out,
                 &wnear_in,
+                sim_day,
                 &get_decimals,
             )
             .await
             {
-                Ok(Some(r)) => r.exchange_rate,
-                _ => return 0,
+                Some(r) => r,
+                None => return 0,
             };
 
             let decimals_in = get_decimals(token_in).await.unwrap_or(24);
@@ -81,15 +90,16 @@ impl SimulationClient {
                 Err(_) => return 0,
             };
 
-            let rate = match persistence::token_rate::TokenRate::get_latest(
+            let rate = match portfolio_state::get_rate_at_date(
                 &token_out_account,
                 &wnear_in,
+                sim_day,
                 &get_decimals,
             )
             .await
             {
-                Ok(Some(r)) => r.exchange_rate,
-                _ => return 0,
+                Some(r) => r,
+                None => return 0,
             };
 
             let token_amount = &near_value * &rate;
