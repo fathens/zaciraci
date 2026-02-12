@@ -186,10 +186,10 @@ impl PredictionService {
         quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
+        end_date: DateTime<Utc>,
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         let log = DEFAULT.new(o!("function" => "predict_multiple_tokens"));
 
-        let end_date = Utc::now();
         let start_date = end_date - Duration::days(history_days);
         let range = TimeRange {
             start: start_date.naive_utc(),
@@ -466,9 +466,16 @@ impl PredictionProvider for PredictionService {
         quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
+        end_date: DateTime<Utc>,
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
-        self.predict_multiple_tokens(tokens, quote_token, history_days, prediction_horizon)
-            .await
+        self.predict_multiple_tokens(
+            tokens,
+            quote_token,
+            history_days,
+            prediction_horizon,
+            end_date,
+        )
+        .await
     }
 }
 

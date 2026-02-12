@@ -59,7 +59,7 @@ where
 }
 
 /// 価格履歴からボラティリティを計算
-pub(crate) fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDecimal> {
+pub fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDecimal> {
     if history.prices.len() < 2 {
         return Err(anyhow::anyhow!(
             "Insufficient price data for volatility calculation: {} points",

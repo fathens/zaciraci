@@ -1,12 +1,13 @@
 use crate::Result;
 use crate::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
-use blockchain::jsonrpc::SentTx;
+use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
 use common::config;
 use common::types::{NearAmount, TokenInAccount, TokenOutAccount, YoctoAmount, YoctoValue};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
+use std::fmt::Display;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // NOTE: LAST_HARVEST_TIME は cron 逐次実行のみからアクセスされるため Relaxed で十分。
@@ -68,7 +69,16 @@ fn update_last_harvest_time() {
 }
 
 /// ハーベスト判定と実行
-pub async fn check_and_harvest(current_portfolio_value: YoctoValue) -> Result<()> {
+pub async fn check_and_harvest<C, W>(
+    _client: &C,
+    _wallet: &W,
+    current_portfolio_value: YoctoValue,
+) -> Result<()>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + SentTx,
+    W: Wallet,
+{
     let log = DEFAULT.new(o!("function" => "check_and_harvest"));
 
     // 最新の評価期間を取得して初期投資額を取得

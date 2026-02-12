@@ -127,6 +127,132 @@ fn test_harvest_threshold_calculation() {
     assert_eq!(harvest_amount, expected_harvest);
 }
 
+// Minimal mock client for harvest tests (params are unused by check_and_harvest)
+struct TestClient;
+
+impl blockchain::jsonrpc::AccountInfo for TestClient {
+    async fn get_native_amount(&self, _account: &AccountId) -> anyhow::Result<near_sdk::NearToken> {
+        Ok(near_sdk::NearToken::from_yoctonear(0))
+    }
+}
+
+impl blockchain::jsonrpc::GasInfo for TestClient {
+    async fn get_gas_price(
+        &self,
+        _block: Option<near_primitives::types::BlockId>,
+    ) -> anyhow::Result<blockchain::types::gas_price::GasPrice> {
+        Ok(blockchain::types::gas_price::GasPrice::from_balance(
+            near_sdk::NearToken::from_yoctonear(100_000_000),
+        ))
+    }
+}
+
+impl blockchain::jsonrpc::SendTx for TestClient {
+    type Output = TestSentTx;
+
+    async fn transfer_native_token(
+        &self,
+        _signer: &near_crypto::InMemorySigner,
+        _receiver: &AccountId,
+        _amount: near_sdk::NearToken,
+    ) -> anyhow::Result<Self::Output> {
+        Ok(TestSentTx)
+    }
+
+    async fn exec_contract<T>(
+        &self,
+        _signer: &near_crypto::InMemorySigner,
+        _receiver: &AccountId,
+        _method_name: &str,
+        _args: T,
+        _deposit: near_sdk::NearToken,
+    ) -> anyhow::Result<Self::Output>
+    where
+        T: Sized + serde::Serialize,
+    {
+        Ok(TestSentTx)
+    }
+
+    async fn send_tx(
+        &self,
+        _signer: &near_crypto::InMemorySigner,
+        _receiver: &AccountId,
+        _actions: Vec<near_primitives::action::Action>,
+    ) -> anyhow::Result<Self::Output> {
+        Ok(TestSentTx)
+    }
+}
+
+impl blockchain::jsonrpc::ViewContract for TestClient {
+    async fn view_contract<T>(
+        &self,
+        _receiver: &AccountId,
+        _method_name: &str,
+        _args: &T,
+    ) -> anyhow::Result<near_primitives::views::CallResult>
+    where
+        T: ?Sized + serde::Serialize + Sync,
+    {
+        Ok(near_primitives::views::CallResult {
+            result: vec![],
+            logs: vec![],
+        })
+    }
+}
+
+struct TestSentTx;
+
+impl std::fmt::Display for TestSentTx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TestSentTx")
+    }
+}
+
+impl blockchain::jsonrpc::SentTx for TestSentTx {
+    async fn wait_for_executed(
+        &self,
+    ) -> anyhow::Result<near_primitives::views::FinalExecutionOutcomeViewEnum> {
+        unimplemented!()
+    }
+
+    async fn wait_for_success(
+        &self,
+    ) -> anyhow::Result<near_primitives::views::ExecutionOutcomeView> {
+        unimplemented!()
+    }
+}
+
+struct TestWallet {
+    account_id: AccountId,
+    signer: near_crypto::InMemorySigner,
+}
+
+impl TestWallet {
+    fn new() -> Self {
+        let account_id: AccountId = "test.near".parse().unwrap();
+        let signer_result = near_crypto::InMemorySigner::from_seed(
+            account_id.clone(),
+            near_crypto::KeyType::ED25519,
+            "test.near",
+        );
+        let signer = match signer_result {
+            near_crypto::Signer::InMemory(s) => s,
+            _ => panic!("Expected InMemorySigner"),
+        };
+        Self { account_id, signer }
+    }
+}
+
+impl blockchain::wallet::Wallet for TestWallet {
+    fn account_id(&self) -> &AccountId {
+        &self.account_id
+    }
+
+    fn signer(&self) -> &near_crypto::InMemorySigner {
+        &self.signer
+    }
+}
+
 #[tokio::test]
 async fn test_check_and_harvest_no_evaluation_period() {
     // 評価期間がまだない場合のテスト
@@ -134,8 +260,9 @@ async fn test_check_and_harvest_no_evaluation_period() {
         YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24)));
 
     // check_and_harvestは早期リターンするはず（評価期間がない場合）
-    // エラーが出ないことを確認
-    let result = check_and_harvest(current_portfolio_value).await;
+    let client = TestClient;
+    let wallet = TestWallet::new();
+    let result = check_and_harvest(&client, &wallet, current_portfolio_value).await;
 
     // データベースが使えない環境ではテストをスキップ
     if result.is_err() {

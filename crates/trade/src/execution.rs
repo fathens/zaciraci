@@ -6,8 +6,9 @@
 use crate::Result;
 use crate::{recorder::TradeRecorder, swap};
 use bigdecimal::BigDecimal;
+use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use common::algorithm::types::TradingAction;
 use common::config;
 use common::types::*;
@@ -15,29 +16,33 @@ use logging::*;
 use near_sdk::NearToken;
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use std::collections::HashMap;
+use std::fmt::Display;
 
 /// 実行サマリー
-pub(crate) struct ExecutionSummary {
+pub struct ExecutionSummary {
     pub success_count: usize,
     pub failed_count: usize,
 }
 
 /// 取引アクションを実際に実行
-pub(crate) async fn execute_trading_actions(
+pub(crate) async fn execute_trading_actions<C, W>(
+    client: &C,
+    wallet: &W,
     actions: &[TradingAction],
     _available_funds: u128,
     period_id: String,
-) -> Result<ExecutionSummary> {
+) -> Result<ExecutionSummary>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + SentTx,
+    W: Wallet,
+{
     let log = DEFAULT.new(o!("function" => "execute_trading_actions"));
 
     let mut summary = ExecutionSummary {
         success_count: 0,
         failed_count: 0,
     };
-
-    // JSONRPCクライアントとウォレットを取得
-    let client = blockchain::jsonrpc::new_client();
-    let wallet = blockchain::wallet::new_wallet();
 
     // TradeRecorderを作成（バッチIDで関連取引をグループ化）
     let recorder = TradeRecorder::new(period_id.clone());
@@ -47,7 +52,7 @@ pub(crate) async fn execute_trading_actions(
     );
 
     for action in actions {
-        match execute_single_action(&client, &wallet, action, &recorder).await {
+        match execute_single_action(client, wallet, action, &recorder).await {
             Ok(_) => {
                 info!(log, "action executed successfully"; "action" => ?action);
                 summary.success_count += 1;
@@ -464,9 +469,17 @@ where
 ///
 /// 戻り値: (period_id, is_new_period, selected_tokens, liquidated_balance)
 /// - liquidated_balance: 清算が行われた場合の最終残高
-pub(crate) async fn manage_evaluation_period(
+pub(crate) async fn manage_evaluation_period<C, W>(
+    client: &C,
+    wallet: &W,
+    current_time: DateTime<Utc>,
     available_funds: YoctoAmount,
-) -> Result<(String, bool, Vec<String>, Option<YoctoAmount>)> {
+) -> Result<(String, bool, Vec<String>, Option<YoctoAmount>)>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + SentTx,
+    W: Wallet,
+{
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
     // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
@@ -482,7 +495,7 @@ pub(crate) async fn manage_evaluation_period(
 
     match latest_period {
         Some(period) => {
-            let now = Utc::now().naive_utc();
+            let now = current_time.naive_utc();
             let period_duration = now.signed_duration_since(period.start_time);
             // period のフィールドを事前に取り出す（clone 不要で move）
             let period_id = period.period_id;
@@ -497,7 +510,7 @@ pub(crate) async fn manage_evaluation_period(
                 );
 
                 // 全トークンをwrap.nearに売却
-                let final_balance = liquidate_all_positions().await?;
+                let final_balance = liquidate_all_positions(client, wallet).await?;
                 info!(log, "liquidated all positions"; "final_balance" => %final_balance);
 
                 // 評価期間のパフォーマンスを計算してログ出力
@@ -638,7 +651,12 @@ pub(crate) fn filter_tokens_to_liquidate(
 /// 全保有トークンをwrap.nearに売却
 ///
 /// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
-pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
+pub(crate) async fn liquidate_all_positions<C, W>(client: &C, wallet: &W) -> Result<YoctoAmount>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + SentTx,
+    W: Wallet,
+{
     let log = DEFAULT.new(o!("function" => "liquidate_all_positions"));
 
     // 最新の評価期間を取得
@@ -664,12 +682,10 @@ pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
     };
 
     // 実際のREF Finance残高を取得して清算対象を決定
-    let client = blockchain::jsonrpc::new_client();
-    let wallet = blockchain::wallet::new_wallet();
     let account = wallet.account_id();
     let wrap_near_token = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
 
-    let deposits = blockchain::ref_finance::deposit::get_deposits(&client, account).await?;
+    let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
     let tokens_to_liquidate = filter_tokens_to_liquidate(&deposits, wrap_near_token);
 
     if tokens_to_liquidate.is_empty() {
@@ -699,7 +715,7 @@ pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
 
         // トークンの REF Finance 上の残高を取得
         let account = wallet.account_id();
-        let deposits = blockchain::ref_finance::deposit::get_deposits(&client, account).await?;
+        let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
         let balance = deposits
             .get(&token_account)
             .map(|u| u.0)
@@ -715,8 +731,8 @@ pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
         match swap::execute_direct_swap(
-            &client,
-            &wallet,
+            client,
+            wallet,
             &from_token,
             &wrap_near_out,
             None,
@@ -736,7 +752,7 @@ pub(crate) async fn liquidate_all_positions() -> Result<YoctoAmount> {
 
     // 最終的なwrap.near残高を取得
     let account = wallet.account_id();
-    let deposits = blockchain::ref_finance::deposit::get_deposits(&client, account).await?;
+    let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
     let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
     let final_balance =
         YoctoAmount::from_u128(deposits.get(wrap_near).map(|u| u.0).unwrap_or_default());

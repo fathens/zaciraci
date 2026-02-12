@@ -7,6 +7,7 @@ members = [
     "crates/dex",
     "crates/logging",
     "crates/persistence",
+    "crates/simulate",
     "crates/trade",
 ]
 resolver = "3"
