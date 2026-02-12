@@ -46,6 +46,45 @@ async fn test_upsert_and_get_one() {
 
 #[tokio::test]
 #[serial]
+async fn test_upsert_overwrites_existing() {
+    let svc = ConfigServiceImpl;
+    let key = test_key("OVERWRITE");
+
+    // Insert initial value
+    svc.upsert(Request::new(UpsertConfigRequest {
+        instance_id: TEST_INSTANCE.to_string(),
+        key: key.clone(),
+        value: "initial".to_string(),
+        description: None,
+    }))
+    .await
+    .unwrap();
+
+    // Overwrite with new value
+    svc.upsert(Request::new(UpsertConfigRequest {
+        instance_id: TEST_INSTANCE.to_string(),
+        key: key.clone(),
+        value: "updated".to_string(),
+        description: None,
+    }))
+    .await
+    .unwrap();
+
+    // Verify updated
+    let response = svc
+        .get_one(Request::new(GetOneConfigRequest {
+            instance_id: TEST_INSTANCE.to_string(),
+            key: key.clone(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(response.into_inner().value, Some("updated".to_string()));
+
+    cleanup(&key).await;
+}
+
+#[tokio::test]
+#[serial]
 async fn test_upsert_and_get_all() {
     let svc = ConfigServiceImpl;
     let key = test_key("GET_ALL");
@@ -107,6 +146,20 @@ async fn test_delete() {
         .await
         .unwrap();
     assert_eq!(response.into_inner().value, None);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_delete_nonexistent_succeeds() {
+    let svc = ConfigServiceImpl;
+
+    let result = svc
+        .delete(Request::new(DeleteConfigRequest {
+            instance_id: TEST_INSTANCE.to_string(),
+            key: test_key("NEVER_EXISTED"),
+        }))
+        .await;
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
