@@ -111,51 +111,54 @@ impl PortfolioState {
         } else {
             let current = self.holdings.get(from_token).copied().unwrap_or(0);
             let actual_deduct = from_amount.min(current);
-            if actual_deduct > 0 {
-                *self.holdings.entry(from_token.to_string()).or_insert(0) -= actual_deduct;
+            if actual_deduct == 0 {
+                // Cannot sell a token we don't hold — skip the entire swap
+                return;
+            }
 
-                // Calculate realized P&L for the sold portion
-                let total_holding = current; // before deduction
-                let total_cost = self.cost_basis.get(from_token).copied().unwrap_or(0);
+            *self.holdings.entry(from_token.to_string()).or_insert(0) -= actual_deduct;
 
-                let cost_of_sold = if actual_deduct == total_holding {
-                    total_cost
-                } else if total_holding > 0 {
-                    total_cost
-                        .checked_mul(actual_deduct)
-                        .map(|v| v / total_holding)
-                        .unwrap_or_else(|| (total_cost / total_holding) * actual_deduct)
-                } else {
-                    0
-                };
+            // Calculate realized P&L for the sold portion
+            let total_holding = current; // before deduction
+            let total_cost = self.cost_basis.get(from_token).copied().unwrap_or(0);
 
-                // For sell side, we need the NEAR value of what we sold.
-                // If to_token is WNEAR, to_amount is the NEAR proceeds.
-                // Otherwise, we use from_amount's proportional cost as a rough estimate.
-                let sell_proceeds_yocto = if to_token == wnear_str {
-                    to_amount
-                } else {
-                    // Token-to-token swap: use cost_of_sold as baseline (no P&L from this leg)
-                    cost_of_sold
-                };
+            let cost_of_sold = if actual_deduct == total_holding {
+                total_cost
+            } else if total_holding > 0 {
+                total_cost
+                    .checked_mul(actual_deduct)
+                    .map(|v| v / total_holding)
+                    .unwrap_or_else(|| (total_cost / total_holding) * actual_deduct)
+            } else {
+                0
+            };
 
-                let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
-                self.realized_pnl += pnl;
-                *self
-                    .realized_pnl_by_token
-                    .entry(from_token.to_string())
-                    .or_insert(0) += pnl;
+            // For sell side, we need the NEAR value of what we sold.
+            // If to_token is WNEAR, to_amount is the NEAR proceeds.
+            // Otherwise, we use from_amount's proportional cost as a rough estimate.
+            let sell_proceeds_yocto = if to_token == wnear_str {
+                to_amount
+            } else {
+                // Token-to-token swap: use cost_of_sold as baseline (no P&L from this leg)
+                cost_of_sold
+            };
 
-                if let Some(basis) = self.cost_basis.get_mut(from_token) {
-                    *basis = basis.saturating_sub(cost_of_sold);
-                }
+            let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
+            self.realized_pnl += pnl;
+            *self
+                .realized_pnl_by_token
+                .entry(from_token.to_string())
+                .or_insert(0) += pnl;
 
-                // Clean up if position is fully closed
-                let remaining = self.holdings.get(from_token).copied().unwrap_or(0);
-                if remaining == 0 {
-                    self.cost_basis.remove(from_token);
-                    self.holdings.remove(from_token);
-                }
+            if let Some(basis) = self.cost_basis.get_mut(from_token) {
+                *basis = basis.saturating_sub(cost_of_sold);
+            }
+
+            // Clean up if position is fully closed
+            let remaining = self.holdings.get(from_token).copied().unwrap_or(0);
+            if remaining == 0 {
+                self.cost_basis.remove(from_token);
+                self.holdings.remove(from_token);
             }
         }
 
