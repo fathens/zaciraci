@@ -186,6 +186,94 @@ fn swap_wnear_to_token_multiple_buys_accumulate_cost() {
 }
 
 // ---------------------------------------------------------------------------
+// execute_simulated_swap edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn swap_token_to_token_non_wnear() {
+    let mut state = PortfolioState::new(NEAR_100);
+
+    // Set up: hold TOKEN_A
+    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50);
+
+    // Swap TOKEN_A -> TOKEN_B (neither is WNEAR)
+    let token_b_amount = 500_000u128; // 0.5 TOKEN_B (6 decimals)
+    state.execute_simulated_swap(TOKEN_A, NEAR_50, TOKEN_B, token_b_amount);
+
+    // TOKEN_A fully sold
+    assert!(!state.holdings.contains_key(TOKEN_A));
+    assert!(!state.cost_basis.contains_key(TOKEN_A));
+
+    // TOKEN_B acquired, but no cost_basis tracked (non-WNEAR source)
+    assert_eq!(state.holdings[TOKEN_B], token_b_amount);
+    assert!(!state.cost_basis.contains_key(TOKEN_B));
+
+    // Cash unchanged (no WNEAR involved)
+    assert_eq!(state.cash_balance, NEAR_100);
+
+    // Realized P&L for token-to-token: sell_proceeds = cost_of_sold → P&L = 0
+    assert_eq!(state.realized_pnl, 0);
+}
+
+#[test]
+fn swap_from_token_with_no_holdings() {
+    let mut state = PortfolioState::new(NEAR_100);
+
+    // Try selling TOKEN_A that we don't hold
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    state.execute_simulated_swap(TOKEN_A, NEAR_50, &wnear, NEAR_50);
+
+    // Nothing happens: no TOKEN_A deducted, but WNEAR is still added
+    assert!(!state.holdings.contains_key(TOKEN_A));
+    // cash_balance increases because to_token is WNEAR
+    assert_eq!(state.cash_balance, NEAR_100 + NEAR_50);
+    assert_eq!(state.realized_pnl, 0);
+}
+
+#[test]
+fn swap_sell_more_than_holdings() {
+    let mut state = PortfolioState::new(0);
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+
+    // Hold only 10 NEAR worth of TOKEN_A
+    let ten_near = 10_000_000_000_000_000_000_000_000u128;
+    state.holdings.insert(TOKEN_A.to_string(), ten_near);
+    state.cost_basis.insert(TOKEN_A.to_string(), ten_near);
+
+    // Try to sell 50 NEAR worth (more than holdings)
+    state.execute_simulated_swap(TOKEN_A, NEAR_50, &wnear, NEAR_50);
+
+    // Only actual_deduct = min(50, 10) = 10 is deducted
+    assert!(!state.holdings.contains_key(TOKEN_A));
+    assert!(!state.cost_basis.contains_key(TOKEN_A));
+    assert_eq!(state.cash_balance, NEAR_50);
+}
+
+#[test]
+fn swap_sell_with_loss() {
+    let mut state = PortfolioState::new(0);
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+
+    // Hold TOKEN_A bought at 100 NEAR
+    state.holdings.insert(TOKEN_A.to_string(), NEAR_100);
+    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_100);
+
+    // Sell all for only 80 NEAR (loss of 20 NEAR)
+    let eighty_near = 80_000_000_000_000_000_000_000_000u128;
+    state.execute_simulated_swap(TOKEN_A, NEAR_100, &wnear, eighty_near);
+
+    assert!(!state.holdings.contains_key(TOKEN_A));
+    assert_eq!(state.cash_balance, eighty_near);
+
+    // Realized P&L: 80 - 100 = -20 NEAR in yocto
+    let expected_pnl = eighty_near as i128 - NEAR_100 as i128;
+    assert!(expected_pnl < 0);
+    assert_eq!(state.realized_pnl, expected_pnl);
+    assert_eq!(state.realized_pnl_by_token[TOKEN_A], expected_pnl);
+}
+
+// ---------------------------------------------------------------------------
 // Value calculation
 // ---------------------------------------------------------------------------
 
