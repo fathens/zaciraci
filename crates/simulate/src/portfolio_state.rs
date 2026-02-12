@@ -171,8 +171,11 @@ impl PortfolioState {
             if from_token == wnear_str {
                 *self.cost_basis.entry(to_token.to_string()).or_insert(0) += from_amount;
             }
-            // For token-to-token swaps via NEAR intermediary, the cost is tracked
-            // by the two individual swap legs (token->NEAR, NEAR->token)
+            // TODO: For direct token-to-token swaps (not via WNEAR), the acquired
+            // token's cost basis is not tracked. This means selling it later will
+            // record the entire proceeds as profit. Currently not an issue because
+            // REF Finance swaps are effectively 2-leg (token->WNEAR, WNEAR->token),
+            // but should be addressed if direct token-to-token routes are added.
         }
     }
 
