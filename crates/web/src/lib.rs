@@ -7,7 +7,9 @@ pub mod proto {
 }
 
 use logging::*;
+use proto::config_service_server::ConfigServiceServer;
 use proto::health_service_server::HealthServiceServer;
+use services::config::ConfigServiceImpl;
 use services::health::HealthServiceImpl;
 
 pub async fn serve(addr: &str) {
@@ -16,6 +18,7 @@ pub async fn serve(addr: &str) {
     let addr = addr.parse().expect("valid socket address");
 
     let health_svc = HealthServiceServer::new(HealthServiceImpl);
+    let config_svc = ConfigServiceServer::new(ConfigServiceImpl);
 
     info!(log, "gRPC server starting"; "addr" => %addr);
 
@@ -23,6 +26,7 @@ pub async fn serve(addr: &str) {
         .accept_http1(true)
         .layer(tonic_web::GrpcWebLayer::new())
         .add_service(health_svc)
+        .add_service(config_svc)
         .serve(addr)
         .await
         .expect("gRPC server failed");
