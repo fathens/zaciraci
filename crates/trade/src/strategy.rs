@@ -222,14 +222,8 @@ where
     );
 
     // 実際の取引実行
-    let executed_actions = execute_trading_actions(
-        client,
-        wallet,
-        &report,
-        available_funds.to_u128(),
-        period_id.clone(),
-    )
-    .await?;
+    let executed_actions =
+        execute_trading_actions(client, wallet, &report, period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
     // Step 7: ハーベスト判定と実行

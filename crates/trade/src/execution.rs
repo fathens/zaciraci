@@ -111,7 +111,6 @@ pub(crate) async fn execute_trading_actions<C, W>(
     client: &C,
     wallet: &W,
     actions: &[TradingAction],
-    _available_funds: u128,
     period_id: String,
 ) -> Result<ExecutionSummary>
 where
