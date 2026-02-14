@@ -603,6 +603,7 @@ fn calculate_token_score(
     prediction: Option<&TokenPrice>,
     historical_prices: &[PriceHistory],
     all_volatilities: &[f64],
+    prediction_confidence: Option<f64>,
 ) -> TokenScore {
     // 予測価格から期待リターンを計算
     let expected_return = if let Some(predicted_price) = prediction {
@@ -617,7 +618,7 @@ fn calculate_token_score(
     };
     let sharpe = calculate_individual_sharpe(token, historical_prices, expected_return);
     let liquidity = token.liquidity_score.unwrap_or(0.0);
-    let confidence = 0.5; // デフォルト信頼度
+    let confidence = prediction_confidence.unwrap_or(0.5);
 
     // ボラティリティランクを計算（低いほど良い）
     let vol_rank = if !all_volatilities.is_empty() {
@@ -654,6 +655,7 @@ pub fn select_optimal_tokens(
     predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
     historical_prices: &[PriceHistory],
     max_tokens: usize,
+    prediction_confidence: Option<f64>,
 ) -> Vec<TokenData> {
     // フィルタリング: 最小要件を満たすトークンのみ
     let min_cap = min_market_cap();
@@ -689,8 +691,13 @@ pub fn select_optimal_tokens(
         .iter()
         .map(|&token| {
             let prediction = predictions.get(&token.symbol);
-            let score =
-                calculate_token_score(token, prediction, historical_prices, &all_volatilities);
+            let score = calculate_token_score(
+                token,
+                prediction,
+                historical_prices,
+                &all_volatilities,
+                prediction_confidence,
+            );
             (score, token)
         })
         .collect();
@@ -843,6 +850,7 @@ pub async fn execute_portfolio_optimization(
         &portfolio_data.predictions,
         &portfolio_data.historical_prices,
         10, // 最大10トークンまで
+        portfolio_data.prediction_confidence,
     );
 
     // 選択されたトークンのみでポートフォリオを構築

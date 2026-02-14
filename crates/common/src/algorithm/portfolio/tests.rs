@@ -1382,7 +1382,7 @@ fn test_token_scoring() {
     let history = create_sample_price_history();
 
     // トークン選択（最大2トークン）
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
 
     // HIGH_SHARPEは必ず選ばれるべき（高流動性、低ボラティリティ）
     assert!(
@@ -1476,7 +1476,7 @@ fn test_correlation_based_selection() {
     }
 
     // トークン選択（最大2トークン）
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
 
     // AとCが選ばれるべき（低相関）またはBとCが選ばれるべき
     // AとBの両方は選ばれないべき（高相関）
@@ -1498,9 +1498,9 @@ fn test_select_optimal_tokens_deterministic() {
     let history = create_sample_price_history();
 
     // 同じ入力で複数回実行
-    let result1 = select_optimal_tokens(&tokens, &predictions, &history, 2);
-    let result2 = select_optimal_tokens(&tokens, &predictions, &history, 2);
-    let result3 = select_optimal_tokens(&tokens, &predictions, &history, 2);
+    let result1 = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
+    let result2 = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
+    let result3 = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
 
     // 結果が一致することを確認（決定的動作）
     assert_eq!(result1.len(), result2.len());
@@ -1607,7 +1607,7 @@ fn test_portfolio_performance_with_token_selection() {
     }
 
     // トークン選択を実行（最大3トークン）
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
 
     // 高品質トークンが選ばれることを検証
     assert!(
@@ -1842,7 +1842,7 @@ fn test_token_selection_with_real_simulation_data() {
 
     // 実際の設定でトークン選択を実行
     println!("Testing with real simulation data structure...");
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
 
     // market_capがすべてNoneのため、フィルタ条件をすべて満たさない
     // そのため、フォールバックロジックにより全トークンが返される
@@ -1892,7 +1892,7 @@ fn test_improved_token_selection_filtering() {
 
     let history = create_sample_price_history();
 
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
 
     println!("Improved filtering test:");
     println!("Selected {} tokens", selected.len());
@@ -1950,7 +1950,7 @@ fn test_liquidity_based_performance_improvement() {
     let history = create_sample_price_history();
 
     println!("Testing liquidity-based performance improvement...");
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
 
     println!("Selected {} tokens:", selected.len());
     for token in &selected {
@@ -2073,7 +2073,7 @@ fn test_actual_token_data_simulation() {
     let history = create_sample_price_history();
 
     println!("Testing with actual simulation data characteristics...");
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 10);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 10, None);
 
     println!("Selected {} tokens:", selected.len());
     for token in &selected {
@@ -2169,7 +2169,7 @@ fn test_token_selection_off_vs_on() {
     let history = create_sample_price_history();
 
     // 選択ありの場合
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3);
+    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
     println!("With selection: {} tokens selected", selected.len());
     for token in &selected {
         println!(
@@ -4358,7 +4358,7 @@ fn test_select_uncorrelated_tokens_cache_correctness() {
         .map(|t| (t.symbol.clone(), price(110.0)))
         .collect();
 
-    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5);
+    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5, None);
 
     // 少なくとも1つのトークンが選択されることを確認
     assert!(
@@ -4368,7 +4368,8 @@ fn test_select_uncorrelated_tokens_cache_correctness() {
 
     // 同じ入力で複数回実行して結果が一貫することを確認
     for _ in 0..5 {
-        let selected_again = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5);
+        let selected_again =
+            select_optimal_tokens(&tokens, &predictions, &historical_prices, 5, None);
         assert_eq!(
             selected.len(),
             selected_again.len(),
@@ -4443,7 +4444,7 @@ fn test_correlation_cache_handles_different_lengths() {
         .collect();
 
     // 異なる長さでもパニックせずに処理できることを確認
-    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 2);
+    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 2, None);
 
     // 両方のトークンが候補として考慮される
     assert!(!selected.is_empty(), "Should select at least one token");
@@ -4489,4 +4490,41 @@ fn test_covariance_matrix_large_input() {
             "Diagonal element [{i},{i}] should be positive"
         );
     }
+}
+
+/// 異なる prediction_confidence で異なるスコアが得られることを検証
+#[test]
+fn test_token_score_varies_with_confidence() {
+    let token = &create_sample_tokens()[0];
+    let predictions = create_sample_predictions();
+    let history = create_sample_price_history();
+    let volatilities: Vec<f64> = create_sample_tokens()
+        .iter()
+        .map(|t| t.historical_volatility)
+        .collect();
+
+    let score_high = calculate_token_score(
+        token,
+        predictions.get(&token.symbol),
+        &history,
+        &volatilities,
+        Some(0.9),
+    );
+    let score_low = calculate_token_score(
+        token,
+        predictions.get(&token.symbol),
+        &history,
+        &volatilities,
+        Some(0.1),
+    );
+
+    // 高 confidence と低 confidence で composite score が異なる
+    assert!(
+        (score_high.composite_score - score_low.composite_score).abs() > 1e-6,
+        "scores should differ: high={}, low={}",
+        score_high.composite_score,
+        score_low.composite_score
+    );
+    assert!((score_high.prediction_confidence - 0.9).abs() < 1e-6);
+    assert!((score_low.prediction_confidence - 0.1).abs() < 1e-6);
 }
