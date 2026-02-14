@@ -113,9 +113,11 @@ src_psql() {
     psql -U readonly postgres "$@"
 }
 
-src_pg_dump() {
+src_copy_out() {
+  local table="$1"
+  shift
   docker compose -f "$PROJECT_ROOT/run_local/docker-compose.yml" exec -T postgres \
-    pg_dump -U readonly --data-only --no-owner --no-privileges "$@" postgres
+    psql -U readonly postgres -c "COPY $table TO STDOUT" "$@"
 }
 
 check_container() {
@@ -178,7 +180,7 @@ stop_progress() {
 # パイプにプログレス表示を挿入
 pipe_with_progress() {
   if [[ "$HAS_PV" == true ]]; then
-    pv -W -b
+    pv -f -a -b
   else
     cat
   fi
@@ -237,14 +239,17 @@ for table in "${TABLE_LIST[@]}"; do
     stop_progress
   elif [[ "$table" == "token_rates" && ( -n "$START_DATE" || -n "$END_DATE" ) ]]; then
     # 日付フィルタ付き COPY
-    where_clauses=()
+    where_parts=""
     if [[ -n "$START_DATE" ]]; then
-      where_clauses+=("timestamp >= '$START_DATE'")
+      where_parts="timestamp >= '$START_DATE'"
     fi
     if [[ -n "$END_DATE" ]]; then
-      where_clauses+=("timestamp < '$END_DATE'")
+      if [[ -n "$where_parts" ]]; then
+        where_parts="$where_parts AND "
+      fi
+      where_parts="${where_parts}timestamp < '$END_DATE'"
     fi
-    where="WHERE $(IFS=' AND '; echo "${where_clauses[*]}")"
+    where="WHERE $where_parts"
 
     filtered_count=$(src_psql -t -A -c "SELECT COUNT(*) FROM $table $where")
     echo "  フィルタ適用: $where ($filtered_count 行)"
@@ -254,10 +259,10 @@ for table in "${TABLE_LIST[@]}"; do
       | pipe_with_progress | dst_psql -c "COPY $table FROM STDIN" > /dev/null
     stop_progress
   else
-    # pg_dump パイプ（全件コピー）
+    # COPY パイプ（全件コピー）
     start_progress "コピー中"
-    src_pg_dump --table="$table" \
-      | pipe_with_progress | dst_psql > /dev/null
+    src_copy_out "$table" \
+      | pipe_with_progress | dst_psql -c "COPY $table FROM STDIN" > /dev/null
     stop_progress
   fi
 
