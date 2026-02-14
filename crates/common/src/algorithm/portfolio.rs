@@ -1066,43 +1066,29 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
 }
 
 /// リバランスアクションを生成
+///
+/// Rebalance アクションのみを生成する。個別の AddPosition/ReducePosition は
+/// Rebalance ハンドラ内で差分計算されるため、ここでは不要。
 fn generate_rebalance_actions(
     tokens: &[TokenInfo],
-    current_weights: &[f64],
+    _current_weights: &[f64],
     target_weights: &[f64],
-    rebalance_threshold: f64,
+    _rebalance_threshold: f64,
 ) -> Vec<TradingAction> {
-    let mut actions = Vec::new();
-    let mut target_map = BTreeMap::new();
+    let target_map: BTreeMap<TokenOutAccount, f64> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| target_weights[*i] > 0.0)
+        .map(|(i, token)| (token.symbol.clone(), target_weights[i]))
+        .collect();
 
-    for (i, token) in tokens.iter().enumerate() {
-        if target_weights[i] > 0.0 {
-            target_map.insert(token.symbol.clone(), target_weights[i]);
-        }
-
-        let weight_diff = target_weights[i] - current_weights[i];
-        if weight_diff.abs() > rebalance_threshold {
-            if weight_diff > 0.0 {
-                actions.push(TradingAction::AddPosition {
-                    token: token.symbol.clone(),
-                    weight: target_weights[i],
-                });
-            } else if current_weights[i] > 0.0 {
-                actions.push(TradingAction::ReducePosition {
-                    token: token.symbol.clone(),
-                    weight: target_weights[i],
-                });
-            }
-        }
+    if target_map.is_empty() {
+        return vec![];
     }
 
-    if !target_map.is_empty() {
-        actions.push(TradingAction::Rebalance {
-            target_weights: target_map,
-        });
-    }
-
-    actions
+    vec![TradingAction::Rebalance {
+        target_weights: target_map,
+    }]
 }
 
 /// ソルティノレシオを計算

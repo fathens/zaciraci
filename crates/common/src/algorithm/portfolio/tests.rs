@@ -3774,33 +3774,60 @@ fn test_issue10_correlation_length_mismatch_trims_to_shorter() {
     );
 }
 
-/// Issue 6: generate_rebalance_actions が個別の AddPosition/ReducePosition を生成することを検証
-/// [修正済み] Hold スタブから AddPosition/ReducePosition に変更
+/// generate_rebalance_actions は Rebalance アクションのみを生成する
 #[test]
-fn test_issue6_rebalance_actions_generates_add_and_reduce() {
+fn test_rebalance_actions_generates_only_rebalance() {
     let tokens = create_sample_tokens();
     let current = vec![0.5, 0.3, 0.2];
     let target = vec![0.3, 0.4, 0.3]; // token-a: -0.2, token-b: +0.1, token-c: +0.1
 
     let actions = generate_rebalance_actions(&tokens, &current, &target, 0.05);
 
-    let has_add = actions
-        .iter()
-        .any(|a| matches!(a, TradingAction::AddPosition { .. }));
-    let has_reduce = actions
-        .iter()
-        .any(|a| matches!(a, TradingAction::ReducePosition { .. }));
-    let has_hold = actions.iter().any(|a| matches!(a, TradingAction::Hold));
-    let has_rebalance = actions
-        .iter()
-        .any(|a| matches!(a, TradingAction::Rebalance { .. }));
+    // Rebalance アクションのみが生成される
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(actions[0], TradingAction::Rebalance { .. }));
 
-    println!("Actions: {:?}", actions);
+    // 個別の AddPosition/ReducePosition は生成されない
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, TradingAction::AddPosition { .. })),
+        "AddPosition は生成されない"
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, TradingAction::ReducePosition { .. })),
+        "ReducePosition は生成されない"
+    );
+}
 
-    assert!(has_add, "AddPosition が生成される");
-    assert!(has_reduce, "ReducePosition が生成される");
-    assert!(!has_hold, "Hold スタブは使われない");
-    assert!(has_rebalance, "Rebalance アクションも生成される");
+/// target_weights が全て 0 の場合は空のアクションリスト
+#[test]
+fn test_rebalance_actions_empty_when_no_targets() {
+    let tokens = create_sample_tokens();
+    let current = vec![0.5, 0.3, 0.2];
+    let target = vec![0.0, 0.0, 0.0];
+    let actions = generate_rebalance_actions(&tokens, &current, &target, 0.05);
+    assert!(actions.is_empty());
+}
+
+/// target_weights の内容が正しいことを検証
+#[test]
+fn test_rebalance_action_contains_correct_weights() {
+    let tokens = create_sample_tokens();
+    let current = vec![0.5, 0.3, 0.2];
+    let target = vec![0.3, 0.4, 0.3];
+    let actions = generate_rebalance_actions(&tokens, &current, &target, 0.05);
+
+    if let TradingAction::Rebalance { target_weights } = &actions[0] {
+        assert_eq!(target_weights.len(), 3);
+        assert!((target_weights[&token_out("token-a")] - 0.3).abs() < 1e-10);
+        assert!((target_weights[&token_out("token-b")] - 0.4).abs() < 1e-10);
+        assert!((target_weights[&token_out("token-c")] - 0.3).abs() < 1e-10);
+    } else {
+        panic!("Expected Rebalance action");
+    }
 }
 
 /// Issue 7: メトリクスが indicators.rs の関数で計算されることを検証
