@@ -68,7 +68,7 @@ pub const DEFAULT_DECIMALS: u8 = 24;
 
 /// 予測価格
 ///
-/// Chronos API から返される予測値は price 形式（NEAR/token）。
+/// 予測価格（NEAR/token 単位）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
