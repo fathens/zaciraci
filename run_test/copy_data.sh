@@ -142,6 +142,50 @@ fix_sequence() {
   dst_psql -c "SELECT setval(pg_get_serial_sequence('$table', 'id'), COALESCE(MAX(id), 1)) FROM $table" > /dev/null 2>&1 || true
 }
 
+# --- プログレス表示 ---
+HAS_PV=false
+if command -v pv &>/dev/null; then
+  HAS_PV=true
+fi
+
+PROGRESS_PID=""
+
+start_progress() {
+  local msg="$1"
+  if [[ "$HAS_PV" == true ]]; then
+    return
+  fi
+  (
+    local elapsed=0
+    while true; do
+      printf "\r  %s %d秒経過 ..." "$msg" "$elapsed" >&2
+      sleep 2
+      elapsed=$((elapsed + 2))
+    done
+  ) &
+  PROGRESS_PID=$!
+}
+
+stop_progress() {
+  if [[ -n "$PROGRESS_PID" ]]; then
+    kill "$PROGRESS_PID" 2>/dev/null || true
+    wait "$PROGRESS_PID" 2>/dev/null || true
+    PROGRESS_PID=""
+    printf "\r\033[K" >&2
+  fi
+}
+
+# パイプにプログレス表示を挿入
+pipe_with_progress() {
+  if [[ "$HAS_PV" == true ]]; then
+    pv -W -b
+  else
+    cat
+  fi
+}
+
+trap 'stop_progress' EXIT
+
 # --- コンテナ起動チェック ---
 echo "=== コンテナの起動確認 ==="
 check_container "$PROJECT_ROOT/run_test/docker-compose.yml" "run_test"
@@ -184,10 +228,13 @@ for table in "${TABLE_LIST[@]}"; do
   echo "  ターゲット: $dst_before 行を削除"
 
   # データ転送
+  echo "  転送中 ..."
   if [[ -n "$FROM_FILE" ]]; then
     # ファイルからリストア
     echo "  ファイルからリストア: $FROM_FILE"
-    cat "$FROM_FILE" | dst_psql > /dev/null
+    start_progress "リストア中"
+    cat "$FROM_FILE" | pipe_with_progress | dst_psql > /dev/null
+    stop_progress
   elif [[ "$table" == "token_rates" && ( -n "$START_DATE" || -n "$END_DATE" ) ]]; then
     # 日付フィルタ付き COPY
     where_clauses=()
@@ -202,12 +249,16 @@ for table in "${TABLE_LIST[@]}"; do
     filtered_count=$(src_psql -t -A -c "SELECT COUNT(*) FROM $table $where")
     echo "  フィルタ適用: $where ($filtered_count 行)"
 
+    start_progress "コピー中"
     src_psql -c "COPY (SELECT * FROM $table $where) TO STDOUT" \
-      | dst_psql -c "COPY $table FROM STDIN" > /dev/null
+      | pipe_with_progress | dst_psql -c "COPY $table FROM STDIN" > /dev/null
+    stop_progress
   else
     # pg_dump パイプ（全件コピー）
+    start_progress "コピー中"
     src_pg_dump --table="$table" \
-      | dst_psql > /dev/null
+      | pipe_with_progress | dst_psql > /dev/null
+    stop_progress
   fi
 
   # シーケンス調整
