@@ -361,11 +361,21 @@ async fn get_actual_price_at(
     let rates =
         TokenRate::get_rates_in_time_range(&range, token, quote_token, get_decimals).await?;
 
-    let closest = rates
-        .into_iter()
-        .min_by_key(|r| (r.timestamp - target_time).num_seconds().unsigned_abs());
-
-    Ok(closest.map(|r| r.exchange_rate.to_price()))
+    if rates.is_empty() {
+        return Ok(None);
+    }
+    let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
+    let (closest_idx, _) = rates
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, r)| (r.timestamp - target_time).num_seconds().unsigned_abs())
+        .unwrap(); // safe: rates is not empty
+    let fallback_path = fallback_indices[closest_idx].and_then(|idx| rates[idx].swap_path.as_ref());
+    Ok(Some(
+        rates[closest_idx]
+            .to_spot_rate_with_fallback(fallback_path)
+            .to_price(),
+    ))
 }
 
 #[cfg(test)]

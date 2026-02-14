@@ -587,9 +587,25 @@ impl TokenRate {
     /// - x = 入力側プールサイズ
     ///
     /// swap_path が None の場合は補正なしで元のレートを返す。
-    #[cfg(test)]
     pub fn to_spot_rate(&self) -> ExchangeRate {
         self.to_spot_rate_with_fallback(None)
+    }
+
+    /// 時系列配列の末尾レートをスポットレートに補正して返す
+    ///
+    /// 末尾レートに `swap_path` がない場合は、直前のレートから `swap_path` を取得して
+    /// フォールバックとして使用する。
+    pub fn latest_spot_rate(rates: &[TokenRate]) -> Option<ExchangeRate> {
+        let last = rates.last()?;
+        let fallback_path = if last.swap_path.is_none() {
+            rates[..rates.len() - 1]
+                .iter()
+                .rev()
+                .find_map(|r| r.swap_path.as_ref())
+        } else {
+            None
+        };
+        Some(last.to_spot_rate_with_fallback(fallback_path))
     }
 
     /// 指定インデックスのレートに対するフォールバック swap_path を検索

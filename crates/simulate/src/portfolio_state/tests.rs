@@ -224,10 +224,9 @@ fn swap_from_token_with_no_holdings() {
     let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
     state.execute_simulated_swap(TOKEN_A, NEAR_50, &wnear, NEAR_50);
 
-    // Nothing happens: no TOKEN_A deducted, but WNEAR is still added
+    // Entire swap is skipped: no TOKEN_A deducted, no WNEAR added
     assert!(!state.holdings.contains_key(TOKEN_A));
-    // cash_balance increases because to_token is WNEAR
-    assert_eq!(state.cash_balance, NEAR_100 + NEAR_50);
+    assert_eq!(state.cash_balance, NEAR_100);
     assert_eq!(state.realized_pnl, 0);
 }
 

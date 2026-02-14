@@ -1,9 +1,16 @@
 use super::*;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
+use chrono::{TimeZone, Utc};
 use near_crypto::InMemorySigner;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use std::collections::BTreeMap;
+
+fn default_sim_day() -> Arc<Mutex<DateTime<Utc>>> {
+    Arc::new(Mutex::new(
+        Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap(),
+    ))
+}
 
 fn make_client_with_decimals(
     cash: u128,
@@ -16,7 +23,7 @@ fn make_client_with_decimals(
         state.decimals.insert(token.to_string(), dec);
     }
     let portfolio = Arc::new(Mutex::new(state));
-    SimulationClient::new(portfolio, cash)
+    SimulationClient::new(portfolio, cash, default_sim_day())
 }
 
 fn make_client(cash: u128, holdings: BTreeMap<String, u128>) -> SimulationClient {
@@ -24,7 +31,7 @@ fn make_client(cash: u128, holdings: BTreeMap<String, u128>) -> SimulationClient
 }
 
 fn make_client_with_portfolio(portfolio: Arc<Mutex<PortfolioState>>) -> SimulationClient {
-    SimulationClient::new(portfolio, 0)
+    SimulationClient::new(portfolio, 0, default_sim_day())
 }
 
 fn test_signer() -> InMemorySigner {

@@ -111,51 +111,27 @@ impl PortfolioState {
         } else {
             let current = self.holdings.get(from_token).copied().unwrap_or(0);
             let actual_deduct = from_amount.min(current);
-            if actual_deduct > 0 {
-                *self.holdings.entry(from_token.to_string()).or_insert(0) -= actual_deduct;
+            if actual_deduct == 0 {
+                // Cannot sell a token we don't hold — skip the entire swap
+                return;
+            }
 
-                // Calculate realized P&L for the sold portion
-                let total_holding = current; // before deduction
-                let total_cost = self.cost_basis.get(from_token).copied().unwrap_or(0);
+            *self.holdings.entry(from_token.to_string()).or_insert(0) -= actual_deduct;
 
-                let cost_of_sold = if actual_deduct == total_holding {
-                    total_cost
-                } else if total_holding > 0 {
-                    total_cost
-                        .checked_mul(actual_deduct)
-                        .map(|v| v / total_holding)
-                        .unwrap_or_else(|| (total_cost / total_holding) * actual_deduct)
-                } else {
-                    0
-                };
+            // Determine sell proceeds for P&L calculation.
+            // If to_token is WNEAR, to_amount is the NEAR proceeds.
+            // For token-to-token swaps, use cost basis as proceeds (0 P&L).
+            let sell_proceeds_yocto = if to_token == wnear_str {
+                to_amount
+            } else {
+                self.average_cost_of_sold(from_token, actual_deduct, current)
+            };
 
-                // For sell side, we need the NEAR value of what we sold.
-                // If to_token is WNEAR, to_amount is the NEAR proceeds.
-                // Otherwise, we use from_amount's proportional cost as a rough estimate.
-                let sell_proceeds_yocto = if to_token == wnear_str {
-                    to_amount
-                } else {
-                    // Token-to-token swap: use cost_of_sold as baseline (no P&L from this leg)
-                    cost_of_sold
-                };
+            self.record_sell_pnl(from_token, actual_deduct, sell_proceeds_yocto);
 
-                let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
-                self.realized_pnl += pnl;
-                *self
-                    .realized_pnl_by_token
-                    .entry(from_token.to_string())
-                    .or_insert(0) += pnl;
-
-                if let Some(basis) = self.cost_basis.get_mut(from_token) {
-                    *basis = basis.saturating_sub(cost_of_sold);
-                }
-
-                // Clean up if position is fully closed
-                let remaining = self.holdings.get(from_token).copied().unwrap_or(0);
-                if remaining == 0 {
-                    self.cost_basis.remove(from_token);
-                    self.holdings.remove(from_token);
-                }
+            // Clean up holdings if position is fully closed
+            if self.holdings.get(from_token).copied().unwrap_or(0) == 0 {
+                self.holdings.remove(from_token);
             }
         }
 
@@ -168,8 +144,11 @@ impl PortfolioState {
             if from_token == wnear_str {
                 *self.cost_basis.entry(to_token.to_string()).or_insert(0) += from_amount;
             }
-            // For token-to-token swaps via NEAR intermediary, the cost is tracked
-            // by the two individual swap legs (token->NEAR, NEAR->token)
+            // TODO: For direct token-to-token swaps (not via WNEAR), the acquired
+            // token's cost basis is not tracked. This means selling it later will
+            // record the entire proceeds as profit. Currently not an issue because
+            // REF Finance swaps are effectively 2-leg (token->WNEAR, WNEAR->token),
+            // but should be addressed if direct token-to-token routes are added.
         }
     }
 
@@ -240,6 +219,23 @@ impl PortfolioState {
         Ok(total)
     }
 
+    /// Compute the cost of the sold portion using average cost basis method.
+    ///
+    /// `total_holding` is the holding amount *before* the sell (including `sell_amount`).
+    fn average_cost_of_sold(&self, token_id: &str, sell_amount: u128, total_holding: u128) -> u128 {
+        let total_cost = self.cost_basis.get(token_id).copied().unwrap_or(0);
+        if sell_amount == total_holding {
+            total_cost
+        } else if total_holding > 0 {
+            total_cost
+                .checked_mul(sell_amount)
+                .map(|v| v / total_holding)
+                .unwrap_or_else(|| (total_cost / total_holding) * sell_amount)
+        } else {
+            0
+        }
+    }
+
     /// Record realized P&L for a sell operation using average cost basis method.
     /// Returns the realized P&L in NEAR (f64).
     fn record_sell_pnl(
@@ -249,21 +245,7 @@ impl PortfolioState {
         sell_proceeds_yocto: u128,
     ) -> f64 {
         let total_holding = self.holdings.get(token_id).copied().unwrap_or(0) + sell_amount;
-        let total_cost = self.cost_basis.get(token_id).copied().unwrap_or(0);
-
-        // Average cost basis: cost_of_sold = total_cost * sell_amount / total_holding
-        let cost_of_sold = if sell_amount == total_holding {
-            // Full sell: no rounding needed
-            total_cost
-        } else if total_holding > 0 {
-            // Use checked_mul to detect overflow, fallback to division-first
-            total_cost
-                .checked_mul(sell_amount)
-                .map(|v| v / total_holding)
-                .unwrap_or_else(|| (total_cost / total_holding) * sell_amount)
-        } else {
-            0
-        };
+        let cost_of_sold = self.average_cost_of_sold(token_id, sell_amount, total_holding);
 
         let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
 
@@ -367,23 +349,47 @@ impl PortfolioState {
     }
 }
 
-/// Get the exchange rate closest to (but not after) the given date
-async fn get_rate_at_date(
+/// Default lookback window for rate queries (24 hours).
+const DEFAULT_RATE_LOOKBACK_HOURS: i64 = 24;
+
+/// Get the exchange rate closest to (but not after) the given date.
+///
+/// Searches within a lookback window ending at `sim_day`. The window size
+/// defaults to [`DEFAULT_RATE_LOOKBACK_HOURS`]; use
+/// [`get_rate_at_date_with_lookback`] to customise.
+pub(crate) async fn get_rate_at_date(
     token_out: &TokenOutAccount,
     wnear_in: &common::types::TokenInAccount,
     sim_day: DateTime<Utc>,
     get_decimals: &persistence::token_rate::GetDecimalsFn,
 ) -> Option<ExchangeRate> {
-    // Use a time range ending at sim_day, look back 24 hours for the latest rate
+    get_rate_at_date_with_lookback(
+        token_out,
+        wnear_in,
+        sim_day,
+        get_decimals,
+        DEFAULT_RATE_LOOKBACK_HOURS,
+    )
+    .await
+}
+
+/// Like [`get_rate_at_date`], but with a configurable lookback window.
+pub(crate) async fn get_rate_at_date_with_lookback(
+    token_out: &TokenOutAccount,
+    wnear_in: &common::types::TokenInAccount,
+    sim_day: DateTime<Utc>,
+    get_decimals: &persistence::token_rate::GetDecimalsFn,
+    lookback_hours: i64,
+) -> Option<ExchangeRate> {
     let range = common::types::TimeRange {
-        start: (sim_day - chrono::Duration::hours(24)).naive_utc(),
+        start: (sim_day - chrono::Duration::hours(lookback_hours)).naive_utc(),
         end: sim_day.naive_utc(),
     };
 
     match TokenRate::get_rates_in_time_range(&range, token_out, wnear_in, get_decimals).await {
         Ok(rates) if !rates.is_empty() => {
-            // Return the last (most recent) rate
-            Some(rates.last().unwrap().exchange_rate.clone())
+            // Return the last (most recent) rate, corrected to spot rate
+            TokenRate::latest_spot_rate(&rates)
         }
         _ => None,
     }
