@@ -525,4 +525,25 @@ mod add_position_tests {
         assert_eq!(result[0].0, 1);
         assert_eq!(result[1].0, 3);
     }
+
+    /// 大きな yocto 値で精度が保たれることを検証
+    #[test]
+    fn test_allocate_large_yocto_precision() {
+        // 100 NEAR = 10^26 yocto（f64 では正確に表現できない）
+        let balance: u128 = 100_000_000_000_000_000_000_000_000;
+        let result = allocate_add_position_amounts(&[(0, 0.3), (1, 0.7)], balance);
+
+        let total: u128 = result.iter().map(|(_, a)| a).sum();
+        // 合計が元の残高と一致すること（最後の要素が残額を引き受ける）
+        assert_eq!(total, balance);
+
+        // 各配分が概ね正しいこと（1 NEAR = 10^24 の許容誤差）
+        let expected_0 = 30_000_000_000_000_000_000_000_000u128; // 30 NEAR
+        let diff_0 = (result[0].1 as i128 - expected_0 as i128).unsigned_abs();
+        assert!(
+            diff_0 < 1_000_000_000_000_000_000_000_000, // < 1 NEAR の誤差
+            "precision loss too large: diff = {} yocto",
+            diff_0
+        );
+    }
 }

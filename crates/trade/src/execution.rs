@@ -42,15 +42,25 @@ fn allocate_add_position_amounts(
     }
 
     let total_weight: f64 = add_positions.iter().map(|(_, w)| w).sum();
+
+    // weight を basis points (1/10000) に変換して整数演算
+    let weights_bps: Vec<u128> = add_positions
+        .iter()
+        .map(|(_, w)| (w / total_weight * 10_000.0).round() as u128)
+        .collect();
+    let total_bps: u128 = weights_bps.iter().sum();
+
     let mut allocated_sum: u128 = 0;
     let mut result = Vec::with_capacity(add_positions.len());
 
-    for (i, &(idx, weight)) in add_positions.iter().enumerate() {
+    for (i, &(idx, _)) in add_positions.iter().enumerate() {
         let amount = if i == add_positions.len() - 1 {
             // 最後の AddPosition は残額全部を使い切る
             balance.saturating_sub(allocated_sum)
+        } else if total_bps > 0 {
+            balance / total_bps * weights_bps[i]
         } else {
-            (balance as f64 * weight / total_weight) as u128
+            0
         };
         allocated_sum = allocated_sum.saturating_add(amount);
         result.push((idx, amount));
