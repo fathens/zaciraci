@@ -470,3 +470,59 @@ mod rebalance_tests {
         );
     }
 }
+
+mod add_position_tests {
+    use super::*;
+
+    #[test]
+    fn test_single_add_position_uses_full_balance() {
+        let result = allocate_add_position_amounts(&[(0, 1.0)], 1_000_000);
+        assert_eq!(result, vec![(0, 1_000_000)]);
+    }
+
+    #[test]
+    fn test_two_equal_weights_split_evenly() {
+        let result = allocate_add_position_amounts(&[(0, 0.5), (1, 0.5)], 1_000_000);
+        assert_eq!(result[0].1 + result[1].1, 1_000_000);
+        assert_eq!(result[0].1, 500_000);
+        assert_eq!(result[1].1, 500_000);
+    }
+
+    #[test]
+    fn test_last_gets_remainder() {
+        let balance: u128 = 19_020_000_000_000_000_000_000_000;
+        let result = allocate_add_position_amounts(&[(0, 0.245), (1, 0.332), (2, 0.423)], balance);
+        let total: u128 = result.iter().map(|(_, a)| a).sum();
+        assert_eq!(total, balance);
+    }
+
+    #[test]
+    fn test_unequal_weights() {
+        let balance: u128 = 10_000;
+        let result = allocate_add_position_amounts(&[(0, 0.1), (1, 0.2), (2, 0.7)], balance);
+        assert_eq!(result[0].1, 1_000); // 10%
+        assert_eq!(result[1].1, 2_000); // 20%
+        assert_eq!(result[2].1, 7_000); // 残額 = 70%
+    }
+
+    #[test]
+    fn test_zero_balance() {
+        let result = allocate_add_position_amounts(&[(0, 0.5), (1, 0.5)], 0);
+        assert_eq!(result[0].1, 0);
+        assert_eq!(result[1].1, 0);
+    }
+
+    #[test]
+    fn test_empty_add_positions() {
+        let result = allocate_add_position_amounts(&[], 1_000_000);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_preserves_action_indices() {
+        // actions[1] と actions[3] が AddPosition の場合
+        let result = allocate_add_position_amounts(&[(1, 0.4), (3, 0.6)], 1_000_000);
+        assert_eq!(result[0].0, 1);
+        assert_eq!(result[1].0, 3);
+    }
+}

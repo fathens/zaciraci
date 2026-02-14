@@ -24,6 +24,78 @@ pub struct ExecutionSummary {
     pub failed_count: usize,
 }
 
+/// AddPosition の swap 金額を weight に基づいて按分計算する。
+/// 最後の AddPosition が端数を含む残額を使い切る。
+///
+/// # 引数
+/// - `add_positions`: (アクションインデックス, weight) のリスト
+/// - `balance`: wrap.near 残高 (yocto)
+///
+/// # 戻り値
+/// (アクションインデックス, swap金額) のリスト
+fn allocate_add_position_amounts(
+    add_positions: &[(usize, f64)],
+    balance: u128,
+) -> Vec<(usize, u128)> {
+    if add_positions.is_empty() {
+        return vec![];
+    }
+
+    let total_weight: f64 = add_positions.iter().map(|(_, w)| w).sum();
+    let mut allocated_sum: u128 = 0;
+    let mut result = Vec::with_capacity(add_positions.len());
+
+    for (i, &(idx, weight)) in add_positions.iter().enumerate() {
+        let amount = if i == add_positions.len() - 1 {
+            // 最後の AddPosition は残額全部を使い切る
+            balance.saturating_sub(allocated_sum)
+        } else {
+            (balance as f64 * weight / total_weight) as u128
+        };
+        allocated_sum = allocated_sum.saturating_add(amount);
+        result.push((idx, amount));
+    }
+
+    result
+}
+
+/// 全 AddPosition の swap 金額を事前に計算する。
+/// 最後の AddPosition が端数を含む残額を使い切る。
+///
+/// # 戻り値
+/// HashMap<アクションのインデックス, swap金額(yocto)>
+async fn precompute_add_position_amounts<C, W>(
+    client: &C,
+    wallet: &W,
+    actions: &[TradingAction],
+) -> Result<HashMap<usize, u128>>
+where
+    C: ViewContract,
+    W: Wallet,
+{
+    let add_positions: Vec<(usize, f64)> = actions
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, action)| match action {
+            TradingAction::AddPosition { weight, .. } => Some((idx, *weight)),
+            _ => None,
+        })
+        .collect();
+
+    if add_positions.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+    let account = wallet.account_id();
+    let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
+    let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
+
+    Ok(allocate_add_position_amounts(&add_positions, balance)
+        .into_iter()
+        .collect())
+}
+
 /// 取引アクションを実際に実行
 pub(crate) async fn execute_trading_actions<C, W>(
     client: &C,
@@ -51,8 +123,12 @@ where
         "period_id" => %period_id
     );
 
-    for action in actions {
-        match execute_single_action(client, wallet, action, &recorder).await {
+    // AddPosition の swap 金額を事前に一括計算
+    let add_position_amounts = precompute_add_position_amounts(client, wallet, actions).await?;
+
+    for (idx, action) in actions.iter().enumerate() {
+        let swap_amount_override = add_position_amounts.get(&idx).copied();
+        match execute_single_action(client, wallet, action, &recorder, swap_amount_override).await {
             Ok(_) => {
                 info!(log, "action executed successfully"; "action" => ?action);
                 summary.success_count += 1;
@@ -73,6 +149,7 @@ async fn execute_single_action<C, W>(
     wallet: &W,
     action: &TradingAction,
     recorder: &TradeRecorder,
+    swap_amount_override: Option<u128>,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -427,12 +504,34 @@ where
             debug!(log, "adding position"; "token" => %token, "weight" => weight);
 
             // wrap.near → token へのswap
-            // common と backend の TokenAccount は同一型なので直接使用可能
             let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
             if token.to_string() != wrap_near.to_string() {
+                let swap_amount = swap_amount_override.ok_or_else(|| {
+                    anyhow::anyhow!("No pre-computed swap amount for AddPosition: {}", token)
+                })?;
+
+                debug!(log, "using pre-computed swap amount";
+                    "swap_amount" => swap_amount, "weight" => weight
+                );
+
+                if swap_amount == 0 {
+                    return Err(anyhow::anyhow!(
+                        "Pre-computed swap amount is 0 for token: {} (weight: {})",
+                        token,
+                        weight
+                    ));
+                }
+
                 let wrap_near_in: TokenInAccount = wrap_near.to_in();
-                swap::execute_direct_swap(client, wallet, &wrap_near_in, token, None, recorder)
-                    .await?;
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near_in,
+                    token,
+                    Some(swap_amount),
+                    recorder,
+                )
+                .await?;
             }
 
             debug!(log, "position added"; "token" => %token, "weight" => weight);
