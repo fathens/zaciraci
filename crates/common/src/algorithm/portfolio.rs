@@ -823,12 +823,8 @@ fn calculate_returns_from_prices(prices: &[PricePoint]) -> Vec<f64> {
 
     let mut returns = Vec::new();
     for i in 1..sorted.len() {
-        let price_current = sorted[i].price.to_string().parse::<f64>().unwrap_or(0.0);
-        let price_prev = sorted[i - 1]
-            .price
-            .to_string()
-            .parse::<f64>()
-            .unwrap_or(0.0);
+        let price_current = sorted[i].price.as_bigdecimal().to_f64().unwrap_or(0.0);
+        let price_prev = sorted[i - 1].price.as_bigdecimal().to_f64().unwrap_or(0.0);
         if price_prev > 0.0 {
             returns.push((price_current - price_prev) / price_prev);
         }

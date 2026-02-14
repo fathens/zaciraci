@@ -4528,3 +4528,15 @@ fn test_token_score_varies_with_confidence() {
     assert!((score_high.prediction_confidence - 0.9).abs() < 1e-6);
     assert!((score_low.prediction_confidence - 0.1).abs() < 1e-6);
 }
+
+/// BigDecimal → f64 変換で ToPrimitive 経由の精度が保たれることを検証
+#[test]
+fn test_price_to_f64_conversion_accuracy() {
+    let p = price(123.456789);
+    let f64_val = p.as_bigdecimal().to_f64().unwrap_or(0.0);
+    assert!(
+        (f64_val - 123.456789).abs() < 1e-6,
+        "ToPrimitive conversion should preserve precision: got {}",
+        f64_val
+    );
+}

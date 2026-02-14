@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{DateTime, Utc};
 use common::types::{ExchangeRate, TokenOutAccount};
 use logging::*;
@@ -203,11 +203,7 @@ impl PortfolioState {
                         decimals,
                     );
                     let near_value = &token_amount / &rate;
-                    let near_f64: f64 = near_value
-                        .as_bigdecimal()
-                        .to_string()
-                        .parse()
-                        .unwrap_or(0.0);
+                    let near_f64: f64 = near_value.as_bigdecimal().to_f64().unwrap_or(0.0);
                     total += near_f64;
                 }
                 None => {
@@ -341,7 +337,6 @@ impl PortfolioState {
                 let near_value = &token_amount / &rate;
                 // NearValue -> yoctoNEAR
                 let yocto = near_value.to_yocto();
-                use num_traits::ToPrimitive;
                 yocto.as_bigdecimal().to_u128().unwrap_or(0)
             }
             None => 0,
