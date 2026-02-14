@@ -63,11 +63,6 @@ failure_reset_seconds = 300
 # 全エンドポイント試行の最大回数
 max_attempts = 10
 
-[external_services]
-# 外部サービスURL
-ollama_base_url = "http://localhost:11434"
-ollama_model = "llama2"
-
 [trade]
 # トレード設定
 initial_investment = 100
