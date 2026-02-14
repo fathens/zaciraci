@@ -271,8 +271,8 @@ where
 
                 let current_amount = current_balances.get(&token_str);
 
-                // 現在の価値（wrap.near換算）を計算
-                let current_value_wrap_near: NearValue = match current_amount {
+                // レートを取得してキャッシュ（売却時に再利用）
+                let spot_rate = match current_amount {
                     Some(amount) if !amount.is_zero() => {
                         let token_out: TokenOutAccount =
                             token_str.parse::<near_sdk::AccountId>()?.into();
@@ -288,8 +288,16 @@ where
                         .await?
                         .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token_str))?;
 
+                        Some(rate.to_spot_rate())
+                    }
+                    _ => None,
+                };
+
+                // 現在の価値（wrap.near換算）を計算
+                let current_value_wrap_near: NearValue = match (current_amount, &spot_rate) {
+                    (Some(amount), Some(rate)) if !amount.is_zero() => {
                         // TokenAmount / &ExchangeRate = NearValue トレイトを使用
-                        amount / &rate.to_spot_rate()
+                        amount / rate
                     }
                     _ => NearValue::zero(),
                 };
@@ -313,26 +321,12 @@ where
                 let zero = NearValue::zero();
 
                 if diff_wrap_near < zero && diff_wrap_near.abs() >= min_trade_size {
-                    // 売却が必要
-                    let token_out: TokenOutAccount =
-                        token_str.parse::<near_sdk::AccountId>()?.into();
-                    let quote_in: TokenInAccount =
-                        wrap_near_str.parse::<near_sdk::AccountId>()?.into();
+                    // 売却が必要 — キャッシュ済みレートを再利用
+                    let rate = spot_rate.ok_or_else(|| {
+                        anyhow::anyhow!("No cached rate for sell operation: {}", token_str)
+                    })?;
 
-                    let get_decimals = crate::make_get_decimals();
-                    let rate = persistence::token_rate::TokenRate::get_latest(
-                        &token_out,
-                        &quote_in,
-                        &get_decimals,
-                    )
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token_str))?;
-
-                    sell_operations.push((
-                        token_str.clone(),
-                        diff_wrap_near.abs(),
-                        rate.to_spot_rate(),
-                    ));
+                    sell_operations.push((token_str.clone(), diff_wrap_near.abs(), rate));
                 } else if diff_wrap_near > zero && diff_wrap_near >= min_trade_size {
                     // 購入が必要
                     buy_operations.push((token_str.clone(), diff_wrap_near));
