@@ -650,6 +650,7 @@ dependencies = [
  "async-trait",
  "bigdecimal",
  "chrono",
+ "nalgebra",
  "ndarray",
  "near-account-id",
  "num-traits",

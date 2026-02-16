@@ -273,25 +273,64 @@ fn test_maximize_sharpe_ratio() {
     assert!(optimal_weights[max_return_idx] > 0.0);
 }
 
+/// 解析解ベースの maximize_sharpe_ratio が2資産の手計算結果と一致することを検証
 #[test]
-fn test_calculate_efficient_frontier() {
+fn test_maximize_sharpe_ratio_analytical_two_assets() {
+    // 2資産: μ = [0.10, 0.05], Σ = [[0.04, 0.01], [0.01, 0.02]]
+    let expected_returns = vec![0.10, 0.05];
+    let covariance = array![[0.04, 0.01], [0.01, 0.02]];
+
+    let weights = maximize_sharpe_ratio(&expected_returns, &covariance);
+    assert_eq!(weights.len(), 2);
+
+    // 重みの合計が1.0
+    let sum: f64 = weights.iter().sum();
+    assert!((sum - 1.0).abs() < 1e-10, "sum={sum}");
+
+    // 手計算: z = Σ⁻¹ · (μ - rf)
+    // Σ⁻¹ = 1/det * [[0.02, -0.01], [-0.01, 0.04]], det = 0.04*0.02 - 0.01*0.01 = 0.0007
+    // μ - rf ≈ [0.10 - 5.479e-5, 0.05 - 5.479e-5] ≈ [0.0999, 0.0499]
+    // z ≈ Σ⁻¹ · μ_excess
+    // z[0] = (0.02*0.0999 - 0.01*0.0499) / 0.0007 ≈ 2.142
+    // z[1] = (-0.01*0.0999 + 0.04*0.0499) / 0.0007 ≈ 1.426
+    // w = z / sum(z) ≈ [0.600, 0.400]
+    assert!(
+        (weights[0] - 0.600).abs() < 0.01,
+        "weights[0]={}, expected ~0.600",
+        weights[0]
+    );
+    assert!(
+        (weights[1] - 0.400).abs() < 0.01,
+        "weights[1]={}, expected ~0.400",
+        weights[1]
+    );
+
+    // 全ての重みが非負
+    for &w in &weights {
+        assert!(w >= 0.0);
+    }
+}
+
+/// 解析解が3資産で合理的な結果を返すことを検証
+#[test]
+fn test_maximize_sharpe_ratio_analytical_three_assets() {
     let expected_returns = vec![0.08, 0.12, 0.10];
     let covariance = array![[0.04, 0.01, 0.02], [0.01, 0.09, 0.01], [0.02, 0.01, 0.03]];
-    let target_return = 0.10;
 
-    let result = calculate_efficient_frontier(&expected_returns, &covariance, target_return);
-    assert!(result.is_ok());
-
-    let weights = result.unwrap();
+    let weights = maximize_sharpe_ratio(&expected_returns, &covariance);
     assert_eq!(weights.len(), 3);
 
-    // 重みの合計が1に近い
+    // 重みの合計が1.0
     let sum: f64 = weights.iter().sum();
-    assert!((sum - 1.0).abs() < 0.1);
+    assert!((sum - 1.0).abs() < 1e-10, "sum={sum}");
 
-    // 目標リターンに近いことを確認
-    let actual_return = calculate_portfolio_return(&weights, &expected_returns);
-    assert!((actual_return - target_return).abs() < 0.05);
+    // 全ての重みが非負
+    for &w in &weights {
+        assert!(w >= 0.0);
+    }
+
+    // 最高リターン資産(idx=1, 12%)にある程度配分されることを確認
+    assert!(weights[1] > 0.0, "高リターン資産に配分されるべき");
 }
 
 #[test]
@@ -3451,10 +3490,13 @@ fn test_validate_weights_empty() {
 // 以下のテストは portfolio.rs のアルゴリズムの問題点を検証するためのもの。
 // 各テストは Issue 番号に対応し、現在の動作を文書化する。
 
-/// Issue 1: 動的リスク調整が期待リターンの scaling を通じて weight に影響することを検証
+/// Issue 1: 解析解ベースのMVOではリターンの一律スケーリングが最適重みに影響しないことを検証
+///
+/// Sharpe比 = (w'μ - rf) / sqrt(w'Σw) なので、μ を定数倍しても
+/// w* = Σ⁻¹(kμ - rf·1) / 1'Σ⁻¹(kμ - rf·1) は rf が十分小さければほぼ変わらない。
+/// 動的リスク調整はポジションサイズ制御で行う（Commit 6 で実装）。
 #[test]
-fn test_issue1_dynamic_risk_adjustment_affects_weights() {
-    // 異なるリターンのトークン + 非対称な共分散
+fn test_issue1_return_scaling_does_not_affect_analytical_weights() {
     let expected_returns = vec![0.15, 0.03, 0.05];
     let covariance = array![[0.04, 0.01, 0.02], [0.01, 0.09, 0.01], [0.02, 0.01, 0.03]];
 
@@ -3473,7 +3515,7 @@ fn test_issue1_dynamic_risk_adjustment_affects_weights() {
     println!("Normal weights:   {:?}", weights_normal);
     println!("Low vol weights:  {:?}", weights_low_vol);
 
-    // 各パターンで weight が異なることを確認
+    // 解析解では一律スケーリングは重みをほとんど変えない（rf が小さいため）
     let diff_high_normal: f64 = weights_high_vol
         .iter()
         .zip(weights_normal.iter())
@@ -3485,19 +3527,13 @@ fn test_issue1_dynamic_risk_adjustment_affects_weights() {
         .map(|(a, b)| (a - b).abs())
         .sum();
 
-    println!(
-        "Diff (high vs normal): {:.6}, (low vs normal): {:.6}",
-        diff_high_normal, diff_low_normal
-    );
-
-    // リスク調整が weight に実際に影響を与えている（正規化で消えない）
     assert!(
-        diff_high_normal > 1e-6,
-        "高ボラ調整は通常と異なる weight を生成すべき: diff={diff_high_normal}"
+        diff_high_normal < 0.01,
+        "一律スケーリングでは重みがほぼ変わらない: diff={diff_high_normal}"
     );
     assert!(
-        diff_low_normal > 1e-6,
-        "低ボラ調整は通常と異なる weight を生成すべき: diff={diff_low_normal}"
+        diff_low_normal < 0.01,
+        "一律スケーリングでは重みがほぼ変わらない: diff={diff_low_normal}"
     );
 }
 
@@ -3577,33 +3613,30 @@ fn test_issue2_sharpe_rp_blend_varies_with_alpha() {
     }
 }
 
-/// Issue 3: 最適化の目標リターンへの収束精度を検証
-/// [修正済み] 収束判定（weight変化量 < 1e-6）による早期終了を追加
+/// Issue 3: 圧倒的に高リターンの資産がある場合、解析解が適切に集中配分することを検証
 #[test]
-fn test_issue3_optimization_convergence_accuracy() {
+fn test_issue3_analytical_sharpe_dominant_asset() {
     let expected_returns = vec![0.01, 0.50, 0.01]; // token-1 が圧倒的
     let covariance = array![
-        [0.001, 0.0009, 0.0001],
-        [0.0009, 0.001, 0.0009],
-        [0.0001, 0.0009, 0.001]
+        [0.04, 0.005, 0.002],
+        [0.005, 0.09, 0.005],
+        [0.002, 0.005, 0.03]
     ];
 
-    let target_return = 0.25; // 中間値
-    let result = calculate_efficient_frontier(&expected_returns, &covariance, target_return);
-    assert!(result.is_ok());
+    let weights = maximize_sharpe_ratio(&expected_returns, &covariance);
 
-    let weights = result.unwrap();
-    let achieved_return = calculate_portfolio_return(&weights, &expected_returns);
-    let gap = (achieved_return - target_return).abs();
-
-    println!("Target return:   {target_return}");
-    println!("Achieved return: {achieved_return}");
-    println!("Gap:             {gap:.6}");
-    println!("Weights:         {:?}", weights);
+    println!("Weights: {:?}", weights);
 
     // 重みの合計が1に近い
     let sum: f64 = weights.iter().sum();
-    assert!((sum - 1.0).abs() < 0.01, "重みの合計が1に近い: {sum}");
+    assert!((sum - 1.0).abs() < 1e-10, "重みの合計が1に近い: {sum}");
+
+    // 圧倒的に高リターンの token-1 に最も配分される
+    assert!(
+        weights[1] > weights[0] && weights[1] > weights[2],
+        "token-1 が最大配分: {:?}",
+        weights
+    );
 }
 
 /// Issue 4: PortfolioMetrics.daily_return が日次リターンをそのまま保持することを検証
@@ -4727,24 +4760,23 @@ async fn test_price_history_alignment_with_selected_tokens() {
         .weights
         .get(&token_out("token-z.near"));
 
-    // 両方のトークンが結果に含まれていることを確認
+    // token-a は高スコア・低ボラ・強い予測のため、必ず含まれるべき
     assert!(
-        weight_a.is_some() && weight_z.is_some(),
-        "Both tokens should be in optimal weights: a={:?}, z={:?}",
-        weight_a,
-        weight_z
+        weight_a.is_some(),
+        "token-a (high score) should be in optimal weights"
     );
 
-    let w_a = weight_a.unwrap();
-    let w_z = weight_z.unwrap();
-
-    // token-a は高スコア・低ボラ・強い予測のため、token-z より大きな重みを持つべき
-    assert!(
-        w_a > w_z,
-        "token-a (high score) should have higher weight than token-z (low score): a={}, z={}",
-        w_a,
-        w_z
-    );
+    // token-z は低スコアのため、解析解で除外される可能性がある
+    // 含まれている場合は token-a より低い重みであること
+    if let Some(w_z) = weight_z {
+        let w_a = weight_a.unwrap();
+        assert!(
+            w_a > w_z,
+            "token-a should have higher weight than token-z: a={}, z={}",
+            w_a,
+            w_z
+        );
+    }
 }
 
 /// NaN ボラティリティでも calculate_token_score がパニックしないことを検証

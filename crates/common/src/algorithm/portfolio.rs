@@ -2,6 +2,7 @@ use crate::Result;
 use crate::types::{NearValue, TokenOutAccount, TokenPrice};
 use bigdecimal::{BigDecimal, FromPrimitive, RoundingMode, ToPrimitive};
 use chrono::{DateTime, Utc};
+use nalgebra::DMatrix;
 use ndarray::{Array1, Array2};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -59,9 +60,6 @@ const MIN_POSITION_SIZE: f64 = 0.05;
 
 /// 最大保有トークン数（集中投資）
 const MAX_HOLDINGS: usize = 6;
-
-/// 最適化の最大反復回数
-const MAX_OPTIMIZATION_ITERATIONS: usize = 100;
 
 /// 数値安定性のための正則化パラメータ
 const REGULARIZATION_FACTOR: f64 = 1e-6;
@@ -223,7 +221,13 @@ pub fn calculate_portfolio_std(weights: &[f64], covariance_matrix: &Array2<f64>)
 
 // ==================== 最適化アルゴリズム ====================
 
-/// シャープレシオを最大化する最適ポートフォリオを計算（rayon による並列化）
+/// シャープレシオを最大化する最適ポートフォリオを計算（解析解 + アクティブセット法）
+///
+/// ロングオンリー制約下での最大シャープ比ポートフォリオ:
+/// 1. 超過リターン μ_excess = μ - rf を計算
+/// 2. z = Σ⁻¹ · μ_excess を解く
+/// 3. z_i < 0 の資産を除外し再計算（アクティブセット法）
+/// 4. w = z / Σz_i で正規化
 pub fn maximize_sharpe_ratio(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
@@ -235,7 +239,11 @@ pub fn maximize_sharpe_ratio(
 
     let default_weights = vec![1.0 / n as f64; n];
 
-    // 目標リターンの範囲を設定
+    if n == 1 {
+        return vec![1.0];
+    }
+
+    // 全トークンの期待リターンが同一の場合、等配分が最小分散解
     let min_return = expected_returns
         .iter()
         .cloned()
@@ -244,117 +252,67 @@ pub fn maximize_sharpe_ratio(
         .iter()
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
-
-    // 全トークンの期待リターンが同一の場合、グリッドサーチは無意味（全反復が同じ target_return）
-    // 等配分が最小分散解の良い近似なので early return
     if (max_return - min_return).abs() < 1e-12 {
         return default_weights;
     }
 
-    // グリッドサーチを並列化
-    let results: Vec<_> = (0..50)
-        .into_par_iter()
-        .filter_map(|i| {
-            let target_return = min_return + (max_return - min_return) * i as f64 / 49.0;
-
-            if let Ok(weights) =
-                calculate_efficient_frontier(expected_returns, covariance_matrix, target_return)
-            {
-                let portfolio_return = calculate_portfolio_return(&weights, expected_returns);
-                let portfolio_std = calculate_portfolio_std(&weights, covariance_matrix);
-
-                if portfolio_std > 0.0 {
-                    let sharpe = (portfolio_return - RISK_FREE_RATE) / portfolio_std;
-                    return Some((sharpe, weights));
-                }
-            }
-            None
-        })
+    // 超過リターン: μ - rf
+    let excess_returns: Vec<f64> = expected_returns
+        .iter()
+        .map(|&r| r - RISK_FREE_RATE)
         .collect();
 
-    // 最良の結果を選択
-    results
-        .into_iter()
-        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(_, weights)| weights)
-        .unwrap_or(default_weights)
-}
+    // アクティブセット法: ロングオンリー制約
+    let mut active: Vec<usize> = (0..n).collect();
 
-/// 効率的フロンティア上の最適ポートフォリオを計算
-pub fn calculate_efficient_frontier(
-    expected_returns: &[f64],
-    covariance_matrix: &Array2<f64>,
-    target_return: f64,
-) -> Result<Vec<f64>> {
-    let n = expected_returns.len();
-    if n == 0 {
-        return Ok(vec![]);
-    }
-
-    // 初期解: 等配分
-    let mut weights = vec![1.0 / n as f64; n];
-
-    // 制約付き最適化（収束判定付き）
-    for _ in 0..MAX_OPTIMIZATION_ITERATIONS {
-        let prev_weights = weights.clone();
-
-        weights =
-            optimize_weights_step(&weights, expected_returns, covariance_matrix, target_return);
-
-        // 制約を適用
-        apply_individual_constraints(&mut weights);
-
-        // 正規化
-        let sum: f64 = weights.iter().sum();
-        if sum > 0.0 {
-            for w in weights.iter_mut() {
-                *w /= sum;
-            }
+    loop {
+        let m = active.len();
+        if m == 0 {
+            return default_weights;
         }
 
-        // 収束判定: weight変化量が十分小さければ早期終了
-        let max_change = weights
+        // アクティブ資産のサブ共分散行列とサブ超過リターンベクトルを構築
+        let cov_sub = DMatrix::from_fn(m, m, |i, j| covariance_matrix[[active[i], active[j]]]);
+        let excess_sub = nalgebra::DVector::from_fn(m, |i, _| excess_returns[active[i]]);
+
+        // Σ_sub · z = μ_excess_sub を解く（Cholesky優先、失敗時はLU分解）
+        let z = cov_sub
+            .clone()
+            .cholesky()
+            .map(|chol| chol.solve(&excess_sub))
+            .or_else(|| cov_sub.lu().solve(&excess_sub));
+
+        let z = match z {
+            Some(z) => z,
+            None => return default_weights,
+        };
+
+        // 負の要素を見つけて除外
+        let min_entry = z
             .iter()
-            .zip(prev_weights.iter())
-            .map(|(w, pw)| (w - pw).abs())
-            .fold(0.0_f64, f64::max);
-        if max_change < 1e-6 {
-            break;
+            .enumerate()
+            .min_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((idx, &val)) = min_entry
+            && val < 0.0
+        {
+            active.remove(idx);
+            continue;
         }
+
+        // 全 z >= 0: 正規化して返す
+        let sum_z: f64 = z.iter().sum();
+        if sum_z <= 0.0 {
+            return default_weights;
+        }
+
+        let mut weights = vec![0.0; n];
+        for (i, &asset_idx) in active.iter().enumerate() {
+            weights[asset_idx] = z[i] / sum_z;
+        }
+
+        return weights;
     }
-
-    Ok(weights)
-}
-
-/// 最適化の1ステップ
-fn optimize_weights_step(
-    current_weights: &[f64],
-    expected_returns: &[f64],
-    covariance_matrix: &Array2<f64>,
-    target_return: f64,
-) -> Vec<f64> {
-    let n = current_weights.len();
-    let mut new_weights = current_weights.to_vec();
-
-    let current_return = calculate_portfolio_return(current_weights, expected_returns);
-    let return_diff = target_return - current_return;
-
-    // リターン調整
-    for i in 0..n {
-        let adjustment = return_diff * expected_returns[i] * 0.1; // 学習率0.1
-        new_weights[i] = (current_weights[i] + adjustment).max(0.0);
-    }
-
-    // リスク調整（分散最小化方向）
-    let w = Array1::from(current_weights.to_vec());
-    let risk_gradient = 2.0 * covariance_matrix.dot(&w);
-
-    for i in 0..n {
-        let risk_adjustment = -risk_gradient[i] * 0.01; // 小さな学習率
-        new_weights[i] = (new_weights[i] + risk_adjustment).max(0.0);
-    }
-
-    new_weights
 }
 
 /// リスクパリティ調整（反復収束版）
@@ -415,13 +373,6 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
 }
 
 // ==================== 制約の適用 ====================
-
-/// 個別制約を適用
-fn apply_individual_constraints(weights: &mut [f64]) {
-    for w in weights.iter_mut() {
-        *w = w.clamp(0.0, MAX_POSITION_SIZE);
-    }
-}
 
 /// 全体制約を適用
 ///
