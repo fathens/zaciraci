@@ -311,6 +311,34 @@ fn test_apply_risk_parity() {
     assert!(max_weight - min_weight < 0.5); // 初期の0.4よりも小さい差
 }
 
+/// 反復収束版リスクパリティが各資産のリスク寄与度を均等化することを検証
+#[test]
+fn test_risk_parity_convergence() {
+    let mut weights = vec![0.8, 0.1, 0.1]; // 大幅に不均等
+    let covariance = array![[0.04, 0.01, 0.02], [0.01, 0.09, 0.01], [0.02, 0.01, 0.03]];
+
+    apply_risk_parity(&mut weights, &covariance);
+
+    // リスク寄与度を計算
+    let w = Array1::from(weights.to_vec());
+    let portfolio_variance = w.dot(&covariance.dot(&w));
+    let portfolio_vol = portfolio_variance.sqrt();
+    let marginal_risk = covariance.dot(&w);
+
+    let risk_contributions: Vec<f64> = (0..3)
+        .map(|i| weights[i] * marginal_risk[i] / portfolio_vol)
+        .collect();
+
+    // 各資産のリスク寄与度が target (= portfolio_vol / n) に近いことを検証
+    let target = portfolio_vol / 3.0;
+    for (i, rc) in risk_contributions.iter().enumerate() {
+        assert!(
+            (rc - target).abs() < 1e-3,
+            "asset {i}: risk contribution {rc:.6} should be close to target {target:.6}"
+        );
+    }
+}
+
 // ==================== 制約テスト ====================
 
 #[test]

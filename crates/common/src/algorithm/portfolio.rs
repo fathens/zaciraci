@@ -79,6 +79,12 @@ fn min_market_cap() -> NearValue {
 const HIGH_VOLATILITY_THRESHOLD: f64 = 0.3; // 30%
 const LOW_VOLATILITY_THRESHOLD: f64 = 0.1; // 10%
 
+/// リスクパリティの最大反復回数
+const MAX_RISK_PARITY_ITERATIONS: usize = 50;
+
+/// リスクパリティの収束判定閾値
+const RISK_PARITY_CONVERGENCE_TOLERANCE: f64 = 1e-6;
+
 /// 最大相関閾値
 const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
 
@@ -351,43 +357,56 @@ fn optimize_weights_step(
     new_weights
 }
 
-/// リスクパリティ調整
+/// リスクパリティ調整（反復収束版）
+///
+/// 各資産のリスク寄与度が均等になるよう重みを反復的に調整する。
+/// 1回の調整で他の全資産のリスク寄与度が変化するため、収束まで反復が必要。
 pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
     let n = weights.len();
     if n == 0 {
         return;
     }
 
-    // 各資産のリスク寄与度を計算
-    let w = Array1::from(weights.to_vec());
-    let portfolio_variance = w.dot(&covariance_matrix.dot(&w));
+    for _ in 0..MAX_RISK_PARITY_ITERATIONS {
+        let w = Array1::from(weights.to_vec());
+        let portfolio_variance = w.dot(&covariance_matrix.dot(&w));
 
-    if portfolio_variance <= 0.0 {
-        return;
-    }
+        if portfolio_variance <= 0.0 {
+            return;
+        }
 
-    let portfolio_vol = portfolio_variance.sqrt();
-    let marginal_risk = covariance_matrix.dot(&w);
+        let portfolio_vol = portfolio_variance.sqrt();
+        let marginal_risk = covariance_matrix.dot(&w);
 
-    // 目標リスク寄与度（均等）
-    let target_risk_contribution = portfolio_vol / n as f64;
+        // 目標リスク寄与度（均等）
+        let target_risk_contribution = portfolio_vol / n as f64;
 
-    // 重みを調整
-    for i in 0..n {
-        if marginal_risk[i] > 0.0 {
-            let current_risk_contribution = weights[i] * marginal_risk[i] / portfolio_vol;
-            if current_risk_contribution > 0.0 {
-                let adjustment = target_risk_contribution / current_risk_contribution;
-                weights[i] *= adjustment.clamp(0.5, 2.0); // 極端な調整を制限
+        let mut max_change: f64 = 0.0;
+
+        // 重みを調整
+        for i in 0..n {
+            if marginal_risk[i] > 0.0 {
+                let current_risk_contribution = weights[i] * marginal_risk[i] / portfolio_vol;
+                if current_risk_contribution > 0.0 {
+                    let adjustment = target_risk_contribution / current_risk_contribution;
+                    let new_weight = weights[i] * adjustment.clamp(0.5, 2.0);
+                    max_change = max_change.max((new_weight - weights[i]).abs());
+                    weights[i] = new_weight;
+                }
             }
         }
-    }
 
-    // 正規化
-    let sum: f64 = weights.iter().sum();
-    if sum > 0.0 {
-        for w in weights.iter_mut() {
-            *w /= sum;
+        // 正規化
+        let sum: f64 = weights.iter().sum();
+        if sum > 0.0 {
+            for w in weights.iter_mut() {
+                *w /= sum;
+            }
+        }
+
+        // 収束判定
+        if max_change < RISK_PARITY_CONVERGENCE_TOLERANCE {
+            break;
         }
     }
 }
