@@ -422,6 +422,10 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
 
 /// 全体制約を適用
 ///
+/// TODO: MAX_HOLDINGS / MIN_POSITION_SIZE / max_position 制約を最適化内部に組み込み、
+/// 制約適用後にメトリクスを再計算する。現在はアクティブセット法でロングオンリー制約のみ
+/// 最適化に統合済みだが、残りの制約は後処理で適用しているため、最適性が損なわれうる。
+///
 /// 2段階の収束ループで構成:
 /// 1. メインループ: clamp + MAX_HOLDINGS フィルタ + MIN_POSITION_SIZE フィルタ + normalize
 /// 2. 防御ループ: normalize 後に max_position を再超過するケースへの安全策
@@ -968,6 +972,9 @@ pub async fn execute_portfolio_optimization(
     };
 
     // メトリクスを計算
+    // TODO: Sharpe比（フォワードルッキング: 予測リターン＋共分散から算出）と
+    // Sortino比/MaxDrawdown/Calmar比（バックワードルッキング: 過去日次リターンから算出）の
+    // 時間軸が混在している。ラベルまたは型レベルで区別すべき。
     let portfolio_return = calculate_portfolio_return(&optimal_weights, &expected_returns);
     let portfolio_vol = calculate_portfolio_std(&optimal_weights, &covariance);
     let sharpe_ratio = if portfolio_vol > 0.0 {
