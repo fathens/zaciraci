@@ -177,7 +177,53 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
         covariance[[i, i]] += REGULARIZATION_FACTOR;
     }
 
+    // PSD保証: 固有値分解→負の固有値をクランプ→再構成
+    ensure_positive_semi_definite(&mut covariance);
+
     covariance
+}
+
+/// 共分散行列が正定値であることを保証する
+///
+/// 異なる長さの系列ペアから計算した共分散行列は正定値でない可能性がある。
+/// 固有値分解 Σ = V·diag(λ)·V' を行い、負の固有値を ε にクランプして再構成する。
+fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
+    let n = covariance.nrows();
+    if n <= 1 {
+        return;
+    }
+
+    // ndarray → nalgebra に変換
+    let mat = nalgebra::DMatrix::from_fn(n, n, |i, j| covariance[[i, j]]);
+
+    // 対称行列の固有値分解
+    let eigen = mat.symmetric_eigen();
+
+    // 負の固有値があるかチェック
+    let min_eigenvalue = eigen
+        .eigenvalues
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY, f64::min);
+
+    if min_eigenvalue >= REGULARIZATION_FACTOR {
+        return; // 既にPSD
+    }
+
+    // 負の固有値をクランプして再構成: Σ' = V · diag(max(λ, ε)) · V'
+    let clamped_eigenvalues =
+        nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_fn(n, |i, _| {
+            eigen.eigenvalues[i].max(REGULARIZATION_FACTOR)
+        }));
+
+    let reconstructed = &eigen.eigenvectors * clamped_eigenvalues * eigen.eigenvectors.transpose();
+
+    // nalgebra → ndarray に変換
+    for i in 0..n {
+        for j in 0..n {
+            covariance[[i, j]] = reconstructed[(i, j)];
+        }
+    }
 }
 
 /// 2つの系列間の共分散を計算

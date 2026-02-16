@@ -603,6 +603,43 @@ fn test_covariance_calculation_edge_cases() {
     assert_eq!(cov_empty[[0, 0]], REGULARIZATION_FACTOR);
 }
 
+/// 非PSD行列がPSD修正で正定値になることを検証
+#[test]
+fn test_covariance_matrix_psd_guarantee() {
+    // 異なる長さの系列から非PSD行列ができるケースを模擬
+    // 相関が矛盾する入力: A-B相関高, B-C相関高, A-C相関低（三角不等式違反に近い）
+    let daily_returns = vec![
+        vec![0.01, 0.02, -0.01, 0.03, 0.01, -0.02, 0.02],
+        vec![0.01, 0.02, -0.01, 0.03], // 短い系列
+        vec![-0.02, 0.01, 0.03, -0.01, 0.02, 0.01, -0.01],
+    ];
+
+    let covariance = calculate_covariance_matrix(&daily_returns);
+
+    // nalgebra で固有値を確認
+    let n = covariance.nrows();
+    let mat = nalgebra::DMatrix::from_fn(n, n, |i, j| covariance[[i, j]]);
+    let eigen = mat.symmetric_eigen();
+
+    // 全固有値が正（PSD保証済み）
+    for (i, &eigenvalue) in eigen.eigenvalues.iter().enumerate() {
+        assert!(
+            eigenvalue >= REGULARIZATION_FACTOR - 1e-10,
+            "eigenvalue[{i}] = {eigenvalue} should be >= {REGULARIZATION_FACTOR}"
+        );
+    }
+
+    // 対称性も保持
+    for i in 0..n {
+        for j in 0..n {
+            assert!(
+                (covariance[[i, j]] - covariance[[j, i]]).abs() < 1e-10,
+                "Symmetry violated at [{i},{j}]"
+            );
+        }
+    }
+}
+
 #[test]
 fn test_extreme_predictions() {
     let tokens = create_sample_tokens();
