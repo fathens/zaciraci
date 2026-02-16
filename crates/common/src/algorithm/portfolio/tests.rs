@@ -4540,3 +4540,125 @@ fn test_price_to_f64_conversion_accuracy() {
         f64_val
     );
 }
+
+/// selected_price_histories が selected_tokens の順序に整合していることを検証する回帰テスト。
+/// スコアリングで入力順序が入れ替わるケースをカバーする。
+#[tokio::test]
+async fn test_price_history_alignment_with_selected_tokens() {
+    let base_time = Utc::now() - Duration::days(30);
+
+    // token-z: 低スコア（中流動性、中市場規模）→ 入力では先頭
+    // token-a: 高スコア（高流動性、高市場規模）→ 入力では末尾
+    // スコアリング後に token-a が先頭に来るため、入力順と逆転する
+    // 注: 両方とも MIN_LIQUIDITY_SCORE(0.5) と min_market_cap(10,000) をクリアする
+    let tokens = vec![
+        TokenData {
+            symbol: token_out("token-z.near"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.5,
+            liquidity_score: Some(0.55),
+            market_cap: Some(cap(100_000)),
+        },
+        TokenData {
+            symbol: token_out("token-a.near"),
+            current_rate: rate_from_price(0.02),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.95),
+            market_cap: Some(cap(5_000_000)),
+        },
+    ];
+
+    let mut predictions = BTreeMap::new();
+    // token-z: 弱い上昇予測 (+2%)
+    predictions.insert(token_out("token-z.near"), price(0.01 * 1.02));
+    // token-a: 強い上昇予測 (+15%)
+    predictions.insert(token_out("token-a.near"), price(0.02 * 1.15));
+
+    // 価格履歴を入力順 (token-z → token-a) で配置
+    // token-z: ランダムに大きく変動（高ボラティリティ）
+    let token_z_prices: Vec<PricePoint> = (0..30)
+        .map(|i| PricePoint {
+            timestamp: base_time + Duration::days(i),
+            price: price(50.0 + (i as f64 * 0.7).sin() * 15.0),
+            volume: Some(BigDecimal::from_f64(500.0).unwrap()),
+        })
+        .collect();
+
+    // token-a: 安定した上昇トレンド（低ボラティリティ）
+    let token_a_prices: Vec<PricePoint> = (0..30)
+        .map(|i| PricePoint {
+            timestamp: base_time + Duration::days(i),
+            price: price(100.0 + i as f64 * 0.3),
+            volume: Some(BigDecimal::from_f64(2000.0).unwrap()),
+        })
+        .collect();
+
+    let historical_prices = vec![
+        PriceHistory {
+            token: token_out("token-z.near"),
+            quote_token: token_in("wrap.near"),
+            prices: token_z_prices,
+        },
+        PriceHistory {
+            token: token_out("token-a.near"),
+            quote_token: token_in("wrap.near"),
+            prices: token_a_prices,
+        },
+    ];
+
+    let mut holdings = BTreeMap::new();
+    holdings.insert(
+        token_out("token-z.near"),
+        TokenAmount::from_smallest_units(BigDecimal::from(5), 18),
+    );
+    holdings.insert(
+        token_out("token-a.near"),
+        TokenAmount::from_smallest_units(BigDecimal::from(5), 18),
+    );
+    let wallet = WalletInfo {
+        holdings,
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::zero(),
+    };
+
+    let portfolio_data = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        prediction_confidence: Some(0.8),
+    };
+
+    let result = execute_portfolio_optimization(&wallet, portfolio_data, 0.05).await;
+    assert!(result.is_ok(), "Optimization should succeed: {:?}", result);
+
+    let report = result.unwrap();
+
+    // token-a はスコアが高いため、より大きな重みを持つべき
+    let weight_a = report
+        .optimal_weights
+        .weights
+        .get(&token_out("token-a.near"));
+    let weight_z = report
+        .optimal_weights
+        .weights
+        .get(&token_out("token-z.near"));
+
+    // 両方のトークンが結果に含まれていることを確認
+    assert!(
+        weight_a.is_some() && weight_z.is_some(),
+        "Both tokens should be in optimal weights: a={:?}, z={:?}",
+        weight_a,
+        weight_z
+    );
+
+    let w_a = weight_a.unwrap();
+    let w_z = weight_z.unwrap();
+
+    // token-a は高スコア・低ボラ・強い予測のため、token-z より大きな重みを持つべき
+    assert!(
+        w_a > w_z,
+        "token-a (high score) should have higher weight than token-z (low score): a={}, z={}",
+        w_a,
+        w_z
+    );
+}

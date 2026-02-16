@@ -860,12 +860,16 @@ pub async fn execute_portfolio_optimization(
     // 期待リターンを計算
     let expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
 
-    // 選択されたトークンの価格履歴のみをフィルタ
-    let selected_price_histories: Vec<PriceHistory> = portfolio_data
-        .historical_prices
+    // 選択されたトークンの価格履歴を selected_tokens の順序に合わせて構築
+    let selected_price_histories: Vec<PriceHistory> = selected_tokens
         .iter()
-        .filter(|p| selected_tokens.iter().any(|t| t.symbol == p.token))
-        .cloned()
+        .filter_map(|t| {
+            portfolio_data
+                .historical_prices
+                .iter()
+                .find(|p| p.token == t.symbol)
+                .cloned()
+        })
         .collect();
 
     // 日次リターンと共分散行列を計算
