@@ -1046,7 +1046,7 @@ fn test_daily_returns_ordering_consistency() {
     println!("Daily returns scenario 1: {:?}", returns1);
     println!("Daily returns scenario 2: {:?}", returns2);
 
-    // 修正後: 入力順序が保持されるため、異なる順序で異なる結果になることを確認
+    // 入力スライスの順序が保持されるため、異なる順序で異なる結果になることを確認
     assert_ne!(
         returns1, returns2,
         "入力順序を保持するため、PriceHistoryの順序が異なれば結果も異なるべき"
@@ -1121,10 +1121,10 @@ fn test_input_ordering_impact_on_optimization() {
         tokens.iter().map(|t| &t.symbol).collect::<Vec<_>>()
     );
 
-    // BTreeMapにより辞書順で処理される：
-    // 1. aaa.low_return.near (4%)
-    // 2. mmm.medium.near (5%)
-    // 3. zzz.high_return.near (20%)
+    // expected_returns は tokens スライスの順序に従う：
+    // 1. zzz.high_return.near (20%) — tokens[0]
+    // 2. aaa.low_return.near (4%)   — tokens[1]
+    // 3. mmm.medium.near (5%)       — tokens[2]
 
     // 新しいトークン選択アルゴリズムにより、期待リターンの順序が変わる可能性がある
     // ただし、期待リターンの値自体は保持される

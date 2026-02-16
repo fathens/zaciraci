@@ -123,8 +123,8 @@ pub fn calculate_expected_returns(
 /// 日次リターンを計算
 /// 注意: 価格データは比率（Price型）として保存されている。リターン計算は相対値なので単位に依存しない。
 ///
-/// **重要**: この関数は入力されたhistorical_pricesの順序を保持します。
-/// 重複トークンがある場合は最初の出現のみを使用します。
+/// 入力スライスの順序を保持して各トークンの日次リターンを返します。
+/// 重複トークンは最初の出現のみを使用します（防御的チェック）。
 pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f64>> {
     let mut seen = std::collections::HashSet::new();
     historical_prices
@@ -712,9 +712,8 @@ pub fn select_optimal_tokens(
 
 /// 相関の低いトークンを選択（最適化版）
 ///
-/// 改善点:
-/// 1. BTreeMap で価格履歴を直接ルックアップ (O(log n))
-/// 2. 日次リターンを事前計算してキャッシュ
+/// BTreeMap で価格履歴を O(log n) でルックアップし、
+/// 日次リターンを事前キャッシュして重複計算を回避する。
 fn select_uncorrelated_tokens(
     scored_tokens: Vec<(TokenScore, &TokenData)>,
     historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
@@ -943,7 +942,7 @@ pub async fn execute_portfolio_optimization(
         0.0
     };
 
-    // 重みをBTreeMapに変換（順序安定化のため）
+    // 重みをBTreeMapに変換（キーによる確定的な順序のため）
     let weight_map: BTreeMap<TokenOutAccount, f64> = selected_tokens
         .iter()
         .zip(optimal_weights.iter())
