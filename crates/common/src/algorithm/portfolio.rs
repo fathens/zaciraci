@@ -402,13 +402,17 @@ fn apply_individual_constraints(weights: &mut [f64]) {
 }
 
 /// 全体制約を適用
+///
+/// 2段階の収束ループで構成:
+/// 1. メインループ: clamp + MAX_HOLDINGS フィルタ + MIN_POSITION_SIZE フィルタ + normalize
+/// 2. 防御ループ: normalize 後に MAX_POSITION_SIZE を再超過するケースへの安全策
+///    （例: 2トークンのみ非ゼロで clamp → normalize → 再超過が連鎖する場合）
 pub fn apply_constraints(weights: &mut [f64]) {
-    // 反復的に制約を適用（収束まで）
+    // Phase 1: 全制約を反復適用
     for _ in 0..10 {
-        // 最大10回の反復
         let mut changed = false;
 
-        // 個別制約
+        // 個別制約: [0.0, MAX_POSITION_SIZE] にクランプ
         for w in weights.iter_mut() {
             let old_w = *w;
             *w = w.clamp(0.0, MAX_POSITION_SIZE);
@@ -417,18 +421,14 @@ pub fn apply_constraints(weights: &mut [f64]) {
             }
         }
 
-        // 上位N個のみ保有
+        // 上位 MAX_HOLDINGS 個のみ保有（残りをゼロ化）
         if weights.len() > MAX_HOLDINGS {
             let mut indexed_weights: Vec<(usize, f64)> =
                 weights.iter().enumerate().map(|(i, &w)| (i, w)).collect();
             indexed_weights
                 .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-            let indices_to_zero: Vec<usize> = indexed_weights[MAX_HOLDINGS..]
-                .iter()
-                .map(|(i, _)| *i)
-                .collect();
-            for idx in indices_to_zero {
+            for &(idx, _) in &indexed_weights[MAX_HOLDINGS..] {
                 if weights[idx] > 0.0 {
                     weights[idx] = 0.0;
                     changed = true;
@@ -444,7 +444,7 @@ pub fn apply_constraints(weights: &mut [f64]) {
             }
         }
 
-        // 正規化
+        // 正規化（合計 = 1.0）
         let sum: f64 = weights.iter().sum();
         if sum > 0.0 {
             for w in weights.iter_mut() {
@@ -452,15 +452,18 @@ pub fn apply_constraints(weights: &mut [f64]) {
             }
         }
 
-        // 変化がなくなったら終了
         if !changed {
             break;
         }
     }
 
-    // 最終的な制約チェックと正規化（収束ループ）
-    // clamp と normalize を繰り返し、両方の制約を同時に満たす
+    // Phase 2: clamp + normalize の防御的収束
+    // Phase 1 の normalize 後に MAX_POSITION_SIZE を再超過する場合の安全策。
+    // 例: weights = [0.6, 0.4] → 0.4 がゼロ化 → normalize で [1.0] → clamp [0.6] → normalize...
     for _ in 0..10 {
+        if weights.iter().all(|&w| w <= MAX_POSITION_SIZE + 1e-10) {
+            break;
+        }
         for w in weights.iter_mut() {
             *w = w.clamp(0.0, MAX_POSITION_SIZE);
         }
@@ -469,10 +472,6 @@ pub fn apply_constraints(weights: &mut [f64]) {
             for w in weights.iter_mut() {
                 *w /= sum;
             }
-        }
-        // 全要素が MAX_POSITION_SIZE 以内なら収束
-        if weights.iter().all(|&w| w <= MAX_POSITION_SIZE + 1e-10) {
-            break;
         }
     }
 }
