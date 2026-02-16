@@ -1140,9 +1140,11 @@ fn calculate_max_drawdown(cumulative_returns: &[f64]) -> f64 {
             peak = value;
         }
 
-        let drawdown = (peak - value) / peak;
-        if drawdown > max_drawdown {
-            max_drawdown = drawdown;
+        if peak > 0.0 {
+            let drawdown = (peak - value) / peak;
+            if drawdown > max_drawdown {
+                max_drawdown = drawdown;
+            }
         }
     }
 

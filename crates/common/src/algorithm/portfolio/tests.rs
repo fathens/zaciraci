@@ -4809,3 +4809,19 @@ fn test_apply_risk_parity_zero_weight_no_inf() {
     let sum: f64 = weights.iter().sum();
     assert!((sum - 1.0).abs() < 1e-6, "weights should sum to 1.0");
 }
+
+/// peak=0.0 で calculate_max_drawdown がゼロ除算しないことを検証
+#[test]
+fn test_max_drawdown_zero_peak() {
+    let values = vec![0.0, 0.0, 1.0, 0.5];
+    let dd = calculate_max_drawdown(&values);
+    assert!(dd.is_finite(), "max_drawdown should be finite, got {}", dd);
+}
+
+/// 全値ゼロで calculate_max_drawdown がパニックしないことを検証
+#[test]
+fn test_max_drawdown_all_zeros() {
+    let values = vec![0.0, 0.0, 0.0];
+    let dd = calculate_max_drawdown(&values);
+    assert_eq!(dd, 0.0);
+}
