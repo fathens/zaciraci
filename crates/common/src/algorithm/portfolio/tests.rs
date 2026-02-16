@@ -4857,3 +4857,61 @@ fn test_max_drawdown_all_zeros() {
     let dd = calculate_max_drawdown(&values);
     assert_eq!(dd, 0.0);
 }
+
+/// 異なる長さの daily_returns がポートフォリオ日次リターン構築時に末尾揃えされることを検証
+#[test]
+fn test_portfolio_daily_returns_tail_aligned() {
+    // Token A: 5日分のリターン [0.01, 0.02, 0.03, 0.04, 0.05]
+    // Token B: 3日分のリターン [0.10, 0.20, 0.30]
+    // min_return_len = 3 → 末尾3日を使用
+    // Token A の末尾3日: [0.03, 0.04, 0.05]
+    // Token B の末尾3日: [0.10, 0.20, 0.30]
+    let daily_returns = [vec![0.01, 0.02, 0.03, 0.04, 0.05], vec![0.10, 0.20, 0.30]];
+    let weights = [0.5, 0.5];
+
+    let min_return_len = daily_returns.iter().map(|r| r.len()).min().unwrap();
+    assert_eq!(min_return_len, 3);
+
+    let portfolio_daily_returns: Vec<f64> = (0..min_return_len)
+        .map(|day| {
+            weights
+                .iter()
+                .zip(daily_returns.iter())
+                .map(|(w, returns)| w * returns[returns.len() - min_return_len + day])
+                .sum()
+        })
+        .collect();
+
+    // day 0: 0.5*0.03 + 0.5*0.10 = 0.065
+    // day 1: 0.5*0.04 + 0.5*0.20 = 0.12
+    // day 2: 0.5*0.05 + 0.5*0.30 = 0.175
+    assert!((portfolio_daily_returns[0] - 0.065).abs() < 1e-10);
+    assert!((portfolio_daily_returns[1] - 0.12).abs() < 1e-10);
+    assert!((portfolio_daily_returns[2] - 0.175).abs() < 1e-10);
+}
+
+/// 同一長の daily_returns では末尾揃えが通常のインデックスと一致することを検証
+#[test]
+fn test_portfolio_daily_returns_same_length() {
+    let daily_returns = [vec![0.01, 0.02, 0.03], vec![0.10, 0.20, 0.30]];
+    let weights = [0.6, 0.4];
+
+    let min_return_len = daily_returns.iter().map(|r| r.len()).min().unwrap();
+
+    let portfolio_daily_returns: Vec<f64> = (0..min_return_len)
+        .map(|day| {
+            weights
+                .iter()
+                .zip(daily_returns.iter())
+                .map(|(w, returns)| w * returns[returns.len() - min_return_len + day])
+                .sum()
+        })
+        .collect();
+
+    // day 0: 0.6*0.01 + 0.4*0.10 = 0.046
+    // day 1: 0.6*0.02 + 0.4*0.20 = 0.092
+    // day 2: 0.6*0.03 + 0.4*0.30 = 0.138
+    assert!((portfolio_daily_returns[0] - 0.046).abs() < 1e-10);
+    assert!((portfolio_daily_returns[1] - 0.092).abs() < 1e-10);
+    assert!((portfolio_daily_returns[2] - 0.138).abs() < 1e-10);
+}

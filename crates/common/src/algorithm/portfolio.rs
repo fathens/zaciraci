@@ -995,7 +995,7 @@ pub async fn execute_portfolio_optimization(
                 optimal_weights
                     .iter()
                     .zip(daily_returns.iter())
-                    .map(|(w, returns)| w * returns[day])
+                    .map(|(w, returns)| w * returns[returns.len() - min_return_len + day])
                     .sum()
             })
             .collect()
