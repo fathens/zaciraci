@@ -4548,10 +4548,14 @@ fn test_token_score_varies_with_confidence() {
     let token = &create_sample_tokens()[0];
     let predictions = create_sample_predictions();
     let history = create_sample_price_history();
-    let volatilities: Vec<f64> = create_sample_tokens()
-        .iter()
-        .map(|t| t.historical_volatility)
-        .collect();
+    let volatilities: Vec<f64> = {
+        let mut v: Vec<f64> = create_sample_tokens()
+            .iter()
+            .map(|t| t.historical_volatility)
+            .collect();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v
+    };
 
     let score_high = calculate_token_score(
         token,

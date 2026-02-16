@@ -605,11 +605,13 @@ fn calculate_std_dev(values: &[f64]) -> f64 {
 }
 
 /// トークンのスコアを計算
+///
+/// `sorted_volatilities` は昇順にソート済みであること。
 fn calculate_token_score(
     token: &TokenData,
     prediction: Option<&TokenPrice>,
     historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
-    all_volatilities: &[f64],
+    sorted_volatilities: &[f64],
     prediction_confidence: Option<f64>,
 ) -> TokenScore {
     // 予測価格から期待リターンを計算
@@ -628,17 +630,12 @@ fn calculate_token_score(
     let confidence = prediction_confidence.unwrap_or(0.5);
 
     // ボラティリティランクを計算（低いほど良い）
-    let vol_rank = if !all_volatilities.is_empty() {
-        let sorted_vols = {
-            let mut v = all_volatilities.to_vec();
-            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            v
-        };
-        let position = sorted_vols
+    let vol_rank = if !sorted_volatilities.is_empty() {
+        let position = sorted_volatilities
             .iter()
             .position(|&v| v >= token.historical_volatility)
-            .unwrap_or(sorted_vols.len());
-        1.0 - (position as f64 / sorted_vols.len() as f64)
+            .unwrap_or(sorted_volatilities.len());
+        1.0 - (position as f64 / sorted_volatilities.len() as f64)
     } else {
         0.5
     };
@@ -687,11 +684,15 @@ pub fn select_optimal_tokens(
         filtered_tokens
     };
 
-    // 全トークンのボラティリティを収集
-    let all_volatilities: Vec<f64> = scoring_tokens
-        .iter()
-        .map(|t| t.historical_volatility)
-        .collect();
+    // 全トークンのボラティリティを収集（昇順ソート済み）
+    let all_volatilities: Vec<f64> = {
+        let mut v: Vec<f64> = scoring_tokens
+            .iter()
+            .map(|t| t.historical_volatility)
+            .collect();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        v
+    };
 
     // スコアリング
     let mut scored_tokens: Vec<(TokenScore, &TokenData)> = scoring_tokens
