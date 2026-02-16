@@ -975,6 +975,8 @@ pub async fn execute_portfolio_optimization(
     };
 
     // メトリクスを計算
+    // TODO: 最適化は adjusted_returns を使うが、ここでは expected_returns で計算している。
+    // 意図的な設計か要調査（adjusted_returns を使うべきか検討）。
     let portfolio_return = calculate_portfolio_return(&optimal_weights, &expected_returns);
     let portfolio_vol = calculate_portfolio_std(&optimal_weights, &covariance);
     let sharpe_ratio = if portfolio_vol > 0.0 {
