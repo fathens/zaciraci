@@ -644,7 +644,7 @@ where
 
     // 7. 結果を集約
     let mut token_data = Vec::new();
-    let mut historical_prices = Vec::new();
+    let mut historical_prices = BTreeMap::new();
 
     for (
         token_out,
@@ -673,7 +673,7 @@ where
         // TokenData 用に symbol を先に取得
         let symbol_for_token_data = history.token.clone();
 
-        historical_prices.push(history);
+        historical_prices.insert(history.token.clone(), history);
 
         token_data.push(TokenData {
             symbol: symbol_for_token_data,

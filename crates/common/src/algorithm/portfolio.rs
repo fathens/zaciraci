@@ -17,7 +17,7 @@ pub struct PortfolioData {
     pub tokens: Vec<TokenData>,
     /// 予測価格（TokenPrice: NEAR/token）
     pub predictions: BTreeMap<TokenOutAccount, TokenPrice>,
-    pub historical_prices: Vec<PriceHistory>,
+    pub historical_prices: BTreeMap<TokenOutAccount, PriceHistory>,
     /// 予測精度に基づく信頼度 [0.0, 1.0]
     /// - Some(1.0): 予測が非常に正確 → Sharpe を信頼
     /// - Some(0.0): 予測が不正確 → RP に退避
@@ -559,14 +559,11 @@ pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 
 /// 個別トークンのシャープレシオを計算
 fn calculate_individual_sharpe(
     token: &TokenData,
-    historical_prices: &[PriceHistory],
+    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
     expected_return: f64,
 ) -> f64 {
     // トークンの価格履歴を取得
-    let token_prices = historical_prices
-        .iter()
-        .find(|p| p.token == token.symbol)
-        .map(|p| &p.prices);
+    let token_prices = historical_prices.get(&token.symbol).map(|p| &p.prices);
 
     if let Some(prices) = token_prices
         && prices.len() > 1
@@ -601,7 +598,7 @@ fn calculate_std_dev(values: &[f64]) -> f64 {
 fn calculate_token_score(
     token: &TokenData,
     prediction: Option<&TokenPrice>,
-    historical_prices: &[PriceHistory],
+    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
     all_volatilities: &[f64],
     prediction_confidence: Option<f64>,
 ) -> TokenScore {
@@ -653,7 +650,7 @@ fn calculate_token_score(
 pub fn select_optimal_tokens(
     tokens: &[TokenData],
     predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
-    historical_prices: &[PriceHistory],
+    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
     max_tokens: usize,
     prediction_confidence: Option<f64>,
 ) -> Vec<TokenData> {
@@ -716,11 +713,11 @@ pub fn select_optimal_tokens(
 /// 相関の低いトークンを選択（最適化版）
 ///
 /// 改善点:
-/// 1. HashMap で価格履歴をインデックス化 (O(m) → O(1) ルックアップ)
+/// 1. BTreeMap で価格履歴を直接ルックアップ (O(log n))
 /// 2. 日次リターンを事前計算してキャッシュ
 fn select_uncorrelated_tokens(
     scored_tokens: Vec<(TokenScore, &TokenData)>,
-    historical_prices: &[PriceHistory],
+    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
     max_tokens: usize,
 ) -> Vec<TokenData> {
     use std::collections::HashMap;
@@ -729,19 +726,10 @@ fn select_uncorrelated_tokens(
         return Vec::new();
     }
 
-    // 1. 価格履歴を HashMap でインデックス化（O(1) ルックアップ）
-    let price_index: HashMap<String, &PriceHistory> = historical_prices
+    // 日次リターンを事前計算してキャッシュ
+    let returns_cache: HashMap<String, Vec<f64>> = historical_prices
         .iter()
-        .map(|p| (p.token.to_string(), p))
-        .collect();
-
-    // 2. 日次リターンを事前計算してキャッシュ
-    let returns_cache: HashMap<String, Vec<f64>> = price_index
-        .iter()
-        .map(|(token, price_history)| {
-            let returns = calculate_returns_from_prices(&price_history.prices);
-            (token.clone(), returns)
-        })
+        .map(|(token, ph)| (token.to_string(), calculate_returns_from_prices(&ph.prices)))
         .collect();
 
     // キャッシュを使った相関計算
@@ -863,13 +851,7 @@ pub async fn execute_portfolio_optimization(
     // 選択されたトークンの価格履歴を selected_tokens の順序に合わせて構築
     let selected_price_histories: Vec<PriceHistory> = selected_tokens
         .iter()
-        .filter_map(|t| {
-            portfolio_data
-                .historical_prices
-                .iter()
-                .find(|p| p.token == t.symbol)
-                .cloned()
-        })
+        .filter_map(|t| portfolio_data.historical_prices.get(&t.symbol).cloned())
         .collect();
 
     // 日次リターンと共分散行列を計算

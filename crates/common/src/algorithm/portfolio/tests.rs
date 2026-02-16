@@ -73,9 +73,9 @@ fn create_sample_predictions() -> BTreeMap<TokenOutAccount, TokenPrice> {
     predictions
 }
 
-fn create_sample_price_history() -> Vec<PriceHistory> {
+fn create_sample_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
     let base_time = Utc::now() - Duration::days(30);
-    let mut history = Vec::new();
+    let mut history = BTreeMap::new();
 
     // TOKEN_A: 上昇トレンド
     let mut token_a_prices = Vec::new();
@@ -86,11 +86,12 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
             volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
         });
     }
-    history.push(PriceHistory {
+    let ph = PriceHistory {
         token: token_out("token-a"),
         quote_token: token_in("wrap.near"),
         prices: token_a_prices,
-    });
+    };
+    history.insert(ph.token.clone(), ph);
 
     // TOKEN_B: 変動大
     let mut token_b_prices = Vec::new();
@@ -102,11 +103,12 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
             volume: Some(BigDecimal::from_f64(800.0).unwrap()),
         });
     }
-    history.push(PriceHistory {
+    let ph = PriceHistory {
         token: token_out("token-b"),
         quote_token: token_in("wrap.near"),
         prices: token_b_prices,
-    });
+    };
+    history.insert(ph.token.clone(), ph);
 
     // TOKEN_C: 安定
     let mut token_c_prices = Vec::new();
@@ -117,11 +119,12 @@ fn create_sample_price_history() -> Vec<PriceHistory> {
             volume: Some(BigDecimal::from_f64(1200.0).unwrap()),
         });
     }
-    history.push(PriceHistory {
+    let ph = PriceHistory {
         token: token_out("token-c"),
         quote_token: token_in("wrap.near"),
         prices: token_c_prices,
-    });
+    };
+    history.insert(ph.token.clone(), ph);
 
     history
 }
@@ -164,7 +167,8 @@ fn test_calculate_expected_returns() {
 #[test]
 fn test_calculate_daily_returns() {
     let price_history = create_sample_price_history();
-    let daily_returns = calculate_daily_returns(&price_history);
+    let price_history_vec: Vec<PriceHistory> = price_history.into_values().collect();
+    let daily_returns = calculate_daily_returns(&price_history_vec);
 
     assert_eq!(daily_returns.len(), 3); // 3つのトークン
 
@@ -1436,7 +1440,10 @@ fn test_correlation_based_selection() {
 
     // 価格履歴を作成（AとBは同じ動き、Cは独立）
     let base_time = Utc::now() - Duration::days(10);
-    let mut history = Vec::new();
+
+    let mut prices_a = Vec::new();
+    let mut prices_b = Vec::new();
+    let mut prices_c = Vec::new();
 
     for i in 0..10 {
         let time = base_time + Duration::days(i);
@@ -1444,36 +1451,43 @@ fn test_correlation_based_selection() {
         let price_b = 50.0 * (1.0 + 0.01 * i as f64); // Aと同じ変動率
         let price_c = 200.0 * (1.0 - 0.005 * i as f64); // 逆の動き
 
-        history.push(PriceHistory {
-            token: token_out("token-a"),
-            quote_token: token_in("quote.near"),
-            prices: vec![PricePoint {
-                timestamp: time,
-                price: price(price_a),
-                volume: None,
-            }],
+        prices_a.push(PricePoint {
+            timestamp: time,
+            price: price(price_a),
+            volume: None,
         });
-
-        history.push(PriceHistory {
-            token: token_out("token-b"),
-            quote_token: token_in("quote.near"),
-            prices: vec![PricePoint {
-                timestamp: time,
-                price: price(price_b),
-                volume: None,
-            }],
+        prices_b.push(PricePoint {
+            timestamp: time,
+            price: price(price_b),
+            volume: None,
         });
-
-        history.push(PriceHistory {
-            token: token_out("token-c"),
-            quote_token: token_in("quote.near"),
-            prices: vec![PricePoint {
-                timestamp: time,
-                price: price(price_c),
-                volume: None,
-            }],
+        prices_c.push(PricePoint {
+            timestamp: time,
+            price: price(price_c),
+            volume: None,
         });
     }
+
+    let history: BTreeMap<TokenOutAccount, PriceHistory> = [
+        PriceHistory {
+            token: token_out("token-a"),
+            quote_token: token_in("quote.near"),
+            prices: prices_a,
+        },
+        PriceHistory {
+            token: token_out("token-b"),
+            quote_token: token_in("quote.near"),
+            prices: prices_b,
+        },
+        PriceHistory {
+            token: token_out("token-c"),
+            quote_token: token_in("quote.near"),
+            prices: prices_c,
+        },
+    ]
+    .into_iter()
+    .map(|ph| (ph.token.clone(), ph))
+    .collect();
 
     // トークン選択（最大2トークン）
     let selected = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
@@ -1578,7 +1592,7 @@ fn test_portfolio_performance_with_token_selection() {
 
     // 価格履歴を作成
     let base_time = Utc::now() - Duration::days(30);
-    let mut history = Vec::new();
+    let mut history = BTreeMap::new();
 
     for token in &tokens {
         let mut prices_vec = Vec::new();
@@ -1599,11 +1613,12 @@ fn test_portfolio_performance_with_token_selection() {
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
             });
         }
-        history.push(PriceHistory {
+        let ph = PriceHistory {
             token: token.symbol.clone(),
             quote_token: token_in("quote.near"),
             prices: prices_vec,
-        });
+        };
+        history.insert(ph.token.clone(), ph);
     }
 
     // トークン選択を実行（最大3トークン）
@@ -1723,7 +1738,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
     };
 
     // 価格履歴を正しく作成（全トークン分）
-    let mut full_history = Vec::new();
+    let mut full_history = BTreeMap::new();
     let base_time = Utc::now() - Duration::days(10);
 
     for (idx, token) in tokens.iter().enumerate() {
@@ -1749,11 +1764,12 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
                 volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
             });
         }
-        full_history.push(PriceHistory {
+        let ph = PriceHistory {
             token: token.symbol.clone(),
             quote_token: token_in("quote.near"),
             prices: prices_vec,
-        });
+        };
+        full_history.insert(ph.token.clone(), ph);
     }
 
     let portfolio_data = PortfolioData {
@@ -2327,7 +2343,9 @@ fn test_revert_to_original_behavior() {
 fn test_dynamic_risk_adjustment() {
     // 高ボラティリティ環境のテスト
     let high_vol_data = create_high_volatility_portfolio_data();
-    let high_vol_returns = calculate_daily_returns(&high_vol_data.historical_prices);
+    let high_vol_hp: Vec<PriceHistory> =
+        high_vol_data.historical_prices.values().cloned().collect();
+    let high_vol_returns = calculate_daily_returns(&high_vol_hp);
     let adjustment = super::calculate_dynamic_risk_adjustment(&high_vol_returns);
     assert!(
         adjustment < 1.0,
@@ -2342,7 +2360,8 @@ fn test_dynamic_risk_adjustment() {
 
     // 低ボラティリティ環境のテスト
     let low_vol_data = create_low_volatility_portfolio_data();
-    let low_vol_returns = calculate_daily_returns(&low_vol_data.historical_prices);
+    let low_vol_hp: Vec<PriceHistory> = low_vol_data.historical_prices.values().cloned().collect();
+    let low_vol_returns = calculate_daily_returns(&low_vol_hp);
     let adjustment = super::calculate_dynamic_risk_adjustment(&low_vol_returns);
     // 実際の計算結果に基づいて期待値を調整
     assert!(
@@ -2407,10 +2426,10 @@ fn create_low_volatility_portfolio_data() -> super::PortfolioData {
     }
 }
 
-fn create_high_volatility_price_history() -> Vec<PriceHistory> {
+fn create_high_volatility_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
     use chrono::{Duration, TimeZone, Utc};
 
-    let mut histories = Vec::new();
+    let mut histories = BTreeMap::new();
     let tokens = ["token_a", "token_b", "token_c"];
 
     for token in tokens.iter() {
@@ -2432,20 +2451,22 @@ fn create_high_volatility_price_history() -> Vec<PriceHistory> {
             });
         }
 
-        histories.push(PriceHistory {
-            token: token.parse().unwrap(),
+        let token_out_account: TokenOutAccount = token.parse().unwrap();
+        let ph = PriceHistory {
+            token: token_out_account.clone(),
             quote_token: token_in("wrap.near"), // ダミークォートトークン
             prices: prices_vec,
-        });
+        };
+        histories.insert(token_out_account, ph);
     }
 
     histories
 }
 
-fn create_low_volatility_price_history() -> Vec<PriceHistory> {
+fn create_low_volatility_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
     use chrono::{Duration, TimeZone, Utc};
 
-    let mut histories = Vec::new();
+    let mut histories = BTreeMap::new();
     let tokens = ["token_a", "token_b", "token_c"];
 
     for token in tokens.iter() {
@@ -2467,11 +2488,13 @@ fn create_low_volatility_price_history() -> Vec<PriceHistory> {
             });
         }
 
-        histories.push(PriceHistory {
-            token: token.parse().unwrap(),
+        let token_out_account: TokenOutAccount = token.parse().unwrap();
+        let ph = PriceHistory {
+            token: token_out_account.clone(),
             quote_token: token_in("wrap.near"), // ダミークォートトークン
             prices: prices_vec,
-        });
+        };
+        histories.insert(token_out_account, ph);
     }
 
     histories
@@ -2486,7 +2509,8 @@ fn test_aggressive_parameters_effect() {
     predictions.insert(token_out("token_c"), price(0.15));
 
     let expected_returns = super::calculate_expected_returns(&tokens, &predictions);
-    let daily_returns = super::calculate_daily_returns(&create_sample_price_history());
+    let hp: Vec<PriceHistory> = create_sample_price_history().into_values().collect();
+    let daily_returns = super::calculate_daily_returns(&hp);
     let covariance = super::calculate_covariance_matrix(&daily_returns);
 
     let weights = super::maximize_sharpe_ratio(&expected_returns, &covariance);
@@ -2663,10 +2687,10 @@ fn create_high_return_tokens() -> Vec<TokenData> {
     ]
 }
 
-fn create_realistic_price_history() -> Vec<PriceHistory> {
+fn create_realistic_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
     use chrono::{Duration, TimeZone, Utc};
 
-    let mut histories = Vec::new();
+    let mut histories = BTreeMap::new();
     let token_configs = [
         ("high_return_token", 1000000000000000000i64, 0.03), // 3%日次成長期待
         ("medium_return_token", 500000000000000000i64, 0.02), // 2%日次成長期待
@@ -2692,11 +2716,13 @@ fn create_realistic_price_history() -> Vec<PriceHistory> {
             });
         }
 
-        histories.push(PriceHistory {
-            token: token_name.parse().unwrap(),
+        let token_out_account: TokenOutAccount = token_name.parse().unwrap();
+        let ph = PriceHistory {
+            token: token_out_account.clone(),
             quote_token: token_in("wrap.near"),
             prices: prices_vec,
-        });
+        };
+        histories.insert(token_out_account, ph);
     }
 
     histories
@@ -4335,10 +4361,10 @@ fn test_select_uncorrelated_tokens_cache_correctness() {
         .collect::<Vec<_>>();
 
     // 価格履歴を作成（相関の異なるパターン）
-    let historical_prices: Vec<PriceHistory> = (0..5)
+    let historical_prices: BTreeMap<TokenOutAccount, PriceHistory> = (0..5)
         .map(|i| {
             let multiplier = if i % 2 == 0 { 1.0 } else { -1.0 }; // 偶数は正相関、奇数は負相関
-            PriceHistory {
+            let ph = PriceHistory {
                 token: token_out(&format!("token-{}", i)),
                 quote_token: token_in("wrap.near"),
                 prices: (0..20)
@@ -4348,7 +4374,8 @@ fn test_select_uncorrelated_tokens_cache_correctness() {
                         volume: None,
                     })
                     .collect(),
-            }
+            };
+            (ph.token.clone(), ph)
         })
         .collect();
 
@@ -4425,7 +4452,7 @@ fn test_correlation_cache_handles_different_lengths() {
         })
         .collect();
 
-    let historical_prices = vec![
+    let historical_prices: BTreeMap<TokenOutAccount, PriceHistory> = [
         PriceHistory {
             token: token_out("token-long"),
             quote_token: token_in("wrap.near"),
@@ -4436,7 +4463,10 @@ fn test_correlation_cache_handles_different_lengths() {
             quote_token: token_in("wrap.near"),
             prices: short_prices,
         },
-    ];
+    ]
+    .into_iter()
+    .map(|ph| (ph.token.clone(), ph))
+    .collect();
 
     let predictions: BTreeMap<TokenOutAccount, TokenPrice> = tokens
         .iter()
@@ -4593,7 +4623,7 @@ async fn test_price_history_alignment_with_selected_tokens() {
         })
         .collect();
 
-    let historical_prices = vec![
+    let historical_prices: BTreeMap<TokenOutAccount, PriceHistory> = [
         PriceHistory {
             token: token_out("token-z.near"),
             quote_token: token_in("wrap.near"),
@@ -4604,7 +4634,10 @@ async fn test_price_history_alignment_with_selected_tokens() {
             quote_token: token_in("wrap.near"),
             prices: token_a_prices,
         },
-    ];
+    ]
+    .into_iter()
+    .map(|ph| (ph.token.clone(), ph))
+    .collect();
 
     let mut holdings = BTreeMap::new();
     holdings.insert(
