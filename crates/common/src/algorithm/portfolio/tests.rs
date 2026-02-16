@@ -1346,7 +1346,7 @@ fn test_performance_metrics_with_existing_functions() {
     let std_dev = variance.sqrt();
 
     // シャープレシオ（手動計算）
-    let sharpe_ratio = (mean_return - RISK_FREE_RATE / 252.0) / std_dev;
+    let sharpe_ratio = (mean_return - RISK_FREE_RATE) / std_dev;
     assert!(sharpe_ratio.is_finite());
 
     // 最大ドローダウン計算（既存関数使用）
@@ -1359,17 +1359,16 @@ fn test_performance_metrics_with_existing_functions() {
     let max_drawdown = super::calculate_max_drawdown(&cumulative_returns);
     assert!(max_drawdown >= 0.0);
 
-    // カルマーレシオ（年化リターン / 最大ドローダウン）
-    let annualized_return = mean_return * 252.0; // 日次を年次に変換
+    // カルマーレシオ（日次リターン / 最大ドローダウン）
     let calmar_ratio = if max_drawdown > 0.0 {
-        annualized_return / max_drawdown
+        mean_return / max_drawdown
     } else {
         f64::INFINITY
     };
     assert!(calmar_ratio.is_finite() || calmar_ratio == f64::INFINITY);
 
     // ソルティノレシオ（既存関数使用）
-    let sortino_ratio = super::calculate_sortino_ratio(&portfolio_returns, RISK_FREE_RATE / 252.0);
+    let sortino_ratio = super::calculate_sortino_ratio(&portfolio_returns, RISK_FREE_RATE);
     assert!(sortino_ratio >= 0.0);
 
     // ポートフォリオの安定性指標

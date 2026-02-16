@@ -48,8 +48,8 @@ pub struct TokenScore {
 
 // ==================== 定数 ====================
 
-/// リスクフリーレート（年率2%）
-const RISK_FREE_RATE: f64 = 0.02;
+/// リスクフリーレート（年率2%相当の日次レート: 0.02 / 365）
+const RISK_FREE_RATE: f64 = 5.479e-5;
 
 /// 単一トークンの最大保有比率（積極的設定）
 const MAX_POSITION_SIZE: f64 = 0.6;
@@ -75,9 +75,9 @@ fn min_market_cap() -> NearValue {
     NearValue::from_near(BigDecimal::from(10000))
 }
 
-/// 動的リスク調整の閾値
-const HIGH_VOLATILITY_THRESHOLD: f64 = 0.3; // 30%
-const LOW_VOLATILITY_THRESHOLD: f64 = 0.1; // 10%
+/// 動的リスク調整の閾値（日次ボラティリティ）
+const HIGH_VOLATILITY_THRESHOLD: f64 = 0.0157; // 年率30%相当の日次ボラティリティ (≈ 0.3/√365)
+const LOW_VOLATILITY_THRESHOLD: f64 = 0.00523; // 年率10%相当の日次ボラティリティ (≈ 0.1/√365)
 
 /// リスクパリティの最大反復回数
 const MAX_RISK_PARITY_ITERATIONS: usize = 50;
@@ -264,7 +264,7 @@ pub fn maximize_sharpe_ratio(
                 let portfolio_std = calculate_portfolio_std(&weights, covariance_matrix);
 
                 if portfolio_std > 0.0 {
-                    let sharpe = (portfolio_return - RISK_FREE_RATE / 365.0) / portfolio_std;
+                    let sharpe = (portfolio_return - RISK_FREE_RATE) / portfolio_std;
                     return Some((sharpe, weights));
                 }
             }
@@ -526,7 +526,7 @@ fn calculate_dynamic_risk_adjustment(daily_returns: &[Vec<f64>]) -> f64 {
             let mean = returns.iter().sum::<f64>() / returns.len() as f64;
             let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
                 / (returns.len() - 1) as f64;
-            variance.sqrt() * (365.25_f64).sqrt() // 年率換算
+            variance.sqrt()
         })
         .sum::<f64>()
         / daily_returns.len() as f64;
@@ -616,7 +616,7 @@ fn calculate_individual_sharpe(
         if !returns.is_empty() {
             let volatility = calculate_std_dev(&returns);
             if volatility > 0.0 {
-                return (expected_return - RISK_FREE_RATE / 365.0) / volatility;
+                return (expected_return - RISK_FREE_RATE) / volatility;
             }
         }
     }
@@ -983,7 +983,7 @@ pub async fn execute_portfolio_optimization(
     let portfolio_return = calculate_portfolio_return(&optimal_weights, &expected_returns);
     let portfolio_vol = calculate_portfolio_std(&optimal_weights, &covariance);
     let sharpe_ratio = if portfolio_vol > 0.0 {
-        (portfolio_return - RISK_FREE_RATE / 365.0) / portfolio_vol
+        (portfolio_return - RISK_FREE_RATE) / portfolio_vol
     } else {
         0.0
     };
@@ -1020,7 +1020,7 @@ pub async fn execute_portfolio_optimization(
         vec![]
     };
 
-    let daily_risk_free = RISK_FREE_RATE / 365.0;
+    let daily_risk_free = RISK_FREE_RATE;
     let sortino_ratio = calculate_sortino_ratio(&portfolio_daily_returns, daily_risk_free);
 
     let cumulative_values: Vec<f64> = {
