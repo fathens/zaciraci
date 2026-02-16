@@ -1098,6 +1098,8 @@ fn generate_rebalance_actions(
 }
 
 /// ソルティノレシオを計算
+///
+/// 下方偏差: sqrt( mean( min(r - rf, 0)^2 ) ) （全サンプル数で除算する標準的定義）
 fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
     if returns.is_empty() {
         return 0.0;
@@ -1106,18 +1108,12 @@ fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
     let mean_return: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
     let excess_return = mean_return - risk_free_rate;
 
-    let downside_returns: Vec<f64> = returns
+    let downside_variance: f64 = returns
         .iter()
-        .map(|&r| (r - risk_free_rate).min(0.0))
-        .collect();
-
-    let downside_deviation = if downside_returns.is_empty() {
-        0.0
-    } else {
-        let variance: f64 =
-            downside_returns.iter().map(|r| r.powi(2)).sum::<f64>() / downside_returns.len() as f64;
-        variance.sqrt()
-    };
+        .map(|&r| (r - risk_free_rate).min(0.0).powi(2))
+        .sum::<f64>()
+        / returns.len() as f64;
+    let downside_deviation = downside_variance.sqrt();
 
     // IEEE 754 guarantees: sqrt(0.0) is exactly 0.0, so exact comparison is correct.
     if downside_deviation == 0.0 {
