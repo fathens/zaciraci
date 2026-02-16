@@ -66,7 +66,7 @@ fn allocate_add_position_amounts(
             // 最後の AddPosition は残額全部を使い切る
             balance.saturating_sub(allocated_sum)
         } else if total_bps > 0 {
-            balance / total_bps * weights_bps[i]
+            balance / total_bps * weights_bps[i] + balance % total_bps * weights_bps[i] / total_bps
         } else {
             0
         };

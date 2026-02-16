@@ -546,4 +546,30 @@ mod add_position_tests {
             diff_0
         );
     }
+
+    /// 小さなバランス値で整数除算の切り捨て誤差が軽減されることを検証
+    #[test]
+    fn test_allocate_small_balance_precision() {
+        // balance=100, weights 30%/70% → bps: 3000/7000, total_bps=10000
+        // 旧: 100/10000*3000 = 0*3000 = 0 (切り捨て)
+        // 新: 100/10000*3000 + 100%10000*3000/10000 = 0 + 100*3000/10000 = 30
+        let result =
+            allocate_add_position_amounts(&[(0, bd("0.3")), (1, bd("0.3")), (2, bd("0.4"))], 100);
+        // 最後のアイテムが残額を吸収するので先頭2つの精度を検証
+        assert_eq!(result[0].1, 30, "30% of 100 should be 30");
+        assert_eq!(result[1].1, 30, "30% of 100 should be 30");
+        assert_eq!(result[2].1, 40, "remainder should be 40");
+    }
+
+    /// balance が total_bps より小さい場合でも正しく配分される
+    #[test]
+    fn test_allocate_balance_smaller_than_total_bps() {
+        // balance=7, weights 50%/50% → bps: 5000/5000, total_bps=10000
+        // 旧: 7/10000*5000 = 0
+        // 新: 0 + 7*5000/10000 = 3
+        let result = allocate_add_position_amounts(&[(0, bd("0.5")), (1, bd("0.5"))], 7);
+        assert_eq!(result[0].1, 3, "50% of 7 should be ~3");
+        assert_eq!(result[1].1, 4, "remainder should be 4");
+        assert_eq!(result[0].1 + result[1].1, 7, "total should equal balance");
+    }
 }
