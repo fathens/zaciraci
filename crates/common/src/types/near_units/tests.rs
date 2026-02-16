@@ -20,7 +20,7 @@ fn test_price_arithmetic() {
     assert!(ratio > 3 && ratio < 4);
 
     // スカラー乗算
-    let scaled = p1.clone() * 2.0;
+    let scaled = p1.clone() * BigDecimal::from(2);
     assert_eq!(scaled.0, BigDecimal::from(20));
 }
 
@@ -278,12 +278,12 @@ fn test_price_edge_cases() {
     // 非常に小さい価格
     let tiny = TokenPrice::from_near_per_token(BigDecimal::from_str("0.000000000001").unwrap());
     assert!(!tiny.is_zero());
-    let doubled = tiny.clone() * 2.0;
+    let doubled = tiny.clone() * BigDecimal::from(2);
     assert!(doubled.as_bigdecimal() > tiny.as_bigdecimal());
 
     // 非常に大きい価格
     let huge = TokenPrice::from_near_per_token(BigDecimal::from_str("999999999999999999").unwrap());
-    let half = huge.clone() * 0.5;
+    let half = huge.clone() * BigDecimal::from_str("0.5").unwrap();
     assert!(half.as_bigdecimal() < huge.as_bigdecimal());
 }
 
@@ -307,28 +307,6 @@ fn test_yocto_amount_scalar_mul() {
 // =============================================================================
 // TokenPrice 追加演算テスト
 // =============================================================================
-
-#[test]
-fn test_price_scalar_division() {
-    let price = TokenPrice::from_near_per_token(BigDecimal::from(100));
-
-    // TokenPrice / f64
-    let divided = price.clone() / 4.0;
-    assert_eq!(divided.as_bigdecimal(), &BigDecimal::from(25));
-
-    // ゼロ除算
-    let zero_div = price / 0.0;
-    assert!(zero_div.is_zero());
-}
-
-#[test]
-fn test_f64_times_price() {
-    let price = TokenPrice::from_near_per_token(BigDecimal::from(10));
-
-    // f64 × TokenPrice
-    let scaled = 3.0 * price;
-    assert_eq!(scaled.as_bigdecimal(), &BigDecimal::from(30));
-}
 
 #[test]
 fn test_price_times_bigdecimal() {
@@ -565,32 +543,6 @@ fn test_yocto_amount_truncation_behavior() {
 // ==================== NearValue の新しいトレイトのテスト ====================
 
 #[test]
-fn test_near_value_mul_f64() {
-    let value = NearValue::from_near(BigDecimal::from(100));
-
-    // 基本的な乗算
-    let result = value.clone() * 0.5;
-    assert_eq!(result, NearValue::from_near(BigDecimal::from(50)));
-
-    // 参照からの乗算
-    let result = &value * 0.5;
-    assert_eq!(result, NearValue::from_near(BigDecimal::from(50)));
-
-    // 小数点の精度（f64 の精度で比較）
-    let result = &value * 0.1;
-    let result_f64 = result.as_bigdecimal().to_f64().unwrap();
-    assert!(
-        (result_f64 - 10.0).abs() < 0.0001,
-        "expected ~10, got {}",
-        result_f64
-    );
-
-    // ゼロとの乗算
-    let result = &value * 0.0;
-    assert_eq!(result, NearValue::zero());
-}
-
-#[test]
 fn test_near_value_neg() {
     let value = NearValue::from_near(BigDecimal::from(100));
 
@@ -650,37 +602,22 @@ fn test_near_value_comparison() {
 fn test_near_value_rebalance_calculation() {
     // Rebalance ブランチで使われる計算パターンをテスト
     let total_value = NearValue::from_near(BigDecimal::from(1000));
-    let target_weight = 0.3; // 30%
+    let target_weight = BigDecimal::from_str("0.3").unwrap(); // 30%
 
-    // 目標価値を計算（f64 精度で比較）
-    let target_value = &total_value * target_weight;
-    let target_f64 = target_value.as_bigdecimal().to_f64().unwrap();
-    assert!(
-        (target_f64 - 300.0).abs() < 0.0001,
-        "expected ~300, got {}",
-        target_f64
-    );
+    // 目標価値を計算
+    let target_value = &total_value * &target_weight;
+    assert_eq!(target_value, NearValue::from_near(BigDecimal::from(300)),);
 
     // 現在価値（例: 200 NEAR）
     let current_value = NearValue::from_near(BigDecimal::from(200));
 
     // 差分を計算
     let value_diff = target_value.clone() - current_value.clone();
-    let diff_f64 = value_diff.as_bigdecimal().to_f64().unwrap();
-    assert!(
-        (diff_f64 - 100.0).abs() < 0.0001,
-        "expected ~100, got {}",
-        diff_f64
-    );
+    assert_eq!(value_diff, NearValue::from_near(BigDecimal::from(100)),);
 
     // 最大トレードサイズ（10%）
-    let max_trade_size = &total_value * 0.1;
-    let max_f64 = max_trade_size.as_bigdecimal().to_f64().unwrap();
-    assert!(
-        (max_f64 - 100.0).abs() < 0.0001,
-        "expected ~100, got {}",
-        max_f64
-    );
+    let max_trade_size = &total_value * &BigDecimal::from_str("0.1").unwrap();
+    assert_eq!(max_trade_size, NearValue::from_near(BigDecimal::from(100)),);
 
     // 差分が最大サイズと同等なので、どちらが使われても OK
     let trade_value = if value_diff > max_trade_size {
@@ -690,24 +627,14 @@ fn test_near_value_rebalance_calculation() {
     } else {
         value_diff.clone()
     };
-    let trade_f64 = trade_value.as_bigdecimal().to_f64().unwrap();
-    assert!(
-        (trade_f64 - 100.0).abs() < 0.0001,
-        "expected ~100, got {}",
-        trade_f64
-    );
+    assert_eq!(trade_value, NearValue::from_near(BigDecimal::from(100)),);
 
     // 最小トレードサイズ（1%）
-    let min_trade_size = &total_value * 0.01;
-    let min_f64 = min_trade_size.as_bigdecimal().to_f64().unwrap();
-    assert!(
-        (min_f64 - 10.0).abs() < 0.0001,
-        "expected ~10, got {}",
-        min_f64
-    );
+    let min_trade_size = &total_value * &BigDecimal::from_str("0.01").unwrap();
+    assert_eq!(min_trade_size, NearValue::from_near(BigDecimal::from(10)),);
 
     // trade_value > min_trade_size なので実行可能
-    assert!(trade_value.abs().as_bigdecimal().to_f64().unwrap() >= min_f64 - 0.0001);
+    assert!(trade_value.abs() >= min_trade_size);
 }
 
 #[test]
@@ -964,32 +891,8 @@ fn test_yocto_value_harvest_calculation_pattern() {
 }
 
 // =============================================================================
-// bigdecimal_from_f64_safe / bigdecimal_to_f64_safe テスト
+// bigdecimal_to_f64_safe テスト
 // =============================================================================
-
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "non-finite f64")]
-fn test_near_value_mul_nan_panics_in_debug() {
-    let value = NearValue::from_near(BigDecimal::from(100));
-    let _ = value * f64::NAN;
-}
-
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "non-finite f64")]
-fn test_near_value_mul_inf_panics_in_debug() {
-    let value = NearValue::from_near(BigDecimal::from(100));
-    let _ = value * f64::INFINITY;
-}
-
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "non-finite f64")]
-fn test_token_price_mul_nan_panics_in_debug() {
-    let price = TokenPrice::from_near_per_token(BigDecimal::from(10));
-    let _ = price * f64::NAN;
-}
 
 #[test]
 fn test_bigdecimal_to_f64_crate_overflow_behavior() {

@@ -100,7 +100,6 @@ fn test_filter_tokens_to_liquidate_only_wrap_near() {
 mod rebalance_tests {
     use bigdecimal::BigDecimal;
     use common::types::{ExchangeRate, NearValue, TokenAmount};
-    use num_traits::ToPrimitive;
     use std::str::FromStr;
 
     #[test]
@@ -213,55 +212,45 @@ mod rebalance_tests {
 
         // Token A
         let token_a_current = NearValue::from_near(BigDecimal::from(200));
-        let token_a_weight = 0.4;
-        let token_a_target = &total_value * token_a_weight;
+        let token_a_weight = BigDecimal::from_str("0.4").unwrap();
+        let token_a_target = &total_value * &token_a_weight;
         let token_a_diff = &token_a_target - &token_a_current;
 
-        // f64 は 0.4 を正確に表現できないため、tolerance-based で比較
-        let target_a_f64 = token_a_target.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (target_a_f64 - 120.0).abs() < 0.0001,
-            "Token A target should be ~120 NEAR, got {}",
-            target_a_f64
+        assert_eq!(
+            token_a_target,
+            NearValue::from_near(BigDecimal::from(120)),
+            "Token A target should be 120 NEAR",
         );
-
-        let diff_a_f64 = token_a_diff.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (diff_a_f64 - (-80.0)).abs() < 0.0001,
-            "Token A diff should be ~-80 NEAR, got {}",
-            diff_a_f64
+        assert_eq!(
+            token_a_diff,
+            NearValue::from_near(BigDecimal::from(-80)),
+            "Token A diff should be -80 NEAR",
         );
         assert!(token_a_diff < NearValue::zero()); // Need to sell
 
         // Token B
         let token_b_current = NearValue::from_near(BigDecimal::from(100));
-        let token_b_weight = 0.6;
-        let token_b_target = &total_value * token_b_weight;
+        let token_b_weight = BigDecimal::from_str("0.6").unwrap();
+        let token_b_target = &total_value * &token_b_weight;
         let token_b_diff = &token_b_target - &token_b_current;
 
-        let target_b_f64 = token_b_target.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (target_b_f64 - 180.0).abs() < 0.0001,
-            "Token B target should be ~180 NEAR, got {}",
-            target_b_f64
+        assert_eq!(
+            token_b_target,
+            NearValue::from_near(BigDecimal::from(180)),
+            "Token B target should be 180 NEAR",
         );
-
-        let diff_b_f64 = token_b_diff.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (diff_b_f64 - 80.0).abs() < 0.0001,
-            "Token B diff should be ~80 NEAR, got {}",
-            diff_b_f64
+        assert_eq!(
+            token_b_diff,
+            NearValue::from_near(BigDecimal::from(80)),
+            "Token B diff should be 80 NEAR",
         );
         assert!(token_b_diff > NearValue::zero()); // Need to buy
 
-        // Verify balance: sell amount ~= buy amount (within tolerance)
-        let sell_amount = token_a_diff.abs().as_bigdecimal().to_f64().unwrap();
-        let buy_amount = token_b_diff.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (sell_amount - buy_amount).abs() < 0.0001,
-            "Sell and buy amounts should match: sell={}, buy={}",
-            sell_amount,
-            buy_amount
+        // Verify balance: sell amount == buy amount (exact with BigDecimal)
+        assert_eq!(
+            token_a_diff.abs(),
+            token_b_diff,
+            "Sell and buy amounts should match",
         );
     }
 
