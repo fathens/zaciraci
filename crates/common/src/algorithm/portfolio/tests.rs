@@ -4794,3 +4794,18 @@ fn test_nan_composite_score_sort_no_panic() {
     let result = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5, None);
     assert!(!result.is_empty());
 }
+
+/// ゼロ重みが含まれる場合に apply_risk_parity が Inf/NaN を生成しないことを検証
+#[test]
+fn test_apply_risk_parity_zero_weight_no_inf() {
+    let mut weights = vec![0.0, 0.5, 0.5];
+    let covariance = array![[0.04, 0.01, 0.01], [0.01, 0.09, 0.02], [0.01, 0.02, 0.06]];
+
+    apply_risk_parity(&mut weights, &covariance);
+
+    for &w in &weights {
+        assert!(w.is_finite(), "weight should be finite, got {}", w);
+    }
+    let sum: f64 = weights.iter().sum();
+    assert!((sum - 1.0).abs() < 1e-6, "weights should sum to 1.0");
+}

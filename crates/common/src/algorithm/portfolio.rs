@@ -376,8 +376,10 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
     for i in 0..n {
         if marginal_risk[i] > 0.0 {
             let current_risk_contribution = weights[i] * marginal_risk[i] / portfolio_vol;
-            let adjustment = target_risk_contribution / current_risk_contribution;
-            weights[i] *= adjustment.clamp(0.5, 2.0); // 極端な調整を制限
+            if current_risk_contribution > 0.0 {
+                let adjustment = target_risk_contribution / current_risk_contribution;
+                weights[i] *= adjustment.clamp(0.5, 2.0); // 極端な調整を制限
+            }
         }
     }
 
