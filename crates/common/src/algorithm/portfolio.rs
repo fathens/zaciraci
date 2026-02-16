@@ -629,7 +629,7 @@ fn calculate_token_score(
     let vol_rank = if !all_volatilities.is_empty() {
         let sorted_vols = {
             let mut v = all_volatilities.to_vec();
-            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             v
         };
         let position = sorted_vols
@@ -711,7 +711,7 @@ pub fn select_optimal_tokens(
     scored_tokens.sort_by(|a, b| {
         b.0.composite_score
             .partial_cmp(&a.0.composite_score)
-            .unwrap()
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // 相関を考慮した選択

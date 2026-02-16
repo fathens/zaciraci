@@ -4715,3 +4715,82 @@ async fn test_price_history_alignment_with_selected_tokens() {
         w_z
     );
 }
+
+/// NaN ボラティリティでも calculate_token_score がパニックしないことを検証
+#[test]
+fn test_nan_volatility_no_panic() {
+    let token = TokenData {
+        symbol: token_out("token-nan"),
+        current_rate: rate_from_price(0.01),
+        historical_volatility: f64::NAN,
+        liquidity_score: Some(0.8),
+        market_cap: Some(cap(100_000)),
+    };
+
+    let volatilities = vec![0.1, f64::NAN, 0.3];
+    let historical_prices = BTreeMap::new();
+
+    // NaN を含むボラティリティでもパニックしない
+    let score = calculate_token_score(&token, None, &historical_prices, &volatilities, None);
+    assert!(score.composite_score.is_finite());
+}
+
+/// NaN composite_score でも select_optimal_tokens がパニックしないことを検証
+#[test]
+fn test_nan_composite_score_sort_no_panic() {
+    let base_time = Utc::now() - Duration::days(10);
+
+    let tokens = vec![
+        TokenData {
+            symbol: token_out("tok-a.near"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: f64::NAN,
+            liquidity_score: Some(0.8),
+            market_cap: Some(cap(100_000)),
+        },
+        TokenData {
+            symbol: token_out("tok-b.near"),
+            current_rate: rate_from_price(0.02),
+            historical_volatility: 0.2,
+            liquidity_score: Some(0.7),
+            market_cap: Some(cap(200_000)),
+        },
+    ];
+
+    let predictions = BTreeMap::new();
+
+    let prices_a: Vec<PricePoint> = (0..10)
+        .map(|i| PricePoint {
+            timestamp: base_time + Duration::days(i),
+            price: price(10.0 + i as f64),
+            volume: None,
+        })
+        .collect();
+    let prices_b: Vec<PricePoint> = (0..10)
+        .map(|i| PricePoint {
+            timestamp: base_time + Duration::days(i),
+            price: price(20.0 + i as f64),
+            volume: None,
+        })
+        .collect();
+
+    let historical_prices: BTreeMap<TokenOutAccount, PriceHistory> = [
+        PriceHistory {
+            token: token_out("tok-a.near"),
+            quote_token: token_in("wrap.near"),
+            prices: prices_a,
+        },
+        PriceHistory {
+            token: token_out("tok-b.near"),
+            quote_token: token_in("wrap.near"),
+            prices: prices_b,
+        },
+    ]
+    .into_iter()
+    .map(|ph| (ph.token.clone(), ph))
+    .collect();
+
+    // NaN ボラティリティのトークンがあってもパニックしない
+    let result = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5, None);
+    assert!(!result.is_empty());
+}
