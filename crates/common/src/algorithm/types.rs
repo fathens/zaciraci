@@ -153,12 +153,18 @@ pub enum TradingAction {
     },
     /// ポートフォリオリバランス
     Rebalance {
-        target_weights: BTreeMap<TokenOutAccount, f64>,
+        target_weights: BTreeMap<TokenOutAccount, BigDecimal>,
     },
     /// ポジション追加
-    AddPosition { token: TokenOutAccount, weight: f64 },
+    AddPosition {
+        token: TokenOutAccount,
+        weight: BigDecimal,
+    },
     /// ポジション削減
-    ReducePosition { token: TokenOutAccount, weight: f64 },
+    ReducePosition {
+        token: TokenOutAccount,
+        weight: BigDecimal,
+    },
 }
 
 // ==================== アルゴリズム実行結果 ====================
@@ -232,7 +238,7 @@ impl ExecutionReport {
 /// ポートフォリオの重み
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioWeights {
-    pub weights: BTreeMap<TokenOutAccount, f64>,
+    pub weights: BTreeMap<TokenOutAccount, BigDecimal>,
     pub timestamp: DateTime<Utc>,
     pub expected_return: f64,
     pub expected_volatility: f64,

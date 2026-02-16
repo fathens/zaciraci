@@ -25,7 +25,7 @@
 use crate::Result;
 use crate::predict::PredictionService;
 use crate::swap;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
 use blockchain::wallet::Wallet;
 use common::algorithm::{
@@ -822,8 +822,8 @@ where
     for (token, weight) in &execution_report.optimal_weights.weights {
         trace!(log, "optimal weight";
             "token" => %token,
-            "weight" => weight,
-            "percentage" => format!("{:.2}%", weight * 100.0)
+            "weight" => %weight,
+            "percentage" => format!("{:.2}%", weight.to_f64().unwrap_or(0.0) * 100.0)
         );
     }
 

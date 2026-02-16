@@ -2587,7 +2587,11 @@ async fn test_enhanced_portfolio_performance() {
     );
     println!("Optimal weights:");
     for (token, weight) in report.optimal_weights.weights.iter() {
-        println!("  {}: {:.1}%", token, weight * 100.0);
+        println!(
+            "  {}: {:.1}%",
+            token,
+            weight.to_f64().unwrap_or(0.0) * 100.0
+        );
     }
     println!("Rebalance needed: {}", report.rebalance_needed);
     println!("Number of actions: {}", report.actions.len());
@@ -2604,7 +2608,8 @@ async fn test_enhanced_portfolio_performance() {
         .optimal_weights
         .weights
         .values()
-        .fold(0.0f64, |a, &b| a.max(b));
+        .map(|w| w.to_f64().unwrap_or(0.0))
+        .fold(0.0f64, f64::max);
     println!("Maximum position size: {:.1}%", max_weight * 100.0);
 
     // 集中投資効果の確認
@@ -2612,7 +2617,7 @@ async fn test_enhanced_portfolio_performance() {
         .optimal_weights
         .weights
         .values()
-        .filter(|&&w| w > 0.01)
+        .filter(|w| w.to_f64().unwrap_or(0.0) > 0.01)
         .count();
     println!("Number of significant positions: {}", non_zero_positions);
     assert!(
@@ -2742,7 +2747,7 @@ fn calculate_expected_portfolio_return(
             // 現在価格から期待リターンを計算
             let current_price = token.current_rate.to_price();
             let expected_return = current_price.expected_return(predicted_price);
-            total_return += weight * expected_return;
+            total_return += weight.to_f64().unwrap_or(0.0) * expected_return;
         }
     }
 
@@ -2799,7 +2804,8 @@ async fn test_baseline_vs_enhanced_comparison() {
         .optimal_weights
         .weights
         .values()
-        .fold(0.0f64, |a, &b| a.max(b));
+        .map(|w| w.to_f64().unwrap_or(0.0))
+        .fold(0.0f64, f64::max);
     println!(
         "Enhanced max position size: {:.1}%",
         enhanced_max_weight * 100.0
@@ -3848,9 +3854,19 @@ fn test_rebalance_action_contains_correct_weights() {
 
     if let TradingAction::Rebalance { target_weights } = &actions[0] {
         assert_eq!(target_weights.len(), 3);
-        assert!((target_weights[&token_out("token-a")] - 0.3).abs() < 1e-10);
-        assert!((target_weights[&token_out("token-b")] - 0.4).abs() < 1e-10);
-        assert!((target_weights[&token_out("token-c")] - 0.3).abs() < 1e-10);
+        let tolerance = BigDecimal::from_str("0.0000000001").unwrap();
+        assert!(
+            (&target_weights[&token_out("token-a")] - BigDecimal::from_str("0.3").unwrap()).abs()
+                < tolerance
+        );
+        assert!(
+            (&target_weights[&token_out("token-b")] - BigDecimal::from_str("0.4").unwrap()).abs()
+                < tolerance
+        );
+        assert!(
+            (&target_weights[&token_out("token-c")] - BigDecimal::from_str("0.3").unwrap()).abs()
+                < tolerance
+        );
     } else {
         panic!("Expected Rebalance action");
     }
@@ -4276,8 +4292,12 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
         let diff: f64 = common_tokens
             .iter()
             .map(|t| {
-                let wh = report_high.optimal_weights.weights[*t];
-                let wl = report_low.optimal_weights.weights[*t];
+                let wh = report_high.optimal_weights.weights[*t]
+                    .to_f64()
+                    .unwrap_or(0.0);
+                let wl = report_low.optimal_weights.weights[*t]
+                    .to_f64()
+                    .unwrap_or(0.0);
                 (wh - wl).abs()
             })
             .sum();

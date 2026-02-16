@@ -1,6 +1,6 @@
 use crate::Result;
 use crate::types::{NearValue, TokenOutAccount, TokenPrice};
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::{BigDecimal, FromPrimitive, RoundingMode, ToPrimitive};
 use chrono::{DateTime, Utc};
 use ndarray::{Array1, Array2};
 use rayon::prelude::*;
@@ -85,6 +85,14 @@ const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
 /// 予測精度が低い場合の alpha 下限値
 /// confidence=0.0 のとき alpha はこの値まで下がる（Sharpe/RP 等配分に近づく）
 pub const PREDICTION_ALPHA_FLOOR: f64 = 0.5;
+
+/// 内部 f64 weight を外部公開用 BigDecimal に変換する。
+/// 小数点以下10桁で丸める。
+fn weight_from_f64(value: f64) -> BigDecimal {
+    BigDecimal::from_f64(value)
+        .unwrap_or_default()
+        .with_scale_round(10, RoundingMode::HalfUp)
+}
 
 // ==================== コア計算関数 ====================
 
@@ -943,11 +951,11 @@ pub async fn execute_portfolio_optimization(
     };
 
     // 重みをBTreeMapに変換（キーによる確定的な順序のため）
-    let weight_map: BTreeMap<TokenOutAccount, f64> = selected_tokens
+    let weight_map: BTreeMap<TokenOutAccount, BigDecimal> = selected_tokens
         .iter()
         .zip(optimal_weights.iter())
         .filter(|&(_, weight)| *weight > 0.0)
-        .map(|(token, weight)| (token.symbol.clone(), *weight))
+        .map(|(token, weight)| (token.symbol.clone(), weight_from_f64(*weight)))
         .collect();
 
     let optimal_weights_struct = PortfolioWeights {
@@ -1071,11 +1079,11 @@ fn generate_rebalance_actions(
     target_weights: &[f64],
     _rebalance_threshold: f64,
 ) -> Vec<TradingAction> {
-    let target_map: BTreeMap<TokenOutAccount, f64> = tokens
+    let target_map: BTreeMap<TokenOutAccount, BigDecimal> = tokens
         .iter()
         .enumerate()
         .filter(|(i, _)| target_weights[*i] > 0.0)
-        .map(|(i, token)| (token.symbol.clone(), target_weights[i]))
+        .map(|(i, token)| (token.symbol.clone(), weight_from_f64(target_weights[i])))
         .collect();
 
     if target_map.is_empty() {

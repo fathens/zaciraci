@@ -47,8 +47,14 @@ fn test_trading_action_sell_structure() {
 #[test]
 fn test_trading_action_rebalance_structure() {
     let mut weights = BTreeMap::new();
-    weights.insert(token_out("token1.near"), 0.5);
-    weights.insert(token_out("token2.near"), 0.5);
+    weights.insert(
+        token_out("token1.near"),
+        BigDecimal::from_str("0.5").unwrap(),
+    );
+    weights.insert(
+        token_out("token2.near"),
+        BigDecimal::from_str("0.5").unwrap(),
+    );
 
     let action = TradingAction::Rebalance {
         target_weights: weights.clone(),
@@ -57,8 +63,14 @@ fn test_trading_action_rebalance_structure() {
     match action {
         TradingAction::Rebalance { target_weights } => {
             assert_eq!(target_weights.len(), 2);
-            assert_eq!(target_weights.get(&token_out("token1.near")), Some(&0.5));
-            assert_eq!(target_weights.get(&token_out("token2.near")), Some(&0.5));
+            assert_eq!(
+                target_weights.get(&token_out("token1.near")),
+                Some(&BigDecimal::from_str("0.5").unwrap())
+            );
+            assert_eq!(
+                target_weights.get(&token_out("token2.near")),
+                Some(&BigDecimal::from_str("0.5").unwrap())
+            );
         }
         _ => panic!("Expected Rebalance action"),
     }

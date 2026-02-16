@@ -5,7 +5,7 @@
 
 use crate::Result;
 use crate::{recorder::TradeRecorder, swap};
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
 use chrono::{DateTime, Utc};
@@ -34,19 +34,27 @@ pub struct ExecutionSummary {
 /// # 戻り値
 /// (アクションインデックス, swap金額) のリスト
 fn allocate_add_position_amounts(
-    add_positions: &[(usize, f64)],
+    add_positions: &[(usize, BigDecimal)],
     balance: u128,
 ) -> Vec<(usize, u128)> {
     if add_positions.is_empty() {
         return vec![];
     }
 
-    let total_weight: f64 = add_positions.iter().map(|(_, w)| w).sum();
+    let total_weight: BigDecimal = add_positions.iter().map(|(_, w)| w).sum();
 
     // weight を basis points (1/10000) に変換して整数演算
     let weights_bps: Vec<u128> = add_positions
         .iter()
-        .map(|(_, w)| (w / total_weight * 10_000.0).round() as u128)
+        .map(|(_, w)| {
+            if total_weight.is_zero() {
+                0u128
+            } else {
+                (w / &total_weight * BigDecimal::from(10_000))
+                    .to_u128()
+                    .unwrap_or(0)
+            }
+        })
         .collect();
     let total_bps: u128 = weights_bps.iter().sum();
 
@@ -83,11 +91,11 @@ where
     C: ViewContract,
     W: Wallet,
 {
-    let add_positions: Vec<(usize, f64)> = actions
+    let add_positions: Vec<(usize, BigDecimal)> = actions
         .iter()
         .enumerate()
         .filter_map(|(idx, action)| match action {
-            TradingAction::AddPosition { weight, .. } => Some((idx, *weight)),
+            TradingAction::AddPosition { weight, .. } => Some((idx, weight.clone())),
             _ => None,
         })
         .collect();
@@ -259,8 +267,8 @@ where
                 let token_str = token.to_string();
 
                 // weight の有効性確認
-                if !target_weight.is_finite() || *target_weight < 0.0 {
-                    warn!(log, "invalid weight, skipping"; "token" => &token_str, "weight" => *target_weight);
+                if *target_weight < BigDecimal::zero() {
+                    warn!(log, "invalid weight, skipping"; "token" => &token_str, "weight" => %target_weight);
                     continue;
                 }
 
@@ -302,8 +310,8 @@ where
                 };
 
                 // 目標価値（wrap.near換算）を計算
-                // target_weight は f64 (0.0~1.0)、例: 0.3 = ポートフォリオの30%
-                let target_value_wrap_near: NearValue = &total_portfolio_value * *target_weight;
+                // target_weight は BigDecimal (0.0~1.0)、例: 0.3 = ポートフォリオの30%
+                let target_value_wrap_near: NearValue = &total_portfolio_value * target_weight;
 
                 // 差分を計算（wrap.near単位）
                 let diff_wrap_near: NearValue = &target_value_wrap_near - &current_value_wrap_near;
@@ -504,7 +512,7 @@ where
         }
         TradingAction::AddPosition { token, weight } => {
             // ポジション追加
-            debug!(log, "adding position"; "token" => %token, "weight" => weight);
+            debug!(log, "adding position"; "token" => %token, "weight" => %weight);
 
             // wrap.near → token へのswap
             let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
@@ -514,7 +522,7 @@ where
                 })?;
 
                 debug!(log, "using pre-computed swap amount";
-                    "swap_amount" => swap_amount, "weight" => weight
+                    "swap_amount" => swap_amount, "weight" => %weight
                 );
 
                 if swap_amount == 0 {
@@ -537,13 +545,13 @@ where
                 .await?;
             }
 
-            debug!(log, "position added"; "token" => %token, "weight" => weight);
+            debug!(log, "position added"; "token" => %token, "weight" => %weight);
             Ok(())
         }
         TradingAction::ReducePosition { token, weight } => {
             // ポジション削減
             // common と backend の TokenAccount は同一型なので直接使用可能
-            debug!(log, "reducing position"; "token" => %token, "weight" => weight);
+            debug!(log, "reducing position"; "token" => %token, "weight" => %weight);
 
             // token → wrap.near へのswap
             let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
@@ -561,7 +569,7 @@ where
                 .await?;
             }
 
-            debug!(log, "position reduced"; "token" => %token, "weight" => weight);
+            debug!(log, "position reduced"; "token" => %token, "weight" => %weight);
             Ok(())
         }
     }
