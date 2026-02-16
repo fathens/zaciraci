@@ -427,6 +427,18 @@ fn apply_individual_constraints(weights: &mut [f64]) {
 /// 2. 防御ループ: normalize 後に MAX_POSITION_SIZE を再超過するケースへの安全策
 ///    （例: 2トークンのみ非ゼロで clamp → normalize → 再超過が連鎖する場合）
 pub fn apply_constraints(weights: &mut [f64]) {
+    // 非ゼロ重みが1つ以下なら normalize して早期リターン
+    let non_zero_count = weights.iter().filter(|&&w| w > 0.0).count();
+    if non_zero_count <= 1 {
+        let sum: f64 = weights.iter().sum();
+        if sum > 0.0 {
+            for w in weights.iter_mut() {
+                *w /= sum;
+            }
+        }
+        return;
+    }
+
     // Phase 1: 全制約を反復適用
     for _ in 0..10 {
         let mut changed = false;
