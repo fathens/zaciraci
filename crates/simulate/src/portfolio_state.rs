@@ -243,6 +243,7 @@ impl PortfolioState {
         let total_holding = self.holdings.get(token_id).copied().unwrap_or(0) + sell_amount;
         let cost_of_sold = self.average_cost_of_sold(token_id, sell_amount, total_holding);
 
+        // Safety: i128::MAX (~1.7e38 yoctoNEAR = ~1.7e14 NEAR) far exceeds realistic values.
         let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
 
         // Update cost basis (subtract the sold portion)
@@ -263,6 +264,7 @@ impl PortfolioState {
             self.cost_basis.remove(token_id);
         }
 
+        // Note: i128 -> f64 loses precision beyond 2^53 yoctoNEAR (~0.009 NEAR); acceptable for metrics.
         pnl as f64 / 1e24
     }
 

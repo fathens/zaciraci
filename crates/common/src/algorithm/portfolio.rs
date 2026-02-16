@@ -1119,6 +1119,7 @@ fn calculate_sortino_ratio(returns: &[f64], risk_free_rate: f64) -> f64 {
         variance.sqrt()
     };
 
+    // IEEE 754 guarantees: sqrt(0.0) is exactly 0.0, so exact comparison is correct.
     if downside_deviation == 0.0 {
         0.0
     } else {
