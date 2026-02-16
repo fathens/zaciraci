@@ -368,6 +368,8 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
     }
 
     for _ in 0..MAX_RISK_PARITY_ITERATIONS {
+        let prev_weights = weights.to_vec();
+
         let w = Array1::from(weights.to_vec());
         let portfolio_variance = w.dot(&covariance_matrix.dot(&w));
 
@@ -381,17 +383,13 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
         // 目標リスク寄与度（均等）
         let target_risk_contribution = portfolio_vol / n as f64;
 
-        let mut max_change: f64 = 0.0;
-
         // 重みを調整
         for i in 0..n {
             if marginal_risk[i] > 0.0 {
                 let current_risk_contribution = weights[i] * marginal_risk[i] / portfolio_vol;
                 if current_risk_contribution > 0.0 {
                     let adjustment = target_risk_contribution / current_risk_contribution;
-                    let new_weight = weights[i] * adjustment.clamp(0.5, 2.0);
-                    max_change = max_change.max((new_weight - weights[i]).abs());
-                    weights[i] = new_weight;
+                    weights[i] *= adjustment.clamp(0.5, 2.0);
                 }
             }
         }
@@ -404,7 +402,12 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
             }
         }
 
-        // 収束判定
+        // 収束判定（正規化後の重み変化で判定）
+        let max_change = weights
+            .iter()
+            .zip(prev_weights.iter())
+            .map(|(w, pw)| (w - pw).abs())
+            .fold(0.0_f64, f64::max);
         if max_change < RISK_PARITY_CONVERGENCE_TOLERANCE {
             break;
         }
