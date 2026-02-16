@@ -842,7 +842,7 @@ pub async fn execute_portfolio_optimization(
         &portfolio_data.tokens,
         &portfolio_data.predictions,
         &portfolio_data.historical_prices,
-        10, // 最大10トークンまで
+        MAX_HOLDINGS + 2, // 相関フィルタでの除外余地を含むバッファ
         portfolio_data.prediction_confidence,
     );
 
