@@ -837,6 +837,13 @@ pub async fn execute_portfolio_optimization(
         portfolio_data.prediction_confidence,
     );
 
+    // historical_prices に存在するトークンのみに絞り込み、
+    // expected_returns / daily_returns の長さ不一致を防止
+    let selected_tokens: Vec<TokenData> = selected_tokens
+        .into_iter()
+        .filter(|t| portfolio_data.historical_prices.contains_key(&t.symbol))
+        .collect();
+
     // 選択されたトークンのみでポートフォリオを構築
     let selected_predictions: BTreeMap<TokenOutAccount, TokenPrice> = portfolio_data
         .predictions
