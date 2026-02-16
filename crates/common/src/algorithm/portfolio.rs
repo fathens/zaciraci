@@ -424,9 +424,9 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
 ///
 /// 2段階の収束ループで構成:
 /// 1. メインループ: clamp + MAX_HOLDINGS フィルタ + MIN_POSITION_SIZE フィルタ + normalize
-/// 2. 防御ループ: normalize 後に MAX_POSITION_SIZE を再超過するケースへの安全策
+/// 2. 防御ループ: normalize 後に max_position を再超過するケースへの安全策
 ///    （例: 2トークンのみ非ゼロで clamp → normalize → 再超過が連鎖する場合）
-pub fn apply_constraints(weights: &mut [f64]) {
+pub fn apply_constraints(weights: &mut [f64], max_position: f64) {
     // 非ゼロ重みが1つ以下なら normalize して早期リターン
     let non_zero_count = weights.iter().filter(|&&w| w > 0.0).count();
     if non_zero_count <= 1 {
@@ -443,10 +443,10 @@ pub fn apply_constraints(weights: &mut [f64]) {
     for _ in 0..10 {
         let mut changed = false;
 
-        // 個別制約: [0.0, MAX_POSITION_SIZE] にクランプ
+        // 個別制約: [0.0, max_position] にクランプ
         for w in weights.iter_mut() {
             let old_w = *w;
-            *w = w.clamp(0.0, MAX_POSITION_SIZE);
+            *w = w.clamp(0.0, max_position);
             if (*w - old_w).abs() > 1e-10 {
                 changed = true;
             }
@@ -489,14 +489,14 @@ pub fn apply_constraints(weights: &mut [f64]) {
     }
 
     // Phase 2: clamp + normalize の防御的収束
-    // Phase 1 の normalize 後に MAX_POSITION_SIZE を再超過する場合の安全策。
+    // Phase 1 の normalize 後に max_position を再超過する場合の安全策。
     // 例: weights = [0.6, 0.4] → 0.4 がゼロ化 → normalize で [1.0] → clamp [0.6] → normalize...
     for _ in 0..10 {
-        if weights.iter().all(|&w| w <= MAX_POSITION_SIZE + 1e-10) {
+        if weights.iter().all(|&w| w <= max_position + 1e-10) {
             break;
         }
         for w in weights.iter_mut() {
-            *w = w.clamp(0.0, MAX_POSITION_SIZE);
+            *w = w.clamp(0.0, max_position);
         }
         let sum: f64 = weights.iter().sum();
         if sum > 0.0 {
@@ -507,14 +507,13 @@ pub fn apply_constraints(weights: &mut [f64]) {
     }
 }
 
-/// 市場ボラティリティに基づく動的リスク調整
-fn calculate_dynamic_risk_adjustment(daily_returns: &[Vec<f64>]) -> f64 {
+/// 市場の平均ボラティリティを計算（日次リターンの標準偏差の平均）
+fn calculate_market_volatility(daily_returns: &[Vec<f64>]) -> f64 {
     if daily_returns.is_empty() {
-        return 1.0; // デフォルト（調整なし）
+        return 0.0;
     }
 
-    // 全トークンの平均ボラティリティを計算
-    let avg_volatility = daily_returns
+    daily_returns
         .iter()
         .map(|returns| {
             if returns.len() < 2 {
@@ -526,21 +525,27 @@ fn calculate_dynamic_risk_adjustment(daily_returns: &[Vec<f64>]) -> f64 {
             variance.sqrt()
         })
         .sum::<f64>()
-        / daily_returns.len() as f64;
+        / daily_returns.len() as f64
+}
 
-    // 動的調整係数を計算
-    if avg_volatility > HIGH_VOLATILITY_THRESHOLD {
-        // 高ボラティリティ：リスクを抑制
-        0.7
-    } else if avg_volatility < LOW_VOLATILITY_THRESHOLD {
-        // 低ボラティリティ：より積極的に
-        1.4
-    } else {
-        // 中程度：線形補間
-        let ratio = (avg_volatility - LOW_VOLATILITY_THRESHOLD)
-            / (HIGH_VOLATILITY_THRESHOLD - LOW_VOLATILITY_THRESHOLD);
-        1.4 - (1.4 - 0.7) * ratio
-    }
+/// ボラティリティ → [0, 1] の正規化比率
+/// LOW_VOLATILITY_THRESHOLD 以下 → 0.0、HIGH_VOLATILITY_THRESHOLD 以上 → 1.0
+fn volatility_ratio(avg_volatility: f64) -> f64 {
+    ((avg_volatility - LOW_VOLATILITY_THRESHOLD)
+        / (HIGH_VOLATILITY_THRESHOLD - LOW_VOLATILITY_THRESHOLD))
+        .clamp(0.0, 1.0)
+}
+
+/// ボラティリティに基づくブレンド alpha [0.7, 0.9]
+/// 高ボラ → 0.7 (RP寄り)、低ボラ → 0.9 (Sharpe寄り)
+fn volatility_blend_alpha(avg_volatility: f64) -> f64 {
+    0.9 - volatility_ratio(avg_volatility) * (0.9 - 0.7)
+}
+
+/// ボラティリティに基づく動的最大ポジションサイズ
+/// 高ボラ → MAX_POSITION_SIZE * 0.7 (分散強制)、低ボラ → MAX_POSITION_SIZE (集中許容)
+fn dynamic_max_position(avg_volatility: f64) -> f64 {
+    MAX_POSITION_SIZE * (1.0 - 0.3 * volatility_ratio(avg_volatility))
 }
 
 /// weight ベクトルのバリデーション
@@ -905,17 +910,12 @@ pub async fn execute_portfolio_optimization(
     let daily_returns = calculate_daily_returns(&selected_price_histories);
     let covariance = calculate_covariance_matrix(&daily_returns);
 
-    // 動的リスク調整係数を計算（選択後トークンのボラティリティに基づく）
-    let risk_adjustment = calculate_dynamic_risk_adjustment(&daily_returns);
+    // 動的リスク調整: ボラティリティに基づくポジションサイズ制御
+    let avg_volatility = calculate_market_volatility(&daily_returns);
+    let max_position = dynamic_max_position(avg_volatility);
 
-    // Issue 1: 期待リターンにリスク調整を適用（高ボラ時は期待リターン縮小）
-    let adjusted_returns: Vec<f64> = expected_returns
-        .iter()
-        .map(|&r| r * risk_adjustment)
-        .collect();
-
-    // Sharpe 最適化（リスク調整済みリターンを使用）
-    let raw_weights = maximize_sharpe_ratio(&adjusted_returns, &covariance);
+    // Sharpe 最適化（リターンのスケーリングは不要: 解析解では一律乗算が重みに影響しない）
+    let raw_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
     let (validated, had_invalid) = validate_weights(&raw_weights);
     debug_assert!(
         !had_invalid,
@@ -929,10 +929,9 @@ pub async fn execute_portfolio_optimization(
     let mut w_rp = vec![1.0 / n as f64; n];
     apply_risk_parity(&mut w_rp, &covariance);
 
-    // risk_adjustment 連動 alpha_vol でブレンド（範囲 [0.7, 0.9]）
-    // risk_adjustment: 0.7 (高ボラ) → 1.4 (低ボラ)
-    // alpha_vol: 0.7 (RP補助) → 0.9 (Sharpe主導)
-    let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+    // ボラティリティ連動 alpha_vol でブレンド（範囲 [0.7, 0.9]）
+    // 高ボラ → 0.7 (RP補助)、低ボラ → 0.9 (Sharpe主導)
+    let alpha_vol = volatility_blend_alpha(avg_volatility);
 
     // prediction_confidence で alpha を調整
     // confidence が低い → alpha を PREDICTION_ALPHA_FLOOR (0.5) まで下げる
@@ -952,8 +951,8 @@ pub async fn execute_portfolio_optimization(
         .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
         .collect();
 
-    // 制約を適用
-    apply_constraints(&mut optimal_weights);
+    // 制約を適用（動的最大ポジションサイズ）
+    apply_constraints(&mut optimal_weights, max_position);
 
     // 現在のポートフォリオ重みを計算
     let current_weights = calculate_current_weights(&selected_tokens, wallet);
@@ -975,8 +974,6 @@ pub async fn execute_portfolio_optimization(
     };
 
     // メトリクスを計算
-    // TODO: 最適化は adjusted_returns を使うが、ここでは expected_returns で計算している。
-    // 意図的な設計か要調査（adjusted_returns を使うべきか検討）。
     let portfolio_return = calculate_portfolio_return(&optimal_weights, &expected_returns);
     let portfolio_vol = calculate_portfolio_std(&optimal_weights, &covariance);
     let sharpe_ratio = if portfolio_vol > 0.0 {

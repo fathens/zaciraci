@@ -384,7 +384,7 @@ fn test_risk_parity_convergence() {
 fn test_apply_constraints() {
     let mut weights = vec![0.7, 0.2, 0.1, 0.03, 0.02]; // 制約違反のケース
 
-    apply_constraints(&mut weights);
+    apply_constraints(&mut weights, MAX_POSITION_SIZE);
 
     // 最大ポジションサイズ制約
     for &weight in &weights {
@@ -892,7 +892,7 @@ fn test_liquidity_impact_on_weights() {
 
     // 制約適用後の重みが流動性を反映
     let mut test_weights = vec![0.5, 0.3, 0.2]; // 流動性を無視した配分
-    apply_constraints(&mut test_weights);
+    apply_constraints(&mut test_weights, MAX_POSITION_SIZE);
 
     // 制約適用後も重みの合計は1付近
     let constrained_sum: f64 = test_weights.iter().sum();
@@ -2443,49 +2443,76 @@ fn test_revert_to_original_behavior() {
 }
 
 #[test]
-fn test_dynamic_risk_adjustment() {
+fn test_market_volatility_and_dynamic_position_size() {
     // 高ボラティリティ環境のテスト
     let high_vol_data = create_high_volatility_portfolio_data();
     let high_vol_hp: Vec<PriceHistory> =
         high_vol_data.historical_prices.values().cloned().collect();
     let high_vol_returns = calculate_daily_returns(&high_vol_hp);
-    let adjustment = super::calculate_dynamic_risk_adjustment(&high_vol_returns);
+    let high_vol = super::calculate_market_volatility(&high_vol_returns);
+    let high_max_pos = super::dynamic_max_position(high_vol);
+    let high_alpha = super::volatility_blend_alpha(high_vol);
+
+    println!("High vol: {high_vol:.6}, max_pos: {high_max_pos:.3}, alpha: {high_alpha:.3}");
+
+    // 高ボラ時は最大ポジションサイズが縮小
     assert!(
-        adjustment < 1.0,
-        "高ボラティリティ時はリスクを抑制すべき: {}",
-        adjustment
+        high_max_pos < MAX_POSITION_SIZE,
+        "高ボラ時は MAX_POSITION_SIZE より小さくなるべき: {high_max_pos}"
     );
     assert!(
-        adjustment >= 0.6,
-        "過度にリスク抑制すべきでない: {}",
-        adjustment
+        high_max_pos >= MAX_POSITION_SIZE * 0.7 - 1e-10,
+        "最大ポジションサイズの下限: {high_max_pos}"
+    );
+
+    // 高ボラ時は alpha が低い（RP寄り）
+    assert!(
+        high_alpha <= 0.8,
+        "高ボラ時は alpha が低くなるべき: {high_alpha}"
     );
 
     // 低ボラティリティ環境のテスト
     let low_vol_data = create_low_volatility_portfolio_data();
     let low_vol_hp: Vec<PriceHistory> = low_vol_data.historical_prices.values().cloned().collect();
     let low_vol_returns = calculate_daily_returns(&low_vol_hp);
-    let adjustment = super::calculate_dynamic_risk_adjustment(&low_vol_returns);
-    // 実際の計算結果に基づいて期待値を調整
+    let low_vol = super::calculate_market_volatility(&low_vol_returns);
+    let low_max_pos = super::dynamic_max_position(low_vol);
+    let low_alpha = super::volatility_blend_alpha(low_vol);
+
+    println!("Low vol: {low_vol:.6}, max_pos: {low_max_pos:.3}, alpha: {low_alpha:.3}");
+
+    // 低ボラ時は最大ポジションサイズが大きい
     assert!(
-        adjustment >= 0.7,
-        "リスク調整係数が小さすぎる: {}",
-        adjustment
-    );
-    assert!(
-        adjustment <= 1.5,
-        "過度に積極的にすべきでない: {}",
-        adjustment
+        low_max_pos >= high_max_pos,
+        "低ボラ時は高ボラ時より大きくなるべき: low={low_max_pos}, high={high_max_pos}"
     );
 
-    println!("Dynamic risk adjustment tests passed");
-    println!(
-        "High volatility adjustment: {:.3}",
-        super::calculate_dynamic_risk_adjustment(&high_vol_returns)
+    // 低ボラ時は alpha が高い（Sharpe寄り）
+    assert!(
+        low_alpha >= high_alpha,
+        "低ボラ時は alpha が高くなるべき: low={low_alpha}, high={high_alpha}"
     );
-    println!(
-        "Low volatility adjustment: {:.3}",
-        super::calculate_dynamic_risk_adjustment(&low_vol_returns)
+
+    // volatility_blend_alpha の境界値テスト
+    assert!(
+        (super::volatility_blend_alpha(0.0) - 0.9).abs() < 1e-10,
+        "最低ボラ → 0.9"
+    );
+    assert!(
+        (super::volatility_blend_alpha(HIGH_VOLATILITY_THRESHOLD * 2.0) - 0.7).abs() < 1e-10,
+        "最高ボラ → 0.7"
+    );
+
+    // dynamic_max_position の境界値テスト
+    assert!(
+        (super::dynamic_max_position(0.0) - MAX_POSITION_SIZE).abs() < 1e-10,
+        "最低ボラ → MAX_POSITION_SIZE"
+    );
+    assert!(
+        (super::dynamic_max_position(HIGH_VOLATILITY_THRESHOLD * 2.0) - MAX_POSITION_SIZE * 0.7)
+            .abs()
+            < 1e-10,
+        "最高ボラ → MAX_POSITION_SIZE * 0.7"
     );
 }
 
@@ -2620,7 +2647,7 @@ fn test_aggressive_parameters_effect() {
 
     // 新しい積極的パラメータでの制約適用
     let mut aggressive_weights = weights.clone();
-    super::apply_constraints(&mut aggressive_weights);
+    super::apply_constraints(&mut aggressive_weights, MAX_POSITION_SIZE);
 
     // 最大ポジションサイズが60%まで許可されることを確認
     let max_weight = aggressive_weights.iter().fold(0.0f64, |a, &b| a.max(b));
@@ -3527,54 +3554,55 @@ fn test_validate_weights_empty() {
 // 以下のテストは portfolio.rs のアルゴリズムの問題点を検証するためのもの。
 // 各テストは Issue 番号に対応し、現在の動作を文書化する。
 
-/// Issue 1: 解析解ベースのMVOではリターンの一律スケーリングが最適重みに影響しないことを検証
+/// Issue 1: 動的リスク調整はポジションサイズ制御で行うことを検証
 ///
-/// Sharpe比 = (w'μ - rf) / sqrt(w'Σw) なので、μ を定数倍しても
-/// w* = Σ⁻¹(kμ - rf·1) / 1'Σ⁻¹(kμ - rf·1) は rf が十分小さければほぼ変わらない。
-/// 動的リスク調整はポジションサイズ制御で行う（Commit 6 で実装）。
+/// 高ボラ時は max_position が縮小され、分散が強制される。
+/// 低ボラ時は max_position がそのままで、集中投資が許容される。
 #[test]
-fn test_issue1_return_scaling_does_not_affect_analytical_weights() {
-    let expected_returns = vec![0.15, 0.03, 0.05];
-    let covariance = array![[0.04, 0.01, 0.02], [0.01, 0.09, 0.01], [0.02, 0.01, 0.03]];
+fn test_issue1_dynamic_position_size_controls_concentration() {
+    // 複数トークンに分散する初期重みを使用（解析解が単一集中する場合に備え）
+    let initial_weights = vec![0.5, 0.3, 0.2];
 
-    // 高ボラ: risk_adjustment = 0.7 → 期待リターンを縮小
-    let adjusted_high_vol: Vec<f64> = expected_returns.iter().map(|&r| r * 0.7).collect();
-    let weights_high_vol = maximize_sharpe_ratio(&adjusted_high_vol, &covariance);
+    // 高ボラ時の最大ポジションサイズ（MAX_POSITION_SIZE * 0.7 = 0.42）
+    let mut weights_high_vol = initial_weights.clone();
+    apply_constraints(&mut weights_high_vol, MAX_POSITION_SIZE * 0.7);
 
-    // 通常: risk_adjustment = 1.0 → そのまま
-    let weights_normal = maximize_sharpe_ratio(&expected_returns, &covariance);
+    // 低ボラ時の最大ポジションサイズ（MAX_POSITION_SIZE = 0.6）
+    let mut weights_low_vol = initial_weights.clone();
+    apply_constraints(&mut weights_low_vol, MAX_POSITION_SIZE);
 
-    // 低ボラ: risk_adjustment = 1.4 → 期待リターンを拡大
-    let adjusted_low_vol: Vec<f64> = expected_returns.iter().map(|&r| r * 1.4).collect();
-    let weights_low_vol = maximize_sharpe_ratio(&adjusted_low_vol, &covariance);
+    println!("High vol constrained: {:?}", weights_high_vol);
+    println!("Low vol constrained:  {:?}", weights_low_vol);
 
-    println!("High vol weights: {:?}", weights_high_vol);
-    println!("Normal weights:   {:?}", weights_normal);
-    println!("Low vol weights:  {:?}", weights_low_vol);
+    let max_weight_high = weights_high_vol.iter().fold(0.0_f64, |a, &b| a.max(b));
+    let max_weight_low = weights_low_vol.iter().fold(0.0_f64, |a, &b| a.max(b));
 
-    // 解析解では一律スケーリングは重みをほとんど変えない（rf が小さいため）
-    let diff_high_normal: f64 = weights_high_vol
-        .iter()
-        .zip(weights_normal.iter())
-        .map(|(a, b)| (a - b).abs())
-        .sum();
-    let diff_low_normal: f64 = weights_low_vol
-        .iter()
-        .zip(weights_normal.iter())
-        .map(|(a, b)| (a - b).abs())
-        .sum();
-
+    // 高ボラ時はより分散される（最大ウェイトが小さい）
     assert!(
-        diff_high_normal < 0.01,
-        "一律スケーリングでは重みがほぼ変わらない: diff={diff_high_normal}"
+        max_weight_high <= MAX_POSITION_SIZE * 0.7 + 1e-4,
+        "高ボラ時の最大ウェイトが制限されるべき: {max_weight_high}"
     );
+
+    // 低ボラ時は集中が許容される
     assert!(
-        diff_low_normal < 0.01,
-        "一律スケーリングでは重みがほぼ変わらない: diff={diff_low_normal}"
+        max_weight_low <= MAX_POSITION_SIZE + 1e-4,
+        "低ボラ時の最大ウェイトが MAX_POSITION_SIZE 以下: {max_weight_low}"
     );
+
+    // 高ボラ時の方が最大ウェイトが小さいか等しい
+    assert!(
+        max_weight_high <= max_weight_low + 1e-4,
+        "高ボラ時の方が分散されるべき: high={max_weight_high}, low={max_weight_low}"
+    );
+
+    // 両方とも合計が1.0
+    let sum_high: f64 = weights_high_vol.iter().sum();
+    let sum_low: f64 = weights_low_vol.iter().sum();
+    assert!((sum_high - 1.0).abs() < 1e-6, "sum=1.0: {sum_high}");
+    assert!((sum_low - 1.0).abs() < 1e-6, "sum=1.0: {sum_low}");
 }
 
-/// Issue 2: Sharpe-RP ブレンドが risk_adjustment に連動した alpha で変化することを検証
+/// Issue 2: Sharpe-RP ブレンドがボラティリティに連動した alpha で変化することを検証
 #[test]
 fn test_issue2_sharpe_rp_blend_varies_with_alpha() {
     let expected_returns = vec![0.15, 0.03, 0.05];
@@ -3588,17 +3616,21 @@ fn test_issue2_sharpe_rp_blend_varies_with_alpha() {
     let mut w_rp = vec![1.0 / n as f64; n];
     apply_risk_parity(&mut w_rp, &covariance);
 
-    // alpha 計算のテスト: risk_adjustment → alpha のマッピング
+    // alpha 計算のテスト: ボラティリティ → alpha のマッピング
     let test_cases = vec![
-        (0.7_f64, 0.7_f64, "高ボラ"),
-        (1.05_f64, 0.8_f64, "中ボラ"),
-        (1.4_f64, 0.9_f64, "低ボラ"),
+        (HIGH_VOLATILITY_THRESHOLD * 1.5, 0.7_f64, "高ボラ"),
+        (
+            (HIGH_VOLATILITY_THRESHOLD + LOW_VOLATILITY_THRESHOLD) / 2.0,
+            0.8_f64,
+            "中ボラ",
+        ),
+        (LOW_VOLATILITY_THRESHOLD * 0.5, 0.9_f64, "低ボラ"),
     ];
 
     let mut blended_results = Vec::new();
 
-    for (risk_adj, expected_alpha, label) in &test_cases {
-        let alpha = ((risk_adj - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+    for (volatility, expected_alpha, label) in &test_cases {
+        let alpha = super::volatility_blend_alpha(*volatility);
 
         // alpha が期待値と一致
         assert!(
@@ -3623,7 +3655,7 @@ fn test_issue2_sharpe_rp_blend_varies_with_alpha() {
         blended_results.push(blended);
     }
 
-    // 異なる risk_adjustment で異なるブレンド結果が得られる
+    // 異なるボラティリティで異なるブレンド結果が得られる
     let diff_high_low: f64 = blended_results[0]
         .iter()
         .zip(blended_results[2].iter())
@@ -3746,19 +3778,19 @@ fn test_issue5_std_dev_population_vs_sample_inconsistency() {
 fn test_issue8_apply_constraints_final_normalization() {
     // ケース1: 通常のケース（最大ウェイトが MAX_POSITION_SIZE を超える）
     let mut weights1 = vec![0.7, 0.2, 0.1, 0.03, 0.02];
-    apply_constraints(&mut weights1);
+    apply_constraints(&mut weights1, MAX_POSITION_SIZE);
     let sum1: f64 = weights1.iter().sum();
     println!("Case 1: weights={:?}, sum={sum1}", weights1);
 
     // ケース2: 全要素が MAX_POSITION_SIZE を超えるケース
     let mut weights2 = vec![0.9, 0.8, 0.0, 0.0, 0.0];
-    apply_constraints(&mut weights2);
+    apply_constraints(&mut weights2, MAX_POSITION_SIZE);
     let sum2: f64 = weights2.iter().sum();
     println!("Case 2: weights={:?}, sum={sum2}", weights2);
 
     // ケース3: MAX_POSITION_SIZE ぎりぎりの2トークン
     let mut weights3 = vec![0.59, 0.59, 0.0, 0.0, 0.0];
-    apply_constraints(&mut weights3);
+    apply_constraints(&mut weights3, MAX_POSITION_SIZE);
     let sum3: f64 = weights3.iter().sum();
     println!("Case 3: weights={:?}, sum={sum3}", weights3);
 
@@ -3767,7 +3799,7 @@ fn test_issue8_apply_constraints_final_normalization() {
     // 単一トークンでは sum=1.0 と MAX_POSITION_SIZE の両方を満たすことが不可能なため、
     // sum=1.0 を優先する)
     let mut weights4 = vec![1.0, 0.0, 0.0];
-    apply_constraints(&mut weights4);
+    apply_constraints(&mut weights4, MAX_POSITION_SIZE);
     let sum4: f64 = weights4.iter().sum();
     println!("Case 4: weights={:?}, sum={sum4}", weights4);
 
@@ -4216,9 +4248,9 @@ fn test_prediction_confidence_adjusts_alpha() {
     let mut w_rp = vec![1.0 / n as f64; n];
     apply_risk_parity(&mut w_rp, &covariance);
 
-    // risk_adjustment = 1.05 (中ボラ) → alpha_vol = 0.8
-    let risk_adjustment: f64 = 1.05;
-    let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+    // 中ボラ → alpha_vol = 0.8
+    let mid_vol = (HIGH_VOLATILITY_THRESHOLD + LOW_VOLATILITY_THRESHOLD) / 2.0;
+    let alpha_vol = super::volatility_blend_alpha(mid_vol);
     assert!((alpha_vol - 0.8).abs() < 1e-10);
 
     let floor = PREDICTION_ALPHA_FLOOR;
@@ -4285,8 +4317,8 @@ fn test_prediction_confidence_adjusts_alpha() {
 /// prediction_confidence = None のとき既存動作と同一であることを検証
 #[test]
 fn test_prediction_confidence_none_backward_compatible() {
-    let risk_adjustment: f64 = 1.05;
-    let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+    let mid_vol = (HIGH_VOLATILITY_THRESHOLD + LOW_VOLATILITY_THRESHOLD) / 2.0;
+    let alpha_vol = super::volatility_blend_alpha(mid_vol);
 
     // None → alpha_vol をそのまま返す
     let prediction_confidence: Option<f64> = None;
@@ -4304,14 +4336,15 @@ fn test_prediction_confidence_none_backward_compatible() {
     );
 }
 
-/// 全ての risk_adjustment × confidence 組み合わせで alpha が有効範囲内
+/// 全てのボラティリティ × confidence 組み合わせで alpha が有効範囲内
 #[test]
 fn test_prediction_confidence_alpha_range_exhaustive() {
     let floor = PREDICTION_ALPHA_FLOOR;
 
-    for risk_i in 0..=10 {
-        let risk_adjustment = 0.7 + (risk_i as f64) * 0.07; // 0.7 → 1.4
-        let alpha_vol = ((risk_adjustment - 0.7) / (1.4 - 0.7) * (0.9 - 0.7) + 0.7).clamp(0.7, 0.9);
+    for vol_i in 0..=10 {
+        let volatility = LOW_VOLATILITY_THRESHOLD
+            + (vol_i as f64) * (HIGH_VOLATILITY_THRESHOLD - LOW_VOLATILITY_THRESHOLD) / 10.0;
+        let alpha_vol = super::volatility_blend_alpha(volatility);
 
         for conf_i in 0..=10 {
             let confidence = conf_i as f64 / 10.0; // 0.0 → 1.0
@@ -4319,7 +4352,7 @@ fn test_prediction_confidence_alpha_range_exhaustive() {
 
             assert!(
                 alpha >= floor && alpha <= 0.9,
-                "alpha={alpha} out of [{floor}, 0.9] at risk={risk_adjustment}, conf={confidence}"
+                "alpha={alpha} out of [{floor}, 0.9] at vol={volatility}, conf={confidence}"
             );
             assert!(alpha.is_finite());
         }
