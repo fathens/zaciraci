@@ -83,8 +83,8 @@ const MAX_RISK_PARITY_ITERATIONS: usize = 50;
 /// リスクパリティの収束判定閾値
 const RISK_PARITY_CONVERGENCE_TOLERANCE: f64 = 1e-6;
 
-/// 最大相関閾値
-const MAX_CORRELATION_THRESHOLD: f64 = 0.7;
+/// 最大相関閾値（既選択トークンとの最大絶対相関で判定）
+const MAX_CORRELATION_THRESHOLD: f64 = 0.85;
 
 /// 予測精度が低い場合の alpha 下限値
 /// confidence=0.0 のとき alpha はこの値まで下がる（Sharpe/RP 等配分に近づく）
@@ -820,22 +820,16 @@ fn select_uncorrelated_tokens(
 
         let token_str = token.symbol.to_string();
 
-        // 既存選択トークンとの平均相関を計算（キャッシュ使用）
-        let correlations: Vec<f64> = selected
+        // 既存選択トークンとの最大絶対相関を計算（キャッシュ使用）
+        let max_correlation = selected
             .iter()
             .map(|selected_token| {
                 calculate_correlation_cached(&token_str, &selected_token.symbol.to_string()).abs()
             })
-            .collect();
+            .fold(0.0_f64, f64::max);
 
-        let avg_correlation = if !correlations.is_empty() {
-            correlations.iter().sum::<f64>() / correlations.len() as f64
-        } else {
-            0.0
-        };
-
-        // 相関が閾値以下なら追加
-        if avg_correlation < MAX_CORRELATION_THRESHOLD {
+        // 最大相関が閾値以下なら追加
+        if max_correlation < MAX_CORRELATION_THRESHOLD {
             selected.push((*token).clone());
         }
     }
