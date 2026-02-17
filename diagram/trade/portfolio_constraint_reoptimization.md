@@ -17,12 +17,15 @@ execute_portfolio_optimization()
   ├─ maximize_sharpe_ratio(max_position)   ... ボックス制約付き厳密解（案C）
   ├─ apply_risk_parity(max_position)       ... clamp 統合（案C）
   ├─ alpha * w_sharpe + (1-alpha) * w_rp   ... ブレンド
-  ├─ apply_constraints()                   ... MAX_HOLDINGS + MIN_POSITION_SIZE（離散制約のみ）
+  ├─ apply_constraints()                   ... 離散制約 + 防御的 box 強制
   └─ reoptimize_for_survivors()            ... 再最適化 + Sharpe セーフガード（案B）
 ```
 
-> **注**: `apply_constraints()` から max_position clamp を削除し、離散制約のみに簡素化する。
-> ボックス制約は `maximize_sharpe_ratio()` / `apply_risk_parity()` 内部で処理される。
+> **変更点**: `apply_constraints()` Phase 1 から max_position 初期 clamp を削除する。
+> ボックス制約は `maximize_sharpe_ratio()` / `apply_risk_parity()` 内部で最適に処理される。
+> ただし Phase 2（防御的 clamp → normalize ループ）は残す。
+> 離散制約（MAX_HOLDINGS / MIN_POSITION_SIZE）適用後の normalize で
+> box 制約違反が起きうるため、事後的な box 強制が必要。
 
 ### 関連する定数
 
@@ -117,9 +120,12 @@ where:
 
 ### 解法
 
+0. **事前チェック**: `n × max_position < 1.0` なら均等配分 `w_i = 1/n` で即座に返す
+   （全変数を上限にしても予算 `Σw = 1` を満たせない大域的非実行可能ケース）
 1. U に属する変数の重みを `max_position` に固定
 2. 残り予算: `budget_F = 1.0 − |U| × max_position`
-   - `budget_F ≤ 0` の場合（n × max_position < 1.0）: 均等配分 `w_i = 1/n` にフォールバックして終了
+   - `budget_F ≤ 0` の場合: U の変数だけで予算を消費しており F に配分できない。
+     U の中でリターンが最も低い変数を F に戻して再試行する。
 3. F に属する変数に対して 2 本の線形ソルブを実行:
    - `p = Σ_FF⁻¹ · μ_excess_F` （μ_excess_F = μ_F − rf, 従来と同じ超過リターン）
    - `q = Σ_FF⁻¹ · (Σ_FU · w_U)` （上限変数の共分散補正）
@@ -131,6 +137,12 @@ where:
    - L/U の変数の KKT 条件違反があれば F に戻す
 7. 集合が収束するまで反復
 
+### 停止性
+
+各反復で少なくとも 1 つの変数が集合間を移動する。変数 × 集合の組み合わせは有限
+（各変数は F/L/U の 3 状態、最悪 3^n 通り）なので、同一状態への再訪がなければ
+有限回で停止する。実用上は n ≤ 10 程度のため反復回数は問題にならない。
+
 ### 後方互換性
 
 U が空のとき（すべての変数が上限未満）、アルゴリズムは現行コードと完全に一致する:
@@ -139,14 +151,23 @@ U が空のとき（すべての変数が上限未満）、アルゴリズムは
 
 ### apply_risk_parity への max_position 統合
 
-現行の `apply_risk_parity()` (portfolio.rs) は反復収束アルゴリズムで重みを算出する。
-max_position 制約を以下のように統合する:
+現行の `apply_risk_parity()` (portfolio.rs:368-418) は反復収束アルゴリズムで重みを算出する。
 
-1. 各反復ステップで重みを更新した後、正規化の**前**に `w_i = min(w_i, max_position)` で clamp
-2. clamp 後に正規化（予算制約 Σw = 1 の回復）
-3. clamp → 正規化のサイクルを収束するまで反復
+**単純な clamp → normalize の問題点**: 各反復で `w_i = min(w_i, max_position)` → normalize
+を行うと、normalize が clamp 済みの重みを再び max_position 以上に押し上げうる。
+例: `[0.5, 0.3, 0.2]` に `max_position = 0.4` → clamp `[0.4, 0.3, 0.2]` → normalize
+`[0.444, 0.333, 0.222]` → 再違反。内側ループが必要になり収束が遅い。
 
-これにより、収束後の解は `0 ≤ w_i ≤ max_position` かつ `Σw = 1` を満たす。
+**固定集合法**（Sharpe のアクティブセットと同様のアプローチ）:
+
+1. 全トークンを free 集合に初期化
+2. Free 集合のトークンに対して RP 反復を実行（予算 = `1.0 − |pinned| × max_position`）
+3. 収束後、`w_i > max_position` のトークンを pinned 集合に移動し `max_position` に固定
+4. Pinned 集合のトークンで RP ウエイトが `max_position` 未満になるものがあれば free に戻す
+5. 集合が安定するまで 2-4 を反復
+
+これにより、各サブ問題は box 制約を満たした状態で RP 収束し、
+外側ループも有限回で停止する（Sharpe の場合と同様の停止性保証）。
 
 ## 5. MAX_HOLDINGS の設定可能化
 
@@ -214,9 +235,10 @@ reoptimize_for_survivors()
   │     ├─ w_rp_sub = apply_risk_parity(equal_weights, sub_cov, max_position)
   │     └─ w_sub = alpha * w_sharpe_sub + (1-alpha) * w_rp_sub
   │
-  ├─ 6. サブ重みに離散制約適用
+  ├─ 6. サブ重みに離散制約 + box 強制
   │     ├─ MIN_POSITION_SIZE フィルタ
-  │     └─ normalize（収束ループ）
+  │     ├─ normalize
+  │     └─ clamp(max_position) → normalize 収束ループ（box 維持）
   │
   ├─ 7. 元のインデックスに書き戻して候補重みを構築
   │     candidate_weights[survivors[j]] = w_sub[j]
@@ -234,7 +256,9 @@ reoptimize_for_survivors()
 ```rust
 // execute_portfolio_optimization() 内:
 
-apply_constraints(&mut optimal_weights);  // 離散制約のみ（max_position は Sharpe/RP 内部で処理済み）
+// Phase 1 から初期 clamp を除去（Sharpe/RP 内部で処理済み）
+// Phase 2 の防御的 clamp → normalize ループは維持
+apply_constraints(&mut optimal_weights, max_position);
 
 // 生存トークンのみで再最適化（制約適用後の最適性回復）
 reoptimize_for_survivors(
@@ -261,7 +285,9 @@ reoptimize_for_survivors(
 | `test_box_constraint_basic` | ボックス制約付き Sharpe 最適化で `w_i ≤ max_position` が成立すること |
 | `test_box_constraint_no_effect` | `max_position` が十分大きい場合に制約なしの解と一致すること |
 | `test_box_constraint_tight` | `max_position` が小さい場合に複数の変数が上限に張り付くこと |
-| `test_box_constraint_budget_infeasible` | `n × max_position < 1.0` の場合にフォールバック（均等配分等）すること |
+| `test_box_constraint_budget_infeasible` | `n × max_position < 1.0` の大域的非実行可能ケースで均等配分にフォールバックすること |
+| `test_risk_parity_box_constraint` | RP + box 制約で `w_i ≤ max_position` かつリスク寄与度が均等化されること |
+| `test_risk_parity_box_no_effect` | `max_position` が十分大きい場合に制約なし RP と一致すること |
 
 ### テスト設計の方針
 
@@ -269,6 +295,7 @@ reoptimize_for_survivors(
 - セーフガードのテストでは、意図的に Sharpe が悪化するケースを構築して発動を確認
 - 制約テストでは再最適化後の全重みに対して制約条件を網羅的にチェック
 - ボックス制約テストでは U が空のケース（後方互換）と非空のケースの両方を検証
+- RP テストでは固定集合法の収束と、pinned 変数が max_position に張り付くことを検証
 
 ## 8. 設計上の注意点
 
