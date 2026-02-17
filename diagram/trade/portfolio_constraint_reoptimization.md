@@ -3,7 +3,11 @@
 > 対象: `crates/common/src/algorithm/portfolio.rs`
 > TODO: L425-427
 
-## 1. 現在のアーキテクチャ
+## 1. 目標アーキテクチャ
+
+> 現行コードでは `maximize_sharpe_ratio()` / `apply_risk_parity()` にボックス制約はなく、
+> `apply_constraints()` で max_position を含む全制約を後処理している。
+> 本改修により、以下のパイプラインへ移行する。
 
 ### パイプライン
 
@@ -13,9 +17,12 @@ execute_portfolio_optimization()
   ├─ maximize_sharpe_ratio(max_position)   ... ボックス制約付き厳密解（案C）
   ├─ apply_risk_parity(max_position)       ... clamp 統合（案C）
   ├─ alpha * w_sharpe + (1-alpha) * w_rp   ... ブレンド
-  ├─ apply_constraints()                   ... MAX_HOLDINGS + MIN_POSITION_SIZE（離散制約）
+  ├─ apply_constraints()                   ... MAX_HOLDINGS + MIN_POSITION_SIZE（離散制約のみ）
   └─ reoptimize_for_survivors()            ... 再最適化 + Sharpe セーフガード（案B）
 ```
+
+> **注**: `apply_constraints()` から max_position clamp を削除し、離散制約のみに簡素化する。
+> ボックス制約は `maximize_sharpe_ratio()` / `apply_risk_parity()` 内部で処理される。
 
 ### 関連する定数
 
@@ -86,15 +93,38 @@ execute_portfolio_optimization()
 - **L（lower）**: `w_i = 0` — 下限に張り付いた変数
 - **U（upper）**: `w_i = max_position` — 上限に張り付いた変数
 
+### KKT 条件の導出
+
+予算制約 `Σw = 1` のラグランジュ乗数を γ とすると、Free 変数に対する KKT 条件は:
+
+```
+Σ_FF w_F + Σ_FU w_U = γ μ_excess_F   (μ_excess_F = μ_F - rf)
+```
+
+これを w_F について解くと:
+
+```
+w_F = γ · Σ_FF⁻¹ · μ_excess_F − Σ_FF⁻¹ · Σ_FU · w_U
+    = γp − q
+
+where:
+  p = Σ_FF⁻¹ · μ_excess_F   (μ_excess_F = μ_F - rf, 従来と同じ超過リターン)
+  q = Σ_FF⁻¹ · Σ_FU · w_U   (上限変数の共分散補正)
+```
+
+> **注意**: Σ_FU · w_U の補正は q 側に含まれる。p 側の μ_excess_F は従来通り μ − rf のままであり、
+> リターンベクトル自体は補正しない。
+
 ### 解法
 
 1. U に属する変数の重みを `max_position` に固定
 2. 残り予算: `budget_F = 1.0 − |U| × max_position`
+   - `budget_F ≤ 0` の場合（n × max_position < 1.0）: 均等配分 `w_i = 1/n` にフォールバックして終了
 3. F に属する変数に対して 2 本の線形ソルブを実行:
-   - `p = Σ_FF⁻¹ · μ_excess_F` （μ_excess_F = μ_F − Σ_FU · w_U に由来するリターン補正）
-   - `q = Σ_FF⁻¹ · (Σ_FU · w_U)`
-4. ラグランジュ乗数: `λ = (budget_F + Σq) / Σp`
-5. Free 変数の重み: `w_F = λp − q`
+   - `p = Σ_FF⁻¹ · μ_excess_F` （μ_excess_F = μ_F − rf, 従来と同じ超過リターン）
+   - `q = Σ_FF⁻¹ · (Σ_FU · w_U)` （上限変数の共分散補正）
+4. ラグランジュ乗数: `γ = (budget_F + Σq) / Σp`
+5. Free 変数の重み: `w_F = γp − q`
 6. 違反チェック:
    - `w_i < 0` なら L に移動
    - `w_i > max_position` なら U に移動
@@ -105,7 +135,18 @@ execute_portfolio_optimization()
 
 U が空のとき（すべての変数が上限未満）、アルゴリズムは現行コードと完全に一致する:
 - `budget_F = 1.0`, `μ_excess_F = μ_F`, `q = 0`
-- `w_F = λ · Σ_FF⁻¹ · μ_F` （現行の解と同一）
+- `w_F = γ · Σ_FF⁻¹ · μ_F` （現行の解と同一）
+
+### apply_risk_parity への max_position 統合
+
+現行の `apply_risk_parity()` (portfolio.rs) は反復収束アルゴリズムで重みを算出する。
+max_position 制約を以下のように統合する:
+
+1. 各反復ステップで重みを更新した後、正規化の**前**に `w_i = min(w_i, max_position)` で clamp
+2. clamp 後に正規化（予算制約 Σw = 1 の回復）
+3. clamp → 正規化のサイクルを収束するまで反復
+
+これにより、収束後の解は `0 ≤ w_i ≤ max_position` かつ `Σw = 1` を満たす。
 
 ## 5. MAX_HOLDINGS の設定可能化
 
@@ -193,7 +234,7 @@ reoptimize_for_survivors()
 ```rust
 // execute_portfolio_optimization() 内:
 
-apply_constraints(&mut optimal_weights, max_position);
+apply_constraints(&mut optimal_weights);  // 離散制約のみ（max_position は Sharpe/RP 内部で処理済み）
 
 // 生存トークンのみで再最適化（制約適用後の最適性回復）
 reoptimize_for_survivors(
