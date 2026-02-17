@@ -516,10 +516,10 @@ fn test_execute_portfolio_optimization() {
     assert!(
         !report.optimal_weights.weights.is_empty() || report.optimal_weights.weights.is_empty()
     );
-    assert!(report.expected_metrics.sharpe_ratio.is_finite());
+    assert!(report.optimal_weights.sharpe_ratio.is_finite());
 
     // メトリクスが合理的な範囲内
-    assert!(report.expected_metrics.volatility >= 0.0);
+    assert!(report.optimal_weights.expected_volatility >= 0.0);
     assert!(report.expected_metrics.turnover_rate >= 0.0);
     assert!(report.expected_metrics.turnover_rate <= 1.0);
 }
@@ -3708,35 +3708,6 @@ fn test_issue3_analytical_sharpe_dominant_asset() {
     );
 }
 
-/// Issue 4: PortfolioMetrics.daily_return が日次リターンをそのまま保持することを検証
-/// [修正済み] 年率化を廃止し、日次リターンをそのまま格納する
-#[test]
-fn test_issue4_daily_return_stored_without_annualization() {
-    // PortfolioMetrics.daily_return は portfolio_return をそのまま格納する
-    // 年率化（単利 *365 や複利 powf(365)）は行わない
-    let daily_return: f64 = 0.01; // 1%/日
-
-    // 旧実装の問題を参考として記録:
-    // 単利 (daily * 365 = 3.65) は複利 (36.78) と10倍の差があり、
-    // 負の日次リターンでは -100% 未満の不可能な値が出る。
-    // → 年率化自体を廃止し、日次リターンをそのまま保持する方針に変更。
-
-    let metrics = PortfolioMetrics {
-        daily_return,
-        volatility: 0.02,
-        sharpe_ratio: 0.5,
-        sortino_ratio: 0.5,
-        max_drawdown: 0.0,
-        calmar_ratio: 0.0,
-        turnover_rate: 0.1,
-    };
-
-    assert_eq!(
-        metrics.daily_return, daily_return,
-        "daily_return は日次リターンそのもの"
-    );
-}
-
 /// Issue 5: calculate_std_dev と calculate_covariance が両方とも標本標準偏差 (n-1) を使用することを検証
 /// [修正済み] calculate_std_dev を /(n-1) に変更済み
 #[test]
@@ -4023,7 +3994,7 @@ async fn test_issue7_metrics_computed_from_indicators() {
 
     let metrics = &report.expected_metrics;
 
-    println!("Sharpe ratio:  {}", metrics.sharpe_ratio);
+    println!("Sharpe ratio:  {}", report.optimal_weights.sharpe_ratio);
     println!("Sortino ratio: {}", metrics.sortino_ratio);
     println!("Max drawdown:  {}", metrics.max_drawdown);
     println!("Calmar ratio:  {}", metrics.calmar_ratio);
@@ -4405,9 +4376,9 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
         .unwrap();
 
     // 全て正常終了
-    assert!(report_high.expected_metrics.sharpe_ratio.is_finite());
-    assert!(report_low.expected_metrics.sharpe_ratio.is_finite());
-    assert!(report_none.expected_metrics.sharpe_ratio.is_finite());
+    assert!(report_high.optimal_weights.sharpe_ratio.is_finite());
+    assert!(report_low.optimal_weights.sharpe_ratio.is_finite());
+    assert!(report_none.optimal_weights.sharpe_ratio.is_finite());
 
     // confidence=0.0 は異なる重みを生成する（RP 寄り = より均等配分）
     // 同一トークンが選択された場合のみ比較

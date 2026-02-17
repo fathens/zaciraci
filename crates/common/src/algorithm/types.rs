@@ -245,15 +245,16 @@ pub struct PortfolioWeights {
     pub sharpe_ratio: f64,
 }
 
-/// ポートフォリオメトリクス
+/// ポートフォリオメトリクス（バックテスト指標）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioMetrics {
-    pub daily_return: f64,
-    pub volatility: f64,
-    pub sharpe_ratio: f64,
+    /// ソルティノレシオ（最適重み × 過去日次リターンから算出）
     pub sortino_ratio: f64,
+    /// 最大ドローダウン（最適重み × 過去日次リターンから算出）
     pub max_drawdown: f64,
+    /// カルマーレシオ（バックテスト平均日次リターン / 最大ドローダウン）
     pub calmar_ratio: f64,
+    /// 回転率
     pub turnover_rate: f64,
 }
 

@@ -971,10 +971,7 @@ pub async fn execute_portfolio_optimization(
         vec![TradingAction::Hold]
     };
 
-    // メトリクスを計算
-    // TODO: Sharpe比（フォワードルッキング: 予測リターン＋共分散から算出）と
-    // Sortino比/MaxDrawdown/Calmar比（バックワードルッキング: 過去日次リターンから算出）の
-    // 時間軸が混在している。ラベルまたは型レベルで区別すべき。
+    // フォワード指標を計算（PortfolioWeights用）
     let portfolio_return = calculate_portfolio_return(&optimal_weights, &expected_returns);
     let portfolio_vol = calculate_portfolio_std(&optimal_weights, &covariance);
     let sharpe_ratio = if portfolio_vol > 0.0 {
@@ -1028,16 +1025,18 @@ pub async fn execute_portfolio_optimization(
     };
     let max_drawdown = calculate_max_drawdown(&cumulative_values);
 
+    let backtest_mean_return = if portfolio_daily_returns.is_empty() {
+        0.0
+    } else {
+        portfolio_daily_returns.iter().sum::<f64>() / portfolio_daily_returns.len() as f64
+    };
     let calmar_ratio = if max_drawdown > 0.0 {
-        portfolio_return / max_drawdown
+        backtest_mean_return / max_drawdown
     } else {
         0.0
     };
 
     let expected_metrics = PortfolioMetrics {
-        daily_return: portfolio_return,
-        volatility: portfolio_vol,
-        sharpe_ratio,
         sortino_ratio,
         max_drawdown,
         calmar_ratio,
