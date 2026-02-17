@@ -27,6 +27,23 @@ execute_portfolio_optimization()
 > 離散制約（MAX_HOLDINGS / MIN_POSITION_SIZE）適用後の normalize で
 > box 制約違反が起きうるため、事後的な box 強制が必要。
 
+### `apply_constraints()`（改修後）の擬似コード
+
+```
+apply_constraints()（改修後）:
+
+  Phase 1（離散制約ループ、最大10回）:
+    1. MAX_HOLDINGS フィルタ（上位 N 以外をゼロ化）
+    2. MIN_POSITION_SIZE フィルタ（閾値未満をゼロ化）
+    3. normalize（合計 = 1.0）
+    4. 変更なしなら break
+
+  Phase 2（防御的 box ループ、最大10回）:
+    1. clamp [0.0, max_position]
+    2. normalize
+    3. 変更なしなら break
+```
+
 ### 関連する定数
 
 | 定数 | 値 | 用途 |
@@ -134,7 +151,9 @@ where:
 6. 違反チェック:
    - `w_i < 0` なら L に移動
    - `w_i > max_position` なら U に移動
-   - L/U の変数の KKT 条件違反があれば F に戻す
+   - L の変数 i: `∂L/∂w_i > 0`（重みを増やすと改善）なら F に戻す
+   - U の変数 i: `∂L/∂w_i < 0`（重みを減らすと改善）なら F に戻す
+   - 勾配: `∂L/∂w_i = γ · μ_excess_i − (Σw)_i`
 7. 集合が収束するまで反復
 
 ### 停止性
@@ -168,6 +187,10 @@ U が空のとき（すべての変数が上限未満）、アルゴリズムは
 
 これにより、各サブ問題は box 制約を満たした状態で RP 収束し、
 外側ループも有限回で停止する（Sharpe の場合と同様の停止性保証）。
+
+**停止性**: Sharpe のアクティブセットと同様に保証される。
+各反復で少なくとも 1 変数が集合間を移動し、変数 × 集合の組み合わせは有限のため
+有限回で停止する。
 
 ## 5. MAX_HOLDINGS の設定可能化
 
@@ -328,3 +351,14 @@ n が小さいため無視できる。
 ボックス制約 Active Set は、上限に張り付く変数がない場合（U = ∅）に
 現行コードと数学的に同一の解を返す。これにより、`max_position` が十分大きい場合の
 既存動作が完全に保持される。
+
+### ブレンドの box 制約保存
+
+`maximize_sharpe_ratio` と `apply_risk_parity` が個別に box 制約を満たすなら、
+凸結合 `α·w_sharpe + (1-α)·w_rp` も自動的に box 制約を満たす:
+
+- 上限: `α·w_i + (1-α)·w_i' ≤ α·max_position + (1-α)·max_position = max_position`
+- 下限・予算制約も同様（凸結合の性質）
+
+したがってブレンド直後には box 違反は起きない。
+防御的 clamp は離散制約の normalize 後にのみ必要。
