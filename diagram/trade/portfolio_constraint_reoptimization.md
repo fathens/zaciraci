@@ -181,9 +181,12 @@ U が空のとき（すべての変数が上限未満）、アルゴリズムは
 
 1. 全トークンを free 集合に初期化
 2. Free 集合のトークンに対して RP 反復を実行（予算 = `1.0 − |pinned| × max_position`）
-3. 収束後、`w_i > max_position` のトークンを pinned 集合に移動し `max_position` に固定
-4. Pinned 集合のトークンで RP ウエイトが `max_position` 未満になるものがあれば free に戻す
-5. 集合が安定するまで 2-4 を反復
+3. 収束後、全トークンの重み（free + pinned）でポートフォリオリスクを計算:
+   - `σ_p = sqrt(w' Σ w)`, `target_RC = σ_p / n`
+4. Free → Pinned: `w_i > max_position` のトークンを pinned に移動し `max_position` に固定
+5. Pinned → Free: pinned トークン i のリスク寄与度 `RC_i = max_position · (Σw)_i / σ_p` が
+   `target_RC` を超える場合、free に戻す（RP が重みを減らしたい = 上限固定が不適切）
+6. 集合が安定するまで 2-5 を反復
 
 これにより、各サブ問題は box 制約を満たした状態で RP 収束し、
 外側ループも有限回で停止する（Sharpe の場合と同様の停止性保証）。
