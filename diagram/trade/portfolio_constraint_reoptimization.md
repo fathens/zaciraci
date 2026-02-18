@@ -33,10 +33,11 @@ execute_portfolio_optimization()
 apply_constraints()（改修後）:
 
   Phase 1（離散制約ループ、最大10回）:
-    1. MAX_HOLDINGS フィルタ（上位 N 以外をゼロ化）
-    2. MIN_POSITION_SIZE フィルタ（閾値未満をゼロ化）
-    3. normalize（合計 = 1.0）
-    4. 変更なしなら break
+    1. 非負 clamp: max(w_i, 0.0)（normalize 後の浮動小数点誤差で負になりうるため）
+    2. MAX_HOLDINGS フィルタ（上位 N 以外をゼロ化）
+    3. MIN_POSITION_SIZE フィルタ（閾値未満をゼロ化）
+    4. normalize（合計 = 1.0）
+    5. 変更なしなら break
 
   Phase 2（防御的 box ループ、最大10回）:
     1. clamp [0.0, max_position]
@@ -146,7 +147,8 @@ where:
 1. U に属する変数の重みを `max_position` に固定
 2. 残り予算: `budget_F = 1.0 − |U| × max_position`
    - `budget_F ≤ 0` の場合: U の変数だけで予算を消費しており F に配分できない。
-     U の中でリターンが最も低い変数を F に戻して再試行する。
+     U の中でリターンが最も低い変数を F に戻し、Step 1 から再実行する
+     （外側ループの次の反復として処理される）。
 3. F に属する変数に対して 2 本の線形ソルブを実行:
    - `p = Σ_FF⁻¹ · μ_excess_F` （μ_excess_F = μ_F − rf, 従来と同じ超過リターン）
    - `q = Σ_FF⁻¹ · (Σ_FU · w_U)` （上限変数の共分散補正）
@@ -160,6 +162,11 @@ where:
    - 勾配: `∂L/∂w_i = γ · μ_excess_i − (Σw)_i`
    - **注意**: 浮動小数点演算では `w_i = -1e-15` のような微小な負値が発生しうる。
      許容誤差なしでは不要な集合移動が発生し、収束が遅延する可能性がある。
+   **処理順序**: 1反復につき最も違反の大きい変数を1つだけ移動する。
+   - F → L: 最も負の w_i を移動
+   - F → U: 最も上限超過量の大きい w_i を移動
+   - L → F / U → F: 勾配の絶対値が最大の変数を移動
+   - F→L/U（実行不可能性の解消）を L/U→F（最適性の改善）より優先する。
 7. 集合が収束するまで反復
 
 ### 停止性
@@ -191,6 +198,11 @@ U が空のとき（すべての変数が上限未満）、アルゴリズムは
 
 1. 全トークンを free 集合に初期化
 2. Free 集合のトークンに対して RP 反復を実行（予算 = `1.0 − |pinned| × max_position`）
+
+> **シグネチャ変更**: 固定集合法は `apply_risk_parity` 内部に統合する。
+> 外側ループでの free 集合の正規化先を `budget_F = 1.0 − |pinned| × max_position`
+> とするため、正規化処理を修正する（現行は常に合計 1.0 に正規化）。
+> シグネチャ: `fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>, max_position: f64)`
 3. 収束後、全トークンの重み（free + pinned）でポートフォリオリスクを計算:
    - `σ_p = sqrt(w' Σ w)`, `target_RC = σ_p / n`（n = 全トークン数）
 4. Free → Pinned: `w_i > max_position` のトークンを pinned に移動し `max_position` に固定
@@ -242,6 +254,17 @@ fn extract_sub_portfolio(
 - `indices` で指定された行・列のみを取り出す
 - 計算量: O(m²) where m = len(indices) ≤ MAX_HOLDINGS
 
+#### `apply_box_constraint_loop()`
+
+Phase 2 相当の防御的 box 制約ループ。サブ問題での制約適用に使用する。
+
+```
+fn apply_box_constraint_loop(weights: &mut [f64], max_position: f64)
+```
+
+- clamp [0.0, max_position] → normalize を最大10回反復
+- `apply_constraints()` の Phase 2 と同一のロジック
+
 #### `reoptimize_for_survivors()`
 
 制約適用後の重みベクトルを受け取り、生存トークンのみで再最適化を試みる。
@@ -276,10 +299,18 @@ reoptimize_for_survivors()
   ├─ 5. サブ問題で再最適化（ボックス制約付き）
   │     ├─ w_sharpe_sub = maximize_sharpe_ratio(sub_returns, sub_cov, max_position)
   │     ├─ w_rp_sub = apply_risk_parity(equal_weights, sub_cov, max_position)
-  │     └─ w_sub = alpha * w_sharpe_sub + (1-alpha) * w_rp_sub
+  │     ├─ w_sub = alpha * w_sharpe_sub + (1-alpha) * w_rp_sub
+  │     └─ 注意: maximize_sharpe_ratio が共分散行列の特異性等で失敗した場合、
+  │           均等配分にフォールバックする（現行コードの既存動作）。
+  │           この場合、セーフガード（Step 9）により元の重みが維持されるため安全。
   │
-  ├─ 6. apply_constraints(sub_weights, max_position) で共通の制約処理を再利用
-  │     （MAX_HOLDINGS フィルタは survivors ≤ MAX_HOLDINGS なので no-op）
+  ├─ 6. サブ問題に防御的 box 制約のみ適用
+  │     ├─ Phase 2（clamp [0, max_position] → normalize ループ）のみ実行
+  │     ├─ Phase 1 の離散フィルタはスキップ
+  │     │   理由: survivors は既に MAX_HOLDINGS / MIN_POSITION_SIZE を通過済み。
+  │     │   サブ問題で MIN_POSITION_SIZE 未満のトークンが生じた場合は、
+  │     │   セーフガード（Step 9）による Sharpe 比較で制御する。
+  │     └─ ヘルパー関数 apply_box_constraint_loop(weights, max_position) を新設
   │
   ├─ 7. 元のインデックスに書き戻して候補重みを構築
   │     candidate_weights[survivors[j]] = w_sub[j]
@@ -288,9 +319,13 @@ reoptimize_for_survivors()
   │     sharpe_candidate = candidate_return / candidate_std
   │
   └─ 9. セーフガード判定
-        ├─ sharpe_original < 0 かつ sharpe_candidate < 0 → 何もしない（元の重みを維持）
-        ├─ sharpe_candidate >= sharpe_original → weights = candidate_weights（採用）
-        └─ sharpe_candidate < sharpe_original  → 何もしない（元の重みを維持）
+        ├─ sharpe_original >= 0 または sharpe_candidate >= 0:
+        │     Sharpe 比較: sharpe_candidate >= sharpe_original なら採用
+        └─ 両方 < 0（超過リターンが負）:
+              Sharpe の大小比較は反直感的になりうるため、リターン直接比較で判定:
+              candidate_return > original_return かつ
+              candidate_std ≤ original_std × 1.1 なら採用
+              （リターン改善かつリスク大幅増でない場合のみ）
 ```
 
 ### 呼び出し箇所
@@ -330,6 +365,7 @@ reoptimize_for_survivors(
 | `test_box_constraint_budget_infeasible` | `n × max_position < 1.0` の大域的非実行可能ケースで均等配分にフォールバックすること |
 | `test_risk_parity_box_constraint` | RP + box 制約で `w_i ≤ max_position` かつリスク寄与度が均等化されること |
 | `test_risk_parity_box_no_effect` | `max_position` が十分大きい場合に制約なし RP と一致すること |
+| `test_apply_box_constraint_loop` | Phase 2 相当の box clamp + normalize ループが正しく収束すること |
 
 ### テスト設計の方針
 
@@ -351,7 +387,8 @@ reoptimize_for_survivors(
 Sharpe の大小比較は反直感的になりうる。
 例えば、ボラティリティが高いほど Sharpe が 0 に近づき「良い」と判定されるが、
 本質的にリスクが高い。この問題を回避するため、両者が共に負の場合は
-保守的に元の重みを維持する方針とする。
+リターン直接比較で判定する: `candidate_return > original_return` かつ
+`candidate_std ≤ original_std × 1.1` なら採用（リターン改善かつリスク大幅増でない場合のみ）。
 
 ### 計算コスト
 
@@ -393,3 +430,15 @@ n が小さいため無視できる。
 
 したがってブレンド直後には box 違反は起きない。
 防御的 clamp は離散制約の normalize 後にのみ必要。
+
+## 9. 実装ステップ
+
+1. `maximize_sharpe_ratio(expected_returns, covariance_matrix, max_position)` — シグネチャ変更 + ボックス制約アクティブセット実装
+2. `apply_risk_parity(weights, covariance_matrix, max_position)` — シグネチャ変更 + 固定集合法実装
+3. `apply_constraints()` — Phase 1 から box clamp を除去（非負 clamp のみ残す）
+4. `apply_box_constraint_loop(weights, max_position)` — Phase 2 相当のヘルパー新設
+5. `extract_sub_portfolio()` — サブ問題抽出ヘルパー新設
+6. `reoptimize_for_survivors()` — 再最適化関数新設
+7. `execute_portfolio_optimization()` — 呼び出し修正（max_position を Sharpe/RP に渡す + reoptimize 呼び出し追加）
+8. `MAX_HOLDINGS` — 設定可能化（config パターンに準拠）
+9. テスト追加（Section 7 の一覧に従う）
