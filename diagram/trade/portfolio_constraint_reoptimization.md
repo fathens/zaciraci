@@ -442,3 +442,161 @@ n が小さいため無視できる。
 7. `execute_portfolio_optimization()` — 呼び出し修正（max_position を Sharpe/RP に渡す + reoptimize 呼び出し追加）
 8. `MAX_HOLDINGS` — 設定可能化（config パターンに準拠）
 9. テスト追加（Section 7 の一覧に従う）
+
+## 10. 代替案 D — トークン選定改善アプローチ
+
+> 案 B+C ハイブリッドのレビューを経て、より軽量な代替案を検討した結果、
+> 以下のアプローチを採用する。
+
+### 方針概要
+
+**根本原因への対処**: 現行の最適性ロスの主因は、`select_optimal_tokens()` が
+`MAX_HOLDINGS + 2`（= 8）トークンを選定し、最適化後に `apply_constraints()` の
+MAX_HOLDINGS フィルタが 2 トークンを脱落させることにある。
+脱落したトークンの重みは残存トークンに normalize で一律再配分されるため、
+残存トークンセットに対する真の最適解から乖離する。
+
+案 D は **脱落自体を防ぐ** ことで、後処理の再最適化を不要にする:
+
+1. **バッファ削減**: `max_tokens` を `MAX_HOLDINGS + 2` → `MAX_HOLDINGS` に変更
+2. **相関フィルタの適応的閾値緩和**: バッファ削減で候補不足が起きうるリスクを緩和
+
+### 案 B+C との比較と選定理由
+
+| 観点 | 案 B+C ハイブリッド | 案 D トークン選定改善 |
+|------|---------------------|----------------------|
+| 実装ステップ | 9 ステップ | 2 ステップ |
+| 変更関数数 | 6 関数（新設 3 + 改修 3） | 2 関数（改修のみ） |
+| 影響範囲 | Sharpe/RP/constraints/reoptimize | select_optimal_tokens 周辺のみ |
+| 数学的正当性 | ボックス制約 Active Set は厳密 | 入力段での候補選定変更 |
+| RP 停止性 | 理論的保証なし（安全弁で対処） | 変更なし（既存コードを維持） |
+| テスト工数 | 13 テスト新設 | 4 テスト新設 |
+| 残存する最適性ロス | なし（厳密解） | MIN_POSITION_SIZE による脱落のみ |
+| 入力推定誤差への感度 | 高精度な解を出すが入力誤差が支配的 | 入力誤差の範囲内で十分 |
+
+**選定理由**:
+
+1. **入力の不確実性が支配的**: 期待リターン・共分散行列の推定誤差は、
+   後処理の最適性ロスよりはるかに大きい。案 B+C の厳密解は理論的に優れるが、
+   入力推定の精度が律速となるため、実用上の改善幅は限定的。
+
+2. **RP 固定集合法の停止性リスク**: Section 4 が認めるように、RP の固定集合法は
+   二次計画法と異なり理論的な停止性保証がない。安全弁（最大反復回数）で対処するが、
+   未知の振動パターンが存在するリスクは排除できない。
+
+3. **実装コスト対効果**: 9 ステップ・6 関数の大規模改修に対し、n ≤ 6 の
+   小規模問題での改善幅が限定的。2 ステップ・2 関数の改修で主要な問題を解決できる。
+
+4. **根本原因への直接対処**: MAX_HOLDINGS フィルタによる脱落が最大の最適性ロス源であり、
+   脱落自体を防げば再最適化は不要になる。
+
+### Step 1: バッファ削減
+
+#### 変更内容
+
+`execute_portfolio_optimization()` での `select_optimal_tokens()` 呼び出しを変更:
+
+```rust
+// 変更前（portfolio.rs:879）
+MAX_HOLDINGS + 2, // 相関フィルタでの除外余地を含むバッファ
+
+// 変更後
+MAX_HOLDINGS, // MAX_HOLDINGS フィルタの脱落を防止
+```
+
+#### 効果
+
+- `select_optimal_tokens()` が返すトークン数 ≤ `MAX_HOLDINGS`
+- `apply_constraints()` Phase 1 の MAX_HOLDINGS フィルタが **no-op** になる
+  （候補数が既に MAX_HOLDINGS 以下のため、脱落が発生しない）
+- 最も大きな最適性ロス（2 トークン脱落 + normalize の歪み）が解消される
+
+#### バッファの元の意図との整合性
+
+元のバッファ（+2）は「相関フィルタでの除外余地」を意図していた。
+しかし実際には、相関フィルタは `select_uncorrelated_tokens()` 内部で
+`max_tokens` を上限として貪欲選択を行うため、バッファは
+「相関フィルタに余裕を与える」のではなく「余分なトークンを後段に渡す」効果しかなかった。
+Step 2 の適応的閾値緩和により、バッファなしでも十分なトークン数を確保できる。
+
+### Step 2: 相関フィルタの適応的閾値緩和
+
+#### 問題
+
+バッファ削減により `max_tokens` が 8 → 6 に減る。相関フィルタの閾値 0.85 が
+厳しすぎる場合、`max_tokens` 個のトークンを選定できず、候補不足に陥るリスクがある。
+
+#### 変更内容
+
+`select_uncorrelated_tokens()` を 2 パス方式に変更:
+
+```
+select_uncorrelated_tokens(scored_tokens, historical_prices, max_tokens):
+
+  // 1パス目: 現行閾値で貪欲選択
+  selected = greedy_select(scored_tokens, threshold=0.85, max_tokens)
+
+  // 2パス目（不足時のみ）: 緩和閾値で追加選択
+  if selected.len() < max_tokens:
+    remaining = scored_tokens - selected  // スコア降順を維持
+    for token in remaining:
+      if selected.len() >= max_tokens:
+        break
+      max_corr = max |corr(token, s)| for s in selected
+      if max_corr < 0.95:  // 緩和閾値
+        selected.push(token)
+
+  return selected
+```
+
+#### 設計判断
+
+| 項目 | 決定 | 理由 |
+|------|------|------|
+| 緩和閾値 | 0.95 | 0.85 より大幅に緩和しつつ、ほぼ同一のトークン（≥ 0.95）は除外 |
+| 2 パス方式 | 採用 | 1 パス目の結果を保持することで、閾値 0.85 で十分な場合は既存動作と同一 |
+| 1 パス目の結果保持 | 必須 | 決定論性と後方互換性を確保（1 パス目で `max_tokens` 個確保できれば 2 パス目は不実行） |
+
+#### 定数の追加
+
+```rust
+/// 適応的相関閾値（候補不足時の緩和閾値）
+const MAX_CORRELATION_THRESHOLD_RELAXED: f64 = 0.95;
+```
+
+### 残存する最適性ロスの分析
+
+案 D を適用しても、`apply_constraints()` Phase 1 の MIN_POSITION_SIZE フィルタ
+（5% 未満のポジションをゼロ化）による脱落は残る。
+
+#### 影響度の比較
+
+| 制約 | 脱落時の影響 | 案 D での状況 |
+|------|-------------|-------------|
+| MAX_HOLDINGS | 10% 以上の重みを持つトークンが脱落しうる → normalize で大きな歪み | **解消**（フィルタが no-op） |
+| MIN_POSITION_SIZE | 脱落するトークンの重みは < 5% → normalize の歪みは < 5% | 残存するが影響は軽微 |
+
+MAX_HOLDINGS フィルタの脱落では、最適化で 10% 以上の重みが割り当てられたトークンが
+上位 6 位に入らず脱落するケースがあり、残存トークンの normalize で 10% 以上の歪みが生じる。
+一方、MIN_POSITION_SIZE フィルタの脱落は 5% 未満のトークンのみが対象であり、
+normalize の歪みは最大でも各トークンあたり数パーセント以下にとどまる。
+
+現行の MAX_HOLDINGS 脱落と比較して、影響は **一桁小さい**。
+入力推定誤差（期待リターン・共分散行列）の範囲内に収まるため、
+追加の再最適化は不要と判断する。
+
+### 実装ステップ
+
+| ステップ | 対象 | 変更内容 |
+|----------|------|---------|
+| 1 | `execute_portfolio_optimization()` | `MAX_HOLDINGS + 2` → `MAX_HOLDINGS` |
+| 2 | `select_uncorrelated_tokens()` | 2 パス方式（適応的閾値緩和）の実装 |
+
+### テスト戦略
+
+| テスト名 | 目的 |
+|----------|------|
+| `test_select_uncorrelated_tokens_relaxed_threshold` | 1 パス目で不足時に 2 パス目で緩和閾値が適用されること |
+| `test_select_uncorrelated_tokens_no_relaxation_needed` | 1 パス目で `max_tokens` 個確保できた場合、2 パス目が不実行であること |
+| `test_select_optimal_tokens_max_holdings_no_buffer` | `max_tokens = MAX_HOLDINGS` で MAX_HOLDINGS フィルタが no-op であること |
+| `test_select_uncorrelated_tokens_deterministic` | 2 パス方式でも決定論性が保たれること（同一入力 → 同一出力） |
