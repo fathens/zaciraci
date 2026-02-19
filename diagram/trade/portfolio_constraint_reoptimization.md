@@ -645,9 +645,10 @@ optimizer の重み配分も全体的に底上げされるため、MIN_POSITION_
 | `test_select_uncorrelated_tokens_deterministic` | 2 パス方式でも決定論性が保たれること（同一入力 → 同一出力） |
 | `test_select_uncorrelated_tokens_near_duplicate_excluded` | corr ≥ 0.98 の候補が 2 パス目でも除外されること |
 
-## 11. 代替アプローチ（最適性重視・外部ソルバ許容）
+## 11. 案 H — 最適性重視の代替アプローチ（外部ソルバ許容）
 
-> 既存の案 B+C / 案 D 以外に、最適性・正当性を優先した場合の代替アプローチを列挙する。
+> Section 3 で却下した案 A（単純再最適化）の発展系として、
+> 最適性をより厳密に追求する代替アプローチを列挙する。
 > 本節は「理論上の選択肢」を明確化する目的であり、**採用は前提としない**。
 
 ### 代替案の一覧
@@ -713,3 +714,146 @@ Sharpe 最大化を SOCP（または二次目的）として定式化し、
    コストに見合う改善が期待しにくい。
 3. **停止性/安定性の懸念**: 近似法は停止性や収束性の保証が弱く、
    実運用での振る舞いが読みにくい。
+
+## 12. 案 G — 2フェーズ最適化アプローチ
+
+> 案 D（トークン選定改善）と案 B+C（内部改修）の間に位置する実用的代替アプローチ。
+> 本節は検討候補の列挙であり、**採用判断は行わない**。
+> 既存の結論（案 D 採用）は変更しない。
+
+### 12.1 方針概要
+
+全 n トークンで最適化パイプライン（Sharpe + RP + ブレンド）を実行し、
+ブレンド後の重み上位 MAX_HOLDINGS トークンを選択、選択したサブセットで再最適化する。
+
+```
+execute_portfolio_optimization() — 案 G パイプライン:
+  │
+  ├─ Phase 1: 全 n トークンで最適化
+  │   ├─ w_sharpe = maximize_sharpe_ratio(全体)
+  │   ├─ w_rp    = apply_risk_parity(全体)
+  │   └─ w_blend = alpha * w_sharpe + (1-alpha) * w_rp
+  │
+  ├─ Phase 2: トークン選択（optimizer-informed）
+  │   └─ survivors = w_blend の重み上位 MAX_HOLDINGS 個
+  │       （n <= MAX_HOLDINGS なら Phase 3 をスキップ）
+  │
+  ├─ Phase 3: サブセットで再最適化
+  │   ├─ (sub_returns, sub_cov) = extract_sub_portfolio(survivors)
+  │   ├─ w_sharpe_sub = maximize_sharpe_ratio(sub)
+  │   ├─ w_rp_sub = apply_risk_parity(sub)
+  │   ├─ w_blend_sub = alpha * w_sharpe_sub + (1-alpha) * w_rp_sub
+  │   └─ candidate = embed_to_full(n, survivors, w_blend_sub)
+  │
+  ├─ Phase 4: 両方に制約適用
+  │   ├─ apply_constraints(&mut original,  max_position)   // Phase 1 結果
+  │   └─ apply_constraints(&mut candidate, max_position)   // Phase 3 結果
+  │
+  └─ Phase 5: セーフガード
+        sharpe_candidate >= sharpe_original → candidate 採用
+        otherwise → original 維持（既存動作と同一）
+```
+
+### 12.2 案 B の reoptimize_for_survivors() との差異
+
+案 B（Section 6）は `apply_constraints()` 適用**後**の生存トークンで再最適化するが、
+案 G は `apply_constraints()` 適用**前**の optimizer 重みでトークンを選択する。
+
+| 観点 | 案 B (reoptimize_for_survivors) | 案 G (2フェーズ) |
+|------|--------------------------------|-----------------|
+| トークン選択タイミング | 制約適用後（box clamp → MAX_HOLDINGS → MIN_POSITION_SIZE 後） | 制約適用前（optimizer の生の重み順） |
+| 選択基準 | 制約で歪んだ重みの非ゼロ判定 | optimizer の共分散判断に基づく重み順 |
+| box 制約の影響 | box clamp が重み順を変える可能性あり | 影響なし（生の重みで判断） |
+| maximize_sharpe_ratio 変更 | 必要（案 C: シグネチャ変更 + box 制約統合） | **不要**（既存関数をそのまま使用） |
+| apply_risk_parity 変更 | 必要（案 C: シグネチャ変更 + 固定集合法） | **不要** |
+| apply_constraints 変更 | 必要（Phase 1 から box clamp 除去） | **不要** |
+
+案 G の最大の利点は **既存の optimizer 関数を一切変更しない** こと。
+新設するのは `extract_sub_portfolio()` と `execute_portfolio_optimization()` 内の
+2フェーズロジックのみ。
+
+### 12.3 Section 11.4 IHT との関係
+
+Section 11.4 の IHT（Iterative Hard Thresholding）は
+「最適化 → 上位 K のみ残す → 射影 → **反復**」するアプローチ。
+案 G はこの**単一パス版**（反復なし）に相当する。
+
+- IHT の停止性懸念（反復の振動リスク）を完全に回避
+- 単一パスでも n-k=2 の小規模問題では十分な近似
+- セーフガードにより既存動作の悪化を防止
+
+### 12.4 案 D との比較
+
+| 観点 | 案 D | 案 G |
+|------|------|------|
+| 実装ステップ | 2 | 3（extract_sub_portfolio + 2フェーズ + セーフガード） |
+| 新設関数 | 0 | 1（extract_sub_portfolio） |
+| 既存関数改修 | 2（select_uncorrelated_tokens + 定数変更） | 1（execute_portfolio_optimization） |
+| maximize_sharpe_ratio 変更 | 不要 | 不要 |
+| apply_risk_parity 変更 | 不要 | 不要 |
+| apply_constraints 変更 | 不要 | 不要 |
+| 最適化実行回数 | 1 | 2 |
+| トークン選択の根拠 | ヒューリスティックスコア + 相関フィルタ | optimizer の共分散判断 |
+| D の弱点対応 | なし | 直接解決 |
+| セーフガード | 不要（脱落が発生しない） | 推奨（再最適化の安全弁） |
+| 過学習リスク | なし | 低（2候補の比較のみ） |
+
+### 12.5 案 D の弱点が問題になるケース
+
+案 D は `select_uncorrelated_tokens` の貪欲法（スコア降順 + 相関フィルタ）で
+トークンを選定する。この選定と optimizer の重み順が乖離するのは:
+
+1. **スコアは低いが分散投資効果が大きいトークン**: 複合スコア（Sharpe 40% + 流動性 20% +
+   信頼度 20% + vol rank 20%）が低くても、他トークンとの低相関により
+   ポートフォリオ全体のリスクを大幅に下げるケース
+2. **相関フィルタで除外されたが有用なトークン**: 閾値 0.85 で除外されたトークンが、
+   optimizer の共分散行列全体の考慮では有用と判断されるケース
+
+ただし:
+- 相関フィルタが部分的に共分散構造をカバーしている
+- n=8→6 の差は2トークンのみで影響範囲は限定的
+- 入力推定誤差が支配的
+
+### 12.6 セーフガード設計
+
+案 B（Section 8）のセーフガードと同一ロジックを再利用:
+
+```
+セーフガード判定:
+  sharpe_original >= 0 または sharpe_candidate >= 0:
+    sharpe_candidate >= sharpe_original → 採用
+  両方 < 0:
+    candidate_return > original_return かつ
+    candidate_std ≤ original_std × 1.1 → 採用
+  otherwise: 元の重みを維持
+```
+
+### 12.7 実装ステップ
+
+| ステップ | 対象 | 変更内容 |
+|----------|------|---------|
+| 1 | `extract_sub_portfolio()` 新設 | サブ期待リターン + サブ共分散行列の抽出 |
+| 2 | `execute_portfolio_optimization()` 改修 | 2フェーズ最適化 + セーフガードの統合 |
+| 3 | テスト追加 | 下記テスト戦略参照 |
+
+### 12.8 テスト戦略
+
+| テスト名 | 目的 |
+|----------|------|
+| `test_extract_sub_portfolio` | サブ問題の抽出が正しいか |
+| `test_two_phase_preserves_or_improves_sharpe` | 2フェーズ後の Sharpe が元以上であること |
+| `test_two_phase_safeguard_reverts` | セーフガード発動時に元の重みが維持されること |
+| `test_two_phase_noop_when_n_leq_max_holdings` | n ≤ MAX_HOLDINGS で Phase 3 がスキップされること |
+| `test_two_phase_satisfies_all_constraints` | 再最適化後も全制約を満たすこと |
+
+### 12.9 案 D との関係
+
+案 G は案 D の**代替**に位置する（組合せは不可）:
+
+- **案 D の代替として使う場合**: `max_tokens = MAX_HOLDINGS + 2` を維持し、
+  2フェーズ最適化で最適なサブセットを自動選択。select_uncorrelated_tokens の
+  2パス改修は不要。
+- **案 D との組合せ**: `max_tokens = MAX_HOLDINGS` にすると n ≤ MAX_HOLDINGS で
+  Phase 3 がスキップされ実質 no-op になるため、組合せの意味がない。
+
+案 D は「脱落自体を防ぐ」アプローチ、案 G は「脱落させてから最適に回復する」アプローチ。
