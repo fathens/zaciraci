@@ -68,7 +68,12 @@ fn update_last_harvest_time() {
     LAST_HARVEST_TIME.store(now, Ordering::Relaxed);
 }
 
-/// ハーベスト判定と実行
+/// ハーベスト判定と実行（旧インターフェース）
+///
+/// 注意: この関数は後方互換のために残していますが、内部的には DB から
+/// 最新の evaluation period の initial_value を取得して比較するため、
+/// 清算→新period作成後に呼び出すと正しく動作しません。
+/// 清算時のハーベスト判定には `check_and_execute_harvest` を使用してください。
 pub async fn check_and_harvest<C, W>(
     _client: &C,
     _wallet: &W,
@@ -95,17 +100,50 @@ where
     let initial_value = YoctoValue::from_yocto(latest_period.initial_value);
     let current_value = current_portfolio_value;
 
-    debug!(log, "Portfolio value check";
+    let _harvested = check_and_execute_harvest_inner(&initial_value, &current_value, &log).await?;
+
+    Ok(())
+}
+
+/// ハーベスト判定と実行（新インターフェース）
+///
+/// 清算時に呼び出す。旧 period の initial_value と清算後の current_value を
+/// 引数で受け取ることで、新 period 作成前に正しく判定できる。
+///
+/// # 戻り値
+/// 実際にハーベストした額（YoctoAmount）。ハーベストしなかった場合は zero。
+pub async fn check_and_execute_harvest(
+    initial_value: &YoctoValue,
+    current_value: &YoctoValue,
+) -> Result<YoctoAmount> {
+    let log = DEFAULT.new(o!("function" => "check_and_execute_harvest"));
+    check_and_execute_harvest_inner(initial_value, current_value, &log).await
+}
+
+/// ハーベスト判定と実行の共通ロジック
+///
+/// initial_value と current_value を直接受け取り、DB 依存なしで判定する。
+async fn check_and_execute_harvest_inner(
+    initial_value: &YoctoValue,
+    current_value: &YoctoValue,
+    log: &slog::Logger,
+) -> Result<YoctoAmount> {
+    debug!(log, "Portfolio value check for harvest";
         "initial_value" => %initial_value,
-        "current_value" => %current_value,
-        "period_id" => %latest_period.period_id
+        "current_value" => %current_value
     );
+
+    // initial_value がゼロの場合はハーベスト不可（初回起動時のバグ防止）
+    if initial_value.is_zero() {
+        trace!(log, "initial_value is zero, skipping harvest");
+        return Ok(YoctoAmount::zero());
+    }
 
     // 200%利益時の判定（初期投資額の2倍になった場合）
     // &YoctoValue * BigDecimal = YoctoValue
-    let harvest_threshold = &initial_value * BigDecimal::from(2);
+    let harvest_threshold = initial_value * BigDecimal::from(2);
 
-    if current_value > harvest_threshold {
+    if *current_value > harvest_threshold {
         // YoctoValue - &YoctoValue = YoctoValue
         let excess = current_value - &harvest_threshold;
         info!(log, "Harvest threshold exceeded, executing harvest";
@@ -129,7 +167,7 @@ where
                 "harvest_amount" => %harvest_amount,
                 "min_amount" => %min_harvest_amount
             );
-            return Ok(());
+            return Ok(YoctoAmount::zero());
         }
 
         debug!(log, "Executing harvest";
@@ -146,23 +184,28 @@ where
                     .expect("system clock is after UNIX epoch")
                     .as_secs() - LAST_HARVEST_TIME.load(Ordering::Relaxed)) / 3600
             );
-            return Ok(());
+            return Ok(YoctoAmount::zero());
         }
 
         // 実際のハーベスト実行
-        execute_harvest_transfer(&harvest_account, harvest_amount, &log).await?;
+        execute_harvest_transfer(&harvest_account, harvest_amount.clone(), log).await?;
 
         // ハーベスト実行時間を更新
         update_last_harvest_time();
+
+        Ok(harvest_amount)
     } else {
         // YoctoValue / YoctoValue = BigDecimal（比率）
-        let current_percentage = (current_value / initial_value) * BigDecimal::from(100);
-        trace!(log, "Portfolio value below harvest threshold";
-            "current_percentage" => %current_percentage
-        );
-    }
+        if !initial_value.is_zero() {
+            let current_percentage =
+                (current_value / initial_value) * BigDecimal::from(100);
+            trace!(log, "Portfolio value below harvest threshold";
+                "current_percentage" => %current_percentage
+            );
+        }
 
-    Ok(())
+        Ok(YoctoAmount::zero())
+    }
 }
 
 /// ハーベスト送金の実行

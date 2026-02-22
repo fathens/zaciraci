@@ -643,6 +643,32 @@ where
                     "change_percentage" => %format!("{:.2}%", change_percentage)
                 );
 
+                // ハーベスト判定: 旧 period の initial_value と清算後の final_value で比較
+                // 新 period 作成前に実行することで、正しい initial_value で判定できる
+                let harvested_amount = crate::harvest::check_and_execute_harvest(
+                    &initial_value,
+                    &final_value,
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    error!(log, "harvest failed, continuing with new period"; "error" => %e);
+                    YoctoAmount::zero()
+                });
+
+                // ハーベスト後の残高を取得（ハーベスト実行時は REF Finance 残高が変動）
+                let post_harvest_balance = if !harvested_amount.is_zero() {
+                    info!(log, "harvest completed, refreshing balance"; "harvested" => %harvested_amount);
+                    let account = wallet.account_id();
+                    let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+                    let deposits =
+                        blockchain::ref_finance::deposit::get_deposits(client, account).await?;
+                    let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
+                    YoctoAmount::from_u128(balance)
+                } else {
+                    final_balance
+                };
+                let post_harvest_value = post_harvest_balance.to_value();
+
                 // TRADE_ENABLED をチェック
                 let trade_enabled = config::get("TRADE_ENABLED")
                     .map(|v| v.to_lowercase() == "true")
@@ -650,7 +676,7 @@ where
 
                 if !trade_enabled {
                     info!(log, "trade disabled, not starting new period";
-                        "final_balance" => %final_balance
+                        "final_balance" => %post_harvest_balance
                     );
 
                     // TRADE_UNWRAP_ON_STOP が有効な場合、wrap.near を NEAR に戻して送金
@@ -666,12 +692,19 @@ where
                     }
 
                     // 空の period_id を返して停止を通知
-                    return Ok((String::new(), false, vec![], Some(final_balance)));
+                    return Ok((
+                        String::new(),
+                        false,
+                        vec![],
+                        Some(post_harvest_balance),
+                    ));
                 }
 
-                // 新規評価期間を作成
-                let new_period =
-                    NewEvaluationPeriod::new(final_value.as_bigdecimal().clone(), vec![]);
+                // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
+                let new_period = NewEvaluationPeriod::new(
+                    post_harvest_value.as_bigdecimal().clone(),
+                    vec![],
+                );
                 let created_period = new_period.insert_async().await?;
 
                 info!(log, "created new evaluation period";
@@ -679,7 +712,12 @@ where
                     "initial_value" => %created_period.initial_value
                 );
 
-                Ok((created_period.period_id, true, vec![], Some(final_balance)))
+                Ok((
+                    created_period.period_id,
+                    true,
+                    vec![],
+                    Some(post_harvest_balance),
+                ))
             } else {
                 // 評価期間中: トランザクション記録で判定
                 debug!(log, "checking evaluation period status";

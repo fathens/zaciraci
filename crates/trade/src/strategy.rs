@@ -226,9 +226,8 @@ where
         execute_trading_actions(client, wallet, &report, period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
-    // Step 7: ハーベスト判定と実行
-    // YoctoAmount → YoctoValue（NEAR は数量=価値）
-    check_and_harvest(client, wallet, available_funds.to_value()).await?;
+    // 注: ハーベスト判定は manage_evaluation_period 内で評価期間終了時（清算後・新period作成前）に
+    // 自動実行される。旧 period の initial_value と清算額で正しく比較するため。
 
     info!(log, "success");
     Ok(())
@@ -827,19 +826,3 @@ where
     Ok(execution_report.actions)
 }
 
-/// ハーベスト判定と実行
-async fn check_and_harvest<C, W>(
-    client: &C,
-    wallet: &W,
-    current_portfolio_value: YoctoValue,
-) -> Result<()>
-where
-    C: AccountInfo + SendTx + ViewContract + GasInfo,
-    <C as SendTx>::Output: Display + blockchain::jsonrpc::SentTx,
-    W: Wallet,
-{
-    // 実際のハーベスト機能を呼び出す
-    // 注: 評価期間中は available_funds = 0 が渡されるため、ハーベスト判定はスキップされる
-    // 評価期間終了時（清算後）のみ、liquidated_balance が渡され、ハーベスト判定が実行される
-    crate::harvest::check_and_harvest(client, wallet, current_portfolio_value).await
-}
