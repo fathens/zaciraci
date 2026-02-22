@@ -172,15 +172,98 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
         covariance[[j, i]] = cov;
     }
 
-    // 正則化（数値安定性のため）
-    for i in 0..n {
-        covariance[[i, i]] += REGULARIZATION_FACTOR;
-    }
+    // Ledoit-Wolf 縮小推定（固定正則化の代替）
+    let mut covariance = ledoit_wolf_shrink(daily_returns, covariance);
 
-    // PSD保証: 固有値分解→負の固有値をクランプ→再構成
+    // PSD保証: 固有値分解→負の固有値をクランプ→再構成（防御的）
     ensure_positive_semi_definite(&mut covariance);
 
     covariance
+}
+
+/// Ledoit-Wolf 縮小推定（共分散行列の正則化）
+///
+/// サンプル共分散行列 S を縮小ターゲット F = (tr(S)/n)·I に向けて最適に縮小する。
+/// Ledoit & Wolf (2004) の解析的縮小係数を使用。
+/// n > T（トークン数 > データ点数）の場合に特に有効。
+fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>], sample_cov: Array2<f64>) -> Array2<f64> {
+    let n = sample_cov.nrows();
+    if n <= 1 {
+        return sample_cov;
+    }
+
+    // 全系列の共通最小長を取得（末尾アライン）
+    let min_len = daily_returns.iter().map(|r| r.len()).min().unwrap_or(0);
+    if min_len < 2 {
+        return sample_cov;
+    }
+
+    let t = min_len;
+
+    // 各トークンの平均リターン（アライン済みデータ）
+    let means: Vec<f64> = (0..n)
+        .map(|i| {
+            let r = &daily_returns[i];
+            let start = r.len() - t;
+            r[start..].iter().sum::<f64>() / t as f64
+        })
+        .collect();
+
+    // ターゲット: F = (tr(S) / n) · I
+    let mu = (0..n).map(|i| sample_cov[[i, i]]).sum::<f64>() / n as f64;
+
+    // ||S - F||²_F
+    let mut delta_sq = 0.0;
+    for i in 0..n {
+        for j in 0..n {
+            let f_ij = if i == j { mu } else { 0.0 };
+            delta_sq += (sample_cov[[i, j]] - f_ij).powi(2);
+        }
+    }
+
+    if delta_sq < 1e-30 {
+        // S ≈ F: ターゲットそのものを返す
+        let mut result = Array2::zeros((n, n));
+        for i in 0..n {
+            result[[i, i]] = mu;
+        }
+        return result;
+    }
+
+    // β̂ = (1/T²) · Σ_t ||x_t·x_t' - S||²_F
+    let mut beta_hat = 0.0;
+    for day in 0..t {
+        let x_t: Vec<f64> = (0..n)
+            .map(|i| {
+                let r = &daily_returns[i];
+                r[r.len() - t + day] - means[i]
+            })
+            .collect();
+
+        let mut norm_sq = 0.0;
+        for i in 0..n {
+            for j in 0..n {
+                let diff = x_t[i] * x_t[j] - sample_cov[[i, j]];
+                norm_sq += diff * diff;
+            }
+        }
+        beta_hat += norm_sq;
+    }
+    beta_hat /= (t as f64) * (t as f64);
+
+    // 最適縮小係数
+    let shrinkage = (beta_hat / delta_sq).clamp(0.0, 1.0);
+
+    // Σ_LW = δ · F + (1 - δ) · S
+    let mut result = Array2::zeros((n, n));
+    for i in 0..n {
+        for j in 0..n {
+            let f_ij = if i == j { mu } else { 0.0 };
+            result[[i, j]] = shrinkage * f_ij + (1.0 - shrinkage) * sample_cov[[i, j]];
+        }
+    }
+
+    result
 }
 
 /// 共分散行列が正定値であることを保証する
@@ -361,6 +444,256 @@ pub fn maximize_sharpe_ratio(
     }
 }
 
+/// ボックス制約付き Sharpe 最大化（3集合 Active Set 法）
+///
+/// 各資産の重みが [0, max_position] の範囲に収まるよう制約しつつ、
+/// Sharpe 比を最大化する。Free / Lower(=0) / Upper(=max_position) の
+/// 3 集合を管理し、KKT 条件に基づいて集合間を移動する。
+///
+/// max_position >= 1.0 のとき既存 `maximize_sharpe_ratio()` と同一の解を返す。
+pub fn box_maximize_sharpe(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    max_position: f64,
+) -> Vec<f64> {
+    let n = expected_returns.len();
+    if n == 0 {
+        return vec![];
+    }
+    if n == 1 {
+        return vec![1.0];
+    }
+
+    let default_weights = vec![1.0 / n as f64; n];
+
+    // max_position が非実用的に小さい場合は等配分
+    let effective_max = if n as f64 * max_position < 1.0 {
+        1.0 / n as f64
+    } else {
+        max_position
+    };
+
+    // max_position >= 1.0 なら制約なしと同等
+    if effective_max >= 1.0 {
+        return maximize_sharpe_ratio(expected_returns, covariance_matrix);
+    }
+
+    // 全トークンの期待リターンが同一 → 等配分
+    let min_ret = expected_returns.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_ret = expected_returns
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
+    if (max_ret - min_ret).abs() < 1e-12 {
+        return default_weights;
+    }
+
+    let excess_returns: Vec<f64> = expected_returns
+        .iter()
+        .map(|&r| r - RISK_FREE_RATE)
+        .collect();
+
+    // 3 集合: Free / Lower (w=0) / Upper (w=max_position)
+    // 状態: 0=Free, 1=Lower, 2=Upper
+    let mut state = vec![0u8; n];
+    let max_iter = 3 * n + 10;
+
+    for _ in 0..max_iter {
+        let free: Vec<usize> = (0..n).filter(|&i| state[i] == 0).collect();
+        let upper: Vec<usize> = (0..n).filter(|&i| state[i] == 2).collect();
+
+        if free.is_empty() {
+            // Free 集合が空: Upper に固定された資産のみで正規化
+            if upper.is_empty() {
+                return default_weights;
+            }
+            let sum = upper.len() as f64 * effective_max;
+            let mut weights = vec![0.0; n];
+            for &i in &upper {
+                weights[i] = effective_max / sum;
+            }
+            // 正規化して返す（合計=1.0）
+            let s: f64 = weights.iter().sum();
+            if s > 0.0 {
+                for w in weights.iter_mut() {
+                    *w /= s;
+                }
+            }
+            return weights;
+        }
+
+        let m = free.len();
+
+        // Upper 集合の固定重みによる budget 消費
+        let budget_upper: f64 = upper.iter().map(|_| effective_max).sum();
+        let budget_free = 1.0 - budget_upper;
+
+        if budget_free <= 0.0 {
+            // Upper 集合だけで budget を超過
+            let mut weights = vec![0.0; n];
+            let total = upper.len() as f64 * effective_max;
+            for &i in &upper {
+                weights[i] = effective_max / total;
+            }
+            return weights;
+        }
+
+        // Free 集合のサブ問題を構築
+        let cov_ff =
+            DMatrix::from_fn(m, m, |i, j| covariance_matrix[[free[i], free[j]]]);
+        let excess_f =
+            nalgebra::DVector::from_fn(m, |i, _| excess_returns[free[i]]);
+
+        // Upper 集合からの共分散補正: q = Σ_FF⁻¹ · Σ_FU · w_U
+        // ただし、まず p = Σ_FF⁻¹ · μ_excess_F を解く
+        let p = cov_ff
+            .clone()
+            .cholesky()
+            .map(|chol| chol.solve(&excess_f))
+            .or_else(|| cov_ff.clone().lu().solve(&excess_f));
+
+        let p = match p {
+            Some(p) => p,
+            None => return default_weights,
+        };
+
+        // Σ_FU · w_U のベクトルを計算
+        let cov_fu_wu: nalgebra::DVector<f64> = if upper.is_empty() {
+            nalgebra::DVector::zeros(m)
+        } else {
+            let mut v = nalgebra::DVector::zeros(m);
+            for (fi, &f_idx) in free.iter().enumerate() {
+                let mut sum = 0.0;
+                for &u_idx in &upper {
+                    sum += covariance_matrix[[f_idx, u_idx]] * effective_max;
+                }
+                v[fi] = sum;
+            }
+            v
+        };
+
+        let q = if upper.is_empty() {
+            nalgebra::DVector::zeros(m)
+        } else {
+            cov_ff
+                .clone()
+                .cholesky()
+                .map(|chol| chol.solve(&cov_fu_wu))
+                .or_else(|| cov_ff.lu().solve(&cov_fu_wu))
+                .unwrap_or_else(|| nalgebra::DVector::zeros(m))
+        };
+
+        // ラグランジュ乗数 γ = (budget_F + Σq) / Σp
+        let sum_p: f64 = p.iter().sum();
+        let sum_q: f64 = q.iter().sum();
+
+        if sum_p.abs() < 1e-15 {
+            return default_weights;
+        }
+
+        let gamma = (budget_free + sum_q) / sum_p;
+
+        // Free 集合の重み: w_F = γ·p - q
+        let w_free: Vec<f64> = (0..m).map(|i| gamma * p[i] - q[i]).collect();
+
+        // 違反チェック
+        let mut moved = false;
+
+        // F→L: w < 0
+        for (fi, &w) in w_free.iter().enumerate() {
+            if w < -1e-10 {
+                state[free[fi]] = 1; // Lower
+                moved = true;
+                break;
+            }
+        }
+        if moved {
+            continue;
+        }
+
+        // F→U: w > max_position
+        for (fi, &w) in w_free.iter().enumerate() {
+            if w > effective_max + 1e-10 {
+                state[free[fi]] = 2; // Upper
+                moved = true;
+                break;
+            }
+        }
+        if moved {
+            continue;
+        }
+
+        // L→F / U→F: 勾配条件チェック
+        // Lower (w=0): ∂L/∂w_i > 0 なら Free に移動すべき
+        // Upper (w=max): ∂L/∂w_i < 0 なら Free に移動すべき
+        // 勾配 = excess_returns[i] - γ * Σ_i· · w
+        let mut weights = vec![0.0; n];
+        for (fi, &f_idx) in free.iter().enumerate() {
+            weights[f_idx] = w_free[fi];
+        }
+        for &u_idx in &upper {
+            weights[u_idx] = effective_max;
+        }
+
+        for i in 0..n {
+            if state[i] == 1 {
+                // Lower: 勾配 = μ_excess[i] - γ * Σ_row[i] · w
+                let grad = excess_returns[i]
+                    - gamma
+                        * (0..n)
+                            .map(|j| covariance_matrix[[i, j]] * weights[j])
+                            .sum::<f64>();
+                if grad > 1e-10 {
+                    state[i] = 0; // Free
+                    moved = true;
+                    break;
+                }
+            } else if state[i] == 2 {
+                // Upper: 勾配の符号が逆 → 減らしたい
+                let grad = excess_returns[i]
+                    - gamma
+                        * (0..n)
+                            .map(|j| covariance_matrix[[i, j]] * weights[j])
+                            .sum::<f64>();
+                if grad < -1e-10 {
+                    state[i] = 0; // Free
+                    moved = true;
+                    break;
+                }
+            }
+        }
+        if moved {
+            continue;
+        }
+
+        // 収束: 全 KKT 条件を満たす
+        // 正規化して返す
+        let sum: f64 = weights.iter().sum();
+        if sum <= 0.0 {
+            return default_weights;
+        }
+        for w in weights.iter_mut() {
+            *w /= sum;
+        }
+
+        // 最終的な box 制約の微調整（浮動小数点誤差）
+        for w in weights.iter_mut() {
+            *w = w.clamp(0.0, effective_max);
+        }
+        let sum: f64 = weights.iter().sum();
+        if sum > 0.0 {
+            for w in weights.iter_mut() {
+                *w /= sum;
+            }
+        }
+
+        return weights;
+    }
+
+    // 収束しなかった場合: 等配分にフォールバック
+    default_weights
+}
+
 /// リスクパリティ調整（反復収束版）
 ///
 /// 各資産のリスク寄与度が均等になるよう重みを反復的に調整する。
@@ -418,13 +751,574 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
     }
 }
 
+/// ボックス制約付き Risk Parity（固定集合法）
+///
+/// 各資産の重みが [0, max_position] に収まるよう制約しつつ、
+/// リスク寄与度の均等化を目指す。max_position に張り付いた資産を
+/// Pinned 集合として固定し、残りの Free 集合で RP を反復する。
+pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Vec<f64> {
+    let n = covariance_matrix.nrows();
+    if n == 0 {
+        return vec![];
+    }
+    if n == 1 {
+        return vec![1.0];
+    }
+
+    let effective_max = if n as f64 * max_position < 1.0 {
+        1.0 / n as f64
+    } else {
+        max_position
+    };
+
+    // effective_max >= 1.0 なら制約なしのRP
+    if effective_max >= 1.0 {
+        let mut w = vec![1.0 / n as f64; n];
+        apply_risk_parity(&mut w, covariance_matrix);
+        return w;
+    }
+
+    // pinned[i] = true なら w[i] = effective_max に固定
+    let mut pinned = vec![false; n];
+    let mut weights = vec![1.0 / n as f64; n];
+    let max_outer = 2 * n;
+
+    for _ in 0..max_outer {
+        let free: Vec<usize> = (0..n).filter(|&i| !pinned[i]).collect();
+        let pinned_count = n - free.len();
+
+        if free.is_empty() {
+            // 全資産 pinned: 均等配分
+            let s = pinned_count as f64 * effective_max;
+            return vec![effective_max / s; n];
+        }
+
+        let budget_free = 1.0 - pinned_count as f64 * effective_max;
+        if budget_free <= 0.0 {
+            // pinned だけで budget 超過: pinned のみで正規化
+            let s = pinned_count as f64 * effective_max;
+            let mut w = vec![0.0; n];
+            for i in 0..n {
+                if pinned[i] {
+                    w[i] = effective_max / s;
+                }
+            }
+            return w;
+        }
+
+        // Free 集合で RP 反復
+        let m = free.len();
+        let mut w_free = vec![budget_free / m as f64; m];
+
+        // サブ共分散行列（Free 集合のみ）
+        let cov_sub = Array2::from_shape_fn((m, m), |(i, j)| {
+            covariance_matrix[[free[i], free[j]]]
+        });
+
+        for _ in 0..MAX_RISK_PARITY_ITERATIONS {
+            let prev = w_free.clone();
+
+            let wf = Array1::from(w_free.clone());
+            let port_var = wf.dot(&cov_sub.dot(&wf));
+
+            if port_var <= 0.0 {
+                break;
+            }
+
+            let port_vol = port_var.sqrt();
+            let marginal = cov_sub.dot(&wf);
+            let target_rc = port_vol / m as f64;
+
+            for i in 0..m {
+                if marginal[i] > 0.0 {
+                    let rc = w_free[i] * marginal[i] / port_vol;
+                    if rc > 0.0 {
+                        let adj = target_rc / rc;
+                        w_free[i] *= adj.clamp(0.5, 2.0);
+                    }
+                }
+            }
+
+            // Free 集合内で budget_free に正規化
+            let sum: f64 = w_free.iter().sum();
+            if sum > 0.0 {
+                for w in w_free.iter_mut() {
+                    *w *= budget_free / sum;
+                }
+            }
+
+            let max_change = w_free
+                .iter()
+                .zip(prev.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f64, f64::max);
+            if max_change < RISK_PARITY_CONVERGENCE_TOLERANCE {
+                break;
+            }
+        }
+
+        // Free→Pinned: max_position 超過チェック
+        let mut any_pinned = false;
+        for (fi, &f_idx) in free.iter().enumerate() {
+            if w_free[fi] > effective_max + 1e-10 {
+                pinned[f_idx] = true;
+                any_pinned = true;
+            }
+        }
+
+        if !any_pinned {
+            // 収束: 重みを組み立てて返す
+            for (fi, &f_idx) in free.iter().enumerate() {
+                weights[f_idx] = w_free[fi];
+            }
+            for i in 0..n {
+                if pinned[i] {
+                    weights[i] = effective_max;
+                }
+            }
+
+            // 正規化
+            let sum: f64 = weights.iter().sum();
+            if sum > 0.0 {
+                for w in weights.iter_mut() {
+                    *w /= sum;
+                }
+            }
+
+            // 最終 clamp（浮動小数点誤差対策）
+            for w in weights.iter_mut() {
+                *w = w.clamp(0.0, effective_max);
+            }
+            let sum: f64 = weights.iter().sum();
+            if sum > 0.0 {
+                for w in weights.iter_mut() {
+                    *w /= sum;
+                }
+            }
+
+            return weights;
+        }
+    }
+
+    // 収束しなかった場合: 等配分
+    vec![1.0 / n as f64; n]
+}
+
+// ==================== 案 I ユーティリティ関数群 ====================
+
+/// サブポートフォリオの μ と Σ を抽出
+fn extract_sub_portfolio(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    indices: &[usize],
+) -> (Vec<f64>, Array2<f64>) {
+    let m = indices.len();
+    let sub_returns: Vec<f64> = indices.iter().map(|&i| expected_returns[i]).collect();
+    let sub_cov = Array2::from_shape_fn((m, m), |(i, j)| {
+        covariance_matrix[[indices[i], indices[j]]]
+    });
+    (sub_returns, sub_cov)
+}
+
+/// Risk Parity 乖離度（RC 均等度）を計算
+///
+/// 各資産のリスク寄与度 RC_i と目標 RC の差の二乗平均を返す。
+/// 値が小さいほど RP に近い。
+fn risk_parity_divergence(weights: &[f64], covariance_matrix: &Array2<f64>) -> f64 {
+    let n = weights.len();
+    if n == 0 {
+        return 0.0;
+    }
+
+    let w = Array1::from(weights.to_vec());
+    let port_var = w.dot(&covariance_matrix.dot(&w));
+    if port_var <= 0.0 {
+        return 0.0;
+    }
+    let port_vol = port_var.sqrt();
+
+    let marginal = covariance_matrix.dot(&w);
+    let target_rc = port_vol / n as f64;
+
+    let mut sum_sq = 0.0;
+    for i in 0..n {
+        let rc = weights[i] * marginal[i] / port_vol;
+        sum_sq += (rc - target_rc).powi(2);
+    }
+    sum_sq / n as f64
+}
+
+/// 流動性ペナルティ付きリターン調整
+///
+/// μ_adj[i] = μ[i] - λ * (1.0 - liquidity[i])
+/// liquidity が低いほどペナルティが大きい。
+fn adjust_returns_for_liquidity(
+    expected_returns: &[f64],
+    liquidity_scores: &[f64],
+    lambda: f64,
+) -> Vec<f64> {
+    expected_returns
+        .iter()
+        .zip(liquidity_scores.iter())
+        .map(|(&r, &liq)| r - lambda * (1.0 - liq.clamp(0.0, 1.0)))
+        .collect()
+}
+
+/// ハードフィルタ: 流動性 + 時価総額の最低条件でトークンをフィルタ
+///
+/// `select_optimal_tokens()` のフィルタ部分を抽出。
+/// スコアリングや相関フィルタは行わない。
+pub fn hard_filter_tokens(
+    tokens: &[TokenData],
+    _predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
+    _historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
+) -> Vec<TokenData> {
+    let min_cap = min_market_cap();
+    let filtered: Vec<&TokenData> = tokens
+        .iter()
+        .filter(|t| {
+            let liquidity_ok = t.liquidity_score.unwrap_or(0.0) >= MIN_LIQUIDITY_SCORE;
+            let market_cap_ok = match &t.market_cap {
+                Some(cap) => cap >= &min_cap,
+                None => true,
+            };
+            liquidity_ok && market_cap_ok
+        })
+        .collect();
+
+    // フィルタが厳しすぎる場合は全トークンをフォールバック
+    if filtered.is_empty() {
+        tokens.to_vec()
+    } else {
+        filtered.into_iter().cloned().collect()
+    }
+}
+
+/// C(n, k) の組み合わせイテレータ（辞書式順序、再帰なし）
+struct Combinations {
+    indices: Vec<usize>,
+    n: usize,
+    k: usize,
+    first: bool,
+}
+
+impl Combinations {
+    fn new(n: usize, k: usize) -> Self {
+        let indices = (0..k).collect();
+        Self {
+            indices,
+            n,
+            k,
+            first: true,
+        }
+    }
+}
+
+impl Iterator for Combinations {
+    type Item = Vec<usize>;
+
+    fn next(&mut self) -> Option<Vec<usize>> {
+        if self.k == 0 || self.k > self.n {
+            return None;
+        }
+
+        if self.first {
+            self.first = false;
+            return Some(self.indices.clone());
+        }
+
+        // 右端から増加可能な位置を探す
+        let mut i = self.k;
+        loop {
+            if i == 0 {
+                return None;
+            }
+            i -= 1;
+            if self.indices[i] < self.n - self.k + i {
+                break;
+            }
+        }
+
+        // その位置をインクリメントし、以降を連番で埋める
+        self.indices[i] += 1;
+        for j in (i + 1)..self.k {
+            self.indices[j] = self.indices[j - 1] + 1;
+        }
+
+        Some(self.indices.clone())
+    }
+}
+
+// ==================== 案 I: Phase 3 全列挙 + 統合最適化 ====================
+
+/// 枝刈り上位からの枝数
+const PRUNE_KEEP_PER: usize = 12; // 2 × MAX_HOLDINGS
+
+/// Phase 3 候補数上限: C(MAX_PHASE3_CANDIDATES, MAX_HOLDINGS) が実用的な計算量に収まる値
+/// C(15, 6) = 5,005
+const MAX_PHASE3_CANDIDATES: usize = 15;
+
+/// 流動性ペナルティ係数
+const LIQUIDITY_PENALTY_LAMBDA: f64 = 0.01;
+
+/// Phase 3: 全列挙による最適サブセット選択
+///
+/// 候補トークン群から C(active, max_holdings) の全組み合わせを列挙し、
+/// 各サブセットで box 制約付き Sharpe + RP ブレンドを計算。
+/// 複合スコアで最良のサブセットを返す。
+fn exhaustive_optimize(
+    active_indices: &[usize],
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    max_position: f64,
+    max_holdings: usize,
+    min_position_size: f64,
+    alpha: f64,
+) -> Vec<f64> {
+    let n_total = expected_returns.len();
+    let n_active = active_indices.len();
+
+    if n_active == 0 {
+        return vec![0.0; n_total];
+    }
+
+    // active <= max_holdings: サブセット選択不要、直接最適化
+    if n_active <= max_holdings {
+        let (sub_ret, sub_cov) =
+            extract_sub_portfolio(expected_returns, covariance_matrix, active_indices);
+
+        let w_sharpe = box_maximize_sharpe(&sub_ret, &sub_cov, max_position);
+        let w_rp = box_risk_parity(&sub_cov, max_position);
+
+        let mut blended: Vec<f64> = w_sharpe
+            .iter()
+            .zip(w_rp.iter())
+            .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+            .collect();
+
+        // 正規化
+        let sum: f64 = blended.iter().sum();
+        if sum > 0.0 {
+            for w in blended.iter_mut() {
+                *w /= sum;
+            }
+        }
+
+        // フルサイズに展開
+        let mut weights = vec![0.0; n_total];
+        for (i, &idx) in active_indices.iter().enumerate() {
+            weights[idx] = blended[i];
+        }
+        return weights;
+    }
+
+    // C(active, max_holdings) の全列挙
+    let mut best_score = f64::NEG_INFINITY;
+    let mut best_weights = vec![0.0; n_total];
+
+    for combo in Combinations::new(n_active, max_holdings) {
+        let subset_indices: Vec<usize> = combo.iter().map(|&ci| active_indices[ci]).collect();
+        let (sub_ret, sub_cov) =
+            extract_sub_portfolio(expected_returns, covariance_matrix, &subset_indices);
+
+        let w_sharpe = box_maximize_sharpe(&sub_ret, &sub_cov, max_position);
+        let w_rp = box_risk_parity(&sub_cov, max_position);
+
+        let mut blended: Vec<f64> = w_sharpe
+            .iter()
+            .zip(w_rp.iter())
+            .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+            .collect();
+
+        // 正規化
+        let sum: f64 = blended.iter().sum();
+        if sum > 0.0 {
+            for w in blended.iter_mut() {
+                *w /= sum;
+            }
+        }
+
+        // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化
+        let survivors: Vec<usize> = blended
+            .iter()
+            .enumerate()
+            .filter(|&(_, w)| *w >= min_position_size)
+            .map(|(i, _)| i)
+            .collect();
+
+        let effective_blended = if survivors.len() < blended.len() && !survivors.is_empty() {
+            let survivor_indices: Vec<usize> =
+                survivors.iter().map(|&si| subset_indices[si]).collect();
+            let (sr, sc) =
+                extract_sub_portfolio(expected_returns, covariance_matrix, &survivor_indices);
+            let ws = box_maximize_sharpe(&sr, &sc, max_position);
+            let wr = box_risk_parity(&sc, max_position);
+            let mut b: Vec<f64> = ws
+                .iter()
+                .zip(wr.iter())
+                .map(|(&s, &r)| alpha * s + (1.0 - alpha) * r)
+                .collect();
+            let s: f64 = b.iter().sum();
+            if s > 0.0 {
+                for w in b.iter_mut() {
+                    *w /= s;
+                }
+            }
+
+            // フルサイズに展開
+            let mut w = vec![0.0; n_total];
+            for (i, &idx) in survivor_indices.iter().enumerate() {
+                w[idx] = b[i];
+            }
+            w
+        } else {
+            // フルサイズに展開
+            let mut w = vec![0.0; n_total];
+            for (i, &idx) in subset_indices.iter().enumerate() {
+                w[idx] = blended[i];
+            }
+            w
+        };
+
+        // 複合スコア: alpha * sharpe - (1-alpha) * rp_div
+        let active_w: Vec<f64> = effective_blended.iter().filter(|&&w| w > 0.0).cloned().collect();
+        let active_idx: Vec<usize> = effective_blended
+            .iter()
+            .enumerate()
+            .filter(|&(_, w)| *w > 0.0)
+            .map(|(i, _)| i)
+            .collect();
+
+        if active_w.is_empty() {
+            continue;
+        }
+
+        let (ar, ac) =
+            extract_sub_portfolio(expected_returns, covariance_matrix, &active_idx);
+        let port_ret = calculate_portfolio_return(&active_w, &ar);
+        let port_std = calculate_portfolio_std(&active_w, &ac);
+        let sharpe = if port_std > 0.0 {
+            (port_ret - RISK_FREE_RATE) / port_std
+        } else {
+            0.0
+        };
+        let rp_div = risk_parity_divergence(&active_w, &ac);
+
+        let score = alpha * sharpe - (1.0 - alpha) * rp_div * 1000.0;
+
+        if score > best_score {
+            best_score = score;
+            best_weights = effective_blended;
+        }
+    }
+
+    // フォールバック: best_weights が全ゼロなら等配分
+    if best_weights.iter().all(|&w| w == 0.0) {
+        let k = max_holdings.min(n_active);
+        for i in 0..k {
+            best_weights[active_indices[i]] = 1.0 / k as f64;
+        }
+    }
+
+    best_weights
+}
+
+/// 3 フェーズ統合最適化（案 I）
+///
+/// Phase 1: 全 n トークンで box_maximize_sharpe + box_risk_parity
+/// Phase 2: Sharpe 上位 ∪ RP 上位 の和集合で枝刈り
+/// Phase 3: exhaustive_optimize で厳密解
+fn unified_optimize(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    liquidity_scores: &[f64],
+    max_position: f64,
+    max_holdings: usize,
+    min_position_size: f64,
+    alpha: f64,
+) -> Vec<f64> {
+    let n = expected_returns.len();
+    if n == 0 {
+        return vec![];
+    }
+    if n == 1 {
+        return vec![1.0];
+    }
+
+    // 流動性調整リターン
+    let adj_returns = adjust_returns_for_liquidity(
+        expected_returns,
+        liquidity_scores,
+        LIQUIDITY_PENALTY_LAMBDA,
+    );
+
+    // Phase 1: 全 n トークンで独立に最適化
+    let w_sharpe = box_maximize_sharpe(&adj_returns, covariance_matrix, max_position);
+    let w_rp = box_risk_parity(covariance_matrix, max_position);
+
+    // Phase 2: 枝刈り — Sharpe 上位 ∪ RP 上位 の和集合
+    let keep = PRUNE_KEEP_PER.min(n);
+
+    let mut sharpe_ranked: Vec<(usize, f64)> =
+        w_sharpe.iter().enumerate().map(|(i, &w)| (i, w)).collect();
+    sharpe_ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut rp_ranked: Vec<(usize, f64)> =
+        w_rp.iter().enumerate().map(|(i, &w)| (i, w)).collect();
+    rp_ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut active_set = std::collections::BTreeSet::new();
+    for &(idx, _) in sharpe_ranked.iter().take(keep) {
+        active_set.insert(idx);
+    }
+    for &(idx, _) in rp_ranked.iter().take(keep) {
+        active_set.insert(idx);
+    }
+
+    // 和集合が空なら全トークンを使用
+    let mut active_indices: Vec<usize> = if active_set.is_empty() {
+        (0..n).collect()
+    } else {
+        active_set.into_iter().collect()
+    };
+
+    // Phase 3 候補数の安全制限: C(n, k) の組み合わせ爆発を防止
+    // 候補が多すぎる場合、ブレンドスコア上位に絞り込む
+    if active_indices.len() > MAX_PHASE3_CANDIDATES && active_indices.len() > max_holdings {
+        let mut scored: Vec<(usize, f64)> = active_indices
+            .iter()
+            .map(|&i| {
+                let blend = alpha * w_sharpe[i] + (1.0 - alpha) * w_rp[i];
+                (i, blend)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        active_indices = scored
+            .iter()
+            .take(MAX_PHASE3_CANDIDATES)
+            .map(|&(i, _)| i)
+            .collect();
+        active_indices.sort(); // インデックス順にソート
+    }
+
+    // Phase 3: 全列挙による厳密解
+    exhaustive_optimize(
+        &active_indices,
+        &adj_returns,
+        covariance_matrix,
+        max_position,
+        max_holdings,
+        min_position_size,
+        alpha,
+    )
+}
+
 // ==================== 制約の適用 ====================
 
 /// 全体制約を適用
 ///
-/// TODO: MAX_HOLDINGS / MIN_POSITION_SIZE / max_position 制約を最適化内部に組み込み、
-/// 制約適用後にメトリクスを再計算する。現在はアクティブセット法でロングオンリー制約のみ
-/// 最適化に統合済みだが、残りの制約は後処理で適用しているため、最適性が損なわれうる。
+/// MAX_HOLDINGS / MIN_POSITION_SIZE / max_position 制約は unified_optimize() で統合済み。
+/// この関数は後方互換および防御的な後処理として残す。
 ///
 /// 2段階の収束ループで構成:
 /// 1. メインループ: clamp + MAX_HOLDINGS フィルタ + MIN_POSITION_SIZE フィルタ + normalize
@@ -871,18 +1765,15 @@ pub async fn execute_portfolio_optimization(
     portfolio_data: PortfolioData,
     rebalance_threshold: f64,
 ) -> Result<PortfolioExecutionReport> {
-    // トークン選択を実施
-    let selected_tokens = select_optimal_tokens(
+    // ハードフィルタ: 流動性 + 時価総額の最低条件
+    let filtered_tokens = hard_filter_tokens(
         &portfolio_data.tokens,
         &portfolio_data.predictions,
         &portfolio_data.historical_prices,
-        MAX_HOLDINGS + 2, // 相関フィルタでの除外余地を含むバッファ
-        portfolio_data.prediction_confidence,
     );
 
-    // historical_prices に存在するトークンのみに絞り込み、
-    // expected_returns / daily_returns の長さ不一致を防止
-    let selected_tokens: Vec<TokenData> = selected_tokens
+    // historical_prices に存在するトークンのみに絞り込み
+    let selected_tokens: Vec<TokenData> = filtered_tokens
         .into_iter()
         .filter(|t| portfolio_data.historical_prices.contains_key(&t.symbol))
         .collect();
@@ -912,29 +1803,10 @@ pub async fn execute_portfolio_optimization(
     let avg_volatility = calculate_market_volatility(&daily_returns);
     let max_position = dynamic_max_position(avg_volatility);
 
-    // Sharpe 最適化（リターンのスケーリングは不要: 解析解では一律乗算が重みに影響しない）
-    let raw_weights = maximize_sharpe_ratio(&expected_returns, &covariance);
-    let (validated, had_invalid) = validate_weights(&raw_weights);
-    debug_assert!(
-        !had_invalid,
-        "maximize_sharpe_ratio returned non-finite weights: {:?}",
-        raw_weights
-    );
-    let w_sharpe = validated;
-
-    // Issue 2: Risk Parity を独立に計算（等配分から開始）
-    let n = w_sharpe.len();
-    let mut w_rp = vec![1.0 / n as f64; n];
-    apply_risk_parity(&mut w_rp, &covariance);
-
     // ボラティリティ連動 alpha_vol でブレンド（範囲 [0.7, 0.9]）
-    // 高ボラ → 0.7 (RP補助)、低ボラ → 0.9 (Sharpe主導)
     let alpha_vol = volatility_blend_alpha(avg_volatility);
 
     // prediction_confidence で alpha を調整
-    // confidence が低い → alpha を PREDICTION_ALPHA_FLOOR (0.5) まで下げる
-    // confidence が高い → alpha_vol をそのまま維持
-    // None → 従来通り alpha_vol を使用（後方互換）
     let alpha = match portfolio_data.prediction_confidence {
         Some(confidence) => {
             let floor = PREDICTION_ALPHA_FLOOR;
@@ -943,14 +1815,22 @@ pub async fn execute_portfolio_optimization(
         None => alpha_vol,
     };
 
-    let mut optimal_weights: Vec<f64> = w_sharpe
+    // 流動性スコアを抽出
+    let liquidity_scores: Vec<f64> = selected_tokens
         .iter()
-        .zip(w_rp.iter())
-        .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+        .map(|t| t.liquidity_score.unwrap_or(0.0))
         .collect();
 
-    // 制約を適用（動的最大ポジションサイズ）
-    apply_constraints(&mut optimal_weights, max_position);
+    // 統合最適化（案 I: 3 フェーズ）
+    let optimal_weights = unified_optimize(
+        &expected_returns,
+        &covariance,
+        &liquidity_scores,
+        max_position,
+        MAX_HOLDINGS,
+        MIN_POSITION_SIZE,
+        alpha,
+    );
 
     // 現在のポートフォリオ重みを計算
     let current_weights = calculate_current_weights(&selected_tokens, wallet);
