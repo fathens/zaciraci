@@ -231,20 +231,24 @@ fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>], sample_cov: Array2<f64>) -> Ar
     }
 
     // β̂ = (1/T²) · Σ_t ||x_t·x_t' - S||²_F
+    // 対称性を利用: 上三角のみ計算して2倍（対角は1倍）
     let mut beta_hat = 0.0;
+    let mut x_t = vec![0.0; n]; // ヒープ確保を1回に
     for day in 0..t {
-        let x_t: Vec<f64> = (0..n)
-            .map(|i| {
-                let r = &daily_returns[i];
-                r[r.len() - t + day] - means[i]
-            })
-            .collect();
+        for i in 0..n {
+            let r = &daily_returns[i];
+            x_t[i] = r[r.len() - t + day] - means[i];
+        }
 
         let mut norm_sq = 0.0;
         for i in 0..n {
-            for j in 0..n {
+            // 対角
+            let diff = x_t[i] * x_t[i] - sample_cov[[i, i]];
+            norm_sq += diff * diff;
+            // 上三角（×2）
+            for j in (i + 1)..n {
                 let diff = x_t[i] * x_t[j] - sample_cov[[i, j]];
-                norm_sq += diff * diff;
+                norm_sq += 2.0 * diff * diff;
             }
         }
         beta_hat += norm_sq;
@@ -507,18 +511,11 @@ pub fn box_maximize_sharpe(
             if upper.is_empty() {
                 return default_weights;
             }
-            let sum = upper.len() as f64 * effective_max;
             let mut weights = vec![0.0; n];
             for &i in &upper {
-                weights[i] = effective_max / sum;
+                weights[i] = effective_max;
             }
-            // 正規化して返す（合計=1.0）
-            let s: f64 = weights.iter().sum();
-            if s > 0.0 {
-                for w in weights.iter_mut() {
-                    *w /= s;
-                }
-            }
+            normalize_weights(&mut weights);
             return weights;
         }
 
@@ -544,43 +541,46 @@ pub fn box_maximize_sharpe(
         let excess_f =
             nalgebra::DVector::from_fn(m, |i, _| excess_returns[free[i]]);
 
-        // Upper 集合からの共分散補正: q = Σ_FF⁻¹ · Σ_FU · w_U
-        // ただし、まず p = Σ_FF⁻¹ · μ_excess_F を解く
-        let p = cov_ff
+        // Σ_FF の分解（Cholesky 優先、LU フォールバック）を1回だけ行い再利用
+        enum Factored {
+            Chol(nalgebra::Cholesky<f64, nalgebra::Dyn>),
+            Lu(nalgebra::LU<f64, nalgebra::Dyn, nalgebra::Dyn>),
+        }
+        let factored = cov_ff
             .clone()
             .cholesky()
-            .map(|chol| chol.solve(&excess_f))
-            .or_else(|| cov_ff.clone().lu().solve(&excess_f));
+            .map(Factored::Chol)
+            .or_else(|| Some(Factored::Lu(cov_ff.lu())));
+        let factored = match factored {
+            Some(f) => f,
+            None => return default_weights,
+        };
+        let solve = |rhs: &nalgebra::DVector<f64>| -> Option<nalgebra::DVector<f64>> {
+            match &factored {
+                Factored::Chol(chol) => Some(chol.solve(rhs)),
+                Factored::Lu(lu) => lu.solve(rhs),
+            }
+        };
 
-        let p = match p {
+        // p = Σ_FF⁻¹ · μ_excess_F
+        let p = match solve(&excess_f) {
             Some(p) => p,
             None => return default_weights,
         };
 
-        // Σ_FU · w_U のベクトルを計算
-        let cov_fu_wu: nalgebra::DVector<f64> = if upper.is_empty() {
+        // Σ_FU · w_U のベクトル → q = Σ_FF⁻¹ · (Σ_FU · w_U)
+        let q = if upper.is_empty() {
             nalgebra::DVector::zeros(m)
         } else {
-            let mut v = nalgebra::DVector::zeros(m);
+            let mut cov_fu_wu = nalgebra::DVector::zeros(m);
             for (fi, &f_idx) in free.iter().enumerate() {
                 let mut sum = 0.0;
                 for &u_idx in &upper {
                     sum += covariance_matrix[[f_idx, u_idx]] * effective_max;
                 }
-                v[fi] = sum;
+                cov_fu_wu[fi] = sum;
             }
-            v
-        };
-
-        let q = if upper.is_empty() {
-            nalgebra::DVector::zeros(m)
-        } else {
-            cov_ff
-                .clone()
-                .cholesky()
-                .map(|chol| chol.solve(&cov_fu_wu))
-                .or_else(|| cov_ff.lu().solve(&cov_fu_wu))
-                .unwrap_or_else(|| nalgebra::DVector::zeros(m))
+            solve(&cov_fu_wu).unwrap_or_else(|| nalgebra::DVector::zeros(m))
         };
 
         // ラグランジュ乗数 γ = (budget_F + Σq) / Σp
@@ -667,25 +667,12 @@ pub fn box_maximize_sharpe(
         }
 
         // 収束: 全 KKT 条件を満たす
-        // 正規化して返す
         let sum: f64 = weights.iter().sum();
         if sum <= 0.0 {
             return default_weights;
         }
-        for w in weights.iter_mut() {
-            *w /= sum;
-        }
-
-        // 最終的な box 制約の微調整（浮動小数点誤差）
-        for w in weights.iter_mut() {
-            *w = w.clamp(0.0, effective_max);
-        }
-        let sum: f64 = weights.iter().sum();
-        if sum > 0.0 {
-            for w in weights.iter_mut() {
-                *w /= sum;
-            }
-        }
+        normalize_weights(&mut weights);
+        clamp_and_normalize(&mut weights, effective_max);
 
         return weights;
     }
@@ -858,15 +845,47 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
         }
 
         // Free→Pinned: max_position 超過チェック
-        let mut any_pinned = false;
+        let mut any_change = false;
         for (fi, &f_idx) in free.iter().enumerate() {
             if w_free[fi] > effective_max + 1e-10 {
                 pinned[f_idx] = true;
-                any_pinned = true;
+                any_change = true;
             }
         }
 
-        if !any_pinned {
+        // Pinned→Free: pinned トークンの RC が目標を超過している場合 unpin
+        // （重みを減らした方が RP に近づく → Free 集合で再最適化させる）
+        if !any_change {
+            // 現在の重みベクトルを構築して RC を計算
+            let mut current_w = vec![0.0; n];
+            for (fi, &f_idx) in free.iter().enumerate() {
+                current_w[f_idx] = w_free[fi];
+            }
+            for i in 0..n {
+                if pinned[i] {
+                    current_w[i] = effective_max;
+                }
+            }
+            let cw = Array1::from(current_w.clone());
+            let pv = cw.dot(&covariance_matrix.dot(&cw));
+            if pv > 0.0 {
+                let pvol = pv.sqrt();
+                let mg = covariance_matrix.dot(&cw);
+                let target_rc = pvol / n as f64;
+                for i in 0..n {
+                    if pinned[i] {
+                        let rc = current_w[i] * mg[i] / pvol;
+                        if rc > target_rc * 1.5 {
+                            pinned[i] = false;
+                            any_change = true;
+                            break; // 1つずつ解除
+                        }
+                    }
+                }
+            }
+        }
+
+        if !any_change {
             // 収束: 重みを組み立てて返す
             for (fi, &f_idx) in free.iter().enumerate() {
                 weights[f_idx] = w_free[fi];
@@ -877,24 +896,8 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
                 }
             }
 
-            // 正規化
-            let sum: f64 = weights.iter().sum();
-            if sum > 0.0 {
-                for w in weights.iter_mut() {
-                    *w /= sum;
-                }
-            }
-
-            // 最終 clamp（浮動小数点誤差対策）
-            for w in weights.iter_mut() {
-                *w = w.clamp(0.0, effective_max);
-            }
-            let sum: f64 = weights.iter().sum();
-            if sum > 0.0 {
-                for w in weights.iter_mut() {
-                    *w /= sum;
-                }
-            }
+            normalize_weights(&mut weights);
+            clamp_and_normalize(&mut weights, effective_max);
 
             return weights;
         }
@@ -905,6 +908,52 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
 }
 
 // ==================== 案 I ユーティリティ関数群 ====================
+
+/// 重みベクトルを正規化（合計 = 1.0）
+fn normalize_weights(weights: &mut [f64]) {
+    let sum: f64 = weights.iter().sum();
+    if sum > 0.0 {
+        for w in weights.iter_mut() {
+            *w /= sum;
+        }
+    }
+}
+
+/// box clamp + 正規化（浮動小数点誤差対策）
+fn clamp_and_normalize(weights: &mut [f64], max_position: f64) {
+    for w in weights.iter_mut() {
+        *w = w.clamp(0.0, max_position);
+    }
+    normalize_weights(weights);
+}
+
+/// box_sharpe + box_rp → alpha ブレンド → 正規化 → フルサイズ展開
+///
+/// サブセットの最適化結果を n_total サイズのベクトルに展開して返す。
+fn blend_and_expand(
+    sub_returns: &[f64],
+    sub_cov: &Array2<f64>,
+    max_position: f64,
+    alpha: f64,
+    subset_indices: &[usize],
+    n_total: usize,
+) -> Vec<f64> {
+    let w_sharpe = box_maximize_sharpe(sub_returns, sub_cov, max_position);
+    let w_rp = box_risk_parity(sub_cov, max_position);
+
+    let mut blended: Vec<f64> = w_sharpe
+        .iter()
+        .zip(w_rp.iter())
+        .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+        .collect();
+    normalize_weights(&mut blended);
+
+    let mut weights = vec![0.0; n_total];
+    for (i, &idx) in subset_indices.iter().enumerate() {
+        weights[idx] = blended[i];
+    }
+    weights
+}
 
 /// サブポートフォリオの μ と Σ を抽出
 fn extract_sub_portfolio(
@@ -968,11 +1017,7 @@ fn adjust_returns_for_liquidity(
 ///
 /// `select_optimal_tokens()` のフィルタ部分を抽出。
 /// スコアリングや相関フィルタは行わない。
-pub fn hard_filter_tokens(
-    tokens: &[TokenData],
-    _predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
-    _historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
-) -> Vec<TokenData> {
+pub fn hard_filter_tokens(tokens: &[TokenData]) -> Vec<TokenData> {
     let min_cap = min_market_cap();
     let filtered: Vec<&TokenData> = tokens
         .iter()
@@ -1087,28 +1132,22 @@ fn exhaustive_optimize(
         let (sub_ret, sub_cov) =
             extract_sub_portfolio(expected_returns, covariance_matrix, active_indices);
 
-        let w_sharpe = box_maximize_sharpe(&sub_ret, &sub_cov, max_position);
-        let w_rp = box_risk_parity(&sub_cov, max_position);
+        let mut weights = blend_and_expand(
+            &sub_ret, &sub_cov, max_position, alpha, active_indices, n_total,
+        );
 
-        let mut blended: Vec<f64> = w_sharpe
+        // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化
+        let survivors: Vec<usize> = active_indices
             .iter()
-            .zip(w_rp.iter())
-            .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+            .filter(|&&idx| weights[idx] >= min_position_size)
+            .copied()
             .collect();
-
-        // 正規化
-        let sum: f64 = blended.iter().sum();
-        if sum > 0.0 {
-            for w in blended.iter_mut() {
-                *w /= sum;
-            }
+        if survivors.len() < n_active && !survivors.is_empty() {
+            let (sr, sc) =
+                extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
+            weights = blend_and_expand(&sr, &sc, max_position, alpha, &survivors, n_total);
         }
 
-        // フルサイズに展開
-        let mut weights = vec![0.0; n_total];
-        for (i, &idx) in active_indices.iter().enumerate() {
-            weights[idx] = blended[i];
-        }
         return weights;
     }
 
@@ -1121,63 +1160,23 @@ fn exhaustive_optimize(
         let (sub_ret, sub_cov) =
             extract_sub_portfolio(expected_returns, covariance_matrix, &subset_indices);
 
-        let w_sharpe = box_maximize_sharpe(&sub_ret, &sub_cov, max_position);
-        let w_rp = box_risk_parity(&sub_cov, max_position);
-
-        let mut blended: Vec<f64> = w_sharpe
-            .iter()
-            .zip(w_rp.iter())
-            .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
-            .collect();
-
-        // 正規化
-        let sum: f64 = blended.iter().sum();
-        if sum > 0.0 {
-            for w in blended.iter_mut() {
-                *w /= sum;
-            }
-        }
+        let mut effective_blended = blend_and_expand(
+            &sub_ret, &sub_cov, max_position, alpha, &subset_indices, n_total,
+        );
 
         // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化
-        let survivors: Vec<usize> = blended
+        let survivors: Vec<usize> = subset_indices
             .iter()
-            .enumerate()
-            .filter(|&(_, w)| *w >= min_position_size)
-            .map(|(i, _)| i)
+            .filter(|&&idx| effective_blended[idx] >= min_position_size)
+            .copied()
             .collect();
 
-        let effective_blended = if survivors.len() < blended.len() && !survivors.is_empty() {
-            let survivor_indices: Vec<usize> =
-                survivors.iter().map(|&si| subset_indices[si]).collect();
+        if survivors.len() < subset_indices.len() && !survivors.is_empty() {
             let (sr, sc) =
-                extract_sub_portfolio(expected_returns, covariance_matrix, &survivor_indices);
-            let ws = box_maximize_sharpe(&sr, &sc, max_position);
-            let wr = box_risk_parity(&sc, max_position);
-            let mut b: Vec<f64> = ws
-                .iter()
-                .zip(wr.iter())
-                .map(|(&s, &r)| alpha * s + (1.0 - alpha) * r)
-                .collect();
-            let s: f64 = b.iter().sum();
-            if s > 0.0 {
-                for w in b.iter_mut() {
-                    *w /= s;
-                }
-            }
-
-            // フルサイズに展開
-            let mut w = vec![0.0; n_total];
-            for (i, &idx) in survivor_indices.iter().enumerate() {
-                w[idx] = b[i];
-            }
-            w
-        } else {
-            // フルサイズに展開
-            let mut w = vec![0.0; n_total];
-            for (i, &idx) in subset_indices.iter().enumerate() {
-                w[idx] = blended[i];
-            }
-            w
+                extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
+            effective_blended = blend_and_expand(
+                &sr, &sc, max_position, alpha, &survivors, n_total,
+            );
         };
 
         // 複合スコア: alpha * sharpe - (1-alpha) * rp_div
@@ -1204,7 +1203,14 @@ fn exhaustive_optimize(
         };
         let rp_div = risk_parity_divergence(&active_w, &ac);
 
-        let score = alpha * sharpe - (1.0 - alpha) * rp_div * 1000.0;
+        // 複合スコア: Sharpe (O(1)) と rp_div (O(1e-5)) のスケール差を
+        // ポートフォリオ分散で正規化して吸収
+        let rp_div_normalized = if port_std > 0.0 {
+            rp_div / (port_std * port_std)
+        } else {
+            0.0
+        };
+        let score = alpha * sharpe - (1.0 - alpha) * rp_div_normalized;
 
         if score > best_score {
             best_score = score;
@@ -1766,11 +1772,7 @@ pub async fn execute_portfolio_optimization(
     rebalance_threshold: f64,
 ) -> Result<PortfolioExecutionReport> {
     // ハードフィルタ: 流動性 + 時価総額の最低条件
-    let filtered_tokens = hard_filter_tokens(
-        &portfolio_data.tokens,
-        &portfolio_data.predictions,
-        &portfolio_data.historical_prices,
-    );
+    let filtered_tokens = hard_filter_tokens(&portfolio_data.tokens);
 
     // historical_prices に存在するトークンのみに絞り込み
     let selected_tokens: Vec<TokenData> = filtered_tokens

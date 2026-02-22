@@ -5575,10 +5575,7 @@ fn test_hard_filter_tokens() {
         },
     ];
 
-    let predictions = BTreeMap::new();
-    let history = BTreeMap::new();
-
-    let filtered = hard_filter_tokens(&tokens, &predictions, &history);
+    let filtered = hard_filter_tokens(&tokens);
 
     // good-token のみ残る
     assert_eq!(filtered.len(), 1);
