@@ -1095,6 +1095,34 @@ const LIQUIDITY_PENALTY_LAMBDA: f64 = 0.01;
 /// 1.5 はヒステリシスとして安定と均衡のバランスが取れた値。
 const PINNED_RC_RELEASE_FACTOR: f64 = 1.5;
 
+/// min_position_size 未満のトークンを除外して再最適化を繰り返す。
+/// 毎回最低1トークンが脱落するため、最大 current_indices.len() 回で収束する。
+fn filter_and_reoptimize(
+    weights: &mut Vec<f64>,
+    current_indices: &mut Vec<usize>,
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    max_position: f64,
+    min_position_size: f64,
+    alpha: f64,
+) {
+    let n_total = expected_returns.len();
+    let max_iters = current_indices.len();
+    for _ in 0..max_iters {
+        let survivors: Vec<usize> = current_indices
+            .iter()
+            .filter(|&&idx| weights[idx] >= min_position_size)
+            .copied()
+            .collect();
+        if survivors.len() == current_indices.len() || survivors.is_empty() {
+            break;
+        }
+        let (sr, sc) = extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
+        *weights = blend_and_expand(&sr, &sc, max_position, alpha, &survivors, n_total);
+        *current_indices = survivors;
+    }
+}
+
 /// Phase 3: 全列挙による最適サブセット選択
 ///
 /// 候補トークン群から C(active, max_holdings) の全組み合わせを列挙し、
@@ -1130,16 +1158,17 @@ fn exhaustive_optimize(
             n_total,
         );
 
-        // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化
-        let survivors: Vec<usize> = active_indices
-            .iter()
-            .filter(|&&idx| weights[idx] >= min_position_size)
-            .copied()
-            .collect();
-        if survivors.len() < n_active && !survivors.is_empty() {
-            let (sr, sc) = extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
-            weights = blend_and_expand(&sr, &sc, max_position, alpha, &survivors, n_total);
-        }
+        // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化（反復）
+        let mut current_indices = active_indices.to_vec();
+        filter_and_reoptimize(
+            &mut weights,
+            &mut current_indices,
+            expected_returns,
+            covariance_matrix,
+            max_position,
+            min_position_size,
+            alpha,
+        );
 
         return weights;
     }
@@ -1162,18 +1191,17 @@ fn exhaustive_optimize(
             n_total,
         );
 
-        // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化
-        let survivors: Vec<usize> = subset_indices
-            .iter()
-            .filter(|&&idx| effective_blended[idx] >= min_position_size)
-            .copied()
-            .collect();
-
-        if survivors.len() < subset_indices.len() && !survivors.is_empty() {
-            let (sr, sc) = extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
-            effective_blended =
-                blend_and_expand(&sr, &sc, max_position, alpha, &survivors, n_total);
-        };
+        // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化（反復）
+        let mut current_indices = subset_indices.clone();
+        filter_and_reoptimize(
+            &mut effective_blended,
+            &mut current_indices,
+            expected_returns,
+            covariance_matrix,
+            max_position,
+            min_position_size,
+            alpha,
+        );
 
         // 複合スコア: alpha * sharpe - (1-alpha) * rp_div
         let active_w: Vec<f64> = effective_blended
