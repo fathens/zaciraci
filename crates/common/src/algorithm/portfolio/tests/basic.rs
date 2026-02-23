@@ -446,8 +446,8 @@ fn test_covariance_matrix_psd_guarantee() {
     // 全固有値が正（PSD保証済み）
     for (i, &eigenvalue) in eigen.eigenvalues.iter().enumerate() {
         assert!(
-            eigenvalue >= REGULARIZATION_FACTOR - 1e-10,
-            "eigenvalue[{i}] = {eigenvalue} should be >= {REGULARIZATION_FACTOR}"
+            eigenvalue >= MIN_EIGENVALUE_THRESHOLD - 1e-10,
+            "eigenvalue[{i}] = {eigenvalue} should be >= {MIN_EIGENVALUE_THRESHOLD}"
         );
     }
 

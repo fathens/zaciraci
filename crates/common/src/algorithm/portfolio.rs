@@ -49,8 +49,11 @@ const MIN_POSITION_SIZE: f64 = 0.05;
 /// 最大保有トークン数（集中投資）
 const MAX_HOLDINGS: usize = 6;
 
-/// 数値安定性のための正則化パラメータ
-const REGULARIZATION_FACTOR: f64 = 1e-6;
+/// PSD 保証のための最小固有値閾値
+const MIN_EIGENVALUE_THRESHOLD: f64 = 1e-6;
+
+/// Ridge 正則化の対角加算量（Σ + εI）
+const RIDGE_EPSILON: f64 = 1e-6;
 
 /// 最小流動性スコア
 /// スコア 0.5 = プール流動性 >= TRADE_MIN_POOL_LIQUIDITY 基準額
@@ -285,14 +288,14 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
         .cloned()
         .fold(f64::INFINITY, f64::min);
 
-    if min_eigenvalue >= REGULARIZATION_FACTOR {
+    if min_eigenvalue >= MIN_EIGENVALUE_THRESHOLD {
         return; // 既にPSD
     }
 
     // 負の固有値をクランプして再構成: Σ' = V · diag(max(λ, ε)) · V'
     let clamped_eigenvalues =
         nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_fn(n, |i, _| {
-            eigen.eigenvalues[i].max(REGULARIZATION_FACTOR)
+            eigen.eigenvalues[i].max(MIN_EIGENVALUE_THRESHOLD)
         }));
 
     let reconstructed = &eigen.eigenvectors * clamped_eigenvalues * eigen.eigenvectors.transpose();
@@ -410,7 +413,7 @@ pub fn maximize_sharpe_ratio(
                 // Ridge regularization retry: Σ_sub + εI
                 let mut cov_reg = cov_sub.clone();
                 for i in 0..m {
-                    cov_reg[(i, i)] += REGULARIZATION_FACTOR;
+                    cov_reg[(i, i)] += RIDGE_EPSILON;
                 }
                 cov_reg.cholesky().map(|chol| chol.solve(&excess_sub))
             });
@@ -575,7 +578,7 @@ pub fn box_maximize_sharpe(
             // Ridge regularization retry: Σ_FF + εI
             let mut cov_reg = DMatrix::from_fn(m, m, |i, j| covariance_matrix[[free[i], free[j]]]);
             for i in 0..m {
-                cov_reg[(i, i)] += REGULARIZATION_FACTOR;
+                cov_reg[(i, i)] += RIDGE_EPSILON;
             }
             cov_reg.cholesky().map(|chol| chol.solve(rhs))
         };
