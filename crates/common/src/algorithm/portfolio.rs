@@ -36,17 +36,6 @@ pub struct PortfolioExecutionReport {
     pub timestamp: DateTime<Utc>,
 }
 
-/// トークンスコア
-#[derive(Debug, Clone)]
-pub struct TokenScore {
-    pub token: String,
-    pub sharpe_ratio: f64,
-    pub liquidity_score: f64,
-    pub prediction_confidence: f64,
-    pub volatility_rank: f64,
-    pub composite_score: f64,
-}
-
 // ==================== 定数 ====================
 
 /// リスクフリーレート（年率2%相当の日次レート: 0.02 / 365）
@@ -82,9 +71,6 @@ const MAX_RISK_PARITY_ITERATIONS: usize = 50;
 
 /// リスクパリティの収束判定閾値
 const RISK_PARITY_CONVERGENCE_TOLERANCE: f64 = 1e-6;
-
-/// 最大相関閾値（既選択トークンとの最大絶対相関で判定）
-const MAX_CORRELATION_THRESHOLD: f64 = 0.85;
 
 /// 予測精度が低い場合の alpha 下限値
 /// confidence=0.0 のとき alpha はこの値まで下がる（Sharpe/RP 等配分に近づく）
@@ -483,7 +469,10 @@ pub fn box_maximize_sharpe(
     }
 
     // 全トークンの期待リターンが同一 → 等配分
-    let min_ret = expected_returns.iter().cloned().fold(f64::INFINITY, f64::min);
+    let min_ret = expected_returns
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY, f64::min);
     let max_ret = expected_returns
         .iter()
         .cloned()
@@ -536,10 +525,8 @@ pub fn box_maximize_sharpe(
         }
 
         // Free 集合のサブ問題を構築
-        let cov_ff =
-            DMatrix::from_fn(m, m, |i, j| covariance_matrix[[free[i], free[j]]]);
-        let excess_f =
-            nalgebra::DVector::from_fn(m, |i, _| excess_returns[free[i]]);
+        let cov_ff = DMatrix::from_fn(m, m, |i, j| covariance_matrix[[free[i], free[j]]]);
+        let excess_f = nalgebra::DVector::from_fn(m, |i, _| excess_returns[free[i]]);
 
         // Σ_FF の分解（Cholesky 優先、LU フォールバック）を1回だけ行い再利用
         enum Factored {
@@ -798,9 +785,7 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
         let mut w_free = vec![budget_free / m as f64; m];
 
         // サブ共分散行列（Free 集合のみ）
-        let cov_sub = Array2::from_shape_fn((m, m), |(i, j)| {
-            covariance_matrix[[free[i], free[j]]]
-        });
+        let cov_sub = Array2::from_shape_fn((m, m), |(i, j)| covariance_matrix[[free[i], free[j]]]);
 
         for _ in 0..MAX_RISK_PARITY_ITERATIONS {
             let prev = w_free.clone();
@@ -963,9 +948,8 @@ fn extract_sub_portfolio(
 ) -> (Vec<f64>, Array2<f64>) {
     let m = indices.len();
     let sub_returns: Vec<f64> = indices.iter().map(|&i| expected_returns[i]).collect();
-    let sub_cov = Array2::from_shape_fn((m, m), |(i, j)| {
-        covariance_matrix[[indices[i], indices[j]]]
-    });
+    let sub_cov =
+        Array2::from_shape_fn((m, m), |(i, j)| covariance_matrix[[indices[i], indices[j]]]);
     (sub_returns, sub_cov)
 }
 
@@ -1133,7 +1117,12 @@ fn exhaustive_optimize(
             extract_sub_portfolio(expected_returns, covariance_matrix, active_indices);
 
         let mut weights = blend_and_expand(
-            &sub_ret, &sub_cov, max_position, alpha, active_indices, n_total,
+            &sub_ret,
+            &sub_cov,
+            max_position,
+            alpha,
+            active_indices,
+            n_total,
         );
 
         // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化
@@ -1143,8 +1132,7 @@ fn exhaustive_optimize(
             .copied()
             .collect();
         if survivors.len() < n_active && !survivors.is_empty() {
-            let (sr, sc) =
-                extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
+            let (sr, sc) = extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
             weights = blend_and_expand(&sr, &sc, max_position, alpha, &survivors, n_total);
         }
 
@@ -1161,7 +1149,12 @@ fn exhaustive_optimize(
             extract_sub_portfolio(expected_returns, covariance_matrix, &subset_indices);
 
         let mut effective_blended = blend_and_expand(
-            &sub_ret, &sub_cov, max_position, alpha, &subset_indices, n_total,
+            &sub_ret,
+            &sub_cov,
+            max_position,
+            alpha,
+            &subset_indices,
+            n_total,
         );
 
         // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化
@@ -1172,15 +1165,17 @@ fn exhaustive_optimize(
             .collect();
 
         if survivors.len() < subset_indices.len() && !survivors.is_empty() {
-            let (sr, sc) =
-                extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
-            effective_blended = blend_and_expand(
-                &sr, &sc, max_position, alpha, &survivors, n_total,
-            );
+            let (sr, sc) = extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
+            effective_blended =
+                blend_and_expand(&sr, &sc, max_position, alpha, &survivors, n_total);
         };
 
         // 複合スコア: alpha * sharpe - (1-alpha) * rp_div
-        let active_w: Vec<f64> = effective_blended.iter().filter(|&&w| w > 0.0).cloned().collect();
+        let active_w: Vec<f64> = effective_blended
+            .iter()
+            .filter(|&&w| w > 0.0)
+            .cloned()
+            .collect();
         let active_idx: Vec<usize> = effective_blended
             .iter()
             .enumerate()
@@ -1192,8 +1187,7 @@ fn exhaustive_optimize(
             continue;
         }
 
-        let (ar, ac) =
-            extract_sub_portfolio(expected_returns, covariance_matrix, &active_idx);
+        let (ar, ac) = extract_sub_portfolio(expected_returns, covariance_matrix, &active_idx);
         let port_ret = calculate_portfolio_return(&active_w, &ar);
         let port_std = calculate_portfolio_std(&active_w, &ac);
         let sharpe = if port_std > 0.0 {
@@ -1252,11 +1246,8 @@ fn unified_optimize(
     }
 
     // 流動性調整リターン
-    let adj_returns = adjust_returns_for_liquidity(
-        expected_returns,
-        liquidity_scores,
-        LIQUIDITY_PENALTY_LAMBDA,
-    );
+    let adj_returns =
+        adjust_returns_for_liquidity(expected_returns, liquidity_scores, LIQUIDITY_PENALTY_LAMBDA);
 
     // Phase 1: 全 n トークンで独立に最適化
     let w_sharpe = box_maximize_sharpe(&adj_returns, covariance_matrix, max_position);
@@ -1269,8 +1260,7 @@ fn unified_optimize(
         w_sharpe.iter().enumerate().map(|(i, &w)| (i, w)).collect();
     sharpe_ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut rp_ranked: Vec<(usize, f64)> =
-        w_rp.iter().enumerate().map(|(i, &w)| (i, w)).collect();
+    let mut rp_ranked: Vec<(usize, f64)> = w_rp.iter().enumerate().map(|(i, &w)| (i, w)).collect();
     rp_ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut active_set = std::collections::BTreeSet::new();
@@ -1501,244 +1491,6 @@ pub fn calculate_turnover_rate(old_weights: &[f64], new_weights: &[f64]) -> f64 
         .map(|(&old, &new)| (old - new).abs())
         .sum::<f64>()
         / 2.0
-}
-
-// ==================== トークン選択 ====================
-
-/// 個別トークンのシャープレシオを計算
-fn calculate_individual_sharpe(
-    token: &TokenData,
-    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
-    expected_return: f64,
-) -> f64 {
-    // トークンの価格履歴を取得
-    let token_prices = historical_prices.get(&token.symbol).map(|p| &p.prices);
-
-    if let Some(prices) = token_prices
-        && prices.len() > 1
-    {
-        let returns = calculate_returns_from_prices(prices);
-
-        if !returns.is_empty() {
-            let volatility = calculate_std_dev(&returns);
-            if volatility > 0.0 {
-                return (expected_return - RISK_FREE_RATE) / volatility;
-            }
-        }
-    }
-
-    0.0
-}
-
-/// 標準偏差を計算
-fn calculate_std_dev(values: &[f64]) -> f64 {
-    if values.len() < 2 {
-        return 0.0;
-    }
-
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let variance =
-        values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
-
-    variance.sqrt()
-}
-
-/// トークンのスコアを計算
-///
-/// `sorted_volatilities` は昇順にソート済みであること。
-fn calculate_token_score(
-    token: &TokenData,
-    prediction: Option<&TokenPrice>,
-    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
-    sorted_volatilities: &[f64],
-    prediction_confidence: Option<f64>,
-) -> TokenScore {
-    // 予測価格から期待リターンを計算
-    let expected_return = if let Some(predicted_price) = prediction {
-        let current_price = token.current_rate.to_price();
-        if current_price.is_zero() || predicted_price.is_zero() {
-            0.0
-        } else {
-            current_price.expected_return(predicted_price)
-        }
-    } else {
-        0.0
-    };
-    let sharpe = calculate_individual_sharpe(token, historical_prices, expected_return);
-    let liquidity = token.liquidity_score.unwrap_or(0.0);
-    let confidence = prediction_confidence.unwrap_or(0.5);
-
-    // ボラティリティランクを計算（低いほど良い）
-    let vol_rank = if !sorted_volatilities.is_empty() {
-        let position = sorted_volatilities
-            .iter()
-            .position(|&v| v >= token.historical_volatility)
-            .unwrap_or(sorted_volatilities.len());
-        1.0 - (position as f64 / sorted_volatilities.len() as f64)
-    } else {
-        0.5
-    };
-
-    // 総合スコアを計算
-    let composite = sharpe.max(0.0) * 0.4 + liquidity * 0.2 + confidence * 0.2 + vol_rank * 0.2;
-
-    TokenScore {
-        token: token.symbol.to_string(),
-        sharpe_ratio: sharpe,
-        liquidity_score: liquidity,
-        prediction_confidence: confidence,
-        volatility_rank: vol_rank,
-        composite_score: composite,
-    }
-}
-
-/// 最適なトークンを選択
-pub fn select_optimal_tokens(
-    tokens: &[TokenData],
-    predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
-    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
-    max_tokens: usize,
-    prediction_confidence: Option<f64>,
-) -> Vec<TokenData> {
-    // フィルタリング: 最小要件を満たすトークンのみ
-    let min_cap = min_market_cap();
-    let filtered_tokens: Vec<&TokenData> = tokens
-        .iter()
-        .filter(|t| {
-            // 実際のデータ構造に合わせたフィルタリング条件
-            // market_capがNoneの場合は流動性スコアのみでフィルタ
-            let liquidity_ok = t.liquidity_score.unwrap_or(0.0) >= MIN_LIQUIDITY_SCORE;
-            let market_cap_ok = match &t.market_cap {
-                Some(cap) => cap >= &min_cap,
-                None => true, // market_capがNoneの場合はスキップ
-            };
-            liquidity_ok && market_cap_ok
-        })
-        .collect();
-
-    // フィルタ条件が厳しすぎる場合は全トークンを候補にする
-    let scoring_tokens: Vec<&TokenData> = if filtered_tokens.is_empty() {
-        tokens.iter().collect()
-    } else {
-        filtered_tokens
-    };
-
-    // 全トークンのボラティリティを収集（昇順ソート済み）
-    let all_volatilities: Vec<f64> = {
-        let mut v: Vec<f64> = scoring_tokens
-            .iter()
-            .map(|t| t.historical_volatility)
-            .collect();
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        v
-    };
-
-    // スコアリング
-    let mut scored_tokens: Vec<(TokenScore, &TokenData)> = scoring_tokens
-        .iter()
-        .map(|&token| {
-            let prediction = predictions.get(&token.symbol);
-            let score = calculate_token_score(
-                token,
-                prediction,
-                historical_prices,
-                &all_volatilities,
-                prediction_confidence,
-            );
-            (score, token)
-        })
-        .collect();
-
-    // スコアでソート（決定的）
-    scored_tokens.sort_by(|a, b| {
-        b.0.composite_score
-            .partial_cmp(&a.0.composite_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    // 相関を考慮した選択
-    select_uncorrelated_tokens(scored_tokens, historical_prices, max_tokens)
-}
-
-/// 相関の低いトークンを選択（最適化版）
-///
-/// BTreeMap で価格履歴を O(log n) でルックアップし、
-/// 日次リターンを事前キャッシュして重複計算を回避する。
-fn select_uncorrelated_tokens(
-    scored_tokens: Vec<(TokenScore, &TokenData)>,
-    historical_prices: &BTreeMap<TokenOutAccount, PriceHistory>,
-    max_tokens: usize,
-) -> Vec<TokenData> {
-    use std::collections::HashMap;
-
-    if scored_tokens.is_empty() {
-        return Vec::new();
-    }
-
-    // 日次リターンを事前計算してキャッシュ
-    let returns_cache: HashMap<String, Vec<f64>> = historical_prices
-        .iter()
-        .map(|(token, ph)| (token.to_string(), calculate_returns_from_prices(&ph.prices)))
-        .collect();
-
-    // キャッシュを使った相関計算
-    let calculate_correlation_cached = |token1: &str, token2: &str| -> f64 {
-        let returns1 = match returns_cache.get(token1) {
-            Some(r) => r,
-            None => return 0.0,
-        };
-        let returns2 = match returns_cache.get(token2) {
-            Some(r) => r,
-            None => return 0.0,
-        };
-
-        // 長さが異なる場合は末尾（最新データ）を優先してトリミング
-        let min_len = returns1.len().min(returns2.len());
-        if min_len < 2 {
-            return 0.0;
-        }
-
-        let r1 = &returns1[returns1.len() - min_len..];
-        let r2 = &returns2[returns2.len() - min_len..];
-
-        // トリミング後のスライスで標準偏差を計算
-        let std1 = calculate_std_dev(r1);
-        let std2 = calculate_std_dev(r2);
-
-        // 標準偏差が0の場合は相関を0とする
-        if std1 <= 0.0 || std2 <= 0.0 {
-            return 0.0;
-        }
-
-        let correlation = calculate_covariance(r1, r2) / (std1 * std2);
-        correlation.clamp(-1.0, 1.0)
-    };
-
-    // 最高スコアのトークンを最初に選択
-    let mut selected = vec![scored_tokens[0].1.clone()];
-
-    for (_score, token) in scored_tokens.iter().skip(1) {
-        if selected.len() >= max_tokens {
-            break;
-        }
-
-        let token_str = token.symbol.to_string();
-
-        // 既存選択トークンとの最大絶対相関を計算（キャッシュ使用）
-        let max_correlation = selected
-            .iter()
-            .map(|selected_token| {
-                calculate_correlation_cached(&token_str, &selected_token.symbol.to_string()).abs()
-            })
-            .fold(0.0_f64, f64::max);
-
-        // 最大相関が閾値以下なら追加
-        if max_correlation < MAX_CORRELATION_THRESHOLD {
-            selected.push((*token).clone());
-        }
-    }
-
-    selected
 }
 
 /// 価格からリターンを計算

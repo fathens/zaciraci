@@ -1453,346 +1453,6 @@ fn test_performance_metrics_with_existing_functions() {
     assert!((0.0..=1.0).contains(&win_rate));
 }
 
-// ==================== トークン選択アルゴリズムテスト ====================
-
-#[test]
-fn test_token_scoring() {
-    let tokens = vec![
-        TokenInfo {
-            symbol: token_out("high-sharpe"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: 0.1,
-            liquidity_score: Some(0.9),
-            market_cap: Some(cap(5000000)),
-        },
-        TokenInfo {
-            symbol: token_out("low-liquidity"),
-            current_rate: rate_from_price(0.02),
-            historical_volatility: 0.2,
-            liquidity_score: Some(0.05), // 低流動性
-            market_cap: Some(cap(1000000)),
-        },
-        TokenInfo {
-            symbol: token_out("high-vol"),
-            current_rate: rate_from_price(0.005),
-            historical_volatility: 0.5, // 高ボラティリティ
-            liquidity_score: Some(0.7),
-            market_cap: Some(cap(2000000)),
-        },
-    ];
-
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("high-sharpe"), price(0.15));
-    predictions.insert(token_out("low-liquidity"), price(0.20));
-    predictions.insert(token_out("high-vol"), price(0.10));
-
-    let history = create_sample_price_history();
-
-    // トークン選択（最大2トークン）
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
-
-    // HIGH_SHARPEは必ず選ばれるべき（高流動性、低ボラティリティ）
-    assert!(
-        selected
-            .iter()
-            .any(|t| t.symbol == token_out("high-sharpe"))
-    );
-
-    // LOW_LIQUIDITYは流動性フィルタで除外されるべき
-    assert!(
-        !selected
-            .iter()
-            .any(|t| t.symbol == token_out("low-liquidity"))
-    );
-
-    // 最大2トークンが選ばれる
-    assert!(selected.len() <= 2);
-}
-
-#[test]
-fn test_correlation_based_selection() {
-    // 相関の高いトークングループを作成
-    let tokens = vec![
-        TokenInfo {
-            symbol: token_out("token-a"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: 0.2,
-            liquidity_score: Some(0.8),
-            market_cap: Some(cap(1000000)),
-        },
-        TokenInfo {
-            symbol: token_out("token-b"), // Aと高相関
-            current_rate: rate_from_price(0.02),
-            historical_volatility: 0.2,
-            liquidity_score: Some(0.8),
-            market_cap: Some(cap(1000000)),
-        },
-        TokenInfo {
-            symbol: token_out("token-c"), // 独立
-            current_rate: rate_from_price(0.005),
-            historical_volatility: 0.15,
-            liquidity_score: Some(0.9),
-            market_cap: Some(cap(2000000)),
-        },
-    ];
-
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("token-a"), price(0.12));
-    predictions.insert(token_out("token-b"), price(0.11));
-    predictions.insert(token_out("token-c"), price(0.10));
-
-    // 価格履歴を作成（AとBは同じ動き、Cは独立）
-    let base_time = Utc::now() - Duration::days(10);
-
-    let mut prices_a = Vec::new();
-    let mut prices_b = Vec::new();
-    let mut prices_c = Vec::new();
-
-    for i in 0..10 {
-        let time = base_time + Duration::days(i);
-        let price_a = 100.0 * (1.0 + 0.01 * i as f64);
-        let price_b = 50.0 * (1.0 + 0.01 * i as f64); // Aと同じ変動率
-        let price_c = 200.0 * (1.0 - 0.005 * i as f64); // 逆の動き
-
-        prices_a.push(PricePoint {
-            timestamp: time,
-            price: price(price_a),
-            volume: None,
-        });
-        prices_b.push(PricePoint {
-            timestamp: time,
-            price: price(price_b),
-            volume: None,
-        });
-        prices_c.push(PricePoint {
-            timestamp: time,
-            price: price(price_c),
-            volume: None,
-        });
-    }
-
-    let history: BTreeMap<TokenOutAccount, PriceHistory> = [
-        PriceHistory {
-            token: token_out("token-a"),
-            quote_token: token_in("quote.near"),
-            prices: prices_a,
-        },
-        PriceHistory {
-            token: token_out("token-b"),
-            quote_token: token_in("quote.near"),
-            prices: prices_b,
-        },
-        PriceHistory {
-            token: token_out("token-c"),
-            quote_token: token_in("quote.near"),
-            prices: prices_c,
-        },
-    ]
-    .into_iter()
-    .map(|ph| (ph.token.clone(), ph))
-    .collect();
-
-    // トークン選択（最大2トークン）
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
-
-    // AとCが選ばれるべき（低相関）またはBとCが選ばれるべき
-    // AとBの両方は選ばれないべき（高相関）
-    if selected.iter().any(|t| t.symbol == token_out("token-a")) {
-        assert!(!selected.iter().any(|t| t.symbol == token_out("token-b")));
-    }
-    if selected.iter().any(|t| t.symbol == token_out("token-b")) {
-        assert!(!selected.iter().any(|t| t.symbol == token_out("token-a")));
-    }
-
-    // TOKEN_Cは必ず選ばれるべき（独立性が高い）
-    assert!(selected.iter().any(|t| t.symbol == token_out("token-c")));
-}
-
-#[test]
-fn test_select_optimal_tokens_deterministic() {
-    let tokens = create_sample_tokens();
-    let predictions = create_sample_predictions();
-    let history = create_sample_price_history();
-
-    // 同じ入力で複数回実行
-    let result1 = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
-    let result2 = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
-    let result3 = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
-
-    // 結果が一致することを確認（決定的動作）
-    assert_eq!(result1.len(), result2.len());
-    assert_eq!(result1.len(), result3.len());
-
-    for i in 0..result1.len() {
-        assert_eq!(result1[i].symbol, result2[i].symbol);
-        assert_eq!(result1[i].symbol, result3[i].symbol);
-    }
-}
-
-// ==================== パフォーマンス改善検証テスト ====================
-
-#[test]
-fn test_portfolio_performance_with_token_selection() {
-    // 多数のトークンから最適なものを選択することで、パフォーマンスが向上することを検証
-
-    // 様々な品質のトークンを作成
-    let tokens = vec![
-        // 高品質トークン
-        TokenInfo {
-            symbol: token_out("excellent1"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: 0.15,
-            liquidity_score: Some(0.95),
-            market_cap: Some(cap(10000000)),
-        },
-        TokenInfo {
-            symbol: token_out("excellent2"),
-            current_rate: rate_from_price(0.005),
-            historical_volatility: 0.12,
-            liquidity_score: Some(0.92),
-            market_cap: Some(cap(8000000)),
-        },
-        // 中品質トークン
-        TokenInfo {
-            symbol: token_out("medium1"),
-            current_rate: rate_from_price(0.02),
-            historical_volatility: 0.25,
-            liquidity_score: Some(0.5),
-            market_cap: Some(cap(1000000)),
-        },
-        TokenInfo {
-            symbol: token_out("medium2"),
-            current_rate: rate_from_price(1.0 / 75.0),
-            historical_volatility: 0.3,
-            liquidity_score: Some(0.4),
-            market_cap: Some(cap(800000)),
-        },
-        // 低品質トークン
-        TokenInfo {
-            symbol: token_out("poor1"),
-            current_rate: rate_from_price(0.1),
-            historical_volatility: 0.5,
-            liquidity_score: Some(0.08), // 低流動性
-            market_cap: Some(cap(50000)),
-        },
-        TokenInfo {
-            symbol: token_out("poor2"),
-            current_rate: rate_from_price(0.2),
-            historical_volatility: 0.6,
-            liquidity_score: Some(0.05), // 非常に低い流動性
-            market_cap: Some(cap(10000)),
-        },
-    ];
-
-    // 予測リターン（高品質トークンほど良いリターン）
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("excellent1"), price(0.20)); // 20%
-    predictions.insert(token_out("excellent2"), price(0.18)); // 18%
-    predictions.insert(token_out("medium1"), price(0.10)); // 10%
-    predictions.insert(token_out("medium2"), price(0.08)); // 8%
-    predictions.insert(token_out("poor1"), price(0.05)); // 5%
-    predictions.insert(token_out("poor2"), price(0.02)); // 2%
-
-    // 価格履歴を作成
-    let base_time = Utc::now() - Duration::days(30);
-    let mut history = BTreeMap::new();
-
-    for token in &tokens {
-        let mut prices_vec = Vec::new();
-        for i in 0..30 {
-            let time = base_time + Duration::days(i);
-            // シンプルな価格変動
-            let price_multiplier = 1.0 + (i as f64 * 0.01);
-            let p = token
-                .current_rate
-                .to_price()
-                .as_bigdecimal()
-                .to_f64()
-                .unwrap()
-                * price_multiplier;
-            prices_vec.push(PricePoint {
-                timestamp: time,
-                price: price(p),
-                volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
-            });
-        }
-        let ph = PriceHistory {
-            token: token.symbol.clone(),
-            quote_token: token_in("quote.near"),
-            prices: prices_vec,
-        };
-        history.insert(ph.token.clone(), ph);
-    }
-
-    // トークン選択を実行（最大3トークン）
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
-
-    // 高品質トークンが選ばれることを検証
-    assert!(
-        selected
-            .iter()
-            .any(|t| t.symbol.to_string().starts_with("excellent")),
-        "少なくとも1つの高品質トークンが選ばれるべき"
-    );
-
-    // 低品質トークンは選ばれないことを検証
-    assert!(
-        !selected
-            .iter()
-            .any(|t| t.symbol.to_string().starts_with("poor")),
-        "低品質トークンは選ばれないべき"
-    );
-
-    // 選択されたトークンの平均期待リターンを計算
-    let selected_avg_return: f64 = selected
-        .iter()
-        .filter_map(|t| {
-            predictions.get(&t.symbol).map(|pred_price| {
-                let current_price = t.current_rate.to_price();
-                current_price.expected_return(pred_price)
-            })
-        })
-        .sum::<f64>()
-        / selected.len() as f64;
-
-    // 全トークンの平均期待リターンを計算
-    let all_avg_return: f64 = tokens
-        .iter()
-        .filter_map(|t| {
-            predictions.get(&t.symbol).map(|pred_price| {
-                let current_price = t.current_rate.to_price();
-                current_price.expected_return(pred_price)
-            })
-        })
-        .sum::<f64>()
-        / predictions.len() as f64;
-
-    println!(
-        "Selected tokens average return: {:.2}%",
-        selected_avg_return * 100.0
-    );
-    println!("All tokens average return: {:.2}%", all_avg_return * 100.0);
-
-    // 選択されたトークンの平均リターンが全体平均より高いことを確認
-    assert!(
-        selected_avg_return > all_avg_return,
-        "選択されたトークンの平均リターン ({:.2}%) は全体平均 ({:.2}%) より高いべき",
-        selected_avg_return * 100.0,
-        all_avg_return * 100.0
-    );
-
-    // パフォーマンス向上率を計算
-    let improvement = (selected_avg_return - all_avg_return) / all_avg_return;
-    println!("Performance improvement: {:.2}%", improvement * 100.0);
-
-    // 少なくとも30%のパフォーマンス向上を期待
-    assert!(
-        improvement > 0.3,
-        "パフォーマンスは少なくとも30%向上すべき（実際: {:.2}%）",
-        improvement * 100.0
-    );
-}
-
 #[tokio::test]
 async fn test_portfolio_optimization_with_selection_vs_without() {
     // トークン選択ありとなしでポートフォリオ最適化を比較
@@ -1922,401 +1582,6 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         "Number of selected tokens: {}",
         result_with_selection.optimal_weights.weights.len()
     );
-}
-
-#[test]
-fn test_token_selection_with_real_simulation_data() {
-    // 実際のシミュレーションと同じTokenData構造をテスト
-    let tokens = vec![
-        // 実際のシミュレーション同様の設定
-        TokenData {
-            symbol: token_out("token1.tkn.near"),
-            current_rate: rate_from_price(1e-18), // yoctoNEAR
-            historical_volatility: 0.2,
-            liquidity_score: Some(0.8),
-            market_cap: None, // 実際のコードでは None
-        },
-        TokenData {
-            symbol: token_out("token2.tkn.near"),
-            current_rate: rate_from_price(2e-18),
-            historical_volatility: 0.15,
-            liquidity_score: Some(0.9),
-            market_cap: None, // 実際のコードでは None
-        },
-        TokenData {
-            symbol: token_out("token3.tkn.near"),
-            current_rate: rate_from_price(5e-19),
-            historical_volatility: 0.3,
-            liquidity_score: Some(0.6),
-            market_cap: None, // 実際のコードでは None
-        },
-    ];
-
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("token1.tkn.near"), price(0.10));
-    predictions.insert(token_out("token2.tkn.near"), price(0.15));
-    predictions.insert(token_out("token3.tkn.near"), price(0.08));
-
-    let history = create_sample_price_history();
-
-    // 実際の設定でトークン選択を実行
-    println!("Testing with real simulation data structure...");
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 2, None);
-
-    // market_capがすべてNoneのため、フィルタ条件をすべて満たさない
-    // そのため、フォールバックロジックにより全トークンが返される
-    println!("Selected {} tokens", selected.len());
-    for token in &selected {
-        println!(
-            "  - {} (volatility: {:.3}, liquidity: {:?})",
-            token.symbol, token.historical_volatility, token.liquidity_score
-        );
-    }
-
-    // フォールバック動作により、最大トークン数か入力トークン数の少ない方が選択される
-    assert_eq!(selected.len(), std::cmp::min(tokens.len(), 2));
-}
-
-#[test]
-fn test_improved_token_selection_filtering() {
-    // フィルタリング条件を緩和したバージョンをテスト
-    let tokens = vec![
-        TokenData {
-            symbol: token_out("good_token"),
-            current_rate: rate_from_price(0.001),
-            historical_volatility: 0.1,
-            liquidity_score: Some(0.9),     // 高流動性
-            market_cap: Some(cap(5000000)), // 高時価総額
-        },
-        TokenData {
-            symbol: token_out("medium_token"),
-            current_rate: rate_from_price(0.002),
-            historical_volatility: 0.2,
-            liquidity_score: Some(0.5), // 中程度の流動性
-            market_cap: None,           // 実際のデータのようにNone
-        },
-        TokenData {
-            symbol: token_out("poor_token"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: 0.5,
-            liquidity_score: Some(0.05), // 低流動性
-            market_cap: None,
-        },
-    ];
-
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("good_token"), price(0.15));
-    predictions.insert(token_out("medium_token"), price(0.10));
-    predictions.insert(token_out("poor_token"), price(0.05));
-
-    let history = create_sample_price_history();
-
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
-
-    println!("Improved filtering test:");
-    println!("Selected {} tokens", selected.len());
-    for token in &selected {
-        println!(
-            "  - {} (volatility: {:.3}, liquidity: {:?}, market_cap: {:?})",
-            token.symbol, token.historical_volatility, token.liquidity_score, token.market_cap
-        );
-    }
-
-    // good_tokenのみが厳しい条件を満たし、それ以外はフォールバック
-    // 実際にはmarket_cap=Noneのため、フォールバック動作になる
-}
-
-#[test]
-fn test_liquidity_based_performance_improvement() {
-    // 流動性ベースのフィルタリングでパフォーマンスが向上することをテスト
-    let tokens = vec![
-        TokenData {
-            symbol: token_out("high_liquidity_good_return"),
-            current_rate: rate_from_price(0.001),
-            historical_volatility: 0.15,
-            liquidity_score: Some(0.9), // 高流動性
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("medium_liquidity_medium_return"),
-            current_rate: rate_from_price(0.002),
-            historical_volatility: 0.25,
-            liquidity_score: Some(0.5), // 中程度の流動性
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("low_liquidity_high_risk"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: 0.8,  // 高リスク
-            liquidity_score: Some(0.05), // 低流動性（フィルタアウト）
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("good_liquidity_stable"),
-            current_rate: rate_from_price(0.00125),
-            historical_volatility: 0.12, // 安定
-            liquidity_score: Some(0.8),  // 高流動性
-            market_cap: None,
-        },
-    ];
-
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("high_liquidity_good_return"), price(0.18)); // 18%
-    predictions.insert(token_out("medium_liquidity_medium_return"), price(0.12)); // 12%
-    predictions.insert(token_out("low_liquidity_high_risk"), price(0.25)); // 25% - 高リターンだが高リスク
-    predictions.insert(token_out("good_liquidity_stable"), price(0.14)); // 14%
-
-    let history = create_sample_price_history();
-
-    println!("Testing liquidity-based performance improvement...");
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
-
-    println!("Selected {} tokens:", selected.len());
-    for token in &selected {
-        let expected_return = predictions.get(&token.symbol).map(|pred_price| {
-            let current_price = token.current_rate.to_price();
-            current_price.expected_return(pred_price) * 100.0
-        });
-        println!(
-            "  - {} (volatility: {:.3}, liquidity: {:?}, predicted_return: {}%)",
-            token.symbol,
-            token.historical_volatility,
-            token.liquidity_score,
-            expected_return
-                .map(|r| format!("{:.1}", r))
-                .unwrap_or("N/A".to_string())
-        );
-    }
-
-    // 低流動性の高リスクトークンが除外されることを確認
-    assert!(
-        !selected
-            .iter()
-            .any(|t| t.symbol == token_out("low_liquidity_high_risk")),
-        "低流動性高リスクトークンは選択されないべき"
-    );
-
-    // 高流動性トークンが選ばれることを確認
-    assert!(
-        selected
-            .iter()
-            .any(|t| t.symbol == token_out("high_liquidity_good_return")),
-        "高流動性トークンが選ばれるべき"
-    );
-
-    assert!(
-        selected
-            .iter()
-            .any(|t| t.symbol == token_out("good_liquidity_stable")),
-        "安定した高流動性トークンが選ばれるべき"
-    );
-
-    // 選択されたトークンの平均予測リターンを計算
-    let selected_avg_return: f64 = selected
-        .iter()
-        .filter_map(|t| {
-            predictions.get(&t.symbol).map(|pred_price| {
-                let current_price = t.current_rate.to_price();
-                current_price.expected_return(pred_price)
-            })
-        })
-        .sum::<f64>()
-        / selected.len() as f64;
-
-    // フィルタされたトークンの平均リターンを計算
-    let _filtered_predictions: Vec<f64> = selected
-        .iter()
-        .filter_map(|t| {
-            predictions.get(&t.symbol).map(|pred_price| {
-                let current_price = t.current_rate.to_price();
-                current_price.expected_return(pred_price)
-            })
-        })
-        .collect();
-
-    // 低流動性トークンを除外することで、リスク調整後リターンが改善される
-    println!(
-        "Selected tokens average return: {:.1}%",
-        selected_avg_return * 100.0
-    );
-
-    // 選択されたトークンにlow_liquidity_high_riskが含まれていないことで、
-    // より安定したポートフォリオが構築される
-    assert!(
-        selected_avg_return > 0.10,
-        "平均リターンは10%以上であるべき"
-    );
-}
-
-#[test]
-fn test_actual_token_data_simulation() {
-    // 実際のシミュレーションで使われるTokenDataの特徴を模擬
-    // liquidity_score = Some(0.8), market_cap = None
-    let tokens = vec![
-        TokenData {
-            symbol: token_out("excellent_performer"),
-            current_rate: rate_from_price(0.001),
-            historical_volatility: 0.1, // 低ボラティリティ
-            liquidity_score: Some(0.8), // 実際のデフォルト値
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("good_performer"),
-            current_rate: rate_from_price(0.00125),
-            historical_volatility: 0.15,
-            liquidity_score: Some(0.8),
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("average_performer"),
-            current_rate: rate_from_price(1.0 / 600.0),
-            historical_volatility: 0.25,
-            liquidity_score: Some(0.8),
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("poor_performer"),
-            current_rate: rate_from_price(0.0025),
-            historical_volatility: 0.4, // 高ボラティリティ
-            liquidity_score: Some(0.8),
-            market_cap: None,
-        },
-    ];
-
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("excellent_performer"), price(0.20)); // 20%
-    predictions.insert(token_out("good_performer"), price(0.15)); // 15%
-    predictions.insert(token_out("average_performer"), price(0.10)); // 10%
-    predictions.insert(token_out("poor_performer"), price(0.05)); // 5%
-
-    let history = create_sample_price_history();
-
-    println!("Testing with actual simulation data characteristics...");
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 10, None);
-
-    println!("Selected {} tokens:", selected.len());
-    for token in &selected {
-        let predicted_return = predictions
-            .get(&token.symbol)
-            .map(|pred_price| {
-                let current_price = token.current_rate.to_price();
-                current_price.expected_return(pred_price)
-            })
-            .unwrap_or(0.0);
-        println!(
-            "  - {} (volatility: {:.3}, liquidity: {:?}, predicted: {:.1}%)",
-            token.symbol,
-            token.historical_volatility,
-            token.liquidity_score,
-            predicted_return * 100.0
-        );
-    }
-
-    // 全トークンが同じ流動性（0.8）を持つ場合の選択ロジックをテスト
-    // この場合、スコアリングは主にシャープレシオとボラティリティランクで決まる
-
-    // 選択されたトークンの予測リターンを確認
-    let selected_returns: Vec<f64> = selected
-        .iter()
-        .filter_map(|t| {
-            predictions.get(&t.symbol).map(|pred_price| {
-                let current_price = t.current_rate.to_price();
-                current_price.expected_return(pred_price)
-            })
-        })
-        .collect();
-
-    let avg_selected_return = selected_returns.iter().sum::<f64>() / selected_returns.len() as f64;
-    let all_returns: Vec<f64> = tokens
-        .iter()
-        .filter_map(|t| {
-            predictions.get(&t.symbol).map(|pred_price| {
-                let current_price = t.current_rate.to_price();
-                current_price.expected_return(pred_price)
-            })
-        })
-        .collect();
-    let avg_all_return = all_returns.iter().sum::<f64>() / all_returns.len() as f64;
-
-    println!(
-        "Average selected return: {:.1}%",
-        avg_selected_return * 100.0
-    );
-    println!("Average all return: {:.1}%", avg_all_return * 100.0);
-
-    // 実際の状況では、高パフォーマンストークンが選ばれているか確認
-    assert!(
-        selected
-            .iter()
-            .any(|t| t.symbol == token_out("excellent_performer")),
-        "最高パフォーマンストークンが選ばれるべき"
-    );
-}
-
-#[test]
-fn test_token_selection_off_vs_on() {
-    // トークン選択あり/なしの比較テスト
-    let tokens = vec![
-        TokenData {
-            symbol: token_out("good_token"),
-            current_rate: rate_from_price(0.001),
-            historical_volatility: 0.12,
-            liquidity_score: Some(0.9),
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("bad_token1"),
-            current_rate: rate_from_price(0.002),
-            historical_volatility: 0.6,  // 非常に高いボラティリティ
-            liquidity_score: Some(0.05), // 低流動性
-            market_cap: None,
-        },
-        TokenData {
-            symbol: token_out("bad_token2"),
-            current_rate: rate_from_price(1.0 / 300.0),
-            historical_volatility: 0.8,
-            liquidity_score: Some(0.03),
-            market_cap: None,
-        },
-    ];
-
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("good_token"), price(0.15));
-    predictions.insert(token_out("bad_token1"), price(0.12));
-    predictions.insert(token_out("bad_token2"), price(0.10));
-
-    let history = create_sample_price_history();
-
-    // 選択ありの場合
-    let selected = select_optimal_tokens(&tokens, &predictions, &history, 3, None);
-    println!("With selection: {} tokens selected", selected.len());
-    for token in &selected {
-        println!(
-            "  - {} (liquidity: {:?})",
-            token.symbol, token.liquidity_score
-        );
-    }
-
-    // 選択なしの場合（全トークンを使用）
-    let all_selected = tokens.clone();
-    println!("Without selection: {} tokens (all)", all_selected.len());
-
-    // フィルタリングによって低品質トークンが除外されるかテスト
-    let good_tokens_count = selected
-        .iter()
-        .filter(|t| t.symbol == token_out("good_token"))
-        .count();
-    let bad_tokens_count = selected
-        .iter()
-        .filter(|t| t.symbol.to_string().starts_with("bad_token"))
-        .count();
-
-    println!("Good tokens selected: {}", good_tokens_count);
-    println!("Bad tokens selected: {}", bad_tokens_count);
-
-    // 低流動性トークンが適切にフィルタされることを確認
-    assert_eq!(good_tokens_count, 1, "good_tokenは選ばれるべき");
-    assert_eq!(bad_tokens_count, 0, "bad_tokensは選ばれないべき");
 }
 
 #[test]
@@ -3708,41 +2973,6 @@ fn test_issue3_analytical_sharpe_dominant_asset() {
     );
 }
 
-/// Issue 5: calculate_std_dev と calculate_covariance が両方とも標本標準偏差 (n-1) を使用することを検証
-/// [修正済み] calculate_std_dev を /(n-1) に変更済み
-#[test]
-fn test_issue5_std_dev_population_vs_sample_inconsistency() {
-    let returns = vec![0.05, -0.03, 0.08, -0.01]; // n=4
-
-    // calculate_std_dev: 標本 (/(n-1)) — 修正済み
-    let std_dev = calculate_std_dev(&returns);
-
-    // calculate_covariance の対角要素: 標本 (/(n-1))
-    let cov_self = calculate_covariance(&returns, &returns);
-    let std_from_cov = cov_self.sqrt();
-
-    println!("calculate_std_dev: {std_dev}");
-    println!("sqrt(calculate_covariance): {std_from_cov}");
-    println!("Ratio: {:.4}", std_from_cov / std_dev);
-
-    // 修正後: 両方とも標本標準偏差 (/(n-1)) を使用するため一致する
-    let ratio = std_from_cov / std_dev;
-    assert!(
-        (ratio - 1.0).abs() < 0.001,
-        "calculate_std_dev と calculate_covariance の標準偏差が一致すること: ratio={ratio:.4}"
-    );
-
-    // n=1 のエッジケース: 標本標準偏差は定義不能のため 0.0
-    let single = vec![0.05];
-    let std_single = calculate_std_dev(&single);
-    assert_eq!(std_single, 0.0, "n=1 の場合は 0.0 を返す");
-
-    // n=0 のエッジケース
-    let empty: Vec<f64> = vec![];
-    let std_empty = calculate_std_dev(&empty);
-    assert_eq!(std_empty, 0.0, "n=0 の場合は 0.0 を返す");
-}
-
 /// Issue 8: apply_constraints の最終正規化で sum=1.0 が保証されることを検証
 /// [修正済み] clamp+normalize の収束ループに変更済み
 #[test]
@@ -3815,95 +3045,6 @@ fn test_issue9_covariance_length_mismatch_trims_to_shorter() {
     // 長さ1以下なら 0.0
     let too_short = vec![0.01];
     assert_eq!(calculate_covariance(&returns1, &too_short), 0.0);
-}
-
-/// Issue 10: 価格履歴の長さ不一致でも正しい相関が計算されることを検証
-/// [修正済み] 短い方の長さに合わせて末尾（最新データ）を優先
-#[test]
-fn test_issue10_correlation_length_mismatch_trims_to_shorter() {
-    use std::collections::HashMap;
-
-    let base_time = Utc::now() - Duration::days(10);
-
-    // token-a: 10日分のデータ（線形上昇）
-    // token-b: 5日分のデータ（同じ線形上昇）
-    let history = vec![
-        PriceHistory {
-            token: token_out("token-a"),
-            quote_token: token_in("wrap.near"),
-            prices: (0..10)
-                .map(|i| PricePoint {
-                    timestamp: base_time + Duration::days(i),
-                    price: price(100.0 + i as f64),
-                    volume: None,
-                })
-                .collect(),
-        },
-        PriceHistory {
-            token: token_out("token-b"),
-            quote_token: token_in("wrap.near"),
-            prices: (0..5)
-                .map(|i| PricePoint {
-                    timestamp: base_time + Duration::days(i),
-                    price: price(100.0 + i as f64), // 同じ動き
-                    volume: None,
-                })
-                .collect(),
-        },
-    ];
-
-    // テスト用の相関計算ヘルパー（select_uncorrelated_tokens 内のロジックと同等）
-    fn test_calculate_correlation(
-        token1: &str,
-        token2: &str,
-        historical_prices: &[PriceHistory],
-    ) -> f64 {
-        let price_index: HashMap<String, &PriceHistory> = historical_prices
-            .iter()
-            .map(|p| (p.token.to_string(), p))
-            .collect();
-
-        let p1 = match price_index.get(token1) {
-            Some(p) => p,
-            None => return 0.0,
-        };
-        let p2 = match price_index.get(token2) {
-            Some(p) => p,
-            None => return 0.0,
-        };
-
-        let returns1 = calculate_returns_from_prices(&p1.prices);
-        let returns2 = calculate_returns_from_prices(&p2.prices);
-
-        // 長さが異なる場合は末尾（最新データ）を優先してトリミング
-        let min_len = returns1.len().min(returns2.len());
-        if min_len < 2 {
-            return 0.0;
-        }
-
-        let r1 = &returns1[returns1.len() - min_len..];
-        let r2 = &returns2[returns2.len() - min_len..];
-
-        // トリミング後のスライスで標準偏差を計算
-        let std1 = calculate_std_dev(r1);
-        let std2 = calculate_std_dev(r2);
-
-        if std1 <= 0.0 || std2 <= 0.0 {
-            return 0.0;
-        }
-
-        let correlation = calculate_covariance(r1, r2) / (std1 * std2);
-        correlation.clamp(-1.0, 1.0)
-    }
-
-    let corr = test_calculate_correlation("token-a", "token-b", &history);
-
-    // 修正後: 短い方に合わせてトリミングし、同じ動きなら高相関
-    println!("Correlation (mismatched lengths, trimmed): {corr}");
-    assert!(
-        corr > 0.9,
-        "同じ動きのトークンはデータ長が違っても高相関: {corr}"
-    );
 }
 
 /// generate_rebalance_actions は Rebalance アクションのみを生成する
@@ -4465,142 +3606,6 @@ fn test_maximize_sharpe_ratio_parallel_determinism() {
     }
 }
 
-/// select_uncorrelated_tokens の HashMap キャッシュが正しく機能することを検証
-#[test]
-fn test_select_uncorrelated_tokens_cache_correctness() {
-    let base_time = Utc::now() - Duration::days(30);
-
-    // 5つのトークンを作成
-    let tokens = (0..5)
-        .map(|i| TokenData {
-            symbol: token_out(&format!("token-{}", i)),
-            current_rate: rate_from_price(0.01 + i as f64 * 0.001),
-            historical_volatility: 0.1 + i as f64 * 0.05,
-            liquidity_score: Some(0.8 - i as f64 * 0.1),
-            market_cap: Some(cap(100000)),
-        })
-        .collect::<Vec<_>>();
-
-    // 価格履歴を作成（相関の異なるパターン）
-    let historical_prices: BTreeMap<TokenOutAccount, PriceHistory> = (0..5)
-        .map(|i| {
-            let multiplier = if i % 2 == 0 { 1.0 } else { -1.0 }; // 偶数は正相関、奇数は負相関
-            let ph = PriceHistory {
-                token: token_out(&format!("token-{}", i)),
-                quote_token: token_in("wrap.near"),
-                prices: (0..20)
-                    .map(|day| PricePoint {
-                        timestamp: base_time + Duration::days(day),
-                        price: price(100.0 + multiplier * (day as f64 * 0.5)),
-                        volume: None,
-                    })
-                    .collect(),
-            };
-            (ph.token.clone(), ph)
-        })
-        .collect();
-
-    // select_optimal_tokens を通じて select_uncorrelated_tokens をテスト
-    let predictions: BTreeMap<TokenOutAccount, TokenPrice> = tokens
-        .iter()
-        .map(|t| (t.symbol.clone(), price(110.0)))
-        .collect();
-
-    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5, None);
-
-    // 少なくとも1つのトークンが選択されることを確認
-    assert!(
-        !selected.is_empty(),
-        "At least one token should be selected"
-    );
-
-    // 同じ入力で複数回実行して結果が一貫することを確認
-    for _ in 0..5 {
-        let selected_again =
-            select_optimal_tokens(&tokens, &predictions, &historical_prices, 5, None);
-        assert_eq!(
-            selected.len(),
-            selected_again.len(),
-            "Same input should produce same number of selected tokens"
-        );
-        for (s1, s2) in selected.iter().zip(selected_again.iter()) {
-            assert_eq!(
-                s1.symbol, s2.symbol,
-                "Same input should select same tokens in same order"
-            );
-        }
-    }
-}
-
-/// 相関キャッシュが異なる長さの価格履歴を正しく処理することを検証
-#[test]
-fn test_correlation_cache_handles_different_lengths() {
-    let base_time = Utc::now() - Duration::days(30);
-
-    // 異なる長さの価格履歴を持つトークン
-    let tokens = vec![
-        TokenData {
-            symbol: token_out("token-long"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: 0.15,
-            liquidity_score: Some(0.9),
-            market_cap: Some(cap(100000)),
-        },
-        TokenData {
-            symbol: token_out("token-short"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: 0.15,
-            liquidity_score: Some(0.8),
-            market_cap: Some(cap(100000)),
-        },
-    ];
-
-    // 長い価格履歴（30日分）
-    let long_prices: Vec<PricePoint> = (0..30)
-        .map(|day| PricePoint {
-            timestamp: base_time + Duration::days(day),
-            price: price(100.0 + day as f64 * 0.5),
-            volume: None,
-        })
-        .collect();
-
-    // 短い価格履歴（10日分、同じパターン）
-    let short_prices: Vec<PricePoint> = (0..10)
-        .map(|day| PricePoint {
-            timestamp: base_time + Duration::days(day),
-            price: price(100.0 + day as f64 * 0.5),
-            volume: None,
-        })
-        .collect();
-
-    let historical_prices: BTreeMap<TokenOutAccount, PriceHistory> = [
-        PriceHistory {
-            token: token_out("token-long"),
-            quote_token: token_in("wrap.near"),
-            prices: long_prices,
-        },
-        PriceHistory {
-            token: token_out("token-short"),
-            quote_token: token_in("wrap.near"),
-            prices: short_prices,
-        },
-    ]
-    .into_iter()
-    .map(|ph| (ph.token.clone(), ph))
-    .collect();
-
-    let predictions: BTreeMap<TokenOutAccount, TokenPrice> = tokens
-        .iter()
-        .map(|t| (t.symbol.clone(), price(110.0)))
-        .collect();
-
-    // 異なる長さでもパニックせずに処理できることを確認
-    let selected = select_optimal_tokens(&tokens, &predictions, &historical_prices, 2, None);
-
-    // 両方のトークンが候補として考慮される
-    assert!(!selected.is_empty(), "Should select at least one token");
-}
-
 /// 大量のトークンでの並行処理が正しく動作することを検証
 #[test]
 fn test_covariance_matrix_large_input() {
@@ -4641,47 +3646,6 @@ fn test_covariance_matrix_large_input() {
             "Diagonal element [{i},{i}] should be positive"
         );
     }
-}
-
-/// 異なる prediction_confidence で異なるスコアが得られることを検証
-#[test]
-fn test_token_score_varies_with_confidence() {
-    let token = &create_sample_tokens()[0];
-    let predictions = create_sample_predictions();
-    let history = create_sample_price_history();
-    let volatilities: Vec<f64> = {
-        let mut v: Vec<f64> = create_sample_tokens()
-            .iter()
-            .map(|t| t.historical_volatility)
-            .collect();
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        v
-    };
-
-    let score_high = calculate_token_score(
-        token,
-        predictions.get(&token.symbol),
-        &history,
-        &volatilities,
-        Some(0.9),
-    );
-    let score_low = calculate_token_score(
-        token,
-        predictions.get(&token.symbol),
-        &history,
-        &volatilities,
-        Some(0.1),
-    );
-
-    // 高 confidence と低 confidence で composite score が異なる
-    assert!(
-        (score_high.composite_score - score_low.composite_score).abs() > 1e-6,
-        "scores should differ: high={}, low={}",
-        score_high.composite_score,
-        score_low.composite_score
-    );
-    assert!((score_high.prediction_confidence - 0.9).abs() < 1e-6);
-    assert!((score_low.prediction_confidence - 0.1).abs() < 1e-6);
 }
 
 /// BigDecimal → f64 変換で ToPrimitive 経由の精度が保たれることを検証
@@ -4822,85 +3786,6 @@ async fn test_price_history_alignment_with_selected_tokens() {
     }
 }
 
-/// NaN ボラティリティでも calculate_token_score がパニックしないことを検証
-#[test]
-fn test_nan_volatility_no_panic() {
-    let token = TokenData {
-        symbol: token_out("token-nan"),
-        current_rate: rate_from_price(0.01),
-        historical_volatility: f64::NAN,
-        liquidity_score: Some(0.8),
-        market_cap: Some(cap(100_000)),
-    };
-
-    let volatilities = vec![0.1, f64::NAN, 0.3];
-    let historical_prices = BTreeMap::new();
-
-    // NaN を含むボラティリティでもパニックしない
-    let score = calculate_token_score(&token, None, &historical_prices, &volatilities, None);
-    assert!(score.composite_score.is_finite());
-}
-
-/// NaN composite_score でも select_optimal_tokens がパニックしないことを検証
-#[test]
-fn test_nan_composite_score_sort_no_panic() {
-    let base_time = Utc::now() - Duration::days(10);
-
-    let tokens = vec![
-        TokenData {
-            symbol: token_out("tok-a.near"),
-            current_rate: rate_from_price(0.01),
-            historical_volatility: f64::NAN,
-            liquidity_score: Some(0.8),
-            market_cap: Some(cap(100_000)),
-        },
-        TokenData {
-            symbol: token_out("tok-b.near"),
-            current_rate: rate_from_price(0.02),
-            historical_volatility: 0.2,
-            liquidity_score: Some(0.7),
-            market_cap: Some(cap(200_000)),
-        },
-    ];
-
-    let predictions = BTreeMap::new();
-
-    let prices_a: Vec<PricePoint> = (0..10)
-        .map(|i| PricePoint {
-            timestamp: base_time + Duration::days(i),
-            price: price(10.0 + i as f64),
-            volume: None,
-        })
-        .collect();
-    let prices_b: Vec<PricePoint> = (0..10)
-        .map(|i| PricePoint {
-            timestamp: base_time + Duration::days(i),
-            price: price(20.0 + i as f64),
-            volume: None,
-        })
-        .collect();
-
-    let historical_prices: BTreeMap<TokenOutAccount, PriceHistory> = [
-        PriceHistory {
-            token: token_out("tok-a.near"),
-            quote_token: token_in("wrap.near"),
-            prices: prices_a,
-        },
-        PriceHistory {
-            token: token_out("tok-b.near"),
-            quote_token: token_in("wrap.near"),
-            prices: prices_b,
-        },
-    ]
-    .into_iter()
-    .map(|ph| (ph.token.clone(), ph))
-    .collect();
-
-    // NaN ボラティリティのトークンがあってもパニックしない
-    let result = select_optimal_tokens(&tokens, &predictions, &historical_prices, 5, None);
-    assert!(!result.is_empty());
-}
-
 /// ゼロ重みが含まれる場合に apply_risk_parity が Inf/NaN を生成しないことを検証
 #[test]
 fn test_apply_risk_parity_zero_weight_no_inf() {
@@ -5019,8 +3904,7 @@ fn test_ledoit_wolf_identity_target() {
     let returns = generate_synthetic_returns(5, 30, 42);
     let sample_cov = {
         let n = returns.len();
-        let pairs: Vec<(usize, usize)> =
-            (0..n).flat_map(|i| (i..n).map(move |j| (i, j))).collect();
+        let pairs: Vec<(usize, usize)> = (0..n).flat_map(|i| (i..n).map(move |j| (i, j))).collect();
         let mut cov = ndarray::Array2::zeros((n, n));
         for (i, j) in pairs {
             let c = calculate_covariance(&returns[i], &returns[j]);
@@ -5115,10 +3999,7 @@ fn test_ledoit_wolf_backward_compat() {
     }
 
     // 差分はサンプル共分散のスケールに比べて小さい
-    let max_cov = sample_cov
-        .iter()
-        .map(|v| v.abs())
-        .fold(0.0_f64, f64::max);
+    let max_cov = sample_cov.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
     assert!(
         max_diff < max_cov * 0.5,
         "With n<T, shrinkage should be moderate: max_diff={}, max_cov={}",
@@ -5177,12 +4058,7 @@ fn test_box_sharpe_basic() {
 
     // 全 w_i ∈ [0, max_position]
     for (i, &w) in weights.iter().enumerate() {
-        assert!(
-            w >= -1e-10,
-            "Weight {} must be non-negative: {}",
-            i,
-            w
-        );
+        assert!(w >= -1e-10, "Weight {} must be non-negative: {}", i, w);
         assert!(
             w <= max_pos + 1e-8,
             "Weight {} exceeds max_position: {} > {}",
@@ -5220,9 +4096,7 @@ fn test_box_sharpe_backward_compat() {
 fn test_box_sharpe_n100() {
     let returns = generate_synthetic_returns(100, 29, 505);
     let cov = calculate_covariance_matrix(&returns);
-    let expected_returns: Vec<f64> = (0..100)
-        .map(|i| 0.01 + (i as f64) * 0.0005)
-        .collect();
+    let expected_returns: Vec<f64> = (0..100).map(|i| 0.01 + (i as f64) * 0.0005).collect();
     let max_pos = 0.3;
 
     let weights = box_maximize_sharpe(&expected_returns, &cov, max_pos);
@@ -5283,9 +4157,13 @@ fn test_box_rp_n100() {
 #[test]
 fn test_extract_sub_portfolio() {
     let returns = vec![0.01, 0.02, 0.03, 0.04, 0.05];
-    let cov = ndarray::Array2::from_shape_fn((5, 5), |(i, j)| {
-        if i == j { 0.01 * (i + 1) as f64 } else { 0.001 }
-    });
+    let cov =
+        ndarray::Array2::from_shape_fn(
+            (5, 5),
+            |(i, j)| {
+                if i == j { 0.01 * (i + 1) as f64 } else { 0.001 }
+            },
+        );
     let indices = vec![1, 3];
 
     let (sub_ret, sub_cov) = extract_sub_portfolio(&returns, &cov, &indices);
@@ -5300,9 +4178,7 @@ fn test_extract_sub_portfolio() {
 /// RC 均等度の計算
 #[test]
 fn test_risk_parity_divergence() {
-    let cov = ndarray::Array2::from_shape_fn((3, 3), |(i, j)| {
-        if i == j { 0.01 } else { 0.002 }
-    });
+    let cov = ndarray::Array2::from_shape_fn((3, 3), |(i, j)| if i == j { 0.01 } else { 0.002 });
 
     // 等配分は均等な共分散行列で完全 RP → 乖離度 ≈ 0
     let equal_w = vec![1.0 / 3.0; 3];
@@ -5407,20 +4283,10 @@ fn test_unified_small_n() {
 fn test_unified_medium_n() {
     let returns = generate_synthetic_returns(10, 29, 909);
     let cov = calculate_covariance_matrix(&returns);
-    let expected_returns: Vec<f64> = (0..10)
-        .map(|i| 0.01 + (i as f64) * 0.005)
-        .collect();
+    let expected_returns: Vec<f64> = (0..10).map(|i| 0.01 + (i as f64) * 0.005).collect();
     let liquidity = vec![0.8; 10];
 
-    let weights = unified_optimize(
-        &expected_returns,
-        &cov,
-        &liquidity,
-        0.4,
-        6,
-        0.05,
-        0.8,
-    );
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.8);
 
     assert_eq!(weights.len(), 10);
     let sum: f64 = weights.iter().sum();
@@ -5428,7 +4294,11 @@ fn test_unified_medium_n() {
 
     // max_holdings=6 なので非ゼロは最大6個
     let non_zero = weights.iter().filter(|&&w| w > 1e-10).count();
-    assert!(non_zero <= 6, "Non-zero count exceeds max_holdings: {}", non_zero);
+    assert!(
+        non_zero <= 6,
+        "Non-zero count exceeds max_holdings: {}",
+        non_zero
+    );
 }
 
 /// n=50 での動作・計算時間
@@ -5436,21 +4306,11 @@ fn test_unified_medium_n() {
 fn test_unified_large_n() {
     let returns = generate_synthetic_returns(50, 29, 1010);
     let cov = calculate_covariance_matrix(&returns);
-    let expected_returns: Vec<f64> = (0..50)
-        .map(|i| 0.01 + (i as f64) * 0.001)
-        .collect();
+    let expected_returns: Vec<f64> = (0..50).map(|i| 0.01 + (i as f64) * 0.001).collect();
     let liquidity = vec![0.8; 50];
 
     let start = std::time::Instant::now();
-    let weights = unified_optimize(
-        &expected_returns,
-        &cov,
-        &liquidity,
-        0.4,
-        6,
-        0.05,
-        0.8,
-    );
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.8);
     let elapsed = start.elapsed();
 
     assert_eq!(weights.len(), 50);
@@ -5470,9 +4330,7 @@ fn test_unified_large_n() {
 fn test_unified_all_constraints_satisfied() {
     let returns = generate_synthetic_returns(15, 29, 1111);
     let cov = calculate_covariance_matrix(&returns);
-    let expected_returns: Vec<f64> = (0..15)
-        .map(|i| 0.01 + (i as f64) * 0.003)
-        .collect();
+    let expected_returns: Vec<f64> = (0..15).map(|i| 0.01 + (i as f64) * 0.003).collect();
     let liquidity = vec![0.8; 15];
     let max_pos = 0.35;
     let max_hold = 6;
@@ -5495,12 +4353,23 @@ fn test_unified_all_constraints_satisfied() {
     // box 制約
     for (i, &w) in weights.iter().enumerate() {
         assert!(w >= -1e-10, "Negative at {}: {}", i, w);
-        assert!(w <= max_pos + 1e-6, "Exceeds max at {}: {} > {}", i, w, max_pos);
+        assert!(
+            w <= max_pos + 1e-6,
+            "Exceeds max at {}: {} > {}",
+            i,
+            w,
+            max_pos
+        );
     }
 
     // max_holdings 制約
     let non_zero = weights.iter().filter(|&&w| w > 1e-10).count();
-    assert!(non_zero <= max_hold, "Non-zero {} > max_holdings {}", non_zero, max_hold);
+    assert!(
+        non_zero <= max_hold,
+        "Non-zero {} > max_holdings {}",
+        non_zero,
+        max_hold
+    );
 
     // min_position_size 制約
     for &w in &weights {
@@ -5522,20 +4391,12 @@ fn test_pruning_union_preserves_top_tokens() {
     let cov = calculate_covariance_matrix(&returns);
     // トークン 15-19 に極端に高いリターンを設定
     let mut expected_returns: Vec<f64> = vec![0.01; 20];
-    for i in 15..20 {
-        expected_returns[i] = 0.10;
+    for item in expected_returns.iter_mut().take(20).skip(15) {
+        *item = 0.10;
     }
     let liquidity = vec![0.8; 20];
 
-    let weights = unified_optimize(
-        &expected_returns,
-        &cov,
-        &liquidity,
-        0.4,
-        6,
-        0.05,
-        0.8,
-    );
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.8);
 
     // 高リターンのトークン群に重みが集中すべき
     let top_weight: f64 = weights[15..20].iter().sum();
@@ -5593,15 +4454,7 @@ fn test_min_position_reoptimization() {
         .collect();
     let liquidity = vec![0.8; 12];
 
-    let weights = unified_optimize(
-        &expected_returns,
-        &cov,
-        &liquidity,
-        0.4,
-        6,
-        0.05,
-        0.9,
-    );
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.9);
 
     let sum: f64 = weights.iter().sum();
     assert!((sum - 1.0).abs() < 1e-6, "Sum={}", sum);
@@ -5609,11 +4462,7 @@ fn test_min_position_reoptimization() {
     // 全非ゼロ重みが min_position_size 以上
     for &w in &weights {
         if w > 1e-10 {
-            assert!(
-                w >= 0.05 - 1e-6,
-                "Weight {} below min_position_size",
-                w
-            );
+            assert!(w >= 0.05 - 1e-6, "Weight {} below min_position_size", w);
         }
     }
 }
@@ -5626,26 +4475,10 @@ fn test_composite_score_consistency() {
     let expected_returns: Vec<f64> = vec![0.02, 0.05, 0.01, 0.04, 0.03, 0.06, 0.015, 0.035];
 
     // alpha=1.0: Sharpe のみ
-    let w_sharpe_only = unified_optimize(
-        &expected_returns,
-        &cov,
-        &vec![0.8; 8],
-        0.4,
-        6,
-        0.05,
-        1.0,
-    );
+    let w_sharpe_only = unified_optimize(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, 1.0);
 
     // alpha=0.0: RP のみ
-    let w_rp_only = unified_optimize(
-        &expected_returns,
-        &cov,
-        &vec![0.8; 8],
-        0.4,
-        6,
-        0.05,
-        0.0,
-    );
+    let w_rp_only = unified_optimize(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, 0.0);
 
     // 両方とも有効な重み
     let sum_s: f64 = w_sharpe_only.iter().sum();
