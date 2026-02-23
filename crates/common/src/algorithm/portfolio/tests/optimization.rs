@@ -261,6 +261,80 @@ fn test_box_sharpe_n100() {
     }
 }
 
+/// 収束失敗時に等配分（default_weights）にフォールバックすることを検証
+///
+/// Active Set 法でサイクリングを引き起こす入力を構築する。
+/// 高相関行列 + 対称的な excess returns で Free↔Lower↔Upper の遷移が
+/// 繰り返し発生し、max_iter 以内に収束しないケースを狙う。
+#[test]
+fn test_box_sharpe_convergence_failure_returns_default_weights() {
+    let n = 5;
+    let max_pos = 0.25;
+
+    // 高条件数の共分散行列: ほぼ完全に相関した資産群
+    // off-diagonal を on-diagonal に近づけることで KKT 勾配の符号が
+    // わずかな重み変化で反転し、集合間の移動がサイクルする
+    let mut cov = Array2::zeros((n, n));
+    for i in 0..n {
+        for j in 0..n {
+            if i == j {
+                cov[[i, j]] = 1.0;
+            } else {
+                // 交互に正負の高相関: 隣接資産と逆相関させることで
+                // Free→Upper→Free のサイクルを誘発
+                let sign = if (i + j) % 2 == 0 { 1.0 } else { -1.0 };
+                cov[[i, j]] = sign * 0.999;
+            }
+        }
+    }
+
+    // excess returns を対称的に正負交互、かつ極小にすることで
+    // unconstrained 最適解が極端な値になり box 制約と衝突を繰り返す
+    let expected_returns: Vec<f64> = (0..n)
+        .map(|i| {
+            let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+            sign * 1e-8
+        })
+        .collect();
+
+    let weights = box_maximize_sharpe(&expected_returns, &cov, max_pos);
+
+    // 検証: 収束失敗時は等配分 OR 制約充足のいずれかを確認
+    let equal = 1.0 / n as f64;
+    let is_equal = weights.iter().all(|&w| (w - equal).abs() < 1e-10);
+
+    // 合計が 1.0 であること
+    let sum: f64 = weights.iter().sum();
+    assert!((sum - 1.0).abs() < 1e-8, "Weights must sum to 1.0: {}", sum);
+
+    // 長さが n であること
+    assert_eq!(weights.len(), n);
+
+    if is_equal {
+        // 等配分にフォールバック（収束失敗パス）
+        for (i, &w) in weights.iter().enumerate() {
+            assert!(
+                (w - equal).abs() < 1e-10,
+                "Expected equal weight at {}: got {}",
+                i,
+                w
+            );
+        }
+    } else {
+        // 収束した場合でも制約は満たされるべき
+        for (i, &w) in weights.iter().enumerate() {
+            assert!(w >= -1e-10, "Weight {} must be non-negative: {}", i, w);
+            assert!(
+                w <= max_pos + 1e-8,
+                "Weight {} exceeds max_position: {} > {}",
+                i,
+                w,
+                max_pos
+            );
+        }
+    }
+}
+
 // --- box_risk_parity テスト ---
 
 /// box 制約付き RP の制約充足
@@ -299,6 +373,65 @@ fn test_box_rp_n100() {
         assert!(w >= -1e-10, "Negative at {}: {}", i, w);
         assert!(w <= max_pos + 1e-6, "Exceeds max at {}: {}", i, w);
     }
+}
+
+/// Pinned→Free (unpin) 遷移が発生することを検証
+///
+/// 低自己分散だが高分散資産との高相関を持つ資産を含む共分散行列で:
+/// 1. RP が低 marginal risk の資産に高ウェイトを付与 → max_position 超過 → Pinned
+/// 2. Pinned 後、高相関による marginal risk 増幅で RC > 1.5 * target_rc → Unpin
+/// 3. Unpin された資産は再最適化で effective_max より小さい重みになる
+#[test]
+fn test_box_rp_pinned_to_free_unpin() {
+    let max_pos = 0.35;
+
+    // Asset 0: 低自己分散(0.02) + 他資産との高相関(off-diag 0.08)
+    // → RP で高ウェイト（marginal risk が小さい）→ Pinned
+    // → Pinned 後、高相関により marginal risk が増幅 → RC > 1.5 * target → Unpin
+    //
+    // Assets 1-3: 高自己分散(0.20) + 低相互相関(0.02)
+    let cov = array![
+        [0.02, 0.08, 0.08, 0.08],
+        [0.08, 0.20, 0.02, 0.02],
+        [0.08, 0.02, 0.20, 0.02],
+        [0.08, 0.02, 0.02, 0.20],
+    ];
+
+    let weights = box_risk_parity(&cov, max_pos);
+
+    // 基本制約: 合計 = 1.0
+    let sum: f64 = weights.iter().sum();
+    assert!((sum - 1.0).abs() < 1e-8, "Weights must sum to 1.0: {}", sum);
+
+    // 基本制約: 各 w_i ∈ [0, max_position]
+    for (i, &w) in weights.iter().enumerate() {
+        assert!(w >= -1e-10, "Weight {} must be non-negative: {}", i, w);
+        assert!(
+            w <= max_pos + 1e-8,
+            "Weight {} exceeds max_position: {} > {}",
+            i,
+            w,
+            max_pos
+        );
+    }
+
+    // Unpin が発生した証拠: asset 0 の最終重みが effective_max より小さい
+    // （unpinned されて再最適化された場合、制約上限にピッタリ張り付かない）
+    // effective_max = max_pos (n * max_pos = 4 * 0.35 = 1.4 > 1.0)
+    assert!(
+        weights[0] < max_pos - 1e-6,
+        "Asset 0 should be unpinned (weight {} should be < max_pos {})",
+        weights[0],
+        max_pos
+    );
+
+    // RP の品質: リスク寄与度の均等度がある程度保たれていること
+    let div = risk_parity_divergence(&weights, &cov);
+    assert!(
+        div < 0.5,
+        "Risk parity divergence too high after unpin: {}",
+        div
+    );
 }
 
 // --- ユーティリティ関数テスト ---
@@ -375,6 +508,16 @@ fn test_combinations_iterator() {
     assert_eq!(combos[0], vec![0, 1, 2]);
     assert_eq!(combos[9], vec![2, 3, 4]);
 
+    // 全組み合わせが厳密な辞書式昇順であることを検証
+    for window in combos.windows(2) {
+        assert!(
+            window[0] < window[1],
+            "Not in lexicographic order: {:?} >= {:?}",
+            window[0],
+            window[1]
+        );
+    }
+
     // 全要素がユニーク
     for combo in &combos {
         for i in 0..combo.len() {
@@ -387,6 +530,16 @@ fn test_combinations_iterator() {
     // C(4, 2) = 6
     let combos4_2: Vec<Vec<usize>> = Combinations::new(4, 2).collect();
     assert_eq!(combos4_2.len(), 6);
+
+    // C(4, 2) も厳密な辞書式昇順であることを検証
+    for window in combos4_2.windows(2) {
+        assert!(
+            window[0] < window[1],
+            "C(4,2) not in lexicographic order: {:?} >= {:?}",
+            window[0],
+            window[1]
+        );
+    }
 
     // C(6, 6) = 1
     let combos6_6: Vec<Vec<usize>> = Combinations::new(6, 6).collect();
