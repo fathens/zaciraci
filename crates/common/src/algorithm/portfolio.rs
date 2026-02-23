@@ -4,7 +4,6 @@ use bigdecimal::{BigDecimal, FromPrimitive, RoundingMode, ToPrimitive};
 use chrono::{DateTime, Utc};
 use nalgebra::DMatrix;
 use ndarray::{Array1, Array2};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -132,34 +131,15 @@ pub fn calculate_daily_returns(historical_prices: &[PriceHistory]) -> Vec<Vec<f6
         .collect()
 }
 
-/// 共分散行列を計算（rayon による並列化）
+/// 共分散行列を計算（Ledoit-Wolf 縮小推定）
 pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     let n = daily_returns.len();
     if n == 0 {
         return Array2::zeros((0, 0));
     }
 
-    // 上三角行列のインデックスペア (i, j) where i <= j を生成
-    let pairs: Vec<(usize, usize)> = (0..n).flat_map(|i| (i..n).map(move |j| (i, j))).collect();
-
-    // 並列で共分散を計算
-    let covariances: Vec<(usize, usize, f64)> = pairs
-        .par_iter()
-        .map(|&(i, j)| {
-            let cov = calculate_covariance(&daily_returns[i], &daily_returns[j]);
-            (i, j, cov)
-        })
-        .collect();
-
-    // 結果を行列に格納
-    let mut covariance = Array2::zeros((n, n));
-    for (i, j, cov) in covariances {
-        covariance[[i, j]] = cov;
-        covariance[[j, i]] = cov;
-    }
-
-    // Ledoit-Wolf 縮小推定（固定正則化の代替）
-    let mut covariance = ledoit_wolf_shrink(daily_returns, covariance);
+    // Ledoit-Wolf 縮小推定（内部で T アラインされた sample_cov を計算）
+    let mut covariance = ledoit_wolf_shrink(daily_returns);
 
     // PSD保証: 固有値分解→負の固有値をクランプ→再構成（防御的）
     ensure_positive_semi_definite(&mut covariance);
@@ -172,21 +152,32 @@ pub fn calculate_covariance_matrix(daily_returns: &[Vec<f64>]) -> Array2<f64> {
 /// サンプル共分散行列 S を縮小ターゲット F = (tr(S)/n)·I に向けて最適に縮小する。
 /// Ledoit & Wolf (2004) の解析的縮小係数を使用。
 /// n > T（トークン数 > データ点数）の場合に特に有効。
-fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>], sample_cov: Array2<f64>) -> Array2<f64> {
-    let n = sample_cov.nrows();
+///
+/// S, β̂, F, δ² を全て同一の T 点（= 全系列の共通最小長）データから計算し、
+/// Ledoit-Wolf の i.i.d. 前提条件を満たす。
+fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>]) -> Array2<f64> {
+    let n = daily_returns.len();
     if n <= 1 {
-        return sample_cov;
+        let mut m = Array2::zeros((n, n));
+        if n == 1 && !daily_returns[0].is_empty() {
+            let r = &daily_returns[0];
+            let mean = r.iter().sum::<f64>() / r.len() as f64;
+            let var = r.iter().map(|&v| (v - mean).powi(2)).sum::<f64>()
+                / (r.len() as f64 - 1.0).max(1.0);
+            m[[0, 0]] = var;
+        }
+        return m;
     }
 
     // 全系列の共通最小長を取得（末尾アライン）
     let min_len = daily_returns.iter().map(|r| r.len()).min().unwrap_or(0);
     if min_len < 2 {
-        return sample_cov;
+        return Array2::zeros((n, n));
     }
 
     let t = min_len;
 
-    // 各トークンの平均リターン（アライン済みデータ）
+    // 各トークンの平均リターン（T アライン済みデータ）
     let means: Vec<f64> = (0..n)
         .map(|i| {
             let r = &daily_returns[i];
@@ -194,6 +185,18 @@ fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>], sample_cov: Array2<f64>) -> Ar
             r[start..].iter().sum::<f64>() / t as f64
         })
         .collect();
+
+    // T アラインされたデータからサンプル共分散行列を計算
+    let mut sample_cov = Array2::zeros((n, n));
+    for i in 0..n {
+        for j in i..n {
+            let ri = &daily_returns[i][daily_returns[i].len() - t..];
+            let rj = &daily_returns[j][daily_returns[j].len() - t..];
+            let cov = calculate_covariance(ri, rj);
+            sample_cov[[i, j]] = cov;
+            sample_cov[[j, i]] = cov;
+        }
+    }
 
     // ターゲット: F = (tr(S) / n) · I
     let mu = (0..n).map(|i| sample_cov[[i, i]]).sum::<f64>() / n as f64;

@@ -3740,7 +3740,7 @@ fn test_ledoit_wolf_identity_target() {
         cov
     };
 
-    let result = ledoit_wolf_shrink(&returns, sample_cov.clone());
+    let result = ledoit_wolf_shrink(&returns);
 
     // 結果は正方行列、元と同じサイズ
     assert_eq!(result.shape(), sample_cov.shape());
@@ -3813,7 +3813,7 @@ fn test_ledoit_wolf_backward_compat() {
         }
     }
 
-    let result = ledoit_wolf_shrink(&returns, sample_cov.clone());
+    let result = ledoit_wolf_shrink(&returns);
 
     // n=8, T=29: T > n なのでサンプル共分散はフルランクに近い
     // δ は比較的小さいはず → 結果は sample_cov に近い
