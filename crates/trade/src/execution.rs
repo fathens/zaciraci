@@ -648,6 +648,7 @@ where
                 let harvested_amount = crate::harvest::check_and_execute_harvest(
                     &initial_value,
                     &final_value,
+                    &period_id,
                 )
                 .await
                 .unwrap_or_else(|e| {
@@ -656,6 +657,7 @@ where
                 });
 
                 // ハーベスト後の残高を取得（ハーベスト実行時は REF Finance 残高が変動）
+                // ハーベスト未実行の場合（閾値未達・時間条件・最低額条件等）は清算時の残高をそのまま使用
                 let post_harvest_balance = if !harvested_amount.is_zero() {
                     info!(log, "harvest completed, refreshing balance"; "harvested" => %harvested_amount);
                     let account = wallet.account_id();
