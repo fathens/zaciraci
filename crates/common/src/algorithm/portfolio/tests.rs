@@ -4325,3 +4325,47 @@ fn test_composite_score_consistency() {
         max_w_rp
     );
 }
+
+/// 特異共分散行列で q solve が失敗した場合、等配分にフォールバックする
+#[test]
+fn test_box_maximize_sharpe_singular_cov_returns_equal_weights() {
+    // 全行が同一 → 特異行列
+    let singular = array![[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
+    let returns = vec![0.05, 0.03, 0.04];
+    let weights = box_maximize_sharpe(&returns, &singular, 0.5);
+    // フォールバック時は等配分
+    let expected = 1.0 / 3.0;
+    for (i, &w) in weights.iter().enumerate() {
+        assert!(
+            (w - expected).abs() < 1e-10,
+            "weight[{i}] = {w}, expected {expected}"
+        );
+    }
+}
+
+/// unified_optimize の結果が厳密に合計 1.0 になることを確認
+#[test]
+fn test_unified_optimize_weights_sum_to_one() {
+    let returns = generate_synthetic_returns(6, 30, 4242);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns = vec![0.03, 0.05, 0.02, 0.04, 0.01, 0.06];
+    let liquidity = vec![0.9, 0.7, 0.8, 0.6, 0.85, 0.75];
+
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 4, 0.05, 0.7);
+
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-12,
+        "weights sum = {sum}, expected exactly 1.0"
+    );
+}
+
+/// adjust_returns_for_liquidity に長さ不一致を渡すと debug_assert で panic する
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "expected_returns and liquidity_scores must have the same length")]
+fn test_adjust_returns_for_liquidity_length_mismatch_panics() {
+    let returns = vec![0.01, 0.02, 0.03];
+    let liquidity = vec![0.5, 0.6]; // 長さ不一致
+    let _ = adjust_returns_for_liquidity(&returns, &liquidity);
+}

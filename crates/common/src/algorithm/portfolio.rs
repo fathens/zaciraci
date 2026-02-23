@@ -570,7 +570,10 @@ pub fn box_maximize_sharpe(
                 }
                 cov_fu_wu[fi] = sum;
             }
-            solve(&cov_fu_wu).unwrap_or_else(|| nalgebra::DVector::zeros(m))
+            match solve(&cov_fu_wu) {
+                Some(q) => q,
+                None => return default_weights,
+            }
         };
 
         // ラグランジュ乗数 γ = (budget_F + Σq) / Σp
@@ -989,6 +992,11 @@ fn risk_parity_divergence(weights: &[f64], covariance_matrix: &Array2<f64>) -> f
 /// μ_adj[i] = μ[i] - LIQUIDITY_PENALTY_LAMBDA * (1.0 - liquidity[i])
 /// liquidity が低いほどペナルティが大きい。
 fn adjust_returns_for_liquidity(expected_returns: &[f64], liquidity_scores: &[f64]) -> Vec<f64> {
+    debug_assert_eq!(
+        expected_returns.len(),
+        liquidity_scores.len(),
+        "expected_returns and liquidity_scores must have the same length"
+    );
     expected_returns
         .iter()
         .zip(liquidity_scores.iter())
@@ -1330,7 +1338,7 @@ fn unified_optimize(
     }
 
     // Phase 3: 全列挙による厳密解
-    exhaustive_optimize(
+    let mut weights = exhaustive_optimize(
         &active_indices,
         &adj_returns,
         covariance_matrix,
@@ -1338,7 +1346,10 @@ fn unified_optimize(
         max_holdings,
         min_position_size,
         alpha,
-    )
+    );
+    // 浮動小数点誤差による合計 != 1.0 を補正
+    normalize_weights(&mut weights);
+    weights
 }
 
 /// 市場の平均ボラティリティを計算（日次リターンの標準偏差の平均）
