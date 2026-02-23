@@ -8,6 +8,8 @@ service PortfolioService {
   rpc GetEvaluationPeriods(GetEvaluationPeriodsRequest) returns (GetEvaluationPeriodsResponse);
   // 評価期間詳細
   rpc GetEvaluationPeriod(GetEvaluationPeriodRequest) returns (GetEvaluationPeriodResponse);
+  // 評価期間の選定トークン一覧
+  rpc GetSelectedTokens(GetSelectedTokensRequest) returns (GetSelectedTokensResponse);
   // 取引履歴（ページネーション）
   rpc GetTrades(GetTradesRequest) returns (GetTradesResponse);
   // バッチ単位の取引詳細
@@ -16,7 +18,7 @@ service PortfolioService {
   rpc GetLatestBatch(GetLatestBatchRequest) returns (GetLatestBatchResponse);
   // 全トークン最新レート
   rpc GetLatestRates(GetLatestRatesRequest) returns (GetLatestRatesResponse);
-  // レート履歴
+  // レート履歴（複数トークン対応）
   rpc GetRateHistory(GetRateHistoryRequest) returns (GetRateHistoryResponse);
 }
 
@@ -26,8 +28,7 @@ message EvaluationPeriodEntry {
   string period_id = 1;
   google.protobuf.Timestamp start_time = 2;
   string initial_value = 3;
-  repeated string selected_tokens = 4;
-  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp created_at = 4;
 }
 
 message GetEvaluationPeriodsRequest {}
@@ -42,6 +43,16 @@ message GetEvaluationPeriodRequest {
 
 message GetEvaluationPeriodResponse {
   optional EvaluationPeriodEntry period = 1;
+}
+
+// ── 選定トークン ──
+
+message GetSelectedTokensRequest {
+  string period_id = 1;
+}
+
+message GetSelectedTokensResponse {
+  repeated string tokens = 1;
 }
 
 // ── 取引 ──
@@ -100,12 +111,18 @@ message GetLatestRatesResponse {
 }
 
 message GetRateHistoryRequest {
-  string base_token = 1;
+  repeated string base_tokens = 1;
   string quote_token = 2;
   google.protobuf.Timestamp start_time = 3;
   google.protobuf.Timestamp end_time = 4;
 }
 
+// トークンごとのレート履歴
+message TokenRateHistory {
+  string base_token = 1;
+  repeated RateEntry rates = 2;
+}
+
 message GetRateHistoryResponse {
-  repeated RateEntry rates = 1;
+  repeated TokenRateHistory histories = 1;
 }

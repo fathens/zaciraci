@@ -9,7 +9,6 @@ async fn test_get_evaluation_periods_returns_ok() {
         .get_evaluation_periods(Request::new(GetEvaluationPeriodsRequest {}))
         .await
         .unwrap();
-    // periods may be empty but the call should succeed
     let _ = response.into_inner().periods;
 }
 
@@ -38,6 +37,30 @@ async fn test_get_evaluation_period_not_found() {
 }
 
 #[tokio::test]
+async fn test_get_selected_tokens_empty_id_rejected() {
+    let svc = PortfolioServiceImpl;
+    let result = svc
+        .get_selected_tokens(Request::new(GetSelectedTokensRequest {
+            period_id: String::new(),
+        }))
+        .await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), tonic::Code::InvalidArgument);
+}
+
+#[tokio::test]
+async fn test_get_selected_tokens_not_found_returns_empty() {
+    let svc = PortfolioServiceImpl;
+    let response = svc
+        .get_selected_tokens(Request::new(GetSelectedTokensRequest {
+            period_id: "nonexistent_period".to_string(),
+        }))
+        .await
+        .unwrap();
+    assert!(response.into_inner().tokens.is_empty());
+}
+
+#[tokio::test]
 async fn test_get_trades_default_pagination() {
     let svc = PortfolioServiceImpl;
     let response = svc
@@ -48,7 +71,6 @@ async fn test_get_trades_default_pagination() {
         }))
         .await
         .unwrap();
-    // Should succeed with default limit (50)
     let _ = response.into_inner();
 }
 
@@ -85,13 +107,12 @@ async fn test_get_latest_rates_returns_ok() {
 }
 
 #[tokio::test]
-async fn test_get_rate_history_missing_fields_rejected() {
+async fn test_get_rate_history_empty_tokens_rejected() {
     let svc = PortfolioServiceImpl;
 
-    // empty base_token
     let result = svc
         .get_rate_history(Request::new(GetRateHistoryRequest {
-            base_token: String::new(),
+            base_tokens: vec![],
             quote_token: "wrap.near".to_string(),
             start_time: Some(Timestamp {
                 seconds: 1000,
@@ -105,11 +126,15 @@ async fn test_get_rate_history_missing_fields_rejected() {
         .await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), tonic::Code::InvalidArgument);
+}
 
-    // empty quote_token
+#[tokio::test]
+async fn test_get_rate_history_empty_quote_rejected() {
+    let svc = PortfolioServiceImpl;
+
     let result = svc
         .get_rate_history(Request::new(GetRateHistoryRequest {
-            base_token: "token.near".to_string(),
+            base_tokens: vec!["token.near".to_string()],
             quote_token: String::new(),
             start_time: Some(Timestamp {
                 seconds: 1000,
@@ -123,11 +148,15 @@ async fn test_get_rate_history_missing_fields_rejected() {
         .await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), tonic::Code::InvalidArgument);
+}
 
-    // missing start_time
+#[tokio::test]
+async fn test_get_rate_history_missing_time_rejected() {
+    let svc = PortfolioServiceImpl;
+
     let result = svc
         .get_rate_history(Request::new(GetRateHistoryRequest {
-            base_token: "token.near".to_string(),
+            base_tokens: vec!["token.near".to_string()],
             quote_token: "wrap.near".to_string(),
             start_time: None,
             end_time: Some(Timestamp {

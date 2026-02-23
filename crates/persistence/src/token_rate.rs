@@ -775,6 +775,61 @@ pub async fn get_rates_in_time_range_simple(
     Ok(rates)
 }
 
+/// 複数トークンの時間範囲内レートを一括取得（decimals が NULL のレコードはスキップ）
+///
+/// `get_rates_for_multiple_tokens` と異なり `GetDecimalsFn` コールバックが不要。
+/// トークンごとに分割して返す。
+pub async fn get_rates_for_multiple_tokens_simple(
+    tokens: &[String],
+    quote: &TokenInAccount,
+    range: &TimeRange,
+) -> Result<HashMap<String, Vec<TokenRate>>> {
+    use diesel::sql_types::{Array, Text, Timestamp};
+
+    if tokens.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let conn = connection_pool::get().await?;
+
+    let tokens_vec = tokens.to_vec();
+    let quote_str = quote.to_string();
+    let start = range.start;
+    let end = range.end;
+
+    let results: Vec<DbTokenRate> = conn
+        .interact(move |conn| {
+            diesel::sql_query(
+                "SELECT id, base_token, quote_token, rate, timestamp, decimals, rate_calc_near, swap_path
+                 FROM token_rates
+                 WHERE base_token = ANY($1)
+                   AND quote_token = $2
+                   AND timestamp > $3
+                   AND timestamp <= $4
+                   AND decimals IS NOT NULL
+                 ORDER BY base_token, timestamp ASC",
+            )
+            .bind::<Array<Text>, _>(&tokens_vec)
+            .bind::<Text, _>(&quote_str)
+            .bind::<Timestamp, _>(start)
+            .bind::<Timestamp, _>(end)
+            .load::<DbTokenRate>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let mut map: HashMap<String, Vec<TokenRate>> = HashMap::new();
+    for db_rate in results {
+        if let Some(decimals) = db_rate.decimals {
+            let base_token = db_rate.base_token.clone();
+            let rate = TokenRate::from_db_with_decimals(db_rate, decimals as u8)?;
+            map.entry(base_token).or_default().push(rate);
+        }
+    }
+
+    Ok(map)
+}
+
 /// DB クエリ結果用の構造体（get_all_decimals 用）
 #[derive(Debug, Clone, diesel::QueryableByName)]
 #[diesel(check_for_backend(diesel::pg::Pg))]

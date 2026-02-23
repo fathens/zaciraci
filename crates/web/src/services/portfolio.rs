@@ -3,10 +3,11 @@ use crate::proto::{
     EvaluationPeriodEntry, GetEvaluationPeriodRequest, GetEvaluationPeriodResponse,
     GetEvaluationPeriodsRequest, GetEvaluationPeriodsResponse, GetLatestBatchRequest,
     GetLatestBatchResponse, GetLatestRatesRequest, GetLatestRatesResponse, GetRateHistoryRequest,
-    GetRateHistoryResponse, GetTradesByBatchRequest, GetTradesByBatchResponse, GetTradesRequest,
-    GetTradesResponse, RateEntry, TradeEntry,
+    GetRateHistoryResponse, GetSelectedTokensRequest, GetSelectedTokensResponse,
+    GetTradesByBatchRequest, GetTradesByBatchResponse, GetTradesRequest, GetTradesResponse,
+    RateEntry, TokenRateHistory, TradeEntry,
 };
-use common::types::{TimeRange, TokenAccount, TokenInAccount, TokenOutAccount};
+use common::types::{TimeRange, TokenAccount, TokenInAccount};
 use persistence::evaluation_period::EvaluationPeriod;
 use persistence::token_rate::TokenRate;
 use persistence::trade_transaction::TradeTransaction;
@@ -24,23 +25,14 @@ fn naive_to_timestamp(dt: chrono::NaiveDateTime) -> Option<Timestamp> {
 }
 
 fn timestamp_to_naive(ts: &Timestamp) -> Option<chrono::NaiveDateTime> {
-    chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
-        .map(|dt| dt.naive_utc())
+    chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32).map(|dt| dt.naive_utc())
 }
 
 fn period_to_entry(ep: EvaluationPeriod) -> EvaluationPeriodEntry {
-    let selected_tokens: Vec<String> = ep
-        .selected_tokens
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .collect();
-
     EvaluationPeriodEntry {
         period_id: ep.period_id,
         start_time: naive_to_timestamp(ep.start_time),
         initial_value: ep.initial_value.to_string(),
-        selected_tokens,
         created_at: naive_to_timestamp(ep.created_at),
     }
 }
@@ -103,6 +95,29 @@ impl PortfolioService for PortfolioServiceImpl {
         }))
     }
 
+    async fn get_selected_tokens(
+        &self,
+        request: Request<GetSelectedTokensRequest>,
+    ) -> Result<Response<GetSelectedTokensResponse>, Status> {
+        let period_id = &request.get_ref().period_id;
+        if period_id.is_empty() {
+            return Err(Status::invalid_argument("period_id must not be empty"));
+        }
+
+        let period = EvaluationPeriod::get_by_period_id_async(period_id.clone())
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get evaluation period: {e}")))?;
+
+        let tokens = period
+            .and_then(|ep| ep.selected_tokens)
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .collect();
+
+        Ok(Response::new(GetSelectedTokensResponse { tokens }))
+    }
+
     async fn get_trades(
         &self,
         request: Request<GetTradesRequest>,
@@ -112,10 +127,9 @@ impl PortfolioService for PortfolioServiceImpl {
         let offset = req.offset as i64;
         let period_id = req.evaluation_period_id.clone().filter(|s| !s.is_empty());
 
-        let (trades, total) =
-            TradeTransaction::find_paginated_async(period_id, limit, offset)
-                .await
-                .map_err(|e| Status::internal(format!("Failed to get trades: {e}")))?;
+        let (trades, total) = TradeTransaction::find_paginated_async(period_id, limit, offset)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get trades: {e}")))?;
 
         let entries = trades.into_iter().map(trade_to_entry).collect();
 
@@ -185,8 +199,8 @@ impl PortfolioService for PortfolioServiceImpl {
     ) -> Result<Response<GetRateHistoryResponse>, Status> {
         let req = request.get_ref();
 
-        if req.base_token.is_empty() {
-            return Err(Status::invalid_argument("base_token must not be empty"));
+        if req.base_tokens.is_empty() {
+            return Err(Status::invalid_argument("base_tokens must not be empty"));
         }
         if req.quote_token.is_empty() {
             return Err(Status::invalid_argument("quote_token must not be empty"));
@@ -203,9 +217,6 @@ impl PortfolioService for PortfolioServiceImpl {
             .and_then(timestamp_to_naive)
             .ok_or_else(|| Status::invalid_argument("end_time is required"))?;
 
-        let base: TokenOutAccount = TokenAccount::from_str(&req.base_token)
-            .map_err(|e| Status::invalid_argument(format!("invalid base_token: {e}")))?
-            .into();
         let quote: TokenInAccount = TokenAccount::from_str(&req.quote_token)
             .map_err(|e| Status::invalid_argument(format!("invalid quote_token: {e}")))?
             .into();
@@ -215,13 +226,23 @@ impl PortfolioService for PortfolioServiceImpl {
             end: end_time,
         };
 
-        let rates = persistence::token_rate::get_rates_in_time_range_simple(&range, &base, &quote)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get rate history: {e}")))?;
+        let rates_map = persistence::token_rate::get_rates_for_multiple_tokens_simple(
+            &req.base_tokens,
+            &quote,
+            &range,
+        )
+        .await
+        .map_err(|e| Status::internal(format!("Failed to get rate history: {e}")))?;
 
-        let entries = rates.into_iter().map(token_rate_to_entry).collect();
+        let histories = rates_map
+            .into_iter()
+            .map(|(base_token, rates)| TokenRateHistory {
+                base_token,
+                rates: rates.into_iter().map(token_rate_to_entry).collect(),
+            })
+            .collect();
 
-        Ok(Response::new(GetRateHistoryResponse { rates: entries }))
+        Ok(Response::new(GetRateHistoryResponse { histories }))
     }
 }
 
