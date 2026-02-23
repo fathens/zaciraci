@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use nalgebra::DMatrix;
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::types::*;
 
@@ -201,12 +201,12 @@ fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     // ターゲット: F = (tr(S) / n) · I
     let mu = (0..n).map(|i| sample_cov[[i, i]]).sum::<f64>() / n as f64;
 
-    // ||S - F||²_F
+    // ||S - F||²_F — 対称性を利用: 対角 + 上三角×2
     let mut delta_sq = 0.0;
     for i in 0..n {
-        for j in 0..n {
-            let f_ij = if i == j { mu } else { 0.0 };
-            delta_sq += (sample_cov[[i, j]] - f_ij).powi(2);
+        delta_sq += (sample_cov[[i, i]] - mu).powi(2);
+        for j in (i + 1)..n {
+            delta_sq += 2.0 * sample_cov[[i, j]].powi(2);
         }
     }
 
@@ -247,12 +247,15 @@ fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     // 最適縮小係数
     let shrinkage = (beta_hat / delta_sq).clamp(0.0, 1.0);
 
-    // Σ_LW = δ · F + (1 - δ) · S
+    // Σ_LW = δ · F + (1 - δ) · S — 対称性を利用
     let mut result = Array2::zeros((n, n));
+    let one_minus_s = 1.0 - shrinkage;
     for i in 0..n {
-        for j in 0..n {
-            let f_ij = if i == j { mu } else { 0.0 };
-            result[[i, j]] = shrinkage * f_ij + (1.0 - shrinkage) * sample_cov[[i, j]];
+        result[[i, i]] = shrinkage * mu + one_minus_s * sample_cov[[i, i]];
+        for j in (i + 1)..n {
+            let val = one_minus_s * sample_cov[[i, j]];
+            result[[i, j]] = val;
+            result[[j, i]] = val;
         }
     }
 
@@ -963,6 +966,43 @@ fn blend_and_expand(
     weights
 }
 
+/// サブセット最適化の不変パラメータ
+struct SubsetOptParams<'a> {
+    expected_returns: &'a [f64],
+    covariance_matrix: &'a Array2<f64>,
+    max_position: f64,
+    alpha: f64,
+}
+
+/// キャッシュ付き blend_and_expand
+///
+/// subset_indices をキーとしてメモ化し、同一サブセットの重複計算を排除する。
+fn cached_blend_and_expand(
+    cache: &mut HashMap<Vec<usize>, Vec<f64>>,
+    params: &SubsetOptParams<'_>,
+    subset_indices: &[usize],
+    n_total: usize,
+) -> Vec<f64> {
+    if let Some(cached) = cache.get(subset_indices) {
+        return cached.clone();
+    }
+    let (sub_ret, sub_cov) = extract_sub_portfolio(
+        params.expected_returns,
+        params.covariance_matrix,
+        subset_indices,
+    );
+    let weights = blend_and_expand(
+        &sub_ret,
+        &sub_cov,
+        params.max_position,
+        params.alpha,
+        subset_indices,
+        n_total,
+    );
+    cache.insert(subset_indices.to_vec(), weights.clone());
+    weights
+}
+
 /// サブポートフォリオの μ と Σ を抽出
 fn extract_sub_portfolio(
     expected_returns: &[f64],
@@ -1125,13 +1165,11 @@ const PINNED_RC_RELEASE_FACTOR: f64 = 1.5;
 fn filter_and_reoptimize(
     weights: &mut Vec<f64>,
     current_indices: &mut Vec<usize>,
-    expected_returns: &[f64],
-    covariance_matrix: &Array2<f64>,
-    max_position: f64,
+    params: &SubsetOptParams<'_>,
     min_position_size: f64,
-    alpha: f64,
+    cache: &mut HashMap<Vec<usize>, Vec<f64>>,
 ) {
-    let n_total = expected_returns.len();
+    let n_total = params.expected_returns.len();
     let max_iters = current_indices.len();
     for _ in 0..max_iters {
         let survivors: Vec<usize> = current_indices
@@ -1142,8 +1180,7 @@ fn filter_and_reoptimize(
         if survivors.len() == current_indices.len() || survivors.is_empty() {
             break;
         }
-        let (sr, sc) = extract_sub_portfolio(expected_returns, covariance_matrix, &survivors);
-        *weights = blend_and_expand(&sr, &sc, max_position, alpha, &survivors, n_total);
+        *weights = cached_blend_and_expand(cache, params, &survivors, n_total);
         *current_indices = survivors;
     }
 }
@@ -1169,30 +1206,26 @@ fn exhaustive_optimize(
         return vec![0.0; n_total];
     }
 
+    let params = SubsetOptParams {
+        expected_returns,
+        covariance_matrix,
+        max_position,
+        alpha,
+    };
+
     // active <= max_holdings: サブセット選択不要、直接最適化
     if n_active <= max_holdings {
-        let (sub_ret, sub_cov) =
-            extract_sub_portfolio(expected_returns, covariance_matrix, active_indices);
-
-        let mut weights = blend_and_expand(
-            &sub_ret,
-            &sub_cov,
-            max_position,
-            alpha,
-            active_indices,
-            n_total,
-        );
+        let mut cache = HashMap::new();
+        let mut weights = cached_blend_and_expand(&mut cache, &params, active_indices, n_total);
 
         // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化（反復）
         let mut current_indices = active_indices.to_vec();
         filter_and_reoptimize(
             &mut weights,
             &mut current_indices,
-            expected_returns,
-            covariance_matrix,
-            max_position,
+            &params,
             min_position_size,
-            alpha,
+            &mut cache,
         );
 
         return weights;
@@ -1201,31 +1234,22 @@ fn exhaustive_optimize(
     // C(active, max_holdings) の全列挙
     let mut best_score = f64::NEG_INFINITY;
     let mut best_weights = vec![0.0; n_total];
+    let mut cache = HashMap::new();
 
     for combo in Combinations::new(n_active, max_holdings) {
         let subset_indices: Vec<usize> = combo.iter().map(|&ci| active_indices[ci]).collect();
-        let (sub_ret, sub_cov) =
-            extract_sub_portfolio(expected_returns, covariance_matrix, &subset_indices);
 
-        let mut effective_blended = blend_and_expand(
-            &sub_ret,
-            &sub_cov,
-            max_position,
-            alpha,
-            &subset_indices,
-            n_total,
-        );
+        let mut effective_blended =
+            cached_blend_and_expand(&mut cache, &params, &subset_indices, n_total);
 
         // MIN_POSITION_SIZE フィルタ: 違反トークンを除外して再最適化（反復）
         let mut current_indices = subset_indices.clone();
         filter_and_reoptimize(
             &mut effective_blended,
             &mut current_indices,
-            expected_returns,
-            covariance_matrix,
-            max_position,
+            &params,
             min_position_size,
-            alpha,
+            &mut cache,
         );
 
         // 複合スコア: alpha * sharpe - (1-alpha) * rp_div

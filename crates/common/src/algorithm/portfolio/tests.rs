@@ -4537,6 +4537,42 @@ fn test_unified_optimize_weights_sum_to_one() {
     );
 }
 
+/// exhaustive_optimize の golden output テスト
+///
+/// キャッシュ導入前後で数値結果が同一であることを保証する。
+#[test]
+fn test_exhaustive_optimize_golden_output() {
+    let returns = generate_synthetic_returns(8, 29, 5555);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.03, 0.06, 0.01, 0.05, 0.02, 0.07, 0.015, 0.04];
+    let active_indices: Vec<usize> = (0..8).collect();
+
+    let weights = exhaustive_optimize(
+        &active_indices,
+        &expected_returns,
+        &cov,
+        0.4,  // max_position
+        3,    // max_holdings
+        0.05, // min_position_size
+        0.7,  // alpha
+    );
+
+    let golden: Vec<f64> = vec![
+        0.0,
+        0.336_285_038_199_695_35,
+        0.0,
+        0.294_239_939_813_386_7,
+        0.0,
+        0.369_475_021_986_917_95,
+        0.0,
+        0.0,
+    ];
+    assert_eq!(weights.len(), golden.len());
+    for (i, (&w, &g)) in weights.iter().zip(golden.iter()).enumerate() {
+        assert!((w - g).abs() < 1e-12, "weights[{i}]: got {w}, expected {g}");
+    }
+}
+
 /// adjust_returns_for_liquidity に長さ不一致を渡すと debug_assert で panic する
 #[cfg(debug_assertions)]
 #[test]
