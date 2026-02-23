@@ -448,6 +448,14 @@ pub fn maximize_sharpe_ratio(
     }
 }
 
+/// Active Set 法における各資産の境界状態
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoundState {
+    Free,
+    Lower,
+    Upper,
+}
+
 /// ボックス制約付き Sharpe 最大化（3集合 Active Set 法）
 ///
 /// 各資産の重みが [0, max_position] の範囲に収まるよう制約しつつ、
@@ -501,13 +509,12 @@ pub fn box_maximize_sharpe(
         .collect();
 
     // 3 集合: Free / Lower (w=0) / Upper (w=max_position)
-    // 状態: 0=Free, 1=Lower, 2=Upper
-    let mut state = vec![0u8; n];
+    let mut state = vec![BoundState::Free; n];
     let max_iter = 3 * n + 10;
 
     for _ in 0..max_iter {
-        let free: Vec<usize> = (0..n).filter(|&i| state[i] == 0).collect();
-        let upper: Vec<usize> = (0..n).filter(|&i| state[i] == 2).collect();
+        let free: Vec<usize> = (0..n).filter(|&i| state[i] == BoundState::Free).collect();
+        let upper: Vec<usize> = (0..n).filter(|&i| state[i] == BoundState::Upper).collect();
 
         if free.is_empty() {
             // Free 集合が空: Upper に固定された資産のみで正規化
@@ -615,7 +622,7 @@ pub fn box_maximize_sharpe(
         // F→L: w < 0
         for (fi, &w) in w_free.iter().enumerate() {
             if w < -1e-10 {
-                state[free[fi]] = 1; // Lower
+                state[free[fi]] = BoundState::Lower;
                 moved = true;
                 break;
             }
@@ -627,7 +634,7 @@ pub fn box_maximize_sharpe(
         // F→U: w > max_position
         for (fi, &w) in w_free.iter().enumerate() {
             if w > effective_max + 1e-10 {
-                state[free[fi]] = 2; // Upper
+                state[free[fi]] = BoundState::Upper;
                 moved = true;
                 break;
             }
@@ -649,7 +656,7 @@ pub fn box_maximize_sharpe(
         }
 
         for i in 0..n {
-            if state[i] == 1 {
+            if state[i] == BoundState::Lower {
                 // Lower: 勾配 = μ_excess[i] - γ * Σ_row[i] · w
                 let grad = excess_returns[i]
                     - gamma
@@ -657,11 +664,11 @@ pub fn box_maximize_sharpe(
                             .map(|j| covariance_matrix[[i, j]] * weights[j])
                             .sum::<f64>();
                 if grad > 1e-10 {
-                    state[i] = 0; // Free
+                    state[i] = BoundState::Free;
                     moved = true;
                     break;
                 }
-            } else if state[i] == 2 {
+            } else if state[i] == BoundState::Upper {
                 // Upper: 勾配の符号が逆 → 減らしたい
                 let grad = excess_returns[i]
                     - gamma
@@ -669,7 +676,7 @@ pub fn box_maximize_sharpe(
                             .map(|j| covariance_matrix[[i, j]] * weights[j])
                             .sum::<f64>();
                 if grad < -1e-10 {
-                    state[i] = 0; // Free
+                    state[i] = BoundState::Free;
                     moved = true;
                     break;
                 }
