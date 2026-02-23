@@ -1015,3 +1015,83 @@ fn test_adjust_returns_for_liquidity_length_mismatch_panics() {
     let liquidity = vec![0.5, 0.6]; // 長さ不一致
     let _ = adjust_returns_for_liquidity(&returns, &liquidity);
 }
+
+/// 全トークンがフィルタ条件を満たさない場合、空 Vec を返す
+#[test]
+fn test_hard_filter_tokens_returns_empty_when_none_pass() {
+    let tokens = vec![
+        TokenData {
+            symbol: token_out("low-liquidity"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.2), // below MIN_LIQUIDITY_SCORE (0.5)
+            market_cap: Some(cap(100_000)),
+        },
+        TokenData {
+            symbol: token_out("low-cap"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.8),
+            market_cap: Some(cap(100)), // below min_market_cap (10,000)
+        },
+        TokenData {
+            symbol: token_out("both-bad"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.1),
+            market_cap: Some(cap(50)),
+        },
+    ];
+
+    let filtered = hard_filter_tokens(&tokens);
+    assert!(
+        filtered.is_empty(),
+        "Expected empty Vec when no tokens pass hard filter"
+    );
+}
+
+/// フィルタ通過トークンなし → execute_portfolio_optimization が Hold で早期リターン
+#[tokio::test]
+async fn test_execute_portfolio_optimization_hold_on_empty_filter() {
+    // 全トークンが流動性条件を満たさない
+    let tokens = vec![
+        TokenData {
+            symbol: token_out("illiquid-a"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.2,
+            liquidity_score: Some(0.1),
+            market_cap: Some(cap(100)),
+        },
+        TokenData {
+            symbol: token_out("illiquid-b"),
+            current_rate: rate_from_price(0.02),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.2),
+            market_cap: Some(cap(50)),
+        },
+    ];
+
+    let wallet = WalletInfo {
+        holdings: BTreeMap::new(),
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::zero(),
+    };
+
+    let portfolio_data = PortfolioData {
+        tokens,
+        predictions: BTreeMap::new(),
+        historical_prices: BTreeMap::new(),
+        prediction_confidence: None,
+    };
+
+    let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
+        .await
+        .unwrap();
+
+    assert_eq!(report.actions.len(), 1);
+    assert!(matches!(report.actions[0], TradingAction::Hold));
+    assert!(!report.rebalance_needed);
+    assert!(report.optimal_weights.weights.is_empty());
+    assert_eq!(report.expected_metrics.sortino_ratio, 0.0);
+    assert_eq!(report.expected_metrics.max_drawdown, 0.0);
+}

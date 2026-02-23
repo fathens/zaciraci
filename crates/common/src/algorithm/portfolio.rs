@@ -1090,12 +1090,7 @@ pub fn hard_filter_tokens(tokens: &[TokenData]) -> Vec<TokenData> {
         })
         .collect();
 
-    // フィルタが厳しすぎる場合は全トークンをフォールバック
-    if filtered.is_empty() {
-        tokens.to_vec()
-    } else {
-        filtered.into_iter().cloned().collect()
-    }
+    filtered.into_iter().cloned().collect()
 }
 
 /// C(n, k) の組み合わせイテレータ（辞書式順序、再帰なし）
@@ -1528,6 +1523,28 @@ pub async fn execute_portfolio_optimization(
 ) -> Result<PortfolioExecutionReport> {
     // ハードフィルタ: 流動性 + 時価総額の最低条件
     let filtered_tokens = hard_filter_tokens(&portfolio_data.tokens);
+
+    // フィルタを通過するトークンがない場合は Hold で早期リターン
+    if filtered_tokens.is_empty() {
+        return Ok(PortfolioExecutionReport {
+            actions: vec![TradingAction::Hold],
+            optimal_weights: PortfolioWeights {
+                weights: BTreeMap::new(),
+                timestamp: Utc::now(),
+                expected_return: 0.0,
+                expected_volatility: 0.0,
+                sharpe_ratio: 0.0,
+            },
+            rebalance_needed: false,
+            expected_metrics: PortfolioMetrics {
+                sortino_ratio: 0.0,
+                max_drawdown: 0.0,
+                calmar_ratio: 0.0,
+                turnover_rate: 0.0,
+            },
+            timestamp: Utc::now(),
+        });
+    }
 
     // historical_prices に存在するトークンのみに絞り込み
     let selected_tokens: Vec<TokenData> = filtered_tokens
