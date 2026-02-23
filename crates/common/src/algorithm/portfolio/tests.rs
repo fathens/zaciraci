@@ -381,35 +381,6 @@ fn test_risk_parity_convergence() {
 // ==================== 制約テスト ====================
 
 #[test]
-fn test_apply_constraints() {
-    let mut weights = vec![0.7, 0.2, 0.1, 0.03, 0.02]; // 制約違反のケース
-
-    apply_constraints(&mut weights, MAX_POSITION_SIZE);
-
-    // 最大ポジションサイズ制約
-    for &weight in &weights {
-        if weight > MAX_POSITION_SIZE {
-            println!(
-                "Weight {} exceeds max position size {}",
-                weight, MAX_POSITION_SIZE
-            );
-        }
-        assert!(weight <= MAX_POSITION_SIZE + 1e-4); // 浮動小数点の誤差を許容
-    }
-
-    // 最小ポジションサイズフィルタ（小さすぎる重みは0になる）
-    let small_positions = weights
-        .iter()
-        .filter(|&&w| w > 0.0 && w < MIN_POSITION_SIZE)
-        .count();
-    assert_eq!(small_positions, 0);
-
-    // 重みの合計が1に近い
-    let sum: f64 = weights.iter().sum();
-    assert!((sum - 1.0).abs() < 0.01);
-}
-
-#[test]
 fn test_needs_rebalancing() {
     let current_weights = vec![0.4, 0.3, 0.3];
     let target_weights_no_rebalance = vec![0.42, 0.28, 0.30]; // 小さな変化
@@ -889,14 +860,6 @@ fn test_liquidity_impact_on_weights() {
         .unwrap();
 
     assert_eq!(max_weight_index, 2); // TOKEN_Cのインデックス
-
-    // 制約適用後の重みが流動性を反映
-    let mut test_weights = vec![0.5, 0.3, 0.2]; // 流動性を無視した配分
-    apply_constraints(&mut test_weights, MAX_POSITION_SIZE);
-
-    // 制約適用後も重みの合計は1付近
-    let constrained_sum: f64 = test_weights.iter().sum();
-    assert!((constrained_sum - 1.0).abs() < 0.1);
 }
 
 // ==================== 相関変化対応テスト ====================
@@ -1895,45 +1858,6 @@ fn create_low_volatility_price_history() -> BTreeMap<TokenOutAccount, PriceHisto
     histories
 }
 
-#[test]
-fn test_aggressive_parameters_effect() {
-    let tokens = create_sample_tokens();
-    let mut predictions = BTreeMap::new();
-    predictions.insert(token_out("token_a"), price(0.25));
-    predictions.insert(token_out("token_b"), price(0.20));
-    predictions.insert(token_out("token_c"), price(0.15));
-
-    let expected_returns = super::calculate_expected_returns(&tokens, &predictions);
-    let hp: Vec<PriceHistory> = create_sample_price_history().into_values().collect();
-    let daily_returns = super::calculate_daily_returns(&hp);
-    let covariance = super::calculate_covariance_matrix(&daily_returns);
-
-    let weights = super::maximize_sharpe_ratio(&expected_returns, &covariance);
-
-    // 新しい積極的パラメータでの制約適用
-    let mut aggressive_weights = weights.clone();
-    super::apply_constraints(&mut aggressive_weights, MAX_POSITION_SIZE);
-
-    // 最大ポジションサイズが60%まで許可されることを確認
-    let max_weight = aggressive_weights.iter().fold(0.0f64, |a, &b| a.max(b));
-    println!(
-        "Maximum weight after aggressive constraints: {:.3}",
-        max_weight
-    );
-
-    // 実際には制約によって調整される可能性があるが、
-    // 従来の40%制限より高い配分が可能であることを確認
-    assert!(max_weight <= 0.6, "最大保有比率が60%を超えてはいけない");
-
-    // 重みの合計が1.0であることを確認
-    let total_weight: f64 = aggressive_weights.iter().sum();
-    assert!(
-        (total_weight - 1.0).abs() < 1e-10,
-        "重みの合計は1.0でなければならない: {}",
-        total_weight
-    );
-}
-
 #[tokio::test]
 async fn test_enhanced_portfolio_performance() {
     use super::super::types::*;
@@ -2819,54 +2743,6 @@ fn test_validate_weights_empty() {
 // 以下のテストは portfolio.rs のアルゴリズムの問題点を検証するためのもの。
 // 各テストは Issue 番号に対応し、現在の動作を文書化する。
 
-/// Issue 1: 動的リスク調整はポジションサイズ制御で行うことを検証
-///
-/// 高ボラ時は max_position が縮小され、分散が強制される。
-/// 低ボラ時は max_position がそのままで、集中投資が許容される。
-#[test]
-fn test_issue1_dynamic_position_size_controls_concentration() {
-    // 複数トークンに分散する初期重みを使用（解析解が単一集中する場合に備え）
-    let initial_weights = vec![0.5, 0.3, 0.2];
-
-    // 高ボラ時の最大ポジションサイズ（MAX_POSITION_SIZE * 0.7 = 0.42）
-    let mut weights_high_vol = initial_weights.clone();
-    apply_constraints(&mut weights_high_vol, MAX_POSITION_SIZE * 0.7);
-
-    // 低ボラ時の最大ポジションサイズ（MAX_POSITION_SIZE = 0.6）
-    let mut weights_low_vol = initial_weights.clone();
-    apply_constraints(&mut weights_low_vol, MAX_POSITION_SIZE);
-
-    println!("High vol constrained: {:?}", weights_high_vol);
-    println!("Low vol constrained:  {:?}", weights_low_vol);
-
-    let max_weight_high = weights_high_vol.iter().fold(0.0_f64, |a, &b| a.max(b));
-    let max_weight_low = weights_low_vol.iter().fold(0.0_f64, |a, &b| a.max(b));
-
-    // 高ボラ時はより分散される（最大ウェイトが小さい）
-    assert!(
-        max_weight_high <= MAX_POSITION_SIZE * 0.7 + 1e-4,
-        "高ボラ時の最大ウェイトが制限されるべき: {max_weight_high}"
-    );
-
-    // 低ボラ時は集中が許容される
-    assert!(
-        max_weight_low <= MAX_POSITION_SIZE + 1e-4,
-        "低ボラ時の最大ウェイトが MAX_POSITION_SIZE 以下: {max_weight_low}"
-    );
-
-    // 高ボラ時の方が最大ウェイトが小さいか等しい
-    assert!(
-        max_weight_high <= max_weight_low + 1e-4,
-        "高ボラ時の方が分散されるべき: high={max_weight_high}, low={max_weight_low}"
-    );
-
-    // 両方とも合計が1.0
-    let sum_high: f64 = weights_high_vol.iter().sum();
-    let sum_low: f64 = weights_low_vol.iter().sum();
-    assert!((sum_high - 1.0).abs() < 1e-6, "sum=1.0: {sum_high}");
-    assert!((sum_low - 1.0).abs() < 1e-6, "sum=1.0: {sum_low}");
-}
-
 /// Issue 2: Sharpe-RP ブレンドがボラティリティに連動した alpha で変化することを検証
 #[test]
 fn test_issue2_sharpe_rp_blend_varies_with_alpha() {
@@ -2971,56 +2847,6 @@ fn test_issue3_analytical_sharpe_dominant_asset() {
         "token-1 が最大配分: {:?}",
         weights
     );
-}
-
-/// Issue 8: apply_constraints の最終正規化で sum=1.0 が保証されることを検証
-/// [修正済み] clamp+normalize の収束ループに変更済み
-#[test]
-fn test_issue8_apply_constraints_final_normalization() {
-    // ケース1: 通常のケース（最大ウェイトが MAX_POSITION_SIZE を超える）
-    let mut weights1 = vec![0.7, 0.2, 0.1, 0.03, 0.02];
-    apply_constraints(&mut weights1, MAX_POSITION_SIZE);
-    let sum1: f64 = weights1.iter().sum();
-    println!("Case 1: weights={:?}, sum={sum1}", weights1);
-
-    // ケース2: 全要素が MAX_POSITION_SIZE を超えるケース
-    let mut weights2 = vec![0.9, 0.8, 0.0, 0.0, 0.0];
-    apply_constraints(&mut weights2, MAX_POSITION_SIZE);
-    let sum2: f64 = weights2.iter().sum();
-    println!("Case 2: weights={:?}, sum={sum2}", weights2);
-
-    // ケース3: MAX_POSITION_SIZE ぎりぎりの2トークン
-    let mut weights3 = vec![0.59, 0.59, 0.0, 0.0, 0.0];
-    apply_constraints(&mut weights3, MAX_POSITION_SIZE);
-    let sum3: f64 = weights3.iter().sum();
-    println!("Case 3: weights={:?}, sum={sum3}", weights3);
-
-    // ケース4: 1トークンのみ
-    // 収束ループにより sum=1.0 が保証される (weight=1.0 > MAX_POSITION_SIZE だが、
-    // 単一トークンでは sum=1.0 と MAX_POSITION_SIZE の両方を満たすことが不可能なため、
-    // sum=1.0 を優先する)
-    let mut weights4 = vec![1.0, 0.0, 0.0];
-    apply_constraints(&mut weights4, MAX_POSITION_SIZE);
-    let sum4: f64 = weights4.iter().sum();
-    println!("Case 4: weights={:?}, sum={sum4}", weights4);
-
-    // 修正後: 全ケースで sum=1.0 が保証される
-    assert!((sum1 - 1.0).abs() < 1e-6, "Case 1: sum={sum1} は厳密に1.0");
-    assert!((sum2 - 1.0).abs() < 1e-6, "Case 2: sum={sum2} は厳密に1.0");
-    assert!((sum3 - 1.0).abs() < 1e-6, "Case 3: sum={sum3} は厳密に1.0");
-    assert!((sum4 - 1.0).abs() < 1e-6, "Case 4: sum={sum4} は厳密に1.0");
-
-    // 2トークン以上のケースでは MAX_POSITION_SIZE 制約も満たす
-    for &w in weights1
-        .iter()
-        .chain(weights2.iter())
-        .chain(weights3.iter())
-    {
-        assert!(
-            w <= MAX_POSITION_SIZE + 1e-4,
-            "weight={w} > MAX_POSITION_SIZE={MAX_POSITION_SIZE}"
-        );
-    }
 }
 
 /// Issue 9: calculate_covariance が異なる長さのリターン系列を末尾トリミングで処理することを検証
