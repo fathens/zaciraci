@@ -860,7 +860,7 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
                 for i in 0..n {
                     if pinned[i] {
                         let rc = current_w[i] * mg[i] / pvol;
-                        if rc > target_rc * 1.5 {
+                        if rc > target_rc * PINNED_RC_RELEASE_FACTOR {
                             pinned[i] = false;
                             any_change = true;
                             break; // 1つずつ解除
@@ -1085,6 +1085,12 @@ const MAX_PHASE3_CANDIDATES: usize = 15;
 
 /// 流動性ペナルティ係数
 const LIQUIDITY_PENALTY_LAMBDA: f64 = 0.01;
+
+/// Pinned→Free 解除閾値の倍率。
+/// RC がターゲットのこの倍率を超えた場合に unpin する。
+/// 1.0 では即座に unpin し振動を招き、2.0 では不均衡を許容しすぎる。
+/// 1.5 はヒステリシスとして安定と均衡のバランスが取れた値。
+const PINNED_RC_RELEASE_FACTOR: f64 = 1.5;
 
 /// Phase 3: 全列挙による最適サブセット選択
 ///
