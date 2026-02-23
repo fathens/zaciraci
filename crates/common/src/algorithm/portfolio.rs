@@ -983,17 +983,13 @@ fn risk_parity_divergence(weights: &[f64], covariance_matrix: &Array2<f64>) -> f
 
 /// 流動性ペナルティ付きリターン調整
 ///
-/// μ_adj[i] = μ[i] - λ * (1.0 - liquidity[i])
+/// μ_adj[i] = μ[i] - LIQUIDITY_PENALTY_LAMBDA * (1.0 - liquidity[i])
 /// liquidity が低いほどペナルティが大きい。
-fn adjust_returns_for_liquidity(
-    expected_returns: &[f64],
-    liquidity_scores: &[f64],
-    lambda: f64,
-) -> Vec<f64> {
+fn adjust_returns_for_liquidity(expected_returns: &[f64], liquidity_scores: &[f64]) -> Vec<f64> {
     expected_returns
         .iter()
         .zip(liquidity_scores.iter())
-        .map(|(&r, &liq)| r - lambda * (1.0 - liq.clamp(0.0, 1.0)))
+        .map(|(&r, &liq)| r - LIQUIDITY_PENALTY_LAMBDA * (1.0 - liq.clamp(0.0, 1.0)))
         .collect()
 }
 
@@ -1246,8 +1242,7 @@ fn unified_optimize(
     }
 
     // 流動性調整リターン
-    let adj_returns =
-        adjust_returns_for_liquidity(expected_returns, liquidity_scores, LIQUIDITY_PENALTY_LAMBDA);
+    let adj_returns = adjust_returns_for_liquidity(expected_returns, liquidity_scores);
 
     // Phase 1: 全 n トークンで独立に最適化
     let w_sharpe = box_maximize_sharpe(&adj_returns, covariance_matrix, max_position);

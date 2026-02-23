@@ -4029,9 +4029,8 @@ fn test_risk_parity_divergence() {
 fn test_liquidity_adjustment() {
     let returns = vec![0.05, 0.05, 0.05];
     let liquidity = vec![1.0, 0.5, 0.0];
-    let lambda = 0.01;
 
-    let adj = adjust_returns_for_liquidity(&returns, &liquidity, lambda);
+    let adj = adjust_returns_for_liquidity(&returns, &liquidity);
 
     // liquidity=1.0 → ペナルティなし
     assert!((adj[0] - 0.05).abs() < 1e-10);
