@@ -402,7 +402,15 @@ pub fn maximize_sharpe_ratio(
             .clone()
             .cholesky()
             .map(|chol| chol.solve(&excess_sub))
-            .or_else(|| cov_sub.lu().solve(&excess_sub));
+            .or_else(|| cov_sub.clone().lu().solve(&excess_sub))
+            .or_else(|| {
+                // Ridge regularization retry: Σ_sub + εI
+                let mut cov_reg = cov_sub.clone();
+                for i in 0..m {
+                    cov_reg[(i, i)] += REGULARIZATION_FACTOR;
+                }
+                cov_reg.cholesky().map(|chol| chol.solve(&excess_sub))
+            });
 
         let z = match z {
             Some(z) => z,
@@ -546,10 +554,19 @@ pub fn box_maximize_sharpe(
             None => return default_weights,
         };
         let solve = |rhs: &nalgebra::DVector<f64>| -> Option<nalgebra::DVector<f64>> {
-            match &factored {
+            let result = match &factored {
                 Factored::Chol(chol) => Some(chol.solve(rhs)),
                 Factored::Lu(lu) => lu.solve(rhs),
+            };
+            if result.is_some() {
+                return result;
             }
+            // Ridge regularization retry: Σ_FF + εI
+            let mut cov_reg = DMatrix::from_fn(m, m, |i, j| covariance_matrix[[free[i], free[j]]]);
+            for i in 0..m {
+                cov_reg[(i, i)] += REGULARIZATION_FACTOR;
+            }
+            cov_reg.cholesky().map(|chol| chol.solve(rhs))
         };
 
         // p = Σ_FF⁻¹ · μ_excess_F

@@ -4370,21 +4370,154 @@ fn test_composite_score_consistency() {
     );
 }
 
-/// 特異共分散行列で q solve が失敗した場合、等配分にフォールバックする
+/// 特異共分散行列でリッジ正則化リトライにより最適化された重みが返る
 #[test]
-fn test_box_maximize_sharpe_singular_cov_returns_equal_weights() {
-    // 全行が同一 → 特異行列
+fn test_box_maximize_sharpe_singular_cov_ridge_recovers() {
+    // 全行が同一 → 特異行列（rank 1）
     let singular = array![[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
     let returns = vec![0.05, 0.03, 0.04];
     let weights = box_maximize_sharpe(&returns, &singular, 0.5);
-    // フォールバック時は等配分
-    let expected = 1.0 / 3.0;
+    // リッジ正則化により等配分ではなく最適化された重みが返る
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-10,
+        "weights should sum to 1.0, got {sum}"
+    );
     for (i, &w) in weights.iter().enumerate() {
-        assert!(
-            (w - expected).abs() < 1e-10,
-            "weight[{i}] = {w}, expected {expected}"
-        );
+        assert!(w >= 0.0, "weight[{i}] should be non-negative, got {w}");
     }
+    // 最高リターン（0.05）の資産が最大ウェイトを持つはず
+    let max_idx = weights
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .unwrap()
+        .0;
+    assert_eq!(
+        max_idx, 0,
+        "asset 0 (highest return) should have max weight"
+    );
+    // 等配分ではないことを確認
+    let equal = 1.0 / 3.0;
+    let is_equal = weights.iter().all(|&w| (w - equal).abs() < 1e-6);
+    assert!(
+        !is_equal,
+        "should not be equal-weighted after ridge recovery"
+    );
+}
+
+/// 準特異行列（高条件数）でリッジ正則化が有効に機能する
+#[test]
+fn test_box_maximize_sharpe_near_singular_ridge_effective() {
+    // ほぼ完全相関 → Cholesky/LU が数値的に不安定になりうる
+    let near_singular = array![
+        [1.0, 0.999999, 0.999998],
+        [0.999999, 1.0, 0.999999],
+        [0.999998, 0.999999, 1.0],
+    ];
+    let returns = vec![0.05, 0.03, 0.04];
+    let weights = box_maximize_sharpe(&returns, &near_singular, 0.5);
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-10,
+        "weights should sum to 1.0, got {sum}"
+    );
+    for (i, &w) in weights.iter().enumerate() {
+        assert!(w >= 0.0, "weight[{i}] should be non-negative, got {w}");
+    }
+}
+
+/// maximize_sharpe_ratio でも特異行列に対してリッジ正則化が機能する
+#[test]
+fn test_maximize_sharpe_ratio_singular_cov_ridge_recovers() {
+    let singular = array![[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
+    let returns = vec![0.05, 0.03, 0.04];
+    let weights = maximize_sharpe_ratio(&returns, &singular);
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-10,
+        "weights should sum to 1.0, got {sum}"
+    );
+    for (i, &w) in weights.iter().enumerate() {
+        assert!(w >= 0.0, "weight[{i}] should be non-negative, got {w}");
+    }
+    // 最高リターンの資産が最大ウェイトを持つはず
+    let max_idx = weights
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .unwrap()
+        .0;
+    assert_eq!(
+        max_idx, 0,
+        "asset 0 (highest return) should have max weight"
+    );
+}
+
+/// q solve パスでリッジ正則化が機能する（Upper 集合非空 + 特異 Σ_FF）
+///
+/// row0 = row3 の rank-3 行列で、asset 1（最高リターン）が Upper に移動した後、
+/// Free 部分行列 {0,2,3} が特異 → p/q solve の両方でリッジが必要。
+#[test]
+fn test_box_maximize_sharpe_singular_q_solve_ridge() {
+    // row0 = row3 → rank 3（4x4 で rank deficient = 1）
+    let singular = array![
+        [0.04, 0.01, 0.005, 0.04],
+        [0.01, 0.06, 0.015, 0.01],
+        [0.005, 0.015, 0.08, 0.005],
+        [0.04, 0.01, 0.005, 0.04],
+    ];
+    // asset 1 の超過リターンが突出 → Upper に移動。
+    // 残り {0,2,3} の Σ_FF は特異（row0=row2 in submatrix）→ q solve にリッジが必要
+    let returns = vec![0.04, 0.08, 0.03, 0.035];
+    let weights = box_maximize_sharpe(&returns, &singular, 0.35);
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-10,
+        "weights should sum to 1.0, got {sum}"
+    );
+    for (i, &w) in weights.iter().enumerate() {
+        assert!(w >= 0.0, "weight[{i}] should be non-negative, got {w}");
+    }
+    // 等配分ではないことを確認（リッジで最適化された結果）
+    let equal = 1.0 / 4.0;
+    let is_equal = weights.iter().all(|&w| (w - equal).abs() < 1e-6);
+    assert!(
+        !is_equal,
+        "should not be equal-weighted after ridge recovery"
+    );
+}
+
+/// 良条件行列ではリッジパスが不要で結果が一致する（回帰テスト）
+#[test]
+fn test_box_maximize_sharpe_well_conditioned_unaffected() {
+    // 対角優位 → 確実に正定値、リッジ不要
+    let well_cond = array![[0.04, 0.01, 0.005], [0.01, 0.09, 0.02], [0.005, 0.02, 0.16],];
+    let returns = vec![0.05, 0.03, 0.04];
+    let weights = box_maximize_sharpe(&returns, &well_cond, 0.5);
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-10,
+        "weights should sum to 1.0, got {sum}"
+    );
+    // 等配分ではなく差別化された重みが返る
+    let equal = 1.0 / 3.0;
+    let is_equal = weights.iter().all(|&w| (w - equal).abs() < 1e-6);
+    assert!(
+        !is_equal,
+        "well-conditioned matrix should produce differentiated weights"
+    );
+    // 最高リターン（0.05）の資産が最大ウェイト
+    let max_idx = weights
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .unwrap()
+        .0;
+    assert_eq!(
+        max_idx, 0,
+        "asset 0 (highest return) should have max weight"
+    );
 }
 
 /// unified_optimize の結果が厳密に合計 1.0 になることを確認
