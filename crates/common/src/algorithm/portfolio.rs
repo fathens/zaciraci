@@ -512,6 +512,11 @@ pub fn box_maximize_sharpe(
     let mut state = vec![BoundState::Free; n];
     let max_iter = 3 * n + 10;
 
+    enum Factored {
+        Chol(nalgebra::Cholesky<f64, nalgebra::Dyn>),
+        Lu(nalgebra::LU<f64, nalgebra::Dyn, nalgebra::Dyn>),
+    }
+
     for _ in 0..max_iter {
         let free: Vec<usize> = (0..n).filter(|&i| state[i] == BoundState::Free).collect();
         let upper: Vec<usize> = (0..n).filter(|&i| state[i] == BoundState::Upper).collect();
@@ -550,10 +555,6 @@ pub fn box_maximize_sharpe(
         let excess_f = nalgebra::DVector::from_fn(m, |i, _| excess_returns[free[i]]);
 
         // Σ_FF の分解（Cholesky 優先、LU フォールバック）を1回だけ行い再利用
-        enum Factored {
-            Chol(nalgebra::Cholesky<f64, nalgebra::Dyn>),
-            Lu(nalgebra::LU<f64, nalgebra::Dyn, nalgebra::Dyn>),
-        }
         let factored = cov_ff
             .clone()
             .cholesky()
