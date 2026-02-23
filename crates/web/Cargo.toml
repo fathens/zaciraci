@@ -8,6 +8,7 @@ common = { path = "../common" }
 persistence = { path = "../persistence" }
 logging = { path = "../logging" }
 
+chrono = { workspace = true }
 tonic = "0.14"
 tonic-prost = "0.14"
 tonic-web = "0.14"

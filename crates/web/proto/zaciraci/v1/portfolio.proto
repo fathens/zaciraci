@@ -1,0 +1,111 @@
+syntax = "proto3";
+package zaciraci.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service PortfolioService {
+  // 評価期間一覧
+  rpc GetEvaluationPeriods(GetEvaluationPeriodsRequest) returns (GetEvaluationPeriodsResponse);
+  // 評価期間詳細
+  rpc GetEvaluationPeriod(GetEvaluationPeriodRequest) returns (GetEvaluationPeriodResponse);
+  // 取引履歴（ページネーション）
+  rpc GetTrades(GetTradesRequest) returns (GetTradesResponse);
+  // バッチ単位の取引詳細
+  rpc GetTradesByBatch(GetTradesByBatchRequest) returns (GetTradesByBatchResponse);
+  // 最新バッチ
+  rpc GetLatestBatch(GetLatestBatchRequest) returns (GetLatestBatchResponse);
+  // 全トークン最新レート
+  rpc GetLatestRates(GetLatestRatesRequest) returns (GetLatestRatesResponse);
+  // レート履歴
+  rpc GetRateHistory(GetRateHistoryRequest) returns (GetRateHistoryResponse);
+}
+
+// ── 評価期間 ──
+
+message EvaluationPeriodEntry {
+  string period_id = 1;
+  google.protobuf.Timestamp start_time = 2;
+  string initial_value = 3;
+  repeated string selected_tokens = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message GetEvaluationPeriodsRequest {}
+
+message GetEvaluationPeriodsResponse {
+  repeated EvaluationPeriodEntry periods = 1;
+}
+
+message GetEvaluationPeriodRequest {
+  string period_id = 1;
+}
+
+message GetEvaluationPeriodResponse {
+  optional EvaluationPeriodEntry period = 1;
+}
+
+// ── 取引 ──
+
+message TradeEntry {
+  string tx_id = 1;
+  string trade_batch_id = 2;
+  string from_token = 3;
+  string from_amount = 4;
+  string to_token = 5;
+  string to_amount = 6;
+  google.protobuf.Timestamp timestamp = 7;
+  optional string evaluation_period_id = 8;
+}
+
+message GetTradesRequest {
+  optional string evaluation_period_id = 1;
+  uint32 limit = 2;
+  uint32 offset = 3;
+}
+
+message GetTradesResponse {
+  repeated TradeEntry trades = 1;
+  uint32 total_count = 2;
+}
+
+message GetTradesByBatchRequest {
+  string batch_id = 1;
+}
+
+message GetTradesByBatchResponse {
+  repeated TradeEntry trades = 1;
+}
+
+message GetLatestBatchRequest {}
+
+message GetLatestBatchResponse {
+  optional string batch_id = 1;
+  repeated TradeEntry trades = 2;
+}
+
+// ── レート ──
+
+message RateEntry {
+  string base_token = 1;
+  string quote_token = 2;
+  string rate = 3;
+  uint32 decimals = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+message GetLatestRatesRequest {}
+
+message GetLatestRatesResponse {
+  repeated RateEntry rates = 1;
+}
+
+message GetRateHistoryRequest {
+  string base_token = 1;
+  string quote_token = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+}
+
+message GetRateHistoryResponse {
+  repeated RateEntry rates = 1;
+}

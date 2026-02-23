@@ -706,6 +706,75 @@ impl TokenRate {
     }
 }
 
+/// 全トークンの最新レートを一括取得（decimals が NULL のレコードはスキップ）
+pub async fn get_all_latest() -> Result<Vec<TokenRate>> {
+    let conn = connection_pool::get().await?;
+
+    let results: Vec<DbTokenRate> = conn
+        .interact(|conn| {
+            use diesel::RunQueryDsl;
+            diesel::sql_query(
+                "SELECT DISTINCT ON (base_token) \
+                     id, base_token, quote_token, rate, timestamp, decimals, rate_calc_near, swap_path \
+                 FROM token_rates \
+                 WHERE decimals IS NOT NULL \
+                 ORDER BY base_token, timestamp DESC",
+            )
+            .load::<DbTokenRate>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let mut rates = Vec::with_capacity(results.len());
+    for db_rate in results {
+        if let Some(decimals) = db_rate.decimals {
+            rates.push(TokenRate::from_db_with_decimals(db_rate, decimals as u8)?);
+        }
+    }
+    Ok(rates)
+}
+
+/// 時間範囲内のレートを取得（decimals が NULL のレコードはスキップ）
+///
+/// `get_rates_in_time_range` と異なり `GetDecimalsFn` コールバックが不要。
+/// decimals が既に記録されているレコードのみ返す。
+pub async fn get_rates_in_time_range_simple(
+    range: &TimeRange,
+    base: &TokenOutAccount,
+    quote: &TokenInAccount,
+) -> Result<Vec<TokenRate>> {
+    use diesel::QueryDsl;
+
+    let conn = connection_pool::get().await?;
+
+    let start = range.start;
+    let end = range.end;
+    let base_str = base.to_string();
+    let quote_str = quote.to_string();
+
+    let results = conn
+        .interact(move |conn| {
+            token_rates::table
+                .filter(token_rates::timestamp.gt(start))
+                .filter(token_rates::timestamp.le(end))
+                .filter(token_rates::base_token.eq(&base_str))
+                .filter(token_rates::quote_token.eq(&quote_str))
+                .filter(token_rates::decimals.is_not_null())
+                .order_by(token_rates::timestamp.asc())
+                .load::<DbTokenRate>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let mut rates = Vec::with_capacity(results.len());
+    for db_rate in results {
+        if let Some(decimals) = db_rate.decimals {
+            rates.push(TokenRate::from_db_with_decimals(db_rate, decimals as u8)?);
+        }
+    }
+    Ok(rates)
+}
+
 /// DB クエリ結果用の構造体（get_all_decimals 用）
 #[derive(Debug, Clone, diesel::QueryableByName)]
 #[diesel(check_for_backend(diesel::pg::Pg))]

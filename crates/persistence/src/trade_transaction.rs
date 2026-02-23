@@ -157,6 +157,56 @@ impl TradeTransaction {
 
         result.context("Failed to count transactions by evaluation period")
     }
+
+    /// ページネーション付きで取引を取得（タイムスタンプ降順）
+    /// period_id が None の場合は全取引を返す
+    pub fn find_paginated(
+        period_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+        conn: &mut PgConnection,
+    ) -> QueryResult<(Vec<TradeTransaction>, i64)> {
+        use diesel::dsl::count;
+
+        let mut count_query = trade_transactions::table.into_boxed();
+        let mut data_query = trade_transactions::table.into_boxed();
+
+        if let Some(pid) = period_id {
+            count_query =
+                count_query.filter(trade_transactions::evaluation_period_id.eq(pid));
+            data_query =
+                data_query.filter(trade_transactions::evaluation_period_id.eq(pid));
+        }
+
+        let total: i64 = count_query
+            .select(count(trade_transactions::tx_id))
+            .first(conn)?;
+
+        let trades = data_query
+            .order(trade_transactions::timestamp.desc())
+            .limit(limit)
+            .offset(offset)
+            .load::<TradeTransaction>(conn)?;
+
+        Ok((trades, total))
+    }
+
+    pub async fn find_paginated_async(
+        period_id: Option<String>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<TradeTransaction>, i64)> {
+        let conn = connection_pool::get().await?;
+
+        let result = conn
+            .interact(move |conn| {
+                Self::find_paginated(period_id.as_deref(), limit, offset, conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
+
+        result.context("Failed to find paginated transactions")
+    }
 }
 
 #[cfg(test)]

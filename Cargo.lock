@@ -4573,6 +4573,7 @@ dependencies = [
 name = "web"
 version = "1.2.0"
 dependencies = [
+ "chrono",
  "common 1.2.0",
  "logging",
  "persistence",
