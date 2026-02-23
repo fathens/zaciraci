@@ -3864,6 +3864,50 @@ fn test_ledoit_wolf_well_conditioned() {
     );
 }
 
+/// 不等長リターンで T アライン（末尾共通窓）が正しく動作する
+#[test]
+fn test_ledoit_wolf_unequal_length_uses_common_window() {
+    // 不等長リターン: T_min = 7
+    let returns = vec![
+        vec![9.9, 9.8, 9.7, 0.01, -0.02, 0.03, -0.01, 0.02, 0.01, -0.03], // 10点
+        vec![0.02, -0.01, 0.03, 0.01, -0.02, 0.04, -0.01],                // 7点
+        vec![0.05, 0.01, -0.03, 0.02, 0.01, -0.01, 0.03, 0.02],           // 8点
+    ];
+
+    let result = ledoit_wolf_shrink(&returns);
+
+    // 末尾7点のみで計算した結果と一致するはず
+    let trimmed: Vec<Vec<f64>> = returns.iter().map(|r| r[r.len() - 7..].to_vec()).collect();
+    let expected = ledoit_wolf_shrink(&trimmed);
+
+    // 一致検証
+    for i in 0..3 {
+        for j in 0..3 {
+            assert!(
+                (result[[i, j]] - expected[[i, j]]).abs() < 1e-14,
+                "[{},{}]: unequal={}, trimmed={}",
+                i,
+                j,
+                result[[i, j]],
+                expected[[i, j]]
+            );
+        }
+    }
+
+    // 先頭余剰データの非影響を検証
+    let mut returns_mod = returns.clone();
+    returns_mod[0][0] = 999.0; // 先頭を大きく変更（T窓外）
+    let result_mod = ledoit_wolf_shrink(&returns_mod);
+    for i in 0..3 {
+        for j in 0..3 {
+            assert!(
+                (result[[i, j]] - result_mod[[i, j]]).abs() < 1e-14,
+                "Data outside T window should not affect result"
+            );
+        }
+    }
+}
+
 // --- box_maximize_sharpe テスト ---
 
 /// w_i ≤ max_position の制約充足
