@@ -111,15 +111,41 @@ impl TestFixture {
     }
 }
 
-// テーブルクリーンアップ用関数（テスト専用）
-async fn clean_test_tokens() -> Result<()> {
-    Ok(())
+/// テスト用: token_rates テーブルを自動クリーンアップする RAII ガード。
+/// DbStoreGuard（common::config）と同じパターン。
+/// テストが途中で panic しても確実にクリーンアップされる。
+struct TokenRateCleanGuard;
+
+impl TokenRateCleanGuard {
+    async fn new() -> Self {
+        Self::clean().await;
+        Self
+    }
+
+    async fn clean() {
+        use diesel::RunQueryDsl;
+        use persistence::schema::token_rates;
+        if let Ok(conn) = persistence::connection_pool::get().await {
+            let _ = conn
+                .interact(|conn| diesel::delete(token_rates::table).execute(conn))
+                .await;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
 }
 
-#[tokio::test]
+impl Drop for TokenRateCleanGuard {
+    fn drop(&mut self) {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(Self::clean());
+        });
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
-    clean_test_tokens().await?;
+    let _guard = TokenRateCleanGuard::new().await;
 
     let fixture = TestFixture::new();
     fixture.setup_volatility_data().await?;
@@ -154,14 +180,13 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
         );
     }
 
-    clean_test_tokens().await?;
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_get_price_history_data_integrity() -> Result<()> {
-    clean_test_tokens().await?;
+    let _guard = TokenRateCleanGuard::new().await;
 
     let fixture = TestFixture::new();
     let test_token: TokenOutAccount = "price_test.near".parse::<TokenAccount>().unwrap().into();
@@ -228,7 +253,6 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         );
     }
 
-    clean_test_tokens().await?;
     Ok(())
 }
 
@@ -378,10 +402,10 @@ fn test_token_prediction_serialization_roundtrip() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_batch_processing_database_operations() -> Result<()> {
-    clean_test_tokens().await?;
+    let _guard = TokenRateCleanGuard::new().await;
 
     let fixture = TestFixture::new();
     let tokens: Vec<String> = (1..=5).map(|i| format!("batch{}.near", i)).collect();
@@ -450,14 +474,13 @@ async fn test_batch_processing_database_operations() -> Result<()> {
         tokens.len()
     );
 
-    clean_test_tokens().await?;
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
-    clean_test_tokens().await?;
+    let _guard = TokenRateCleanGuard::new().await;
 
     let fixture = TestFixture::new();
 
@@ -479,14 +502,13 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
         .predict_multiple_tokens(tokens, &fixture.quote_token, 1, 24, Utc::now())
         .await;
 
-    clean_test_tokens().await?;
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
-    clean_test_tokens().await?;
+    let _guard = TokenRateCleanGuard::new().await;
 
     let service = PredictionService::new();
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
@@ -512,7 +534,6 @@ async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
         error_msg
     );
 
-    clean_test_tokens().await?;
     Ok(())
 }
 
@@ -753,10 +774,10 @@ fn test_confidence_none_when_forecast_invalid() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
-    clean_test_tokens().await?;
+    let _guard = TokenRateCleanGuard::new().await;
 
     let fixture = TestFixture::new();
 
@@ -805,7 +826,6 @@ async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
         duration
     );
 
-    clean_test_tokens().await?;
     Ok(())
 }
 
@@ -834,13 +854,13 @@ async fn test_prediction_concurrency_config() {
     assert_eq!(overridden, 4);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
     use common::types::TimeRange;
     use persistence::token_rate::TokenRate;
 
-    clean_test_tokens().await?;
+    let _guard = TokenRateCleanGuard::new().await;
 
     let fixture = TestFixture::new();
 
@@ -895,7 +915,6 @@ async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
         );
     }
 
-    clean_test_tokens().await?;
     Ok(())
 }
 

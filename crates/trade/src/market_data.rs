@@ -5,7 +5,7 @@
 
 use crate::Result;
 use bigdecimal::BigDecimal;
-use common::algorithm::types::PriceHistory;
+use common::algorithm::types::{PriceHistory, PricePoint};
 use common::types::*;
 use num_traits::Zero;
 use std::str::FromStr;
@@ -67,9 +67,11 @@ pub fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDe
         ));
     }
 
-    // 日次リターンを計算 (BigDecimalを使用)
-    let returns: Vec<BigDecimal> = history
-        .prices
+    // タイムスタンプ順にソートしてから日次リターンを計算 (BigDecimalを使用)
+    let mut sorted_prices: Vec<&PricePoint> = history.prices.iter().collect();
+    sorted_prices.sort_by_key(|p| p.timestamp);
+
+    let returns: Vec<BigDecimal> = sorted_prices
         .windows(2)
         .filter_map(|window| {
             let prev_price = &window[0].price;
@@ -90,6 +92,11 @@ pub fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDe
         ));
     }
 
+    // 標本分散には最低2つのリターンが必要
+    if returns.len() < 2 {
+        return Ok(BigDecimal::from(0));
+    }
+
     // 平均リターンを計算
     let sum: BigDecimal = returns.iter().sum();
     let count = BigDecimal::from(returns.len() as u64);
@@ -104,7 +111,8 @@ pub fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDe
         })
         .sum();
 
-    let variance = &variance_sum / &count;
+    let count_minus_1 = BigDecimal::from((returns.len() - 1) as u64);
+    let variance = &variance_sum / &count_minus_1;
 
     // BigDecimalで平方根を計算（Newton法による近似）
     if variance.is_zero() {

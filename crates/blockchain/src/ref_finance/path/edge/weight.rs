@@ -6,15 +6,15 @@ use std::ops::Add;
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub struct EdgeWeight {
     pair_id: Option<TokenPairId>,
-    estimated_rate: f32,
+    estimated_rate: f64,
 }
 
 impl EdgeWeight {
-    fn calc_rate(input_value: u128, estimated_return: u128) -> f32 {
+    fn calc_rate(input_value: u128, estimated_return: u128) -> f64 {
         if input_value == 0 {
             zero()
         } else {
-            -(estimated_return as f32 / input_value as f32)
+            -(estimated_return as f64 / input_value as f64)
         }
     }
 

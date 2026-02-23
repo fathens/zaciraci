@@ -100,7 +100,6 @@ fn test_filter_tokens_to_liquidate_only_wrap_near() {
 mod rebalance_tests {
     use bigdecimal::BigDecimal;
     use common::types::{ExchangeRate, NearValue, TokenAmount};
-    use num_traits::ToPrimitive;
     use std::str::FromStr;
 
     #[test]
@@ -213,55 +212,45 @@ mod rebalance_tests {
 
         // Token A
         let token_a_current = NearValue::from_near(BigDecimal::from(200));
-        let token_a_weight = 0.4;
-        let token_a_target = &total_value * token_a_weight;
+        let token_a_weight = BigDecimal::from_str("0.4").unwrap();
+        let token_a_target = &total_value * &token_a_weight;
         let token_a_diff = &token_a_target - &token_a_current;
 
-        // f64 は 0.4 を正確に表現できないため、tolerance-based で比較
-        let target_a_f64 = token_a_target.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (target_a_f64 - 120.0).abs() < 0.0001,
-            "Token A target should be ~120 NEAR, got {}",
-            target_a_f64
+        assert_eq!(
+            token_a_target,
+            NearValue::from_near(BigDecimal::from(120)),
+            "Token A target should be 120 NEAR",
         );
-
-        let diff_a_f64 = token_a_diff.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (diff_a_f64 - (-80.0)).abs() < 0.0001,
-            "Token A diff should be ~-80 NEAR, got {}",
-            diff_a_f64
+        assert_eq!(
+            token_a_diff,
+            NearValue::from_near(BigDecimal::from(-80)),
+            "Token A diff should be -80 NEAR",
         );
         assert!(token_a_diff < NearValue::zero()); // Need to sell
 
         // Token B
         let token_b_current = NearValue::from_near(BigDecimal::from(100));
-        let token_b_weight = 0.6;
-        let token_b_target = &total_value * token_b_weight;
+        let token_b_weight = BigDecimal::from_str("0.6").unwrap();
+        let token_b_target = &total_value * &token_b_weight;
         let token_b_diff = &token_b_target - &token_b_current;
 
-        let target_b_f64 = token_b_target.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (target_b_f64 - 180.0).abs() < 0.0001,
-            "Token B target should be ~180 NEAR, got {}",
-            target_b_f64
+        assert_eq!(
+            token_b_target,
+            NearValue::from_near(BigDecimal::from(180)),
+            "Token B target should be 180 NEAR",
         );
-
-        let diff_b_f64 = token_b_diff.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (diff_b_f64 - 80.0).abs() < 0.0001,
-            "Token B diff should be ~80 NEAR, got {}",
-            diff_b_f64
+        assert_eq!(
+            token_b_diff,
+            NearValue::from_near(BigDecimal::from(80)),
+            "Token B diff should be 80 NEAR",
         );
         assert!(token_b_diff > NearValue::zero()); // Need to buy
 
-        // Verify balance: sell amount ~= buy amount (within tolerance)
-        let sell_amount = token_a_diff.abs().as_bigdecimal().to_f64().unwrap();
-        let buy_amount = token_b_diff.as_bigdecimal().to_f64().unwrap();
-        assert!(
-            (sell_amount - buy_amount).abs() < 0.0001,
-            "Sell and buy amounts should match: sell={}, buy={}",
-            sell_amount,
-            buy_amount
+        // Verify balance: sell amount == buy amount (exact with BigDecimal)
+        assert_eq!(
+            token_a_diff.abs(),
+            token_b_diff,
+            "Sell and buy amounts should match",
         );
     }
 
@@ -468,5 +457,119 @@ mod rebalance_tests {
             num_bigint::BigInt::from(1),
             "Boundary rate should be exactly 1"
         );
+    }
+}
+
+mod add_position_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn bd(s: &str) -> BigDecimal {
+        BigDecimal::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn test_single_add_position_uses_full_balance() {
+        let result = allocate_add_position_amounts(&[(0, bd("1.0"))], 1_000_000);
+        assert_eq!(result, vec![(0, 1_000_000)]);
+    }
+
+    #[test]
+    fn test_two_equal_weights_split_evenly() {
+        let result = allocate_add_position_amounts(&[(0, bd("0.5")), (1, bd("0.5"))], 1_000_000);
+        assert_eq!(result[0].1 + result[1].1, 1_000_000);
+        assert_eq!(result[0].1, 500_000);
+        assert_eq!(result[1].1, 500_000);
+    }
+
+    #[test]
+    fn test_last_gets_remainder() {
+        let balance: u128 = 19_020_000_000_000_000_000_000_000;
+        let result = allocate_add_position_amounts(
+            &[(0, bd("0.245")), (1, bd("0.332")), (2, bd("0.423"))],
+            balance,
+        );
+        let total: u128 = result.iter().map(|(_, a)| a).sum();
+        assert_eq!(total, balance);
+    }
+
+    #[test]
+    fn test_unequal_weights() {
+        let balance: u128 = 10_000;
+        let result = allocate_add_position_amounts(
+            &[(0, bd("0.1")), (1, bd("0.2")), (2, bd("0.7"))],
+            balance,
+        );
+        assert_eq!(result[0].1, 1_000); // 10%
+        assert_eq!(result[1].1, 2_000); // 20%
+        assert_eq!(result[2].1, 7_000); // 残額 = 70%
+    }
+
+    #[test]
+    fn test_zero_balance() {
+        let result = allocate_add_position_amounts(&[(0, bd("0.5")), (1, bd("0.5"))], 0);
+        assert_eq!(result[0].1, 0);
+        assert_eq!(result[1].1, 0);
+    }
+
+    #[test]
+    fn test_empty_add_positions() {
+        let result = allocate_add_position_amounts(&[], 1_000_000);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_preserves_action_indices() {
+        // actions[1] と actions[3] が AddPosition の場合
+        let result = allocate_add_position_amounts(&[(1, bd("0.4")), (3, bd("0.6"))], 1_000_000);
+        assert_eq!(result[0].0, 1);
+        assert_eq!(result[1].0, 3);
+    }
+
+    /// 大きな yocto 値で精度が保たれることを検証
+    #[test]
+    fn test_allocate_large_yocto_precision() {
+        // 100 NEAR = 10^26 yocto（f64 では正確に表現できない）
+        let balance: u128 = 100_000_000_000_000_000_000_000_000;
+        let result = allocate_add_position_amounts(&[(0, bd("0.3")), (1, bd("0.7"))], balance);
+
+        let total: u128 = result.iter().map(|(_, a)| a).sum();
+        // 合計が元の残高と一致すること（最後の要素が残額を引き受ける）
+        assert_eq!(total, balance);
+
+        // 各配分が概ね正しいこと（1 NEAR = 10^24 の許容誤差）
+        let expected_0 = 30_000_000_000_000_000_000_000_000u128; // 30 NEAR
+        let diff_0 = (result[0].1 as i128 - expected_0 as i128).unsigned_abs();
+        assert!(
+            diff_0 < 1_000_000_000_000_000_000_000_000, // < 1 NEAR の誤差
+            "precision loss too large: diff = {} yocto",
+            diff_0
+        );
+    }
+
+    /// 小さなバランス値で整数除算の切り捨て誤差が軽減されることを検証
+    #[test]
+    fn test_allocate_small_balance_precision() {
+        // balance=100, weights 30%/70% → bps: 3000/7000, total_bps=10000
+        // 旧: 100/10000*3000 = 0*3000 = 0 (切り捨て)
+        // 新: 100/10000*3000 + 100%10000*3000/10000 = 0 + 100*3000/10000 = 30
+        let result =
+            allocate_add_position_amounts(&[(0, bd("0.3")), (1, bd("0.3")), (2, bd("0.4"))], 100);
+        // 最後のアイテムが残額を吸収するので先頭2つの精度を検証
+        assert_eq!(result[0].1, 30, "30% of 100 should be 30");
+        assert_eq!(result[1].1, 30, "30% of 100 should be 30");
+        assert_eq!(result[2].1, 40, "remainder should be 40");
+    }
+
+    /// balance が total_bps より小さい場合でも正しく配分される
+    #[test]
+    fn test_allocate_balance_smaller_than_total_bps() {
+        // balance=7, weights 50%/50% → bps: 5000/5000, total_bps=10000
+        // 旧: 7/10000*5000 = 0
+        // 新: 0 + 7*5000/10000 = 3
+        let result = allocate_add_position_amounts(&[(0, bd("0.5")), (1, bd("0.5"))], 7);
+        assert_eq!(result[0].1, 3, "50% of 7 should be ~3");
+        assert_eq!(result[1].1, 4, "remainder should be 4");
+        assert_eq!(result[0].1 + result[1].1, 7, "total should equal balance");
     }
 }

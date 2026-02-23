@@ -521,3 +521,64 @@ async fn test_pool_liquidity_error_default_score_override() {
     let score_custom = calculate_pool_liquidity_score(&client, "test.token").await;
     assert!((score_custom - 0.5).abs() < 0.001);
 }
+
+/// タイムスタンプ未ソートの価格データでも正しいボラティリティを計算することを検証
+#[test]
+fn test_calculate_volatility_from_history_unsorted_prices() {
+    use chrono::{Duration, Utc};
+    use common::algorithm::types::{PriceHistory, PricePoint};
+
+    let base_time = Utc::now() - Duration::days(5);
+
+    // ソート済みの価格データ
+    let sorted_prices = vec![
+        PricePoint {
+            timestamp: base_time,
+            price: price_from_int(100),
+            volume: None,
+        },
+        PricePoint {
+            timestamp: base_time + Duration::days(1),
+            price: price_from_int(110),
+            volume: None,
+        },
+        PricePoint {
+            timestamp: base_time + Duration::days(2),
+            price: price_from_int(105),
+            volume: None,
+        },
+        PricePoint {
+            timestamp: base_time + Duration::days(3),
+            price: price_from_int(115),
+            volume: None,
+        },
+        PricePoint {
+            timestamp: base_time + Duration::days(4),
+            price: price_from_int(108),
+            volume: None,
+        },
+    ];
+
+    let history_sorted = PriceHistory {
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
+        prices: sorted_prices.clone(),
+    };
+    let volatility_sorted = calculate_volatility_from_history(&history_sorted).unwrap();
+
+    // 逆順で渡す（タイムスタンプが降順）
+    let mut reversed_prices = sorted_prices;
+    reversed_prices.reverse();
+    let history_reversed = PriceHistory {
+        token: "test.token".parse::<TokenOutAccount>().unwrap(),
+        quote_token: "wrap.near".parse::<TokenInAccount>().unwrap(),
+        prices: reversed_prices,
+    };
+    let volatility_reversed = calculate_volatility_from_history(&history_reversed).unwrap();
+
+    assert_eq!(
+        volatility_sorted, volatility_reversed,
+        "Volatility should be the same regardless of input order: sorted={}, reversed={}",
+        volatility_sorted, volatility_reversed
+    );
+}

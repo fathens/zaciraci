@@ -1,13 +1,10 @@
 use crate::Result;
 use crate::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
-use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
-use blockchain::wallet::Wallet;
 use common::config;
 use common::types::{NearAmount, TokenInAccount, TokenOutAccount, YoctoAmount, YoctoValue};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
-use std::fmt::Display;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // NOTE: LAST_HARVEST_TIME は cron 逐次実行のみからアクセスされるため Relaxed で十分。
@@ -69,43 +66,51 @@ fn update_last_harvest_time() {
 }
 
 /// ハーベスト判定と実行
-pub async fn check_and_harvest<C, W>(
-    _client: &C,
-    _wallet: &W,
-    current_portfolio_value: YoctoValue,
-) -> Result<()>
-where
-    C: AccountInfo + SendTx + ViewContract + GasInfo,
-    <C as SendTx>::Output: Display + SentTx,
-    W: Wallet,
-{
-    let log = DEFAULT.new(o!("function" => "check_and_harvest"));
+///
+/// 清算時に呼び出す。旧 period の initial_value と清算後の current_value を
+/// 引数で受け取ることで、新 period 作成前に正しく判定できる。
+///
+/// # 引数
+/// - `initial_value`: 旧 evaluation period の初期投資額
+/// - `current_value`: 清算後のポートフォリオ価値
+/// - `period_id`: ハーベスト取引を記録する evaluation period の ID
+///
+/// # 戻り値
+/// 実際にハーベストした額（YoctoAmount）。ハーベストしなかった場合は zero。
+pub async fn check_and_execute_harvest(
+    initial_value: &YoctoValue,
+    current_value: &YoctoValue,
+    period_id: &str,
+) -> Result<YoctoAmount> {
+    let log = DEFAULT.new(o!("function" => "check_and_execute_harvest"));
+    check_and_execute_harvest_inner(initial_value, current_value, period_id, &log).await
+}
 
-    // 最新の評価期間を取得して初期投資額を取得
-    let latest_period =
-        match persistence::evaluation_period::EvaluationPeriod::get_latest_async().await? {
-            Some(period) => period,
-            None => {
-                trace!(log, "No evaluation period found, skipping harvest");
-                return Ok(());
-            }
-        };
-
-    // 型安全な YoctoValue で計算
-    let initial_value = YoctoValue::from_yocto(latest_period.initial_value);
-    let current_value = current_portfolio_value;
-
-    debug!(log, "Portfolio value check";
+/// ハーベスト判定と実行の内部ロジック
+///
+/// initial_value と current_value を直接受け取り、DB 依存なしで判定する。
+async fn check_and_execute_harvest_inner(
+    initial_value: &YoctoValue,
+    current_value: &YoctoValue,
+    period_id: &str,
+    log: &slog::Logger,
+) -> Result<YoctoAmount> {
+    debug!(log, "Portfolio value check for harvest";
         "initial_value" => %initial_value,
-        "current_value" => %current_value,
-        "period_id" => %latest_period.period_id
+        "current_value" => %current_value
     );
+
+    // initial_value がゼロの場合はハーベスト不可（初回起動時のバグ防止）
+    if initial_value.is_zero() {
+        trace!(log, "initial_value is zero, skipping harvest");
+        return Ok(YoctoAmount::zero());
+    }
 
     // 200%利益時の判定（初期投資額の2倍になった場合）
     // &YoctoValue * BigDecimal = YoctoValue
-    let harvest_threshold = &initial_value * BigDecimal::from(2);
+    let harvest_threshold = initial_value * BigDecimal::from(2);
 
-    if current_value > harvest_threshold {
+    if *current_value > harvest_threshold {
         // YoctoValue - &YoctoValue = YoctoValue
         let excess = current_value - &harvest_threshold;
         info!(log, "Harvest threshold exceeded, executing harvest";
@@ -129,7 +134,7 @@ where
                 "harvest_amount" => %harvest_amount,
                 "min_amount" => %min_harvest_amount
             );
-            return Ok(());
+            return Ok(YoctoAmount::zero());
         }
 
         debug!(log, "Executing harvest";
@@ -146,33 +151,39 @@ where
                     .expect("system clock is after UNIX epoch")
                     .as_secs() - LAST_HARVEST_TIME.load(Ordering::Relaxed)) / 3600
             );
-            return Ok(());
+            return Ok(YoctoAmount::zero());
         }
 
         // 実際のハーベスト実行
-        execute_harvest_transfer(&harvest_account, harvest_amount, &log).await?;
+        execute_harvest_transfer(&harvest_account, harvest_amount.clone(), period_id, log).await?;
 
         // ハーベスト実行時間を更新
         update_last_harvest_time();
+
+        Ok(harvest_amount)
     } else {
         // YoctoValue / YoctoValue = BigDecimal（比率）
-        let current_percentage = (current_value / initial_value) * BigDecimal::from(100);
+        // NOTE: initial_value は上方のゼロガードで非ゼロが保証されている
+        let current_percentage =
+            (current_value / initial_value) * BigDecimal::from(100);
         trace!(log, "Portfolio value below harvest threshold";
             "current_percentage" => %current_percentage
         );
-    }
 
-    Ok(())
+        Ok(YoctoAmount::zero())
+    }
 }
 
 /// ハーベスト送金の実行
 async fn execute_harvest_transfer(
     target_account: &AccountId,
     harvest_amount: YoctoAmount,
+    period_id: &str,
     log: &slog::Logger,
 ) -> Result<()> {
-    use blockchain::jsonrpc::{AccountInfo, SendTx};
+    use blockchain::jsonrpc::{AccountInfo, SendTx, SentTx};
     use blockchain::ref_finance::{deposit, token_account::WNEAR_TOKEN};
+    use blockchain::wallet::Wallet;
 
     debug!(log, "Starting harvest transfer execution";
         "target" => %target_account,
@@ -292,19 +303,7 @@ async fn execute_harvest_transfer(
         "tx_hash" => %tx_hash
     );
 
-    // 4. 最新の評価期間を取得
-    let latest_period =
-        persistence::evaluation_period::EvaluationPeriod::get_latest_async().await?;
-    let period_id = match latest_period {
-        Some(period) => period.period_id,
-        None => {
-            return Err(anyhow::anyhow!(
-                "No evaluation period found for harvest transaction"
-            ));
-        }
-    };
-
-    // 5. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
+    // 4. ハーベスト取引をTradeTransactionに記録（実際の送金額で記録）
     // wNEAR → NEAR 変換なので、どちらも decimals=24
     let actual_transfer_yocto = YoctoAmount::from_u128(actual_transfer_amount.as_yoctonear());
     let from_amount = actual_transfer_yocto.to_token_amount();
@@ -315,7 +314,7 @@ async fn execute_harvest_transfer(
     let from_token: TokenInAccount = WNEAR_TOKEN.to_in();
     let to_token: TokenOutAccount = NEAR_TOKEN.to_out();
 
-    let recorder = TradeRecorder::new(period_id);
+    let recorder = TradeRecorder::new(period_id.to_string());
     recorder
         .record_trade(
             tx_hash, // 実際のトランザクションハッシュを使用

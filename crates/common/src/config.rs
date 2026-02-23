@@ -17,8 +17,6 @@ pub struct Config {
     #[serde(default)]
     pub rpc: RpcConfig,
     #[serde(default)]
-    pub external_services: ExternalServicesConfig,
-    #[serde(default)]
     pub trade: TradeConfig,
     #[serde(default)]
     pub cron: CronConfig,
@@ -70,9 +68,6 @@ pub struct RpcSettings {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
 }
-
-#[derive(Debug, Deserialize, Default)]
-pub struct ExternalServicesConfig {}
 
 #[derive(Debug, Deserialize)]
 pub struct TradeConfig {

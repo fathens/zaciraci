@@ -5,6 +5,7 @@
 ### コードスタイル
 - `cargo fmt --all -- --check` でRustコードフォーマットをチェック
 - `cargo clippy --all-targets --all-features -- -D warnings` でlintをチェック（警告はエラーとして扱う）
+- `#[allow(clippy::...)]` による clippy 警告の抑制は禁止。警告が出た場合はコードを修正して根本対応すること
 - `cargo test` ですべてのテストが通ることを確認
 
 #### モジュール構成
@@ -151,6 +152,61 @@ fn test_example() {
     // ...
 }
 ```
+
+#### 大規模テストファイルの分割
+
+テストファイル（`tests.rs` や `tests/` 配下のファイル）が **2000 行**を超える場合は、テストの関心事ごとにサブモジュールへ分割すること。
+
+**変更前:**
+
+```
+src/
+  foo.rs
+  foo/
+    tests.rs      # 2000 行超の大規模テストファイル
+```
+
+**変更後（サブモジュール名は一例）:**
+
+```
+src/
+  foo.rs
+  foo/
+    tests.rs      # pub use + mod 宣言のみ
+    tests/
+      helpers.rs
+      basic.rs
+      advanced.rs
+```
+
+**`tests.rs`（分割後）:**
+
+```rust
+pub use super::*;
+// テスト共通の use 宣言
+
+mod helpers;
+pub use helpers::*;
+
+mod basic;
+mod advanced;
+```
+
+**各サブモジュール:**
+
+```rust
+use super::*;
+
+#[test]
+fn test_example() {
+    // ...
+}
+```
+
+### コミット粒度
+- コミットは独立した変更ごとに分けること（1コミット = 1つの論理的変更）
+- 1つのコミットに複数の独立した変更を混ぜない
+- 例: 3つの独立したテスト追加 → 3つの個別コミット
 
 ### コミットメッセージ
 - 明確で説明的なコミットメッセージを使用

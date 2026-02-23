@@ -12,12 +12,6 @@
 # ネットワーク設定（mainnet/testnetの切り替え）
 USE_MAINNET=false  # trueでmainnet、falseでtestnet
 
-# Chronos API設定（価格予測）
-CHRONOS_URL=http://localhost:8000
-
-# Backend API設定
-BACKEND_URL=http://localhost:3000
-
 # データベース設定
 PG_DSN=postgres://username:password@localhost:5432/zaciraci
 PG_POOL_SIZE=16  # データベース接続プールサイズ（オプション）
@@ -124,9 +118,8 @@ ORDER BY executed_at DESC;
 ### トレードが実行されない場合
 
 1. ウォレット残高を確認
-2. Chronos APIの接続を確認
-3. データベース接続を確認
-4. ログでエラーを確認
+2. データベース接続を確認
+3. ログでエラーを確認
 
 ### ハーベストが実行されない場合
 

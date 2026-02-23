@@ -5,7 +5,7 @@
 
 use crate::Result;
 use crate::{recorder::TradeRecorder, swap};
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
 use chrono::{DateTime, Utc};
@@ -24,12 +24,101 @@ pub struct ExecutionSummary {
     pub failed_count: usize,
 }
 
+/// AddPosition の swap 金額を weight に基づいて按分計算する。
+/// 最後の AddPosition が端数を含む残額を使い切る。
+///
+/// # 引数
+/// - `add_positions`: (アクションインデックス, weight) のリスト
+/// - `balance`: wrap.near 残高 (yocto)
+///
+/// # 戻り値
+/// (アクションインデックス, swap金額) のリスト
+fn allocate_add_position_amounts(
+    add_positions: &[(usize, BigDecimal)],
+    balance: u128,
+) -> Vec<(usize, u128)> {
+    if add_positions.is_empty() {
+        return vec![];
+    }
+
+    let total_weight: BigDecimal = add_positions.iter().map(|(_, w)| w).sum();
+
+    // weight を basis points (1/10000) に変換して整数演算
+    let weights_bps: Vec<u128> = add_positions
+        .iter()
+        .map(|(_, w)| {
+            if total_weight.is_zero() {
+                0u128
+            } else {
+                (w / &total_weight * BigDecimal::from(10_000))
+                    .to_u128()
+                    .unwrap_or(0)
+            }
+        })
+        .collect();
+    let total_bps: u128 = weights_bps.iter().sum();
+
+    let mut allocated_sum: u128 = 0;
+    let mut result = Vec::with_capacity(add_positions.len());
+
+    for (i, &(idx, _)) in add_positions.iter().enumerate() {
+        let amount = if i == add_positions.len() - 1 {
+            // 最後の AddPosition は残額全部を使い切る
+            balance.saturating_sub(allocated_sum)
+        } else if total_bps > 0 {
+            balance / total_bps * weights_bps[i] + balance % total_bps * weights_bps[i] / total_bps
+        } else {
+            0
+        };
+        allocated_sum = allocated_sum.saturating_add(amount);
+        result.push((idx, amount));
+    }
+
+    result
+}
+
+/// 全 AddPosition の swap 金額を事前に計算する。
+/// 最後の AddPosition が端数を含む残額を使い切る。
+///
+/// # 戻り値
+/// HashMap<アクションのインデックス, swap金額(yocto)>
+async fn precompute_add_position_amounts<C, W>(
+    client: &C,
+    wallet: &W,
+    actions: &[TradingAction],
+) -> Result<HashMap<usize, u128>>
+where
+    C: ViewContract,
+    W: Wallet,
+{
+    let add_positions: Vec<(usize, BigDecimal)> = actions
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, action)| match action {
+            TradingAction::AddPosition { weight, .. } => Some((idx, weight.clone())),
+            _ => None,
+        })
+        .collect();
+
+    if add_positions.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+    let account = wallet.account_id();
+    let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
+    let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
+
+    Ok(allocate_add_position_amounts(&add_positions, balance)
+        .into_iter()
+        .collect())
+}
+
 /// 取引アクションを実際に実行
 pub(crate) async fn execute_trading_actions<C, W>(
     client: &C,
     wallet: &W,
     actions: &[TradingAction],
-    _available_funds: u128,
     period_id: String,
 ) -> Result<ExecutionSummary>
 where
@@ -51,8 +140,12 @@ where
         "period_id" => %period_id
     );
 
-    for action in actions {
-        match execute_single_action(client, wallet, action, &recorder).await {
+    // AddPosition の swap 金額を事前に一括計算
+    let add_position_amounts = precompute_add_position_amounts(client, wallet, actions).await?;
+
+    for (idx, action) in actions.iter().enumerate() {
+        let swap_amount_override = add_position_amounts.get(&idx).copied();
+        match execute_single_action(client, wallet, action, &recorder, swap_amount_override).await {
             Ok(_) => {
                 info!(log, "action executed successfully"; "action" => ?action);
                 summary.success_count += 1;
@@ -73,6 +166,7 @@ async fn execute_single_action<C, W>(
     wallet: &W,
     action: &TradingAction,
     recorder: &TradeRecorder,
+    swap_amount_override: Option<u128>,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -173,8 +267,8 @@ where
                 let token_str = token.to_string();
 
                 // weight の有効性確認
-                if !target_weight.is_finite() || *target_weight < 0.0 {
-                    warn!(log, "invalid weight, skipping"; "token" => &token_str, "weight" => *target_weight);
+                if *target_weight < BigDecimal::zero() {
+                    warn!(log, "invalid weight, skipping"; "token" => &token_str, "weight" => %target_weight);
                     continue;
                 }
 
@@ -184,8 +278,8 @@ where
 
                 let current_amount = current_balances.get(&token_str);
 
-                // 現在の価値（wrap.near換算）を計算
-                let current_value_wrap_near: NearValue = match current_amount {
+                // レートを取得してキャッシュ（売却時に再利用）
+                let spot_rate = match current_amount {
                     Some(amount) if !amount.is_zero() => {
                         let token_out: TokenOutAccount =
                             token_str.parse::<near_sdk::AccountId>()?.into();
@@ -201,15 +295,23 @@ where
                         .await?
                         .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token_str))?;
 
+                        Some(rate.to_spot_rate())
+                    }
+                    _ => None,
+                };
+
+                // 現在の価値（wrap.near換算）を計算
+                let current_value_wrap_near: NearValue = match (current_amount, &spot_rate) {
+                    (Some(amount), Some(rate)) if !amount.is_zero() => {
                         // TokenAmount / &ExchangeRate = NearValue トレイトを使用
-                        amount / &rate.to_spot_rate()
+                        amount / rate
                     }
                     _ => NearValue::zero(),
                 };
 
                 // 目標価値（wrap.near換算）を計算
-                // target_weight は f64 (0.0~1.0)、例: 0.3 = ポートフォリオの30%
-                let target_value_wrap_near: NearValue = &total_portfolio_value * *target_weight;
+                // target_weight は BigDecimal (0.0~1.0)、例: 0.3 = ポートフォリオの30%
+                let target_value_wrap_near: NearValue = &total_portfolio_value * target_weight;
 
                 // 差分を計算（wrap.near単位）
                 let diff_wrap_near: NearValue = &target_value_wrap_near - &current_value_wrap_near;
@@ -226,26 +328,12 @@ where
                 let zero = NearValue::zero();
 
                 if diff_wrap_near < zero && diff_wrap_near.abs() >= min_trade_size {
-                    // 売却が必要
-                    let token_out: TokenOutAccount =
-                        token_str.parse::<near_sdk::AccountId>()?.into();
-                    let quote_in: TokenInAccount =
-                        wrap_near_str.parse::<near_sdk::AccountId>()?.into();
+                    // 売却が必要 — キャッシュ済みレートを再利用
+                    let rate = spot_rate.ok_or_else(|| {
+                        anyhow::anyhow!("No cached rate for sell operation: {}", token_str)
+                    })?;
 
-                    let get_decimals = crate::make_get_decimals();
-                    let rate = persistence::token_rate::TokenRate::get_latest(
-                        &token_out,
-                        &quote_in,
-                        &get_decimals,
-                    )
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("No rate found for token: {}", token_str))?;
-
-                    sell_operations.push((
-                        token_str.clone(),
-                        diff_wrap_near.abs(),
-                        rate.to_spot_rate(),
-                    ));
+                    sell_operations.push((token_str.clone(), diff_wrap_near.abs(), rate));
                 } else if diff_wrap_near > zero && diff_wrap_near >= min_trade_size {
                     // 購入が必要
                     buy_operations.push((token_str.clone(), diff_wrap_near));
@@ -424,24 +512,46 @@ where
         }
         TradingAction::AddPosition { token, weight } => {
             // ポジション追加
-            debug!(log, "adding position"; "token" => %token, "weight" => weight);
+            debug!(log, "adding position"; "token" => %token, "weight" => %weight);
 
             // wrap.near → token へのswap
-            // common と backend の TokenAccount は同一型なので直接使用可能
             let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
             if token.to_string() != wrap_near.to_string() {
+                let swap_amount = swap_amount_override.ok_or_else(|| {
+                    anyhow::anyhow!("No pre-computed swap amount for AddPosition: {}", token)
+                })?;
+
+                debug!(log, "using pre-computed swap amount";
+                    "swap_amount" => swap_amount, "weight" => %weight
+                );
+
+                if swap_amount == 0 {
+                    return Err(anyhow::anyhow!(
+                        "Pre-computed swap amount is 0 for token: {} (weight: {})",
+                        token,
+                        weight
+                    ));
+                }
+
                 let wrap_near_in: TokenInAccount = wrap_near.to_in();
-                swap::execute_direct_swap(client, wallet, &wrap_near_in, token, None, recorder)
-                    .await?;
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near_in,
+                    token,
+                    Some(swap_amount),
+                    recorder,
+                )
+                .await?;
             }
 
-            debug!(log, "position added"; "token" => %token, "weight" => weight);
+            debug!(log, "position added"; "token" => %token, "weight" => %weight);
             Ok(())
         }
         TradingAction::ReducePosition { token, weight } => {
             // ポジション削減
             // common と backend の TokenAccount は同一型なので直接使用可能
-            debug!(log, "reducing position"; "token" => %token, "weight" => weight);
+            debug!(log, "reducing position"; "token" => %token, "weight" => %weight);
 
             // token → wrap.near へのswap
             let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
@@ -459,7 +569,7 @@ where
                 .await?;
             }
 
-            debug!(log, "position reduced"; "token" => %token, "weight" => weight);
+            debug!(log, "position reduced"; "token" => %token, "weight" => %weight);
             Ok(())
         }
     }
@@ -533,6 +643,34 @@ where
                     "change_percentage" => %format!("{:.2}%", change_percentage)
                 );
 
+                // ハーベスト判定: 旧 period の initial_value と清算後の final_value で比較
+                // 新 period 作成前に実行することで、正しい initial_value で判定できる
+                let harvested_amount = crate::harvest::check_and_execute_harvest(
+                    &initial_value,
+                    &final_value,
+                    &period_id,
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    error!(log, "harvest failed, continuing with new period"; "error" => %e);
+                    YoctoAmount::zero()
+                });
+
+                // ハーベスト後の残高を取得（ハーベスト実行時は REF Finance 残高が変動）
+                // ハーベスト未実行の場合（閾値未達・時間条件・最低額条件等）は清算時の残高をそのまま使用
+                let post_harvest_balance = if !harvested_amount.is_zero() {
+                    info!(log, "harvest completed, refreshing balance"; "harvested" => %harvested_amount);
+                    let account = wallet.account_id();
+                    let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+                    let deposits =
+                        blockchain::ref_finance::deposit::get_deposits(client, account).await?;
+                    let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
+                    YoctoAmount::from_u128(balance)
+                } else {
+                    final_balance
+                };
+                let post_harvest_value = post_harvest_balance.to_value();
+
                 // TRADE_ENABLED をチェック
                 let trade_enabled = config::get("TRADE_ENABLED")
                     .map(|v| v.to_lowercase() == "true")
@@ -540,7 +678,7 @@ where
 
                 if !trade_enabled {
                     info!(log, "trade disabled, not starting new period";
-                        "final_balance" => %final_balance
+                        "final_balance" => %post_harvest_balance
                     );
 
                     // TRADE_UNWRAP_ON_STOP が有効な場合、wrap.near を NEAR に戻して送金
@@ -556,12 +694,19 @@ where
                     }
 
                     // 空の period_id を返して停止を通知
-                    return Ok((String::new(), false, vec![], Some(final_balance)));
+                    return Ok((
+                        String::new(),
+                        false,
+                        vec![],
+                        Some(post_harvest_balance),
+                    ));
                 }
 
-                // 新規評価期間を作成
-                let new_period =
-                    NewEvaluationPeriod::new(final_value.as_bigdecimal().clone(), vec![]);
+                // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
+                let new_period = NewEvaluationPeriod::new(
+                    post_harvest_value.as_bigdecimal().clone(),
+                    vec![],
+                );
                 let created_period = new_period.insert_async().await?;
 
                 info!(log, "created new evaluation period";
@@ -569,7 +714,12 @@ where
                     "initial_value" => %created_period.initial_value
                 );
 
-                Ok((created_period.period_id, true, vec![], Some(final_balance)))
+                Ok((
+                    created_period.period_id,
+                    true,
+                    vec![],
+                    Some(post_harvest_balance),
+                ))
             } else {
                 // 評価期間中: トランザクション記録で判定
                 debug!(log, "checking evaluation period status";

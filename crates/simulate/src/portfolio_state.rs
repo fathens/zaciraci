@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use chrono::{DateTime, Utc};
 use common::types::{ExchangeRate, TokenOutAccount};
 use logging::*;
@@ -203,11 +203,7 @@ impl PortfolioState {
                         decimals,
                     );
                     let near_value = &token_amount / &rate;
-                    let near_f64: f64 = near_value
-                        .as_bigdecimal()
-                        .to_string()
-                        .parse()
-                        .unwrap_or(0.0);
+                    let near_f64: f64 = near_value.as_bigdecimal().to_f64().unwrap_or(0.0);
                     total += near_f64;
                 }
                 None => {
@@ -247,6 +243,7 @@ impl PortfolioState {
         let total_holding = self.holdings.get(token_id).copied().unwrap_or(0) + sell_amount;
         let cost_of_sold = self.average_cost_of_sold(token_id, sell_amount, total_holding);
 
+        // Safety: i128::MAX (~1.7e38 yoctoNEAR = ~1.7e14 NEAR) far exceeds realistic values.
         let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
 
         // Update cost basis (subtract the sold portion)
@@ -267,6 +264,7 @@ impl PortfolioState {
             self.cost_basis.remove(token_id);
         }
 
+        // Note: i128 -> f64 loses precision beyond 2^53 yoctoNEAR (~0.009 NEAR); acceptable for metrics.
         pnl as f64 / 1e24
     }
 
@@ -341,7 +339,6 @@ impl PortfolioState {
                 let near_value = &token_amount / &rate;
                 // NearValue -> yoctoNEAR
                 let yocto = near_value.to_yocto();
-                use num_traits::ToPrimitive;
                 yocto.as_bigdecimal().to_u128().unwrap_or(0)
             }
             None => 0,

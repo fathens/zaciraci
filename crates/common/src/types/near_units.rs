@@ -17,22 +17,13 @@
 //! YoctoValue / YoctoAmount = TokenPrice
 //! ```
 //!
-use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::str::FromStr;
 
 use super::token_types::{ExchangeRate, TokenAmount};
-
-/// f64 → BigDecimal 変換。NaN/Infinity の場合はゼロを返し debug_assert で検出。
-fn bigdecimal_from_f64_safe(value: f64) -> BigDecimal {
-    debug_assert!(
-        value.is_finite(),
-        "bigdecimal_from_f64_safe: non-finite f64: {value}"
-    );
-    BigDecimal::from_f64(value).unwrap_or_default()
-}
 
 /// BigDecimal → f64 変換。非有限値（Inf 含む）の場合はゼロを返し debug_assert で検出。
 ///
@@ -181,22 +172,6 @@ impl Div<&TokenPrice> for TokenPrice {
     }
 }
 
-// TokenPrice × スカラー (f64)
-impl Mul<f64> for TokenPrice {
-    type Output = TokenPrice;
-    fn mul(self, scalar: f64) -> TokenPrice {
-        TokenPrice(self.0 * bigdecimal_from_f64_safe(scalar))
-    }
-}
-
-// スカラー (f64) × TokenPrice
-impl Mul<TokenPrice> for f64 {
-    type Output = TokenPrice;
-    fn mul(self, price: TokenPrice) -> TokenPrice {
-        TokenPrice(bigdecimal_from_f64_safe(self) * price.0)
-    }
-}
-
 // TokenPrice × スカラー (BigDecimal)
 impl Mul<BigDecimal> for TokenPrice {
     type Output = TokenPrice;
@@ -213,19 +188,6 @@ impl Div<BigDecimal> for TokenPrice {
             TokenPrice::zero()
         } else {
             TokenPrice(self.0 / scalar)
-        }
-    }
-}
-
-// TokenPrice / スカラー (f64)
-impl Div<f64> for TokenPrice {
-    type Output = TokenPrice;
-    fn div(self, scalar: f64) -> TokenPrice {
-        let divisor = bigdecimal_from_f64_safe(scalar);
-        if divisor.is_zero() {
-            TokenPrice::zero()
-        } else {
-            TokenPrice(self.0 / divisor)
         }
     }
 }
@@ -777,21 +739,6 @@ impl Sub<&NearValue> for &NearValue {
     type Output = NearValue;
     fn sub(self, other: &NearValue) -> NearValue {
         NearValue(&self.0 - &other.0)
-    }
-}
-
-// NearValue × f64 → NearValue（ウェイト計算用）
-impl Mul<f64> for NearValue {
-    type Output = NearValue;
-    fn mul(self, rhs: f64) -> NearValue {
-        NearValue(self.0 * bigdecimal_from_f64_safe(rhs))
-    }
-}
-
-impl Mul<f64> for &NearValue {
-    type Output = NearValue;
-    fn mul(self, rhs: f64) -> NearValue {
-        NearValue(&self.0 * bigdecimal_from_f64_safe(rhs))
     }
 }
 

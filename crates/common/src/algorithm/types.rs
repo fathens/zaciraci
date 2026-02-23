@@ -68,7 +68,7 @@ pub const DEFAULT_DECIMALS: u8 = 24;
 
 /// 予測価格
 ///
-/// Chronos API から返される予測値は price 形式（NEAR/token）。
+/// 予測価格（NEAR/token 単位）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedPrice {
     pub timestamp: DateTime<Utc>,
@@ -153,12 +153,18 @@ pub enum TradingAction {
     },
     /// ポートフォリオリバランス
     Rebalance {
-        target_weights: BTreeMap<TokenOutAccount, f64>,
+        target_weights: BTreeMap<TokenOutAccount, BigDecimal>,
     },
     /// ポジション追加
-    AddPosition { token: TokenOutAccount, weight: f64 },
+    AddPosition {
+        token: TokenOutAccount,
+        weight: BigDecimal,
+    },
     /// ポジション削減
-    ReducePosition { token: TokenOutAccount, weight: f64 },
+    ReducePosition {
+        token: TokenOutAccount,
+        weight: BigDecimal,
+    },
 }
 
 // ==================== アルゴリズム実行結果 ====================
@@ -232,22 +238,23 @@ impl ExecutionReport {
 /// ポートフォリオの重み
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioWeights {
-    pub weights: BTreeMap<TokenOutAccount, f64>,
+    pub weights: BTreeMap<TokenOutAccount, BigDecimal>,
     pub timestamp: DateTime<Utc>,
     pub expected_return: f64,
     pub expected_volatility: f64,
     pub sharpe_ratio: f64,
 }
 
-/// ポートフォリオメトリクス
+/// ポートフォリオメトリクス（バックテスト指標）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioMetrics {
-    pub daily_return: f64,
-    pub volatility: f64,
-    pub sharpe_ratio: f64,
+    /// ソルティノレシオ（最適重み × 過去日次リターンから算出）
     pub sortino_ratio: f64,
+    /// 最大ドローダウン（最適重み × 過去日次リターンから算出）
     pub max_drawdown: f64,
+    /// カルマーレシオ（バックテスト平均日次リターン / 最大ドローダウン）
     pub calmar_ratio: f64,
+    /// 回転率
     pub turnover_rate: f64,
 }
 
