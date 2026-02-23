@@ -5,6 +5,7 @@
 ### コードスタイル
 - `cargo fmt --all -- --check` でRustコードフォーマットをチェック
 - `cargo clippy --all-targets --all-features -- -D warnings` でlintをチェック（警告はエラーとして扱う）
+- `#[allow(clippy::...)]` による clippy 警告の抑制は禁止。警告が出た場合はコードを修正して根本対応すること
 - `cargo test` ですべてのテストが通ることを確認
 
 #### モジュール構成
