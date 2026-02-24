@@ -145,7 +145,16 @@ where
 
     for (idx, action) in actions.iter().enumerate() {
         let swap_amount_override = add_position_amounts.get(&idx).copied();
-        match execute_single_action(client, wallet, action, &recorder, swap_amount_override).await {
+        match execute_single_action(
+            client,
+            wallet,
+            action,
+            &recorder,
+            swap_amount_override,
+            &period_id,
+        )
+        .await
+        {
             Ok(_) => {
                 info!(log, "action executed successfully"; "action" => ?action);
                 summary.success_count += 1;
@@ -167,6 +176,7 @@ async fn execute_single_action<C, W>(
     action: &TradingAction,
     recorder: &TradeRecorder,
     swap_amount_override: Option<u128>,
+    evaluation_period_id: &str,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -246,7 +256,12 @@ where
             trace!(log, "tokens list for balance query"; "tokens" => ?tokens, "count" => tokens.len());
 
             let current_balances =
-                crate::swap::get_current_portfolio_balances(client, wallet, &tokens).await?;
+                match crate::snapshot::get_holdings_from_db(evaluation_period_id).await? {
+                    Some(holdings) => holdings,
+                    None => {
+                        crate::swap::get_current_portfolio_balances(client, wallet, &tokens).await?
+                    }
+                };
 
             // 総ポートフォリオ価値を計算
             let total_portfolio_value =
@@ -694,19 +709,12 @@ where
                     }
 
                     // 空の period_id を返して停止を通知
-                    return Ok((
-                        String::new(),
-                        false,
-                        vec![],
-                        Some(post_harvest_balance),
-                    ));
+                    return Ok((String::new(), false, vec![], Some(post_harvest_balance)));
                 }
 
                 // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
-                let new_period = NewEvaluationPeriod::new(
-                    post_harvest_value.as_bigdecimal().clone(),
-                    vec![],
-                );
+                let new_period =
+                    NewEvaluationPeriod::new(post_harvest_value.as_bigdecimal().clone(), vec![]);
                 let created_period = new_period.insert_async().await?;
 
                 info!(log, "created new evaluation period";

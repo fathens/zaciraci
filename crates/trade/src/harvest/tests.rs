@@ -133,8 +133,7 @@ fn test_harvest_threshold_calculation() {
 async fn test_harvest_skips_when_initial_value_is_zero() {
     // Bug A 回帰テスト: initial_value=0 の場合、ハーベストは発火しないこと
     let initial_value = YoctoValue::from_yocto(BigDecimal::from(0u64));
-    let current_value =
-        YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24))); // 100 NEAR
+    let current_value = YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24))); // 100 NEAR
 
     let result = check_and_execute_harvest(&initial_value, &current_value, "test-period").await;
 
@@ -156,10 +155,8 @@ async fn test_harvest_skips_when_initial_value_is_zero() {
 #[tokio::test]
 async fn test_harvest_skips_when_below_threshold() {
     // 正常系: ポートフォリオが200%未満の場合ハーベストしない
-    let initial_value =
-        YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24))); // 100 NEAR
-    let current_value =
-        YoctoValue::from_yocto(BigDecimal::from(150u128 * 10u128.pow(24))); // 150 NEAR (50% profit)
+    let initial_value = YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24))); // 100 NEAR
+    let current_value = YoctoValue::from_yocto(BigDecimal::from(150u128 * 10u128.pow(24))); // 150 NEAR (50% profit)
 
     let result = check_and_execute_harvest(&initial_value, &current_value, "test-period").await;
 
@@ -182,8 +179,7 @@ async fn test_harvest_inner_logic_initial_value_zero() {
     // Bug A の核心テスト: initial_value=0 の場合、閾値 2*0=0 で
     // current_value > 0 が成立するが、ゼロガードで早期リターンすること
     let initial_value = YoctoValue::from_yocto(BigDecimal::from(0u64));
-    let current_value =
-        YoctoValue::from_yocto(BigDecimal::from(50u128 * 10u128.pow(24))); // 50 NEAR
+    let current_value = YoctoValue::from_yocto(BigDecimal::from(50u128 * 10u128.pow(24))); // 50 NEAR
 
     let result = check_and_execute_harvest(&initial_value, &current_value, "test-period").await;
     let harvested = result.expect("should succeed with zero initial_value");
@@ -247,7 +243,7 @@ fn test_harvest_new_period_should_use_old_initial_value() {
     let current_value = YoctoValue::from_yocto(BigDecimal::from(final_value_yocto));
     let threshold_new = &new_initial_value * BigDecimal::from(2);
     assert!(
-        !(current_value > threshold_new),
+        (current_value <= threshold_new),
         "With new period's initial_value == current_value, harvest should NOT trigger"
     );
 

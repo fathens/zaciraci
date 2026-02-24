@@ -222,9 +222,22 @@ where
     );
 
     // 実際の取引実行
+    let token_strs: Vec<String> = selected_tokens.iter().map(|t| t.to_string()).collect();
     let executed_actions =
         execute_trading_actions(client, wallet, &report, period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
+
+    // ポートフォリオ保有量を記録
+    if let Err(e) =
+        super::snapshot::record_portfolio_holdings(client, wallet, &period_id, &token_strs).await
+    {
+        warn!(log, "failed to record portfolio holdings"; "error" => ?e);
+    }
+
+    // 古い保有量レコードのクリーンアップ
+    if let Err(e) = super::snapshot::cleanup_old_records().await {
+        warn!(log, "failed to cleanup old portfolio holdings"; "error" => ?e);
+    }
 
     // 注: ハーベスト判定は manage_evaluation_period 内で評価期間終了時（清算後・新period作成前）に
     // 自動実行される。旧 period の initial_value と清算額で正しく比較するため。
@@ -743,14 +756,22 @@ where
             log,
             "continuing evaluation period, loading current holdings"
         );
-        // wrap.near を含めて全残高を取得
+        // wrap.near を含めて全残高を取得（DB に記録がある場合は DB から読み取り）
         let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
         let mut token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
         if !token_strs.contains(&wnear_str) {
             token_strs.push(wnear_str.clone());
         }
-        let current_balances =
-            swap::get_current_portfolio_balances(client, wallet, &token_strs).await?;
+        let current_balances = match super::snapshot::get_holdings_from_db(period_id).await? {
+            Some(holdings) => {
+                debug!(log, "loaded holdings from DB snapshot");
+                holdings
+            }
+            None => {
+                debug!(log, "no DB snapshot, falling back to RPC");
+                swap::get_current_portfolio_balances(client, wallet, &token_strs).await?
+            }
+        };
 
         // 実際のポートフォリオ総価値を計算
         let total_value_near =
@@ -825,4 +846,3 @@ where
 
     Ok(execution_report.actions)
 }
-

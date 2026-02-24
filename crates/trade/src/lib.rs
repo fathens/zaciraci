@@ -6,6 +6,7 @@ pub mod market_data;
 pub mod predict;
 pub mod prediction_accuracy;
 pub mod recorder;
+pub mod snapshot;
 pub mod strategy;
 pub mod swap;
 pub mod token_cache;
