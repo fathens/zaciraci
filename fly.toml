@@ -1,0 +1,56 @@
+# Zaciraci - NEAR blockchain trading bot
+# Fly.io deployment configuration (Machines v2)
+#
+# 初回セットアップ:
+#   fly apps create zaciraci
+#   fly postgres create --name zaciraci-db --region nrt
+#   fly postgres attach zaciraci-db --app zaciraci
+#
+# シークレット設定:
+#   fly secrets set ROOT_ACCOUNT_ID="your-account.near"
+#   fly secrets set ROOT_MNEMONIC="your twelve word mnemonic phrase"
+#   fly secrets set HARVEST_ACCOUNT_ID="your-harvest-account.near"
+#   fly secrets set INSTANCE_ID="flyio-prod"
+#
+# デプロイ:
+#   fly deploy
+
+app = 'zaciraci'
+primary_region = 'nrt'
+
+[build]
+  dockerfile = "Dockerfile"
+  [build.args]
+    CARGO_BUILD_ARGS = "--release"
+
+[env]
+  RUST_LOG = "info"
+  RUST_LOG_FORMAT = "json"
+  USE_MAINNET = "true"
+
+# gRPC + gRPC-Web サービス (ポート 50051)
+# Health / Config API を外部公開
+[http_service]
+  internal_port = 50051
+  force_https = true
+  # 24 時間稼働: 自動停止しない
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 80
+    hard_limit = 100
+
+  # ヘルスチェック
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/"
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'

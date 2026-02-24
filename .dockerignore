@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+.gitignore
+*.md
+config/config.local.toml
+cobertura.xml
+fly.toml

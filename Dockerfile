@@ -50,5 +50,6 @@ RUN chown -R app /app
 USER app
 
 COPY --from=builder /app/main /app/main
+COPY config/config.toml /app/config/config.toml
 
 ENTRYPOINT [ "/app/main" ]
