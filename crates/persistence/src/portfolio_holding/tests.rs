@@ -1,4 +1,173 @@
 use super::*;
+use crate::evaluation_period::NewEvaluationPeriod;
+use bigdecimal::BigDecimal;
+use serial_test::serial;
+
+fn create_test_holdings_json() -> serde_json::Value {
+    serde_json::to_value(vec![
+        TokenHolding {
+            token: "wrap.near".to_string(),
+            balance: "1000000000000000000000000".to_string(),
+            decimals: 24,
+        },
+        TokenHolding {
+            token: "usdt.tether-token.near".to_string(),
+            balance: "5000000".to_string(),
+            decimals: 6,
+        },
+    ])
+    .unwrap()
+}
+
+async fn create_test_evaluation_period() -> String {
+    let new_period =
+        NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+    let created = new_period.insert_async().await.unwrap();
+    created.period_id
+}
+
+async fn cleanup_holdings_for_period(period_id: &str) {
+    let conn = crate::connection_pool::get().await.unwrap();
+    let pid = period_id.to_string();
+    conn.interact(move |conn| {
+        diesel::delete(
+            portfolio_holdings::table.filter(portfolio_holdings::evaluation_period_id.eq(&pid)),
+        )
+        .execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+}
+
+// --- DB integration tests ---
+
+#[tokio::test]
+#[serial(portfolio_holding)]
+async fn test_insert_and_get_by_period() -> Result<()> {
+    let period_id = create_test_evaluation_period().await;
+    let holdings_json = create_test_holdings_json();
+    let now = chrono::Utc::now().naive_utc();
+
+    // Insert 3 records with different timestamps
+    for i in 0..3 {
+        let record = NewPortfolioHolding {
+            evaluation_period_id: period_id.clone(),
+            timestamp: now - chrono::Duration::seconds(i),
+            token_holdings: holdings_json.clone(),
+        };
+        PortfolioHolding::insert_async(record).await?;
+    }
+
+    let results = PortfolioHolding::get_by_period_async(period_id.clone()).await?;
+    assert_eq!(results.len(), 3);
+
+    // Verify timestamp descending order
+    for i in 0..results.len() - 1 {
+        assert!(results[i].timestamp >= results[i + 1].timestamp);
+    }
+
+    // Verify JSONB round-trip via parse_holdings
+    let holdings = results[0].parse_holdings()?;
+    assert_eq!(holdings.len(), 2);
+    assert_eq!(holdings[0].token, "wrap.near");
+    assert_eq!(holdings[0].balance, "1000000000000000000000000");
+    assert_eq!(holdings[1].token, "usdt.tether-token.near");
+    assert_eq!(holdings[1].balance, "5000000");
+
+    cleanup_holdings_for_period(&period_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(portfolio_holding)]
+async fn test_get_latest_for_period() -> Result<()> {
+    let period_id = create_test_evaluation_period().await;
+    let holdings_json = create_test_holdings_json();
+    let now = chrono::Utc::now().naive_utc();
+
+    let older = NewPortfolioHolding {
+        evaluation_period_id: period_id.clone(),
+        timestamp: now - chrono::Duration::seconds(10),
+        token_holdings: holdings_json.clone(),
+    };
+    PortfolioHolding::insert_async(older).await?;
+
+    let newer = NewPortfolioHolding {
+        evaluation_period_id: period_id.clone(),
+        timestamp: now,
+        token_holdings: holdings_json,
+    };
+    PortfolioHolding::insert_async(newer).await?;
+
+    // Should return the record with the latest timestamp
+    let latest = PortfolioHolding::get_latest_for_period_async(period_id.clone()).await?;
+    assert!(latest.is_some());
+    assert_eq!(latest.unwrap().timestamp, now);
+
+    // Non-existent period_id returns None
+    let none =
+        PortfolioHolding::get_latest_for_period_async("non_existent_period".to_string()).await?;
+    assert!(none.is_none());
+
+    cleanup_holdings_for_period(&period_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(portfolio_holding)]
+async fn test_cleanup_old_records() -> Result<()> {
+    let period_id = create_test_evaluation_period().await;
+    let holdings_json = create_test_holdings_json();
+    let now = chrono::Utc::now().naive_utc();
+
+    // Insert an old record (10 days ago)
+    let old_record = NewPortfolioHolding {
+        evaluation_period_id: period_id.clone(),
+        timestamp: now - chrono::Duration::days(10),
+        token_holdings: holdings_json.clone(),
+    };
+    PortfolioHolding::insert_async(old_record).await?;
+
+    // Insert a recent record (now)
+    let new_record = NewPortfolioHolding {
+        evaluation_period_id: period_id.clone(),
+        timestamp: now,
+        token_holdings: holdings_json,
+    };
+    PortfolioHolding::insert_async(new_record).await?;
+
+    // Cleanup records older than 5 days
+    let deleted = PortfolioHolding::cleanup_old_records(5).await?;
+    assert!(deleted >= 1);
+
+    // Only the recent record should remain for this period
+    let remaining = PortfolioHolding::get_by_period_async(period_id.clone()).await?;
+    assert_eq!(remaining.len(), 1);
+    assert!(remaining[0].timestamp > now - chrono::Duration::days(5));
+
+    cleanup_holdings_for_period(&period_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(portfolio_holding)]
+async fn test_insert_with_invalid_period_id() {
+    let holdings_json = create_test_holdings_json();
+    let now = chrono::Utc::now().naive_utc();
+
+    let record = NewPortfolioHolding {
+        evaluation_period_id: "non_existent_period_id".to_string(),
+        timestamp: now,
+        token_holdings: holdings_json,
+    };
+
+    // FK constraint should cause an error
+    let result = PortfolioHolding::insert_async(record).await;
+    assert!(result.is_err());
+}
+
+// --- Unit tests ---
 
 #[test]
 fn test_token_holding_serialization() {
