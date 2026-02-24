@@ -38,8 +38,11 @@ pub fn make_get_decimals()
     |token: &str| {
         let token = token.to_string();
         Box::pin(async move {
+            let token_account: common::types::TokenAccount = token
+                .parse()
+                .map_err(|e| anyhow::anyhow!("Invalid token account: {}", e))?;
             let client = blockchain::jsonrpc::new_client();
-            token_cache::get_token_decimals_cached(&client, &token).await
+            token_cache::get_token_decimals_cached(&client, &token_account).await
         })
     }
 }
@@ -233,9 +236,9 @@ async fn record_rates() -> Result<()> {
     trace!(log, "converting to rates (yocto scale)");
 
     // 各トークンの decimals を取得（キャッシュ経由、DB 初期化済み）
-    let token_ids: Vec<String> = values
+    let token_ids: Vec<common::types::TokenAccount> = values
         .iter()
-        .map(|(base, _, _)| base.to_string())
+        .map(|(base, _, _)| base.inner().clone())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();

@@ -619,7 +619,7 @@ where
                         // トークンの decimals を取得（キャッシュ経由）
                         let decimals = match crate::token_cache::get_token_decimals_cached(
                             client,
-                            &token_str,
+                            token_out.inner(),
                         )
                         .await
                         {

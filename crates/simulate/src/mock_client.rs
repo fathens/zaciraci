@@ -238,7 +238,8 @@ impl ViewContract for SimulationClient {
                 // Look up decimals for the specific token (receiver)
                 // Try global cache first, fall back to portfolio state decimals
                 let receiver_str = receiver.to_string();
-                let decimals = trade::token_cache::get_cached_decimals(&receiver_str)
+                let receiver_token = common::types::TokenAccount::from(receiver.clone());
+                let decimals = trade::token_cache::get_cached_decimals(&receiver_token)
                     .or_else(|| {
                         self.portfolio
                             .try_lock()

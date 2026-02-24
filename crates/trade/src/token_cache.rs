@@ -34,24 +34,24 @@ pub async fn load_from_db() -> crate::Result<()> {
 ///
 /// キャッシュに存在しない場合は None を返す。
 /// シミュレーション等、非同期 RPC を呼べない文脈で使用。
-pub fn get_cached_decimals(token_id: &str) -> Option<u8> {
+pub fn get_cached_decimals(token_id: &TokenAccount) -> Option<u8> {
     TOKEN_DECIMALS_CACHE
         .try_read()
         .ok()
-        .and_then(|cache| cache.get(token_id).copied())
+        .and_then(|cache| cache.get(token_id.as_str()).copied())
 }
 
 /// 単一トークンの decimals を取得 (キャッシュ優先、ミス時のみ RPC)
 ///
 /// RPC 失敗時はエラーを返し、キャッシュには保存しない。
-pub async fn get_token_decimals_cached<C>(client: &C, token_id: &str) -> crate::Result<u8>
+pub async fn get_token_decimals_cached<C>(client: &C, token_id: &TokenAccount) -> crate::Result<u8>
 where
     C: blockchain::jsonrpc::ViewContract,
 {
     // 1. キャッシュから取得
     {
         let cache = TOKEN_DECIMALS_CACHE.read().await;
-        if let Some(&decimals) = cache.get(token_id) {
+        if let Some(&decimals) = cache.get(token_id.as_str()) {
             return Ok(decimals);
         }
     }
@@ -59,14 +59,11 @@ where
     // 2. キャッシュミス: RPC にフォールバック（エラーはキャッシュしない）
     let log = DEFAULT.new(o!(
         "function" => "token_cache::get_token_decimals_cached",
-        "token_id" => token_id.to_owned(),
+        "token_id" => token_id.to_string(),
     ));
     debug!(log, "cache miss, fetching decimals via RPC");
 
-    let token_account: TokenAccount = token_id
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token account: {}", e))?;
-    let decimals = super::market_data::get_token_decimals(client, &token_account).await?;
+    let decimals = super::market_data::get_token_decimals(client, token_id).await?;
 
     // 3. 成功時のみキャッシュに保存
     {
@@ -78,7 +75,10 @@ where
 }
 
 /// 複数トークンの decimals を一括確認し、ミス分のみ並列 RPC で取得
-pub async fn ensure_decimals_cached<C>(client: &C, token_ids: &[String]) -> HashMap<String, u8>
+pub async fn ensure_decimals_cached<C>(
+    client: &C,
+    token_ids: &[TokenAccount],
+) -> HashMap<String, u8>
 where
     C: blockchain::jsonrpc::ViewContract + Sync,
 {
@@ -94,8 +94,8 @@ where
     {
         let cache = TOKEN_DECIMALS_CACHE.read().await;
         for token_id in token_ids {
-            if let Some(&decimals) = cache.get(token_id) {
-                result.insert(token_id.clone(), decimals);
+            if let Some(&decimals) = cache.get(token_id.as_str()) {
+                result.insert(token_id.to_string(), decimals);
             } else {
                 missing.push(token_id.clone());
             }
@@ -119,18 +119,11 @@ where
         .map(|token_id| {
             let log = log.clone();
             async move {
-                let token_account: TokenAccount = match token_id.parse() {
-                    Ok(ta) => ta,
+                match super::market_data::get_token_decimals(client, &token_id).await {
+                    Ok(d) => (token_id.to_string(), Some(d)),
                     Err(e) => {
-                        warn!(log, "invalid token account"; "token_id" => &token_id, "error" => %e);
-                        return (token_id, None);
-                    }
-                };
-                match super::market_data::get_token_decimals(client, &token_account).await {
-                    Ok(d) => (token_id, Some(d)),
-                    Err(e) => {
-                        warn!(log, "failed to fetch decimals via RPC"; "token_id" => &token_id, "error" => %e);
-                        (token_id, None)
+                        warn!(log, "failed to fetch decimals via RPC"; "token_id" => %token_id, "error" => %e);
+                        (token_id.to_string(), None)
                     }
                 }
             }
