@@ -5,6 +5,14 @@ use logging::*;
 use persistence::portfolio_holding::{NewPortfolioHolding, PortfolioHolding, TokenHolding};
 use std::collections::BTreeMap;
 
+/// トークンリストに wrap.near が含まれていなければ追加する
+pub fn ensure_wnear_included(tokens: &mut Vec<String>) {
+    let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    if !tokens.contains(&wnear_str) {
+        tokens.push(wnear_str);
+    }
+}
+
 /// トレード後のポートフォリオ保有量を DB に記録
 pub async fn record_portfolio_holdings<C, W>(
     client: &C,
@@ -22,11 +30,8 @@ where
     let log = DEFAULT.new(o!("function" => "record_portfolio_holdings"));
 
     // wrap.near を含めて全残高を取得
-    let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
     let mut tokens: Vec<String> = selected_tokens.to_vec();
-    if !tokens.contains(&wnear_str) {
-        tokens.push(wnear_str);
-    }
+    ensure_wnear_included(&mut tokens);
 
     let balances = crate::swap::get_current_portfolio_balances(client, wallet, &tokens).await?;
 
@@ -75,10 +80,19 @@ pub async fn get_holdings_from_db(
 
 /// 古い保有量レコードのクリーンアップ
 pub async fn cleanup_old_records() -> Result<usize> {
-    let retention_days: i64 = common::config::get("PORTFOLIO_HOLDINGS_RETENTION_DAYS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(90);
+    let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
+
+    let retention_days: u16 =
+        common::config::get("PORTFOLIO_HOLDINGS_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| {
+                v.parse().map_err(|e| {
+                warn!(log, "failed to parse PORTFOLIO_HOLDINGS_RETENTION_DAYS, using default";
+                    "value" => &v, "error" => %e);
+                e
+            }).ok()
+            })
+            .unwrap_or(90);
 
     PortfolioHolding::cleanup_old_records(retention_days).await
 }

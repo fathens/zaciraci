@@ -34,6 +34,14 @@ pub struct NewPortfolioHolding {
     pub token_holdings: serde_json::Value,
 }
 
+impl DbPortfolioHolding {
+    /// token_holdings JSONB を TokenHolding の Vec にパース
+    pub fn parse_holdings(&self) -> Result<Vec<TokenHolding>> {
+        serde_json::from_value(self.token_holdings.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to parse token_holdings: {}", e))
+    }
+}
+
 pub struct PortfolioHolding;
 
 impl PortfolioHolding {
@@ -90,9 +98,10 @@ impl PortfolioHolding {
     }
 
     /// 古いレコードを削除
-    pub async fn cleanup_old_records(retention_days: i64) -> Result<usize> {
+    pub async fn cleanup_old_records(retention_days: u16) -> Result<usize> {
         let conn = connection_pool::get().await?;
-        let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::days(retention_days);
+        let cutoff =
+            chrono::Utc::now().naive_utc() - chrono::Duration::days(i64::from(retention_days));
 
         let deleted = conn
             .interact(move |conn| {
@@ -110,11 +119,3 @@ impl PortfolioHolding {
 
 #[cfg(test)]
 mod tests;
-
-impl DbPortfolioHolding {
-    /// token_holdings JSONB を TokenHolding の Vec にパース
-    pub fn parse_holdings(&self) -> Result<Vec<TokenHolding>> {
-        serde_json::from_value(self.token_holdings.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to parse token_holdings: {}", e))
-    }
-}

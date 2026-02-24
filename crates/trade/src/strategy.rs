@@ -759,9 +759,7 @@ where
         // wrap.near を含めて全残高を取得（DB に記録がある場合は DB から読み取り）
         let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
         let mut token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
-        if !token_strs.contains(&wnear_str) {
-            token_strs.push(wnear_str.clone());
-        }
+        super::snapshot::ensure_wnear_included(&mut token_strs);
         let current_balances = match super::snapshot::get_holdings_from_db(period_id).await? {
             Some(holdings) => {
                 debug!(log, "loaded holdings from DB snapshot");
