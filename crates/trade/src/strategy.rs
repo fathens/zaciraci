@@ -154,10 +154,7 @@ where
         tokens
     } else {
         // 評価期間中: 既存のトークンを使用
-        existing_tokens
-            .into_iter()
-            .filter_map(|s| s.parse::<AccountId>().ok())
-            .collect()
+        existing_tokens.into_iter().map(AccountId::from).collect()
     };
 
     debug!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
@@ -222,14 +219,14 @@ where
     );
 
     // 実際の取引実行
-    let token_strs: Vec<String> = selected_tokens.iter().map(|t| t.to_string()).collect();
     let executed_actions =
         execute_trading_actions(client, wallet, &report, period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
     // ポートフォリオ保有量を記録
     if let Err(e) =
-        super::snapshot::record_portfolio_holdings(client, wallet, &period_id, &token_strs).await
+        super::snapshot::record_portfolio_holdings(client, wallet, &period_id, &token_accounts)
+            .await
     {
         warn!(log, "failed to record portfolio holdings"; "error" => ?e);
     }
@@ -758,9 +755,12 @@ where
             "continuing evaluation period, loading current holdings"
         );
         // wrap.near を含めて全残高を取得（DB に記録がある場合は DB から読み取り）
-        let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
-        let mut token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
-        super::snapshot::ensure_wnear_included(&mut token_strs);
+        let wnear_token = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+        let mut token_accounts: Vec<common::types::TokenAccount> = tokens
+            .iter()
+            .map(|t| common::types::TokenAccount::from(t.clone()))
+            .collect();
+        super::snapshot::ensure_wnear_included(&mut token_accounts);
         let current_balances = match super::snapshot::get_holdings_from_db(period_id).await? {
             Some(holdings) => {
                 debug!(log, "loaded holdings from DB snapshot");
@@ -768,7 +768,7 @@ where
             }
             None => {
                 debug!(log, "no DB snapshot, falling back to RPC");
-                swap::get_current_portfolio_balances(client, wallet, &token_strs).await?
+                swap::get_current_portfolio_balances(client, wallet, &token_accounts).await?
             }
         };
 
@@ -778,7 +778,7 @@ where
 
         // wrap.near の残高を cash_balance として使用
         let cash_balance_near = current_balances
-            .get(&wnear_str)
+            .get(wnear_token)
             .map(|amount| {
                 let rate = ExchangeRate::wnear();
                 amount / &rate
@@ -791,14 +791,13 @@ where
         // holdings には投資対象トークンのみ（wrap.near は除外）
         let mut holdings_typed = BTreeMap::new();
         for (token, amount) in &current_balances {
-            if token == &wnear_str {
+            if token == wnear_token {
                 continue;
             }
             if !amount.is_zero() {
-                trace!(log, "loaded existing position"; "token" => token, "amount" => %amount);
-                if let Ok(token_out) = token.parse::<common::types::TokenOutAccount>() {
-                    holdings_typed.insert(token_out, amount.clone());
-                }
+                trace!(log, "loaded existing position"; "token" => %token, "amount" => %amount);
+                let token_out: common::types::TokenOutAccount = token.clone().into();
+                holdings_typed.insert(token_out, amount.clone());
             }
         }
 

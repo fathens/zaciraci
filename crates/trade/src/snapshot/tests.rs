@@ -4,18 +4,22 @@ use common::types::TokenAmount;
 use persistence::portfolio_holding::TokenHolding;
 use std::collections::BTreeMap;
 
+fn ta(s: &str) -> TokenAccount {
+    s.parse().unwrap()
+}
+
 #[test]
 fn test_balances_to_holdings_basic() {
     let mut balances = BTreeMap::new();
     balances.insert(
-        "wrap.near".to_string(),
+        ta("wrap.near"),
         TokenAmount::from_smallest_units(
             BigDecimal::from(1_000_000_000_000_000_000_000_000u128),
             24,
         ),
     );
     balances.insert(
-        "usdt.tether-token.near".to_string(),
+        ta("usdt.tether-token.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(1_000_000u64), 6),
     );
 
@@ -40,15 +44,15 @@ fn test_balances_to_holdings_basic() {
 fn test_balances_to_holdings_filters_zero() {
     let mut balances = BTreeMap::new();
     balances.insert(
-        "token-a.near".to_string(),
+        ta("token-a.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(100u64), 18),
     );
     balances.insert(
-        "token-b.near".to_string(),
+        ta("token-b.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(0u64), 18),
     );
     balances.insert(
-        "token-c.near".to_string(),
+        ta("token-c.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(999u64), 6),
     );
 
@@ -72,11 +76,11 @@ fn test_balances_to_holdings_empty() {
 fn test_balances_to_holdings_all_zero() {
     let mut balances = BTreeMap::new();
     balances.insert(
-        "token-a.near".to_string(),
+        ta("token-a.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(0u64), 18),
     );
     balances.insert(
-        "token-b.near".to_string(),
+        ta("token-b.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(0u64), 6),
     );
 
@@ -103,14 +107,14 @@ fn test_holdings_to_balances_basic() {
 
     assert_eq!(balances.len(), 2);
 
-    let wnear = &balances["wrap.near"];
+    let wnear = &balances[&ta("wrap.near")];
     assert_eq!(
         wnear.smallest_units(),
         &BigDecimal::from(5_000_000_000_000_000_000_000_000u128)
     );
     assert_eq!(wnear.decimals(), 24);
 
-    let usdt = &balances["usdt.tether-token.near"];
+    let usdt = &balances[&ta("usdt.tether-token.near")];
     assert_eq!(usdt.smallest_units(), &BigDecimal::from(1_000_000u64));
     assert_eq!(usdt.decimals(), 6);
 }
@@ -144,7 +148,7 @@ fn test_holdings_to_balances_large_values() {
     }];
 
     let balances = holdings_to_balances(&holdings).unwrap();
-    let wnear = &balances["wrap.near"];
+    let wnear = &balances[&ta("wrap.near")];
     assert_eq!(
         wnear.smallest_units().to_string(),
         "340282366920938463463374607431768211455"
@@ -156,15 +160,15 @@ fn test_holdings_to_balances_large_values() {
 fn test_roundtrip_balances_to_holdings_to_balances() {
     let mut original = BTreeMap::new();
     original.insert(
-        "wrap.near".to_string(),
+        ta("wrap.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(1_234_567_890u64), 24),
     );
     original.insert(
-        "usdt.tether-token.near".to_string(),
+        ta("usdt.tether-token.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(999_999u64), 6),
     );
     original.insert(
-        "aurora".to_string(),
+        ta("aurora"),
         TokenAmount::from_smallest_units(BigDecimal::from(50_000_000_000_000_000_000u128), 18),
     );
 
@@ -183,11 +187,11 @@ fn test_roundtrip_balances_to_holdings_to_balances() {
 fn test_roundtrip_excludes_zero_balances() {
     let mut original = BTreeMap::new();
     original.insert(
-        "wrap.near".to_string(),
+        ta("wrap.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(100u64), 24),
     );
     original.insert(
-        "zero-token.near".to_string(),
+        ta("zero-token.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(0u64), 18),
     );
 
@@ -196,8 +200,8 @@ fn test_roundtrip_excludes_zero_balances() {
 
     let restored = holdings_to_balances(&holdings).unwrap();
     assert_eq!(restored.len(), 1);
-    assert!(restored.contains_key("wrap.near"));
-    assert!(!restored.contains_key("zero-token.near"));
+    assert!(restored.contains_key(&ta("wrap.near")));
+    assert!(!restored.contains_key(&ta("zero-token.near")));
 }
 
 #[test]
@@ -205,29 +209,29 @@ fn test_holdings_preserves_decimals() {
     let mut balances = BTreeMap::new();
     // 異なる decimals のトークンを複数追加
     balances.insert(
-        "token-6.near".to_string(),
+        ta("token-6.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(1u64), 6),
     );
     balances.insert(
-        "token-8.near".to_string(),
+        ta("token-8.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(1u64), 8),
     );
     balances.insert(
-        "token-18.near".to_string(),
+        ta("token-18.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(1u64), 18),
     );
     balances.insert(
-        "token-24.near".to_string(),
+        ta("token-24.near"),
         TokenAmount::from_smallest_units(BigDecimal::from(1u64), 24),
     );
 
     let holdings = balances_to_holdings(&balances);
     let restored = holdings_to_balances(&holdings).unwrap();
 
-    assert_eq!(restored["token-6.near"].decimals(), 6);
-    assert_eq!(restored["token-8.near"].decimals(), 8);
-    assert_eq!(restored["token-18.near"].decimals(), 18);
-    assert_eq!(restored["token-24.near"].decimals(), 24);
+    assert_eq!(restored[&ta("token-6.near")].decimals(), 6);
+    assert_eq!(restored[&ta("token-8.near")].decimals(), 8);
+    assert_eq!(restored[&ta("token-18.near")].decimals(), 18);
+    assert_eq!(restored[&ta("token-24.near")].decimals(), 24);
 }
 
 #[test]
@@ -240,5 +244,5 @@ fn test_holdings_to_balances_zero_balance_string() {
 
     let balances = holdings_to_balances(&holdings).unwrap();
     assert_eq!(balances.len(), 1);
-    assert!(balances["wrap.near"].is_zero());
+    assert!(balances[&ta("wrap.near")].is_zero());
 }

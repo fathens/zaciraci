@@ -2,7 +2,7 @@ use crate::Result;
 use crate::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::SentTx;
-use common::types::{NearValue, TokenAmount};
+use common::types::{NearValue, TokenAccount, TokenAmount};
 use logging::*;
 use near_sdk::NearToken;
 use std::collections::BTreeMap;
@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 pub async fn get_current_portfolio_balances<C, W>(
     client: &C,
     wallet: &W,
-    tokens: &[String],
-) -> Result<BTreeMap<String, TokenAmount>>
+    tokens: &[TokenAccount],
+) -> Result<BTreeMap<TokenAccount, TokenAmount>>
 where
     C: blockchain::jsonrpc::AccountInfo
         + blockchain::jsonrpc::SendTx
@@ -28,26 +28,18 @@ where
     let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
 
     for token in tokens {
-        let token_account: common::types::TokenAccount = token
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))?;
-
         // depositsから該当トークンの残高を取得
-        let balance = deposits
-            .get(&token_account)
-            .map(|u| u.0)
-            .unwrap_or_default();
+        let balance = deposits.get(token).map(|u| u.0).unwrap_or_default();
 
         // トークンの decimals を取得
-        let decimals =
-            crate::token_cache::get_token_decimals_cached(client, &token_account).await?;
+        let decimals = crate::token_cache::get_token_decimals_cached(client, token).await?;
 
         balances.insert(
             token.clone(),
             TokenAmount::from_smallest_units(BigDecimal::from(balance), decimals),
         );
 
-        trace!(log, "retrieved balance"; "token" => token, "balance" => balance, "decimals" => decimals);
+        trace!(log, "retrieved balance"; "token" => %token, "balance" => balance, "decimals" => decimals);
     }
 
     Ok(balances)
@@ -57,7 +49,7 @@ where
 pub async fn calculate_total_portfolio_value<C, W>(
     _client: &C,
     _wallet: &W,
-    current_balances: &BTreeMap<String, TokenAmount>,
+    current_balances: &BTreeMap<TokenAccount, TokenAmount>,
 ) -> Result<NearValue>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -71,13 +63,15 @@ where
     let log = DEFAULT.new(o!("function" => "calculate_total_portfolio_value"));
     let mut total_value = NearValue::zero();
 
+    let wnear_token = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+
     for (token, amount) in current_balances {
         if amount.is_zero() {
             continue;
         }
 
         // wrap.nearの場合はそのまま価値とする（decimals=24）
-        if token == &blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string() {
+        if token == wnear_token {
             // wrap.near: 1 NEAR = 1 wNEAR (固定レート)
             let rate = ExchangeRate::wnear();
             let value = amount / &rate;
@@ -85,40 +79,28 @@ where
         } else {
             // 他のトークンの場合は、wrap.nearとの交換レートを使用して価値を計算
             use common::types::TokenOutAccount;
-            use near_sdk::AccountId;
             use persistence::token_rate::TokenRate;
 
-            let base_token = match token.parse::<AccountId>() {
-                Ok(account_id) => TokenOutAccount::from(account_id),
-                Err(_) => {
-                    warn!(log, "Invalid token account ID"; "token" => token);
-                    continue;
-                }
-            };
+            let base_token: TokenOutAccount = token.clone().into();
             let quote_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
             // 最新のレートを取得
             let get_decimals = super::make_get_decimals();
             match TokenRate::get_latest(&base_token, &quote_token, &get_decimals).await {
                 Ok(Some(rate)) => {
-                    // TokenAmount / &ExchangeRate = NearValue トレイトを使用
-                    // TokenRate は既に正しい ExchangeRate を持っている
-                    // decimals は DB backfill 時に設定済み
                     let spot = rate.to_spot_rate();
                     if spot.is_zero() {
-                        warn!(log, "Rate is zero for token"; "token" => token);
+                        warn!(log, "Rate is zero for token"; "token" => %token);
                     } else {
                         let token_value = amount / &spot;
                         total_value = total_value + token_value;
                     }
                 }
                 Ok(None) => {
-                    // レートが見つからない場合は警告を出して0として扱う
-                    warn!(log, "No price data found for token"; "token" => token);
+                    warn!(log, "No price data found for token"; "token" => %token);
                 }
                 Err(e) => {
-                    // エラーの場合も警告を出して0として扱う
-                    warn!(log, "Failed to get price for token"; "token" => token, "error" => %e);
+                    warn!(log, "Failed to get price for token"; "token" => %token, "error" => %e);
                 }
             }
         }
