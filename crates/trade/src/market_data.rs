@@ -27,15 +27,11 @@ pub struct TokenMetadata {
 }
 
 /// トークンのメタデータを取得（ft_metadata）
-pub async fn get_token_metadata<C>(client: &C, token_id: &str) -> Result<TokenMetadata>
+pub async fn get_token_metadata<C>(client: &C, token_id: &TokenAccount) -> Result<TokenMetadata>
 where
     C: blockchain::jsonrpc::ViewContract,
 {
-    use near_sdk::AccountId;
-
-    let account_id: AccountId = token_id
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token account ID: {}", e))?;
+    let account_id = token_id.as_account_id().clone();
 
     let args = serde_json::json!({});
     let result = client
@@ -50,7 +46,7 @@ where
 }
 
 /// トークンの decimals を取得（キャッシュなし）
-pub async fn get_token_decimals<C>(client: &C, token_id: &str) -> Result<u8>
+pub async fn get_token_decimals<C>(client: &C, token_id: &TokenAccount) -> Result<u8>
 where
     C: blockchain::jsonrpc::ViewContract,
 {
@@ -133,7 +129,7 @@ pub fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDe
 /// 0.0 - 1.0 の範囲でスコアを返す
 pub(crate) async fn calculate_enhanced_liquidity_score<C>(
     client: &C,
-    token_id: &str,
+    token_id: &TokenAccount,
     history: &PriceHistory,
 ) -> f64
 where
@@ -159,7 +155,7 @@ where
 }
 
 /// プール流動性スコアを計算
-async fn calculate_pool_liquidity_score<C>(client: &C, token_id: &str) -> f64
+async fn calculate_pool_liquidity_score<C>(client: &C, token_id: &TokenAccount) -> f64
 where
     C: blockchain::jsonrpc::ViewContract,
 {
@@ -197,18 +193,14 @@ where
 pub(crate) async fn get_token_pool_liquidity<C>(
     client: &C,
     ref_exchange_account: &near_sdk::AccountId,
-    token_id: &str,
+    token_id: &TokenAccount,
 ) -> Result<u128>
 where
     C: blockchain::jsonrpc::ViewContract,
 {
-    use near_sdk::AccountId;
     use serde_json::Value;
 
-    // ft_balance_of でREF Exchangeでの残高を取得
-    let token_account: AccountId = token_id
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token account ID: {}", e))?;
+    let token_account = token_id.as_account_id().clone();
 
     let args = serde_json::json!({
         "account_id": ref_exchange_account.to_string()
@@ -291,7 +283,7 @@ pub(crate) fn calculate_liquidity_score(history: &PriceHistory) -> f64 {
 /// ```
 pub(crate) async fn estimate_market_cap_async<C>(
     client: &C,
-    token_id: &str,
+    token_id: &TokenAccount,
     price: &TokenPrice,
     decimals: u8,
 ) -> NearValue
@@ -329,18 +321,15 @@ where
 /// * `TokenAmount` - 総発行量（smallest_units + decimals）
 pub(crate) async fn get_token_total_supply<C>(
     client: &C,
-    token_id: &str,
+    token_id: &TokenAccount,
     decimals: u8,
 ) -> Result<TokenAmount>
 where
     C: blockchain::jsonrpc::ViewContract,
 {
-    use near_sdk::AccountId;
     use serde_json::Value;
 
-    let account_id: AccountId = token_id
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid token account ID: {}", e))?;
+    let account_id = token_id.as_account_id().clone();
 
     let args = serde_json::json!({});
     let result = client

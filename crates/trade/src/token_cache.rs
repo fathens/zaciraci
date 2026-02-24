@@ -3,6 +3,7 @@
 //! DB から一括ロードし、キャッシュミス時のみ RPC にフォールバックする。
 //! これにより `record_rates` の ~1013 逐次 RPC 呼び出しを 0 に削減する。
 
+use common::types::TokenAccount;
 use logging::*;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -62,7 +63,10 @@ where
     ));
     debug!(log, "cache miss, fetching decimals via RPC");
 
-    let decimals = super::market_data::get_token_decimals(client, token_id).await?;
+    let token_account: TokenAccount = token_id
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid token account: {}", e))?;
+    let decimals = super::market_data::get_token_decimals(client, &token_account).await?;
 
     // 3. 成功時のみキャッシュに保存
     {
@@ -115,7 +119,14 @@ where
         .map(|token_id| {
             let log = log.clone();
             async move {
-                match super::market_data::get_token_decimals(client, &token_id).await {
+                let token_account: TokenAccount = match token_id.parse() {
+                    Ok(ta) => ta,
+                    Err(e) => {
+                        warn!(log, "invalid token account"; "token_id" => &token_id, "error" => %e);
+                        return (token_id, None);
+                    }
+                };
+                match super::market_data::get_token_decimals(client, &token_account).await {
                     Ok(d) => (token_id, Some(d)),
                     Err(e) => {
                         warn!(log, "failed to fetch decimals via RPC"; "token_id" => &token_id, "error" => %e);

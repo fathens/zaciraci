@@ -7,6 +7,10 @@ fn price_from_int(v: i64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from(v))
 }
 
+fn ta(s: &str) -> TokenAccount {
+    s.parse().unwrap()
+}
+
 #[test]
 fn test_calculate_liquidity_score() {
     use chrono::Utc;
@@ -107,7 +111,7 @@ async fn test_estimate_market_cap_async() {
     // total_supply = 10^30 smallest_units = 10^6 whole tokens（decimals=24）
     // market_cap = 10^6 tokens × 1 NEAR/token = 1M NEAR
     let price_1_near = TokenPrice::from_near_per_token(BigDecimal::from(1));
-    let market_cap = estimate_market_cap_async(&client, "test.token", &price_1_near, 24).await;
+    let market_cap = estimate_market_cap_async(&client, &ta("test.token"), &price_1_near, 24).await;
     let expected_1m = NearValue::from_near(BigDecimal::from(1_000_000));
     assert_eq!(
         market_cap, expected_1m,
@@ -118,7 +122,8 @@ async fn test_estimate_market_cap_async() {
     // total_supply = 10^30 smallest_units = 10^6 whole tokens（decimals=24）
     // market_cap = 10^6 tokens × 10 NEAR/token = 10M NEAR
     let price_10_near = TokenPrice::from_near_per_token(BigDecimal::from(10));
-    let market_cap = estimate_market_cap_async(&client, "test.token", &price_10_near, 24).await;
+    let market_cap =
+        estimate_market_cap_async(&client, &ta("test.token"), &price_10_near, 24).await;
     let expected_10m = NearValue::from_near(BigDecimal::from(10_000_000));
     assert_eq!(
         market_cap, expected_10m,
@@ -156,7 +161,7 @@ async fn test_get_token_total_supply() {
     let client = MockClient;
 
     // decimals=18 の場合: 10^24 smallest_units = 10^6 whole tokens
-    let result = get_token_total_supply(&client, "test.token", 18)
+    let result = get_token_total_supply(&client, &ta("test.token"), 18)
         .await
         .unwrap();
     let expected = TokenAmount::from_smallest_units(
@@ -214,7 +219,7 @@ async fn test_calculate_enhanced_liquidity_score() {
         }],
     };
 
-    let score = calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
+    let score = calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history).await;
 
     // プール流動性が高いため、スコアは0.5以上になるはず
     assert!(
@@ -266,7 +271,7 @@ async fn test_get_token_pool_liquidity() {
         .parse::<near_sdk::AccountId>()
         .unwrap();
 
-    let result = get_token_pool_liquidity(&client, &ref_account, "test.token")
+    let result = get_token_pool_liquidity(&client, &ref_account, &ta("test.token"))
         .await
         .unwrap();
 
@@ -474,13 +479,14 @@ async fn test_enhanced_liquidity_score_weight_override() {
     };
 
     // デフォルト重み (volume=0.6, pool=0.4) でスコア計算
-    let score_default = calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
+    let score_default =
+        calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history).await;
 
     // volume 寄りから pool 寄りに変更 (volume=0.1, pool=0.9)
     let _guard1 = common::config::ConfigGuard::new("LIQUIDITY_VOLUME_WEIGHT", "0.1");
     let _guard2 = common::config::ConfigGuard::new("LIQUIDITY_POOL_WEIGHT", "0.9");
     let score_pool_heavy =
-        calculate_enhanced_liquidity_score(&client, "test.token", &history).await;
+        calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history).await;
 
     // pool_score > volume_score なので、pool 寄りの重みではスコアが上がるはず
     assert!(
@@ -513,12 +519,12 @@ async fn test_pool_liquidity_error_default_score_override() {
     let client = FailingClient;
 
     // デフォルト (0.3)
-    let score_default = calculate_pool_liquidity_score(&client, "test.token").await;
+    let score_default = calculate_pool_liquidity_score(&client, &ta("test.token")).await;
     assert!((score_default - 0.3).abs() < 0.001);
 
     // オーバーライド (0.5)
     let _guard = common::config::ConfigGuard::new("LIQUIDITY_ERROR_DEFAULT_SCORE", "0.5");
-    let score_custom = calculate_pool_liquidity_score(&client, "test.token").await;
+    let score_custom = calculate_pool_liquidity_score(&client, &ta("test.token")).await;
     assert!((score_custom - 0.5).abs() < 0.001);
 }
 

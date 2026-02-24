@@ -613,7 +613,8 @@ where
                     async move {
                         // 流動性スコアの計算（プール情報 + 取引量ベース）
                         let liquidity_score =
-                            calculate_enhanced_liquidity_score(client, &token_str, &history).await;
+                            calculate_enhanced_liquidity_score(client, token_out.inner(), &history)
+                                .await;
 
                         // トークンの decimals を取得（キャッシュ経由）
                         let decimals = match crate::token_cache::get_token_decimals_cached(
@@ -631,7 +632,7 @@ where
 
                         // 市場規模の推定（実際の発行量データを取得）
                         let market_cap =
-                            estimate_market_cap_async(client, &token_str, &current_price, decimals)
+                            estimate_market_cap_async(client, token_out.inner(), &current_price, decimals)
                                 .await;
 
                         Some((
