@@ -251,8 +251,7 @@ async fn record_rates() -> Result<()> {
     let rates: Vec<_> = values
         .into_iter()
         .filter_map(|(base, value, path)| {
-            let token_str = base.to_string();
-            match token_decimals.get(&token_str).copied() {
+            match token_decimals.get(base.inner()).copied() {
                 Some(decimals) => {
                     let amount =
                         TokenAmount::from_smallest_units(BigDecimal::from(value), decimals);
@@ -286,7 +285,7 @@ async fn record_rates() -> Result<()> {
                     ))
                 }
                 None => {
-                    warn!(log, "skipping token: decimals unknown"; "token" => &token_str);
+                    warn!(log, "skipping token: decimals unknown"; "token" => %base);
                     None
                 }
             }

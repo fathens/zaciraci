@@ -466,11 +466,11 @@ impl TokenRate {
     /// N個のトークンに対して1回のDBクエリで履歴を取得し、トークンごとのHashMapとして返す。
     /// NULL decimals があれば get_decimals で取得して DB を backfill する。
     pub async fn get_rates_for_multiple_tokens(
-        tokens: &[String],
+        tokens: &[TokenOutAccount],
         quote: &TokenInAccount,
         range: &TimeRange,
         get_decimals: &GetDecimalsFn,
-    ) -> Result<HashMap<String, Vec<TokenRate>>> {
+    ) -> Result<HashMap<TokenOutAccount, Vec<TokenRate>>> {
         use diesel::sql_types::{Array, Text, Timestamp};
 
         if tokens.is_empty() {
@@ -479,7 +479,7 @@ impl TokenRate {
 
         let conn = connection_pool::get().await?;
 
-        let tokens_vec = tokens.to_vec();
+        let tokens_vec: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
         let quote_str = quote.to_string();
         let start = range.start;
         let end = range.end;
@@ -508,9 +508,9 @@ impl TokenRate {
         let rates = Self::from_db_results_with_backfill(results, get_decimals).await?;
 
         // トークンごとに分割
-        let mut map: HashMap<String, Vec<TokenRate>> = HashMap::new();
+        let mut map: HashMap<TokenOutAccount, Vec<TokenRate>> = HashMap::new();
         for rate in rates {
-            map.entry(rate.base.to_string()).or_default().push(rate);
+            map.entry(rate.base.clone()).or_default().push(rate);
         }
 
         Ok(map)
@@ -717,7 +717,7 @@ struct TokenDecimalsRow {
 }
 
 /// token_rates テーブルから全トークンの最新 decimals を一括取得
-pub async fn get_all_decimals() -> Result<HashMap<String, u8>> {
+pub async fn get_all_decimals() -> Result<HashMap<TokenAccount, u8>> {
     let conn = connection_pool::get().await?;
 
     let rows: Vec<TokenDecimalsRow> = conn
@@ -736,7 +736,9 @@ pub async fn get_all_decimals() -> Result<HashMap<String, u8>> {
 
     let mut result = HashMap::with_capacity(rows.len());
     for row in rows {
-        result.insert(row.base_token, row.decimals as u8);
+        if let Ok(token) = TokenAccount::from_str(&row.base_token) {
+            result.insert(token, row.decimals as u8);
+        }
     }
     Ok(result)
 }

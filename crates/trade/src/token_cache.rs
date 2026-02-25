@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 /// グローバル decimals キャッシュ: token_id → decimals
-static TOKEN_DECIMALS_CACHE: Lazy<RwLock<HashMap<String, u8>>> =
+static TOKEN_DECIMALS_CACHE: Lazy<RwLock<HashMap<TokenAccount, u8>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// 起動時に DB から全トークンの decimals を一括ロード (1 SQL クエリ)
@@ -22,9 +22,7 @@ pub async fn load_from_db() -> crate::Result<()> {
 
     let count = decimals_map.len();
     let mut cache = TOKEN_DECIMALS_CACHE.write().await;
-    for (token_id, decimals) in decimals_map {
-        cache.insert(token_id, decimals);
-    }
+    *cache = decimals_map;
 
     info!(log, "loaded token decimals from DB"; "count" => count);
     Ok(())
@@ -38,7 +36,7 @@ pub fn get_cached_decimals(token_id: &TokenAccount) -> Option<u8> {
     TOKEN_DECIMALS_CACHE
         .try_read()
         .ok()
-        .and_then(|cache| cache.get(token_id.as_str()).copied())
+        .and_then(|cache| cache.get(token_id).copied())
 }
 
 /// 単一トークンの decimals を取得 (キャッシュ優先、ミス時のみ RPC)
@@ -51,7 +49,7 @@ where
     // 1. キャッシュから取得
     {
         let cache = TOKEN_DECIMALS_CACHE.read().await;
-        if let Some(&decimals) = cache.get(token_id.as_str()) {
+        if let Some(&decimals) = cache.get(token_id) {
             return Ok(decimals);
         }
     }
@@ -68,7 +66,7 @@ where
     // 3. 成功時のみキャッシュに保存
     {
         let mut cache = TOKEN_DECIMALS_CACHE.write().await;
-        cache.insert(token_id.to_string(), decimals);
+        cache.insert(token_id.clone(), decimals);
     }
 
     Ok(decimals)
@@ -78,7 +76,7 @@ where
 pub async fn ensure_decimals_cached<C>(
     client: &C,
     token_ids: &[TokenAccount],
-) -> HashMap<String, u8>
+) -> HashMap<TokenAccount, u8>
 where
     C: blockchain::jsonrpc::ViewContract + Sync,
 {
@@ -94,8 +92,8 @@ where
     {
         let cache = TOKEN_DECIMALS_CACHE.read().await;
         for token_id in token_ids {
-            if let Some(&decimals) = cache.get(token_id.as_str()) {
-                result.insert(token_id.to_string(), decimals);
+            if let Some(&decimals) = cache.get(token_id) {
+                result.insert(token_id.clone(), decimals);
             } else {
                 missing.push(token_id.clone());
             }
@@ -115,15 +113,15 @@ where
     // 2. ミス分を最大20並列で RPC 取得（失敗分はスキップ）
     use futures::stream::{self, StreamExt};
 
-    let fetched: Vec<(String, Option<u8>)> = stream::iter(missing)
+    let fetched: Vec<(TokenAccount, Option<u8>)> = stream::iter(missing)
         .map(|token_id| {
             let log = log.clone();
             async move {
                 match super::market_data::get_token_decimals(client, &token_id).await {
-                    Ok(d) => (token_id.to_string(), Some(d)),
+                    Ok(d) => (token_id, Some(d)),
                     Err(e) => {
                         warn!(log, "failed to fetch decimals via RPC"; "token_id" => %token_id, "error" => %e);
-                        (token_id.to_string(), None)
+                        (token_id, None)
                     }
                 }
             }

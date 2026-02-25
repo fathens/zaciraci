@@ -114,7 +114,7 @@ fn calculate_composite_confidence(
 pub async fn record_predictions(
     evaluation_period_id: &str,
     predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
-    quote_token: &str,
+    quote_token: &TokenInAccount,
 ) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
@@ -291,8 +291,11 @@ pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
         };
 
         // 前のレコードを取得
-        let prev = match PredictionRecord::get_previous_evaluated(&record.token, record.target_time)
-            .await
+        let token = match TokenAccount::from_str(&record.token) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let prev = match PredictionRecord::get_previous_evaluated(&token, record.target_time).await
         {
             Ok(Some(p)) => p,
             Ok(None) => continue, // 前レコードなし（初回など）

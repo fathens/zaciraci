@@ -106,7 +106,7 @@ async fn test_get_cached_returns_cached_value() {
     // キャッシュにプリロード
     {
         let mut cache = TOKEN_DECIMALS_CACHE.write().await;
-        cache.insert("token.near".to_string(), 18);
+        cache.insert(ta("token.near"), 18);
     }
 
     // RPC の decimals=99 は呼ばれないはず
@@ -130,7 +130,7 @@ async fn test_get_cached_falls_back_to_rpc_on_miss() {
 
     // RPC 結果がキャッシュに保存されている
     let cache = TOKEN_DECIMALS_CACHE.read().await;
-    assert_eq!(cache.get("usdt.near"), Some(&6));
+    assert_eq!(cache.get(&ta("usdt.near")), Some(&6));
 }
 
 #[tokio::test]
@@ -165,7 +165,7 @@ async fn test_get_cached_rpc_failure_returns_error() {
 
     // エラー時はキャッシュに保存されない
     let cache = TOKEN_DECIMALS_CACHE.read().await;
-    assert!(cache.get("fail.near").is_none());
+    assert!(cache.get(&ta("fail.near")).is_none());
 }
 
 #[tokio::test]
@@ -179,7 +179,7 @@ async fn test_get_cached_rpc_failure_then_success_caches_correct_value() {
     assert!(result.is_err());
     {
         let cache = TOKEN_DECIMALS_CACHE.read().await;
-        assert!(cache.get("retry.near").is_none());
+        assert!(cache.get(&ta("retry.near")).is_none());
     }
 
     // 2回目: RPC 成功 → キャッシュに保存
@@ -190,7 +190,7 @@ async fn test_get_cached_rpc_failure_then_success_caches_correct_value() {
     assert_eq!(result, 6);
     {
         let cache = TOKEN_DECIMALS_CACHE.read().await;
-        assert_eq!(cache.get("retry.near"), Some(&6));
+        assert_eq!(cache.get(&ta("retry.near")), Some(&6));
     }
 }
 
@@ -203,8 +203,8 @@ async fn test_ensure_all_cached() {
 
     {
         let mut cache = TOKEN_DECIMALS_CACHE.write().await;
-        cache.insert("a.near".to_string(), 18);
-        cache.insert("b.near".to_string(), 24);
+        cache.insert(ta("a.near"), 18);
+        cache.insert(ta("b.near"), 24);
     }
 
     let client = MockMetadataClient { decimals: 99 };
@@ -212,8 +212,8 @@ async fn test_ensure_all_cached() {
     let result = ensure_decimals_cached(&client, &token_ids).await;
 
     assert_eq!(result.len(), 2);
-    assert_eq!(result["a.near"], 18);
-    assert_eq!(result["b.near"], 24);
+    assert_eq!(result[&ta("a.near")], 18);
+    assert_eq!(result[&ta("b.near")], 24);
 }
 
 #[tokio::test]
@@ -224,7 +224,7 @@ async fn test_ensure_fetches_missing_via_rpc() {
     // 一部だけキャッシュにプリロード
     {
         let mut cache = TOKEN_DECIMALS_CACHE.write().await;
-        cache.insert("cached.near".to_string(), 18);
+        cache.insert(ta("cached.near"), 18);
     }
 
     let client = MockMetadataClient { decimals: 8 };
@@ -232,12 +232,12 @@ async fn test_ensure_fetches_missing_via_rpc() {
     let result = ensure_decimals_cached(&client, &token_ids).await;
 
     assert_eq!(result.len(), 2);
-    assert_eq!(result["cached.near"], 18); // キャッシュから
-    assert_eq!(result["missing.near"], 8); // RPC から
+    assert_eq!(result[&ta("cached.near")], 18); // キャッシュから
+    assert_eq!(result[&ta("missing.near")], 8); // RPC から
 
     // missing.near もキャッシュに保存された
     let cache = TOKEN_DECIMALS_CACHE.read().await;
-    assert_eq!(cache.get("missing.near"), Some(&8));
+    assert_eq!(cache.get(&ta("missing.near")), Some(&8));
 }
 
 #[tokio::test]
@@ -250,9 +250,9 @@ async fn test_ensure_all_missing() {
     let result = ensure_decimals_cached(&client, &token_ids).await;
 
     assert_eq!(result.len(), 3);
-    assert_eq!(result["x.near"], 12);
-    assert_eq!(result["y.near"], 12);
-    assert_eq!(result["z.near"], 12);
+    assert_eq!(result[&ta("x.near")], 12);
+    assert_eq!(result[&ta("y.near")], 12);
+    assert_eq!(result[&ta("z.near")], 12);
 
     // 全てキャッシュに保存された
     let cache = TOKEN_DECIMALS_CACHE.read().await;
@@ -281,7 +281,7 @@ async fn test_ensure_duplicate_tokens_deduplicated_by_caller() {
 
     // HashMap なので最終的に1エントリ
     assert_eq!(result.len(), 1);
-    assert_eq!(result["dup.near"], 6);
+    assert_eq!(result[&ta("dup.near")], 6);
 }
 
 #[tokio::test]
@@ -299,8 +299,8 @@ async fn test_ensure_rpc_failure_skips_token() {
 
     // キャッシュにも保存されない
     let cache = TOKEN_DECIMALS_CACHE.read().await;
-    assert!(cache.get("fail1.near").is_none());
-    assert!(cache.get("fail2.near").is_none());
+    assert!(cache.get(&ta("fail1.near")).is_none());
+    assert!(cache.get(&ta("fail2.near")).is_none());
 }
 
 #[tokio::test]
@@ -318,11 +318,11 @@ async fn test_ensure_partial_rpc_failure_returns_only_successful() {
 
     // 成功分のみ結果に含まれる
     assert_eq!(result.len(), 1);
-    assert_eq!(result["ok.near"], 6);
-    assert!(!result.contains_key("fail.near"));
+    assert_eq!(result[&ta("ok.near")], 6);
+    assert!(!result.contains_key(&ta("fail.near")));
 
     // 成功分のみキャッシュに保存される
     let cache = TOKEN_DECIMALS_CACHE.read().await;
-    assert_eq!(cache.get("ok.near"), Some(&6));
-    assert!(cache.get("fail.near").is_none());
+    assert_eq!(cache.get(&ta("ok.near")), Some(&6));
+    assert!(cache.get(&ta("fail.near")).is_none());
 }
