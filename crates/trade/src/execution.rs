@@ -199,13 +199,13 @@ where
             debug!(log, "executing sell"; "from" => %token, "to" => %target);
 
             // 2段階のswap: token → wrap.near → target
-            let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+            let wrap_near = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
             let wrap_near_in: TokenInAccount = wrap_near.to_in();
             let wrap_near_out: TokenOutAccount = wrap_near.to_out();
 
             // Step 1: token → wrap.near
             // common と backend の TokenAccount は同一型なので直接使用可能
-            if token.to_string() != wrap_near.to_string() {
+            if token.inner() != wrap_near {
                 let from_token = token.as_in();
                 swap::execute_direct_swap(
                     client,
@@ -219,7 +219,7 @@ where
             }
 
             // Step 2: wrap.near → target
-            if target.to_string() != wrap_near.to_string() {
+            if target.inner() != wrap_near {
                 swap::execute_direct_swap(client, wallet, &wrap_near_in, target, None, recorder)
                     .await?;
             }
@@ -512,8 +512,8 @@ where
             debug!(log, "adding position"; "token" => %token, "weight" => %weight);
 
             // wrap.near → token へのswap
-            let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
-            if token.to_string() != wrap_near.to_string() {
+            let wrap_near = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+            if token.inner() != wrap_near {
                 let swap_amount = swap_amount_override.ok_or_else(|| {
                     anyhow::anyhow!("No pre-computed swap amount for AddPosition: {}", token)
                 })?;
@@ -551,8 +551,8 @@ where
             debug!(log, "reducing position"; "token" => %token, "weight" => %weight);
 
             // token → wrap.near へのswap
-            let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
-            if token.to_string() != wrap_near.to_string() {
+            let wrap_near = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+            if token.inner() != wrap_near {
                 let from_token = token.as_in();
                 let wrap_near_out: TokenOutAccount = wrap_near.to_out();
                 swap::execute_direct_swap(

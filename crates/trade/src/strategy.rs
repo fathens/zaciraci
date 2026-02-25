@@ -346,10 +346,8 @@ pub async fn select_top_volatility_tokens(
             // 購入方向のパスを確認（wrap.near → token）
             let buyable_tokens = match graph.update_graph(&wnear_token) {
                 Ok(goals) => {
-                    let token_ids: std::collections::HashSet<_> = goals
-                        .iter()
-                        .map(|t| t.as_account_id().to_string())
-                        .collect();
+                    let token_ids: std::collections::HashSet<AccountId> =
+                        goals.iter().map(|t| t.as_account_id().clone()).collect();
                     trace!(log, "buyable tokens (wrap.near → token)";
                         "count" => token_ids.len(),
                     );
@@ -368,7 +366,7 @@ pub async fn select_top_volatility_tokens(
             let original_count = tokens.len();
             let buyable_filtered: Vec<AccountId> = tokens
                 .into_iter()
-                .filter(|token| buyable_tokens.contains(&token.to_string()))
+                .filter(|token| buyable_tokens.contains(token))
                 .collect();
 
             debug!(log, "tokens after buyability filtering";
@@ -381,11 +379,7 @@ pub async fn select_top_volatility_tokens(
                 blockchain::ref_finance::token_account::WNEAR_TOKEN.to_out();
             let mut filtered_tokens: Vec<AccountId> = Vec::new();
             for token in buyable_filtered {
-                let token_account: TokenAccount = match token.to_string().parse() {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                let token_in: TokenInAccount = token_account.into();
+                let token_in: TokenInAccount = TokenAccount::from(token.clone()).into();
 
                 // token から wrap.near へのパスが存在するか確認
                 match graph.update_graph(&token_in) {
