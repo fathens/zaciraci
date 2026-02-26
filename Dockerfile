@@ -32,12 +32,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo chef cook --release --recipe-path recipe.json
 
-ARG GIT_COMMIT_HASH=unknown
-ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
-
 COPY Cargo.toml .
 COPY Cargo.lock .
 COPY crates crates
+
+ARG GIT_COMMIT_HASH=unknown
+ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
