@@ -1,0 +1,38 @@
+app = "zaciraci"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  release_command = "sh -c 'DATABASE_URL=$PG_DSN diesel migration run'"
+
+[env]
+  RUST_LOG = "info"
+  RUST_BACKTRACE = "1"
+
+[[services]]
+  internal_port = 50051
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+    force_https = true
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

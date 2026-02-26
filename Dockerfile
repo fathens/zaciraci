@@ -42,15 +42,22 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 RUN cp target/*/backend main
 
+# Build diesel_cli in the builder stage
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo install diesel_cli --no-default-features --features postgres
+
 FROM debian:bookworm-slim
 WORKDIR /app
 
-RUN apt update && apt install -y openssl ca-certificates libpq5
+RUN apt update && apt install -y openssl ca-certificates libpq5 && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -ms /bin/bash app
 RUN chown -R app /app
 USER app
 
 COPY --from=builder /app/main /app/main
+COPY --from=builder /usr/local/cargo/bin/diesel /usr/local/bin/diesel
+COPY migrations /app/migrations
 
 ENTRYPOINT [ "/app/main" ]
