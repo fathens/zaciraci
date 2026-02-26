@@ -1,6 +1,7 @@
 .*
 !.github/
 !.gitignore
+!.dockerignore
 target/
 cobertura.xml
 config/config.local.toml
