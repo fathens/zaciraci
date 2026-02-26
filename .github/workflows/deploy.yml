@@ -11,7 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+        with:
+          version: 0.4.15
 
       - name: Deploy to Fly.io
         run: flyctl deploy --remote-only --build-arg GIT_COMMIT_HASH=${{ github.sha }}
