@@ -14,7 +14,7 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
         "postgres://postgres_test:postgres_test@localhost:5433/postgres_test".to_string()
     });
     let mgr_config = ManagerConfig {
-        recycling_method: RecyclingMethod::Fast,
+        recycling_method: RecyclingMethod::Verified,
     };
     let mgr = Manager::from_config(dsn, deadpool_diesel::Runtime::Tokio1, mgr_config);
     Pool::builder(mgr)
