@@ -154,10 +154,7 @@ where
         tokens
     } else {
         // 評価期間中: 既存のトークンを使用
-        existing_tokens
-            .into_iter()
-            .filter_map(|s| s.parse::<AccountId>().ok())
-            .collect()
+        existing_tokens.into_iter().map(AccountId::from).collect()
     };
 
     debug!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
@@ -225,6 +222,19 @@ where
     let executed_actions =
         execute_trading_actions(client, wallet, &report, period_id.clone()).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
+
+    // ポートフォリオ保有量を記録
+    if let Err(e) =
+        super::snapshot::record_portfolio_holdings(client, wallet, &period_id, &token_accounts)
+            .await
+    {
+        warn!(log, "failed to record portfolio holdings"; "error" => ?e);
+    }
+
+    // 古い保有量レコードのクリーンアップ
+    if let Err(e) = super::snapshot::cleanup_old_records().await {
+        warn!(log, "failed to cleanup old portfolio holdings"; "error" => ?e);
+    }
 
     // 注: ハーベスト判定は manage_evaluation_period 内で評価期間終了時（清算後・新period作成前）に
     // 自動実行される。旧 period の initial_value と清算額で正しく比較するため。
@@ -336,10 +346,8 @@ pub async fn select_top_volatility_tokens(
             // 購入方向のパスを確認（wrap.near → token）
             let buyable_tokens = match graph.update_graph(&wnear_token) {
                 Ok(goals) => {
-                    let token_ids: std::collections::HashSet<_> = goals
-                        .iter()
-                        .map(|t| t.as_account_id().to_string())
-                        .collect();
+                    let token_ids: std::collections::HashSet<AccountId> =
+                        goals.iter().map(|t| t.as_account_id().clone()).collect();
                     trace!(log, "buyable tokens (wrap.near → token)";
                         "count" => token_ids.len(),
                     );
@@ -358,7 +366,7 @@ pub async fn select_top_volatility_tokens(
             let original_count = tokens.len();
             let buyable_filtered: Vec<AccountId> = tokens
                 .into_iter()
-                .filter(|token| buyable_tokens.contains(&token.to_string()))
+                .filter(|token| buyable_tokens.contains(token))
                 .collect();
 
             debug!(log, "tokens after buyability filtering";
@@ -371,11 +379,7 @@ pub async fn select_top_volatility_tokens(
                 blockchain::ref_finance::token_account::WNEAR_TOKEN.to_out();
             let mut filtered_tokens: Vec<AccountId> = Vec::new();
             for token in buyable_filtered {
-                let token_account: TokenAccount = match token.to_string().parse() {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                let token_in: TokenInAccount = token_account.into();
+                let token_in: TokenInAccount = TokenAccount::from(token.clone()).into();
 
                 // token から wrap.near へのパスが存在するか確認
                 match graph.update_graph(&token_in) {
@@ -600,12 +604,13 @@ where
                     async move {
                         // 流動性スコアの計算（プール情報 + 取引量ベース）
                         let liquidity_score =
-                            calculate_enhanced_liquidity_score(client, &token_str, &history).await;
+                            calculate_enhanced_liquidity_score(client, token_out.inner(), &history)
+                                .await;
 
                         // トークンの decimals を取得（キャッシュ経由）
                         let decimals = match crate::token_cache::get_token_decimals_cached(
                             client,
-                            &token_str,
+                            token_out.inner(),
                         )
                         .await
                         {
@@ -618,7 +623,7 @@ where
 
                         // 市場規模の推定（実際の発行量データを取得）
                         let market_cap =
-                            estimate_market_cap_async(client, &token_str, &current_price, decimals)
+                            estimate_market_cap_async(client, token_out.inner(), &current_price, decimals)
                                 .await;
 
                         Some((
@@ -715,7 +720,8 @@ where
 
     // 今回の予測を DB に記録（失敗しても取引は続行）
     if let Err(e) =
-        super::prediction_accuracy::record_predictions(period_id, &predictions, "wrap.near").await
+        super::prediction_accuracy::record_predictions(period_id, &predictions, &quote_token_in)
+            .await
     {
         warn!(log, "failed to record predictions"; "error" => ?e);
     }
@@ -743,14 +749,23 @@ where
             log,
             "continuing evaluation period, loading current holdings"
         );
-        // wrap.near を含めて全残高を取得
-        let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
-        let mut token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
-        if !token_strs.contains(&wnear_str) {
-            token_strs.push(wnear_str.clone());
-        }
-        let current_balances =
-            swap::get_current_portfolio_balances(client, wallet, &token_strs).await?;
+        // wrap.near を含めて全残高を取得（DB に記録がある場合は DB から読み取り）
+        let wnear_token = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+        let mut token_accounts: Vec<common::types::TokenAccount> = tokens
+            .iter()
+            .map(|t| common::types::TokenAccount::from(t.clone()))
+            .collect();
+        super::snapshot::ensure_wnear_included(&mut token_accounts);
+        let current_balances = match super::snapshot::get_holdings_from_db(period_id).await? {
+            Some(holdings) => {
+                debug!(log, "loaded holdings from DB snapshot");
+                holdings
+            }
+            None => {
+                debug!(log, "no DB snapshot, falling back to RPC");
+                swap::get_current_portfolio_balances(client, wallet, &token_accounts).await?
+            }
+        };
 
         // 実際のポートフォリオ総価値を計算
         let total_value_near =
@@ -758,7 +773,7 @@ where
 
         // wrap.near の残高を cash_balance として使用
         let cash_balance_near = current_balances
-            .get(&wnear_str)
+            .get(wnear_token)
             .map(|amount| {
                 let rate = ExchangeRate::wnear();
                 amount / &rate
@@ -771,14 +786,13 @@ where
         // holdings には投資対象トークンのみ（wrap.near は除外）
         let mut holdings_typed = BTreeMap::new();
         for (token, amount) in &current_balances {
-            if token == &wnear_str {
+            if token == wnear_token {
                 continue;
             }
             if !amount.is_zero() {
-                trace!(log, "loaded existing position"; "token" => token, "amount" => %amount);
-                if let Ok(token_out) = token.parse::<common::types::TokenOutAccount>() {
-                    holdings_typed.insert(token_out, amount.clone());
-                }
+                trace!(log, "loaded existing position"; "token" => %token, "amount" => %amount);
+                let token_out: common::types::TokenOutAccount = token.clone().into();
+                holdings_typed.insert(token_out, amount.clone());
             }
         }
 
@@ -825,4 +839,3 @@ where
 
     Ok(execution_report.actions)
 }
-

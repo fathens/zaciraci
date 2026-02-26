@@ -8,6 +8,30 @@
 - `#[allow(clippy::...)]` による clippy 警告の抑制は禁止。警告が出た場合はコードを修正して根本対応すること
 - `cargo test` ですべてのテストが通ることを確認
 
+#### ドメイン型の使用
+
+##### 原則
+
+`String`, `BigDecimal`, `u128`, `f64` などのプリミティブ型を直接使う前に、`common::types`（`crates/common/src/types.rs` の re-export 一覧を参照）および `dex` クレートに意味のある専用型がないか確認すること。専用型が存在する場合は必ずそちらを使う。
+
+##### 探す場所
+
+- `crates/common/src/types.rs` — re-export 一覧（`TokenAccount`, `NearValue`, `ExchangeRate`, `TokenAmount` 等）
+- `crates/common/src/types/` 配下の各ファイル — 型の定義とドキュメント
+- `crates/dex/src/` — DEX ドメイン型（`PoolInfo`, `TokenPair`, `TokenPath` 等）
+
+##### 判断基準
+
+- 値に「単位」や「意味」があるなら専用型を使う（例: NEAR 金額、トークン ID、交換レート）
+- 関数シグネチャでは特に重要 — 引数や戻り値にプリミティブ型を使うと呼び出し元全体に波及する
+- コレクションのキーや要素にも適用（例: `BTreeMap<String, ...>` のキーがトークン ID なら `BTreeMap<TokenAccount, ...>` にする）
+
+##### persistence 層の扱い
+
+ドメイン型は Diesel の SQL カラム型トレイト（`FromSql`/`ToSql`）を実装していないため、Diesel モデル構造体の直接マッピングカラム（VARCHAR, NUMERIC 等）にはプリミティブ型を使う。ドメイン型との変換は persistence を呼び出す側で行う。
+
+ただし、JSONB カラムではドメイン型は全て Serde（`Serialize`/`Deserialize`）を実装しているため、`serde_json::to_value()` / `from_value()` 経由で直接使用できる。
+
 #### モジュール構成
 **モダンなRustコードスタイル**: `mod.rs`ファイルの使用を避け、ディレクトリ同名のファイルを使用する
 

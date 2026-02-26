@@ -1,5 +1,9 @@
 use super::*;
 
+fn ta(s: &str) -> common::types::TokenAccount {
+    s.parse().unwrap()
+}
+
 #[test]
 fn test_filter_tokens_to_liquidate_excludes_wrap_near() {
     use common::types::TokenAccount;
@@ -16,8 +20,8 @@ fn test_filter_tokens_to_liquidate_excludes_wrap_near() {
     let result = filter_tokens_to_liquidate(&deposits, &wrap_near);
 
     assert_eq!(result.len(), 1);
-    assert!(result.contains(&"token_a.near".to_string()));
-    assert!(!result.contains(&"wrap.near".to_string()));
+    assert!(result.contains(&ta("token_a.near")));
+    assert!(!result.contains(&ta("wrap.near")));
 }
 
 #[test]
@@ -37,8 +41,8 @@ fn test_filter_tokens_to_liquidate_excludes_zero_balance() {
     let result = filter_tokens_to_liquidate(&deposits, &wrap_near);
 
     assert_eq!(result.len(), 1);
-    assert!(result.contains(&"token_a.near".to_string()));
-    assert!(!result.contains(&"token_b.near".to_string()));
+    assert!(result.contains(&ta("token_a.near")));
+    assert!(!result.contains(&ta("token_b.near")));
 }
 
 #[test]
@@ -61,10 +65,10 @@ fn test_filter_tokens_to_liquidate_includes_tokens_with_balance() {
     let result = filter_tokens_to_liquidate(&deposits, &wrap_near);
 
     assert_eq!(result.len(), 2);
-    assert!(result.contains(&"token_a.near".to_string()));
-    assert!(result.contains(&"token_c.near".to_string()));
-    assert!(!result.contains(&"wrap.near".to_string()));
-    assert!(!result.contains(&"token_b.near".to_string()));
+    assert!(result.contains(&ta("token_a.near")));
+    assert!(result.contains(&ta("token_c.near")));
+    assert!(!result.contains(&ta("wrap.near")));
+    assert!(!result.contains(&ta("token_b.near")));
 }
 
 #[test]

@@ -164,8 +164,7 @@ async fn check_and_execute_harvest_inner(
     } else {
         // YoctoValue / YoctoValue = BigDecimal（比率）
         // NOTE: initial_value は上方のゼロガードで非ゼロが保証されている
-        let current_percentage =
-            (current_value / initial_value) * BigDecimal::from(100);
+        let current_percentage = (current_value / initial_value) * BigDecimal::from(100);
         trace!(log, "Portfolio value below harvest threshold";
             "current_percentage" => %current_percentage
         );

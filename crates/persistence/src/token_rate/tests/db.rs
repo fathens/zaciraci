@@ -1011,25 +1011,22 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
     };
 
     // 2トークンのみ取得
-    let tokens = vec!["token1.near".to_string(), "token2.near".to_string()];
+    let tokens = vec![base1.clone(), base2.clone()];
     let result =
         TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range, test_get_decimals())
             .await?;
 
     assert_eq!(result.len(), 2, "Should return 2 tokens");
-    assert!(result.contains_key("token1.near"), "Should contain token1");
-    assert!(result.contains_key("token2.near"), "Should contain token2");
-    assert!(
-        !result.contains_key("token3.near"),
-        "Should not contain token3"
-    );
+    assert!(result.contains_key(&base1), "Should contain token1");
+    assert!(result.contains_key(&base2), "Should contain token2");
+    assert!(!result.contains_key(&base3), "Should not contain token3");
 
     // 各トークンに2件のデータがあることを確認
-    assert_eq!(result["token1.near"].len(), 2);
-    assert_eq!(result["token2.near"].len(), 2);
+    assert_eq!(result[&base1].len(), 2);
+    assert_eq!(result[&base2].len(), 2);
 
     // 時系列順（昇順）であることを確認
-    assert!(result["token1.near"][0].timestamp < result["token1.near"][1].timestamp);
+    assert!(result[&base1][0].timestamp < result[&base1][1].timestamp);
 
     clean_table().await?;
     Ok(())
@@ -1049,9 +1046,9 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
     };
 
     // 存在しないトークン
-    let tokens = vec![
-        "nonexistent1.near".to_string(),
-        "nonexistent2.near".to_string(),
+    let tokens: Vec<TokenOutAccount> = vec![
+        TokenAccount::from_str("nonexistent1.near")?.into(),
+        TokenAccount::from_str("nonexistent2.near")?.into(),
     ];
     let result =
         TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range, test_get_decimals())
@@ -1078,7 +1075,7 @@ async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
     };
 
     // 空のトークンリスト
-    let tokens: Vec<String> = vec![];
+    let tokens: Vec<TokenOutAccount> = vec![];
     let result =
         TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range, test_get_decimals())
             .await?;
@@ -1106,8 +1103,14 @@ async fn test_get_all_decimals() -> Result<()> {
     TokenRate::batch_insert(&rates).await?;
 
     let decimals = get_all_decimals().await?;
-    assert_eq!(decimals.get("token_a.near"), Some(&24u8));
-    assert_eq!(decimals.get("token_b.near"), Some(&24u8));
+    assert_eq!(
+        decimals.get(&TokenAccount::from_str("token_a.near")?),
+        Some(&24u8)
+    );
+    assert_eq!(
+        decimals.get(&TokenAccount::from_str("token_b.near")?),
+        Some(&24u8)
+    );
 
     clean_table().await?;
     Ok(())

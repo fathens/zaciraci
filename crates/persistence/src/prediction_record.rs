@@ -3,6 +3,7 @@ use crate::schema::prediction_records;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
+use common::types::TokenAccount;
 use diesel::prelude::*;
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -123,7 +124,7 @@ impl PredictionRecord {
 
     /// 同一トークンの直前の評価済みレコードを取得
     pub async fn get_previous_evaluated(
-        token: &str,
+        token: &TokenAccount,
         before_target_time: NaiveDateTime,
     ) -> Result<Option<DbPredictionRecord>> {
         let conn = connection_pool::get().await?;

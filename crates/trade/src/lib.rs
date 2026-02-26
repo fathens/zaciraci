@@ -6,6 +6,7 @@ pub mod market_data;
 pub mod predict;
 pub mod prediction_accuracy;
 pub mod recorder;
+pub mod snapshot;
 pub mod strategy;
 pub mod swap;
 pub mod token_cache;
@@ -37,8 +38,11 @@ pub fn make_get_decimals()
     |token: &str| {
         let token = token.to_string();
         Box::pin(async move {
+            let token_account: common::types::TokenAccount = token
+                .parse()
+                .map_err(|e| anyhow::anyhow!("Invalid token account: {}", e))?;
             let client = blockchain::jsonrpc::new_client();
-            token_cache::get_token_decimals_cached(&client, &token).await
+            token_cache::get_token_decimals_cached(&client, &token_account).await
         })
     }
 }
@@ -232,9 +236,9 @@ async fn record_rates() -> Result<()> {
     trace!(log, "converting to rates (yocto scale)");
 
     // 各トークンの decimals を取得（キャッシュ経由、DB 初期化済み）
-    let token_ids: Vec<String> = values
+    let token_ids: Vec<common::types::TokenAccount> = values
         .iter()
-        .map(|(base, _, _)| base.to_string())
+        .map(|(base, _, _)| base.inner().clone())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -247,8 +251,7 @@ async fn record_rates() -> Result<()> {
     let rates: Vec<_> = values
         .into_iter()
         .filter_map(|(base, value, path)| {
-            let token_str = base.to_string();
-            match token_decimals.get(&token_str).copied() {
+            match token_decimals.get(base.inner()).copied() {
                 Some(decimals) => {
                     let amount =
                         TokenAmount::from_smallest_units(BigDecimal::from(value), decimals);
@@ -282,7 +285,7 @@ async fn record_rates() -> Result<()> {
                     ))
                 }
                 None => {
-                    warn!(log, "skipping token: decimals unknown"; "token" => &token_str);
+                    warn!(log, "skipping token: decimals unknown"; "token" => %base);
                     None
                 }
             }

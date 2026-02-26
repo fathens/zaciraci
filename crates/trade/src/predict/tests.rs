@@ -880,14 +880,13 @@ async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
     }
 
     // バッチ履歴取得の機能を直接テスト
-    let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
     let range = TimeRange {
         start: (Utc::now() - Duration::hours(10)).naive_utc(),
         end: Utc::now().naive_utc(),
     };
 
     let histories_map = TokenRate::get_rates_for_multiple_tokens(
-        &token_strs,
+        &tokens,
         &fixture.quote_token,
         &range,
         test_get_decimals(),
@@ -902,16 +901,16 @@ async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
     );
 
     // 各トークンに価格データがあることを確認
-    for token_str in &token_strs {
+    for token in &tokens {
         assert!(
-            histories_map.contains_key(token_str),
+            histories_map.contains_key(token),
             "Should contain {}",
-            token_str
+            token
         );
         assert!(
-            !histories_map[token_str].is_empty(),
+            !histories_map[token].is_empty(),
             "Should have price data for {}",
-            token_str
+            token
         );
     }
 

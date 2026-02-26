@@ -34,6 +34,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    portfolio_holdings (id) {
+        id -> Int4,
+        evaluation_period_id -> Varchar,
+        timestamp -> Timestamp,
+        token_holdings -> Jsonb,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     pool_info (id) {
         id -> Int4,
         pool_id -> Int4,
@@ -95,6 +105,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     config_store_history,
     evaluation_periods,
     pool_info,
+    portfolio_holdings,
     prediction_records,
     token_rates,
     trade_transactions,
