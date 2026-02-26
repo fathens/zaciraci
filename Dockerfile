@@ -58,4 +58,4 @@ COPY --from=builder /app/main /app/main
 COPY --from=diesel-builder /usr/local/cargo/bin/diesel /usr/local/bin/diesel
 COPY migrations /app/migrations
 
-ENTRYPOINT [ "/app/main" ]
+CMD [ "/app/main" ]
