@@ -19,15 +19,11 @@ COPY Cargo.lock .
 COPY crates crates
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo chef prepare --recipe-path recipe.json
 
 FROM base AS builder
-ARG GIT_COMMIT_HASH=unknown
 
 RUN apt-get update && apt-get install -y protobuf-compiler && rm -rf /var/lib/apt/lists/*
-
-ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
 
 WORKDIR /app
 
@@ -35,6 +31,9 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo chef cook --release --recipe-path recipe.json
+
+ARG GIT_COMMIT_HASH=unknown
+ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
 
 COPY Cargo.toml .
 COPY Cargo.lock .
