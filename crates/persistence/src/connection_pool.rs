@@ -10,7 +10,7 @@ static POOL: Lazy<Pool> = Lazy::new(|| {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(2);
-    let dsn = common::config::get("PG_DSN").unwrap_or_else(|_| {
+    let dsn = common::config::get("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres_test:postgres_test@localhost:5433/postgres_test".to_string()
     });
     let mgr_config = ManagerConfig {

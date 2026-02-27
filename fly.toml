@@ -5,7 +5,7 @@ primary_region = "nrt"
   dockerfile = "Dockerfile"
 
 [deploy]
-  release_command = "sh -c 'DATABASE_URL=$PG_DSN diesel migration run'"
+  release_command = "diesel migration run"
 
 [env]
   RUST_LOG = "info"

@@ -4,6 +4,8 @@ on: [push]
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://postgres_test:postgres_test@localhost:5433/postgres_test
     services:
       postgres:
         image: postgres:15
@@ -44,8 +46,6 @@ jobs:
 
       - name: Run database migrations
         run: diesel migration run
-        env:
-          DATABASE_URL: postgres://postgres_test:postgres_test@localhost:5433/postgres_test
 
       - name: Check format
         continue-on-error: true

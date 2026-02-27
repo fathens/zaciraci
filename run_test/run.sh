@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 
 # 環境変数の設定
-export PG_TEST_DSN="postgres://postgres_test:postgres_test@localhost:5433/postgres_test"
+export DATABASE_URL="postgres://postgres_test:postgres_test@localhost:5433/postgres_test"
 export RUST_LOG=${RUST_LOG:-debug}
 export RUST_LOG_FORMAT=${RUST_LOG_FORMAT:-plain}
 export RUST_BACKTRACE=${RUST_BACKTRACE:-1}
@@ -33,13 +33,13 @@ done
 # マイグレーションの実行
 echo "=== マイグレーションを実行します ==="
 cd ..
-DATABASE_URL=$PG_TEST_DSN diesel migration run
+diesel migration run
 cd run_test
 
 echo "=== テスト環境の準備が完了しました ==="
-echo "テスト用DB接続情報: $PG_TEST_DSN"
+echo "テスト用DB接続情報: $DATABASE_URL"
 echo "テストを実行するには、別のターミナルで以下のコマンドを実行してください:"
-echo "PG_DSN=$PG_TEST_DSN cargo test -- --nocapture"
+echo "DATABASE_URL=$DATABASE_URL cargo test -- --nocapture"
 echo ""
 echo "テスト環境を停止するには、以下のコマンドを実行してください:"
 echo "cd $(pwd) && docker-compose down"

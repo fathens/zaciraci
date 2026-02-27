@@ -13,7 +13,7 @@
 USE_MAINNET=false  # trueでmainnet、falseでtestnet
 
 # データベース設定
-PG_DSN=postgres://username:password@localhost:5432/zaciraci
+DATABASE_URL=postgres://username:password@localhost:5432/zaciraci
 PG_POOL_SIZE=16  # データベース接続プールサイズ（オプション）
 
 # NEAR ウォレット設定
