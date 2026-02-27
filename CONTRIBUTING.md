@@ -289,7 +289,7 @@ cd run_local
 
 ### 環境変数設定
 主要な環境変数（`run_local/docker-compose.yml`参照）:
-- `PG_DSN`: PostgreSQL接続文字列
+- `DATABASE_URL`: PostgreSQL接続文字列
 - `USE_MAINNET`: NEAR mainnet/testnet切り替え
 - `ROOT_MNEMONIC`, `ROOT_ACCOUNT_ID`: NEARウォレット設定
 - `RUST_LOG`: ログレベル設定
@@ -314,7 +314,7 @@ cd run_test
 ./run.sh
 
 # テスト用データベースでテスト実行
-PG_DSN=postgres://postgres_test:postgres_test@localhost:5433/postgres_test cargo test -- --nocapture
+DATABASE_URL=postgres://postgres_test:postgres_test@localhost:5433/postgres_test cargo test -- --nocapture
 ```
 
 ### データベースマイグレーション

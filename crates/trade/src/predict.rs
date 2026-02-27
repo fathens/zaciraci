@@ -212,7 +212,7 @@ impl PredictionService {
         let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(8);
+            .unwrap_or(4);
 
         // 3. 予測を並行実行
         let results: Vec<_> = stream::iter(tokens.clone())

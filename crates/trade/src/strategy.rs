@@ -508,7 +508,7 @@ where
     let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(8);
+        .unwrap_or(4);
 
     // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
     let start_date = end_date - chrono::Duration::days(price_history_days);
