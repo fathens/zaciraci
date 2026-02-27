@@ -63,14 +63,16 @@ async fn test_pool_info_latest() -> Result<()> {
     pool_info.bare.pool_kind = "STABLE_SWAP".to_string();
 
     let new_pool = to_new_db(&pool_info)?;
-    let conn = connection_pool::get().await?;
-    conn.interact(move |conn| {
-        diesel::insert_into(pool_info::table)
-            .values(&new_pool)
-            .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
+            diesel::insert_into(pool_info::table)
+                .values(&new_pool)
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    }
 
     // 1秒待機して新しいタイムスタンプでデータを更新
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -80,14 +82,16 @@ async fn test_pool_info_latest() -> Result<()> {
     updated_pool_info.timestamp = chrono::Utc::now().naive_utc();
 
     let new_pool = to_new_db(&updated_pool_info)?;
-    let conn = connection_pool::get().await?;
-    conn.interact(move |conn| {
-        diesel::insert_into(pool_info::table)
-            .values(&new_pool)
-            .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
+            diesel::insert_into(pool_info::table)
+                .values(&new_pool)
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    }
 
     // 最新のデータを取得
     let retrieved = get_latest(126).await?;
@@ -162,6 +166,7 @@ async fn test_pool_info_get_latest_before() -> Result<()> {
         Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
         Err(e) => return Err(anyhow!("DB error: {}", e)),
     };
+    drop(conn);
 
     let result1 = get_latest_before(pool_id_1, timestamp2).await?;
     assert!(
@@ -266,6 +271,7 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
         Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
         Err(e) => return Err(anyhow!("DB error: {}", e)),
     };
+    drop(conn);
 
     let results = get_all_unique_between(TimeRange {
         start: timestamp1,
@@ -372,12 +378,13 @@ async fn test_cleanup_old_records() -> Result<()> {
         Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
         Err(e) => return Err(anyhow!("DB error: {}", e)),
     };
+    drop(conn);
 
     cleanup_old_records(10).await?;
 
-    let conn = connection_pool::get().await?;
-    let count_pool_1 = conn
-        .interact(move |conn| {
+    let count_pool_1 = {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
             use diesel::dsl::count;
             pool_info::table
                 .filter(pool_info::pool_id.eq(pool_id_1 as i32))
@@ -385,16 +392,17 @@ async fn test_cleanup_old_records() -> Result<()> {
                 .first::<i64>(conn)
         })
         .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+    };
 
     assert_eq!(
         count_pool_1, 10,
         "プールID 100 のレコード数は10件であるべきです"
     );
 
-    let conn = connection_pool::get().await?;
-    let count_pool_2 = conn
-        .interact(move |conn| {
+    let count_pool_2 = {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
             use diesel::dsl::count;
             pool_info::table
                 .filter(pool_info::pool_id.eq(pool_id_2 as i32))
@@ -402,16 +410,17 @@ async fn test_cleanup_old_records() -> Result<()> {
                 .first::<i64>(conn)
         })
         .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+    };
 
     assert_eq!(
         count_pool_2, 5,
         "プールID 200 のレコード数は5件のままであるべきです"
     );
 
-    let conn = connection_pool::get().await?;
-    let latest_timestamp = conn
-        .interact(move |conn| {
+    let latest_timestamp = {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
             use diesel::dsl::max;
             pool_info::table
                 .filter(pool_info::pool_id.eq(pool_id_1 as i32))
@@ -419,7 +428,8 @@ async fn test_cleanup_old_records() -> Result<()> {
                 .first::<Option<NaiveDateTime>>(conn)
         })
         .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+    };
 
     assert_eq!(
         latest_timestamp,
@@ -427,9 +437,9 @@ async fn test_cleanup_old_records() -> Result<()> {
         "最新のタイムスタンプは14秒後であるべきです"
     );
 
-    let conn = connection_pool::get().await?;
-    let oldest_timestamp = conn
-        .interact(move |conn| {
+    let oldest_timestamp = {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
             use diesel::dsl::min;
             pool_info::table
                 .filter(pool_info::pool_id.eq(pool_id_1 as i32))
@@ -437,7 +447,8 @@ async fn test_cleanup_old_records() -> Result<()> {
                 .first::<Option<NaiveDateTime>>(conn)
         })
         .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+    };
 
     assert_eq!(
         oldest_timestamp,
