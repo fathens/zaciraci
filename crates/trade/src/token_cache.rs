@@ -110,8 +110,13 @@ where
         "missing" => missing.len()
     );
 
-    // 2. ミス分を最大20並列で RPC 取得（失敗分はスキップ）
+    // 2. ミス分を並列で RPC 取得（失敗分はスキップ）
     use futures::stream::{self, StreamExt};
+
+    let concurrency = common::config::get("TRADE_TOKEN_CACHE_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
 
     let fetched: Vec<(TokenAccount, Option<u8>)> = stream::iter(missing)
         .map(|token_id| {
@@ -126,7 +131,7 @@ where
                 }
             }
         })
-        .buffer_unordered(20)
+        .buffer_unordered(concurrency)
         .collect()
         .await;
 

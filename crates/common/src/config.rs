@@ -97,6 +97,8 @@ pub struct TradeConfig {
     pub prediction_concurrency: u32,
     #[serde(default = "default_min_pool_liquidity")]
     pub min_pool_liquidity: u32,
+    #[serde(default = "default_token_cache_concurrency")]
+    pub token_cache_concurrency: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +208,9 @@ fn default_prediction_concurrency() -> u32 {
 fn default_min_pool_liquidity() -> u32 {
     100 // 100 NEAR
 }
+fn default_token_cache_concurrency() -> u32 {
+    8
+}
 fn default_pool_info_retention_count() -> u32 {
     10
 }
@@ -267,6 +272,7 @@ impl Default for TradeConfig {
             unwrap_on_stop: default_unwrap_on_stop(),
             prediction_concurrency: default_prediction_concurrency(),
             min_pool_liquidity: default_min_pool_liquidity(),
+            token_cache_concurrency: default_token_cache_concurrency(),
         }
     }
 }
@@ -387,6 +393,7 @@ pub fn get(name: &str) -> Result<String> {
         "ARBITRAGE_OTHER_ERROR_WAIT" => Some(CONFIG.arbitrage.other_error_wait.clone()),
         "ARBITRAGE_PREVIEW_NOT_FOUND_WAIT" => Some(CONFIG.arbitrage.preview_not_found_wait.clone()),
         "TRADE_PREDICTION_CONCURRENCY" => Some(CONFIG.trade.prediction_concurrency.to_string()),
+        "TRADE_TOKEN_CACHE_CONCURRENCY" => Some(CONFIG.trade.token_cache_concurrency.to_string()),
         "RPC_ENDPOINTS" => {
             let json = serde_json::to_string(&CONFIG.rpc.endpoints).ok();
             if json.as_deref() == Some("[]") {
@@ -661,6 +668,9 @@ fn merge_config(base: &mut Config, local: Config) {
     if local.trade.min_pool_liquidity != default_min_pool_liquidity() {
         base.trade.min_pool_liquidity = local.trade.min_pool_liquidity;
     }
+    if local.trade.token_cache_concurrency != default_token_cache_concurrency() {
+        base.trade.token_cache_concurrency = local.trade.token_cache_concurrency;
+    }
 
     // Cron
     if local.cron.pool_info_retention_count != default_pool_info_retention_count() {
@@ -798,6 +808,7 @@ mod tests {
         // 環境変数と CONFIG_STORE をクリア
         let keys_and_defaults = [
             ("TRADE_PREDICTION_CONCURRENCY", "8"),
+            ("TRADE_TOKEN_CACHE_CONCURRENCY", "8"),
             ("RPC_FAILURE_RESET_SECONDS", "300"),
             ("RPC_MAX_ATTEMPTS", "10"),
             ("PORTFOLIO_REBALANCE_THRESHOLD", "0.1"),
