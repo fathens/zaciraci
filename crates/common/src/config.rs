@@ -203,7 +203,7 @@ fn default_unwrap_on_stop() -> bool {
     false
 }
 fn default_prediction_concurrency() -> u32 {
-    8 // DB接続プール(16)の半分
+    4
 }
 fn default_min_pool_liquidity() -> u32 {
     100 // 100 NEAR
@@ -807,7 +807,7 @@ mod tests {
     fn test_new_config_keys_defaults() {
         // 環境変数と CONFIG_STORE をクリア
         let keys_and_defaults = [
-            ("TRADE_PREDICTION_CONCURRENCY", "8"),
+            ("TRADE_PREDICTION_CONCURRENCY", "4"),
             ("TRADE_TOKEN_CACHE_CONCURRENCY", "8"),
             ("RPC_FAILURE_RESET_SECONDS", "300"),
             ("RPC_MAX_ATTEMPTS", "10"),

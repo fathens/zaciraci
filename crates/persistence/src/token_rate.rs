@@ -206,11 +206,11 @@ impl TokenRate {
         if !tokens_with_null.is_empty() {
             trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
 
-            // 並行実行数（設定から取得、デフォルト8）
+            // 並行実行数（設定から取得、デフォルト4）
             let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(8);
+                .unwrap_or(4);
 
             // 全トークンの decimals を並行取得
             let fetch_results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())
