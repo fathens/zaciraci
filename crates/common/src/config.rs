@@ -1,3 +1,4 @@
+pub mod startup;
 pub mod store;
 mod typed;
 
