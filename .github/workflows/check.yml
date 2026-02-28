@@ -4,6 +4,7 @@ on: [push]
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       DATABASE_URL: postgres://postgres_test:postgres_test@localhost:5433/postgres_test
     services:
