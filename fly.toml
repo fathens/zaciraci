@@ -26,7 +26,9 @@ primary_region = "nrt"
   [[services.ports]]
     handlers = ["tls", "http"]
     port = 443
-    force_https = true
+
+    [services.ports.http_options]
+      h2_backend = true
 
   [[services.tcp_checks]]
     interval = "15s"
