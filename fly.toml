@@ -27,9 +27,6 @@ primary_region = "nrt"
     handlers = ["tls"]
     port = 443
 
-    [services.ports.tls_options]
-      alpn = ["h2"]
-
   [[services.tcp_checks]]
     interval = "15s"
     timeout = "5s"
