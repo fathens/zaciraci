@@ -1,5 +1,8 @@
 use super::*;
+use common::config::ConfigResolver;
 use serial_test::serial;
+
+const CFG: ConfigResolver = ConfigResolver;
 
 fn ta(s: &str) -> TokenAccount {
     s.parse().unwrap()
@@ -209,7 +212,7 @@ async fn test_ensure_all_cached() {
 
     let client = MockMetadataClient { decimals: 99 };
     let token_ids = vec![ta("a.near"), ta("b.near")];
-    let result = ensure_decimals_cached(&client, &token_ids).await;
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
 
     assert_eq!(result.len(), 2);
     assert_eq!(result[&ta("a.near")], 18);
@@ -229,7 +232,7 @@ async fn test_ensure_fetches_missing_via_rpc() {
 
     let client = MockMetadataClient { decimals: 8 };
     let token_ids = vec![ta("cached.near"), ta("missing.near")];
-    let result = ensure_decimals_cached(&client, &token_ids).await;
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
 
     assert_eq!(result.len(), 2);
     assert_eq!(result[&ta("cached.near")], 18); // キャッシュから
@@ -247,7 +250,7 @@ async fn test_ensure_all_missing() {
 
     let client = MockMetadataClient { decimals: 12 };
     let token_ids = vec![ta("x.near"), ta("y.near"), ta("z.near")];
-    let result = ensure_decimals_cached(&client, &token_ids).await;
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
 
     assert_eq!(result.len(), 3);
     assert_eq!(result[&ta("x.near")], 12);
@@ -265,7 +268,7 @@ async fn test_ensure_empty_input() {
     clear_cache().await;
 
     let client = MockMetadataClient { decimals: 99 };
-    let result = ensure_decimals_cached(&client, &[]).await;
+    let result = ensure_decimals_cached(&client, &[], &CFG).await;
     assert!(result.is_empty());
 }
 
@@ -277,7 +280,7 @@ async fn test_ensure_duplicate_tokens_deduplicated_by_caller() {
     let client = MockMetadataClient { decimals: 6 };
     // 呼び出し元で重複排除される前提だが、重複入力でもパニックしないことを確認
     let token_ids = vec![ta("dup.near"), ta("dup.near")];
-    let result = ensure_decimals_cached(&client, &token_ids).await;
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
 
     // HashMap なので最終的に1エントリ
     assert_eq!(result.len(), 1);
@@ -292,7 +295,7 @@ async fn test_ensure_rpc_failure_skips_token() {
     // RPC が常に失敗するクライアント
     let client = FailingClient;
     let token_ids = vec![ta("fail1.near"), ta("fail2.near")];
-    let result = ensure_decimals_cached(&client, &token_ids).await;
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
 
     // RPC 失敗トークンは結果に含まれない
     assert!(result.is_empty());
@@ -314,7 +317,7 @@ async fn test_ensure_partial_rpc_failure_returns_only_successful() {
     let client = PartialFailClient { success_map };
 
     let token_ids = vec![ta("ok.near"), ta("fail.near")];
-    let result = ensure_decimals_cached(&client, &token_ids).await;
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
 
     // 成功分のみ結果に含まれる
     assert_eq!(result.len(), 1);

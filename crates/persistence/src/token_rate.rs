@@ -4,7 +4,7 @@ use crate::schema::token_rates;
 use anyhow::anyhow;
 use bigdecimal::{BigDecimal, Zero};
 use chrono::NaiveDateTime;
-use common::config::{self, ConfigAccess};
+use common::config::ConfigAccess;
 use common::types::TimeRange;
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount};
 use diesel::prelude::*;
@@ -189,6 +189,7 @@ impl TokenRate {
     async fn from_db_results_with_backfill(
         results: Vec<DbTokenRate>,
         get_decimals: &GetDecimalsFn,
+        cfg: &impl ConfigAccess,
     ) -> Result<Vec<Self>> {
         let log = DEFAULT.new(o!(
             "function" => "from_db_results_with_backfill",
@@ -207,7 +208,7 @@ impl TokenRate {
             trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
 
             // 並行実行数（設定から取得、デフォルト4）
-            let concurrency = config::typed().trade_prediction_concurrency() as usize;
+            let concurrency = cfg.trade_prediction_concurrency() as usize;
 
             // 全トークンの decimals を並行取得
             let fetch_results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())
@@ -302,7 +303,7 @@ impl TokenRate {
     }
 
     // 複数レコードを一括挿入
-    pub async fn batch_insert(token_rates: &[TokenRate]) -> Result<()> {
+    pub async fn batch_insert(token_rates: &[TokenRate], cfg: &impl ConfigAccess) -> Result<()> {
         let log = DEFAULT.new(o!(
             "function" => "batch_insert",
             "token_rates" => token_rates.len(),
@@ -328,7 +329,7 @@ impl TokenRate {
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
         // 古いレコードをクリーンアップ
-        let retention_days = config::typed().token_rates_retention_days();
+        let retention_days = cfg.token_rates_retention_days();
 
         trace!(log, "cleaning up old records"; "retention_days" => retention_days);
         TokenRate::cleanup_old_records(retention_days).await?;
@@ -429,6 +430,7 @@ impl TokenRate {
         base: &TokenOutAccount,
         quote: &TokenInAccount,
         get_decimals: &GetDecimalsFn,
+        cfg: &impl ConfigAccess,
     ) -> Result<Vec<TokenRate>> {
         use diesel::QueryDsl;
 
@@ -452,7 +454,7 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        Self::from_db_results_with_backfill(results, get_decimals).await
+        Self::from_db_results_with_backfill(results, get_decimals, cfg).await
     }
 
     /// 複数トークンの価格履歴を一括取得
@@ -464,6 +466,7 @@ impl TokenRate {
         quote: &TokenInAccount,
         range: &TimeRange,
         get_decimals: &GetDecimalsFn,
+        cfg: &impl ConfigAccess,
     ) -> Result<HashMap<TokenOutAccount, Vec<TokenRate>>> {
         use diesel::sql_types::{Array, Text, Timestamp};
 
@@ -499,7 +502,7 @@ impl TokenRate {
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
         // backfill 処理して TokenRate に変換
-        let rates = Self::from_db_results_with_backfill(results, get_decimals).await?;
+        let rates = Self::from_db_results_with_backfill(results, get_decimals, cfg).await?;
 
         // トークンごとに分割
         let mut map: HashMap<TokenOutAccount, Vec<TokenRate>> = HashMap::new();

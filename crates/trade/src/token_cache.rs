@@ -77,6 +77,7 @@ where
 pub async fn ensure_decimals_cached<C>(
     client: &C,
     token_ids: &[TokenAccount],
+    cfg: &impl ConfigAccess,
 ) -> HashMap<TokenAccount, u8>
 where
     C: blockchain::jsonrpc::ViewContract + Sync,
@@ -114,7 +115,7 @@ where
     // 2. ミス分を並列で RPC 取得（失敗分はスキップ）
     use futures::stream::{self, StreamExt};
 
-    let concurrency = common::config::typed().trade_token_cache_concurrency() as usize;
+    let concurrency = cfg.trade_token_cache_concurrency() as usize;
 
     let fetched: Vec<(TokenAccount, Option<u8>)> = stream::iter(missing)
         .map(|token_id| {

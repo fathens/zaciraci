@@ -17,32 +17,32 @@ use std::time::Duration;
 
 type Result<T> = anyhow::Result<T>;
 
-fn token_not_found_wait() -> Duration {
-    common::config::typed().arbitrage_token_not_found_wait()
+fn token_not_found_wait(cfg: &impl ConfigAccess) -> Duration {
+    cfg.arbitrage_token_not_found_wait()
 }
 
-fn other_error_wait() -> Duration {
-    common::config::typed().arbitrage_other_error_wait()
+fn other_error_wait(cfg: &impl ConfigAccess) -> Duration {
+    cfg.arbitrage_other_error_wait()
 }
 
-fn preview_not_found_wait() -> Duration {
-    common::config::typed().arbitrage_preview_not_found_wait()
+fn preview_not_found_wait(cfg: &impl ConfigAccess) -> Duration {
+    cfg.arbitrage_preview_not_found_wait()
 }
 
-fn is_needed() -> bool {
-    common::config::typed().arbitrage_needed()
+fn is_needed(cfg: &impl ConfigAccess) -> bool {
+    cfg.arbitrage_needed()
 }
 
-pub async fn run() {
+pub async fn run(cfg: common::config::ConfigResolver) {
     let log = DEFAULT.new(o!("function" => "main_loop"));
-    if !is_needed() {
+    if !is_needed(&cfg) {
         info!(log, "Arbitrage is not needed.");
         return;
     }
     let client = jsonrpc::new_client();
-    let wallet = wallet::new_wallet();
+    let wallet = wallet::new_wallet(&cfg);
     loop {
-        match single_loop(&client, &wallet).await {
+        match single_loop(&client, &wallet, &cfg).await {
             Ok(_) => info!(log, "success, go next"),
             Err(err) => {
                 warn!(log, "failure: {:?}", err);
@@ -50,13 +50,13 @@ pub async fn run() {
                 if let Some(Error::TokenNotFound(name)) = err.downcast_ref::<Error>()
                     && WNEAR_TOKEN.to_string().eq(name)
                 {
-                    let wait = token_not_found_wait();
+                    let wait = token_not_found_wait(&cfg);
                     info!(log, "token not found, retrying after {:?}", wait);
                     tokio::time::sleep(wait).await;
                     continue;
                 }
                 // その他のエラーは長めの待機
-                let wait = other_error_wait();
+                let wait = other_error_wait(&cfg);
                 warn!(log, "non-jsonrpc error, retrying after {:?}", wait);
                 tokio::time::sleep(wait).await;
                 continue;
@@ -65,7 +65,7 @@ pub async fn run() {
     }
 }
 
-async fn single_loop<C, W>(client: &C, wallet: &W) -> crate::Result<()>
+async fn single_loop<C, W>(client: &C, wallet: &W, cfg: &impl ConfigAccess) -> crate::Result<()>
 where
     C: jsonrpc::AccountInfo + jsonrpc::SendTx + jsonrpc::ViewContract + jsonrpc::GasInfo,
     <C as jsonrpc::SendTx>::Output: std::fmt::Display,
@@ -73,7 +73,7 @@ where
 {
     let log = DEFAULT.new(o!("function" => "single_loop"));
 
-    let balance = ref_finance::balances::start(client, wallet, &WNEAR_TOKEN, None).await?;
+    let balance = ref_finance::balances::start(client, wallet, &WNEAR_TOKEN, None, cfg).await?;
     let start = WNEAR_TOKEN.to_in();
     let balance_yocto = balance.as_yoctonear();
     let start_balance = MicroNear::from_yocto(balance_yocto);
@@ -120,7 +120,7 @@ where
         );
     } else {
         info!(log, "previews not found");
-        tokio::time::sleep(preview_not_found_wait()).await;
+        tokio::time::sleep(preview_not_found_wait(cfg)).await;
     }
 
     Ok(())

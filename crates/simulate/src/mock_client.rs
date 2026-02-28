@@ -51,6 +51,7 @@ impl SimulationClient {
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         let get_decimals = trade::make_get_decimals();
         let sim_day = *self.sim_day.lock().await;
+        let cfg = common::config::ConfigResolver;
 
         // token_in -> NEAR value
         let near_value = if token_in == wnear_str {
@@ -67,6 +68,7 @@ impl SimulationClient {
                 &wnear_in,
                 sim_day,
                 &get_decimals,
+                &cfg,
             )
             .await
             {
@@ -95,6 +97,7 @@ impl SimulationClient {
                 &wnear_in,
                 sim_day,
                 &get_decimals,
+                &cfg,
             )
             .await
             {

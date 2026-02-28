@@ -77,7 +77,8 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
         info!(log, "simulation day"; "date" => %current_date, "day" => day_count);
 
         // Execute the full trading cycle via trade::strategy::start
-        if let Err(e) = trade::strategy::start(&sim_client, &sim_wallet, sim_day).await {
+        let cfg = common::config::ConfigResolver;
+        if let Err(e) = trade::strategy::start(&sim_client, &sim_wallet, sim_day, &cfg).await {
             warn!(log, "trading cycle failed"; "date" => %current_date, "error" => ?e);
         }
 

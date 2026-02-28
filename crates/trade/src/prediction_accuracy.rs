@@ -1,7 +1,7 @@
 use crate::Result;
 use bigdecimal::BigDecimal;
 use chrono::{NaiveDateTime, Utc};
-use common::config::{self, ConfigAccess};
+use common::config::ConfigAccess;
 use common::types::TimeRange;
 use common::types::TokenPrice;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
@@ -20,12 +20,12 @@ use std::str::FromStr;
 /// 削除対象:
 /// - 評価済みレコード: evaluated_at から PREDICTION_RECORD_RETENTION_DAYS 日以上経過
 /// - 未評価レコード: target_time から PREDICTION_UNEVALUATED_RETENTION_DAYS 日以上経過
-pub async fn cleanup_old_records() -> Result<(usize, usize)> {
+pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usize)> {
     let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
 
-    let retention_days = config::typed().prediction_record_retention_days();
+    let retention_days = cfg.prediction_record_retention_days();
 
-    let unevaluated_retention_days = config::typed().prediction_unevaluated_retention_days();
+    let unevaluated_retention_days = cfg.prediction_unevaluated_retention_days();
 
     let (evaluated_deleted, unevaluated_deleted) =
         PredictionRecord::delete_old_records(retention_days, unevaluated_retention_days).await?;
@@ -129,14 +129,14 @@ pub async fn record_predictions(
 /// 戻り値: Option<(f64, f64)>
 ///   - Some((rolling_mape, confidence)): 評価済み >= MIN_SAMPLES なら直近 N 件の平均 MAPE と confidence
 ///   - None: データ不足
-pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
+pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Option<(f64, f64)>> {
     let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
 
-    let tolerance_minutes = config::typed().prediction_eval_tolerance_minutes();
+    let tolerance_minutes = cfg.prediction_eval_tolerance_minutes();
 
-    let window = config::typed().prediction_accuracy_window();
+    let window = cfg.prediction_accuracy_window();
 
-    let min_samples = config::typed().prediction_accuracy_min_samples();
+    let min_samples = cfg.prediction_accuracy_min_samples();
 
     // decimals 取得コールバック
     let get_decimals = super::make_get_decimals();
@@ -177,6 +177,7 @@ pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
             record.target_time,
             tolerance_minutes,
             &get_decimals,
+            cfg,
         )
         .await
         {
@@ -231,7 +232,7 @@ pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
     }
 
     // 古いレコードを削除（エラーは警告のみで続行）
-    if let Err(e) = cleanup_old_records().await {
+    if let Err(e) = cleanup_old_records(cfg).await {
         warn!(log, "failed to cleanup old records"; "error" => %e);
     }
 
@@ -297,9 +298,9 @@ pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
     };
 
     // 環境変数からしきい値を取得
-    let mape_excellent = config::typed().prediction_mape_excellent();
+    let mape_excellent = cfg.prediction_mape_excellent();
 
-    let mape_poor = config::typed().prediction_mape_poor();
+    let mape_poor = cfg.prediction_mape_poor();
 
     // 複合 confidence 計算
     let confidence =
@@ -323,13 +324,14 @@ async fn get_actual_price_at(
     target_time: NaiveDateTime,
     tolerance_minutes: i64,
     get_decimals: &persistence::token_rate::GetDecimalsFn,
+    cfg: &impl ConfigAccess,
 ) -> Result<Option<TokenPrice>> {
     let range = TimeRange {
         start: target_time - chrono::Duration::minutes(tolerance_minutes),
         end: target_time + chrono::Duration::minutes(tolerance_minutes),
     };
     let rates =
-        TokenRate::get_rates_in_time_range(&range, token, quote_token, get_decimals).await?;
+        TokenRate::get_rates_in_time_range(&range, token, quote_token, get_decimals, cfg).await?;
 
     if rates.is_empty() {
         return Ok(None);

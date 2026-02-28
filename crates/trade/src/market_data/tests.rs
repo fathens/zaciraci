@@ -1,7 +1,10 @@
 use super::*;
+use common::config::ConfigResolver;
 use common::types::{TokenInAccount, TokenOutAccount};
 use serial_test::serial;
 use std::str::FromStr;
+
+const CFG: ConfigResolver = ConfigResolver;
 
 fn price_from_int(v: i64) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from(v))
@@ -219,7 +222,8 @@ async fn test_calculate_enhanced_liquidity_score() {
         }],
     };
 
-    let score = calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history).await;
+    let score =
+        calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history, &CFG).await;
 
     // プール流動性が高いため、スコアは0.5以上になるはず
     assert!(
@@ -480,13 +484,13 @@ async fn test_enhanced_liquidity_score_weight_override() {
 
     // デフォルト重み (volume=0.6, pool=0.4) でスコア計算
     let score_default =
-        calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history).await;
+        calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history, &CFG).await;
 
     // volume 寄りから pool 寄りに変更 (volume=0.1, pool=0.9)
     let _guard1 = common::config::ConfigGuard::new("LIQUIDITY_VOLUME_WEIGHT", "0.1");
     let _guard2 = common::config::ConfigGuard::new("LIQUIDITY_POOL_WEIGHT", "0.9");
     let score_pool_heavy =
-        calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history).await;
+        calculate_enhanced_liquidity_score(&client, &ta("test.token"), &history, &CFG).await;
 
     // pool_score > volume_score なので、pool 寄りの重みではスコアが上がるはず
     assert!(
@@ -519,12 +523,12 @@ async fn test_pool_liquidity_error_default_score_override() {
     let client = FailingClient;
 
     // デフォルト (0.3)
-    let score_default = calculate_pool_liquidity_score(&client, &ta("test.token")).await;
+    let score_default = calculate_pool_liquidity_score(&client, &ta("test.token"), &CFG).await;
     assert!((score_default - 0.3).abs() < 0.001);
 
     // オーバーライド (0.5)
     let _guard = common::config::ConfigGuard::new("LIQUIDITY_ERROR_DEFAULT_SCORE", "0.5");
-    let score_custom = calculate_pool_liquidity_score(&client, &ta("test.token")).await;
+    let score_custom = calculate_pool_liquidity_score(&client, &ta("test.token"), &CFG).await;
     assert!((score_custom - 0.5).abs() < 0.001);
 }
 

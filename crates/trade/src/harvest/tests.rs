@@ -1,7 +1,10 @@
 use super::*;
 use bigdecimal::BigDecimal;
 use common::config;
+use common::config::ConfigResolver;
 use common::types::{NearValue, YoctoAmount, YoctoValue};
+
+const CFG: ConfigResolver = ConfigResolver;
 
 /// NEAR → yoctoNEAR 変換のヘルパー（型安全）
 fn near_to_yocto(near: u64) -> BigDecimal {
@@ -49,7 +52,7 @@ fn test_harvest_reserve_amount_custom() {
 fn test_harvest_min_amount_default() {
     // HARVEST_MIN_AMOUNTのデフォルト値テスト
     let expected = near_to_yocto_amount(10);
-    let actual = harvest_min_amount();
+    let actual = harvest_min_amount(&CFG);
     assert_eq!(actual, expected);
 }
 
@@ -95,13 +98,13 @@ fn test_harvest_account_parsing() {
 #[test]
 fn test_is_time_to_harvest() {
     // 初回は常にtrueになるはず（LAST_HARVEST_TIMEが0のため）
-    assert!(is_time_to_harvest());
+    assert!(is_time_to_harvest(&CFG));
 
     // 現在時刻を記録
     update_last_harvest_time();
 
     // 直後はfalseになるはず
-    assert!(!is_time_to_harvest());
+    assert!(!is_time_to_harvest(&CFG));
 }
 
 #[test]
@@ -135,7 +138,8 @@ async fn test_harvest_skips_when_initial_value_is_zero() {
     let initial_value = YoctoValue::from_yocto(BigDecimal::from(0u64));
     let current_value = YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24))); // 100 NEAR
 
-    let result = check_and_execute_harvest(&initial_value, &current_value, "test-period").await;
+    let result =
+        check_and_execute_harvest(&initial_value, &current_value, "test-period", &CFG).await;
 
     match result {
         Ok(harvested) => {
@@ -158,7 +162,8 @@ async fn test_harvest_skips_when_below_threshold() {
     let initial_value = YoctoValue::from_yocto(BigDecimal::from(100u128 * 10u128.pow(24))); // 100 NEAR
     let current_value = YoctoValue::from_yocto(BigDecimal::from(150u128 * 10u128.pow(24))); // 150 NEAR (50% profit)
 
-    let result = check_and_execute_harvest(&initial_value, &current_value, "test-period").await;
+    let result =
+        check_and_execute_harvest(&initial_value, &current_value, "test-period", &CFG).await;
 
     match result {
         Ok(harvested) => {
@@ -181,7 +186,8 @@ async fn test_harvest_inner_logic_initial_value_zero() {
     let initial_value = YoctoValue::from_yocto(BigDecimal::from(0u64));
     let current_value = YoctoValue::from_yocto(BigDecimal::from(50u128 * 10u128.pow(24))); // 50 NEAR
 
-    let result = check_and_execute_harvest(&initial_value, &current_value, "test-period").await;
+    let result =
+        check_and_execute_harvest(&initial_value, &current_value, "test-period", &CFG).await;
     let harvested = result.expect("should succeed with zero initial_value");
     assert!(
         harvested.is_zero(),

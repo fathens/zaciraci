@@ -1,5 +1,4 @@
 use crate::Result;
-use crate::config;
 use anyhow::anyhow;
 use common::config::ConfigAccess;
 use logging::*;
@@ -10,8 +9,8 @@ use near_sdk::AccountId;
 const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
-pub fn new_wallet() -> StandardWallet {
-    StandardWallet::new_from_config().expect("Failed to create wallet from config")
+pub fn new_wallet(cfg: &impl ConfigAccess) -> StandardWallet {
+    StandardWallet::new_from_config(cfg).expect("Failed to create wallet from config")
 }
 
 pub trait Wallet {
@@ -29,18 +28,18 @@ pub struct StandardWallet {
 }
 
 impl StandardWallet {
-    fn get_account_id() -> Result<AccountId> {
-        let strval = config::typed().root_account_id()?;
+    fn get_account_id(cfg: &impl ConfigAccess) -> Result<AccountId> {
+        let strval = cfg.root_account_id()?;
         Ok(strval.parse()?)
     }
 
-    fn get_mnemonic() -> Result<bip39::Mnemonic> {
-        let strval = config::typed().root_mnemonic()?;
+    fn get_mnemonic(cfg: &impl ConfigAccess) -> Result<bip39::Mnemonic> {
+        let strval = cfg.root_mnemonic()?;
         Ok(strval.parse()?)
     }
 
-    fn get_hdpath() -> Result<slipped10::BIP32Path> {
-        let strval = config::typed().root_hdpath();
+    fn get_hdpath(cfg: &impl ConfigAccess) -> Result<slipped10::BIP32Path> {
+        let strval = cfg.root_hdpath();
         strval.parse().map_err(|e| anyhow!("{}", e))
     }
 
@@ -74,10 +73,10 @@ impl StandardWallet {
         Ok(wallet)
     }
 
-    pub fn new_from_config() -> Result<StandardWallet> {
-        let account_id = Self::get_account_id()?;
-        let mnemonic = Self::get_mnemonic()?;
-        let hdpath = Self::get_hdpath()?;
+    pub fn new_from_config(cfg: &impl ConfigAccess) -> Result<StandardWallet> {
+        let account_id = Self::get_account_id(cfg)?;
+        let mnemonic = Self::get_mnemonic(cfg)?;
+        let hdpath = Self::get_hdpath(cfg)?;
         Self::new(account_id, mnemonic, hdpath)
     }
 

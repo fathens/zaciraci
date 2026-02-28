@@ -475,7 +475,8 @@ async fn seed_rate(
         rate_calc_near: 10,
         swap_path: None,
     };
-    TokenRate::batch_insert(&[token_rate]).await?;
+    let cfg = common::config::ConfigResolver;
+    TokenRate::batch_insert(&[token_rate], &cfg).await?;
     Ok(())
 }
 

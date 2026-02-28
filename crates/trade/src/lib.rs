@@ -18,7 +18,7 @@ use blockchain::jsonrpc;
 use blockchain::ref_finance;
 use blockchain::ref_finance::token_account::WNEAR_TOKEN;
 use chrono::Utc as TZ;
-use common::config::{self, ConfigAccess};
+use common::config::{self, ConfigAccess, ConfigResolver};
 use common::types::NearAmount;
 use common::types::TokenAmount;
 use common::types::TokenInAccount;
@@ -47,15 +47,15 @@ pub fn make_get_decimals()
     }
 }
 
-pub async fn run() {
+pub async fn run(cfg: ConfigResolver) {
     // DB からトークン decimals キャッシュを初期化
     if let Err(e) = token_cache::load_from_db().await {
         let log = DEFAULT.new(o!("function" => "run"));
         error!(log, "failed to load token decimals cache from DB"; "error" => ?e);
     }
 
-    tokio::spawn(run_record_rates());
-    tokio::spawn(run_trade());
+    tokio::spawn(run_record_rates(cfg));
+    tokio::spawn(run_trade(cfg));
 }
 
 /// 環境変数から cron スケジュールを取得してパースする
@@ -76,13 +76,13 @@ fn get_cron_schedule(env_var: &str, default: &str) -> cron::Schedule {
     }
 }
 
-async fn run_record_rates() {
+async fn run_record_rates(cfg: ConfigResolver) {
     const DEFAULT_CRON: &str = "0 */15 * * * *"; // デフォルト: 15分間隔
     let schedule = get_cron_schedule("RECORD_RATES_CRON_SCHEDULE", DEFAULT_CRON);
-    cronjob(schedule, record_rates, "record_rates").await;
+    cronjob(schedule, || record_rates(&cfg), "record_rates", &cfg).await;
 }
 
-async fn run_trade() {
+async fn run_trade(cfg: ConfigResolver) {
     const DEFAULT_CRON: &str = "0 0 0 * * *"; // デフォルト: 毎日午前0時
     let log = DEFAULT.new(o!("function" => "run_trade"));
     info!(log, "initializing auto trade cron job");
@@ -92,15 +92,16 @@ async fn run_trade() {
         schedule,
         || async {
             let client = blockchain::jsonrpc::new_client();
-            let wallet = blockchain::wallet::new_wallet();
-            strategy::start(&client, &wallet, chrono::Utc::now()).await
+            let wallet = blockchain::wallet::new_wallet(&cfg);
+            strategy::start(&client, &wallet, chrono::Utc::now(), &cfg).await
         },
         "auto_trade",
+        &cfg,
     )
     .await;
 }
 
-async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str)
+async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str, cfg: &impl ConfigAccess)
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<()>>,
@@ -142,11 +143,11 @@ where
                     };
 
                     // 最大sleep秒数（設定可能、デフォルト60秒）
-                    let max_sleep = config::typed().cron_max_sleep_seconds();
+                    let max_sleep = cfg.cron_max_sleep_seconds();
                     let sleep_duration = remaining.min(std::time::Duration::from_secs(max_sleep));
 
                     // 長時間待機の場合は定期的にログを出力
-                    let log_threshold = config::typed().cron_log_threshold_seconds();
+                    let log_threshold = cfg.cron_log_threshold_seconds();
                     if remaining.as_secs() > log_threshold {
                         debug!(log, "still waiting for next execution";
                             "remaining_seconds" => remaining.as_secs(),
@@ -158,7 +159,7 @@ where
                 }
 
                 // タスク実行前に DB から設定をリロード
-                persistence::config_store::reload_to_config().await.ok();
+                persistence::config_store::reload_to_config(cfg).await.ok();
 
                 let exec_log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
                 info!(exec_log, "executing scheduled task");
@@ -184,22 +185,22 @@ fn get_quote_token() -> TokenInAccount {
     WNEAR_TOKEN.to_in()
 }
 
-fn get_initial_value() -> NearAmount {
+fn get_initial_value(cfg: &impl ConfigAccess) -> NearAmount {
     // config からフィルタ基準を取得し、10% でレート計算（スリッページ最大9%を保証）
-    let min_pool = config::typed().trade_min_pool_liquidity();
+    let min_pool = cfg.trade_min_pool_liquidity();
 
     let rate_calc_amount = (min_pool / 10).max(1);
     rate_calc_amount.to_string().parse().unwrap()
 }
 
-async fn record_rates() -> Result<()> {
+async fn record_rates(cfg: &impl ConfigAccess) -> Result<()> {
     use dex::TokenPairLike;
     use persistence::token_rate::{SwapPath, SwapPoolInfo};
 
     let log = DEFAULT.new(o!("function" => "record_rates"));
 
     let quote_token = &get_quote_token();
-    let initial_value = get_initial_value();
+    let initial_value = get_initial_value(cfg);
 
     trace!(log, "recording rates";
         "quote_token" => %quote_token,
@@ -210,7 +211,7 @@ async fn record_rates() -> Result<()> {
 
     trace!(log, "loading pools");
     let pools = ref_finance::pool_info::read_pools_from_node(client).await?;
-    persistence::pool_info::write_to_db(&pools).await?;
+    persistence::pool_info::write_to_db(&pools, cfg).await?;
 
     trace!(log, "updating graph");
     let graph = ref_finance::path::graph::TokenGraph::new(Arc::clone(&pools));
@@ -233,7 +234,7 @@ async fn record_rates() -> Result<()> {
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
-    let token_decimals = token_cache::ensure_decimals_cached(client, &token_ids).await;
+    let token_decimals = token_cache::ensure_decimals_cached(client, &token_ids, cfg).await;
 
     // ExchangeRate を使って TokenRate を構築
     // TokenAmount / NearAmount → ExchangeRate で型安全に rate を計算
@@ -284,7 +285,7 @@ async fn record_rates() -> Result<()> {
         .collect();
 
     trace!(log, "inserting rates");
-    TokenRate::batch_insert(&rates).await?;
+    TokenRate::batch_insert(&rates, cfg).await?;
 
     debug!(log, "success");
     Ok(())
@@ -331,7 +332,8 @@ mod tests {
         // デフォルト: 100 NEAR → 10% = 10 NEAR
         let _env_guard = common::config::EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
         let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "100");
-        let value = get_initial_value();
+        let cfg = ConfigResolver;
+        let value = get_initial_value(&cfg);
         assert_eq!(value.to_string(), "10 NEAR");
     }
 
@@ -340,7 +342,8 @@ mod tests {
     fn test_get_initial_value_custom() {
         // 200 NEAR → 10% = 20 NEAR
         let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "200");
-        let value = get_initial_value();
+        let cfg = ConfigResolver;
+        let value = get_initial_value(&cfg);
         assert_eq!(value.to_string(), "20 NEAR");
     }
 
@@ -349,7 +352,8 @@ mod tests {
     fn test_get_initial_value_min_1() {
         // 5 NEAR → 10% = 0 → max(1) = 1 NEAR
         let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "5");
-        let value = get_initial_value();
+        let cfg = ConfigResolver;
+        let value = get_initial_value(&cfg);
         assert_eq!(value.to_string(), "1 NEAR");
     }
 }
