@@ -146,13 +146,14 @@ macro_rules! define_typed_config {
             }
         )*
     ) => {
-        pub trait ConfigAccess {
+        pub trait ConfigAccess: Send + Sync {
             $(
                 $(#[doc = $doc])*
                 fn $method(&self) -> $ty;
             )*
         }
 
+        #[derive(Clone, Copy)]
         pub struct ConfigResolver;
 
         impl ConfigAccess for ConfigResolver {
