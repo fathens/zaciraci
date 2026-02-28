@@ -1,6 +1,7 @@
 use super::*;
 use crate::evaluation_period::NewEvaluationPeriod;
 use bigdecimal::BigDecimal;
+use chrono::Timelike;
 use serial_test::serial;
 
 fn create_test_holdings_json() -> serde_json::Value {
@@ -84,7 +85,11 @@ async fn test_insert_and_get_by_period() -> Result<()> {
 async fn test_get_latest_for_period() -> Result<()> {
     let period_id = create_test_evaluation_period().await;
     let holdings_json = create_test_holdings_json();
+    // PostgreSQL TIMESTAMP has microsecond precision, so truncate nanoseconds
     let now = chrono::Utc::now().naive_utc();
+    let now = now
+        .with_nanosecond(now.nanosecond() / 1_000 * 1_000)
+        .unwrap();
 
     let older = NewPortfolioHolding {
         evaluation_period_id: period_id.clone(),
