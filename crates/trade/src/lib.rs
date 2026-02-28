@@ -237,6 +237,7 @@ async fn record_rates(cfg: &impl ConfigAccess) -> Result<()> {
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
+    token_cache::cleanup_stale_failures(&token_ids).await;
     let token_decimals = token_cache::ensure_decimals_cached(client, &token_ids, cfg).await;
 
     // ExchangeRate を使って TokenRate を構築
@@ -280,7 +281,7 @@ async fn record_rates(cfg: &impl ConfigAccess) -> Result<()> {
                     ))
                 }
                 None => {
-                    warn!(log, "skipping token: decimals unknown"; "token" => %base);
+                    debug!(log, "skipping token: decimals not available"; "token" => %base);
                     None
                 }
             }
