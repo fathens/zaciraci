@@ -266,6 +266,18 @@ define_typed_config! {
         default: 8
     }
 
+    /// Base backoff interval in minutes for failed decimals RPC fetches
+    fn trade_token_cache_backoff_base_minutes() -> u64 {
+        key: "TRADE_TOKEN_CACHE_BACKOFF_BASE_MINUTES",
+        default: 15
+    }
+
+    /// Maximum backoff interval in minutes for failed decimals RPC fetches
+    fn trade_token_cache_max_backoff_minutes() -> u64 {
+        key: "TRADE_TOKEN_CACHE_MAX_BACKOFF_MINUTES",
+        default: 1440
+    }
+
     // ── arbitrage ──
 
     /// Whether arbitrage engine is enabled

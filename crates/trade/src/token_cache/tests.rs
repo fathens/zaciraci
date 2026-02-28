@@ -8,10 +8,12 @@ fn ta(s: &str) -> TokenAccount {
     s.parse().unwrap()
 }
 
-/// テスト前にキャッシュをクリア
+/// テスト前にキャッシュをクリア（正キャッシュ + ネガティブキャッシュ）
 async fn clear_cache() {
     let mut cache = TOKEN_DECIMALS_CACHE.write().await;
     cache.clear();
+    let mut failures = TOKEN_DECIMALS_FAILURES.write().await;
+    failures.clear();
 }
 
 /// ft_metadata を返すモッククライアント（decimals を指定可能）
@@ -300,10 +302,18 @@ async fn test_ensure_rpc_failure_skips_token() {
     // RPC 失敗トークンは結果に含まれない
     assert!(result.is_empty());
 
-    // キャッシュにも保存されない
+    // 正キャッシュにも保存されない
     let cache = TOKEN_DECIMALS_CACHE.read().await;
     assert!(cache.get(&ta("fail1.near")).is_none());
     assert!(cache.get(&ta("fail2.near")).is_none());
+    drop(cache);
+
+    // ネガティブキャッシュに記録される
+    let failures = TOKEN_DECIMALS_FAILURES.read().await;
+    assert!(failures.contains_key(&ta("fail1.near")));
+    assert!(failures.contains_key(&ta("fail2.near")));
+    assert_eq!(failures[&ta("fail1.near")].failure_count, 1);
+    assert_eq!(failures[&ta("fail2.near")].failure_count, 1);
 }
 
 #[tokio::test]
@@ -328,4 +338,159 @@ async fn test_ensure_partial_rpc_failure_returns_only_successful() {
     let cache = TOKEN_DECIMALS_CACHE.read().await;
     assert_eq!(cache.get(&ta("ok.near")), Some(&6));
     assert!(cache.get(&ta("fail.near")).is_none());
+}
+
+// --- negative cache (backoff) ---
+
+#[tokio::test]
+#[serial]
+async fn test_negative_cache_skips_recently_failed_token() {
+    clear_cache().await;
+
+    let client = FailingClient;
+    let token_ids = vec![ta("bad.near")];
+
+    // 1回目: RPC 失敗 → ネガティブキャッシュに記録
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
+    assert!(result.is_empty());
+
+    {
+        let failures = TOKEN_DECIMALS_FAILURES.read().await;
+        assert_eq!(failures[&ta("bad.near")].failure_count, 1);
+    }
+
+    // 2回目: バックオフ中なので RPC は呼ばれずスキップ
+    // (base=15分なので、即座の再試行はスキップされる)
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
+    assert!(result.is_empty());
+
+    // failure_count は増えない（RPC 呼出自体がスキップされるため）
+    let failures = TOKEN_DECIMALS_FAILURES.read().await;
+    assert_eq!(failures[&ta("bad.near")].failure_count, 1);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_negative_cache_retries_after_backoff_expires() {
+    clear_cache().await;
+
+    // ネガティブキャッシュに古い失敗記録を手動で挿入
+    {
+        let mut failures = TOKEN_DECIMALS_FAILURES.write().await;
+        failures.insert(
+            ta("recover.near"),
+            FailureRecord {
+                failure_count: 1,
+                // 30分前の失敗 → base=15分の backoff(2^1=30分) で期限ギリギリ
+                last_failure: Utc::now() - chrono::Duration::minutes(31),
+            },
+        );
+    }
+
+    // RPC 成功するクライアント
+    let client = MockMetadataClient { decimals: 18 };
+    let token_ids = vec![ta("recover.near")];
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
+
+    // バックオフ期限切れ → RPC 呼出 → 成功
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[&ta("recover.near")], 18);
+
+    // ネガティブキャッシュから削除された
+    let failures = TOKEN_DECIMALS_FAILURES.read().await;
+    assert!(!failures.contains_key(&ta("recover.near")));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_negative_cache_increments_failure_count() {
+    clear_cache().await;
+
+    // ネガティブキャッシュに期限切れの失敗記録を挿入
+    {
+        let mut failures = TOKEN_DECIMALS_FAILURES.write().await;
+        failures.insert(
+            ta("stubborn.near"),
+            FailureRecord {
+                failure_count: 2,
+                // 十分古い → リトライ対象
+                last_failure: Utc::now() - chrono::Duration::hours(24),
+            },
+        );
+    }
+
+    // RPC は再び失敗
+    let client = FailingClient;
+    let token_ids = vec![ta("stubborn.near")];
+    let result = ensure_decimals_cached(&client, &token_ids, &CFG).await;
+    assert!(result.is_empty());
+
+    // failure_count がインクリメントされた
+    let failures = TOKEN_DECIMALS_FAILURES.read().await;
+    assert_eq!(failures[&ta("stubborn.near")].failure_count, 3);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_cleanup_stale_failures_removes_inactive_tokens() {
+    clear_cache().await;
+
+    // ネガティブキャッシュに複数トークンを登録
+    {
+        let mut failures = TOKEN_DECIMALS_FAILURES.write().await;
+        for token in &["active.near", "stale1.near", "stale2.near"] {
+            failures.insert(
+                ta(token),
+                FailureRecord {
+                    failure_count: 1,
+                    last_failure: Utc::now(),
+                },
+            );
+        }
+    }
+
+    // active.near のみアクティブ
+    let active = vec![ta("active.near"), ta("other.near")];
+    cleanup_stale_failures(&active).await;
+
+    let failures = TOKEN_DECIMALS_FAILURES.read().await;
+    assert!(failures.contains_key(&ta("active.near")));
+    assert!(!failures.contains_key(&ta("stale1.near")));
+    assert!(!failures.contains_key(&ta("stale2.near")));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_failure_record_should_retry_backoff_progression() {
+    let now = Utc::now();
+    let base = 15u64;
+    let max = 1440u64;
+
+    let record = FailureRecord {
+        failure_count: 1,
+        last_failure: now,
+    };
+
+    // failure_count=1 → backoff = 15 * 2^1 = 30分
+    assert!(!record.should_retry(now, base, max)); // 0分経過
+    assert!(!record.should_retry(now + chrono::Duration::minutes(29), base, max)); // 29分経過
+    assert!(record.should_retry(now + chrono::Duration::minutes(30), base, max)); // 30分経過
+
+    let record3 = FailureRecord {
+        failure_count: 3,
+        last_failure: now,
+    };
+
+    // failure_count=3 → backoff = 15 * 2^3 = 120分
+    assert!(!record3.should_retry(now + chrono::Duration::minutes(119), base, max));
+    assert!(record3.should_retry(now + chrono::Duration::minutes(120), base, max));
+
+    let record_high = FailureRecord {
+        failure_count: 20,
+        last_failure: now,
+    };
+
+    // failure_count=20 → exponent capped at 8, 15 * 256 = 3840 → max_backoff=1440
+    assert!(!record_high.should_retry(now + chrono::Duration::minutes(1439), base, max));
+    assert!(record_high.should_retry(now + chrono::Duration::minutes(1440), base, max));
 }
