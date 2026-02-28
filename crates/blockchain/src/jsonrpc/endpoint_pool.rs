@@ -1,4 +1,4 @@
-use common::config;
+use common::config::ConfigAccess;
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -28,10 +28,9 @@ struct FailedEndpoints {
 impl EndpointPool {
     /// Create a new EndpointPool from configuration
     pub fn new() -> Self {
-        let mut endpoints: Vec<RpcEndpoint> = config::get("RPC_ENDPOINTS")
-            .ok()
-            .and_then(|json| serde_json::from_str::<Vec<common::config::RpcEndpoint>>(&json).ok())
-            .unwrap_or_default()
+        let typed = common::config::typed();
+        let mut endpoints: Vec<RpcEndpoint> = typed
+            .rpc_endpoints()
             .into_iter()
             .map(|ep| RpcEndpoint {
                 url: ep.url,
@@ -42,10 +41,7 @@ impl EndpointPool {
 
         // If no endpoints in config, use defaults based on network
         if endpoints.is_empty() {
-            let use_mainnet = config::get("USE_MAINNET")
-                .ok()
-                .and_then(|v| v.parse::<bool>().ok())
-                .unwrap_or(true);
+            let use_mainnet = typed.use_mainnet();
             let default_url = if use_mainnet {
                 "https://rpc.mainnet.near.org"
             } else {
@@ -58,10 +54,7 @@ impl EndpointPool {
             });
         }
 
-        let failure_reset_seconds = config::get("RPC_FAILURE_RESET_SECONDS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(300);
+        let failure_reset_seconds = typed.rpc_failure_reset_seconds();
 
         Self {
             endpoints,

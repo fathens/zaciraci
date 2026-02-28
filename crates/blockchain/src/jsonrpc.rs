@@ -11,6 +11,7 @@ use crate::config;
 use crate::jsonrpc::near_client::StandardNearClient;
 use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::types::gas_price::GasPrice;
+use common::config::ConfigAccess;
 use logging::*;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{MethodCallResult, methods};
@@ -27,12 +28,11 @@ use once_cell::sync::Lazy;
 use std::sync::Arc;
 
 pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
-    let str = config::get("USE_MAINNET").unwrap_or_default();
+    let value = config::typed().use_mainnet();
     let log = DEFAULT.new(o!(
         "function" => "IS_MAINNET",
-        "given_value" => format!("{}", str),
+        "given_value" => format!("{}", value),
     ));
-    let value = str.parse().unwrap_or_default();
     if value {
         info!(log, "Using mainnet");
     } else {

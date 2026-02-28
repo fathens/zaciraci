@@ -7,40 +7,30 @@ use blockchain::ref_finance::path::preview::Preview;
 use blockchain::ref_finance::token_account::WNEAR_TOKEN;
 use blockchain::types::MicroNear;
 use blockchain::wallet;
-use common::config;
+use common::config::ConfigAccess;
 use dex::TokenPath;
 use dex::errors::Error;
 use logging::*;
 
 use anyhow::bail;
-use humantime::parse_duration;
 use std::time::Duration;
 
 type Result<T> = anyhow::Result<T>;
 
 fn token_not_found_wait() -> Duration {
-    config::get("ARBITRAGE_TOKEN_NOT_FOUND_WAIT")
-        .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(1))
+    common::config::typed().arbitrage_token_not_found_wait()
 }
 
 fn other_error_wait() -> Duration {
-    config::get("ARBITRAGE_OTHER_ERROR_WAIT")
-        .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(30))
+    common::config::typed().arbitrage_other_error_wait()
 }
 
 fn preview_not_found_wait() -> Duration {
-    config::get("ARBITRAGE_PREVIEW_NOT_FOUND_WAIT")
-        .and_then(|v| Ok(parse_duration(&v)?))
-        .unwrap_or_else(|_| Duration::from_secs(10))
+    common::config::typed().arbitrage_preview_not_found_wait()
 }
 
 fn is_needed() -> bool {
-    config::get("ARBITRAGE_NEEDED")
-        .ok()
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(false)
+    common::config::typed().arbitrage_needed()
 }
 
 pub async fn run() {

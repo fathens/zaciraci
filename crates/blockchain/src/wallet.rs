@@ -1,6 +1,7 @@
 use crate::Result;
 use crate::config;
 use anyhow::anyhow;
+use common::config::ConfigAccess;
 use logging::*;
 use near_crypto::SecretKey::ED25519;
 use near_crypto::{ED25519SecretKey, InMemorySigner};
@@ -29,17 +30,17 @@ pub struct StandardWallet {
 
 impl StandardWallet {
     fn get_account_id() -> Result<AccountId> {
-        let strval = config::get("ROOT_ACCOUNT_ID")?;
+        let strval = config::typed().root_account_id()?;
         Ok(strval.parse()?)
     }
 
     fn get_mnemonic() -> Result<bip39::Mnemonic> {
-        let strval = config::get("ROOT_MNEMONIC")?;
+        let strval = config::typed().root_mnemonic()?;
         Ok(strval.parse()?)
     }
 
     fn get_hdpath() -> Result<slipped10::BIP32Path> {
-        let strval = config::get("ROOT_HDPATH")?;
+        let strval = config::typed().root_hdpath();
         strval.parse().map_err(|e| anyhow!("{}", e))
     }
 

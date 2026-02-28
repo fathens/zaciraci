@@ -3,7 +3,7 @@ use crate::connection_pool;
 use crate::schema::pool_info;
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
-use common::config;
+use common::config::{self, ConfigAccess};
 use common::types::TimeRange;
 use dex::{PoolInfo, PoolInfoBared, PoolInfoList};
 use diesel::prelude::*;
@@ -105,10 +105,7 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>]) -> Result<()> {
     .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
     // 古いレコードをクリーンアップ
-    let retention_count = config::get("POOL_INFO_RETENTION_COUNT")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(10);
+    let retention_count = config::typed().pool_info_retention_count();
 
     trace!(log, "cleaning up old records"; "retention_count" => retention_count);
     cleanup_old_records(retention_count).await?;

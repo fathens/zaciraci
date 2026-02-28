@@ -4,7 +4,7 @@ use crate::schema::token_rates;
 use anyhow::anyhow;
 use bigdecimal::{BigDecimal, Zero};
 use chrono::NaiveDateTime;
-use common::config;
+use common::config::{self, ConfigAccess};
 use common::types::TimeRange;
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount};
 use diesel::prelude::*;
@@ -207,10 +207,7 @@ impl TokenRate {
             trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
 
             // 並行実行数（設定から取得、デフォルト4）
-            let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(4);
+            let concurrency = config::typed().trade_prediction_concurrency() as usize;
 
             // 全トークンの decimals を並行取得
             let fetch_results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())
@@ -331,10 +328,7 @@ impl TokenRate {
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
         // 古いレコードをクリーンアップ
-        let retention_days = config::get("TOKEN_RATES_RETENTION_DAYS")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(90);
+        let retention_days = config::typed().token_rates_retention_days();
 
         trace!(log, "cleaning up old records"; "retention_days" => retention_days);
         TokenRate::cleanup_old_records(retention_days).await?;

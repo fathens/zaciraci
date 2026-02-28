@@ -5,6 +5,7 @@ use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::wallet::Wallet;
+use common::config::ConfigAccess;
 use common::types::NearAmount;
 use common::types::TokenAccount;
 use logging::*;
@@ -20,27 +21,27 @@ const MINIMUM_NATIVE_BALANCE: NearToken = NearToken::from_near(1);
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
 
 fn harvest_account() -> AccountId {
-    let value = config::get("HARVEST_ACCOUNT_ID").expect("HARVEST_ACCOUNT_ID config is required");
+    let value = config::typed()
+        .harvest_account_id()
+        .expect("HARVEST_ACCOUNT_ID config is required");
     value
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{value}`: {err}"))
 }
 
 fn trade_account_reserve() -> NearToken {
-    let yocto = config::get("TRADE_ACCOUNT_RESERVE")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
+    let yocto = config::typed()
+        .trade_account_reserve()
+        .to_string()
+        .parse::<NearAmount>()
+        .expect("valid NearAmount literal")
         .to_yocto()
         .to_u128();
     NearToken::from_yoctonear(yocto)
 }
 
 fn harvest_interval() -> u64 {
-    config::get("HARVEST_INTERVAL_SECONDS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(86400)
+    config::typed().harvest_interval_seconds()
 }
 
 fn is_time_to_harvest() -> bool {
@@ -62,10 +63,7 @@ fn update_last_harvest() {
 
 /// 残高上限乗数を適用するヘルパー関数
 fn multiply_by_balance_multiplier(token: NearToken) -> NearToken {
-    let multiplier: u128 = config::get("HARVEST_BALANCE_MULTIPLIER")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(128);
+    let multiplier: u128 = config::typed().harvest_balance_multiplier();
     NearToken::from_yoctonear(token.as_yoctonear().saturating_mul(multiplier))
 }
 

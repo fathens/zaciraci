@@ -6,11 +6,9 @@ use once_cell::sync::Lazy;
 pub type Client = deadpool_diesel::postgres::Connection;
 
 static POOL: Lazy<Pool> = Lazy::new(|| {
-    let max_size: usize = common::config::get("PG_POOL_SIZE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(2);
-    let dsn = common::config::get("DATABASE_URL").unwrap_or_else(|_| {
+    use common::config::ConfigAccess;
+    let max_size: usize = common::config::typed().pg_pool_size();
+    let dsn = common::config::typed().database_url().unwrap_or_else(|_| {
         "postgres://postgres_test:postgres_test@localhost:5433/postgres_test".to_string()
     });
     let mgr_config = ManagerConfig {

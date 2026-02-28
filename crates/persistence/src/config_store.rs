@@ -223,7 +223,10 @@ pub async fn delete(instance_id: &str, key: &str) -> Result<()> {
 /// `INSTANCE_ID` は env/TOML から取得する。DB 接続に依存するキーは
 /// DB からは取得しない前提。
 pub async fn reload_to_config() -> Result<()> {
-    let instance_id = common::config::get("INSTANCE_ID").unwrap_or_else(|_| "*".to_string());
+    let instance_id = {
+        use common::config::ConfigAccess;
+        common::config::typed().instance_id()
+    };
     let configs = get_all_for_instance(&instance_id).await?;
     common::config::load_db_config(configs);
     Ok(())
