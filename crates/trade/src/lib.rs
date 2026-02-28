@@ -18,7 +18,7 @@ use blockchain::jsonrpc;
 use blockchain::ref_finance;
 use blockchain::ref_finance::token_account::WNEAR_TOKEN;
 use chrono::Utc as TZ;
-use common::config::{self, ConfigAccess, ConfigResolver};
+use common::config::{ConfigAccess, ConfigResolver};
 use common::types::NearAmount;
 use common::types::TokenAmount;
 use common::types::TokenInAccount;
@@ -61,7 +61,7 @@ pub async fn run(cfg: ConfigResolver) {
 /// 環境変数から cron スケジュールを取得してパースする
 fn get_cron_schedule(env_var: &str, default: &str) -> cron::Schedule {
     let log = DEFAULT.new(o!("function" => "get_cron_schedule", "env_var" => env_var.to_owned()));
-    let cron_conf = config::get(env_var).unwrap_or_else(|_| default.to_string());
+    let cron_conf = common::config::store::get(env_var).unwrap_or_else(|_| default.to_string());
 
     match cron_conf.parse() {
         Ok(s) => {
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_get_cron_schedule_uses_env_value() {
-        let _env_guard = common::config::EnvGuard::set("TEST_CRON_VALID", "0 */30 * * * *");
+        let _env_guard = common::config::store::EnvGuard::set("TEST_CRON_VALID", "0 */30 * * * *");
         let schedule = get_cron_schedule("TEST_CRON_VALID", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_get_cron_schedule_fallback_on_invalid_env() {
-        let _env_guard = common::config::EnvGuard::set("TEST_CRON_INVALID", "invalid cron");
+        let _env_guard = common::config::store::EnvGuard::set("TEST_CRON_INVALID", "invalid cron");
         let schedule = get_cron_schedule("TEST_CRON_INVALID", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
@@ -333,8 +333,8 @@ mod tests {
     #[serial]
     fn test_get_initial_value_default() {
         // デフォルト: 100 NEAR → 10% = 10 NEAR
-        let _env_guard = common::config::EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
-        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "100");
+        let _env_guard = common::config::store::EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
+        let _guard = common::config::store::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "100");
         let cfg = ConfigResolver;
         let value = get_initial_value(&cfg);
         assert_eq!(value.to_string(), "10 NEAR");
@@ -344,7 +344,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_custom() {
         // 200 NEAR → 10% = 20 NEAR
-        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "200");
+        let _guard = common::config::store::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "200");
         let cfg = ConfigResolver;
         let value = get_initial_value(&cfg);
         assert_eq!(value.to_string(), "20 NEAR");
@@ -354,7 +354,7 @@ mod tests {
     #[serial]
     fn test_get_initial_value_min_1() {
         // 5 NEAR → 10% = 0 → max(1) = 1 NEAR
-        let _guard = common::config::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "5");
+        let _guard = common::config::store::ConfigGuard::new("TRADE_MIN_POOL_LIQUIDITY", "5");
         let cfg = ConfigResolver;
         let value = get_initial_value(&cfg);
         assert_eq!(value.to_string(), "1 NEAR");

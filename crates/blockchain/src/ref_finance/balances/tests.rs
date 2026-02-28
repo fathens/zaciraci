@@ -55,8 +55,8 @@ impl Wallet for MockWallet {
 
 fn initialize() {
     INIT.call_once(|| {
-        common::config::set("HARVEST_ACCOUNT_ID", "harvest.near");
-        common::config::set("TRADE_ACCOUNT_RESERVE", "1");
+        common::config::store::set("HARVEST_ACCOUNT_ID", "harvest.near");
+        common::config::store::set("TRADE_ACCOUNT_RESERVE", "1");
     });
 }
 
@@ -856,7 +856,7 @@ fn test_multiply_by_balance_multiplier_default() {
 #[serial(harvest)]
 fn test_multiply_by_balance_multiplier_override() {
     // CONFIG_STORE で乗数を変更
-    let _guard = common::config::ConfigGuard::new("HARVEST_BALANCE_MULTIPLIER", "64");
+    let _guard = common::config::store::ConfigGuard::new("HARVEST_BALANCE_MULTIPLIER", "64");
     let one_near = NearToken::from_yoctonear(10u128.pow(24));
     let result = multiply_by_balance_multiplier(one_near, &CFG);
     assert_eq!(result.as_yoctonear(), 64 * 10u128.pow(24));

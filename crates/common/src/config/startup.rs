@@ -22,7 +22,7 @@ fn default_max_retries() -> u32 {
 /// Startup-time configuration resolved once from env > defaults.
 ///
 /// These values are fixed after process start and never change.
-/// Unlike `ConfigAccess` (which goes through CONFIG_STORE > DB_STORE > env > TOML > defaults),
+/// Unlike `ConfigAccess` (which goes through CONFIG_STORE > DB_STORE > env > defaults),
 /// `StartupConfig` only reads environment variables with hardcoded defaults.
 #[derive(Debug, Clone)]
 pub struct StartupConfig {

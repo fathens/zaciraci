@@ -68,17 +68,19 @@ fn test_yocto_near_conversion() {
 #[test]
 fn test_harvest_reserve_amount_parsing() {
     // 無効な設定値の場合のフォールバック動作テスト
-    let _guard = config::ConfigGuard::new("HARVEST_RESERVE_AMOUNT", "invalid");
+    let _guard = config::store::ConfigGuard::new("HARVEST_RESERVE_AMOUNT", "invalid");
 
-    let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
+    let reserve_str =
+        config::store::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
     let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
 
     // 無効な値の場合、デフォルト1に戻ることを確認
     assert_eq!(reserve_near, 1);
 
     // 正常な値の場合のテスト
-    config::set("HARVEST_RESERVE_AMOUNT", "3");
-    let reserve_str = config::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
+    config::store::set("HARVEST_RESERVE_AMOUNT", "3");
+    let reserve_str =
+        config::store::get("HARVEST_RESERVE_AMOUNT").unwrap_or_else(|_| "1".to_string());
     let reserve_near = reserve_str.parse::<u64>().unwrap_or(1);
     assert_eq!(reserve_near, 3);
 }
@@ -86,9 +88,10 @@ fn test_harvest_reserve_amount_parsing() {
 #[test]
 fn test_harvest_account_parsing() {
     // HARVEST_ACCOUNT_IDの正常なパース動作テスト
-    let _guard = config::ConfigGuard::new("HARVEST_ACCOUNT_ID", "test.near");
+    let _guard = config::store::ConfigGuard::new("HARVEST_ACCOUNT_ID", "test.near");
 
-    let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|_| "harvest.near".to_string());
+    let value =
+        config::store::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|_| "harvest.near".to_string());
     let parsed_account = value.parse::<AccountId>();
 
     assert!(parsed_account.is_ok());

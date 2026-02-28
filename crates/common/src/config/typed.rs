@@ -11,7 +11,7 @@ pub(crate) trait ConfigResolve: Sized {
 impl ConfigResolve for bool {
     type Default = bool;
     fn resolve(key: &str, default: bool) -> Self {
-        crate::config::get(key)
+        crate::config::store::get(key)
             .ok()
             .and_then(|v| v.to_lowercase().parse::<bool>().ok())
             .unwrap_or(default)
@@ -21,7 +21,7 @@ impl ConfigResolve for bool {
 impl ConfigResolve for String {
     type Default = &'static str;
     fn resolve(key: &str, default: &'static str) -> Self {
-        crate::config::get(key).unwrap_or_else(|_| default.to_string())
+        crate::config::store::get(key).unwrap_or_else(|_| default.to_string())
     }
 }
 
@@ -30,7 +30,7 @@ macro_rules! impl_config_resolve_numeric {
         $(impl ConfigResolve for $ty {
             type Default = $ty;
             fn resolve(key: &str, default: $ty) -> Self {
-                crate::config::get(key)
+                crate::config::store::get(key)
                     .ok()
                     .and_then(|v| v.parse::<$ty>().ok())
                     .unwrap_or(default)
@@ -44,7 +44,7 @@ impl_config_resolve_numeric!(u16, u32, u64, u128, usize, i64, f64);
 impl ConfigResolve for Duration {
     type Default = Duration;
     fn resolve(key: &str, default: Duration) -> Self {
-        crate::config::get(key)
+        crate::config::store::get(key)
             .ok()
             .and_then(|v| humantime::parse_duration(&v).ok())
             .unwrap_or(default)
@@ -54,7 +54,7 @@ impl ConfigResolve for Duration {
 impl ConfigResolve for anyhow::Result<String> {
     type Default = ();
     fn resolve(key: &str, _default: ()) -> Self {
-        crate::config::get(key)
+        crate::config::store::get(key)
             .map_err(|_| anyhow::anyhow!("required config key not found: {}", key))
     }
 }
@@ -444,7 +444,7 @@ static TYPED: Lazy<ConfigResolver> = Lazy::new(|| ConfigResolver);
 /// Returns a reference to the global typed config resolver.
 ///
 /// Each accessor resolves the value at call time through the priority chain
-/// (CONFIG_STORE > DB_STORE > env > TOML > defaults).
+/// (CONFIG_STORE > DB_STORE > env > defaults).
 pub fn typed() -> &'static ConfigResolver {
     &TYPED
 }

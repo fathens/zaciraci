@@ -125,19 +125,19 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 
 /// Apply CLI parameters to the config system
 pub(crate) fn apply_config(cli: &Cli) {
-    common::config::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
-    common::config::set("TRADE_VOLATILITY_DAYS", &cli.volatility_days.to_string());
-    common::config::set(
+    common::config::store::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
+    common::config::store::set("TRADE_VOLATILITY_DAYS", &cli.volatility_days.to_string());
+    common::config::store::set(
         "TRADE_PRICE_HISTORY_DAYS",
         &cli.price_history_days.to_string(),
     );
-    common::config::set(
+    common::config::store::set(
         "PORTFOLIO_REBALANCE_THRESHOLD",
         &cli.rebalance_threshold.to_string(),
     );
-    common::config::set("TRADE_INITIAL_INVESTMENT", &cli.initial_capital.to_string());
+    common::config::store::set("TRADE_INITIAL_INVESTMENT", &cli.initial_capital.to_string());
     // Enable trading (mock client prevents real transactions)
-    common::config::set("TRADE_ENABLED", "true");
+    common::config::store::set("TRADE_ENABLED", "true");
 }
 
 #[cfg(test)]
@@ -188,20 +188,26 @@ mod tests {
 
         apply_config(&cli);
 
-        assert_eq!(common::config::get("TRADE_TOP_TOKENS").unwrap(), "20");
-        assert_eq!(common::config::get("TRADE_VOLATILITY_DAYS").unwrap(), "14");
         assert_eq!(
-            common::config::get("TRADE_PRICE_HISTORY_DAYS").unwrap(),
+            common::config::store::get("TRADE_TOP_TOKENS").unwrap(),
+            "20"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_VOLATILITY_DAYS").unwrap(),
+            "14"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_PRICE_HISTORY_DAYS").unwrap(),
             "60"
         );
         assert_eq!(
-            common::config::get("PORTFOLIO_REBALANCE_THRESHOLD").unwrap(),
+            common::config::store::get("PORTFOLIO_REBALANCE_THRESHOLD").unwrap(),
             "0.25"
         );
         assert_eq!(
-            common::config::get("TRADE_INITIAL_INVESTMENT").unwrap(),
+            common::config::store::get("TRADE_INITIAL_INVESTMENT").unwrap(),
             "500"
         );
-        assert_eq!(common::config::get("TRADE_ENABLED").unwrap(), "true");
+        assert_eq!(common::config::store::get("TRADE_ENABLED").unwrap(), "true");
     }
 }

@@ -16,36 +16,19 @@ fn test_config_store_priority() {
 
 #[test]
 #[serial]
-fn test_boolean_config() {
-    let _env_guard = EnvGuard::remove("ARBITRAGE_NEEDED");
-    let result = get("ARBITRAGE_NEEDED").unwrap();
-    assert_eq!(result, "false");
-}
-
-#[test]
-#[serial]
-fn test_numeric_config() {
-    let _env_guard = EnvGuard::remove("TRADE_TOP_TOKENS");
-    let result = get("TRADE_TOP_TOKENS").unwrap();
-    assert_eq!(result, "10");
-}
-
-#[test]
-#[serial]
 fn test_priority_order() {
-    // 優先順位の完全検証: CONFIG_STORE > DB > 環境変数 > TOML > デフォルト
-    const TEST_KEY: &str = "TRADE_TOP_TOKENS";
+    // 優先順位の完全検証: CONFIG_STORE > DB > 環境変数 > Err
+    const TEST_KEY: &str = "TEST_PRIORITY_ORDER_KEY";
 
     // Guard で全レイヤーの状態を保存。Drop 時に復元。
     let _db_guard = DbStoreGuard::new();
     let _env_guard = EnvGuard::remove(TEST_KEY);
     remove(TEST_KEY);
 
-    // Step 1: TOML/デフォルトのみ (最低優先度)
-    let result = get(TEST_KEY).unwrap();
-    assert_eq!(result, "10"); // config.toml または default
+    // Step 1: 何もない場合は Err
+    assert!(get(TEST_KEY).is_err());
 
-    // Step 2: 環境変数追加 (TOML より優先)
+    // Step 2: 環境変数追加
     unsafe {
         std::env::set_var(TEST_KEY, "99");
     }
@@ -65,61 +48,10 @@ fn test_priority_order() {
 
 #[test]
 #[serial]
-fn test_trade_min_pool_liquidity_default() {
-    let _env_guard = EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
-    remove("TRADE_MIN_POOL_LIQUIDITY");
-    let result = get("TRADE_MIN_POOL_LIQUIDITY").unwrap();
-    assert_eq!(result, "100");
-}
-
-#[test]
-#[serial]
 fn test_trade_min_pool_liquidity_from_env() {
     let _env_guard = EnvGuard::set("TRADE_MIN_POOL_LIQUIDITY", "200");
     let result = get("TRADE_MIN_POOL_LIQUIDITY").unwrap();
     assert_eq!(result, "200");
-}
-
-/// Step 1: 新規キーのデフォルト値テスト
-#[test]
-#[serial]
-fn test_new_config_keys_defaults() {
-    // 環境変数と CONFIG_STORE をクリア
-    let keys_and_defaults = [
-        ("TRADE_PREDICTION_CONCURRENCY", "4"),
-        ("TRADE_TOKEN_CACHE_CONCURRENCY", "8"),
-        ("RPC_MAX_ATTEMPTS", "10"),
-        ("PORTFOLIO_REBALANCE_THRESHOLD", "0.1"),
-        ("LIQUIDITY_VOLUME_WEIGHT", "0.6"),
-        ("LIQUIDITY_POOL_WEIGHT", "0.4"),
-        ("LIQUIDITY_ERROR_DEFAULT_SCORE", "0.3"),
-        ("CRON_MAX_SLEEP_SECONDS", "60"),
-        ("CRON_LOG_THRESHOLD_SECONDS", "300"),
-        ("HARVEST_BALANCE_MULTIPLIER", "128"),
-    ];
-
-    let _env_guards: Vec<_> = keys_and_defaults
-        .iter()
-        .map(|(key, _)| EnvGuard::remove(key))
-        .collect();
-    for (key, _) in &keys_and_defaults {
-        remove(key);
-    }
-
-    for (key, expected) in &keys_and_defaults {
-        let result = get(key).unwrap();
-        assert_eq!(result, *expected, "key={key}");
-    }
-}
-
-#[test]
-#[serial]
-fn test_rpc_endpoints_moved_to_startup() {
-    // RPC_ENDPOINTS is now in StartupConfig, not in the TOML priority chain
-    let _env_guard = EnvGuard::remove("RPC_ENDPOINTS");
-    remove("RPC_ENDPOINTS");
-    // get() should return Err since it's no longer in the TOML match
-    assert!(get("RPC_ENDPOINTS").is_err());
 }
 
 #[test]

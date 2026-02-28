@@ -848,10 +848,7 @@ async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_prediction_concurrency_config() {
-    let concurrency: u32 = common::config::get("TRADE_PREDICTION_CONCURRENCY")
-        .unwrap()
-        .parse()
-        .unwrap();
+    let concurrency = CFG.trade_prediction_concurrency();
     assert!(
         concurrency >= 1,
         "prediction_concurrency should be at least 1"
@@ -862,11 +859,8 @@ async fn test_prediction_concurrency_config() {
     );
 
     // CONFIG_STORE オーバーライドテスト
-    let _guard = common::config::ConfigGuard::new("TRADE_PREDICTION_CONCURRENCY", "4");
-    let overridden: u32 = common::config::get("TRADE_PREDICTION_CONCURRENCY")
-        .unwrap()
-        .parse()
-        .unwrap();
+    let _guard = common::config::store::ConfigGuard::new("TRADE_PREDICTION_CONCURRENCY", "4");
+    let overridden = CFG.trade_prediction_concurrency();
     assert_eq!(overridden, 4);
 }
 

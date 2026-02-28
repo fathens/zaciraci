@@ -21,10 +21,10 @@ static INIT: Once = Once::new();
 
 fn initialize() {
     INIT.call_once(|| {
-        config::set("ARBITRAGE_NEEDED", "true");
-        config::set("ARBITRAGE_TOKEN_NOT_FOUND_WAIT", "1s");
-        config::set("ARBITRAGE_OTHER_ERROR_WAIT", "1s");
-        config::set("ARBITRAGE_PREVIEW_NOT_FOUND_WAIT", "1s");
+        config::store::set("ARBITRAGE_NEEDED", "true");
+        config::store::set("ARBITRAGE_TOKEN_NOT_FOUND_WAIT", "1s");
+        config::store::set("ARBITRAGE_OTHER_ERROR_WAIT", "1s");
+        config::store::set("ARBITRAGE_PREVIEW_NOT_FOUND_WAIT", "1s");
     });
 }
 
@@ -250,7 +250,7 @@ impl jsonrpc::SentTx for MockSentTx {
 #[test]
 fn test_is_needed_default() {
     // デフォルトでは false (存在しないキーの場合)
-    let result = config::get("ARBITRAGE_NEEDED_NONEXISTENT")
+    let result = config::store::get("ARBITRAGE_NEEDED_NONEXISTENT")
         .ok()
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(false);
@@ -264,22 +264,22 @@ fn test_is_needed_behavior() {
     // config::get が "true" を返す場合は true、それ以外は false を返す
 
     // "true" の場合
-    let _guard = config::ConfigGuard::new("ARBITRAGE_NEEDED", "true");
-    let value = config::get("ARBITRAGE_NEEDED").unwrap();
+    let _guard = config::store::ConfigGuard::new("ARBITRAGE_NEEDED", "true");
+    let value = config::store::get("ARBITRAGE_NEEDED").unwrap();
     assert_eq!(value, "true");
     let parsed = value.parse::<bool>().unwrap();
     assert!(parsed, "Should parse 'true' as true");
 
     // "false" の場合
-    config::set("ARBITRAGE_NEEDED", "false");
-    let value = config::get("ARBITRAGE_NEEDED").unwrap();
+    config::store::set("ARBITRAGE_NEEDED", "false");
+    let value = config::store::get("ARBITRAGE_NEEDED").unwrap();
     assert_eq!(value, "false");
     let parsed = value.parse::<bool>().unwrap();
     assert!(!parsed, "Should parse 'false' as false");
 
     // 無効な値の場合
-    config::set("ARBITRAGE_NEEDED", "invalid");
-    let value = config::get("ARBITRAGE_NEEDED").unwrap();
+    config::store::set("ARBITRAGE_NEEDED", "invalid");
+    let value = config::store::get("ARBITRAGE_NEEDED").unwrap();
     assert_eq!(value, "invalid");
     let parsed = value.parse::<bool>();
     assert!(parsed.is_err(), "Should fail to parse 'invalid'");
@@ -288,21 +288,21 @@ fn test_is_needed_behavior() {
 #[test]
 fn test_duration_config_defaults() {
     // TOKEN_NOT_FOUND_WAIT のデフォルト確認
-    let default_wait = config::get("TOKEN_NOT_FOUND_WAIT_NONEXISTENT")
+    let default_wait = config::store::get("TOKEN_NOT_FOUND_WAIT_NONEXISTENT")
         .map(|v| parse_duration(&v).ok())
         .unwrap_or(None)
         .unwrap_or_else(|| Duration::from_secs(1));
     assert_eq!(default_wait, Duration::from_secs(1));
 
     // OTHER_ERROR_WAIT のデフォルト確認
-    let default_other = config::get("OTHER_ERROR_WAIT_NONEXISTENT")
+    let default_other = config::store::get("OTHER_ERROR_WAIT_NONEXISTENT")
         .map(|v| parse_duration(&v).ok())
         .unwrap_or(None)
         .unwrap_or_else(|| Duration::from_secs(30));
     assert_eq!(default_other, Duration::from_secs(30));
 
     // PREVIEW_NOT_FOUND_WAIT のデフォルト確認
-    let default_preview = config::get("PREVIEW_NOT_FOUND_WAIT_NONEXISTENT")
+    let default_preview = config::store::get("PREVIEW_NOT_FOUND_WAIT_NONEXISTENT")
         .map(|v| parse_duration(&v).ok())
         .unwrap_or(None)
         .unwrap_or_else(|| Duration::from_secs(10));
