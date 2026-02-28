@@ -347,22 +347,6 @@ pub fn get(name: &str) -> Result<String> {
 
     // Priority 4: TOML config
     let toml_value = match name {
-        "USE_MAINNET" => Some(CONFIG.network.use_mainnet.to_string()),
-        "ROOT_ACCOUNT_ID" => {
-            if !CONFIG.wallet.root_account_id.is_empty() {
-                Some(CONFIG.wallet.root_account_id.clone())
-            } else {
-                None
-            }
-        }
-        "ROOT_MNEMONIC" => {
-            if !CONFIG.wallet.root_mnemonic.is_empty() {
-                Some(CONFIG.wallet.root_mnemonic.clone())
-            } else {
-                None
-            }
-        }
-        "ROOT_HDPATH" => Some(CONFIG.wallet.root_hdpath.clone()),
         "TRADE_INITIAL_INVESTMENT" => Some(CONFIG.trade.initial_investment.to_string()),
         "TRADE_TOP_TOKENS" => Some(CONFIG.trade.top_tokens.to_string()),
         "TRADE_EVALUATION_DAYS" => Some(CONFIG.trade.evaluation_days.to_string()),
@@ -394,15 +378,6 @@ pub fn get(name: &str) -> Result<String> {
         "ARBITRAGE_PREVIEW_NOT_FOUND_WAIT" => Some(CONFIG.arbitrage.preview_not_found_wait.clone()),
         "TRADE_PREDICTION_CONCURRENCY" => Some(CONFIG.trade.prediction_concurrency.to_string()),
         "TRADE_TOKEN_CACHE_CONCURRENCY" => Some(CONFIG.trade.token_cache_concurrency.to_string()),
-        "RPC_ENDPOINTS" => {
-            let json = serde_json::to_string(&CONFIG.rpc.endpoints).ok();
-            if json.as_deref() == Some("[]") {
-                None
-            } else {
-                json
-            }
-        }
-        "RPC_FAILURE_RESET_SECONDS" => Some(CONFIG.rpc.settings.failure_reset_seconds.to_string()),
         "RPC_MAX_ATTEMPTS" => Some(CONFIG.rpc.settings.max_attempts.to_string()),
         "PORTFOLIO_REBALANCE_THRESHOLD" => Some("0.1".to_string()),
         "LIQUIDITY_VOLUME_WEIGHT" => Some("0.6".to_string()),
@@ -411,7 +386,6 @@ pub fn get(name: &str) -> Result<String> {
         "CRON_MAX_SLEEP_SECONDS" => Some("60".to_string()),
         "CRON_LOG_THRESHOLD_SECONDS" => Some("300".to_string()),
         "HARVEST_BALANCE_MULTIPLIER" => Some("128".to_string()),
-        "RUST_LOG_FORMAT" => Some(CONFIG.logging.rust_log_format.clone()),
         _ => None,
     };
 

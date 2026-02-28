@@ -1,8 +1,6 @@
 use once_cell::sync::Lazy;
 use std::time::Duration;
 
-use super::store::RpcEndpoint;
-
 // ── ConfigResolve trait: type-specific config resolution ──
 
 pub(crate) trait ConfigResolve: Sized {
@@ -49,16 +47,6 @@ impl ConfigResolve for Duration {
         crate::config::get(key)
             .ok()
             .and_then(|v| humantime::parse_duration(&v).ok())
-            .unwrap_or(default)
-    }
-}
-
-impl ConfigResolve for Vec<RpcEndpoint> {
-    type Default = Vec<RpcEndpoint>;
-    fn resolve(key: &str, default: Vec<RpcEndpoint>) -> Self {
-        crate::config::get(key)
-            .ok()
-            .and_then(|v| serde_json::from_str::<Vec<RpcEndpoint>>(&v).ok())
             .unwrap_or(default)
     }
 }
@@ -111,13 +99,6 @@ impl MockStore for Duration {
     type Storage = Duration;
     fn from_storage(s: &Duration) -> Self {
         *s
-    }
-}
-
-impl MockStore for Vec<RpcEndpoint> {
-    type Storage = Vec<RpcEndpoint>;
-    fn from_storage(s: &Vec<RpcEndpoint>) -> Self {
-        s.clone()
     }
 }
 
@@ -345,24 +326,6 @@ define_typed_config! {
 
     // ── rpc ──
 
-    /// Use NEAR mainnet (true) or testnet (false)
-    fn use_mainnet() -> bool {
-        key: "USE_MAINNET",
-        default: true
-    }
-
-    /// JSON-RPC endpoints with weights/retries
-    fn rpc_endpoints() -> Vec<RpcEndpoint> {
-        key: "RPC_ENDPOINTS",
-        default: vec![]
-    }
-
-    /// Time to reset failed RPC endpoints in seconds
-    fn rpc_failure_reset_seconds() -> u64 {
-        key: "RPC_FAILURE_RESET_SECONDS",
-        default: 300
-    }
-
     /// Max RPC retry attempts
     fn rpc_max_attempts() -> u32 {
         key: "RPC_MAX_ATTEMPTS",
@@ -395,33 +358,7 @@ define_typed_config! {
         default: 300
     }
 
-    // ── wallet ──
-
-    /// NEAR account ID (required)
-    fn root_account_id() -> anyhow::Result<String> {
-        key: "ROOT_ACCOUNT_ID",
-        default: ()
-    }
-
-    /// BIP39 mnemonic for wallet derivation (required)
-    fn root_mnemonic() -> anyhow::Result<String> {
-        key: "ROOT_MNEMONIC",
-        default: ()
-    }
-
-    /// HD wallet derivation path
-    fn root_hdpath() -> String {
-        key: "ROOT_HDPATH",
-        default: "m/44'/397'/0'"
-    }
-
-    // ── logging ──
-
-    /// Log format: "json" or "text"
-    fn rust_log_format() -> String {
-        key: "RUST_LOG_FORMAT",
-        default: "json"
-    }
+    // ── wallet / logging: moved to StartupConfig ──
 
     // ── portfolio/liquidity ──
 
@@ -499,25 +436,7 @@ define_typed_config! {
         default: 15.0
     }
 
-    // ── persistence ──
-
-    /// PostgreSQL connection string (required)
-    fn database_url() -> anyhow::Result<String> {
-        key: "DATABASE_URL",
-        default: ()
-    }
-
-    /// Database connection pool size
-    fn pg_pool_size() -> usize {
-        key: "PG_POOL_SIZE",
-        default: 2
-    }
-
-    /// Instance identifier for multi-instance deployments
-    fn instance_id() -> String {
-        key: "INSTANCE_ID",
-        default: "*"
-    }
+    // ── persistence: database_url, pg_pool_size, instance_id moved to StartupConfig ──
 }
 
 static TYPED: Lazy<ConfigResolver> = Lazy::new(|| ConfigResolver);

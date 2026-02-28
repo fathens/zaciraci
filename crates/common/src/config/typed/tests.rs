@@ -25,14 +25,6 @@ fn test_trade_enabled_override() {
 
 #[test]
 #[serial]
-fn test_use_mainnet_default() {
-    let _env = EnvGuard::remove("USE_MAINNET");
-    crate::config::store::remove("USE_MAINNET");
-    assert!(typed().use_mainnet());
-}
-
-#[test]
-#[serial]
 fn test_arbitrage_needed_default() {
     let _env = EnvGuard::remove("ARBITRAGE_NEEDED");
     crate::config::store::remove("ARBITRAGE_NEEDED");
@@ -180,14 +172,6 @@ fn test_harvest_interval_seconds_default() {
 
 #[test]
 #[serial]
-fn test_rpc_failure_reset_seconds_default() {
-    let _env = EnvGuard::remove("RPC_FAILURE_RESET_SECONDS");
-    crate::config::store::remove("RPC_FAILURE_RESET_SECONDS");
-    assert_eq!(typed().rpc_failure_reset_seconds(), 300);
-}
-
-#[test]
-#[serial]
 fn test_cron_max_sleep_seconds_default() {
     let _env = EnvGuard::remove("CRON_MAX_SLEEP_SECONDS");
     crate::config::store::remove("CRON_MAX_SLEEP_SECONDS");
@@ -313,14 +297,6 @@ fn test_prediction_accuracy_min_samples_default() {
     assert_eq!(typed().prediction_accuracy_min_samples(), 5);
 }
 
-#[test]
-#[serial]
-fn test_pg_pool_size_default() {
-    let _env = EnvGuard::remove("PG_POOL_SIZE");
-    crate::config::store::remove("PG_POOL_SIZE");
-    assert_eq!(typed().pg_pool_size(), 2);
-}
-
 // ── u16 keys ──
 
 #[test]
@@ -339,30 +315,6 @@ fn test_trade_cron_schedule_default() {
     let _env = EnvGuard::remove("TRADE_CRON_SCHEDULE");
     crate::config::store::remove("TRADE_CRON_SCHEDULE");
     assert_eq!(typed().trade_cron_schedule(), "0 0 0 * * *");
-}
-
-#[test]
-#[serial]
-fn test_root_hdpath_default() {
-    let _env = EnvGuard::remove("ROOT_HDPATH");
-    crate::config::store::remove("ROOT_HDPATH");
-    assert_eq!(typed().root_hdpath(), "m/44'/397'/0'");
-}
-
-#[test]
-#[serial]
-fn test_rust_log_format_default() {
-    let _env = EnvGuard::remove("RUST_LOG_FORMAT");
-    crate::config::store::remove("RUST_LOG_FORMAT");
-    assert_eq!(typed().rust_log_format(), "json");
-}
-
-#[test]
-#[serial]
-fn test_instance_id_default() {
-    let _env = EnvGuard::remove("INSTANCE_ID");
-    crate::config::store::remove("INSTANCE_ID");
-    assert_eq!(typed().instance_id(), "*");
 }
 
 // ── Duration keys ──
@@ -411,65 +363,10 @@ fn test_arbitrage_duration_override() {
 
 #[test]
 #[serial]
-fn test_required_key_returns_error_when_missing() {
-    let _env = EnvGuard::remove("DATABASE_URL");
-    crate::config::store::remove("DATABASE_URL");
-    assert!(typed().database_url().is_err());
-}
-
-#[test]
-#[serial]
-fn test_required_key_returns_value_when_set() {
-    let _guard = ConfigGuard::new("DATABASE_URL", "postgres://localhost/test");
-    assert_eq!(typed().database_url().unwrap(), "postgres://localhost/test");
-}
-
-#[test]
-#[serial]
-fn test_root_account_id_required() {
-    let _env = EnvGuard::remove("ROOT_ACCOUNT_ID");
-    crate::config::store::remove("ROOT_ACCOUNT_ID");
-    assert!(typed().root_account_id().is_err());
-}
-
-#[test]
-#[serial]
-fn test_root_mnemonic_required() {
-    let _env = EnvGuard::remove("ROOT_MNEMONIC");
-    crate::config::store::remove("ROOT_MNEMONIC");
-    assert!(typed().root_mnemonic().is_err());
-}
-
-#[test]
-#[serial]
 fn test_harvest_account_id_required() {
     let _env = EnvGuard::remove("HARVEST_ACCOUNT_ID");
     crate::config::store::remove("HARVEST_ACCOUNT_ID");
     assert!(typed().harvest_account_id().is_err());
-}
-
-// ── Vec<RpcEndpoint> ──
-
-#[test]
-#[serial]
-fn test_rpc_endpoints_default_empty() {
-    let _env = EnvGuard::remove("RPC_ENDPOINTS");
-    crate::config::store::remove("RPC_ENDPOINTS");
-    // Default may be empty or loaded from TOML; both are valid
-    let endpoints = typed().rpc_endpoints();
-    // Just verify it doesn't panic and returns a valid vec
-    assert!(endpoints.len() < 1000);
-}
-
-#[test]
-#[serial]
-fn test_rpc_endpoints_json_override() {
-    let json = r#"[{"url":"https://rpc.example.com","weight":10,"max_retries":3}]"#;
-    let _guard = ConfigGuard::new("RPC_ENDPOINTS", json);
-    let endpoints = typed().rpc_endpoints();
-    assert_eq!(endpoints.len(), 1);
-    assert_eq!(endpoints[0].url, "https://rpc.example.com");
-    assert_eq!(endpoints[0].weight, 10);
 }
 
 // ── MockConfig tests ──

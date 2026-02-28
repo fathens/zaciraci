@@ -7,7 +7,7 @@ use serial_test::serial;
 #[serial]
 fn test_config_store_priority() {
     // CONFIG_STOREの値が最優先
-    const TEST_KEY: &str = "RUST_LOG_FORMAT";
+    const TEST_KEY: &str = "TRADE_CRON_SCHEDULE";
     let _env_guard = EnvGuard::set(TEST_KEY, "env-value");
     let _config_guard = ConfigGuard::new(TEST_KEY, "store-value");
     let result = get(TEST_KEY).unwrap();
@@ -17,9 +17,9 @@ fn test_config_store_priority() {
 #[test]
 #[serial]
 fn test_boolean_config() {
-    let _env_guard = EnvGuard::remove("USE_MAINNET");
-    let result = get("USE_MAINNET").unwrap();
-    assert_eq!(result, "true");
+    let _env_guard = EnvGuard::remove("ARBITRAGE_NEEDED");
+    let result = get("ARBITRAGE_NEEDED").unwrap();
+    assert_eq!(result, "false");
 }
 
 #[test]
@@ -88,7 +88,6 @@ fn test_new_config_keys_defaults() {
     let keys_and_defaults = [
         ("TRADE_PREDICTION_CONCURRENCY", "4"),
         ("TRADE_TOKEN_CACHE_CONCURRENCY", "8"),
-        ("RPC_FAILURE_RESET_SECONDS", "300"),
         ("RPC_MAX_ATTEMPTS", "10"),
         ("PORTFOLIO_REBALANCE_THRESHOLD", "0.1"),
         ("LIQUIDITY_VOLUME_WEIGHT", "0.6"),
@@ -115,18 +114,12 @@ fn test_new_config_keys_defaults() {
 
 #[test]
 #[serial]
-fn test_rpc_endpoints_json() {
+fn test_rpc_endpoints_moved_to_startup() {
+    // RPC_ENDPOINTS is now in StartupConfig, not in the TOML priority chain
     let _env_guard = EnvGuard::remove("RPC_ENDPOINTS");
     remove("RPC_ENDPOINTS");
-    // RPC_ENDPOINTS はデフォルトで空配列なので None→Err になるか、
-    // TOML に設定があれば JSON 文字列が返る
-    let result = get("RPC_ENDPOINTS");
-    if let Ok(json_str) = result {
-        // 有効な JSON であること
-        let parsed: std::result::Result<Vec<RpcEndpoint>, _> = serde_json::from_str(&json_str);
-        assert!(parsed.is_ok(), "RPC_ENDPOINTS should be valid JSON array");
-    }
-    // 空配列の場合は Err が返って OK
+    // get() should return Err since it's no longer in the TOML match
+    assert!(get("RPC_ENDPOINTS").is_err());
 }
 
 #[test]

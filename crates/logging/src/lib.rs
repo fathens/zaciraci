@@ -23,10 +23,7 @@ pub static DEFAULT: Lazy<Logger> = Lazy::new(|| {
 
     let mk_json = || slog_json::Json::default(std::io::stdout()).fuse();
 
-    let format = {
-        use common::config::ConfigAccess;
-        common::config::typed().rust_log_format()
-    };
+    let format = common::config::startup::get().rust_log_format.clone();
     let drain = match format.as_str() {
         "json" => wrap(mk_json()),
         _ => wrap(mk_term()),

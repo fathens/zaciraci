@@ -13,7 +13,7 @@ use once_cell::sync::Lazy;
 
 pub static CONTRACT_ADDRESS: Lazy<AccountId> = Lazy::new(|| {
     let log = DEFAULT.new(o!("function" => "ref_finance::CONTRACT_ADDRESS"));
-    let account_id = if *crate::jsonrpc::IS_MAINNET {
+    let account_id = if common::config::startup::get().is_mainnet {
         "v2.ref-finance.near"
             .parse()
             .expect("valid AccountId literal")

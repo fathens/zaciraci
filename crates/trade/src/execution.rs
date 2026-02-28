@@ -945,7 +945,7 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
     let reserve_amount_u128: u128 = reserve_amount.to_u128();
 
     let client = blockchain::jsonrpc::new_client();
-    let wallet = blockchain::wallet::new_wallet(cfg);
+    let wallet = blockchain::wallet::new_wallet();
     let account = wallet.account_id();
 
     // REF Finance 内の wrap.near 残高を取得

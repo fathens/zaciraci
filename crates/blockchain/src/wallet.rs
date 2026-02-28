@@ -1,6 +1,6 @@
 use crate::Result;
 use anyhow::anyhow;
-use common::config::ConfigAccess;
+use common::config::startup::StartupConfig;
 use logging::*;
 use near_crypto::SecretKey::ED25519;
 use near_crypto::{ED25519SecretKey, InMemorySigner};
@@ -9,8 +9,9 @@ use near_sdk::AccountId;
 const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
-pub fn new_wallet(cfg: &impl ConfigAccess) -> StandardWallet {
-    StandardWallet::new_from_config(cfg).expect("Failed to create wallet from config")
+pub fn new_wallet() -> StandardWallet {
+    StandardWallet::new_from_startup(common::config::startup::get())
+        .expect("Failed to create wallet from config")
 }
 
 pub trait Wallet {
@@ -28,21 +29,6 @@ pub struct StandardWallet {
 }
 
 impl StandardWallet {
-    fn get_account_id(cfg: &impl ConfigAccess) -> Result<AccountId> {
-        let strval = cfg.root_account_id()?;
-        Ok(strval.parse()?)
-    }
-
-    fn get_mnemonic(cfg: &impl ConfigAccess) -> Result<bip39::Mnemonic> {
-        let strval = cfg.root_mnemonic()?;
-        Ok(strval.parse()?)
-    }
-
-    fn get_hdpath(cfg: &impl ConfigAccess) -> Result<slipped10::BIP32Path> {
-        let strval = cfg.root_hdpath();
-        strval.parse().map_err(|e| anyhow!("{}", e))
-    }
-
     fn new(
         account_id: AccountId,
         mnemonic: bip39::Mnemonic,
@@ -73,10 +59,17 @@ impl StandardWallet {
         Ok(wallet)
     }
 
-    pub fn new_from_config(cfg: &impl ConfigAccess) -> Result<StandardWallet> {
-        let account_id = Self::get_account_id(cfg)?;
-        let mnemonic = Self::get_mnemonic(cfg)?;
-        let hdpath = Self::get_hdpath(cfg)?;
+    pub fn new_from_startup(startup: &StartupConfig) -> Result<StandardWallet> {
+        if startup.root_account_id.is_empty() {
+            return Err(anyhow!("ROOT_ACCOUNT_ID is required"));
+        }
+        let account_id: AccountId = startup.root_account_id.parse()?;
+        if startup.root_mnemonic.is_empty() {
+            return Err(anyhow!("ROOT_MNEMONIC is required"));
+        }
+        let mnemonic: bip39::Mnemonic = startup.root_mnemonic.parse()?;
+        let hdpath: slipped10::BIP32Path =
+            startup.root_hdpath.parse().map_err(|e| anyhow!("{}", e))?;
         Self::new(account_id, mnemonic, hdpath)
     }
 

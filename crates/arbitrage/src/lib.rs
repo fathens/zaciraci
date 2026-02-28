@@ -40,7 +40,7 @@ pub async fn run(cfg: common::config::ConfigResolver) {
         return;
     }
     let client = jsonrpc::new_client();
-    let wallet = wallet::new_wallet(&cfg);
+    let wallet = wallet::new_wallet();
     loop {
         match single_loop(&client, &wallet, &cfg).await {
             Ok(_) => info!(log, "success, go next"),

@@ -201,7 +201,7 @@ async fn execute_harvest_transfer(
 
     // クライアントとウォレットの準備
     let client = blockchain::jsonrpc::new_client();
-    let wallet = blockchain::wallet::new_wallet(cfg);
+    let wallet = blockchain::wallet::new_wallet();
 
     trace!(log, "Executing harvest sequence";
         "step" => "1_withdraw_from_ref_finance",

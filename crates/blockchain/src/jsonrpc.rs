@@ -7,12 +7,9 @@ mod sent_tx;
 mod near_compat_tests;
 
 use crate::Result;
-use crate::config;
 use crate::jsonrpc::near_client::StandardNearClient;
 use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::types::gas_price::GasPrice;
-use common::config::ConfigAccess;
-use logging::*;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{MethodCallResult, methods};
 use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
@@ -27,24 +24,13 @@ use near_sdk::{AccountId, NearToken};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
-pub static IS_MAINNET: Lazy<bool> = Lazy::new(|| {
-    let value = config::typed().use_mainnet();
-    let log = DEFAULT.new(o!(
-        "function" => "IS_MAINNET",
-        "given_value" => format!("{}", value),
-    ));
-    if value {
-        info!(log, "Using mainnet");
-    } else {
-        info!(log, "Using testnet");
-    }
-    value
-});
-
 /// 全呼び出し元で共有される EndpointPool
 /// 障害エンドポイント情報を共有し、無駄なリトライを削減する
-static SHARED_ENDPOINT_POOL: Lazy<Arc<endpoint_pool::EndpointPool>> =
-    Lazy::new(|| Arc::new(endpoint_pool::EndpointPool::new()));
+static SHARED_ENDPOINT_POOL: Lazy<Arc<endpoint_pool::EndpointPool>> = Lazy::new(|| {
+    Arc::new(endpoint_pool::EndpointPool::new(
+        common::config::startup::get(),
+    ))
+});
 
 pub fn new_client() -> StandardNearClient<StandardRpcClient> {
     StandardNearClient::new(&Arc::new(StandardRpcClient::new(

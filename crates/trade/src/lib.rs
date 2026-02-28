@@ -92,7 +92,7 @@ async fn run_trade(cfg: ConfigResolver) {
         schedule,
         || async {
             let client = blockchain::jsonrpc::new_client();
-            let wallet = blockchain::wallet::new_wallet(&cfg);
+            let wallet = blockchain::wallet::new_wallet();
             strategy::start(&client, &wallet, chrono::Utc::now(), &cfg).await
         },
         "auto_trade",
@@ -159,7 +159,10 @@ where
                 }
 
                 // タスク実行前に DB から設定をリロード
-                persistence::config_store::reload_to_config(cfg).await.ok();
+                let instance_id = &common::config::startup::get().instance_id;
+                persistence::config_store::reload_to_config(instance_id)
+                    .await
+                    .ok();
 
                 let exec_log = DEFAULT.new(o!("function" => "run", "name" => name.to_owned()));
                 info!(exec_log, "executing scheduled task");

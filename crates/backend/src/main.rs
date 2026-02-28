@@ -9,13 +9,14 @@ async fn main() {
     info!(log, "Starting up");
 
     let cfg = ConfigResolver;
+    let startup = common::config::startup::get();
 
     // DB から設定をロード（失敗時はスキップ）
-    if let Err(e) = persistence::config_store::reload_to_config(&cfg).await {
+    if let Err(e) = persistence::config_store::reload_to_config(&startup.instance_id).await {
         warn!(log, "failed to load config from DB, continuing with env/TOML"; "error" => %e);
     }
 
-    let base = blockchain::wallet::new_wallet(&cfg).derive(0).unwrap();
+    let base = blockchain::wallet::new_wallet().derive(0).unwrap();
     let account_zero = base.derive(0).unwrap();
     info!(log, "Account 0 created"; "pubkey" => %account_zero.pub_base58());
 

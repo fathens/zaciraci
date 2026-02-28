@@ -1,5 +1,4 @@
 use super::*;
-use crate::config;
 use anyhow::anyhow;
 use common::config::ConfigResolver;
 use near_crypto::InMemorySigner;
@@ -56,8 +55,8 @@ impl Wallet for MockWallet {
 
 fn initialize() {
     INIT.call_once(|| {
-        config::set("HARVEST_ACCOUNT_ID", "harvest.near");
-        config::set("TRADE_ACCOUNT_RESERVE", "1");
+        common::config::set("HARVEST_ACCOUNT_ID", "harvest.near");
+        common::config::set("TRADE_ACCOUNT_RESERVE", "1");
     });
 }
 
