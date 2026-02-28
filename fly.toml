@@ -24,7 +24,7 @@ primary_region = "nrt"
     hard_limit = 250
 
   [[services.ports]]
-    handlers = ["tls", "http"]
+    handlers = ["tls"]
     port = 443
 
     [services.ports.http_options]
