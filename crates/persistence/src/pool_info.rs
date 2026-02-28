@@ -94,15 +94,17 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
         pool_infos.iter().map(|pool| to_new_db(pool)).collect();
 
     let new_pools = new_pools?;
-    let conn = connection_pool::get().await?;
+    {
+        let conn = connection_pool::get().await?;
 
-    conn.interact(move |conn| {
-        diesel::insert_into(pool_info::table)
-            .values(&new_pools)
-            .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        conn.interact(move |conn| {
+            diesel::insert_into(pool_info::table)
+                .values(&new_pools)
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    }
 
     // 古いレコードをクリーンアップ
     let retention_count = cfg.pool_info_retention_count();
