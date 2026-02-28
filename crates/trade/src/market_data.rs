@@ -18,6 +18,7 @@ pub struct TokenMetadata {
     pub spec: String,
     pub name: String,
     pub symbol: String,
+    #[serde(deserialize_with = "deserialize_decimals")]
     pub decimals: u8,
     #[serde(default)]
     pub icon: Option<String>,
@@ -25,6 +26,38 @@ pub struct TokenMetadata {
     pub reference: Option<String>,
     #[serde(default)]
     pub reference_hash: Option<String>,
+}
+
+/// `decimals` フィールドのカスタムデシリアライザ。
+/// NEP-148 標準では `decimals` は整数だが、一部トークン（例: pixeltoken.near）が
+/// 浮動小数点数（`6.0`）を返すため、両方を受け付ける。
+fn deserialize_decimals<'de, D>(deserializer: D) -> std::result::Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    use serde::de::Error;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                u8::try_from(u).map_err(|_| Error::custom(format!("decimals out of range: {u}")))
+            } else if let Some(f) = n.as_f64() {
+                if f.fract() == 0.0 && (0.0..=255.0).contains(&f) {
+                    Ok(f as u8)
+                } else {
+                    Err(Error::custom(format!(
+                        "decimals out of range or fractional: {f}"
+                    )))
+                }
+            } else {
+                Err(Error::custom("invalid number for decimals"))
+            }
+        }
+        _ => Err(Error::custom(format!(
+            "expected number for decimals, got: {value}"
+        ))),
+    }
 }
 
 /// トークンのメタデータを取得（ft_metadata）

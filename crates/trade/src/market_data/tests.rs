@@ -532,6 +532,29 @@ async fn test_pool_liquidity_error_default_score_override() {
     assert!((score_custom - 0.5).abs() < 0.001);
 }
 
+#[test]
+fn test_deserialize_decimals_integer() {
+    let json = r#"{"spec":"ft-1.0.0","name":"Test","symbol":"TST","decimals":6}"#;
+    let metadata: TokenMetadata = serde_json::from_str(json).unwrap();
+    assert_eq!(metadata.decimals, 6);
+}
+
+#[test]
+fn test_deserialize_decimals_float_whole() {
+    // pixeltoken.near のように decimals が 6.0 で返るケース
+    let json = r#"{"spec":"ft-1.0.0","name":"Test","symbol":"TST","decimals":6.0}"#;
+    let metadata: TokenMetadata = serde_json::from_str(json).unwrap();
+    assert_eq!(metadata.decimals, 6);
+}
+
+#[test]
+fn test_deserialize_decimals_float_fractional() {
+    // 小数部が 0 でない場合はエラー
+    let json = r#"{"spec":"ft-1.0.0","name":"Test","symbol":"TST","decimals":6.5}"#;
+    let result = serde_json::from_str::<TokenMetadata>(json);
+    assert!(result.is_err());
+}
+
 /// タイムスタンプ未ソートの価格データでも正しいボラティリティを計算することを検証
 #[test]
 fn test_calculate_volatility_from_history_unsorted_prices() {
