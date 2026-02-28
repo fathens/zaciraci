@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, TimeDelta, Utc};
-use common::algorithm::prediction::{PredictionProvider, TopTokenInfo};
+use common::algorithm::prediction::TopTokenInfo;
 use common::algorithm::types::{PredictedPrice, PriceHistory, PricePoint, TokenPredictionResult};
 use common::api::chronos::ChronosPredictor;
+use common::config::ConfigAccess;
 use common::types::{TimeRange, TokenInAccount, TokenOutAccount, TokenPrice};
 use futures::stream::{self, StreamExt};
 use logging::*;
@@ -18,22 +18,10 @@ pub struct PredictionService {
     pub(crate) retry_delay_seconds: u64,
 }
 
-impl Default for PredictionService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl PredictionService {
-    pub fn new() -> Self {
-        let max_retries = common::config::get("TRADE_PREDICTION_MAX_RETRIES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(2);
-        let retry_delay_seconds = common::config::get("TRADE_PREDICTION_RETRY_DELAY_SECONDS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5);
+    pub fn new(cfg: &impl ConfigAccess) -> Self {
+        let max_retries = cfg.trade_prediction_max_retries();
+        let retry_delay_seconds = cfg.trade_prediction_retry_delay_seconds();
         Self {
             predictor: ChronosPredictor::new(),
             max_retries,
@@ -77,6 +65,7 @@ impl PredictionService {
         quote_token: &TokenInAccount,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
+        cfg: &impl ConfigAccess,
     ) -> Result<PriceHistory> {
         // 直接データベースから価格履歴を取得
         let base_token: TokenOutAccount = token.clone();
@@ -93,6 +82,7 @@ impl PredictionService {
             &base_token,
             &quote_token_account,
             &get_decimals,
+            cfg,
         )
         .await
         .context("Failed to get price history from database")?;
@@ -187,6 +177,7 @@ impl PredictionService {
         history_days: i64,
         prediction_horizon: usize,
         end_date: DateTime<Utc>,
+        cfg: &impl ConfigAccess,
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         let log = DEFAULT.new(o!("function" => "predict_multiple_tokens"));
 
@@ -198,10 +189,15 @@ impl PredictionService {
 
         // 1. 全トークンの履歴を一括取得（1回のDBクエリ）
         let get_decimals = super::make_get_decimals();
-        let histories_map =
-            TokenRate::get_rates_for_multiple_tokens(&tokens, quote_token, &range, &get_decimals)
-                .await
-                .context("Failed to batch fetch price histories")?;
+        let histories_map = TokenRate::get_rates_for_multiple_tokens(
+            &tokens,
+            quote_token,
+            &range,
+            &get_decimals,
+            cfg,
+        )
+        .await
+        .context("Failed to batch fetch price histories")?;
 
         info!(log, "Fetched price histories";
             "requested" => tokens.len(),
@@ -209,10 +205,7 @@ impl PredictionService {
         );
 
         // 2. 設定から並行実行数を取得
-        let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(4);
+        let concurrency = cfg.trade_prediction_concurrency() as usize;
 
         // 3. 予測を並行実行
         let results: Vec<_> = stream::iter(tokens.clone())
@@ -418,58 +411,6 @@ impl PredictionService {
         }
 
         Err(last_error.expect("loop executed at least once"))
-    }
-}
-
-// PredictionProviderトレイトの実装
-// 型が common の型と同一になったため、直接委譲するだけ
-#[async_trait]
-impl PredictionProvider for PredictionService {
-    async fn get_tokens_by_volatility(
-        &self,
-        start_date: DateTime<Utc>,
-        end_date: DateTime<Utc>,
-        quote_token: &TokenInAccount,
-    ) -> Result<Vec<TopTokenInfo>> {
-        self.get_tokens_by_volatility(start_date, end_date, quote_token)
-            .await
-    }
-
-    async fn get_price_history(
-        &self,
-        token: &TokenOutAccount,
-        quote_token: &TokenInAccount,
-        start_date: DateTime<Utc>,
-        end_date: DateTime<Utc>,
-    ) -> Result<PriceHistory> {
-        self.get_price_history(token, quote_token, start_date, end_date)
-            .await
-    }
-
-    async fn predict_price(
-        &self,
-        history: &PriceHistory,
-        prediction_horizon: usize,
-    ) -> Result<TokenPredictionResult> {
-        self.predict_price(history, prediction_horizon).await
-    }
-
-    async fn predict_multiple_tokens(
-        &self,
-        tokens: Vec<TokenOutAccount>,
-        quote_token: &TokenInAccount,
-        history_days: i64,
-        prediction_horizon: usize,
-        end_date: DateTime<Utc>,
-    ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
-        self.predict_multiple_tokens(
-            tokens,
-            quote_token,
-            history_days,
-            prediction_horizon,
-            end_date,
-        )
-        .await
     }
 }
 

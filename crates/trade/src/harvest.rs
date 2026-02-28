@@ -1,7 +1,7 @@
 use crate::Result;
 use crate::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
-use common::config;
+use common::config::ConfigAccess;
 use common::types::{NearAmount, TokenInAccount, TokenOutAccount, YoctoAmount, YoctoValue};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
@@ -11,15 +11,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // 並行化する場合は compare_exchange による排他制御が必要。
 static LAST_HARVEST_TIME: AtomicU64 = AtomicU64::new(0);
 
-fn harvest_interval() -> u64 {
-    config::get("HARVEST_INTERVAL_SECONDS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(86400)
+fn harvest_interval(cfg: &impl ConfigAccess) -> u64 {
+    cfg.harvest_interval_seconds()
 }
 
-fn harvest_account() -> AccountId {
-    let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| {
+fn harvest_account(cfg: &impl ConfigAccess) -> AccountId {
+    let value = cfg.harvest_account_id().unwrap_or_else(|err| {
         let log = DEFAULT.new(o!("function" => "harvest_account"));
         warn!(log, "HARVEST_ACCOUNT_ID not set, using default";
             "error" => %err,
@@ -32,29 +29,29 @@ fn harvest_account() -> AccountId {
         .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{value}`: {err}"))
 }
 
-fn harvest_min_amount() -> YoctoAmount {
-    config::get("HARVEST_MIN_AMOUNT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
+fn harvest_min_amount(cfg: &impl ConfigAccess) -> YoctoAmount {
+    cfg.harvest_min_amount()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto()
 }
 
-fn harvest_reserve_amount() -> YoctoAmount {
-    config::get("HARVEST_RESERVE_AMOUNT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "1".parse().expect("valid NearAmount literal"))
+fn harvest_reserve_amount(cfg: &impl ConfigAccess) -> YoctoAmount {
+    cfg.harvest_reserve_amount()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto()
 }
 
-fn is_time_to_harvest() -> bool {
+fn is_time_to_harvest(cfg: &impl ConfigAccess) -> bool {
     let last = LAST_HARVEST_TIME.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock is after UNIX epoch")
         .as_secs();
-    now - last > harvest_interval()
+    now - last > harvest_interval(cfg)
 }
 
 fn update_last_harvest_time() {
@@ -81,9 +78,10 @@ pub async fn check_and_execute_harvest(
     initial_value: &YoctoValue,
     current_value: &YoctoValue,
     period_id: &str,
+    cfg: &impl ConfigAccess,
 ) -> Result<YoctoAmount> {
     let log = DEFAULT.new(o!("function" => "check_and_execute_harvest"));
-    check_and_execute_harvest_inner(initial_value, current_value, period_id, &log).await
+    check_and_execute_harvest_inner(initial_value, current_value, period_id, &log, cfg).await
 }
 
 /// ハーベスト判定と実行の内部ロジック
@@ -94,6 +92,7 @@ async fn check_and_execute_harvest_inner(
     current_value: &YoctoValue,
     period_id: &str,
     log: &slog::Logger,
+    cfg: &impl ConfigAccess,
 ) -> Result<YoctoAmount> {
     debug!(log, "Portfolio value check for harvest";
         "initial_value" => %initial_value,
@@ -125,8 +124,8 @@ async fn check_and_execute_harvest_inner(
         // 価値を送金数量に変換（NEAR は価値=数量）
         let harvest_amount = harvest_value.to_amount();
 
-        let harvest_account = harvest_account();
-        let min_harvest_amount = harvest_min_amount();
+        let harvest_account = harvest_account(cfg);
+        let min_harvest_amount = harvest_min_amount(cfg);
 
         // YoctoAmount < YoctoAmount
         if harvest_amount < min_harvest_amount {
@@ -144,7 +143,7 @@ async fn check_and_execute_harvest_inner(
         );
 
         // ハーベスト時間条件もチェック
-        if !is_time_to_harvest() {
+        if !is_time_to_harvest(cfg) {
             trace!(log, "Harvest time interval not met, skipping";
                 "last_harvest_interval_hours" => (std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -155,7 +154,14 @@ async fn check_and_execute_harvest_inner(
         }
 
         // 実際のハーベスト実行
-        execute_harvest_transfer(&harvest_account, harvest_amount.clone(), period_id, log).await?;
+        execute_harvest_transfer(
+            &harvest_account,
+            harvest_amount.clone(),
+            period_id,
+            log,
+            cfg,
+        )
+        .await?;
 
         // ハーベスト実行時間を更新
         update_last_harvest_time();
@@ -179,6 +185,7 @@ async fn execute_harvest_transfer(
     harvest_amount: YoctoAmount,
     period_id: &str,
     log: &slog::Logger,
+    cfg: &impl ConfigAccess,
 ) -> Result<()> {
     use blockchain::jsonrpc::{AccountInfo, SendTx, SentTx};
     use blockchain::ref_finance::{deposit, token_account::WNEAR_TOKEN};
@@ -245,7 +252,7 @@ async fn execute_harvest_transfer(
     let current_native_balance = client.get_native_amount(account_id).await?;
 
     // 保護額をu128に変換
-    let reserve_amount_u128: u128 = harvest_reserve_amount().to_u128();
+    let reserve_amount_u128: u128 = harvest_reserve_amount(cfg).to_u128();
     let reserve_amount_token = NearToken::from_yoctonear(reserve_amount_u128);
 
     // 送金可能額 = 現在残高 - 保護額

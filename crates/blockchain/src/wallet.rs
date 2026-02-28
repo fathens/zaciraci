@@ -1,6 +1,6 @@
 use crate::Result;
-use crate::config;
 use anyhow::anyhow;
+use common::config::startup::StartupConfig;
 use logging::*;
 use near_crypto::SecretKey::ED25519;
 use near_crypto::{ED25519SecretKey, InMemorySigner};
@@ -10,7 +10,8 @@ const CURVE: slipped10::Curve = slipped10::Curve::Ed25519;
 const HARDEND: u32 = 1 << 31;
 
 pub fn new_wallet() -> StandardWallet {
-    StandardWallet::new_from_config().expect("Failed to create wallet from config")
+    StandardWallet::new_from_startup(common::config::startup::get())
+        .expect("Failed to create wallet from config")
 }
 
 pub trait Wallet {
@@ -28,21 +29,6 @@ pub struct StandardWallet {
 }
 
 impl StandardWallet {
-    fn get_account_id() -> Result<AccountId> {
-        let strval = config::get("ROOT_ACCOUNT_ID")?;
-        Ok(strval.parse()?)
-    }
-
-    fn get_mnemonic() -> Result<bip39::Mnemonic> {
-        let strval = config::get("ROOT_MNEMONIC")?;
-        Ok(strval.parse()?)
-    }
-
-    fn get_hdpath() -> Result<slipped10::BIP32Path> {
-        let strval = config::get("ROOT_HDPATH")?;
-        strval.parse().map_err(|e| anyhow!("{}", e))
-    }
-
     fn new(
         account_id: AccountId,
         mnemonic: bip39::Mnemonic,
@@ -73,10 +59,17 @@ impl StandardWallet {
         Ok(wallet)
     }
 
-    pub fn new_from_config() -> Result<StandardWallet> {
-        let account_id = Self::get_account_id()?;
-        let mnemonic = Self::get_mnemonic()?;
-        let hdpath = Self::get_hdpath()?;
+    pub fn new_from_startup(startup: &StartupConfig) -> Result<StandardWallet> {
+        if startup.root_account_id.is_empty() {
+            return Err(anyhow!("ROOT_ACCOUNT_ID is required"));
+        }
+        let account_id: AccountId = startup.root_account_id.parse()?;
+        if startup.root_mnemonic.is_empty() {
+            return Err(anyhow!("ROOT_MNEMONIC is required"));
+        }
+        let mnemonic: bip39::Mnemonic = startup.root_mnemonic.parse()?;
+        let hdpath: slipped10::BIP32Path =
+            startup.root_hdpath.parse().map_err(|e| anyhow!("{}", e))?;
         Self::new(account_id, mnemonic, hdpath)
     }
 

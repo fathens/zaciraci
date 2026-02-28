@@ -3,7 +3,7 @@ use crate::connection_pool;
 use crate::schema::pool_info;
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
-use common::config;
+use common::config::ConfigAccess;
 use common::types::TimeRange;
 use dex::{PoolInfo, PoolInfoBared, PoolInfoList};
 use diesel::prelude::*;
@@ -78,7 +78,7 @@ fn to_new_db(pool: &PoolInfo) -> Result<NewDbPoolInfo> {
 }
 
 /// 複数レコードを一括挿入
-pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>]) -> Result<()> {
+pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess) -> Result<()> {
     let log = DEFAULT.new(o!(
         "function" => "pool_info::batch_insert",
         "pool_infos" => pool_infos.len(),
@@ -105,10 +105,7 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>]) -> Result<()> {
     .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
     // 古いレコードをクリーンアップ
-    let retention_count = config::get("POOL_INFO_RETENTION_COUNT")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(10);
+    let retention_count = cfg.pool_info_retention_count();
 
     trace!(log, "cleaning up old records"; "retention_count" => retention_count);
     cleanup_old_records(retention_count).await?;
@@ -253,8 +250,8 @@ pub async fn read_from_db(timestamp: Option<NaiveDateTime>) -> Result<Arc<PoolIn
 }
 
 /// PoolInfoListをDBに書き込む
-pub async fn write_to_db(list: &PoolInfoList) -> Result<()> {
-    batch_insert(list.list()).await
+pub async fn write_to_db(list: &PoolInfoList, cfg: &impl ConfigAccess) -> Result<()> {
+    batch_insert(list.list(), cfg).await
 }
 
 #[cfg(test)]

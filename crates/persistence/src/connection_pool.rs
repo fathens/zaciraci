@@ -6,19 +6,18 @@ use once_cell::sync::Lazy;
 pub type Client = deadpool_diesel::postgres::Connection;
 
 static POOL: Lazy<Pool> = Lazy::new(|| {
-    let max_size: usize = common::config::get("PG_POOL_SIZE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(2);
-    let dsn = common::config::get("DATABASE_URL").unwrap_or_else(|_| {
+    let startup = common::config::startup::get();
+    let dsn = if startup.database_url.is_empty() {
         "postgres://postgres_test:postgres_test@localhost:5433/postgres_test".to_string()
-    });
+    } else {
+        startup.database_url.clone()
+    };
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Verified,
     };
     let mgr = Manager::from_config(dsn, deadpool_diesel::Runtime::Tokio1, mgr_config);
     Pool::builder(mgr)
-        .max_size(max_size)
+        .max_size(startup.pg_pool_size)
         .build()
         .expect("Failed to build database connection pool")
 });

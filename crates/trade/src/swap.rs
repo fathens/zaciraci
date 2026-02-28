@@ -118,6 +118,7 @@ pub async fn execute_direct_swap<C, W>(
     to_token: &common::types::TokenOutAccount,
     swap_amount: Option<u128>,
     recorder: &TradeRecorder,
+    cfg: &impl common::config::ConfigAccess,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -147,6 +148,7 @@ where
             wallet,
             &from_token_account,
             swap_amount_token,
+            cfg,
         )
         .await?
     } else {

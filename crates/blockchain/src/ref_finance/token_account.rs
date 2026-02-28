@@ -1,9 +1,8 @@
-use crate::jsonrpc::IS_MAINNET;
 use common::types::TokenAccount;
 use once_cell::sync::Lazy;
 
 pub static WNEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
-    let id = if *IS_MAINNET {
+    let id = if common::config::startup::get().is_mainnet {
         "wrap.near"
     } else {
         "wrap.testnet"

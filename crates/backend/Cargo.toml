@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 logging = { path = "../logging" }
+common = { path = "../common" }
 blockchain = { path = "../blockchain" }
 persistence = { path = "../persistence" }
 trade = { path = "../trade" }

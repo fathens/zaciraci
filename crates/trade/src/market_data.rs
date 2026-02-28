@@ -6,6 +6,7 @@
 use crate::Result;
 use bigdecimal::BigDecimal;
 use common::algorithm::types::{PriceHistory, PricePoint};
+use common::config::ConfigAccess;
 use common::types::*;
 use num_traits::Zero;
 use std::str::FromStr;
@@ -131,6 +132,7 @@ pub(crate) async fn calculate_enhanced_liquidity_score<C>(
     client: &C,
     token_id: &TokenAccount,
     history: &PriceHistory,
+    cfg: &impl ConfigAccess,
 ) -> f64
 where
     C: blockchain::jsonrpc::ViewContract,
@@ -139,35 +141,28 @@ where
     let volume_score = calculate_liquidity_score(history);
 
     // 2. REF Financeプール流動性スコア
-    let pool_score = calculate_pool_liquidity_score(client, token_id).await;
+    let pool_score = calculate_pool_liquidity_score(client, token_id, cfg).await;
 
     // 3. 両方のスコアを重み付き平均で統合
-    let volume_weight = common::config::get("LIQUIDITY_VOLUME_WEIGHT")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(0.6);
-    let pool_weight = common::config::get("LIQUIDITY_POOL_WEIGHT")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(0.4);
+    let volume_weight = cfg.liquidity_volume_weight();
+    let pool_weight = cfg.liquidity_pool_weight();
     let combined_score = volume_score * volume_weight + pool_score * pool_weight;
     combined_score.clamp(0.0, 1.0)
 }
 
 /// プール流動性スコアを計算
-async fn calculate_pool_liquidity_score<C>(client: &C, token_id: &TokenAccount) -> f64
+async fn calculate_pool_liquidity_score<C>(
+    client: &C,
+    token_id: &TokenAccount,
+    cfg: &impl ConfigAccess,
+) -> f64
 where
     C: blockchain::jsonrpc::ViewContract,
 {
-    use common::config;
-
     let ref_exchange_account = blockchain::ref_finance::CONTRACT_ADDRESS.clone();
 
     // config から設定取得（デフォルト 100 NEAR）
-    let min_pool_liquidity_near: u32 = config::get("TRADE_MIN_POOL_LIQUIDITY")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(100);
+    let min_pool_liquidity_near = cfg.trade_min_pool_liquidity();
 
     let high_liquidity_threshold = (min_pool_liquidity_near as u128) * 10u128.pow(24);
 
@@ -182,10 +177,7 @@ where
             let normalized_score = liquidity_ratio / (1.0 + liquidity_ratio);
             normalized_score.clamp(0.0, 1.0)
         }
-        Err(_) => common::config::get("LIQUIDITY_ERROR_DEFAULT_SCORE")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.3),
+        Err(_) => cfg.liquidity_error_default_score(),
     }
 }
 

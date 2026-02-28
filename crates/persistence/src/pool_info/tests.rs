@@ -1,4 +1,5 @@
 use super::*;
+use common::config::ConfigResolver;
 use common::types::TokenAccount;
 use dex::PoolInfoBared;
 use near_sdk::json_types::U128;
@@ -32,7 +33,8 @@ async fn test_pool_info_batch_insert() -> Result<()> {
     pool_info2.id = 125;
     pool_info2.bare.pool_kind = "WEIGHTED_SWAP".to_string();
 
-    batch_insert(&[Arc::new(pool_info1), Arc::new(pool_info2)]).await?;
+    let cfg = ConfigResolver;
+    batch_insert(&[Arc::new(pool_info1), Arc::new(pool_info2)], &cfg).await?;
 
     // データベースから取得して値を確認
     let retrieved1 = get_latest(124).await?;

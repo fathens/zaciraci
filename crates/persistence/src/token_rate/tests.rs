@@ -6,6 +6,7 @@ pub use crate::token_rate::{SwapPath, SwapPoolInfo, TokenRate};
 pub use anyhow::anyhow;
 pub use bigdecimal::BigDecimal;
 pub use chrono::{NaiveDateTime, SubsecRound};
+pub use common::config::ConfigResolver;
 pub use common::types::ExchangeRate;
 pub use common::types::TimeRange;
 pub use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};

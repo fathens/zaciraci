@@ -1,10 +1,10 @@
 use crate::Result;
-use crate::config;
 use crate::jsonrpc::{AccountInfo, SendTx, SentTx, ViewContract};
 use crate::ref_finance::deposit;
 use crate::ref_finance::history::get_history;
 use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::wallet::Wallet;
+use common::config::ConfigAccess;
 use common::types::NearAmount;
 use common::types::TokenAccount;
 use logging::*;
@@ -19,37 +19,37 @@ const MINIMUM_NATIVE_BALANCE: NearToken = NearToken::from_near(1);
 
 static LAST_HARVEST: AtomicU64 = AtomicU64::new(0);
 
-fn harvest_account() -> AccountId {
-    let value = config::get("HARVEST_ACCOUNT_ID").expect("HARVEST_ACCOUNT_ID config is required");
+fn harvest_account(cfg: &impl ConfigAccess) -> AccountId {
+    let value = cfg
+        .harvest_account_id()
+        .expect("HARVEST_ACCOUNT_ID config is required");
     value
         .parse()
         .unwrap_or_else(|err| panic!("Failed to parse HARVEST_ACCOUNT_ID `{value}`: {err}"))
 }
 
-fn trade_account_reserve() -> NearToken {
-    let yocto = config::get("TRADE_ACCOUNT_RESERVE")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
+fn trade_account_reserve(cfg: &impl ConfigAccess) -> NearToken {
+    let yocto = cfg
+        .trade_account_reserve()
+        .to_string()
+        .parse::<NearAmount>()
+        .expect("valid NearAmount literal")
         .to_yocto()
         .to_u128();
     NearToken::from_yoctonear(yocto)
 }
 
-fn harvest_interval() -> u64 {
-    config::get("HARVEST_INTERVAL_SECONDS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(86400)
+fn harvest_interval(cfg: &impl ConfigAccess) -> u64 {
+    cfg.harvest_interval_seconds()
 }
 
-fn is_time_to_harvest() -> bool {
+fn is_time_to_harvest(cfg: &impl ConfigAccess) -> bool {
     let last = LAST_HARVEST.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock is after UNIX epoch")
         .as_secs();
-    now - last > harvest_interval()
+    now - last > harvest_interval(cfg)
 }
 
 fn update_last_harvest() {
@@ -61,11 +61,8 @@ fn update_last_harvest() {
 }
 
 /// 残高上限乗数を適用するヘルパー関数
-fn multiply_by_balance_multiplier(token: NearToken) -> NearToken {
-    let multiplier: u128 = config::get("HARVEST_BALANCE_MULTIPLIER")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(128);
+fn multiply_by_balance_multiplier(token: NearToken, cfg: &impl ConfigAccess) -> NearToken {
+    let multiplier: u128 = cfg.harvest_balance_multiplier();
     NearToken::from_yoctonear(token.as_yoctonear().saturating_mul(multiplier))
 }
 
@@ -74,6 +71,7 @@ pub async fn start<C, W>(
     wallet: &W,
     token: &TokenAccount,
     required_balance: Option<NearToken>,
+    cfg: &impl ConfigAccess,
 ) -> Result<NearToken>
 where
     C: AccountInfo + SendTx + ViewContract,
@@ -109,12 +107,12 @@ where
 
     if deposited_wnear < required_balance {
         let shortage = required_balance.saturating_sub(deposited_wnear);
-        refill(client, wallet, shortage).await?;
+        refill(client, wallet, shortage, cfg).await?;
         // refill後の残高を再取得して返す
         let new_balance = balance_of_start_token(client, wallet, token).await?;
         Ok(new_balance)
     } else {
-        let upper = multiply_by_balance_multiplier(required_balance); // 乗数倍
+        let upper = multiply_by_balance_multiplier(required_balance, cfg); // 乗数倍
         if upper < deposited_wnear {
             let withdraw_amount = deposited_wnear.saturating_sub(upper);
             match harvest(
@@ -123,6 +121,7 @@ where
                 &WNEAR_TOKEN,
                 withdraw_amount,
                 required_balance,
+                cfg,
             )
             .await
             {
@@ -149,7 +148,12 @@ where
     Ok(NearToken::from_yoctonear(yocto))
 }
 
-async fn refill<C, W>(client: &C, wallet: &W, want: NearToken) -> Result<()>
+async fn refill<C, W>(
+    client: &C,
+    wallet: &W,
+    want: NearToken,
+    cfg: &impl ConfigAccess,
+) -> Result<()>
 where
     C: AccountInfo + ViewContract + SendTx,
     W: Wallet,
@@ -169,7 +173,7 @@ where
         let wrapping = want.saturating_sub(wrapped_balance);
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance = trade_account_reserve();
+        let minimum_native_balance = trade_account_reserve(cfg);
 
         let log = log.new(o!(
             "native_balance" => native_balance.as_yoctonear(),
@@ -219,7 +223,12 @@ where
 }
 
 /// 投資額全額を REF Finance にデポジット（初期ポートフォリオ構築用）
-pub async fn deposit_wrap_near_to_ref<C, W>(client: &C, wallet: &W, amount: NearToken) -> Result<()>
+pub async fn deposit_wrap_near_to_ref<C, W>(
+    client: &C,
+    wallet: &W,
+    amount: NearToken,
+    cfg: &impl ConfigAccess,
+) -> Result<()>
 where
     C: AccountInfo + ViewContract + SendTx,
     W: Wallet,
@@ -261,7 +270,7 @@ where
         let wrapping = shortage.saturating_sub(wrapped_balance);
         let native_balance = client.get_native_amount(account).await?;
 
-        let minimum_native_balance = trade_account_reserve();
+        let minimum_native_balance = trade_account_reserve(cfg);
 
         let available = native_balance.saturating_sub(minimum_native_balance);
 
@@ -319,6 +328,7 @@ pub async fn harvest<C, W>(
     token: &TokenAccount,
     withdraw: NearToken,
     required: NearToken,
+    cfg: &impl ConfigAccess,
 ) -> Result<()>
 where
     C: AccountInfo + SendTx,
@@ -333,11 +343,11 @@ where
         "token" => %token,
     );
 
-    let minimum_native_balance = trade_account_reserve();
+    let minimum_native_balance = trade_account_reserve(cfg);
 
     let account = wallet.account_id();
     let before_withdraw = client.get_native_amount(account).await?;
-    let added = if before_withdraw < minimum_native_balance || is_time_to_harvest() {
+    let added = if before_withdraw < minimum_native_balance || is_time_to_harvest(cfg) {
         deposit::withdraw(client, wallet, token, withdraw)
             .await?
             .wait_for_success()
@@ -347,14 +357,14 @@ where
         NearToken::from_yoctonear(0)
     };
     let native_balance = before_withdraw.saturating_add(added);
-    let upper = multiply_by_balance_multiplier(required); // 乗数倍
+    let upper = multiply_by_balance_multiplier(required, cfg); // 乗数倍
     trace!(log, "checking";
         "native_balance" => native_balance.as_yoctonear(),
         "upper" => upper.as_yoctonear(),
     );
-    if upper < native_balance && is_time_to_harvest() {
+    if upper < native_balance && is_time_to_harvest(cfg) {
         let amount = native_balance.saturating_sub(upper);
-        let target = &harvest_account();
+        let target = &harvest_account(cfg);
         info!(log, "harvesting";
             "target" => %target,
             "amount" => amount.as_yoctonear(),

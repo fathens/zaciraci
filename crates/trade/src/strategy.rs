@@ -32,7 +32,7 @@ use common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{TokenData, TradingAction, WalletInfo},
 };
-use common::config;
+use common::config::ConfigAccess;
 use common::types::{ExchangeRate, NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use futures::stream::{self, StreamExt};
@@ -54,6 +54,7 @@ pub async fn start<C, W>(
     client: &C,
     wallet: &W,
     current_time: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
 ) -> Result<()>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
@@ -65,14 +66,12 @@ where
     info!(log, "starting portfolio-based trading strategy");
 
     // TRADE_ENABLED のチェック
-    let trade_enabled = config::get("TRADE_ENABLED")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false);
+    let trade_enabled = cfg.trade_enabled();
 
     // Step 1: 評価期間のチェックと管理（清算が必要な場合は先に実行）
     // 初回起動時は available_funds=0 で呼び出し、後で prepare_funds() で資金準備
     let (period_id, is_new_period, existing_tokens, liquidated_balance) =
-        manage_evaluation_period(client, wallet, current_time, YoctoAmount::zero()).await?;
+        manage_evaluation_period(client, wallet, current_time, YoctoAmount::zero(), cfg).await?;
     info!(log, "evaluation period status";
         "period_id" => %period_id,
         "is_new_period" => is_new_period,
@@ -95,7 +94,7 @@ where
         } else {
             // 評価期間中: 清算して終了
             info!(log, "trade disabled, liquidating positions");
-            let _ = liquidate_all_positions(client, wallet).await?;
+            let _ = liquidate_all_positions(client, wallet, cfg).await?;
             return Ok(());
         }
     }
@@ -112,7 +111,7 @@ where
             balance
         } else {
             // 初回起動: NEAR -> wrap.near 変換
-            let funds = prepare_funds(client, wallet).await?;
+            let funds = prepare_funds(client, wallet, cfg).await?;
             debug!(log, "Prepared funds for new period"; "available_funds" => %funds);
 
             if funds.is_zero() {
@@ -129,12 +128,12 @@ where
     };
 
     // Step 3: PredictionServiceの初期化
-    let prediction_service = PredictionService::new();
+    let prediction_service = PredictionService::new(cfg);
 
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
         // 新規期間: 新しくトークンを選定
-        let tokens = select_top_volatility_tokens(&prediction_service, current_time).await?;
+        let tokens = select_top_volatility_tokens(&prediction_service, current_time, cfg).await?;
 
         // 選定したトークンをデータベースに保存
         if !tokens.is_empty() {
@@ -183,6 +182,7 @@ where
             client,
             wallet,
             NearToken::from_yoctonear(available_funds.to_u128()),
+            cfg,
         )
         .await?;
         debug!(log, "initial investment deposited to REF Finance");
@@ -204,6 +204,7 @@ where
         client,
         wallet,
         current_time,
+        cfg,
     )
     .await
     {
@@ -220,7 +221,7 @@ where
 
     // 実際の取引実行
     let executed_actions =
-        execute_trading_actions(client, wallet, &report, period_id.clone()).await?;
+        execute_trading_actions(client, wallet, &report, period_id.clone(), cfg).await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
     // ポートフォリオ保有量を記録
@@ -232,7 +233,7 @@ where
     }
 
     // 古い保有量レコードのクリーンアップ
-    if let Err(e) = super::snapshot::cleanup_old_records().await {
+    if let Err(e) = super::snapshot::cleanup_old_records(cfg).await {
         warn!(log, "failed to cleanup old portfolio holdings"; "error" => ?e);
     }
 
@@ -244,7 +245,7 @@ where
 }
 
 /// 資金準備 (NEAR -> wrap.near 変換)
-async fn prepare_funds<C, W>(client: &C, wallet: &W) -> Result<YoctoAmount>
+async fn prepare_funds<C, W>(client: &C, wallet: &W, cfg: &impl ConfigAccess) -> Result<YoctoAmount>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
     <C as SendTx>::Output: Display + blockchain::jsonrpc::SentTx,
@@ -253,10 +254,11 @@ where
     let log = DEFAULT.new(o!("function" => "prepare_funds"));
 
     // 初期投資額の設定値を取得（NEAR単位で入力、yoctoNEARに変換）
-    let target_investment: YoctoAmount = config::get("TRADE_INITIAL_INVESTMENT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "100".parse().unwrap())
+    let target_investment: YoctoAmount = cfg
+        .trade_initial_investment()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto();
 
     // 必要な wrap.near 残高として投資額を設定（NEAR -> wrap.near変換）
@@ -268,6 +270,7 @@ where
         wallet,
         &blockchain::ref_finance::token_account::WNEAR_TOKEN,
         Some(required_balance),
+        cfg,
     )
     .await?;
 
@@ -300,19 +303,14 @@ where
 pub async fn select_top_volatility_tokens(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "select_top_volatility_tokens"));
 
-    let limit = config::get("TRADE_TOP_TOKENS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
+    let limit = cfg.trade_top_tokens() as usize;
 
     // ボラティリティトークンを全て取得（DBから）
-    let volatility_days = config::get("TRADE_VOLATILITY_DAYS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(7);
+    let volatility_days = i64::from(cfg.trade_volatility_days());
     let start_date = end_date - chrono::Duration::days(volatility_days);
 
     // 型安全な quote_token を準備
@@ -463,6 +461,7 @@ pub async fn execute_portfolio_strategy<C, W>(
     client: &C,
     wallet: &W,
     end_date: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
 ) -> Result<Vec<TradingAction>>
 where
     C: blockchain::jsonrpc::ViewContract
@@ -481,14 +480,13 @@ where
         blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
     // 過去の予測を Chronos 待ちの間に並行評価
-    let eval_handle =
-        tokio::spawn(async { super::prediction_accuracy::evaluate_pending_predictions().await });
+    let eval_cfg = common::config::ConfigResolver;
+    let eval_handle = tokio::spawn(async move {
+        super::prediction_accuracy::evaluate_pending_predictions(&eval_cfg).await
+    });
 
     // 設定を事前に取得
-    let price_history_days = config::get("TRADE_PRICE_HISTORY_DAYS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(30);
+    let price_history_days = i64::from(cfg.trade_price_history_days());
 
     // 1. predict_multiple_tokens() を使用してバッチ履歴取得 + 予測を並行実行
     let token_out_list: Vec<TokenOutAccount> = tokens.iter().map(|t| t.clone().into()).collect();
@@ -499,16 +497,14 @@ where
             price_history_days,
             24,
             end_date,
+            cfg,
         )
         .await?;
 
     debug!(log, "batch predictions completed"; "count" => batch_predictions.len());
 
     // 2. 並行実行数を設定から取得
-    let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(4);
+    let concurrency = cfg.trade_prediction_concurrency() as usize;
 
     // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
     let start_date = end_date - chrono::Duration::days(price_history_days);
@@ -539,7 +535,7 @@ where
 
                 // 価格履歴の取得
                 let history_result = prediction_service
-                    .get_price_history(&data.token_out, &quote_token_in, start_date, end_date)
+                    .get_price_history(&data.token_out, &quote_token_in, start_date, end_date, cfg)
                     .await;
 
                 let history = match history_result {
@@ -604,7 +600,7 @@ where
                     async move {
                         // 流動性スコアの計算（プール情報 + 取引量ベース）
                         let liquidity_score =
-                            calculate_enhanced_liquidity_score(client, token_out.inner(), &history)
+                            calculate_enhanced_liquidity_score(client, token_out.inner(), &history, cfg)
                                 .await;
 
                         // トークンの decimals を取得（キャッシュ経由）
@@ -807,10 +803,7 @@ where
     let execution_report = execute_portfolio_optimization(
         &wallet_info,
         portfolio_data,
-        config::get("PORTFOLIO_REBALANCE_THRESHOLD")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.1),
+        cfg.portfolio_rebalance_threshold(),
     )
     .await?;
 

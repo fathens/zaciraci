@@ -1,4 +1,4 @@
-use common::config;
+use common::config::startup::StartupConfig;
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -26,15 +26,13 @@ struct FailedEndpoints {
 }
 
 impl EndpointPool {
-    /// Create a new EndpointPool from configuration
-    pub fn new() -> Self {
-        let mut endpoints: Vec<RpcEndpoint> = config::get("RPC_ENDPOINTS")
-            .ok()
-            .and_then(|json| serde_json::from_str::<Vec<common::config::RpcEndpoint>>(&json).ok())
-            .unwrap_or_default()
-            .into_iter()
+    /// Create a new EndpointPool from startup configuration
+    pub fn new(startup: &StartupConfig) -> Self {
+        let mut endpoints: Vec<RpcEndpoint> = startup
+            .rpc_endpoints
+            .iter()
             .map(|ep| RpcEndpoint {
-                url: ep.url,
+                url: ep.url.clone(),
                 weight: ep.weight,
                 max_retries: ep.max_retries,
             })
@@ -42,11 +40,7 @@ impl EndpointPool {
 
         // If no endpoints in config, use defaults based on network
         if endpoints.is_empty() {
-            let use_mainnet = config::get("USE_MAINNET")
-                .ok()
-                .and_then(|v| v.parse::<bool>().ok())
-                .unwrap_or(true);
-            let default_url = if use_mainnet {
+            let default_url = if startup.is_mainnet {
                 "https://rpc.mainnet.near.org"
             } else {
                 "https://rpc.testnet.near.org"
@@ -58,17 +52,12 @@ impl EndpointPool {
             });
         }
 
-        let failure_reset_seconds = config::get("RPC_FAILURE_RESET_SECONDS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(300);
-
         Self {
             endpoints,
             failed_endpoints: Arc::new(Mutex::new(FailedEndpoints {
                 failures: std::collections::HashMap::new(),
             })),
-            failure_reset_seconds,
+            failure_reset_seconds: startup.rpc_failure_reset_seconds,
         }
     }
 
@@ -165,12 +154,6 @@ impl EndpointPool {
         }
 
         endpoints.last().copied()
-    }
-}
-
-impl Default for EndpointPool {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

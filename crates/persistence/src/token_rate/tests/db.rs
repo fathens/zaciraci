@@ -17,7 +17,8 @@ async fn test_token_rate_single_insert() -> Result<()> {
     // 3. １つインサート
     let timestamp = chrono::Utc::now().naive_utc();
     let token_rate = make_token_rate(base.clone(), quote.clone(), 1000, timestamp);
-    TokenRate::batch_insert(std::slice::from_ref(&token_rate)).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(std::slice::from_ref(&token_rate), &cfg).await?;
 
     // 4. get_latest でインサートしたレコードが返ることを確認
     let result = TokenRate::get_latest(&base, &quote, test_get_decimals()).await?;
@@ -54,7 +55,8 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     ];
 
     // 3. バッチ挿入
-    TokenRate::batch_insert(&rates).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
 
     // 4. get_rates_in_time_range で履歴を取得（時系列順で返る）
     let time_range = TimeRange {
@@ -62,7 +64,8 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
         end: latest + chrono::Duration::minutes(1),
     };
     let mut history =
-        TokenRate::get_rates_in_time_range(&time_range, &base, &quote, test_get_decimals()).await?;
+        TokenRate::get_rates_in_time_range(&time_range, &base, &quote, test_get_decimals(), &cfg)
+            .await?;
     // 新しい順に並び替え（get_history は降順、get_rates_in_time_range は昇順）
     history.reverse();
 
@@ -138,7 +141,8 @@ async fn test_token_rate_different_pairs() -> Result<()> {
     let rate3 = make_token_rate(base1.clone(), quote2.clone(), 3000, now);
 
     // 3. レコードを挿入
-    TokenRate::batch_insert(&[rate1.clone(), rate2.clone(), rate3.clone()]).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&[rate1.clone(), rate2.clone(), rate3.clone()], &cfg).await?;
 
     // 4. 特定のペアのみが取得されることを確認
     let result1 = TokenRate::get_latest(&base1, &quote1, test_get_decimals()).await?;
@@ -179,7 +183,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
     };
 
     let history1 =
-        TokenRate::get_rates_in_time_range(&time_range, &base1, &quote1, test_get_decimals())
+        TokenRate::get_rates_in_time_range(&time_range, &base1, &quote1, test_get_decimals(), &cfg)
             .await?;
     assert_eq!(history1.len(), 1, "Should find 1 record for base1-quote1");
     assert_token_rate_eq!(
@@ -189,7 +193,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
     );
 
     let history2 =
-        TokenRate::get_rates_in_time_range(&time_range, &base2, &quote1, test_get_decimals())
+        TokenRate::get_rates_in_time_range(&time_range, &base2, &quote1, test_get_decimals(), &cfg)
             .await?;
     assert_eq!(history2.len(), 1, "Should find 1 record for base2-quote1");
     assert_token_rate_eq!(
@@ -200,7 +204,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
 
     // 7. 存在しないペアは空の配列を返すことを確認
     let history3 =
-        TokenRate::get_rates_in_time_range(&time_range, &base2, &quote2, test_get_decimals())
+        TokenRate::get_rates_in_time_range(&time_range, &base2, &quote2, test_get_decimals(), &cfg)
             .await?;
     assert_eq!(history3.len(), 0, "Should find 0 records for base2-quote2");
 
@@ -241,7 +245,8 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     ];
 
     // 4. バッチ挿入
-    TokenRate::batch_insert(&rates).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
 
     // 5. 時間範囲を設定
     let time_range = TimeRange {
@@ -333,7 +338,8 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
         ),
     ];
 
-    TokenRate::batch_insert(&zero_rate_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&zero_rate_data, &cfg).await?;
 
     // ボラティリティを取得
     let zero_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote).await?;
@@ -427,7 +433,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         ), // 範囲終了直後
     ];
 
-    TokenRate::batch_insert(&boundary_test_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&boundary_test_data, &cfg).await?;
 
     // 境界値テストの結果を検証
     let boundary_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
@@ -471,7 +478,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         make_token_rate(base2.clone(), quote1.clone(), 300, one_hour_ago),
     ];
 
-    TokenRate::batch_insert(&same_volatility_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&same_volatility_data, &cfg).await?;
 
     // 同一ボラティリティテストの結果を検証
     let same_volatility_results =
@@ -512,7 +520,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         make_token_rate(base2.clone(), quote1.clone(), 10, one_hour_ago),
     ];
 
-    TokenRate::batch_insert(&zero_max_rate_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&zero_max_rate_data, &cfg).await?;
 
     // 0レートが除外されるケースの結果を検証
     let zero_max_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
@@ -545,7 +554,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         one_hour_ago,
     )];
 
-    TokenRate::batch_insert(&single_record_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&single_record_data, &cfg).await?;
 
     // 1つのレコードのみの場合の結果を検証
     let single_record_results =
@@ -585,7 +595,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         make_token_rate(base1.clone(), quote2.clone(), 400, one_hour_ago), // 変動率100%だが、quote1でフィルタリングされる
     ];
 
-    TokenRate::batch_insert(&different_quote_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&different_quote_data, &cfg).await?;
 
     // 異なるquoteトークンのフィルタリングテストの結果を検証
     let quote_filter_results =
@@ -646,7 +657,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         ), // 確実に範囲内
     ];
 
-    TokenRate::batch_insert(&mixed_rates_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&mixed_rates_data, &cfg).await?;
 
     // 混在レートテストの結果を検証（base1は除外される）
     let mixed_rates_results =
@@ -702,7 +714,8 @@ async fn test_rate_difference_calculation() -> Result<()> {
         make_token_rate(base1.clone(), quote1.clone(), 1500, one_hour_ago),
     ];
 
-    TokenRate::batch_insert(&normal_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&normal_data, &cfg).await?;
 
     // 通常の計算結果を検証
     let normal_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
@@ -733,7 +746,8 @@ async fn test_rate_difference_calculation() -> Result<()> {
         make_token_rate(base1.clone(), quote1.clone(), 100, one_hour_ago),
     ];
 
-    TokenRate::batch_insert(&negative_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&negative_data, &cfg).await?;
 
     // 正の値の計算結果を検証
     let positive_results = TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
@@ -764,7 +778,8 @@ async fn test_rate_difference_calculation() -> Result<()> {
         make_token_rate(base1.clone(), quote1.clone(), 100, one_hour_ago),
     ];
 
-    TokenRate::batch_insert(&same_value_data).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&same_value_data, &cfg).await?;
 
     // 同一値の計算結果を検証
     let same_value_results =
@@ -825,7 +840,8 @@ async fn test_cleanup_old_records() -> Result<()> {
     ];
 
     // 3. レコードを挿入（cleanup_old_recordsは自動で呼ばれ、デフォルトで365日より古いレコードが削除される）
-    TokenRate::batch_insert(&old_rates).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&old_rates, &cfg).await?;
 
     // 4. 残っているレコード数を確認
     let wide_range = TimeRange {
@@ -833,10 +849,10 @@ async fn test_cleanup_old_records() -> Result<()> {
         end: now + chrono::Duration::days(1),
     };
     let mut history1 =
-        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals())
+        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals(), &cfg)
             .await?;
     let history2 =
-        TokenRate::get_rates_in_time_range(&wide_range, &base2, &quote, test_get_decimals())
+        TokenRate::get_rates_in_time_range(&wide_range, &base2, &quote, test_get_decimals(), &cfg)
             .await?;
     // 新しい順に並び替え
     history1.reverse();
@@ -941,11 +957,12 @@ async fn test_cleanup_old_records() -> Result<()> {
     ];
 
     // まず全件挿入（デフォルトのクリーンアップで全件残る）
-    TokenRate::batch_insert(&recent_rates).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&recent_rates, &cfg).await?;
 
     // 全件残っていることを確認
     let all_history =
-        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals())
+        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals(), &cfg)
             .await?;
     assert_eq!(all_history.len(), 4, "Should have all 4 records initially");
 
@@ -954,7 +971,7 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     // 8. 30日以内のレコードだけが残っていることを確認
     let mut recent_history =
-        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals())
+        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals(), &cfg)
             .await?;
     // 新しい順に並び替え
     recent_history.reverse();
@@ -1003,7 +1020,8 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
         make_token_rate(base3.clone(), quote.clone(), 300, one_hour_ago),
         make_token_rate(base3.clone(), quote.clone(), 330, now),
     ];
-    TokenRate::batch_insert(&rates).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
 
     let time_range = TimeRange {
         start: one_hour_ago - chrono::Duration::minutes(1),
@@ -1012,9 +1030,14 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
 
     // 2トークンのみ取得
     let tokens = vec![base1.clone(), base2.clone()];
-    let result =
-        TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range, test_get_decimals())
-            .await?;
+    let result = TokenRate::get_rates_for_multiple_tokens(
+        &tokens,
+        &quote,
+        &time_range,
+        test_get_decimals(),
+        &cfg,
+    )
+    .await?;
 
     assert_eq!(result.len(), 2, "Should return 2 tokens");
     assert!(result.contains_key(&base1), "Should contain token1");
@@ -1037,6 +1060,7 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
 async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
     clean_table().await?;
 
+    let cfg = ConfigResolver;
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
     let now = chrono::Utc::now().naive_utc();
 
@@ -1050,9 +1074,14 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
         TokenAccount::from_str("nonexistent1.near")?.into(),
         TokenAccount::from_str("nonexistent2.near")?.into(),
     ];
-    let result =
-        TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range, test_get_decimals())
-            .await?;
+    let result = TokenRate::get_rates_for_multiple_tokens(
+        &tokens,
+        &quote,
+        &time_range,
+        test_get_decimals(),
+        &cfg,
+    )
+    .await?;
 
     assert!(
         result.is_empty(),
@@ -1066,6 +1095,7 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
+    let cfg = ConfigResolver;
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
     let now = chrono::Utc::now().naive_utc();
 
@@ -1076,9 +1106,14 @@ async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
 
     // 空のトークンリスト
     let tokens: Vec<TokenOutAccount> = vec![];
-    let result =
-        TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range, test_get_decimals())
-            .await?;
+    let result = TokenRate::get_rates_for_multiple_tokens(
+        &tokens,
+        &quote,
+        &time_range,
+        test_get_decimals(),
+        &cfg,
+    )
+    .await?;
 
     assert!(result.is_empty(), "Should return empty map for empty input");
 
@@ -1100,7 +1135,8 @@ async fn test_get_all_decimals() -> Result<()> {
         make_token_rate(base_a.clone(), quote.clone(), 100, now),
         make_token_rate(base_b.clone(), quote.clone(), 200, now),
     ];
-    TokenRate::batch_insert(&rates).await?;
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
 
     let decimals = get_all_decimals().await?;
     assert_eq!(

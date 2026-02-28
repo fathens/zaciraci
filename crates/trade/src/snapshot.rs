@@ -1,5 +1,6 @@
 use crate::Result;
 use bigdecimal::BigDecimal;
+use common::config::ConfigAccess;
 use common::types::{TokenAccount, TokenAmount};
 use logging::*;
 use persistence::portfolio_holding::{NewPortfolioHolding, PortfolioHolding, TokenHolding};
@@ -79,20 +80,8 @@ pub async fn get_holdings_from_db(
 }
 
 /// 古い保有量レコードのクリーンアップ
-pub async fn cleanup_old_records() -> Result<usize> {
-    let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
-
-    let retention_days: u16 =
-        common::config::get("PORTFOLIO_HOLDINGS_RETENTION_DAYS")
-            .ok()
-            .and_then(|v| {
-                v.parse().map_err(|e| {
-                warn!(log, "failed to parse PORTFOLIO_HOLDINGS_RETENTION_DAYS, using default";
-                    "value" => &v, "error" => %e);
-                e
-            }).ok()
-            })
-            .unwrap_or(90);
+pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<usize> {
+    let retention_days = cfg.portfolio_holdings_retention_days();
 
     PortfolioHolding::cleanup_old_records(retention_days).await
 }

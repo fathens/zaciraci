@@ -10,7 +10,7 @@ use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
 use chrono::{DateTime, Utc};
 use common::algorithm::types::TradingAction;
-use common::config;
+use common::config::ConfigAccess;
 use common::types::*;
 use logging::*;
 use near_sdk::NearToken;
@@ -120,6 +120,7 @@ pub(crate) async fn execute_trading_actions<C, W>(
     wallet: &W,
     actions: &[TradingAction],
     period_id: String,
+    cfg: &impl ConfigAccess,
 ) -> Result<ExecutionSummary>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
@@ -152,6 +153,7 @@ where
             &recorder,
             swap_amount_override,
             &period_id,
+            cfg,
         )
         .await
         {
@@ -177,13 +179,14 @@ async fn execute_single_action<C, W>(
     recorder: &TradeRecorder,
     swap_amount_override: Option<u128>,
     evaluation_period_id: &str,
+    cfg: &impl ConfigAccess,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
         + blockchain::jsonrpc::SendTx
         + blockchain::jsonrpc::ViewContract
         + blockchain::jsonrpc::GasInfo,
-    <C as blockchain::jsonrpc::SendTx>::Output: std::fmt::Display,
+    <C as blockchain::jsonrpc::SendTx>::Output: std::fmt::Display + blockchain::jsonrpc::SentTx,
     W: blockchain::wallet::Wallet,
 {
     let log = DEFAULT.new(o!("function" => "execute_single_action"));
@@ -214,14 +217,23 @@ where
                     &wrap_near_out,
                     None,
                     recorder,
+                    cfg,
                 )
                 .await?;
             }
 
             // Step 2: wrap.near → target
             if target.inner() != wrap_near {
-                swap::execute_direct_swap(client, wallet, &wrap_near_in, target, None, recorder)
-                    .await?;
+                swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near_in,
+                    target,
+                    None,
+                    recorder,
+                    cfg,
+                )
+                .await?;
             }
 
             debug!(log, "sell completed"; "from" => %token, "to" => %target);
@@ -233,7 +245,7 @@ where
             debug!(log, "executing switch"; "from" => %from, "to" => %to);
 
             let from_token = from.as_in();
-            swap::execute_direct_swap(client, wallet, &from_token, to, None, recorder).await?;
+            swap::execute_direct_swap(client, wallet, &from_token, to, None, recorder, cfg).await?;
 
             debug!(log, "switch completed"; "from" => %from, "to" => %to);
             Ok(())
@@ -387,6 +399,7 @@ where
                     &wrap_near_out,
                     Some(token_amount_u128),
                     recorder,
+                    cfg,
                 )
                 .await?;
             }
@@ -472,6 +485,7 @@ where
                     &to_token,
                     Some(wrap_near_amount_u128),
                     recorder,
+                    cfg,
                 )
                 .await
                 {
@@ -538,6 +552,7 @@ where
                     token,
                     Some(swap_amount),
                     recorder,
+                    cfg,
                 )
                 .await?;
             }
@@ -562,6 +577,7 @@ where
                     &wrap_near_out,
                     None,
                     recorder,
+                    cfg,
                 )
                 .await?;
             }
@@ -581,6 +597,7 @@ pub(crate) async fn manage_evaluation_period<C, W>(
     wallet: &W,
     current_time: DateTime<Utc>,
     available_funds: YoctoAmount,
+    cfg: &impl ConfigAccess,
 ) -> Result<(String, bool, Vec<TokenAccount>, Option<YoctoAmount>)>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
@@ -590,10 +607,7 @@ where
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
     // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
-    let evaluation_period_days = config::get("TRADE_EVALUATION_DAYS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(10);
+    let evaluation_period_days = i64::from(cfg.trade_evaluation_days());
 
     info!(log, "evaluation period configuration"; "days" => evaluation_period_days);
 
@@ -617,7 +631,7 @@ where
                 );
 
                 // 全トークンをwrap.nearに売却
-                let final_balance = liquidate_all_positions(client, wallet).await?;
+                let final_balance = liquidate_all_positions(client, wallet, cfg).await?;
                 info!(log, "liquidated all positions"; "final_balance" => %final_balance);
 
                 // 評価期間のパフォーマンスを計算してログ出力
@@ -646,6 +660,7 @@ where
                     &initial_value,
                     &final_value,
                     &period_id,
+                    cfg,
                 )
                 .await
                 .unwrap_or_else(|e| {
@@ -669,9 +684,7 @@ where
                 let post_harvest_value = post_harvest_balance.to_value();
 
                 // TRADE_ENABLED をチェック
-                let trade_enabled = config::get("TRADE_ENABLED")
-                    .map(|v| v.to_lowercase() == "true")
-                    .unwrap_or(false);
+                let trade_enabled = cfg.trade_enabled();
 
                 if !trade_enabled {
                     info!(log, "trade disabled, not starting new period";
@@ -679,13 +692,11 @@ where
                     );
 
                     // TRADE_UNWRAP_ON_STOP が有効な場合、wrap.near を NEAR に戻して送金
-                    let unwrap_on_stop = config::get("TRADE_UNWRAP_ON_STOP")
-                        .map(|v| v.to_lowercase() == "true")
-                        .unwrap_or(false);
+                    let unwrap_on_stop = cfg.trade_unwrap_on_stop();
 
                     if unwrap_on_stop {
                         info!(log, "unwrap_on_stop enabled, executing unwrap and transfer");
-                        if let Err(e) = unwrap_and_transfer_wnear(&log).await {
+                        if let Err(e) = unwrap_and_transfer_wnear(&log, cfg).await {
                             error!(log, "failed to unwrap and transfer"; "error" => %e);
                         }
                     }
@@ -792,7 +803,11 @@ pub(crate) fn filter_tokens_to_liquidate(
 /// 全保有トークンをwrap.nearに売却
 ///
 /// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
-pub(crate) async fn liquidate_all_positions<C, W>(client: &C, wallet: &W) -> Result<YoctoAmount>
+pub(crate) async fn liquidate_all_positions<C, W>(
+    client: &C,
+    wallet: &W,
+    cfg: &impl ConfigAccess,
+) -> Result<YoctoAmount>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
     <C as SendTx>::Output: Display + SentTx,
@@ -868,6 +883,7 @@ where
             &wrap_near_out,
             None,
             &recorder,
+            cfg,
         )
         .await
         {
@@ -898,13 +914,13 @@ where
 /// 1. REF Finance から wrap.near を withdraw
 /// 2. wrap.near を NEAR に unwrap
 /// 3. NEAR を HARVEST_ACCOUNT_ID に送金（HARVEST_RESERVE_AMOUNT を残す）
-async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
+async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) -> Result<()> {
     use blockchain::jsonrpc::{AccountInfo, SendTx, SentTx};
     use blockchain::ref_finance::{deposit, token_account::WNEAR_TOKEN};
     use common::types::{NearAmount, YoctoAmount};
 
     // HARVEST_ACCOUNT_ID を取得（未設定の場合はスキップ）
-    let harvest_account_id = match config::get("HARVEST_ACCOUNT_ID") {
+    let harvest_account_id = match cfg.harvest_account_id() {
         Ok(id) if !id.is_empty() => id,
         _ => {
             info!(
@@ -920,10 +936,11 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Invalid HARVEST_ACCOUNT_ID: {}", e))?;
 
     // HARVEST_RESERVE_AMOUNT を取得
-    let reserve_amount: YoctoAmount = config::get("HARVEST_RESERVE_AMOUNT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "1".parse().expect("valid NearAmount literal"))
+    let reserve_amount: YoctoAmount = cfg
+        .harvest_reserve_amount()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto();
     let reserve_amount_u128: u128 = reserve_amount.to_u128();
 

@@ -2,7 +2,7 @@ use super::*;
 
 // デフォルト値を使用したテスト用ヘルパー
 fn confidence_with_defaults(mape: f64) -> f64 {
-    mape_to_confidence(mape, DEFAULT_MAPE_EXCELLENT, DEFAULT_MAPE_POOR)
+    mape_to_confidence(mape, 3.0, 15.0)
 }
 
 // --- mape_to_confidence ---

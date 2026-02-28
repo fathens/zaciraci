@@ -220,12 +220,11 @@ pub async fn delete(instance_id: &str, key: &str) -> Result<()> {
 
 /// DB から設定をロードし common::config に反映
 ///
-/// `INSTANCE_ID` は env/TOML から取得する。DB 接続に依存するキーは
+/// `instance_id` は起動時設定から取得する。DB 接続に依存するキーは
 /// DB からは取得しない前提。
-pub async fn reload_to_config() -> Result<()> {
-    let instance_id = common::config::get("INSTANCE_ID").unwrap_or_else(|_| "*".to_string());
-    let configs = get_all_for_instance(&instance_id).await?;
-    common::config::load_db_config(configs);
+pub async fn reload_to_config(instance_id: &str) -> Result<()> {
+    let configs = get_all_for_instance(instance_id).await?;
+    common::config::store::load_db_config(configs);
     Ok(())
 }
 
@@ -382,10 +381,10 @@ mod tests {
             .unwrap();
 
         // reload_to_config を実行
-        reload_to_config().await.unwrap();
+        reload_to_config("*").await.unwrap();
 
-        // common::config::get() で取得可能になること
-        let val = common::config::get("TEST_RELOAD_KEY").unwrap();
+        // common::config::store::get() で取得可能になること
+        let val = common::config::store::get("TEST_RELOAD_KEY").unwrap();
         assert_eq!(val, "db_value");
 
         // Cleanup
