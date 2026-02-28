@@ -24,9 +24,11 @@ primary_region = "nrt"
     hard_limit = 250
 
   [[services.ports]]
-    handlers = ["tls", "http"]
+    handlers = ["tls"]
     port = 443
-    force_https = true
+
+    [services.ports.tls_options]
+      alpn = ["h2"]
 
   [[services.tcp_checks]]
     interval = "15s"
