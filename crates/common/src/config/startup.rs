@@ -2,7 +2,22 @@ use once_cell::sync::Lazy;
 use serde::de::DeserializeOwned;
 use std::str::FromStr;
 
-use super::store::RpcEndpoint;
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
+pub struct RpcEndpoint {
+    pub url: String,
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+}
+
+fn default_weight() -> u32 {
+    10
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
 
 /// Startup-time configuration resolved once from env > defaults.
 ///

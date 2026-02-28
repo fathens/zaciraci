@@ -1,3 +1,4 @@
+use super::startup::RpcEndpoint;
 use crate::Result;
 use anyhow::anyhow;
 use once_cell::sync::Lazy;
@@ -50,15 +51,6 @@ pub struct RpcConfig {
     pub endpoints: Vec<RpcEndpoint>,
     #[serde(default)]
     pub settings: RpcSettings,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize, Clone)]
-pub struct RpcEndpoint {
-    pub url: String,
-    #[serde(default = "default_weight")]
-    pub weight: u32,
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,12 +148,6 @@ fn default_use_mainnet() -> bool {
 }
 fn default_hdpath() -> String {
     "m/44'/397'/0'".to_string()
-}
-fn default_weight() -> u32 {
-    10
-}
-fn default_max_retries() -> u32 {
-    3
 }
 fn default_failure_reset_seconds() -> u64 {
     300
