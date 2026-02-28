@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, TimeDelta, Utc};
 use common::algorithm::prediction::{PredictionProvider, TopTokenInfo};
 use common::algorithm::types::{PredictedPrice, PriceHistory, PricePoint, TokenPredictionResult};
 use common::api::chronos::ChronosPredictor;
+use common::config::ConfigAccess;
 use common::types::{TimeRange, TokenInAccount, TokenOutAccount, TokenPrice};
 use futures::stream::{self, StreamExt};
 use logging::*;
@@ -26,14 +27,8 @@ impl Default for PredictionService {
 
 impl PredictionService {
     pub fn new() -> Self {
-        let max_retries = common::config::get("TRADE_PREDICTION_MAX_RETRIES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(2);
-        let retry_delay_seconds = common::config::get("TRADE_PREDICTION_RETRY_DELAY_SECONDS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5);
+        let max_retries = common::config::typed().trade_prediction_max_retries();
+        let retry_delay_seconds = common::config::typed().trade_prediction_retry_delay_seconds();
         Self {
             predictor: ChronosPredictor::new(),
             max_retries,
@@ -209,10 +204,7 @@ impl PredictionService {
         );
 
         // 2. 設定から並行実行数を取得
-        let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(4);
+        let concurrency = common::config::typed().trade_prediction_concurrency() as usize;
 
         // 3. 予測を並行実行
         let results: Vec<_> = stream::iter(tokens.clone())

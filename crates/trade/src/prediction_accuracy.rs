@@ -1,7 +1,7 @@
 use crate::Result;
 use bigdecimal::BigDecimal;
 use chrono::{NaiveDateTime, Utc};
-use common::config;
+use common::config::{self, ConfigAccess};
 use common::types::TimeRange;
 use common::types::TokenPrice;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
@@ -11,18 +11,6 @@ use persistence::prediction_record::{NewPredictionRecord, PredictionRecord};
 use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
 use std::str::FromStr;
-
-/// MAPE の閾値デフォルト値: これ以下なら予測が非常に正確（confidence = 1.0）
-const DEFAULT_MAPE_EXCELLENT: f64 = 3.0;
-
-/// MAPE の閾値デフォルト値: これ以上なら予測が不正確（confidence = 0.0）
-const DEFAULT_MAPE_POOR: f64 = 15.0;
-
-/// 評価済みレコードの保持日数デフォルト値
-const DEFAULT_RECORD_RETENTION_DAYS: i64 = 30;
-
-/// 未評価レコードの保持日数デフォルト値
-const DEFAULT_UNEVALUATED_RETENTION_DAYS: i64 = 20;
 
 /// 古い prediction_records を削除する。
 ///
@@ -35,15 +23,9 @@ const DEFAULT_UNEVALUATED_RETENTION_DAYS: i64 = 20;
 pub async fn cleanup_old_records() -> Result<(usize, usize)> {
     let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
 
-    let retention_days: i64 = config::get("PREDICTION_RECORD_RETENTION_DAYS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_RECORD_RETENTION_DAYS);
+    let retention_days = config::typed().prediction_record_retention_days();
 
-    let unevaluated_retention_days: i64 = config::get("PREDICTION_UNEVALUATED_RETENTION_DAYS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_UNEVALUATED_RETENTION_DAYS);
+    let unevaluated_retention_days = config::typed().prediction_unevaluated_retention_days();
 
     let (evaluated_deleted, unevaluated_deleted) =
         PredictionRecord::delete_old_records(retention_days, unevaluated_retention_days).await?;
@@ -150,20 +132,11 @@ pub async fn record_predictions(
 pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
     let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
 
-    let tolerance_minutes: i64 = config::get("PREDICTION_EVAL_TOLERANCE_MINUTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(30);
+    let tolerance_minutes = config::typed().prediction_eval_tolerance_minutes();
 
-    let window: i64 = config::get("PREDICTION_ACCURACY_WINDOW")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(20);
+    let window = config::typed().prediction_accuracy_window();
 
-    let min_samples: usize = config::get("PREDICTION_ACCURACY_MIN_SAMPLES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
+    let min_samples = config::typed().prediction_accuracy_min_samples();
 
     // decimals 取得コールバック
     let get_decimals = super::make_get_decimals();
@@ -324,15 +297,9 @@ pub async fn evaluate_pending_predictions() -> Result<Option<(f64, f64)>> {
     };
 
     // 環境変数からしきい値を取得
-    let mape_excellent: f64 = config::get("PREDICTION_MAPE_EXCELLENT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_MAPE_EXCELLENT);
+    let mape_excellent = config::typed().prediction_mape_excellent();
 
-    let mape_poor: f64 = config::get("PREDICTION_MAPE_POOR")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_MAPE_POOR);
+    let mape_poor = config::typed().prediction_mape_poor();
 
     // 複合 confidence 計算
     let confidence =

@@ -32,7 +32,7 @@ use common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
     types::{TokenData, TradingAction, WalletInfo},
 };
-use common::config;
+use common::config::{self, ConfigAccess};
 use common::types::{ExchangeRate, NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use futures::stream::{self, StreamExt};
@@ -65,9 +65,7 @@ where
     info!(log, "starting portfolio-based trading strategy");
 
     // TRADE_ENABLED のチェック
-    let trade_enabled = config::get("TRADE_ENABLED")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false);
+    let trade_enabled = config::typed().trade_enabled();
 
     // Step 1: 評価期間のチェックと管理（清算が必要な場合は先に実行）
     // 初回起動時は available_funds=0 で呼び出し、後で prepare_funds() で資金準備
@@ -253,10 +251,11 @@ where
     let log = DEFAULT.new(o!("function" => "prepare_funds"));
 
     // 初期投資額の設定値を取得（NEAR単位で入力、yoctoNEARに変換）
-    let target_investment: YoctoAmount = config::get("TRADE_INITIAL_INVESTMENT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "100".parse().unwrap())
+    let target_investment: YoctoAmount = config::typed()
+        .trade_initial_investment()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto();
 
     // 必要な wrap.near 残高として投資額を設定（NEAR -> wrap.near変換）
@@ -303,16 +302,10 @@ pub async fn select_top_volatility_tokens(
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "select_top_volatility_tokens"));
 
-    let limit = config::get("TRADE_TOP_TOKENS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
+    let limit = config::typed().trade_top_tokens() as usize;
 
     // ボラティリティトークンを全て取得（DBから）
-    let volatility_days = config::get("TRADE_VOLATILITY_DAYS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(7);
+    let volatility_days = i64::from(config::typed().trade_volatility_days());
     let start_date = end_date - chrono::Duration::days(volatility_days);
 
     // 型安全な quote_token を準備
@@ -485,10 +478,7 @@ where
         tokio::spawn(async { super::prediction_accuracy::evaluate_pending_predictions().await });
 
     // 設定を事前に取得
-    let price_history_days = config::get("TRADE_PRICE_HISTORY_DAYS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(30);
+    let price_history_days = i64::from(config::typed().trade_price_history_days());
 
     // 1. predict_multiple_tokens() を使用してバッチ履歴取得 + 予測を並行実行
     let token_out_list: Vec<TokenOutAccount> = tokens.iter().map(|t| t.clone().into()).collect();
@@ -505,10 +495,7 @@ where
     debug!(log, "batch predictions completed"; "count" => batch_predictions.len());
 
     // 2. 並行実行数を設定から取得
-    let concurrency = common::config::get("TRADE_PREDICTION_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(4);
+    let concurrency = config::typed().trade_prediction_concurrency() as usize;
 
     // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
     let start_date = end_date - chrono::Duration::days(price_history_days);
@@ -807,10 +794,7 @@ where
     let execution_report = execute_portfolio_optimization(
         &wallet_info,
         portfolio_data,
-        config::get("PORTFOLIO_REBALANCE_THRESHOLD")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.1),
+        config::typed().portfolio_rebalance_threshold(),
     )
     .await?;
 

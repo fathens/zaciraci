@@ -10,7 +10,7 @@ use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
 use chrono::{DateTime, Utc};
 use common::algorithm::types::TradingAction;
-use common::config;
+use common::config::{self, ConfigAccess};
 use common::types::*;
 use logging::*;
 use near_sdk::NearToken;
@@ -590,10 +590,7 @@ where
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
     // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
-    let evaluation_period_days = config::get("TRADE_EVALUATION_DAYS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(10);
+    let evaluation_period_days = i64::from(config::typed().trade_evaluation_days());
 
     info!(log, "evaluation period configuration"; "days" => evaluation_period_days);
 
@@ -669,9 +666,7 @@ where
                 let post_harvest_value = post_harvest_balance.to_value();
 
                 // TRADE_ENABLED をチェック
-                let trade_enabled = config::get("TRADE_ENABLED")
-                    .map(|v| v.to_lowercase() == "true")
-                    .unwrap_or(false);
+                let trade_enabled = config::typed().trade_enabled();
 
                 if !trade_enabled {
                     info!(log, "trade disabled, not starting new period";
@@ -679,9 +674,7 @@ where
                     );
 
                     // TRADE_UNWRAP_ON_STOP が有効な場合、wrap.near を NEAR に戻して送金
-                    let unwrap_on_stop = config::get("TRADE_UNWRAP_ON_STOP")
-                        .map(|v| v.to_lowercase() == "true")
-                        .unwrap_or(false);
+                    let unwrap_on_stop = config::typed().trade_unwrap_on_stop();
 
                     if unwrap_on_stop {
                         info!(log, "unwrap_on_stop enabled, executing unwrap and transfer");
@@ -904,7 +897,7 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
     use common::types::{NearAmount, YoctoAmount};
 
     // HARVEST_ACCOUNT_ID を取得（未設定の場合はスキップ）
-    let harvest_account_id = match config::get("HARVEST_ACCOUNT_ID") {
+    let harvest_account_id = match config::typed().harvest_account_id() {
         Ok(id) if !id.is_empty() => id,
         _ => {
             info!(
@@ -920,10 +913,11 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Invalid HARVEST_ACCOUNT_ID: {}", e))?;
 
     // HARVEST_RESERVE_AMOUNT を取得
-    let reserve_amount: YoctoAmount = config::get("HARVEST_RESERVE_AMOUNT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "1".parse().expect("valid NearAmount literal"))
+    let reserve_amount: YoctoAmount = config::typed()
+        .harvest_reserve_amount()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto();
     let reserve_amount_u128: u128 = reserve_amount.to_u128();
 

@@ -3,6 +3,7 @@
 //! DB から一括ロードし、キャッシュミス時のみ RPC にフォールバックする。
 //! これにより `record_rates` の ~1013 逐次 RPC 呼び出しを 0 に削減する。
 
+use common::config::ConfigAccess;
 use common::types::TokenAccount;
 use logging::*;
 use once_cell::sync::Lazy;
@@ -113,10 +114,7 @@ where
     // 2. ミス分を並列で RPC 取得（失敗分はスキップ）
     use futures::stream::{self, StreamExt};
 
-    let concurrency = common::config::get("TRADE_TOKEN_CACHE_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(8);
+    let concurrency = common::config::typed().trade_token_cache_concurrency() as usize;
 
     let fetched: Vec<(TokenAccount, Option<u8>)> = stream::iter(missing)
         .map(|token_id| {

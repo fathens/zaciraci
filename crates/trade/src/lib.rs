@@ -18,7 +18,7 @@ use blockchain::jsonrpc;
 use blockchain::ref_finance;
 use blockchain::ref_finance::token_account::WNEAR_TOKEN;
 use chrono::Utc as TZ;
-use common::config;
+use common::config::{self, ConfigAccess};
 use common::types::NearAmount;
 use common::types::TokenAmount;
 use common::types::TokenInAccount;
@@ -142,17 +142,11 @@ where
                     };
 
                     // 最大sleep秒数（設定可能、デフォルト60秒）
-                    let max_sleep = config::get("CRON_MAX_SLEEP_SECONDS")
-                        .ok()
-                        .and_then(|v| v.parse::<u64>().ok())
-                        .unwrap_or(60);
+                    let max_sleep = config::typed().cron_max_sleep_seconds();
                     let sleep_duration = remaining.min(std::time::Duration::from_secs(max_sleep));
 
                     // 長時間待機の場合は定期的にログを出力
-                    let log_threshold = config::get("CRON_LOG_THRESHOLD_SECONDS")
-                        .ok()
-                        .and_then(|v| v.parse::<u64>().ok())
-                        .unwrap_or(300);
+                    let log_threshold = config::typed().cron_log_threshold_seconds();
                     if remaining.as_secs() > log_threshold {
                         debug!(log, "still waiting for next execution";
                             "remaining_seconds" => remaining.as_secs(),
@@ -192,10 +186,7 @@ fn get_quote_token() -> TokenInAccount {
 
 fn get_initial_value() -> NearAmount {
     // config からフィルタ基準を取得し、10% でレート計算（スリッページ最大9%を保証）
-    let min_pool = config::get("TRADE_MIN_POOL_LIQUIDITY")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(100);
+    let min_pool = config::typed().trade_min_pool_liquidity();
 
     let rate_calc_amount = (min_pool / 10).max(1);
     rate_calc_amount.to_string().parse().unwrap()

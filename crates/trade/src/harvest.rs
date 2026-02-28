@@ -1,7 +1,7 @@
 use crate::Result;
 use crate::recorder::TradeRecorder;
 use bigdecimal::BigDecimal;
-use common::config;
+use common::config::{self, ConfigAccess};
 use common::types::{NearAmount, TokenInAccount, TokenOutAccount, YoctoAmount, YoctoValue};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
@@ -12,14 +12,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static LAST_HARVEST_TIME: AtomicU64 = AtomicU64::new(0);
 
 fn harvest_interval() -> u64 {
-    config::get("HARVEST_INTERVAL_SECONDS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(86400)
+    config::typed().harvest_interval_seconds()
 }
 
 fn harvest_account() -> AccountId {
-    let value = config::get("HARVEST_ACCOUNT_ID").unwrap_or_else(|err| {
+    let value = config::typed().harvest_account_id().unwrap_or_else(|err| {
         let log = DEFAULT.new(o!("function" => "harvest_account"));
         warn!(log, "HARVEST_ACCOUNT_ID not set, using default";
             "error" => %err,
@@ -33,18 +30,20 @@ fn harvest_account() -> AccountId {
 }
 
 fn harvest_min_amount() -> YoctoAmount {
-    config::get("HARVEST_MIN_AMOUNT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "10".parse().expect("valid NearAmount literal"))
+    config::typed()
+        .harvest_min_amount()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto()
 }
 
 fn harvest_reserve_amount() -> YoctoAmount {
-    config::get("HARVEST_RESERVE_AMOUNT")
-        .ok()
-        .and_then(|v| v.parse::<NearAmount>().ok())
-        .unwrap_or_else(|| "1".parse().expect("valid NearAmount literal"))
+    config::typed()
+        .harvest_reserve_amount()
+        .to_string()
+        .parse::<NearAmount>()
+        .unwrap()
         .to_yocto()
 }
 
