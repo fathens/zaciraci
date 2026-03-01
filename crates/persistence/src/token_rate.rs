@@ -318,15 +318,17 @@ impl TokenRate {
         let new_rates: Vec<NewDbTokenRate> =
             token_rates.iter().map(|rate| rate.to_new_db()).collect();
 
-        let conn = connection_pool::get().await?;
+        {
+            let conn = connection_pool::get().await?;
 
-        conn.interact(move |conn| {
-            diesel::insert_into(token_rates::table)
-                .values(&new_rates)
-                .execute(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+            conn.interact(move |conn| {
+                diesel::insert_into(token_rates::table)
+                    .values(&new_rates)
+                    .execute(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        }
 
         // 古いレコードをクリーンアップ
         let retention_days = cfg.token_rates_retention_days();

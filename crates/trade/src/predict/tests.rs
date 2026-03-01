@@ -140,7 +140,10 @@ impl TokenRateCleanGuard {
 impl Drop for TokenRateCleanGuard {
     fn drop(&mut self) {
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(Self::clean());
+            let _ = tokio::runtime::Handle::current().block_on(tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                Self::clean(),
+            ));
         });
     }
 }
