@@ -408,3 +408,143 @@ fn test_trade_price_history_days_default() {
     crate::config::store::remove("TRADE_PRICE_HISTORY_DAYS");
     assert_eq!(typed().trade_price_history_days(), 30);
 }
+
+// ── KEY_DEFINITIONS tests ──
+
+#[test]
+fn test_key_definitions_count() {
+    assert!(
+        !KEY_DEFINITIONS.is_empty(),
+        "KEY_DEFINITIONS should not be empty"
+    );
+}
+
+#[test]
+fn test_key_definitions_fields_non_empty() {
+    for def in KEY_DEFINITIONS {
+        assert!(!def.key.is_empty(), "key should not be empty");
+        assert!(
+            !def.description.trim().is_empty(),
+            "description should not be empty for key: {}",
+            def.key
+        );
+        assert!(
+            !def.type_name.is_empty(),
+            "type_name should not be empty for key: {}",
+            def.key
+        );
+        assert!(
+            !def.default_value.is_empty(),
+            "default_value should not be empty for key: {}",
+            def.key
+        );
+    }
+}
+
+#[test]
+fn test_key_definitions_no_duplicate_keys() {
+    let mut keys: Vec<&str> = KEY_DEFINITIONS.iter().map(|d| d.key).collect();
+    let original_len = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(
+        keys.len(),
+        original_len,
+        "KEY_DEFINITIONS should not have duplicate keys"
+    );
+}
+
+#[test]
+fn test_key_definitions_trade_enabled_metadata() {
+    let def = KEY_DEFINITIONS
+        .iter()
+        .find(|d| d.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist in KEY_DEFINITIONS");
+    assert_eq!(def.type_name, "bool");
+    assert_eq!(def.default_value, "false");
+    assert!(def.description.contains("trading"));
+}
+
+// ── resolve_all_without_db tests ──
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_count() {
+    let resolved = resolve_all_without_db();
+    assert_eq!(resolved.len(), KEY_DEFINITIONS.len());
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_fields_non_empty() {
+    let resolved = resolve_all_without_db();
+    for info in &resolved {
+        assert!(!info.key.is_empty(), "key should not be empty");
+        assert!(
+            !info.description.is_empty(),
+            "description should not be empty for key: {}",
+            info.key
+        );
+        assert!(
+            !info.type_name.is_empty(),
+            "type_name should not be empty for key: {}",
+            info.key
+        );
+        // resolved_value can be "(未設定)" for required keys
+    }
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_trade_enabled() {
+    let _env = EnvGuard::remove("TRADE_ENABLED");
+    crate::config::store::remove("TRADE_ENABLED");
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist in resolved list");
+    assert_eq!(info.type_name, "bool");
+    assert_eq!(info.resolved_value, "false");
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_excludes_db() {
+    use crate::config::store::DbStoreGuard;
+    use std::collections::HashMap;
+
+    let _db_guard = DbStoreGuard::new();
+    let _env = EnvGuard::remove("TRADE_ENABLED");
+    crate::config::store::remove("TRADE_ENABLED");
+
+    // DB に true をセットしても resolve_all_without_db はスキップする
+    crate::config::store::load_db_config(HashMap::from([(
+        "TRADE_ENABLED".to_string(),
+        "true".to_string(),
+    )]));
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist");
+    // DB の値は無視され、デフォルトの false が返る
+    assert_eq!(info.resolved_value, "false");
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_harvest_account_id_unset() {
+    let _env = EnvGuard::remove("HARVEST_ACCOUNT_ID");
+    crate::config::store::remove("HARVEST_ACCOUNT_ID");
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "HARVEST_ACCOUNT_ID")
+        .expect("HARVEST_ACCOUNT_ID should exist");
+    assert_eq!(info.type_name, "string(required)");
+    assert_eq!(info.resolved_value, "(未設定)");
+}
