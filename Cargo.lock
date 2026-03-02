@@ -106,12 +106,12 @@ dependencies = [
 
 [[package]]
 name = "arbitrage"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "assertables",
  "blockchain",
- "common 1.2.0",
+ "common 1.3.0",
  "dex",
  "humantime",
  "logging",
@@ -291,11 +291,11 @@ dependencies = [
 
 [[package]]
 name = "backend"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "arbitrage",
  "blockchain",
- "common 1.2.0",
+ "common 1.3.0",
  "logging",
  "persistence",
  "slog",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "blockchain"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "assertables",
@@ -425,7 +425,7 @@ dependencies = [
  "bip39",
  "bs58 0.5.1",
  "chrono",
- "common 1.2.0",
+ "common 1.3.0",
  "dex",
  "ed25519-dalek",
  "futures",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -954,12 +954,12 @@ dependencies = [
 
 [[package]]
 name = "dex"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "bigdecimal",
  "chrono",
- "common 1.2.0",
+ "common 1.3.0",
  "near-sdk",
  "num-bigint 0.4.6",
  "serde",
@@ -1883,9 +1883,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "logging"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
- "common 1.2.0",
+ "common 1.3.0",
  "once_cell",
  "slog",
  "slog-async",
@@ -2571,12 +2571,12 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "persistence"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "bigdecimal",
  "chrono",
- "common 1.2.0",
+ "common 1.3.0",
  "deadpool-diesel",
  "dex",
  "diesel",
@@ -3533,14 +3533,14 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simulate"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "bigdecimal",
  "blockchain",
  "chrono",
  "clap",
- "common 1.2.0",
+ "common 1.3.0",
  "dex",
  "logging",
  "near-account-id",
@@ -4243,7 +4243,7 @@ dependencies = [
 
 [[package]]
 name = "trade"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "assertables",
@@ -4251,7 +4251,7 @@ dependencies = [
  "bigdecimal",
  "blockchain",
  "chrono",
- "common 1.2.0",
+ "common 1.3.0",
  "cron",
  "dex",
  "diesel",
@@ -4522,9 +4522,9 @@ dependencies = [
 
 [[package]]
 name = "web"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
- "common 1.2.0",
+ "common 1.3.0",
  "logging",
  "persistence",
  "prost",
