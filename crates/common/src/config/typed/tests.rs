@@ -141,7 +141,7 @@ fn test_pool_info_retention_count_default() {
 fn test_token_rates_retention_days_default() {
     let _env = EnvGuard::remove("TOKEN_RATES_RETENTION_DAYS");
     crate::config::store::remove("TOKEN_RATES_RETENTION_DAYS");
-    assert_eq!(typed().token_rates_retention_days(), 365);
+    assert_eq!(typed().token_rates_retention_days(), 90);
 }
 
 #[test]

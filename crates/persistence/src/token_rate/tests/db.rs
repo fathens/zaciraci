@@ -823,19 +823,19 @@ async fn test_cleanup_old_records() -> Result<()> {
     let days_10_ago = now - chrono::Duration::days(10);
 
     let old_rates = vec![
-        // 400日前のレコード（削除されるはず）
+        // 400日前のレコード（削除されるはず - 90日超）
         make_token_rate(base1.clone(), quote.clone(), 1000, days_400_ago),
-        // 200日前のレコード（残るはず - 365日以内）
+        // 200日前のレコード（削除されるはず - 90日超）
         make_token_rate(base1.clone(), quote.clone(), 1100, days_200_ago),
-        // 100日前のレコード（残るはず）
+        // 100日前のレコード（削除されるはず - 90日超）
         make_token_rate(base1.clone(), quote.clone(), 1200, days_100_ago),
-        // 10日前のレコード（残るはず）
+        // 10日前のレコード（残るはず - 90日以内）
         make_token_rate(base1.clone(), quote.clone(), 1300, days_10_ago),
-        // 今のレコード（残るはず）
+        // 今のレコード（残るはず - 90日以内）
         make_token_rate(base1.clone(), quote.clone(), 1400, now),
-        // 別のトークンペア - 400日前（削除されるはず）
+        // 別のトークンペア - 400日前（削除されるはず - 90日超）
         make_token_rate(base2.clone(), quote.clone(), 20000, days_400_ago),
-        // 別のトークンペア - 今（残るはず）
+        // 別のトークンペア - 今（残るはず - 90日以内）
         make_token_rate(base2.clone(), quote.clone(), 21000, now),
     ];
 
@@ -857,18 +857,18 @@ async fn test_cleanup_old_records() -> Result<()> {
     // 新しい順に並び替え
     history1.reverse();
 
-    // base1: 200日前、100日前、10日前、今の4件が残る（全て365日以内）
+    // base1: 10日前、今の2件が残る（全て90日以内）
     assert_eq!(
         history1.len(),
-        4,
-        "Should have 4 records for base1 (within 365 days)"
+        2,
+        "Should have 2 records for base1 (within 90 days)"
     );
 
     // base2: 今の1件が残る
     assert_eq!(
         history2.len(),
         1,
-        "Should have 1 record for base2 (within 365 days)"
+        "Should have 1 record for base2 (within 90 days)"
     );
 
     // 5. 残っているレコードのタイムスタンプを確認
@@ -895,34 +895,34 @@ async fn test_cleanup_old_records() -> Result<()> {
     println!("  200 days ago = {}", days_200_ago);
     println!("  400 days ago = {}", days_400_ago);
 
-    // 最も古いレコードは200日前のもの（index 3）
-    // レートで確認（200日前のレコードは rate = 1100）
+    // 最も古いレコードは10日前のもの（index 1）
+    // レートで確認（10日前のレコードは rate = 1300）
     assert_eq!(
-        history1[3].exchange_rate.raw_rate(),
-        &BigDecimal::from(1100),
-        "Oldest retained record should have rate 1100 (200 days old record)"
+        history1[1].exchange_rate.raw_rate(),
+        &BigDecimal::from(1300),
+        "Oldest retained record should have rate 1300 (10 days old record)"
     );
 
-    // タイムスタンプも確認（精度の問題を考慮して、200日前から少し前後する範囲を許容）
-    let timestamp_diff = if history1[3].timestamp > days_200_ago {
-        history1[3].timestamp - days_200_ago
+    // タイムスタンプも確認（精度の問題を考慮して、10日前から少し前後する範囲を許容）
+    let timestamp_diff = if history1[1].timestamp > days_10_ago {
+        history1[1].timestamp - days_10_ago
     } else {
-        days_200_ago - history1[3].timestamp
+        days_10_ago - history1[1].timestamp
     };
 
     assert!(
         timestamp_diff < chrono::Duration::seconds(1),
-        "Oldest retained record timestamp should be close to 200 days ago. \
+        "Oldest retained record timestamp should be close to 10 days ago. \
          Expected: {}, Actual: {}, Diff: {:?}",
-        days_200_ago,
-        history1[3].timestamp,
+        days_10_ago,
+        history1[1].timestamp,
         timestamp_diff
     );
 
-    // 400日前のレコードは削除されているので、200日前のレコードより新しい
+    // 100日前以前のレコードは全て削除されている（90日超）
     assert!(
-        history1[3].timestamp > days_400_ago,
-        "Oldest retained record should be newer than 400 days ago (400 days old records should be deleted)"
+        history1[1].timestamp > days_100_ago,
+        "Oldest retained record should be newer than 100 days ago (90+ days old records should be deleted)"
     );
 
     // クリーンアップ
@@ -956,15 +956,19 @@ async fn test_cleanup_old_records() -> Result<()> {
         ),
     ];
 
-    // まず全件挿入（デフォルトのクリーンアップで全件残る）
+    // まず全件挿入（デフォルトの90日クリーンアップで90日以内のレコードが残る）
     let cfg = ConfigResolver;
     TokenRate::batch_insert(&recent_rates, &cfg).await?;
 
-    // 全件残っていることを確認
+    // 90日以内のレコード（50日前、20日前、5日前）が残っていることを確認
     let all_history =
         TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals(), &cfg)
             .await?;
-    assert_eq!(all_history.len(), 4, "Should have all 4 records initially");
+    assert_eq!(
+        all_history.len(),
+        3,
+        "Should have 3 records initially (within 90 days)"
+    );
 
     // 7. 30日でクリーンアップを実行
     TokenRate::cleanup_old_records(30).await?;
