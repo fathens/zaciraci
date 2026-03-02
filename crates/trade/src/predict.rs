@@ -94,15 +94,19 @@ impl PredictionService {
         let price_points: Vec<PricePoint> = rates
             .iter()
             .enumerate()
-            .map(|(i, rate)| {
+            .filter_map(|(i, rate)| {
                 let fallback_path = fallback_indices[i]
                     .and_then(|idx| rates.get(idx))
                     .and_then(|r| r.swap_path.as_ref());
-                PricePoint {
-                    timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                    price: rate.to_spot_rate_with_fallback(fallback_path).to_price(),
-                    volume: None,
+                let spot_rate = rate.to_spot_rate_with_fallback(fallback_path);
+                if spot_rate.is_effectively_zero() {
+                    return None;
                 }
+                Some(PricePoint {
+                    timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
+                    price: spot_rate.to_price(),
+                    volume: None,
+                })
             })
             .collect();
 
@@ -227,18 +231,22 @@ impl PredictionService {
                         prices: rates
                             .iter()
                             .enumerate()
-                            .map(|(i, r)| {
+                            .filter_map(|(i, r)| {
                                 let fallback_path = fallback_indices[i]
                                     .and_then(|idx| rates.get(idx))
                                     .and_then(|rate| rate.swap_path.as_ref());
-                                PricePoint {
+                                let spot_rate = r.to_spot_rate_with_fallback(fallback_path);
+                                if spot_rate.is_effectively_zero() {
+                                    return None;
+                                }
+                                Some(PricePoint {
                                     timestamp: DateTime::from_naive_utc_and_offset(
                                         r.timestamp,
                                         Utc,
                                     ),
-                                    price: r.to_spot_rate_with_fallback(fallback_path).to_price(),
+                                    price: spot_rate.to_price(),
                                     volume: None,
-                                }
+                                })
                             })
                             .collect(),
                     };
