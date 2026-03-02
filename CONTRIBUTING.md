@@ -5,7 +5,32 @@
 ### コードスタイル
 - `cargo fmt --all -- --check` でRustコードフォーマットをチェック
 - `cargo clippy --all-targets --all-features -- -D warnings` でlintをチェック（警告はエラーとして扱う）
+- `#[allow(clippy::...)]` による clippy 警告の抑制は禁止。警告が出た場合はコードを修正して根本対応すること
 - `cargo test` ですべてのテストが通ることを確認
+
+#### ドメイン型の使用
+
+##### 原則
+
+`String`, `BigDecimal`, `u128`, `f64` などのプリミティブ型を直接使う前に、`common::types`（`crates/common/src/types.rs` の re-export 一覧を参照）および `dex` クレートに意味のある専用型がないか確認すること。専用型が存在する場合は必ずそちらを使う。
+
+##### 探す場所
+
+- `crates/common/src/types.rs` — re-export 一覧（`TokenAccount`, `NearValue`, `ExchangeRate`, `TokenAmount` 等）
+- `crates/common/src/types/` 配下の各ファイル — 型の定義とドキュメント
+- `crates/dex/src/` — DEX ドメイン型（`PoolInfo`, `TokenPair`, `TokenPath` 等）
+
+##### 判断基準
+
+- 値に「単位」や「意味」があるなら専用型を使う（例: NEAR 金額、トークン ID、交換レート）
+- 関数シグネチャでは特に重要 — 引数や戻り値にプリミティブ型を使うと呼び出し元全体に波及する
+- コレクションのキーや要素にも適用（例: `BTreeMap<String, ...>` のキーがトークン ID なら `BTreeMap<TokenAccount, ...>` にする）
+
+##### persistence 層の扱い
+
+ドメイン型は Diesel の SQL カラム型トレイト（`FromSql`/`ToSql`）を実装していないため、Diesel モデル構造体の直接マッピングカラム（VARCHAR, NUMERIC 等）にはプリミティブ型を使う。ドメイン型との変換は persistence を呼び出す側で行う。
+
+ただし、JSONB カラムではドメイン型は全て Serde（`Serialize`/`Deserialize`）を実装しているため、`serde_json::to_value()` / `from_value()` 経由で直接使用できる。
 
 #### モジュール構成
 **モダンなRustコードスタイル**: `mod.rs`ファイルの使用を避け、ディレクトリ同名のファイルを使用する
@@ -58,16 +83,6 @@ src/
 **重要**: `println!` マクロの使用は禁止です。適切なログマクロを使用してください。
 - **例外**: テストコード（`#[cfg(test)]`モジュールや`tests.rs`ファイル）では、デバッグ出力として`println!`の使用を許可します。
 
-#### フロントエンド（frontend/）
-- `log` クレートを使用
-- インポート不要（グローバルに利用可能）
-- 使用例:
-  ```rust
-  log::debug!("デバッグ情報: {}", value);
-  log::info!("処理完了: データ正規化");
-  log::error!("エラー発生: {:?}", error);
-  ```
-
 #### バックエンド（backend/）
 - `slog` 構造化ログライブラリを使用
 - `use crate::logging::*;` でインポート
@@ -117,6 +132,106 @@ src/
 - `cargo test` でテストを実行
 - テストカバレッジを維持
 
+### テストコードの分離
+
+以下の **両方** を満たすファイルは、テストコードを別ファイルに分離する。
+
+1. テストコード（`#[cfg(test)] mod tests { ... }` ブロック）がファイル全体の **1/4 超**
+2. テストコードが **100 行超**
+
+#### 分離方法
+
+`foo.rs` を `foo.rs` + `foo/tests.rs` に分割する。`mod.rs` は使わない。
+
+**変更前:**
+
+```
+src/
+  foo.rs          # プロダクションコード + テスト
+```
+
+**変更後:**
+
+```
+src/
+  foo.rs          # プロダクションコード + #[cfg(test)] mod tests;
+  foo/
+    tests.rs      # テストモジュールの中身（mod tests { } の内側だけ）
+```
+
+**`foo.rs` の末尾:**
+
+```rust
+#[cfg(test)]
+mod tests;
+```
+
+**`foo/tests.rs`:**
+
+```rust
+use super::*;
+
+#[test]
+fn test_example() {
+    // ...
+}
+```
+
+#### 大規模テストファイルの分割
+
+テストファイル（`tests.rs` や `tests/` 配下のファイル）が **2000 行**を超える場合は、テストの関心事ごとにサブモジュールへ分割すること。
+
+**変更前:**
+
+```
+src/
+  foo.rs
+  foo/
+    tests.rs      # 2000 行超の大規模テストファイル
+```
+
+**変更後（サブモジュール名は一例）:**
+
+```
+src/
+  foo.rs
+  foo/
+    tests.rs      # pub use + mod 宣言のみ
+    tests/
+      helpers.rs
+      basic.rs
+      advanced.rs
+```
+
+**`tests.rs`（分割後）:**
+
+```rust
+pub use super::*;
+// テスト共通の use 宣言
+
+mod helpers;
+pub use helpers::*;
+
+mod basic;
+mod advanced;
+```
+
+**各サブモジュール:**
+
+```rust
+use super::*;
+
+#[test]
+fn test_example() {
+    // ...
+}
+```
+
+### コミット粒度
+- コミットは独立した変更ごとに分けること（1コミット = 1つの論理的変更）
+- 1つのコミットに複数の独立した変更を混ぜない
+- 例: 3つの独立したテスト追加 → 3つの個別コミット
+
 ### コミットメッセージ
 - 明確で説明的なコミットメッセージを使用
 - 可能であれば conventional commit 形式に従う
@@ -136,20 +251,26 @@ src/
 
 ## プロジェクトアーキテクチャ
 
-Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRust製のフルスタックWebアプリケーションです。
+Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRust製のアプリケーションです。
 
 ### ワークスペース構成
-- **backend**: Axum ベースのREST APIサーバー（NEAR ブロックチェーン連携、裁定取引計算、データベース操作）
-- **frontend**: Dioxus ベースのWebAssemblyフロントエンド（取引インターフェース、プール可視化、AI予測）
-- **common**: バックエンドとフロントエンドで共有される型、設定、ユーティリティ
-- **../zcrc-chronos**: Chronos時系列予測APIサーバー（フロントエンドから予測リクエストを受信）
+
+すべてのクレートは `crates/` ディレクトリ配下に配置する。新しいクレートを追加する場合も `crates/<クレート名>/` に作成し、ルートの `Cargo.toml` の `workspace.members` に登録すること。
+
+- **crates/backend**: バイナリオーケストレータ（main.rs のみ。各クレートを起動する）
+- **crates/common**: 共有される型、設定、ユーティリティ
+- **crates/dex**: DEX ドメイン型（PoolInfo、TokenPair、TokenPath 等）
+- **crates/logging**: slog 構造化ロギング
+- **crates/persistence**: DB接続・スキーマ・データアクセス（Diesel ORM / PostgreSQL）
+- **crates/blockchain**: NEAR ブロックチェーン連携（JSON-RPC、REF Finance、ウォレット）
+- **crates/trade**: ポートフォリオベース自動取引エンジン
+- **crates/arbitrage**: 裁定取引エンジン
 
 ### 主要コンポーネント
-- **裁定取引エンジン** (`backend/src/arbitrage.rs`, `backend/src/trade/`): 取引アルゴリズムとARIMA統計分析
-- **REF Finance連携** (`backend/src/ref_finance/`): NEAR DeFiプロトコル連携（プール分析、スワップ、残高管理）
-- **データベース層** (`backend/src/persistence/`): Diesel ORMを使用したPostgreSQL連携
-- **AI統合** (`backend/src/ollama/`, `frontend/src/ollama.rs`): ローカルLLMによる取引予測と分析
-- **Webインターフェース** (`backend/src/web/`, `frontend/src/`): REST APIとリアクティブWeb UI
+- **裁定取引エンジン** (`crates/arbitrage/`): 裁定取引アルゴリズム
+- **取引エンジン** (`crates/trade/`): ポートフォリオ戦略、ARIMA統計分析、予測精度評価
+- **REF Finance連携** (`crates/blockchain/src/ref_finance/`): NEAR DeFiプロトコル連携（プール分析、スワップ、残高管理）
+- **データベース層** (`crates/persistence/`): Diesel ORMを使用したPostgreSQL連携
 
 ## 開発環境セットアップ
 
@@ -164,16 +285,13 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 cd run_local
 ./run.sh
 
-# バックエンドは http://localhost:8080 で起動
-# フロントエンド開発は別途 trunk serve を使用
 ```
 
 ### 環境変数設定
 主要な環境変数（`run_local/docker-compose.yml`参照）:
-- `PG_DSN`: PostgreSQL接続文字列
+- `DATABASE_URL`: PostgreSQL接続文字列
 - `USE_MAINNET`: NEAR mainnet/testnet切り替え
 - `ROOT_MNEMONIC`, `ROOT_ACCOUNT_ID`: NEARウォレット設定
-- `OLLAMA_BASE_URL`, `OLLAMA_MODEL`: AIモデル設定
 - `RUST_LOG`: ログレベル設定
 
 ### データベース環境
@@ -196,25 +314,11 @@ cd run_test
 ./run.sh
 
 # テスト用データベースでテスト実行
-PG_DSN=postgres://postgres_test:postgres_test@localhost:5433/postgres_test cargo test -- --nocapture
+DATABASE_URL=postgres://postgres_test:postgres_test@localhost:5433/postgres_test cargo test -- --nocapture
 ```
-
-### フロントエンド開発
-フロントエンドはDioxusを使用したWebAssemblyアプリケーション:
-```bash
-cd frontend
-
-# 開発サーバー起動（ホットリロード有効）
-dx serve --package zaciraci-frontend --port 8088 --platform web
-
-# ビルド（リリース用）
-dx build --release
-```
-
-**注意**: このプロジェクトでは `dx` コマンドを使用します。`trunk` ではありません。
 
 ### データベースマイグレーション
 - データベーススキーマ変更にはDieselを使用
 - `diesel migration run` でマイグレーションを実行
 - `diesel migration generate <name>` で新しいマイグレーションを作成
-- スキーマは `src/persistence/schema.rs` で定義
+- スキーマは `crates/backend/src/persistence/schema.rs` で定義

@@ -1,0 +1,8 @@
+.*
+target
+run_local
+run_test
+diagram
+proptest-regressions
+cobertura.xml
+*.md

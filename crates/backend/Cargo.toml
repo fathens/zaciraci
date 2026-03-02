@@ -1,0 +1,15 @@
+[package]
+name = "backend"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+logging = { path = "../logging" }
+common = { path = "../common" }
+blockchain = { path = "../blockchain" }
+persistence = { path = "../persistence" }
+trade = { path = "../trade" }
+arbitrage = { path = "../arbitrage" }
+web = { path = "../web" }
+tokio = { workspace = true }
+slog = { workspace = true }

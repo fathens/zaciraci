@@ -1,0 +1,48 @@
+syntax = "proto3";
+package zaciraci.v1;
+
+service ConfigService {
+  rpc GetAll(GetAllConfigRequest) returns (GetAllConfigResponse);
+  rpc GetOne(GetOneConfigRequest) returns (GetOneConfigResponse);
+  rpc Upsert(UpsertConfigRequest) returns (UpsertConfigResponse);
+  rpc Delete(DeleteConfigRequest) returns (DeleteConfigResponse);
+}
+
+message ConfigEntry {
+  string key = 1;
+  string value = 2;
+  string instance_id = 3;
+}
+
+message GetAllConfigRequest {
+  string instance_id = 1;
+}
+
+message GetAllConfigResponse {
+  repeated ConfigEntry entries = 1;
+}
+
+message GetOneConfigRequest {
+  string instance_id = 1;
+  string key = 2;
+}
+
+message GetOneConfigResponse {
+  optional string value = 1;
+}
+
+message UpsertConfigRequest {
+  string instance_id = 1;
+  string key = 2;
+  string value = 3;
+  optional string description = 4;
+}
+
+message UpsertConfigResponse {}
+
+message DeleteConfigRequest {
+  string instance_id = 1;
+  string key = 2;
+}
+
+message DeleteConfigResponse {}

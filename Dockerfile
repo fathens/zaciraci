@@ -1,28 +1,29 @@
 FROM rust:1.91.0-bookworm AS base
 
-RUN cargo install sccache
-RUN cargo install cargo-chef
+RUN cargo install sccache cargo-chef
 
 ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
+
+# Build diesel_cli in an independent stage (unaffected by source changes)
+FROM base AS diesel-builder
+RUN apt-get update && apt-get install -y libpq-dev && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo install diesel_cli --no-default-features --features postgres
 
 FROM base AS planner
 WORKDIR /app
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY common common
-COPY backend backend
-COPY cli_tokens cli_tokens
+COPY crates crates
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo chef prepare --recipe-path recipe.json
 
 FROM base AS builder
-ARG CARGO_BUILD_ARGS
-ARG GIT_COMMIT_HASH=unknown
 
-ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
+RUN apt-get update && apt-get install -y protobuf-compiler && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -33,26 +34,28 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY common common
-COPY backend backend
-COPY cli_tokens cli_tokens
+COPY crates crates
 
-RUN cargo clean
+ARG GIT_COMMIT_HASH=unknown
+ENV GIT_COMMIT_HASH=$GIT_COMMIT_HASH
+
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
-    cargo build ${CARGO_BUILD_ARGS} -p zaciraci-backend
+    cargo build --release -p backend
 
-RUN cp target/*/zaciraci-backend main
+RUN cp target/release/backend main
 
 FROM debian:bookworm-slim
 WORKDIR /app
 
-RUN apt update && apt install -y openssl ca-certificates libpq5
+RUN apt-get update && apt-get install -y openssl ca-certificates libpq5 && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -ms /bin/bash app
 RUN chown -R app /app
 USER app
 
 COPY --from=builder /app/main /app/main
+COPY --from=diesel-builder /usr/local/cargo/bin/diesel /usr/local/bin/diesel
+COPY migrations /app/migrations
 
-ENTRYPOINT [ "/app/main" ]
+CMD [ "/app/main" ]
