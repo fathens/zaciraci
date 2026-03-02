@@ -275,8 +275,8 @@ async fn test_list_key_definitions_fields_non_empty() {
             def.key
         );
         assert!(
-            !def.type_name.is_empty(),
-            "type_name should not be empty for key: {}",
+            def.value_type != 0,
+            "value_type should not be UNSPECIFIED for key: {}",
             def.key
         );
     }

@@ -13,7 +13,6 @@ pub enum ConfigValueType {
     I64,
     F64,
     String,
-    RequiredString,
     Duration,
 }
 
@@ -28,7 +27,6 @@ impl ConfigValueType {
             Self::I64 => "i64",
             Self::F64 => "f64",
             Self::String => "string",
-            Self::RequiredString => "string(required)",
             Self::Duration => "duration",
         }
     }
@@ -45,14 +43,14 @@ impl std::fmt::Display for ConfigValueType {
 pub struct KeyDefinition {
     pub key: &'static str,
     pub description: &'static str,
-    pub type_name: &'static str,
+    pub value_type: ConfigValueType,
     pub default_value: &'static str,
 }
 
 pub struct ResolvedKeyInfo {
     pub key: std::string::String,
     pub description: std::string::String,
-    pub type_name: std::string::String,
+    pub value_type: ConfigValueType,
     pub resolved_value: std::string::String,
 }
 
@@ -154,7 +152,7 @@ impl ConfigResolve for Duration {
 
 impl ConfigResolve for anyhow::Result<String> {
     type Default = ();
-    const VALUE_TYPE: ConfigValueType = ConfigValueType::RequiredString;
+    const VALUE_TYPE: ConfigValueType = ConfigValueType::String;
     fn resolve(key: &str, _default: ()) -> Self {
         crate::config::store::get(key)
             .map_err(|_| anyhow::anyhow!("required config key not found: {}", key))
@@ -293,7 +291,7 @@ macro_rules! define_typed_config {
                 KeyDefinition {
                     key: $key,
                     description: concat!($($doc, "\n",)*),
-                    type_name: <$ty as ConfigResolve>::VALUE_TYPE.as_str(),
+                    value_type: <$ty as ConfigResolve>::VALUE_TYPE,
                     default_value: stringify!($default),
                 },
             )*
@@ -307,7 +305,7 @@ macro_rules! define_typed_config {
                         ResolvedKeyInfo {
                             key: $key.to_string(),
                             description: concat!($($doc, "\n",)*).trim().to_string(),
-                            type_name: <$ty as ConfigResolve>::VALUE_TYPE.as_str().to_string(),
+                            value_type: <$ty as ConfigResolve>::VALUE_TYPE,
                             resolved_value: <$ty as ConfigResolve>::display_string(value),
                         }
                     },

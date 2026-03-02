@@ -421,7 +421,6 @@ fn test_config_value_type_as_str() {
     assert_eq!(ConfigValueType::I64.as_str(), "i64");
     assert_eq!(ConfigValueType::F64.as_str(), "f64");
     assert_eq!(ConfigValueType::String.as_str(), "string");
-    assert_eq!(ConfigValueType::RequiredString.as_str(), "string(required)");
     assert_eq!(ConfigValueType::Duration.as_str(), "duration");
 }
 
@@ -429,10 +428,6 @@ fn test_config_value_type_as_str() {
 fn test_config_value_type_display() {
     assert_eq!(format!("{}", ConfigValueType::Bool), "bool");
     assert_eq!(format!("{}", ConfigValueType::String), "string");
-    assert_eq!(
-        format!("{}", ConfigValueType::RequiredString),
-        "string(required)"
-    );
     assert_eq!(format!("{}", ConfigValueType::Duration), "duration");
 }
 
@@ -544,7 +539,7 @@ fn test_value_type_duration() {
 fn test_value_type_result_string() {
     assert_eq!(
         <anyhow::Result<String> as ConfigResolve>::VALUE_TYPE,
-        ConfigValueType::RequiredString
+        ConfigValueType::String
     );
 }
 
@@ -566,8 +561,8 @@ fn test_key_definitions_fields_non_empty() {
             def.key
         );
         assert!(
-            !def.type_name.is_empty(),
-            "type_name should not be empty for key: {}",
+            !def.value_type.as_str().is_empty(),
+            "value_type should not be empty for key: {}",
             def.key
         );
         assert!(
@@ -597,7 +592,7 @@ fn test_key_definitions_trade_enabled_metadata() {
         .iter()
         .find(|d| d.key == "TRADE_ENABLED")
         .expect("TRADE_ENABLED should exist in KEY_DEFINITIONS");
-    assert_eq!(def.type_name, "bool");
+    assert_eq!(def.value_type, ConfigValueType::Bool);
     assert_eq!(def.default_value, "false");
     assert!(def.description.contains("trading"));
 }
@@ -623,8 +618,8 @@ fn test_resolve_all_without_db_fields_non_empty() {
             info.key
         );
         assert!(
-            !info.type_name.is_empty(),
-            "type_name should not be empty for key: {}",
+            !info.value_type.as_str().is_empty(),
+            "value_type should not be empty for key: {}",
             info.key
         );
         // resolved_value can be "(未設定)" for required keys
@@ -642,7 +637,7 @@ fn test_resolve_all_without_db_trade_enabled() {
         .iter()
         .find(|r| r.key == "TRADE_ENABLED")
         .expect("TRADE_ENABLED should exist in resolved list");
-    assert_eq!(info.type_name, "bool");
+    assert_eq!(info.value_type, ConfigValueType::Bool);
     assert_eq!(info.resolved_value, "false");
 }
 
@@ -712,6 +707,6 @@ fn test_resolve_all_without_db_harvest_account_id_unset() {
         .iter()
         .find(|r| r.key == "HARVEST_ACCOUNT_ID")
         .expect("HARVEST_ACCOUNT_ID should exist");
-    assert_eq!(info.type_name, "string(required)");
+    assert_eq!(info.value_type, ConfigValueType::String);
     assert_eq!(info.resolved_value, "(未設定)");
 }

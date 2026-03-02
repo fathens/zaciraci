@@ -48,10 +48,23 @@ message DeleteConfigRequest {
 
 message DeleteConfigResponse {}
 
+enum ConfigValueType {
+  CONFIG_VALUE_TYPE_UNSPECIFIED = 0;
+  CONFIG_VALUE_TYPE_BOOL = 1;
+  CONFIG_VALUE_TYPE_U16 = 2;
+  CONFIG_VALUE_TYPE_U32 = 3;
+  CONFIG_VALUE_TYPE_U64 = 4;
+  CONFIG_VALUE_TYPE_U128 = 5;
+  CONFIG_VALUE_TYPE_I64 = 6;
+  CONFIG_VALUE_TYPE_F64 = 7;
+  CONFIG_VALUE_TYPE_STRING = 8;
+  CONFIG_VALUE_TYPE_DURATION = 9;
+}
+
 message KeyDefinitionEntry {
   string key = 1;
   string description = 2;
-  string type_name = 3;
+  ConfigValueType value_type = 3;
   string resolved_value = 4;
 }
 

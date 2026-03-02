@@ -7,6 +7,23 @@ use crate::proto::{
 };
 use tonic::{Request, Response, Status};
 
+impl From<common::config::ConfigValueType> for crate::proto::ConfigValueType {
+    fn from(vt: common::config::ConfigValueType) -> Self {
+        use common::config::ConfigValueType as CVT;
+        match vt {
+            CVT::Bool => Self::Bool,
+            CVT::U16 => Self::U16,
+            CVT::U32 => Self::U32,
+            CVT::U64 => Self::U64,
+            CVT::U128 => Self::U128,
+            CVT::I64 => Self::I64,
+            CVT::F64 => Self::F64,
+            CVT::String => Self::String,
+            CVT::Duration => Self::Duration,
+        }
+    }
+}
+
 pub struct ConfigServiceImpl;
 
 impl ConfigServiceImpl {
@@ -112,7 +129,7 @@ impl ConfigService for ConfigServiceImpl {
             .map(|info| KeyDefinitionEntry {
                 key: info.key,
                 description: info.description.trim().to_string(),
-                type_name: info.type_name,
+                value_type: crate::proto::ConfigValueType::from(info.value_type).into(),
                 resolved_value: info.resolved_value,
             })
             .collect();
