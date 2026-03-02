@@ -24,7 +24,7 @@ services:
       args:
         - GIT_COMMIT_HASH=${GIT_COMMIT_HASH:-unknown}
     ports:
-      - "8080:8080"
+      - "50051:50051"
     volumes:
       - ../config:/app/config:ro
     environment:
