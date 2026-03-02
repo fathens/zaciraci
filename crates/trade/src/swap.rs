@@ -89,8 +89,8 @@ where
             match TokenRate::get_latest(&base_token, &quote_token, &get_decimals).await {
                 Ok(Some(rate)) => {
                     let spot = rate.to_spot_rate();
-                    if spot.is_zero() {
-                        warn!(log, "Rate is zero for token"; "token" => %token);
+                    if spot.is_effectively_zero() {
+                        warn!(log, "Rate is effectively zero for token"; "token" => %token);
                     } else {
                         let token_value = amount / &spot;
                         total_value = total_value + token_value;
