@@ -486,10 +486,8 @@ fn test_display_string_result_err() {
 
 #[test]
 fn test_key_definitions_count() {
-    assert!(
-        !KEY_DEFINITIONS.is_empty(),
-        "KEY_DEFINITIONS should not be empty"
-    );
+    // define_typed_config! に定義されたキーの数と一致すること
+    assert_eq!(KEY_DEFINITIONS.len(), 42);
 }
 
 #[test]

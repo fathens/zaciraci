@@ -3,8 +3,8 @@ pub mod store;
 mod typed;
 
 pub use typed::{
-    ConfigAccess, ConfigResolver, ConfigValueType, KeyDefinition, MockConfig, ResolvedKeyInfo,
-    KEY_DEFINITIONS, resolve_all_without_db, typed,
+    ConfigAccess, ConfigResolver, ConfigValueType, KEY_DEFINITIONS, KeyDefinition, MockConfig,
+    ResolvedKeyInfo, resolve_all_without_db, typed,
 };
 
 #[cfg(test)]
