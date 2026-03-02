@@ -409,6 +409,79 @@ fn test_trade_price_history_days_default() {
     assert_eq!(typed().trade_price_history_days(), 30);
 }
 
+// ── ConfigValueType tests ──
+
+#[test]
+fn test_config_value_type_as_str() {
+    assert_eq!(ConfigValueType::Bool.as_str(), "bool");
+    assert_eq!(ConfigValueType::U16.as_str(), "u16");
+    assert_eq!(ConfigValueType::U32.as_str(), "u32");
+    assert_eq!(ConfigValueType::U64.as_str(), "u64");
+    assert_eq!(ConfigValueType::U128.as_str(), "u128");
+    assert_eq!(ConfigValueType::I64.as_str(), "i64");
+    assert_eq!(ConfigValueType::F64.as_str(), "f64");
+    assert_eq!(ConfigValueType::String.as_str(), "string");
+    assert_eq!(ConfigValueType::RequiredString.as_str(), "string(required)");
+    assert_eq!(ConfigValueType::Duration.as_str(), "duration");
+}
+
+#[test]
+fn test_config_value_type_display() {
+    assert_eq!(format!("{}", ConfigValueType::Bool), "bool");
+    assert_eq!(format!("{}", ConfigValueType::String), "string");
+    assert_eq!(
+        format!("{}", ConfigValueType::RequiredString),
+        "string(required)"
+    );
+    assert_eq!(format!("{}", ConfigValueType::Duration), "duration");
+}
+
+// ── display_string tests ──
+
+#[test]
+fn test_display_string_bool() {
+    assert_eq!(<bool as ConfigResolve>::display_string(true), "true");
+    assert_eq!(<bool as ConfigResolve>::display_string(false), "false");
+}
+
+#[test]
+fn test_display_string_u32() {
+    assert_eq!(<u32 as ConfigResolve>::display_string(42), "42");
+}
+
+#[test]
+fn test_display_string_string() {
+    assert_eq!(
+        <String as ConfigResolve>::display_string("hello".to_string()),
+        "hello"
+    );
+}
+
+#[test]
+fn test_display_string_duration() {
+    let d = Duration::from_secs(5);
+    let s = <Duration as ConfigResolve>::display_string(d);
+    assert_eq!(s, "5s");
+}
+
+#[test]
+fn test_display_string_result_ok() {
+    let v: anyhow::Result<String> = Ok("value".to_string());
+    assert_eq!(
+        <anyhow::Result<String> as ConfigResolve>::display_string(v),
+        "value"
+    );
+}
+
+#[test]
+fn test_display_string_result_err() {
+    let v: anyhow::Result<String> = Err(anyhow::anyhow!("not found"));
+    assert_eq!(
+        <anyhow::Result<String> as ConfigResolve>::display_string(v),
+        "(未設定)"
+    );
+}
+
 // ── KEY_DEFINITIONS tests ──
 
 #[test]

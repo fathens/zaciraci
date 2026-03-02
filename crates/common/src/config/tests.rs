@@ -338,3 +338,66 @@ fn test_env_guard_remove_noop_when_no_previous() {
     // guard drop → 何もしない（元から無かった）
     assert!(std::env::var(KEY).is_err());
 }
+
+// =========================================================================
+// get_excluding_db のユニットテスト
+// =========================================================================
+
+#[test]
+#[serial]
+fn test_get_excluding_db_returns_err_when_nothing_set() {
+    const KEY: &str = "TEST_EXCL_DB_NOTHING";
+    let _env = EnvGuard::remove(KEY);
+    remove(KEY);
+    assert!(get_excluding_db(KEY).is_err());
+}
+
+#[test]
+#[serial]
+fn test_get_excluding_db_returns_env_var() {
+    const KEY: &str = "TEST_EXCL_DB_ENV";
+    let _env = EnvGuard::set(KEY, "from_env");
+    remove(KEY);
+    assert_eq!(get_excluding_db(KEY).unwrap(), "from_env");
+}
+
+#[test]
+#[serial]
+fn test_get_excluding_db_config_store_overrides_env() {
+    const KEY: &str = "TEST_EXCL_DB_STORE";
+    let _env = EnvGuard::set(KEY, "from_env");
+    let _config = ConfigGuard::new(KEY, "from_store");
+    assert_eq!(get_excluding_db(KEY).unwrap(), "from_store");
+}
+
+#[test]
+#[serial]
+fn test_get_excluding_db_skips_db_store() {
+    const KEY: &str = "TEST_EXCL_DB_SKIP";
+    let _db_guard = DbStoreGuard::new();
+    let _env = EnvGuard::remove(KEY);
+    remove(KEY);
+
+    load_db_config(HashMap::from([(KEY.to_string(), "from_db".to_string())]));
+
+    // get() は DB_STORE の値を返す
+    assert_eq!(get(KEY).unwrap(), "from_db");
+    // get_excluding_db() は DB_STORE をスキップするので Err
+    assert!(get_excluding_db(KEY).is_err());
+}
+
+#[test]
+#[serial]
+fn test_get_excluding_db_skips_db_falls_through_to_env() {
+    const KEY: &str = "TEST_EXCL_DB_FALLTHROUGH";
+    let _db_guard = DbStoreGuard::new();
+    let _env = EnvGuard::set(KEY, "from_env");
+    remove(KEY);
+
+    load_db_config(HashMap::from([(KEY.to_string(), "from_db".to_string())]));
+
+    // get() は DB_STORE の値（優先度が高い）を返す
+    assert_eq!(get(KEY).unwrap(), "from_db");
+    // get_excluding_db() は DB_STORE をスキップして env を返す
+    assert_eq!(get_excluding_db(KEY).unwrap(), "from_env");
+}
