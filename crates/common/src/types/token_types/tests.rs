@@ -449,6 +449,38 @@ fn test_wnear_rate_with_decimals() {
 }
 
 // =============================================================================
+// ExchangeRate::is_effectively_zero テスト
+// =============================================================================
+
+#[test]
+fn test_is_effectively_zero_decimals_0_small_rate() {
+    // decimals=0, raw_rate=0.5 → 1 NEAR で 0.5 token (取引不能)
+    let rate = ExchangeRate::from_raw_rate(BigDecimal::from_str("0.5").unwrap(), 0);
+    assert!(rate.is_effectively_zero());
+}
+
+#[test]
+fn test_is_effectively_zero_zero_rate() {
+    // raw_rate=0 → 明らかに取引不能
+    let rate = ExchangeRate::from_raw_rate(BigDecimal::zero(), 0);
+    assert!(rate.is_effectively_zero());
+}
+
+#[test]
+fn test_is_effectively_zero_boundary_one() {
+    // raw_rate=1, decimals=0 → 1 NEAR で 1 token (取引可能)
+    let rate = ExchangeRate::from_raw_rate(BigDecimal::from(1), 0);
+    assert!(!rate.is_effectively_zero());
+}
+
+#[test]
+fn test_is_effectively_zero_normal_token() {
+    // USDT: raw_rate=5_000_000, decimals=6 → 通常トークン
+    let rate = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
+    assert!(!rate.is_effectively_zero());
+}
+
+// =============================================================================
 // TokenAmount / NearAmount → ExchangeRate テスト
 // =============================================================================
 

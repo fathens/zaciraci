@@ -123,6 +123,13 @@ impl ExchangeRate {
         self.raw_rate.is_zero()
     }
 
+    /// レートが実質的にゼロか判定
+    ///
+    /// raw_rate < 1 の場合、1 NEAR で 1 smallest_unit 未満しか得られず取引不能。
+    pub fn is_effectively_zero(&self) -> bool {
+        self.raw_rate < 1
+    }
+
     /// wNEAR (wrap.near) の ExchangeRate を取得
     ///
     /// wNEAR は 1:1 で NEAR と交換可能なため、固定レート。
