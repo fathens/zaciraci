@@ -243,3 +243,59 @@ async fn test_empty_instance_id_defaults_to_global() {
 
     cleanup(&key).await;
 }
+
+#[tokio::test]
+#[serial]
+async fn test_list_key_definitions_returns_entries() {
+    let svc = ConfigServiceImpl;
+    let response = svc
+        .list_key_definitions(Request::new(ListKeyDefinitionsRequest {}))
+        .await
+        .unwrap();
+    let definitions = response.into_inner().definitions;
+    assert!(
+        !definitions.is_empty(),
+        "ListKeyDefinitions should return entries"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_list_key_definitions_fields_non_empty() {
+    let svc = ConfigServiceImpl;
+    let response = svc
+        .list_key_definitions(Request::new(ListKeyDefinitionsRequest {}))
+        .await
+        .unwrap();
+    for def in &response.into_inner().definitions {
+        assert!(!def.key.is_empty(), "key should not be empty");
+        assert!(
+            !def.description.is_empty(),
+            "description should not be empty for key: {}",
+            def.key
+        );
+        assert!(
+            !def.type_name.is_empty(),
+            "type_name should not be empty for key: {}",
+            def.key
+        );
+    }
+}
+
+#[tokio::test]
+#[serial]
+async fn test_list_key_definitions_description_trimmed() {
+    let svc = ConfigServiceImpl;
+    let response = svc
+        .list_key_definitions(Request::new(ListKeyDefinitionsRequest {}))
+        .await
+        .unwrap();
+    for def in &response.into_inner().definitions {
+        assert_eq!(
+            def.description,
+            def.description.trim(),
+            "description should be trimmed for key: {}",
+            def.key
+        );
+    }
+}

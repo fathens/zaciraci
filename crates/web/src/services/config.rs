@@ -1,7 +1,8 @@
 use crate::proto::config_service_server::ConfigService;
 use crate::proto::{
     ConfigEntry, DeleteConfigRequest, DeleteConfigResponse, GetAllConfigRequest,
-    GetAllConfigResponse, GetOneConfigRequest, GetOneConfigResponse, UpsertConfigRequest,
+    GetAllConfigResponse, GetOneConfigRequest, GetOneConfigResponse, KeyDefinitionEntry,
+    ListKeyDefinitionsRequest, ListKeyDefinitionsResponse, UpsertConfigRequest,
     UpsertConfigResponse,
 };
 use tonic::{Request, Response, Status};
@@ -99,6 +100,23 @@ impl ConfigService for ConfigServiceImpl {
             .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
 
         Ok(Response::new(DeleteConfigResponse {}))
+    }
+
+    async fn list_key_definitions(
+        &self,
+        _request: Request<ListKeyDefinitionsRequest>,
+    ) -> Result<Response<ListKeyDefinitionsResponse>, Status> {
+        let resolved = common::config::resolve_all_without_db();
+        let definitions = resolved
+            .into_iter()
+            .map(|info| KeyDefinitionEntry {
+                key: info.key,
+                description: info.description.trim().to_string(),
+                type_name: info.type_name,
+                resolved_value: info.resolved_value,
+            })
+            .collect();
+        Ok(Response::new(ListKeyDefinitionsResponse { definitions }))
     }
 }
 

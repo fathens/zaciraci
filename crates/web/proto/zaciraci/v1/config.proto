@@ -6,6 +6,7 @@ service ConfigService {
   rpc GetOne(GetOneConfigRequest) returns (GetOneConfigResponse);
   rpc Upsert(UpsertConfigRequest) returns (UpsertConfigResponse);
   rpc Delete(DeleteConfigRequest) returns (DeleteConfigResponse);
+  rpc ListKeyDefinitions(ListKeyDefinitionsRequest) returns (ListKeyDefinitionsResponse);
 }
 
 message ConfigEntry {
@@ -46,3 +47,16 @@ message DeleteConfigRequest {
 }
 
 message DeleteConfigResponse {}
+
+message KeyDefinitionEntry {
+  string key = 1;
+  string description = 2;
+  string type_name = 3;
+  string resolved_value = 4;
+}
+
+message ListKeyDefinitionsRequest {}
+
+message ListKeyDefinitionsResponse {
+  repeated KeyDefinitionEntry definitions = 1;
+}
