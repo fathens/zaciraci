@@ -372,6 +372,15 @@ fn test_get_excluding_db_config_store_overrides_env() {
 
 #[test]
 #[serial]
+fn test_get_excluding_db_empty_config_store_returns_err() {
+    const KEY: &str = "TEST_EXCL_DB_EMPTY_STORE";
+    let _env = EnvGuard::remove(KEY);
+    let _config = ConfigGuard::new(KEY, "");
+    assert!(get_excluding_db(KEY).is_err());
+}
+
+#[test]
+#[serial]
 fn test_get_excluding_db_skips_db_store() {
     const KEY: &str = "TEST_EXCL_DB_SKIP";
     let _db_guard = DbStoreGuard::new();

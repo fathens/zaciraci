@@ -482,6 +482,72 @@ fn test_display_string_result_err() {
     );
 }
 
+// ── ConfigResolve::VALUE_TYPE tests ──
+
+#[test]
+fn test_value_type_bool() {
+    assert_eq!(<bool as ConfigResolve>::VALUE_TYPE, ConfigValueType::Bool);
+}
+
+#[test]
+fn test_value_type_u16() {
+    assert_eq!(<u16 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U16);
+}
+
+#[test]
+fn test_value_type_u32() {
+    assert_eq!(<u32 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U32);
+}
+
+#[test]
+fn test_value_type_u64() {
+    assert_eq!(<u64 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U64);
+}
+
+#[test]
+fn test_value_type_u128() {
+    assert_eq!(<u128 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U128);
+}
+
+#[test]
+fn test_value_type_usize_maps_to_u64() {
+    assert_eq!(<usize as ConfigResolve>::VALUE_TYPE, ConfigValueType::U64);
+}
+
+#[test]
+fn test_value_type_i64() {
+    assert_eq!(<i64 as ConfigResolve>::VALUE_TYPE, ConfigValueType::I64);
+}
+
+#[test]
+fn test_value_type_f64() {
+    assert_eq!(<f64 as ConfigResolve>::VALUE_TYPE, ConfigValueType::F64);
+}
+
+#[test]
+fn test_value_type_string() {
+    assert_eq!(
+        <String as ConfigResolve>::VALUE_TYPE,
+        ConfigValueType::String
+    );
+}
+
+#[test]
+fn test_value_type_duration() {
+    assert_eq!(
+        <Duration as ConfigResolve>::VALUE_TYPE,
+        ConfigValueType::Duration
+    );
+}
+
+#[test]
+fn test_value_type_result_string() {
+    assert_eq!(
+        <anyhow::Result<String> as ConfigResolve>::VALUE_TYPE,
+        ConfigValueType::RequiredString
+    );
+}
+
 // ── KEY_DEFINITIONS tests ──
 
 #[test]
@@ -603,6 +669,36 @@ fn test_resolve_all_without_db_excludes_db() {
         .expect("TRADE_ENABLED should exist");
     // DB の値は無視され、デフォルトの false が返る
     assert_eq!(info.resolved_value, "false");
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_env_override() {
+    // 環境変数で設定した値が resolve_all_without_db に反映されること
+    let _env = EnvGuard::set("TRADE_ENABLED", "true");
+    crate::config::store::remove("TRADE_ENABLED");
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist");
+    assert_eq!(info.resolved_value, "true");
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_description_trimmed() {
+    // description に前後の空白がないこと
+    let resolved = resolve_all_without_db();
+    for info in &resolved {
+        assert_eq!(
+            info.description,
+            info.description.trim(),
+            "description should be trimmed for key: {}",
+            info.key
+        );
+    }
 }
 
 #[test]
