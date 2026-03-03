@@ -34,16 +34,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    portfolio_holdings (id) {
-        id -> Int4,
-        evaluation_period_id -> Varchar,
-        timestamp -> Timestamp,
-        token_holdings -> Jsonb,
-        created_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     pool_info (id) {
         id -> Int4,
         pool_id -> Int4,
@@ -54,6 +44,16 @@ diesel::table! {
         shares_total_supply -> Jsonb,
         amp -> Int8,
         timestamp -> Timestamp,
+    }
+}
+
+diesel::table! {
+    portfolio_holdings (id) {
+        id -> Int4,
+        evaluation_period_id -> Varchar,
+        timestamp -> Timestamp,
+        token_holdings -> Jsonb,
+        created_at -> Timestamp,
     }
 }
 
