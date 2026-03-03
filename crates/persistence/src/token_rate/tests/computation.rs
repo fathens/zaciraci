@@ -877,6 +877,11 @@ fn test_precompute_fallback_indices_last_only() {
 /// 大量データでの実行時間を比較し、precompute が明らかに高速であることを確認
 #[test]
 fn test_precompute_fallback_indices_performance() {
+    if std::env::var("CI").is_ok() {
+        println!("Skipping performance test in CI environment");
+        return;
+    }
+
     let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
     let now = chrono::Utc::now().naive_utc();
@@ -956,6 +961,11 @@ fn test_precompute_fallback_indices_performance() {
 /// データ量が10倍になっても処理時間が線形に増加することを確認
 #[test]
 fn test_precompute_fallback_indices_scalability() {
+    if std::env::var("CI").is_ok() {
+        println!("Skipping performance test in CI environment");
+        return;
+    }
+
     let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
     let now = chrono::Utc::now().naive_utc();

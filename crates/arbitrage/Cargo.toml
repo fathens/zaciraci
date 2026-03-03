@@ -11,7 +11,6 @@ persistence = { path = "../persistence" }
 blockchain = { path = "../blockchain" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
-once_cell = { workspace = true }
 humantime = { workspace = true }
 slog = { workspace = true }
 near-sdk = { version = "5.24", features = ["non-contract-usage"] }

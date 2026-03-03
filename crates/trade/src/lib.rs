@@ -27,26 +27,6 @@ use persistence::token_rate::TokenRate;
 use std::future::Future;
 use std::sync::Arc;
 
-/// token_rate の backfill 用 decimals 取得コールバックを返す。
-///
-/// persistence クレートの TokenRate メソッド（get_latest, get_rates_in_time_range 等）に渡す。
-/// RPC client を使わず、キャッシュ + RPC のフォールバックで decimals を取得する。
-pub fn make_get_decimals()
--> impl Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<u8>> + Send + '_>>
-+ Send
-+ Sync {
-    |token: &str| {
-        let token = token.to_string();
-        Box::pin(async move {
-            let token_account: common::types::TokenAccount = token
-                .parse()
-                .map_err(|e| anyhow::anyhow!("Invalid token account: {}", e))?;
-            let client = blockchain::jsonrpc::new_client();
-            token_cache::get_token_decimals_cached(&client, &token_account).await
-        })
-    }
-}
-
 pub async fn run(cfg: ConfigResolver) {
     // DB からトークン decimals キャッシュを初期化
     if let Err(e) = token_cache::load_from_db().await {

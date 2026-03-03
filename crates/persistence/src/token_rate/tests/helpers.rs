@@ -44,11 +44,6 @@ pub fn make_token_rate_str(
     }
 }
 
-/// テスト用ヘルパー: decimals 取得コールバック（テストデータは常に decimals=24 で挿入するため backfill は発生しない）
-pub fn test_get_decimals() -> &'static GetDecimalsFn {
-    &|_token: &str| Box::pin(async move { Ok(24u8) })
-}
-
 // TokenRateインスタンス比較用マクロ
 macro_rules! assert_token_rate_eq {
     ($left:expr, $right:expr, $message:expr) => {{

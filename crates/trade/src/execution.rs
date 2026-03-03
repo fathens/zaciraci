@@ -308,18 +308,20 @@ where
                         let token_out: TokenOutAccount = token_account.clone().into();
                         let quote_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
-                        let get_decimals = crate::make_get_decimals();
-                        let rate = persistence::token_rate::TokenRate::get_latest(
-                            &token_out,
-                            &quote_in,
-                            &get_decimals,
-                        )
-                        .await?
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("No rate found for token: {}", token_account)
-                        })?;
+                        let rate =
+                            persistence::token_rate::TokenRate::get_latest(&token_out, &quote_in)
+                                .await?
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("No rate found for token: {}", token_account)
+                                })?;
 
-                        Some(rate.to_spot_rate())
+                        let spot = rate.to_spot_rate();
+                        if spot.is_effectively_zero() {
+                            warn!(log, "rate too small for rebalance"; "token" => %token_account);
+                            None
+                        } else {
+                            Some(spot)
+                        }
                     }
                     _ => None,
                 };
@@ -370,12 +372,6 @@ where
             for (token, wrap_near_value, exchange_rate) in sell_operations {
                 // wrap.near価値をトークン数量に変換
                 // NearValue * ExchangeRate = TokenAmount
-                // NOTE: 理論上、decimals が非常に小さく高価なトークン（例: decimals=0, 価格 > 1 NEAR/token）の場合、
-                // smallest_units < 1 となり to_bigint() でゼロに切り捨てられる可能性がある。
-                // ただし、NEAR エコシステムの標準は decimals=18〜24 であり、
-                // REF Finance で取引可能なトークンは実質的に全て decimals≥6 のため、
-                // このケースは発生しない。
-                // 参考: test_small_rate_scaling_issue (execution/tests.rs:413)
                 let token_amount: TokenAmount = &wrap_near_value * &exchange_rate;
                 let token_amount_u128 = token_amount
                     .smallest_units()
@@ -384,6 +380,12 @@ where
                     .to_string()
                     .parse::<u128>()
                     .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
+
+                if token_amount_u128 == 0 {
+                    warn!(log, "token amount truncated to zero, skipping sell";
+                        "token" => %token);
+                    continue;
+                }
 
                 trace!(log, "selling token";
                     "token" => %token,

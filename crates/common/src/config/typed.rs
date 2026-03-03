@@ -491,7 +491,7 @@ define_typed_config! {
     /// Retention period for token rate records in days
     fn token_rates_retention_days() -> u32 {
         key: "TOKEN_RATES_RETENTION_DAYS",
-        default: 365
+        default: 90
     }
 
     /// Max sleep duration in cron loop in seconds

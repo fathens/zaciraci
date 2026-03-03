@@ -20,7 +20,7 @@ pub trait RateProvider: Send + Sync {
 }
 
 /// Production RateProvider that queries the database via TokenRate
-/// and retrieves decimals via trade::make_get_decimals().
+/// and retrieves decimals via trade::token_cache.
 pub struct DbRateProvider;
 
 impl RateProvider for DbRateProvider {
@@ -30,14 +30,15 @@ impl RateProvider for DbRateProvider {
         sim_day: DateTime<Utc>,
     ) -> Option<ExchangeRate> {
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-        let get_decimals_fn = trade::make_get_decimals();
-        let cfg = common::config::ConfigResolver;
-        get_rate_at_date(token, &wnear_in, sim_day, &get_decimals_fn, &cfg).await
+        get_rate_at_date(token, &wnear_in, sim_day).await
     }
 
     async fn get_decimals(&self, token_id: &str) -> u8 {
-        let get_decimals_fn = trade::make_get_decimals();
-        get_decimals_fn(token_id).await.unwrap_or(24)
+        let token_account: common::types::TokenAccount = match token_id.parse() {
+            Ok(t) => t,
+            Err(_) => return 24,
+        };
+        trade::token_cache::get_cached_decimals(&token_account).unwrap_or(24)
     }
 }
 
@@ -359,18 +360,8 @@ pub(crate) async fn get_rate_at_date(
     token_out: &TokenOutAccount,
     wnear_in: &common::types::TokenInAccount,
     sim_day: DateTime<Utc>,
-    get_decimals: &persistence::token_rate::GetDecimalsFn,
-    cfg: &impl common::config::ConfigAccess,
 ) -> Option<ExchangeRate> {
-    get_rate_at_date_with_lookback(
-        token_out,
-        wnear_in,
-        sim_day,
-        get_decimals,
-        DEFAULT_RATE_LOOKBACK_HOURS,
-        cfg,
-    )
-    .await
+    get_rate_at_date_with_lookback(token_out, wnear_in, sim_day, DEFAULT_RATE_LOOKBACK_HOURS).await
 }
 
 /// Like [`get_rate_at_date`], but with a configurable lookback window.
@@ -378,16 +369,14 @@ pub(crate) async fn get_rate_at_date_with_lookback(
     token_out: &TokenOutAccount,
     wnear_in: &common::types::TokenInAccount,
     sim_day: DateTime<Utc>,
-    get_decimals: &persistence::token_rate::GetDecimalsFn,
     lookback_hours: i64,
-    cfg: &impl common::config::ConfigAccess,
 ) -> Option<ExchangeRate> {
     let range = common::types::TimeRange {
         start: (sim_day - chrono::Duration::hours(lookback_hours)).naive_utc(),
         end: sim_day.naive_utc(),
     };
 
-    match TokenRate::get_rates_in_time_range(&range, token_out, wnear_in, get_decimals, cfg).await {
+    match TokenRate::get_rates_in_time_range(&range, token_out, wnear_in).await {
         Ok(rates) if !rates.is_empty() => {
             // Return the last (most recent) rate, corrected to spot rate
             TokenRate::latest_spot_rate(&rates)
