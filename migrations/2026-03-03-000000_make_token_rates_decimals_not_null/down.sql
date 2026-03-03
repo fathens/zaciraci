@@ -1,0 +1,1 @@
+ALTER TABLE token_rates ALTER COLUMN decimals DROP NOT NULL;
