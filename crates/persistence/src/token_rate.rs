@@ -8,10 +8,9 @@ use common::config::ConfigAccess;
 use common::types::TimeRange;
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount};
 use diesel::prelude::*;
-use futures::stream::{self, StreamExt};
 use logging::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 /// token decimals を非同期取得するコールバック型
@@ -52,7 +51,7 @@ struct DbTokenRate {
     pub quote_token: String,
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
-    pub decimals: Option<i16>,
+    pub decimals: i16,
     pub rate_calc_near: i64,
     pub swap_path: Option<serde_json::Value>,
 }
@@ -65,7 +64,7 @@ struct NewDbTokenRate {
     pub quote_token: String,
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
-    pub decimals: Option<i16>,
+    pub decimals: i16,
     pub rate_calc_near: i64,
     pub swap_path: Option<serde_json::Value>,
 }
@@ -84,7 +83,7 @@ impl NewDbTokenRate {
             base_token: base.to_string(),
             quote_token: quote.to_string(),
             rate: exchange_rate.raw_rate().clone(),
-            decimals: Some(exchange_rate.decimals() as i16),
+            decimals: exchange_rate.decimals() as i16,
             timestamp,
             rate_calc_near,
             swap_path: swap_path.and_then(|p| serde_json::to_value(p).ok()),
@@ -162,101 +161,25 @@ impl TokenRate {
     /// 単一の DB レコードを変換し、NULL decimals があれば get_decimals で取得して backfill
     async fn from_db_with_backfill(
         db_rate: DbTokenRate,
-        get_decimals: &GetDecimalsFn,
+        _get_decimals: &GetDecimalsFn,
     ) -> Result<Self> {
-        let decimals = match db_rate.decimals {
-            Some(d) => d as u8,
-            None => {
-                let log = DEFAULT.new(o!(
-                    "function" => "from_db_with_backfill",
-                    "base_token" => db_rate.base_token.clone(),
-                ));
-                trace!(log, "backfilling decimals for token with NULL");
-
-                let decimals = get_decimals(&db_rate.base_token).await?;
-                Self::backfill_decimals(&db_rate.base_token, decimals).await?;
-                decimals
-            }
-        };
+        let decimals = db_rate.decimals as u8;
         Self::from_db_with_decimals(db_rate, decimals)
     }
 
     /// 複数の DB レコードを変換し、NULL decimals があれば get_decimals で取得して backfill
-    ///
-    /// 1. NULL decimals を持つトークンを特定
-    /// 2. get_decimals で decimals を取得して DB を backfill
-    /// 3. 正しい decimals で全レコードを変換
     async fn from_db_results_with_backfill(
         results: Vec<DbTokenRate>,
-        get_decimals: &GetDecimalsFn,
-        cfg: &impl ConfigAccess,
+        _get_decimals: &GetDecimalsFn,
+        _cfg: &impl ConfigAccess,
     ) -> Result<Vec<Self>> {
-        let log = DEFAULT.new(o!(
-            "function" => "from_db_results_with_backfill",
-        ));
-
-        // NULL decimals を持つトークンを特定
-        let tokens_with_null: HashSet<String> = results
-            .iter()
-            .filter(|r| r.decimals.is_none())
-            .map(|r| r.base_token.clone())
-            .collect();
-
-        // get_decimals で decimals を並行取得して backfill
-        let mut decimals_map: HashMap<String, u8> = HashMap::new();
-        if !tokens_with_null.is_empty() {
-            trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
-
-            // 並行実行数（設定から取得、デフォルト4）
-            let concurrency = cfg.trade_prediction_concurrency() as usize;
-
-            // 全トークンの decimals を並行取得
-            let fetch_results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())
-                .map(|token| {
-                    let log = log.clone();
-                    async move {
-                        match get_decimals(&token).await {
-                            Ok(decimals) => {
-                                // backfill は並行で実行
-                                if let Err(e) = Self::backfill_decimals(&token, decimals).await {
-                                    warn!(log, "failed to backfill decimals"; "token" => &token, "error" => %e);
-                                }
-                                Some((token, decimals))
-                            }
-                            Err(e) => {
-                                warn!(log, "failed to fetch decimals for backfill"; "token" => &token, "error" => %e);
-                                None
-                            }
-                        }
-                    }
-                })
-                .buffer_unordered(concurrency)
-                .collect()
-                .await;
-
-            // 結果を decimals_map に収集
-            for result in fetch_results.into_iter().flatten() {
-                decimals_map.insert(result.0, result.1);
-            }
-        }
-
-        // 正しい decimals で変換
-        let mut rates = Vec::with_capacity(results.len());
-        for db_rate in results {
-            let decimals = match db_rate.decimals {
-                Some(d) => d as u8,
-                None => match decimals_map.get(&db_rate.base_token) {
-                    Some(&d) => d,
-                    None => {
-                        warn!(log, "skipping rate: decimals unknown after backfill"; "token" => &db_rate.base_token);
-                        continue;
-                    }
-                },
-            };
-            rates.push(Self::from_db_with_decimals(db_rate, decimals)?);
-        }
-
-        Ok(rates)
+        results
+            .into_iter()
+            .map(|db_rate| {
+                let decimals = db_rate.decimals as u8;
+                Self::from_db_with_decimals(db_rate, decimals)
+            })
+            .collect()
     }
 
     /// 指定トークンの全レコードに decimals を設定
@@ -725,7 +648,6 @@ pub async fn get_all_decimals() -> Result<HashMap<TokenAccount, u8>> {
             diesel::sql_query(
                 "SELECT DISTINCT ON (base_token) base_token, decimals \
                  FROM token_rates \
-                 WHERE decimals IS NOT NULL \
                  ORDER BY base_token, timestamp DESC",
             )
             .load::<TokenDecimalsRow>(conn)
