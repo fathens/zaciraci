@@ -516,14 +516,33 @@ impl TokenRate {
     /// swap_path が None の場合、提供された fallback_path を使用して補正。
     /// swap_path も fallback_path もない場合は補正なしで元のレートを返す。
     ///
-    /// 補正式（マルチホップ）:
-    /// ```text
-    /// correction = Π(1 + Δx_i / x_i)
+    /// # AMM プライスインパクト補正モデル
     ///
-    /// where:
-    ///   Δx_0 = rate_calc_near (yocto 変換後)
-    ///   Δx_{i+1} = Δx_i × (amount_out_i / amount_in_i)
+    /// AMM（自動マーケットメーカー）では、スワップ量が大きいほど実効レートが
+    /// スポットレート（無限小取引量での理論レート）から乖離する（プライスインパクト）。
+    /// この補正は、実測のスワップレートからプライスインパクトを除去して
+    /// スポットレートを推定する。
+    ///
+    /// ## 補正式（マルチホップ）
+    ///
+    /// ```text
+    /// spot_rate = exchange_rate × correction
+    ///
+    /// correction = Π_i (1 + Δx_i / x_i)
     /// ```
+    ///
+    /// - `Δx_i`: ホップ i でプールに投入されたトークン量
+    /// - `x_i`: ホップ i のプール内の投入トークン側リザーブ（= `amount_in`）
+    /// - `Δx_0 = rate_calc_near × 10^24`（NEAR → yocto 変換）
+    /// - `Δx_{i+1} = Δx_i × (amount_out_i / amount_in_i)`:
+    ///   前ホップの出力比率で次ホップの投入量を推定
+    ///
+    /// ## 直感的な解釈
+    ///
+    /// 定積 AMM (x·y=k) では、Δx を投入すると実効レートは `y/(x+Δx)` になるが、
+    /// スポットレートは `y/x`。比率は `(x+Δx)/x = 1 + Δx/x` なので、
+    /// 実効レートにこの補正係数を掛けるとスポットレートが復元される。
+    /// マルチホップでは各プールの補正を積算する。
     pub fn to_spot_rate_with_fallback(&self, fallback_path: Option<&SwapPath>) -> ExchangeRate {
         let path = self.swap_path.as_ref().or(fallback_path);
         if let Some(path) = path
