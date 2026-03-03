@@ -30,7 +30,29 @@ pub fn get(name: &str) -> Result<String> {
         return Ok(value);
     }
 
-    // Priority 3: Environment variables
+    get_from_env(name)
+}
+
+/// Resolve a configuration value excluding DB_STORE:
+/// CONFIG_STORE > env > Err
+///
+/// DB に値がない場合の「実効値」を取得するために使用する。
+#[doc(hidden)]
+pub fn get_excluding_db(name: &str) -> Result<String> {
+    // Priority 1: CONFIG_STORE (runtime overrides)
+    if let Some(value) = get_from_store(name) {
+        if value.is_empty() {
+            return Err(anyhow!("{} is empty", name));
+        }
+        return Ok(value);
+    }
+
+    // (DB_STORE をスキップ)
+
+    get_from_env(name)
+}
+
+fn get_from_env(name: &str) -> Result<String> {
     if let Ok(val) = std::env::var(name)
         && !val.is_empty()
     {

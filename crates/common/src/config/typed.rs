@@ -1,61 +1,168 @@
 use once_cell::sync::Lazy;
 use std::time::Duration;
 
+// ── ConfigValueType enum ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigValueType {
+    Bool,
+    U16,
+    U32,
+    U64,
+    U128,
+    I64,
+    F64,
+    String,
+    Duration,
+}
+
+impl ConfigValueType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bool => "bool",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+            Self::U128 => "u128",
+            Self::I64 => "i64",
+            Self::F64 => "f64",
+            Self::String => "string",
+            Self::Duration => "duration",
+        }
+    }
+}
+
+impl std::fmt::Display for ConfigValueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// ── KeyDefinition / ResolvedKeyInfo ──
+
+pub struct KeyDefinition {
+    pub key: &'static str,
+    pub description: &'static str,
+    pub value_type: ConfigValueType,
+    pub default_value: &'static str,
+}
+
+pub struct ResolvedKeyInfo {
+    pub key: std::string::String,
+    pub description: std::string::String,
+    pub value_type: ConfigValueType,
+    pub resolved_value: std::string::String,
+}
+
 // ── ConfigResolve trait: type-specific config resolution ──
 
 pub(crate) trait ConfigResolve: Sized {
     type Default;
+    const VALUE_TYPE: ConfigValueType;
     fn resolve(key: &str, default: Self::Default) -> Self;
+    fn resolve_without_db(key: &str, default: Self::Default) -> Self;
+    fn display_string(value: Self) -> std::string::String;
 }
 
 impl ConfigResolve for bool {
     type Default = bool;
+    const VALUE_TYPE: ConfigValueType = ConfigValueType::Bool;
     fn resolve(key: &str, default: bool) -> Self {
         crate::config::store::get(key)
             .ok()
             .and_then(|v| v.to_lowercase().parse::<bool>().ok())
             .unwrap_or(default)
     }
+    fn resolve_without_db(key: &str, default: bool) -> Self {
+        crate::config::store::get_excluding_db(key)
+            .ok()
+            .and_then(|v| v.to_lowercase().parse::<bool>().ok())
+            .unwrap_or(default)
+    }
+    fn display_string(value: Self) -> std::string::String {
+        value.to_string()
+    }
 }
 
 impl ConfigResolve for String {
     type Default = &'static str;
+    const VALUE_TYPE: ConfigValueType = ConfigValueType::String;
     fn resolve(key: &str, default: &'static str) -> Self {
         crate::config::store::get(key).unwrap_or_else(|_| default.to_string())
+    }
+    fn resolve_without_db(key: &str, default: &'static str) -> Self {
+        crate::config::store::get_excluding_db(key).unwrap_or_else(|_| default.to_string())
+    }
+    fn display_string(value: Self) -> std::string::String {
+        value
     }
 }
 
 macro_rules! impl_config_resolve_numeric {
-    ($($ty:ty),*) => {
-        $(impl ConfigResolve for $ty {
+    ($ty:ty, $variant:ident) => {
+        impl ConfigResolve for $ty {
             type Default = $ty;
+            const VALUE_TYPE: ConfigValueType = ConfigValueType::$variant;
             fn resolve(key: &str, default: $ty) -> Self {
                 crate::config::store::get(key)
                     .ok()
                     .and_then(|v| v.parse::<$ty>().ok())
                     .unwrap_or(default)
             }
-        })*
-    }
+            fn resolve_without_db(key: &str, default: $ty) -> Self {
+                crate::config::store::get_excluding_db(key)
+                    .ok()
+                    .and_then(|v| v.parse::<$ty>().ok())
+                    .unwrap_or(default)
+            }
+            fn display_string(value: Self) -> std::string::String {
+                value.to_string()
+            }
+        }
+    };
 }
 
-impl_config_resolve_numeric!(u16, u32, u64, u128, usize, i64, f64);
+impl_config_resolve_numeric!(u16, U16);
+impl_config_resolve_numeric!(u32, U32);
+impl_config_resolve_numeric!(u64, U64);
+impl_config_resolve_numeric!(u128, U128);
+impl_config_resolve_numeric!(usize, U64);
+impl_config_resolve_numeric!(i64, I64);
+impl_config_resolve_numeric!(f64, F64);
 
 impl ConfigResolve for Duration {
     type Default = Duration;
+    const VALUE_TYPE: ConfigValueType = ConfigValueType::Duration;
     fn resolve(key: &str, default: Duration) -> Self {
         crate::config::store::get(key)
             .ok()
             .and_then(|v| humantime::parse_duration(&v).ok())
             .unwrap_or(default)
     }
+    fn resolve_without_db(key: &str, default: Duration) -> Self {
+        crate::config::store::get_excluding_db(key)
+            .ok()
+            .and_then(|v| humantime::parse_duration(&v).ok())
+            .unwrap_or(default)
+    }
+    fn display_string(value: Self) -> std::string::String {
+        humantime::format_duration(value).to_string()
+    }
 }
 
 impl ConfigResolve for anyhow::Result<String> {
     type Default = ();
+    const VALUE_TYPE: ConfigValueType = ConfigValueType::String;
     fn resolve(key: &str, _default: ()) -> Self {
         crate::config::store::get(key)
             .map_err(|_| anyhow::anyhow!("required config key not found: {}", key))
+    }
+    fn resolve_without_db(key: &str, _default: ()) -> Self {
+        crate::config::store::get_excluding_db(key)
+            .map_err(|_| anyhow::anyhow!("required config key not found: {}", key))
+    }
+    fn display_string(value: Self) -> std::string::String {
+        value.unwrap_or_else(|_| "(未設定)".to_string())
     }
 }
 
@@ -117,6 +224,8 @@ impl MockStore for anyhow::Result<String> {
 /// - `ConfigAccess` trait with typed accessor methods
 /// - `ConfigResolver` struct that resolves values via `config::get()` priority chain
 /// - `MockConfig` struct for test isolation (wraps real resolver, overrides per-field)
+/// - `KEY_DEFINITIONS` const with static metadata for all config keys
+/// - `resolve_all_without_db()` function for runtime key resolution excluding DB
 macro_rules! define_typed_config {
     (
         $(
@@ -175,6 +284,33 @@ macro_rules! define_typed_config {
                     }
                 }
             )*
+        }
+
+        pub const KEY_DEFINITIONS: &[KeyDefinition] = &[
+            $(
+                KeyDefinition {
+                    key: $key,
+                    description: concat!($($doc, "\n",)*),
+                    value_type: <$ty as ConfigResolve>::VALUE_TYPE,
+                    default_value: stringify!($default),
+                },
+            )*
+        ];
+
+        pub fn resolve_all_without_db() -> Vec<ResolvedKeyInfo> {
+            vec![
+                $(
+                    {
+                        let value = <$ty as ConfigResolve>::resolve_without_db($key, $default);
+                        ResolvedKeyInfo {
+                            key: $key.to_string(),
+                            description: concat!($($doc, "\n",)*).trim().to_string(),
+                            value_type: <$ty as ConfigResolve>::VALUE_TYPE,
+                            resolved_value: <$ty as ConfigResolve>::display_string(value),
+                        }
+                    },
+                )*
+            ]
         }
     };
 }

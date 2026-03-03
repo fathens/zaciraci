@@ -1,10 +1,28 @@
 use crate::proto::config_service_server::ConfigService;
 use crate::proto::{
     ConfigEntry, DeleteConfigRequest, DeleteConfigResponse, GetAllConfigRequest,
-    GetAllConfigResponse, GetOneConfigRequest, GetOneConfigResponse, UpsertConfigRequest,
+    GetAllConfigResponse, GetOneConfigRequest, GetOneConfigResponse, KeyDefinitionEntry,
+    ListKeyDefinitionsRequest, ListKeyDefinitionsResponse, UpsertConfigRequest,
     UpsertConfigResponse,
 };
 use tonic::{Request, Response, Status};
+
+impl From<common::config::ConfigValueType> for crate::proto::ConfigValueType {
+    fn from(vt: common::config::ConfigValueType) -> Self {
+        use common::config::ConfigValueType as CVT;
+        match vt {
+            CVT::Bool => Self::Bool,
+            CVT::U16 => Self::U16,
+            CVT::U32 => Self::U32,
+            CVT::U64 => Self::U64,
+            CVT::U128 => Self::U128,
+            CVT::I64 => Self::I64,
+            CVT::F64 => Self::F64,
+            CVT::String => Self::String,
+            CVT::Duration => Self::Duration,
+        }
+    }
+}
 
 pub struct ConfigServiceImpl;
 
@@ -99,6 +117,23 @@ impl ConfigService for ConfigServiceImpl {
             .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
 
         Ok(Response::new(DeleteConfigResponse {}))
+    }
+
+    async fn list_key_definitions(
+        &self,
+        _request: Request<ListKeyDefinitionsRequest>,
+    ) -> Result<Response<ListKeyDefinitionsResponse>, Status> {
+        let resolved = common::config::resolve_all_without_db();
+        let definitions = resolved
+            .into_iter()
+            .map(|info| KeyDefinitionEntry {
+                key: info.key,
+                description: info.description.trim().to_string(),
+                value_type: crate::proto::ConfigValueType::from(info.value_type).into(),
+                resolved_value: info.resolved_value,
+            })
+            .collect();
+        Ok(Response::new(ListKeyDefinitionsResponse { definitions }))
     }
 }
 

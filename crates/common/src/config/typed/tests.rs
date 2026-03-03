@@ -408,3 +408,305 @@ fn test_trade_price_history_days_default() {
     crate::config::store::remove("TRADE_PRICE_HISTORY_DAYS");
     assert_eq!(typed().trade_price_history_days(), 30);
 }
+
+// ── ConfigValueType tests ──
+
+#[test]
+fn test_config_value_type_as_str() {
+    assert_eq!(ConfigValueType::Bool.as_str(), "bool");
+    assert_eq!(ConfigValueType::U16.as_str(), "u16");
+    assert_eq!(ConfigValueType::U32.as_str(), "u32");
+    assert_eq!(ConfigValueType::U64.as_str(), "u64");
+    assert_eq!(ConfigValueType::U128.as_str(), "u128");
+    assert_eq!(ConfigValueType::I64.as_str(), "i64");
+    assert_eq!(ConfigValueType::F64.as_str(), "f64");
+    assert_eq!(ConfigValueType::String.as_str(), "string");
+    assert_eq!(ConfigValueType::Duration.as_str(), "duration");
+}
+
+#[test]
+fn test_config_value_type_display() {
+    assert_eq!(format!("{}", ConfigValueType::Bool), "bool");
+    assert_eq!(format!("{}", ConfigValueType::String), "string");
+    assert_eq!(format!("{}", ConfigValueType::Duration), "duration");
+}
+
+// ── display_string tests ──
+
+#[test]
+fn test_display_string_bool() {
+    assert_eq!(<bool as ConfigResolve>::display_string(true), "true");
+    assert_eq!(<bool as ConfigResolve>::display_string(false), "false");
+}
+
+#[test]
+fn test_display_string_u32() {
+    assert_eq!(<u32 as ConfigResolve>::display_string(42), "42");
+}
+
+#[test]
+fn test_display_string_string() {
+    assert_eq!(
+        <String as ConfigResolve>::display_string("hello".to_string()),
+        "hello"
+    );
+}
+
+#[test]
+fn test_display_string_duration() {
+    let d = Duration::from_secs(5);
+    let s = <Duration as ConfigResolve>::display_string(d);
+    assert_eq!(s, "5s");
+}
+
+#[test]
+fn test_display_string_result_ok() {
+    let v: anyhow::Result<String> = Ok("value".to_string());
+    assert_eq!(
+        <anyhow::Result<String> as ConfigResolve>::display_string(v),
+        "value"
+    );
+}
+
+#[test]
+fn test_display_string_result_err() {
+    let v: anyhow::Result<String> = Err(anyhow::anyhow!("not found"));
+    assert_eq!(
+        <anyhow::Result<String> as ConfigResolve>::display_string(v),
+        "(未設定)"
+    );
+}
+
+// ── ConfigResolve::VALUE_TYPE tests ──
+
+#[test]
+fn test_value_type_bool() {
+    assert_eq!(<bool as ConfigResolve>::VALUE_TYPE, ConfigValueType::Bool);
+}
+
+#[test]
+fn test_value_type_u16() {
+    assert_eq!(<u16 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U16);
+}
+
+#[test]
+fn test_value_type_u32() {
+    assert_eq!(<u32 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U32);
+}
+
+#[test]
+fn test_value_type_u64() {
+    assert_eq!(<u64 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U64);
+}
+
+#[test]
+fn test_value_type_u128() {
+    assert_eq!(<u128 as ConfigResolve>::VALUE_TYPE, ConfigValueType::U128);
+}
+
+#[test]
+fn test_value_type_usize_maps_to_u64() {
+    assert_eq!(<usize as ConfigResolve>::VALUE_TYPE, ConfigValueType::U64);
+}
+
+#[test]
+fn test_value_type_i64() {
+    assert_eq!(<i64 as ConfigResolve>::VALUE_TYPE, ConfigValueType::I64);
+}
+
+#[test]
+fn test_value_type_f64() {
+    assert_eq!(<f64 as ConfigResolve>::VALUE_TYPE, ConfigValueType::F64);
+}
+
+#[test]
+fn test_value_type_string() {
+    assert_eq!(
+        <String as ConfigResolve>::VALUE_TYPE,
+        ConfigValueType::String
+    );
+}
+
+#[test]
+fn test_value_type_duration() {
+    assert_eq!(
+        <Duration as ConfigResolve>::VALUE_TYPE,
+        ConfigValueType::Duration
+    );
+}
+
+#[test]
+fn test_value_type_result_string() {
+    assert_eq!(
+        <anyhow::Result<String> as ConfigResolve>::VALUE_TYPE,
+        ConfigValueType::String
+    );
+}
+
+// ── KEY_DEFINITIONS tests ──
+
+#[test]
+fn test_key_definitions_count() {
+    // define_typed_config! に定義されたキーの数と一致すること
+    assert_eq!(KEY_DEFINITIONS.len(), 42);
+}
+
+#[test]
+fn test_key_definitions_fields_non_empty() {
+    for def in KEY_DEFINITIONS {
+        assert!(!def.key.is_empty(), "key should not be empty");
+        assert!(
+            !def.description.trim().is_empty(),
+            "description should not be empty for key: {}",
+            def.key
+        );
+        assert!(
+            !def.value_type.as_str().is_empty(),
+            "value_type should not be empty for key: {}",
+            def.key
+        );
+        assert!(
+            !def.default_value.is_empty(),
+            "default_value should not be empty for key: {}",
+            def.key
+        );
+    }
+}
+
+#[test]
+fn test_key_definitions_no_duplicate_keys() {
+    let mut keys: Vec<&str> = KEY_DEFINITIONS.iter().map(|d| d.key).collect();
+    let original_len = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(
+        keys.len(),
+        original_len,
+        "KEY_DEFINITIONS should not have duplicate keys"
+    );
+}
+
+#[test]
+fn test_key_definitions_trade_enabled_metadata() {
+    let def = KEY_DEFINITIONS
+        .iter()
+        .find(|d| d.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist in KEY_DEFINITIONS");
+    assert_eq!(def.value_type, ConfigValueType::Bool);
+    assert_eq!(def.default_value, "false");
+    assert!(def.description.contains("trading"));
+}
+
+// ── resolve_all_without_db tests ──
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_count() {
+    let resolved = resolve_all_without_db();
+    assert_eq!(resolved.len(), KEY_DEFINITIONS.len());
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_fields_non_empty() {
+    let resolved = resolve_all_without_db();
+    for info in &resolved {
+        assert!(!info.key.is_empty(), "key should not be empty");
+        assert!(
+            !info.description.is_empty(),
+            "description should not be empty for key: {}",
+            info.key
+        );
+        assert!(
+            !info.value_type.as_str().is_empty(),
+            "value_type should not be empty for key: {}",
+            info.key
+        );
+        // resolved_value can be "(未設定)" for required keys
+    }
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_trade_enabled() {
+    let _env = EnvGuard::remove("TRADE_ENABLED");
+    crate::config::store::remove("TRADE_ENABLED");
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist in resolved list");
+    assert_eq!(info.value_type, ConfigValueType::Bool);
+    assert_eq!(info.resolved_value, "false");
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_excludes_db() {
+    use crate::config::store::DbStoreGuard;
+    use std::collections::HashMap;
+
+    let _db_guard = DbStoreGuard::new();
+    let _env = EnvGuard::remove("TRADE_ENABLED");
+    crate::config::store::remove("TRADE_ENABLED");
+
+    // DB に true をセットしても resolve_all_without_db はスキップする
+    crate::config::store::load_db_config(HashMap::from([(
+        "TRADE_ENABLED".to_string(),
+        "true".to_string(),
+    )]));
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist");
+    // DB の値は無視され、デフォルトの false が返る
+    assert_eq!(info.resolved_value, "false");
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_env_override() {
+    // 環境変数で設定した値が resolve_all_without_db に反映されること
+    let _env = EnvGuard::set("TRADE_ENABLED", "true");
+    crate::config::store::remove("TRADE_ENABLED");
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "TRADE_ENABLED")
+        .expect("TRADE_ENABLED should exist");
+    assert_eq!(info.resolved_value, "true");
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_description_trimmed() {
+    // description に前後の空白がないこと
+    let resolved = resolve_all_without_db();
+    for info in &resolved {
+        assert_eq!(
+            info.description,
+            info.description.trim(),
+            "description should be trimmed for key: {}",
+            info.key
+        );
+    }
+}
+
+#[test]
+#[serial]
+fn test_resolve_all_without_db_harvest_account_id_unset() {
+    let _env = EnvGuard::remove("HARVEST_ACCOUNT_ID");
+    crate::config::store::remove("HARVEST_ACCOUNT_ID");
+
+    let resolved = resolve_all_without_db();
+    let info = resolved
+        .iter()
+        .find(|r| r.key == "HARVEST_ACCOUNT_ID")
+        .expect("HARVEST_ACCOUNT_ID should exist");
+    assert_eq!(info.value_type, ConfigValueType::String);
+    assert_eq!(info.resolved_value, "(未設定)");
+}
