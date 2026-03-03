@@ -13,11 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-/// token decimals を非同期取得するコールバック型
-pub type GetDecimalsFn = dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<u8>> + Send + '_>>
-    + Send
-    + Sync;
-
 /// スワップパス内の個々のプール情報
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SwapPoolInfo {
@@ -139,11 +134,11 @@ impl TokenRate {
         }
     }
 
-    /// DB レコードから変換（decimals を明示的に指定）
-    fn from_db_with_decimals(db_rate: DbTokenRate, decimals: u8) -> Result<Self> {
+    /// DB レコードからドメインモデルに変換
+    fn from_db(db_rate: DbTokenRate) -> Result<Self> {
         let base = TokenAccount::from_str(&db_rate.base_token)?.into();
         let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
-        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
+        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, db_rate.decimals as u8);
         let swap_path = db_rate
             .swap_path
             .and_then(|v| serde_json::from_value(v).ok());
@@ -156,61 +151,6 @@ impl TokenRate {
             rate_calc_near: db_rate.rate_calc_near,
             swap_path,
         })
-    }
-
-    /// 単一の DB レコードを変換し、NULL decimals があれば get_decimals で取得して backfill
-    async fn from_db_with_backfill(
-        db_rate: DbTokenRate,
-        _get_decimals: &GetDecimalsFn,
-    ) -> Result<Self> {
-        let decimals = db_rate.decimals as u8;
-        Self::from_db_with_decimals(db_rate, decimals)
-    }
-
-    /// 複数の DB レコードを変換し、NULL decimals があれば get_decimals で取得して backfill
-    async fn from_db_results_with_backfill(
-        results: Vec<DbTokenRate>,
-        _get_decimals: &GetDecimalsFn,
-        _cfg: &impl ConfigAccess,
-    ) -> Result<Vec<Self>> {
-        results
-            .into_iter()
-            .map(|db_rate| {
-                let decimals = db_rate.decimals as u8;
-                Self::from_db_with_decimals(db_rate, decimals)
-            })
-            .collect()
-    }
-
-    /// 指定トークンの全レコードに decimals を設定
-    pub async fn backfill_decimals(base_token: &str, decimals: u8) -> Result<usize> {
-        use diesel::sql_types::{SmallInt, Text};
-
-        let log = DEFAULT.new(o!(
-            "function" => "backfill_decimals",
-            "base_token" => base_token.to_string(),
-            "decimals" => decimals,
-        ));
-        trace!(log, "start");
-
-        let conn = connection_pool::get().await?;
-        let base_token = base_token.to_string();
-        let decimals_i16 = decimals as i16;
-
-        let updated_count = conn
-            .interact(move |conn| {
-                diesel::sql_query(
-                    "UPDATE token_rates SET decimals = $1 WHERE base_token = $2 AND decimals IS NULL",
-                )
-                .bind::<SmallInt, _>(decimals_i16)
-                .bind::<Text, _>(&base_token)
-                .execute(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        trace!(log, "finish"; "updated_count" => updated_count);
-        Ok(updated_count)
     }
 
     /// NewDbTokenRate に変換
@@ -294,12 +234,9 @@ impl TokenRate {
     }
 
     /// 最新のレートを取得
-    ///
-    /// NULL decimals があれば get_decimals で取得して DB を backfill する。
     pub async fn get_latest(
         base: &TokenOutAccount,
         quote: &TokenInAccount,
-        get_decimals: &GetDecimalsFn,
     ) -> Result<Option<TokenRate>> {
         use diesel::QueryDsl;
         use diesel::dsl::max;
@@ -339,23 +276,17 @@ impl TokenRate {
                 .await
                 .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-            Ok(Some(
-                TokenRate::from_db_with_backfill(result, get_decimals).await?,
-            ))
+            Ok(Some(TokenRate::from_db(result)?))
         } else {
             Ok(None)
         }
     }
 
     /// 時間範囲内のレートを取得
-    ///
-    /// NULL decimals があれば get_decimals で取得して DB を backfill する。
     pub async fn get_rates_in_time_range(
         range: &TimeRange,
         base: &TokenOutAccount,
         quote: &TokenInAccount,
-        get_decimals: &GetDecimalsFn,
-        cfg: &impl ConfigAccess,
     ) -> Result<Vec<TokenRate>> {
         use diesel::QueryDsl;
 
@@ -379,19 +310,16 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        Self::from_db_results_with_backfill(results, get_decimals, cfg).await
+        results.into_iter().map(Self::from_db).collect()
     }
 
     /// 複数トークンの価格履歴を一括取得
     ///
     /// N個のトークンに対して1回のDBクエリで履歴を取得し、トークンごとのHashMapとして返す。
-    /// NULL decimals があれば get_decimals で取得して DB を backfill する。
     pub async fn get_rates_for_multiple_tokens(
         tokens: &[TokenOutAccount],
         quote: &TokenInAccount,
         range: &TimeRange,
-        get_decimals: &GetDecimalsFn,
-        cfg: &impl ConfigAccess,
     ) -> Result<HashMap<TokenOutAccount, Vec<TokenRate>>> {
         use diesel::sql_types::{Array, Text, Timestamp};
 
@@ -426,8 +354,10 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        // backfill 処理して TokenRate に変換
-        let rates = Self::from_db_results_with_backfill(results, get_decimals, cfg).await?;
+        let rates: Vec<TokenRate> = results
+            .into_iter()
+            .map(Self::from_db)
+            .collect::<Result<_>>()?;
 
         // トークンごとに分割
         let mut map: HashMap<TokenOutAccount, Vec<TokenRate>> = HashMap::new();

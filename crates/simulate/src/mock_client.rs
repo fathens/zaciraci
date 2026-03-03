@@ -49,9 +49,7 @@ impl SimulationClient {
 
         let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-        let get_decimals = trade::make_get_decimals();
         let sim_day = *self.sim_day.lock().await;
-        let cfg = common::config::ConfigResolver;
 
         // token_in -> NEAR value
         let near_value = if token_in == wnear_str {
@@ -63,20 +61,18 @@ impl SimulationClient {
                 Err(_) => return 0,
             };
 
-            let rate = match portfolio_state::get_rate_at_date(
-                &token_in_out,
-                &wnear_in,
-                sim_day,
-                &get_decimals,
-                &cfg,
-            )
-            .await
-            {
-                Some(r) => r,
-                None => return 0,
-            };
+            let rate =
+                match portfolio_state::get_rate_at_date(&token_in_out, &wnear_in, sim_day).await {
+                    Some(r) => r,
+                    None => return 0,
+                };
 
-            let decimals_in = get_decimals(token_in).await.unwrap_or(24);
+            let token_in_account: common::types::TokenAccount = match token_in.parse() {
+                Ok(t) => t,
+                Err(_) => return 0,
+            };
+            let decimals_in =
+                trade::token_cache::get_cached_decimals(&token_in_account).unwrap_or(24);
             let token_amount =
                 TokenAmount::from_smallest_units(BigDecimal::from(amount_in), decimals_in);
             &token_amount / &rate
@@ -92,18 +88,13 @@ impl SimulationClient {
                 Err(_) => return 0,
             };
 
-            let rate = match portfolio_state::get_rate_at_date(
-                &token_out_account,
-                &wnear_in,
-                sim_day,
-                &get_decimals,
-                &cfg,
-            )
-            .await
-            {
-                Some(r) => r,
-                None => return 0,
-            };
+            let rate =
+                match portfolio_state::get_rate_at_date(&token_out_account, &wnear_in, sim_day)
+                    .await
+                {
+                    Some(r) => r,
+                    None => return 0,
+                };
 
             let token_amount = &near_value * &rate;
             token_amount.smallest_units().to_u128().unwrap_or(0)

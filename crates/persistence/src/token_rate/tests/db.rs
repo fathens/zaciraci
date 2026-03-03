@@ -11,7 +11,7 @@ async fn test_token_rate_single_insert() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
 
     // 2. get_latest で None が返ることを確認
-    let result = TokenRate::get_latest(&base, &quote, test_get_decimals()).await?;
+    let result = TokenRate::get_latest(&base, &quote).await?;
     assert!(result.is_none(), "Empty table should return None");
 
     // 3. １つインサート
@@ -21,7 +21,7 @@ async fn test_token_rate_single_insert() -> Result<()> {
     TokenRate::batch_insert(std::slice::from_ref(&token_rate), &cfg).await?;
 
     // 4. get_latest でインサートしたレコードが返ることを確認
-    let result = TokenRate::get_latest(&base, &quote, test_get_decimals()).await?;
+    let result = TokenRate::get_latest(&base, &quote).await?;
     assert!(result.is_some(), "Should return inserted record");
 
     let retrieved_rate = result.unwrap();
@@ -63,9 +63,7 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
         start: earliest - chrono::Duration::minutes(1),
         end: latest + chrono::Duration::minutes(1),
     };
-    let mut history =
-        TokenRate::get_rates_in_time_range(&time_range, &base, &quote, test_get_decimals(), &cfg)
-            .await?;
+    let mut history = TokenRate::get_rates_in_time_range(&time_range, &base, &quote).await?;
     // 新しい順に並び替え（get_history は降順、get_rates_in_time_range は昇順）
     history.reverse();
 
@@ -145,7 +143,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
     TokenRate::batch_insert(&[rate1.clone(), rate2.clone(), rate3.clone()], &cfg).await?;
 
     // 4. 特定のペアのみが取得されることを確認
-    let result1 = TokenRate::get_latest(&base1, &quote1, test_get_decimals()).await?;
+    let result1 = TokenRate::get_latest(&base1, &quote1).await?;
     assert!(result1.is_some(), "base1-quote1 pair should be found");
     let retrieved_rate1 = result1.unwrap();
     assert_token_rate_eq!(
@@ -154,7 +152,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
         "base1-quote1 TokenRate should match"
     );
 
-    let result2 = TokenRate::get_latest(&base2, &quote1, test_get_decimals()).await?;
+    let result2 = TokenRate::get_latest(&base2, &quote1).await?;
     assert!(result2.is_some(), "base2-quote1 pair should be found");
     let retrieved_rate2 = result2.unwrap();
     assert_token_rate_eq!(
@@ -163,7 +161,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
         "base2-quote1 TokenRate should match"
     );
 
-    let result3 = TokenRate::get_latest(&base1, &quote2, test_get_decimals()).await?;
+    let result3 = TokenRate::get_latest(&base1, &quote2).await?;
     assert!(result3.is_some(), "base1-quote2 pair should be found");
     let retrieved_rate3 = result3.unwrap();
     assert_token_rate_eq!(
@@ -173,7 +171,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
     );
 
     // 5. 存在しないペアが None を返すことを確認
-    let result4 = TokenRate::get_latest(&base2, &quote2, test_get_decimals()).await?;
+    let result4 = TokenRate::get_latest(&base2, &quote2).await?;
     assert!(result4.is_none(), "base2-quote2 pair should not be found");
 
     // 6. get_rates_in_time_range でも特定のペアだけが取得されることを確認
@@ -182,9 +180,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
         end: now + chrono::Duration::minutes(1),
     };
 
-    let history1 =
-        TokenRate::get_rates_in_time_range(&time_range, &base1, &quote1, test_get_decimals(), &cfg)
-            .await?;
+    let history1 = TokenRate::get_rates_in_time_range(&time_range, &base1, &quote1).await?;
     assert_eq!(history1.len(), 1, "Should find 1 record for base1-quote1");
     assert_token_rate_eq!(
         history1[0],
@@ -192,9 +188,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
         "base1-quote1 history TokenRate should match"
     );
 
-    let history2 =
-        TokenRate::get_rates_in_time_range(&time_range, &base2, &quote1, test_get_decimals(), &cfg)
-            .await?;
+    let history2 = TokenRate::get_rates_in_time_range(&time_range, &base2, &quote1).await?;
     assert_eq!(history2.len(), 1, "Should find 1 record for base2-quote1");
     assert_token_rate_eq!(
         history2[0],
@@ -203,9 +197,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
     );
 
     // 7. 存在しないペアは空の配列を返すことを確認
-    let history3 =
-        TokenRate::get_rates_in_time_range(&time_range, &base2, &quote2, test_get_decimals(), &cfg)
-            .await?;
+    let history3 = TokenRate::get_rates_in_time_range(&time_range, &base2, &quote2).await?;
     assert_eq!(history3.len(), 0, "Should find 0 records for base2-quote2");
 
     // クリーンアップ
@@ -848,12 +840,8 @@ async fn test_cleanup_old_records() -> Result<()> {
         start: days_400_ago - chrono::Duration::days(1),
         end: now + chrono::Duration::days(1),
     };
-    let mut history1 =
-        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals(), &cfg)
-            .await?;
-    let history2 =
-        TokenRate::get_rates_in_time_range(&wide_range, &base2, &quote, test_get_decimals(), &cfg)
-            .await?;
+    let mut history1 = TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote).await?;
+    let history2 = TokenRate::get_rates_in_time_range(&wide_range, &base2, &quote).await?;
     // 新しい順に並び替え
     history1.reverse();
 
@@ -961,9 +949,7 @@ async fn test_cleanup_old_records() -> Result<()> {
     TokenRate::batch_insert(&recent_rates, &cfg).await?;
 
     // 90日以内のレコード（50日前、20日前、5日前）が残っていることを確認
-    let all_history =
-        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals(), &cfg)
-            .await?;
+    let all_history = TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote).await?;
     assert_eq!(
         all_history.len(),
         3,
@@ -975,8 +961,7 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     // 8. 30日以内のレコードだけが残っていることを確認
     let mut recent_history =
-        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote, test_get_decimals(), &cfg)
-            .await?;
+        TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote).await?;
     // 新しい順に並び替え
     recent_history.reverse();
     assert_eq!(
@@ -1034,14 +1019,7 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
 
     // 2トークンのみ取得
     let tokens = vec![base1.clone(), base2.clone()];
-    let result = TokenRate::get_rates_for_multiple_tokens(
-        &tokens,
-        &quote,
-        &time_range,
-        test_get_decimals(),
-        &cfg,
-    )
-    .await?;
+    let result = TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range).await?;
 
     assert_eq!(result.len(), 2, "Should return 2 tokens");
     assert!(result.contains_key(&base1), "Should contain token1");
@@ -1064,7 +1042,6 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
 async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
     clean_table().await?;
 
-    let cfg = ConfigResolver;
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
     let now = chrono::Utc::now().naive_utc();
 
@@ -1078,14 +1055,7 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
         TokenAccount::from_str("nonexistent1.near")?.into(),
         TokenAccount::from_str("nonexistent2.near")?.into(),
     ];
-    let result = TokenRate::get_rates_for_multiple_tokens(
-        &tokens,
-        &quote,
-        &time_range,
-        test_get_decimals(),
-        &cfg,
-    )
-    .await?;
+    let result = TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range).await?;
 
     assert!(
         result.is_empty(),
@@ -1099,7 +1069,6 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
-    let cfg = ConfigResolver;
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
     let now = chrono::Utc::now().naive_utc();
 
@@ -1110,14 +1079,7 @@ async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
 
     // 空のトークンリスト
     let tokens: Vec<TokenOutAccount> = vec![];
-    let result = TokenRate::get_rates_for_multiple_tokens(
-        &tokens,
-        &quote,
-        &time_range,
-        test_get_decimals(),
-        &cfg,
-    )
-    .await?;
+    let result = TokenRate::get_rates_for_multiple_tokens(&tokens, &quote, &time_range).await?;
 
     assert!(result.is_empty(), "Should return empty map for empty input");
 

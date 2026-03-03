@@ -308,16 +308,12 @@ where
                         let token_out: TokenOutAccount = token_account.clone().into();
                         let quote_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
-                        let get_decimals = crate::make_get_decimals();
-                        let rate = persistence::token_rate::TokenRate::get_latest(
-                            &token_out,
-                            &quote_in,
-                            &get_decimals,
-                        )
-                        .await?
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("No rate found for token: {}", token_account)
-                        })?;
+                        let rate =
+                            persistence::token_rate::TokenRate::get_latest(&token_out, &quote_in)
+                                .await?
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("No rate found for token: {}", token_account)
+                                })?;
 
                         let spot = rate.to_spot_rate();
                         if spot.is_effectively_zero() {

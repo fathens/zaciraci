@@ -65,7 +65,6 @@ impl PredictionService {
         quote_token: &TokenInAccount,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        cfg: &impl ConfigAccess,
     ) -> Result<PriceHistory> {
         // 直接データベースから価格履歴を取得
         let base_token: TokenOutAccount = token.clone();
@@ -76,16 +75,9 @@ impl PredictionService {
             end: end_date.naive_utc(),
         };
 
-        let get_decimals = super::make_get_decimals();
-        let rates = TokenRate::get_rates_in_time_range(
-            &range,
-            &base_token,
-            &quote_token_account,
-            &get_decimals,
-            cfg,
-        )
-        .await
-        .context("Failed to get price history from database")?;
+        let rates = TokenRate::get_rates_in_time_range(&range, &base_token, &quote_token_account)
+            .await
+            .context("Failed to get price history from database")?;
 
         // TokenRateをPricePointに変換（スポットレート補正適用）
         // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
@@ -192,16 +184,9 @@ impl PredictionService {
         };
 
         // 1. 全トークンの履歴を一括取得（1回のDBクエリ）
-        let get_decimals = super::make_get_decimals();
-        let histories_map = TokenRate::get_rates_for_multiple_tokens(
-            &tokens,
-            quote_token,
-            &range,
-            &get_decimals,
-            cfg,
-        )
-        .await
-        .context("Failed to batch fetch price histories")?;
+        let histories_map = TokenRate::get_rates_for_multiple_tokens(&tokens, quote_token, &range)
+            .await
+            .context("Failed to batch fetch price histories")?;
 
         info!(log, "Fetched price histories";
             "requested" => tokens.len(),
