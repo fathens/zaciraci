@@ -126,6 +126,48 @@ impl EvaluationPeriod {
         result.context("Failed to get all evaluation periods")
     }
 
+    /// ページネーション付きで評価期間を取得（開始時刻降順）
+    pub fn get_paginated(
+        page: i64,
+        page_size: i64,
+        conn: &mut PgConnection,
+    ) -> QueryResult<Vec<EvaluationPeriod>> {
+        evaluation_periods::table
+            .order(evaluation_periods::start_time.desc())
+            .limit(page_size)
+            .offset(page * page_size)
+            .load(conn)
+    }
+
+    /// ページネーション付きで評価期間を非同期で取得
+    pub async fn get_paginated_async(page: i64, page_size: i64) -> Result<Vec<EvaluationPeriod>> {
+        let conn = connection_pool::get().await?;
+
+        let result = conn
+            .interact(move |conn| Self::get_paginated(page, page_size, conn))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
+
+        result.context("Failed to get paginated evaluation periods")
+    }
+
+    /// 評価期間の総数を取得
+    pub fn count_all(conn: &mut PgConnection) -> QueryResult<i64> {
+        evaluation_periods::table.count().first(conn)
+    }
+
+    /// 評価期間の総数を非同期で取得
+    pub async fn count_all_async() -> Result<i64> {
+        let conn = connection_pool::get().await?;
+
+        let result = conn
+            .interact(Self::count_all)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
+
+        result.context("Failed to count evaluation periods")
+    }
+
     /// 選定トークンを更新
     pub fn update_selected_tokens(
         conn: &mut PgConnection,
