@@ -79,6 +79,12 @@ jobs:
         run: cargo install diesel_cli --no-default-features --features postgres
       - name: Run database migrations
         run: diesel migration run
+      - name: Verify schema.rs is up to date
+        run: |
+          if ! git diff --exit-code crates/persistence/src/schema.rs; then
+            echo "::error::schema.rs is out of sync with migrations. Run 'diesel migration run' and commit the updated schema.rs."
+            exit 1
+          fi
       - name: Run tests with coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
