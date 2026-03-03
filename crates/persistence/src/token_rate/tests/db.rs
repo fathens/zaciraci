@@ -866,23 +866,6 @@ async fn test_cleanup_old_records() -> Result<()> {
         "Most recent record should be recent"
     );
 
-    // デバッグ情報：レコードの詳細を確認
-    println!("Debug: history1 records:");
-    for (i, record) in history1.iter().enumerate() {
-        println!(
-            "  [{}] rate={}, timestamp={}",
-            i,
-            record.exchange_rate.raw_rate(),
-            record.timestamp
-        );
-    }
-    println!("Expected timestamps:");
-    println!("  now        = {}", now);
-    println!("  10 days ago = {}", days_10_ago);
-    println!("  100 days ago = {}", days_100_ago);
-    println!("  200 days ago = {}", days_200_ago);
-    println!("  400 days ago = {}", days_400_ago);
-
     // 最も古いレコードは10日前のもの（index 1）
     // レートで確認（10日前のレコードは rate = 1300）
     assert_eq!(
