@@ -35,6 +35,9 @@ fn evaluation_period_to_proto(
 
 pub struct PortfolioServiceImpl;
 
+#[cfg(test)]
+mod tests;
+
 #[tonic::async_trait]
 impl PortfolioService for PortfolioServiceImpl {
     async fn get_evaluation_periods(
