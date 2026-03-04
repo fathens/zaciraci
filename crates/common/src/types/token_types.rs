@@ -16,6 +16,7 @@ use std::fmt;
 use std::ops::{Div, Mul};
 
 use super::near_units::{NearAmount, NearValue, TokenPrice};
+use super::token_smallest_units::TokenSmallestUnits;
 
 /// 10^n を BigDecimal で計算（オーバーフロー回避）
 fn pow10(n: u8) -> BigDecimal {
@@ -200,6 +201,11 @@ impl TokenAmount {
     /// 量がゼロかどうか
     pub fn is_zero(&self) -> bool {
         self.smallest_units.is_zero()
+    }
+
+    /// smallest_units を TokenSmallestUnits として取得（decimals を捨てる）
+    pub fn into_smallest_units(self) -> TokenSmallestUnits {
+        TokenSmallestUnits::from_bigdecimal(self.smallest_units)
     }
 }
 
