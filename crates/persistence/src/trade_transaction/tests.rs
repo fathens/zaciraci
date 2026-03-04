@@ -26,6 +26,15 @@ async fn test_trade_transaction_crud() {
         .unwrap()
         .unwrap();
     assert_eq!(found.tx_id, tx_id);
+    // amount が DB ラウンドトリップで正しく復元されることを確認
+    assert_eq!(
+        found.from_amount,
+        TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000)
+    );
+    assert_eq!(
+        found.to_amount,
+        TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000)
+    );
 
     let batch_transactions = TradeTransaction::find_by_batch_id_async(batch_id)
         .await

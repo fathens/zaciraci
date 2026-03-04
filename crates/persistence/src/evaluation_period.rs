@@ -232,4 +232,21 @@ mod tests {
 
         assert_eq!(new_period.selected_tokens, None);
     }
+
+    #[tokio::test]
+    async fn test_initial_value_db_roundtrip() {
+        // 大きな値で DB ラウンドトリップが正しく YoctoAmount に戻ることを確認
+        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
+        let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
+
+        let created = new_period.insert_async().await.unwrap();
+        assert_eq!(created.initial_value, initial_value);
+
+        // DB から再取得しても一致
+        let fetched = EvaluationPeriod::get_by_period_id_async(created.period_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.initial_value, initial_value);
+    }
 }
