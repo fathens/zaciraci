@@ -82,10 +82,10 @@ fn test_evaluation_period_to_proto_tokens_with_none() {
 }
 
 #[tokio::test]
-async fn test_get_evaluation_period_empty_period_id_returns_invalid_argument() {
+async fn test_get_portfolio_holdings_empty_period_id() {
     let svc = PortfolioServiceImpl;
     let result = svc
-        .get_evaluation_period(Request::new(GetEvaluationPeriodRequest {
+        .get_portfolio_holdings(Request::new(GetPortfolioHoldingsRequest {
             period_id: String::new(),
         }))
         .await;
@@ -110,13 +110,13 @@ async fn test_get_evaluation_periods_returns_list() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn test_get_evaluation_period_not_found() {
+async fn test_get_portfolio_holdings_not_found() {
     let svc = PortfolioServiceImpl;
     let result = svc
-        .get_evaluation_period(Request::new(GetEvaluationPeriodRequest {
+        .get_portfolio_holdings(Request::new(GetPortfolioHoldingsRequest {
             period_id: "eval_nonexistent_00000000".to_string(),
         }))
         .await;
     assert!(result.is_ok());
-    assert!(result.unwrap().into_inner().period.is_none());
+    assert!(result.unwrap().into_inner().holdings.is_empty());
 }
