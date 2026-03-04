@@ -40,17 +40,24 @@ impl TradeRecorder {
         let log = DEFAULT.new(o!("function" => "record_trade"));
         debug!(log, "recording trade"; "from_token" => %from_token, "to_token" => %to_token, "tx_id" => %tx_id);
 
-        // 型安全な値をDB層用のBigDecimalに変換
-        let from_amount_bd = from_amount.smallest_units().clone();
-        let to_amount_bd = to_amount.smallest_units().clone();
+        let from_smallest = from_amount.into_smallest_units();
+        let to_smallest = to_amount.into_smallest_units();
+
+        debug!(log, "recording trade details";
+            "from_amount" => %from_smallest,
+            "from_token" => %from_token,
+            "to_amount" => %to_smallest,
+            "to_token" => %to_token,
+            "batch_id" => %self.batch_id
+        );
 
         let transaction = TradeTransaction {
             tx_id: tx_id.clone(),
             trade_batch_id: self.batch_id.clone(),
             from_token: from_token.to_string(),
-            from_amount: from_amount_bd.clone(),
+            from_amount: from_smallest,
             to_token: to_token.to_string(),
-            to_amount: to_amount_bd.clone(),
+            to_amount: to_smallest,
             timestamp: chrono::Utc::now().naive_utc(),
             evaluation_period_id: Some(self.evaluation_period_id.clone()),
         };
@@ -59,14 +66,6 @@ impl TradeRecorder {
             .insert_async()
             .await
             .with_context(|| format!("Failed to insert trade transaction: {}", tx_id))?;
-
-        debug!(log, "successfully recorded trade";
-            "from_amount" => %from_amount_bd,
-            "from_token" => %from_token,
-            "to_amount" => %to_amount_bd,
-            "to_token" => %to_token,
-            "batch_id" => %self.batch_id
-        );
 
         Ok(result)
     }
