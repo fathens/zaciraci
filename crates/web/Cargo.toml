@@ -16,7 +16,6 @@ prost-types = "0.14"
 chrono = { workspace = true }
 tokio = { workspace = true }
 slog = { workspace = true }
-bigdecimal = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build = "0.14"
@@ -24,3 +23,4 @@ tonic-prost-build = "0.14"
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 serial_test = "3.2"
+bigdecimal = { workspace = true }
