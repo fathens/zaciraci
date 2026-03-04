@@ -1071,6 +1071,77 @@ async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
 
 #[tokio::test]
 #[serial]
+async fn test_swap_path_jsonb_roundtrip() -> Result<()> {
+    use common::types::TokenSmallestUnits;
+
+    clean_table().await?;
+
+    let base: TokenOutAccount = TokenAccount::from_str("token.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+    let now = chrono::Utc::now().naive_utc();
+
+    // TokenSmallestUnits を含む SwapPath を作成
+    let swap_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 42,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000),
+                amount_out: TokenSmallestUnits::from_u128(500_000_000_000_000_000_000_000),
+            },
+            SwapPoolInfo {
+                pool_id: 99,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: TokenSmallestUnits::from_u128(u128::MAX),
+                amount_out: TokenSmallestUnits::from_u128(0),
+            },
+        ],
+    };
+
+    let rate = TokenRate {
+        base: base.clone(),
+        quote: quote.clone(),
+        exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
+        timestamp: now,
+        rate_calc_near: 10,
+        swap_path: Some(swap_path.clone()),
+    };
+
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(std::slice::from_ref(&rate), &cfg).await?;
+
+    // DB から取得して SwapPath が復元されることを確認
+    let retrieved = TokenRate::get_latest(&base, &quote).await?.unwrap();
+    let retrieved_path = retrieved.swap_path.unwrap();
+
+    assert_eq!(retrieved_path.pools.len(), 2);
+    assert_eq!(retrieved_path.pools[0].pool_id, 42);
+    assert_eq!(
+        retrieved_path.pools[0].amount_in,
+        TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000)
+    );
+    assert_eq!(
+        retrieved_path.pools[0].amount_out,
+        TokenSmallestUnits::from_u128(500_000_000_000_000_000_000_000)
+    );
+    // u128::MAX もラウンドトリップできることを確認
+    assert_eq!(
+        retrieved_path.pools[1].amount_in,
+        TokenSmallestUnits::from_u128(u128::MAX)
+    );
+    assert_eq!(
+        retrieved_path.pools[1].amount_out,
+        TokenSmallestUnits::from_u128(0)
+    );
+
+    clean_table().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn test_get_all_decimals() -> Result<()> {
     clean_table().await?;
 

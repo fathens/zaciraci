@@ -33,8 +33,8 @@ fn test_to_spot_rate_with_path() {
             pool_id: 123,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: pool_amount_yocto.to_string(),
-            amount_out: "5000000000000000000000000000".to_string(), // 5,000 NEAR in yocto
+            amount_in: pool_amount_yocto.parse().unwrap(),
+            amount_out: "5000000000000000000000000000".parse().unwrap(), // 5,000 NEAR in yocto
         }],
     };
 
@@ -75,8 +75,8 @@ fn test_to_spot_rate_with_small_pool() {
             pool_id: 456,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: pool_amount_yocto.to_string(),
-            amount_out: "50000000000000000000000000".to_string(), // 50 NEAR in yocto
+            amount_in: pool_amount_yocto.parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(), // 50 NEAR in yocto
         }],
     };
 
@@ -140,8 +140,8 @@ fn test_to_spot_rate_with_zero_pool_amount() {
             pool_id: 789,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "0".to_string(),
-            amount_out: "1000".to_string(),
+            amount_in: "0".parse().unwrap(),
+            amount_out: "1000".parse().unwrap(),
         }],
     };
 
@@ -188,8 +188,8 @@ fn test_to_spot_rate_with_fallback_uses_fallback() {
             pool_id: 456,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR in yocto
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -218,8 +218,8 @@ fn test_to_spot_rate_with_fallback_prefers_own_path() {
             pool_id: 123,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "10000000000000000000000000000".to_string(), // 10,000 NEAR in yocto
-            amount_out: "5000000000000000000000000000".to_string(),
+            amount_in: "10000000000000000000000000000".parse().unwrap(), // 10,000 NEAR in yocto
+            amount_out: "5000000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -238,8 +238,8 @@ fn test_to_spot_rate_with_fallback_prefers_own_path() {
             pool_id: 456,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -293,8 +293,8 @@ fn test_find_fallback_path_returns_nearest_newer() {
             pool_id,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(),
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -399,8 +399,8 @@ fn test_spot_rate_uses_own_path_not_fallback() {
             pool_id: 100,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -410,8 +410,8 @@ fn test_spot_rate_uses_own_path_not_fallback() {
             pool_id: 200,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "1000000000000000000000000000".to_string(), // 1000 NEAR
-            amount_out: "500000000000000000000000000".to_string(),
+            amount_in: "1000000000000000000000000000".parse().unwrap(), // 1000 NEAR
+            amount_out: "500000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -511,8 +511,8 @@ fn test_precompute_fallback_indices_basic() {
             pool_id,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(),
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -646,8 +646,8 @@ fn test_precompute_fallback_indices_all_some() {
             pool_id,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(),
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -731,8 +731,8 @@ fn test_precompute_fallback_indices_single() {
                 pool_id: 100,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(),
-                amount_out: "50000000000000000000000000".to_string(),
+                amount_in: "100000000000000000000000000".parse().unwrap(),
+                amount_out: "50000000000000000000000000".parse().unwrap(),
             }],
         }),
     }];
@@ -756,8 +756,8 @@ fn test_precompute_fallback_indices_first_only() {
             pool_id,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(),
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -821,8 +821,8 @@ fn test_precompute_fallback_indices_last_only() {
             pool_id,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(),
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -891,8 +891,8 @@ fn test_precompute_fallback_indices_performance() {
             pool_id,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(),
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -975,8 +975,8 @@ fn test_precompute_fallback_indices_scalability() {
             pool_id,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(),
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -1047,8 +1047,8 @@ fn test_to_spot_rate_multihop_single_hop_same_as_before() {
             pool_id: 123,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "10000000000000000000000000000".to_string(), // 10,000 NEAR in yocto
-            amount_out: "5000000000000000000000000000".to_string(), // 5,000 NEAR in yocto
+            amount_in: "10000000000000000000000000000".parse().unwrap(), // 10,000 NEAR in yocto
+            amount_out: "5000000000000000000000000000".parse().unwrap(), // 5,000 NEAR in yocto
         }],
     };
 
@@ -1103,15 +1103,15 @@ fn test_to_spot_rate_multihop_two_hops() {
                 pool_id: 1,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
-                amount_out: "200000000000000000000000000".to_string(), // 200 単位
+                amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR in yocto
+                amount_out: "200000000000000000000000000".parse().unwrap(), // 200 単位
             },
             SwapPoolInfo {
                 pool_id: 2,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "1000000000000000000000000000".to_string(), // 1000 NEAR in yocto
-                amount_out: "500000000000000000000000000".to_string(), // 500 単位
+                amount_in: "1000000000000000000000000000".parse().unwrap(), // 1000 NEAR in yocto
+                amount_out: "500000000000000000000000000".parse().unwrap(), // 500 単位
             },
         ],
     };
@@ -1160,22 +1160,22 @@ fn test_to_spot_rate_multihop_three_hops() {
                 pool_id: 1,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
-                amount_out: "100000000000000000000000000".to_string(),
+                amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR
+                amount_out: "100000000000000000000000000".parse().unwrap(),
             },
             SwapPoolInfo {
                 pool_id: 2,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(),
-                amount_out: "100000000000000000000000000".to_string(),
+                amount_in: "100000000000000000000000000".parse().unwrap(),
+                amount_out: "100000000000000000000000000".parse().unwrap(),
             },
             SwapPoolInfo {
                 pool_id: 3,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(),
-                amount_out: "100000000000000000000000000".to_string(),
+                amount_in: "100000000000000000000000000".parse().unwrap(),
+                amount_out: "100000000000000000000000000".parse().unwrap(),
             },
         ],
     };
@@ -1198,109 +1198,6 @@ fn test_to_spot_rate_multihop_three_hops() {
         spot_rate.raw_rate(),
         &expected,
         "Three hop correction should be 1.1^3 = 1.331, so 1000 * 1.331 = 1331"
-    );
-}
-
-/// amount_out パース失敗時: 安全にフォールバック（current_delta を維持）
-#[test]
-fn test_to_spot_rate_multihop_amount_out_parse_failure() {
-    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
-    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
-    let timestamp = chrono::Utc::now().naive_utc();
-
-    // Hop1 の amount_out が不正な場合、Δx は維持される
-    // Hop1: in=100, out=invalid -> correction1 = 1.1, Δx'=Δx (10)
-    // Hop2: in=100, out=100 -> correction2 = 1.1
-    // 総補正 = 1.1 * 1.1 = 1.21
-    let swap_path = SwapPath {
-        pools: vec![
-            SwapPoolInfo {
-                pool_id: 1,
-                token_in_idx: 0,
-                token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(),
-                amount_out: "invalid_number".to_string(), // 不正な値
-            },
-            SwapPoolInfo {
-                pool_id: 2,
-                token_in_idx: 0,
-                token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(),
-                amount_out: "100000000000000000000000000".to_string(),
-            },
-        ],
-    };
-
-    let token_rate = TokenRate {
-        base,
-        quote,
-        exchange_rate: make_rate(1000),
-        timestamp,
-        rate_calc_near: 10,
-        swap_path: Some(swap_path),
-    };
-
-    let spot_rate = token_rate.to_spot_rate();
-
-    // パース失敗時は Δx を維持するので、両ホップとも同じ Δx で補正
-    // 1.1 * 1.1 = 1.21
-    // 1000 * 1.21 = 1210
-    let expected = BigDecimal::from_str("1210").unwrap();
-    assert_eq!(
-        spot_rate.raw_rate(),
-        &expected,
-        "When amount_out parse fails, Δx should be maintained. 1.1 * 1.1 = 1.21"
-    );
-}
-
-/// amount_in パース失敗時: そのプールの補正をスキップ
-#[test]
-fn test_to_spot_rate_multihop_amount_in_parse_failure() {
-    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
-    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
-    let timestamp = chrono::Utc::now().naive_utc();
-
-    // Hop1 の amount_in が不正な場合、そのプールの補正はスキップ
-    // Hop1: in=invalid -> スキップ
-    // Hop2: in=100, out=100 -> correction = 1.1
-    // 総補正 = 1.1
-    let swap_path = SwapPath {
-        pools: vec![
-            SwapPoolInfo {
-                pool_id: 1,
-                token_in_idx: 0,
-                token_out_idx: 1,
-                amount_in: "invalid_number".to_string(), // 不正な値
-                amount_out: "100000000000000000000000000".to_string(),
-            },
-            SwapPoolInfo {
-                pool_id: 2,
-                token_in_idx: 0,
-                token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(),
-                amount_out: "100000000000000000000000000".to_string(),
-            },
-        ],
-    };
-
-    let token_rate = TokenRate {
-        base,
-        quote,
-        exchange_rate: make_rate(1000),
-        timestamp,
-        rate_calc_near: 10,
-        swap_path: Some(swap_path),
-    };
-
-    let spot_rate = token_rate.to_spot_rate();
-
-    // Hop1 はスキップ、Hop2 のみ補正: 1.1
-    // 1000 * 1.1 = 1100
-    let expected = BigDecimal::from_str("1100").unwrap();
-    assert_eq!(
-        spot_rate.raw_rate(),
-        &expected,
-        "When amount_in parse fails, that pool should be skipped. Only hop2: 1.1"
     );
 }
 
@@ -1331,15 +1228,15 @@ fn test_to_spot_rate_multihop_with_fallback() {
                 pool_id: 1,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "100000000000000000000000000".to_string(),
-                amount_out: "200000000000000000000000000".to_string(),
+                amount_in: "100000000000000000000000000".parse().unwrap(),
+                amount_out: "200000000000000000000000000".parse().unwrap(),
             },
             SwapPoolInfo {
                 pool_id: 2,
                 token_in_idx: 0,
                 token_out_idx: 1,
-                amount_in: "1000000000000000000000000000".to_string(),
-                amount_out: "500000000000000000000000000".to_string(),
+                amount_in: "1000000000000000000000000000".parse().unwrap(),
+                amount_out: "500000000000000000000000000".parse().unwrap(),
             },
         ],
     };

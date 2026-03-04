@@ -6,7 +6,9 @@ use bigdecimal::{BigDecimal, Zero};
 use chrono::NaiveDateTime;
 use common::config::ConfigAccess;
 use common::types::TimeRange;
-use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount};
+use common::types::{
+    ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount, TokenSmallestUnits,
+};
 use diesel::prelude::*;
 use logging::*;
 use serde::{Deserialize, Serialize};
@@ -22,10 +24,10 @@ pub struct SwapPoolInfo {
     pub token_in_idx: u8,
     /// 出力トークンのインデックス
     pub token_out_idx: u8,
-    /// 入力側プールサイズ（yocto 単位の文字列）
-    pub amount_in: String,
-    /// 出力側プールサイズ（yocto 単位の文字列）
-    pub amount_out: String,
+    /// 入力側プールサイズ（smallest_units）
+    pub amount_in: TokenSmallestUnits,
+    /// 出力側プールサイズ（smallest_units）
+    pub amount_out: TokenSmallestUnits,
 }
 
 /// スワップパス全体の情報（マルチホップ対応）
@@ -556,18 +558,14 @@ impl TokenRate {
             let mut current_delta = delta_x;
 
             for pool in &path.pools {
-                if let Ok(pool_amount) = pool.amount_in.parse::<BigDecimal>()
-                    && !pool_amount.is_zero()
-                {
+                let pool_amount = pool.amount_in.as_bigdecimal();
+                if !pool_amount.is_zero() {
                     // 各プールで補正を積算: correction *= (1 + Δx / x)
-                    correction *= (&pool_amount + &current_delta) / &pool_amount;
+                    correction *= (pool_amount + &current_delta) / pool_amount;
 
                     // 次のホップの入力は現在のホップの出力に比例
-                    if let Ok(amount_out) = pool.amount_out.parse::<BigDecimal>() {
-                        current_delta = &amount_out * &current_delta / &pool_amount;
-                    }
-                    // amount_out のパースに失敗した場合は current_delta を維持
-                    // （次のプールでも同じ delta を使用）
+                    let amount_out = pool.amount_out.as_bigdecimal();
+                    current_delta = amount_out * &current_delta / pool_amount;
                 }
             }
 

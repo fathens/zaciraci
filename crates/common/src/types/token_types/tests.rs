@@ -594,3 +594,25 @@ fn test_token_amount_near_amount_inverse_of_existing() {
     assert_eq!(actual_rate.raw_rate(), expected_rate.raw_rate());
     assert_eq!(actual_rate.decimals(), expected_rate.decimals());
 }
+
+#[test]
+fn test_into_smallest_units() {
+    let amount = TokenAmount::from_smallest_units(BigDecimal::from(1_000_000u64), 6);
+    let smallest = amount.into_smallest_units();
+    assert_eq!(smallest, TokenSmallestUnits::from_u128(1_000_000));
+}
+
+#[test]
+fn test_into_smallest_units_zero() {
+    let amount = TokenAmount::zero(24);
+    let smallest = amount.into_smallest_units();
+    assert!(smallest.is_zero());
+}
+
+#[test]
+fn test_into_smallest_units_large_value() {
+    let big = BigDecimal::from(u128::MAX);
+    let amount = TokenAmount::from_smallest_units(big.clone(), 24);
+    let smallest = amount.into_smallest_units();
+    assert_eq!(smallest.as_bigdecimal(), &big);
+}

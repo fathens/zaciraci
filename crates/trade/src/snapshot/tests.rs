@@ -30,13 +30,16 @@ fn test_balances_to_holdings_basic() {
     // BTreeMap は key でソート済み
     let usdt = holdings
         .iter()
-        .find(|h| h.token == "usdt.tether-token.near")
+        .find(|h| h.token.as_str() == "usdt.tether-token.near")
         .unwrap();
-    assert_eq!(usdt.balance, "1000000");
+    assert_eq!(usdt.balance.to_string(), "1000000");
     assert_eq!(usdt.decimals, 6);
 
-    let wnear = holdings.iter().find(|h| h.token == "wrap.near").unwrap();
-    assert_eq!(wnear.balance, "1000000000000000000000000");
+    let wnear = holdings
+        .iter()
+        .find(|h| h.token.as_str() == "wrap.near")
+        .unwrap();
+    assert_eq!(wnear.balance.to_string(), "1000000000000000000000000");
     assert_eq!(wnear.decimals, 24);
 }
 
@@ -92,18 +95,18 @@ fn test_balances_to_holdings_all_zero() {
 fn test_holdings_to_balances_basic() {
     let holdings = vec![
         TokenHolding {
-            token: "wrap.near".to_string(),
-            balance: "5000000000000000000000000".to_string(),
+            token: ta("wrap.near"),
+            balance: "5000000000000000000000000".parse().unwrap(),
             decimals: 24,
         },
         TokenHolding {
-            token: "usdt.tether-token.near".to_string(),
-            balance: "1000000".to_string(),
+            token: ta("usdt.tether-token.near"),
+            balance: "1000000".parse().unwrap(),
             decimals: 6,
         },
     ];
 
-    let balances = holdings_to_balances(&holdings).unwrap();
+    let balances = holdings_to_balances(&holdings);
 
     assert_eq!(balances.len(), 2);
 
@@ -122,32 +125,20 @@ fn test_holdings_to_balances_basic() {
 #[test]
 fn test_holdings_to_balances_empty() {
     let holdings: Vec<TokenHolding> = vec![];
-    let balances = holdings_to_balances(&holdings).unwrap();
+    let balances = holdings_to_balances(&holdings);
     assert!(balances.is_empty());
-}
-
-#[test]
-fn test_holdings_to_balances_invalid_balance() {
-    let holdings = vec![TokenHolding {
-        token: "wrap.near".to_string(),
-        balance: "not_a_number".to_string(),
-        decimals: 24,
-    }];
-
-    let result = holdings_to_balances(&holdings);
-    assert!(result.is_err());
 }
 
 #[test]
 fn test_holdings_to_balances_large_values() {
     // u128::MAX に近い値
     let holdings = vec![TokenHolding {
-        token: "wrap.near".to_string(),
-        balance: "340282366920938463463374607431768211455".to_string(),
+        token: ta("wrap.near"),
+        balance: "340282366920938463463374607431768211455".parse().unwrap(),
         decimals: 24,
     }];
 
-    let balances = holdings_to_balances(&holdings).unwrap();
+    let balances = holdings_to_balances(&holdings);
     let wnear = &balances[&ta("wrap.near")];
     assert_eq!(
         wnear.smallest_units().to_string(),
@@ -173,7 +164,7 @@ fn test_roundtrip_balances_to_holdings_to_balances() {
     );
 
     let holdings = balances_to_holdings(&original);
-    let restored = holdings_to_balances(&holdings).unwrap();
+    let restored = holdings_to_balances(&holdings);
 
     assert_eq!(original.len(), restored.len());
     for (token, amount) in &original {
@@ -198,7 +189,7 @@ fn test_roundtrip_excludes_zero_balances() {
     let holdings = balances_to_holdings(&original);
     assert_eq!(holdings.len(), 1);
 
-    let restored = holdings_to_balances(&holdings).unwrap();
+    let restored = holdings_to_balances(&holdings);
     assert_eq!(restored.len(), 1);
     assert!(restored.contains_key(&ta("wrap.near")));
     assert!(!restored.contains_key(&ta("zero-token.near")));
@@ -226,7 +217,7 @@ fn test_holdings_preserves_decimals() {
     );
 
     let holdings = balances_to_holdings(&balances);
-    let restored = holdings_to_balances(&holdings).unwrap();
+    let restored = holdings_to_balances(&holdings);
 
     assert_eq!(restored[&ta("token-6.near")].decimals(), 6);
     assert_eq!(restored[&ta("token-8.near")].decimals(), 8);
@@ -237,12 +228,12 @@ fn test_holdings_preserves_decimals() {
 #[test]
 fn test_holdings_to_balances_zero_balance_string() {
     let holdings = vec![TokenHolding {
-        token: "wrap.near".to_string(),
-        balance: "0".to_string(),
+        token: ta("wrap.near"),
+        balance: "0".parse().unwrap(),
         decimals: 24,
     }];
 
-    let balances = holdings_to_balances(&holdings).unwrap();
+    let balances = holdings_to_balances(&holdings);
     assert_eq!(balances.len(), 1);
     assert!(balances[&ta("wrap.near")].is_zero());
 }

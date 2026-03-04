@@ -2,6 +2,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protos = &[
         "proto/zaciraci/v1/health.proto",
         "proto/zaciraci/v1/config.proto",
+        "proto/zaciraci/v1/portfolio.proto",
     ];
 
     tonic_prost_build::configure()

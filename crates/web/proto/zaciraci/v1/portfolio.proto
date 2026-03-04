@@ -1,0 +1,48 @@
+syntax = "proto3";
+package zaciraci.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service PortfolioService {
+  rpc GetEvaluationPeriods(GetEvaluationPeriodsRequest) returns (GetEvaluationPeriodsResponse);
+  rpc GetPortfolioHoldings(GetPortfolioHoldingsRequest) returns (GetPortfolioHoldingsResponse);
+}
+
+message EvaluationPeriod {
+  int32 id = 1;
+  string period_id = 2;
+  google.protobuf.Timestamp start_time = 3;
+  string initial_value = 4;
+  repeated string selected_tokens = 5;
+}
+
+message GetEvaluationPeriodsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message GetEvaluationPeriodsResponse {
+  repeated EvaluationPeriod periods = 1;
+  int64 total_count = 2;
+}
+
+message TokenHolding {
+  string token = 1;
+  string balance = 2;
+  uint32 decimals = 3;
+  string value_wnear = 4;
+}
+
+message PortfolioHolding {
+  google.protobuf.Timestamp timestamp = 1;
+  repeated TokenHolding token_holdings = 2;
+  string total_value_wnear = 3;
+}
+
+message GetPortfolioHoldingsRequest {
+  string period_id = 1;
+}
+
+message GetPortfolioHoldingsResponse {
+  repeated PortfolioHolding holdings = 1;
+}

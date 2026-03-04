@@ -391,6 +391,18 @@ impl Mul<BigDecimal> for YoctoAmount {
     }
 }
 
+impl From<BigDecimal> for YoctoAmount {
+    fn from(value: BigDecimal) -> Self {
+        YoctoAmount(value)
+    }
+}
+
+impl From<YoctoAmount> for BigDecimal {
+    fn from(value: YoctoAmount) -> Self {
+        value.0
+    }
+}
+
 // =============================================================================
 // NearAmount（量）- NEAR 単位
 // =============================================================================
