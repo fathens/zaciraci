@@ -63,11 +63,8 @@ fn db_holding_to_proto(
     let mut total_yocto = YoctoValue::zero();
 
     for th in &parsed {
-        let balance = th
-            .balance
-            .parse()
-            .map_err(|e| Status::internal(format!("Invalid balance for {}: {e}", th.token)))?;
-        let amount = TokenAmount::from_smallest_units(balance, th.decimals);
+        let amount =
+            TokenAmount::from_smallest_units(th.balance.as_bigdecimal().clone(), th.decimals);
 
         let yocto = if th.token == *wnear {
             let rate = ExchangeRate::wnear();
@@ -96,7 +93,7 @@ fn db_holding_to_proto(
 
         token_holdings.push(crate::proto::TokenHolding {
             token: th.token.to_string(),
-            balance: th.balance.clone(),
+            balance: th.balance.to_string(),
             decimals: u32::from(th.decimals),
             value_wnear: yocto.to_string(),
         });

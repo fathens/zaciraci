@@ -2,6 +2,7 @@ use crate::connection_pool;
 use crate::schema::portfolio_holdings;
 use anyhow::Result;
 use chrono::NaiveDateTime;
+use common::types::TokenSmallestUnits;
 use common::types::token_account::TokenAccount;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -10,8 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenHolding {
     pub token: TokenAccount,
-    /// smallest_units の文字列表現
-    pub balance: String,
+    pub balance: TokenSmallestUnits,
     pub decimals: u8,
 }
 

@@ -1,7 +1,6 @@
 use crate::Result;
-use bigdecimal::BigDecimal;
 use common::config::ConfigAccess;
-use common::types::{TokenAccount, TokenAmount};
+use common::types::{TokenAccount, TokenAmount, TokenSmallestUnits};
 use logging::*;
 use persistence::portfolio_holding::{NewPortfolioHolding, PortfolioHolding, TokenHolding};
 use std::collections::BTreeMap;
@@ -76,7 +75,7 @@ pub async fn get_holdings_from_db(
     };
 
     let holdings = record.parse_holdings()?;
-    holdings_to_balances(&holdings).map(Some)
+    Ok(Some(holdings_to_balances(&holdings)))
 }
 
 /// 古い保有量レコードのクリーンアップ
@@ -93,26 +92,22 @@ fn balances_to_holdings(balances: &BTreeMap<TokenAccount, TokenAmount>) -> Vec<T
         .filter(|(_, amount)| !amount.is_zero())
         .map(|(token, amount)| TokenHolding {
             token: token.clone(),
-            balance: amount.smallest_units().to_string(),
+            balance: TokenSmallestUnits::from_bigdecimal(amount.smallest_units().clone()),
             decimals: amount.decimals(),
         })
         .collect()
 }
 
 /// Vec<TokenHolding> → BTreeMap<TokenAccount, TokenAmount> に変換
-fn holdings_to_balances(holdings: &[TokenHolding]) -> Result<BTreeMap<TokenAccount, TokenAmount>> {
+fn holdings_to_balances(holdings: &[TokenHolding]) -> BTreeMap<TokenAccount, TokenAmount> {
     let mut result = BTreeMap::new();
     for h in holdings {
-        let smallest_units: BigDecimal = h
-            .balance
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Failed to parse balance '{}': {}", h.balance, e))?;
         result.insert(
             h.token.clone(),
-            TokenAmount::from_smallest_units(smallest_units, h.decimals),
+            TokenAmount::from_smallest_units(h.balance.as_bigdecimal().clone(), h.decimals),
         );
     }
-    Ok(result)
+    result
 }
 
 #[cfg(test)]

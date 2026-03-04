@@ -8,12 +8,12 @@ fn create_test_holdings_json() -> serde_json::Value {
     serde_json::to_value(vec![
         TokenHolding {
             token: "wrap.near".parse().unwrap(),
-            balance: "1000000000000000000000000".to_string(),
+            balance: "1000000000000000000000000".parse().unwrap(),
             decimals: 24,
         },
         TokenHolding {
             token: "usdt.tether-token.near".parse().unwrap(),
-            balance: "5000000".to_string(),
+            balance: "5000000".parse().unwrap(),
             decimals: 6,
         },
     ])
@@ -72,9 +72,9 @@ async fn test_insert_and_get_by_period() -> Result<()> {
     let holdings = results[0].parse_holdings()?;
     assert_eq!(holdings.len(), 2);
     assert_eq!(holdings[0].token.as_str(), "wrap.near");
-    assert_eq!(holdings[0].balance, "1000000000000000000000000");
+    assert_eq!(holdings[0].balance.to_string(), "1000000000000000000000000");
     assert_eq!(holdings[1].token.as_str(), "usdt.tether-token.near");
-    assert_eq!(holdings[1].balance, "5000000");
+    assert_eq!(holdings[1].balance.to_string(), "5000000");
 
     cleanup_holdings_for_period(&period_id).await;
     Ok(())
@@ -179,12 +179,12 @@ fn test_token_holding_serialization() {
     let holdings = vec![
         TokenHolding {
             token: "usdt.tether-token.near".parse().unwrap(),
-            balance: "1000000".to_string(),
+            balance: "1000000".parse().unwrap(),
             decimals: 6,
         },
         TokenHolding {
             token: "wrap.near".parse().unwrap(),
-            balance: "5000000000000000000000000000".to_string(),
+            balance: "5000000000000000000000000000".parse().unwrap(),
             decimals: 24,
         },
     ];
@@ -212,7 +212,7 @@ fn test_token_holding_deserialization() {
     let holdings: Vec<TokenHolding> = serde_json::from_value(json).unwrap();
     assert_eq!(holdings.len(), 2);
     assert_eq!(holdings[0].token.as_str(), "usdt.tether-token.near");
-    assert_eq!(holdings[0].balance, "1000000");
+    assert_eq!(holdings[0].balance.to_string(), "1000000");
     assert_eq!(holdings[0].decimals, 6);
     assert_eq!(holdings[1].token.as_str(), "wrap.near");
     assert_eq!(holdings[1].decimals, 24);
@@ -223,12 +223,12 @@ fn test_token_holding_roundtrip() {
     let original = vec![
         TokenHolding {
             token: "token-a.near".parse().unwrap(),
-            balance: "123456789012345678901234".to_string(),
+            balance: "123456789012345678901234".parse().unwrap(),
             decimals: 18,
         },
         TokenHolding {
             token: "token-b.near".parse().unwrap(),
-            balance: "0".to_string(),
+            balance: "0".parse().unwrap(),
             decimals: 8,
         },
     ];
@@ -262,7 +262,7 @@ fn test_parse_holdings_valid_jsonb() {
     let holdings = record.parse_holdings().unwrap();
     assert_eq!(holdings.len(), 1);
     assert_eq!(holdings[0].token.as_str(), "wrap.near");
-    assert_eq!(holdings[0].balance, "1000000000000000000000000");
+    assert_eq!(holdings[0].balance.to_string(), "1000000000000000000000000");
     assert_eq!(holdings[0].decimals, 24);
 }
 
@@ -298,7 +298,7 @@ fn test_parse_holdings_invalid_jsonb() {
 fn test_new_portfolio_holding_construction() {
     let holdings = vec![TokenHolding {
         token: "wrap.near".parse().unwrap(),
-        balance: "100".to_string(),
+        balance: "100".parse().unwrap(),
         decimals: 24,
     }];
     let json = serde_json::to_value(&holdings).unwrap();
@@ -318,7 +318,7 @@ fn test_token_holding_large_balance() {
     // u128::MAX に近い値でもシリアライズ可能
     let holding = TokenHolding {
         token: "wrap.near".parse().unwrap(),
-        balance: "340282366920938463463374607431768211455".to_string(),
+        balance: "340282366920938463463374607431768211455".parse().unwrap(),
         decimals: 24,
     };
 
