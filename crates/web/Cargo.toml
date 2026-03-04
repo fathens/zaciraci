@@ -13,6 +13,7 @@ tonic-prost = "0.14"
 tonic-web = "0.14"
 prost = "0.14"
 prost-types = "0.14"
+chrono = { workspace = true }
 tokio = { workspace = true }
 slog = { workspace = true }
 
