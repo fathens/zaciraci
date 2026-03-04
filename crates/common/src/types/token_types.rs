@@ -203,7 +203,12 @@ impl TokenAmount {
         self.smallest_units.is_zero()
     }
 
-    /// smallest_units を TokenSmallestUnits として取得（decimals を捨てる）
+    /// smallest_units を TokenSmallestUnits として取得（decimals を捨てる、借用版）
+    pub fn to_smallest_units(&self) -> TokenSmallestUnits {
+        TokenSmallestUnits::from_bigdecimal(self.smallest_units.clone())
+    }
+
+    /// smallest_units を TokenSmallestUnits として取得（decimals を捨てる、消費版）
     pub fn into_smallest_units(self) -> TokenSmallestUnits {
         TokenSmallestUnits::from_bigdecimal(self.smallest_units)
     }

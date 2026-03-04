@@ -1,6 +1,6 @@
 use crate::Result;
 use common::config::ConfigAccess;
-use common::types::{TokenAccount, TokenAmount, TokenSmallestUnits};
+use common::types::{TokenAccount, TokenAmount};
 use logging::*;
 use persistence::portfolio_holding::{NewPortfolioHolding, PortfolioHolding, TokenHolding};
 use std::collections::BTreeMap;
@@ -92,7 +92,7 @@ fn balances_to_holdings(balances: &BTreeMap<TokenAccount, TokenAmount>) -> Vec<T
         .filter(|(_, amount)| !amount.is_zero())
         .map(|(token, amount)| TokenHolding {
             token: token.clone(),
-            balance: TokenSmallestUnits::from_bigdecimal(amount.smallest_units().clone()),
+            balance: amount.to_smallest_units(),
             decimals: amount.decimals(),
         })
         .collect()
@@ -102,10 +102,7 @@ fn balances_to_holdings(balances: &BTreeMap<TokenAccount, TokenAmount>) -> Vec<T
 fn holdings_to_balances(holdings: &[TokenHolding]) -> BTreeMap<TokenAccount, TokenAmount> {
     let mut result = BTreeMap::new();
     for h in holdings {
-        result.insert(
-            h.token.clone(),
-            TokenAmount::from_smallest_units(h.balance.as_bigdecimal().clone(), h.decimals),
-        );
+        result.insert(h.token.clone(), h.balance.clone().with_decimals(h.decimals));
     }
     result
 }

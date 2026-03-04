@@ -6,7 +6,7 @@ use crate::proto::{
 use common::types::near_units::YoctoValue;
 use common::types::time_range::TimeRange;
 use common::types::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
-use common::types::token_types::{ExchangeRate, TokenAmount};
+use common::types::token_types::ExchangeRate;
 use persistence::evaluation_period::EvaluationPeriod;
 use persistence::portfolio_holding::{DbPortfolioHolding, PortfolioHolding};
 use persistence::token_rate::TokenRate;
@@ -63,8 +63,7 @@ fn db_holding_to_proto(
     let mut total_yocto = YoctoValue::zero();
 
     for th in &parsed {
-        let amount =
-            TokenAmount::from_smallest_units(th.balance.as_bigdecimal().clone(), th.decimals);
+        let amount = th.balance.clone().with_decimals(th.decimals);
 
         let yocto = if th.token == *wnear {
             let rate = ExchangeRate::wnear();
