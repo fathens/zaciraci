@@ -65,7 +65,6 @@ impl PredictionService {
         quote_token: &TokenInAccount,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
-        cfg: &impl ConfigAccess,
     ) -> Result<PriceHistory> {
         // 直接データベースから価格履歴を取得
         let base_token: TokenOutAccount = token.clone();
@@ -76,16 +75,9 @@ impl PredictionService {
             end: end_date.naive_utc(),
         };
 
-        let get_decimals = super::make_get_decimals();
-        let rates = TokenRate::get_rates_in_time_range(
-            &range,
-            &base_token,
-            &quote_token_account,
-            &get_decimals,
-            cfg,
-        )
-        .await
-        .context("Failed to get price history from database")?;
+        let rates = TokenRate::get_rates_in_time_range(&range, &base_token, &quote_token_account)
+            .await
+            .context("Failed to get price history from database")?;
 
         // TokenRateをPricePointに変換（スポットレート補正適用）
         // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
@@ -94,15 +86,19 @@ impl PredictionService {
         let price_points: Vec<PricePoint> = rates
             .iter()
             .enumerate()
-            .map(|(i, rate)| {
+            .filter_map(|(i, rate)| {
                 let fallback_path = fallback_indices[i]
                     .and_then(|idx| rates.get(idx))
                     .and_then(|r| r.swap_path.as_ref());
-                PricePoint {
-                    timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                    price: rate.to_spot_rate_with_fallback(fallback_path).to_price(),
-                    volume: None,
+                let spot_rate = rate.to_spot_rate_with_fallback(fallback_path);
+                if spot_rate.is_effectively_zero() {
+                    return None;
                 }
+                Some(PricePoint {
+                    timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
+                    price: spot_rate.to_price(),
+                    volume: None,
+                })
             })
             .collect();
 
@@ -188,16 +184,9 @@ impl PredictionService {
         };
 
         // 1. 全トークンの履歴を一括取得（1回のDBクエリ）
-        let get_decimals = super::make_get_decimals();
-        let histories_map = TokenRate::get_rates_for_multiple_tokens(
-            &tokens,
-            quote_token,
-            &range,
-            &get_decimals,
-            cfg,
-        )
-        .await
-        .context("Failed to batch fetch price histories")?;
+        let histories_map = TokenRate::get_rates_for_multiple_tokens(&tokens, quote_token, &range)
+            .await
+            .context("Failed to batch fetch price histories")?;
 
         info!(log, "Fetched price histories";
             "requested" => tokens.len(),
@@ -227,18 +216,22 @@ impl PredictionService {
                         prices: rates
                             .iter()
                             .enumerate()
-                            .map(|(i, r)| {
+                            .filter_map(|(i, r)| {
                                 let fallback_path = fallback_indices[i]
                                     .and_then(|idx| rates.get(idx))
                                     .and_then(|rate| rate.swap_path.as_ref());
-                                PricePoint {
+                                let spot_rate = r.to_spot_rate_with_fallback(fallback_path);
+                                if spot_rate.is_effectively_zero() {
+                                    return None;
+                                }
+                                Some(PricePoint {
                                     timestamp: DateTime::from_naive_utc_and_offset(
                                         r.timestamp,
                                         Utc,
                                     ),
-                                    price: r.to_spot_rate_with_fallback(fallback_path).to_price(),
+                                    price: spot_rate.to_price(),
                                     volume: None,
-                                }
+                                })
                             })
                             .collect(),
                     };

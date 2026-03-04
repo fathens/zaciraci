@@ -1,4 +1,5 @@
 use super::*;
+use common::types::TokenSmallestUnits;
 
 #[tokio::test]
 async fn test_trade_transaction_crud() {
@@ -9,9 +10,9 @@ async fn test_trade_transaction_crud() {
         tx_id: tx_id.clone(),
         trade_batch_id: batch_id.clone(),
         from_token: "wrap.near".to_string(),
-        from_amount: BigDecimal::from(1000000000000000000000000i128), // 1 NEAR
+        from_amount: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000), // 1 NEAR
         to_token: "akaia.tkn.near".to_string(),
-        to_amount: BigDecimal::from(50000000000000000000000i128),
+        to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
         evaluation_period_id: None,
     };
@@ -25,6 +26,15 @@ async fn test_trade_transaction_crud() {
         .unwrap()
         .unwrap();
     assert_eq!(found.tx_id, tx_id);
+    // amount が DB ラウンドトリップで正しく復元されることを確認
+    assert_eq!(
+        found.from_amount,
+        TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000)
+    );
+    assert_eq!(
+        found.to_amount,
+        TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000)
+    );
 
     let batch_transactions = TradeTransaction::find_by_batch_id_async(batch_id)
         .await
@@ -41,8 +51,10 @@ async fn test_count_by_evaluation_period() {
     use crate::evaluation_period::NewEvaluationPeriod;
 
     // 評価期間を作成（外部キー制約のため）
-    let new_period =
-        NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+    let new_period = NewEvaluationPeriod::new(
+        common::types::YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000),
+        vec![],
+    );
     let created_period = new_period.insert_async().await.unwrap();
     let period_id = created_period.period_id;
     let batch_id = uuid::Uuid::new_v4().to_string();
@@ -57,9 +69,9 @@ async fn test_count_by_evaluation_period() {
             tx_id,
             trade_batch_id: batch_id.clone(),
             from_token: "wrap.near".to_string(),
-            from_amount: BigDecimal::from(1000000000000000000000000i128),
+            from_amount: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000),
             to_token: "akaia.tkn.near".to_string(),
-            to_amount: BigDecimal::from(50000000000000000000000i128),
+            to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
             timestamp: chrono::Utc::now().naive_utc(),
             evaluation_period_id: Some(period_id.clone()),
         };
@@ -93,8 +105,10 @@ async fn test_transaction_with_evaluation_period_id() {
     use crate::evaluation_period::NewEvaluationPeriod;
 
     // 評価期間を作成（外部キー制約のため）
-    let new_period =
-        NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+    let new_period = NewEvaluationPeriod::new(
+        common::types::YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000),
+        vec![],
+    );
     let created_period = new_period.insert_async().await.unwrap();
     let period_id = created_period.period_id;
     let batch_id = uuid::Uuid::new_v4().to_string();
@@ -105,9 +119,9 @@ async fn test_transaction_with_evaluation_period_id() {
         tx_id: tx_id.clone(),
         trade_batch_id: batch_id.clone(),
         from_token: "wrap.near".to_string(),
-        from_amount: BigDecimal::from(1000000000000000000000000i128),
+        from_amount: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000),
         to_token: "akaia.tkn.near".to_string(),
-        to_amount: BigDecimal::from(50000000000000000000000i128),
+        to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
         evaluation_period_id: Some(period_id.clone()),
     };

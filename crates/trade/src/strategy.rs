@@ -535,7 +535,7 @@ where
 
                 // 価格履歴の取得
                 let history_result = prediction_service
-                    .get_price_history(&data.token_out, &quote_token_in, start_date, end_date, cfg)
+                    .get_price_history(&data.token_out, &quote_token_in, start_date, end_date)
                     .await;
 
                 let history = match history_result {

@@ -13,11 +13,6 @@ use std::str::FromStr;
 
 const CFG: ConfigResolver = ConfigResolver;
 
-/// テスト用ヘルパー: decimals 取得コールバック
-fn test_get_decimals() -> &'static persistence::token_rate::GetDecimalsFn {
-    &|_token: &str| Box::pin(async move { Ok(24u8) })
-}
-
 fn price(s: &str) -> TokenPrice {
     TokenPrice::from_near_per_token(BigDecimal::from_str(s).unwrap())
 }
@@ -207,13 +202,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
     let end_date = Utc::now();
 
     let result = service
-        .get_price_history(
-            &test_token,
-            &fixture.quote_token,
-            start_date,
-            end_date,
-            &CFG,
-        )
+        .get_price_history(&test_token, &fixture.quote_token, start_date, end_date)
         .await;
 
     assert!(result.is_ok(), "get_price_history should succeed");
@@ -452,7 +441,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
     for token_name in &tokens {
         let token: TokenOutAccount = token_name.parse::<TokenAccount>().unwrap().into();
         let result = service
-            .get_price_history(&token, &fixture.quote_token, start_date, end_date, &CFG)
+            .get_price_history(&token, &fixture.quote_token, start_date, end_date)
             .await;
 
         if result.is_ok() {
@@ -898,14 +887,8 @@ async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
         end: Utc::now().naive_utc(),
     };
 
-    let histories_map = TokenRate::get_rates_for_multiple_tokens(
-        &tokens,
-        &fixture.quote_token,
-        &range,
-        test_get_decimals(),
-        &CFG,
-    )
-    .await?;
+    let histories_map =
+        TokenRate::get_rates_for_multiple_tokens(&tokens, &fixture.quote_token, &range).await?;
 
     // 全トークンの履歴が取得できることを確認
     assert_eq!(
@@ -964,8 +947,8 @@ fn test_spot_rate_correction_with_path() {
             pool_id: 123,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR in yocto
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -1003,8 +986,8 @@ fn test_spot_rate_correction_with_fallback() {
             pool_id: 456,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 

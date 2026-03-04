@@ -2,15 +2,16 @@ use crate::connection_pool;
 use crate::schema::portfolio_holdings;
 use anyhow::Result;
 use chrono::NaiveDateTime;
+use common::types::TokenSmallestUnits;
+use common::types::token_account::TokenAccount;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// JSONB 用の個別トークン保有量
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenHolding {
-    pub token: String,
-    /// smallest_units の文字列表現
-    pub balance: String,
+    pub token: TokenAccount,
+    pub balance: TokenSmallestUnits,
     pub decimals: u8,
 }
 

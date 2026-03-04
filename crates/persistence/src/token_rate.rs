@@ -6,18 +6,14 @@ use bigdecimal::{BigDecimal, Zero};
 use chrono::NaiveDateTime;
 use common::config::ConfigAccess;
 use common::types::TimeRange;
-use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount};
+use common::types::{
+    ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount, TokenSmallestUnits,
+};
 use diesel::prelude::*;
-use futures::stream::{self, StreamExt};
 use logging::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::FromStr;
-
-/// token decimals を非同期取得するコールバック型
-pub type GetDecimalsFn = dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<u8>> + Send + '_>>
-    + Send
-    + Sync;
 
 /// スワップパス内の個々のプール情報
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,10 +24,10 @@ pub struct SwapPoolInfo {
     pub token_in_idx: u8,
     /// 出力トークンのインデックス
     pub token_out_idx: u8,
-    /// 入力側プールサイズ（yocto 単位の文字列）
-    pub amount_in: String,
-    /// 出力側プールサイズ（yocto 単位の文字列）
-    pub amount_out: String,
+    /// 入力側プールサイズ（smallest_units）
+    pub amount_in: TokenSmallestUnits,
+    /// 出力側プールサイズ（smallest_units）
+    pub amount_out: TokenSmallestUnits,
 }
 
 /// スワップパス全体の情報（マルチホップ対応）
@@ -52,7 +48,7 @@ struct DbTokenRate {
     pub quote_token: String,
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
-    pub decimals: Option<i16>,
+    pub decimals: i16,
     pub rate_calc_near: i64,
     pub swap_path: Option<serde_json::Value>,
 }
@@ -65,7 +61,7 @@ struct NewDbTokenRate {
     pub quote_token: String,
     pub rate: BigDecimal,
     pub timestamp: NaiveDateTime,
-    pub decimals: Option<i16>,
+    pub decimals: i16,
     pub rate_calc_near: i64,
     pub swap_path: Option<serde_json::Value>,
 }
@@ -84,7 +80,7 @@ impl NewDbTokenRate {
             base_token: base.to_string(),
             quote_token: quote.to_string(),
             rate: exchange_rate.raw_rate().clone(),
-            decimals: Some(exchange_rate.decimals() as i16),
+            decimals: exchange_rate.decimals() as i16,
             timestamp,
             rate_calc_near,
             swap_path: swap_path.and_then(|p| serde_json::to_value(p).ok()),
@@ -140,11 +136,11 @@ impl TokenRate {
         }
     }
 
-    /// DB レコードから変換（decimals を明示的に指定）
-    fn from_db_with_decimals(db_rate: DbTokenRate, decimals: u8) -> Result<Self> {
+    /// DB レコードからドメインモデルに変換
+    fn from_db(db_rate: DbTokenRate) -> Result<Self> {
         let base = TokenAccount::from_str(&db_rate.base_token)?.into();
         let quote = TokenAccount::from_str(&db_rate.quote_token)?.into();
-        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, decimals);
+        let exchange_rate = ExchangeRate::from_raw_rate(db_rate.rate, db_rate.decimals as u8);
         let swap_path = db_rate
             .swap_path
             .and_then(|v| serde_json::from_value(v).ok());
@@ -157,137 +153,6 @@ impl TokenRate {
             rate_calc_near: db_rate.rate_calc_near,
             swap_path,
         })
-    }
-
-    /// 単一の DB レコードを変換し、NULL decimals があれば get_decimals で取得して backfill
-    async fn from_db_with_backfill(
-        db_rate: DbTokenRate,
-        get_decimals: &GetDecimalsFn,
-    ) -> Result<Self> {
-        let decimals = match db_rate.decimals {
-            Some(d) => d as u8,
-            None => {
-                let log = DEFAULT.new(o!(
-                    "function" => "from_db_with_backfill",
-                    "base_token" => db_rate.base_token.clone(),
-                ));
-                trace!(log, "backfilling decimals for token with NULL");
-
-                let decimals = get_decimals(&db_rate.base_token).await?;
-                Self::backfill_decimals(&db_rate.base_token, decimals).await?;
-                decimals
-            }
-        };
-        Self::from_db_with_decimals(db_rate, decimals)
-    }
-
-    /// 複数の DB レコードを変換し、NULL decimals があれば get_decimals で取得して backfill
-    ///
-    /// 1. NULL decimals を持つトークンを特定
-    /// 2. get_decimals で decimals を取得して DB を backfill
-    /// 3. 正しい decimals で全レコードを変換
-    async fn from_db_results_with_backfill(
-        results: Vec<DbTokenRate>,
-        get_decimals: &GetDecimalsFn,
-        cfg: &impl ConfigAccess,
-    ) -> Result<Vec<Self>> {
-        let log = DEFAULT.new(o!(
-            "function" => "from_db_results_with_backfill",
-        ));
-
-        // NULL decimals を持つトークンを特定
-        let tokens_with_null: HashSet<String> = results
-            .iter()
-            .filter(|r| r.decimals.is_none())
-            .map(|r| r.base_token.clone())
-            .collect();
-
-        // get_decimals で decimals を並行取得して backfill
-        let mut decimals_map: HashMap<String, u8> = HashMap::new();
-        if !tokens_with_null.is_empty() {
-            trace!(log, "backfilling decimals for tokens with NULL"; "tokens_with_null_count" => tokens_with_null.len());
-
-            // 並行実行数（設定から取得、デフォルト4）
-            let concurrency = cfg.trade_prediction_concurrency() as usize;
-
-            // 全トークンの decimals を並行取得
-            let fetch_results: Vec<_> = stream::iter(tokens_with_null.iter().cloned())
-                .map(|token| {
-                    let log = log.clone();
-                    async move {
-                        match get_decimals(&token).await {
-                            Ok(decimals) => {
-                                // backfill は並行で実行
-                                if let Err(e) = Self::backfill_decimals(&token, decimals).await {
-                                    warn!(log, "failed to backfill decimals"; "token" => &token, "error" => %e);
-                                }
-                                Some((token, decimals))
-                            }
-                            Err(e) => {
-                                warn!(log, "failed to fetch decimals for backfill"; "token" => &token, "error" => %e);
-                                None
-                            }
-                        }
-                    }
-                })
-                .buffer_unordered(concurrency)
-                .collect()
-                .await;
-
-            // 結果を decimals_map に収集
-            for result in fetch_results.into_iter().flatten() {
-                decimals_map.insert(result.0, result.1);
-            }
-        }
-
-        // 正しい decimals で変換
-        let mut rates = Vec::with_capacity(results.len());
-        for db_rate in results {
-            let decimals = match db_rate.decimals {
-                Some(d) => d as u8,
-                None => match decimals_map.get(&db_rate.base_token) {
-                    Some(&d) => d,
-                    None => {
-                        warn!(log, "skipping rate: decimals unknown after backfill"; "token" => &db_rate.base_token);
-                        continue;
-                    }
-                },
-            };
-            rates.push(Self::from_db_with_decimals(db_rate, decimals)?);
-        }
-
-        Ok(rates)
-    }
-
-    /// 指定トークンの全レコードに decimals を設定
-    pub async fn backfill_decimals(base_token: &str, decimals: u8) -> Result<usize> {
-        use diesel::sql_types::{SmallInt, Text};
-
-        let log = DEFAULT.new(o!(
-            "function" => "backfill_decimals",
-            "base_token" => base_token.to_string(),
-            "decimals" => decimals,
-        ));
-        trace!(log, "start");
-
-        let conn = connection_pool::get().await?;
-        let base_token = base_token.to_string();
-        let decimals_i16 = decimals as i16;
-
-        let updated_count = conn
-            .interact(move |conn| {
-                diesel::sql_query(
-                    "UPDATE token_rates SET decimals = $1 WHERE base_token = $2 AND decimals IS NULL",
-                )
-                .bind::<SmallInt, _>(decimals_i16)
-                .bind::<Text, _>(&base_token)
-                .execute(conn)
-            })
-            .await
-            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-        trace!(log, "finish"; "updated_count" => updated_count);
-        Ok(updated_count)
     }
 
     /// NewDbTokenRate に変換
@@ -371,12 +236,9 @@ impl TokenRate {
     }
 
     /// 最新のレートを取得
-    ///
-    /// NULL decimals があれば get_decimals で取得して DB を backfill する。
     pub async fn get_latest(
         base: &TokenOutAccount,
         quote: &TokenInAccount,
-        get_decimals: &GetDecimalsFn,
     ) -> Result<Option<TokenRate>> {
         use diesel::QueryDsl;
         use diesel::dsl::max;
@@ -416,23 +278,17 @@ impl TokenRate {
                 .await
                 .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-            Ok(Some(
-                TokenRate::from_db_with_backfill(result, get_decimals).await?,
-            ))
+            Ok(Some(TokenRate::from_db(result)?))
         } else {
             Ok(None)
         }
     }
 
     /// 時間範囲内のレートを取得
-    ///
-    /// NULL decimals があれば get_decimals で取得して DB を backfill する。
     pub async fn get_rates_in_time_range(
         range: &TimeRange,
         base: &TokenOutAccount,
         quote: &TokenInAccount,
-        get_decimals: &GetDecimalsFn,
-        cfg: &impl ConfigAccess,
     ) -> Result<Vec<TokenRate>> {
         use diesel::QueryDsl;
 
@@ -456,19 +312,16 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        Self::from_db_results_with_backfill(results, get_decimals, cfg).await
+        results.into_iter().map(Self::from_db).collect()
     }
 
     /// 複数トークンの価格履歴を一括取得
     ///
     /// N個のトークンに対して1回のDBクエリで履歴を取得し、トークンごとのHashMapとして返す。
-    /// NULL decimals があれば get_decimals で取得して DB を backfill する。
     pub async fn get_rates_for_multiple_tokens(
         tokens: &[TokenOutAccount],
         quote: &TokenInAccount,
         range: &TimeRange,
-        get_decimals: &GetDecimalsFn,
-        cfg: &impl ConfigAccess,
     ) -> Result<HashMap<TokenOutAccount, Vec<TokenRate>>> {
         use diesel::sql_types::{Array, Text, Timestamp};
 
@@ -503,8 +356,10 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        // backfill 処理して TokenRate に変換
-        let rates = Self::from_db_results_with_backfill(results, get_decimals, cfg).await?;
+        let rates: Vec<TokenRate> = results
+            .into_iter()
+            .map(Self::from_db)
+            .collect::<Result<_>>()?;
 
         // トークンごとに分割
         let mut map: HashMap<TokenOutAccount, Vec<TokenRate>> = HashMap::new();
@@ -663,14 +518,33 @@ impl TokenRate {
     /// swap_path が None の場合、提供された fallback_path を使用して補正。
     /// swap_path も fallback_path もない場合は補正なしで元のレートを返す。
     ///
-    /// 補正式（マルチホップ）:
-    /// ```text
-    /// correction = Π(1 + Δx_i / x_i)
+    /// # AMM プライスインパクト補正モデル
     ///
-    /// where:
-    ///   Δx_0 = rate_calc_near (yocto 変換後)
-    ///   Δx_{i+1} = Δx_i × (amount_out_i / amount_in_i)
+    /// AMM（自動マーケットメーカー）では、スワップ量が大きいほど実効レートが
+    /// スポットレート（無限小取引量での理論レート）から乖離する（プライスインパクト）。
+    /// この補正は、実測のスワップレートからプライスインパクトを除去して
+    /// スポットレートを推定する。
+    ///
+    /// ## 補正式（マルチホップ）
+    ///
+    /// ```text
+    /// spot_rate = exchange_rate × correction
+    ///
+    /// correction = Π_i (1 + Δx_i / x_i)
     /// ```
+    ///
+    /// - `Δx_i`: ホップ i でプールに投入されたトークン量
+    /// - `x_i`: ホップ i のプール内の投入トークン側リザーブ（= `amount_in`）
+    /// - `Δx_0 = rate_calc_near × 10^24`（NEAR → yocto 変換）
+    /// - `Δx_{i+1} = Δx_i × (amount_out_i / amount_in_i)`:
+    ///   前ホップの出力比率で次ホップの投入量を推定
+    ///
+    /// ## 直感的な解釈
+    ///
+    /// 定積 AMM (x·y=k) では、Δx を投入すると実効レートは `y/(x+Δx)` になるが、
+    /// スポットレートは `y/x`。比率は `(x+Δx)/x = 1 + Δx/x` なので、
+    /// 実効レートにこの補正係数を掛けるとスポットレートが復元される。
+    /// マルチホップでは各プールの補正を積算する。
     pub fn to_spot_rate_with_fallback(&self, fallback_path: Option<&SwapPath>) -> ExchangeRate {
         let path = self.swap_path.as_ref().or(fallback_path);
         if let Some(path) = path
@@ -684,18 +558,14 @@ impl TokenRate {
             let mut current_delta = delta_x;
 
             for pool in &path.pools {
-                if let Ok(pool_amount) = pool.amount_in.parse::<BigDecimal>()
-                    && !pool_amount.is_zero()
-                {
+                let pool_amount = pool.amount_in.as_bigdecimal();
+                if !pool_amount.is_zero() {
                     // 各プールで補正を積算: correction *= (1 + Δx / x)
-                    correction *= (&pool_amount + &current_delta) / &pool_amount;
+                    correction *= (pool_amount + &current_delta) / pool_amount;
 
                     // 次のホップの入力は現在のホップの出力に比例
-                    if let Ok(amount_out) = pool.amount_out.parse::<BigDecimal>() {
-                        current_delta = &amount_out * &current_delta / &pool_amount;
-                    }
-                    // amount_out のパースに失敗した場合は current_delta を維持
-                    // （次のプールでも同じ delta を使用）
+                    let amount_out = pool.amount_out.as_bigdecimal();
+                    current_delta = amount_out * &current_delta / pool_amount;
                 }
             }
 
@@ -725,7 +595,6 @@ pub async fn get_all_decimals() -> Result<HashMap<TokenAccount, u8>> {
             diesel::sql_query(
                 "SELECT DISTINCT ON (base_token) base_token, decimals \
                  FROM token_rates \
-                 WHERE decimals IS NOT NULL \
                  ORDER BY base_token, timestamp DESC",
             )
             .load::<TokenDecimalsRow>(conn)

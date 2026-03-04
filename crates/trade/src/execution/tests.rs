@@ -102,7 +102,7 @@ fn test_filter_tokens_to_liquidate_only_wrap_near() {
 
 // Rebalance logic tests
 mod rebalance_tests {
-    use bigdecimal::BigDecimal;
+    use bigdecimal::{BigDecimal, Zero};
     use common::types::{ExchangeRate, NearValue, TokenAmount};
     use std::str::FromStr;
 
@@ -405,61 +405,35 @@ mod rebalance_tests {
 
     #[test]
     fn test_small_rate_scaling_issue() {
-        // Test: Very small rates can become 0 when converted to u128
-        // This happens for expensive tokens with few decimals
-        use num_bigint::ToBigInt;
+        // decimals=0 のトークンで raw_rate < 1 となるケースを
+        // is_effectively_zero() で検出できることを確認
 
-        // Case 1: Normal rate (token worth 0.001 NEAR, 18 decimals)
-        // rate = 1e18 / 1e26 = 1e-8
-        let rate_normal = BigDecimal::from_str("0.00000001").unwrap();
-        let scale = BigDecimal::from_str("1000000000000000000000000").unwrap(); // 1e24
-        let scaled_normal = &rate_normal * &scale;
-        let bigint_normal = scaled_normal.to_bigint().unwrap();
-        println!(
-            "Normal rate: {} -> scaled: {} -> bigint: {}",
-            rate_normal, scaled_normal, bigint_normal
-        );
+        // Case 1: Normal rate (USDT風, decimals=6, 1 NEAR = 5 USDT)
+        let rate_normal = ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6);
         assert!(
-            bigint_normal > num_bigint::BigInt::from(0),
-            "Normal rate should not become 0"
+            !rate_normal.is_effectively_zero(),
+            "Normal rate should be tradeable"
         );
 
-        // Case 2: Problematic rate (expensive token with 0 decimals, worth 2 NEAR)
-        // rate = 50 / 1e26 = 5e-25
-        let rate_problem = BigDecimal::from_str("0.0000000000000000000000005").unwrap();
-        let scaled_problem = &rate_problem * &scale;
-        let bigint_problem = scaled_problem.to_bigint();
-        println!(
-            "Problem rate: {} -> scaled: {} -> bigint: {:?}",
-            rate_problem, scaled_problem, bigint_problem
+        // Case 2: Problematic rate (decimals=0, 1 token = 2 NEAR → raw_rate = 0.5)
+        let rate_problem = ExchangeRate::from_raw_rate(BigDecimal::from_str("0.5").unwrap(), 0);
+        assert!(
+            rate_problem.is_effectively_zero(),
+            "Rate < 1 should be effectively zero (untradeable)"
         );
 
-        // This test documents the known issue: small rates become 0
-        // The bigint should be Some(0) or the scaled value should be < 1
-        if let Some(bi) = bigint_problem {
-            println!("WARNING: Very small rate results in bigint = {}", bi);
-            // If this is 0, we have a precision issue
-            if bi == num_bigint::BigInt::from(0) {
-                println!(
-                    "ISSUE CONFIRMED: Rate {} scaled to {} truncates to 0",
-                    rate_problem, scaled_problem
-                );
-            }
-        }
-
-        // Case 3: Edge case - rate exactly at boundary
-        // rate × 1e24 = 1 -> rate = 1e-24
-        let rate_boundary = BigDecimal::from_str("0.000000000000000000000001").unwrap();
-        let scaled_boundary = &rate_boundary * &scale;
-        let bigint_boundary = scaled_boundary.to_bigint().unwrap();
-        println!(
-            "Boundary rate: {} -> scaled: {} -> bigint: {}",
-            rate_boundary, scaled_boundary, bigint_boundary
+        // Case 3: Boundary (decimals=0, raw_rate = 1 → 1 NEAR で 1 token)
+        let rate_boundary = ExchangeRate::from_raw_rate(BigDecimal::from(1), 0);
+        assert!(
+            !rate_boundary.is_effectively_zero(),
+            "Rate = 1 should be tradeable"
         );
-        assert_eq!(
-            bigint_boundary,
-            num_bigint::BigInt::from(1),
-            "Boundary rate should be exactly 1"
+
+        // Case 4: Zero rate
+        let rate_zero = ExchangeRate::from_raw_rate(BigDecimal::zero(), 0);
+        assert!(
+            rate_zero.is_effectively_zero(),
+            "Zero rate should be effectively zero"
         );
     }
 }

@@ -85,12 +85,11 @@ where
             let quote_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
             // 最新のレートを取得
-            let get_decimals = super::make_get_decimals();
-            match TokenRate::get_latest(&base_token, &quote_token, &get_decimals).await {
+            match TokenRate::get_latest(&base_token, &quote_token).await {
                 Ok(Some(rate)) => {
                     let spot = rate.to_spot_rate();
-                    if spot.is_zero() {
-                        warn!(log, "Rate is zero for token"; "token" => %token);
+                    if spot.is_effectively_zero() {
+                        warn!(log, "Rate is effectively zero for token"; "token" => %token);
                     } else {
                         let token_value = amount / &spot;
                         total_value = total_value + token_value;

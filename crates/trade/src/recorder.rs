@@ -40,17 +40,24 @@ impl TradeRecorder {
         let log = DEFAULT.new(o!("function" => "record_trade"));
         debug!(log, "recording trade"; "from_token" => %from_token, "to_token" => %to_token, "tx_id" => %tx_id);
 
-        // 型安全な値をDB層用のBigDecimalに変換
-        let from_amount_bd = from_amount.smallest_units().clone();
-        let to_amount_bd = to_amount.smallest_units().clone();
+        let from_smallest = from_amount.into_smallest_units();
+        let to_smallest = to_amount.into_smallest_units();
+
+        debug!(log, "recording trade details";
+            "from_amount" => %from_smallest,
+            "from_token" => %from_token,
+            "to_amount" => %to_smallest,
+            "to_token" => %to_token,
+            "batch_id" => %self.batch_id
+        );
 
         let transaction = TradeTransaction {
             tx_id: tx_id.clone(),
             trade_batch_id: self.batch_id.clone(),
             from_token: from_token.to_string(),
-            from_amount: from_amount_bd.clone(),
+            from_amount: from_smallest,
             to_token: to_token.to_string(),
-            to_amount: to_amount_bd.clone(),
+            to_amount: to_smallest,
             timestamp: chrono::Utc::now().naive_utc(),
             evaluation_period_id: Some(self.evaluation_period_id.clone()),
         };
@@ -60,14 +67,6 @@ impl TradeRecorder {
             .await
             .with_context(|| format!("Failed to insert trade transaction: {}", tx_id))?;
 
-        debug!(log, "successfully recorded trade";
-            "from_amount" => %from_amount_bd,
-            "from_token" => %from_token,
-            "to_amount" => %to_amount_bd,
-            "to_token" => %to_token,
-            "batch_id" => %self.batch_id
-        );
-
         Ok(result)
     }
 }
@@ -76,7 +75,7 @@ impl TradeRecorder {
 mod tests {
     use super::*;
     use bigdecimal::BigDecimal;
-    use common::types::TokenAccount;
+    use common::types::{TokenAccount, YoctoAmount};
 
     // テスト用定数
     const WNEAR_DECIMALS: u8 = 24;
@@ -93,7 +92,7 @@ mod tests {
 
         // 評価期間を作成（外部キー制約のため）
         // 初期投資額: 100 NEAR (= 100e24 yocto)
-        let initial_value = BigDecimal::from(100_000_000_000_000_000_000_000_000u128); // 100 NEAR
+        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000); // 100 NEAR
         let new_period = NewEvaluationPeriod::new(initial_value, vec![]);
         let created_period = new_period.insert_async().await.unwrap();
         let period_id = created_period.period_id;

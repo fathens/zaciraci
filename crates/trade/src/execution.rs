@@ -308,18 +308,20 @@ where
                         let token_out: TokenOutAccount = token_account.clone().into();
                         let quote_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
-                        let get_decimals = crate::make_get_decimals();
-                        let rate = persistence::token_rate::TokenRate::get_latest(
-                            &token_out,
-                            &quote_in,
-                            &get_decimals,
-                        )
-                        .await?
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("No rate found for token: {}", token_account)
-                        })?;
+                        let rate =
+                            persistence::token_rate::TokenRate::get_latest(&token_out, &quote_in)
+                                .await?
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("No rate found for token: {}", token_account)
+                                })?;
 
-                        Some(rate.to_spot_rate())
+                        let spot = rate.to_spot_rate();
+                        if spot.is_effectively_zero() {
+                            warn!(log, "rate too small for rebalance"; "token" => %token_account);
+                            None
+                        } else {
+                            Some(spot)
+                        }
                     }
                     _ => None,
                 };
@@ -370,12 +372,6 @@ where
             for (token, wrap_near_value, exchange_rate) in sell_operations {
                 // wrap.near価値をトークン数量に変換
                 // NearValue * ExchangeRate = TokenAmount
-                // NOTE: 理論上、decimals が非常に小さく高価なトークン（例: decimals=0, 価格 > 1 NEAR/token）の場合、
-                // smallest_units < 1 となり to_bigint() でゼロに切り捨てられる可能性がある。
-                // ただし、NEAR エコシステムの標準は decimals=18〜24 であり、
-                // REF Finance で取引可能なトークンは実質的に全て decimals≥6 のため、
-                // このケースは発生しない。
-                // 参考: test_small_rate_scaling_issue (execution/tests.rs:413)
                 let token_amount: TokenAmount = &wrap_near_value * &exchange_rate;
                 let token_amount_u128 = token_amount
                     .smallest_units()
@@ -384,6 +380,12 @@ where
                     .to_string()
                     .parse::<u128>()
                     .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
+
+                if token_amount_u128 == 0 {
+                    warn!(log, "token amount truncated to zero, skipping sell";
+                        "token" => %token);
+                    continue;
+                }
 
                 trace!(log, "selling token";
                     "token" => %token,
@@ -635,7 +637,7 @@ where
                 info!(log, "liquidated all positions"; "final_balance" => %final_balance);
 
                 // 評価期間のパフォーマンスを計算してログ出力
-                let initial_value = YoctoValue::from_yocto(period_initial_value);
+                let initial_value = period_initial_value.to_value();
                 let final_value = final_balance.to_value();
 
                 // 参照同士の演算（clone 不要）
@@ -706,8 +708,7 @@ where
                 }
 
                 // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
-                let new_period =
-                    NewEvaluationPeriod::new(post_harvest_value.as_bigdecimal().clone(), vec![]);
+                let new_period = NewEvaluationPeriod::new(post_harvest_value.to_amount(), vec![]);
                 let created_period = new_period.insert_async().await?;
 
                 info!(log, "created new evaluation period";
@@ -766,8 +767,7 @@ where
             // 初回起動: 新規評価期間を作成
             info!(log, "no evaluation period found, creating first period");
 
-            let initial_value = available_funds.as_bigdecimal().clone();
-            let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
+            let new_period = NewEvaluationPeriod::new(available_funds.clone(), vec![]);
             let created_period = new_period.insert_async().await?;
 
             info!(log, "created first evaluation period";

@@ -138,9 +138,6 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Opt
 
     let min_samples = cfg.prediction_accuracy_min_samples();
 
-    // decimals 取得コールバック
-    let get_decimals = super::make_get_decimals();
-
     // 未評価 & target_time 経過済みのレコードを取得
     let pending = PredictionRecord::get_pending_evaluations().await?;
 
@@ -176,8 +173,6 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Opt
             &quote_in,
             record.target_time,
             tolerance_minutes,
-            &get_decimals,
-            cfg,
         )
         .await
         {
@@ -323,15 +318,12 @@ async fn get_actual_price_at(
     quote_token: &TokenInAccount,
     target_time: NaiveDateTime,
     tolerance_minutes: i64,
-    get_decimals: &persistence::token_rate::GetDecimalsFn,
-    cfg: &impl ConfigAccess,
 ) -> Result<Option<TokenPrice>> {
     let range = TimeRange {
         start: target_time - chrono::Duration::minutes(tolerance_minutes),
         end: target_time + chrono::Duration::minutes(tolerance_minutes),
     };
-    let rates =
-        TokenRate::get_rates_in_time_range(&range, token, quote_token, get_decimals, cfg).await?;
+    let rates = TokenRate::get_rates_in_time_range(&range, token, quote_token).await?;
 
     if rates.is_empty() {
         return Ok(None);

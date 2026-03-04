@@ -3,6 +3,7 @@ use crate::schema::trade_transactions;
 use anyhow::{Context, Result};
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
+use common::types::TokenSmallestUnits;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -13,26 +14,29 @@ pub struct TradeTransaction {
     pub tx_id: String,
     pub trade_batch_id: String,
     pub from_token: String,
-    pub from_amount: BigDecimal,
+    #[diesel(deserialize_as = BigDecimal)]
+    #[diesel(serialize_as = BigDecimal)]
+    pub from_amount: TokenSmallestUnits,
     pub to_token: String,
-    pub to_amount: BigDecimal,
+    #[diesel(deserialize_as = BigDecimal)]
+    #[diesel(serialize_as = BigDecimal)]
+    pub to_amount: TokenSmallestUnits,
     pub timestamp: NaiveDateTime,
     pub evaluation_period_id: Option<String>,
 }
 
 impl TradeTransaction {
-    pub fn insert(&self, conn: &mut PgConnection) -> QueryResult<TradeTransaction> {
+    pub fn insert(self, conn: &mut PgConnection) -> QueryResult<TradeTransaction> {
         diesel::insert_into(trade_transactions::table)
             .values(self)
             .get_result(conn)
     }
 
-    pub async fn insert_async(&self) -> Result<TradeTransaction> {
-        let transaction = self.clone();
+    pub async fn insert_async(self) -> Result<TradeTransaction> {
         let conn = connection_pool::get().await?;
 
         let result = conn
-            .interact(move |conn| transaction.insert(conn))
+            .interact(move |conn| self.insert(conn))
             .await
             .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
 
@@ -44,7 +48,7 @@ impl TradeTransaction {
         conn: &mut PgConnection,
     ) -> QueryResult<Vec<TradeTransaction>> {
         diesel::insert_into(trade_transactions::table)
-            .values(&transactions)
+            .values(transactions)
             .get_results(conn)
     }
 

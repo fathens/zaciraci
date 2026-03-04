@@ -16,6 +16,7 @@ use std::fmt;
 use std::ops::{Div, Mul};
 
 use super::near_units::{NearAmount, NearValue, TokenPrice};
+use super::token_smallest_units::TokenSmallestUnits;
 
 /// 10^n を BigDecimal で計算（オーバーフロー回避）
 fn pow10(n: u8) -> BigDecimal {
@@ -123,6 +124,13 @@ impl ExchangeRate {
         self.raw_rate.is_zero()
     }
 
+    /// レートが実質的にゼロか判定
+    ///
+    /// raw_rate < 1 の場合、1 NEAR で 1 smallest_unit 未満しか得られず取引不能。
+    pub fn is_effectively_zero(&self) -> bool {
+        self.raw_rate < 1
+    }
+
     /// wNEAR (wrap.near) の ExchangeRate を取得
     ///
     /// wNEAR は 1:1 で NEAR と交換可能なため、固定レート。
@@ -193,6 +201,16 @@ impl TokenAmount {
     /// 量がゼロかどうか
     pub fn is_zero(&self) -> bool {
         self.smallest_units.is_zero()
+    }
+
+    /// smallest_units を TokenSmallestUnits として取得（decimals を捨てる、借用版）
+    pub fn to_smallest_units(&self) -> TokenSmallestUnits {
+        TokenSmallestUnits::from_bigdecimal(self.smallest_units.clone())
+    }
+
+    /// smallest_units を TokenSmallestUnits として取得（decimals を捨てる、消費版）
+    pub fn into_smallest_units(self) -> TokenSmallestUnits {
+        TokenSmallestUnits::from_bigdecimal(self.smallest_units)
     }
 }
 

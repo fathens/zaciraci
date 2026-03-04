@@ -7,17 +7,12 @@ edition = "2024"
 common = { path = "../common" }
 dex = { path = "../dex" }
 logging = { path = "../logging" }
-async-trait = "0.1"
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 once_cell = { workspace = true }
 async-once-cell = { workspace = true }
 chrono = { workspace = true }
-bigdecimal = { workspace = true }
-num-bigint = { workspace = true }
 num-traits = { workspace = true }
-num-rational = { workspace = true }
 num-integer = { workspace = true }
 slog = { workspace = true }
 near-gas = "0.3.4"
@@ -33,12 +28,8 @@ slipped10 = "0.4"
 bip39 = { version = "2.1", features = ["rand"] }
 bs58 = { workspace = true }
 ed25519-dalek = { version = "2", default-features = false }
-futures = { workspace = true }
 futures-util = { workspace = true }
-humantime = { workspace = true }
 reqwest = { workspace = true }
-base64 = { workspace = true }
-rayon = { workspace = true }
 rand = { workspace = true }
 
 [dev-dependencies]
