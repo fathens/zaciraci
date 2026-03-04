@@ -73,16 +73,13 @@ async fn db_holding_to_proto(
             .map_err(|e| Status::internal(format!("Invalid balance for {}: {e}", th.token)))?;
         let amount = TokenAmount::from_smallest_units(balance, th.decimals);
 
-        let yocto_str = if th.token == wnear_token {
+        let yocto_str = if th.token.as_str() == wnear_token {
             let rate = ExchangeRate::wnear();
             let near_value = amount / &rate;
             let yocto = near_value.to_yocto();
             yocto.to_string()
         } else {
-            let token_out: TokenOutAccount = th
-                .token
-                .parse()
-                .map_err(|e| Status::internal(format!("Invalid token ID {}: {e}", th.token)))?;
+            let token_out = TokenOutAccount::from(th.token.clone());
 
             let rates = TokenRate::get_rates_in_time_range(&range, &token_out, &wnear_in)
                 .await
@@ -104,7 +101,7 @@ async fn db_holding_to_proto(
         total_yocto += yocto_val;
 
         token_holdings.push(crate::proto::TokenHolding {
-            token: th.token.clone(),
+            token: th.token.to_string(),
             balance: th.balance.clone(),
             decimals: u32::from(th.decimals),
             value_wnear: yocto_str,

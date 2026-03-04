@@ -30,12 +30,15 @@ fn test_balances_to_holdings_basic() {
     // BTreeMap は key でソート済み
     let usdt = holdings
         .iter()
-        .find(|h| h.token == "usdt.tether-token.near")
+        .find(|h| h.token.as_str() == "usdt.tether-token.near")
         .unwrap();
     assert_eq!(usdt.balance, "1000000");
     assert_eq!(usdt.decimals, 6);
 
-    let wnear = holdings.iter().find(|h| h.token == "wrap.near").unwrap();
+    let wnear = holdings
+        .iter()
+        .find(|h| h.token.as_str() == "wrap.near")
+        .unwrap();
     assert_eq!(wnear.balance, "1000000000000000000000000");
     assert_eq!(wnear.decimals, 24);
 }
@@ -92,12 +95,12 @@ fn test_balances_to_holdings_all_zero() {
 fn test_holdings_to_balances_basic() {
     let holdings = vec![
         TokenHolding {
-            token: "wrap.near".to_string(),
+            token: ta("wrap.near"),
             balance: "5000000000000000000000000".to_string(),
             decimals: 24,
         },
         TokenHolding {
-            token: "usdt.tether-token.near".to_string(),
+            token: ta("usdt.tether-token.near"),
             balance: "1000000".to_string(),
             decimals: 6,
         },
@@ -129,7 +132,7 @@ fn test_holdings_to_balances_empty() {
 #[test]
 fn test_holdings_to_balances_invalid_balance() {
     let holdings = vec![TokenHolding {
-        token: "wrap.near".to_string(),
+        token: ta("wrap.near"),
         balance: "not_a_number".to_string(),
         decimals: 24,
     }];
@@ -142,7 +145,7 @@ fn test_holdings_to_balances_invalid_balance() {
 fn test_holdings_to_balances_large_values() {
     // u128::MAX に近い値
     let holdings = vec![TokenHolding {
-        token: "wrap.near".to_string(),
+        token: ta("wrap.near"),
         balance: "340282366920938463463374607431768211455".to_string(),
         decimals: 24,
     }];
@@ -237,7 +240,7 @@ fn test_holdings_preserves_decimals() {
 #[test]
 fn test_holdings_to_balances_zero_balance_string() {
     let holdings = vec![TokenHolding {
-        token: "wrap.near".to_string(),
+        token: ta("wrap.near"),
         balance: "0".to_string(),
         decimals: 24,
     }];

@@ -92,7 +92,7 @@ fn balances_to_holdings(balances: &BTreeMap<TokenAccount, TokenAmount>) -> Vec<T
         .iter()
         .filter(|(_, amount)| !amount.is_zero())
         .map(|(token, amount)| TokenHolding {
-            token: token.to_string(),
+            token: token.clone(),
             balance: amount.smallest_units().to_string(),
             decimals: amount.decimals(),
         })
@@ -107,12 +107,8 @@ fn holdings_to_balances(holdings: &[TokenHolding]) -> Result<BTreeMap<TokenAccou
             .balance
             .parse()
             .map_err(|e| anyhow::anyhow!("Failed to parse balance '{}': {}", h.balance, e))?;
-        let token_account: TokenAccount = h
-            .token
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Failed to parse token '{}': {}", h.token, e))?;
         result.insert(
-            token_account,
+            h.token.clone(),
             TokenAmount::from_smallest_units(smallest_units, h.decimals),
         );
     }
