@@ -249,4 +249,25 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn test_u128_max_serde_roundtrip() {
+        let amount = TokenSmallestUnits::from_u128(u128::MAX);
+        let json = serde_json::to_string(&amount).unwrap();
+        let deserialized: TokenSmallestUnits = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, amount);
+        assert_eq!(amount.to_string(), u128::MAX.to_string());
+    }
+
+    #[test]
+    fn test_from_str_invalid() {
+        let result: Result<TokenSmallestUnits, _> = "not_a_number".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_str_empty() {
+        let result: Result<TokenSmallestUnits, _> = "".parse();
+        assert!(result.is_err());
+    }
 }

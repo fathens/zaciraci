@@ -906,3 +906,41 @@ fn test_bigdecimal_to_f64_crate_overflow_behavior() {
         "BigDecimal crate returns Inf, not None"
     );
 }
+
+// =============================================================================
+// YoctoAmount From トレイト変換テスト
+// (diesel deserialize_as/serialize_as の基盤)
+// =============================================================================
+
+#[test]
+fn test_yocto_amount_from_bigdecimal() {
+    let bd = BigDecimal::from_str("100000000000000000000000000").unwrap();
+    let amount: YoctoAmount = bd.clone().into();
+    assert_eq!(amount.as_bigdecimal(), &bd);
+}
+
+#[test]
+fn test_yocto_amount_into_bigdecimal() {
+    let amount = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
+    let bd: BigDecimal = amount.into();
+    assert_eq!(
+        bd,
+        BigDecimal::from(100_000_000_000_000_000_000_000_000u128)
+    );
+}
+
+#[test]
+fn test_yocto_amount_from_bigdecimal_roundtrip() {
+    let original = BigDecimal::from_str("999999999999999999999999999").unwrap();
+    let amount: YoctoAmount = original.clone().into();
+    let back: BigDecimal = amount.into();
+    assert_eq!(back, original);
+}
+
+#[test]
+fn test_yocto_amount_from_bigdecimal_zero() {
+    let amount: YoctoAmount = BigDecimal::from(0).into();
+    assert!(amount.is_zero());
+    let back: BigDecimal = amount.into();
+    assert_eq!(back, BigDecimal::from(0));
+}
