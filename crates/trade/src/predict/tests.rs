@@ -947,8 +947,8 @@ fn test_spot_rate_correction_with_path() {
             pool_id: 123,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR in yocto
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR in yocto
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 
@@ -986,8 +986,8 @@ fn test_spot_rate_correction_with_fallback() {
             pool_id: 456,
             token_in_idx: 0,
             token_out_idx: 1,
-            amount_in: "100000000000000000000000000".to_string(), // 100 NEAR
-            amount_out: "50000000000000000000000000".to_string(),
+            amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR
+            amount_out: "50000000000000000000000000".parse().unwrap(),
         }],
     };
 

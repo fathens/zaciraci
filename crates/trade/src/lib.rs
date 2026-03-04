@@ -245,8 +245,8 @@ async fn record_rates(cfg: &impl ConfigAccess) -> Result<()> {
                                     pool_id: pair.pool_id(),
                                     token_in_idx: pair.token_in.as_index().as_u8(),
                                     token_out_idx: pair.token_out.as_index().as_u8(),
-                                    amount_in: amount_in.to_string(),
-                                    amount_out: amount_out.to_string(),
+                                    amount_in: amount_in.into(),
+                                    amount_out: amount_out.into(),
                                 })
                             })
                             .collect(),
