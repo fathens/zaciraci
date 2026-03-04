@@ -1,7 +1,6 @@
 use super::*;
-use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
-use std::str::FromStr;
+use common::types::YoctoAmount;
 
 fn make_evaluation_period(
     id: i32,
@@ -14,7 +13,7 @@ fn make_evaluation_period(
         id,
         period_id: period_id.to_string(),
         start_time,
-        initial_value: BigDecimal::from_str(initial_value).unwrap(),
+        initial_value: YoctoAmount::from_u128(initial_value.parse().unwrap()),
         selected_tokens: tokens,
         created_at: start_time,
     }

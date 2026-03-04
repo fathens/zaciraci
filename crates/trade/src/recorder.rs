@@ -76,7 +76,7 @@ impl TradeRecorder {
 mod tests {
     use super::*;
     use bigdecimal::BigDecimal;
-    use common::types::TokenAccount;
+    use common::types::{TokenAccount, YoctoAmount};
 
     // テスト用定数
     const WNEAR_DECIMALS: u8 = 24;
@@ -93,7 +93,7 @@ mod tests {
 
         // 評価期間を作成（外部キー制約のため）
         // 初期投資額: 100 NEAR (= 100e24 yocto)
-        let initial_value = BigDecimal::from(100_000_000_000_000_000_000_000_000u128); // 100 NEAR
+        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000); // 100 NEAR
         let new_period = NewEvaluationPeriod::new(initial_value, vec![]);
         let created_period = new_period.insert_async().await.unwrap();
         let period_id = created_period.period_id;

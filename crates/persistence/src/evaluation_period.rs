@@ -3,6 +3,7 @@ use crate::schema::evaluation_periods;
 use anyhow::{Context, Result};
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
+use common::types::YoctoAmount;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -14,7 +15,9 @@ pub struct EvaluationPeriod {
     pub id: i32,
     pub period_id: String,
     pub start_time: NaiveDateTime,
-    pub initial_value: BigDecimal,
+    #[diesel(deserialize_as = BigDecimal)]
+    #[diesel(serialize_as = BigDecimal)]
+    pub initial_value: YoctoAmount,
     pub selected_tokens: Option<Vec<Option<String>>>,
     pub created_at: NaiveDateTime,
 }
@@ -24,12 +27,13 @@ pub struct EvaluationPeriod {
 pub struct NewEvaluationPeriod {
     pub period_id: String,
     pub start_time: NaiveDateTime,
-    pub initial_value: BigDecimal,
+    #[diesel(serialize_as = BigDecimal)]
+    pub initial_value: YoctoAmount,
     pub selected_tokens: Option<Vec<Option<String>>>,
 }
 
 impl NewEvaluationPeriod {
-    pub fn new(initial_value: BigDecimal, selected_tokens: Vec<String>) -> Self {
+    pub fn new(initial_value: YoctoAmount, selected_tokens: Vec<String>) -> Self {
         let selected_tokens_opt: Option<Vec<Option<String>>> = if selected_tokens.is_empty() {
             None
         } else {
@@ -44,18 +48,17 @@ impl NewEvaluationPeriod {
         }
     }
 
-    pub fn insert(&self, conn: &mut PgConnection) -> QueryResult<EvaluationPeriod> {
+    pub fn insert(self, conn: &mut PgConnection) -> QueryResult<EvaluationPeriod> {
         diesel::insert_into(evaluation_periods::table)
             .values(self)
             .get_result(conn)
     }
 
-    pub async fn insert_async(&self) -> Result<EvaluationPeriod> {
-        let self_clone = self.clone();
+    pub async fn insert_async(self) -> Result<EvaluationPeriod> {
         let conn = connection_pool::get().await?;
 
         let result = conn
-            .interact(move |conn| self_clone.insert(conn))
+            .interact(move |conn| self.insert(conn))
             .await
             .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
 
@@ -206,15 +209,13 @@ impl EvaluationPeriod {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bigdecimal::BigDecimal;
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_create_and_get_evaluation_period() {
-        let initial_value = BigDecimal::from_str("100000000000000000000000000").unwrap();
+        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
         let tokens = vec!["token1.near".to_string(), "token2.near".to_string()];
 
-        let new_period = NewEvaluationPeriod::new(initial_value.clone(), tokens);
+        let new_period = NewEvaluationPeriod::new(initial_value, tokens);
 
         assert!(new_period.period_id.starts_with("eval_"));
         assert_eq!(new_period.selected_tokens.as_ref().unwrap().len(), 2);
@@ -224,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_new_evaluation_period_with_empty_tokens() {
-        let initial_value = BigDecimal::from_str("100000000000000000000000000").unwrap();
+        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
         let tokens = vec![];
 
         let new_period = NewEvaluationPeriod::new(initial_value, tokens);

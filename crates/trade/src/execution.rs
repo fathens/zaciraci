@@ -637,7 +637,7 @@ where
                 info!(log, "liquidated all positions"; "final_balance" => %final_balance);
 
                 // 評価期間のパフォーマンスを計算してログ出力
-                let initial_value = YoctoValue::from_yocto(period_initial_value);
+                let initial_value = period_initial_value.to_value();
                 let final_value = final_balance.to_value();
 
                 // 参照同士の演算（clone 不要）
@@ -708,8 +708,7 @@ where
                 }
 
                 // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
-                let new_period =
-                    NewEvaluationPeriod::new(post_harvest_value.as_bigdecimal().clone(), vec![]);
+                let new_period = NewEvaluationPeriod::new(post_harvest_value.to_amount(), vec![]);
                 let created_period = new_period.insert_async().await?;
 
                 info!(log, "created new evaluation period";
@@ -768,8 +767,7 @@ where
             // 初回起動: 新規評価期間を作成
             info!(log, "no evaluation period found, creating first period");
 
-            let initial_value = available_funds.as_bigdecimal().clone();
-            let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
+            let new_period = NewEvaluationPeriod::new(available_funds.clone(), vec![]);
             let created_period = new_period.insert_async().await?;
 
             info!(log, "created first evaluation period";

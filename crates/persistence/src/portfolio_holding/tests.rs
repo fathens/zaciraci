@@ -1,7 +1,7 @@
 use super::*;
 use crate::evaluation_period::NewEvaluationPeriod;
-use bigdecimal::BigDecimal;
 use chrono::Timelike;
+use common::types::YoctoAmount;
 use serial_test::serial;
 
 fn create_test_holdings_json() -> serde_json::Value {
@@ -21,8 +21,10 @@ fn create_test_holdings_json() -> serde_json::Value {
 }
 
 async fn create_test_evaluation_period() -> String {
-    let new_period =
-        NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+    let new_period = NewEvaluationPeriod::new(
+        YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000),
+        vec![],
+    );
     let created = new_period.insert_async().await.unwrap();
     created.period_id
 }

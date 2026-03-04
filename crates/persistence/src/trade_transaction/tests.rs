@@ -41,8 +41,10 @@ async fn test_count_by_evaluation_period() {
     use crate::evaluation_period::NewEvaluationPeriod;
 
     // 評価期間を作成（外部キー制約のため）
-    let new_period =
-        NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+    let new_period = NewEvaluationPeriod::new(
+        common::types::YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000),
+        vec![],
+    );
     let created_period = new_period.insert_async().await.unwrap();
     let period_id = created_period.period_id;
     let batch_id = uuid::Uuid::new_v4().to_string();
@@ -93,8 +95,10 @@ async fn test_transaction_with_evaluation_period_id() {
     use crate::evaluation_period::NewEvaluationPeriod;
 
     // 評価期間を作成（外部キー制約のため）
-    let new_period =
-        NewEvaluationPeriod::new(BigDecimal::from(100000000000000000000000000i128), vec![]);
+    let new_period = NewEvaluationPeriod::new(
+        common::types::YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000),
+        vec![],
+    );
     let created_period = new_period.insert_async().await.unwrap();
     let period_id = created_period.period_id;
     let batch_id = uuid::Uuid::new_v4().to_string();
