@@ -1276,6 +1276,232 @@ async fn test_get_spot_rates_at_time_swap_path_fallback() -> Result<()> {
     Ok(())
 }
 
+/// 最新レートが swap_path を持つ場合、フォールバックではなく自身の swap_path を使用する
+#[tokio::test]
+#[serial]
+async fn test_get_spot_rates_at_time_own_swap_path_preferred() -> Result<()> {
+    use common::types::TokenSmallestUnits;
+
+    clean_table().await?;
+
+    let base: TokenOutAccount = TokenAccount::from_str("token1.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+
+    let now = chrono::Utc::now().naive_utc();
+    let t1 = now - chrono::Duration::hours(2);
+    let t2 = now - chrono::Duration::hours(1);
+
+    // 大きいプール → 小さい補正
+    let old_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 1,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000_000),
+            amount_out: TokenSmallestUnits::from_u128(500_000_000_000_000_000_000_000_000),
+        }],
+    };
+
+    // 小さいプール → 大きい補正
+    let new_path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 2,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: TokenSmallestUnits::from_u128(100_000_000_000_000_000_000_000_000),
+            amount_out: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000_000),
+        }],
+    };
+
+    let rate_old = TokenRate {
+        base: base.clone(),
+        quote: quote.clone(),
+        exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
+        timestamp: t1,
+        rate_calc_near: 10,
+        swap_path: Some(old_path),
+    };
+    let rate_new = TokenRate {
+        base: base.clone(),
+        quote: quote.clone(),
+        exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(110), 24),
+        timestamp: t2,
+        rate_calc_near: 10,
+        swap_path: Some(new_path.clone()),
+    };
+
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&[rate_old, rate_new.clone()], &cfg).await?;
+
+    let tokens = vec![base.clone()];
+    let result = TokenRate::get_spot_rates_at_time(&tokens, &quote, t2).await?;
+
+    // 最新レートは自身の swap_path を使うので、rate_new.to_spot_rate() と一致するはず
+    let expected = rate_new.to_spot_rate();
+    assert_eq!(
+        result[&base].raw_rate(),
+        expected.raw_rate(),
+        "Should use own swap_path, not fallback"
+    );
+
+    clean_table().await?;
+    Ok(())
+}
+
+/// swap_path が一切ない場合、補正なしの生レートが返る
+#[tokio::test]
+#[serial]
+async fn test_get_spot_rates_at_time_no_swap_path_anywhere() -> Result<()> {
+    clean_table().await?;
+
+    let base: TokenOutAccount = TokenAccount::from_str("token1.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+
+    let now = chrono::Utc::now().naive_utc();
+    let t1 = now - chrono::Duration::hours(2);
+    let t2 = now - chrono::Duration::hours(1);
+
+    // 両方とも swap_path なし
+    let rates = vec![
+        make_token_rate(base.clone(), quote.clone(), 100, t1),
+        make_token_rate(base.clone(), quote.clone(), 200, t2),
+    ];
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
+
+    let tokens = vec![base.clone()];
+    let result = TokenRate::get_spot_rates_at_time(&tokens, &quote, t2).await?;
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result[&base].raw_rate(),
+        &BigDecimal::from(200),
+        "No swap_path anywhere, should return raw rate"
+    );
+
+    clean_table().await?;
+    Ok(())
+}
+
+/// 複数トークンで swap_path の有無が混在するケース
+#[tokio::test]
+#[serial]
+async fn test_get_spot_rates_at_time_mixed_swap_path() -> Result<()> {
+    use common::types::TokenSmallestUnits;
+
+    clean_table().await?;
+
+    let base_with: TokenOutAccount = TokenAccount::from_str("has_path.near")?.into();
+    let base_without: TokenOutAccount = TokenAccount::from_str("no_path.near")?.into();
+    let base_fallback: TokenOutAccount = TokenAccount::from_str("fallback.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+
+    let now = chrono::Utc::now().naive_utc();
+    let t1 = now - chrono::Duration::hours(2);
+    let t2 = now - chrono::Duration::hours(1);
+
+    let path = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 10,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000_000),
+            amount_out: TokenSmallestUnits::from_u128(500_000_000_000_000_000_000_000_000),
+        }],
+    };
+
+    let rates = vec![
+        // base_with: 最新に swap_path あり
+        TokenRate {
+            base: base_with.clone(),
+            quote: quote.clone(),
+            exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
+            timestamp: t2,
+            rate_calc_near: 10,
+            swap_path: Some(path.clone()),
+        },
+        // base_without: swap_path なし（一切なし）
+        make_token_rate(base_without.clone(), quote.clone(), 200, t2),
+        // base_fallback: t1 に swap_path あり、t2 は swap_path なし
+        TokenRate {
+            base: base_fallback.clone(),
+            quote: quote.clone(),
+            exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(300), 24),
+            timestamp: t1,
+            rate_calc_near: 10,
+            swap_path: Some(path),
+        },
+        make_token_rate(base_fallback.clone(), quote.clone(), 310, t2),
+    ];
+
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
+
+    let tokens = vec![
+        base_with.clone(),
+        base_without.clone(),
+        base_fallback.clone(),
+    ];
+    let result = TokenRate::get_spot_rates_at_time(&tokens, &quote, t2).await?;
+
+    assert_eq!(result.len(), 3);
+
+    // base_with: 自身の swap_path で補正 → 生レート(100)より大きい
+    assert!(
+        result[&base_with].raw_rate() > &BigDecimal::from(100),
+        "Should be corrected with own swap_path"
+    );
+
+    // base_without: swap_path なし → 補正なし
+    assert_eq!(
+        result[&base_without].raw_rate(),
+        &BigDecimal::from(200),
+        "No swap_path, should return raw rate"
+    );
+
+    // base_fallback: フォールバック swap_path で補正 → 生レート(310)より大きい
+    assert!(
+        result[&base_fallback].raw_rate() > &BigDecimal::from(310),
+        "Should be corrected with fallback swap_path"
+    );
+
+    clean_table().await?;
+    Ok(())
+}
+
+/// 存在しないトークンを含むリクエスト
+#[tokio::test]
+#[serial]
+async fn test_get_spot_rates_at_time_partial_tokens() -> Result<()> {
+    clean_table().await?;
+
+    let base_exists: TokenOutAccount = TokenAccount::from_str("exists.near")?.into();
+    let base_missing: TokenOutAccount = TokenAccount::from_str("missing.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![make_token_rate(
+        base_exists.clone(),
+        quote.clone(),
+        500,
+        now,
+    )];
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
+
+    let tokens = vec![base_exists.clone(), base_missing.clone()];
+    let result = TokenRate::get_spot_rates_at_time(&tokens, &quote, now).await?;
+
+    // 存在するトークンのみ返る
+    assert_eq!(result.len(), 1);
+    assert!(result.contains_key(&base_exists));
+    assert!(!result.contains_key(&base_missing));
+
+    clean_table().await?;
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn test_get_all_decimals() -> Result<()> {
