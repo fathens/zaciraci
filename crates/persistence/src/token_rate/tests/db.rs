@@ -1248,24 +1248,29 @@ async fn test_get_spot_rates_at_time_swap_path_fallback() -> Result<()> {
         exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
         timestamp: t1,
         rate_calc_near: 10,
-        swap_path: Some(swap_path),
+        swap_path: Some(swap_path.clone()),
     };
     let rate_without_path = make_token_rate(base.clone(), quote.clone(), 110, t2);
 
     let cfg = ConfigResolver;
     TokenRate::batch_insert(&[rate_with_path, rate_without_path], &cfg).await?;
 
-    // t2 時点: 最新は swap_path なし → t1 の swap_path をフォールバックとして使用
+    // t2 時点: 最新は swap_path なし → t1 の swap_path を COALESCE で使用
     let tokens = vec![base.clone()];
     let result = TokenRate::get_spot_rates_at_time(&tokens, &quote, t2).await?;
 
     assert_eq!(result.len(), 1);
     let spot_rate = &result[&base];
-    // フォールバック swap_path で補正されるので、生レート(110)とは異なるはず
-    // 補正式: rate * (1 + delta_x / pool_amount_in)
-    // delta_x = 10 * 10^24, pool_amount_in = 10^27
-    // correction = 1 + 10^25 / 10^27 = 1 + 0.01 = 1.01
-    // spot_rate = 110 * 1.01 = 111.1
+
+    // to_spot_rate_with_fallback で期待値を計算して exact match
+    let rate_without_path = make_token_rate(base.clone(), quote.clone(), 110, t2);
+    let expected = rate_without_path.to_spot_rate_with_fallback(Some(&swap_path));
+    assert_eq!(
+        spot_rate.raw_rate(),
+        expected.raw_rate(),
+        "Spot rate should match to_spot_rate_with_fallback result"
+    );
+    // 補正が実際に適用されていることも確認
     assert!(
         spot_rate.raw_rate() > &BigDecimal::from(110),
         "Spot rate should be corrected (> 110), got {}",
@@ -1497,6 +1502,52 @@ async fn test_get_spot_rates_at_time_partial_tokens() -> Result<()> {
     assert_eq!(result.len(), 1);
     assert!(result.contains_key(&base_exists));
     assert!(!result.contains_key(&base_missing));
+
+    clean_table().await?;
+    Ok(())
+}
+
+/// 異なる quote トークンのレートが混入しないことを検証
+#[tokio::test]
+#[serial]
+async fn test_get_spot_rates_at_time_quote_isolation() -> Result<()> {
+    clean_table().await?;
+
+    let base: TokenOutAccount = TokenAccount::from_str("token1.near")?.into();
+    let quote_a: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+    let quote_b: TokenInAccount = TokenAccount::from_str("usdt.near")?.into();
+
+    let now = chrono::Utc::now().naive_utc();
+    let t1 = now - chrono::Duration::hours(2);
+    let t2 = now - chrono::Duration::hours(1);
+
+    // quote_a: t1=100 のみ、quote_b: t2=999（より新しい）
+    let rates = vec![
+        make_token_rate(base.clone(), quote_a.clone(), 100, t1),
+        make_token_rate(base.clone(), quote_b.clone(), 999, t2),
+    ];
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
+
+    // quote_a で取得 → quote_b の 999 が混入しないこと
+    let tokens = vec![base.clone()];
+    let result = TokenRate::get_spot_rates_at_time(&tokens, &quote_a, t2).await?;
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result[&base].raw_rate(),
+        &BigDecimal::from(100),
+        "Should only return rates for the specified quote token"
+    );
+
+    // quote_b で取得
+    let result = TokenRate::get_spot_rates_at_time(&tokens, &quote_b, t2).await?;
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result[&base].raw_rate(),
+        &BigDecimal::from(999),
+        "Should return the correct quote_b rate"
+    );
 
     clean_table().await?;
     Ok(())
