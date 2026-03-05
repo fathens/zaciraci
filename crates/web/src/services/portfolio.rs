@@ -49,17 +49,15 @@ fn wnear_token() -> TokenAccount {
 fn db_holding_to_proto(
     holding: &DbPortfolioHolding,
     wnear: &TokenAccount,
+    parsed: &[persistence::portfolio_holding::TokenHolding],
     rates: &HashMap<TokenOutAccount, ExchangeRate>,
 ) -> Result<crate::proto::PortfolioHolding, Status> {
-    let parsed = holding
-        .parse_holdings()
-        .map_err(|e| Status::internal(format!("Failed to parse token holdings: {e}")))?;
     let ts = holding.timestamp;
 
     let mut token_holdings = Vec::with_capacity(parsed.len());
     let mut total_yocto = YoctoValue::zero();
 
-    for th in &parsed {
+    for th in parsed {
         let amount = th.balance.clone().with_decimals(th.decimals);
 
         let yocto = if th.token == *wnear {
@@ -97,11 +95,17 @@ fn db_holding_to_proto(
     })
 }
 
-/// 単一 holding のレートを取得
-async fn fetch_rates_for_holding(
+/// holding をパースしてレートを取得
+async fn parse_and_fetch_rates(
     holding: &DbPortfolioHolding,
     wnear: &TokenAccount,
-) -> Result<HashMap<TokenOutAccount, ExchangeRate>, Status> {
+) -> Result<
+    (
+        Vec<persistence::portfolio_holding::TokenHolding>,
+        HashMap<TokenOutAccount, ExchangeRate>,
+    ),
+    Status,
+> {
     let parsed = holding
         .parse_holdings()
         .map_err(|e| Status::internal(format!("Failed to parse token holdings: {e}")))?;
@@ -111,12 +115,13 @@ async fn fetch_rates_for_holding(
         .map(|th| TokenOutAccount::from(th.token.clone()))
         .collect();
     if tokens.is_empty() {
-        return Ok(HashMap::new());
+        return Ok((parsed, HashMap::new()));
     }
     let wnear_in = TokenInAccount::from(wnear.clone());
-    TokenRate::get_spot_rates_at_time(&tokens, &wnear_in, holding.timestamp)
+    let rates = TokenRate::get_spot_rates_at_time(&tokens, &wnear_in, holding.timestamp)
         .await
-        .map_err(|e| Status::internal(format!("Failed to get rates: {e}")))
+        .map_err(|e| Status::internal(format!("Failed to get rates: {e}")))?;
+    Ok((parsed, rates))
 }
 
 pub struct PortfolioServiceImpl;
@@ -169,8 +174,8 @@ impl PortfolioService for PortfolioServiceImpl {
 
         let mut holdings = Vec::with_capacity(db_holdings.len());
         for h in &db_holdings {
-            let rates = fetch_rates_for_holding(h, &wnear).await?;
-            holdings.push(db_holding_to_proto(h, &wnear, &rates)?);
+            let (parsed, rates) = parse_and_fetch_rates(h, &wnear).await?;
+            holdings.push(db_holding_to_proto(h, &wnear, &parsed, &rates)?);
         }
 
         Ok(Response::new(GetPortfolioHoldingsResponse { holdings }))
