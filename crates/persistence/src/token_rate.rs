@@ -578,7 +578,7 @@ impl TokenRate {
     ///
     /// CTE で最新レートと最新 swap_path 付きレートを同時取得し、
     /// COALESCE で swap_path をフォールバック補完した結果を返す。
-    /// 各レートは `to_spot_rate()` で補正済みの ExchangeRate に変換。
+    /// 各レートは swap_path 補完後に `to_spot_rate()` でスポットレートに変換。
     pub async fn get_spot_rates_at_time(
         tokens: &[TokenOutAccount],
         quote: &TokenInAccount,
