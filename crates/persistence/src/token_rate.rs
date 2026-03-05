@@ -576,9 +576,9 @@ impl TokenRate {
 
     /// 指定タイムスタンプ以前の最新スポットレートをトークンごとに取得
     ///
-    /// 1. DISTINCT ON で各トークンの最新レートを取得
-    /// 2. swap_path がないレートのフォールバック用に、swap_path 付き最新レートを別途取得
-    /// 3. to_spot_rate_with_fallback で補正済みの ExchangeRate を返す
+    /// CTE で最新レートと最新 swap_path 付きレートを同時取得し、
+    /// COALESCE で swap_path をフォールバック補完した結果を返す。
+    /// 各レートは `to_spot_rate()` で補正済みの ExchangeRate に変換。
     pub async fn get_spot_rates_at_time(
         tokens: &[TokenOutAccount],
         quote: &TokenInAccount,
@@ -596,17 +596,34 @@ impl TokenRate {
         let quote_str = quote.to_string();
         let ts = at_or_before;
 
-        // メインクエリ: 各トークンの最新レートを取得
-        let main_results: Vec<DbTokenRate> = conn
+        let results: Vec<DbTokenRate> = conn
             .interact(move |conn| {
                 diesel::sql_query(
-                    "SELECT DISTINCT ON (base_token) \
-                         id, base_token, quote_token, rate, timestamp, decimals, rate_calc_near, swap_path \
-                     FROM token_rates \
-                     WHERE base_token = ANY($1) \
-                       AND quote_token = $2 \
-                       AND timestamp <= $3 \
-                     ORDER BY base_token, timestamp DESC",
+                    "WITH latest AS ( \
+                         SELECT DISTINCT ON (base_token) \
+                             id, base_token, quote_token, rate, timestamp, \
+                             decimals, rate_calc_near, swap_path \
+                         FROM token_rates \
+                         WHERE base_token = ANY($1) \
+                           AND quote_token = $2 \
+                           AND timestamp <= $3 \
+                         ORDER BY base_token, timestamp DESC \
+                     ), \
+                     fallback AS ( \
+                         SELECT DISTINCT ON (base_token) \
+                             base_token, swap_path \
+                         FROM token_rates \
+                         WHERE base_token = ANY($1) \
+                           AND quote_token = $2 \
+                           AND timestamp <= $3 \
+                           AND swap_path IS NOT NULL \
+                         ORDER BY base_token, timestamp DESC \
+                     ) \
+                     SELECT l.id, l.base_token, l.quote_token, l.rate, l.timestamp, \
+                            l.decimals, l.rate_calc_near, \
+                            COALESCE(l.swap_path, f.swap_path) AS swap_path \
+                     FROM latest l \
+                     LEFT JOIN fallback f ON l.base_token = f.base_token",
                 )
                 .bind::<Array<Text>, _>(&tokens_vec)
                 .bind::<Text, _>(&quote_str)
@@ -616,63 +633,14 @@ impl TokenRate {
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        let main_rates: Vec<TokenRate> = main_results
+        let rates: Vec<TokenRate> = results
             .into_iter()
             .map(Self::from_db)
             .collect::<Result<_>>()?;
 
-        // swap_path がないトークンを収集
-        let missing_path_tokens: Vec<String> = main_rates
-            .iter()
-            .filter(|r| r.swap_path.is_none())
-            .map(|r| r.base.to_string())
-            .collect();
-
-        // フォールバック: swap_path 付き最新レートを取得
-        let fallback_map: HashMap<String, SwapPath> = if missing_path_tokens.is_empty() {
-            HashMap::new()
-        } else {
-            let conn = connection_pool::get().await?;
-            let quote_str = quote.to_string();
-            let ts = at_or_before;
-
-            let fallback_results: Vec<DbTokenRate> = conn
-                .interact(move |conn| {
-                    diesel::sql_query(
-                        "SELECT DISTINCT ON (base_token) \
-                             id, base_token, quote_token, rate, timestamp, decimals, rate_calc_near, swap_path \
-                         FROM token_rates \
-                         WHERE base_token = ANY($1) \
-                           AND quote_token = $2 \
-                           AND timestamp <= $3 \
-                           AND swap_path IS NOT NULL \
-                         ORDER BY base_token, timestamp DESC",
-                    )
-                    .bind::<Array<Text>, _>(&missing_path_tokens)
-                    .bind::<Text, _>(&quote_str)
-                    .bind::<Timestamp, _>(ts)
-                    .load::<DbTokenRate>(conn)
-                })
-                .await
-                .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-            let fallback_rates: Vec<TokenRate> = fallback_results
-                .into_iter()
-                .map(Self::from_db)
-                .collect::<Result<_>>()?;
-
-            fallback_rates
-                .into_iter()
-                .filter_map(|r| r.swap_path.map(|p| (r.base.to_string(), p)))
-                .collect()
-        };
-
-        // 各レートの spot rate を計算して HashMap にまとめる
-        let mut result = HashMap::with_capacity(main_rates.len());
-        for rate in &main_rates {
-            let fallback_path = fallback_map.get(&rate.base.to_string());
-            let spot_rate = rate.to_spot_rate_with_fallback(fallback_path);
-            result.insert(rate.base.clone(), spot_rate);
+        let mut result = HashMap::with_capacity(rates.len());
+        for rate in &rates {
+            result.insert(rate.base.clone(), rate.to_spot_rate());
         }
 
         Ok(result)
