@@ -563,8 +563,21 @@ impl TokenRate {
     /// 算出したフォールバックを適用する。
     /// ExchangeRate が実質ゼロのレコードは除外する。
     pub fn to_spot_rates(rates: &[TokenRate]) -> Vec<(NaiveDateTime, ExchangeRate)> {
-        let _ = rates;
-        vec![]
+        let fallback_indices = Self::precompute_fallback_indices(rates);
+        rates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, rate)| {
+                let fallback_path = fallback_indices[i]
+                    .and_then(|idx| rates.get(idx))
+                    .and_then(|r| r.swap_path.as_ref());
+                let spot_rate = rate.to_spot_rate_with_fallback(fallback_path);
+                if spot_rate.is_effectively_zero() {
+                    return None;
+                }
+                Some((rate.timestamp, spot_rate))
+            })
+            .collect()
     }
 
     /// 指定タイムスタンプ以前の最新スポットレートをトークンごとに取得
