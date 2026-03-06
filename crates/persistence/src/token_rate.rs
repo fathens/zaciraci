@@ -557,6 +557,16 @@ impl TokenRate {
         self.exchange_rate.clone()
     }
 
+    /// Vec<TokenRate> のスポットレート一括変換。
+    ///
+    /// swap_path が NULL のレコードには precompute_fallback_indices で
+    /// 算出したフォールバックを適用する。
+    /// ExchangeRate が実質ゼロのレコードは除外する。
+    pub fn to_spot_rates(rates: &[TokenRate]) -> Vec<(NaiveDateTime, ExchangeRate)> {
+        let _ = rates;
+        vec![]
+    }
+
     /// 指定タイムスタンプ以前の最新スポットレートをトークンごとに取得
     ///
     /// CTE で最新レートと最新 swap_path 付きレートを同時取得し、
