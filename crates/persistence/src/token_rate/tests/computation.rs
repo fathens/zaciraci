@@ -1409,6 +1409,29 @@ fn test_to_spot_rates_applies_fallback() {
 }
 
 #[test]
+fn test_to_spot_rates_all_zero_returns_empty() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            0,
+            now - chrono::Duration::hours(1),
+        ),
+        make_token_rate(base, quote, 0, now),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert!(
+        result.is_empty(),
+        "All-zero rates should produce empty output"
+    );
+}
+
+#[test]
 fn test_to_spot_rates_preserves_timestamp_order() {
     let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
