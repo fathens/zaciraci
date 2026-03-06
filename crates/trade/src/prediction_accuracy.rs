@@ -313,6 +313,9 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Opt
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。
+///
+/// 実質ゼロのレートは無効データとして除外し、
+/// 残りのうち target_time に最も近いものを返す。
 async fn get_actual_price_at(
     token: &TokenOutAccount,
     quote_token: &TokenInAccount,
