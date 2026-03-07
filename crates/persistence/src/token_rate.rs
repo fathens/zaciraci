@@ -445,23 +445,6 @@ impl TokenRate {
         self.to_spot_rate_with_fallback(None)
     }
 
-    /// 時系列配列の末尾レートをスポットレートに補正して返す
-    ///
-    /// 末尾レートに `swap_path` がない場合は、直前のレートから `swap_path` を取得して
-    /// フォールバックとして使用する。
-    pub fn latest_spot_rate(rates: &[TokenRate]) -> Option<ExchangeRate> {
-        let last = rates.last()?;
-        let fallback_path = if last.swap_path.is_none() {
-            rates[..rates.len() - 1]
-                .iter()
-                .rev()
-                .find_map(|r| r.swap_path.as_ref())
-        } else {
-            None
-        };
-        Some(last.to_spot_rate_with_fallback(fallback_path))
-    }
-
     /// 指定インデックスのレートに対するフォールバック swap_path を検索
     ///
     /// 「自分より新しくもっとも古い」swap_path を返す。
@@ -572,6 +555,101 @@ impl TokenRate {
             return self.exchange_rate.clone() * correction;
         }
         self.exchange_rate.clone()
+    }
+
+    /// Vec<TokenRate> のスポットレート一括変換。
+    ///
+    /// swap_path が NULL のレコードには precompute_fallback_indices で
+    /// 算出したフォールバックを適用する。
+    /// ExchangeRate が実質ゼロのレコードは除外する。
+    pub fn to_spot_rates(rates: &[TokenRate]) -> Vec<(NaiveDateTime, ExchangeRate)> {
+        let fallback_indices = Self::precompute_fallback_indices(rates);
+        rates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, rate)| {
+                let fallback_path = fallback_indices[i]
+                    .and_then(|idx| rates.get(idx))
+                    .and_then(|r| r.swap_path.as_ref());
+                let spot_rate = rate.to_spot_rate_with_fallback(fallback_path);
+                if spot_rate.is_effectively_zero() {
+                    return None;
+                }
+                Some((rate.timestamp, spot_rate))
+            })
+            .collect()
+    }
+
+    /// 指定タイムスタンプ以前の最新スポットレートをトークンごとに取得
+    ///
+    /// CTE で最新レートと最新 swap_path 付きレートを同時取得し、
+    /// COALESCE で swap_path をフォールバック補完した結果を返す。
+    /// 各レートは swap_path 補完後に `to_spot_rate()` でスポットレートに変換。
+    pub async fn get_spot_rates_at_time(
+        tokens: &[TokenOutAccount],
+        quote: &TokenInAccount,
+        at_or_before: NaiveDateTime,
+    ) -> Result<HashMap<TokenOutAccount, ExchangeRate>> {
+        use diesel::sql_types::{Array, Text, Timestamp};
+
+        if tokens.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let conn = connection_pool::get().await?;
+
+        let tokens_vec: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let quote_str = quote.to_string();
+        let ts = at_or_before;
+
+        let results: Vec<DbTokenRate> = conn
+            .interact(move |conn| {
+                diesel::sql_query(
+                    "WITH latest AS ( \
+                         SELECT DISTINCT ON (base_token) \
+                             id, base_token, quote_token, rate, timestamp, \
+                             decimals, rate_calc_near, swap_path \
+                         FROM token_rates \
+                         WHERE base_token = ANY($1) \
+                           AND quote_token = $2 \
+                           AND timestamp <= $3 \
+                         ORDER BY base_token, timestamp DESC \
+                     ), \
+                     fallback AS ( \
+                         SELECT DISTINCT ON (base_token) \
+                             base_token, swap_path \
+                         FROM token_rates \
+                         WHERE base_token = ANY($1) \
+                           AND quote_token = $2 \
+                           AND timestamp <= $3 \
+                           AND swap_path IS NOT NULL \
+                         ORDER BY base_token, timestamp DESC \
+                     ) \
+                     SELECT l.id, l.base_token, l.quote_token, l.rate, l.timestamp, \
+                            l.decimals, l.rate_calc_near, \
+                            COALESCE(l.swap_path, f.swap_path) AS swap_path \
+                     FROM latest l \
+                     LEFT JOIN fallback f ON l.base_token = f.base_token",
+                )
+                .bind::<Array<Text>, _>(&tokens_vec)
+                .bind::<Text, _>(&quote_str)
+                .bind::<Timestamp, _>(ts)
+                .load::<DbTokenRate>(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        let rates: Vec<TokenRate> = results
+            .into_iter()
+            .map(Self::from_db)
+            .collect::<Result<_>>()?;
+
+        let mut result = HashMap::with_capacity(rates.len());
+        for rate in &rates {
+            result.insert(rate.base.clone(), rate.to_spot_rate());
+        }
+
+        Ok(result)
     }
 }
 

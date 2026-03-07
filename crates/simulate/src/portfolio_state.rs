@@ -348,41 +348,20 @@ impl PortfolioState {
     }
 }
 
-/// Default lookback window for rate queries (24 hours).
-const DEFAULT_RATE_LOOKBACK_HOURS: i64 = 24;
-
-/// Get the exchange rate closest to (but not after) the given date.
+/// Get the spot rate for a token at (or before) the given date.
 ///
-/// Searches within a lookback window ending at `sim_day`. The window size
-/// defaults to [`DEFAULT_RATE_LOOKBACK_HOURS`]; use
-/// [`get_rate_at_date_with_lookback`] to customise.
+/// Uses `get_spot_rates_at_time` which finds the latest rate at or before
+/// the specified timestamp across the entire DB, so no lookback window is needed.
 pub(crate) async fn get_rate_at_date(
     token_out: &TokenOutAccount,
     wnear_in: &common::types::TokenInAccount,
     sim_day: DateTime<Utc>,
 ) -> Option<ExchangeRate> {
-    get_rate_at_date_with_lookback(token_out, wnear_in, sim_day, DEFAULT_RATE_LOOKBACK_HOURS).await
-}
-
-/// Like [`get_rate_at_date`], but with a configurable lookback window.
-pub(crate) async fn get_rate_at_date_with_lookback(
-    token_out: &TokenOutAccount,
-    wnear_in: &common::types::TokenInAccount,
-    sim_day: DateTime<Utc>,
-    lookback_hours: i64,
-) -> Option<ExchangeRate> {
-    let range = common::types::TimeRange {
-        start: (sim_day - chrono::Duration::hours(lookback_hours)).naive_utc(),
-        end: sim_day.naive_utc(),
-    };
-
-    match TokenRate::get_rates_in_time_range(&range, token_out, wnear_in).await {
-        Ok(rates) if !rates.is_empty() => {
-            // Return the last (most recent) rate, corrected to spot rate
-            TokenRate::latest_spot_rate(&rates)
-        }
-        _ => None,
-    }
+    let tokens = [token_out.clone()];
+    let rates = TokenRate::get_spot_rates_at_time(&tokens, wnear_in, sim_day.naive_utc())
+        .await
+        .ok()?;
+    rates.get(token_out).cloned()
 }
 
 #[cfg(test)]

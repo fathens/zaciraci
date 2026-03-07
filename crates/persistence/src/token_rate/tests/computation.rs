@@ -1251,3 +1251,205 @@ fn test_to_spot_rate_multihop_with_fallback() {
         "Multihop fallback should work: 1.1 * 1.02 = 1.122"
     );
 }
+
+// =============================================================================
+// to_spot_rates() テスト
+// =============================================================================
+
+#[test]
+fn test_to_spot_rates_empty() {
+    let result = TokenRate::to_spot_rates(&[]);
+    assert!(result.is_empty(), "Empty input should produce empty output");
+}
+
+#[test]
+fn test_to_spot_rates_single_rate() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rate = make_token_rate(base, quote, 1000, now);
+    let result = TokenRate::to_spot_rates(&[rate]);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].0, now);
+    // swap_path=None なので生レートがそのまま返る
+    assert_eq!(result[0].1.raw_rate(), &BigDecimal::from(1000));
+}
+
+#[test]
+fn test_to_spot_rates_all_normal() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            100,
+            now - chrono::Duration::hours(2),
+        ),
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            200,
+            now - chrono::Duration::hours(1),
+        ),
+        make_token_rate(base, quote, 300, now),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0].1.raw_rate(), &BigDecimal::from(100));
+    assert_eq!(result[1].1.raw_rate(), &BigDecimal::from(200));
+    assert_eq!(result[2].1.raw_rate(), &BigDecimal::from(300));
+}
+
+#[test]
+fn test_to_spot_rates_filters_zero_rates() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            100,
+            now - chrono::Duration::hours(2),
+        ),
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            0,
+            now - chrono::Duration::hours(1),
+        ),
+        make_token_rate(base, quote, 300, now),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 2, "Zero rate should be filtered out");
+    assert_eq!(result[0].1.raw_rate(), &BigDecimal::from(100));
+    assert_eq!(result[1].1.raw_rate(), &BigDecimal::from(300));
+}
+
+#[test]
+fn test_to_spot_rates_applies_fallback() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
+        }],
+    };
+
+    // r0: swap_path=None → r1 のフォールバックが適用される
+    // r1: swap_path=Some(pool_id=200) → 自身の swap_path で補正
+    // r2: swap_path=None → フォールバックなし（自分より新しい swap_path がない）
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: Some(make_path(200)),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+    ];
+
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 3);
+
+    // r0 は r1 の swap_path をフォールバックで使用 → 補正あり
+    // r1 は自身の swap_path で補正あり
+    // r0 と r1 は同じレート・同じ swap_path なので同じスポットレート
+    assert_eq!(
+        result[0].1.raw_rate(),
+        result[1].1.raw_rate(),
+        "r0 (fallback from r1) and r1 (own path) should produce same spot rate"
+    );
+
+    // r2 はフォールバックなし → 生レートのまま
+    assert_eq!(
+        result[2].1.raw_rate(),
+        &BigDecimal::from(1000),
+        "r2 without fallback should return raw rate"
+    );
+
+    // r0/r1 は補正ありなので raw rate (1000) とは異なる
+    assert_ne!(
+        result[0].1.raw_rate(),
+        &BigDecimal::from(1000),
+        "r0 with fallback correction should differ from raw rate"
+    );
+}
+
+#[test]
+fn test_to_spot_rates_all_zero_returns_empty() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            0,
+            now - chrono::Duration::hours(1),
+        ),
+        make_token_rate(base, quote, 0, now),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert!(
+        result.is_empty(),
+        "All-zero rates should produce empty output"
+    );
+}
+
+#[test]
+fn test_to_spot_rates_preserves_timestamp_order() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let ts0 = now - chrono::Duration::hours(3);
+    let ts1 = now - chrono::Duration::hours(2);
+    let ts2 = now - chrono::Duration::hours(1);
+
+    let rates = vec![
+        make_token_rate(base.clone(), quote.clone(), 100, ts0),
+        make_token_rate(base.clone(), quote.clone(), 200, ts1),
+        make_token_rate(base, quote, 300, ts2),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0].0, ts0);
+    assert_eq!(result[1].0, ts1);
+    assert_eq!(result[2].0, ts2);
+}
