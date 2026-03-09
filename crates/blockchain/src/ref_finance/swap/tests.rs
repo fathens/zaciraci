@@ -1,6 +1,8 @@
 use super::*;
+use crate::test_utils::dummy_final_outcome;
 use common::types::TokenAccount;
 use common::types::{TokenInAccount, TokenOutAccount};
+use near_primitives::views::FinalExecutionStatus;
 use near_sdk::require;
 
 struct MockTokenPair {
@@ -158,4 +160,36 @@ fn test_build_swap_actions_with_very_small_amounts() {
     assert_eq!(output, 0); // 1 * 0.9 = 0.9 → 0 (整数の切り捨て)
     assert_eq!(actions[0].amount_in, Some(U128(1)));
     assert_eq!(actions[0].min_amount_out.0, 5);
+}
+
+#[test]
+fn test_extract_actual_output_success() {
+    // REF Finance returns U128 as JSON-encoded string: "\"12345\""
+    let view = dummy_final_outcome(b"\"12345\"".to_vec());
+    let result = extract_actual_output(&view).unwrap();
+    assert_eq!(result, 12345);
+}
+
+#[test]
+fn test_extract_actual_output_zero() {
+    let view = dummy_final_outcome(b"\"0\"".to_vec());
+    let result = extract_actual_output(&view).unwrap();
+    assert_eq!(result, 0);
+}
+
+#[test]
+fn test_extract_actual_output_large_value() {
+    // Large u128 value typical of token amounts with 24 decimals
+    let value = "\"1000000000000000000000000\""; // 1e24
+    let view = dummy_final_outcome(value.as_bytes().to_vec());
+    let result = extract_actual_output(&view).unwrap();
+    assert_eq!(result, 1_000_000_000_000_000_000_000_000);
+}
+
+#[test]
+fn test_extract_actual_output_failure() {
+    let mut view = dummy_final_outcome(b"\"0\"".to_vec());
+    view.status = FinalExecutionStatus::NotStarted;
+    let result = extract_actual_output(&view);
+    assert!(result.is_err());
 }
