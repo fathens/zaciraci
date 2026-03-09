@@ -328,6 +328,7 @@ async fn execute_harvest_transfer(
             from_amount,
             &to_token,
             to_amount,
+            None, // harvest does not go through REF Finance swap
         )
         .await?;
 

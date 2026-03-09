@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use bigdecimal::{BigDecimal, Zero};
 use common::types::TokenAmount;
 use common::types::{TokenInAccount, TokenOutAccount};
 use logging::*;
@@ -36,12 +37,33 @@ impl TradeRecorder {
         from_amount: TokenAmount,
         to_token: &TokenOutAccount,
         to_amount: TokenAmount,
+        actual_to_amount: Option<TokenAmount>,
     ) -> Result<TradeTransaction> {
         let log = DEFAULT.new(o!("function" => "record_trade"));
         debug!(log, "recording trade"; "from_token" => %from_token, "to_token" => %to_token, "tx_id" => %tx_id);
 
         let from_smallest = from_amount.into_smallest_units();
-        let to_smallest = to_amount.into_smallest_units();
+        let to_smallest = to_amount.clone().into_smallest_units();
+
+        if let Some(ref actual) = actual_to_amount {
+            let estimated_whole = to_amount.to_whole();
+            let actual_whole = actual.to_whole();
+            let diff_pct = if !estimated_whole.is_zero() {
+                let diff = &actual_whole - &estimated_whole;
+                (&diff / &estimated_whole) * BigDecimal::from(100)
+            } else {
+                BigDecimal::from(0)
+            };
+            info!(log, "swap slippage";
+                "estimated" => %estimated_whole,
+                "actual" => %actual_whole,
+                "diff_pct" => %diff_pct,
+                "to_token" => %to_token
+            );
+        }
+
+        let actual_to_smallest: Option<BigDecimal> =
+            actual_to_amount.map(|a| a.into_smallest_units().into());
 
         debug!(log, "recording trade details";
             "from_amount" => %from_smallest,
@@ -60,7 +82,7 @@ impl TradeRecorder {
             to_amount: to_smallest,
             timestamp: chrono::Utc::now().naive_utc(),
             evaluation_period_id: Some(self.evaluation_period_id.clone()),
-            actual_to_amount: None,
+            actual_to_amount: actual_to_smallest,
         };
 
         let result = transaction
@@ -110,7 +132,11 @@ mod tests {
                 &from_token,
                 token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
                 &to_token,
-                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens
+                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens (estimated)
+                Some(token_amount(
+                    49_500_000_000_000_000_000_000,
+                    TEST_TOKEN_DECIMALS,
+                )), // actual
             )
             .await
             .unwrap();
