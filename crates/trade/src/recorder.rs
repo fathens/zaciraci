@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
-use bigdecimal::{BigDecimal, Zero};
+use bigdecimal::BigDecimal;
 use common::types::TokenAmount;
 use common::types::{TokenInAccount, TokenOutAccount};
 use logging::*;
+use num_traits::Zero;
 use uuid::Uuid;
 
 use persistence::trade_transaction::TradeTransaction;
@@ -43,27 +44,25 @@ impl TradeRecorder {
         debug!(log, "recording trade"; "from_token" => %from_token, "to_token" => %to_token, "tx_id" => %tx_id);
 
         let from_smallest = from_amount.into_smallest_units();
-        let to_smallest = to_amount.clone().into_smallest_units();
-
-        if let Some(ref actual) = actual_to_amount {
-            let estimated_whole = to_amount.to_whole();
-            let actual_whole = actual.to_whole();
-            let diff_pct = if !estimated_whole.is_zero() {
-                let diff = &actual_whole - &estimated_whole;
-                (&diff / &estimated_whole) * BigDecimal::from(100)
-            } else {
-                BigDecimal::from(0)
-            };
-            info!(log, "swap slippage";
-                "estimated" => %estimated_whole,
-                "actual" => %actual_whole,
-                "diff_pct" => %diff_pct,
-                "to_token" => %to_token
-            );
-        }
+        let to_smallest = to_amount.into_smallest_units();
 
         let actual_to_smallest: Option<BigDecimal> =
             actual_to_amount.map(|a| a.into_smallest_units().into());
+
+        if let Some(ref actual_bd) = actual_to_smallest {
+            let estimated_bd = to_smallest.as_bigdecimal();
+            if !estimated_bd.is_zero() {
+                let diff = actual_bd - estimated_bd;
+                let diff_pct = (&diff / estimated_bd * BigDecimal::from(100))
+                    .with_scale_round(4, bigdecimal::RoundingMode::HalfUp);
+                info!(log, "swap slippage";
+                    "estimated" => %estimated_bd,
+                    "actual" => %actual_bd,
+                    "diff_pct" => %diff_pct,
+                    "to_token" => %to_token
+                );
+            }
+        }
 
         debug!(log, "recording trade details";
             "from_amount" => %from_smallest,
