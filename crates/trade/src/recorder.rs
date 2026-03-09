@@ -60,6 +60,7 @@ impl TradeRecorder {
             to_amount: to_smallest,
             timestamp: chrono::Utc::now().naive_utc(),
             evaluation_period_id: Some(self.evaluation_period_id.clone()),
+            actual_to_amount: None,
         };
 
         let result = transaction

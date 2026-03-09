@@ -23,6 +23,7 @@ pub struct TradeTransaction {
     pub to_amount: TokenSmallestUnits,
     pub timestamp: NaiveDateTime,
     pub evaluation_period_id: Option<String>,
+    pub actual_to_amount: Option<BigDecimal>,
 }
 
 impl TradeTransaction {

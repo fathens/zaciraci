@@ -15,6 +15,7 @@ async fn test_trade_transaction_crud() {
         to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
         evaluation_period_id: None,
+        actual_to_amount: None,
     };
 
     let result = transaction.insert_async().await.unwrap();
@@ -74,6 +75,7 @@ async fn test_count_by_evaluation_period() {
             to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
             timestamp: chrono::Utc::now().naive_utc(),
             evaluation_period_id: Some(period_id.clone()),
+            actual_to_amount: None,
         };
 
         transaction.insert_async().await.unwrap();
@@ -124,6 +126,7 @@ async fn test_transaction_with_evaluation_period_id() {
         to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
         evaluation_period_id: Some(period_id.clone()),
+        actual_to_amount: None,
     };
 
     let result = transaction.insert_async().await.unwrap();
