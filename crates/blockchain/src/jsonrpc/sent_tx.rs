@@ -4,7 +4,8 @@ use logging::*;
 use near_primitives::hash::CryptoHash;
 use near_primitives::types::AccountId;
 use near_primitives::views::{
-    ExecutionOutcomeView, FinalExecutionOutcomeViewEnum, FinalExecutionStatus, TxExecutionStatus,
+    FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum, FinalExecutionStatus,
+    TxExecutionStatus,
 };
 use std::time::Duration;
 
@@ -39,7 +40,7 @@ impl<A: TxInfo> SentTx for StandardSentTx<A> {
             .ok_or_else(|| anyhow!("No outcome of tx: {}", self.tx_hash))
     }
 
-    async fn wait_for_success(&self) -> crate::Result<ExecutionOutcomeView> {
+    async fn wait_for_success(&self) -> crate::Result<FinalExecutionOutcomeView> {
         let log = DEFAULT.new(o!(
             "function" => "wait_for_success",
             "tx_hash" => format!("{}", self.tx_hash),
@@ -117,7 +118,7 @@ impl<A: TxInfo> SentTx for StandardSentTx<A> {
                             attempt_log,
                             "transaction completed successfully and finalized"
                         );
-                        return Ok(view.transaction_outcome.outcome);
+                        return Ok(view);
                     }
                 }
             } else {

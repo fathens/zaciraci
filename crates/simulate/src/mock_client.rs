@@ -7,7 +7,7 @@ use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
 use near_primitives::types::BlockId;
-use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+use near_primitives::views::{CallResult, FinalExecutionOutcomeViewEnum};
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde_json::json;
@@ -302,18 +302,11 @@ impl SentTx for MockSentTx {
         unimplemented!("SimulationClient does not execute real transactions")
     }
 
-    async fn wait_for_success(&self) -> anyhow::Result<ExecutionOutcomeView> {
-        Ok(ExecutionOutcomeView {
-            logs: vec![],
-            receipt_ids: vec![],
-            gas_burnt: near_primitives::types::Gas::from_gas(0),
-            tokens_burnt: NearToken::from_yoctonear(0),
-            executor_id: AccountId::try_from("sim.near".to_string())?,
-            status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
-            metadata: near_primitives::views::ExecutionMetadataView {
-                version: 1,
-                gas_profile: None,
-            },
-        })
+    async fn wait_for_success(
+        &self,
+    ) -> anyhow::Result<near_primitives::views::FinalExecutionOutcomeView> {
+        Ok(blockchain::test_utils::dummy_final_outcome(
+            b"\"0\"".to_vec(),
+        ))
     }
 }

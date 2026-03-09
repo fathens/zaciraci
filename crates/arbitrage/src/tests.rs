@@ -8,7 +8,9 @@ use humantime::parse_duration;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
 use near_primitives::types::BlockId;
-use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+use near_primitives::views::{
+    CallResult, FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
+};
 use near_sdk::AccountId;
 use near_sdk::NearToken;
 use near_sdk::json_types::U128;
@@ -224,22 +226,13 @@ impl jsonrpc::SentTx for MockSentTx {
         unimplemented!()
     }
 
-    async fn wait_for_success(&self) -> crate::Result<ExecutionOutcomeView> {
+    async fn wait_for_success(&self) -> crate::Result<FinalExecutionOutcomeView> {
         if self.should_fail {
             return Err(anyhow!("Transaction failed"));
         }
-        Ok(ExecutionOutcomeView {
-            logs: vec![],
-            receipt_ids: vec![],
-            gas_burnt: near_primitives::types::Gas::from_gas(0),
-            tokens_burnt: NearToken::from_yoctonear(0),
-            executor_id: AccountId::try_from("test.near".to_string())?,
-            status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
-            metadata: near_primitives::views::ExecutionMetadataView {
-                version: 1,
-                gas_profile: None,
-            },
-        })
+        Ok(blockchain::test_utils::dummy_final_outcome(
+            b"\"0\"".to_vec(),
+        ))
     }
 }
 
