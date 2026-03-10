@@ -227,6 +227,8 @@ impl EvaluationPeriod {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
+    use std::panic::AssertUnwindSafe;
 
     #[tokio::test]
     async fn test_create_and_get_evaluation_period() {
@@ -258,18 +260,26 @@ mod tests {
         let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
 
         let created = new_period.insert_async().await.unwrap();
-        assert_eq!(created.initial_value, initial_value);
+        let period_id = created.period_id.clone();
 
-        // DB から再取得しても一致
-        let fetched = EvaluationPeriod::get_by_period_id_async(created.period_id.clone())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.initial_value, initial_value);
+        let result = AssertUnwindSafe(async {
+            assert_eq!(created.initial_value, initial_value);
 
-        // Cleanup
-        EvaluationPeriod::delete_by_period_id_async(created.period_id)
-            .await
-            .unwrap();
+            // DB から再取得しても一致
+            let fetched = EvaluationPeriod::get_by_period_id_async(period_id.clone())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fetched.initial_value, initial_value);
+        })
+        .catch_unwind()
+        .await;
+
+        // Cleanup（テスト本体がパニックしても常に実行）
+        let _ = EvaluationPeriod::delete_by_period_id_async(period_id).await;
+
+        if let Err(e) = result {
+            std::panic::resume_unwind(e);
+        }
     }
 }

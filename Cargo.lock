@@ -2568,6 +2568,7 @@ dependencies = [
  "deadpool-diesel",
  "dex",
  "diesel",
+ "futures",
  "logging",
  "near-sdk",
  "once_cell",

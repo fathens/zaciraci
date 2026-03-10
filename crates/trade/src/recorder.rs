@@ -105,6 +105,8 @@ mod tests {
     use super::*;
     use bigdecimal::BigDecimal;
     use common::types::{TokenAccount, YoctoAmount};
+    use futures::FutureExt;
+    use std::panic::AssertUnwindSafe;
 
     // テスト用定数
     const WNEAR_DECIMALS: u8 = 24;
@@ -132,42 +134,51 @@ mod tests {
         let tx_id = format!("test_tx_{}", Uuid::new_v4());
         let from_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
         let to_token: TokenOutAccount = "akaia.tkn.near".parse::<TokenAccount>().unwrap().into();
-        let result = recorder
-            .record_trade(
+
+        let result = AssertUnwindSafe(async {
+            let result = recorder
+                .record_trade(
+                    tx_id.clone(),
+                    &from_token,
+                    token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
+                    &to_token,
+                    token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens (estimated)
+                    Some(token_amount(
+                        49_500_000_000_000_000_000_000,
+                        TEST_TOKEN_DECIMALS,
+                    )), // actual
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result.tx_id, tx_id);
+            assert_eq!(result.trade_batch_id, batch_id);
+            // actual_to_amount が DB に正しく保存されていることを検証
+            let found = persistence::trade_transaction::TradeTransaction::find_by_tx_id_async(
                 tx_id.clone(),
-                &from_token,
-                token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS), // 1 wNEAR
-                &to_token,
-                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS), // 50000 tokens (estimated)
-                Some(token_amount(
-                    49_500_000_000_000_000_000_000,
-                    TEST_TOKEN_DECIMALS,
-                )), // actual
             )
             .await
+            .unwrap()
             .unwrap();
+            assert!(found.actual_to_amount.is_some());
+            assert_eq!(
+                found.actual_to_amount.unwrap(),
+                BigDecimal::from(49_500_000_000_000_000_000_000_u128)
+            );
+        })
+        .catch_unwind()
+        .await;
 
-        assert_eq!(result.tx_id, tx_id);
-        assert_eq!(result.trade_batch_id, batch_id);
-        // actual_to_amount が DB に正しく保存されていることを検証
-        let found =
-            persistence::trade_transaction::TradeTransaction::find_by_tx_id_async(tx_id.clone())
-                .await
-                .unwrap()
-                .unwrap();
-        assert!(found.actual_to_amount.is_some());
-        assert_eq!(
-            found.actual_to_amount.unwrap(),
-            BigDecimal::from(49_500_000_000_000_000_000_000_u128)
-        );
+        // Cleanup（テスト本体がパニックしても常に実行）
+        let _ =
+            persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id).await;
+        let _ =
+            persistence::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
+                .await;
 
-        // Cleanup
-        persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
-            .await
-            .unwrap();
-        persistence::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
-            .await
-            .unwrap();
+        if let Err(e) = result {
+            std::panic::resume_unwind(e);
+        }
     }
 
     #[tokio::test]
@@ -184,33 +195,42 @@ mod tests {
         let tx_id = format!("test_tx_{}", Uuid::new_v4());
         let from_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
         let to_token: TokenOutAccount = "akaia.tkn.near".parse::<TokenAccount>().unwrap().into();
-        let result = recorder
-            .record_trade(
+
+        let result = AssertUnwindSafe(async {
+            let result = recorder
+                .record_trade(
+                    tx_id.clone(),
+                    &from_token,
+                    token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS),
+                    &to_token,
+                    token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS),
+                    None,
+                )
+                .await
+                .unwrap();
+
+            // actual_to_amount が NULL として保存されていることを検証
+            let found = persistence::trade_transaction::TradeTransaction::find_by_tx_id_async(
                 tx_id.clone(),
-                &from_token,
-                token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS),
-                &to_token,
-                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS),
-                None,
             )
             .await
+            .unwrap()
             .unwrap();
+            assert!(found.actual_to_amount.is_none());
+            assert_eq!(result.tx_id, tx_id);
+        })
+        .catch_unwind()
+        .await;
 
-        // actual_to_amount が NULL として保存されていることを検証
-        let found =
-            persistence::trade_transaction::TradeTransaction::find_by_tx_id_async(tx_id.clone())
-                .await
-                .unwrap()
-                .unwrap();
-        assert!(found.actual_to_amount.is_none());
-        assert_eq!(result.tx_id, tx_id);
+        // Cleanup（テスト本体がパニックしても常に実行）
+        let _ =
+            persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id).await;
+        let _ =
+            persistence::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
+                .await;
 
-        // Cleanup
-        persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
-            .await
-            .unwrap();
-        persistence::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
-            .await
-            .unwrap();
+        if let Err(e) = result {
+            std::panic::resume_unwind(e);
+        }
     }
 }

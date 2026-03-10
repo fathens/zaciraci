@@ -22,6 +22,7 @@ slog = { workspace = true }
 mock = []
 
 [dev-dependencies]
+futures = { workspace = true }
 near-sdk = { version = "5.24", features = ["non-contract-usage"] }
 serial_test = "3.2"
 tokio = { workspace = true, features = ["full"] }

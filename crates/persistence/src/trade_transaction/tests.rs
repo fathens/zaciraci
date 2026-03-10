@@ -1,6 +1,8 @@
 use super::*;
 use bigdecimal::BigDecimal;
 use common::types::TokenSmallestUnits;
+use futures::FutureExt;
+use std::panic::AssertUnwindSafe;
 
 #[tokio::test]
 async fn test_trade_transaction_crud() {
@@ -82,28 +84,32 @@ async fn test_count_by_evaluation_period() {
         transaction.insert_async().await.unwrap();
     }
 
-    // count_by_evaluation_period_asyncをテスト
-    let count = TradeTransaction::count_by_evaluation_period_async(period_id.clone())
-        .await
-        .unwrap();
-    assert_eq!(count, 3);
-
-    // 存在しないperiod_idの場合は0を返す
-    let count_non_existent =
-        TradeTransaction::count_by_evaluation_period_async("non_existent_period".to_string())
+    let result = AssertUnwindSafe(async {
+        // count_by_evaluation_period_asyncをテスト
+        let count = TradeTransaction::count_by_evaluation_period_async(period_id.clone())
             .await
             .unwrap();
-    assert_eq!(count_non_existent, 0);
+        assert_eq!(count, 3);
 
-    // Cleanup
-    for tx_id in tx_ids {
-        TradeTransaction::delete_by_tx_id_async(tx_id)
-            .await
-            .unwrap();
+        // 存在しないperiod_idの場合は0を返す
+        let count_non_existent =
+            TradeTransaction::count_by_evaluation_period_async("non_existent_period".to_string())
+                .await
+                .unwrap();
+        assert_eq!(count_non_existent, 0);
+    })
+    .catch_unwind()
+    .await;
+
+    // Cleanup（テスト本体がパニックしても常に実行）
+    for tx_id in &tx_ids {
+        let _ = TradeTransaction::delete_by_tx_id_async(tx_id.clone()).await;
     }
-    crate::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
-        .await
-        .unwrap();
+    let _ = crate::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id).await;
+
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
+    }
 }
 
 #[tokio::test]
@@ -133,24 +139,28 @@ async fn test_transaction_with_evaluation_period_id() {
         actual_to_amount: None,
     };
 
-    let result = transaction.insert_async().await.unwrap();
-    assert_eq!(result.tx_id, tx_id);
-    assert_eq!(result.evaluation_period_id, Some(period_id.clone()));
+    let result = AssertUnwindSafe(async {
+        let inserted = transaction.insert_async().await.unwrap();
+        assert_eq!(inserted.tx_id, tx_id);
+        assert_eq!(inserted.evaluation_period_id, Some(period_id.clone()));
 
-    // 取得して確認
-    let found = TradeTransaction::find_by_tx_id_async(tx_id.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(found.evaluation_period_id, Some(period_id.clone()));
+        // 取得して確認
+        let found = TradeTransaction::find_by_tx_id_async(tx_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.evaluation_period_id, Some(period_id.clone()));
+    })
+    .catch_unwind()
+    .await;
 
-    // Cleanup
-    TradeTransaction::delete_by_tx_id_async(tx_id)
-        .await
-        .unwrap();
-    crate::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
-        .await
-        .unwrap();
+    // Cleanup（テスト本体がパニックしても常に実行）
+    let _ = TradeTransaction::delete_by_tx_id_async(tx_id).await;
+    let _ = crate::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id).await;
+
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
+    }
 }
 
 #[tokio::test]
@@ -189,24 +199,28 @@ async fn test_actual_to_amount_roundtrip() {
     };
     tx_without.insert_async().await.unwrap();
 
-    // 読み戻して検証
-    let found_with = TradeTransaction::find_by_tx_id_async(tx_id_with.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(found_with.actual_to_amount, Some(actual_value));
+    let result = AssertUnwindSafe(async {
+        // 読み戻して検証
+        let found_with = TradeTransaction::find_by_tx_id_async(tx_id_with.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found_with.actual_to_amount, Some(actual_value));
 
-    let found_without = TradeTransaction::find_by_tx_id_async(tx_id_without.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(found_without.actual_to_amount, None);
+        let found_without = TradeTransaction::find_by_tx_id_async(tx_id_without.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found_without.actual_to_amount, None);
+    })
+    .catch_unwind()
+    .await;
 
-    // Cleanup
-    TradeTransaction::delete_by_tx_id_async(tx_id_with)
-        .await
-        .unwrap();
-    TradeTransaction::delete_by_tx_id_async(tx_id_without)
-        .await
-        .unwrap();
+    // Cleanup（テスト本体がパニックしても常に実行）
+    let _ = TradeTransaction::delete_by_tx_id_async(tx_id_with).await;
+    let _ = TradeTransaction::delete_by_tx_id_async(tx_id_without).await;
+
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
+    }
 }
