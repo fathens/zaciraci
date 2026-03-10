@@ -11,7 +11,7 @@ path = "src/main.rs"
 common = { path = "../common" }
 persistence = { path = "../persistence" }
 trade = { path = "../trade" }
-blockchain = { path = "../blockchain", features = ["test-utils"] }
+blockchain = { path = "../blockchain" }
 logging = { path = "../logging" }
 clap = { version = "4", features = ["derive"] }
 tokio = { workspace = true }

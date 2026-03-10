@@ -4,10 +4,15 @@ use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
 use chrono::{DateTime, Utc};
 use logging::*;
-use near_crypto::InMemorySigner;
+use near_crypto::{InMemorySigner, KeyType, PublicKey, Signature};
 use near_primitives::action::Action;
+use near_primitives::hash::CryptoHash;
 use near_primitives::types::BlockId;
-use near_primitives::views::{CallResult, FinalExecutionOutcomeViewEnum};
+use near_primitives::views::{
+    CallResult, ExecutionMetadataView, ExecutionOutcomeView, ExecutionOutcomeWithIdView,
+    ExecutionStatusView, FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
+    FinalExecutionStatus, SignedTransactionView,
+};
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde_json::json;
@@ -125,7 +130,7 @@ impl SendTx for SimulationClient {
         _receiver: &AccountId,
         _amount: NearToken,
     ) -> anyhow::Result<Self::Output> {
-        Ok(MockSentTx)
+        Ok(MockSentTx { output_amount: 0 })
     }
 
     async fn exec_contract<T>(
@@ -173,6 +178,10 @@ impl SendTx for SimulationClient {
                                 "token_out" => &token_out,
                                 "amount_out" => amount_out
                             );
+
+                            return Ok(MockSentTx {
+                                output_amount: amount_out,
+                            });
                         } else {
                             warn!(log, "swap output is zero, skipping";
                                 "token_in" => &token_in, "token_out" => &token_out
@@ -183,7 +192,7 @@ impl SendTx for SimulationClient {
             }
         }
 
-        Ok(MockSentTx)
+        Ok(MockSentTx { output_amount: 0 })
     }
 
     async fn send_tx(
@@ -192,7 +201,7 @@ impl SendTx for SimulationClient {
         _receiver: &AccountId,
         _actions: Vec<Action>,
     ) -> anyhow::Result<Self::Output> {
-        Ok(MockSentTx)
+        Ok(MockSentTx { output_amount: 0 })
     }
 }
 
@@ -289,11 +298,13 @@ impl ViewContract for SimulationClient {
 #[cfg(test)]
 mod tests;
 
-pub struct MockSentTx;
+pub struct MockSentTx {
+    output_amount: u128,
+}
 
 impl std::fmt::Display for MockSentTx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MockSentTx(sim)")
+        write!(f, "MockSentTx(sim, output={})", self.output_amount)
     }
 }
 
@@ -302,11 +313,47 @@ impl SentTx for MockSentTx {
         unimplemented!("SimulationClient does not execute real transactions")
     }
 
-    async fn wait_for_success(
-        &self,
-    ) -> anyhow::Result<near_primitives::views::FinalExecutionOutcomeView> {
-        Ok(blockchain::test_utils::dummy_final_outcome(
-            b"\"0\"".to_vec(),
-        ))
+    async fn wait_for_success(&self) -> anyhow::Result<FinalExecutionOutcomeView> {
+        let value_json = serde_json::to_vec(&U128(self.output_amount))?;
+        Ok(dummy_final_outcome(value_json))
+    }
+}
+
+/// Create a dummy `FinalExecutionOutcomeView` for simulation.
+///
+/// This is a local copy to avoid depending on blockchain's `test-utils` feature.
+fn dummy_final_outcome(success_value: Vec<u8>) -> FinalExecutionOutcomeView {
+    let account_id: AccountId = "sim.near".parse().expect("valid account id");
+    let outcome = ExecutionOutcomeView {
+        logs: vec![],
+        receipt_ids: vec![],
+        gas_burnt: near_primitives::types::Gas::from_gas(0),
+        tokens_burnt: NearToken::from_yoctonear(0),
+        executor_id: account_id.clone(),
+        status: ExecutionStatusView::SuccessValue(success_value.clone()),
+        metadata: ExecutionMetadataView {
+            version: 1,
+            gas_profile: None,
+        },
+    };
+    FinalExecutionOutcomeView {
+        status: FinalExecutionStatus::SuccessValue(success_value),
+        transaction: SignedTransactionView {
+            signer_id: account_id.clone(),
+            public_key: PublicKey::empty(KeyType::ED25519),
+            nonce: 0,
+            receiver_id: account_id,
+            actions: vec![],
+            priority_fee: 0,
+            signature: Signature::default(),
+            hash: CryptoHash::default(),
+        },
+        transaction_outcome: ExecutionOutcomeWithIdView {
+            proof: vec![],
+            block_hash: CryptoHash::default(),
+            id: CryptoHash::default(),
+            outcome,
+        },
+        receipts_outcome: vec![],
     }
 }
