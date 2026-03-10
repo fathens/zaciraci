@@ -205,7 +205,8 @@ impl EvaluationPeriod {
         result.context("Failed to update selected tokens")
     }
 
-    /// period_idで評価期間を削除
+    /// period_idで評価期間を削除（テスト専用）
+    #[cfg(any(test, feature = "mock"))]
     pub async fn delete_by_period_id_async(period_id: String) -> Result<()> {
         let conn = connection_pool::get().await?;
 
