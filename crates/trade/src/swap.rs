@@ -244,7 +244,7 @@ where
         "to" => %to_token,
         "input" => swap_amount,
         "estimated_output" => out,
-        "actual_output" => actual_to_amount.as_ref().map(|a| a.to_string()).unwrap_or_default(),
+        "actual_output" => actual_to_amount.as_ref().map(|a| a.to_string()).unwrap_or_else(|| "N/A".to_string()),
     );
 
     let from_amount =
