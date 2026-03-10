@@ -121,7 +121,7 @@ mod tests {
         let created_period = new_period.insert_async().await.unwrap();
         let period_id = created_period.period_id;
 
-        let recorder = TradeRecorder::new(period_id);
+        let recorder = TradeRecorder::new(period_id.clone());
         let batch_id = recorder.get_batch_id().to_string();
 
         let tx_id = format!("test_tx_{}", Uuid::new_v4());
@@ -160,6 +160,9 @@ mod tests {
         persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
             .await
             .unwrap();
+        persistence::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -171,7 +174,7 @@ mod tests {
         let created_period = new_period.insert_async().await.unwrap();
         let period_id = created_period.period_id;
 
-        let recorder = TradeRecorder::new(period_id);
+        let recorder = TradeRecorder::new(period_id.clone());
 
         let tx_id = format!("test_tx_{}", Uuid::new_v4());
         let from_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
@@ -199,6 +202,9 @@ mod tests {
 
         // Cleanup
         persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
+            .await
+            .unwrap();
+        persistence::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
             .await
             .unwrap();
     }

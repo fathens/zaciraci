@@ -204,6 +204,23 @@ impl EvaluationPeriod {
 
         result.context("Failed to update selected tokens")
     }
+
+    /// period_idで評価期間を削除
+    pub async fn delete_by_period_id_async(period_id: String) -> Result<()> {
+        let conn = connection_pool::get().await?;
+
+        conn.interact(move |conn| {
+            diesel::delete(
+                evaluation_periods::table.filter(evaluation_periods::period_id.eq(&period_id)),
+            )
+            .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?
+        .map_err(|e| anyhow::anyhow!("Failed to delete evaluation period: {}", e))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -248,5 +265,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.initial_value, initial_value);
+
+        // Cleanup
+        EvaluationPeriod::delete_by_period_id_async(created.period_id)
+            .await
+            .unwrap();
     }
 }

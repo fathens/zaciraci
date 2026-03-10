@@ -101,6 +101,9 @@ async fn test_count_by_evaluation_period() {
             .await
             .unwrap();
     }
+    crate::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -139,10 +142,13 @@ async fn test_transaction_with_evaluation_period_id() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(found.evaluation_period_id, Some(period_id));
+    assert_eq!(found.evaluation_period_id, Some(period_id.clone()));
 
     // Cleanup
     TradeTransaction::delete_by_tx_id_async(tx_id)
+        .await
+        .unwrap();
+    crate::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id)
         .await
         .unwrap();
 }
