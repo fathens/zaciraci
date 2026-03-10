@@ -2,6 +2,7 @@ use super::*;
 use crate::mock::dummy_final_outcome;
 use common::types::TokenAccount;
 use common::types::{TokenInAccount, TokenOutAccount};
+use near_primitives::errors::{InvalidTxError, TxExecutionError};
 use near_primitives::views::FinalExecutionStatus;
 use near_sdk::require;
 
@@ -206,4 +207,20 @@ fn test_extract_actual_output_empty_bytes() {
     let view = dummy_final_outcome(vec![]);
     let result = extract_actual_output(&view);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_extract_actual_output_failure() {
+    let tx_error = TxExecutionError::InvalidTxError(InvalidTxError::InvalidSignerId {
+        signer_id: "bad".to_string(),
+    });
+    let mut view = dummy_final_outcome(b"\"0\"".to_vec());
+    view.status = FinalExecutionStatus::Failure(tx_error);
+    let result = extract_actual_output(&view);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Transaction failed"),
+        "unexpected error message: {err_msg}"
+    );
 }
