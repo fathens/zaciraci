@@ -129,7 +129,17 @@ where
 pub fn extract_actual_output(view: &FinalExecutionOutcomeView) -> Result<u128> {
     match &view.status {
         FinalExecutionStatus::SuccessValue(bytes) => {
-            let amount: U128 = serde_json::from_slice(bytes)?;
+            let amount: U128 = serde_json::from_slice(bytes).map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "extract_actual_output"));
+                let raw_str = String::from_utf8_lossy(bytes);
+                let hex_str: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                warn!(log, "failed to parse SuccessValue as U128";
+                    "error" => %e,
+                    "raw_bytes_utf8" => %raw_str,
+                    "raw_bytes_hex" => hex_str,
+                );
+                e
+            })?;
             Ok(amount.0)
         }
         FinalExecutionStatus::Failure(err) => Err(anyhow::anyhow!("Transaction failed: {:?}", err)),
