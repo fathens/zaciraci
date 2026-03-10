@@ -17,7 +17,7 @@ use near_primitives::action::Action;
 use near_primitives::hash::CryptoHash;
 use near_primitives::types::BlockId;
 use near_primitives::views::{
-    AccessKeyView, BlockView, CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
+    AccessKeyView, BlockView, CallResult, FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
     TxExecutionStatus,
 };
 use near_sdk::{AccountId, NearToken};
@@ -119,5 +119,5 @@ pub trait SendTx {
 
 pub trait SentTx {
     async fn wait_for_executed(&self) -> Result<FinalExecutionOutcomeViewEnum>;
-    async fn wait_for_success(&self) -> Result<ExecutionOutcomeView>;
+    async fn wait_for_success(&self) -> Result<FinalExecutionOutcomeView>;
 }

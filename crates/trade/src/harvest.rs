@@ -321,6 +321,7 @@ async fn execute_harvest_transfer(
     let to_token: TokenOutAccount = NEAR_TOKEN.to_out();
 
     let recorder = TradeRecorder::new(period_id.to_string());
+    let actual_to_amount = Some(to_amount.clone()); // harvest は 1:1 変換のため actual = estimated
     recorder
         .record_trade(
             tx_hash, // 実際のトランザクションハッシュを使用
@@ -328,6 +329,7 @@ async fn execute_harvest_transfer(
             from_amount,
             &to_token,
             to_amount,
+            actual_to_amount,
         )
         .await?;
 

@@ -28,6 +28,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 [dev-dependencies]
 assertables = "9.5"
 diesel = { version = "2.2", features = ["postgres"] }
+persistence = { path = "../persistence", features = ["mock"] }
 proptest = "1.6"
 serial_test = "3.2"
 tokio = { version = "1.0", features = ["full"] }

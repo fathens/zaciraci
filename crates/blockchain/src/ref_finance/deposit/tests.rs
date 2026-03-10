@@ -4,7 +4,9 @@ use crate::ref_finance::token_account::WNEAR_TOKEN;
 use anyhow::anyhow;
 use near_crypto::InMemorySigner;
 use near_primitives::transaction::Action;
-use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+use near_primitives::views::{
+    CallResult, FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
+};
 use near_sdk::NearToken;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
@@ -78,22 +80,11 @@ impl SentTx for MockSentTx {
         unimplemented!()
     }
 
-    async fn wait_for_success(&self) -> Result<ExecutionOutcomeView> {
+    async fn wait_for_success(&self) -> Result<FinalExecutionOutcomeView> {
         if self.should_fail {
             return Err(anyhow!("Transaction failed"));
         }
-        Ok(ExecutionOutcomeView {
-            logs: vec![],
-            receipt_ids: vec![],
-            gas_burnt: near_primitives::types::Gas::from_gas(0),
-            tokens_burnt: NearToken::from_yoctonear(0),
-            executor_id: AccountId::try_from("test.near".to_string())?,
-            status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
-            metadata: near_primitives::views::ExecutionMetadataView {
-                version: 1,
-                gas_profile: None,
-            },
-        })
+        Ok(crate::mock::dummy_final_outcome(b"\"0\"".to_vec()))
     }
 }
 

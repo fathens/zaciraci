@@ -2,6 +2,8 @@
 #![allow(async_fn_in_trait)]
 
 pub mod jsonrpc;
+#[cfg(any(test, feature = "mock"))]
+pub mod mock;
 pub mod ref_finance;
 pub mod types;
 pub mod wallet;

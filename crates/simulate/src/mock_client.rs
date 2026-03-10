@@ -7,7 +7,9 @@ use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
 use near_primitives::types::BlockId;
-use near_primitives::views::{CallResult, ExecutionOutcomeView, FinalExecutionOutcomeViewEnum};
+use near_primitives::views::{
+    CallResult, FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
+};
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde_json::json;
@@ -125,7 +127,7 @@ impl SendTx for SimulationClient {
         _receiver: &AccountId,
         _amount: NearToken,
     ) -> anyhow::Result<Self::Output> {
-        Ok(MockSentTx)
+        Ok(MockSentTx { output_amount: 0 })
     }
 
     async fn exec_contract<T>(
@@ -173,6 +175,10 @@ impl SendTx for SimulationClient {
                                 "token_out" => &token_out,
                                 "amount_out" => amount_out
                             );
+
+                            return Ok(MockSentTx {
+                                output_amount: amount_out,
+                            });
                         } else {
                             warn!(log, "swap output is zero, skipping";
                                 "token_in" => &token_in, "token_out" => &token_out
@@ -183,7 +189,7 @@ impl SendTx for SimulationClient {
             }
         }
 
-        Ok(MockSentTx)
+        Ok(MockSentTx { output_amount: 0 })
     }
 
     async fn send_tx(
@@ -192,7 +198,7 @@ impl SendTx for SimulationClient {
         _receiver: &AccountId,
         _actions: Vec<Action>,
     ) -> anyhow::Result<Self::Output> {
-        Ok(MockSentTx)
+        Ok(MockSentTx { output_amount: 0 })
     }
 }
 
@@ -286,14 +292,13 @@ impl ViewContract for SimulationClient {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
-pub struct MockSentTx;
+pub struct MockSentTx {
+    output_amount: u128,
+}
 
 impl std::fmt::Display for MockSentTx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MockSentTx(sim)")
+        write!(f, "MockSentTx(sim, output={})", self.output_amount)
     }
 }
 
@@ -302,18 +307,11 @@ impl SentTx for MockSentTx {
         unimplemented!("SimulationClient does not execute real transactions")
     }
 
-    async fn wait_for_success(&self) -> anyhow::Result<ExecutionOutcomeView> {
-        Ok(ExecutionOutcomeView {
-            logs: vec![],
-            receipt_ids: vec![],
-            gas_burnt: near_primitives::types::Gas::from_gas(0),
-            tokens_burnt: NearToken::from_yoctonear(0),
-            executor_id: AccountId::try_from("sim.near".to_string())?,
-            status: near_primitives::views::ExecutionStatusView::SuccessValue(vec![]),
-            metadata: near_primitives::views::ExecutionMetadataView {
-                version: 1,
-                gas_profile: None,
-            },
-        })
+    async fn wait_for_success(&self) -> anyhow::Result<FinalExecutionOutcomeView> {
+        let value_json = serde_json::to_vec(&U128(self.output_amount))?;
+        Ok(blockchain::mock::dummy_final_outcome(value_json))
     }
 }
+
+#[cfg(test)]
+mod tests;

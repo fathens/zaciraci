@@ -374,14 +374,30 @@ async fn exec_contract_swap_none_amount_in_is_noop() {
 
 #[tokio::test]
 async fn mock_sent_tx_display() {
-    let tx = MockSentTx;
-    assert_eq!(format!("{tx}"), "MockSentTx(sim)");
+    let tx = MockSentTx { output_amount: 0 };
+    assert_eq!(format!("{tx}"), "MockSentTx(sim, output=0)");
+
+    let tx = MockSentTx {
+        output_amount: 12345,
+    };
+    assert_eq!(format!("{tx}"), "MockSentTx(sim, output=12345)");
 }
 
 #[tokio::test]
 async fn mock_sent_tx_wait_for_success_returns_ok() {
     use blockchain::jsonrpc::SentTx;
-    let tx = MockSentTx;
+    let tx = MockSentTx {
+        output_amount: 42000,
+    };
     let result = tx.wait_for_success().await;
     assert!(result.is_ok());
+
+    // Verify the output amount is encoded in the outcome
+    let outcome = result.unwrap();
+    if let near_primitives::views::FinalExecutionStatus::SuccessValue(val) = &outcome.status {
+        let decoded: near_sdk::json_types::U128 = serde_json::from_slice(val).unwrap();
+        assert_eq!(decoded.0, 42000);
+    } else {
+        panic!("expected SuccessValue status");
+    }
 }
