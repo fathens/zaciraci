@@ -124,8 +124,13 @@ where
 
 /// Extract the actual output amount from a successful swap transaction outcome.
 ///
-/// REF Finance's `swap()` contract function returns the actual output amount as a
-/// JSON-encoded `U128` in `FinalExecutionStatus::SuccessValue`.
+/// # Contract assumption
+///
+/// REF Finance's `swap()` contract function returns the actual output token amount
+/// as a JSON-encoded `U128` in `FinalExecutionStatus::SuccessValue`, even for
+/// multi-hop swaps. If the contract changes this format (e.g. after an upgrade),
+/// parsing will fail with a `warn` log and the caller should treat the result as
+/// `None` (i.e. `actual_to_amount` = NULL in the database).
 pub fn extract_actual_output(view: &FinalExecutionOutcomeView) -> Result<u128> {
     match &view.status {
         FinalExecutionStatus::SuccessValue(bytes) => {
