@@ -292,9 +292,6 @@ impl ViewContract for SimulationClient {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 pub struct MockSentTx {
     output_amount: u128,
 }
@@ -315,3 +312,6 @@ impl SentTx for MockSentTx {
         Ok(blockchain::mock::dummy_final_outcome(value_json))
     }
 }
+
+#[cfg(test)]
+mod tests;
