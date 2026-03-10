@@ -142,6 +142,58 @@ mod tests {
 
         assert_eq!(result.tx_id, tx_id);
         assert_eq!(result.trade_batch_id, batch_id);
+        // actual_to_amount が DB に正しく保存されていることを検証
+        let found =
+            persistence::trade_transaction::TradeTransaction::find_by_tx_id_async(tx_id.clone())
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(found.actual_to_amount.is_some());
+        assert_eq!(
+            found.actual_to_amount.unwrap(),
+            BigDecimal::from(49_500_000_000_000_000_000_000_u128)
+        );
+
+        // Cleanup
+        persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_trade_recorder_without_actual_amount() {
+        use persistence::evaluation_period::NewEvaluationPeriod;
+
+        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
+        let new_period = NewEvaluationPeriod::new(initial_value, vec![]);
+        let created_period = new_period.insert_async().await.unwrap();
+        let period_id = created_period.period_id;
+
+        let recorder = TradeRecorder::new(period_id);
+
+        let tx_id = format!("test_tx_{}", Uuid::new_v4());
+        let from_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
+        let to_token: TokenOutAccount = "akaia.tkn.near".parse::<TokenAccount>().unwrap().into();
+        let result = recorder
+            .record_trade(
+                tx_id.clone(),
+                &from_token,
+                token_amount(1_000_000_000_000_000_000_000_000, WNEAR_DECIMALS),
+                &to_token,
+                token_amount(50_000_000_000_000_000_000_000, TEST_TOKEN_DECIMALS),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // actual_to_amount が NULL として保存されていることを検証
+        let found =
+            persistence::trade_transaction::TradeTransaction::find_by_tx_id_async(tx_id.clone())
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(found.actual_to_amount.is_none());
+        assert_eq!(result.tx_id, tx_id);
 
         // Cleanup
         persistence::trade_transaction::TradeTransaction::delete_by_tx_id_async(tx_id)

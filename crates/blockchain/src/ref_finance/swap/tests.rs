@@ -187,9 +187,23 @@ fn test_extract_actual_output_large_value() {
 }
 
 #[test]
-fn test_extract_actual_output_failure() {
+fn test_extract_actual_output_not_started() {
     let mut view = dummy_final_outcome(b"\"0\"".to_vec());
     view.status = FinalExecutionStatus::NotStarted;
+    let result = extract_actual_output(&view);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_extract_actual_output_invalid_json() {
+    let view = dummy_final_outcome(b"not valid json".to_vec());
+    let result = extract_actual_output(&view);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_extract_actual_output_empty_bytes() {
+    let view = dummy_final_outcome(vec![]);
     let result = extract_actual_output(&view);
     assert!(result.is_err());
 }

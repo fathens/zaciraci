@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use common::types::TokenSmallestUnits;
 
 #[tokio::test]
@@ -142,6 +143,64 @@ async fn test_transaction_with_evaluation_period_id() {
 
     // Cleanup
     TradeTransaction::delete_by_tx_id_async(tx_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_actual_to_amount_roundtrip() {
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    let tx_id_with = format!("test_tx_actual_{}", uuid::Uuid::new_v4());
+    let tx_id_without = format!("test_tx_no_actual_{}", uuid::Uuid::new_v4());
+
+    let actual_value = BigDecimal::from(49_500_000_000_000_000_000_000_u128);
+
+    // actual_to_amount あり
+    let tx_with = TradeTransaction {
+        tx_id: tx_id_with.clone(),
+        trade_batch_id: batch_id.clone(),
+        from_token: "wrap.near".to_string(),
+        from_amount: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000),
+        to_token: "akaia.tkn.near".to_string(),
+        to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
+        timestamp: chrono::Utc::now().naive_utc(),
+        evaluation_period_id: None,
+        actual_to_amount: Some(actual_value.clone()),
+    };
+    tx_with.insert_async().await.unwrap();
+
+    // actual_to_amount なし
+    let tx_without = TradeTransaction {
+        tx_id: tx_id_without.clone(),
+        trade_batch_id: batch_id.clone(),
+        from_token: "wrap.near".to_string(),
+        from_amount: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000),
+        to_token: "akaia.tkn.near".to_string(),
+        to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
+        timestamp: chrono::Utc::now().naive_utc(),
+        evaluation_period_id: None,
+        actual_to_amount: None,
+    };
+    tx_without.insert_async().await.unwrap();
+
+    // 読み戻して検証
+    let found_with = TradeTransaction::find_by_tx_id_async(tx_id_with.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found_with.actual_to_amount, Some(actual_value));
+
+    let found_without = TradeTransaction::find_by_tx_id_async(tx_id_without.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found_without.actual_to_amount, None);
+
+    // Cleanup
+    TradeTransaction::delete_by_tx_id_async(tx_id_with)
+        .await
+        .unwrap();
+    TradeTransaction::delete_by_tx_id_async(tx_id_without)
         .await
         .unwrap();
 }
