@@ -223,10 +223,16 @@ where
 
     // 実績値を抽出
     let actual_to_amount = match blockchain::ref_finance::swap::extract_actual_output(&outcome) {
-        Ok(actual) => Some(TokenAmount::from_smallest_units(
-            BigDecimal::from(actual),
-            to_decimals,
-        )),
+        Ok(actual) => {
+            if actual == 0 {
+                warn!(log, "swap returned zero output amount";
+                    "from" => %from_token, "to" => %to_token);
+            }
+            Some(TokenAmount::from_smallest_units(
+                BigDecimal::from(actual),
+                to_decimals,
+            ))
+        }
         Err(e) => {
             warn!(log, "failed to extract actual output"; "error" => %e);
             None
