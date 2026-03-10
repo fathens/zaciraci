@@ -132,10 +132,10 @@ where
 /// parsing will fail with a `warn` log and the caller should treat the result as
 /// `None` (i.e. `actual_to_amount` = NULL in the database).
 pub fn extract_actual_output(view: &FinalExecutionOutcomeView) -> Result<u128> {
+    let log = DEFAULT.new(o!("function" => "extract_actual_output"));
     match &view.status {
         FinalExecutionStatus::SuccessValue(bytes) => {
             let amount: U128 = serde_json::from_slice(bytes).map_err(|e| {
-                let log = DEFAULT.new(o!("function" => "extract_actual_output"));
                 let raw_str = String::from_utf8_lossy(bytes);
                 let hex_str: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
                 warn!(log, "failed to parse SuccessValue as U128";
