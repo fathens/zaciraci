@@ -327,8 +327,8 @@ async fn execute_harvest_transfer(
             &from_token,
             from_amount,
             &to_token,
-            to_amount,
-            None, // harvest does not go through REF Finance swap
+            to_amount.clone(),
+            Some(to_amount), // harvest は 1:1 変換のため actual = estimated
         )
         .await?;
 
