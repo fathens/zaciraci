@@ -6,12 +6,12 @@ use near_primitives::views::{
 };
 use near_sdk::{AccountId, NearToken};
 
-/// Create a dummy `FinalExecutionOutcomeView` for tests.
+/// Create a dummy `FinalExecutionOutcomeView` with the given success value.
 ///
 /// `success_value` is the bytes stored in `FinalExecutionStatus::SuccessValue`.
 /// For REF Finance swap, this is typically a JSON-encoded `U128` like `b"\"12345\""`.
 pub fn dummy_final_outcome(success_value: Vec<u8>) -> FinalExecutionOutcomeView {
-    let account_id: AccountId = "test.near".parse().expect("valid account id");
+    let account_id: AccountId = "mock.near".parse().expect("valid account id");
     let outcome = ExecutionOutcomeView {
         logs: vec![],
         receipt_ids: vec![],

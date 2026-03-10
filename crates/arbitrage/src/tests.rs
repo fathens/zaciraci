@@ -230,9 +230,7 @@ impl jsonrpc::SentTx for MockSentTx {
         if self.should_fail {
             return Err(anyhow!("Transaction failed"));
         }
-        Ok(blockchain::test_utils::dummy_final_outcome(
-            b"\"0\"".to_vec(),
-        ))
+        Ok(blockchain::mock::dummy_final_outcome(b"\"0\"".to_vec()))
     }
 }
 

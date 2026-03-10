@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_utils::dummy_final_outcome;
+use crate::mock::dummy_final_outcome;
 use common::types::TokenAccount;
 use common::types::{TokenInAccount, TokenOutAccount};
 use near_primitives::views::FinalExecutionStatus;
