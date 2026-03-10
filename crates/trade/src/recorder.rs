@@ -51,7 +51,12 @@ impl TradeRecorder {
 
         if let Some(ref actual_bd) = actual_to_smallest {
             let estimated_bd = to_smallest.as_bigdecimal();
-            if !estimated_bd.is_zero() {
+            if estimated_bd.is_zero() {
+                warn!(log, "skipping slippage calculation: estimated amount is zero";
+                    "actual" => %actual_bd,
+                    "to_token" => %to_token
+                );
+            } else {
                 // diff_pct > 0: actual > estimated (有利な約定)
                 // diff_pct < 0: actual < estimated (不利な約定 = スリッページ損)
                 let diff = actual_bd - estimated_bd;
