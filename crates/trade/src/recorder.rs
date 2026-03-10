@@ -62,7 +62,7 @@ impl TradeRecorder {
                 let diff = actual_bd - estimated_bd;
                 let diff_pct = (&diff / estimated_bd * BigDecimal::from(100))
                     .with_scale_round(4, bigdecimal::RoundingMode::HalfUp);
-                info!(log, "swap slippage";
+                debug!(log, "swap slippage";
                     "estimated" => %estimated_bd,
                     "actual" => %actual_bd,
                     "diff_pct" => %diff_pct,
