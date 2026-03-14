@@ -397,47 +397,17 @@ pub async fn select_top_volatility_tokens(
                 "buyable_count" => buyable_filtered.len(),
             );
 
-            // 売却方向のパスも確認（token → wrap.near）
-            let wnear_out: TokenOutAccount =
-                blockchain::ref_finance::token_account::WNEAR_TOKEN.to_out();
-            let mut filtered_tokens: Vec<AccountId> = Vec::new();
-            for token in buyable_filtered {
-                let token_in: TokenInAccount = TokenAccount::from(token.clone()).into();
-
-                // token から wrap.near へのパスが存在するか確認
-                match graph.update_graph(&token_in) {
-                    Ok(sellable_goals) => {
-                        if sellable_goals
-                            .iter()
-                            .any(|g| g.as_account_id() == wnear_out.as_account_id())
-                        {
-                            filtered_tokens.push(token);
-
-                            // 必要な数に達したら即座に終了
-                            if filtered_tokens.len() >= limit {
-                                trace!(log, "reached required token count, stopping early"; "count" => limit);
-                                break;
-                            }
-                        } else {
-                            trace!(log, "token not sellable to wrap.near, skipping"; "token" => %token);
-                        }
-                    }
-                    Err(_) => {
-                        trace!(log, "failed to check sellability, skipping"; "token" => %token);
-                    }
-                }
-            }
+            // update_graph(&wnear_token) は双方向到達可能性を保証済み:
+            // wnear→token と token→wnear の両方のパスが存在するトークンのみ返す。
+            // そのため追加の sellability チェックは不要。
+            let filtered_tokens: Vec<AccountId> =
+                buyable_filtered.into_iter().take(limit).collect();
 
             if filtered_tokens.is_empty() {
                 return Err(anyhow::anyhow!(
                     "No tokens with sufficient liquidity after filtering {} volatility tokens",
                     original_count
                 ));
-            }
-
-            // 要求された数に制限（フィルタ後の上位 limit 個を返す）
-            if filtered_tokens.len() > limit {
-                filtered_tokens.truncate(limit);
             }
 
             if filtered_tokens.len() < limit {
