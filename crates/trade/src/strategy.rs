@@ -341,90 +341,28 @@ pub async fn select_top_volatility_tokens(
             // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
             let pools = persistence::pool_info::read_from_db(None).await?;
 
-            // 最小流動性でプールをフィルタ（レート取得失敗時はフィルタをスキップ）
+            // レート取得（失敗時は None → フィルタスキップ）
             let min_liquidity =
                 NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
             let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
-            let filtered_pools = match persistence::token_rate::get_all_latest_rates(&wnear).await {
-                Ok(latest_rates) => {
-                    let filtered =
-                        filter_pools_by_liquidity(&pools, &wnear, &min_liquidity, &latest_rates);
-                    debug!(log, "pools filtered by minimum liquidity";
-                        "original_pools" => pools.list().len(),
-                        "filtered_pools" => filtered.list().len(),
-                        "min_liquidity_near" => cfg.trade_min_pool_liquidity(),
-                    );
-                    filtered
-                }
+            let wnear_in: TokenInAccount = wnear.to_in();
+            let latest_rates = match persistence::token_rate::get_all_latest_rates(&wnear).await {
+                Ok(rates) => Some(rates),
                 Err(e) => {
                     warn!(log, "failed to fetch rates, skipping liquidity filter"; "error" => %e);
-                    pools.clone()
+                    None
                 }
             };
 
-            let graph = blockchain::ref_finance::path::graph::TokenGraph::new(filtered_pools);
-            let wnear_token: TokenInAccount =
-                blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-
-            // 購入方向のパスを確認（wrap.near → token）
-            let buyable_tokens = match graph.update_graph(&wnear_token) {
-                Ok(goals) => {
-                    let token_ids: std::collections::HashSet<AccountId> =
-                        goals.iter().map(|t| t.as_account_id().clone()).collect();
-                    trace!(log, "buyable tokens (wrap.near → token)";
-                        "count" => token_ids.len(),
-                    );
-                    token_ids
-                }
-                Err(e) => {
-                    warn!(log, "failed to get buyable tokens, using all volatility tokens";
-                        "error" => ?e,
-                    );
-                    // フィルタリング失敗時は全トークンを返す
-                    return Ok(tokens);
-                }
-            };
-
-            // volatility トークンを購入可能性でフィルタ
-            let original_count = tokens.len();
-            let buyable_filtered: Vec<AccountId> = tokens
-                .into_iter()
-                .filter(|token| buyable_tokens.contains(token))
-                .collect();
-
-            debug!(log, "tokens after buyability filtering";
-                "original_count" => original_count,
-                "buyable_count" => buyable_filtered.len(),
-            );
-
-            // update_graph(&wnear_token) は双方向到達可能性を保証済み:
-            // wnear→token と token→wnear の両方のパスが存在するトークンのみ返す。
-            // そのため追加の sellability チェックは不要。
-            let filtered_tokens: Vec<AccountId> =
-                buyable_filtered.into_iter().take(limit).collect();
-
-            if filtered_tokens.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "No tokens with sufficient liquidity after filtering {} volatility tokens",
-                    original_count
-                ));
-            }
-
-            if filtered_tokens.len() < limit {
-                warn!(log, "insufficient tokens after liquidity filtering";
-                    "required" => limit,
-                    "available" => filtered_tokens.len(),
-                    "fetched" => original_count,
-                );
-            }
-
-            debug!(log, "tokens after liquidity filtering";
-                "original_count" => original_count,
-                "filtered_count" => filtered_tokens.len(),
-                "required_count" => limit,
-            );
-
-            Ok(filtered_tokens)
+            apply_liquidity_filter_and_select(
+                tokens,
+                &pools,
+                latest_rates.as_ref(),
+                &wnear,
+                &wnear_in,
+                &min_liquidity,
+                limit,
+            )
         }
         Err(e) => {
             error!(log, "failed to get tokens from prediction service"; "error" => ?e);
@@ -898,6 +836,89 @@ fn estimate_pool_liquidity_in_near(
     }
 
     min_side
+}
+
+/// ボラティリティトークンに対して流動性フィルタとグラフ到達性フィルタを適用する
+///
+/// 制御フロー:
+/// 1. `latest_rates` が Some なら流動性でプールをフィルタ、None ならフィルタをスキップ（fail-open）
+/// 2. フィルタ済みプールからグラフを構築し、双方向到達可能なトークンのみ残す
+/// 3. グラフ構築失敗時は全トークンをそのまま返す（fail-open）
+/// 4. フィルタ後にトークンが残らなければエラー
+fn apply_liquidity_filter_and_select(
+    tokens: Vec<AccountId>,
+    pools: &Arc<dex::PoolInfoList>,
+    latest_rates: Option<&HashMap<TokenAccount, ExchangeRate>>,
+    wnear: &TokenAccount,
+    wnear_in: &TokenInAccount,
+    min_liquidity: &NearValue,
+    limit: usize,
+) -> Result<Vec<AccountId>> {
+    let log = DEFAULT.new(o!("function" => "apply_liquidity_filter_and_select"));
+
+    // Step 1: 流動性でプールをフィルタ（レートなしならスキップ）
+    let filtered_pools = match latest_rates {
+        Some(rates) => {
+            let filtered = filter_pools_by_liquidity(pools, wnear, min_liquidity, rates);
+            debug!(log, "pools filtered by minimum liquidity";
+                "original_pools" => pools.list().len(),
+                "filtered_pools" => filtered.list().len(),
+            );
+            filtered
+        }
+        None => {
+            debug!(log, "skipping liquidity filter (no rates available)");
+            pools.clone()
+        }
+    };
+
+    // Step 2: グラフ到達性フィルタ（双方向到達可能なトークンのみ）
+    let graph = blockchain::ref_finance::path::graph::TokenGraph::new(filtered_pools);
+    let buyable_tokens = match graph.update_graph(wnear_in) {
+        Ok(goals) => {
+            let token_ids: std::collections::HashSet<AccountId> =
+                goals.iter().map(|t| t.as_account_id().clone()).collect();
+            trace!(log, "buyable tokens"; "count" => token_ids.len());
+            token_ids
+        }
+        Err(e) => {
+            warn!(log, "failed to get buyable tokens, using all volatility tokens";
+                "error" => ?e,
+            );
+            return Ok(tokens);
+        }
+    };
+
+    // Step 3: フィルタ＋リミット適用
+    let original_count = tokens.len();
+    let filtered_tokens: Vec<AccountId> = tokens
+        .into_iter()
+        .filter(|token| buyable_tokens.contains(token))
+        .take(limit)
+        .collect();
+
+    if filtered_tokens.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No tokens with sufficient liquidity after filtering {} volatility tokens",
+            original_count
+        ));
+    }
+
+    if filtered_tokens.len() < limit {
+        warn!(log, "insufficient tokens after filtering";
+            "required" => limit,
+            "available" => filtered_tokens.len(),
+            "fetched" => original_count,
+        );
+    }
+
+    debug!(log, "tokens after liquidity filtering";
+        "original_count" => original_count,
+        "filtered_count" => filtered_tokens.len(),
+        "required_count" => limit,
+    );
+
+    Ok(filtered_tokens)
 }
 
 #[cfg(test)]
