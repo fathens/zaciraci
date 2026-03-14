@@ -344,15 +344,12 @@ pub async fn select_top_volatility_tokens(
             // 最小流動性でプールをフィルタ
             let min_liquidity =
                 NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
-            let latest_rates = persistence::token_rate::get_all_latest_rates()
+            let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
+            let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear)
                 .await
                 .unwrap_or_default();
-            let filtered_pools = filter_pools_by_liquidity(
-                &pools,
-                &blockchain::ref_finance::token_account::WNEAR_TOKEN,
-                &min_liquidity,
-                &latest_rates,
-            );
+            let filtered_pools =
+                filter_pools_by_liquidity(&pools, &wnear, &min_liquidity, &latest_rates);
 
             debug!(log, "pools filtered by minimum liquidity";
                 "original_pools" => pools.list().len(),

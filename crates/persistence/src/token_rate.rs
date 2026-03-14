@@ -675,31 +675,43 @@ struct TokenRateRow {
     decimals: i16,
 }
 
-/// 全トークンの最新 ExchangeRate を一括取得（wrap.near 建て）
+/// 全トークンの最新 ExchangeRate を一括取得（指定 quote_token 建て）
 ///
 /// DISTINCT ON (base_token) ORDER BY timestamp DESC で最新レコードを取得。
 /// プール流動性の NEAR 換算に使用する。
-pub async fn get_all_latest_rates() -> Result<HashMap<TokenAccount, ExchangeRate>> {
+pub async fn get_all_latest_rates(
+    quote_token: &TokenAccount,
+) -> Result<HashMap<TokenAccount, ExchangeRate>> {
     let conn = connection_pool::get().await?;
+    let quote_str = quote_token.to_string();
 
     let rows: Vec<TokenRateRow> = conn
-        .interact(|conn| {
+        .interact(move |conn| {
             use diesel::RunQueryDsl;
+            use diesel::sql_types::Text;
             diesel::sql_query(
                 "SELECT DISTINCT ON (base_token) base_token, rate, decimals \
                  FROM token_rates \
+                 WHERE quote_token = $1 \
                  ORDER BY base_token, timestamp DESC",
             )
+            .bind::<Text, _>(&quote_str)
             .load::<TokenRateRow>(conn)
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
+    let log = DEFAULT.new(o!("function" => "get_all_latest_rates"));
     let mut result = HashMap::with_capacity(rows.len());
     for row in rows {
-        if let Ok(token) = TokenAccount::from_str(&row.base_token) {
-            let rate = ExchangeRate::from_raw_rate(row.rate, row.decimals as u8);
-            result.insert(token, rate);
+        match TokenAccount::from_str(&row.base_token) {
+            Ok(token) => {
+                let rate = ExchangeRate::from_raw_rate(row.rate, row.decimals as u8);
+                result.insert(token, rate);
+            }
+            Err(e) => {
+                debug!(log, "skipping unparseable base_token"; "base_token" => &row.base_token, "error" => %e);
+            }
         }
     }
     Ok(result)
