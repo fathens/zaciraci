@@ -296,3 +296,145 @@ fn test_filter_empty_pool_list() {
     let filtered = filter_pools_by_liquidity(&pools, &wnear, &min_liquidity, &rates);
     assert_eq!(filtered.list().len(), 0);
 }
+
+#[test]
+fn test_filter_mixed_pools() {
+    // 3つのプール: 十分な流動性 / 不十分 / 全レート不明
+    let wnear = wnear();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(100));
+
+    // プール1: 500 NEAR（十分）
+    let near_500_yocto: u128 = 500 * 10u128.pow(24);
+    let pool_good = make_pool(
+        1,
+        vec!["wrap.near", "usdt.tether-token.near"],
+        vec![near_500_yocto, 2_500_000_000],
+    );
+
+    // プール2: 1 NEAR（不十分）
+    let near_1_yocto: u128 = 10u128.pow(24);
+    let pool_bad = make_pool(
+        2,
+        vec!["wrap.near", "usdt.tether-token.near"],
+        vec![near_1_yocto, 5_000_000],
+    );
+
+    // プール3: 全レート不明（除外される）
+    let pool_unknown = make_pool(
+        3,
+        vec!["unknown-a.near", "unknown-b.near"],
+        vec![1_000_000, 2_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![
+        pool_good,
+        pool_bad,
+        pool_unknown,
+    ]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("usdt.tether-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let filtered = filter_pools_by_liquidity(&pools, &wnear, &min_liquidity, &rates);
+    assert_eq!(
+        filtered.list().len(),
+        1,
+        "Only the pool with sufficient liquidity should pass"
+    );
+}
+
+#[test]
+fn test_three_token_pool() {
+    // 3トークンプール（stable pool のようなケース）
+    // wnear: 100 NEAR, usdt: 100 NEAR 相当, usdc: 50 NEAR 相当
+    let wnear = wnear();
+    let near_100_yocto: u128 = 100 * 10u128.pow(24);
+    // USDT: 100 NEAR = 500_000_000 smallest (rate=5_000_000, dec=6)
+    // USDC: 50 NEAR = 255_000_000 smallest (rate=5_100_000, dec=6)
+    let pool = make_pool(
+        10,
+        vec!["wrap.near", "usdt.tether-token.near", "usdc.token.near"],
+        vec![near_100_yocto, 500_000_000, 255_000_000],
+    );
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("usdt.tether-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+    rates.insert(
+        make_token("usdc.token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_100_000), 6),
+    );
+
+    let result = estimate_pool_liquidity_in_near(&pool, &wnear, &rates);
+    assert!(result.is_some());
+    let liquidity = result.unwrap();
+    // USDC side: 255_000_000 / 5_100_000 = 50 NEAR → min(100, 100, 50) = 50
+    assert_eq!(liquidity, NearValue::from_near(BigDecimal::from(50)));
+}
+
+#[test]
+fn test_filter_boundary_exactly_at_threshold() {
+    // ちょうど閾値と等しいプール → >= なので通過する
+    let wnear = wnear();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(100));
+
+    // wnear 側がちょうど 100 NEAR
+    let near_100_yocto: u128 = 100 * 10u128.pow(24);
+    // USDT 側も 100 NEAR 相当 = 500_000_000 smallest
+    let pool = make_pool(
+        1,
+        vec!["wrap.near", "usdt.tether-token.near"],
+        vec![near_100_yocto, 500_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("usdt.tether-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let filtered = filter_pools_by_liquidity(&pools, &wnear, &min_liquidity, &rates);
+    assert_eq!(
+        filtered.list().len(),
+        1,
+        "Pool exactly at threshold should pass (>= check)"
+    );
+}
+
+#[test]
+fn test_wnear_in_rates_map_ignored() {
+    // rates に wrap.near のレートが含まれていても、wnear 側は yocto→NEAR 直接変換を使う
+    let wnear = wnear();
+    let near_100_yocto: u128 = 100 * 10u128.pow(24);
+    let pool = make_pool(
+        1,
+        vec!["wrap.near", "usdt.tether-token.near"],
+        vec![near_100_yocto, 500_000_000],
+    );
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("usdt.tether-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+    // wrap.near に巨大なレートを設定（もし参照されれば結果が大きく変わるはず）
+    rates.insert(
+        make_token("wrap.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(999_999_999_999_i64), 24),
+    );
+
+    let result = estimate_pool_liquidity_in_near(&pool, &wnear, &rates);
+    assert!(result.is_some());
+    let liquidity = result.unwrap();
+    // wnear 側は rates を参照せず直接 yocto→NEAR 変換: 100 NEAR
+    // USDT 側: 500_000_000 / 5_000_000 = 100 NEAR
+    // min(100, 100) = 100
+    assert_eq!(liquidity, NearValue::from_near(BigDecimal::from(100)));
+}
