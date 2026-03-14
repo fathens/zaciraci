@@ -185,6 +185,30 @@ fn test_empty_pool() {
     assert!(result.is_none());
 }
 
+#[test]
+fn test_zero_rate_token() {
+    // ゼロレートのトークンを含むプール → 流動性ゼロと判定
+    let wnear = wnear();
+    let near_500_yocto: u128 = 500 * 10u128.pow(24);
+    let pool = make_pool(
+        8,
+        vec!["wrap.near", "worthless-token.near"],
+        vec![near_500_yocto, 1_000_000],
+    );
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("worthless-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(0), 6),
+    );
+
+    let result = estimate_pool_liquidity_in_near(&pool, &wnear, &rates);
+    assert!(result.is_some());
+    // ゼロレートのトークンは NearValue::zero() として min 計算に含まれるため、
+    // min(500 NEAR, 0 NEAR) = 0 NEAR
+    assert!(result.unwrap().is_zero());
+}
+
 // =============================================================================
 // filter_pools_by_liquidity テスト
 // =============================================================================

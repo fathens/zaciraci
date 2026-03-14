@@ -881,8 +881,11 @@ fn filter_pools_by_liquidity(
 
 /// プールの片側流動性を NEAR 建てで推定（最小値）
 ///
-/// プール内の各トークンを NEAR 換算し、最小の値を返す。
-/// どちらの方向にも閾値以上の流動性があることを保証する。
+/// プール内の各トークンを NEAR 換算し、評価可能なトークンの中で最小の NEAR 換算額を返す。
+///
+/// - wnear: 直接 NearValue に変換
+/// - レートが存在するトークン: レートで NEAR 換算（レートがゼロの場合は NearValue::zero()）
+/// - レートが存在しないトークン: スキップ（評価不能）
 ///
 /// None を返すケース: トークンが無い空プール、または全トークンのレートが取得できないプール
 fn estimate_pool_liquidity_in_near(
@@ -902,12 +905,14 @@ fn estimate_pool_liquidity_in_near(
             YoctoValue::from_yocto(BigDecimal::from(amount_raw)).to_near()
         } else if let Some(rate) = rates.get(token) {
             if rate.is_zero() {
-                continue;
+                // ゼロレート = 無価値トークン → 流動性ゼロとして min 計算に含める
+                NearValue::zero()
+            } else {
+                // 他トークン: レートで NEAR 換算
+                let token_amount =
+                    TokenAmount::from_smallest_units(BigDecimal::from(amount_raw), rate.decimals());
+                token_amount / rate
             }
-            // 他トークン: レートで NEAR 換算
-            let token_amount =
-                TokenAmount::from_smallest_units(BigDecimal::from(amount_raw), rate.decimals());
-            token_amount / rate
         } else {
             // レートが無いトークン: スキップ
             continue;
