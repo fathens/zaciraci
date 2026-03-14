@@ -663,6 +663,48 @@ struct TokenDecimalsRow {
     decimals: i16,
 }
 
+/// DB クエリ結果用の構造体（get_all_latest_rates 用）
+#[derive(Debug, Clone, diesel::QueryableByName)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+struct TokenRateRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    base_token: String,
+    #[diesel(sql_type = diesel::sql_types::Numeric)]
+    rate: BigDecimal,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    decimals: i16,
+}
+
+/// 全トークンの最新 ExchangeRate を一括取得（wrap.near 建て）
+///
+/// DISTINCT ON (base_token) ORDER BY timestamp DESC で最新レコードを取得。
+/// プール流動性の NEAR 換算に使用する。
+pub async fn get_all_latest_rates() -> Result<HashMap<TokenAccount, ExchangeRate>> {
+    let conn = connection_pool::get().await?;
+
+    let rows: Vec<TokenRateRow> = conn
+        .interact(|conn| {
+            use diesel::RunQueryDsl;
+            diesel::sql_query(
+                "SELECT DISTINCT ON (base_token) base_token, rate, decimals \
+                 FROM token_rates \
+                 ORDER BY base_token, timestamp DESC",
+            )
+            .load::<TokenRateRow>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let mut result = HashMap::with_capacity(rows.len());
+    for row in rows {
+        if let Ok(token) = TokenAccount::from_str(&row.base_token) {
+            let rate = ExchangeRate::from_raw_rate(row.rate, row.decimals as u8);
+            result.insert(token, rate);
+        }
+    }
+    Ok(result)
+}
+
 /// token_rates テーブルから全トークンの最新 decimals を一括取得
 pub async fn get_all_decimals() -> Result<HashMap<TokenAccount, u8>> {
     let conn = connection_pool::get().await?;

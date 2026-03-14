@@ -33,14 +33,17 @@ use common::algorithm::{
     types::{TokenData, TradingAction, WalletInfo},
 };
 use common::config::ConfigAccess;
-use common::types::{ExchangeRate, NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
+use common::types::{
+    ExchangeRate, NearAmount, NearValue, TokenAmount, TokenPrice, YoctoAmount, YoctoValue,
+};
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use futures::stream::{self, StreamExt};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
 use persistence::evaluation_period::EvaluationPeriod;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
+use std::sync::Arc;
 
 use super::execution::{
     execute_trading_actions, liquidate_all_positions, manage_evaluation_period,
@@ -337,7 +340,27 @@ pub async fn select_top_volatility_tokens(
 
             // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
             let pools = persistence::pool_info::read_from_db(None).await?;
-            let graph = blockchain::ref_finance::path::graph::TokenGraph::new(pools);
+
+            // 最小流動性でプールをフィルタ
+            let min_liquidity =
+                NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
+            let latest_rates = persistence::token_rate::get_all_latest_rates()
+                .await
+                .unwrap_or_default();
+            let filtered_pools = filter_pools_by_liquidity(
+                &pools,
+                &blockchain::ref_finance::token_account::WNEAR_TOKEN,
+                &min_liquidity,
+                &latest_rates,
+            );
+
+            debug!(log, "pools filtered by minimum liquidity";
+                "original_pools" => pools.list().len(),
+                "filtered_pools" => filtered_pools.list().len(),
+                "min_liquidity_near" => cfg.trade_min_pool_liquidity(),
+            );
+
+            let graph = blockchain::ref_finance::path::graph::TokenGraph::new(filtered_pools);
             let wnear_token: TokenInAccount =
                 blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
@@ -832,3 +855,73 @@ where
 
     Ok(execution_report.actions)
 }
+
+/// 最小流動性を満たさないプールを除外する
+///
+/// 各プールの片側流動性（NEAR 換算の最小値）を算出し、閾値未満のプールを除外する。
+fn filter_pools_by_liquidity(
+    pools: &Arc<dex::PoolInfoList>,
+    wnear: &TokenAccount,
+    min_liquidity: &NearValue,
+    rates: &HashMap<TokenAccount, ExchangeRate>,
+) -> Arc<dex::PoolInfoList> {
+    let filtered: Vec<Arc<dex::PoolInfo>> = pools
+        .iter()
+        .filter(
+            |pool| match estimate_pool_liquidity_in_near(pool, wnear, rates) {
+                Some(liquidity) => &liquidity >= min_liquidity,
+                None => false,
+            },
+        )
+        .cloned()
+        .collect();
+
+    Arc::new(dex::PoolInfoList::new(filtered))
+}
+
+/// プールの片側流動性を NEAR 建てで推定（最小値）
+///
+/// プール内の各トークンを NEAR 換算し、最小の値を返す。
+/// どちらの方向にも閾値以上の流動性があることを保証する。
+///
+/// None を返すケース: トークンが無い空プール、または全トークンのレートが取得できないプール
+fn estimate_pool_liquidity_in_near(
+    pool: &dex::PoolInfo,
+    wnear: &TokenAccount,
+    rates: &HashMap<TokenAccount, ExchangeRate>,
+) -> Option<NearValue> {
+    let tokens = &pool.bare.token_account_ids;
+    let amounts = &pool.bare.amounts;
+    let mut min_side: Option<NearValue> = None;
+
+    for (i, token) in tokens.iter().enumerate() {
+        let amount_raw = amounts.get(i).map(|a| a.0).unwrap_or(0);
+
+        let side_value = if token == wnear {
+            // wnear: 直接 NearValue に変換
+            YoctoValue::from_yocto(BigDecimal::from(amount_raw)).to_near()
+        } else if let Some(rate) = rates.get(token) {
+            if rate.is_zero() {
+                continue;
+            }
+            // 他トークン: レートで NEAR 換算
+            let token_amount =
+                TokenAmount::from_smallest_units(BigDecimal::from(amount_raw), rate.decimals());
+            token_amount / rate
+        } else {
+            // レートが無いトークン: スキップ
+            continue;
+        };
+
+        min_side = Some(match min_side {
+            Some(current_min) if side_value < current_min => side_value,
+            Some(current_min) => current_min,
+            None => side_value,
+        });
+    }
+
+    min_side
+}
+
+#[cfg(test)]
+mod tests;
