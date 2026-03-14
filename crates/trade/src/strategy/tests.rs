@@ -602,6 +602,114 @@ fn test_select_excludes_one_way_token() {
     );
 }
 
+/// 全プールが流動性フィルタで除外され、空グラフになった場合、
+/// update_graph が Err(TokenNotFound) → fail-open で元の tokens をそのまま返す
+#[test]
+fn test_select_failopen_on_graph_error() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    // min_liquidity=100 NEAR で全プールを除外する
+    let min_liquidity = NearValue::from_near(BigDecimal::from(100));
+
+    // プール: wrap.near ↔ token-a.near (1 NEAR — min_liquidity=100 で除外される)
+    let pool = make_pool(
+        1,
+        vec!["wrap.near", "token-a.near"],
+        vec![10u128.pow(24), 5_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("token-a.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let tokens = vec![
+        make_account_id("token-a.near"),
+        make_account_id("token-b.near"),
+    ];
+
+    // 全プール除外 → グラフ空 → update_graph Err → fail-open → 全 tokens 返却
+    let result = apply_liquidity_filter_and_select(
+        tokens.clone(),
+        &pools,
+        Some(&rates),
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.len(),
+        2,
+        "All tokens should be returned when graph construction fails (fail-open)"
+    );
+    assert_eq!(result, tokens);
+}
+
+/// limit パラメータが正しくトークン数を制限する
+#[test]
+fn test_select_respects_limit() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    // 3つのプール: 全て十分な流動性
+    let pool_a = make_pool(
+        1,
+        vec!["wrap.near", "token-a.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pool_b = make_pool(
+        2,
+        vec!["wrap.near", "token-b.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pool_c = make_pool(
+        3,
+        vec!["wrap.near", "token-c.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_a, pool_b, pool_c]));
+
+    let mut rates = HashMap::new();
+    for name in &["token-a.near", "token-b.near", "token-c.near"] {
+        rates.insert(
+            make_token(name),
+            ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+        );
+    }
+
+    let tokens = vec![
+        make_account_id("token-a.near"),
+        make_account_id("token-b.near"),
+        make_account_id("token-c.near"),
+    ];
+
+    // limit=2 で 3 個中 2 個のみ返る
+    let result = apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        Some(&rates),
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.len(),
+        2,
+        "Result should be limited to 2 tokens when limit=2"
+    );
+}
+
 /// グラフ上に到達可能だがボラティリティトークンに含まれない場合、
 /// 全ボラティリティトークンがフィルタで除外されエラーを返す
 #[test]
