@@ -1,7 +1,8 @@
 use super::*;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDate;
-use common::types::{ExchangeRate, NearValue, TokenAccount};
+use common::types::{ExchangeRate, NearValue, TokenAccount, TokenInAccount};
+use near_sdk::AccountId;
 use near_sdk::json_types::U128;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -437,4 +438,208 @@ fn test_wnear_in_rates_map_ignored() {
     // USDT 側: 500_000_000 / 5_000_000 = 100 NEAR
     // min(100, 100) = 100
     assert_eq!(liquidity, NearValue::from_near(BigDecimal::from(100)));
+}
+
+// =============================================================================
+// apply_liquidity_filter_and_select テスト（統合レベル）
+// =============================================================================
+
+fn make_account_id(name: &str) -> AccountId {
+    name.parse().unwrap()
+}
+
+/// 低流動性トークンのプールが除外され、最終結果に含まれない
+#[test]
+fn test_select_excludes_low_liquidity_token() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(100));
+
+    // プール1: wrap.near ↔ good-token.near (500 NEAR — 十分な流動性)
+    let pool_good = make_pool(
+        1,
+        vec!["wrap.near", "good-token.near"],
+        vec![500 * 10u128.pow(24), 2_500_000_000],
+    );
+
+    // プール2: wrap.near ↔ lowliq-token.near (1 NEAR — 不十分な流動性)
+    let pool_low = make_pool(
+        2,
+        vec!["wrap.near", "lowliq-token.near"],
+        vec![10u128.pow(24), 5_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_good, pool_low]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("good-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+    rates.insert(
+        make_token("lowliq-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let tokens = vec![
+        make_account_id("good-token.near"),
+        make_account_id("lowliq-token.near"),
+    ];
+
+    let result = apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        Some(&rates),
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0], make_account_id("good-token.near"));
+}
+
+/// レート取得失敗時（None）は流動性フィルタをスキップし、トークンを除外しない
+#[test]
+fn test_select_keeps_all_when_rates_unavailable() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(100));
+
+    // 流動性が低いプールでも、レートが無ければフィルタされない
+    let pool_a = make_pool(
+        1,
+        vec!["wrap.near", "token-a.near"],
+        vec![500 * 10u128.pow(24), 1_000_000],
+    );
+    let pool_b = make_pool(
+        2,
+        vec!["wrap.near", "token-b.near"],
+        vec![500 * 10u128.pow(24), 1_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_a, pool_b]));
+
+    let tokens = vec![
+        make_account_id("token-a.near"),
+        make_account_id("token-b.near"),
+    ];
+
+    // rates = None → 流動性フィルタをスキップ → 全プールでグラフ構築
+    let result = apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        None, // レート取得失敗
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.len(),
+        2,
+        "Both tokens should pass when rates are unavailable (fail-open)"
+    );
+}
+
+/// 片道しか到達できないトークンは最終結果から除外される
+#[test]
+fn test_select_excludes_one_way_token() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    // プール1: wrap.near ↔ good-token.near (双方向、十分な流動性)
+    // good-token: rate=5_000_000(dec=6), 500_000_000 smallest = 100 NEAR 相当
+    let pool_good = make_pool(
+        1,
+        vec!["wrap.near", "good-token.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+
+    // プール2: wrap.near → oneway-token.near のみ
+    // oneway-token.near の amount=1 → 1/2=0 (integer div) → 復路エッジ生成不可
+    let pool_oneway = make_pool(
+        2,
+        vec!["wrap.near", "oneway-token.near"],
+        vec![500 * 10u128.pow(24), 1],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_good, pool_oneway]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("good-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+    // oneway-token.near のレートは不要（wrap.near 側の流動性だけで閾値を超える）
+
+    let tokens = vec![
+        make_account_id("good-token.near"),
+        make_account_id("oneway-token.near"),
+    ];
+
+    let result = apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        Some(&rates),
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result[0],
+        make_account_id("good-token.near"),
+        "One-way token should be excluded by graph reachability filter"
+    );
+}
+
+/// グラフ上に到達可能だがボラティリティトークンに含まれない場合、
+/// 全ボラティリティトークンがフィルタで除外されエラーを返す
+#[test]
+fn test_select_error_when_all_filtered_out() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    // プール: wrap.near ↔ other-token.near（グラフには存在するが volatility token ではない）
+    let pool = make_pool(
+        1,
+        vec!["wrap.near", "other-token.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("other-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    // volatility token は unrelated-token.near（どのプールにも存在しない）
+    let tokens = vec![make_account_id("unrelated-token.near")];
+
+    let result = apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        Some(&rates),
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        10,
+    );
+
+    assert!(
+        result.is_err(),
+        "Should return error when no volatility tokens match buyable tokens"
+    );
 }
