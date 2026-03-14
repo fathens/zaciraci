@@ -187,7 +187,7 @@ fn test_empty_pool() {
 
 #[test]
 fn test_zero_rate_token() {
-    // ゼロレートのトークンを含むプール → 流動性ゼロと判定
+    // ゼロレート (raw_rate=0) のトークンを含むプール → 流動性ゼロと判定
     let wnear = wnear();
     let near_500_yocto: u128 = 500 * 10u128.pow(24);
     let pool = make_pool(
@@ -205,6 +205,30 @@ fn test_zero_rate_token() {
     let result = estimate_pool_liquidity_in_near(&pool, &wnear, &rates);
     assert!(result.is_some());
     // ゼロレートのトークンは NearValue::zero() として min 計算に含まれるため、
+    // min(500 NEAR, 0 NEAR) = 0 NEAR
+    assert!(result.unwrap().is_zero());
+}
+
+#[test]
+fn test_effectively_zero_rate_token() {
+    // raw_rate < 1 (取引不能) のトークンを含むプール → 流動性ゼロと判定
+    let wnear = wnear();
+    let near_500_yocto: u128 = 500 * 10u128.pow(24);
+    let pool = make_pool(
+        9,
+        vec!["wrap.near", "micro-token.near"],
+        vec![near_500_yocto, 1_000_000],
+    );
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("micro-token.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from_str("0.5").unwrap(), 6),
+    );
+
+    let result = estimate_pool_liquidity_in_near(&pool, &wnear, &rates);
+    assert!(result.is_some());
+    // raw_rate=0.5 < 1 は is_effectively_zero() で取引不能と判定され、
     // min(500 NEAR, 0 NEAR) = 0 NEAR
     assert!(result.unwrap().is_zero());
 }

@@ -906,8 +906,8 @@ fn estimate_pool_liquidity_in_near(
             // wnear: 直接 NearValue に変換
             YoctoValue::from_yocto(BigDecimal::from(amount_raw)).to_near()
         } else if let Some(rate) = rates.get(token) {
-            if rate.is_zero() {
-                // ゼロレート = 無価値トークン → 流動性ゼロとして min 計算に含める
+            if rate.is_effectively_zero() {
+                // 取引不能レート (raw_rate < 1) → 流動性ゼロとして min 計算に含める
                 NearValue::zero()
             } else {
                 // 他トークン: レートで NEAR 換算
