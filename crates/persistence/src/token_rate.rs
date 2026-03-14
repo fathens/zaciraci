@@ -604,6 +604,8 @@ impl TokenRate {
 
         let results: Vec<DbTokenRate> = conn
             .interact(move |conn| {
+                // NOTE: $1, $2, $3 are intentionally reused in both CTEs.
+                // PostgreSQL allows referencing the same bind parameters multiple times.
                 diesel::sql_query(
                     "WITH latest AS ( \
                          SELECT DISTINCT ON (base_token) \
@@ -678,6 +680,8 @@ pub async fn get_all_latest_rates(
         .interact(move |conn| {
             use diesel::RunQueryDsl;
             use diesel::sql_types::Text;
+            // NOTE: $1 (quote_token) is intentionally reused in both CTEs.
+            // PostgreSQL allows referencing the same bind parameter multiple times.
             diesel::sql_query(
                 "WITH latest AS ( \
                      SELECT DISTINCT ON (base_token) \
