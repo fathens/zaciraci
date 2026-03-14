@@ -2,6 +2,7 @@ use super::*;
 use crate::ref_finance::path::edge::EdgeWeight;
 use dex::{PoolInfo, PoolInfoList, TokenPairId, TokenPairLike};
 use near_sdk::NearToken;
+use near_sdk::json_types::U128;
 use petgraph::Graph;
 use petgraph::algo::dijkstra;
 use petgraph::graph::NodeIndex;
@@ -520,4 +521,76 @@ fn test_with_sample_pools() {
         let value = value.unwrap();
         assert_eq!(value, 1760);
     }
+}
+
+/// update_graph が、復路のないトークンを結果から除外することを検証する。
+///
+/// トポロジ:
+///   - Pool 1: [A, B]  amounts=[1_000_000, 1_000_000] → A↔B 双方向
+///   - Pool 2: [B, C]  amounts=[1_000_000, 1]          → B→C は成立するが、
+///     C 側の amount=1 では estimate_normal_return が 1/2=0 (integer div) で
+///     ZeroAmount エラーとなるため C→B のエッジは生成されない。
+///
+/// 期待: update_graph(&A) は B を返すが、C は返さない
+///   - B は A から到達可能で、B→A の復路も存在する
+///   - C は A→B→C で到達可能だが、C→B のエッジが無いため復路が存在しない
+#[test]
+fn test_update_graph_excludes_one_way_tokens() {
+    use chrono::NaiveDate;
+
+    let ts = NaiveDate::from_ymd_opt(2025, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+
+    let token_a: TokenAccount = "token-a.near".parse().unwrap();
+    let token_b: TokenAccount = "token-b.near".parse().unwrap();
+    let token_c: TokenAccount = "token-c.near".parse().unwrap();
+
+    // Pool 1: A ↔ B (双方向、十分な流動性)
+    let pool1 = Arc::new(PoolInfo::new(
+        1,
+        dex::pool_info::PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![token_a.clone(), token_b.clone()],
+            amounts: vec![U128(1_000_000), U128(1_000_000)],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        ts,
+    ));
+
+    // Pool 2: B → C のみ (C の amount=1 → C→B のエッジが生成されない)
+    let pool2 = Arc::new(PoolInfo::new(
+        2,
+        dex::pool_info::PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![token_b.clone(), token_c.clone()],
+            amounts: vec![U128(1_000_000), U128(1)],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        ts,
+    ));
+
+    let pools_list = Arc::new(PoolInfoList::new(vec![pool1, pool2]));
+    let graph = TokenGraph::new(pools_list);
+
+    let start: TokenInAccount = token_a.into();
+    let goals = graph.update_graph(&start).unwrap();
+
+    let goal_strs: Vec<String> = goals.iter().map(|g| g.to_string()).collect();
+
+    assert!(
+        goal_strs.contains(&"token-b.near".to_string()),
+        "B should be reachable with return path: goals = {:?}",
+        goal_strs
+    );
+    assert!(
+        !goal_strs.contains(&"token-c.near".to_string()),
+        "C should be excluded (no return path): goals = {:?}",
+        goal_strs
+    );
 }
