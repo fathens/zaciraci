@@ -489,7 +489,7 @@ fn test_select_excludes_low_liquidity_token() {
     let result = apply_liquidity_filter_and_select(
         tokens,
         &pools,
-        Some(&rates),
+        &rates,
         &wnear,
         &wnear_in,
         &min_liquidity,
@@ -499,51 +499,6 @@ fn test_select_excludes_low_liquidity_token() {
 
     assert_eq!(result.len(), 1);
     assert_eq!(result[0], make_account_id("good-token.near"));
-}
-
-/// レート取得失敗時（None）は流動性フィルタをスキップし、トークンを除外しない
-#[test]
-fn test_select_keeps_all_when_rates_unavailable() {
-    let wnear = wnear();
-    let wnear_in: TokenInAccount = wnear.clone().into();
-    let min_liquidity = NearValue::from_near(BigDecimal::from(100));
-
-    // 流動性が低いプールでも、レートが無ければフィルタされない
-    let pool_a = make_pool(
-        1,
-        vec!["wrap.near", "token-a.near"],
-        vec![500 * 10u128.pow(24), 1_000_000],
-    );
-    let pool_b = make_pool(
-        2,
-        vec!["wrap.near", "token-b.near"],
-        vec![500 * 10u128.pow(24), 1_000_000],
-    );
-
-    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_a, pool_b]));
-
-    let tokens = vec![
-        make_account_id("token-a.near"),
-        make_account_id("token-b.near"),
-    ];
-
-    // rates = None → 流動性フィルタをスキップ → 全プールでグラフ構築
-    let result = apply_liquidity_filter_and_select(
-        tokens,
-        &pools,
-        None, // レート取得失敗
-        &wnear,
-        &wnear_in,
-        &min_liquidity,
-        10,
-    )
-    .unwrap();
-
-    assert_eq!(
-        result.len(),
-        2,
-        "Both tokens should pass when rates are unavailable (fail-open)"
-    );
 }
 
 /// 片道しか到達できないトークンは最終結果から除外される
@@ -586,7 +541,7 @@ fn test_select_excludes_one_way_token() {
     let result = apply_liquidity_filter_and_select(
         tokens,
         &pools,
-        Some(&rates),
+        &rates,
         &wnear,
         &wnear_in,
         &min_liquidity,
@@ -603,9 +558,9 @@ fn test_select_excludes_one_way_token() {
 }
 
 /// 全プールが流動性フィルタで除外され、空グラフになった場合、
-/// update_graph が Err(TokenNotFound) → fail-open で元の tokens をそのまま返す
+/// update_graph が Err → エラーを返す
 #[test]
-fn test_select_failopen_on_graph_error() {
+fn test_select_returns_error_on_graph_error() {
     let wnear = wnear();
     let wnear_in: TokenInAccount = wnear.clone().into();
     // min_liquidity=100 NEAR で全プールを除外する
@@ -631,24 +586,21 @@ fn test_select_failopen_on_graph_error() {
         make_account_id("token-b.near"),
     ];
 
-    // 全プール除外 → グラフ空 → update_graph Err → fail-open → 全 tokens 返却
+    // 全プール除外 → グラフ空 → update_graph Err → エラーを返す
     let result = apply_liquidity_filter_and_select(
-        tokens.clone(),
+        tokens,
         &pools,
-        Some(&rates),
+        &rates,
         &wnear,
         &wnear_in,
         &min_liquidity,
         10,
-    )
-    .unwrap();
-
-    assert_eq!(
-        result.len(),
-        2,
-        "All tokens should be returned when graph construction fails (fail-open)"
     );
-    assert_eq!(result, tokens);
+
+    assert!(
+        result.is_err(),
+        "Should return error when graph construction fails"
+    );
 }
 
 /// limit パラメータが正しくトークン数を制限する
@@ -695,7 +647,7 @@ fn test_select_respects_limit() {
     let result = apply_liquidity_filter_and_select(
         tokens,
         &pools,
-        Some(&rates),
+        &rates,
         &wnear,
         &wnear_in,
         &min_liquidity,
@@ -739,7 +691,7 @@ fn test_select_error_when_all_filtered_out() {
     let result = apply_liquidity_filter_and_select(
         tokens,
         &pools,
-        Some(&rates),
+        &rates,
         &wnear,
         &wnear_in,
         &min_liquidity,

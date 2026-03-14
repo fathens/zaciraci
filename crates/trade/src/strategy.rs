@@ -341,23 +341,16 @@ pub async fn select_top_volatility_tokens(
             // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
             let pools = persistence::pool_info::read_from_db(None).await?;
 
-            // レート取得（失敗時は None → フィルタスキップ）
             let min_liquidity =
                 NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
             let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
             let wnear_in: TokenInAccount = wnear.to_in();
-            let latest_rates = match persistence::token_rate::get_all_latest_rates(&wnear).await {
-                Ok(rates) => Some(rates),
-                Err(e) => {
-                    warn!(log, "failed to fetch rates, skipping liquidity filter"; "error" => %e);
-                    None
-                }
-            };
+            let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear).await?;
 
             apply_liquidity_filter_and_select(
                 tokens,
                 &pools,
-                latest_rates.as_ref(),
+                &latest_rates,
                 &wnear,
                 &wnear_in,
                 &min_liquidity,
@@ -841,14 +834,13 @@ fn estimate_pool_liquidity_in_near(
 /// ボラティリティトークンに対して流動性フィルタとグラフ到達性フィルタを適用する
 ///
 /// 制御フロー:
-/// 1. `latest_rates` が Some なら流動性でプールをフィルタ、None ならフィルタをスキップ（fail-open）
+/// 1. 流動性でプールをフィルタ
 /// 2. フィルタ済みプールからグラフを構築し、双方向到達可能なトークンのみ残す
-/// 3. グラフ構築失敗時は全トークンをそのまま返す（fail-open）
-/// 4. フィルタ後にトークンが残らなければエラー
+/// 3. フィルタ後にトークンが残らなければエラー
 fn apply_liquidity_filter_and_select(
     tokens: Vec<AccountId>,
     pools: &Arc<dex::PoolInfoList>,
-    latest_rates: Option<&HashMap<TokenAccount, ExchangeRate>>,
+    latest_rates: &HashMap<TokenAccount, ExchangeRate>,
     wnear: &TokenAccount,
     wnear_in: &TokenInAccount,
     min_liquidity: &NearValue,
@@ -856,20 +848,14 @@ fn apply_liquidity_filter_and_select(
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "apply_liquidity_filter_and_select"));
 
-    // Step 1: 流動性でプールをフィルタ（レートなしならスキップ）
-    let filtered_pools = match latest_rates {
-        Some(rates) => {
-            let filtered = filter_pools_by_liquidity(pools, wnear, min_liquidity, rates);
-            debug!(log, "pools filtered by minimum liquidity";
-                "original_pools" => pools.list().len(),
-                "filtered_pools" => filtered.list().len(),
-            );
-            filtered
-        }
-        None => {
-            debug!(log, "skipping liquidity filter (no rates available)");
-            pools.clone()
-        }
+    // Step 1: 流動性でプールをフィルタ
+    let filtered_pools = {
+        let filtered = filter_pools_by_liquidity(pools, wnear, min_liquidity, latest_rates);
+        debug!(log, "pools filtered by minimum liquidity";
+            "original_pools" => pools.list().len(),
+            "filtered_pools" => filtered.list().len(),
+        );
+        filtered
     };
 
     // Step 2: グラフ到達性フィルタ（双方向到達可能なトークンのみ）
@@ -882,10 +868,7 @@ fn apply_liquidity_filter_and_select(
             token_ids
         }
         Err(e) => {
-            warn!(log, "failed to get buyable tokens, using all volatility tokens";
-                "error" => ?e,
-            );
-            return Ok(tokens);
+            return Err(anyhow::anyhow!("Failed to build token graph: {}", e));
         }
     };
 
