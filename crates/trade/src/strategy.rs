@@ -341,21 +341,26 @@ pub async fn select_top_volatility_tokens(
             // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
             let pools = persistence::pool_info::read_from_db(None).await?;
 
-            // 最小流動性でプールをフィルタ
+            // 最小流動性でプールをフィルタ（レート取得失敗時はフィルタをスキップ）
             let min_liquidity =
                 NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
             let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
-            let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear)
-                .await
-                .unwrap_or_default();
-            let filtered_pools =
-                filter_pools_by_liquidity(&pools, &wnear, &min_liquidity, &latest_rates);
-
-            debug!(log, "pools filtered by minimum liquidity";
-                "original_pools" => pools.list().len(),
-                "filtered_pools" => filtered_pools.list().len(),
-                "min_liquidity_near" => cfg.trade_min_pool_liquidity(),
-            );
+            let filtered_pools = match persistence::token_rate::get_all_latest_rates(&wnear).await {
+                Ok(latest_rates) => {
+                    let filtered =
+                        filter_pools_by_liquidity(&pools, &wnear, &min_liquidity, &latest_rates);
+                    debug!(log, "pools filtered by minimum liquidity";
+                        "original_pools" => pools.list().len(),
+                        "filtered_pools" => filtered.list().len(),
+                        "min_liquidity_near" => cfg.trade_min_pool_liquidity(),
+                    );
+                    filtered
+                }
+                Err(e) => {
+                    warn!(log, "failed to fetch rates, skipping liquidity filter"; "error" => %e);
+                    pools.clone()
+                }
+            };
 
             let graph = blockchain::ref_finance::path::graph::TokenGraph::new(filtered_pools);
             let wnear_token: TokenInAccount =
