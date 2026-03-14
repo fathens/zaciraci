@@ -1749,3 +1749,130 @@ async fn test_get_all_latest_rates_swap_path_fallback() -> Result<()> {
     clean_table().await?;
     Ok(())
 }
+
+/// 複数トークンで swap_path の有無が混在するケースで、
+/// DISTINCT ON + LEFT JOIN fallback がトークン間で混線しないことを検証
+#[tokio::test]
+#[serial]
+async fn test_get_all_latest_rates_multi_token_mixed() -> Result<()> {
+    use common::types::TokenSmallestUnits;
+
+    clean_table().await?;
+
+    let base_with: TokenOutAccount = TokenAccount::from_str("has-path.near")?.into();
+    let base_fallback: TokenOutAccount = TokenAccount::from_str("fallback.near")?.into();
+    let base_none: TokenOutAccount = TokenAccount::from_str("no-path.near")?.into();
+    let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
+
+    let now = chrono::Utc::now().naive_utc();
+    let t1 = now - chrono::Duration::hours(3);
+    let t2 = now - chrono::Duration::hours(2);
+    let t3 = now - chrono::Duration::hours(1);
+
+    let path_a = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 10,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000_000),
+            amount_out: TokenSmallestUnits::from_u128(500_000_000_000_000_000_000_000_000),
+        }],
+    };
+
+    let path_b = SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id: 20,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: TokenSmallestUnits::from_u128(2_000_000_000_000_000_000_000_000_000),
+            amount_out: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000_000),
+        }],
+    };
+
+    let rates = vec![
+        // has-path.near: 最新レコードに swap_path あり（自身のパスを使用すべき）
+        TokenRate {
+            base: base_with.clone(),
+            quote: quote.clone(),
+            exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(100), 24),
+            timestamp: t3,
+            rate_calc_near: 10,
+            swap_path: Some(path_a.clone()),
+        },
+        // fallback.near: 古いレコードに swap_path あり、最新レコードは swap_path なし
+        // → fallback CTE から path_b が補完されるべき（path_a ではない）
+        TokenRate {
+            base: base_fallback.clone(),
+            quote: quote.clone(),
+            exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(200), 24),
+            timestamp: t1,
+            rate_calc_near: 10,
+            swap_path: Some(path_b),
+        },
+        TokenRate {
+            base: base_fallback.clone(),
+            quote: quote.clone(),
+            exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(210), 24),
+            timestamp: t3,
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        // no-path.near: swap_path が一切ない → 生レートがそのまま返るべき
+        make_token_rate(base_none.clone(), quote.clone(), 300, t2),
+    ];
+
+    let cfg = ConfigResolver;
+    TokenRate::batch_insert(&rates, &cfg).await?;
+
+    let quote_token = TokenAccount::from_str("wrap.near")?;
+    let result = get_all_latest_rates(&quote_token).await?;
+
+    assert_eq!(result.len(), 3, "Should return all 3 tokens");
+
+    // has-path.near: 自身の swap_path で補正 → 生レート(100)より大きい
+    let has_path_token = TokenAccount::from_str("has-path.near")?;
+    let rate_with = result
+        .get(&has_path_token)
+        .expect("Should have has-path.near");
+    assert!(
+        rate_with.raw_rate() > &BigDecimal::from(100),
+        "has-path.near should be corrected with own swap_path, got {}",
+        rate_with.raw_rate()
+    );
+
+    // fallback.near: fallback swap_path (path_b, pool_id=20) で補正
+    // → 生レート(210)より大きく、かつ has-path.near とは異なる補正
+    let fallback_token = TokenAccount::from_str("fallback.near")?;
+    let rate_fb = result
+        .get(&fallback_token)
+        .expect("Should have fallback.near");
+    assert!(
+        rate_fb.raw_rate() > &BigDecimal::from(210),
+        "fallback.near should be corrected with fallback swap_path, got {}",
+        rate_fb.raw_rate()
+    );
+    // path_b は path_a と異なる amount_in を持つため、補正係数が異なる
+    // path_a: correction = 1 + 10^25 / 10^27 = 1.01
+    // path_b: correction = 1 + 10^25 / 2*10^27 = 1.005
+    // has-path: 100 * 1.01 = 101, fallback: 210 * 1.005 = 211.05
+    // 補正係数が異なることで、fallback が has-path のパスを流用していないことを確認
+    assert_ne!(
+        rate_with.raw_rate(),
+        rate_fb.raw_rate(),
+        "Different tokens should get different corrections (not cross-contaminated)"
+    );
+
+    // no-path.near: swap_path なし → 生レートそのまま
+    let no_path_token = TokenAccount::from_str("no-path.near")?;
+    let rate_none = result
+        .get(&no_path_token)
+        .expect("Should have no-path.near");
+    assert_eq!(
+        rate_none.raw_rate(),
+        &BigDecimal::from(300),
+        "no-path.near should return raw rate without correction"
+    );
+
+    clean_table().await?;
+    Ok(())
+}
