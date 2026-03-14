@@ -663,21 +663,10 @@ struct TokenDecimalsRow {
     decimals: i16,
 }
 
-/// DB クエリ結果用の構造体（get_all_latest_rates 用）
-#[derive(Debug, Clone, diesel::QueryableByName)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
-struct TokenRateRow {
-    #[diesel(sql_type = diesel::sql_types::Text)]
-    base_token: String,
-    #[diesel(sql_type = diesel::sql_types::Numeric)]
-    rate: BigDecimal,
-    #[diesel(sql_type = diesel::sql_types::SmallInt)]
-    decimals: i16,
-}
-
-/// 全トークンの最新 ExchangeRate を一括取得（指定 quote_token 建て）
+/// 全トークンの最新スポットレートを一括取得（指定 quote_token 建て）
 ///
-/// DISTINCT ON (base_token) ORDER BY timestamp DESC で最新レコードを取得。
+/// CTE で最新レートと最新 swap_path 付きレートを同時取得し、
+/// COALESCE で swap_path をフォールバック補完した結果にスポットレート補正を適用。
 /// プール流動性の NEAR 換算に使用する。
 pub async fn get_all_latest_rates(
     quote_token: &TokenAccount,
@@ -685,18 +674,35 @@ pub async fn get_all_latest_rates(
     let conn = connection_pool::get().await?;
     let quote_str = quote_token.to_string();
 
-    let rows: Vec<TokenRateRow> = conn
+    let rows: Vec<DbTokenRate> = conn
         .interact(move |conn| {
             use diesel::RunQueryDsl;
             use diesel::sql_types::Text;
             diesel::sql_query(
-                "SELECT DISTINCT ON (base_token) base_token, rate, decimals \
-                 FROM token_rates \
-                 WHERE quote_token = $1 \
-                 ORDER BY base_token, timestamp DESC",
+                "WITH latest AS ( \
+                     SELECT DISTINCT ON (base_token) \
+                         id, base_token, quote_token, rate, timestamp, \
+                         decimals, rate_calc_near, swap_path \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                     ORDER BY base_token, timestamp DESC \
+                 ), \
+                 fallback AS ( \
+                     SELECT DISTINCT ON (base_token) \
+                         base_token, swap_path \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                       AND swap_path IS NOT NULL \
+                     ORDER BY base_token, timestamp DESC \
+                 ) \
+                 SELECT l.id, l.base_token, l.quote_token, l.rate, l.timestamp, \
+                        l.decimals, l.rate_calc_near, \
+                        COALESCE(l.swap_path, f.swap_path) AS swap_path \
+                 FROM latest l \
+                 LEFT JOIN fallback f ON l.base_token = f.base_token",
             )
             .bind::<Text, _>(&quote_str)
-            .load::<TokenRateRow>(conn)
+            .load::<DbTokenRate>(conn)
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
@@ -704,13 +710,14 @@ pub async fn get_all_latest_rates(
     let log = DEFAULT.new(o!("function" => "get_all_latest_rates"));
     let mut result = HashMap::with_capacity(rows.len());
     for row in rows {
-        match TokenAccount::from_str(&row.base_token) {
-            Ok(token) => {
-                let rate = ExchangeRate::from_raw_rate(row.rate, row.decimals as u8);
-                result.insert(token, rate);
+        match TokenRate::from_db(row) {
+            Ok(token_rate) => {
+                let spot_rate = token_rate.to_spot_rate();
+                let token: TokenAccount = token_rate.base.into();
+                result.insert(token, spot_rate);
             }
             Err(e) => {
-                debug!(log, "skipping unparseable base_token"; "base_token" => &row.base_token, "error" => %e);
+                debug!(log, "skipping unparseable token rate"; "error" => %e);
             }
         }
     }
