@@ -1080,23 +1080,17 @@ fn test_to_spot_rate_multihop_two_hops() {
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
     let timestamp = chrono::Utc::now().naive_utc();
 
-    // 2ホップスワップ:
+    // 2ホップスワップ（AMM 定積公式: Δx_{i+1} = y × Δx / (x + Δx)）:
     // Hop1: NEAR -> TokenA
-    //   - pool_amount_in: 100 NEAR = 10^26 yocto
-    //   - pool_amount_out: 200 TokenA
-    //   - Δx_0 = 10 NEAR = 10^25 yocto
-    //   - 補正1: 1 + 10^25 / 10^26 = 1.1
-    //   - Δx_1 = 10 * 10^24 * (200 / 100) = 20 * 10^24 (相対的なスケール)
+    //   - x = 100 NEAR (10^26 yocto), y = 200, Δx = 10 NEAR (10^25 yocto)
+    //   - correction1 = (100 + 10) / 100 = 11/10
+    //   - Δx_1 = 200 × 10 / (100 + 10) = 200/11
     //
     // Hop2: TokenA -> TokenB
-    //   - pool_amount_in: 1000 = 10^3
-    //   - pool_amount_out: 500
-    //   - 補正2: 1 + Δx_1 / 10^3
+    //   - x = 1000, y = 500, Δx = 200/11
+    //   - correction2 = (1000 + 200/11) / 1000 = 11200/11000 = 56/55
     //
-    // 簡略化のため、同じスケールで計算:
-    // Hop1: in=100, out=200, Δx=10 -> correction1 = 1.1, Δx'=10*200/100=20
-    // Hop2: in=1000, out=500, Δx'=20 -> correction2 = 1.02
-    // 総補正 = 1.1 * 1.02 = 1.122
+    // 総補正 = 11/10 × 56/55 = 308/275 = 1.12
     let swap_path = SwapPath {
         pools: vec![
             SwapPoolInfo {
@@ -1129,16 +1123,16 @@ fn test_to_spot_rate_multihop_two_hops() {
 
     // 計算:
     // Δx_0 = 10 * 10^24 yocto
-    // Hop1: pool_in = 100 * 10^24, correction1 = (100 + 10) / 100 = 1.1
-    //       Δx_1 = 10 * 10^24 * (200 / 100) = 20 * 10^24
-    // Hop2: pool_in = 1000 * 10^24, correction2 = (1000 + 20) / 1000 = 1.02
-    // 総補正 = 1.1 * 1.02 = 1.122
-    // 期待値: 1000 * 1.122 = 1122
-    let expected = BigDecimal::from_str("1122").unwrap();
-    assert_eq!(
+    // Hop1: pool_in = 100 * 10^24, correction1 = (100 + 10) / 100 = 11/10
+    //       Δx_1 = 200 * 10 / (100 + 10) * 10^24 = 200/11 * 10^24  (AMM 定積公式)
+    // Hop2: pool_in = 1000 * 10^24, correction2 = (1000 + 200/11) / 1000 = 56/55
+    // 総補正 = 11/10 * 56/55 = 308/275 = 1.12
+    // 期待値: 1000 * 1.12 = 1120
+    let expected = BigDecimal::from_str("1120").unwrap();
+    assert_rate_approx_eq(
         spot_rate.raw_rate(),
         &expected,
-        "Two hop correction should be 1.1 * 1.02 = 1.122, so 1000 * 1.122 = 1122"
+        "Two hop correction should be 11/10 * 56/55 = 308/275 = 1.12, so 1000 * 1.12 = 1120",
     );
 }
 
@@ -1149,11 +1143,12 @@ fn test_to_spot_rate_multihop_three_hops() {
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
     let timestamp = chrono::Utc::now().naive_utc();
 
-    // 3ホップスワップ:
-    // Hop1: in=100, out=100 (1:1) -> correction1 = 1.1, Δx'=10
-    // Hop2: in=100, out=100 (1:1) -> correction2 = 1.1, Δx''=10
-    // Hop3: in=100, out=100 (1:1) -> correction3 = 1.1
-    // 総補正 = 1.1^3 = 1.331
+    // 3ホップスワップ（AMM 定積公式: Δx_{i+1} = y × Δx / (x + Δx)）:
+    // Hop1: x=100, y=100, Δx=10 -> correction1 = 11/10, Δx_1 = 100×10/110 = 100/11
+    // Hop2: x=100, y=100, Δx=100/11 -> correction2 = (1100+100)/(11×100) = 12/11
+    //       Δx_2 = 100×(100/11)/(100+100/11) = (10000/11)/(1200/11) = 25/3
+    // Hop3: x=100, y=100, Δx=25/3 -> correction3 = (300+25)/(3×100) = 13/12
+    // 総補正 = 11/10 × 12/11 × 13/12 = 13/10 = 1.3（テレスコープ積）
     let swap_path = SwapPath {
         pools: vec![
             SwapPoolInfo {
@@ -1191,13 +1186,13 @@ fn test_to_spot_rate_multihop_three_hops() {
 
     let spot_rate = token_rate.to_spot_rate();
 
-    // 1.1^3 = 1.331
-    // 1000 * 1.331 = 1331
-    let expected = BigDecimal::from_str("1331").unwrap();
-    assert_eq!(
+    // 13/10 = 1.3
+    // 1000 * 1.3 = 1300
+    let expected = BigDecimal::from_str("1300").unwrap();
+    assert_rate_approx_eq(
         spot_rate.raw_rate(),
         &expected,
-        "Three hop correction should be 1.1^3 = 1.331, so 1000 * 1.331 = 1331"
+        "Three hop correction should be 11/10 * 12/11 * 13/12 = 13/10 = 1.3, so 1000 * 1.3 = 1300",
     );
 }
 
@@ -1218,10 +1213,10 @@ fn test_to_spot_rate_multihop_with_fallback() {
         swap_path: None,
     };
 
-    // フォールバック用の2ホップパス
-    // Hop1: in=100, out=200 -> correction1 = 1.1, Δx'=20
-    // Hop2: in=1000, out=500 -> correction2 = 1.02
-    // 総補正 = 1.122
+    // フォールバック用の2ホップパス（AMM 定積公式）
+    // Hop1: x=100, y=200, Δx=10 -> correction1 = 11/10, Δx_1 = 200×10/110 = 200/11
+    // Hop2: x=1000, y=500, Δx=200/11 -> correction2 = (11000+200)/(11×1000) = 56/55
+    // 総補正 = 11/10 × 56/55 = 1.12
     let fallback_path = SwapPath {
         pools: vec![
             SwapPoolInfo {
@@ -1243,12 +1238,73 @@ fn test_to_spot_rate_multihop_with_fallback() {
 
     let spot_rate = token_rate.to_spot_rate_with_fallback(Some(&fallback_path));
 
-    // 1000 * 1.122 = 1122
-    let expected = BigDecimal::from_str("1122").unwrap();
-    assert_eq!(
+    // 1000 * 1.12 = 1120
+    let expected = BigDecimal::from_str("1120").unwrap();
+    assert_rate_approx_eq(
         spot_rate.raw_rate(),
         &expected,
-        "Multihop fallback should work: 1.1 * 1.02 = 1.122"
+        "Multihop fallback should work: 11/10 * 56/55 = 1.12",
+    );
+}
+
+/// マルチホップで Δx >> x（入力量がリザーブを大幅に超過）のケース
+/// AMM の定積公式による正確な伝搬を検証
+#[test]
+fn test_to_spot_rate_multihop_delta_much_larger_than_reserve() {
+    let base: TokenOutAccount = TokenAccount::from_str("meme.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("wnear.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // 2ホップスワップ: 第1ホップが極めて低流動性
+    //
+    // Hop1: x1 = 1 NEAR (10^24 yocto), y1 = 2 NEAR (2×10^24 yocto)
+    //   Δx = 10 NEAR (10^25 yocto)  →  Δx/x = 10 (入力がリザーブの10倍)
+    //   correction1 = (1 + 10) / 1 = 11
+    //   Δx_1 = 2 × 10 / (1 + 10) = 20/11  (AMM 定積公式)
+    //
+    // Hop2: x2 = 100 NEAR, y2 = 50 NEAR
+    //   correction2 = (100 + 20/11) / 100 = 1120/1100 = 56/55
+    //
+    // 総補正 = 11 × 56/55 = 56/5 = 11.2
+    //
+    // （旧バグ式では Δx_1 = 2×10/1 = 20 → correction2 = 1.2 → 総補正 = 13.2 で不正確）
+    let swap_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 1,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "1000000000000000000000000".parse().unwrap(), // 1 NEAR in yocto
+                amount_out: "2000000000000000000000000".parse().unwrap(), // 2 NEAR in yocto
+            },
+            SwapPoolInfo {
+                pool_id: 2,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR
+                amount_out: "50000000000000000000000000".parse().unwrap(), // 50 NEAR
+            },
+        ],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10, // 10 NEAR >> hop1 の 1 NEAR リザーブ
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // 総補正 = 11 × 56/55 = 56/5 = 11.2
+    // 期待値: 1000 × 11.2 = 11200
+    let expected = BigDecimal::from_str("11200").unwrap();
+    assert_rate_approx_eq(
+        spot_rate.raw_rate(),
+        &expected,
+        "Multi-hop with Δx >> x should use AMM formula: 11 * 56/55 = 11.2, so 1000 * 11.2 = 11200",
     );
 }
 
