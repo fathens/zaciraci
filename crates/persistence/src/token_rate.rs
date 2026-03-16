@@ -667,9 +667,12 @@ struct TokenDecimalsRow {
 
 /// 全トークンの最新スポットレートを一括取得（指定 quote_token 建て）
 ///
-/// CTE で最新レートと最新 swap_path 付きレートを同時取得し、
-/// COALESCE で swap_path をフォールバック補完した結果にスポットレート補正を適用。
+/// LATERAL サブクエリで base_token ごとに最新1行だけを取得し、
+/// swap_path のフォールバック補完を行った結果にスポットレート補正を適用。
 /// プール流動性の NEAR 換算に使用する。
+///
+/// インデックス `(quote_token, base_token, timestamp DESC)` を活用し、
+/// base_token ごとに Index Scan + LIMIT 1 で O(N) で完了する。
 pub async fn get_all_latest_rates(
     quote_token: &TokenAccount,
 ) -> Result<HashMap<TokenAccount, ExchangeRate>> {
@@ -680,30 +683,33 @@ pub async fn get_all_latest_rates(
         .interact(move |conn| {
             use diesel::RunQueryDsl;
             use diesel::sql_types::Text;
-            // NOTE: $1 (quote_token) is intentionally reused in both CTEs.
-            // PostgreSQL allows referencing the same bind parameter multiple times.
             diesel::sql_query(
-                "WITH latest AS ( \
-                     SELECT DISTINCT ON (base_token) \
-                         id, base_token, quote_token, rate, timestamp, \
-                         decimals, rate_calc_near, swap_path \
-                     FROM token_rates \
-                     WHERE quote_token = $1 \
-                     ORDER BY base_token, timestamp DESC \
-                 ), \
-                 fallback AS ( \
-                     SELECT DISTINCT ON (base_token) \
-                         base_token, swap_path \
-                     FROM token_rates \
-                     WHERE quote_token = $1 \
-                       AND swap_path IS NOT NULL \
-                     ORDER BY base_token, timestamp DESC \
-                 ) \
-                 SELECT l.id, l.base_token, l.quote_token, l.rate, l.timestamp, \
+                "SELECT l.id, l.base_token, l.quote_token, l.rate, l.timestamp, \
                         l.decimals, l.rate_calc_near, \
                         COALESCE(l.swap_path, f.swap_path) AS swap_path \
-                 FROM latest l \
-                 LEFT JOIN fallback f ON l.base_token = f.base_token",
+                 FROM ( \
+                     SELECT DISTINCT base_token \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                 ) AS tokens \
+                 CROSS JOIN LATERAL ( \
+                     SELECT id, base_token, quote_token, rate, timestamp, \
+                            decimals, rate_calc_near, swap_path \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                       AND base_token = tokens.base_token \
+                     ORDER BY timestamp DESC \
+                     LIMIT 1 \
+                 ) AS l \
+                 LEFT JOIN LATERAL ( \
+                     SELECT swap_path \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                       AND base_token = tokens.base_token \
+                       AND swap_path IS NOT NULL \
+                     ORDER BY timestamp DESC \
+                     LIMIT 1 \
+                 ) AS f ON true",
             )
             .bind::<Text, _>(&quote_str)
             .load::<DbTokenRate>(conn)
