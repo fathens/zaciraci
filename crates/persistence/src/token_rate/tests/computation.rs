@@ -1080,23 +1080,17 @@ fn test_to_spot_rate_multihop_two_hops() {
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
     let timestamp = chrono::Utc::now().naive_utc();
 
-    // 2ホップスワップ:
+    // 2ホップスワップ（AMM 定積公式: Δx_{i+1} = y × Δx / (x + Δx)）:
     // Hop1: NEAR -> TokenA
-    //   - pool_amount_in: 100 NEAR = 10^26 yocto
-    //   - pool_amount_out: 200 TokenA
-    //   - Δx_0 = 10 NEAR = 10^25 yocto
-    //   - 補正1: 1 + 10^25 / 10^26 = 1.1
-    //   - Δx_1 = 10 * 10^24 * (200 / 100) = 20 * 10^24 (相対的なスケール)
+    //   - x = 100 NEAR (10^26 yocto), y = 200, Δx = 10 NEAR (10^25 yocto)
+    //   - correction1 = (100 + 10) / 100 = 11/10
+    //   - Δx_1 = 200 × 10 / (100 + 10) = 200/11
     //
     // Hop2: TokenA -> TokenB
-    //   - pool_amount_in: 1000 = 10^3
-    //   - pool_amount_out: 500
-    //   - 補正2: 1 + Δx_1 / 10^3
+    //   - x = 1000, y = 500, Δx = 200/11
+    //   - correction2 = (1000 + 200/11) / 1000 = 11200/11000 = 56/55
     //
-    // 簡略化のため、同じスケールで計算:
-    // Hop1: in=100, out=200, Δx=10 -> correction1 = 1.1, Δx'=10*200/100=20
-    // Hop2: in=1000, out=500, Δx'=20 -> correction2 = 1.02
-    // 総補正 = 1.1 * 1.02 = 1.122
+    // 総補正 = 11/10 × 56/55 = 308/275 = 1.12
     let swap_path = SwapPath {
         pools: vec![
             SwapPoolInfo {
@@ -1129,16 +1123,16 @@ fn test_to_spot_rate_multihop_two_hops() {
 
     // 計算:
     // Δx_0 = 10 * 10^24 yocto
-    // Hop1: pool_in = 100 * 10^24, correction1 = (100 + 10) / 100 = 1.1
-    //       Δx_1 = 10 * 10^24 * (200 / 100) = 20 * 10^24
-    // Hop2: pool_in = 1000 * 10^24, correction2 = (1000 + 20) / 1000 = 1.02
-    // 総補正 = 1.1 * 1.02 = 1.122
-    // 期待値: 1000 * 1.122 = 1122
-    let expected = BigDecimal::from_str("1122").unwrap();
-    assert_eq!(
+    // Hop1: pool_in = 100 * 10^24, correction1 = (100 + 10) / 100 = 11/10
+    //       Δx_1 = 200 * 10 / (100 + 10) * 10^24 = 200/11 * 10^24  (AMM 定積公式)
+    // Hop2: pool_in = 1000 * 10^24, correction2 = (1000 + 200/11) / 1000 = 56/55
+    // 総補正 = 11/10 * 56/55 = 308/275 = 1.12
+    // 期待値: 1000 * 1.12 = 1120
+    let expected = BigDecimal::from_str("1120").unwrap();
+    assert_rate_approx_eq(
         spot_rate.raw_rate(),
         &expected,
-        "Two hop correction should be 1.1 * 1.02 = 1.122, so 1000 * 1.122 = 1122"
+        "Two hop correction should be 11/10 * 56/55 = 308/275 = 1.12, so 1000 * 1.12 = 1120",
     );
 }
 
@@ -1149,11 +1143,12 @@ fn test_to_spot_rate_multihop_three_hops() {
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
     let timestamp = chrono::Utc::now().naive_utc();
 
-    // 3ホップスワップ:
-    // Hop1: in=100, out=100 (1:1) -> correction1 = 1.1, Δx'=10
-    // Hop2: in=100, out=100 (1:1) -> correction2 = 1.1, Δx''=10
-    // Hop3: in=100, out=100 (1:1) -> correction3 = 1.1
-    // 総補正 = 1.1^3 = 1.331
+    // 3ホップスワップ（AMM 定積公式: Δx_{i+1} = y × Δx / (x + Δx)）:
+    // Hop1: x=100, y=100, Δx=10 -> correction1 = 11/10, Δx_1 = 100×10/110 = 100/11
+    // Hop2: x=100, y=100, Δx=100/11 -> correction2 = (1100+100)/(11×100) = 12/11
+    //       Δx_2 = 100×(100/11)/(100+100/11) = (10000/11)/(1200/11) = 25/3
+    // Hop3: x=100, y=100, Δx=25/3 -> correction3 = (300+25)/(3×100) = 13/12
+    // 総補正 = 11/10 × 12/11 × 13/12 = 13/10 = 1.3（テレスコープ積）
     let swap_path = SwapPath {
         pools: vec![
             SwapPoolInfo {
@@ -1191,13 +1186,13 @@ fn test_to_spot_rate_multihop_three_hops() {
 
     let spot_rate = token_rate.to_spot_rate();
 
-    // 1.1^3 = 1.331
-    // 1000 * 1.331 = 1331
-    let expected = BigDecimal::from_str("1331").unwrap();
-    assert_eq!(
+    // 13/10 = 1.3
+    // 1000 * 1.3 = 1300
+    let expected = BigDecimal::from_str("1300").unwrap();
+    assert_rate_approx_eq(
         spot_rate.raw_rate(),
         &expected,
-        "Three hop correction should be 1.1^3 = 1.331, so 1000 * 1.331 = 1331"
+        "Three hop correction should be 11/10 * 12/11 * 13/12 = 13/10 = 1.3, so 1000 * 1.3 = 1300",
     );
 }
 
@@ -1218,10 +1213,10 @@ fn test_to_spot_rate_multihop_with_fallback() {
         swap_path: None,
     };
 
-    // フォールバック用の2ホップパス
-    // Hop1: in=100, out=200 -> correction1 = 1.1, Δx'=20
-    // Hop2: in=1000, out=500 -> correction2 = 1.02
-    // 総補正 = 1.122
+    // フォールバック用の2ホップパス（AMM 定積公式）
+    // Hop1: x=100, y=200, Δx=10 -> correction1 = 11/10, Δx_1 = 200×10/110 = 200/11
+    // Hop2: x=1000, y=500, Δx=200/11 -> correction2 = (11000+200)/(11×1000) = 56/55
+    // 総補正 = 11/10 × 56/55 = 1.12
     let fallback_path = SwapPath {
         pools: vec![
             SwapPoolInfo {
@@ -1243,11 +1238,274 @@ fn test_to_spot_rate_multihop_with_fallback() {
 
     let spot_rate = token_rate.to_spot_rate_with_fallback(Some(&fallback_path));
 
-    // 1000 * 1.122 = 1122
-    let expected = BigDecimal::from_str("1122").unwrap();
-    assert_eq!(
+    // 1000 * 1.12 = 1120
+    let expected = BigDecimal::from_str("1120").unwrap();
+    assert_rate_approx_eq(
         spot_rate.raw_rate(),
         &expected,
-        "Multihop fallback should work: 1.1 * 1.02 = 1.122"
+        "Multihop fallback should work: 11/10 * 56/55 = 1.12",
     );
+}
+
+/// マルチホップで Δx >> x（入力量がリザーブを大幅に超過）のケース
+/// AMM の定積公式による正確な伝搬を検証
+#[test]
+fn test_to_spot_rate_multihop_delta_much_larger_than_reserve() {
+    let base: TokenOutAccount = TokenAccount::from_str("meme.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("wnear.token").unwrap().into();
+    let timestamp = chrono::Utc::now().naive_utc();
+
+    // 2ホップスワップ: 第1ホップが極めて低流動性
+    //
+    // Hop1: x1 = 1 NEAR (10^24 yocto), y1 = 2 NEAR (2×10^24 yocto)
+    //   Δx = 10 NEAR (10^25 yocto)  →  Δx/x = 10 (入力がリザーブの10倍)
+    //   correction1 = (1 + 10) / 1 = 11
+    //   Δx_1 = 2 × 10 / (1 + 10) = 20/11  (AMM 定積公式)
+    //
+    // Hop2: x2 = 100 NEAR, y2 = 50 NEAR
+    //   correction2 = (100 + 20/11) / 100 = 1120/1100 = 56/55
+    //
+    // 総補正 = 11 × 56/55 = 56/5 = 11.2
+    //
+    // （旧バグ式では Δx_1 = 2×10/1 = 20 → correction2 = 1.2 → 総補正 = 13.2 で不正確）
+    let swap_path = SwapPath {
+        pools: vec![
+            SwapPoolInfo {
+                pool_id: 1,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "1000000000000000000000000".parse().unwrap(), // 1 NEAR in yocto
+                amount_out: "2000000000000000000000000".parse().unwrap(), // 2 NEAR in yocto
+            },
+            SwapPoolInfo {
+                pool_id: 2,
+                token_in_idx: 0,
+                token_out_idx: 1,
+                amount_in: "100000000000000000000000000".parse().unwrap(), // 100 NEAR
+                amount_out: "50000000000000000000000000".parse().unwrap(), // 50 NEAR
+            },
+        ],
+    };
+
+    let token_rate = TokenRate {
+        base,
+        quote,
+        exchange_rate: make_rate(1000),
+        timestamp,
+        rate_calc_near: 10, // 10 NEAR >> hop1 の 1 NEAR リザーブ
+        swap_path: Some(swap_path),
+    };
+
+    let spot_rate = token_rate.to_spot_rate();
+
+    // 総補正 = 11 × 56/55 = 56/5 = 11.2
+    // 期待値: 1000 × 11.2 = 11200
+    let expected = BigDecimal::from_str("11200").unwrap();
+    assert_rate_approx_eq(
+        spot_rate.raw_rate(),
+        &expected,
+        "Multi-hop with Δx >> x should use AMM formula: 11 * 56/55 = 11.2, so 1000 * 11.2 = 11200",
+    );
+}
+
+// =============================================================================
+// to_spot_rates() テスト
+// =============================================================================
+
+#[test]
+fn test_to_spot_rates_empty() {
+    let result = TokenRate::to_spot_rates(&[]);
+    assert!(result.is_empty(), "Empty input should produce empty output");
+}
+
+#[test]
+fn test_to_spot_rates_single_rate() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rate = make_token_rate(base, quote, 1000, now);
+    let result = TokenRate::to_spot_rates(&[rate]);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].0, now);
+    // swap_path=None なので生レートがそのまま返る
+    assert_eq!(result[0].1.raw_rate(), &BigDecimal::from(1000));
+}
+
+#[test]
+fn test_to_spot_rates_all_normal() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            100,
+            now - chrono::Duration::hours(2),
+        ),
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            200,
+            now - chrono::Duration::hours(1),
+        ),
+        make_token_rate(base, quote, 300, now),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0].1.raw_rate(), &BigDecimal::from(100));
+    assert_eq!(result[1].1.raw_rate(), &BigDecimal::from(200));
+    assert_eq!(result[2].1.raw_rate(), &BigDecimal::from(300));
+}
+
+#[test]
+fn test_to_spot_rates_filters_zero_rates() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            100,
+            now - chrono::Duration::hours(2),
+        ),
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            0,
+            now - chrono::Duration::hours(1),
+        ),
+        make_token_rate(base, quote, 300, now),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 2, "Zero rate should be filtered out");
+    assert_eq!(result[0].1.raw_rate(), &BigDecimal::from(100));
+    assert_eq!(result[1].1.raw_rate(), &BigDecimal::from(300));
+}
+
+#[test]
+fn test_to_spot_rates_applies_fallback() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let make_path = |pool_id: u32| SwapPath {
+        pools: vec![SwapPoolInfo {
+            pool_id,
+            token_in_idx: 0,
+            token_out_idx: 1,
+            amount_in: "100000000000000000000000000".parse().unwrap(),
+            amount_out: "50000000000000000000000000".parse().unwrap(),
+        }],
+    };
+
+    // r0: swap_path=None → r1 のフォールバックが適用される
+    // r1: swap_path=Some(pool_id=200) → 自身の swap_path で補正
+    // r2: swap_path=None → フォールバックなし（自分より新しい swap_path がない）
+    let rates = vec![
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(2),
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now - chrono::Duration::hours(1),
+            rate_calc_near: 10,
+            swap_path: Some(make_path(200)),
+        },
+        TokenRate {
+            base: base.clone(),
+            quote: quote.clone(),
+            exchange_rate: make_rate(1000),
+            timestamp: now,
+            rate_calc_near: 10,
+            swap_path: None,
+        },
+    ];
+
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 3);
+
+    // r0 は r1 の swap_path をフォールバックで使用 → 補正あり
+    // r1 は自身の swap_path で補正あり
+    // r0 と r1 は同じレート・同じ swap_path なので同じスポットレート
+    assert_eq!(
+        result[0].1.raw_rate(),
+        result[1].1.raw_rate(),
+        "r0 (fallback from r1) and r1 (own path) should produce same spot rate"
+    );
+
+    // r2 はフォールバックなし → 生レートのまま
+    assert_eq!(
+        result[2].1.raw_rate(),
+        &BigDecimal::from(1000),
+        "r2 without fallback should return raw rate"
+    );
+
+    // r0/r1 は補正ありなので raw rate (1000) とは異なる
+    assert_ne!(
+        result[0].1.raw_rate(),
+        &BigDecimal::from(1000),
+        "r0 with fallback correction should differ from raw rate"
+    );
+}
+
+#[test]
+fn test_to_spot_rates_all_zero_returns_empty() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let rates = vec![
+        make_token_rate(
+            base.clone(),
+            quote.clone(),
+            0,
+            now - chrono::Duration::hours(1),
+        ),
+        make_token_rate(base, quote, 0, now),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert!(
+        result.is_empty(),
+        "All-zero rates should produce empty output"
+    );
+}
+
+#[test]
+fn test_to_spot_rates_preserves_timestamp_order() {
+    let base: TokenOutAccount = TokenAccount::from_str("eth.token").unwrap().into();
+    let quote: TokenInAccount = TokenAccount::from_str("usdt.token").unwrap().into();
+    let now = chrono::Utc::now().naive_utc();
+
+    let ts0 = now - chrono::Duration::hours(3);
+    let ts1 = now - chrono::Duration::hours(2);
+    let ts2 = now - chrono::Duration::hours(1);
+
+    let rates = vec![
+        make_token_rate(base.clone(), quote.clone(), 100, ts0),
+        make_token_rate(base.clone(), quote.clone(), 200, ts1),
+        make_token_rate(base, quote, 300, ts2),
+    ];
+    let result = TokenRate::to_spot_rates(&rates);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0].0, ts0);
+    assert_eq!(result[1].0, ts1);
+    assert_eq!(result[2].0, ts2);
 }

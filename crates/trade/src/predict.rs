@@ -80,25 +80,12 @@ impl PredictionService {
             .context("Failed to get price history from database")?;
 
         // TokenRateをPricePointに変換（スポットレート補正適用）
-        // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
-        // フォールバックインデックスを事前計算（O(n)）して O(n²) → O(n) に改善
-        let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
-        let price_points: Vec<PricePoint> = rates
-            .iter()
-            .enumerate()
-            .filter_map(|(i, rate)| {
-                let fallback_path = fallback_indices[i]
-                    .and_then(|idx| rates.get(idx))
-                    .and_then(|r| r.swap_path.as_ref());
-                let spot_rate = rate.to_spot_rate_with_fallback(fallback_path);
-                if spot_rate.is_effectively_zero() {
-                    return None;
-                }
-                Some(PricePoint {
-                    timestamp: DateTime::from_naive_utc_and_offset(rate.timestamp, Utc),
-                    price: spot_rate.to_price(),
-                    volume: None,
-                })
+        let price_points: Vec<PricePoint> = TokenRate::to_spot_rates(&rates)
+            .into_iter()
+            .map(|(ts, spot_rate)| PricePoint {
+                timestamp: DateTime::from_naive_utc_and_offset(ts, Utc),
+                price: spot_rate.to_price(),
+                volume: None,
             })
             .collect();
 
@@ -207,31 +194,15 @@ impl PredictionService {
                 let quote_token = quote_token.clone();
                 async move {
                     // TokenPriceHistory を構築（スポットレート補正適用）
-                    // swap_path が NULL のレコードには「自分より新しくもっとも古い」swap_path を使用
-                    // フォールバックインデックスを事前計算（O(n)）して O(n²) → O(n) に改善
-                    let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
                     let history = PriceHistory {
                         token: token.clone(),
                         quote_token: quote_token.clone(),
-                        prices: rates
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, r)| {
-                                let fallback_path = fallback_indices[i]
-                                    .and_then(|idx| rates.get(idx))
-                                    .and_then(|rate| rate.swap_path.as_ref());
-                                let spot_rate = r.to_spot_rate_with_fallback(fallback_path);
-                                if spot_rate.is_effectively_zero() {
-                                    return None;
-                                }
-                                Some(PricePoint {
-                                    timestamp: DateTime::from_naive_utc_and_offset(
-                                        r.timestamp,
-                                        Utc,
-                                    ),
-                                    price: spot_rate.to_price(),
-                                    volume: None,
-                                })
+                        prices: TokenRate::to_spot_rates(&rates)
+                            .into_iter()
+                            .map(|(ts, spot_rate)| PricePoint {
+                                timestamp: DateTime::from_naive_utc_and_offset(ts, Utc),
+                                price: spot_rate.to_price(),
+                                volume: None,
                             })
                             .collect(),
                     };

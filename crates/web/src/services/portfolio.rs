@@ -4,7 +4,6 @@ use crate::proto::{
     GetPortfolioHoldingsResponse,
 };
 use common::types::near_units::YoctoValue;
-use common::types::time_range::TimeRange;
 use common::types::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use common::types::token_types::ExchangeRate;
 use persistence::evaluation_period::EvaluationPeriod;
@@ -12,8 +11,6 @@ use persistence::portfolio_holding::{DbPortfolioHolding, PortfolioHolding};
 use persistence::token_rate::TokenRate;
 use std::collections::HashMap;
 use tonic::{Request, Response, Status};
-
-const RATE_LOOKBACK_HOURS: i64 = 24;
 
 fn naive_to_timestamp(dt: chrono::NaiveDateTime) -> prost_types::Timestamp {
     let utc = dt.and_utc();
@@ -52,17 +49,15 @@ fn wnear_token() -> TokenAccount {
 fn db_holding_to_proto(
     holding: &DbPortfolioHolding,
     wnear: &TokenAccount,
-    rates_map: &HashMap<TokenOutAccount, Vec<TokenRate>>,
+    parsed: &[persistence::portfolio_holding::TokenHolding],
+    rates: &HashMap<TokenOutAccount, ExchangeRate>,
 ) -> Result<crate::proto::PortfolioHolding, Status> {
-    let parsed = holding
-        .parse_holdings()
-        .map_err(|e| Status::internal(format!("Failed to parse token holdings: {e}")))?;
     let ts = holding.timestamp;
 
     let mut token_holdings = Vec::with_capacity(parsed.len());
     let mut total_yocto = YoctoValue::zero();
 
-    for th in &parsed {
+    for th in parsed {
         let amount = th.balance.clone().with_decimals(th.decimals);
 
         let yocto = if th.token == *wnear {
@@ -72,21 +67,14 @@ fn db_holding_to_proto(
         } else {
             let token_out = TokenOutAccount::from(th.token.clone());
 
-            let rates = rates_map.get(&token_out).ok_or_else(|| {
+            let spot_rate = rates.get(&token_out).ok_or_else(|| {
                 Status::failed_precondition(format!(
-                    "No rates found for {} in time range",
+                    "No rates found for {} at holding timestamp",
                     th.token
                 ))
             })?;
 
-            let spot_rate = TokenRate::latest_spot_rate(rates).ok_or_else(|| {
-                Status::failed_precondition(format!(
-                    "No rates found for {} in time range",
-                    th.token
-                ))
-            })?;
-
-            let near_value = amount / &spot_rate;
+            let near_value = amount / spot_rate;
             near_value.to_yocto()
         };
 
@@ -107,50 +95,33 @@ fn db_holding_to_proto(
     })
 }
 
-/// 全 holding から wNEAR 以外のトークンを収集し、一括でレートを取得
-async fn fetch_all_rates(
-    db_holdings: &[DbPortfolioHolding],
+/// holding をパースしてレートを取得
+async fn parse_and_fetch_rates(
+    holding: &DbPortfolioHolding,
     wnear: &TokenAccount,
-) -> Result<HashMap<TokenOutAccount, Vec<TokenRate>>, Status> {
-    // 全 holding をパースして wNEAR 以外のトークンを収集
-    let mut tokens: Vec<TokenOutAccount> = Vec::new();
-    let mut min_ts = chrono::NaiveDateTime::MAX;
-    let mut max_ts = chrono::NaiveDateTime::MIN;
-
-    for h in db_holdings {
-        let parsed = h
-            .parse_holdings()
-            .map_err(|e| Status::internal(format!("Failed to parse token holdings: {e}")))?;
-        for th in &parsed {
-            if th.token != *wnear {
-                let token_out = TokenOutAccount::from(th.token.clone());
-                if !tokens.contains(&token_out) {
-                    tokens.push(token_out);
-                }
-            }
-        }
-        if h.timestamp < min_ts {
-            min_ts = h.timestamp;
-        }
-        if h.timestamp > max_ts {
-            max_ts = h.timestamp;
-        }
-    }
-
+) -> Result<
+    (
+        Vec<persistence::portfolio_holding::TokenHolding>,
+        HashMap<TokenOutAccount, ExchangeRate>,
+    ),
+    Status,
+> {
+    let parsed = holding
+        .parse_holdings()
+        .map_err(|e| Status::internal(format!("Failed to parse token holdings: {e}")))?;
+    let tokens: Vec<TokenOutAccount> = parsed
+        .iter()
+        .filter(|th| th.token != *wnear)
+        .map(|th| TokenOutAccount::from(th.token.clone()))
+        .collect();
     if tokens.is_empty() {
-        return Ok(HashMap::new());
+        return Ok((parsed, HashMap::new()));
     }
-
-    let range = TimeRange {
-        start: min_ts - chrono::Duration::hours(RATE_LOOKBACK_HOURS),
-        end: max_ts,
-    };
-
     let wnear_in = TokenInAccount::from(wnear.clone());
-
-    TokenRate::get_rates_for_multiple_tokens(&tokens, &wnear_in, &range)
+    let rates = TokenRate::get_spot_rates_at_time(&tokens, &wnear_in, holding.timestamp)
         .await
-        .map_err(|e| Status::internal(format!("Failed to get rates: {e}")))
+        .map_err(|e| Status::internal(format!("Failed to get rates: {e}")))?;
+    Ok((parsed, rates))
 }
 
 pub struct PortfolioServiceImpl;
@@ -200,11 +171,11 @@ impl PortfolioService for PortfolioServiceImpl {
             .map_err(|e| Status::internal(format!("Failed to get portfolio holdings: {e}")))?;
 
         let wnear = wnear_token();
-        let rates_map = fetch_all_rates(&db_holdings, &wnear).await?;
 
         let mut holdings = Vec::with_capacity(db_holdings.len());
         for h in &db_holdings {
-            holdings.push(db_holding_to_proto(h, &wnear, &rates_map)?);
+            let (parsed, rates) = parse_and_fetch_rates(h, &wnear).await?;
+            holdings.push(db_holding_to_proto(h, &wnear, &parsed, &rates)?);
         }
 
         Ok(Response::new(GetPortfolioHoldingsResponse { holdings }))

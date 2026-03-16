@@ -32,6 +32,9 @@ futures-util = { workspace = true }
 reqwest = { workspace = true }
 rand = { workspace = true }
 
+[features]
+mock = []
+
 [dev-dependencies]
 assertables = "9.5"
 proptest = "1.6"

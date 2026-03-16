@@ -23,6 +23,9 @@ pub struct TradeTransaction {
     pub to_amount: TokenSmallestUnits,
     pub timestamp: NaiveDateTime,
     pub evaluation_period_id: Option<String>,
+    // Nullable カラムでは deserialize_as/serialize_as が Option と互換しないため
+    // BigDecimal を直接使用。呼び出し側で TokenSmallestUnits との変換を行う。
+    pub actual_to_amount: Option<BigDecimal>,
 }
 
 impl TradeTransaction {

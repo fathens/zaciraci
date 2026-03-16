@@ -24,3 +24,4 @@ near-crypto = "0.34"
 near-primitives = "0.34"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+blockchain = { path = "../blockchain", features = ["mock"] }

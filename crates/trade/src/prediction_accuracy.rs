@@ -313,6 +313,9 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Opt
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。
+///
+/// 実質ゼロのレートは無効データとして除外し、
+/// 残りのうち target_time に最も近いものを返す。
 async fn get_actual_price_at(
     token: &TokenOutAccount,
     quote_token: &TokenInAccount,
@@ -325,21 +328,15 @@ async fn get_actual_price_at(
     };
     let rates = TokenRate::get_rates_in_time_range(&range, token, quote_token).await?;
 
-    if rates.is_empty() {
+    let spot_rates = TokenRate::to_spot_rates(&rates);
+    if spot_rates.is_empty() {
         return Ok(None);
     }
-    let fallback_indices = TokenRate::precompute_fallback_indices(&rates);
-    let (closest_idx, _) = rates
+    let (_, closest_rate) = spot_rates
         .iter()
-        .enumerate()
-        .min_by_key(|(_, r)| (r.timestamp - target_time).num_seconds().unsigned_abs())
-        .unwrap(); // safe: rates is not empty
-    let fallback_path = fallback_indices[closest_idx].and_then(|idx| rates[idx].swap_path.as_ref());
-    Ok(Some(
-        rates[closest_idx]
-            .to_spot_rate_with_fallback(fallback_path)
-            .to_price(),
-    ))
+        .min_by_key(|(ts, _)| (*ts - target_time).num_seconds().unsigned_abs())
+        .unwrap();
+    Ok(Some(closest_rate.to_price()))
 }
 
 #[cfg(test)]

@@ -204,11 +204,31 @@ impl EvaluationPeriod {
 
         result.context("Failed to update selected tokens")
     }
+
+    /// period_idで評価期間を削除（テスト専用）
+    #[cfg(any(test, feature = "mock"))]
+    pub async fn delete_by_period_id_async(period_id: String) -> Result<()> {
+        let conn = connection_pool::get().await?;
+
+        conn.interact(move |conn| {
+            diesel::delete(
+                evaluation_periods::table.filter(evaluation_periods::period_id.eq(&period_id)),
+            )
+            .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?
+        .map_err(|e| anyhow::anyhow!("Failed to delete evaluation period: {}", e))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
+    use std::panic::AssertUnwindSafe;
 
     #[tokio::test]
     async fn test_create_and_get_evaluation_period() {
@@ -240,13 +260,26 @@ mod tests {
         let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
 
         let created = new_period.insert_async().await.unwrap();
-        assert_eq!(created.initial_value, initial_value);
+        let period_id = created.period_id.clone();
 
-        // DB から再取得しても一致
-        let fetched = EvaluationPeriod::get_by_period_id_async(created.period_id.clone())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.initial_value, initial_value);
+        let result = AssertUnwindSafe(async {
+            assert_eq!(created.initial_value, initial_value);
+
+            // DB から再取得しても一致
+            let fetched = EvaluationPeriod::get_by_period_id_async(period_id.clone())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fetched.initial_value, initial_value);
+        })
+        .catch_unwind()
+        .await;
+
+        // Cleanup（テスト本体がパニックしても常に実行）
+        let _ = EvaluationPeriod::delete_by_period_id_async(period_id).await;
+
+        if let Err(e) = result {
+            std::panic::resume_unwind(e);
+        }
     }
 }

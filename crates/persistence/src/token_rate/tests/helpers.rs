@@ -44,6 +44,20 @@ pub fn make_token_rate_str(
     }
 }
 
+/// テスト用ヘルパー: BigDecimal の近似比較（マルチホップ補正で無限小数が発生するため）
+pub fn assert_rate_approx_eq(actual: &BigDecimal, expected: &BigDecimal, message: &str) {
+    let diff = (actual - expected).abs();
+    let tolerance = BigDecimal::from_str("0.0000000001").unwrap();
+    assert!(
+        diff < tolerance,
+        "{}: expected ~{}, got {} (diff={})",
+        message,
+        expected,
+        actual,
+        diff,
+    );
+}
+
 // TokenRateインスタンス比較用マクロ
 macro_rules! assert_token_rate_eq {
     ($left:expr, $right:expr, $message:expr) => {{

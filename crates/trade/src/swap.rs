@@ -207,24 +207,46 @@ where
     let (sent_tx, out) =
         blockchain::ref_finance::swap::run_swap(client, wallet, &path.0, arg).await?;
 
-    if let Err(e) = sent_tx.wait_for_success().await {
-        error!(log, "swap transaction failed"; "error" => %e);
-        return Err(anyhow::anyhow!("Swap transaction failed: {}", e));
-    }
+    let outcome = match sent_tx.wait_for_success().await {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            error!(log, "swap transaction failed"; "error" => %e);
+            return Err(anyhow::anyhow!("Swap transaction failed: {}", e));
+        }
+    };
 
-    info!(log, "swap successful";
-        "from" => %from_token,
-        "to" => %to_token,
-        "input" => swap_amount,
-        "output" => out,
-    );
-
-    // トレード記録を保存
     // トークンの decimals を取得して TokenAmount を作成
     let from_decimals =
         crate::token_cache::get_token_decimals_cached(client, from_token.inner()).await?;
     let to_decimals =
         crate::token_cache::get_token_decimals_cached(client, to_token.inner()).await?;
+
+    // 実績値を抽出
+    let actual_to_amount = match blockchain::ref_finance::swap::extract_actual_output(&outcome) {
+        Ok(actual) => {
+            if actual == 0 {
+                warn!(log, "swap returned zero output amount";
+                    "from" => %from_token, "to" => %to_token);
+            }
+            Some(TokenAmount::from_smallest_units(
+                BigDecimal::from(actual),
+                to_decimals,
+            ))
+        }
+        Err(e) => {
+            warn!(log, "failed to extract actual output"; "error" => %e);
+            None
+        }
+    };
+
+    info!(log, "swap successful";
+        "from" => %from_token,
+        "to" => %to_token,
+        "input" => swap_amount,
+        "estimated_output" => out,
+        "actual_output" => actual_to_amount.as_ref().map(|a| a.to_string()).unwrap_or_else(|| "N/A".to_string()),
+    );
+
     let from_amount =
         TokenAmount::from_smallest_units(BigDecimal::from(swap_amount), from_decimals);
     let to_amount = TokenAmount::from_smallest_units(BigDecimal::from(out), to_decimals);
@@ -236,6 +258,7 @@ where
             from_amount,
             to_token,
             to_amount,
+            actual_to_amount,
         )
         .await?;
 

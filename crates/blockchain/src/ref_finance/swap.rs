@@ -3,6 +3,7 @@ use crate::wallet::Wallet;
 use crate::{Result, jsonrpc};
 use dex::{TokenPair, TokenPairLike};
 use logging::*;
+use near_primitives::views::{FinalExecutionOutcomeView, FinalExecutionStatus};
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde::{Deserialize, Serialize};
@@ -119,6 +120,39 @@ where
         .await?;
 
     Ok((tx_hash, out))
+}
+
+/// Extract the actual output amount from a successful swap transaction outcome.
+///
+/// # Contract assumption
+///
+/// REF Finance's `swap()` contract function returns the actual output token amount
+/// as a JSON-encoded `U128` in `FinalExecutionStatus::SuccessValue`, even for
+/// multi-hop swaps. If the contract changes this format (e.g. after an upgrade),
+/// parsing will fail with a `warn` log and the caller should treat the result as
+/// `None` (i.e. `actual_to_amount` = NULL in the database).
+pub fn extract_actual_output(view: &FinalExecutionOutcomeView) -> Result<u128> {
+    let log = DEFAULT.new(o!("function" => "extract_actual_output"));
+    match &view.status {
+        FinalExecutionStatus::SuccessValue(bytes) => {
+            let amount: U128 = serde_json::from_slice(bytes).map_err(|e| {
+                let raw_str = String::from_utf8_lossy(bytes);
+                let hex_str: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                warn!(log, "failed to parse SuccessValue as U128";
+                    "error" => %e,
+                    "raw_bytes_utf8" => %raw_str,
+                    "raw_bytes_hex" => hex_str,
+                );
+                e
+            })?;
+            Ok(amount.0)
+        }
+        FinalExecutionStatus::Failure(err) => Err(anyhow::anyhow!("Transaction failed: {:?}", err)),
+        _ => Err(anyhow::anyhow!(
+            "Transaction did not complete: {:?}",
+            view.status
+        )),
+    }
 }
 
 #[cfg(test)]

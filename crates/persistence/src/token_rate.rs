@@ -445,23 +445,6 @@ impl TokenRate {
         self.to_spot_rate_with_fallback(None)
     }
 
-    /// 時系列配列の末尾レートをスポットレートに補正して返す
-    ///
-    /// 末尾レートに `swap_path` がない場合は、直前のレートから `swap_path` を取得して
-    /// フォールバックとして使用する。
-    pub fn latest_spot_rate(rates: &[TokenRate]) -> Option<ExchangeRate> {
-        let last = rates.last()?;
-        let fallback_path = if last.swap_path.is_none() {
-            rates[..rates.len() - 1]
-                .iter()
-                .rev()
-                .find_map(|r| r.swap_path.as_ref())
-        } else {
-            None
-        };
-        Some(last.to_spot_rate_with_fallback(fallback_path))
-    }
-
     /// 指定インデックスのレートに対するフォールバック swap_path を検索
     ///
     /// 「自分より新しくもっとも古い」swap_path を返す。
@@ -536,8 +519,8 @@ impl TokenRate {
     /// - `Δx_i`: ホップ i でプールに投入されたトークン量
     /// - `x_i`: ホップ i のプール内の投入トークン側リザーブ（= `amount_in`）
     /// - `Δx_0 = rate_calc_near × 10^24`（NEAR → yocto 変換）
-    /// - `Δx_{i+1} = Δx_i × (amount_out_i / amount_in_i)`:
-    ///   前ホップの出力比率で次ホップの投入量を推定
+    /// - `Δx_{i+1} = y_i × Δx_i / (x_i + Δx_i)`:
+    ///   AMM 定積公式 (x·y=k) による次ホップの投入量算出
     ///
     /// ## 直感的な解釈
     ///
@@ -563,15 +546,112 @@ impl TokenRate {
                     // 各プールで補正を積算: correction *= (1 + Δx / x)
                     correction *= (pool_amount + &current_delta) / pool_amount;
 
-                    // 次のホップの入力は現在のホップの出力に比例
+                    // 次のホップの入力量を AMM の定積公式で算出: Δx_{i+1} = y × Δx / (x + Δx)
                     let amount_out = pool.amount_out.as_bigdecimal();
-                    current_delta = amount_out * &current_delta / pool_amount;
+                    current_delta = amount_out * &current_delta / (pool_amount + &current_delta);
                 }
             }
 
             return self.exchange_rate.clone() * correction;
         }
         self.exchange_rate.clone()
+    }
+
+    /// Vec<TokenRate> のスポットレート一括変換。
+    ///
+    /// swap_path が NULL のレコードには precompute_fallback_indices で
+    /// 算出したフォールバックを適用する。
+    /// ExchangeRate が実質ゼロのレコードは除外する。
+    pub fn to_spot_rates(rates: &[TokenRate]) -> Vec<(NaiveDateTime, ExchangeRate)> {
+        let fallback_indices = Self::precompute_fallback_indices(rates);
+        rates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, rate)| {
+                let fallback_path = fallback_indices[i]
+                    .and_then(|idx| rates.get(idx))
+                    .and_then(|r| r.swap_path.as_ref());
+                let spot_rate = rate.to_spot_rate_with_fallback(fallback_path);
+                if spot_rate.is_effectively_zero() {
+                    return None;
+                }
+                Some((rate.timestamp, spot_rate))
+            })
+            .collect()
+    }
+
+    /// 指定タイムスタンプ以前の最新スポットレートをトークンごとに取得
+    ///
+    /// CTE で最新レートと最新 swap_path 付きレートを同時取得し、
+    /// COALESCE で swap_path をフォールバック補完した結果を返す。
+    /// 各レートは swap_path 補完後に `to_spot_rate()` でスポットレートに変換。
+    pub async fn get_spot_rates_at_time(
+        tokens: &[TokenOutAccount],
+        quote: &TokenInAccount,
+        at_or_before: NaiveDateTime,
+    ) -> Result<HashMap<TokenOutAccount, ExchangeRate>> {
+        use diesel::sql_types::{Array, Text, Timestamp};
+
+        if tokens.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let conn = connection_pool::get().await?;
+
+        let tokens_vec: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let quote_str = quote.to_string();
+        let ts = at_or_before;
+
+        let results: Vec<DbTokenRate> = conn
+            .interact(move |conn| {
+                // NOTE: $1, $2, $3 are intentionally reused in both CTEs.
+                // PostgreSQL allows referencing the same bind parameters multiple times.
+                diesel::sql_query(
+                    "WITH latest AS ( \
+                         SELECT DISTINCT ON (base_token) \
+                             id, base_token, quote_token, rate, timestamp, \
+                             decimals, rate_calc_near, swap_path \
+                         FROM token_rates \
+                         WHERE base_token = ANY($1) \
+                           AND quote_token = $2 \
+                           AND timestamp <= $3 \
+                         ORDER BY base_token, timestamp DESC \
+                     ), \
+                     fallback AS ( \
+                         SELECT DISTINCT ON (base_token) \
+                             base_token, swap_path \
+                         FROM token_rates \
+                         WHERE base_token = ANY($1) \
+                           AND quote_token = $2 \
+                           AND timestamp <= $3 \
+                           AND swap_path IS NOT NULL \
+                         ORDER BY base_token, timestamp DESC \
+                     ) \
+                     SELECT l.id, l.base_token, l.quote_token, l.rate, l.timestamp, \
+                            l.decimals, l.rate_calc_near, \
+                            COALESCE(l.swap_path, f.swap_path) AS swap_path \
+                     FROM latest l \
+                     LEFT JOIN fallback f ON l.base_token = f.base_token",
+                )
+                .bind::<Array<Text>, _>(&tokens_vec)
+                .bind::<Text, _>(&quote_str)
+                .bind::<Timestamp, _>(ts)
+                .load::<DbTokenRate>(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+        let rates: Vec<TokenRate> = results
+            .into_iter()
+            .map(Self::from_db)
+            .collect::<Result<_>>()?;
+
+        let mut result = HashMap::with_capacity(rates.len());
+        for rate in &rates {
+            result.insert(rate.base.clone(), rate.to_spot_rate());
+        }
+
+        Ok(result)
     }
 }
 
@@ -583,6 +663,75 @@ struct TokenDecimalsRow {
     base_token: String,
     #[diesel(sql_type = diesel::sql_types::SmallInt)]
     decimals: i16,
+}
+
+/// 全トークンの最新スポットレートを一括取得（指定 quote_token 建て）
+///
+/// LATERAL サブクエリで base_token ごとに最新1行だけを取得し、
+/// swap_path のフォールバック補完を行った結果にスポットレート補正を適用。
+/// プール流動性の NEAR 換算に使用する。
+///
+/// インデックス `(quote_token, base_token, timestamp DESC)` を活用し、
+/// base_token ごとに Index Scan + LIMIT 1 で O(N) で完了する。
+pub async fn get_all_latest_rates(
+    quote_token: &TokenAccount,
+) -> Result<HashMap<TokenAccount, ExchangeRate>> {
+    let conn = connection_pool::get().await?;
+    let quote_str = quote_token.to_string();
+
+    let rows: Vec<DbTokenRate> = conn
+        .interact(move |conn| {
+            use diesel::RunQueryDsl;
+            use diesel::sql_types::Text;
+            diesel::sql_query(
+                "SELECT l.id, l.base_token, l.quote_token, l.rate, l.timestamp, \
+                        l.decimals, l.rate_calc_near, \
+                        COALESCE(l.swap_path, f.swap_path) AS swap_path \
+                 FROM ( \
+                     SELECT DISTINCT base_token \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                 ) AS tokens \
+                 CROSS JOIN LATERAL ( \
+                     SELECT id, base_token, quote_token, rate, timestamp, \
+                            decimals, rate_calc_near, swap_path \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                       AND base_token = tokens.base_token \
+                     ORDER BY timestamp DESC \
+                     LIMIT 1 \
+                 ) AS l \
+                 LEFT JOIN LATERAL ( \
+                     SELECT swap_path \
+                     FROM token_rates \
+                     WHERE quote_token = $1 \
+                       AND base_token = tokens.base_token \
+                       AND swap_path IS NOT NULL \
+                     ORDER BY timestamp DESC \
+                     LIMIT 1 \
+                 ) AS f ON true",
+            )
+            .bind::<Text, _>(&quote_str)
+            .load::<DbTokenRate>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let log = DEFAULT.new(o!("function" => "get_all_latest_rates"));
+    let mut result = HashMap::with_capacity(rows.len());
+    for row in rows {
+        match TokenRate::from_db(row) {
+            Ok(token_rate) => {
+                let spot_rate = token_rate.to_spot_rate();
+                let token: TokenAccount = token_rate.base.into();
+                result.insert(token, spot_rate);
+            }
+            Err(e) => {
+                debug!(log, "skipping unparseable token rate"; "error" => %e);
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// token_rates テーブルから全トークンの最新 decimals を一括取得
