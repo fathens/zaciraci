@@ -27,9 +27,6 @@ async fn test_token_rate_single_insert() -> Result<()> {
     let retrieved_rate = result.unwrap();
     assert_token_rate_eq!(retrieved_rate, token_rate, "Token rate should match");
 
-    // クリーンアップ
-    clean_table().await?;
-
     Ok(())
 }
 
@@ -114,9 +111,6 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
         "Earliest record should match"
     );
 
-    // クリーンアップ
-    clean_table().await?;
-
     Ok(())
 }
 
@@ -199,9 +193,6 @@ async fn test_token_rate_different_pairs() -> Result<()> {
     // 7. 存在しないペアは空の配列を返すことを確認
     let history3 = TokenRate::get_rates_in_time_range(&time_range, &base2, &quote2).await?;
     assert_eq!(history3.len(), 0, "Should find 0 records for base2-quote2");
-
-    // クリーンアップ
-    clean_table().await?;
 
     Ok(())
 }
@@ -371,9 +362,6 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
         0,
         "Should return empty list when no data is available"
     );
-
-    // クリーンアップ
-    clean_table().await?;
 
     Ok(())
 }
@@ -668,9 +656,6 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         "Variance should be greater than 0"
     );
 
-    // クリーンアップ
-    clean_table().await?;
-
     Ok(())
 }
 
@@ -789,9 +774,6 @@ async fn test_rate_difference_calculation() -> Result<()> {
         BigDecimal::from(0),
         "Variance should be 0"
     );
-
-    // クリーンアップ
-    clean_table().await?;
 
     Ok(())
 }
@@ -963,9 +945,6 @@ async fn test_cleanup_old_records() -> Result<()> {
         "Second should be ~20 days old"
     );
 
-    // クリーンアップ
-    clean_table().await?;
-
     Ok(())
 }
 
@@ -1016,7 +995,6 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
     // 時系列順（昇順）であることを確認
     assert!(result[&base1][0].timestamp < result[&base1][1].timestamp);
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1045,7 +1023,6 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
         "Should return empty map for nonexistent tokens"
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1136,7 +1113,6 @@ async fn test_swap_path_jsonb_roundtrip() -> Result<()> {
         TokenSmallestUnits::from_u128(0)
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1181,7 +1157,6 @@ async fn test_get_spot_rates_at_time_latest_before() -> Result<()> {
     assert_eq!(result[&base1].raw_rate(), &BigDecimal::from(300));
     assert_eq!(result[&base2].raw_rate(), &BigDecimal::from(600));
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1213,7 +1188,6 @@ async fn test_get_spot_rates_at_time_empty() -> Result<()> {
     let result = TokenRate::get_spot_rates_at_time(&[], &quote, now).await?;
     assert!(result.is_empty());
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1277,7 +1251,6 @@ async fn test_get_spot_rates_at_time_swap_path_fallback() -> Result<()> {
         spot_rate.raw_rate()
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1349,7 +1322,6 @@ async fn test_get_spot_rates_at_time_own_swap_path_preferred() -> Result<()> {
         "Should use own swap_path, not fallback"
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1384,7 +1356,6 @@ async fn test_get_spot_rates_at_time_no_swap_path_anywhere() -> Result<()> {
         "No swap_path anywhere, should return raw rate"
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1470,7 +1441,6 @@ async fn test_get_spot_rates_at_time_mixed_swap_path() -> Result<()> {
         "Should be corrected with fallback swap_path"
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1503,7 +1473,6 @@ async fn test_get_spot_rates_at_time_partial_tokens() -> Result<()> {
     assert!(result.contains_key(&base_exists));
     assert!(!result.contains_key(&base_missing));
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1549,7 +1518,6 @@ async fn test_get_spot_rates_at_time_quote_isolation() -> Result<()> {
         "Should return the correct quote_b rate"
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1581,7 +1549,6 @@ async fn test_get_all_decimals() -> Result<()> {
         Some(&24u8)
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1641,7 +1608,6 @@ async fn test_get_all_latest_rates_returns_latest() -> Result<()> {
     // swap_path なしの場合、spot_rate == raw_rate なので最新の 200 が返る
     assert_eq!(rate.raw_rate(), &BigDecimal::from(200));
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1680,7 +1646,6 @@ async fn test_get_all_latest_rates_quote_isolation() -> Result<()> {
         "Should only return rates for the specified quote token"
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1746,7 +1711,6 @@ async fn test_get_all_latest_rates_swap_path_fallback() -> Result<()> {
         "Fallback swap_path should apply spot rate correction"
     );
 
-    clean_table().await?;
     Ok(())
 }
 
@@ -1873,6 +1837,5 @@ async fn test_get_all_latest_rates_multi_token_mixed() -> Result<()> {
         "no-path.near should return raw rate without correction"
     );
 
-    clean_table().await?;
     Ok(())
 }
