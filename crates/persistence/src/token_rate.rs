@@ -546,9 +546,9 @@ impl TokenRate {
                     // 各プールで補正を積算: correction *= (1 + Δx / x)
                     correction *= (pool_amount + &current_delta) / pool_amount;
 
-                    // 次のホップの入力は現在のホップの出力に比例
+                    // 次のホップの入力量を AMM の定積公式で算出: Δx_{i+1} = y × Δx / (x + Δx)
                     let amount_out = pool.amount_out.as_bigdecimal();
-                    current_delta = amount_out * &current_delta / pool_amount;
+                    current_delta = amount_out * &current_delta / (pool_amount + &current_delta);
                 }
             }
 
