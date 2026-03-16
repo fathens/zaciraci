@@ -798,6 +798,11 @@ fn estimate_pool_liquidity_in_near(
 ) -> Option<NearValue> {
     let tokens = &pool.bare.token_account_ids;
     let amounts = &pool.bare.amounts;
+    debug_assert_eq!(
+        tokens.len(),
+        amounts.len(),
+        "PoolInfo tokens and amounts must have the same length"
+    );
     let mut min_side: Option<NearValue> = None;
 
     for (i, token) in tokens.iter().enumerate() {
