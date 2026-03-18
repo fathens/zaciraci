@@ -1,28 +1,8 @@
-use super::helpers::ta;
+use super::helpers::{RATE_24, buy_op, sell_op, ta};
 use super::*;
 use bigdecimal::BigDecimal;
 use common::types::{ExchangeRate, NearValue};
 use std::str::FromStr;
-
-fn sell_op(token: &str, near: i64, rate_raw: &str, decimals: u8) -> SellOperation {
-    SellOperation {
-        token: ta(token),
-        near_value: NearValue::from_near(BigDecimal::from(near)),
-        exchange_rate: ExchangeRate::from_raw_rate(
-            BigDecimal::from_str(rate_raw).unwrap(),
-            decimals,
-        ),
-    }
-}
-
-fn buy_op(token: &str, near: i64) -> BuyOperation {
-    BuyOperation {
-        token: ta(token),
-        near_value: NearValue::from_near(BigDecimal::from(near)),
-    }
-}
-
-const RATE_24: &str = "500000000000000000000000";
 
 #[test]
 fn test_exact_match_single_pair() {
