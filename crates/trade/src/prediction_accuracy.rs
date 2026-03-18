@@ -262,6 +262,8 @@ fn calculate_direction_accuracy_for_records(records: &[DbPredictionRecord]) -> (
 /// トークンごとの prediction confidence を計算する。
 ///
 /// 1回の DB クエリで全トークンのレコードを取得し、Rust 側でグルーピング。
+const MAX_PREDICTION_QUERY_LIMIT: i64 = 10_000;
+
 /// 各トークンの平均 MAPE と方向正解率から複合 confidence を算出。
 ///
 /// 戻り値: Result<BTreeMap<TokenOutAccount, f64>>
@@ -278,7 +280,9 @@ pub async fn calculate_per_token_confidence(
     let mape_poor = cfg.prediction_mape_poor();
 
     // 1回の DB クエリで全トークンのレコードを取得
-    let limit = window.saturating_mul(tokens.len() as i64).min(10_000);
+    let limit = window
+        .saturating_mul(tokens.len() as i64)
+        .min(MAX_PREDICTION_QUERY_LIMIT);
     let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
         .await
         .map_err(|e| {
