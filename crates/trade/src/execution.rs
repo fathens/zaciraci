@@ -93,11 +93,7 @@ fn match_rebalance_operations(
     let mut buy_remaining = buy_operations[0].near_value.clone();
 
     loop {
-        let match_value = if sell_remaining <= buy_remaining {
-            sell_remaining.clone()
-        } else {
-            buy_remaining.clone()
-        };
+        let match_value = std::cmp::min(&sell_remaining, &buy_remaining).clone();
 
         if match_value > NearValue::zero() {
             direct_swaps.push(DirectSwap {
@@ -164,7 +160,8 @@ fn match_rebalance_operations(
     }
 }
 
-/// TokenAmount を u128 に変換する
+/// TokenAmount を u128 に変換する。
+/// 小数部がある場合は切り捨てられる（floor）。
 fn token_amount_to_u128(amount: &TokenAmount) -> crate::Result<u128> {
     amount
         .smallest_units()
@@ -529,8 +526,10 @@ where
 
             let mut direct_swap_success: usize = 0;
             let mut direct_swap_failed: usize = 0;
-            let mut remainder_success: usize = 0;
-            let mut remainder_failed: usize = 0;
+            let mut remainder_sell_success: usize = 0;
+            let mut remainder_sell_failed: usize = 0;
+            let mut remainder_buy_success: usize = 0;
+            let mut remainder_buy_failed: usize = 0;
 
             // 常に match_rebalance_operations を通す（売却のみ・購入のみも統一処理）
             let result = match_rebalance_operations(sell_operations, buy_operations);
@@ -601,7 +600,7 @@ where
                     Ok(v) => v,
                     Err(e) => {
                         error!(log, "token amount conversion failed"; "error" => %e);
-                        remainder_failed += 1;
+                        remainder_sell_failed += 1;
                         continue;
                     }
                 };
@@ -609,7 +608,7 @@ where
                 if token_amount_u128 == 0 {
                     warn!(log, "token amount truncated to zero, skipping sell";
                         "token" => %sell.token);
-                    remainder_failed += 1;
+                    remainder_sell_failed += 1;
                     continue;
                 }
 
@@ -629,11 +628,11 @@ where
                 {
                     Ok(_) => {
                         info!(log, "remainder sell completed"; "token" => %sell.token);
-                        remainder_success += 1;
+                        remainder_sell_success += 1;
                     }
                     Err(e) => {
                         error!(log, "remainder sell failed"; "token" => %sell.token, "error" => %e);
-                        remainder_failed += 1;
+                        remainder_sell_failed += 1;
                     }
                 }
             }
@@ -673,7 +672,7 @@ where
 
                     if wrap_near_amount_u128 == 0 {
                         error!(log, "Failed to convert purchase amount to u128"; "token" => %buy.token);
-                        remainder_failed += 1;
+                        remainder_buy_failed += 1;
                         continue;
                     }
 
@@ -695,24 +694,47 @@ where
                     {
                         Ok(_) => {
                             info!(log, "remainder buy completed"; "token" => %buy.token);
-                            remainder_success += 1;
+                            remainder_buy_success += 1;
                         }
                         Err(e) => {
                             error!(log, "remainder buy failed"; "token" => %buy.token, "error" => %e);
-                            remainder_failed += 1;
+                            remainder_buy_failed += 1;
                         }
                     }
                 }
             }
 
+            let remainder_success = remainder_sell_success + remainder_buy_success;
+            let remainder_failed = remainder_sell_failed + remainder_buy_failed;
             let total_success = direct_swap_success + remainder_success;
             let total_failed = direct_swap_failed + remainder_failed;
+
+            if direct_swap_failed > direct_swap_success && direct_swap_failed > 0 {
+                warn!(log, "high direct swap failure rate";
+                    "success" => direct_swap_success, "failed" => direct_swap_failed);
+            }
+            if !result.remaining_sells.is_empty()
+                && remainder_sell_success == 0
+                && remainder_sell_failed > 0
+            {
+                warn!(log, "all remainder sells failed";
+                    "failed" => remainder_sell_failed);
+            }
+            if !result.remaining_buys.is_empty()
+                && remainder_buy_success == 0
+                && remainder_buy_failed > 0
+            {
+                warn!(log, "all remainder buys failed";
+                    "failed" => remainder_buy_failed);
+            }
 
             info!(log, "rebalance completed";
                 "direct_swap_success" => direct_swap_success,
                 "direct_swap_failed" => direct_swap_failed,
-                "remainder_success" => remainder_success,
-                "remainder_failed" => remainder_failed
+                "remainder_sell_success" => remainder_sell_success,
+                "remainder_sell_failed" => remainder_sell_failed,
+                "remainder_buy_success" => remainder_buy_success,
+                "remainder_buy_failed" => remainder_buy_failed
             );
 
             // 全操作失敗時のみエラーを返す。部分失敗は次回リバランスサイクルで自然修正。
