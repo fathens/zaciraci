@@ -163,3 +163,81 @@ fn test_mape_to_confidence_equal_thresholds() {
     assert_eq!(mape_to_confidence(3.0, 3.0, 3.0), 1.0); // mape == excellent == poor
     assert_eq!(mape_to_confidence(5.0, 3.0, 3.0), 0.0); // mape > poor
 }
+
+// --- calculate_direction_accuracy_for_records ---
+
+fn make_time(offset_hours: i64) -> NaiveDateTime {
+    let base = Utc::now().naive_utc();
+    base + chrono::Duration::hours(offset_hours)
+}
+
+fn make_record(
+    target_time: NaiveDateTime,
+    predicted: i64,
+    actual: Option<i64>,
+) -> DbPredictionRecord {
+    DbPredictionRecord {
+        id: 0,
+        evaluation_period_id: "test".to_string(),
+        token: "token.near".to_string(),
+        quote_token: "wrap.near".to_string(),
+        predicted_price: BigDecimal::from(predicted),
+        prediction_time: target_time - chrono::Duration::hours(24),
+        target_time,
+        actual_price: actual.map(BigDecimal::from),
+        mape: None,
+        absolute_error: None,
+        evaluated_at: Some(target_time),
+        created_at: target_time,
+    }
+}
+
+#[test]
+fn test_direction_accuracy_empty_input() {
+    let (correct, total) = calculate_direction_accuracy_for_records(&[]);
+    assert_eq!(correct, 0);
+    assert_eq!(total, 0);
+}
+
+#[test]
+fn test_direction_accuracy_single_record() {
+    let records = vec![make_record(make_time(0), 100, Some(105))];
+    let (correct, total) = calculate_direction_accuracy_for_records(&records);
+    assert_eq!(correct, 0);
+    assert_eq!(total, 0);
+}
+
+#[test]
+fn test_direction_accuracy_with_none_actual() {
+    let t1 = make_time(1);
+    let t2 = make_time(0);
+    // pair[0].actual_price = None → skip
+    let records = vec![make_record(t1, 110, None), make_record(t2, 100, Some(100))];
+    let (correct, total) = calculate_direction_accuracy_for_records(&records);
+    assert_eq!(total, 0);
+    assert_eq!(correct, 0);
+}
+
+#[test]
+fn test_direction_accuracy_normal_cases() {
+    // target_time DESC: t3 > t2 > t1
+    let t1 = make_time(0);
+    let t2 = make_time(1);
+    let t3 = make_time(2);
+
+    let records = vec![
+        // pair[0]: predicted=120, actual=115 (上昇を正しく予測)
+        make_record(t3, 120, Some(115)),
+        // pair[1] (prev): actual=110
+        // pair[0]: predicted=90, actual=110 (下落を予測したが上昇 → 不正解)
+        make_record(t2, 90, Some(110)),
+        // pair[1] (prev): actual=100
+        make_record(t1, 100, Some(100)),
+    ];
+
+    let (correct, total) = calculate_direction_accuracy_for_records(&records);
+    // pair (t3, t2): prev_actual=110, predicted=120(上昇), actual=115(上昇) → correct
+    // pair (t2, t1): prev_actual=100, predicted=90(下落), actual=110(上昇) → incorrect
+    assert_eq!(total, 2);
+    assert_eq!(correct, 1);
+}
