@@ -361,7 +361,7 @@ async fn get_actual_price_at(
     let (_, closest_rate) = spot_rates
         .iter()
         .min_by_key(|(ts, _)| (*ts - target_time).num_seconds().unsigned_abs())
-        .unwrap();
+        .expect("spot_rates is non-empty (checked above)");
     Ok(Some(closest_rate.to_price()))
 }
 
