@@ -426,6 +426,11 @@ where
                 }
             }
 
+            if sell_failed > 0 {
+                warn!(log, "some sell operations failed, portfolio may diverge from target";
+                    "sell_failed" => sell_failed, "sell_success" => sell_success);
+            }
+
             // Phase 1完了後、利用可能なwrap.nearを確認し、Phase 2の購入額を調整
             let available_wrap_near = {
                 let account = wallet.account_id();
@@ -772,6 +777,11 @@ where
                 // selected_tokens.is_empty() だけだとパース全失敗（データ破損）時に誤判定するため、
                 // transaction_count == 0 も併用して安全性を確保
                 let is_new_period = selected_tokens.is_empty() && transaction_count == 0;
+
+                if selected_tokens.is_empty() && transaction_count > 0 {
+                    warn!(log, "selected_tokens empty but transactions exist, possible data corruption";
+                        "transaction_count" => transaction_count);
+                }
 
                 if is_new_period {
                     debug!(
