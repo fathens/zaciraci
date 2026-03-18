@@ -287,7 +287,7 @@ pub(crate) async fn calculate_per_token_confidence(
     cfg: &impl ConfigAccess,
 ) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
     let log = DEFAULT.new(o!("function" => "calculate_per_token_confidence"));
-    let window = cfg.prediction_accuracy_window();
+    let window = cfg.prediction_accuracy_window().max(1);
     let min_samples = cfg.prediction_accuracy_min_samples();
     let mape_excellent = cfg.prediction_mape_excellent();
     let mape_poor = cfg.prediction_mape_poor();
@@ -324,7 +324,7 @@ pub(crate) async fn calculate_per_token_confidence(
     // 各トークン内を target_time DESC でソート（方向判定に必要）
     for entries in by_token.values_mut() {
         entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
-        entries.truncate(window as usize);
+        entries.truncate(window as usize); // window は .max(1) 済みのため正値保証
     }
 
     let mut result = BTreeMap::new();

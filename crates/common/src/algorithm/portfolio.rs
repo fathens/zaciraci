@@ -1308,6 +1308,7 @@ fn exhaustive_optimize(
         // アクティブトークンの alpha 単純平均を使用
         // 加重平均はウエイト→alpha→ウエイトの循環依存になるため不可
         // active_idx は active_w（非空チェック済み）のゼロ超要素から構築されるため必ず非空
+        debug_assert!(!active_idx.is_empty());
         let effective_alpha: f64 = active_idx
             .iter()
             .map(|&idx| {
@@ -1396,7 +1397,10 @@ fn unified_optimize(
         let mut scored: Vec<(usize, f64)> = active_indices
             .iter()
             .map(|&i| {
-                let blend = alphas[i] * w_sharpe[i] + (1.0 - alphas[i]) * w_rp[i];
+                let a = *alphas
+                    .get(i)
+                    .expect("active_indices[i] must be within alphas bounds");
+                let blend = a * w_sharpe[i] + (1.0 - a) * w_rp[i];
                 (i, blend)
             })
             .collect();
