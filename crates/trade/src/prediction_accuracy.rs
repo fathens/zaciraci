@@ -7,7 +7,7 @@ use common::types::TokenPrice;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use logging::*;
 use num_traits::Zero;
-use persistence::prediction_record::{NewPredictionRecord, PredictionRecord};
+use persistence::prediction_record::{DbPredictionRecord, NewPredictionRecord, PredictionRecord};
 use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -47,9 +47,6 @@ pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usiz
 /// - MAPE ≤ excellent → 1.0（予測が正確 → Sharpe を信頼）
 /// - MAPE ≥ poor → 0.0（予測が不正確 → RP に退避）
 /// - 中間値は線形補間
-///
-/// NOTE: calculate_per_token_confidence() (Step 4) で使用予定
-#[cfg(test)]
 fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
     let range = poor - excellent;
     if range.abs() < 1e-9 {
@@ -59,9 +56,6 @@ fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
 }
 
 /// 方向正解を判定: 予測と実際の変化方向が一致すれば true
-///
-/// NOTE: calculate_per_token_confidence() (Step 4) で使用予定
-#[cfg(test)]
 fn is_direction_correct(
     prev_actual: &BigDecimal,
     predicted: &BigDecimal,
@@ -75,9 +69,6 @@ fn is_direction_correct(
 }
 
 /// 複合スコア: MAPE と方向正解率を組み合わせ
-///
-/// NOTE: calculate_per_token_confidence() (Step 4) で使用予定
-#[cfg(test)]
 fn calculate_composite_confidence(
     rolling_mape: f64,
     hit_rate: Option<f64>, // None = 方向データ不足
@@ -239,6 +230,109 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32
     }
 
     Ok(evaluated_count)
+}
+
+/// ソート済みレコード（target_time DESC）の隣接ペアから方向正解率を計算する。
+/// DB アクセスなしで計算（N+1 クエリ排除）。
+fn calculate_direction_accuracy_for_records(records: &[DbPredictionRecord]) -> (usize, usize) {
+    let mut correct = 0usize;
+    let mut total = 0usize;
+    for pair in records.windows(2) {
+        let (Some(actual), Some(prev_actual)) = (&pair[0].actual_price, &pair[1].actual_price)
+        else {
+            continue;
+        };
+        if is_direction_correct(prev_actual, &pair[0].predicted_price, actual) {
+            correct += 1;
+        }
+        total += 1;
+    }
+    (correct, total)
+}
+
+/// トークンごとの prediction confidence を計算する。
+///
+/// 1回の DB クエリで全トークンのレコードを取得し、Rust 側でグルーピング。
+/// 各トークンの平均 MAPE と方向正解率から複合 confidence を算出。
+///
+/// 戻り値: BTreeMap<TokenOutAccount, f64>
+///   - エントリあり: 十分なサンプルがあり confidence 計算済み
+///   - エントリなし: データ不足（コールドスタート）
+pub async fn calculate_per_token_confidence(
+    tokens: &[TokenOutAccount],
+    cfg: &impl ConfigAccess,
+) -> BTreeMap<TokenOutAccount, f64> {
+    let log = DEFAULT.new(o!("function" => "calculate_per_token_confidence"));
+    let window = cfg.prediction_accuracy_window();
+    let min_samples = cfg.prediction_accuracy_min_samples();
+    let mape_excellent = cfg.prediction_mape_excellent();
+    let mape_poor = cfg.prediction_mape_poor();
+
+    // 1回の DB クエリで全トークンのレコードを取得
+    let all_records = match PredictionRecord::get_recent_evaluated_for_tokens(
+        window * tokens.len() as i64,
+        tokens,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(log, "failed to get prediction records"; "error" => %e);
+            return BTreeMap::new();
+        }
+    };
+
+    // Rust 側でトークンごとにグルーピング
+    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> =
+        all_records.into_iter().fold(BTreeMap::new(), |mut map, r| {
+            map.entry(r.token.clone()).or_default().push(r);
+            map
+        });
+
+    // 各トークン内を target_time DESC でソート（方向判定に必要）
+    for entries in by_token.values_mut() {
+        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
+        entries.truncate(window as usize);
+    }
+
+    let mut result = BTreeMap::new();
+
+    for token in tokens {
+        let token_str = token.to_string();
+        let records = by_token.get(&token_str);
+        let mape_values: Vec<f64> = records
+            .map(|rs| rs.iter().filter_map(|r| r.mape).collect())
+            .unwrap_or_default();
+
+        if mape_values.len() < min_samples {
+            continue;
+        }
+
+        let avg_mape = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
+
+        let direction_data = records.map(|rs| calculate_direction_accuracy_for_records(rs));
+        let hit_rate = direction_data.and_then(|(correct, total)| {
+            if total >= min_samples {
+                Some(correct as f64 / total as f64)
+            } else {
+                None
+            }
+        });
+
+        let confidence =
+            calculate_composite_confidence(avg_mape, hit_rate, mape_excellent, mape_poor);
+
+        debug!(log, "token prediction confidence";
+            "token" => %token_str,
+            "avg_mape" => format!("{:.2}%", avg_mape),
+            "hit_rate" => hit_rate.map(|h| format!("{:.1}%", h * 100.0)),
+            "confidence" => format!("{:.3}", confidence)
+        );
+
+        result.insert(token.clone(), confidence);
+    }
+
+    result
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。

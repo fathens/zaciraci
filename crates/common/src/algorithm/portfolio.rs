@@ -18,11 +18,10 @@ pub struct PortfolioData {
     /// 予測価格（TokenPrice: NEAR/token）
     pub predictions: BTreeMap<TokenOutAccount, TokenPrice>,
     pub historical_prices: BTreeMap<TokenOutAccount, PriceHistory>,
-    /// 予測精度に基づく信頼度 [0.0, 1.0]
-    /// - Some(1.0): 予測が非常に正確 → Sharpe を信頼
-    /// - Some(0.0): 予測が不正確 → RP に退避
-    /// - None: データ不足 → 従来通り（後方互換）
-    pub prediction_confidence: Option<f64>,
+    /// トークンごとの予測精度に基づく信頼度 [0.0, 1.0]
+    /// - エントリあり: confidence に応じた Sharpe/RP ブレンド
+    /// - エントリなし: データ不足 → alpha_vol * 0.5 にフォールバック
+    pub prediction_confidences: BTreeMap<TokenOutAccount, f64>,
 }
 
 /// ポートフォリオ実行レポート
@@ -956,7 +955,7 @@ fn blend_and_expand(
     sub_returns: &[f64],
     sub_cov: &Array2<f64>,
     max_position: f64,
-    alpha: f64,
+    alphas: &[f64],
     subset_indices: &[usize],
     n_total: usize,
 ) -> Vec<f64> {
@@ -966,7 +965,11 @@ fn blend_and_expand(
     let mut blended: Vec<f64> = w_sharpe
         .iter()
         .zip(w_rp.iter())
-        .map(|(&ws, &wr)| alpha * ws + (1.0 - alpha) * wr)
+        .enumerate()
+        .map(|(i, (&ws, &wr))| {
+            let a = alphas[subset_indices[i]];
+            a * ws + (1.0 - a) * wr
+        })
         .collect();
     normalize_weights(&mut blended);
 
@@ -982,7 +985,7 @@ struct SubsetOptParams<'a> {
     expected_returns: &'a [f64],
     covariance_matrix: &'a Array2<f64>,
     max_position: f64,
-    alpha: f64,
+    alphas: &'a [f64],
 }
 
 /// キャッシュ付き blend_and_expand
@@ -1006,7 +1009,7 @@ fn cached_blend_and_expand(
         &sub_ret,
         &sub_cov,
         params.max_position,
-        params.alpha,
+        params.alphas,
         subset_indices,
         n_total,
     );
@@ -1203,7 +1206,7 @@ fn exhaustive_optimize(
     max_position: f64,
     max_holdings: usize,
     min_position_size: f64,
-    alpha: f64,
+    alphas: &[f64],
 ) -> Vec<f64> {
     let n_total = expected_returns.len();
     let n_active = active_indices.len();
@@ -1216,7 +1219,7 @@ fn exhaustive_optimize(
         expected_returns,
         covariance_matrix,
         max_position,
-        alpha,
+        alphas,
     };
 
     // active <= max_holdings: サブセット選択不要、直接最適化
@@ -1292,7 +1295,11 @@ fn exhaustive_optimize(
         } else {
             0.0
         };
-        let score = alpha * sharpe - (1.0 - alpha) * rp_div_normalized;
+        // アクティブトークンの alpha 単純平均を使用
+        // 加重平均はウエイト→alpha→ウエイトの循環依存になるため不可
+        let effective_alpha: f64 =
+            active_idx.iter().map(|&idx| alphas[idx]).sum::<f64>() / active_idx.len() as f64;
+        let score = effective_alpha * sharpe - (1.0 - effective_alpha) * rp_div_normalized;
 
         if score > best_score {
             best_score = score;
@@ -1323,7 +1330,7 @@ fn unified_optimize(
     max_position: f64,
     max_holdings: usize,
     min_position_size: f64,
-    alpha: f64,
+    alphas: &[f64],
 ) -> Vec<f64> {
     let n = expected_returns.len();
     if n == 0 {
@@ -1371,7 +1378,7 @@ fn unified_optimize(
         let mut scored: Vec<(usize, f64)> = active_indices
             .iter()
             .map(|&i| {
-                let blend = alpha * w_sharpe[i] + (1.0 - alpha) * w_rp[i];
+                let blend = alphas[i] * w_sharpe[i] + (1.0 - alphas[i]) * w_rp[i];
                 (i, blend)
             })
             .collect();
@@ -1392,7 +1399,7 @@ fn unified_optimize(
         max_position,
         max_holdings,
         min_position_size,
-        alpha,
+        alphas,
     );
     // 浮動小数点誤差による合計 != 1.0 を補正
     normalize_weights(&mut weights);
@@ -1580,14 +1587,24 @@ pub async fn execute_portfolio_optimization(
     // ボラティリティ連動 alpha_vol でブレンド（範囲 [0.7, 0.9]）
     let alpha_vol = volatility_blend_alpha(avg_volatility);
 
-    // prediction_confidence で alpha を調整
-    let alpha = match portfolio_data.prediction_confidence {
-        Some(confidence) => {
-            let floor = PREDICTION_ALPHA_FLOOR;
-            (floor + (alpha_vol - floor) * confidence).clamp(floor, 0.9)
-        }
-        None => alpha_vol,
-    };
+    // per-token alpha: トークンごとの confidence に基づく Sharpe/RP ブレンド比率
+    let alphas: Vec<f64> = selected_tokens
+        .iter()
+        .map(|t| {
+            let confidence = portfolio_data
+                .prediction_confidences
+                .get(&t.symbol)
+                .copied();
+            match confidence {
+                Some(c) => {
+                    let floor = PREDICTION_ALPHA_FLOOR;
+                    (floor + (alpha_vol - floor) * c).clamp(floor, 0.9)
+                }
+                // データなし（コールドスタート）→ 控えめなデフォルト
+                None => alpha_vol * 0.5,
+            }
+        })
+        .collect();
 
     // 流動性スコアを抽出
     let liquidity_scores: Vec<f64> = selected_tokens
@@ -1603,7 +1620,7 @@ pub async fn execute_portfolio_optimization(
         max_position,
         MAX_HOLDINGS,
         MIN_POSITION_SIZE,
-        alpha,
+        &alphas,
     );
 
     // 現在のポートフォリオ重みを計算

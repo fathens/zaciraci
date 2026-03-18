@@ -15,7 +15,7 @@ async fn test_enhanced_portfolio_performance() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     // 空のウォレット（初期状態）
@@ -122,7 +122,7 @@ async fn test_baseline_vs_enhanced_comparison() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     let wallet = WalletInfo {
@@ -940,7 +940,7 @@ async fn test_issue7_metrics_computed_from_indicators() {
         tokens,
         predictions,
         historical_prices: history,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
@@ -1297,34 +1297,38 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
     let historical_prices = create_sample_price_history();
     let wallet = create_sample_wallet();
 
-    // confidence = 1.0（高精度予測）
+    // confidence = 1.0（高精度予測）- 全トークンに同じ値を設定
+    let confidences_high: BTreeMap<TokenOutAccount, f64> =
+        tokens.iter().map(|t| (t.symbol.clone(), 1.0)).collect();
     let pd_high = PortfolioData {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: historical_prices.clone(),
-        prediction_confidence: Some(1.0),
+        prediction_confidences: confidences_high,
     };
     let report_high = execute_portfolio_optimization(&wallet, pd_high, 0.05)
         .await
         .unwrap();
 
-    // confidence = 0.0（低精度予測 → RP 寄り）
+    // confidence = 0.0（低精度予測 → RP 寄り）- 全トークンに同じ値を設定
+    let confidences_low: BTreeMap<TokenOutAccount, f64> =
+        tokens.iter().map(|t| (t.symbol.clone(), 0.0)).collect();
     let pd_low = PortfolioData {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: historical_prices.clone(),
-        prediction_confidence: Some(0.0),
+        prediction_confidences: confidences_low,
     };
     let report_low = execute_portfolio_optimization(&wallet, pd_low, 0.05)
         .await
         .unwrap();
 
-    // None（データ不足 → 後方互換）
+    // 空（データ不足 → 後方互換）
     let pd_none = PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
     let report_none = execute_portfolio_optimization(&wallet, pd_none, 0.05)
         .await
@@ -1557,11 +1561,13 @@ async fn test_price_history_alignment_with_selected_tokens() {
         cash_balance: NearValue::zero(),
     };
 
+    let confidences: BTreeMap<TokenOutAccount, f64> =
+        tokens.iter().map(|t| (t.symbol.clone(), 0.8)).collect();
     let portfolio_data = PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidence: Some(0.8),
+        prediction_confidences: confidences,
     };
 
     let result = execute_portfolio_optimization(&wallet, portfolio_data, 0.05).await;

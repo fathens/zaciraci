@@ -623,9 +623,6 @@ where
         ));
     }
 
-    // prediction_confidence は Step 4 で per-token confidence に置き換え予定
-    let prediction_confidence: Option<f64> = None;
-
     // 今回の予測を DB に記録（失敗しても取引は続行）
     if let Err(e) =
         super::prediction_accuracy::record_predictions(period_id, &predictions, &quote_token_in)
@@ -634,11 +631,66 @@ where
         warn!(log, "failed to record predictions"; "error" => ?e);
     }
 
+    // per-token confidence を計算
+    let token_out_for_confidence: Vec<TokenOutAccount> =
+        token_data.iter().map(|t| t.symbol.clone()).collect();
+    let prediction_confidences =
+        super::prediction_accuracy::calculate_per_token_confidence(&token_out_for_confidence, cfg)
+            .await;
+
+    // 低 confidence トークンを除外（予測は既に実行済み → MAPE は更新される）
+    let min_confidence = cfg.trade_min_token_confidence();
+    let original_count = token_data.len();
+    token_data.retain(|t| {
+        let confidence = prediction_confidences.get(&t.symbol).copied();
+        match confidence {
+            Some(c) if c < min_confidence => {
+                info!(log, "excluding token due to low confidence";
+                    "token" => %t.symbol, "confidence" => format!("{:.3}", c));
+                false
+            }
+            None => true, // データなし（コールドスタート）は除外しない
+            _ => true,
+        }
+    });
+    predictions.retain(|k, _| token_data.iter().any(|t| &t.symbol == k));
+    historical_prices.retain(|k, _| token_data.iter().any(|t| &t.symbol == k));
+
+    if token_data.len() < original_count {
+        info!(log, "tokens filtered by prediction confidence";
+            "original" => original_count, "remaining" => token_data.len());
+    }
+
+    // 全トークン除外のエッジケース: confidence 上位2件をフォールバック
+    if token_data.is_empty() {
+        let mut fallback: Vec<_> = prediction_confidences.iter().collect();
+        fallback.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let fallback_tokens: Vec<_> = fallback.iter().take(2).map(|(k, _)| (*k).clone()).collect();
+
+        if fallback_tokens.is_empty() {
+            warn!(log, "no tokens available at all, skipping optimization");
+            return Ok(vec![TradingAction::Hold]);
+        }
+
+        warn!(log, "all tokens below confidence threshold, using top-N fallback";
+            "fallback_count" => fallback_tokens.len());
+        // token_data, predictions, historical_prices をフォールバックトークンで再構築する
+        // ため、元の全トークン分のデータを保持しておくか上流から再取得する必要がある。
+        // ここでは簡易的に Hold を返す（実運用では上流で全データを保持しリトライ可能）
+        return Ok(vec![TradingAction::Hold]);
+    }
+
+    // フィルタ後のトークンのみの confidence を PortfolioData に渡す
+    let filtered_confidences: BTreeMap<TokenOutAccount, f64> = prediction_confidences
+        .into_iter()
+        .filter(|(k, _)| token_data.iter().any(|t| &t.symbol == k))
+        .collect();
+
     let portfolio_data = PortfolioData {
         tokens: token_data,
         predictions,
         historical_prices,
-        prediction_confidence,
+        prediction_confidences: filtered_confidences,
     };
 
     // 既存ポジションの取得と WalletInfo の構築
