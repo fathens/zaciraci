@@ -189,7 +189,7 @@ fn make_record(
         actual_price: actual.map(BigDecimal::from),
         mape: None,
         absolute_error: None,
-        evaluated_at: Some(target_time),
+        evaluated_at: Some(target_time + chrono::Duration::hours(1)),
         created_at: target_time,
     }
 }
