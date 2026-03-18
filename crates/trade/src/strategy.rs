@@ -631,12 +631,21 @@ where
         warn!(log, "failed to record predictions"; "error" => ?e);
     }
 
-    // per-token confidence を計算
+    // per-token confidence を計算（DB エラー時は Hold で安全に停止）
     let token_out_for_confidence: Vec<TokenOutAccount> =
         token_data.iter().map(|t| t.symbol.clone()).collect();
-    let prediction_confidences =
-        super::prediction_accuracy::calculate_per_token_confidence(&token_out_for_confidence, cfg)
-            .await;
+    let prediction_confidences = match super::prediction_accuracy::calculate_per_token_confidence(
+        &token_out_for_confidence,
+        cfg,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(log, "confidence calculation failed, holding"; "error" => %e);
+            return Ok(vec![TradingAction::Hold]);
+        }
+    };
 
     // 低 confidence トークンを除外（予測は既に実行済み → MAPE は更新される）
     let min_confidence = cfg.trade_min_token_confidence();

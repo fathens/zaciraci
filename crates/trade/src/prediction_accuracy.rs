@@ -258,13 +258,13 @@ fn calculate_direction_accuracy_for_records(records: &[DbPredictionRecord]) -> (
 /// 1回の DB クエリで全トークンのレコードを取得し、Rust 側でグルーピング。
 /// 各トークンの平均 MAPE と方向正解率から複合 confidence を算出。
 ///
-/// 戻り値: BTreeMap<TokenOutAccount, f64>
-///   - エントリあり: 十分なサンプルがあり confidence 計算済み
-///   - エントリなし: データ不足（コールドスタート）
+/// 戻り値: Result<BTreeMap<TokenOutAccount, f64>>
+///   - Ok(map): 計算成功。エントリあり = confidence 計算済み、エントリなし = データ不足
+///   - Err: DB アクセス失敗
 pub async fn calculate_per_token_confidence(
     tokens: &[TokenOutAccount],
     cfg: &impl ConfigAccess,
-) -> BTreeMap<TokenOutAccount, f64> {
+) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
     let log = DEFAULT.new(o!("function" => "calculate_per_token_confidence"));
     let window = cfg.prediction_accuracy_window();
     let min_samples = cfg.prediction_accuracy_min_samples();
@@ -272,18 +272,13 @@ pub async fn calculate_per_token_confidence(
     let mape_poor = cfg.prediction_mape_poor();
 
     // 1回の DB クエリで全トークンのレコードを取得
-    let all_records = match PredictionRecord::get_recent_evaluated_for_tokens(
-        window * tokens.len() as i64,
-        tokens,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            warn!(log, "failed to get prediction records"; "error" => %e);
-            return BTreeMap::new();
-        }
-    };
+    let all_records =
+        PredictionRecord::get_recent_evaluated_for_tokens(window * tokens.len() as i64, tokens)
+            .await
+            .map_err(|e| {
+                warn!(log, "failed to get prediction records"; "error" => %e);
+                e
+            })?;
 
     // Rust 側でトークンごとにグルーピング
     let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> =
@@ -335,7 +330,7 @@ pub async fn calculate_per_token_confidence(
         result.insert(token.clone(), confidence);
     }
 
-    result
+    Ok(result)
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。
