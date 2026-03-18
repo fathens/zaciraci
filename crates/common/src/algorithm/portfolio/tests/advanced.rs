@@ -1422,23 +1422,29 @@ async fn test_per_token_alpha_with_varying_confidence() {
         .filter(|k| report_uniform.optimal_weights.weights.contains_key(*k))
         .collect();
 
-    if common_tokens.len() >= 2 {
-        let diff: f64 = common_tokens
-            .iter()
-            .map(|t| {
-                let wv = report_varied.optimal_weights.weights[*t]
-                    .to_f64()
-                    .unwrap_or(0.0);
-                let wu = report_uniform.optimal_weights.weights[*t]
-                    .to_f64()
-                    .unwrap_or(0.0);
-                (wv - wu).abs()
-            })
-            .sum();
+    assert!(
+        common_tokens.len() >= 2,
+        "expected at least 2 common tokens, got {}",
+        common_tokens.len()
+    );
+    let diff: f64 = common_tokens
+        .iter()
+        .map(|t| {
+            let wv = report_varied.optimal_weights.weights[*t]
+                .to_f64()
+                .unwrap_or(0.0);
+            let wu = report_uniform.optimal_weights.weights[*t]
+                .to_f64()
+                .unwrap_or(0.0);
+            (wv - wu).abs()
+        })
+        .sum();
 
-        // 異なる alpha 設定では異なるウエイトが期待される
-        println!("Weight diff between varied/uniform confidence: {diff:.6}");
-    }
+    // 異なる alpha 設定では異なるウエイトが期待される
+    assert!(
+        diff > 1e-10,
+        "expected weight difference between varied/uniform confidence, got {diff:.6}"
+    );
 }
 
 /// unified_optimize で異なる alphas を渡した場合、

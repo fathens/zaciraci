@@ -243,3 +243,32 @@ fn test_direction_accuracy_normal_cases() {
     assert_eq!(total, 2);
     assert_eq!(correct, 1);
 }
+
+// --- mape_to_confidence edge cases ---
+
+#[test]
+fn test_mape_to_confidence_nan_input() {
+    let c = mape_to_confidence(f64::NAN, 3.0, 15.0);
+    // NaN is non-finite and not sign-negative → 0.0 (worst confidence)
+    assert_eq!(c, 0.0, "NaN MAPE should produce 0.0 confidence");
+}
+
+#[test]
+fn test_mape_to_confidence_infinity_input() {
+    let c = mape_to_confidence(f64::INFINITY, 3.0, 15.0);
+    assert_eq!(c, 0.0, "INFINITY MAPE should produce 0.0 confidence");
+}
+
+#[test]
+fn test_mape_to_confidence_negative_infinity_input() {
+    let c = mape_to_confidence(f64::NEG_INFINITY, 3.0, 15.0);
+    assert_eq!(c, 1.0, "NEG_INFINITY MAPE should produce 1.0 confidence");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "poor")]
+fn test_mape_to_confidence_poor_less_than_excellent() {
+    // poor < excellent violates the contract
+    mape_to_confidence(5.0, 15.0, 3.0);
+}

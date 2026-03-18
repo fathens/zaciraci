@@ -52,6 +52,9 @@ fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
         poor >= excellent,
         "poor ({poor}) must be >= excellent ({excellent})"
     );
+    if !mape.is_finite() {
+        return if mape.is_sign_negative() { 1.0 } else { 0.0 };
+    }
     let range = poor - excellent;
     if range.abs() < 1e-9 {
         return if mape <= excellent { 1.0 } else { 0.0 };
