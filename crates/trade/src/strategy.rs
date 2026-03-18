@@ -654,7 +654,7 @@ where
     token_data.retain(|t| {
         prediction_confidences.get(&t.symbol).is_none_or(|&c| {
             if c < min_confidence {
-                debug!(log, "excluding token due to low confidence";
+                info!(log, "excluding token due to low confidence";
                         "token" => %t.symbol, "confidence" => format!("{:.3}", c));
                 false
             } else {

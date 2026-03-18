@@ -138,7 +138,7 @@ pub async fn record_predictions(
 /// タイミング: トレード戦略実行前
 ///
 /// 戻り値: 評価したレコード数
-pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32> {
+pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32> {
     let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
 
     let tolerance_minutes = cfg.prediction_eval_tolerance_minutes();
@@ -276,7 +276,7 @@ const MAX_PREDICTION_QUERY_LIMIT: i64 = 10_000;
 /// 戻り値: Result<BTreeMap<TokenOutAccount, f64>>
 ///   - Ok(map): 計算成功。エントリあり = confidence 計算済み、エントリなし = データ不足
 ///   - Err: DB アクセス失敗
-pub async fn calculate_per_token_confidence(
+pub(crate) async fn calculate_per_token_confidence(
     tokens: &[TokenOutAccount],
     cfg: &impl ConfigAccess,
 ) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
