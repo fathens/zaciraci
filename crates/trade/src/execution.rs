@@ -24,6 +24,170 @@ pub struct ExecutionSummary {
     pub failed_count: usize,
 }
 
+// --- リバランス直接スワップ最適化の型定義 ---
+
+/// 売却操作（差分計算の出力）
+#[derive(Debug, Clone)]
+struct SellOperation {
+    token: TokenAccount,
+    near_value: NearValue,
+    exchange_rate: ExchangeRate,
+}
+
+/// 購入操作（差分計算の出力）
+#[derive(Debug, Clone)]
+struct BuyOperation {
+    token: TokenAccount,
+    near_value: NearValue,
+}
+
+/// マッチングされた直接スワップ
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirectSwap {
+    sell_token: TokenAccount,
+    buy_token: TokenAccount,
+    near_value: NearValue,
+    sell_exchange_rate: ExchangeRate,
+}
+
+/// マッチング後の残余（排他的: 売却残余と購入残余は同時に発生しない）
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Remainder {
+    None,
+    Sell(TokenAccount, NearValue, ExchangeRate),
+    Buy(TokenAccount, NearValue),
+}
+
+/// 売却・購入操作を直接スワップにマッチングする（純粋関数）
+///
+/// アルゴリズム:
+/// 1. 売却・購入を wNEAR 価値の降順でソート
+/// 2. 2ポインタで貪欲マッチング
+/// 3. 残余は排他的に Remainder で返す
+///
+/// 不変条件:
+/// - sum(direct_swap.near_value) + remainder_value = max(sum(sell), sum(buy))
+/// - 同一売却トークンの分割スワップの合計 ≤ 元の売却額
+/// - 残余は売却側・購入側のいずれか一方のみ
+fn match_rebalance_operations(
+    mut sell_operations: Vec<SellOperation>,
+    mut buy_operations: Vec<BuyOperation>,
+) -> (Vec<DirectSwap>, Remainder) {
+    if sell_operations.is_empty() || buy_operations.is_empty() {
+        // マッチング不可: 全てが残余
+        return match (sell_operations.len(), buy_operations.len()) {
+            (0, 0) => (vec![], Remainder::None),
+            (_, 0) => {
+                // 全て売却残余 — 複数の場合は最大のもののみ（通常は1件）
+                // 複数売却があっても購入がなければ個別に wNEAR へ売却するため、
+                // ここでは残余としてまとめずに空のマッチ結果を返す
+                // 呼び出し側で sell_operations を直接処理する
+                (vec![], Remainder::None)
+            }
+            (0, _) => {
+                // 同様に購入のみの場合
+                (vec![], Remainder::None)
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    // 降順ソート（大きい金額を優先的にマッチ）
+    sell_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
+    buy_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
+
+    let mut direct_swaps = Vec::new();
+
+    let mut si = 0;
+    let mut bi = 0;
+    let mut sell_remaining = sell_operations[0].near_value.clone();
+    let mut buy_remaining = buy_operations[0].near_value.clone();
+
+    loop {
+        let match_value = std::cmp::min(sell_remaining.clone(), buy_remaining.clone());
+
+        if match_value > NearValue::zero() {
+            direct_swaps.push(DirectSwap {
+                sell_token: sell_operations[si].token.clone(),
+                buy_token: buy_operations[bi].token.clone(),
+                near_value: match_value.clone(),
+                sell_exchange_rate: sell_operations[si].exchange_rate.clone(),
+            });
+        }
+
+        sell_remaining = &sell_remaining - &match_value;
+        buy_remaining = &buy_remaining - &match_value;
+
+        // 売却側が消化された場合、次の売却へ
+        if sell_remaining == NearValue::zero() {
+            si += 1;
+            if si >= sell_operations.len() {
+                // 売却を全て消化
+                if buy_remaining > NearValue::zero() {
+                    return (
+                        direct_swaps,
+                        Remainder::Buy(buy_operations[bi].token.clone(), buy_remaining),
+                    );
+                }
+                // 購入側も丁度消化 — 残りの購入をチェック
+                bi += 1;
+                if bi >= buy_operations.len() {
+                    return (direct_swaps, Remainder::None);
+                }
+                return (
+                    direct_swaps,
+                    Remainder::Buy(
+                        buy_operations[bi].token.clone(),
+                        buy_operations[bi].near_value.clone(),
+                    ),
+                );
+            }
+            sell_remaining = sell_operations[si].near_value.clone();
+        }
+
+        // 購入側が消化された場合、次の購入へ
+        if buy_remaining == NearValue::zero() {
+            bi += 1;
+            if bi >= buy_operations.len() {
+                // 購入を全て消化
+                if sell_remaining > NearValue::zero() {
+                    return (
+                        direct_swaps,
+                        Remainder::Sell(
+                            sell_operations[si].token.clone(),
+                            sell_remaining,
+                            sell_operations[si].exchange_rate.clone(),
+                        ),
+                    );
+                }
+                // 売却側も丁度消化 — 残りの売却をチェック
+                si += 1;
+                if si >= sell_operations.len() {
+                    return (direct_swaps, Remainder::None);
+                }
+                return (
+                    direct_swaps,
+                    Remainder::Sell(
+                        sell_operations[si].token.clone(),
+                        sell_operations[si].near_value.clone(),
+                        sell_operations[si].exchange_rate.clone(),
+                    ),
+                );
+            }
+            buy_remaining = buy_operations[bi].near_value.clone();
+        }
+    }
+}
+
+/// 残余購入の金額を利用可能な wNEAR 残高に合わせて調整する
+fn adjust_buy_to_available(buy_value: &NearValue, available_wrap_near: &NearValue) -> NearValue {
+    if buy_value <= available_wrap_near {
+        buy_value.clone()
+    } else {
+        available_wrap_near.clone()
+    }
+}
+
 /// AddPosition の swap 金額を weight に基づいて按分計算する。
 /// 最後の AddPosition が端数を含む残額を使い切る。
 ///
@@ -280,12 +444,11 @@ where
                 crate::swap::calculate_total_portfolio_value(client, wallet, &current_balances)
                     .await?;
 
-            // Phase 1と2に分けてリバランスを実行
-            // まず各トークンの差分（wrap.near換算）を計算
+            // 各トークンの差分（wrap.near換算）を計算
             use num_bigint::ToBigInt;
 
-            let mut sell_operations: Vec<(TokenAccount, NearValue, ExchangeRate)> = Vec::new();
-            let mut buy_operations: Vec<(TokenAccount, NearValue)> = Vec::new();
+            let mut sell_operations: Vec<SellOperation> = Vec::new();
+            let mut buy_operations: Vec<BuyOperation> = Vec::new();
 
             for (token, target_weight) in target_weights.iter() {
                 let token_account: &TokenAccount = token.inner();
@@ -355,10 +518,17 @@ where
                         anyhow::anyhow!("No cached rate for sell operation: {}", token_account)
                     })?;
 
-                    sell_operations.push((token_account.clone(), diff_wrap_near.abs(), rate));
+                    sell_operations.push(SellOperation {
+                        token: token_account.clone(),
+                        near_value: diff_wrap_near.abs(),
+                        exchange_rate: rate,
+                    });
                 } else if diff_wrap_near > zero && diff_wrap_near >= min_trade_size {
                     // 購入が必要
-                    buy_operations.push((token_account.clone(), diff_wrap_near));
+                    buy_operations.push(BuyOperation {
+                        token: token_account.clone(),
+                        near_value: diff_wrap_near,
+                    });
                 }
             }
 
@@ -367,193 +537,295 @@ where
             let wrap_near_in: TokenInAccount = wrap_near_token.to_in();
             let wrap_near_out: TokenOutAccount = wrap_near_token.to_out();
 
-            // Phase 1: 全ての売却を実行（token → wrap.near）
-            info!(log, "rebalance sell phase";
+            // 売却のみ / 購入のみの場合はマッチング不要で直接実行
+            // 両方ある場合は直接スワップにマッチング
+            let has_sells = !sell_operations.is_empty();
+            let has_buys = !buy_operations.is_empty();
+
+            info!(log, "rebalance operations";
                 "sell_count" => sell_operations.len(),
                 "buy_count" => buy_operations.len()
             );
-            for (token_account, value, _) in &sell_operations {
-                debug!(log, "sell operation planned"; "token" => %token_account, "wrap_near_value" => %value);
-            }
 
-            let mut sell_success: usize = 0;
-            let mut sell_failed: usize = 0;
+            let mut direct_swap_success: usize = 0;
+            let mut direct_swap_failed: usize = 0;
+            let mut remainder_success: usize = 0;
+            let mut remainder_failed: usize = 0;
 
-            for (token, wrap_near_value, exchange_rate) in sell_operations {
-                // wrap.near価値をトークン数量に変換
-                // NearValue * ExchangeRate = TokenAmount
-                let token_amount: TokenAmount = &wrap_near_value * &exchange_rate;
-                let token_amount_u128 = token_amount
-                    .smallest_units()
-                    .to_bigint()
-                    .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))?
-                    .to_string()
-                    .parse::<u128>()
-                    .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
+            if has_sells && has_buys {
+                // 直接スワップマッチング
+                let (direct_swaps, remainder) =
+                    match_rebalance_operations(sell_operations, buy_operations);
 
-                if token_amount_u128 == 0 {
-                    warn!(log, "token amount truncated to zero, skipping sell";
-                        "token" => %token);
-                    continue;
-                }
-
-                trace!(log, "selling token";
-                    "token" => %token,
-                    "wrap_near_value" => %wrap_near_value,
-                    "token_amount" => token_amount_u128
+                info!(log, "direct swap matching result";
+                    "direct_swap_count" => direct_swaps.len(),
+                    "remainder" => ?remainder
                 );
 
-                let from_token: TokenInAccount = token.clone().into();
-                match swap::execute_direct_swap(
-                    client,
-                    wallet,
-                    &from_token,
-                    &wrap_near_out,
-                    Some(token_amount_u128),
-                    recorder,
-                    cfg,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        info!(log, "sell completed"; "token" => %token);
-                        sell_success += 1;
+                // 直接スワップ実行（near_value 降順 — match_rebalance_operations がソート済み）
+                for ds in &direct_swaps {
+                    let token_amount: TokenAmount = &ds.near_value * &ds.sell_exchange_rate;
+                    let token_amount_u128 = match token_amount
+                        .smallest_units()
+                        .to_bigint()
+                        .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))
+                        .and_then(|bi| {
+                            bi.to_string()
+                                .parse::<u128>()
+                                .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))
+                        }) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error!(log, "token amount conversion failed"; "error" => %e);
+                            direct_swap_failed += 1;
+                            continue;
+                        }
+                    };
+
+                    if token_amount_u128 == 0 {
+                        warn!(log, "token amount truncated to zero, skipping direct swap";
+                            "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token);
+                        continue;
                     }
-                    Err(e) => {
-                        error!(log, "sell failed"; "token" => %token, "error" => %e);
-                        sell_failed += 1;
-                    }
-                }
-            }
 
-            // NOTE: sell_failed > 0 ガードにより sell_failed==0 && sell_success==0
-            // （売却対象ゼロ）のケースはここに到達しない。新規購入のみの
-            // リバランスは Phase 2 に正常に進む。
-            if sell_failed > 0 {
-                warn!(log, "some sell operations failed, portfolio may diverge from target";
-                    "sell_failed" => sell_failed, "sell_success" => sell_success);
-
-                if sell_failed >= sell_success {
-                    warn!(log, "majority of sell operations failed, aborting Phase 2 to prevent portfolio divergence";
-                        "sell_failed" => sell_failed, "sell_success" => sell_success);
-                    return Ok(());
-                }
-            }
-
-            // Phase 1完了後、利用可能なwrap.nearを確認し、Phase 2の購入額を調整
-            let available_wrap_near = {
-                let account = wallet.account_id();
-                let deposits =
-                    blockchain::ref_finance::deposit::get_deposits(client, account).await?;
-                deposits
-                    .get(wrap_near_token)
-                    .map(|u| u.0)
-                    .unwrap_or_default()
-            };
-
-            debug!(log, "Phase 1 completed, checking available wrap.near";
-                "available_wrap_near" => %available_wrap_near
-            );
-
-            // available_wrap_near (u128) を NearValue に変換
-            let available_wrap_near_value =
-                YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
-
-            // Phase 2の購入操作の総額を計算
-            let total_buy_value: NearValue = buy_operations
-                .iter()
-                .map(|(_, value)| value.clone())
-                .fold(NearValue::zero(), |acc, v| acc + v);
-
-            debug!(log, "Phase 2 purchase amount analysis";
-                "total_buy_value" => %total_buy_value,
-                "available_wrap_near_value" => %available_wrap_near_value
-            );
-
-            // 利用可能残高に基づいて購入額を調整
-            let adjusted_buy_operations: Vec<(TokenAccount, NearValue)> =
-                if total_buy_value > available_wrap_near_value {
-                    // 比率を計算して調整（型安全な除算演算子を使用）
-                    let ratio = &available_wrap_near_value / &total_buy_value;
-                    debug!(log, "Adjusting purchase amounts to fit available balance";
-                        "adjustment_factor" => %ratio
+                    trace!(log, "executing direct swap";
+                        "sell_token" => %ds.sell_token,
+                        "buy_token" => %ds.buy_token,
+                        "near_value" => %ds.near_value,
+                        "token_amount" => token_amount_u128
                     );
 
-                    buy_operations
-                        .into_iter()
-                        .map(|(token, value)| (token, &value * &ratio))
-                        .collect()
-                } else {
-                    buy_operations
-                };
-
-            // Phase 2: 全ての購入を実行（wrap.near → token）
-            debug!(log, "Phase 2: executing buy operations"; "count" => adjusted_buy_operations.len());
-
-            let mut phase2_success = 0;
-            let mut phase2_failed = 0;
-
-            for (token, wrap_near_value) in adjusted_buy_operations {
-                // NearValue → YoctoValue → YoctoAmount → u128 に変換
-                let wrap_near_amount_u128 = wrap_near_value.to_yocto().to_amount().to_u128();
-
-                // NOTE: wrap_near_amount_u128 == 0 は、調整後の値が 10^-24 NEAR 未満の場合に発生。
-                // これは available_wrap_near が total_buy_value の 10^-24 未満の場合であり、
-                // 実質的に残高がゼロに等しい状況。そのような状況ではリバランス自体が意味をなさないため、
-                // スキップして継続する現在の実装で問題ない。
-                if wrap_near_amount_u128 == 0 {
-                    error!(log, "Failed to convert purchase amount to u128"; "token" => %token);
-                    phase2_failed += 1;
-                    continue;
+                    let from_token: TokenInAccount = ds.sell_token.clone().into();
+                    let to_token: TokenOutAccount = ds.buy_token.clone().into();
+                    match swap::execute_direct_swap(
+                        client,
+                        wallet,
+                        &from_token,
+                        &to_token,
+                        Some(token_amount_u128),
+                        recorder,
+                        cfg,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!(log, "direct swap completed";
+                                "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token);
+                            direct_swap_success += 1;
+                        }
+                        Err(e) => {
+                            error!(log, "direct swap failed";
+                                "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token,
+                                "error" => %e);
+                            direct_swap_failed += 1;
+                        }
+                    }
                 }
 
-                trace!(log, "buying token";
-                    "token" => %token,
-                    "wrap_near_amount" => wrap_near_amount_u128
-                );
+                // 残余処理
+                match remainder {
+                    Remainder::None => {}
+                    Remainder::Sell(token, near_value, exchange_rate) => {
+                        let token_amount: TokenAmount = &near_value * &exchange_rate;
+                        let token_amount_u128 = token_amount
+                            .smallest_units()
+                            .to_bigint()
+                            .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))?
+                            .to_string()
+                            .parse::<u128>()
+                            .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
 
-                let to_token: TokenOutAccount = token.into();
-
-                match swap::execute_direct_swap(
-                    client,
-                    wallet,
-                    &wrap_near_in,
-                    &to_token,
-                    Some(wrap_near_amount_u128),
-                    recorder,
-                    cfg,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        trace!(log, "purchase completed successfully"; "token" => %to_token);
-                        phase2_success += 1;
+                        if token_amount_u128 > 0 {
+                            trace!(log, "executing remainder sell";
+                                "token" => %token, "near_value" => %near_value);
+                            let from_token: TokenInAccount = token.clone().into();
+                            match swap::execute_direct_swap(
+                                client,
+                                wallet,
+                                &from_token,
+                                &wrap_near_out,
+                                Some(token_amount_u128),
+                                recorder,
+                                cfg,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    info!(log, "remainder sell completed"; "token" => %token);
+                                    remainder_success += 1;
+                                }
+                                Err(e) => {
+                                    error!(log, "remainder sell failed"; "token" => %token, "error" => %e);
+                                    remainder_failed += 1;
+                                }
+                            }
+                        }
                     }
-                    Err(e) => {
-                        error!(log, "purchase failed"; "token" => %to_token, "error" => %e);
-                        phase2_failed += 1;
+                    Remainder::Buy(token, near_value) => {
+                        // wNEAR 残高を取得して比率調整を適用
+                        let available_wrap_near = {
+                            let account = wallet.account_id();
+                            let deposits =
+                                blockchain::ref_finance::deposit::get_deposits(client, account)
+                                    .await?;
+                            deposits
+                                .get(wrap_near_token)
+                                .map(|u| u.0)
+                                .unwrap_or_default()
+                        };
+                        let available_wrap_near_value =
+                            YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
+
+                        let adjusted_value =
+                            adjust_buy_to_available(&near_value, &available_wrap_near_value);
+                        let wrap_near_amount_u128 = adjusted_value.to_yocto().to_amount().to_u128();
+
+                        if wrap_near_amount_u128 > 0 {
+                            trace!(log, "executing remainder buy";
+                                "token" => %token,
+                                "original_value" => %near_value,
+                                "adjusted_value" => %adjusted_value);
+                            let to_token: TokenOutAccount = token.clone().into();
+                            match swap::execute_direct_swap(
+                                client,
+                                wallet,
+                                &wrap_near_in,
+                                &to_token,
+                                Some(wrap_near_amount_u128),
+                                recorder,
+                                cfg,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    info!(log, "remainder buy completed"; "token" => %token);
+                                    remainder_success += 1;
+                                }
+                                Err(e) => {
+                                    error!(log, "remainder buy failed"; "token" => %token, "error" => %e);
+                                    remainder_failed += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if has_sells {
+                // 売却のみ: 全て wNEAR へ
+                for sell in sell_operations {
+                    let token_amount: TokenAmount = &sell.near_value * &sell.exchange_rate;
+                    let token_amount_u128 = token_amount
+                        .smallest_units()
+                        .to_bigint()
+                        .ok_or_else(|| anyhow::anyhow!("Failed to convert to BigInt"))?
+                        .to_string()
+                        .parse::<u128>()
+                        .map_err(|e| anyhow::anyhow!("Failed to parse as u128: {}", e))?;
+
+                    if token_amount_u128 == 0 {
+                        warn!(log, "token amount truncated to zero, skipping sell";
+                            "token" => %sell.token);
+                        continue;
+                    }
+
+                    let from_token: TokenInAccount = sell.token.clone().into();
+                    match swap::execute_direct_swap(
+                        client,
+                        wallet,
+                        &from_token,
+                        &wrap_near_out,
+                        Some(token_amount_u128),
+                        recorder,
+                        cfg,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!(log, "sell completed"; "token" => %sell.token);
+                            remainder_success += 1;
+                        }
+                        Err(e) => {
+                            error!(log, "sell failed"; "token" => %sell.token, "error" => %e);
+                            remainder_failed += 1;
+                        }
+                    }
+                }
+            } else if has_buys {
+                // 購入のみ: wNEAR から購入（残高チェック + 比率調整）
+                let available_wrap_near = {
+                    let account = wallet.account_id();
+                    let deposits =
+                        blockchain::ref_finance::deposit::get_deposits(client, account).await?;
+                    deposits
+                        .get(wrap_near_token)
+                        .map(|u| u.0)
+                        .unwrap_or_default()
+                };
+                let available_wrap_near_value =
+                    YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
+
+                let total_buy_value: NearValue = buy_operations
+                    .iter()
+                    .map(|op| op.near_value.clone())
+                    .fold(NearValue::zero(), |acc, v| acc + v);
+
+                let ratio = if total_buy_value > available_wrap_near_value {
+                    Some(&available_wrap_near_value / &total_buy_value)
+                } else {
+                    None
+                };
+
+                for buy in buy_operations {
+                    let adjusted_value = match &ratio {
+                        Some(r) => &buy.near_value * r,
+                        None => buy.near_value.clone(),
+                    };
+                    let wrap_near_amount_u128 = adjusted_value.to_yocto().to_amount().to_u128();
+
+                    if wrap_near_amount_u128 == 0 {
+                        error!(log, "Failed to convert purchase amount to u128"; "token" => %buy.token);
+                        remainder_failed += 1;
+                        continue;
+                    }
+
+                    let to_token: TokenOutAccount = buy.token.clone().into();
+                    match swap::execute_direct_swap(
+                        client,
+                        wallet,
+                        &wrap_near_in,
+                        &to_token,
+                        Some(wrap_near_amount_u128),
+                        recorder,
+                        cfg,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!(log, "buy completed"; "token" => %buy.token);
+                            remainder_success += 1;
+                        }
+                        Err(e) => {
+                            error!(log, "buy failed"; "token" => %buy.token, "error" => %e);
+                            remainder_failed += 1;
+                        }
                     }
                 }
             }
 
+            let total_success = direct_swap_success + remainder_success;
+            let total_failed = direct_swap_failed + remainder_failed;
+
             info!(log, "rebalance completed";
-                "sell_success" => sell_success,
-                "sell_failed" => sell_failed,
-                "buy_success" => phase2_success,
-                "buy_failed" => phase2_failed
+                "direct_swap_success" => direct_swap_success,
+                "direct_swap_failed" => direct_swap_failed,
+                "remainder_success" => remainder_success,
+                "remainder_failed" => remainder_failed
             );
 
-            // Phase 2で全ての購入が失敗した場合のみエラーを返す
-            // NOTE: 部分失敗（phase2_success > 0 && phase2_failed > 0）の場合も Ok を返す設計。
-            // 理由:
-            // 1. 次回のクーロン実行で、現在のポートフォリオ残高から再計算してリバランスが試行される
-            // 2. failed_count はログに出力されるが、ExecutionSummary としてアクションには使われていない
-            // 3. 部分的にリバランスされた状態でも、次回実行で自然に修正される
-            // 将来的にアラートやメトリクス収集が必要になった場合は、この条件の見直しを検討する。
-            if phase2_success == 0 && phase2_failed > 0 {
+            // 全操作失敗時のみエラーを返す。部分失敗は次回リバランスサイクルで自然修正。
+            if total_success == 0 && total_failed > 0 {
                 return Err(anyhow::anyhow!(
-                    "All Phase 2 purchases failed ({} failed)",
-                    phase2_failed
+                    "All rebalance operations failed ({} failed)",
+                    total_failed
                 ));
             }
 
