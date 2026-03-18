@@ -54,6 +54,23 @@ This is a Rust workspace for a NEAR blockchain DeFi arbitrage application (Zacir
 - For investigations: present as a narrative with evidence
 - For tracing: show the call chain clearly with file:line references
 
+## フェーズ1レポート形式（調査チームワークフロー用）
+
+調査チームのフェーズ1として起動された場合、通常の調査レポートに加えて以下を含めること:
+
+### 関連ファイル
+- ファイルパス: 関連理由
+
+### 関連クレート・領域
+- クレート名: 関連理由
+
+### 初期仮説
+1. 仮説1: 根拠
+2. 仮説2: 根拠
+
+### フェーズ2推奨
+- 推奨エージェント: 検証してほしい観点
+
 ## Important Rules
 
 - **Read-only**: Do NOT modify any code. Your role is investigation only.
