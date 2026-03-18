@@ -213,7 +213,7 @@ where
     let params = PortfolioStrategyParams {
         prediction_service: &prediction_service,
         tokens: &selected_tokens,
-        available_funds: available_funds.to_u128(),
+        available_funds: available_funds.clone(),
         is_new_period,
         period_id: &period_id,
         end_date: current_time,
@@ -377,7 +377,7 @@ pub async fn select_top_volatility_tokens(
 pub struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
     pub prediction_service: &'a PredictionService,
     pub tokens: &'a [AccountId],
-    pub available_funds: u128,
+    pub available_funds: YoctoAmount,
     pub is_new_period: bool,
     pub period_id: &'a str,
     pub end_date: chrono::DateTime<chrono::Utc>,
@@ -404,7 +404,7 @@ where
 {
     let prediction_service = params.prediction_service;
     let tokens = params.tokens;
-    let available_funds = params.available_funds;
+    let available_funds = &params.available_funds;
     let is_new_period = params.is_new_period;
     let period_id = params.period_id;
     let end_date = params.end_date;
@@ -696,7 +696,7 @@ where
     let wallet_info = if is_new_period {
         // 新規期間: ポジションなし、available_funds を総価値として使用
         debug!(log, "new evaluation period, starting with empty holdings");
-        let total_value_near = YoctoValue::from_yocto(BigDecimal::from(available_funds)).to_near();
+        let total_value_near = available_funds.to_value().to_near();
         WalletInfo {
             holdings: BTreeMap::new(),
             total_value: total_value_near.clone(),
