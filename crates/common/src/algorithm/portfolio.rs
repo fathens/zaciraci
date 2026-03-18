@@ -1297,6 +1297,10 @@ fn exhaustive_optimize(
         };
         // アクティブトークンの alpha 単純平均を使用
         // 加重平均はウエイト→alpha→ウエイトの循環依存になるため不可
+        debug_assert!(
+            !active_idx.is_empty(),
+            "active_idx must be non-empty when active_w is non-empty"
+        );
         let effective_alpha: f64 =
             active_idx.iter().map(|&idx| alphas[idx]).sum::<f64>() / active_idx.len() as f64;
         let score = effective_alpha * sharpe - (1.0 - effective_alpha) * rp_div_normalized;

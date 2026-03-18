@@ -651,16 +651,15 @@ where
     let min_confidence = cfg.trade_min_token_confidence();
     let original_count = token_data.len();
     token_data.retain(|t| {
-        let confidence = prediction_confidences.get(&t.symbol).copied();
-        match confidence {
-            Some(c) if c < min_confidence => {
+        prediction_confidences.get(&t.symbol).is_none_or(|&c| {
+            if c < min_confidence {
                 info!(log, "excluding token due to low confidence";
-                    "token" => %t.symbol, "confidence" => format!("{:.3}", c));
+                        "token" => %t.symbol, "confidence" => format!("{:.3}", c));
                 false
+            } else {
+                true
             }
-            None => true, // データなし（コールドスタート）は除外しない
-            _ => true,
-        }
+        })
     });
     let remaining_symbols: HashSet<&TokenOutAccount> =
         token_data.iter().map(|t| &t.symbol).collect();
