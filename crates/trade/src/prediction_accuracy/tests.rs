@@ -167,7 +167,9 @@ fn test_mape_to_confidence_equal_thresholds() {
 // --- calculate_direction_accuracy_for_records ---
 
 fn make_time(offset_hours: i64) -> NaiveDateTime {
-    let base = Utc::now().naive_utc();
+    let base = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+        .unwrap()
+        .naive_utc();
     base + chrono::Duration::hours(offset_hours)
 }
 
