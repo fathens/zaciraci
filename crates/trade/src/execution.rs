@@ -768,8 +768,10 @@ where
                     .filter_map(|s| s.parse::<TokenAccount>().ok())
                     .collect();
 
-                // トランザクションがゼロなら新規期間として扱う
-                let is_new_period = transaction_count == 0;
+                // selected_tokens が空かつトランザクションがゼロなら新規期間として扱う
+                // selected_tokens.is_empty() だけだとパース全失敗（データ破損）時に誤判定するため、
+                // transaction_count == 0 も併用して安全性を確保
+                let is_new_period = selected_tokens.is_empty() && transaction_count == 0;
 
                 if is_new_period {
                     debug!(
