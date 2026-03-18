@@ -374,14 +374,14 @@ pub async fn select_top_volatility_tokens(
 }
 
 /// ポートフォリオ戦略実行のパラメータ
-pub struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
-    pub prediction_service: &'a PredictionService,
-    pub tokens: &'a [AccountId],
-    pub available_funds: YoctoAmount,
-    pub is_new_period: bool,
-    pub period_id: &'a str,
-    pub end_date: chrono::DateTime<chrono::Utc>,
-    pub cfg: &'a Cfg,
+pub(crate) struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
+    pub(crate) prediction_service: &'a PredictionService,
+    pub(crate) tokens: &'a [AccountId],
+    pub(crate) available_funds: YoctoAmount,
+    pub(crate) is_new_period: bool,
+    pub(crate) period_id: &'a str,
+    pub(crate) end_date: chrono::DateTime<chrono::Utc>,
+    pub(crate) cfg: &'a Cfg,
 }
 
 /// ポートフォリオ戦略の実行
@@ -389,7 +389,7 @@ pub struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
 /// # 内部の単位
 /// * 価格: Price型（無次元比率）をスケーリング（× 10^24）してu128に格納
 /// * 予測: 同じスケーリング済みf64値
-pub async fn execute_portfolio_strategy<C, W, Cfg>(
+pub(crate) async fn execute_portfolio_strategy<C, W, Cfg>(
     params: &PortfolioStrategyParams<'_, Cfg>,
     client: &C,
     wallet: &W,
