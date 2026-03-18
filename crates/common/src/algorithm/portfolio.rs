@@ -975,7 +975,9 @@ fn blend_and_expand(
         .zip(w_rp.iter())
         .enumerate()
         .map(|(i, (&ws, &wr))| {
-            let a = alphas[subset_indices[i]];
+            let a = *alphas
+                .get(subset_indices[i])
+                .expect("subset_indices[i] must be within alphas bounds");
             a * ws + (1.0 - a) * wr
         })
         .collect();
@@ -1306,8 +1308,15 @@ fn exhaustive_optimize(
         // アクティブトークンの alpha 単純平均を使用
         // 加重平均はウエイト→alpha→ウエイトの循環依存になるため不可
         // active_idx は active_w（非空チェック済み）のゼロ超要素から構築されるため必ず非空
-        let effective_alpha: f64 =
-            active_idx.iter().map(|&idx| alphas[idx]).sum::<f64>() / active_idx.len() as f64;
+        let effective_alpha: f64 = active_idx
+            .iter()
+            .map(|&idx| {
+                *alphas
+                    .get(idx)
+                    .expect("active_idx must be within alphas bounds")
+            })
+            .sum::<f64>()
+            / active_idx.len() as f64;
         let score = effective_alpha * sharpe - (1.0 - effective_alpha) * rp_div_normalized;
 
         if score > best_score {

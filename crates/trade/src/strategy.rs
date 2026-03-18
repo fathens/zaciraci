@@ -653,12 +653,12 @@ where
     let original_count = token_data.len();
     let excluded: Vec<(TokenOutAccount, f64)> = token_data
         .iter()
-        .filter(|t| {
+        .filter_map(|t| {
             prediction_confidences
                 .get(&t.symbol)
-                .is_some_and(|&c| c < min_confidence)
+                .filter(|&&c| c < min_confidence)
+                .map(|&c| (t.symbol.clone(), c))
         })
-        .map(|t| (t.symbol.clone(), prediction_confidences[&t.symbol]))
         .collect();
     token_data.retain(|t| {
         prediction_confidences
