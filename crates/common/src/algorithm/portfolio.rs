@@ -1310,7 +1310,7 @@ fn exhaustive_optimize(
             "active_idx must be non-empty when active_w is non-empty"
         );
         let effective_alpha: f64 =
-            active_idx.iter().map(|&idx| alphas[idx]).sum::<f64>() / active_idx.len() as f64;
+            active_idx.iter().map(|&idx| alphas[idx]).sum::<f64>() / active_idx.len().max(1) as f64;
         let score = effective_alpha * sharpe - (1.0 - effective_alpha) * rp_div_normalized;
 
         if score > best_score {
