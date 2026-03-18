@@ -651,31 +651,37 @@ where
     // 低 confidence トークンを除外（予測は既に実行済み → MAPE は更新される）
     let min_confidence = cfg.trade_min_token_confidence();
     let original_count = token_data.len();
-    token_data.retain(|t| {
-        prediction_confidences.get(&t.symbol).is_none_or(|&c| {
-            if c < min_confidence {
-                info!(log, "excluding token due to low confidence";
-                        "token" => %t.symbol, "confidence" => format!("{:.3}", c));
-                false
-            } else {
-                true
-            }
+    let excluded: Vec<(TokenOutAccount, f64)> = token_data
+        .iter()
+        .filter(|t| {
+            prediction_confidences
+                .get(&t.symbol)
+                .is_some_and(|&c| c < min_confidence)
         })
+        .map(|t| (t.symbol.clone(), prediction_confidences[&t.symbol]))
+        .collect();
+    token_data.retain(|t| {
+        prediction_confidences
+            .get(&t.symbol)
+            .is_none_or(|&c| c >= min_confidence)
     });
     let remaining_symbols: HashSet<&TokenOutAccount> =
         token_data.iter().map(|t| &t.symbol).collect();
     predictions.retain(|k, _| remaining_symbols.contains(k));
     historical_prices.retain(|k, _| remaining_symbols.contains(k));
 
-    if token_data.len() < original_count {
-        let excluded: Vec<String> = prediction_confidences
+    for (token, c) in &excluded {
+        info!(log, "excluding token due to low confidence";
+            "token" => %token, "confidence" => format!("{:.3}", c));
+    }
+    if !excluded.is_empty() {
+        let excluded_str: Vec<String> = excluded
             .iter()
-            .filter(|(k, _)| !remaining_symbols.contains(k))
             .map(|(k, c)| format!("{}({:.3})", k, c))
             .collect();
         info!(log, "tokens filtered by prediction confidence";
             "original" => original_count, "remaining" => token_data.len(),
-            "excluded" => excluded.join(", "));
+            "excluded" => excluded_str.join(", "));
     }
 
     // 全トークン除外のエッジケース: 安全に Hold を返す

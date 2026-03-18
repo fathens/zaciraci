@@ -262,7 +262,8 @@ fn test_mape_to_confidence_infinity_input() {
 #[test]
 fn test_mape_to_confidence_negative_infinity_input() {
     let c = mape_to_confidence(f64::NEG_INFINITY, 3.0, 15.0);
-    assert_eq!(c, 1.0, "NEG_INFINITY MAPE should produce 1.0 confidence");
+    // MAPE is non-negative by definition; NEG_INFINITY is anomalous → worst confidence
+    assert_eq!(c, 0.0, "NEG_INFINITY MAPE should produce 0.0 confidence");
 }
 
 #[cfg(debug_assertions)]

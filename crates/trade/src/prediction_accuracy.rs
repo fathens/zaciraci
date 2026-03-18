@@ -52,8 +52,14 @@ fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
         poor >= excellent,
         "poor ({poor}) must be >= excellent ({excellent})"
     );
+    debug_assert!(
+        mape >= 0.0 || !mape.is_finite(),
+        "mape ({mape}) must be non-negative"
+    );
     if !mape.is_finite() {
-        return if mape.is_sign_negative() { 1.0 } else { 0.0 };
+        // NaN → 0.0 (worst), ±Infinity → 0.0 (worst)
+        // MAPE is non-negative by definition; any non-finite value indicates a bug
+        return 0.0;
     }
     let range = poor - excellent;
     if range.abs() < 1e-9 {
@@ -288,9 +294,13 @@ pub(crate) async fn calculate_per_token_confidence(
 
     // 1回の DB クエリで全トークンのレコードを取得
     let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
-    let limit = window
-        .saturating_mul(token_count)
-        .min(MAX_PREDICTION_QUERY_LIMIT);
+    let raw_limit = window.saturating_mul(token_count);
+    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
+    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
+        warn!(log, "prediction query limit capped";
+            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
+            "tokens" => tokens.len(), "window" => window);
+    }
     let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
         .await
         .map_err(|e| {
@@ -299,11 +309,10 @@ pub(crate) async fn calculate_per_token_confidence(
         })?;
 
     // Rust 側でトークンごとにグルーピング
-    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> =
-        all_records.into_iter().fold(BTreeMap::new(), |mut map, r| {
-            map.entry(r.token.clone()).or_default().push(r);
-            map
-        });
+    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
+    for r in all_records {
+        by_token.entry(r.token.clone()).or_default().push(r);
+    }
 
     // 各トークン内を target_time DESC でソート（方向判定に必要）
     for entries in by_token.values_mut() {
@@ -317,13 +326,11 @@ pub(crate) async fn calculate_per_token_confidence(
         let token_str = token.to_string();
         let records = by_token.get(&token_str);
         let mape_values: Vec<f64> = records
-            .map(|rs| {
-                rs.iter()
-                    .filter_map(|r| r.mape)
-                    .filter(|m| m.is_finite())
-                    .collect()
-            })
-            .unwrap_or_default();
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.mape)
+            .filter(|m| m.is_finite())
+            .collect();
 
         if mape_values.len() < min_samples {
             continue;
