@@ -210,19 +210,16 @@ where
         "token_count" => selected_tokens.len()
     );
 
-    let report = match execute_portfolio_strategy(
-        &prediction_service,
-        &selected_tokens,
-        available_funds.to_u128(),
+    let params = PortfolioStrategyParams {
+        prediction_service: &prediction_service,
+        tokens: &selected_tokens,
+        available_funds: available_funds.to_u128(),
         is_new_period,
-        &period_id,
-        client,
-        wallet,
-        current_time,
+        period_id: &period_id,
+        end_date: current_time,
         cfg,
-    )
-    .await
-    {
+    };
+    let report = match execute_portfolio_strategy(&params, client, wallet).await {
         Ok(actions) => actions,
         Err(e) => {
             error!(log, "failed to execute portfolio strategy"; "error" => ?e);
@@ -376,30 +373,26 @@ pub async fn select_top_volatility_tokens(
     }
 }
 
+/// ポートフォリオ戦略実行のパラメータ
+pub struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
+    pub prediction_service: &'a PredictionService,
+    pub tokens: &'a [AccountId],
+    pub available_funds: u128,
+    pub is_new_period: bool,
+    pub period_id: &'a str,
+    pub end_date: chrono::DateTime<chrono::Utc>,
+    pub cfg: &'a Cfg,
+}
+
 /// ポートフォリオ戦略の実行
-///
-/// # 引数
-/// * `prediction_service` - 価格予測サービス
-/// * `tokens` - 対象トークンのアカウントID
-/// * `available_funds` - 利用可能資金（yoctoNEAR単位）
-/// * `is_new_period` - 新しい評価期間かどうか
-/// * `client` - RPCクライアント
-/// * `wallet` - ウォレット
 ///
 /// # 内部の単位
 /// * 価格: Price型（無次元比率）をスケーリング（× 10^24）してu128に格納
 /// * 予測: 同じスケーリング済みf64値
-#[allow(clippy::too_many_arguments)]
-pub async fn execute_portfolio_strategy<C, W>(
-    prediction_service: &PredictionService,
-    tokens: &[AccountId],
-    available_funds: u128,
-    is_new_period: bool,
-    period_id: &str,
+pub async fn execute_portfolio_strategy<C, W, Cfg>(
+    params: &PortfolioStrategyParams<'_, Cfg>,
     client: &C,
     wallet: &W,
-    end_date: chrono::DateTime<chrono::Utc>,
-    cfg: &impl ConfigAccess,
 ) -> Result<Vec<TradingAction>>
 where
     C: blockchain::jsonrpc::ViewContract
@@ -407,7 +400,15 @@ where
         + blockchain::jsonrpc::SendTx
         + blockchain::jsonrpc::GasInfo,
     W: blockchain::wallet::Wallet,
+    Cfg: ConfigAccess,
 {
+    let prediction_service = params.prediction_service;
+    let tokens = params.tokens;
+    let available_funds = params.available_funds;
+    let is_new_period = params.is_new_period;
+    let period_id = params.period_id;
+    let end_date = params.end_date;
+    let cfg = params.cfg;
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
     // ポートフォリオデータの準備
