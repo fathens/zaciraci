@@ -1,11 +1,8 @@
+use super::helpers::ta;
 use super::*;
 use bigdecimal::BigDecimal;
-use common::types::{ExchangeRate, NearValue, TokenAccount};
+use common::types::{ExchangeRate, NearValue};
 use std::str::FromStr;
-
-fn ta(s: &str) -> TokenAccount {
-    s.parse().unwrap()
-}
 
 fn sell_op(token: &str, near: i64, rate_raw: &str, decimals: u8) -> SellOperation {
     SellOperation {
@@ -25,108 +22,108 @@ fn buy_op(token: &str, near: i64) -> BuyOperation {
     }
 }
 
+const RATE_24: &str = "500000000000000000000000";
+
 #[test]
 fn test_exact_match_single_pair() {
-    // 売却80 NEAR, 購入80 NEAR → 1 DirectSwap, Remainder::None
-    let sells = vec![sell_op("token_a.near", 80, "500000000000000000000000", 24)];
+    let sells = vec![sell_op("token_a.near", 80, RATE_24, 24)];
     let buys = vec![buy_op("token_b.near", 80)];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert_eq!(swaps.len(), 1);
-    assert_eq!(swaps[0].sell_token, ta("token_a.near"));
-    assert_eq!(swaps[0].buy_token, ta("token_b.near"));
+    assert_eq!(result.direct_swaps.len(), 1);
+    assert_eq!(result.direct_swaps[0].sell_token, ta("token_a.near"));
+    assert_eq!(result.direct_swaps[0].buy_token, ta("token_b.near"));
     assert_eq!(
-        swaps[0].near_value,
+        result.direct_swaps[0].near_value,
         NearValue::from_near(BigDecimal::from(80))
     );
-    assert_eq!(remainder, Remainder::None);
+    assert!(result.remaining_sells.is_empty());
+    assert!(result.remaining_buys.is_empty());
 }
 
 #[test]
 fn test_sell_greater_than_buy() {
-    // 売却100, 購入60 → 1 DirectSwap(60), Remainder::Sell(40)
-    let sells = vec![sell_op("token_a.near", 100, "500000000000000000000000", 24)];
+    let sells = vec![sell_op("token_a.near", 100, RATE_24, 24)];
     let buys = vec![buy_op("token_b.near", 60)];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert_eq!(swaps.len(), 1);
+    assert_eq!(result.direct_swaps.len(), 1);
     assert_eq!(
-        swaps[0].near_value,
+        result.direct_swaps[0].near_value,
         NearValue::from_near(BigDecimal::from(60))
     );
-    match &remainder {
-        Remainder::Sell(token, value, _) => {
-            assert_eq!(token, &ta("token_a.near"));
-            assert_eq!(value, &NearValue::from_near(BigDecimal::from(40)));
-        }
-        _ => panic!("Expected Remainder::Sell, got {:?}", remainder),
-    }
+    assert_eq!(result.remaining_sells.len(), 1);
+    assert_eq!(result.remaining_sells[0].token, ta("token_a.near"));
+    assert_eq!(
+        result.remaining_sells[0].near_value,
+        NearValue::from_near(BigDecimal::from(40))
+    );
+    assert!(result.remaining_buys.is_empty());
 }
 
 #[test]
 fn test_buy_greater_than_sell() {
-    // 売却50, 購入80 → 1 DirectSwap(50), Remainder::Buy(30)
-    let sells = vec![sell_op("token_a.near", 50, "500000000000000000000000", 24)];
+    let sells = vec![sell_op("token_a.near", 50, RATE_24, 24)];
     let buys = vec![buy_op("token_b.near", 80)];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert_eq!(swaps.len(), 1);
+    assert_eq!(result.direct_swaps.len(), 1);
     assert_eq!(
-        swaps[0].near_value,
+        result.direct_swaps[0].near_value,
         NearValue::from_near(BigDecimal::from(50))
     );
-    match &remainder {
-        Remainder::Buy(token, value) => {
-            assert_eq!(token, &ta("token_b.near"));
-            assert_eq!(value, &NearValue::from_near(BigDecimal::from(30)));
-        }
-        _ => panic!("Expected Remainder::Buy, got {:?}", remainder),
-    }
+    assert!(result.remaining_sells.is_empty());
+    assert_eq!(result.remaining_buys.len(), 1);
+    assert_eq!(result.remaining_buys[0].token, ta("token_b.near"));
+    assert_eq!(
+        result.remaining_buys[0].near_value,
+        NearValue::from_near(BigDecimal::from(30))
+    );
 }
 
 #[test]
 fn test_multiple_sells_multiple_buys_exact() {
-    // 計画の例: 売却 A(80), C(20) / 購入 B(60), D(40)
-    // → A→B(60), A→D(20), C→D(20), Remainder::None
+    // 売却 A(80), C(20) / 購入 B(60), D(40)
     let sells = vec![
-        sell_op("token_a.near", 80, "500000000000000000000000", 24),
+        sell_op("token_a.near", 80, RATE_24, 24),
         sell_op("token_c.near", 20, "1000000000000000000000000", 24),
     ];
     let buys = vec![buy_op("token_b.near", 60), buy_op("token_d.near", 40)];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert_eq!(swaps.len(), 3);
+    assert_eq!(result.direct_swaps.len(), 3);
 
-    // 降順ソートされるので: A(80) first, then C(20); B(60) first, then D(40)
-    // Match 1: A→B min(80,60)=60, A_rem=20, B消化
-    assert_eq!(swaps[0].sell_token, ta("token_a.near"));
-    assert_eq!(swaps[0].buy_token, ta("token_b.near"));
+    // 降順: A(80), C(20); B(60), D(40)
+    // Match 1: A→B min(80,60)=60, A_rem=20
+    assert_eq!(result.direct_swaps[0].sell_token, ta("token_a.near"));
+    assert_eq!(result.direct_swaps[0].buy_token, ta("token_b.near"));
     assert_eq!(
-        swaps[0].near_value,
+        result.direct_swaps[0].near_value,
         NearValue::from_near(BigDecimal::from(60))
     );
 
-    // Match 2: A→D min(20,40)=20, A消化, D_rem=20
-    assert_eq!(swaps[1].sell_token, ta("token_a.near"));
-    assert_eq!(swaps[1].buy_token, ta("token_d.near"));
+    // Match 2: A→D min(20,40)=20, D_rem=20
+    assert_eq!(result.direct_swaps[1].sell_token, ta("token_a.near"));
+    assert_eq!(result.direct_swaps[1].buy_token, ta("token_d.near"));
     assert_eq!(
-        swaps[1].near_value,
+        result.direct_swaps[1].near_value,
         NearValue::from_near(BigDecimal::from(20))
     );
 
     // Match 3: C→D min(20,20)=20
-    assert_eq!(swaps[2].sell_token, ta("token_c.near"));
-    assert_eq!(swaps[2].buy_token, ta("token_d.near"));
+    assert_eq!(result.direct_swaps[2].sell_token, ta("token_c.near"));
+    assert_eq!(result.direct_swaps[2].buy_token, ta("token_d.near"));
     assert_eq!(
-        swaps[2].near_value,
+        result.direct_swaps[2].near_value,
         NearValue::from_near(BigDecimal::from(20))
     );
 
-    assert_eq!(remainder, Remainder::None);
+    assert!(result.remaining_sells.is_empty());
+    assert!(result.remaining_buys.is_empty());
 }
 
 #[test]
@@ -134,164 +131,266 @@ fn test_empty_sells() {
     let sells = vec![];
     let buys = vec![buy_op("token_b.near", 60)];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert!(swaps.is_empty());
-    assert_eq!(remainder, Remainder::None);
+    assert!(result.direct_swaps.is_empty());
+    assert!(result.remaining_sells.is_empty());
+    assert_eq!(result.remaining_buys.len(), 1);
+    assert_eq!(result.remaining_buys[0].token, ta("token_b.near"));
 }
 
 #[test]
 fn test_empty_buys() {
-    let sells = vec![sell_op("token_a.near", 80, "500000000000000000000000", 24)];
+    let sells = vec![sell_op("token_a.near", 80, RATE_24, 24)];
     let buys = vec![];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert!(swaps.is_empty());
-    assert_eq!(remainder, Remainder::None);
+    assert!(result.direct_swaps.is_empty());
+    assert_eq!(result.remaining_sells.len(), 1);
+    assert_eq!(result.remaining_sells[0].token, ta("token_a.near"));
+    assert!(result.remaining_buys.is_empty());
 }
 
 #[test]
 fn test_both_empty() {
-    let (swaps, remainder) = match_rebalance_operations(vec![], vec![]);
+    let result = match_rebalance_operations(vec![], vec![]);
 
-    assert!(swaps.is_empty());
-    assert_eq!(remainder, Remainder::None);
+    assert!(result.direct_swaps.is_empty());
+    assert!(result.remaining_sells.is_empty());
+    assert!(result.remaining_buys.is_empty());
 }
 
 #[test]
 fn test_single_sell_multiple_buys() {
     // 売却 A(100) / 購入 B(30), C(30), D(40)
-    let sells = vec![sell_op("token_a.near", 100, "500000000000000000000000", 24)];
+    let sells = vec![sell_op("token_a.near", 100, RATE_24, 24)];
     let buys = vec![
         buy_op("token_b.near", 30),
         buy_op("token_c.near", 30),
         buy_op("token_d.near", 40),
     ];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert_eq!(swaps.len(), 3);
+    assert_eq!(result.direct_swaps.len(), 3);
 
     // 購入は降順: D(40), B(30), C(30)
-    // Match 1: A→D min(100,40)=40, A_rem=60
-    assert_eq!(swaps[0].buy_token, ta("token_d.near"));
+    assert_eq!(result.direct_swaps[0].buy_token, ta("token_d.near"));
     assert_eq!(
-        swaps[0].near_value,
+        result.direct_swaps[0].near_value,
         NearValue::from_near(BigDecimal::from(40))
     );
-
-    // Match 2: A→B min(60,30)=30, A_rem=30
-    assert_eq!(swaps[1].buy_token, ta("token_b.near"));
+    assert_eq!(result.direct_swaps[1].buy_token, ta("token_b.near"));
     assert_eq!(
-        swaps[1].near_value,
+        result.direct_swaps[1].near_value,
+        NearValue::from_near(BigDecimal::from(30))
+    );
+    assert_eq!(result.direct_swaps[2].buy_token, ta("token_c.near"));
+    assert_eq!(
+        result.direct_swaps[2].near_value,
         NearValue::from_near(BigDecimal::from(30))
     );
 
-    // Match 3: A→C min(30,30)=30
-    assert_eq!(swaps[2].buy_token, ta("token_c.near"));
-    assert_eq!(
-        swaps[2].near_value,
-        NearValue::from_near(BigDecimal::from(30))
-    );
-
-    assert_eq!(remainder, Remainder::None);
+    assert!(result.remaining_sells.is_empty());
+    assert!(result.remaining_buys.is_empty());
 }
 
 #[test]
 fn test_large_value_difference() {
     // 売却 A(1000) / 購入 B(1)
-    let sells = vec![sell_op(
-        "token_a.near",
-        1000,
-        "500000000000000000000000",
-        24,
-    )];
+    let sells = vec![sell_op("token_a.near", 1000, RATE_24, 24)];
     let buys = vec![buy_op("token_b.near", 1)];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert_eq!(swaps.len(), 1);
+    assert_eq!(result.direct_swaps.len(), 1);
     assert_eq!(
-        swaps[0].near_value,
+        result.direct_swaps[0].near_value,
         NearValue::from_near(BigDecimal::from(1))
     );
-    match &remainder {
-        Remainder::Sell(token, value, _) => {
-            assert_eq!(token, &ta("token_a.near"));
-            assert_eq!(value, &NearValue::from_near(BigDecimal::from(999)));
-        }
-        _ => panic!("Expected Remainder::Sell"),
-    }
+    assert_eq!(result.remaining_sells.len(), 1);
+    assert_eq!(result.remaining_sells[0].token, ta("token_a.near"));
+    assert_eq!(
+        result.remaining_sells[0].near_value,
+        NearValue::from_near(BigDecimal::from(999))
+    );
+    assert!(result.remaining_buys.is_empty());
 }
 
 #[test]
 fn test_direct_swaps_preserve_exchange_rate() {
-    let rate_str = "500000000000000000000000";
-    let sells = vec![sell_op("token_a.near", 80, rate_str, 24)];
+    let sells = vec![sell_op("token_a.near", 80, RATE_24, 24)];
     let buys = vec![buy_op("token_b.near", 80)];
 
-    let (swaps, _) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
     assert_eq!(
-        swaps[0].sell_exchange_rate,
-        ExchangeRate::from_raw_rate(BigDecimal::from_str(rate_str).unwrap(), 24)
+        result.direct_swaps[0].sell_exchange_rate,
+        ExchangeRate::from_raw_rate(BigDecimal::from_str(RATE_24).unwrap(), 24)
     );
-}
-
-#[test]
-fn test_adjust_buy_to_available_sufficient() {
-    let buy = NearValue::from_near(BigDecimal::from(50));
-    let available = NearValue::from_near(BigDecimal::from(100));
-    let result = adjust_buy_to_available(&buy, &available);
-    assert_eq!(result, buy);
-}
-
-#[test]
-fn test_adjust_buy_to_available_insufficient() {
-    let buy = NearValue::from_near(BigDecimal::from(100));
-    let available = NearValue::from_near(BigDecimal::from(50));
-    let result = adjust_buy_to_available(&buy, &available);
-    assert_eq!(result, available);
-}
-
-#[test]
-fn test_adjust_buy_to_available_exact() {
-    let buy = NearValue::from_near(BigDecimal::from(50));
-    let available = NearValue::from_near(BigDecimal::from(50));
-    let result = adjust_buy_to_available(&buy, &available);
-    assert_eq!(result, buy);
 }
 
 #[test]
 fn test_multiple_sells_single_buy() {
     // 売却 A(30), B(50) / 購入 C(80)
     let sells = vec![
-        sell_op("token_a.near", 30, "500000000000000000000000", 24),
+        sell_op("token_a.near", 30, RATE_24, 24),
         sell_op("token_b.near", 50, "1000000000000000000000000", 24),
     ];
     let buys = vec![buy_op("token_c.near", 80)];
 
-    let (swaps, remainder) = match_rebalance_operations(sells, buys);
+    let result = match_rebalance_operations(sells, buys);
 
-    assert_eq!(swaps.len(), 2);
+    assert_eq!(result.direct_swaps.len(), 2);
 
     // 降順: B(50), A(30); C(80)
-    // Match 1: B→C min(50,80)=50, C_rem=30
-    assert_eq!(swaps[0].sell_token, ta("token_b.near"));
-    assert_eq!(swaps[0].buy_token, ta("token_c.near"));
+    assert_eq!(result.direct_swaps[0].sell_token, ta("token_b.near"));
+    assert_eq!(result.direct_swaps[0].buy_token, ta("token_c.near"));
     assert_eq!(
-        swaps[0].near_value,
+        result.direct_swaps[0].near_value,
         NearValue::from_near(BigDecimal::from(50))
     );
 
-    // Match 2: A→C min(30,30)=30
-    assert_eq!(swaps[1].sell_token, ta("token_a.near"));
-    assert_eq!(swaps[1].buy_token, ta("token_c.near"));
+    assert_eq!(result.direct_swaps[1].sell_token, ta("token_a.near"));
+    assert_eq!(result.direct_swaps[1].buy_token, ta("token_c.near"));
     assert_eq!(
-        swaps[1].near_value,
+        result.direct_swaps[1].near_value,
         NearValue::from_near(BigDecimal::from(30))
     );
 
-    assert_eq!(remainder, Remainder::None);
+    assert!(result.remaining_sells.is_empty());
+    assert!(result.remaining_buys.is_empty());
+}
+
+// --- CRITICAL バグ再現テスト ---
+
+#[test]
+fn test_multiple_sells_vs_single_buy_remainder() {
+    // 3売却 vs 1購入: 残余売却が全て保持されることを検証
+    // sells=[A(50), B(50), C(50)], buys=[D(30)]
+    // 降順: A(50), B(50), C(50); D(30)
+    // Match: A→D min(50,30)=30, A_rem=20
+    // → remaining_sells: A(20), B(50), C(50)
+    let sells = vec![
+        sell_op("token_a.near", 50, RATE_24, 24),
+        sell_op("token_b.near", 50, RATE_24, 24),
+        sell_op("token_c.near", 50, RATE_24, 24),
+    ];
+    let buys = vec![buy_op("token_d.near", 30)];
+
+    let result = match_rebalance_operations(sells, buys);
+
+    assert_eq!(result.direct_swaps.len(), 1);
+    assert_eq!(result.direct_swaps[0].sell_token, ta("token_a.near"));
+    assert_eq!(result.direct_swaps[0].buy_token, ta("token_d.near"));
+    assert_eq!(
+        result.direct_swaps[0].near_value,
+        NearValue::from_near(BigDecimal::from(30))
+    );
+
+    // 全ての未消化売却が remaining_sells に含まれること
+    assert_eq!(result.remaining_sells.len(), 3);
+    assert_eq!(result.remaining_sells[0].token, ta("token_a.near"));
+    assert_eq!(
+        result.remaining_sells[0].near_value,
+        NearValue::from_near(BigDecimal::from(20))
+    );
+    assert_eq!(result.remaining_sells[1].token, ta("token_b.near"));
+    assert_eq!(
+        result.remaining_sells[1].near_value,
+        NearValue::from_near(BigDecimal::from(50))
+    );
+    assert_eq!(result.remaining_sells[2].token, ta("token_c.near"));
+    assert_eq!(
+        result.remaining_sells[2].near_value,
+        NearValue::from_near(BigDecimal::from(50))
+    );
+    assert!(result.remaining_buys.is_empty());
+}
+
+#[test]
+fn test_single_sell_vs_multiple_buys_remainder() {
+    // 1売却 vs 3購入: 残余購入が全て保持されることを検証（対称ケース）
+    // sells=[A(30)], buys=[B(50), C(50), D(50)]
+    // 降順: A(30); B(50), C(50), D(50)
+    // Match: A→B min(30,50)=30, B_rem=20
+    // → remaining_buys: B(20), C(50), D(50)
+    let sells = vec![sell_op("token_a.near", 30, RATE_24, 24)];
+    let buys = vec![
+        buy_op("token_b.near", 50),
+        buy_op("token_c.near", 50),
+        buy_op("token_d.near", 50),
+    ];
+
+    let result = match_rebalance_operations(sells, buys);
+
+    assert_eq!(result.direct_swaps.len(), 1);
+    assert_eq!(result.direct_swaps[0].sell_token, ta("token_a.near"));
+    assert_eq!(result.direct_swaps[0].buy_token, ta("token_b.near"));
+    assert_eq!(
+        result.direct_swaps[0].near_value,
+        NearValue::from_near(BigDecimal::from(30))
+    );
+
+    assert!(result.remaining_sells.is_empty());
+    assert_eq!(result.remaining_buys.len(), 3);
+    assert_eq!(result.remaining_buys[0].token, ta("token_b.near"));
+    assert_eq!(
+        result.remaining_buys[0].near_value,
+        NearValue::from_near(BigDecimal::from(20))
+    );
+    assert_eq!(result.remaining_buys[1].token, ta("token_c.near"));
+    assert_eq!(
+        result.remaining_buys[1].near_value,
+        NearValue::from_near(BigDecimal::from(50))
+    );
+    assert_eq!(result.remaining_buys[2].token, ta("token_d.near"));
+    assert_eq!(
+        result.remaining_buys[2].near_value,
+        NearValue::from_near(BigDecimal::from(50))
+    );
+}
+
+#[test]
+fn test_invariant_total_value_preserved() {
+    // 不変条件検証: sum(direct_swaps) + sum(remaining) == total
+    let sells = vec![
+        sell_op("token_a.near", 80, RATE_24, 24),
+        sell_op("token_b.near", 30, RATE_24, 24),
+    ];
+    let buys = vec![buy_op("token_c.near", 60), buy_op("token_d.near", 20)];
+
+    let result = match_rebalance_operations(sells, buys);
+
+    let total_sell = NearValue::from_near(BigDecimal::from(110)); // 80 + 30
+    let total_buy = NearValue::from_near(BigDecimal::from(80)); // 60 + 20
+
+    let swap_sum: NearValue = result
+        .direct_swaps
+        .iter()
+        .map(|ds| ds.near_value.clone())
+        .fold(NearValue::zero(), |acc, v| acc + v);
+    let remaining_sell_sum: NearValue = result
+        .remaining_sells
+        .iter()
+        .map(|s| s.near_value.clone())
+        .fold(NearValue::zero(), |acc, v| acc + v);
+    let remaining_buy_sum: NearValue = result
+        .remaining_buys
+        .iter()
+        .map(|b| b.near_value.clone())
+        .fold(NearValue::zero(), |acc, v| acc + v);
+
+    // 直接スワップ合計 = min(total_sell, total_buy) = total_buy = 80
+    assert_eq!(swap_sum, total_buy);
+    // 残余売却合計 = total_sell - total_buy = 30
+    assert_eq!(
+        remaining_sell_sum,
+        NearValue::from_near(BigDecimal::from(30))
+    );
+    // 残余購入なし
+    assert_eq!(remaining_buy_sum, NearValue::zero());
+    // 不変条件: swap_sum + remaining_sell_sum = total_sell
+    assert_eq!(swap_sum + remaining_sell_sum, total_sell);
 }
