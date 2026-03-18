@@ -429,6 +429,12 @@ where
             if sell_failed > 0 {
                 warn!(log, "some sell operations failed, portfolio may diverge from target";
                     "sell_failed" => sell_failed, "sell_success" => sell_success);
+
+                if sell_failed >= sell_success {
+                    warn!(log, "majority of sell operations failed, aborting Phase 2 to prevent portfolio divergence";
+                        "sell_failed" => sell_failed, "sell_success" => sell_success);
+                    return Ok(());
+                }
             }
 
             // Phase 1完了後、利用可能なwrap.nearを確認し、Phase 2の購入額を調整
