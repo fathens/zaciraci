@@ -141,22 +141,13 @@ if token_data.len() < original_count {
         "original" => original_count, "remaining" => token_data.len());
 }
 
-// 全トークン除外のエッジケース: 最低2トークンは残す（confidence 上位から選出）
+// 全トークン除外のエッジケース: 安全に Hold を返す
+// 全トークンが閾値未満 = 予測モデル全体が信頼できない状態。
+// ポジションを取らず Hold で安全に停止する。
 if token_data.is_empty() {
-    // confidence 上位2件をフォールバックとして復帰
-    let mut fallback: Vec<_> = prediction_confidences.iter().collect();
-    fallback.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let fallback_tokens: Vec<_> = fallback.iter().take(2).map(|(k, _)| k.clone()).collect();
-
-    if fallback_tokens.is_empty() {
-        warn!(log, "no tokens available at all, skipping optimization");
-        return Ok(vec![TradingAction::Hold]);
-    }
-
-    warn!(log, "all tokens below confidence threshold, using top-N fallback";
-        "fallback_count" => fallback_tokens.len());
-    // token_data, predictions, historical_prices をフォールバックトークンで再構築
-    // （元の全10トークン分のデータから復帰）
+    warn!(log, "all tokens below confidence threshold, holding";
+        "threshold" => format!("{:.3}", min_confidence));
+    return Ok(vec![TradingAction::Hold]);
 }
 ```
 

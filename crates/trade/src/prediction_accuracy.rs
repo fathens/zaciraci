@@ -280,8 +280,9 @@ pub async fn calculate_per_token_confidence(
     let mape_poor = cfg.prediction_mape_poor();
 
     // 1回の DB クエリで全トークンのレコードを取得
+    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
     let limit = window
-        .saturating_mul(tokens.len() as i64)
+        .saturating_mul(token_count)
         .min(MAX_PREDICTION_QUERY_LIMIT);
     let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
         .await
@@ -330,7 +331,7 @@ pub async fn calculate_per_token_confidence(
         let confidence =
             calculate_composite_confidence(avg_mape, hit_rate, mape_excellent, mape_poor);
 
-        info!(log, "token prediction confidence";
+        debug!(log, "token prediction confidence";
             "token" => %token_str,
             "avg_mape" => format!("{:.2}%", avg_mape),
             "hit_rate" => hit_rate.map(|h| format!("{:.1}%", h * 100.0)),

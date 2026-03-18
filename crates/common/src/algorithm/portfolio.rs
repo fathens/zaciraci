@@ -1615,6 +1615,8 @@ pub async fn execute_portfolio_optimization(
                 // データなし（コールドスタート）→ PREDICTION_ALPHA_FLOOR を使用
                 // alpha_vol * 0.5 は [0.35, 0.45] で常に FLOOR(0.5) 未満のため、
                 // 現在の設定では実質 FLOOR 固定。FLOOR を下げた場合のみ alpha_vol が効く。
+                // NOTE: PREDICTION_ALPHA_FLOOR を 0.5 未満に変更する場合、
+                // この分岐の挙動が変わるため再検討が必要。
                 None => (alpha_vol * 0.5).max(PREDICTION_ALPHA_FLOOR),
             }
         })

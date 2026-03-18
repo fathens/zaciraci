@@ -654,7 +654,7 @@ where
     token_data.retain(|t| {
         prediction_confidences.get(&t.symbol).is_none_or(|&c| {
             if c < min_confidence {
-                info!(log, "excluding token due to low confidence";
+                debug!(log, "excluding token due to low confidence";
                         "token" => %t.symbol, "confidence" => format!("{:.3}", c));
                 false
             } else {
@@ -668,14 +668,25 @@ where
     historical_prices.retain(|k, _| remaining_symbols.contains(k));
 
     if token_data.len() < original_count {
+        let excluded: Vec<String> = prediction_confidences
+            .iter()
+            .filter(|(k, _)| !remaining_symbols.contains(k))
+            .map(|(k, c)| format!("{}({:.3})", k, c))
+            .collect();
         info!(log, "tokens filtered by prediction confidence";
-            "original" => original_count, "remaining" => token_data.len());
+            "original" => original_count, "remaining" => token_data.len(),
+            "excluded" => excluded.join(", "));
     }
 
     // 全トークン除外のエッジケース: 安全に Hold を返す
     if token_data.is_empty() {
+        let all_confidences: Vec<String> = prediction_confidences
+            .iter()
+            .map(|(k, c)| format!("{}({:.3})", k, c))
+            .collect();
         warn!(log, "all tokens below confidence threshold, holding";
-            "threshold" => format!("{:.3}", min_confidence));
+            "threshold" => format!("{:.3}", min_confidence),
+            "tokens" => all_confidences.join(", "));
         return Ok(vec![TradingAction::Hold]);
     }
 
