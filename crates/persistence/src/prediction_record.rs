@@ -38,6 +38,9 @@ pub struct NewPredictionRecord {
 
 pub struct PredictionRecord;
 
+#[cfg(test)]
+mod tests;
+
 impl PredictionRecord {
     /// 予測バッチ挿入
     pub async fn batch_insert(records: &[NewPredictionRecord]) -> Result<()> {
