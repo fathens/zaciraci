@@ -47,6 +47,9 @@ pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usiz
 /// - MAPE ≤ excellent → 1.0（予測が正確 → Sharpe を信頼）
 /// - MAPE ≥ poor → 0.0（予測が不正確 → RP に退避）
 /// - 中間値は線形補間
+///
+/// NOTE: calculate_per_token_confidence() (Step 4) で使用予定
+#[cfg(test)]
 fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
     let range = poor - excellent;
     if range.abs() < 1e-9 {
@@ -56,6 +59,9 @@ fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
 }
 
 /// 方向正解を判定: 予測と実際の変化方向が一致すれば true
+///
+/// NOTE: calculate_per_token_confidence() (Step 4) で使用予定
+#[cfg(test)]
 fn is_direction_correct(
     prev_actual: &BigDecimal,
     predicted: &BigDecimal,
@@ -69,6 +75,9 @@ fn is_direction_correct(
 }
 
 /// 複合スコア: MAPE と方向正解率を組み合わせ
+///
+/// NOTE: calculate_per_token_confidence() (Step 4) で使用予定
+#[cfg(test)]
 fn calculate_composite_confidence(
     rolling_mape: f64,
     hit_rate: Option<f64>, // None = 方向データ不足
@@ -125,22 +134,16 @@ pub async fn record_predictions(
     Ok(())
 }
 
-/// 過去の予測を実績と比較して精度を評価する。
+/// 過去の予測を実績と比較して精度を評価する（ハウスキーピング）。
 ///
-/// 呼び出し元: execute_portfolio_strategy() 内で tokio::spawn
-/// タイミング: Chronos API 予測取得と並行実行
+/// 呼び出し元: start() の冒頭
+/// タイミング: トレード戦略実行前
 ///
-/// 戻り値: Option<(f64, f64)>
-///   - Some((rolling_mape, confidence)): 評価済み >= MIN_SAMPLES なら直近 N 件の平均 MAPE と confidence
-///   - None: データ不足
-pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Option<(f64, f64)>> {
+/// 戻り値: 評価したレコード数
+pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32> {
     let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
 
     let tolerance_minutes = cfg.prediction_eval_tolerance_minutes();
-
-    let window = cfg.prediction_accuracy_window();
-
-    let min_samples = cfg.prediction_accuracy_min_samples();
 
     // 未評価 & target_time 経過済みのレコードを取得
     let pending = PredictionRecord::get_pending_evaluations().await?;
@@ -235,85 +238,7 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Opt
         warn!(log, "failed to cleanup old records"; "error" => %e);
     }
 
-    // 直近 N 件の評価済みレコードから rolling MAPE と方向正解率を算出
-    let recent = PredictionRecord::get_recent_evaluated(window).await?;
-
-    if recent.len() < min_samples {
-        debug!(log, "insufficient samples for rolling metrics";
-            "available" => recent.len(), "required" => min_samples);
-        return Ok(None);
-    }
-
-    // MAPE の収集
-    let mape_values: Vec<f64> = recent.iter().filter_map(|r| r.mape).collect();
-
-    if mape_values.len() < min_samples {
-        return Ok(None);
-    }
-
-    let rolling_mape: f64 = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
-
-    // 方向正解率の計算（各レコードについて前レコードを参照）
-    let mut direction_correct_count = 0usize;
-    let mut direction_total_count = 0usize;
-
-    for record in &recent {
-        // actual_price と predicted_price が必要
-        let Some(actual) = &record.actual_price else {
-            continue;
-        };
-
-        // 前のレコードを取得
-        let token = match TokenAccount::from_str(&record.token) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let prev = match PredictionRecord::get_previous_evaluated(&token, record.target_time).await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => continue, // 前レコードなし（初回など）
-            Err(e) => {
-                debug!(log, "failed to get previous record"; "error" => %e);
-                continue;
-            }
-        };
-
-        let Some(prev_actual) = prev.actual_price else {
-            continue;
-        };
-
-        // 方向判定
-        if is_direction_correct(&prev_actual, &record.predicted_price, actual) {
-            direction_correct_count += 1;
-        }
-        direction_total_count += 1;
-    }
-
-    // hit_rate 計算（十分なサンプルがあれば）
-    let hit_rate = if direction_total_count >= min_samples {
-        Some(direction_correct_count as f64 / direction_total_count as f64)
-    } else {
-        None
-    };
-
-    // 環境変数からしきい値を取得
-    let mape_excellent = cfg.prediction_mape_excellent();
-
-    let mape_poor = cfg.prediction_mape_poor();
-
-    // 複合 confidence 計算
-    let confidence =
-        calculate_composite_confidence(rolling_mape, hit_rate, mape_excellent, mape_poor);
-
-    info!(log, "prediction accuracy calculated";
-        "rolling_mape" => format!("{:.2}%", rolling_mape),
-        "hit_rate" => hit_rate.map(|h| format!("{:.1}%", h * 100.0)),
-        "direction_samples" => direction_total_count,
-        "confidence" => format!("{:.3}", confidence),
-        "thresholds" => format!("excellent={}, poor={}", mape_excellent, mape_poor),
-    );
-
-    Ok(Some((rolling_mape, confidence)))
+    Ok(evaluated_count)
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。

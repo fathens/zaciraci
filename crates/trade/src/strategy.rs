@@ -68,6 +68,18 @@ where
 
     info!(log, "starting portfolio-based trading strategy");
 
+    // 未評価の予測レコードを評価（ハウスキーピング: トレード戦略とは独立）
+    match super::prediction_accuracy::evaluate_pending_predictions(cfg).await {
+        Ok(count) => {
+            if count > 0 {
+                info!(log, "evaluated pending predictions"; "count" => count);
+            }
+        }
+        Err(e) => {
+            warn!(log, "prediction evaluation failed, continuing"; "error" => %e);
+        }
+    }
+
     // TRADE_ENABLED のチェック
     let trade_enabled = cfg.trade_enabled();
 
@@ -405,12 +417,6 @@ where
     let quote_token_in: TokenInAccount =
         blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
-    // 過去の予測を Chronos 待ちの間に並行評価
-    let eval_cfg = common::config::ConfigResolver;
-    let eval_handle = tokio::spawn(async move {
-        super::prediction_accuracy::evaluate_pending_predictions(&eval_cfg).await
-    });
-
     // 設定を事前に取得
     let price_history_days = i64::from(cfg.trade_price_history_days());
 
@@ -617,28 +623,8 @@ where
         ));
     }
 
-    // 評価タスクの結果を取得（mape と confidence のタプル）
-    let prediction_confidence: Option<f64> = match eval_handle.await {
-        Ok(Ok(Some((mape, confidence)))) => {
-            info!(log, "prediction accuracy";
-                "rolling_mape" => format!("{:.2}%", mape),
-                "prediction_confidence" => format!("{:.3}", confidence)
-            );
-            Some(confidence)
-        }
-        Ok(Ok(None)) => {
-            debug!(log, "prediction accuracy: insufficient data");
-            None
-        }
-        Ok(Err(e)) => {
-            warn!(log, "prediction evaluation failed"; "error" => ?e);
-            None
-        }
-        Err(e) => {
-            warn!(log, "prediction evaluation task panicked"; "error" => ?e);
-            None
-        }
-    };
+    // prediction_confidence は Step 4 で per-token confidence に置き換え予定
+    let prediction_confidence: Option<f64> = None;
 
     // 今回の予測を DB に記録（失敗しても取引は続行）
     if let Err(e) =
