@@ -20,7 +20,7 @@ pub struct PortfolioData {
     pub historical_prices: BTreeMap<TokenOutAccount, PriceHistory>,
     /// トークンごとの予測精度に基づく信頼度 [0.0, 1.0]
     /// - エントリあり: confidence に応じた Sharpe/RP ブレンド
-    /// - エントリなし: データ不足 → alpha_vol * 0.5 にフォールバック
+    /// - エントリなし: データ不足 → max(alpha_vol * 0.5, PREDICTION_ALPHA_FLOOR) にフォールバック
     pub prediction_confidences: BTreeMap<TokenOutAccount, f64>,
 }
 
@@ -1600,8 +1600,8 @@ pub async fn execute_portfolio_optimization(
                     let floor = PREDICTION_ALPHA_FLOOR;
                     (floor + (alpha_vol - floor) * c).clamp(floor, 0.9)
                 }
-                // データなし（コールドスタート）→ 控えめなデフォルト
-                None => alpha_vol * 0.5,
+                // データなし（コールドスタート）→ FLOOR を保証しつつ控えめなデフォルト
+                None => (alpha_vol * 0.5).max(PREDICTION_ALPHA_FLOOR),
             }
         })
         .collect();
