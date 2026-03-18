@@ -1,6 +1,6 @@
 ---
 name: architecture-reviewer
-description: "実用的な設計の調停者。クレート間依存、関心の分離、API設計、テスト品質をバランスよく評価する。code-investigator のサブエージェントとして動作。"
+description: "実用的な設計の調停者。クレート間依存、関心の分離、API設計、テスト品質をバランスよく評価する。コードレビューおよびコード調査の専門エージェントとして動作。"
 model: opus
 memory: project
 ---

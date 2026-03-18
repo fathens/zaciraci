@@ -1,6 +1,6 @@
 ---
 name: financial-correctness-reviewer
-description: "批判的な金融計算の番人。数値計算の正確性、丸め誤差、オーバーフロー、AMM数式、スリッページ計算を厳密に検証する。code-investigator のサブエージェントとして動作。"
+description: "批判的な金融計算の番人。数値計算の正確性、丸め誤差、オーバーフロー、AMM数式、スリッページ計算を厳密に検証する。コードレビューおよびコード調査の専門エージェントとして動作。"
 model: opus
 memory: project
 ---

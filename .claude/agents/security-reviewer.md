@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: "慎重なセキュリティ監査人。ウォレット操作、RPC入出力検証、トランザクション安全性、秘密情報漏洩を保守的に検査する。code-investigator のサブエージェントとして動作。"
+description: "慎重なセキュリティ監査人。ウォレット操作、RPC入出力検証、トランザクション安全性、秘密情報漏洩を保守的に検査する。コードレビューおよびコード調査の専門エージェントとして動作。"
 model: opus
 memory: project
 ---
