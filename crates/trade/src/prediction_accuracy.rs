@@ -6,7 +6,7 @@ use common::types::TimeRange;
 use common::types::TokenPrice;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use logging::*;
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 use persistence::prediction_record::{DbPredictionRecord, NewPredictionRecord, PredictionRecord};
 use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
@@ -200,7 +200,10 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32
         let diff = predicted_bd - actual_bd;
         let absolute_error = diff.abs();
         let mape_bd = &absolute_error / actual_bd * BigDecimal::from(100);
-        let mape: f64 = mape_bd.to_string().parse().unwrap_or(f64::MAX);
+        let Some(mape) = mape_bd.to_f64() else {
+            warn!(log, "mape conversion failed, skipping"; "token" => &record.token);
+            continue;
+        };
 
         debug!(log, "evaluated prediction";
             "token" => &record.token,

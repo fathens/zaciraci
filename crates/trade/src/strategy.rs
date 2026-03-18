@@ -490,7 +490,7 @@ where
 
                 // ボラティリティの計算
                 let volatility = calculate_volatility_from_history(&history).ok()?;
-                let volatility_f64 = volatility.to_string().parse::<f64>().ok()?;
+                let volatility_f64 = volatility.to_f64()?;
 
                 Some((
                     data.token_out,
