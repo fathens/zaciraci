@@ -373,7 +373,7 @@ where
                 "buy_count" => buy_operations.len()
             );
             for (token_account, value, _) in &sell_operations {
-                info!(log, "sell operation planned"; "token" => %token_account, "wrap_near_value" => %value);
+                debug!(log, "sell operation planned"; "token" => %token_account, "wrap_near_value" => %value);
             }
 
             let mut sell_success: usize = 0;
@@ -779,7 +779,7 @@ where
                 let is_new_period = selected_tokens.is_empty() && transaction_count == 0;
 
                 if selected_tokens.is_empty() && transaction_count > 0 {
-                    warn!(log, "selected_tokens empty but transactions exist, possible data corruption";
+                    error!(log, "selected_tokens empty but transactions exist, possible data corruption";
                         "transaction_count" => transaction_count);
                 }
 

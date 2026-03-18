@@ -326,7 +326,7 @@ pub async fn calculate_per_token_confidence(
         let confidence =
             calculate_composite_confidence(avg_mape, hit_rate, mape_excellent, mape_poor);
 
-        debug!(log, "token prediction confidence";
+        info!(log, "token prediction confidence";
             "token" => %token_str,
             "avg_mape" => format!("{:.2}%", avg_mape),
             "hit_rate" => hit_rate.map(|h| format!("{:.1}%", h * 100.0)),
