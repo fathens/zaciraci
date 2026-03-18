@@ -48,6 +48,10 @@ pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usiz
 /// - MAPE ≥ poor → 0.0（予測が不正確 → RP に退避）
 /// - 中間値は線形補間
 fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
+    debug_assert!(
+        poor >= excellent,
+        "poor ({poor}) must be >= excellent ({excellent})"
+    );
     let range = poor - excellent;
     if range.abs() < 1e-9 {
         return if mape <= excellent { 1.0 } else { 0.0 };
@@ -310,7 +314,12 @@ pub async fn calculate_per_token_confidence(
         let token_str = token.to_string();
         let records = by_token.get(&token_str);
         let mape_values: Vec<f64> = records
-            .map(|rs| rs.iter().filter_map(|r| r.mape).collect())
+            .map(|rs| {
+                rs.iter()
+                    .filter_map(|r| r.mape)
+                    .filter(|m| m.is_finite())
+                    .collect()
+            })
             .unwrap_or_default();
 
         if mape_values.len() < min_samples {
