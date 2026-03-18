@@ -41,7 +41,7 @@ use futures::stream::{self, StreamExt};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
 use persistence::evaluation_period::EvaluationPeriod;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -653,37 +653,27 @@ where
             _ => true,
         }
     });
-    predictions.retain(|k, _| token_data.iter().any(|t| &t.symbol == k));
-    historical_prices.retain(|k, _| token_data.iter().any(|t| &t.symbol == k));
+    let remaining_symbols: HashSet<&TokenOutAccount> =
+        token_data.iter().map(|t| &t.symbol).collect();
+    predictions.retain(|k, _| remaining_symbols.contains(k));
+    historical_prices.retain(|k, _| remaining_symbols.contains(k));
 
     if token_data.len() < original_count {
         info!(log, "tokens filtered by prediction confidence";
             "original" => original_count, "remaining" => token_data.len());
     }
 
-    // 全トークン除外のエッジケース: confidence 上位2件をフォールバック
+    // 全トークン除外のエッジケース: 安全に Hold を返す
     if token_data.is_empty() {
-        let mut fallback: Vec<_> = prediction_confidences.iter().collect();
-        fallback.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let fallback_tokens: Vec<_> = fallback.iter().take(2).map(|(k, _)| (*k).clone()).collect();
-
-        if fallback_tokens.is_empty() {
-            warn!(log, "no tokens available at all, skipping optimization");
-            return Ok(vec![TradingAction::Hold]);
-        }
-
-        warn!(log, "all tokens below confidence threshold, using top-N fallback";
-            "fallback_count" => fallback_tokens.len());
-        // token_data, predictions, historical_prices をフォールバックトークンで再構築する
-        // ため、元の全トークン分のデータを保持しておくか上流から再取得する必要がある。
-        // ここでは簡易的に Hold を返す（実運用では上流で全データを保持しリトライ可能）
+        warn!(log, "all tokens below confidence threshold, holding";
+            "threshold" => format!("{:.3}", min_confidence));
         return Ok(vec![TradingAction::Hold]);
     }
 
     // フィルタ後のトークンのみの confidence を PortfolioData に渡す
     let filtered_confidences: BTreeMap<TokenOutAccount, f64> = prediction_confidences
         .into_iter()
-        .filter(|(k, _)| token_data.iter().any(|t| &t.symbol == k))
+        .filter(|(k, _)| remaining_symbols.contains(k))
         .collect();
 
     let portfolio_data = PortfolioData {
