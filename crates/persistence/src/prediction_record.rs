@@ -3,7 +3,7 @@ use crate::schema::prediction_records;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
-use common::types::TokenAccount;
+use common::types::{TokenAccount, TokenOutAccount};
 use diesel::prelude::*;
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -37,6 +37,9 @@ pub struct NewPredictionRecord {
 }
 
 pub struct PredictionRecord;
+
+#[cfg(test)]
+mod tests;
 
 impl PredictionRecord {
     /// 予測バッチ挿入
@@ -119,6 +122,30 @@ impl PredictionRecord {
             .await
             .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
+        Ok(results)
+    }
+
+    /// 指定トークン群の直近評価済みレコードを一括取得
+    pub async fn get_recent_evaluated_for_tokens(
+        limit: i64,
+        tokens: &[TokenOutAccount],
+    ) -> Result<Vec<DbPredictionRecord>> {
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tokens: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let conn = connection_pool::get().await?;
+        let results = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::evaluated_at.is_not_null())
+                    .filter(prediction_records::token.eq_any(&tokens))
+                    .order_by(prediction_records::target_time.desc())
+                    .limit(limit)
+                    .load::<DbPredictionRecord>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
         Ok(results)
     }
 

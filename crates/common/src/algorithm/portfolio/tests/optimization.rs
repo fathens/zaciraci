@@ -565,6 +565,7 @@ fn test_unified_small_n() {
     let expected_returns: Vec<f64> = vec![0.03, 0.05, 0.02];
     let liquidity = vec![0.8, 0.9, 0.7];
 
+    let alphas = vec![0.8; expected_returns.len()];
     let weights = unified_optimize(
         &expected_returns,
         &cov,
@@ -572,7 +573,7 @@ fn test_unified_small_n() {
         0.5,  // max_position
         6,    // max_holdings (> n)
         0.05, // min_position_size
-        0.8,  // alpha
+        &alphas,
     );
 
     assert_eq!(weights.len(), 3);
@@ -588,7 +589,8 @@ fn test_unified_medium_n() {
     let expected_returns: Vec<f64> = (0..10).map(|i| 0.01 + (i as f64) * 0.005).collect();
     let liquidity = vec![0.8; 10];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.8);
+    let alphas = vec![0.8; expected_returns.len()];
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     assert_eq!(weights.len(), 10);
     let sum: f64 = weights.iter().sum();
@@ -611,8 +613,9 @@ fn test_unified_large_n() {
     let expected_returns: Vec<f64> = (0..50).map(|i| 0.01 + (i as f64) * 0.001).collect();
     let liquidity = vec![0.8; 50];
 
+    let alphas = vec![0.8; expected_returns.len()];
     let start = std::time::Instant::now();
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.8);
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
     let elapsed = start.elapsed();
 
     assert_eq!(weights.len(), 50);
@@ -638,6 +641,7 @@ fn test_unified_all_constraints_satisfied() {
     let max_hold = 6;
     let min_pos = 0.05;
 
+    let alphas = vec![0.8; expected_returns.len()];
     let weights = unified_optimize(
         &expected_returns,
         &cov,
@@ -645,7 +649,7 @@ fn test_unified_all_constraints_satisfied() {
         max_pos,
         max_hold,
         min_pos,
-        0.8,
+        &alphas,
     );
 
     // 合計 = 1.0
@@ -698,7 +702,8 @@ fn test_pruning_union_preserves_top_tokens() {
     }
     let liquidity = vec![0.8; 20];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.8);
+    let alphas = vec![0.8; expected_returns.len()];
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     // 高リターンのトークン群に重みが集中すべき
     let top_weight: f64 = weights[15..20].iter().sum();
@@ -755,8 +760,9 @@ fn test_min_position_reoptimization() {
         .map(|i| if i < 3 { 0.08 } else { 0.005 }) // 上位3つが支配的
         .collect();
     let liquidity = vec![0.8; 12];
+    let alphas = vec![0.9; expected_returns.len()];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, 0.9);
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     let sum: f64 = weights.iter().sum();
     assert!((sum - 1.0).abs() < 1e-6, "Sum={}", sum);
@@ -777,10 +783,20 @@ fn test_composite_score_consistency() {
     let expected_returns: Vec<f64> = vec![0.02, 0.05, 0.01, 0.04, 0.03, 0.06, 0.015, 0.035];
 
     // alpha=1.0: Sharpe のみ
-    let w_sharpe_only = unified_optimize(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, 1.0);
+    let alphas_sharpe = vec![1.0; expected_returns.len()];
+    let w_sharpe_only = unified_optimize(
+        &expected_returns,
+        &cov,
+        &[0.8; 8],
+        0.4,
+        6,
+        0.05,
+        &alphas_sharpe,
+    );
 
     // alpha=0.0: RP のみ
-    let w_rp_only = unified_optimize(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, 0.0);
+    let alphas_rp = vec![0.0; expected_returns.len()];
+    let w_rp_only = unified_optimize(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, &alphas_rp);
 
     // 両方とも有効な重み
     let sum_s: f64 = w_sharpe_only.iter().sum();
@@ -960,8 +976,9 @@ fn test_unified_optimize_weights_sum_to_one() {
     let cov = calculate_covariance_matrix(&returns);
     let expected_returns = vec![0.03, 0.05, 0.02, 0.04, 0.01, 0.06];
     let liquidity = vec![0.9, 0.7, 0.8, 0.6, 0.85, 0.75];
+    let alphas = vec![0.7; expected_returns.len()];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 4, 0.05, 0.7);
+    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 4, 0.05, &alphas);
 
     let sum: f64 = weights.iter().sum();
     assert!(
@@ -979,6 +996,7 @@ fn test_exhaustive_optimize_golden_output() {
     let cov = calculate_covariance_matrix(&returns);
     let expected_returns: Vec<f64> = vec![0.03, 0.06, 0.01, 0.05, 0.02, 0.07, 0.015, 0.04];
     let active_indices: Vec<usize> = (0..8).collect();
+    let alphas = vec![0.7; expected_returns.len()];
 
     let weights = exhaustive_optimize(
         &active_indices,
@@ -987,7 +1005,7 @@ fn test_exhaustive_optimize_golden_output() {
         0.4,  // max_position
         3,    // max_holdings
         0.05, // min_position_size
-        0.7,  // alpha
+        &alphas,
     );
 
     let golden: Vec<f64> = vec![
@@ -1081,7 +1099,7 @@ async fn test_execute_portfolio_optimization_hold_on_empty_filter() {
         tokens,
         predictions: BTreeMap::new(),
         historical_prices: BTreeMap::new(),
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)

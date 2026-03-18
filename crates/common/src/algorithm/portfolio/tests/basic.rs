@@ -322,7 +322,7 @@ fn test_execute_portfolio_optimization() {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1353,7 +1353,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: full_history,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     // トークン選択ありで最適化を実行

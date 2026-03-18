@@ -368,7 +368,17 @@ where
             let wrap_near_out: TokenOutAccount = wrap_near_token.to_out();
 
             // Phase 1: 全ての売却を実行（token → wrap.near）
-            debug!(log, "Phase 1: executing sell operations"; "count" => sell_operations.len());
+            info!(log, "rebalance sell phase";
+                "sell_count" => sell_operations.len(),
+                "buy_count" => buy_operations.len()
+            );
+            for (token_account, value, _) in &sell_operations {
+                debug!(log, "sell operation planned"; "token" => %token_account, "wrap_near_value" => %value);
+            }
+
+            let mut sell_success: usize = 0;
+            let mut sell_failed: usize = 0;
+
             for (token, wrap_near_value, exchange_rate) in sell_operations {
                 // wrap.near価値をトークン数量に変換
                 // NearValue * ExchangeRate = TokenAmount
@@ -393,8 +403,8 @@ where
                     "token_amount" => token_amount_u128
                 );
 
-                let from_token: TokenInAccount = token.into();
-                swap::execute_direct_swap(
+                let from_token: TokenInAccount = token.clone().into();
+                match swap::execute_direct_swap(
                     client,
                     wallet,
                     &from_token,
@@ -403,7 +413,31 @@ where
                     recorder,
                     cfg,
                 )
-                .await?;
+                .await
+                {
+                    Ok(_) => {
+                        info!(log, "sell completed"; "token" => %token);
+                        sell_success += 1;
+                    }
+                    Err(e) => {
+                        error!(log, "sell failed"; "token" => %token, "error" => %e);
+                        sell_failed += 1;
+                    }
+                }
+            }
+
+            // NOTE: sell_failed > 0 ガードにより sell_failed==0 && sell_success==0
+            // （売却対象ゼロ）のケースはここに到達しない。新規購入のみの
+            // リバランスは Phase 2 に正常に進む。
+            if sell_failed > 0 {
+                warn!(log, "some sell operations failed, portfolio may diverge from target";
+                    "sell_failed" => sell_failed, "sell_success" => sell_success);
+
+                if sell_failed >= sell_success {
+                    warn!(log, "majority of sell operations failed, aborting Phase 2 to prevent portfolio divergence";
+                        "sell_failed" => sell_failed, "sell_success" => sell_success);
+                    return Ok(());
+                }
             }
 
             // Phase 1完了後、利用可能なwrap.nearを確認し、Phase 2の購入額を調整
@@ -503,8 +537,10 @@ where
             }
 
             info!(log, "rebalance completed";
-                "phase2_success" => phase2_success,
-                "phase2_failed" => phase2_failed
+                "sell_success" => sell_success,
+                "sell_failed" => sell_failed,
+                "buy_success" => phase2_success,
+                "buy_failed" => phase2_failed
             );
 
             // Phase 2で全ての購入が失敗した場合のみエラーを返す
@@ -746,8 +782,15 @@ where
                     .filter_map(|s| s.parse::<TokenAccount>().ok())
                     .collect();
 
-                // トランザクションがゼロなら新規期間として扱う
-                let is_new_period = transaction_count == 0;
+                // selected_tokens が空かつトランザクションがゼロなら新規期間として扱う
+                // selected_tokens.is_empty() だけだとパース全失敗（データ破損）時に誤判定するため、
+                // transaction_count == 0 も併用して安全性を確保
+                let is_new_period = selected_tokens.is_empty() && transaction_count == 0;
+
+                if selected_tokens.is_empty() && transaction_count > 0 {
+                    error!(log, "selected_tokens empty but transactions exist, possible data corruption";
+                        "transaction_count" => transaction_count);
+                }
 
                 if is_new_period {
                     debug!(

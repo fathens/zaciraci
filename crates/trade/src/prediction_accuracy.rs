@@ -6,8 +6,8 @@ use common::types::TimeRange;
 use common::types::TokenPrice;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use logging::*;
-use num_traits::Zero;
-use persistence::prediction_record::{NewPredictionRecord, PredictionRecord};
+use num_traits::{ToPrimitive, Zero};
+use persistence::prediction_record::{DbPredictionRecord, NewPredictionRecord, PredictionRecord};
 use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -48,7 +48,24 @@ pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usiz
 /// - MAPE ≥ poor → 0.0（予測が不正確 → RP に退避）
 /// - 中間値は線形補間
 fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
-    ((poor - mape) / (poor - excellent)).clamp(0.0, 1.0)
+    debug_assert!(
+        poor >= excellent,
+        "poor ({poor}) must be >= excellent ({excellent})"
+    );
+    debug_assert!(
+        mape >= 0.0 || !mape.is_finite(),
+        "mape ({mape}) must be non-negative"
+    );
+    if !mape.is_finite() {
+        // NaN → 0.0 (worst), ±Infinity → 0.0 (worst)
+        // MAPE is non-negative by definition; any non-finite value indicates a bug
+        return 0.0;
+    }
+    let range = poor - excellent;
+    if range.abs() < 1e-9 {
+        return if mape <= excellent { 1.0 } else { 0.0 };
+    }
+    ((poor - mape) / range).clamp(0.0, 1.0)
 }
 
 /// 方向正解を判定: 予測と実際の変化方向が一致すれば true
@@ -121,22 +138,16 @@ pub async fn record_predictions(
     Ok(())
 }
 
-/// 過去の予測を実績と比較して精度を評価する。
+/// 過去の予測を実績と比較して精度を評価する（ハウスキーピング）。
 ///
-/// 呼び出し元: execute_portfolio_strategy() 内で tokio::spawn
-/// タイミング: Chronos API 予測取得と並行実行
+/// 呼び出し元: start() の冒頭
+/// タイミング: トレード戦略実行前
 ///
-/// 戻り値: Option<(f64, f64)>
-///   - Some((rolling_mape, confidence)): 評価済み >= MIN_SAMPLES なら直近 N 件の平均 MAPE と confidence
-///   - None: データ不足
-pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Option<(f64, f64)>> {
+/// 戻り値: 評価したレコード数
+pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32> {
     let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
 
     let tolerance_minutes = cfg.prediction_eval_tolerance_minutes();
-
-    let window = cfg.prediction_accuracy_window();
-
-    let min_samples = cfg.prediction_accuracy_min_samples();
 
     // 未評価 & target_time 経過済みのレコードを取得
     let pending = PredictionRecord::get_pending_evaluations().await?;
@@ -202,7 +213,10 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Opt
         let diff = predicted_bd - actual_bd;
         let absolute_error = diff.abs();
         let mape_bd = &absolute_error / actual_bd * BigDecimal::from(100);
-        let mape: f64 = mape_bd.to_string().parse().unwrap_or(f64::MAX);
+        let Some(mape) = mape_bd.to_f64() else {
+            warn!(log, "mape conversion failed, skipping"; "token" => &record.token);
+            continue;
+        };
 
         debug!(log, "evaluated prediction";
             "token" => &record.token,
@@ -231,85 +245,132 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<Opt
         warn!(log, "failed to cleanup old records"; "error" => %e);
     }
 
-    // 直近 N 件の評価済みレコードから rolling MAPE と方向正解率を算出
-    let recent = PredictionRecord::get_recent_evaluated(window).await?;
+    Ok(evaluated_count)
+}
 
-    if recent.len() < min_samples {
-        debug!(log, "insufficient samples for rolling metrics";
-            "available" => recent.len(), "required" => min_samples);
-        return Ok(None);
-    }
-
-    // MAPE の収集
-    let mape_values: Vec<f64> = recent.iter().filter_map(|r| r.mape).collect();
-
-    if mape_values.len() < min_samples {
-        return Ok(None);
-    }
-
-    let rolling_mape: f64 = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
-
-    // 方向正解率の計算（各レコードについて前レコードを参照）
-    let mut direction_correct_count = 0usize;
-    let mut direction_total_count = 0usize;
-
-    for record in &recent {
-        // actual_price と predicted_price が必要
-        let Some(actual) = &record.actual_price else {
+/// ソート済みレコード（target_time DESC）の隣接ペアから方向正解率を計算する。
+/// DB アクセスなしで計算（N+1 クエリ排除）。
+fn calculate_direction_accuracy_for_records(records: &[DbPredictionRecord]) -> (usize, usize) {
+    debug_assert!(
+        records
+            .windows(2)
+            .all(|w| w[0].target_time >= w[1].target_time),
+        "records must be sorted by target_time DESC"
+    );
+    let mut correct = 0usize;
+    let mut total = 0usize;
+    for pair in records.windows(2) {
+        let (Some(actual), Some(prev_actual)) = (&pair[0].actual_price, &pair[1].actual_price)
+        else {
             continue;
         };
-
-        // 前のレコードを取得
-        let token = match TokenAccount::from_str(&record.token) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let prev = match PredictionRecord::get_previous_evaluated(&token, record.target_time).await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => continue, // 前レコードなし（初回など）
-            Err(e) => {
-                debug!(log, "failed to get previous record"; "error" => %e);
-                continue;
-            }
-        };
-
-        let Some(prev_actual) = prev.actual_price else {
-            continue;
-        };
-
-        // 方向判定
-        if is_direction_correct(&prev_actual, &record.predicted_price, actual) {
-            direction_correct_count += 1;
+        if is_direction_correct(prev_actual, &pair[0].predicted_price, actual) {
+            correct += 1;
         }
-        direction_total_count += 1;
+        total += 1;
     }
+    (correct, total)
+}
 
-    // hit_rate 計算（十分なサンプルがあれば）
-    let hit_rate = if direction_total_count >= min_samples {
-        Some(direction_correct_count as f64 / direction_total_count as f64)
-    } else {
-        None
-    };
+/// トークンごとの prediction confidence を計算する。
+///
+/// 1回の DB クエリで全トークンのレコードを取得し、Rust 側でグルーピング。
+const MAX_PREDICTION_QUERY_LIMIT: i64 = 10_000;
 
-    // 環境変数からしきい値を取得
+/// 各トークンの平均 MAPE と方向正解率から複合 confidence を算出。
+///
+/// 戻り値: Result<BTreeMap<TokenOutAccount, f64>>
+///   - Ok(map): 計算成功。エントリあり = confidence 計算済み、エントリなし = データ不足
+///   - Err: DB アクセス失敗
+pub(crate) async fn calculate_per_token_confidence(
+    tokens: &[TokenOutAccount],
+    cfg: &impl ConfigAccess,
+) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
+    let log = DEFAULT.new(o!("function" => "calculate_per_token_confidence"));
+    let window = cfg.prediction_accuracy_window().max(1);
+    let min_samples = cfg.prediction_accuracy_min_samples();
     let mape_excellent = cfg.prediction_mape_excellent();
-
     let mape_poor = cfg.prediction_mape_poor();
 
-    // 複合 confidence 計算
-    let confidence =
-        calculate_composite_confidence(rolling_mape, hit_rate, mape_excellent, mape_poor);
+    // 1回の DB クエリで全トークンのレコードを取得
+    // NOTE: tokens.len() は実用上 i64 範囲を超えない（メモリ制約）。
+    // 万一変換に失敗した場合は MAX_PREDICTION_QUERY_LIMIT にフォールバックし、
+    // 下記の warn ログで検知される。
+    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
+    // NOTE: キャップ発生時は高頻度トークンがレコードを独占し、低頻度トークンの
+    // confidence が min_samples 未満で計算不能（コールドスタート扱い）になりうる。
+    // 現在の運用規模（window=30, tokens~10 → 300 << 10,000）では問題ないが、
+    // トークン数が大幅に増加した場合は warn ログで検知すること。
+    let raw_limit = window.saturating_mul(token_count);
+    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
+    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
+        warn!(log, "prediction query limit capped";
+            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
+            "tokens" => tokens.len(), "window" => window);
+    }
+    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
+        .await
+        .map_err(|e| {
+            warn!(log, "failed to get prediction records"; "error" => %e);
+            e
+        })?;
 
-    info!(log, "prediction accuracy calculated";
-        "rolling_mape" => format!("{:.2}%", rolling_mape),
-        "hit_rate" => hit_rate.map(|h| format!("{:.1}%", h * 100.0)),
-        "direction_samples" => direction_total_count,
-        "confidence" => format!("{:.3}", confidence),
-        "thresholds" => format!("excellent={}, poor={}", mape_excellent, mape_poor),
-    );
+    // Rust 側でトークンごとにグルーピング
+    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
+    for r in all_records {
+        by_token.entry(r.token.clone()).or_default().push(r);
+    }
 
-    Ok(Some((rolling_mape, confidence)))
+    // 各トークン内を target_time DESC でソート（DB も target_time DESC だがグルーピング後に保証）
+    for entries in by_token.values_mut() {
+        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
+        entries.truncate(window as usize); // window は .max(1) 済みのため正値保証
+    }
+
+    let mut result = BTreeMap::new();
+
+    for token in tokens {
+        let token_str = token.to_string();
+        let records = by_token.get(&token_str);
+        let mape_values: Vec<f64> = records
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.mape)
+            .filter(|m| m.is_finite())
+            .collect();
+
+        if mape_values.len() < min_samples {
+            continue;
+        }
+
+        // NOTE: min_samples >= 1（デフォルト 5）であるため mape_values は非空。
+        // 仮に min_samples == 0 に設定された場合でもゼロ除算は NaN → mape_to_confidence
+        // の NaN ガードで confidence = 0.0（安全側）になる。
+        let avg_mape = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
+
+        let direction_data = records.map(|rs| calculate_direction_accuracy_for_records(rs));
+        let hit_rate = direction_data.and_then(|(correct, total)| {
+            if total >= min_samples {
+                Some(correct as f64 / total as f64)
+            } else {
+                None
+            }
+        });
+
+        let confidence =
+            calculate_composite_confidence(avg_mape, hit_rate, mape_excellent, mape_poor);
+
+        debug!(log, "token prediction confidence";
+            "token" => %token_str,
+            "avg_mape" => format!("{:.2}%", avg_mape),
+            "hit_rate" => hit_rate.map(|h| format!("{:.1}%", h * 100.0)),
+            "confidence" => format!("{:.3}", confidence)
+        );
+
+        result.insert(token.clone(), confidence);
+    }
+
+    Ok(result)
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。
@@ -335,7 +396,7 @@ async fn get_actual_price_at(
     let (_, closest_rate) = spot_rates
         .iter()
         .min_by_key(|(ts, _)| (*ts - target_time).num_seconds().unsigned_abs())
-        .unwrap();
+        .expect("spot_rates is non-empty (checked above)");
     Ok(Some(closest_rate.to_price()))
 }
 

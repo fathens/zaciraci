@@ -211,20 +211,25 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // 2. タイムスタンプを設定
     let now = chrono::Utc::now().naive_utc();
+    let thirty_min_ago = now - chrono::Duration::minutes(30);
     let one_hour_ago = now - chrono::Duration::hours(1);
     let two_hours_ago = now - chrono::Duration::hours(2);
 
     // 3. 複数のレコードを挿入（異なるボラティリティを持つデータ）
+    // COUNT(*) >= 3 が必要なため各トークン3件以上
     let rates = vec![
         // base1 (eth) - 変動率 50%
         make_token_rate(base1.clone(), quote.clone(), 1000, two_hours_ago),
         make_token_rate(base1.clone(), quote.clone(), 1500, one_hour_ago),
+        make_token_rate(base1.clone(), quote.clone(), 1200, thirty_min_ago),
         // base2 (btc) - 変動率 100%
         make_token_rate(base2.clone(), quote.clone(), 20000, two_hours_ago),
         make_token_rate(base2.clone(), quote.clone(), 40000, one_hour_ago),
+        make_token_rate(base2.clone(), quote.clone(), 30000, thirty_min_ago),
         // base3 (near) - 変動率 10%
         make_token_rate(base3.clone(), quote.clone(), 5, two_hours_ago),
         make_token_rate_str(base3.clone(), quote.clone(), "5.5", one_hour_ago),
+        make_token_rate_str(base3.clone(), quote.clone(), "5.2", thirty_min_ago),
     ];
 
     // 4. バッチ挿入
@@ -311,8 +316,14 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
             150,
             one_hour_ago + chrono::Duration::minutes(1),
         ),
-        // base2: 全て正の値のため含まれる
-        make_token_rate(base2.clone(), quote.clone(), 50, one_hour_ago),
+        // base2: 全て正の値のため含まれる（COUNT(*) >= 3 必要）
+        make_token_rate(
+            base2.clone(),
+            quote.clone(),
+            50,
+            two_hours_ago + chrono::Duration::minutes(1),
+        ),
+        make_token_rate(base2.clone(), quote.clone(), 55, one_hour_ago),
         make_token_rate(
             base2.clone(),
             quote.clone(),
@@ -394,9 +405,12 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     };
 
     // ケース1: 境界値テスト - 時間範囲の境界値データ
+    // COUNT(*) >= 3 が必要なため範囲内に3件
+    let mid_range = one_hour_ago;
     let boundary_test_data = vec![
-        // 範囲内のデータ（境界値ぎりぎり）
+        // 範囲内のデータ（境界値ぎりぎり + 中間）
         make_token_rate(base1.clone(), quote1.clone(), 1000, just_before_range),
+        make_token_rate(base1.clone(), quote1.clone(), 1200, mid_range),
         make_token_rate(base1.clone(), quote1.clone(), 1500, just_after_range),
         // 範囲外のデータ（除外されるはず）
         make_token_rate(
@@ -438,24 +452,36 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // クリーンアップ
     clean_table().await?;
 
-    // ケース2: 同一ボラティリティ値の処理
+    // ケース2: 同一ボラティリティ値の処理（COUNT(*) >= 3 が必要）
     let same_volatility_data = vec![
-        // base1 (eth) - 変動率 50%
+        // base1 (eth) - CV同等
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             100,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        make_token_rate(base1.clone(), quote1.clone(), 150, one_hour_ago),
-        // base2 (btc) - 変動率 50%（同じ）
+        make_token_rate(base1.clone(), quote1.clone(), 125, one_hour_ago),
+        make_token_rate(
+            base1.clone(),
+            quote1.clone(),
+            150,
+            now - chrono::Duration::minutes(30),
+        ),
+        // base2 (btc) - CV同等
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             200,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        make_token_rate(base2.clone(), quote1.clone(), 300, one_hour_ago),
+        make_token_rate(base2.clone(), quote1.clone(), 250, one_hour_ago),
+        make_token_rate(
+            base2.clone(),
+            quote1.clone(),
+            300,
+            now - chrono::Duration::minutes(30),
+        ),
     ];
 
     let cfg = ConfigResolver;
@@ -481,6 +507,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     clean_table().await?;
 
     // ケース3: 最小レートが0の場合（HAVING MIN(rate) > 0により除外されるケース）
+    // COUNT(*) >= 3 が必要
     let zero_max_rate_data = vec![
         // base1: 負の値(-10)と0の値 -> MIN(rate) = -10 > 0 が false なので除外される
         make_token_rate(
@@ -489,7 +516,13 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             -10,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        make_token_rate(base1.clone(), quote1.clone(), 0, one_hour_ago), // MIN(rate) = -10 (negative) なので除外
+        make_token_rate(base1.clone(), quote1.clone(), -5, one_hour_ago),
+        make_token_rate(
+            base1.clone(),
+            quote1.clone(),
+            0,
+            now - chrono::Duration::minutes(30),
+        ),
         // base2: 全て正の値 -> MIN(rate) = 5 > 0 が true なので含まれる
         make_token_rate(
             base2.clone(),
@@ -497,7 +530,13 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             5,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        make_token_rate(base2.clone(), quote1.clone(), 10, one_hour_ago),
+        make_token_rate(base2.clone(), quote1.clone(), 8, one_hour_ago),
+        make_token_rate(
+            base2.clone(),
+            quote1.clone(),
+            10,
+            now - chrono::Duration::minutes(30),
+        ),
     ];
 
     let cfg = ConfigResolver;
@@ -526,7 +565,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // クリーンアップ
     clean_table().await?;
 
-    // ケース4: 1つのレコードのみの場合（ボラティリティ = 0）
+    // ケース4: レコードが3件未満の場合（COUNT(*) >= 3 により除外される）
     let single_record_data = vec![make_token_rate(
         base1.clone(),
         quote1.clone(),
@@ -537,25 +576,19 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     let cfg = ConfigResolver;
     TokenRate::batch_insert(&single_record_data, &cfg).await?;
 
-    // 1つのレコードのみの場合の結果を検証
+    // COUNT(*) < 3 なので結果は0件
     let single_record_results =
         TokenRate::get_by_volatility_in_time_range(&time_range, &quote1).await?;
-    assert_eq!(single_record_results.len(), 1, "Should find 1 token");
     assert_eq!(
-        single_record_results[0].base.to_string(),
-        "eth.token",
-        "Token should be eth"
-    );
-    assert_eq!(
-        single_record_results[0].variance,
-        BigDecimal::from(0),
-        "Variance should be 0"
+        single_record_results.len(),
+        0,
+        "Should find 0 tokens (COUNT < 3)"
     );
 
     // クリーンアップ
     clean_table().await?;
 
-    // ケース5: 異なる quote トークンのフィルタリング
+    // ケース5: 異なる quote トークンのフィルタリング（COUNT(*) >= 3 が必要）
     let different_quote_data = vec![
         // quote1用のデータ
         make_token_rate(
@@ -564,7 +597,13 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             100,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        make_token_rate(base1.clone(), quote1.clone(), 150, one_hour_ago),
+        make_token_rate(base1.clone(), quote1.clone(), 125, one_hour_ago),
+        make_token_rate(
+            base1.clone(),
+            quote1.clone(),
+            150,
+            now - chrono::Duration::minutes(30),
+        ),
         // quote2用のデータ（フィルタリングされるはず）
         make_token_rate(
             base1.clone(),
@@ -572,7 +611,13 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             200,
             two_hours_ago + chrono::Duration::minutes(1),
         ),
-        make_token_rate(base1.clone(), quote2.clone(), 400, one_hour_ago), // 変動率100%だが、quote1でフィルタリングされる
+        make_token_rate(base1.clone(), quote2.clone(), 300, one_hour_ago),
+        make_token_rate(
+            base1.clone(),
+            quote2.clone(),
+            400,
+            now - chrono::Duration::minutes(30),
+        ),
     ];
 
     let cfg = ConfigResolver;
@@ -622,7 +667,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             10,
             two_hours_ago + chrono::Duration::minutes(30),
         ), // 確実に範囲内
-        // base2: 全て正の値 -> MIN(rate) = 5 > 0 なので含まれる
+        // base2: 全て正の値 -> MIN(rate) = 5 > 0 なので含まれる（COUNT(*) >= 3 必要）
         make_token_rate(
             base2.clone(),
             quote1.clone(),
@@ -632,8 +677,14 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         make_token_rate(
             base2.clone(),
             quote1.clone(),
-            15,
+            10,
             two_hours_ago + chrono::Duration::minutes(50),
+        ), // 確実に範囲内
+        make_token_rate(
+            base2.clone(),
+            quote1.clone(),
+            15,
+            two_hours_ago + chrono::Duration::minutes(60),
         ), // 確実に範囲内
     ];
 
@@ -680,7 +731,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
         end: now,
     };
 
-    // ケース1: 通常の計算 - 正の値
+    // ケース1: 通常の計算 - 正の値（COUNT(*) >= 3 が必要）
     let normal_data = vec![
         make_token_rate(
             base1.clone(),
@@ -688,7 +739,13 @@ async fn test_rate_difference_calculation() -> Result<()> {
             1000,
             two_hours_ago + chrono::Duration::minutes(30),
         ),
-        make_token_rate(base1.clone(), quote1.clone(), 1500, one_hour_ago),
+        make_token_rate(base1.clone(), quote1.clone(), 1200, one_hour_ago),
+        make_token_rate(
+            base1.clone(),
+            quote1.clone(),
+            1500,
+            now - chrono::Duration::minutes(30),
+        ),
     ];
 
     let cfg = ConfigResolver;
@@ -713,6 +770,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
     clean_table().await?;
 
     // ケース2: 負の値を含む計算（HAVING MIN(rate) > 0により除外される）
+    // COUNT(*) >= 3 が必要
     let negative_data = vec![
         make_token_rate(
             base1.clone(),
@@ -720,7 +778,13 @@ async fn test_rate_difference_calculation() -> Result<()> {
             10,
             two_hours_ago + chrono::Duration::minutes(1),
         ), // MIN(rate) = 10 > 0 なので含まれる
-        make_token_rate(base1.clone(), quote1.clone(), 100, one_hour_ago),
+        make_token_rate(base1.clone(), quote1.clone(), 50, one_hour_ago),
+        make_token_rate(
+            base1.clone(),
+            quote1.clone(),
+            100,
+            now - chrono::Duration::minutes(30),
+        ),
     ];
 
     let cfg = ConfigResolver;
@@ -744,7 +808,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
     // クリーンアップ
     clean_table().await?;
 
-    // ケース3: 同一値の計算
+    // ケース3: 同一値の計算（COUNT(*) >= 3 が必要）
     let same_value_data = vec![
         make_token_rate(
             base1.clone(),
@@ -753,6 +817,12 @@ async fn test_rate_difference_calculation() -> Result<()> {
             two_hours_ago + chrono::Duration::minutes(30),
         ),
         make_token_rate(base1.clone(), quote1.clone(), 100, one_hour_ago),
+        make_token_rate(
+            base1.clone(),
+            quote1.clone(),
+            100,
+            now - chrono::Duration::minutes(30),
+        ),
     ];
 
     let cfg = ConfigResolver;

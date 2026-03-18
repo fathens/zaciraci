@@ -41,7 +41,7 @@ use futures::stream::{self, StreamExt};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
 use persistence::evaluation_period::EvaluationPeriod;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -67,6 +67,18 @@ where
     let log = DEFAULT.new(o!("function" => "trade::start"));
 
     info!(log, "starting portfolio-based trading strategy");
+
+    // 未評価の予測レコードを評価（ハウスキーピング: トレード戦略とは独立）
+    match super::prediction_accuracy::evaluate_pending_predictions(cfg).await {
+        Ok(count) => {
+            if count > 0 {
+                info!(log, "evaluated pending predictions"; "count" => count);
+            }
+        }
+        Err(e) => {
+            warn!(log, "prediction evaluation failed, continuing"; "error" => %e);
+        }
+    }
 
     // TRADE_ENABLED のチェック
     let trade_enabled = cfg.trade_enabled();
@@ -198,19 +210,16 @@ where
         "token_count" => selected_tokens.len()
     );
 
-    let report = match execute_portfolio_strategy(
-        &prediction_service,
-        &selected_tokens,
-        available_funds.to_u128(),
+    let params = PortfolioStrategyParams {
+        prediction_service: &prediction_service,
+        tokens: &selected_tokens,
+        available_funds: available_funds.clone(),
         is_new_period,
-        &period_id,
-        client,
-        wallet,
-        current_time,
+        period_id: &period_id,
+        end_date: current_time,
         cfg,
-    )
-    .await
-    {
+    };
+    let report = match execute_portfolio_strategy(&params, client, wallet).await {
         Ok(actions) => actions,
         Err(e) => {
             error!(log, "failed to execute portfolio strategy"; "error" => ?e);
@@ -364,30 +373,26 @@ pub async fn select_top_volatility_tokens(
     }
 }
 
+/// ポートフォリオ戦略実行のパラメータ
+pub(crate) struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
+    pub(crate) prediction_service: &'a PredictionService,
+    pub(crate) tokens: &'a [AccountId],
+    pub(crate) available_funds: YoctoAmount,
+    pub(crate) is_new_period: bool,
+    pub(crate) period_id: &'a str,
+    pub(crate) end_date: chrono::DateTime<chrono::Utc>,
+    pub(crate) cfg: &'a Cfg,
+}
+
 /// ポートフォリオ戦略の実行
-///
-/// # 引数
-/// * `prediction_service` - 価格予測サービス
-/// * `tokens` - 対象トークンのアカウントID
-/// * `available_funds` - 利用可能資金（yoctoNEAR単位）
-/// * `is_new_period` - 新しい評価期間かどうか
-/// * `client` - RPCクライアント
-/// * `wallet` - ウォレット
 ///
 /// # 内部の単位
 /// * 価格: Price型（無次元比率）をスケーリング（× 10^24）してu128に格納
 /// * 予測: 同じスケーリング済みf64値
-#[allow(clippy::too_many_arguments)]
-pub async fn execute_portfolio_strategy<C, W>(
-    prediction_service: &PredictionService,
-    tokens: &[AccountId],
-    available_funds: u128,
-    is_new_period: bool,
-    period_id: &str,
+pub(crate) async fn execute_portfolio_strategy<C, W, Cfg>(
+    params: &PortfolioStrategyParams<'_, Cfg>,
     client: &C,
     wallet: &W,
-    end_date: chrono::DateTime<chrono::Utc>,
-    cfg: &impl ConfigAccess,
 ) -> Result<Vec<TradingAction>>
 where
     C: blockchain::jsonrpc::ViewContract
@@ -395,7 +400,15 @@ where
         + blockchain::jsonrpc::SendTx
         + blockchain::jsonrpc::GasInfo,
     W: blockchain::wallet::Wallet,
+    Cfg: ConfigAccess,
 {
+    let prediction_service = params.prediction_service;
+    let tokens = params.tokens;
+    let available_funds = &params.available_funds;
+    let is_new_period = params.is_new_period;
+    let period_id = params.period_id;
+    let end_date = params.end_date;
+    let cfg = params.cfg;
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
     // ポートフォリオデータの準備
@@ -404,12 +417,6 @@ where
     // 型安全な quote_token をループ外で事前に準備（最適化）
     let quote_token_in: TokenInAccount =
         blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-
-    // 過去の予測を Chronos 待ちの間に並行評価
-    let eval_cfg = common::config::ConfigResolver;
-    let eval_handle = tokio::spawn(async move {
-        super::prediction_accuracy::evaluate_pending_predictions(&eval_cfg).await
-    });
 
     // 設定を事前に取得
     let price_history_days = i64::from(cfg.trade_price_history_days());
@@ -484,7 +491,7 @@ where
 
                 // ボラティリティの計算
                 let volatility = calculate_volatility_from_history(&history).ok()?;
-                let volatility_f64 = volatility.to_string().parse::<f64>().ok()?;
+                let volatility_f64 = volatility.to_f64()?;
 
                 Some((
                     data.token_out,
@@ -617,29 +624,6 @@ where
         ));
     }
 
-    // 評価タスクの結果を取得（mape と confidence のタプル）
-    let prediction_confidence: Option<f64> = match eval_handle.await {
-        Ok(Ok(Some((mape, confidence)))) => {
-            info!(log, "prediction accuracy";
-                "rolling_mape" => format!("{:.2}%", mape),
-                "prediction_confidence" => format!("{:.3}", confidence)
-            );
-            Some(confidence)
-        }
-        Ok(Ok(None)) => {
-            debug!(log, "prediction accuracy: insufficient data");
-            None
-        }
-        Ok(Err(e)) => {
-            warn!(log, "prediction evaluation failed"; "error" => ?e);
-            None
-        }
-        Err(e) => {
-            warn!(log, "prediction evaluation task panicked"; "error" => ?e);
-            None
-        }
-    };
-
     // 今回の予測を DB に記録（失敗しても取引は続行）
     if let Err(e) =
         super::prediction_accuracy::record_predictions(period_id, &predictions, &quote_token_in)
@@ -648,18 +632,88 @@ where
         warn!(log, "failed to record predictions"; "error" => ?e);
     }
 
+    // per-token confidence を計算（DB エラー時は Hold で安全に停止）
+    let token_out_for_confidence: Vec<TokenOutAccount> =
+        token_data.iter().map(|t| t.symbol.clone()).collect();
+    let prediction_confidences = match super::prediction_accuracy::calculate_per_token_confidence(
+        &token_out_for_confidence,
+        cfg,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(log, "confidence calculation failed, holding"; "error" => %e);
+            return Ok(vec![TradingAction::Hold]);
+        }
+    };
+
+    // 低 confidence トークンを除外（予測は既に実行済み → MAPE は更新される）
+    let min_confidence = cfg.trade_min_token_confidence();
+    let original_count = token_data.len();
+    let excluded: Vec<(TokenOutAccount, f64)> = token_data
+        .iter()
+        .filter_map(|t| {
+            prediction_confidences
+                .get(&t.symbol)
+                .filter(|&&c| c < min_confidence)
+                .map(|&c| (t.symbol.clone(), c))
+        })
+        .collect();
+    token_data.retain(|t| {
+        prediction_confidences
+            .get(&t.symbol)
+            .is_none_or(|&c| c >= min_confidence)
+    });
+    let remaining_symbols: HashSet<&TokenOutAccount> =
+        token_data.iter().map(|t| &t.symbol).collect();
+    predictions.retain(|k, _| remaining_symbols.contains(k));
+    historical_prices.retain(|k, _| remaining_symbols.contains(k));
+
+    for (token, c) in &excluded {
+        info!(log, "excluding token due to low confidence";
+            "token" => %token, "confidence" => format!("{:.3}", c));
+    }
+    if !excluded.is_empty() {
+        let excluded_str: Vec<String> = excluded
+            .iter()
+            .map(|(k, c)| format!("{}({:.3})", k, c))
+            .collect();
+        info!(log, "tokens filtered by prediction confidence";
+            "original" => original_count, "remaining" => token_data.len(),
+            "excluded" => excluded_str.join(", "));
+    }
+
+    // 全トークン除外のエッジケース: 安全に Hold を返す
+    if token_data.is_empty() {
+        let all_confidences: Vec<String> = prediction_confidences
+            .iter()
+            .map(|(k, c)| format!("{}({:.3})", k, c))
+            .collect();
+        warn!(log, "all tokens below confidence threshold, holding";
+            "threshold" => format!("{:.3}", min_confidence),
+            "tokens" => all_confidences.join(", "));
+        return Ok(vec![TradingAction::Hold]);
+    }
+
+    // フィルタ後のトークンのみの confidence を PortfolioData に渡す
+    let filtered_confidences: BTreeMap<TokenOutAccount, f64> = prediction_confidences
+        .into_iter()
+        .filter(|(k, _)| remaining_symbols.contains(k))
+        .collect();
+
     let portfolio_data = PortfolioData {
         tokens: token_data,
         predictions,
         historical_prices,
-        prediction_confidence,
+        prediction_confidences: filtered_confidences,
     };
 
     // 既存ポジションの取得と WalletInfo の構築
     let wallet_info = if is_new_period {
         // 新規期間: ポジションなし、available_funds を総価値として使用
         debug!(log, "new evaluation period, starting with empty holdings");
-        let total_value_near = YoctoValue::from_yocto(BigDecimal::from(available_funds)).to_near();
+        let total_value_near = available_funds.to_value().to_near();
         WalletInfo {
             holdings: BTreeMap::new(),
             total_value: total_value_near.clone(),

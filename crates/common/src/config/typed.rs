@@ -414,6 +414,13 @@ define_typed_config! {
         default: 1440
     }
 
+    /// Minimum per-token prediction confidence to include in portfolio.
+    /// Tokens below this threshold are excluded from trading.
+    fn trade_min_token_confidence() -> f64 {
+        key: "TRADE_MIN_TOKEN_CONFIDENCE",
+        default: 0.3
+    }
+
     // ── arbitrage ──
 
     /// Whether arbitrage engine is enabled

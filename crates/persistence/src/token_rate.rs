@@ -396,7 +396,7 @@ impl TokenRate {
                     "
                 SELECT
                     base_token,
-                    var_pop(rate) as variance
+                    stddev_pop(rate) / NULLIF(avg(rate), 0) as variance
                 FROM token_rates
                 WHERE
                     quote_token = $1 AND
@@ -404,7 +404,7 @@ impl TokenRate {
                     timestamp <= $3
                 GROUP BY base_token
                 HAVING
-                    MIN(rate) > 0
+                    MIN(rate) > 0 AND COUNT(*) >= 3
                 ORDER BY variance DESC
                 ",
                 )
