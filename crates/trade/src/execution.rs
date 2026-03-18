@@ -426,6 +426,9 @@ where
                 }
             }
 
+            // NOTE: sell_failed > 0 ガードにより sell_failed==0 && sell_success==0
+            // （売却対象ゼロ）のケースはここに到達しない。新規購入のみの
+            // リバランスは Phase 2 に正常に進む。
             if sell_failed > 0 {
                 warn!(log, "some sell operations failed, portfolio may diverge from target";
                     "sell_failed" => sell_failed, "sell_success" => sell_success);

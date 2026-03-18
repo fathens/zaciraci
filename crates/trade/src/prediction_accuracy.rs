@@ -293,7 +293,14 @@ pub(crate) async fn calculate_per_token_confidence(
     let mape_poor = cfg.prediction_mape_poor();
 
     // 1回の DB クエリで全トークンのレコードを取得
+    // NOTE: tokens.len() は実用上 i64 範囲を超えない（メモリ制約）。
+    // 万一変換に失敗した場合は MAX_PREDICTION_QUERY_LIMIT にフォールバックし、
+    // 下記の warn ログで検知される。
     let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
+    // NOTE: キャップ発生時は高頻度トークンがレコードを独占し、低頻度トークンの
+    // confidence が min_samples 未満で計算不能（コールドスタート扱い）になりうる。
+    // 現在の運用規模（window=30, tokens~10 → 300 << 10,000）では問題ないが、
+    // トークン数が大幅に増加した場合は warn ログで検知すること。
     let raw_limit = window.saturating_mul(token_count);
     let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
     if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
@@ -336,6 +343,9 @@ pub(crate) async fn calculate_per_token_confidence(
             continue;
         }
 
+        // NOTE: min_samples >= 1（デフォルト 5）であるため mape_values は非空。
+        // 仮に min_samples == 0 に設定された場合でもゼロ除算は NaN → mape_to_confidence
+        // の NaN ガードで confidence = 0.0（安全側）になる。
         let avg_mape = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
 
         let direction_data = records.map(|rs| calculate_direction_accuracy_for_records(rs));
