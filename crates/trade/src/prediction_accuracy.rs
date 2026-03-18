@@ -238,6 +238,12 @@ pub async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32
 /// ソート済みレコード（target_time DESC）の隣接ペアから方向正解率を計算する。
 /// DB アクセスなしで計算（N+1 クエリ排除）。
 fn calculate_direction_accuracy_for_records(records: &[DbPredictionRecord]) -> (usize, usize) {
+    debug_assert!(
+        records
+            .windows(2)
+            .all(|w| w[0].target_time >= w[1].target_time),
+        "records must be sorted by target_time DESC"
+    );
     let mut correct = 0usize;
     let mut total = 0usize;
     for pair in records.windows(2) {

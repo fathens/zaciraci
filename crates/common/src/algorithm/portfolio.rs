@@ -959,6 +959,10 @@ fn blend_and_expand(
     subset_indices: &[usize],
     n_total: usize,
 ) -> Vec<f64> {
+    debug_assert!(
+        subset_indices.iter().all(|&idx| idx < alphas.len()),
+        "subset_indices must be within alphas bounds"
+    );
     let w_sharpe = box_maximize_sharpe(sub_returns, sub_cov, max_position);
     let w_rp = box_risk_parity(sub_cov, max_position);
 
