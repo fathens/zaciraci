@@ -137,7 +137,7 @@ impl PredictionRecord {
                 prediction_records::table
                     .filter(prediction_records::evaluated_at.is_not_null())
                     .filter(prediction_records::token.eq_any(&tokens))
-                    .order_by(prediction_records::evaluated_at.desc())
+                    .order_by(prediction_records::target_time.desc())
                     .limit(limit)
                     .load::<DbPredictionRecord>(conn)
             })

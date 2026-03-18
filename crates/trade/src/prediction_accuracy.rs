@@ -321,7 +321,7 @@ pub(crate) async fn calculate_per_token_confidence(
         by_token.entry(r.token.clone()).or_default().push(r);
     }
 
-    // 各トークン内を target_time DESC でソート（方向判定に必要）
+    // 各トークン内を target_time DESC でソート（DB も target_time DESC だがグルーピング後に保証）
     for entries in by_token.values_mut() {
         entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
         entries.truncate(window as usize); // window は .max(1) 済みのため正値保証
