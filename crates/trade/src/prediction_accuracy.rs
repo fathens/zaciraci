@@ -278,13 +278,13 @@ pub async fn calculate_per_token_confidence(
     let mape_poor = cfg.prediction_mape_poor();
 
     // 1回の DB クエリで全トークンのレコードを取得
-    let all_records =
-        PredictionRecord::get_recent_evaluated_for_tokens(window * tokens.len() as i64, tokens)
-            .await
-            .map_err(|e| {
-                warn!(log, "failed to get prediction records"; "error" => %e);
-                e
-            })?;
+    let limit = window.saturating_mul(tokens.len() as i64).min(10_000);
+    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
+        .await
+        .map_err(|e| {
+            warn!(log, "failed to get prediction records"; "error" => %e);
+            e
+        })?;
 
     // Rust 側でトークンごとにグルーピング
     let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> =
