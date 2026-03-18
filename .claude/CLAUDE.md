@@ -7,11 +7,11 @@
 - コミットメッセージは英語で記述する
 - コミットメッセージのフッターに Claude の署名（Co-Authored-By）を付けないこと
 - マルチステップの実装タスクでは、各ステップ完了後にコミットすること（全変更を最後にまとめてコミットしない）
-- コミット時に `$()` コマンド置換を使わないこと（承認ダイアログが毎回表示されるため）。代わりに echo とパイプを使う：
+- コミット時に `$()` コマンド置換や `echo ... | git commit -F -` を使わないこと（承認ダイアログが表示されるため）。代わりに `-m` オプションで直接渡す：
   ```bash
-  echo 'feat: add feature
+  git commit -m 'feat: add feature
 
-  detailed description' | git commit -F -
+  detailed description'
   ```
 - 複数のコマンドを `&&` で連結しないこと。代わりに個別の Bash ツール呼び出しを使う
 
