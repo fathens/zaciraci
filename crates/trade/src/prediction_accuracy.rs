@@ -48,7 +48,11 @@ pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usiz
 /// - MAPE ≥ poor → 0.0（予測が不正確 → RP に退避）
 /// - 中間値は線形補間
 fn mape_to_confidence(mape: f64, excellent: f64, poor: f64) -> f64 {
-    ((poor - mape) / (poor - excellent)).clamp(0.0, 1.0)
+    let range = poor - excellent;
+    if range.abs() < 1e-9 {
+        return if mape <= excellent { 1.0 } else { 0.0 };
+    }
+    ((poor - mape) / range).clamp(0.0, 1.0)
 }
 
 /// 方向正解を判定: 予測と実際の変化方向が一致すれば true

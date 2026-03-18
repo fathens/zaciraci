@@ -155,3 +155,11 @@ fn test_calculate_composite_confidence() {
     // composite = 0.0
     assert!((c5 - 0.0).abs() < 0.01);
 }
+
+#[test]
+fn test_mape_to_confidence_equal_thresholds() {
+    // poor == excellent のエッジケース: ゼロ除算を起こさないこと
+    assert_eq!(mape_to_confidence(2.0, 3.0, 3.0), 1.0); // mape < excellent
+    assert_eq!(mape_to_confidence(3.0, 3.0, 3.0), 1.0); // mape == excellent == poor
+    assert_eq!(mape_to_confidence(5.0, 3.0, 3.0), 0.0); // mape > poor
+}
