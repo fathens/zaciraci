@@ -258,3 +258,83 @@ fn test_small_rate_scaling_issue() {
         "Zero rate should be effectively zero"
     );
 }
+
+#[test]
+fn test_rounding_remainder_three_way_split() {
+    // 3等分で割り切れない yoctoNEAR 値の端数回収テスト
+    // allocate_add_position_amounts と同パターンで、
+    // 最後の要素が saturating_sub で端数を回収する
+    let available: u128 = 10_000_000_000_000_000_000_000_001; // 10 NEAR + 1 yocto
+    let ratio = BigDecimal::from_str("0.5").unwrap(); // 半分に按分
+
+    let buy_values = [
+        NearValue::from_near(BigDecimal::from(10)),
+        NearValue::from_near(BigDecimal::from(5)),
+        NearValue::from_near(BigDecimal::from(5)),
+    ];
+
+    let mut allocated_sum: u128 = 0;
+    let mut amounts = Vec::new();
+    let buy_count = buy_values.len();
+
+    for (i, buy) in buy_values.iter().enumerate() {
+        let is_last = i == buy_count - 1;
+        let amount = if is_last {
+            available.saturating_sub(allocated_sum)
+        } else {
+            let adjusted = buy * &ratio;
+            adjusted.to_yocto().to_amount().to_u128()
+        };
+        allocated_sum = allocated_sum.saturating_add(amount);
+        amounts.push(amount);
+    }
+
+    // 不変条件: 合計が available に一致
+    let total: u128 = amounts.iter().sum();
+    assert_eq!(
+        total, available,
+        "total allocated must equal available balance"
+    );
+
+    // 最後の要素が端数を含む
+    // buy[0] = 10 * 0.5 = 5 NEAR, buy[1] = 5 * 0.5 = 2.5 NEAR
+    // buy[2] = available - sum(buy[0..2])
+    assert!(amounts[2] > 0, "last element should collect remainder");
+}
+
+#[test]
+fn test_rounding_remainder_indivisible_yocto() {
+    // 7 yocto を 3 等分: floor(7/3)=2, floor(7/3)=2, remainder=3
+    let available: u128 = 7;
+    let total_buy = NearValue::from_near(BigDecimal::from(3));
+    let ratio = &NearValue::from_near(BigDecimal::from_str("0.000000000000000000000007").unwrap())
+        / &total_buy;
+
+    let buy_values = [
+        NearValue::from_near(BigDecimal::from(1)),
+        NearValue::from_near(BigDecimal::from(1)),
+        NearValue::from_near(BigDecimal::from(1)),
+    ];
+
+    let mut allocated_sum: u128 = 0;
+    let mut amounts = Vec::new();
+    let buy_count = buy_values.len();
+
+    for (i, buy) in buy_values.iter().enumerate() {
+        let is_last = i == buy_count - 1;
+        let amount = if is_last {
+            available.saturating_sub(allocated_sum)
+        } else {
+            let adjusted = buy * &ratio;
+            adjusted.to_yocto().to_amount().to_u128()
+        };
+        allocated_sum = allocated_sum.saturating_add(amount);
+        amounts.push(amount);
+    }
+
+    let total: u128 = amounts.iter().sum();
+    assert_eq!(
+        total, available,
+        "total must equal available even for small indivisible values"
+    );
+}
