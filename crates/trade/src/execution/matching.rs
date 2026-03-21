@@ -51,8 +51,8 @@ pub(crate) struct MatchResult {
 /// - sum(direct_swaps) + sum(remaining_buys) = sum(original_buys)
 /// - 同一売却トークンの分割スワップの合計 ≤ 元の売却額
 pub(crate) fn match_rebalance_operations(
-    mut sell_operations: Vec<SellOperation>,
-    mut buy_operations: Vec<BuyOperation>,
+    sell_operations: Vec<SellOperation>,
+    buy_operations: Vec<BuyOperation>,
 ) -> MatchResult {
     if sell_operations.is_empty() || buy_operations.is_empty() {
         return MatchResult {
@@ -63,10 +63,12 @@ pub(crate) fn match_rebalance_operations(
     }
 
     // 降順ソート（大きい金額を優先的にマッチ）
+    let mut sell_operations = sell_operations;
+    let mut buy_operations = buy_operations;
     sell_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
     buy_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
 
-    let mut direct_swaps = Vec::new();
+    let mut direct_swaps = Vec::with_capacity(sell_operations.len() + buy_operations.len());
     let mut sell_iter = sell_operations.into_iter();
     let mut buy_iter = buy_operations.into_iter();
 
