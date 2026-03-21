@@ -549,7 +549,9 @@ where
                     allocated_sum = allocated_sum.saturating_add(wrap_near_amount_u128);
 
                     if wrap_near_amount_u128 == 0 {
-                        error!(log, "Failed to convert purchase amount to u128"; "token" => %buy.token);
+                        error!(log, "purchase amount is zero after conversion";
+                            "token" => %buy.token,
+                            "original_near_value" => %buy.near_value);
                         remainder_buy.failed += 1;
                         continue;
                     }
@@ -1050,7 +1052,12 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
         .parse::<NearAmount>()
         .map_err(|e| anyhow::anyhow!("Failed to parse harvest reserve amount: {}", e))?
         .to_yocto();
-    let reserve_amount_u128: u128 = reserve_amount.to_u128();
+    let mut reserve_amount_u128: u128 = reserve_amount.to_u128();
+    if reserve_amount_u128 == 0 {
+        warn!(log, "harvest reserve amount converted to zero, using default 1 NEAR";
+            "configured_value" => cfg.harvest_reserve_amount());
+        reserve_amount_u128 = 1_000_000_000_000_000_000_000_000; // 1 NEAR
+    }
 
     let client = blockchain::jsonrpc::new_client();
     let wallet = blockchain::wallet::new_wallet();
