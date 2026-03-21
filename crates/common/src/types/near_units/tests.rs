@@ -944,3 +944,28 @@ fn test_yocto_amount_from_bigdecimal_zero() {
     let back: BigDecimal = amount.into();
     assert_eq!(back, BigDecimal::from(0));
 }
+
+#[test]
+fn test_near_value_sum_multiple() {
+    let values = vec![
+        NearValue::from_near(BigDecimal::from(10)),
+        NearValue::from_near(BigDecimal::from(20)),
+        NearValue::from_near(BigDecimal::from(30)),
+    ];
+    let total: NearValue = values.into_iter().sum();
+    assert_eq!(total, NearValue::from_near(BigDecimal::from(60)));
+}
+
+#[test]
+fn test_near_value_sum_empty() {
+    let values: Vec<NearValue> = vec![];
+    let total: NearValue = values.into_iter().sum();
+    assert_eq!(total, NearValue::zero());
+}
+
+#[test]
+fn test_near_value_sum_single() {
+    let values = vec![NearValue::from_near(BigDecimal::from(42))];
+    let total: NearValue = values.into_iter().sum();
+    assert_eq!(total, NearValue::from_near(BigDecimal::from(42)));
+}
