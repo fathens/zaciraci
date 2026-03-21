@@ -83,11 +83,7 @@ pub(crate) fn match_rebalance_operations(
     let mut buy_remaining = current_buy.near_value.clone();
 
     loop {
-        let match_value = if sell_remaining <= buy_remaining {
-            sell_remaining.clone()
-        } else {
-            buy_remaining.clone()
-        };
+        let match_value = std::cmp::min(&sell_remaining, &buy_remaining).clone();
 
         if match_value > NearValue::zero() {
             direct_swaps.push(DirectSwap {
