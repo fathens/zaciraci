@@ -669,10 +669,16 @@ where
         let available_wrap_near = {
             let account = wallet.account_id();
             let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
-            deposits
-                .get(wrap_near_token)
-                .map(|u| u.0)
-                .unwrap_or_default()
+            match deposits.get(wrap_near_token) {
+                Some(u) => u.0,
+                None => {
+                    warn!(
+                        log,
+                        "no wNEAR deposit found, remaining buys will be skipped"
+                    );
+                    0
+                }
+            }
         };
         let available_wrap_near_value =
             YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
