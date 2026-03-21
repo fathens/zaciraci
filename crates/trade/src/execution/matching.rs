@@ -5,6 +5,7 @@
 
 use common::types::*;
 use num_bigint::ToBigInt;
+use num_traits::ToPrimitive;
 
 // --- リバランス直接スワップ最適化の型定義 ---
 
@@ -154,7 +155,6 @@ pub(crate) fn token_amount_to_u128(amount: &TokenAmount) -> crate::Result<u128> 
         .smallest_units()
         .to_bigint()
         .ok_or_else(|| anyhow::anyhow!("Failed to convert TokenAmount to BigInt"))?
-        .to_string()
-        .parse::<u128>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse TokenAmount as u128: {}", e))
+        .to_u128()
+        .ok_or_else(|| anyhow::anyhow!("TokenAmount out of u128 range"))
 }
