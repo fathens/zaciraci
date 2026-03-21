@@ -2,7 +2,7 @@ use bigdecimal::BigDecimal;
 use common::types::{ExchangeRate, NearValue, TokenAccount};
 use std::str::FromStr;
 
-use super::{BuyOperation, SellOperation};
+use crate::execution::matching::{BuyOperation, SellOperation};
 
 pub fn ta(s: &str) -> TokenAccount {
     s.parse().expect("invalid TokenAccount in test")

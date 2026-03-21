@@ -14,7 +14,9 @@ use common::config::ConfigAccess;
 use common::types::*;
 use logging::*;
 use near_sdk::NearToken;
-use num_bigint::ToBigInt;
+pub(crate) mod matching;
+
+use matching::{BuyOperation, SellOperation, match_rebalance_operations, token_amount_to_u128};
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -23,153 +25,6 @@ use std::fmt::Display;
 pub struct ExecutionSummary {
     pub success_count: usize,
     pub failed_count: usize,
-}
-
-// --- リバランス直接スワップ最適化の型定義 ---
-
-/// 売却操作（差分計算の出力）
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SellOperation {
-    token: TokenAccount,
-    near_value: NearValue,
-    exchange_rate: ExchangeRate,
-}
-
-/// 購入操作（差分計算の出力）
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BuyOperation {
-    token: TokenAccount,
-    near_value: NearValue,
-}
-
-/// マッチングされた直接スワップ
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DirectSwap {
-    sell_token: TokenAccount,
-    buy_token: TokenAccount,
-    near_value: NearValue,
-    sell_exchange_rate: ExchangeRate,
-}
-
-/// マッチング結果
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MatchResult {
-    direct_swaps: Vec<DirectSwap>,
-    remaining_sells: Vec<SellOperation>,
-    remaining_buys: Vec<BuyOperation>,
-}
-
-/// 売却・購入操作を直接スワップにマッチングする（純粋関数）
-///
-/// アルゴリズム:
-/// 1. 売却・購入を wNEAR 価値の降順でソート
-/// 2. 2ポインタで貪欲マッチング
-/// 3. 未消化の操作を全て remaining に収集
-///
-/// 不変条件:
-/// - sum(direct_swap.near_value) + sum(remaining) = max(sum(sell), sum(buy))
-/// - 同一売却トークンの分割スワップの合計 ≤ 元の売却額
-fn match_rebalance_operations(
-    mut sell_operations: Vec<SellOperation>,
-    mut buy_operations: Vec<BuyOperation>,
-) -> MatchResult {
-    if sell_operations.is_empty() || buy_operations.is_empty() {
-        return MatchResult {
-            direct_swaps: vec![],
-            remaining_sells: sell_operations,
-            remaining_buys: buy_operations,
-        };
-    }
-
-    // 降順ソート（大きい金額を優先的にマッチ）
-    sell_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
-    buy_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
-
-    let mut direct_swaps = Vec::new();
-
-    let mut si = 0;
-    let mut bi = 0;
-    let mut sell_remaining = sell_operations[0].near_value.clone();
-    let mut buy_remaining = buy_operations[0].near_value.clone();
-
-    loop {
-        let match_value = std::cmp::min(&sell_remaining, &buy_remaining).clone();
-
-        if match_value > NearValue::zero() {
-            direct_swaps.push(DirectSwap {
-                sell_token: sell_operations[si].token.clone(),
-                buy_token: buy_operations[bi].token.clone(),
-                near_value: match_value.clone(),
-                sell_exchange_rate: sell_operations[si].exchange_rate.clone(),
-            });
-        }
-
-        sell_remaining = &sell_remaining - &match_value;
-        buy_remaining = &buy_remaining - &match_value;
-
-        // 売却側が消化された場合、次の売却へ
-        if sell_remaining == NearValue::zero() {
-            si += 1;
-            if si >= sell_operations.len() {
-                // 売却を全て消化 — 購入側の残余を全て収集
-                let mut remaining_buys = Vec::new();
-                if buy_remaining > NearValue::zero() {
-                    remaining_buys.push(BuyOperation {
-                        token: buy_operations[bi].token.clone(),
-                        near_value: buy_remaining,
-                    });
-                }
-                // 現在の購入（部分消化済み or 完全消化）の次から未処理を追加
-                for buy in &buy_operations[bi + 1..] {
-                    remaining_buys.push(buy.clone());
-                }
-                return MatchResult {
-                    direct_swaps,
-                    remaining_sells: vec![],
-                    remaining_buys,
-                };
-            }
-            sell_remaining = sell_operations[si].near_value.clone();
-        }
-
-        // 購入側が消化された場合、次の購入へ
-        if buy_remaining == NearValue::zero() {
-            bi += 1;
-            if bi >= buy_operations.len() {
-                // 購入を全て消化 — 売却側の残余を全て収集
-                let mut remaining_sells = Vec::new();
-                if sell_remaining > NearValue::zero() {
-                    remaining_sells.push(SellOperation {
-                        token: sell_operations[si].token.clone(),
-                        near_value: sell_remaining,
-                        exchange_rate: sell_operations[si].exchange_rate.clone(),
-                    });
-                }
-                // 現在の売却（部分消化済み or 完全消化）の次から未処理を追加
-                for sell in &sell_operations[si + 1..] {
-                    remaining_sells.push(sell.clone());
-                }
-                return MatchResult {
-                    direct_swaps,
-                    remaining_sells,
-                    remaining_buys: vec![],
-                };
-            }
-            buy_remaining = buy_operations[bi].near_value.clone();
-        }
-    }
-}
-
-/// TokenAmount を u128 に変換する。
-/// 小数部がある場合は切り捨てられる（floor）。
-fn token_amount_to_u128(amount: &TokenAmount) -> crate::Result<u128> {
-    amount
-        .smallest_units()
-        .to_bigint()
-        .ok_or_else(|| anyhow::anyhow!("Failed to convert TokenAmount to BigInt"))?
-        .to_string()
-        .parse::<u128>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse TokenAmount as u128: {}", e))
 }
 
 /// AddPosition の swap 金額を weight に基づいて按分計算する。
@@ -655,7 +510,7 @@ where
                     .remaining_buys
                     .iter()
                     .map(|op| op.near_value.clone())
-                    .fold(NearValue::zero(), |acc, v| acc + v);
+                    .sum();
 
                 let ratio = if total_buy_value > available_wrap_near_value {
                     Some(&available_wrap_near_value / &total_buy_value)

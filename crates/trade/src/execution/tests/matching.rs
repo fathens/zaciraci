@@ -350,17 +350,17 @@ fn test_invariant_total_value_preserved() {
         .direct_swaps
         .iter()
         .map(|ds| ds.near_value.clone())
-        .fold(NearValue::zero(), |acc, v| acc + v);
+        .sum();
     let remaining_sell_sum: NearValue = result
         .remaining_sells
         .iter()
         .map(|s| s.near_value.clone())
-        .fold(NearValue::zero(), |acc, v| acc + v);
+        .sum();
     let remaining_buy_sum: NearValue = result
         .remaining_buys
         .iter()
         .map(|b| b.near_value.clone())
-        .fold(NearValue::zero(), |acc, v| acc + v);
+        .sum();
 
     // 直接スワップ合計 = min(total_sell, total_buy) = total_buy = 80
     assert_eq!(swap_sum, total_buy);
