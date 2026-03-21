@@ -4,8 +4,6 @@
 //! 中間 wNEAR 変換を削減する最適化を提供する。
 
 use common::types::*;
-use num_bigint::ToBigInt;
-use num_traits::ToPrimitive;
 
 // --- リバランス直接スワップ最適化の型定義 ---
 
@@ -159,24 +157,4 @@ pub(crate) fn match_rebalance_operations(
             }
         }
     }
-}
-
-/// TokenAmount を u128 に変換する。
-///
-/// 小数部がある場合は切り捨てられる（floor）。
-///
-/// # 前提条件
-/// `amount` は非負であること。負の値を渡すと `u128` へのパースが失敗しエラーを返す。
-/// 呼び出し元で `.abs()` 等により非負を保証すること。
-pub(crate) fn token_amount_to_u128(amount: &TokenAmount) -> crate::Result<u128> {
-    debug_assert!(
-        amount.smallest_units() >= &bigdecimal::BigDecimal::default(),
-        "token_amount_to_u128: amount must be non-negative"
-    );
-    amount
-        .smallest_units()
-        .to_bigint()
-        .ok_or_else(|| anyhow::anyhow!("Failed to convert TokenAmount to BigInt"))?
-        .to_u128()
-        .ok_or_else(|| anyhow::anyhow!("TokenAmount out of u128 range"))
 }

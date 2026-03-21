@@ -15,11 +15,39 @@ use common::algorithm::types::TradingAction;
 use common::config::ConfigAccess;
 use common::types::*;
 use logging::*;
-use matching::{BuyOperation, SellOperation, match_rebalance_operations, token_amount_to_u128};
+use matching::{BuyOperation, SellOperation, match_rebalance_operations};
 use near_sdk::NearToken;
+use num_bigint::ToBigInt;
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use std::collections::HashMap;
 use std::fmt::Display;
+
+/// TokenAmount を u128 に変換する。
+///
+/// 小数部がある場合は切り捨てられる（floor）。
+///
+/// # 前提条件
+/// `amount` は非負であること。負の値を渡すと `u128` へのパースが失敗しエラーを返す。
+/// 呼び出し元で `.abs()` 等により非負を保証すること。
+fn token_amount_to_u128(amount: &TokenAmount) -> Result<u128> {
+    debug_assert!(
+        amount.smallest_units() >= &bigdecimal::BigDecimal::default(),
+        "token_amount_to_u128: amount must be non-negative"
+    );
+    amount
+        .smallest_units()
+        .to_bigint()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Failed to convert TokenAmount to BigInt: {}",
+                amount.smallest_units()
+            )
+        })?
+        .to_u128()
+        .ok_or_else(|| {
+            anyhow::anyhow!("TokenAmount out of u128 range: {}", amount.smallest_units())
+        })
+}
 
 /// フェーズごとの成功・失敗カウンタ
 #[derive(Debug, Default)]
