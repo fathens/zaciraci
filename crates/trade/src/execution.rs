@@ -57,7 +57,7 @@ struct PhaseCounters {
 }
 
 /// harvest reserve のデフォルト値（1 NEAR in yoctoNEAR）
-const DEFAULT_HARVEST_RESERVE: u128 = 1_000_000_000_000_000_000_000_000;
+const DEFAULT_HARVEST_RESERVE: u128 = 10u128.pow(24);
 
 /// 実行サマリー
 pub struct ExecutionSummary {
