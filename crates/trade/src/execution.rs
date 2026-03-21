@@ -386,7 +386,7 @@ where
             let mut remainder_buy = PhaseCounters::new();
 
             // 常に match_rebalance_operations を通す（売却のみ・購入のみも統一処理）
-            let result = match_rebalance_operations(sell_operations, buy_operations);
+            let mut result = match_rebalance_operations(sell_operations, buy_operations);
 
             info!(log, "direct swap matching result";
                 "direct_swap_count" => result.direct_swaps.len(),
@@ -395,13 +395,28 @@ where
             );
 
             // 1. 直接スワップ実行（near_value 降順 — match_rebalance_operations がソート済み）
-            for ds in &result.direct_swaps {
+            // 失敗した直接スワップは remaining に fallback し、wNEAR 経由で再試行される
+            let fallback_to_remaining =
+                |result: &mut matching::MatchResult, ds: &matching::DirectSwap| {
+                    result.remaining_sells.push(SellOperation {
+                        token: ds.sell_token.clone(),
+                        near_value: ds.near_value.clone(),
+                        exchange_rate: ds.sell_exchange_rate.clone(),
+                    });
+                    result.remaining_buys.push(BuyOperation {
+                        token: ds.buy_token.clone(),
+                        near_value: ds.near_value.clone(),
+                    });
+                };
+
+            for ds in &result.direct_swaps.clone() {
                 let token_amount: TokenAmount = &ds.near_value * &ds.sell_exchange_rate;
                 let token_amount_u128 = match token_amount_to_u128(&token_amount) {
                     Ok(v) => v,
                     Err(e) => {
                         error!(log, "token amount conversion failed"; "error" => %e);
                         direct_swap.failed += 1;
+                        fallback_to_remaining(&mut result, ds);
                         continue;
                     }
                 };
@@ -410,6 +425,7 @@ where
                     warn!(log, "token amount truncated to zero, skipping direct swap";
                         "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token);
                     direct_swap.failed += 1;
+                    fallback_to_remaining(&mut result, ds);
                     continue;
                 }
 
@@ -443,6 +459,7 @@ where
                             "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token,
                             "error" => %e);
                         direct_swap.failed += 1;
+                        fallback_to_remaining(&mut result, ds);
                     }
                 }
             }
