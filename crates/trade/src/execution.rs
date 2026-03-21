@@ -405,7 +405,8 @@ where
     // 現在の保有量を取得（wrap.nearを明示的に追加）
     let mut tokens: Vec<TokenAccount> = target_weights.keys().map(|t| t.inner().clone()).collect();
     let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
-    if !tokens.contains(wnear) {
+    let wnear_out: TokenOutAccount = wnear.clone().into();
+    if !target_weights.contains_key(&wnear_out) {
         tokens.push(wnear.clone());
         trace!(
             log,
