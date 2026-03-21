@@ -527,12 +527,22 @@ where
                     None
                 };
 
-                for buy in &result.remaining_buys {
-                    let adjusted_value = match &ratio {
-                        Some(r) => &buy.near_value * r,
-                        None => buy.near_value.clone(),
+                // 最後の購入で端数を回収する（allocate_add_position_amounts と同パターン）
+                let mut allocated_sum: u128 = 0;
+                let buy_count = result.remaining_buys.len();
+                for (i, buy) in result.remaining_buys.iter().enumerate() {
+                    let is_last = i == buy_count - 1;
+                    let wrap_near_amount_u128 = if is_last && ratio.is_some() {
+                        // 最後の購入は残額を使い切り、ratio 按分の切り捨て端数を回収
+                        available_wrap_near.saturating_sub(allocated_sum)
+                    } else {
+                        let adjusted_value = match &ratio {
+                            Some(r) => &buy.near_value * r,
+                            None => buy.near_value.clone(),
+                        };
+                        adjusted_value.to_yocto().to_amount().to_u128()
                     };
-                    let wrap_near_amount_u128 = adjusted_value.to_yocto().to_amount().to_u128();
+                    allocated_sum = allocated_sum.saturating_add(wrap_near_amount_u128);
 
                     if wrap_near_amount_u128 == 0 {
                         error!(log, "Failed to convert purchase amount to u128"; "token" => %buy.token);
@@ -543,7 +553,7 @@ where
                     trace!(log, "executing remainder buy";
                         "token" => %buy.token,
                         "original_value" => %buy.near_value,
-                        "adjusted_value" => %adjusted_value);
+                        "wrap_near_amount" => wrap_near_amount_u128);
                     let to_token: TokenOutAccount = buy.token.clone().into();
                     match swap::execute_direct_swap(
                         client,
