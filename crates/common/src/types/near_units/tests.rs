@@ -969,3 +969,21 @@ fn test_near_value_sum_single() {
     let total: NearValue = values.into_iter().sum();
     assert_eq!(total, NearValue::from_near(BigDecimal::from(42)));
 }
+
+#[test]
+fn test_near_value_sum_ref() {
+    let values = [
+        NearValue::from_near(BigDecimal::from(10)),
+        NearValue::from_near(BigDecimal::from(20)),
+        NearValue::from_near(BigDecimal::from(30)),
+    ];
+    let total: NearValue = values.iter().sum();
+    assert_eq!(total, NearValue::from_near(BigDecimal::from(60)));
+}
+
+#[test]
+fn test_near_value_sum_ref_empty() {
+    let values: [NearValue; 0] = [];
+    let total: NearValue = values.iter().sum();
+    assert_eq!(total, NearValue::zero());
+}

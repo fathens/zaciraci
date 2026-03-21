@@ -739,6 +739,12 @@ impl Sum for NearValue {
     }
 }
 
+impl<'a> Sum<&'a NearValue> for NearValue {
+    fn sum<I: Iterator<Item = &'a NearValue>>(iter: I) -> NearValue {
+        iter.fold(NearValue::zero(), |acc, v| acc + v)
+    }
+}
+
 // NearValue 同士の減算
 impl Sub for NearValue {
     type Output = NearValue;

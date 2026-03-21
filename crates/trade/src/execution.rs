@@ -515,11 +515,8 @@ where
                 let available_wrap_near_value =
                     YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
 
-                let total_buy_value: NearValue = result
-                    .remaining_buys
-                    .iter()
-                    .map(|op| op.near_value.clone())
-                    .sum();
+                let total_buy_value: NearValue =
+                    result.remaining_buys.iter().map(|op| &op.near_value).sum();
 
                 let ratio = if total_buy_value > available_wrap_near_value {
                     Some(&available_wrap_near_value / &total_buy_value)
