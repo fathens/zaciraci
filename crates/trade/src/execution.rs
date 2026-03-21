@@ -669,95 +669,105 @@ where
     }
 
     // 3. 残余購入実行（wNEAR → token、比率調整あり）
-    // 直接スワップ・残余売却の両方が全失敗した場合、売却で wNEAR が増えていないため
-    // 残余購入をスキップする。ただし事前に wNEAR 残高がある場合は購入を試行する。
-    let all_sells_failed = direct_swap_counters.success == 0
-        && remainder_sell.success == 0
-        && (direct_swap_counters.failed > 0 || remainder_sell.failed > 0);
-    if !remaining_buys.is_empty() && !all_sells_failed {
+    // 直接スワップ・残余売却の両方が全失敗した場合でも、事前に wNEAR 残高があれば
+    // 購入を試行する（RPC タイムアウトでオンチェーンでは売却が成功している可能性があるため）。
+    // wNEAR 残高が 0 の場合のみスキップする。
+    if !remaining_buys.is_empty() {
+        let all_sells_failed = direct_swap_counters.success == 0
+            && remainder_sell.success == 0
+            && (direct_swap_counters.failed > 0 || remainder_sell.failed > 0);
+
         let available_wrap_near = {
             let account = wallet.account_id();
             let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
             match deposits.get(wrap_near_token) {
                 Some(u) => u.0,
-                None => {
-                    warn!(
-                        log,
-                        "no wNEAR deposit found, remaining buys will be skipped"
-                    );
-                    0
-                }
+                None => 0,
             }
         };
-        let available_wrap_near_value =
-            YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
 
-        let total_buy_value: NearValue = remaining_buys.iter().map(|op| &op.near_value).sum();
-
-        let ratio = if total_buy_value > available_wrap_near_value {
-            Some(&available_wrap_near_value / &total_buy_value)
-        } else {
-            None
-        };
-
-        // 最後の購入で端数を回収する（allocate_add_position_amounts と同パターン）。
-        // NOTE: allocated_sum はスワップ実行前に加算されるため、中間の購入が
-        // 失敗した場合、最後の購入が過少割り当てになる（保守的方向の誤差）。
-        // 失敗時に巻き戻すと過大割り当て → wNEAR 残高不足リスクが生じるため、
-        // 意図的に事前按分としている。次サイクルで自然修正される。
-        let mut allocated_sum: u128 = 0;
-        let buy_count = remaining_buys.len();
-        for (i, buy) in remaining_buys.iter().enumerate() {
-            let is_last = i == buy_count - 1;
-            let wrap_near_amount_u128 = if is_last && ratio.is_some() {
-                // 最後の購入は残額を使い切り、ratio 按分の切り捨て端数を回収
-                available_wrap_near.saturating_sub(allocated_sum)
+        if available_wrap_near == 0 {
+            if all_sells_failed {
+                warn!(log, "skipping remainder buys: all sells failed and no wNEAR balance";
+                    "remaining_buy_count" => remaining_buys.len());
             } else {
-                let adjusted_value = match &ratio {
-                    Some(r) => &buy.near_value * r,
-                    None => buy.near_value.clone(),
-                };
-                adjusted_value.to_yocto().to_amount().to_u128()
-            };
-            allocated_sum = allocated_sum.saturating_add(wrap_near_amount_u128);
-
-            if wrap_near_amount_u128 == 0 {
-                error!(log, "purchase amount is zero after conversion";
-                    "token" => %buy.token,
-                    "original_near_value" => %buy.near_value);
-                remainder_buy.failed += 1;
-                continue;
+                warn!(log, "skipping remainder buys: no wNEAR deposit found";
+                    "remaining_buy_count" => remaining_buys.len());
+            }
+        } else {
+            if all_sells_failed {
+                warn!(log, "all sells failed but wNEAR balance available, proceeding with remainder buys";
+                    "available_wrap_near" => available_wrap_near,
+                    "remaining_buy_count" => remaining_buys.len());
             }
 
-            trace!(log, "executing remainder buy";
-                "token" => %buy.token,
-                "original_value" => %buy.near_value,
-                "wrap_near_amount" => wrap_near_amount_u128);
-            let to_token: TokenOutAccount = buy.token.clone().into();
-            match swap::execute_direct_swap(
-                client,
-                wallet,
-                &wrap_near_in,
-                &to_token,
-                Some(wrap_near_amount_u128),
-                recorder,
-                cfg,
-            )
-            .await
-            {
-                Ok(_) => {
-                    info!(log, "remainder buy completed"; "token" => %buy.token);
-                    remainder_buy.success += 1;
-                }
-                Err(e) => {
-                    error!(log, "remainder buy failed"; "token" => %buy.token, "error" => %e);
+            let available_wrap_near_value =
+                YoctoValue::from_yocto(BigDecimal::from(available_wrap_near)).to_near();
+
+            let total_buy_value: NearValue = remaining_buys.iter().map(|op| &op.near_value).sum();
+
+            let ratio = if total_buy_value > available_wrap_near_value {
+                Some(&available_wrap_near_value / &total_buy_value)
+            } else {
+                None
+            };
+
+            // 最後の購入で端数を回収する（allocate_add_position_amounts と同パターン）。
+            // NOTE: allocated_sum はスワップ実行前に加算されるため、中間の購入が
+            // 失敗した場合、最後の購入が過少割り当てになる（保守的方向の誤差）。
+            // 失敗時に巻き戻すと過大割り当て → wNEAR 残高不足リスクが生じるため、
+            // 意図的に事前按分としている。次サイクルで自然修正される。
+            let mut allocated_sum: u128 = 0;
+            let buy_count = remaining_buys.len();
+            for (i, buy) in remaining_buys.iter().enumerate() {
+                let is_last = i == buy_count - 1;
+                let wrap_near_amount_u128 = if is_last && ratio.is_some() {
+                    // 最後の購入は残額を使い切り、ratio 按分の切り捨て端数を回収
+                    available_wrap_near.saturating_sub(allocated_sum)
+                } else {
+                    let adjusted_value = match &ratio {
+                        Some(r) => &buy.near_value * r,
+                        None => buy.near_value.clone(),
+                    };
+                    adjusted_value.to_yocto().to_amount().to_u128()
+                };
+                allocated_sum = allocated_sum.saturating_add(wrap_near_amount_u128);
+
+                if wrap_near_amount_u128 == 0 {
+                    error!(log, "purchase amount is zero after conversion";
+                        "token" => %buy.token,
+                        "original_near_value" => %buy.near_value);
                     remainder_buy.failed += 1;
+                    continue;
+                }
+
+                trace!(log, "executing remainder buy";
+                    "token" => %buy.token,
+                    "original_value" => %buy.near_value,
+                    "wrap_near_amount" => wrap_near_amount_u128);
+                let to_token: TokenOutAccount = buy.token.clone().into();
+                match swap::execute_direct_swap(
+                    client,
+                    wallet,
+                    &wrap_near_in,
+                    &to_token,
+                    Some(wrap_near_amount_u128),
+                    recorder,
+                    cfg,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        info!(log, "remainder buy completed"; "token" => %buy.token);
+                        remainder_buy.success += 1;
+                    }
+                    Err(e) => {
+                        error!(log, "remainder buy failed"; "token" => %buy.token, "error" => %e);
+                        remainder_buy.failed += 1;
+                    }
                 }
             }
         }
-    } else if !remaining_buys.is_empty() && all_sells_failed {
-        warn!(log, "skipping remainder buys: all sells failed";
-            "remaining_buy_count" => remaining_buys.len());
     }
 
     let total_success =
