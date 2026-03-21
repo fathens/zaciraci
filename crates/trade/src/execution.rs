@@ -3,7 +3,7 @@
 //! ポートフォリオ戦略で決定された取引アクションの実行、
 //! ポジションの清算、評価期間のライフサイクル管理を担当する。
 
-pub(crate) mod matching;
+mod matching;
 
 use crate::Result;
 use crate::{recorder::TradeRecorder, swap};
