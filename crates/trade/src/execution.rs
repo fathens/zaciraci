@@ -560,7 +560,11 @@ where
                     None
                 };
 
-                // 最後の購入で端数を回収する（allocate_add_position_amounts と同パターン）
+                // 最後の購入で端数を回収する（allocate_add_position_amounts と同パターン）。
+                // NOTE: allocated_sum はスワップ実行前に加算されるため、中間の購入が
+                // 失敗した場合、最後の購入が過少割り当てになる（保守的方向の誤差）。
+                // 失敗時に巻き戻すと過大割り当て → wNEAR 残高不足リスクが生じるため、
+                // 意図的に事前按分としている。次サイクルで自然修正される。
                 let mut allocated_sum: u128 = 0;
                 let buy_count = result.remaining_buys.len();
                 for (i, buy) in result.remaining_buys.iter().enumerate() {
