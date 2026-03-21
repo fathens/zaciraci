@@ -68,7 +68,7 @@ pub(crate) fn match_rebalance_operations(
     sell_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
     buy_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
 
-    let mut direct_swaps = Vec::with_capacity(sell_operations.len() + buy_operations.len());
+    let mut direct_swaps = Vec::with_capacity(sell_operations.len().max(buy_operations.len()));
     let mut sell_iter = sell_operations.into_iter();
     let mut buy_iter = buy_operations.into_iter();
 
