@@ -403,7 +403,10 @@ where
             );
 
             // 1. 直接スワップ実行（near_value 降順 — match_rebalance_operations がソート済み）
-            // 失敗した直接スワップは remaining に fallback し、wNEAR 経由で再試行される
+            // 失敗した直接スワップは remaining に fallback し、wNEAR 経由で再試行される。
+            // NOTE: at-least-once セマンティクス — RPC タイムアウト等でトランザクションが
+            // オンチェーンでは成功しているが Err を返した場合、同額が wNEAR 経由で
+            // 再実行される可能性がある。次回リバランスサイクルで超過分は自然修正される。
             let direct_swaps = std::mem::take(&mut result.direct_swaps);
             let mut fallback_sells = Vec::new();
             let mut fallback_buys = Vec::new();
