@@ -85,15 +85,19 @@ fn allocate_add_position_amounts(
     let total_weight: BigDecimal = add_positions.iter().map(|(_, w)| w).sum();
 
     // weight を basis points (1/10000) に変換して整数演算
+    let log = DEFAULT.new(o!("function" => "allocate_add_position_amounts"));
     let weights_bps: Vec<u128> = add_positions
         .iter()
         .map(|(_, w)| {
             if total_weight.is_zero() {
                 0u128
             } else {
-                (w / &total_weight * BigDecimal::from(10_000))
-                    .to_u128()
-                    .unwrap_or(0)
+                let bps = w / &total_weight * BigDecimal::from(10_000);
+                bps.to_u128().unwrap_or_else(|| {
+                    warn!(log, "BPS weight conversion to u128 failed, using 0";
+                        "weight" => %w, "total_weight" => %total_weight, "bps" => %bps);
+                    0
+                })
             }
         })
         .collect();
@@ -665,7 +669,12 @@ where
     }
 
     // 3. 残余購入実行（wNEAR → token、比率調整あり）
-    if !remaining_buys.is_empty() {
+    // 直接スワップ・残余売却の両方が全失敗した場合、売却で wNEAR が増えていないため
+    // 残余購入をスキップする。ただし事前に wNEAR 残高がある場合は購入を試行する。
+    let all_sells_failed = direct_swap_counters.success == 0
+        && remainder_sell.success == 0
+        && (direct_swap_counters.failed > 0 || remainder_sell.failed > 0);
+    if !remaining_buys.is_empty() && !all_sells_failed {
         let available_wrap_near = {
             let account = wallet.account_id();
             let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
@@ -746,6 +755,9 @@ where
                 }
             }
         }
+    } else if !remaining_buys.is_empty() && all_sells_failed {
+        warn!(log, "skipping remainder buys: all sells failed";
+            "remaining_buy_count" => remaining_buys.len());
     }
 
     let total_success =
