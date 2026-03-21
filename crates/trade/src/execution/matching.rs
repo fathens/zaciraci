@@ -70,10 +70,13 @@ pub(crate) fn match_rebalance_operations(
     let mut sell_iter = sell_operations.into_iter();
     let mut buy_iter = buy_operations.into_iter();
 
-    let mut current_sell = sell_iter
-        .next()
-        .expect("BUG: sell_operations was non-empty");
-    let mut current_buy = buy_iter.next().expect("BUG: buy_operations was non-empty");
+    // Safety: is_empty() ガードにより到達時は必ず要素がある
+    let Some(mut current_sell) = sell_iter.next() else {
+        unreachable!("sell_operations was verified non-empty above");
+    };
+    let Some(mut current_buy) = buy_iter.next() else {
+        unreachable!("buy_operations was verified non-empty above");
+    };
     let mut sell_remaining = current_sell.near_value.clone();
     let mut buy_remaining = current_buy.near_value.clone();
 
