@@ -1048,7 +1048,7 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
         .harvest_reserve_amount()
         .to_string()
         .parse::<NearAmount>()
-        .unwrap()
+        .map_err(|e| anyhow::anyhow!("Failed to parse harvest reserve amount: {}", e))?
         .to_yocto();
     let reserve_amount_u128: u128 = reserve_amount.to_u128();
 
