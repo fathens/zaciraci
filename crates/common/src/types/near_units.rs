@@ -20,6 +20,7 @@
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::iter::Sum;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::str::FromStr;
 
@@ -729,6 +730,12 @@ impl Add<&NearValue> for NearValue {
     type Output = NearValue;
     fn add(self, other: &NearValue) -> NearValue {
         NearValue(self.0 + &other.0)
+    }
+}
+
+impl Sum for NearValue {
+    fn sum<I: Iterator<Item = NearValue>>(iter: I) -> NearValue {
+        iter.fold(NearValue::zero(), |acc, v| acc + v)
     }
 }
 
