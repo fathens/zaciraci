@@ -41,22 +41,6 @@ pub(crate) struct MatchResult {
     pub(crate) remaining_buys: Vec<BuyOperation>,
 }
 
-/// フェーズごとの成功・失敗カウンタ
-#[derive(Debug)]
-pub(crate) struct PhaseCounters {
-    pub(crate) success: usize,
-    pub(crate) failed: usize,
-}
-
-impl PhaseCounters {
-    pub(crate) fn new() -> Self {
-        Self {
-            success: 0,
-            failed: 0,
-        }
-    }
-}
-
 /// 売却・購入操作を直接スワップにマッチングする（純粋関数）
 ///
 /// アルゴリズム:
@@ -88,14 +72,19 @@ pub(crate) fn match_rebalance_operations(
     let mut sell_iter = sell_operations.into_iter();
     let mut buy_iter = buy_operations.into_iter();
 
-    // safe: non-empty checked above
-    let mut current_sell = sell_iter.next().unwrap();
-    let mut current_buy = buy_iter.next().unwrap();
+    let mut current_sell = sell_iter
+        .next()
+        .expect("BUG: sell_operations was non-empty");
+    let mut current_buy = buy_iter.next().expect("BUG: buy_operations was non-empty");
     let mut sell_remaining = current_sell.near_value.clone();
     let mut buy_remaining = current_buy.near_value.clone();
 
     loop {
-        let match_value = sell_remaining.clone().min(buy_remaining.clone());
+        let match_value = if sell_remaining <= buy_remaining {
+            sell_remaining.clone()
+        } else {
+            buy_remaining.clone()
+        };
 
         if match_value > NearValue::zero() {
             direct_swaps.push(DirectSwap {
@@ -180,6 +169,10 @@ pub(crate) fn match_rebalance_operations(
 /// `amount` は非負であること。負の値を渡すと `u128` へのパースが失敗しエラーを返す。
 /// 呼び出し元で `.abs()` 等により非負を保証すること。
 pub(crate) fn token_amount_to_u128(amount: &TokenAmount) -> crate::Result<u128> {
+    debug_assert!(
+        amount.smallest_units() >= &bigdecimal::BigDecimal::default(),
+        "token_amount_to_u128: amount must be non-negative"
+    );
     amount
         .smallest_units()
         .to_bigint()

@@ -3,6 +3,8 @@
 //! ポートフォリオ戦略で決定された取引アクションの実行、
 //! ポジションの清算、評価期間のライフサイクル管理を担当する。
 
+pub(crate) mod matching;
+
 use crate::Result;
 use crate::{recorder::TradeRecorder, swap};
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
@@ -13,15 +15,21 @@ use common::algorithm::types::TradingAction;
 use common::config::ConfigAccess;
 use common::types::*;
 use logging::*;
+use matching::{BuyOperation, SellOperation, match_rebalance_operations, token_amount_to_u128};
 use near_sdk::NearToken;
-pub(crate) mod matching;
-
-use matching::{
-    BuyOperation, PhaseCounters, SellOperation, match_rebalance_operations, token_amount_to_u128,
-};
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use std::collections::HashMap;
 use std::fmt::Display;
+
+/// フェーズごとの成功・失敗カウンタ
+#[derive(Debug, Default)]
+struct PhaseCounters {
+    success: usize,
+    failed: usize,
+}
+
+/// harvest reserve のデフォルト値（1 NEAR in yoctoNEAR）
+const DEFAULT_HARVEST_RESERVE: u128 = 1_000_000_000_000_000_000_000_000;
 
 /// 実行サマリー
 pub struct ExecutionSummary {
@@ -381,9 +389,9 @@ where
                 "buy_count" => buy_operations.len()
             );
 
-            let mut direct_swap = PhaseCounters::new();
-            let mut remainder_sell = PhaseCounters::new();
-            let mut remainder_buy = PhaseCounters::new();
+            let mut direct_swap = PhaseCounters::default();
+            let mut remainder_sell = PhaseCounters::default();
+            let mut remainder_buy = PhaseCounters::default();
 
             // 常に match_rebalance_operations を通す（売却のみ・購入のみも統一処理）
             let mut result = match_rebalance_operations(sell_operations, buy_operations);
@@ -396,27 +404,26 @@ where
 
             // 1. 直接スワップ実行（near_value 降順 — match_rebalance_operations がソート済み）
             // 失敗した直接スワップは remaining に fallback し、wNEAR 経由で再試行される
-            let fallback_to_remaining =
-                |result: &mut matching::MatchResult, ds: &matching::DirectSwap| {
-                    result.remaining_sells.push(SellOperation {
-                        token: ds.sell_token.clone(),
-                        near_value: ds.near_value.clone(),
-                        exchange_rate: ds.sell_exchange_rate.clone(),
-                    });
-                    result.remaining_buys.push(BuyOperation {
-                        token: ds.buy_token.clone(),
-                        near_value: ds.near_value.clone(),
-                    });
-                };
+            let direct_swaps = std::mem::take(&mut result.direct_swaps);
+            let mut fallback_sells = Vec::new();
+            let mut fallback_buys = Vec::new();
 
-            for ds in &result.direct_swaps.clone() {
+            for ds in &direct_swaps {
                 let token_amount: TokenAmount = &ds.near_value * &ds.sell_exchange_rate;
                 let token_amount_u128 = match token_amount_to_u128(&token_amount) {
                     Ok(v) => v,
                     Err(e) => {
                         error!(log, "token amount conversion failed"; "error" => %e);
                         direct_swap.failed += 1;
-                        fallback_to_remaining(&mut result, ds);
+                        fallback_sells.push(SellOperation {
+                            token: ds.sell_token.clone(),
+                            near_value: ds.near_value.clone(),
+                            exchange_rate: ds.sell_exchange_rate.clone(),
+                        });
+                        fallback_buys.push(BuyOperation {
+                            token: ds.buy_token.clone(),
+                            near_value: ds.near_value.clone(),
+                        });
                         continue;
                     }
                 };
@@ -425,7 +432,15 @@ where
                     warn!(log, "token amount truncated to zero, skipping direct swap";
                         "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token);
                     direct_swap.failed += 1;
-                    fallback_to_remaining(&mut result, ds);
+                    fallback_sells.push(SellOperation {
+                        token: ds.sell_token.clone(),
+                        near_value: ds.near_value.clone(),
+                        exchange_rate: ds.sell_exchange_rate.clone(),
+                    });
+                    fallback_buys.push(BuyOperation {
+                        token: ds.buy_token.clone(),
+                        near_value: ds.near_value.clone(),
+                    });
                     continue;
                 }
 
@@ -459,10 +474,21 @@ where
                             "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token,
                             "error" => %e);
                         direct_swap.failed += 1;
-                        fallback_to_remaining(&mut result, ds);
+                        fallback_sells.push(SellOperation {
+                            token: ds.sell_token.clone(),
+                            near_value: ds.near_value.clone(),
+                            exchange_rate: ds.sell_exchange_rate.clone(),
+                        });
+                        fallback_buys.push(BuyOperation {
+                            token: ds.buy_token.clone(),
+                            near_value: ds.near_value.clone(),
+                        });
                     }
                 }
             }
+
+            result.remaining_sells.extend(fallback_sells);
+            result.remaining_buys.extend(fallback_buys);
 
             // 2. 残余売却実行（token → wNEAR）
             for sell in &result.remaining_sells {
@@ -1056,7 +1082,7 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
     if reserve_amount_u128 == 0 {
         warn!(log, "harvest reserve amount converted to zero, using default 1 NEAR";
             "configured_value" => cfg.harvest_reserve_amount());
-        reserve_amount_u128 = 1_000_000_000_000_000_000_000_000; // 1 NEAR
+        reserve_amount_u128 = DEFAULT_HARVEST_RESERVE;
     }
 
     let client = blockchain::jsonrpc::new_client();
