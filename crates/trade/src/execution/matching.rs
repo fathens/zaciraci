@@ -41,6 +41,22 @@ pub(crate) struct MatchResult {
     pub(crate) remaining_buys: Vec<BuyOperation>,
 }
 
+/// フェーズごとの成功・失敗カウンタ
+#[derive(Debug)]
+pub(crate) struct PhaseCounters {
+    pub(crate) success: usize,
+    pub(crate) failed: usize,
+}
+
+impl PhaseCounters {
+    pub(crate) fn new() -> Self {
+        Self {
+            success: 0,
+            failed: 0,
+        }
+    }
+}
+
 /// 売却・購入操作を直接スワップにマッチングする（純粋関数）
 ///
 /// アルゴリズム:
@@ -69,76 +85,89 @@ pub(crate) fn match_rebalance_operations(
     buy_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
 
     let mut direct_swaps = Vec::new();
+    let mut sell_iter = sell_operations.into_iter();
+    let mut buy_iter = buy_operations.into_iter();
 
-    let mut si = 0;
-    let mut bi = 0;
-    let mut sell_remaining = sell_operations[0].near_value.clone();
-    let mut buy_remaining = buy_operations[0].near_value.clone();
+    // safe: non-empty checked above
+    let mut current_sell = sell_iter.next().unwrap();
+    let mut current_buy = buy_iter.next().unwrap();
+    let mut sell_remaining = current_sell.near_value.clone();
+    let mut buy_remaining = current_buy.near_value.clone();
 
     loop {
         let match_value = sell_remaining.clone().min(buy_remaining.clone());
 
         if match_value > NearValue::zero() {
             direct_swaps.push(DirectSwap {
-                sell_token: sell_operations[si].token.clone(),
-                buy_token: buy_operations[bi].token.clone(),
+                sell_token: current_sell.token.clone(),
+                buy_token: current_buy.token.clone(),
                 near_value: match_value.clone(),
-                sell_exchange_rate: sell_operations[si].exchange_rate.clone(),
+                sell_exchange_rate: current_sell.exchange_rate.clone(),
             });
         }
 
         sell_remaining = &sell_remaining - &match_value;
         buy_remaining = &buy_remaining - &match_value;
+        debug_assert!(
+            sell_remaining >= NearValue::zero(),
+            "sell_remaining must be non-negative"
+        );
+        debug_assert!(
+            buy_remaining >= NearValue::zero(),
+            "buy_remaining must be non-negative"
+        );
 
         // 売却側が消化された場合、次の売却へ
         if sell_remaining == NearValue::zero() {
-            si += 1;
-            if si >= sell_operations.len() {
-                // 売却を全て消化 — 購入側の残余を全て収集
-                let mut remaining_buys = Vec::new();
-                if buy_remaining > NearValue::zero() {
-                    remaining_buys.push(BuyOperation {
-                        token: buy_operations[bi].token.clone(),
-                        near_value: buy_remaining,
-                    });
+            match sell_iter.next() {
+                None => {
+                    // 売却を全て消化 — 購入側の残余を全て収集
+                    let mut remaining_buys = Vec::new();
+                    if buy_remaining > NearValue::zero() {
+                        remaining_buys.push(BuyOperation {
+                            token: current_buy.token,
+                            near_value: buy_remaining,
+                        });
+                    }
+                    remaining_buys.extend(buy_iter);
+                    return MatchResult {
+                        direct_swaps,
+                        remaining_sells: vec![],
+                        remaining_buys,
+                    };
                 }
-                // 現在の購入（部分消化済み or 完全消化）の次から未処理を追加
-                for buy in &buy_operations[bi + 1..] {
-                    remaining_buys.push(buy.clone());
+                Some(next) => {
+                    current_sell = next;
+                    sell_remaining = current_sell.near_value.clone();
                 }
-                return MatchResult {
-                    direct_swaps,
-                    remaining_sells: vec![],
-                    remaining_buys,
-                };
             }
-            sell_remaining = sell_operations[si].near_value.clone();
         }
 
         // 購入側が消化された場合、次の購入へ
         if buy_remaining == NearValue::zero() {
-            bi += 1;
-            if bi >= buy_operations.len() {
-                // 購入を全て消化 — 売却側の残余を全て収集
-                let mut remaining_sells = Vec::new();
-                if sell_remaining > NearValue::zero() {
-                    remaining_sells.push(SellOperation {
-                        token: sell_operations[si].token.clone(),
-                        near_value: sell_remaining,
-                        exchange_rate: sell_operations[si].exchange_rate.clone(),
-                    });
+            match buy_iter.next() {
+                None => {
+                    // 購入を全て消化 — 売却側の残余を全て収集
+                    let mut remaining_sells = Vec::new();
+                    if sell_remaining > NearValue::zero() {
+                        remaining_sells.push(SellOperation {
+                            token: current_sell.token,
+                            near_value: sell_remaining,
+                            exchange_rate: current_sell.exchange_rate,
+                        });
+                    }
+                    remaining_sells.extend(sell_iter);
+                    return MatchResult {
+                        direct_swaps,
+                        remaining_sells,
+                        remaining_buys: vec![],
+                    };
                 }
-                // 現在の売却（部分消化済み or 完全消化）の次から未処理を追加
-                for sell in &sell_operations[si + 1..] {
-                    remaining_sells.push(sell.clone());
+                Some(next) => {
+                    current_buy = next;
+                    buy_remaining = current_buy.near_value.clone();
                 }
-                return MatchResult {
-                    direct_swaps,
-                    remaining_sells,
-                    remaining_buys: vec![],
-                };
             }
-            buy_remaining = buy_operations[bi].near_value.clone();
         }
     }
 }

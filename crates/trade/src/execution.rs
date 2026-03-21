@@ -16,7 +16,9 @@ use logging::*;
 use near_sdk::NearToken;
 pub(crate) mod matching;
 
-use matching::{BuyOperation, SellOperation, match_rebalance_operations, token_amount_to_u128};
+use matching::{
+    BuyOperation, PhaseCounters, SellOperation, match_rebalance_operations, token_amount_to_u128,
+};
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -379,18 +381,6 @@ where
                 "buy_count" => buy_operations.len()
             );
 
-            struct PhaseCounters {
-                success: usize,
-                failed: usize,
-            }
-            impl PhaseCounters {
-                fn new() -> Self {
-                    Self {
-                        success: 0,
-                        failed: 0,
-                    }
-                }
-            }
             let mut direct_swap = PhaseCounters::new();
             let mut remainder_sell = PhaseCounters::new();
             let mut remainder_buy = PhaseCounters::new();
