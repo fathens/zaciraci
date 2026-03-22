@@ -475,7 +475,13 @@ where
                 let token_str = token_out.to_string();
 
                 // 予測がないトークンはスキップ
-                let predicted_price = predicted_price?;
+                let predicted_price = match predicted_price {
+                    Some(p) => p,
+                    None => {
+                        debug!(log, "no prediction available, skipping"; "token" => %token_str);
+                        return None;
+                    }
+                };
 
                 // 価格履歴の取得
                 let history_result = prediction_service

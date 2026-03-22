@@ -272,3 +272,27 @@ fn test_mape_to_confidence_poor_less_than_excellent() {
     // poor < excellent violates the contract
     mape_to_confidence(5.0, 15.0, 3.0);
 }
+
+// --- ラウンドトリップテスト ---
+
+#[test]
+fn test_token_account_display_fromstr_roundtrip() {
+    let original = TokenAccount::from_str("token.near").unwrap();
+    let roundtrip: TokenAccount = original.to_string().parse().unwrap();
+    assert_eq!(original, roundtrip);
+}
+
+#[test]
+fn test_predicted_price_bigdecimal_roundtrip() {
+    // 極小値（NEARエコシステムのトークン価格で現実的な値）
+    let price = BigDecimal::from_str("0.000000001234567890123456789").unwrap();
+    let token_price = TokenPrice::from_near_per_token(price.clone());
+    assert_eq!(*token_price.as_bigdecimal(), price);
+}
+
+#[test]
+fn test_predicted_price_large_value_roundtrip() {
+    let price = BigDecimal::from_str("123456789.987654321").unwrap();
+    let token_price = TokenPrice::from_near_per_token(price.clone());
+    assert_eq!(*token_price.as_bigdecimal(), price);
+}
