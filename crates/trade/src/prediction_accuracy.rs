@@ -106,12 +106,8 @@ fn calculate_composite_confidence(
 
 /// 予測結果を prediction_records テーブルに記録する。
 ///
-/// 呼び出し元: execute_portfolio_strategy()
-/// タイミング: 予測ループ完了後、PortfolioData 構築前
-///
 /// DB 操作: INSERT INTO prediction_records (トークン数分)
 pub async fn record_predictions(
-    evaluation_period_id: &str,
     predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
     quote_token: &TokenInAccount,
 ) -> Result<()> {
@@ -123,7 +119,6 @@ pub async fn record_predictions(
     let records: Vec<NewPredictionRecord> = predictions
         .iter()
         .map(|(token, price)| NewPredictionRecord {
-            evaluation_period_id: evaluation_period_id.to_string(),
             token: token.to_string(),
             quote_token: quote_token.to_string(),
             predicted_price: price.as_bigdecimal().clone(),

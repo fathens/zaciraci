@@ -42,12 +42,9 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
 
     // 挿入（evaluated_at はヘルパー内で target_time + 1h に設定されるが、
     // ここでは手動で上書きして逆順にする）
-    let r1 = insert_evaluated_record(token, quote, "period1", 100, 105, t1_prediction, t1_target)
-        .await?;
-    let r2 = insert_evaluated_record(token, quote, "period1", 110, 108, t2_prediction, t2_target)
-        .await?;
-    let r3 = insert_evaluated_record(token, quote, "period1", 120, 115, t3_prediction, t3_target)
-        .await?;
+    let r1 = insert_evaluated_record(token, quote, 100, 105, t1_prediction, t1_target).await?;
+    let r2 = insert_evaluated_record(token, quote, 110, 108, t2_prediction, t2_target).await?;
+    let r3 = insert_evaluated_record(token, quote, 120, 115, t3_prediction, t3_target).await?;
 
     // evaluated_at を意図的に target_time と逆順に設定
     // r1 (oldest target) → evaluated_at = base + 10h (newest)
@@ -114,16 +111,7 @@ async fn test_limit_returns_most_recent_by_target_time() -> Result<()> {
     for i in 0i64..5 {
         let target = base + chrono::Duration::hours(i);
         let prediction = target - chrono::Duration::hours(24);
-        insert_evaluated_record(
-            token,
-            quote,
-            "period1",
-            100 + i,
-            105 + i,
-            prediction,
-            target,
-        )
-        .await?;
+        insert_evaluated_record(token, quote, 100 + i, 105 + i, prediction, target).await?;
     }
 
     let token_out = TokenAccount::from_str(token)?.into();
@@ -165,8 +153,8 @@ async fn test_token_filter() -> Result<()> {
     for i in 0..3 {
         let target = base + chrono::Duration::hours(i);
         let prediction = target - chrono::Duration::hours(24);
-        insert_evaluated_record(token_a, quote, "period1", 100, 105, prediction, target).await?;
-        insert_evaluated_record(token_b, quote, "period1", 200, 210, prediction, target).await?;
+        insert_evaluated_record(token_a, quote, 100, 105, prediction, target).await?;
+        insert_evaluated_record(token_b, quote, 200, 210, prediction, target).await?;
     }
 
     // token_a のみ指定
@@ -206,7 +194,7 @@ async fn test_empty_token_list_returns_empty() -> Result<()> {
     // レコードを1件挿入しておく
     let target = base;
     let prediction = base - chrono::Duration::hours(24);
-    insert_evaluated_record(token, quote, "period1", 100, 105, prediction, target).await?;
+    insert_evaluated_record(token, quote, 100, 105, prediction, target).await?;
 
     // 空トークンリストで呼び出し
     let results = PredictionRecord::get_recent_evaluated_for_tokens(100, &[]).await?;
@@ -232,16 +220,16 @@ async fn test_excludes_unevaluated_records() -> Result<()> {
     // 評価済みレコード 2 件
     let target1 = base;
     let prediction1 = base - chrono::Duration::hours(24);
-    insert_evaluated_record(token, quote, "period1", 100, 105, prediction1, target1).await?;
+    insert_evaluated_record(token, quote, 100, 105, prediction1, target1).await?;
 
     let target2 = base + chrono::Duration::hours(1);
     let prediction2 = base - chrono::Duration::hours(23);
-    insert_evaluated_record(token, quote, "period1", 110, 108, prediction2, target2).await?;
+    insert_evaluated_record(token, quote, 110, 108, prediction2, target2).await?;
 
     // 未評価レコード 1 件（evaluated_at = NULL）
     let target3 = base + chrono::Duration::hours(2);
     let prediction3 = base - chrono::Duration::hours(22);
-    insert_unevaluated_record(token, quote, "period1", 120, prediction3, target3).await?;
+    insert_unevaluated_record(token, quote, 120, prediction3, target3).await?;
 
     let token_out = TokenAccount::from_str(token)?.into();
     let results = PredictionRecord::get_recent_evaluated_for_tokens(100, &[token_out]).await?;

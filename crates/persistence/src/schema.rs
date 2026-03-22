@@ -60,7 +60,6 @@ diesel::table! {
 diesel::table! {
     prediction_records (id) {
         id -> Int4,
-        evaluation_period_id -> Varchar,
         token -> Varchar,
         quote_token -> Varchar,
         predicted_price -> Numeric,

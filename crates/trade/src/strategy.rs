@@ -626,8 +626,7 @@ where
 
     // 今回の予測を DB に記録（失敗しても取引は続行）
     if let Err(e) =
-        super::prediction_accuracy::record_predictions(period_id, &predictions, &quote_token_in)
-            .await
+        super::prediction_accuracy::record_predictions(&predictions, &quote_token_in).await
     {
         warn!(log, "failed to record predictions"; "error" => ?e);
     }

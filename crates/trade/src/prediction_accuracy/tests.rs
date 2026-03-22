@@ -180,7 +180,6 @@ fn make_record(
 ) -> DbPredictionRecord {
     DbPredictionRecord {
         id: 0,
-        evaluation_period_id: "test".to_string(),
         token: "token.near".to_string(),
         quote_token: "wrap.near".to_string(),
         predicted_price: BigDecimal::from(predicted),

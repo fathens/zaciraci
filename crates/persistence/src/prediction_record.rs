@@ -12,7 +12,6 @@ use diesel::prelude::*;
 #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
 pub struct DbPredictionRecord {
     pub id: i32,
-    pub evaluation_period_id: String,
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
@@ -28,7 +27,6 @@ pub struct DbPredictionRecord {
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
-    pub evaluation_period_id: String,
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
