@@ -610,6 +610,10 @@ where
                 error!(log, "direct swap failed";
                     "sell_token" => %ds.sell_token, "buy_token" => %ds.buy_token,
                     "error" => %e);
+                warn!(log, "falling back to wNEAR route; at-least-once risk if RPC timeout";
+                    "sell_token" => %ds.sell_token,
+                    "buy_token" => %ds.buy_token,
+                    "near_value" => %ds.near_value);
                 direct_swap_counters.failed += 1;
                 fallback_sells.push(SellOperation {
                     token: ds.sell_token.clone(),
