@@ -171,6 +171,39 @@ impl PredictionRecord {
         Ok(result)
     }
 
+    /// 指定トークンの最新予測を鮮度フィルタ付きで取得
+    ///
+    /// 各トークンについて `prediction_time > staleness_cutoff` かつ
+    /// 最新の `prediction_time` を持つレコードを1件返す。
+    pub async fn get_latest_fresh_predictions(
+        tokens: &[String],
+        staleness_cutoff: NaiveDateTime,
+    ) -> Result<Vec<DbPredictionRecord>> {
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tokens = tokens.to_vec();
+        let conn = connection_pool::get().await?;
+
+        let results = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::token.eq_any(&tokens))
+                    .filter(prediction_records::prediction_time.gt(staleness_cutoff))
+                    .distinct_on(prediction_records::token)
+                    .order_by((
+                        prediction_records::token,
+                        prediction_records::prediction_time.desc(),
+                    ))
+                    .load::<DbPredictionRecord>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(results)
+    }
+
     /// 古いレコードを削除
     ///
     /// - 評価済みレコード: evaluated_at から retention_days 日以上経過したもの
