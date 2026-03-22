@@ -1167,6 +1167,18 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid HARVEST_ACCOUNT_ID: {}", e))?;
 
+    let client = blockchain::jsonrpc::new_client();
+    let wallet = blockchain::wallet::new_wallet();
+    let account = wallet.account_id();
+
+    if harvest_account == *account {
+        warn!(
+            log,
+            "harvest_account_id is same as wallet account, skipping transfer"
+        );
+        return Ok(());
+    }
+
     // HARVEST_RESERVE_AMOUNT を取得
     let reserve_amount: YoctoAmount = cfg
         .harvest_reserve_amount()
@@ -1180,10 +1192,6 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
             "configured_value" => cfg.harvest_reserve_amount());
         reserve_amount_u128 = DEFAULT_HARVEST_RESERVE;
     }
-
-    let client = blockchain::jsonrpc::new_client();
-    let wallet = blockchain::wallet::new_wallet();
-    let account = wallet.account_id();
 
     // REF Finance 内の wrap.near 残高を取得
     let deposits = deposit::get_deposits(&client, account).await?;
@@ -1200,12 +1208,18 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
         "reserve_amount" => reserve_amount_u128
     );
 
+    // 以下の3段階は非アトミック。中間ステップで失敗した場合:
+    // - step 1 成功・step 2 失敗 → wNEAR がウォレットに残留。次回評価期間開始時の
+    //   deposit_wrap_near_to_ref が wnear::balance_of で残留分を検出し REF にデポジットする。
+    // - step 2 成功・step 3 失敗 → NEAR がウォレットに残留。同様に refill で wrap → deposit される。
+
     // 1. REF Finance から wrap.near を withdraw
     let wnear_token = NearToken::from_yoctonear(wnear_balance);
     trace!(log, "withdrawing wrap.near from REF Finance"; "amount" => wnear_balance);
     let withdraw_tx = deposit::withdraw(&client, &wallet, &WNEAR_TOKEN, wnear_token).await?;
     if let Err(e) = withdraw_tx.wait_for_success().await {
-        error!(log, "failed to withdraw from REF Finance"; "error" => %e);
+        error!(log, "failed to withdraw from REF Finance";
+            "step" => "1_withdraw_from_ref", "error" => %e);
         return Err(anyhow::anyhow!("Withdraw failed: {}", e));
     }
 
@@ -1213,7 +1227,8 @@ async fn unwrap_and_transfer_wnear(log: &slog::Logger, cfg: &impl ConfigAccess) 
     trace!(log, "unwrapping wrap.near to NEAR"; "amount" => wnear_balance);
     let unwrap_tx = deposit::wnear::unwrap(&client, &wallet, wnear_token).await?;
     if let Err(e) = unwrap_tx.wait_for_success().await {
-        error!(log, "failed to unwrap NEAR"; "error" => %e);
+        error!(log, "failed to unwrap NEAR";
+            "step" => "2_unwrap_wnear", "error" => %e);
         return Err(anyhow::anyhow!("Unwrap failed: {}", e));
     }
 
