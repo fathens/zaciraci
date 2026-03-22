@@ -436,21 +436,9 @@ fn test_invariant_total_value_preserved() {
     let total_sell = NearValue::from_near(BigDecimal::from(110)); // 80 + 30
     let total_buy = NearValue::from_near(BigDecimal::from(80)); // 60 + 20
 
-    let swap_sum: NearValue = result
-        .direct_swaps
-        .iter()
-        .map(|ds| ds.near_value.clone())
-        .sum();
-    let remaining_sell_sum: NearValue = result
-        .remaining_sells
-        .iter()
-        .map(|s| s.near_value.clone())
-        .sum();
-    let remaining_buy_sum: NearValue = result
-        .remaining_buys
-        .iter()
-        .map(|b| b.near_value.clone())
-        .sum();
+    let swap_sum: NearValue = result.direct_swaps.iter().map(|ds| &ds.near_value).sum();
+    let remaining_sell_sum: NearValue = result.remaining_sells.iter().map(|s| &s.near_value).sum();
+    let remaining_buy_sum: NearValue = result.remaining_buys.iter().map(|b| &b.near_value).sum();
 
     // 直接スワップ合計 = min(total_sell, total_buy) = total_buy = 80
     assert_eq!(swap_sum, total_buy);
@@ -497,21 +485,9 @@ fn test_invariant_fractional_near_values() {
 
     let result = match_rebalance_operations(sells, buys);
 
-    let swap_sum: NearValue = result
-        .direct_swaps
-        .iter()
-        .map(|ds| ds.near_value.clone())
-        .sum();
-    let remaining_sell_sum: NearValue = result
-        .remaining_sells
-        .iter()
-        .map(|s| s.near_value.clone())
-        .sum();
-    let remaining_buy_sum: NearValue = result
-        .remaining_buys
-        .iter()
-        .map(|b| b.near_value.clone())
-        .sum();
+    let swap_sum: NearValue = result.direct_swaps.iter().map(|ds| &ds.near_value).sum();
+    let remaining_sell_sum: NearValue = result.remaining_sells.iter().map(|s| &s.near_value).sum();
+    let remaining_buy_sum: NearValue = result.remaining_buys.iter().map(|b| &b.near_value).sum();
 
     // 不変条件: swap_sum + remaining_sell_sum = total_sell
     assert_eq!(
