@@ -314,7 +314,7 @@ pub async fn select_top_volatility_tokens(
 /// `select_top_volatility_tokens()` と同じフィルタ（ボラティリティ＋流動性＋グラフ到達性）
 /// を適用するが、上位N個への切り詰めを行わず全対象を返す。
 /// 予測フェーズで全対象トークンの価格予測を実行するために使用。
-pub async fn select_prediction_target_tokens(
+pub(crate) async fn select_prediction_target_tokens(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
