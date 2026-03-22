@@ -111,6 +111,8 @@ fn allocate_add_position_amounts(
             // 最後の AddPosition は残額全部を使い切る
             balance.saturating_sub(allocated_sum)
         } else if total_bps > 0 {
+            // BPS 按分: 整数除算で近似。切り捨て誤差は最大 1 yocto/要素（≈0.01%）。
+            // 最後の要素（上の分岐）が残額全部を使い切ることで端数を回収する。
             balance / total_bps * weights_bps[i] + balance % total_bps * weights_bps[i] / total_bps
         } else {
             0
