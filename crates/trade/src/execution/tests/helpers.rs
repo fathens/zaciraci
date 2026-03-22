@@ -4,13 +4,13 @@ use std::str::FromStr;
 
 use crate::execution::matching::{BuyOperation, SellOperation};
 
-pub fn token_account(s: &str) -> TokenAccount {
+pub(super) fn token_account(s: &str) -> TokenAccount {
     s.parse().expect("invalid TokenAccount in test")
 }
 
-pub const RATE_24: &str = "500000000000000000000000";
+pub(super) const RATE_24: &str = "500000000000000000000000";
 
-pub fn sell_op(token: &str, near: i64, rate_raw: &str, decimals: u8) -> SellOperation {
+pub(super) fn sell_op(token: &str, near: i64, rate_raw: &str, decimals: u8) -> SellOperation {
     SellOperation {
         token: token_account(token),
         near_value: NearValue::from_near(BigDecimal::from(near)),
@@ -21,7 +21,7 @@ pub fn sell_op(token: &str, near: i64, rate_raw: &str, decimals: u8) -> SellOper
     }
 }
 
-pub fn buy_op(token: &str, near: i64) -> BuyOperation {
+pub(super) fn buy_op(token: &str, near: i64) -> BuyOperation {
     BuyOperation {
         token: token_account(token),
         near_value: NearValue::from_near(BigDecimal::from(near)),
