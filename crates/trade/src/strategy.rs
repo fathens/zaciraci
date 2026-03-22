@@ -305,60 +305,8 @@ pub async fn select_top_volatility_tokens(
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
 ) -> Result<Vec<AccountId>> {
-    let log = DEFAULT.new(o!("function" => "select_top_volatility_tokens"));
-
     let limit = cfg.trade_top_tokens() as usize;
-
-    // ボラティリティトークンを全て取得（DBから）
-    let volatility_days = i64::from(cfg.trade_price_history_days());
-    let start_date = end_date - chrono::Duration::days(volatility_days);
-
-    // 型安全な quote_token を準備
-    let quote_token: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-
-    match prediction_service
-        .get_tokens_by_volatility(start_date, end_date, &quote_token)
-        .await
-    {
-        Ok(top_tokens) => {
-            // TopTokenInfo を AccountId に変換
-            let tokens: Vec<AccountId> = top_tokens
-                .into_iter()
-                .map(|token| token.token.into())
-                .collect();
-
-            if tokens.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "No volatility tokens returned from prediction service"
-                ));
-            }
-
-            debug!(log, "selected tokens from prediction service"; "count" => tokens.len());
-
-            // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
-            let pools = persistence::pool_info::read_from_db(None).await?;
-
-            let min_liquidity =
-                NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
-            let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
-            let wnear_in: TokenInAccount = wnear.to_in();
-            let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear).await?;
-
-            apply_liquidity_filter_and_select(
-                tokens,
-                &pools,
-                &latest_rates,
-                &wnear,
-                &wnear_in,
-                &min_liquidity,
-                Some(limit),
-            )
-        }
-        Err(e) => {
-            error!(log, "failed to get tokens from prediction service"; "error" => ?e);
-            Err(anyhow::anyhow!("Failed to get volatility tokens: {}", e))
-        }
-    }
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit)).await
 }
 
 /// 全対象トークンの予測用リストを生成（流動性フィルタ適用、上限なし）
@@ -371,7 +319,20 @@ pub async fn select_prediction_target_tokens(
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
 ) -> Result<Vec<AccountId>> {
-    let log = DEFAULT.new(o!("function" => "select_prediction_target_tokens"));
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, None).await
+}
+
+/// ボラティリティトークン選定の共通ロジック
+///
+/// ボラティリティ順にトークンを取得し、流動性フィルタ＋グラフ到達性フィルタを適用。
+/// `limit` が `Some(n)` なら上位N個に切り詰め、`None` なら全件返す。
+async fn select_volatility_tokens_inner(
+    prediction_service: &PredictionService,
+    end_date: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+    limit: Option<usize>,
+) -> Result<Vec<AccountId>> {
+    let log = DEFAULT.new(o!("function" => "select_volatility_tokens"));
 
     let volatility_days = i64::from(cfg.trade_price_history_days());
     let start_date = end_date - chrono::Duration::days(volatility_days);
@@ -393,7 +354,7 @@ pub async fn select_prediction_target_tokens(
         ));
     }
 
-    debug!(log, "volatility tokens for prediction"; "count" => tokens.len());
+    debug!(log, "volatility tokens selected"; "count" => tokens.len(), "limit" => ?limit);
 
     let pools = persistence::pool_info::read_from_db(None).await?;
     let min_liquidity = NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
@@ -408,7 +369,7 @@ pub async fn select_prediction_target_tokens(
         &wnear,
         &wnear_in,
         &min_liquidity,
-        None,
+        limit,
     )
 }
 
