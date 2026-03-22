@@ -439,7 +439,10 @@ where
                 let token: TokenOutAccount = account.into();
                 batch_predictions.insert(token, TokenPrice::from_near_per_token(r.predicted_price));
             }
-            Err(_) => parse_failures += 1,
+            Err(e) => {
+                warn!(log, "failed to parse token from prediction record"; "token" => &r.token, "error" => %e);
+                parse_failures += 1;
+            }
         }
     }
     if parse_failures > 0 {
