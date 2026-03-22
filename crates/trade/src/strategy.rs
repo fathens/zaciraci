@@ -424,7 +424,7 @@ where
     // 1. DB から最新の予測を読み取り（run_predictions() で事前に保存済み）
     let token_out_list: Vec<TokenOutAccount> = tokens.iter().map(|t| t.clone().into()).collect();
     let token_strings: Vec<String> = token_out_list.iter().map(|t| t.to_string()).collect();
-    let staleness_hours = cfg.trade_prediction_staleness_hours();
+    let staleness_hours = cfg.trade_prediction_staleness_hours().max(1);
     let staleness_cutoff =
         end_date.naive_utc() - chrono::Duration::hours(i64::from(staleness_hours));
     let db_predictions =
