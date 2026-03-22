@@ -375,7 +375,7 @@ define_typed_config! {
     /// Days of volatility data
     fn trade_volatility_days() -> u32 {
         key: "TRADE_VOLATILITY_DAYS",
-        default: 7
+        default: 30
     }
 
     /// Whether to unwrap wrap.near on stop

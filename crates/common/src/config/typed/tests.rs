@@ -396,7 +396,7 @@ fn test_mock_config_delegates_to_real() {
 fn test_trade_volatility_days_default() {
     let _env = EnvGuard::remove("TRADE_VOLATILITY_DAYS");
     crate::config::store::remove("TRADE_VOLATILITY_DAYS");
-    assert_eq!(typed().trade_volatility_days(), 7);
+    assert_eq!(typed().trade_volatility_days(), 30);
 }
 
 // ── trade_price_history_days ──
