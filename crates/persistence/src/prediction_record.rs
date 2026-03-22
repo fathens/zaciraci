@@ -195,6 +195,7 @@ impl PredictionRecord {
                     .order_by((
                         prediction_records::token,
                         prediction_records::prediction_time.desc(),
+                        prediction_records::id.desc(),
                     ))
                     .load::<DbPredictionRecord>(conn)
             })
