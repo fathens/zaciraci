@@ -13,9 +13,6 @@ pub mod token_cache;
 
 type Result<T> = anyhow::Result<T>;
 
-/// 予測の時間軸（何時間先の価格を予測するか）
-pub(crate) const PREDICTION_HORIZON_HOURS: i64 = 24;
-
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc;
 use blockchain::ref_finance;
@@ -128,7 +125,7 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
             token_out_list,
             &quote_token,
             price_history_days,
-            PREDICTION_HORIZON_HOURS as usize,
+            prediction_accuracy::PREDICTION_HORIZON_HOURS,
             now,
             cfg,
         )

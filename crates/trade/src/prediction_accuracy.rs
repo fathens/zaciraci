@@ -12,6 +12,9 @@ use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
+/// 予測の時間軸（何時間先の価格を予測するか）
+pub(crate) const PREDICTION_HORIZON_HOURS: usize = 24;
+
 /// 古い prediction_records を削除する。
 ///
 /// 呼び出し元: evaluate_pending_predictions() の最後
@@ -114,7 +117,7 @@ pub async fn record_predictions(
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
     let prediction_time = Utc::now().naive_utc();
-    let target_time = prediction_time + chrono::Duration::hours(super::PREDICTION_HORIZON_HOURS);
+    let target_time = prediction_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
 
     let records: Vec<NewPredictionRecord> = predictions
         .iter()
