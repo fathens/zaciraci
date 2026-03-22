@@ -389,16 +389,6 @@ fn test_mock_config_delegates_to_real() {
     let _ = mock.trade_top_tokens();
 }
 
-// ── trade_volatility_days ──
-
-#[test]
-#[serial]
-fn test_trade_volatility_days_default() {
-    let _env = EnvGuard::remove("TRADE_VOLATILITY_DAYS");
-    crate::config::store::remove("TRADE_VOLATILITY_DAYS");
-    assert_eq!(typed().trade_volatility_days(), 30);
-}
-
 // ── trade_price_history_days ──
 
 #[test]

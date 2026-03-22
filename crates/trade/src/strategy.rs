@@ -322,7 +322,7 @@ pub async fn select_top_volatility_tokens(
     let limit = cfg.trade_top_tokens() as usize;
 
     // ボラティリティトークンを全て取得（DBから）
-    let volatility_days = i64::from(cfg.trade_volatility_days());
+    let volatility_days = i64::from(cfg.trade_price_history_days());
     let start_date = end_date - chrono::Duration::days(volatility_days);
 
     // 型安全な quote_token を準備
