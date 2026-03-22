@@ -25,8 +25,10 @@ use common::config::{ConfigAccess, ConfigResolver};
 use common::types::NearAmount;
 use common::types::TokenAmount;
 use common::types::TokenInAccount;
+use common::types::TokenOutAccount;
 use logging::*;
 use persistence::token_rate::TokenRate;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -93,9 +95,6 @@ async fn run_trade(cfg: ConfigResolver) {
 
 /// 全対象トークンの価格予測を実行して prediction_records に保存する
 async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
-    use common::types::TokenOutAccount;
-    use std::collections::BTreeMap;
-
     let log = DEFAULT.new(o!("function" => "run_predictions"));
 
     // 1. 過去予測の評価（ハウスキーピング）
