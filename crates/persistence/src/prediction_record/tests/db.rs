@@ -1,6 +1,11 @@
 use super::*;
-use common::types::TokenAccount;
+use common::types::{TokenAccount, TokenOutAccount};
 use std::str::FromStr;
+
+/// テスト用ヘルパー: 文字列から TokenOutAccount を作成
+fn tok(s: &str) -> TokenOutAccount {
+    TokenAccount::from_str(s).unwrap().into()
+}
 
 /// テスト用の基準時刻を作成
 fn base_time() -> NaiveDateTime {
@@ -42,12 +47,9 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
 
     // 挿入（evaluated_at はヘルパー内で target_time + 1h に設定されるが、
     // ここでは手動で上書きして逆順にする）
-    let r1 = insert_evaluated_record(token, quote, "period1", 100, 105, t1_prediction, t1_target)
-        .await?;
-    let r2 = insert_evaluated_record(token, quote, "period1", 110, 108, t2_prediction, t2_target)
-        .await?;
-    let r3 = insert_evaluated_record(token, quote, "period1", 120, 115, t3_prediction, t3_target)
-        .await?;
+    let r1 = insert_evaluated_record(token, quote, 100, 105, t1_prediction, t1_target).await?;
+    let r2 = insert_evaluated_record(token, quote, 110, 108, t2_prediction, t2_target).await?;
+    let r3 = insert_evaluated_record(token, quote, 120, 115, t3_prediction, t3_target).await?;
 
     // evaluated_at を意図的に target_time と逆順に設定
     // r1 (oldest target) → evaluated_at = base + 10h (newest)
@@ -114,16 +116,7 @@ async fn test_limit_returns_most_recent_by_target_time() -> Result<()> {
     for i in 0i64..5 {
         let target = base + chrono::Duration::hours(i);
         let prediction = target - chrono::Duration::hours(24);
-        insert_evaluated_record(
-            token,
-            quote,
-            "period1",
-            100 + i,
-            105 + i,
-            prediction,
-            target,
-        )
-        .await?;
+        insert_evaluated_record(token, quote, 100 + i, 105 + i, prediction, target).await?;
     }
 
     let token_out = TokenAccount::from_str(token)?.into();
@@ -165,8 +158,8 @@ async fn test_token_filter() -> Result<()> {
     for i in 0..3 {
         let target = base + chrono::Duration::hours(i);
         let prediction = target - chrono::Duration::hours(24);
-        insert_evaluated_record(token_a, quote, "period1", 100, 105, prediction, target).await?;
-        insert_evaluated_record(token_b, quote, "period1", 200, 210, prediction, target).await?;
+        insert_evaluated_record(token_a, quote, 100, 105, prediction, target).await?;
+        insert_evaluated_record(token_b, quote, 200, 210, prediction, target).await?;
     }
 
     // token_a のみ指定
@@ -206,7 +199,7 @@ async fn test_empty_token_list_returns_empty() -> Result<()> {
     // レコードを1件挿入しておく
     let target = base;
     let prediction = base - chrono::Duration::hours(24);
-    insert_evaluated_record(token, quote, "period1", 100, 105, prediction, target).await?;
+    insert_evaluated_record(token, quote, 100, 105, prediction, target).await?;
 
     // 空トークンリストで呼び出し
     let results = PredictionRecord::get_recent_evaluated_for_tokens(100, &[]).await?;
@@ -232,16 +225,16 @@ async fn test_excludes_unevaluated_records() -> Result<()> {
     // 評価済みレコード 2 件
     let target1 = base;
     let prediction1 = base - chrono::Duration::hours(24);
-    insert_evaluated_record(token, quote, "period1", 100, 105, prediction1, target1).await?;
+    insert_evaluated_record(token, quote, 100, 105, prediction1, target1).await?;
 
     let target2 = base + chrono::Duration::hours(1);
     let prediction2 = base - chrono::Duration::hours(23);
-    insert_evaluated_record(token, quote, "period1", 110, 108, prediction2, target2).await?;
+    insert_evaluated_record(token, quote, 110, 108, prediction2, target2).await?;
 
     // 未評価レコード 1 件（evaluated_at = NULL）
     let target3 = base + chrono::Duration::hours(2);
     let prediction3 = base - chrono::Duration::hours(22);
-    insert_unevaluated_record(token, quote, "period1", 120, prediction3, target3).await?;
+    insert_unevaluated_record(token, quote, 120, prediction3, target3).await?;
 
     let token_out = TokenAccount::from_str(token)?.into();
     let results = PredictionRecord::get_recent_evaluated_for_tokens(100, &[token_out]).await?;
@@ -257,6 +250,183 @@ async fn test_excludes_unevaluated_records() -> Result<()> {
             "All returned records should have evaluated_at set"
         );
     }
+
+    Ok(())
+}
+
+// ── get_latest_fresh_predictions ──
+
+/// target_time フィルタ: target_time が as_of 以前のレコードは除外されること
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_filters_by_target_time() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+
+    // target_time が as_of より前（除外されるべき）
+    let past_prediction = base - chrono::Duration::hours(48);
+    let past_target = base - chrono::Duration::hours(24);
+    insert_unevaluated_record(token, quote, 100, past_prediction, past_target).await?;
+
+    // target_time が as_of より後（含まれるべき）
+    let future_prediction = base - chrono::Duration::hours(12);
+    let future_target = base + chrono::Duration::hours(12);
+    insert_unevaluated_record(token, quote, 200, future_prediction, future_target).await?;
+
+    let as_of = base;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].predicted_price, BigDecimal::from(200));
+
+    Ok(())
+}
+
+/// 最新1件選択: 同一トークンに複数予測がある場合、最新の prediction_time が返ること
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_returns_latest_per_token() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+
+    // 同一トークン、同一 target_time だが prediction_time が異なる
+    let target = base + chrono::Duration::hours(24);
+    let older_prediction = base - chrono::Duration::hours(2);
+    let newer_prediction = base;
+    insert_unevaluated_record(token, quote, 100, older_prediction, target).await?;
+    insert_unevaluated_record(token, quote, 200, newer_prediction, target).await?;
+
+    let as_of = base - chrono::Duration::hours(1);
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "Should return exactly one record per token"
+    );
+    assert_eq!(
+        results[0].predicted_price,
+        BigDecimal::from(200),
+        "Should return the prediction with the latest prediction_time"
+    );
+
+    Ok(())
+}
+
+/// トークン分離: 異なるトークンの予測が正しく分離されること
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_separates_tokens() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token_a = "token_a.near";
+    let token_b = "token_b.near";
+    let quote = "wrap.near";
+
+    let target = base + chrono::Duration::hours(24);
+    let prediction_time = base;
+
+    insert_unevaluated_record(token_a, quote, 100, prediction_time, target).await?;
+    insert_unevaluated_record(token_b, quote, 200, prediction_time, target).await?;
+
+    let results =
+        PredictionRecord::get_latest_fresh_predictions(&[tok(token_a), tok(token_b)], base).await?;
+
+    assert_eq!(results.len(), 2, "Should return one record per token");
+
+    let prices: std::collections::BTreeSet<_> =
+        results.iter().map(|r| r.predicted_price.clone()).collect();
+    assert!(prices.contains(&BigDecimal::from(100)));
+    assert!(prices.contains(&BigDecimal::from(200)));
+
+    Ok(())
+}
+
+/// 空トークンリスト: 空リストで空結果が返ること
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_empty_tokens() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let target = base + chrono::Duration::hours(24);
+    insert_unevaluated_record("token_a.near", "wrap.near", 100, base, target).await?;
+
+    let results = PredictionRecord::get_latest_fresh_predictions(&[], base).await?;
+
+    assert!(
+        results.is_empty(),
+        "Empty token list should return empty results"
+    );
+
+    Ok(())
+}
+
+/// 境界値: target_time が as_of ちょうどのレコードは除外されること（gt の確認）
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+
+    // target_time == as_of（ちょうど境界、gt なので除外されるべき）
+    let prediction_time = base - chrono::Duration::hours(24);
+    insert_unevaluated_record(token, quote, 100, prediction_time, base).await?;
+
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], base).await?;
+
+    assert!(
+        results.is_empty(),
+        "Record with target_time == as_of should be excluded (gt, not gte)"
+    );
+
+    Ok(())
+}
+
+/// target_time 優先: 同一トークン・同一 prediction_time で異なる target_time がある場合、
+/// 最新の target_time を持つレコードが返ること
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_prefers_latest_target_time() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+
+    let prediction_time = base;
+
+    // 近い未来の target_time（+12h）
+    let near_target = base + chrono::Duration::hours(12);
+    insert_unevaluated_record(token, quote, 100, prediction_time, near_target).await?;
+
+    // 遠い未来の target_time（+36h）
+    let far_target = base + chrono::Duration::hours(36);
+    insert_unevaluated_record(token, quote, 200, prediction_time, far_target).await?;
+
+    let as_of = base;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "Should return exactly one record per token"
+    );
+    assert_eq!(
+        results[0].predicted_price,
+        BigDecimal::from(200),
+        "Should prefer the prediction with the latest target_time"
+    );
 
     Ok(())
 }

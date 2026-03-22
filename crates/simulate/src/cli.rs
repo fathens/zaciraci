@@ -20,10 +20,6 @@ pub struct Cli {
     #[arg(long, default_value = "10")]
     pub top_tokens: usize,
 
-    /// Days for volatility calculation
-    #[arg(long, default_value = "7")]
-    pub volatility_days: i64,
-
     /// Days of price history for prediction
     #[arg(long, default_value = "30")]
     pub price_history_days: i64,
@@ -67,7 +63,6 @@ mod tests {
             end_date: end.to_string(),
             initial_capital: 100.0,
             top_tokens: 10,
-            volatility_days: 7,
             price_history_days: 30,
             rebalance_threshold: 0.1,
             rebalance_interval_days: 1,

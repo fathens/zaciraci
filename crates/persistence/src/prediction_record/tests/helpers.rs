@@ -19,14 +19,12 @@ pub async fn clean_table() -> Result<()> {
 pub async fn insert_evaluated_record(
     token: &str,
     quote_token: &str,
-    evaluation_period_id: &str,
     predicted_price: i64,
     actual_price: i64,
     prediction_time: NaiveDateTime,
     target_time: NaiveDateTime,
 ) -> Result<DbPredictionRecord> {
     let new_record = NewPredictionRecord {
-        evaluation_period_id: evaluation_period_id.to_string(),
         token: token.to_string(),
         quote_token: quote_token.to_string(),
         predicted_price: BigDecimal::from(predicted_price),
@@ -84,13 +82,11 @@ pub async fn insert_evaluated_record(
 pub async fn insert_unevaluated_record(
     token: &str,
     quote_token: &str,
-    evaluation_period_id: &str,
     predicted_price: i64,
     prediction_time: NaiveDateTime,
     target_time: NaiveDateTime,
 ) -> Result<()> {
     let new_record = NewPredictionRecord {
-        evaluation_period_id: evaluation_period_id.to_string(),
         token: token.to_string(),
         quote_token: quote_token.to_string(),
         predicted_price: BigDecimal::from(predicted_price),

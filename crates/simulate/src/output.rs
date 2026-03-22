@@ -24,7 +24,6 @@ pub struct SimulationConfig {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SimulationParameters {
     pub top_tokens: usize,
-    pub volatility_days: i64,
     pub price_history_days: i64,
     pub rebalance_threshold: f64,
     pub rebalance_interval_days: i64,
@@ -72,7 +71,6 @@ impl SimulationResult {
             initial_capital: cli.initial_capital,
             parameters: SimulationParameters {
                 top_tokens: cli.top_tokens,
-                volatility_days: cli.volatility_days,
                 price_history_days: cli.price_history_days,
                 rebalance_threshold: cli.rebalance_threshold,
                 rebalance_interval_days: cli.rebalance_interval_days,

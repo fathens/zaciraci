@@ -12,6 +12,9 @@ use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
+/// 予測の時間軸（何時間先の価格を予測するか）
+pub(crate) const PREDICTION_HORIZON_HOURS: usize = 24;
+
 /// 古い prediction_records を削除する。
 ///
 /// 呼び出し元: evaluate_pending_predictions() の最後
@@ -106,24 +109,19 @@ fn calculate_composite_confidence(
 
 /// 予測結果を prediction_records テーブルに記録する。
 ///
-/// 呼び出し元: execute_portfolio_strategy()
-/// タイミング: 予測ループ完了後、PortfolioData 構築前
-///
 /// DB 操作: INSERT INTO prediction_records (トークン数分)
 pub async fn record_predictions(
-    evaluation_period_id: &str,
     predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
     quote_token: &TokenInAccount,
 ) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
     let prediction_time = Utc::now().naive_utc();
-    let target_time = prediction_time + chrono::Duration::hours(24);
+    let target_time = prediction_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
 
     let records: Vec<NewPredictionRecord> = predictions
         .iter()
         .map(|(token, price)| NewPredictionRecord {
-            evaluation_period_id: evaluation_period_id.to_string(),
             token: token.to_string(),
             quote_token: quote_token.to_string(),
             predicted_price: price.as_bigdecimal().clone(),

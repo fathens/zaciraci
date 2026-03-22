@@ -366,16 +366,10 @@ define_typed_config! {
         default: 5
     }
 
-    /// Days of price history for predictions
+    /// Days of price history for predictions and volatility calculation
     fn trade_price_history_days() -> u32 {
         key: "TRADE_PRICE_HISTORY_DAYS",
         default: 30
-    }
-
-    /// Days of volatility data
-    fn trade_volatility_days() -> u32 {
-        key: "TRADE_VOLATILITY_DAYS",
-        default: 7
     }
 
     /// Whether to unwrap wrap.near on stop

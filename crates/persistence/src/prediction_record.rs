@@ -12,7 +12,6 @@ use diesel::prelude::*;
 #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
 pub struct DbPredictionRecord {
     pub id: i32,
-    pub evaluation_period_id: String,
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
@@ -28,7 +27,6 @@ pub struct DbPredictionRecord {
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
-    pub evaluation_period_id: String,
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
@@ -171,6 +169,41 @@ impl PredictionRecord {
             .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
         Ok(result)
+    }
+
+    /// 指定トークンの最新予測を取得（target_time が未来のもののみ）
+    ///
+    /// 各トークンについて `target_time > as_of` かつ
+    /// 最新の `target_time`（同一なら最新の `prediction_time`）を持つレコードを1件返す。
+    pub async fn get_latest_fresh_predictions(
+        tokens: &[TokenOutAccount],
+        as_of: NaiveDateTime,
+    ) -> Result<Vec<DbPredictionRecord>> {
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tokens: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let conn = connection_pool::get().await?;
+
+        let results = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::token.eq_any(&tokens))
+                    .filter(prediction_records::target_time.gt(as_of))
+                    .distinct_on(prediction_records::token)
+                    .order_by((
+                        prediction_records::token,
+                        prediction_records::target_time.desc(),
+                        prediction_records::prediction_time.desc(),
+                        prediction_records::id.desc(),
+                    ))
+                    .load::<DbPredictionRecord>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(results)
     }
 
     /// 古いレコードを削除

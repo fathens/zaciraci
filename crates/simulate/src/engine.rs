@@ -126,7 +126,6 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 /// Apply CLI parameters to the config system
 pub(crate) fn apply_config(cli: &Cli) {
     common::config::store::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
-    common::config::store::set("TRADE_VOLATILITY_DAYS", &cli.volatility_days.to_string());
     common::config::store::set(
         "TRADE_PRICE_HISTORY_DAYS",
         &cli.price_history_days.to_string(),
@@ -151,7 +150,6 @@ mod tests {
             end_date: end.to_string(),
             initial_capital: 100.0,
             top_tokens: 10,
-            volatility_days: 7,
             price_history_days: 30,
             rebalance_threshold: 0.1,
             rebalance_interval_days: 1,
@@ -178,7 +176,6 @@ mod tests {
             end_date: "2025-12-31".to_string(),
             initial_capital: 500.0,
             top_tokens: 20,
-            volatility_days: 14,
             price_history_days: 60,
             rebalance_threshold: 0.25,
             rebalance_interval_days: 3,
@@ -191,10 +188,6 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_TOP_TOKENS").unwrap(),
             "20"
-        );
-        assert_eq!(
-            common::config::store::get("TRADE_VOLATILITY_DAYS").unwrap(),
-            "14"
         );
         assert_eq!(
             common::config::store::get("TRADE_PRICE_HISTORY_DAYS").unwrap(),

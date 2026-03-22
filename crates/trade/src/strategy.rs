@@ -68,18 +68,6 @@ where
 
     info!(log, "starting portfolio-based trading strategy");
 
-    // 未評価の予測レコードを評価（ハウスキーピング: トレード戦略とは独立）
-    match super::prediction_accuracy::evaluate_pending_predictions(cfg).await {
-        Ok(count) => {
-            if count > 0 {
-                info!(log, "evaluated pending predictions"; "count" => count);
-            }
-        }
-        Err(e) => {
-            warn!(log, "prediction evaluation failed, continuing"; "error" => %e);
-        }
-    }
-
     // TRADE_ENABLED のチェック
     let trade_enabled = cfg.trade_enabled();
 
@@ -317,60 +305,72 @@ pub async fn select_top_volatility_tokens(
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
 ) -> Result<Vec<AccountId>> {
-    let log = DEFAULT.new(o!("function" => "select_top_volatility_tokens"));
-
     let limit = cfg.trade_top_tokens() as usize;
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit)).await
+}
 
-    // ボラティリティトークンを全て取得（DBから）
-    let volatility_days = i64::from(cfg.trade_volatility_days());
-    let start_date = end_date - chrono::Duration::days(volatility_days);
+/// 全対象トークンの予測用リストを生成（流動性フィルタ適用、上限なし）
+///
+/// `select_top_volatility_tokens()` と同じフィルタ（ボラティリティ＋流動性＋グラフ到達性）
+/// を適用するが、上位N個への切り詰めを行わず全対象を返す。
+/// 予測フェーズで全対象トークンの価格予測を実行するために使用。
+pub(crate) async fn select_prediction_target_tokens(
+    prediction_service: &PredictionService,
+    end_date: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+) -> Result<Vec<AccountId>> {
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, None).await
+}
 
-    // 型安全な quote_token を準備
+/// ボラティリティトークン選定の共通ロジック
+///
+/// ボラティリティ順にトークンを取得し、流動性フィルタ＋グラフ到達性フィルタを適用。
+/// `limit` が `Some(n)` なら上位N個に切り詰め、`None` なら全件返す。
+async fn select_volatility_tokens_inner(
+    prediction_service: &PredictionService,
+    end_date: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+    limit: Option<usize>,
+) -> Result<Vec<AccountId>> {
+    let log = DEFAULT.new(o!("function" => "select_volatility_tokens"));
+
+    let price_history_days = i64::from(cfg.trade_price_history_days());
+    let start_date = end_date - chrono::Duration::days(price_history_days);
+
     let quote_token: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
-    match prediction_service
+    let top_tokens = prediction_service
         .get_tokens_by_volatility(start_date, end_date, &quote_token)
-        .await
-    {
-        Ok(top_tokens) => {
-            // TopTokenInfo を AccountId に変換
-            let tokens: Vec<AccountId> = top_tokens
-                .into_iter()
-                .map(|token| token.token.into())
-                .collect();
+        .await?;
 
-            if tokens.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "No volatility tokens returned from prediction service"
-                ));
-            }
+    let tokens: Vec<AccountId> = top_tokens
+        .into_iter()
+        .map(|token| token.token.into())
+        .collect();
 
-            debug!(log, "selected tokens from prediction service"; "count" => tokens.len());
-
-            // 流動性フィルタリング: REF Finance で現在取引可能なトークンのみを選択
-            let pools = persistence::pool_info::read_from_db(None).await?;
-
-            let min_liquidity =
-                NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
-            let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
-            let wnear_in: TokenInAccount = wnear.to_in();
-            let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear).await?;
-
-            apply_liquidity_filter_and_select(
-                tokens,
-                &pools,
-                &latest_rates,
-                &wnear,
-                &wnear_in,
-                &min_liquidity,
-                limit,
-            )
-        }
-        Err(e) => {
-            error!(log, "failed to get tokens from prediction service"; "error" => ?e);
-            Err(anyhow::anyhow!("Failed to get volatility tokens: {}", e))
-        }
+    if tokens.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No volatility tokens returned from prediction service"
+        ));
     }
+
+    debug!(log, "volatility tokens selected"; "count" => tokens.len(), "limit" => ?limit);
+
+    let pools = persistence::pool_info::read_from_db(None).await?;
+    let min_liquidity = NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
+    let wnear_in: TokenInAccount = wnear.to_in();
+    let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear).await?;
+
+    apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        &latest_rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        limit,
+    )
 }
 
 /// ポートフォリオ戦略実行のパラメータ
@@ -421,54 +421,71 @@ where
     // 設定を事前に取得
     let price_history_days = i64::from(cfg.trade_price_history_days());
 
-    // 1. predict_multiple_tokens() を使用してバッチ履歴取得 + 予測を並行実行
+    // 1. DB から最新の予測を読み取り（run_predictions() で事前に保存済み）
     let token_out_list: Vec<TokenOutAccount> = tokens.iter().map(|t| t.clone().into()).collect();
-    let batch_predictions = prediction_service
-        .predict_multiple_tokens(
-            token_out_list.clone(),
-            &quote_token_in,
-            price_history_days,
-            24,
-            end_date,
-            cfg,
+    let db_predictions =
+        persistence::prediction_record::PredictionRecord::get_latest_fresh_predictions(
+            &token_out_list,
+            end_date.naive_utc(),
         )
         .await?;
 
-    debug!(log, "batch predictions completed"; "count" => batch_predictions.len());
+    let mut batch_predictions: BTreeMap<TokenOutAccount, TokenPrice> = BTreeMap::new();
+    let mut parse_failures = 0u32;
+    for r in db_predictions {
+        match r.token.parse::<TokenAccount>() {
+            Ok(account) => {
+                let token: TokenOutAccount = account.into();
+                batch_predictions.insert(token, TokenPrice::from_near_per_token(r.predicted_price));
+            }
+            Err(e) => {
+                warn!(log, "failed to parse token from prediction record"; "token" => &r.token, "error" => %e);
+                parse_failures += 1;
+            }
+        }
+    }
+    if parse_failures > 0 {
+        warn!(log, "skipped predictions with unparseable tokens"; "count" => parse_failures);
+    }
+
+    if batch_predictions.is_empty() {
+        warn!(log, "no fresh predictions available for any token";
+            "token_count" => token_out_list.len(),
+        );
+        return Err(anyhow::anyhow!("No fresh predictions available"));
+    }
+
+    debug!(log, "predictions loaded from DB"; "count" => batch_predictions.len());
 
     // 2. 並行実行数を設定から取得
     let concurrency = cfg.trade_prediction_concurrency() as usize;
 
-    // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
+    // 3. 価格履歴の期間を計算
     let start_date = end_date - chrono::Duration::days(price_history_days);
 
-    // 4. 各トークンの追加データを並行取得（流動性スコア、市場規模、decimals）
-    // TokenData 用のデータを構築
-    struct TokenProcessingData {
-        token_out: TokenOutAccount,
-        prediction: Option<common::algorithm::types::TokenPredictionResult>,
-    }
-
-    let processing_data: Vec<_> = token_out_list
+    // 4. 各トークンの価格履歴・予測価格を並行取得
+    let history_futures: Vec<_> = token_out_list
         .iter()
-        .map(|token_out| TokenProcessingData {
-            token_out: token_out.clone(),
-            prediction: batch_predictions.get(token_out).cloned(),
-        })
-        .collect();
-
-    // 5. 価格履歴を並行取得
-    let history_futures: Vec<_> = processing_data
-        .into_iter()
-        .map(|data| {
+        .map(|token_out| {
             let log = log.clone();
             let quote_token_in = quote_token_in.clone();
+            let token_out = token_out.clone();
+            let predicted_price = batch_predictions.get(&token_out).cloned();
             async move {
-                let token_str = data.token_out.to_string();
+                let token_str = token_out.to_string();
+
+                // 予測がないトークンはスキップ
+                let predicted_price = match predicted_price {
+                    Some(p) => p,
+                    None => {
+                        debug!(log, "no prediction available, skipping"; "token" => %token_str);
+                        return None;
+                    }
+                };
 
                 // 価格履歴の取得
                 let history_result = prediction_service
-                    .get_price_history(&data.token_out, &quote_token_in, start_date, end_date)
+                    .get_price_history(&token_out, &quote_token_in, start_date, end_date)
                     .await;
 
                 let history = match history_result {
@@ -482,19 +499,12 @@ where
                 // 現在価格を履歴から取得
                 let current_price = history.prices.last()?.price.clone();
 
-                // 予測価格を取得
-                let predicted_price = data
-                    .prediction
-                    .as_ref()
-                    .and_then(|p| p.predictions.first())
-                    .map(|p| p.price.clone())?;
-
                 // ボラティリティの計算
                 let volatility = calculate_volatility_from_history(&history).ok()?;
                 let volatility_f64 = volatility.to_f64()?;
 
                 Some((
-                    data.token_out,
+                    token_out,
                     history,
                     current_price,
                     predicted_price,
@@ -622,14 +632,6 @@ where
         return Err(anyhow::anyhow!(
             "Failed to process any tokens for portfolio strategy"
         ));
-    }
-
-    // 今回の予測を DB に記録（失敗しても取引は続行）
-    if let Err(e) =
-        super::prediction_accuracy::record_predictions(period_id, &predictions, &quote_token_in)
-            .await
-    {
-        warn!(log, "failed to record predictions"; "error" => ?e);
     }
 
     // per-token confidence を計算（DB エラー時は Hold で安全に停止）
@@ -915,7 +917,7 @@ fn apply_liquidity_filter_and_select(
     wnear: &TokenAccount,
     wnear_in: &TokenInAccount,
     min_liquidity: &NearValue,
-    limit: usize,
+    limit: Option<usize>,
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "apply_liquidity_filter_and_select"));
 
@@ -945,11 +947,13 @@ fn apply_liquidity_filter_and_select(
 
     // Step 3: フィルタ＋リミット適用
     let original_count = tokens.len();
-    let filtered_tokens: Vec<AccountId> = tokens
+    let filtered_iter = tokens
         .into_iter()
-        .filter(|token| buyable_tokens.contains(token))
-        .take(limit)
-        .collect();
+        .filter(|token| buyable_tokens.contains(token));
+    let filtered_tokens: Vec<AccountId> = match limit {
+        Some(n) => filtered_iter.take(n).collect(),
+        None => filtered_iter.collect(),
+    };
 
     if filtered_tokens.is_empty() {
         return Err(anyhow::anyhow!(
@@ -958,9 +962,11 @@ fn apply_liquidity_filter_and_select(
         ));
     }
 
-    if filtered_tokens.len() < limit {
+    if let Some(n) = limit
+        && filtered_tokens.len() < n
+    {
         warn!(log, "insufficient tokens after filtering";
-            "required" => limit,
+            "required" => n,
             "available" => filtered_tokens.len(),
             "fetched" => original_count,
         );
@@ -969,7 +975,7 @@ fn apply_liquidity_filter_and_select(
     debug!(log, "tokens after liquidity filtering";
         "original_count" => original_count,
         "filtered_count" => filtered_tokens.len(),
-        "required_count" => limit,
+        "limit" => ?limit,
     );
 
     Ok(filtered_tokens)
