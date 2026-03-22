@@ -221,7 +221,6 @@ fn make_cli(start: &str, end: &str) -> Cli {
         end_date: end.to_string(),
         initial_capital: 100.0,
         top_tokens: 10,
-        volatility_days: 7,
         price_history_days: 30,
         rebalance_threshold: 0.1,
         rebalance_interval_days: 1,
@@ -295,7 +294,6 @@ fn from_state_config_reflects_cli_params() {
         end_date: "2025-03-31".to_string(),
         initial_capital: 200.0,
         top_tokens: 5,
-        volatility_days: 14,
         price_history_days: 60,
         rebalance_threshold: 0.2,
         rebalance_interval_days: 3,
@@ -309,7 +307,6 @@ fn from_state_config_reflects_cli_params() {
     assert_eq!(result.config.end_date, "2025-03-31");
     assert!((result.config.initial_capital - 200.0).abs() < 1e-10);
     assert_eq!(result.config.parameters.top_tokens, 5);
-    assert_eq!(result.config.parameters.volatility_days, 14);
     assert_eq!(result.config.parameters.price_history_days, 60);
     assert!((result.config.parameters.rebalance_threshold - 0.2).abs() < 1e-10);
     assert_eq!(result.config.parameters.rebalance_interval_days, 3);
