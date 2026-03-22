@@ -114,7 +114,7 @@ pub async fn record_predictions(
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
     let prediction_time = Utc::now().naive_utc();
-    let target_time = prediction_time + chrono::Duration::hours(24);
+    let target_time = prediction_time + chrono::Duration::hours(super::PREDICTION_HORIZON_HOURS);
 
     let records: Vec<NewPredictionRecord> = predictions
         .iter()
