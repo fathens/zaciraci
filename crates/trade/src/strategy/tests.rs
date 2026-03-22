@@ -662,6 +662,64 @@ fn test_select_respects_limit() {
     );
 }
 
+/// limit=None の場合、フィルタを通過した全トークンが返る
+#[test]
+fn test_select_returns_all_when_limit_is_none() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    let pool_a = make_pool(
+        1,
+        vec!["wrap.near", "token-a.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pool_b = make_pool(
+        2,
+        vec!["wrap.near", "token-b.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pool_c = make_pool(
+        3,
+        vec!["wrap.near", "token-c.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_a, pool_b, pool_c]));
+
+    let mut rates = HashMap::new();
+    for name in &["token-a.near", "token-b.near", "token-c.near"] {
+        rates.insert(
+            make_token(name),
+            ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+        );
+    }
+
+    let tokens = vec![
+        make_account_id("token-a.near"),
+        make_account_id("token-b.near"),
+        make_account_id("token-c.near"),
+    ];
+
+    // limit=None で全件返る
+    let result = apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        &rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.len(),
+        3,
+        "All tokens should be returned when limit is None"
+    );
+}
+
 /// グラフ上に到達可能だがボラティリティトークンに含まれない場合、
 /// 全ボラティリティトークンがフィルタで除外されエラーを返す
 #[test]
