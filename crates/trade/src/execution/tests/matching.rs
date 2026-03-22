@@ -502,3 +502,59 @@ fn test_invariant_fractional_near_values() {
         "buy invariant broken with fractional values"
     );
 }
+
+/// sell 合計 != buy 合計かつ端数を含むケースでの不変条件テスト
+#[test]
+fn test_invariant_mismatched_totals_with_fractions() {
+    let sells = vec![
+        SellOperation {
+            token: token_account("token_a.near"),
+            near_value: NearValue::from_near(BigDecimal::from_str("33.333").unwrap()),
+            exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str(RATE_24).unwrap(), 24),
+        },
+        SellOperation {
+            token: token_account("token_b.near"),
+            near_value: NearValue::from_near(BigDecimal::from_str("16.667").unwrap()),
+            exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from_str(RATE_24).unwrap(), 24),
+        },
+    ];
+    let buys = vec![
+        BuyOperation {
+            token: token_account("token_c.near"),
+            near_value: NearValue::from_near(BigDecimal::from_str("25.5").unwrap()),
+        },
+        BuyOperation {
+            token: token_account("token_d.near"),
+            near_value: NearValue::from_near(BigDecimal::from_str("7.832").unwrap()),
+        },
+        BuyOperation {
+            token: token_account("token_e.near"),
+            near_value: NearValue::from_near(BigDecimal::from_str("12.0").unwrap()),
+        },
+    ];
+
+    let total_sell: NearValue = sells.iter().map(|s| &s.near_value).sum();
+    let total_buy: NearValue = buys.iter().map(|b| &b.near_value).sum();
+
+    // 合計が一致しないことを確認: 50.000 vs 45.332
+    assert_ne!(total_sell, total_buy);
+
+    let result = match_rebalance_operations(sells, buys);
+
+    let swap_sum: NearValue = result.direct_swaps.iter().map(|ds| &ds.near_value).sum();
+    let remaining_sell_sum: NearValue = result.remaining_sells.iter().map(|s| &s.near_value).sum();
+    let remaining_buy_sum: NearValue = result.remaining_buys.iter().map(|b| &b.near_value).sum();
+
+    // 不変条件: swap_sum + remaining_sell_sum = total_sell
+    assert_eq!(
+        swap_sum.clone() + remaining_sell_sum,
+        total_sell,
+        "sell invariant broken with mismatched fractional totals"
+    );
+    // 不変条件: swap_sum + remaining_buy_sum = total_buy
+    assert_eq!(
+        swap_sum + remaining_buy_sum,
+        total_buy,
+        "buy invariant broken with mismatched fractional totals"
+    );
+}
