@@ -449,6 +449,13 @@ where
         warn!(log, "skipped predictions with unparseable tokens"; "count" => parse_failures);
     }
 
+    if batch_predictions.is_empty() {
+        warn!(log, "no fresh predictions available for any token";
+            "token_count" => token_out_list.len(),
+        );
+        return Err(anyhow::anyhow!("No fresh predictions available"));
+    }
+
     debug!(log, "predictions loaded from DB"; "count" => batch_predictions.len());
 
     // 2. 並行実行数を設定から取得
