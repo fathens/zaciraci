@@ -68,18 +68,6 @@ where
 
     info!(log, "starting portfolio-based trading strategy");
 
-    // 未評価の予測レコードを評価（ハウスキーピング: トレード戦略とは独立）
-    match super::prediction_accuracy::evaluate_pending_predictions(cfg).await {
-        Ok(count) => {
-            if count > 0 {
-                info!(log, "evaluated pending predictions"; "count" => count);
-            }
-        }
-        Err(e) => {
-            warn!(log, "prediction evaluation failed, continuing"; "error" => %e);
-        }
-    }
-
     // TRADE_ENABLED のチェック
     let trade_enabled = cfg.trade_enabled();
 
@@ -472,54 +460,52 @@ where
     // 設定を事前に取得
     let price_history_days = i64::from(cfg.trade_price_history_days());
 
-    // 1. predict_multiple_tokens() を使用してバッチ履歴取得 + 予測を並行実行
+    // 1. DB から最新の予測を読み取り（run_predictions() で事前に保存済み）
     let token_out_list: Vec<TokenOutAccount> = tokens.iter().map(|t| t.clone().into()).collect();
-    let batch_predictions = prediction_service
-        .predict_multiple_tokens(
-            token_out_list.clone(),
-            &quote_token_in,
-            price_history_days,
-            24,
-            end_date,
-            cfg,
+    let token_strings: Vec<String> = token_out_list.iter().map(|t| t.to_string()).collect();
+    let staleness_hours = cfg.trade_prediction_staleness_hours();
+    let staleness_cutoff =
+        end_date.naive_utc() - chrono::Duration::hours(i64::from(staleness_hours));
+    let db_predictions =
+        persistence::prediction_record::PredictionRecord::get_latest_fresh_predictions(
+            &token_strings,
+            staleness_cutoff,
         )
         .await?;
 
-    debug!(log, "batch predictions completed"; "count" => batch_predictions.len());
+    let batch_predictions: BTreeMap<TokenOutAccount, TokenPrice> = db_predictions
+        .into_iter()
+        .filter_map(|r| {
+            let token: TokenOutAccount = r.token.parse::<TokenAccount>().ok()?.into();
+            Some((token, TokenPrice::from_near_per_token(r.predicted_price)))
+        })
+        .collect();
+
+    debug!(log, "predictions loaded from DB"; "count" => batch_predictions.len());
 
     // 2. 並行実行数を設定から取得
     let concurrency = cfg.trade_prediction_concurrency() as usize;
 
-    // 3. 価格履歴を一括取得（predict_multiple_tokens 内で既に取得されているが、PriceHistory 形式が必要）
+    // 3. 価格履歴の期間を計算
     let start_date = end_date - chrono::Duration::days(price_history_days);
 
-    // 4. 各トークンの追加データを並行取得（流動性スコア、市場規模、decimals）
-    // TokenData 用のデータを構築
-    struct TokenProcessingData {
-        token_out: TokenOutAccount,
-        prediction: Option<common::algorithm::types::TokenPredictionResult>,
-    }
-
-    let processing_data: Vec<_> = token_out_list
+    // 4. 各トークンの価格履歴・予測価格を並行取得
+    let history_futures: Vec<_> = token_out_list
         .iter()
-        .map(|token_out| TokenProcessingData {
-            token_out: token_out.clone(),
-            prediction: batch_predictions.get(token_out).cloned(),
-        })
-        .collect();
-
-    // 5. 価格履歴を並行取得
-    let history_futures: Vec<_> = processing_data
-        .into_iter()
-        .map(|data| {
+        .map(|token_out| {
             let log = log.clone();
             let quote_token_in = quote_token_in.clone();
+            let token_out = token_out.clone();
+            let predicted_price = batch_predictions.get(&token_out).cloned();
             async move {
-                let token_str = data.token_out.to_string();
+                let token_str = token_out.to_string();
+
+                // 予測がないトークンはスキップ
+                let predicted_price = predicted_price?;
 
                 // 価格履歴の取得
                 let history_result = prediction_service
-                    .get_price_history(&data.token_out, &quote_token_in, start_date, end_date)
+                    .get_price_history(&token_out, &quote_token_in, start_date, end_date)
                     .await;
 
                 let history = match history_result {
@@ -533,19 +519,12 @@ where
                 // 現在価格を履歴から取得
                 let current_price = history.prices.last()?.price.clone();
 
-                // 予測価格を取得
-                let predicted_price = data
-                    .prediction
-                    .as_ref()
-                    .and_then(|p| p.predictions.first())
-                    .map(|p| p.price.clone())?;
-
                 // ボラティリティの計算
                 let volatility = calculate_volatility_from_history(&history).ok()?;
                 let volatility_f64 = volatility.to_f64()?;
 
                 Some((
-                    data.token_out,
+                    token_out,
                     history,
                     current_price,
                     predicted_price,
@@ -673,13 +652,6 @@ where
         return Err(anyhow::anyhow!(
             "Failed to process any tokens for portfolio strategy"
         ));
-    }
-
-    // 今回の予測を DB に記録（失敗しても取引は続行）
-    if let Err(e) =
-        super::prediction_accuracy::record_predictions(&predictions, &quote_token_in).await
-    {
-        warn!(log, "failed to record predictions"; "error" => ?e);
     }
 
     // per-token confidence を計算（DB エラー時は Hold で安全に停止）
