@@ -65,14 +65,14 @@ pub(crate) fn match_rebalance_operations(
     // 降順ソート（大きい金額を優先的にマッチ）
     let mut sell_operations = sell_operations;
     let mut buy_operations = buy_operations;
-    sell_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
-    buy_operations.sort_by(|a, b| b.near_value.cmp(&a.near_value));
+    sell_operations.sort_unstable_by(|a, b| b.near_value.cmp(&a.near_value));
+    buy_operations.sort_unstable_by(|a, b| b.near_value.cmp(&a.near_value));
 
     let mut direct_swaps = Vec::with_capacity(sell_operations.len().max(buy_operations.len()));
     let mut sell_iter = sell_operations.into_iter();
     let mut buy_iter = buy_operations.into_iter();
 
-    // Safety: is_empty() ガードにより到達時は必ず要素がある
+    // Invariant: is_empty() ガードにより到達時は必ず要素がある
     let Some(mut current_sell) = sell_iter.next() else {
         unreachable!("sell_operations was verified non-empty above");
     };
