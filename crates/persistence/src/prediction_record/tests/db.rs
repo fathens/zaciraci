@@ -1,6 +1,11 @@
 use super::*;
-use common::types::TokenAccount;
+use common::types::{TokenAccount, TokenOutAccount};
 use std::str::FromStr;
+
+/// テスト用ヘルパー: 文字列から TokenOutAccount を作成
+fn tok(s: &str) -> TokenOutAccount {
+    TokenAccount::from_str(s).unwrap().into()
+}
 
 /// テスト用の基準時刻を作成
 fn base_time() -> NaiveDateTime {
@@ -272,8 +277,7 @@ async fn test_fresh_predictions_filters_by_target_time() -> Result<()> {
     insert_unevaluated_record(token, quote, 200, future_prediction, future_target).await?;
 
     let as_of = base;
-    let results =
-        PredictionRecord::get_latest_fresh_predictions(&[token.to_string()], as_of).await?;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].predicted_price, BigDecimal::from(200));
@@ -299,8 +303,7 @@ async fn test_fresh_predictions_returns_latest_per_token() -> Result<()> {
     insert_unevaluated_record(token, quote, 200, newer_prediction, target).await?;
 
     let as_of = base - chrono::Duration::hours(1);
-    let results =
-        PredictionRecord::get_latest_fresh_predictions(&[token.to_string()], as_of).await?;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
 
     assert_eq!(
         results.len(),
@@ -333,11 +336,8 @@ async fn test_fresh_predictions_separates_tokens() -> Result<()> {
     insert_unevaluated_record(token_a, quote, 100, prediction_time, target).await?;
     insert_unevaluated_record(token_b, quote, 200, prediction_time, target).await?;
 
-    let results = PredictionRecord::get_latest_fresh_predictions(
-        &[token_a.to_string(), token_b.to_string()],
-        base,
-    )
-    .await?;
+    let results =
+        PredictionRecord::get_latest_fresh_predictions(&[tok(token_a), tok(token_b)], base).await?;
 
     assert_eq!(results.len(), 2, "Should return one record per token");
 
@@ -383,8 +383,7 @@ async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
     let prediction_time = base - chrono::Duration::hours(24);
     insert_unevaluated_record(token, quote, 100, prediction_time, base).await?;
 
-    let results =
-        PredictionRecord::get_latest_fresh_predictions(&[token.to_string()], base).await?;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], base).await?;
 
     assert!(
         results.is_empty(),

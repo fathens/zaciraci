@@ -423,10 +423,9 @@ where
 
     // 1. DB から最新の予測を読み取り（run_predictions() で事前に保存済み）
     let token_out_list: Vec<TokenOutAccount> = tokens.iter().map(|t| t.clone().into()).collect();
-    let token_strings: Vec<String> = token_out_list.iter().map(|t| t.to_string()).collect();
     let db_predictions =
         persistence::prediction_record::PredictionRecord::get_latest_fresh_predictions(
-            &token_strings,
+            &token_out_list,
             end_date.naive_utc(),
         )
         .await?;

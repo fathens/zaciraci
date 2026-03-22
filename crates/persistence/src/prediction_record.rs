@@ -176,14 +176,14 @@ impl PredictionRecord {
     /// 各トークンについて `target_time > as_of` かつ
     /// 最新の `prediction_time` を持つレコードを1件返す。
     pub async fn get_latest_fresh_predictions(
-        tokens: &[String],
+        tokens: &[TokenOutAccount],
         as_of: NaiveDateTime,
     ) -> Result<Vec<DbPredictionRecord>> {
         if tokens.is_empty() {
             return Ok(Vec::new());
         }
 
-        let tokens = tokens.to_vec();
+        let tokens: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
         let conn = connection_pool::get().await?;
 
         let results = conn
