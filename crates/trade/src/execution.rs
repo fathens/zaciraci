@@ -729,7 +729,10 @@ where
             for (i, buy) in remaining_buys.iter().enumerate() {
                 let is_last = i == buy_count - 1;
                 let wrap_near_amount_u128 = if is_last && ratio.is_some() {
-                    // 最後の購入は残額を使い切り、ratio 按分の切り捨て端数を回収
+                    // 最後の購入は残額を使い切り、ratio 按分の切り捨て端数を回収。
+                    // ratio.is_none()（wNEAR 十分）時は端数回収しない。to_u128() の
+                    // truncation で各購入最大 1 yocto 損失するが（N 件で最大 N yocto）、
+                    // available_wrap_near を cap にすると surplus が最後の buy に集中するため不可。
                     available_wrap_near.saturating_sub(allocated_sum)
                 } else {
                     let adjusted_value = match &ratio {
