@@ -434,13 +434,20 @@ where
         )
         .await?;
 
-    let batch_predictions: BTreeMap<TokenOutAccount, TokenPrice> = db_predictions
-        .into_iter()
-        .filter_map(|r| {
-            let token: TokenOutAccount = r.token.parse::<TokenAccount>().ok()?.into();
-            Some((token, TokenPrice::from_near_per_token(r.predicted_price)))
-        })
-        .collect();
+    let mut batch_predictions: BTreeMap<TokenOutAccount, TokenPrice> = BTreeMap::new();
+    let mut parse_failures = 0u32;
+    for r in db_predictions {
+        match r.token.parse::<TokenAccount>() {
+            Ok(account) => {
+                let token: TokenOutAccount = account.into();
+                batch_predictions.insert(token, TokenPrice::from_near_per_token(r.predicted_price));
+            }
+            Err(_) => parse_failures += 1,
+        }
+    }
+    if parse_failures > 0 {
+        warn!(log, "skipped predictions with unparseable tokens"; "count" => parse_failures);
+    }
 
     debug!(log, "predictions loaded from DB"; "count" => batch_predictions.len());
 

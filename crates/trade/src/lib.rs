@@ -133,10 +133,20 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
         .await?;
 
     // 4. 予測価格を抽出して DB に保存
-    let prediction_prices: BTreeMap<TokenOutAccount, common::types::TokenPrice> = predictions
-        .into_iter()
-        .filter_map(|(token, result)| result.predictions.first().map(|p| (token, p.price.clone())))
-        .collect();
+    let mut prediction_prices: BTreeMap<TokenOutAccount, common::types::TokenPrice> =
+        BTreeMap::new();
+    let mut empty_predictions = 0u32;
+    for (token, result) in predictions {
+        match result.predictions.first() {
+            Some(p) => {
+                prediction_prices.insert(token, p.price.clone());
+            }
+            None => empty_predictions += 1,
+        }
+    }
+    if empty_predictions > 0 {
+        warn!(log, "tokens with empty prediction results"; "count" => empty_predictions);
+    }
 
     prediction_accuracy::record_predictions(&prediction_prices, &quote_token).await?;
 
