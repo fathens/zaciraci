@@ -390,13 +390,6 @@ define_typed_config! {
         default: 100
     }
 
-    /// Maximum age in hours for predictions to be considered fresh.
-    /// Predictions older than this are excluded when reading from DB.
-    fn trade_prediction_staleness_hours() -> u32 {
-        key: "TRADE_PREDICTION_STALENESS_HOURS",
-        default: 1
-    }
-
     /// Parallel token cache update tasks
     fn trade_token_cache_concurrency() -> u32 {
         key: "TRADE_TOKEN_CACHE_CONCURRENCY",

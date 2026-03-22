@@ -171,13 +171,13 @@ impl PredictionRecord {
         Ok(result)
     }
 
-    /// 指定トークンの最新予測を鮮度フィルタ付きで取得
+    /// 指定トークンの最新予測を取得（target_time が未来のもののみ）
     ///
-    /// 各トークンについて `prediction_time > staleness_cutoff` かつ
+    /// 各トークンについて `target_time > as_of` かつ
     /// 最新の `prediction_time` を持つレコードを1件返す。
     pub async fn get_latest_fresh_predictions(
         tokens: &[String],
-        staleness_cutoff: NaiveDateTime,
+        as_of: NaiveDateTime,
     ) -> Result<Vec<DbPredictionRecord>> {
         if tokens.is_empty() {
             return Ok(Vec::new());
@@ -190,7 +190,7 @@ impl PredictionRecord {
             .interact(move |conn| {
                 prediction_records::table
                     .filter(prediction_records::token.eq_any(&tokens))
-                    .filter(prediction_records::prediction_time.gt(staleness_cutoff))
+                    .filter(prediction_records::target_time.gt(as_of))
                     .distinct_on(prediction_records::token)
                     .order_by((
                         prediction_records::token,
