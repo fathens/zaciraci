@@ -392,3 +392,41 @@ async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
 
     Ok(())
 }
+
+/// target_time 優先: 同一トークン・同一 prediction_time で異なる target_time がある場合、
+/// 最新の target_time を持つレコードが返ること
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_prefers_latest_target_time() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+
+    let prediction_time = base;
+
+    // 近い未来の target_time（+12h）
+    let near_target = base + chrono::Duration::hours(12);
+    insert_unevaluated_record(token, quote, 100, prediction_time, near_target).await?;
+
+    // 遠い未来の target_time（+36h）
+    let far_target = base + chrono::Duration::hours(36);
+    insert_unevaluated_record(token, quote, 200, prediction_time, far_target).await?;
+
+    let as_of = base;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "Should return exactly one record per token"
+    );
+    assert_eq!(
+        results[0].predicted_price,
+        BigDecimal::from(200),
+        "Should prefer the prediction with the latest target_time"
+    );
+
+    Ok(())
+}
