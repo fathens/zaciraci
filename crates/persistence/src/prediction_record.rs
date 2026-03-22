@@ -174,7 +174,7 @@ impl PredictionRecord {
     /// 指定トークンの最新予測を取得（target_time が未来のもののみ）
     ///
     /// 各トークンについて `target_time > as_of` かつ
-    /// 最新の `prediction_time` を持つレコードを1件返す。
+    /// 最新の `target_time`（同一なら最新の `prediction_time`）を持つレコードを1件返す。
     pub async fn get_latest_fresh_predictions(
         tokens: &[TokenOutAccount],
         as_of: NaiveDateTime,

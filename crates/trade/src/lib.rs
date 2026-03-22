@@ -118,7 +118,7 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
     let quote_token = get_quote_token();
     let price_history_days = i64::from(cfg.trade_price_history_days());
     let token_out_list: Vec<TokenOutAccount> =
-        target_tokens.iter().map(|t| t.clone().into()).collect();
+        target_tokens.into_iter().map(|t| t.into()).collect();
 
     let predictions = prediction_service
         .predict_multiple_tokens(

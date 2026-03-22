@@ -334,8 +334,8 @@ async fn select_volatility_tokens_inner(
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "select_volatility_tokens"));
 
-    let volatility_days = i64::from(cfg.trade_price_history_days());
-    let start_date = end_date - chrono::Duration::days(volatility_days);
+    let price_history_days = i64::from(cfg.trade_price_history_days());
+    let start_date = end_date - chrono::Duration::days(price_history_days);
 
     let quote_token: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
