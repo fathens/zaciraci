@@ -363,7 +363,7 @@ pub async fn select_top_volatility_tokens(
                 &wnear,
                 &wnear_in,
                 &min_liquidity,
-                limit,
+                Some(limit),
             )
         }
         Err(e) => {
@@ -371,6 +371,57 @@ pub async fn select_top_volatility_tokens(
             Err(anyhow::anyhow!("Failed to get volatility tokens: {}", e))
         }
     }
+}
+
+/// 全対象トークンの予測用リストを生成（流動性フィルタ適用、上限なし）
+///
+/// `select_top_volatility_tokens()` と同じフィルタ（ボラティリティ＋流動性＋グラフ到達性）
+/// を適用するが、上位N個への切り詰めを行わず全対象を返す。
+/// 予測フェーズで全対象トークンの価格予測を実行するために使用。
+pub async fn select_prediction_target_tokens(
+    prediction_service: &PredictionService,
+    end_date: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+) -> Result<Vec<AccountId>> {
+    let log = DEFAULT.new(o!("function" => "select_prediction_target_tokens"));
+
+    let volatility_days = i64::from(cfg.trade_price_history_days());
+    let start_date = end_date - chrono::Duration::days(volatility_days);
+
+    let quote_token: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
+
+    let top_tokens = prediction_service
+        .get_tokens_by_volatility(start_date, end_date, &quote_token)
+        .await?;
+
+    let tokens: Vec<AccountId> = top_tokens
+        .into_iter()
+        .map(|token| token.token.into())
+        .collect();
+
+    if tokens.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No volatility tokens returned from prediction service"
+        ));
+    }
+
+    debug!(log, "volatility tokens for prediction"; "count" => tokens.len());
+
+    let pools = persistence::pool_info::read_from_db(None).await?;
+    let min_liquidity = NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
+    let wnear_in: TokenInAccount = wnear.to_in();
+    let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear).await?;
+
+    apply_liquidity_filter_and_select(
+        tokens,
+        &pools,
+        &latest_rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        None,
+    )
 }
 
 /// ポートフォリオ戦略実行のパラメータ
@@ -914,7 +965,7 @@ fn apply_liquidity_filter_and_select(
     wnear: &TokenAccount,
     wnear_in: &TokenInAccount,
     min_liquidity: &NearValue,
-    limit: usize,
+    limit: Option<usize>,
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "apply_liquidity_filter_and_select"));
 
@@ -944,11 +995,13 @@ fn apply_liquidity_filter_and_select(
 
     // Step 3: フィルタ＋リミット適用
     let original_count = tokens.len();
-    let filtered_tokens: Vec<AccountId> = tokens
+    let filtered_iter = tokens
         .into_iter()
-        .filter(|token| buyable_tokens.contains(token))
-        .take(limit)
-        .collect();
+        .filter(|token| buyable_tokens.contains(token));
+    let filtered_tokens: Vec<AccountId> = match limit {
+        Some(n) => filtered_iter.take(n).collect(),
+        None => filtered_iter.collect(),
+    };
 
     if filtered_tokens.is_empty() {
         return Err(anyhow::anyhow!(
@@ -957,9 +1010,11 @@ fn apply_liquidity_filter_and_select(
         ));
     }
 
-    if filtered_tokens.len() < limit {
+    if let Some(n) = limit
+        && filtered_tokens.len() < n
+    {
         warn!(log, "insufficient tokens after filtering";
-            "required" => limit,
+            "required" => n,
             "available" => filtered_tokens.len(),
             "fetched" => original_count,
         );
@@ -968,7 +1023,7 @@ fn apply_liquidity_filter_and_select(
     debug!(log, "tokens after liquidity filtering";
         "original_count" => original_count,
         "filtered_count" => filtered_tokens.len(),
-        "required_count" => limit,
+        "limit" => ?limit,
     );
 
     Ok(filtered_tokens)

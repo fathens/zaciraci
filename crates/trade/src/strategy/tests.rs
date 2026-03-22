@@ -493,7 +493,7 @@ fn test_select_excludes_low_liquidity_token() {
         &wnear,
         &wnear_in,
         &min_liquidity,
-        10,
+        Some(10),
     )
     .unwrap();
 
@@ -545,7 +545,7 @@ fn test_select_excludes_one_way_token() {
         &wnear,
         &wnear_in,
         &min_liquidity,
-        10,
+        Some(10),
     )
     .unwrap();
 
@@ -594,7 +594,7 @@ fn test_select_returns_error_on_graph_error() {
         &wnear,
         &wnear_in,
         &min_liquidity,
-        10,
+        Some(10),
     );
 
     assert!(
@@ -651,7 +651,7 @@ fn test_select_respects_limit() {
         &wnear,
         &wnear_in,
         &min_liquidity,
-        2,
+        Some(2),
     )
     .unwrap();
 
@@ -695,7 +695,7 @@ fn test_select_error_when_all_filtered_out() {
         &wnear,
         &wnear_in,
         &min_liquidity,
-        10,
+        Some(10),
     );
 
     assert!(
