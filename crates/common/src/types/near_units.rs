@@ -282,6 +282,11 @@ impl YoctoAmount {
     /// ブロックチェーンに送信する際に使用する。
     /// yoctoNEAR より小さい単位は存在しないため、整数部のみを取得する。
     pub fn to_u128(&self) -> u128 {
+        debug_assert!(
+            self.0 >= BigDecimal::zero(),
+            "YoctoAmount::to_u128 called on negative value: {}",
+            self.0
+        );
         self.0.to_u128().unwrap_or(0)
     }
 

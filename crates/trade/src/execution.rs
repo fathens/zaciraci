@@ -736,6 +736,9 @@ where
                         Some(r) => &buy.near_value * r,
                         None => buy.near_value.clone(),
                     };
+                    trace!(log, "buy allocation before u128 conversion";
+                        "token" => %buy.token,
+                        "adjusted_near_value" => %adjusted_value);
                     adjusted_value.to_yocto().to_amount().to_u128()
                 };
                 allocated_sum = allocated_sum.saturating_add(wrap_near_amount_u128);
