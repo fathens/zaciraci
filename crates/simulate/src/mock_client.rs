@@ -182,7 +182,13 @@ impl SimulationClient {
         let Some(actions_array) = args_value.get("actions") else {
             return Ok(0);
         };
-        let swap_actions: Vec<SwapAction> = serde_json::from_value(actions_array.clone())?;
+        let swap_actions: Vec<SwapAction> = match serde_json::from_value(actions_array.clone()) {
+            Ok(actions) => actions,
+            Err(e) => {
+                warn!(log, "failed to parse swap actions, skipping"; "error" => %e);
+                return Ok(0);
+            }
+        };
         if swap_actions.is_empty() {
             return Ok(0);
         }
