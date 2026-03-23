@@ -81,6 +81,7 @@ pub struct TradeRecord {
 pub(crate) const DEFAULT_DECIMALS: u8 = 24;
 
 /// Actual amounts of a successful simulated swap after balance clamping.
+#[derive(Debug, Clone, Copy)]
 pub struct SwapResult {
     pub actual_in: u128,
     pub actual_out: u128,
@@ -380,7 +381,8 @@ impl PortfolioState {
         let cost_of_sold = self.average_cost_of_sold(token, sell_amount, total_holding);
 
         // P&L = proceeds - cost (using BigDecimal for precision)
-        let pnl_bd = sell_proceeds_yocto.as_bigdecimal() - cost_of_sold.as_bigdecimal();
+        let pnl_bd = (sell_proceeds_yocto.as_bigdecimal() - cost_of_sold.as_bigdecimal())
+            .with_scale_round(0, bigdecimal::RoundingMode::Down);
         let pnl = to_i128_or_warn(&pnl_bd, "realized_pnl");
 
         // Update cost basis (subtract the sold portion)
