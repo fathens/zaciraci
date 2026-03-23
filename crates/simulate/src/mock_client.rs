@@ -175,9 +175,8 @@ impl SimulationClient {
         let Some(first) = swap_actions.first() else {
             return Ok(0);
         };
-        let Some(last) = swap_actions.last() else {
-            return Ok(0);
-        };
+        // Safety: last() is always Some when first() is Some (non-empty slice).
+        let last = swap_actions.last().expect("non-empty after first() check");
         let token_in_account = TokenAccount::from(first.token_in.clone());
         let token_out_account = TokenAccount::from(last.token_out.clone());
         let amount_in = first.amount_in.map(u128::from).unwrap_or(0);
