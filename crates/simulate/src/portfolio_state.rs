@@ -50,6 +50,10 @@ pub struct TradeRecord {
     pub realized_pnl_near: Option<f64>,
 }
 
+/// Default token decimals for NEAR ecosystem tokens.
+/// Most native tokens use 24 decimals; used when the actual value is unknown.
+pub(crate) const DEFAULT_DECIMALS: u8 = 24;
+
 pub struct PortfolioState {
     /// wrap.near balance in yoctoNEAR
     pub cash_balance: YoctoValue,
@@ -162,7 +166,7 @@ impl PortfolioState {
         } else {
             let entry = self.holdings.entry(to_token.clone()).or_insert_with(|| {
                 // Use decimals from existing holdings or default to 24
-                TokenAmount::zero(24)
+                TokenAmount::zero(DEFAULT_DECIMALS)
             });
             let new_units = entry.smallest_units() + BigDecimal::from(actual_to);
             *entry = TokenAmount::from_smallest_units(new_units, entry.decimals());

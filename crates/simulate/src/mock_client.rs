@@ -1,4 +1,4 @@
-use crate::portfolio_state::{self, PortfolioState};
+use crate::portfolio_state::{self, DEFAULT_DECIMALS, PortfolioState};
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
@@ -107,7 +107,8 @@ impl SimulationClient {
                     None => return 0,
                 };
 
-            let decimals_in = trade::token_cache::get_cached_decimals(token_in).unwrap_or(24);
+            let decimals_in =
+                trade::token_cache::get_cached_decimals(token_in).unwrap_or(DEFAULT_DECIMALS);
             let token_amount =
                 TokenAmount::from_smallest_units(BigDecimal::from(amount_in), decimals_in);
             &token_amount / &rate
@@ -289,7 +290,7 @@ impl ViewContract for SimulationClient {
                             state.holdings.get(&receiver_token).map(|a| a.decimals())
                         })
                     })
-                    .unwrap_or(24);
+                    .unwrap_or(DEFAULT_DECIMALS);
                 let metadata = json!({
                     "spec": "ft-1.0.0",
                     "name": "SimToken",
