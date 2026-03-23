@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::mem;
 
-/// Convert BigDecimal to u128, logging a warning and returning 0 if the value is out of range.
+/// 非負の BigDecimal を u128 に変換する。
+///
+/// 変換できない場合（負値、小数部のみ、u128 範囲超過）は warn ログを出力し 0 を返す。
+/// 呼び出し元は 0 が返った場合に処理をスキップするガードを持つ前提で設計されている。
 pub(crate) fn to_u128_or_warn(value: &BigDecimal, context: &str) -> u128 {
     value.to_u128().unwrap_or_else(|| {
         let log = DEFAULT.new(o!("function" => "to_u128_or_warn"));
