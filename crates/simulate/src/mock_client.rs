@@ -32,7 +32,12 @@ pub struct SimulationClient {
 }
 
 fn decimals_for(token: &TokenAccount) -> u8 {
-    trade::token_cache::get_cached_decimals(token).unwrap_or(DEFAULT_DECIMALS)
+    trade::token_cache::get_cached_decimals(token).unwrap_or_else(|| {
+        let log = DEFAULT.new(o!("function" => "decimals_for"));
+        warn!(log, "token decimals not cached, using default";
+            "token" => %token, "default" => DEFAULT_DECIMALS);
+        DEFAULT_DECIMALS
+    })
 }
 
 impl SimulationClient {
