@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use chrono::{DateTime, Utc};
 use common::types::{ExchangeRate, TokenAccount, TokenAmount, TokenOutAccount, YoctoValue};
 use logging::*;
@@ -125,6 +125,9 @@ impl PortfolioState {
             return;
         }
         let actual_to = Self::scale_output(to_amount, actual_from, from_amount);
+        if actual_to == 0 {
+            return;
+        }
 
         let from_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_from));
         let to_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_to));
@@ -135,7 +138,8 @@ impl PortfolioState {
         } else {
             // Subtract from holdings
             if let Some(holding) = self.holdings.get_mut(from_token) {
-                let new_units = holding.smallest_units() - BigDecimal::from(actual_from);
+                let new_units = (holding.smallest_units() - BigDecimal::from(actual_from))
+                    .max(BigDecimal::zero());
                 *holding = TokenAmount::from_smallest_units(new_units, holding.decimals());
             }
 
