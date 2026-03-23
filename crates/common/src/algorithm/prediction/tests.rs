@@ -368,6 +368,110 @@ mod prediction_tests {
         );
     }
 
+    // --- prediction_at_horizon ---
+
+    fn make_prediction_result(
+        data_cutoff_time: DateTime<Utc>,
+        hour_offsets: &[i64],
+    ) -> TokenPredictionResult {
+        let token: TokenOutAccount = "test_token".parse().unwrap();
+        let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
+        let predictions = hour_offsets
+            .iter()
+            .map(|&h| PredictedPrice {
+                timestamp: data_cutoff_time + Duration::hours(h),
+                price: TokenPrice::from_near_per_token(
+                    BigDecimal::from_f64(100.0 + h as f64).unwrap(),
+                ),
+                confidence: Some("0.8".parse::<BigDecimal>().unwrap()),
+            })
+            .collect();
+        TokenPredictionResult {
+            token,
+            quote_token,
+            data_cutoff_time,
+            predictions,
+        }
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_exact_match() {
+        let base = create_test_timestamp();
+        let result = make_prediction_result(base, &[1, 2, 12, 24]);
+        let p = result.prediction_at_horizon(24).unwrap();
+        assert_eq!(p.timestamp, base + Duration::hours(24));
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_no_match() {
+        let base = create_test_timestamp();
+        // 1h〜12h しかない → 24h はマッチしない
+        let result = make_prediction_result(base, &[1, 2, 12]);
+        assert!(result.prediction_at_horizon(24).is_none());
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_boundary_23h() {
+        let base = create_test_timestamp();
+        // 23h のポイントのみ → 24h ±1h の範囲内なのでマッチする
+        let result = make_prediction_result(base, &[23]);
+        let p = result.prediction_at_horizon(24).unwrap();
+        assert_eq!(p.timestamp, base + Duration::hours(23));
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_boundary_25h() {
+        let base = create_test_timestamp();
+        // 25h のポイントのみ → 24h ±1h の範囲内なのでマッチする
+        let result = make_prediction_result(base, &[25]);
+        let p = result.prediction_at_horizon(24).unwrap();
+        assert_eq!(p.timestamp, base + Duration::hours(25));
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_outside_tolerance() {
+        let base = create_test_timestamp();
+        // 22h と 26h → どちらも 24h ±1h の範囲外
+        let result = make_prediction_result(base, &[22, 26]);
+        assert!(result.prediction_at_horizon(24).is_none());
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_zero() {
+        let base = create_test_timestamp();
+        let result = make_prediction_result(base, &[1, 24]);
+        assert!(
+            result.prediction_at_horizon(0).is_none(),
+            "horizon_hours = 0 should return None"
+        );
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_selects_closest() {
+        let base = create_test_timestamp();
+        // 23h と 24h の両方がある → 24h（目標に最も近い）が選ばれるべき
+        let result = make_prediction_result(base, &[23, 24]);
+        let p = result.prediction_at_horizon(24).unwrap();
+        assert_eq!(
+            p.timestamp,
+            base + Duration::hours(24),
+            "Should select the closest point to target (24h), not the first match (23h)"
+        );
+    }
+
+    #[test]
+    fn test_prediction_at_horizon_selects_closest_from_both_sides() {
+        let base = create_test_timestamp();
+        // 23h と 25h → どちらも距離1hで同じ。min_by_key は最初のものを返す = 23h
+        let result = make_prediction_result(base, &[23, 25]);
+        let p = result.prediction_at_horizon(24).unwrap();
+        // 両方同距離なので最初のマッチ（23h）を返す
+        assert!(
+            p.timestamp == base + Duration::hours(23) || p.timestamp == base + Duration::hours(25),
+            "Should return one of the equidistant points"
+        );
+    }
+
     #[tokio::test]
     async fn test_prediction_provider_error_handling() {
         let provider = MockPredictionProvider::new();
