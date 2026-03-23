@@ -450,11 +450,13 @@ impl PortfolioState {
         let cost_of_sold = self.average_cost_of_sold(token, sell_amount, total_holding);
 
         // P&L = proceeds - cost (using BigDecimal for precision).
-        // Down = truncate toward zero: positive P&L is slightly underestimated,
-        // negative P&L is slightly underestimated in magnitude (loss looks smaller).
-        // Both effects are sub-yoctoNEAR and negligible.
+        // Floor = always round toward negative infinity. This is conservative:
+        // positive P&L is slightly underestimated, negative P&L is slightly
+        // overestimated in magnitude (loss looks larger). Both effects are
+        // sub-yoctoNEAR and negligible, but Floor aligns with the accounting
+        // principle of prudence (recognize losses early, defer gains).
         let pnl_bd = (sell_proceeds_yocto.as_bigdecimal() - cost_of_sold.as_bigdecimal())
-            .with_scale_round(0, bigdecimal::RoundingMode::Down);
+            .with_scale_round(0, bigdecimal::RoundingMode::Floor);
         let pnl = to_i128_or_warn(&pnl_bd, "realized_pnl");
 
         // Update cost basis (subtract the sold portion)
