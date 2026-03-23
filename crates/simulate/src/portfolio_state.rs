@@ -253,21 +253,11 @@ impl PortfolioState {
 
             // Track cost basis: the NEAR value of what we spent
             if from_token == wnear {
-                let basis = self
-                    .cost_basis
-                    .entry(to_token.clone())
-                    .or_insert_with(YoctoValue::zero);
-                let current_basis = mem::replace(basis, YoctoValue::zero());
-                *basis = current_basis + from_yocto;
+                self.add_to_cost_basis(to_token, from_yocto);
             } else if !transferred_cost.is_zero() {
                 // Direct token-to-token swap: transfer proportional cost basis
                 // from the sold token to the acquired token.
-                let basis = self
-                    .cost_basis
-                    .entry(to_token.clone())
-                    .or_insert_with(YoctoValue::zero);
-                let current_basis = mem::replace(basis, YoctoValue::zero());
-                *basis = current_basis + transferred_cost;
+                self.add_to_cost_basis(to_token, transferred_cost);
             }
         }
 
@@ -275,6 +265,16 @@ impl PortfolioState {
             actual_in: actual_from,
             actual_out: actual_to,
         })
+    }
+
+    /// Add `amount` to the cost basis of `token`.
+    fn add_to_cost_basis(&mut self, token: &TokenAccount, amount: YoctoValue) {
+        let basis = self
+            .cost_basis
+            .entry(token.clone())
+            .or_insert_with(YoctoValue::zero);
+        let current = mem::replace(basis, YoctoValue::zero());
+        *basis = current + amount;
     }
 
     /// Scale output amount proportionally when actual input is less than requested.
