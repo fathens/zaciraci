@@ -1,6 +1,7 @@
 use crate::cli::Cli;
 use crate::portfolio_state::PortfolioState;
 use anyhow::Result;
+use bigdecimal::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -83,8 +84,8 @@ impl SimulationResult {
             .map(|t| TradeEntry {
                 timestamp: t.timestamp.to_rfc3339(),
                 action: t.action.clone(),
-                token: t.token.clone(),
-                amount: t.amount,
+                token: t.token.to_string(),
+                amount: t.amount.smallest_units().to_u128().unwrap_or(0),
                 price: t.price_near,
                 realized_pnl: t.realized_pnl_near,
             })
@@ -100,11 +101,17 @@ impl SimulationResult {
                 } else {
                     0.0
                 };
+                // Convert holdings to String -> u128 for JSON output
+                let holdings_map: BTreeMap<String, u128> = s
+                    .holdings
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.smallest_units().to_u128().unwrap_or(0)))
+                    .collect();
                 values.push(PortfolioValueEntry {
                     timestamp: s.timestamp.to_rfc3339(),
                     total_value: s.total_value_near,
-                    holdings: s.holdings.clone(),
-                    cash_balance: s.cash_balance as f64 / 1e24,
+                    holdings: holdings_map,
+                    cash_balance: s.cash_balance.as_bigdecimal().to_f64().unwrap_or(0.0) / 1e24,
                     daily_pnl_near,
                     daily_pnl_pct,
                     cumulative_realized_pnl_near: s.realized_pnl_near,

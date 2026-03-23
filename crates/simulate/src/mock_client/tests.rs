@@ -1,10 +1,11 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
 use chrono::{TimeZone, Utc};
+use common::types::{TokenAmount, YoctoValue};
 use near_crypto::InMemorySigner;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
-use std::collections::BTreeMap;
 
 fn default_sim_day() -> Arc<Mutex<DateTime<Utc>>> {
     Arc::new(Mutex::new(
@@ -12,22 +13,21 @@ fn default_sim_day() -> Arc<Mutex<DateTime<Utc>>> {
     ))
 }
 
-fn make_client_with_decimals(
-    cash: u128,
-    holdings: BTreeMap<String, u128>,
-    decimals: Vec<(&str, u8)>,
-) -> SimulationClient {
-    let mut state = PortfolioState::new(cash);
-    state.holdings = holdings;
-    for (token, dec) in decimals {
-        state.decimals.insert(token.to_string(), dec);
+fn make_client_with_holdings(cash: u128, holdings: Vec<(&str, u128, u8)>) -> SimulationClient {
+    let mut state = PortfolioState::new(YoctoValue::from_yocto(BigDecimal::from(cash)));
+    for (token, amount, decimals) in holdings {
+        let token_account: TokenAccount = token.parse().unwrap();
+        state.holdings.insert(
+            token_account,
+            TokenAmount::from_smallest_units(BigDecimal::from(amount), decimals),
+        );
     }
     let portfolio = Arc::new(Mutex::new(state));
     SimulationClient::new(portfolio, cash, default_sim_day())
 }
 
-fn make_client(cash: u128, holdings: BTreeMap<String, u128>) -> SimulationClient {
-    make_client_with_decimals(cash, holdings, vec![])
+fn make_client(cash: u128) -> SimulationClient {
+    make_client_with_holdings(cash, vec![])
 }
 
 fn make_client_with_portfolio(portfolio: Arc<Mutex<PortfolioState>>) -> SimulationClient {
@@ -50,11 +50,8 @@ fn wnear_str() -> String {
 
 #[tokio::test]
 async fn view_contract_get_deposits_returns_cash_and_holdings() {
-    let mut holdings = BTreeMap::new();
-    holdings.insert("usdt.tether-token.near".to_string(), 1_000_000u128);
-
     let cash = 50_000_000_000_000_000_000_000_000u128; // 50 NEAR
-    let client = make_client_with_decimals(cash, holdings, vec![("usdt.tether-token.near", 6)]);
+    let client = make_client_with_holdings(cash, vec![("usdt.tether-token.near", 1_000_000, 6)]);
 
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
     let result = client
@@ -81,7 +78,7 @@ async fn view_contract_get_deposits_returns_cash_and_holdings() {
 
 #[tokio::test]
 async fn view_contract_ft_metadata_returns_decimals() {
-    let client = make_client(0, BTreeMap::new());
+    let client = make_client(0);
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -97,10 +94,7 @@ async fn view_contract_ft_metadata_returns_decimals() {
 
 #[tokio::test]
 async fn view_contract_ft_metadata_returns_stored_decimals() {
-    let mut holdings = BTreeMap::new();
-    holdings.insert("usdt.tether-token.near".to_string(), 1_000_000u128);
-
-    let client = make_client_with_decimals(0, holdings, vec![("usdt.tether-token.near", 6)]);
+    let client = make_client_with_holdings(0, vec![("usdt.tether-token.near", 1_000_000, 6)]);
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -109,13 +103,13 @@ async fn view_contract_ft_metadata_returns_stored_decimals() {
         .unwrap();
 
     let metadata: serde_json::Value = serde_json::from_slice(&result.result).unwrap();
-    // decimals should come from portfolio state (6 for usdt)
+    // decimals should come from holdings (6 for usdt)
     assert_eq!(metadata["decimals"], 6);
 }
 
 #[tokio::test]
 async fn view_contract_ft_balance_of_returns_large_value() {
-    let client = make_client(0, BTreeMap::new());
+    let client = make_client(0);
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -133,7 +127,7 @@ async fn view_contract_ft_balance_of_returns_large_value() {
 
 #[tokio::test]
 async fn view_contract_storage_balance_of_returns_some() {
-    let client = make_client(0, BTreeMap::new());
+    let client = make_client(0);
 
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
     let result = client
@@ -152,7 +146,7 @@ async fn view_contract_storage_balance_of_returns_some() {
 
 #[tokio::test]
 async fn view_contract_unknown_method_returns_empty() {
-    let client = make_client(0, BTreeMap::new());
+    let client = make_client(0);
 
     let receiver: AccountId = "some.near".parse().unwrap();
     let result = client
@@ -167,7 +161,7 @@ async fn view_contract_unknown_method_returns_empty() {
 #[tokio::test]
 async fn get_native_amount_returns_initial_capital() {
     let initial = 100_000_000_000_000_000_000_000_000u128; // 100 NEAR
-    let client = make_client(initial, BTreeMap::new());
+    let client = make_client(initial);
 
     let account: AccountId = "sim.near".parse().unwrap();
     let amount = client.get_native_amount(&account).await.unwrap();
@@ -180,7 +174,7 @@ async fn get_native_amount_returns_initial_capital() {
 
 #[tokio::test]
 async fn get_gas_price_returns_fixed_value() {
-    let client = make_client(0, BTreeMap::new());
+    let client = make_client(0);
     let gas_price = client.get_gas_price(None).await.unwrap();
     // Should return the fixed 100_000_000 yoctoNEAR gas price
     assert!(gas_price.to_balance() > 0);
@@ -192,7 +186,7 @@ async fn get_gas_price_returns_fixed_value() {
 
 #[tokio::test]
 async fn transfer_native_token_returns_ok() {
-    let client = make_client(0, BTreeMap::new());
+    let client = make_client(0);
     let signer = test_signer();
     let receiver: AccountId = "receiver.near".parse().unwrap();
     let result = client
@@ -203,7 +197,7 @@ async fn transfer_native_token_returns_ok() {
 
 #[tokio::test]
 async fn send_tx_returns_ok() {
-    let client = make_client(0, BTreeMap::new());
+    let client = make_client(0);
     let signer = test_signer();
     let receiver: AccountId = "receiver.near".parse().unwrap();
     let result = client.send_tx(&signer, &receiver, vec![]).await;
@@ -217,7 +211,9 @@ async fn send_tx_returns_ok() {
 #[tokio::test]
 async fn exec_contract_non_swap_method_is_noop() {
     let cash = 100_000_000_000_000_000_000_000_000u128;
-    let portfolio = Arc::new(Mutex::new(PortfolioState::new(cash)));
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(YoctoValue::from_yocto(
+        BigDecimal::from(cash),
+    ))));
     let client = make_client_with_portfolio(Arc::clone(&portfolio));
     let signer = test_signer();
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
@@ -235,7 +231,10 @@ async fn exec_contract_non_swap_method_is_noop() {
 
     // Portfolio should be unchanged
     let state = portfolio.lock().await;
-    assert_eq!(state.cash_balance, cash);
+    assert_eq!(
+        state.cash_balance,
+        YoctoValue::from_yocto(BigDecimal::from(cash))
+    );
     assert!(state.holdings.is_empty());
 }
 
@@ -246,7 +245,9 @@ async fn exec_contract_non_swap_method_is_noop() {
 #[tokio::test]
 async fn exec_contract_swap_empty_actions_is_noop() {
     let cash = 100_000_000_000_000_000_000_000_000u128;
-    let portfolio = Arc::new(Mutex::new(PortfolioState::new(cash)));
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(YoctoValue::from_yocto(
+        BigDecimal::from(cash),
+    ))));
     let client = make_client_with_portfolio(Arc::clone(&portfolio));
     let signer = test_signer();
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
@@ -267,14 +268,19 @@ async fn exec_contract_swap_empty_actions_is_noop() {
     assert!(result.is_ok());
 
     let state = portfolio.lock().await;
-    assert_eq!(state.cash_balance, cash);
+    assert_eq!(
+        state.cash_balance,
+        YoctoValue::from_yocto(BigDecimal::from(cash))
+    );
     assert!(state.holdings.is_empty());
 }
 
 #[tokio::test]
 async fn exec_contract_swap_no_actions_field_is_noop() {
     let cash = 100_000_000_000_000_000_000_000_000u128;
-    let portfolio = Arc::new(Mutex::new(PortfolioState::new(cash)));
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(YoctoValue::from_yocto(
+        BigDecimal::from(cash),
+    ))));
     let client = make_client_with_portfolio(Arc::clone(&portfolio));
     let signer = test_signer();
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
@@ -296,13 +302,18 @@ async fn exec_contract_swap_no_actions_field_is_noop() {
     assert!(result.is_ok());
 
     let state = portfolio.lock().await;
-    assert_eq!(state.cash_balance, cash);
+    assert_eq!(
+        state.cash_balance,
+        YoctoValue::from_yocto(BigDecimal::from(cash))
+    );
 }
 
 #[tokio::test]
 async fn exec_contract_swap_zero_amount_in_is_noop() {
     let cash = 100_000_000_000_000_000_000_000_000u128;
-    let portfolio = Arc::new(Mutex::new(PortfolioState::new(cash)));
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(YoctoValue::from_yocto(
+        BigDecimal::from(cash),
+    ))));
     let client = make_client_with_portfolio(Arc::clone(&portfolio));
     let signer = test_signer();
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
@@ -330,14 +341,19 @@ async fn exec_contract_swap_zero_amount_in_is_noop() {
 
     // amount_in=0 should skip swap execution
     let state = portfolio.lock().await;
-    assert_eq!(state.cash_balance, cash);
+    assert_eq!(
+        state.cash_balance,
+        YoctoValue::from_yocto(BigDecimal::from(cash))
+    );
     assert!(state.holdings.is_empty());
 }
 
 #[tokio::test]
 async fn exec_contract_swap_none_amount_in_is_noop() {
     let cash = 100_000_000_000_000_000_000_000_000u128;
-    let portfolio = Arc::new(Mutex::new(PortfolioState::new(cash)));
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(YoctoValue::from_yocto(
+        BigDecimal::from(cash),
+    ))));
     let client = make_client_with_portfolio(Arc::clone(&portfolio));
     let signer = test_signer();
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
@@ -365,7 +381,10 @@ async fn exec_contract_swap_none_amount_in_is_noop() {
 
     // amount_in=None maps to 0 → skip
     let state = portfolio.lock().await;
-    assert_eq!(state.cash_balance, cash);
+    assert_eq!(
+        state.cash_balance,
+        YoctoValue::from_yocto(BigDecimal::from(cash))
+    );
 }
 
 // ---------------------------------------------------------------------------

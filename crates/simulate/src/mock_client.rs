@@ -1,8 +1,10 @@
 use crate::portfolio_state::{self, PortfolioState};
+use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
 use chrono::{DateTime, Utc};
+use common::types::TokenAccount;
 use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
@@ -45,7 +47,6 @@ impl SimulationClient {
         amount_in: u128,
         token_out: &str,
     ) -> u128 {
-        use bigdecimal::BigDecimal;
         use common::types::{TokenAmount, TokenOutAccount, YoctoValue};
         use num_traits::ToPrimitive;
 
@@ -69,7 +70,7 @@ impl SimulationClient {
                     None => return 0,
                 };
 
-            let token_in_account: common::types::TokenAccount = match token_in.parse() {
+            let token_in_account: TokenAccount = match token_in.parse() {
                 Ok(t) => t,
                 Err(_) => return 0,
             };
@@ -164,15 +165,20 @@ impl SendTx for SimulationClient {
                             .await;
 
                         if amount_out > 0 {
+                            let token_in_account: TokenAccount = token_in.parse()?;
+                            let token_out_account: TokenAccount = token_out.parse()?;
                             let mut state = self.portfolio.lock().await;
                             state.execute_simulated_swap(
-                                &token_in, amount_in, &token_out, amount_out,
+                                &token_in_account,
+                                amount_in,
+                                &token_out_account,
+                                amount_out,
                             );
 
                             trace!(log, "simulated swap";
-                                "token_in" => &token_in,
+                                "token_in" => &token_in_account.to_string(),
                                 "amount_in" => amount_in,
-                                "token_out" => &token_out,
+                                "token_out" => &token_out_account.to_string(),
                                 "amount_out" => amount_out
                             );
 
@@ -221,14 +227,14 @@ impl ViewContract for SimulationClient {
                 let wnear_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
                 deposits.insert(
                     wnear_token,
-                    serde_json::Value::String(state.cash_balance.to_string()),
+                    serde_json::Value::String(state.cash_balance.as_bigdecimal().to_string()),
                 );
 
                 // token holdings
-                for (token_id, amount) in &state.holdings {
+                for (token_account, amount) in &state.holdings {
                     deposits.insert(
-                        token_id.clone(),
-                        serde_json::Value::String(amount.to_string()),
+                        token_account.to_string(),
+                        serde_json::Value::String(amount.smallest_units().to_string()),
                     );
                 }
 
@@ -236,15 +242,13 @@ impl ViewContract for SimulationClient {
             }
             "ft_metadata" => {
                 // Look up decimals for the specific token (receiver)
-                // Try global cache first, fall back to portfolio state decimals
-                let receiver_str = receiver.to_string();
-                let receiver_token = common::types::TokenAccount::from(receiver.clone());
+                let receiver_token = TokenAccount::from(receiver.clone());
                 let decimals = trade::token_cache::get_cached_decimals(&receiver_token)
                     .or_else(|| {
-                        self.portfolio
-                            .try_lock()
-                            .ok()
-                            .and_then(|state| state.decimals.get(&receiver_str).copied())
+                        // Fall back to holdings decimals
+                        self.portfolio.try_lock().ok().and_then(|state| {
+                            state.holdings.get(&receiver_token).map(|a| a.decimals())
+                        })
                     })
                     .unwrap_or(24);
                 let metadata = json!({
