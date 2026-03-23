@@ -95,9 +95,9 @@ impl SimulationClient {
         &self,
         swap_actions: &[SwapAction],
         amount_in: u128,
+        sim_day: DateTime<Utc>,
     ) -> Option<u128> {
         let log = DEFAULT.new(o!("function" => "calculate_swap_output_via_pools"));
-        let sim_day = *self.sim_day.lock().await;
         let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
             .await
             .inspect_err(|e| warn!(log, "failed to read pool data from DB"; "error" => %e))
@@ -111,11 +111,11 @@ impl SimulationClient {
         token_in: &TokenAccount,
         amount_in: u128,
         token_out: &TokenAccount,
+        sim_day: DateTime<Utc>,
     ) -> u128 {
         use common::types::{TokenAmount, YoctoValue};
         let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-        let sim_day = *self.sim_day.lock().await;
 
         // token_in -> NEAR value
         let near_value = if token_in == wnear {
@@ -158,6 +158,11 @@ impl SimulationClient {
     async fn handle_swap(&self, args_value: serde_json::Value) -> anyhow::Result<u128> {
         let log = DEFAULT.new(o!("function" => "SimulationClient::handle_swap"));
 
+        // Acquire sim_day once upfront. All sub-methods receive it by value,
+        // ensuring a consistent timestamp throughout the swap and avoiding
+        // repeated lock acquisitions.
+        let sim_day = *self.sim_day.lock().await;
+
         let Some(actions_array) = args_value.get("actions") else {
             return Ok(0);
         };
@@ -183,7 +188,7 @@ impl SimulationClient {
 
         // Try pool-based estimate_return first (fee + slippage aware)
         let (amount_out, swap_method) = match self
-            .calculate_swap_output_via_pools(&swap_actions, amount_in)
+            .calculate_swap_output_via_pools(&swap_actions, amount_in, sim_day)
             .await
         {
             Some(out) => (out, SwapMethod::PoolBased),
@@ -197,6 +202,7 @@ impl SimulationClient {
                         &token_in_account,
                         amount_in,
                         &token_out_account,
+                        sim_day,
                     )
                     .await;
                 (out, SwapMethod::DbRate)
@@ -210,9 +216,8 @@ impl SimulationClient {
             return Ok(0);
         }
 
-        // Lock order: sim_day before portfolio (must be
-        // consistent across all call sites to avoid deadlock).
-        let sim_day = *self.sim_day.lock().await;
+        // sim_day was acquired at the top of handle_swap. Only portfolio
+        // needs locking here.
         let mut state = self.portfolio.lock().await;
         let actual = state.execute_simulated_swap(
             &token_in_account,
