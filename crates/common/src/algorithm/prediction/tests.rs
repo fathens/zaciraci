@@ -93,11 +93,11 @@ impl PredictionProvider for MockPredictionProvider {
             .last()
             .map(|p| p.price.to_string().parse::<f64>().unwrap_or(100.0))
             .unwrap_or(100.0);
-        let prediction_time = Utc::now();
+        let data_cutoff_time = Utc::now();
         let mut predictions = Vec::new();
 
         for i in 1..=prediction_horizon {
-            let timestamp = prediction_time + Duration::hours(i as i64);
+            let timestamp = data_cutoff_time + Duration::hours(i as i64);
             // price 形式で予測を作成（NEAR/token）
             let price_value = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap();
             predictions.push(PredictedPrice {
@@ -110,7 +110,7 @@ impl PredictionProvider for MockPredictionProvider {
         Ok(TokenPredictionResult {
             token: history.token.clone(),
             quote_token: history.quote_token.clone(),
-            prediction_time,
+            data_cutoff_time,
             predictions,
         })
     }
@@ -203,8 +203,8 @@ mod prediction_tests {
 
     #[tokio::test]
     async fn test_prediction_data_conversion() {
-        let prediction_time = create_test_timestamp();
-        let predicted_timestamp = prediction_time + Duration::hours(24);
+        let data_cutoff_time = create_test_timestamp();
+        let predicted_timestamp = data_cutoff_time + Duration::hours(24);
 
         // 予測価格を price 形式（NEAR/token）で作成
         let predicted_price_value = BigDecimal::from_f64(110.0).unwrap();
@@ -213,7 +213,7 @@ mod prediction_tests {
         let prediction_result = TokenPredictionResult {
             token: token.clone(),
             quote_token,
-            prediction_time,
+            data_cutoff_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
                 price: TokenPrice::from_near_per_token(predicted_price_value.clone()),
@@ -269,15 +269,15 @@ mod prediction_tests {
 
     #[tokio::test]
     async fn test_prediction_data_conversion_missing_24h_prediction() {
-        let prediction_time = create_test_timestamp();
-        let predicted_timestamp = prediction_time + Duration::hours(1); // 24時間後ではない
+        let data_cutoff_time = create_test_timestamp();
+        let predicted_timestamp = data_cutoff_time + Duration::hours(1); // 24時間後ではない
 
         let token: TokenOutAccount = "test_token".parse().unwrap();
         let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
         let prediction_result = TokenPredictionResult {
             token,
             quote_token,
-            prediction_time,
+            data_cutoff_time,
             predictions: vec![PredictedPrice {
                 timestamp: predicted_timestamp,
                 price: TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap()),

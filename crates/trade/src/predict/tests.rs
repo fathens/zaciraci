@@ -372,7 +372,7 @@ fn test_token_prediction_serialization_roundtrip() {
     let prediction = TokenPredictionResult {
         token: test_token,
         quote_token,
-        prediction_time: Utc::now(),
+        data_cutoff_time: Utc::now(),
         predictions: vec![PredictedPrice {
             timestamp: Utc::now(),
             price: price("1.5"),
@@ -389,7 +389,7 @@ fn test_token_prediction_serialization_roundtrip() {
         deserialized.quote_token.to_string(),
         prediction.quote_token.to_string()
     );
-    assert_eq!(deserialized.prediction_time, prediction.prediction_time);
+    assert_eq!(deserialized.data_cutoff_time, prediction.data_cutoff_time);
     assert_eq!(deserialized.predictions.len(), prediction.predictions.len());
 
     for (orig, deser) in prediction

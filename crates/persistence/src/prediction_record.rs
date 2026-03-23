@@ -15,7 +15,7 @@ pub struct DbPredictionRecord {
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
-    pub prediction_time: NaiveDateTime,
+    pub data_cutoff_time: NaiveDateTime,
     pub target_time: NaiveDateTime,
     pub actual_price: Option<BigDecimal>,
     pub mape: Option<f64>,
@@ -30,7 +30,7 @@ pub struct NewPredictionRecord {
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
-    pub prediction_time: NaiveDateTime,
+    pub data_cutoff_time: NaiveDateTime,
     pub target_time: NaiveDateTime,
 }
 
@@ -174,7 +174,7 @@ impl PredictionRecord {
     /// 指定トークンの最新予測を取得（target_time が未来のもののみ）
     ///
     /// 各トークンについて `target_time > as_of` かつ
-    /// 最新の `target_time`（同一なら最新の `prediction_time`）を持つレコードを1件返す。
+    /// 最新の `target_time`（同一なら最新の `data_cutoff_time`）を持つレコードを1件返す。
     pub async fn get_latest_fresh_predictions(
         tokens: &[TokenOutAccount],
         as_of: NaiveDateTime,
@@ -195,7 +195,7 @@ impl PredictionRecord {
                     .order_by((
                         prediction_records::token,
                         prediction_records::target_time.desc(),
-                        prediction_records::prediction_time.desc(),
+                        prediction_records::data_cutoff_time.desc(),
                         prediction_records::id.desc(),
                     ))
                     .load::<DbPredictionRecord>(conn)

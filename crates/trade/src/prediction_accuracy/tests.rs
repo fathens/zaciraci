@@ -183,7 +183,7 @@ fn make_record(
         token: "token.near".to_string(),
         quote_token: "wrap.near".to_string(),
         predicted_price: BigDecimal::from(predicted),
-        prediction_time: target_time - chrono::Duration::hours(24),
+        data_cutoff_time: target_time - chrono::Duration::hours(24),
         target_time,
         actual_price: actual.map(BigDecimal::from),
         mape: None,

@@ -58,7 +58,7 @@ impl crate::algorithm::types::PredictionData {
 
         // 24時間後の予測価格を取得
         let predicted_24h = prediction.predictions.iter().find(|p| {
-            let diff = p.timestamp - prediction.prediction_time;
+            let diff = p.timestamp - prediction.data_cutoff_time;
             diff >= Duration::hours(23) && diff <= Duration::hours(25)
         })?;
 
@@ -66,7 +66,7 @@ impl crate::algorithm::types::PredictionData {
             token: prediction.token.clone(),
             current_price,
             predicted_price_24h: predicted_24h.price.clone(),
-            timestamp: prediction.prediction_time,
+            timestamp: prediction.data_cutoff_time,
             confidence: predicted_24h.confidence.clone(),
         })
     }

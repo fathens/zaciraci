@@ -1,6 +1,6 @@
 use crate::Result;
 use bigdecimal::BigDecimal;
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use common::config::ConfigAccess;
 use common::types::TimeRange;
 use common::types::TokenPrice;
@@ -111,26 +111,27 @@ fn calculate_composite_confidence(
 ///
 /// DB 操作: INSERT INTO prediction_records (トークン数分)
 pub async fn record_predictions(
-    predictions: &BTreeMap<TokenOutAccount, TokenPrice>,
+    predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
 ) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
-    let prediction_time = Utc::now().naive_utc();
-    let target_time = prediction_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
-
     let records: Vec<NewPredictionRecord> = predictions
         .iter()
-        .map(|(token, price)| NewPredictionRecord {
-            token: token.to_string(),
-            quote_token: quote_token.to_string(),
-            predicted_price: price.as_bigdecimal().clone(),
-            prediction_time,
-            target_time,
+        .map(|(token, (price, data_cutoff_time))| {
+            let target_time =
+                *data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+            NewPredictionRecord {
+                token: token.to_string(),
+                quote_token: quote_token.to_string(),
+                predicted_price: price.as_bigdecimal().clone(),
+                data_cutoff_time: *data_cutoff_time,
+                target_time,
+            }
         })
         .collect();
 
-    info!(log, "recording predictions"; "count" => records.len(), "target_time" => %target_time);
+    info!(log, "recording predictions"; "count" => records.len());
     PredictionRecord::batch_insert(&records).await?;
 
     Ok(())

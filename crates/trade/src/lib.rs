@@ -132,13 +132,18 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
         .await?;
 
     // 4. 予測価格を抽出して DB に保存
-    let mut prediction_prices: BTreeMap<TokenOutAccount, common::types::TokenPrice> =
-        BTreeMap::new();
+    let mut prediction_entries: BTreeMap<
+        TokenOutAccount,
+        (common::types::TokenPrice, chrono::NaiveDateTime),
+    > = BTreeMap::new();
     let mut empty_predictions = 0u32;
     for (token, result) in predictions {
         match result.predictions.first() {
             Some(p) => {
-                prediction_prices.insert(token, p.price.clone());
+                prediction_entries.insert(
+                    token,
+                    (p.price.clone(), result.data_cutoff_time.naive_utc()),
+                );
             }
             None => empty_predictions += 1,
         }
@@ -147,9 +152,9 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
         warn!(log, "tokens with empty prediction results"; "count" => empty_predictions);
     }
 
-    prediction_accuracy::record_predictions(&prediction_prices, &quote_token).await?;
+    prediction_accuracy::record_predictions(&prediction_entries, &quote_token).await?;
 
-    info!(log, "predictions recorded"; "count" => prediction_prices.len());
+    info!(log, "predictions recorded"; "count" => prediction_entries.len());
     Ok(())
 }
 
