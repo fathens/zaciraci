@@ -857,6 +857,29 @@ fn trade_action_display_matches_serde() {
 }
 
 // ---------------------------------------------------------------------------
+// SwapMethod Serde consistency
+// ---------------------------------------------------------------------------
+
+#[test]
+fn swap_method_serde_roundtrip() {
+    // Ensure serde serialization produces expected snake_case strings
+    // and round-trips correctly for all variants.
+    for (method, expected_str) in [
+        (SwapMethod::PoolBased, "pool_based"),
+        (SwapMethod::DbRate, "db_rate"),
+    ] {
+        let serialized = serde_json::to_value(method).unwrap();
+        assert_eq!(
+            serialized,
+            serde_json::Value::String(expected_str.to_string()),
+            "serde mismatch for {method:?}: expected={expected_str}, got={serialized}"
+        );
+        let deserialized: SwapMethod = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, method, "round-trip failed for {method:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // average_cost_of_sold precision (BigDecimal eliminates overflow-fallback error)
 // ---------------------------------------------------------------------------
 
