@@ -38,7 +38,14 @@ impl SimulationClient {
     }
 }
 
-/// Walk SwapAction hops through pool estimate_return (pure calculation, no I/O).
+/// Estimate swap output by walking SwapAction hops through pool `estimate_return`.
+///
+/// This is a pure calculation (no I/O). Each hop's output feeds into the next
+/// hop's input, so `SwapAction::amount_in` fields are intentionally ignored —
+/// only the `amount_in` argument is used as the initial input for the first hop.
+///
+/// Returns `None` if any pool is missing from the list or a token is not found
+/// in the pool's token list.
 fn estimate_swap_via_pools(
     pools: &dex::PoolInfoList,
     swap_actions: &[SwapAction],
