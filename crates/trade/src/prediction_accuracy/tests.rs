@@ -273,6 +273,91 @@ fn test_mape_to_confidence_poor_less_than_excellent() {
     mape_to_confidence(5.0, 15.0, 3.0);
 }
 
+// --- record_predictions: target_time 計算 ---
+
+/// data_cutoff_time が過去でも target_time = data_cutoff_time + 24h で計算されること
+#[test]
+fn test_new_prediction_record_target_time_with_past_data_cutoff() {
+    let now = chrono::Utc::now().naive_utc();
+    // 6時間前のデータカットオフ（データ取得遅延シナリオ）
+    let data_cutoff_time = now - chrono::Duration::hours(6);
+    let expected_target_time =
+        data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+
+    let token: TokenOutAccount = "token.near".parse().unwrap();
+    let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(100));
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token.clone(), (price, data_cutoff_time));
+
+    let records: Vec<NewPredictionRecord> = predictions
+        .iter()
+        .map(|(token, (price, data_cutoff_time))| {
+            let target_time =
+                *data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+            NewPredictionRecord {
+                token: token.to_string(),
+                quote_token: quote_token.to_string(),
+                predicted_price: price.as_bigdecimal().clone(),
+                data_cutoff_time: *data_cutoff_time,
+                target_time,
+            }
+        })
+        .collect();
+
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.data_cutoff_time, data_cutoff_time);
+    assert_eq!(record.target_time, expected_target_time);
+    // target_time は現在時刻より過去（6h前 + 24h = 18h後 → 未来だが、Utc::now() + 24h より6h早い）
+    assert!(
+        record.target_time < now + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64),
+        "target_time should be earlier than now + 24h when data_cutoff_time is in the past"
+    );
+}
+
+/// data_cutoff_time が大幅に過去（3日前）の場合、target_time も過去になること
+#[test]
+fn test_new_prediction_record_target_time_far_in_past() {
+    let now = chrono::Utc::now().naive_utc();
+    // 3日前のデータカットオフ
+    let data_cutoff_time = now - chrono::Duration::days(3);
+    let expected_target_time =
+        data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+
+    let token: TokenOutAccount = "token.near".parse().unwrap();
+    let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(100));
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token, (price, data_cutoff_time));
+
+    let records: Vec<NewPredictionRecord> = predictions
+        .iter()
+        .map(|(token, (price, data_cutoff_time))| {
+            let target_time =
+                *data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+            NewPredictionRecord {
+                token: token.to_string(),
+                quote_token: quote_token.to_string(),
+                predicted_price: price.as_bigdecimal().clone(),
+                data_cutoff_time: *data_cutoff_time,
+                target_time,
+            }
+        })
+        .collect();
+
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.target_time, expected_target_time);
+    // 3日前 + 24h = 2日前 → target_time は過去
+    assert!(
+        record.target_time < now,
+        "target_time should be in the past when data_cutoff_time is 3 days ago"
+    );
+}
+
 // --- ラウンドトリップテスト ---
 
 #[test]

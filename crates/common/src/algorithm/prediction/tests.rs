@@ -88,12 +88,14 @@ impl PredictionProvider for MockPredictionProvider {
         }
 
         // デフォルトの予測を生成
-        let last_price = history
-            .prices
-            .last()
+        let last_price_point = history.prices.last();
+        let last_price = last_price_point
             .map(|p| p.price.to_string().parse::<f64>().unwrap_or(100.0))
             .unwrap_or(100.0);
-        let data_cutoff_time = Utc::now();
+        // 実装に合わせて最終データのタイムスタンプを使用
+        let data_cutoff_time = last_price_point
+            .map(|p| p.timestamp)
+            .unwrap_or_else(Utc::now);
         let mut predictions = Vec::new();
 
         for i in 1..=prediction_horizon {
@@ -291,6 +293,79 @@ mod prediction_tests {
 
         // 24時間後の予測が見つからないため、Noneが返される
         assert!(prediction_data.is_none());
+    }
+
+    /// data_cutoff_time が現在時刻より大幅に過去でも、24hフィルタが data_cutoff_time 基準で動作すること
+    #[tokio::test]
+    async fn test_prediction_data_conversion_with_past_data_cutoff_time() {
+        // 3日前のデータカットオフ時刻
+        let data_cutoff_time = Utc::now() - Duration::days(3);
+        let predicted_timestamp = data_cutoff_time + Duration::hours(24);
+
+        let token: TokenOutAccount = "test_token".parse().unwrap();
+        let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
+        let prediction_result = TokenPredictionResult {
+            token: token.clone(),
+            quote_token,
+            data_cutoff_time,
+            predictions: vec![
+                PredictedPrice {
+                    timestamp: data_cutoff_time + Duration::hours(1),
+                    price: TokenPrice::from_near_per_token(BigDecimal::from_f64(101.0).unwrap()),
+                    confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
+                },
+                PredictedPrice {
+                    timestamp: predicted_timestamp,
+                    price: TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap()),
+                    confidence: Some("0.85".parse::<BigDecimal>().unwrap()),
+                },
+            ],
+        };
+
+        let current_price = TokenPrice::from_near_per_token(BigDecimal::from(100));
+        let prediction_data =
+            PredictionData::from_token_prediction(&prediction_result, current_price);
+
+        assert!(
+            prediction_data.is_some(),
+            "Should find 24h prediction even when data_cutoff_time is in the past"
+        );
+        let data = prediction_data.unwrap();
+        // 1h後の予測ではなく、24h後の予測が選択されること
+        assert_eq!(
+            data.predicted_price_24h,
+            TokenPrice::from_near_per_token(BigDecimal::from_f64(110.0).unwrap()),
+            "Should select the 24h prediction, not the 1h prediction"
+        );
+        assert_eq!(data.timestamp, data_cutoff_time);
+    }
+
+    /// MockPredictionProvider が data_cutoff_time に最終データのタイムスタンプを使用すること
+    #[tokio::test]
+    async fn test_mock_provider_uses_last_data_timestamp_for_cutoff() {
+        let past_timestamp = Utc::now() - Duration::hours(6);
+        let provider = MockPredictionProvider::new()
+            .with_price_history("token1", vec![(past_timestamp, 100.0)]);
+
+        let token: TokenOutAccount = "token1".parse().unwrap();
+        let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
+        let history = provider
+            .get_price_history(&token, &quote_token, Utc::now(), Utc::now())
+            .await
+            .unwrap();
+        let result = provider.predict_price(&history, 24).await.unwrap();
+
+        assert_eq!(
+            result.data_cutoff_time, past_timestamp,
+            "data_cutoff_time should be the last data timestamp, not Utc::now()"
+        );
+        // predictions のタイムスタンプが data_cutoff_time 基準であること
+        let first_prediction = result.predictions.first().unwrap();
+        let expected_first_ts = past_timestamp + Duration::hours(1);
+        assert_eq!(
+            first_prediction.timestamp, expected_first_ts,
+            "First prediction timestamp should be data_cutoff_time + 1h"
+        );
     }
 
     #[tokio::test]
