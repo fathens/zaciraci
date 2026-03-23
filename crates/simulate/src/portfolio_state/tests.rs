@@ -611,3 +611,45 @@ async fn integration_record_snapshot_with_db() -> anyhow::Result<()> {
     cleanup_token_rates().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// scale_output unit tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scale_output_no_scaling_when_equal() {
+    // actual == requested → return to_amount unchanged
+    assert_eq!(PortfolioState::scale_output(1000, 500, 500), 1000);
+}
+
+#[test]
+fn scale_output_half_input() {
+    // actual = half of requested → output halved
+    assert_eq!(PortfolioState::scale_output(1000, 50, 100), 500);
+}
+
+#[test]
+fn scale_output_one_third() {
+    // actual = 1/3 of requested → output = 1000/3 = 333 (floor)
+    assert_eq!(PortfolioState::scale_output(1000, 1, 3), 333);
+}
+
+#[test]
+fn scale_output_actual_one() {
+    // minimal actual input
+    assert_eq!(PortfolioState::scale_output(1_000_000, 1, 1_000_000), 1);
+}
+
+#[test]
+fn scale_output_to_amount_zero() {
+    // zero output stays zero regardless of scaling
+    assert_eq!(PortfolioState::scale_output(0, 50, 100), 0);
+}
+
+#[test]
+fn scale_output_large_values() {
+    // large values near u128 range
+    let large = 10u128.pow(30);
+    let result = PortfolioState::scale_output(large, large / 2, large);
+    assert_eq!(result, large / 2);
+}
