@@ -1,5 +1,5 @@
 use crate::cli::Cli;
-use crate::portfolio_state::{PortfolioState, to_u128_or_warn};
+use crate::portfolio_state::{PortfolioState, SwapMethod, to_u128_or_warn};
 use anyhow::Result;
 use bigdecimal::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ pub struct SimulationResult {
     pub config: SimulationConfig,
     pub performance: PerformanceMetrics,
     pub trades: Vec<TradeEntry>,
+    pub swap_events: Vec<SwapEventEntry>,
     pub portfolio_values: Vec<PortfolioValueEntry>,
 }
 
@@ -41,6 +42,10 @@ pub struct PerformanceMetrics {
     pub total_realized_pnl_near: f64,
     pub trade_count: usize,
     pub liquidation_count: usize,
+    pub total_swaps: usize,
+    pub pool_based_swaps: usize,
+    pub fallback_swaps: usize,
+    pub fallback_rate: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,6 +56,19 @@ pub struct TradeEntry {
     pub amount: u128,
     pub price: f64,
     pub realized_pnl: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SwapEventEntry {
+    pub timestamp: String,
+    pub token_in: String,
+    pub amount_in: String,
+    pub amount_in_raw: u128,
+    pub token_out: String,
+    pub amount_out: String,
+    pub amount_out_raw: u128,
+    pub swap_method: SwapMethod,
+    pub pool_ids: Vec<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -126,6 +144,41 @@ impl SimulationResult {
             values
         };
 
+        let swap_events: Vec<SwapEventEntry> = state
+            .swap_events
+            .iter()
+            .map(|e| SwapEventEntry {
+                timestamp: e.timestamp.to_rfc3339(),
+                token_in: e.token_in.to_string(),
+                amount_in: e.amount_in.to_string(),
+                amount_in_raw: to_u128_or_warn(
+                    e.amount_in.smallest_units(),
+                    "swap_event_amount_in",
+                ),
+                token_out: e.token_out.to_string(),
+                amount_out: e.amount_out.to_string(),
+                amount_out_raw: to_u128_or_warn(
+                    e.amount_out.smallest_units(),
+                    "swap_event_amount_out",
+                ),
+                swap_method: e.swap_method,
+                pool_ids: e.pool_ids.clone(),
+            })
+            .collect();
+
+        let total_swaps = state.swap_events.len();
+        let pool_based_swaps = state
+            .swap_events
+            .iter()
+            .filter(|e| e.swap_method == SwapMethod::PoolBased)
+            .count();
+        let fallback_swaps = total_swaps - pool_based_swaps;
+        let fallback_rate = if total_swaps > 0 {
+            fallback_swaps as f64 / total_swaps as f64
+        } else {
+            0.0
+        };
+
         let trade_count = state
             .trades
             .iter()
@@ -137,7 +190,7 @@ impl SimulationResult {
             .filter(|t| t.action == "liquidation")
             .count();
 
-        let performance = calculate_performance(
+        let mut performance = calculate_performance(
             cli.initial_capital,
             &state.snapshots,
             state.realized_pnl,
@@ -145,11 +198,16 @@ impl SimulationResult {
             liquidation_count,
             cli.rebalance_interval_days,
         );
+        performance.total_swaps = total_swaps;
+        performance.pool_based_swaps = pool_based_swaps;
+        performance.fallback_swaps = fallback_swaps;
+        performance.fallback_rate = fallback_rate;
 
         Ok(Self {
             config,
             performance,
             trades,
+            swap_events,
             portfolio_values,
         })
     }
@@ -180,6 +238,10 @@ fn calculate_performance(
             total_realized_pnl_near: realized_pnl as f64 / 1e24,
             trade_count,
             liquidation_count,
+            total_swaps: 0,
+            pool_based_swaps: 0,
+            fallback_swaps: 0,
+            fallback_rate: 0.0,
         };
     }
 
@@ -228,6 +290,10 @@ fn calculate_performance(
         total_realized_pnl_near: realized_pnl as f64 / 1e24,
         trade_count,
         liquidation_count,
+        total_swaps: 0,
+        pool_based_swaps: 0,
+        fallback_swaps: 0,
+        fallback_rate: 0.0,
     }
 }
 

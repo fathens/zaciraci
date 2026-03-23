@@ -1,6 +1,8 @@
 use super::*;
 use crate::cli::Cli;
-use crate::portfolio_state::{PortfolioSnapshot, PortfolioState, TradeRecord};
+use crate::portfolio_state::{
+    PortfolioSnapshot, PortfolioState, SwapEvent, SwapMethod, TradeRecord,
+};
 use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
 use common::types::{TokenAccount, TokenAmount, YoctoValue};
@@ -426,4 +428,125 @@ fn from_state_maps_realized_pnl_on_trade() {
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
     assert_eq!(result.trades[0].realized_pnl, Some(0.5));
+}
+
+// --- swap event and fallback stats ---
+
+fn make_swap_event(method: SwapMethod, pool_ids: Vec<u32>) -> SwapEvent {
+    let token_a: TokenAccount = "token_a.near".parse().unwrap();
+    let token_b: TokenAccount = "token_b.near".parse().unwrap();
+    SwapEvent {
+        timestamp: Utc::now(),
+        token_in: token_a,
+        amount_in: TokenAmount::from_smallest_units(BigDecimal::from(1_000_000u64), 24),
+        token_out: token_b,
+        amount_out: TokenAmount::from_smallest_units(BigDecimal::from(500_000u64), 24),
+        swap_method: method,
+        pool_ids,
+    }
+}
+
+#[test]
+fn from_state_no_swap_events() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let state = PortfolioState::new(yocto(NEAR_100_YOCTO));
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert!(result.swap_events.is_empty());
+    assert_eq!(result.performance.total_swaps, 0);
+    assert_eq!(result.performance.pool_based_swaps, 0);
+    assert_eq!(result.performance.fallback_swaps, 0);
+    assert!((result.performance.fallback_rate - 0.0).abs() < 1e-10);
+}
+
+#[test]
+fn from_state_all_pool_based_swaps() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::PoolBased, vec![1]));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::PoolBased, vec![2, 3]));
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.performance.total_swaps, 2);
+    assert_eq!(result.performance.pool_based_swaps, 2);
+    assert_eq!(result.performance.fallback_swaps, 0);
+    assert!((result.performance.fallback_rate - 0.0).abs() < 1e-10);
+}
+
+#[test]
+fn from_state_mixed_swap_methods() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::PoolBased, vec![1]));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::DbRate, vec![]));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::PoolBased, vec![2]));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::DbRate, vec![]));
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.performance.total_swaps, 4);
+    assert_eq!(result.performance.pool_based_swaps, 2);
+    assert_eq!(result.performance.fallback_swaps, 2);
+    assert!((result.performance.fallback_rate - 0.5).abs() < 1e-10);
+}
+
+#[test]
+fn from_state_all_fallback_swaps() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::DbRate, vec![]));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::DbRate, vec![]));
+    state
+        .swap_events
+        .push(make_swap_event(SwapMethod::DbRate, vec![]));
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.performance.total_swaps, 3);
+    assert_eq!(result.performance.pool_based_swaps, 0);
+    assert_eq!(result.performance.fallback_swaps, 3);
+    assert!((result.performance.fallback_rate - 1.0).abs() < 1e-10);
+}
+
+#[test]
+fn from_state_swap_event_entry_mapping() {
+    let cli = make_cli("2025-01-01", "2025-01-31");
+    let ts = Utc.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap();
+    let token_a: TokenAccount = "token_a.near".parse().unwrap();
+    let token_b: TokenAccount = "token_b.near".parse().unwrap();
+
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
+    state.swap_events.push(SwapEvent {
+        timestamp: ts,
+        token_in: token_a,
+        amount_in: TokenAmount::from_smallest_units(BigDecimal::from(1_000_000u64), 6),
+        token_out: token_b,
+        amount_out: TokenAmount::from_smallest_units(BigDecimal::from(500_000u64), 24),
+        swap_method: SwapMethod::PoolBased,
+        pool_ids: vec![42, 99],
+    });
+
+    let result = SimulationResult::from_state(&cli, &state).unwrap();
+    assert_eq!(result.swap_events.len(), 1);
+    let entry = &result.swap_events[0];
+    assert_eq!(entry.token_in, "token_a.near");
+    assert_eq!(entry.token_out, "token_b.near");
+    assert_eq!(entry.amount_in_raw, 1_000_000);
+    assert_eq!(entry.amount_out_raw, 500_000);
+    assert_eq!(entry.swap_method, SwapMethod::PoolBased);
+    assert_eq!(entry.pool_ids, vec![42, 99]);
 }
