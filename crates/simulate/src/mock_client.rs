@@ -355,18 +355,18 @@ impl ViewContract for SimulationClient {
                     .or_else(|| {
                         // Fall back to holdings decimals.
                         // Uses try_lock (not lock) to avoid violating the sim_day→portfolio
-                        // lock ordering documented on SimulationClient. view_contract is
-                        // called without holding sim_day, so a blocking lock could deadlock
-                        // if another task holds portfolio and waits for sim_day.
+                        // lock ordering documented on SimulationClient.
                         match self.portfolio.try_lock() {
-                            Ok(state) => {
-                                state.holdings.get(&receiver_token).map(|a| a.decimals())
-                            }
+                            Ok(state) => state.holdings.get(&receiver_token).map(|a| a.decimals()),
                             Err(_) => {
+                                // When try_lock fails, use decimals_for() (token_cache lookup)
+                                // instead of DEFAULT_DECIMALS. This avoids 10^18 magnitude
+                                // errors when DEFAULT_DECIMALS(24) is applied to 6-decimal
+                                // tokens like USDT.
                                 let log = DEFAULT.new(o!("function" => "ft_metadata"));
-                                warn!(log, "portfolio try_lock failed, using DEFAULT_DECIMALS";
-                                    "token" => %receiver_token, "default_decimals" => DEFAULT_DECIMALS);
-                                None
+                                warn!(log, "portfolio try_lock failed, falling back to token_cache";
+                                    "token" => %receiver_token);
+                                Some(decimals_for(&receiver_token))
                             }
                         }
                     })
