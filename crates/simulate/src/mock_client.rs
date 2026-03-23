@@ -358,9 +358,17 @@ impl ViewContract for SimulationClient {
                         // lock ordering documented on SimulationClient. view_contract is
                         // called without holding sim_day, so a blocking lock could deadlock
                         // if another task holds portfolio and waits for sim_day.
-                        self.portfolio.try_lock().ok().and_then(|state| {
-                            state.holdings.get(&receiver_token).map(|a| a.decimals())
-                        })
+                        match self.portfolio.try_lock() {
+                            Ok(state) => {
+                                state.holdings.get(&receiver_token).map(|a| a.decimals())
+                            }
+                            Err(_) => {
+                                let log = DEFAULT.new(o!("function" => "ft_metadata"));
+                                warn!(log, "portfolio try_lock failed, using DEFAULT_DECIMALS";
+                                    "token" => %receiver_token, "default_decimals" => DEFAULT_DECIMALS);
+                                None
+                            }
+                        }
                     })
                     .unwrap_or(DEFAULT_DECIMALS);
                 let metadata = json!({
