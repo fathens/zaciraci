@@ -653,3 +653,77 @@ fn scale_output_large_values() {
     let result = PortfolioState::scale_output(large, large / 2, large);
     assert_eq!(result, large / 2);
 }
+
+// ---------------------------------------------------------------------------
+// to_u128_or_warn
+// ---------------------------------------------------------------------------
+
+#[test]
+fn to_u128_or_warn_normal_value() {
+    let v = BigDecimal::from(42u64);
+    assert_eq!(to_u128_or_warn(&v, "test"), 42);
+}
+
+#[test]
+fn to_u128_or_warn_zero() {
+    let v = BigDecimal::from(0u64);
+    assert_eq!(to_u128_or_warn(&v, "test"), 0);
+}
+
+#[test]
+fn to_u128_or_warn_negative_returns_zero() {
+    let v = BigDecimal::from(-100i64);
+    assert_eq!(
+        to_u128_or_warn(&v, "test"),
+        0,
+        "negative BigDecimal should return 0"
+    );
+}
+
+#[test]
+fn to_u128_or_warn_fractional_returns_zero() {
+    use std::str::FromStr;
+    let v = BigDecimal::from_str("0.5").unwrap();
+    assert_eq!(
+        to_u128_or_warn(&v, "test"),
+        0,
+        "fractional BigDecimal (0.5) should return 0 since to_u128 truncates"
+    );
+}
+
+#[test]
+fn to_u128_or_warn_large_integer() {
+    // u128::MAX = 340282366920938463463374607431768211455
+    let v = BigDecimal::from(u128::MAX);
+    assert_eq!(to_u128_or_warn(&v, "test"), u128::MAX);
+}
+
+#[test]
+fn to_u128_or_warn_exceeds_u128_returns_zero() {
+    let v = BigDecimal::from(u128::MAX) + BigDecimal::from(1u64);
+    assert_eq!(
+        to_u128_or_warn(&v, "test"),
+        0,
+        "value exceeding u128::MAX should return 0"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// execute_simulated_swap: actual_to == 0 guard
+// ---------------------------------------------------------------------------
+
+#[test]
+fn swap_skipped_when_scaled_output_is_zero() {
+    // scale_output(1, 1, very_large) → 0 → swap should be skipped entirely
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+    let wnear = wnear();
+
+    // to_amount = 1, from_amount = NEAR_100, actual_from = 1 (min(NEAR_100, NEAR_100))
+    // But we want actual_to = 0: set to_amount = 0
+    state.execute_simulated_swap(&wnear, NEAR_50, &token_a(), 0);
+
+    // Nothing should change: to_amount = 0 → amount_out check in mock_client prevents this,
+    // but execute_simulated_swap should also guard
+    assert_eq!(state.cash_balance, yocto(NEAR_100));
+    assert!(state.holdings.is_empty());
+}

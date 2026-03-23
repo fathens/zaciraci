@@ -630,3 +630,45 @@ async fn mock_sent_tx_wait_for_success_returns_ok() {
         panic!("expected SuccessValue status");
     }
 }
+
+// ---------------------------------------------------------------------------
+// estimate_swap_via_pools: multi-hop mid-failure
+// ---------------------------------------------------------------------------
+
+#[test]
+fn estimate_swap_multi_hop_second_pool_missing_returns_none() {
+    // Hop 1: pool 1 exists (wNEAR → tokenA)
+    // Hop 2: pool 2 does NOT exist → should return None
+    let pool1 = make_simple_pool(
+        1,
+        "wrap.near",
+        "token-a.near",
+        1_000_000_000_000_000_000_000_000_000,  // 1000 NEAR
+        10_000_000_000_000_000_000_000_000_000, // 10000 tokenA
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool1]); // only pool 1, no pool 2
+
+    let actions = vec![
+        SwapAction {
+            pool_id: 1,
+            token_in: "wrap.near".parse().unwrap(),
+            amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+            token_out: "token-a.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+        SwapAction {
+            pool_id: 2, // does not exist
+            token_in: "token-a.near".parse().unwrap(),
+            amount_in: None,
+            token_out: "token-b.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+    ];
+
+    let result = estimate_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000);
+    assert!(
+        result.is_none(),
+        "should return None when second hop pool is missing"
+    );
+}
