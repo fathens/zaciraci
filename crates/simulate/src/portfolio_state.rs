@@ -174,19 +174,19 @@ pub(crate) struct SwapEvent {
 
 pub struct PortfolioState {
     /// wrap.near balance in yoctoNEAR
-    pub cash_balance: YoctoValue,
+    pub(crate) cash_balance: YoctoValue,
     /// token -> amount (with decimals)
-    pub holdings: BTreeMap<TokenAccount, TokenAmount>,
+    pub(crate) holdings: BTreeMap<TokenAccount, TokenAmount>,
     /// daily snapshots
-    pub snapshots: Vec<PortfolioSnapshot>,
+    pub(crate) snapshots: Vec<PortfolioSnapshot>,
     /// trade history
-    pub trades: Vec<TradeRecord>,
+    pub(crate) trades: Vec<TradeRecord>,
     /// token -> total acquisition cost in yoctoNEAR
-    pub cost_basis: BTreeMap<TokenAccount, YoctoValue>,
+    pub(crate) cost_basis: BTreeMap<TokenAccount, YoctoValue>,
     /// cumulative realized P&L in yoctoNEAR (signed)
-    pub realized_pnl: i128,
+    pub(crate) realized_pnl: i128,
     /// token -> cumulative realized P&L in yoctoNEAR (signed)
-    pub realized_pnl_by_token: BTreeMap<TokenAccount, i128>,
+    pub(crate) realized_pnl_by_token: BTreeMap<TokenAccount, i128>,
     /// swap event history
     pub(crate) swap_events: Vec<SwapEvent>,
 }
