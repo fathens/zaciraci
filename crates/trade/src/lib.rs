@@ -10,6 +10,7 @@ pub mod snapshot;
 pub mod strategy;
 pub mod swap;
 pub mod token_cache;
+pub mod valuation;
 
 type Result<T> = anyhow::Result<T>;
 
