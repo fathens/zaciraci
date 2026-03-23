@@ -598,3 +598,26 @@ fn from_state_swap_event_entry_mapping() {
     assert_eq!(entry.swap_method, SwapMethod::PoolBased);
     assert_eq!(entry.pool_ids, vec![42, 99]);
 }
+
+#[test]
+fn performance_includes_non_default_swap_stats() {
+    let snapshots = vec![make_snapshot(110.0)];
+    let perf = calculate_performance(PerformanceInput {
+        initial_capital: 100.0,
+        snapshots: &snapshots,
+        realized_pnl: 0,
+        trade_count: 5,
+        liquidation_count: 0,
+        rebalance_interval_days: 1,
+        swap_stats: SwapStats {
+            total_swaps: 10,
+            pool_based_swaps: 7,
+            fallback_swaps: 3,
+            fallback_rate: 0.3,
+        },
+    });
+    assert_eq!(perf.swap_stats.total_swaps, 10);
+    assert_eq!(perf.swap_stats.pool_based_swaps, 7);
+    assert_eq!(perf.swap_stats.fallback_swaps, 3);
+    assert!((perf.swap_stats.fallback_rate - 0.3).abs() < 1e-10);
+}

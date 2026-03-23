@@ -554,6 +554,40 @@ async fn liquidate_all_computes_pnl() {
     );
 }
 
+#[tokio::test]
+async fn liquidate_all_partial_missing_rate() {
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    // TOKEN_A has a rate, TOKEN_B does not
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    state.cost_basis.insert(token_a(), yocto(NEAR_50));
+    state.holdings.insert(token_b(), token_amount_6d(1_000_000));
+    state
+        .cost_basis
+        .insert(token_b(), yocto(1_000_000_000_000_000_000_000_000));
+
+    // Provider only has token_a rate — token_b should be skipped
+    let provider = provider_with_a();
+    state.liquidate_all(sim_day(), &provider).await.unwrap();
+
+    // TOKEN_A should be liquidated
+    assert!(
+        !state.holdings.contains_key(&token_a()) || state.holdings[&token_a()].is_zero(),
+        "token_a should be liquidated"
+    );
+    // TOKEN_B should remain (no rate available)
+    assert!(
+        state.holdings.contains_key(&token_b()),
+        "token_b should remain since no rate available"
+    );
+    // Should have exactly 1 liquidation trade (only token_a)
+    assert_eq!(
+        state.trades.len(),
+        1,
+        "only token_a should have liquidation trade"
+    );
+    assert_eq!(state.trades[0].action, "liquidation");
+}
+
 // ===========================================================================
 // DB Integration Tests
 // ===========================================================================
