@@ -338,7 +338,8 @@ impl PortfolioState {
         let to_bd = BigDecimal::from(to_amount);
         let actual_bd = BigDecimal::from(actual);
         let requested_bd = BigDecimal::from(requested);
-        let scaled = (to_bd * actual_bd) / requested_bd;
+        let scaled = ((to_bd * actual_bd) / requested_bd)
+            .with_scale_round(0, bigdecimal::RoundingMode::Down);
         to_u128_or_warn(&scaled, "scale_output")
     }
 
