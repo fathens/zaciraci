@@ -124,7 +124,7 @@ pub struct PortfolioState {
     /// token -> cumulative realized P&L in yoctoNEAR (signed)
     pub realized_pnl_by_token: BTreeMap<TokenAccount, i128>,
     /// swap event history
-    pub swap_events: Vec<SwapEvent>,
+    pub(crate) swap_events: Vec<SwapEvent>,
 }
 
 impl PortfolioState {

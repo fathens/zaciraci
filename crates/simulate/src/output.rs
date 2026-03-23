@@ -46,7 +46,7 @@ pub struct PerformanceMetrics {
     pub swap_stats: SwapStats,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SwapStats {
     pub total_swaps: usize,
     pub pool_based_swaps: usize,
@@ -248,23 +248,6 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         swap_stats,
     } = input;
 
-    if snapshots.is_empty() {
-        return PerformanceMetrics {
-            total_return: 0.0,
-            sharpe_ratio: 0.0,
-            sortino_ratio: 0.0,
-            max_drawdown: 0.0,
-            win_rate: 0.0,
-            final_balance_near: initial_capital,
-            total_realized_pnl_near: realized_pnl as f64 / 1e24,
-            trade_count,
-            liquidation_count,
-            swap_stats,
-        };
-    }
-
-    // Safety: snapshots.is_empty() is checked above, but use defensive pattern
-    // to avoid panics if the guard is ever moved or removed.
     let Some(last) = snapshots.last() else {
         return PerformanceMetrics {
             total_return: 0.0,
@@ -273,6 +256,8 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
             max_drawdown: 0.0,
             win_rate: 0.0,
             final_balance_near: initial_capital,
+            // Note: i128 -> f64 loses precision beyond 2^53 yoctoNEAR (~0.009 NEAR);
+            // acceptable for display metrics.
             total_realized_pnl_near: realized_pnl as f64 / 1e24,
             trade_count,
             liquidation_count,
@@ -321,6 +306,8 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         max_drawdown,
         win_rate,
         final_balance_near: final_value,
+        // Note: i128 -> f64 loses precision beyond 2^53 yoctoNEAR (~0.009 NEAR);
+        // acceptable for display metrics.
         total_realized_pnl_near: realized_pnl as f64 / 1e24,
         trade_count,
         liquidation_count,
