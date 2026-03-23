@@ -106,30 +106,24 @@ impl PortfolioState {
     ) {
         let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
 
-        // Determine actual deduction and proportionally scale to_amount.
-        // If from_amount exceeds available balance, we clamp and scale output
-        // to maintain consistent input/output ratio.
-        let (actual_from, actual_to) = if from_token == wnear {
-            let available = to_u128_or_warn(self.cash_balance.as_bigdecimal(), "cash_balance");
-            let actual = from_amount.min(available);
-            if actual == 0 {
-                return;
-            }
-            let scaled_to = Self::scale_output(to_amount, actual, from_amount);
-            (actual, scaled_to)
+        // Get the available balance for the source token (computed once, reused
+        // for both clamping and P&L cost-basis lookup).
+        let from_balance = if from_token == wnear {
+            to_u128_or_warn(self.cash_balance.as_bigdecimal(), "cash_balance")
         } else {
-            let current = self
-                .holdings
+            self.holdings
                 .get(from_token)
                 .map(|a| to_u128_or_warn(a.smallest_units(), "holdings"))
-                .unwrap_or(0);
-            let actual = from_amount.min(current);
-            if actual == 0 {
-                return;
-            }
-            let scaled_to = Self::scale_output(to_amount, actual, from_amount);
-            (actual, scaled_to)
+                .unwrap_or(0)
         };
+
+        // Clamp from_amount to available balance and proportionally scale to_amount
+        // to maintain consistent input/output ratio.
+        let actual_from = from_amount.min(from_balance);
+        if actual_from == 0 {
+            return;
+        }
+        let actual_to = Self::scale_output(to_amount, actual_from, from_amount);
 
         let from_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_from));
         let to_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_to));
@@ -138,12 +132,6 @@ impl PortfolioState {
         if from_token == wnear {
             self.cash_balance = self.cash_balance.saturating_sub(&from_yocto);
         } else {
-            let current = self
-                .holdings
-                .get(from_token)
-                .map(|a| to_u128_or_warn(a.smallest_units(), "holdings"))
-                .unwrap_or(0);
-
             // Subtract from holdings
             if let Some(holding) = self.holdings.get_mut(from_token) {
                 let new_units = holding.smallest_units() - BigDecimal::from(actual_from);
@@ -154,7 +142,7 @@ impl PortfolioState {
             let sell_proceeds_yocto = if to_token == wnear {
                 actual_to
             } else {
-                self.average_cost_of_sold(from_token, actual_from, current)
+                self.average_cost_of_sold(from_token, actual_from, from_balance)
             };
 
             self.record_sell_pnl(from_token, actual_from, sell_proceeds_yocto);
@@ -198,8 +186,16 @@ impl PortfolioState {
     }
 
     /// Scale output amount proportionally when actual input is less than requested.
-    /// Uses BigDecimal for precision: `to_amount * actual / requested`.
+    ///
+    /// Computes `to_amount * actual / requested` using BigDecimal for precision.
+    /// The result is truncated (floor) to the nearest integer, which means the
+    /// output is always rounded in the conservative direction (less output).
+    ///
+    /// # Preconditions
+    /// - `requested > 0` (guaranteed by callers which return early when `actual == 0`,
+    ///   and `actual <= requested` by construction via `min()`).
     fn scale_output(to_amount: u128, actual: u128, requested: u128) -> u128 {
+        debug_assert!(requested > 0, "scale_output called with requested == 0");
         if actual == requested {
             return to_amount;
         }
