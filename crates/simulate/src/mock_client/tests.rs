@@ -543,6 +543,60 @@ fn estimate_swap_token_not_in_pool_returns_none() {
     );
 }
 
+#[test]
+fn estimate_swap_zero_liquidity_pool() {
+    // Pool with zero liquidity in one side
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        0, // zero NEAR liquidity
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000);
+    // Zero liquidity should return 0 or error, not panic
+    if let Some(out) = result {
+        assert_eq!(out, 0, "zero liquidity pool should return 0 output");
+    }
+}
+
+#[test]
+fn estimate_swap_zero_amount_in() {
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(0)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_swap_via_pools(&pools, &actions, 0);
+    if let Some(out) = result {
+        assert_eq!(out, 0, "zero input should produce zero output");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MockSentTx
 // ---------------------------------------------------------------------------
