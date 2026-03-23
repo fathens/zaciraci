@@ -835,6 +835,28 @@ fn swap_skipped_when_scaled_output_is_zero() {
 }
 
 // ---------------------------------------------------------------------------
+// TradeAction Display/Serde consistency
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trade_action_display_matches_serde() {
+    // Ensure Display output matches serde serialization for all variants.
+    for action in [
+        TradeAction::Buy,
+        TradeAction::Sell,
+        TradeAction::Liquidation,
+    ] {
+        let display = action.to_string();
+        let serde_value = serde_json::to_value(&action).unwrap();
+        assert_eq!(
+            serde_value,
+            serde_json::Value::String(display.clone()),
+            "Display and serde mismatch for {action:?}: display={display}, serde={serde_value}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // average_cost_of_sold precision (BigDecimal eliminates overflow-fallback error)
 // ---------------------------------------------------------------------------
 
