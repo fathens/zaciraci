@@ -82,14 +82,14 @@ pub(crate) const DEFAULT_DECIMALS: u8 = 24;
 
 /// Actual amounts of a successful simulated swap after balance clamping.
 #[derive(Debug, Clone, Copy)]
-pub struct SwapResult {
-    pub actual_in: u128,
-    pub actual_out: u128,
+pub(crate) struct SwapResult {
+    pub(crate) actual_in: u128,
+    pub(crate) actual_out: u128,
 }
 
 /// Method used for swap output calculation during simulation.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SwapMethod {
+pub(crate) enum SwapMethod {
     /// Pool-based estimate_return (fee + slippage aware)
     PoolBased,
     /// Fallback to DB rate conversion (no fee/slippage)
@@ -98,14 +98,14 @@ pub enum SwapMethod {
 
 /// Record of a single swap operation during simulation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwapEvent {
-    pub timestamp: DateTime<Utc>,
-    pub token_in: TokenAccount,
-    pub amount_in: TokenAmount,
-    pub token_out: TokenAccount,
-    pub amount_out: TokenAmount,
-    pub swap_method: SwapMethod,
-    pub pool_ids: Vec<u32>,
+pub(crate) struct SwapEvent {
+    pub(crate) timestamp: DateTime<Utc>,
+    pub(crate) token_in: TokenAccount,
+    pub(crate) amount_in: TokenAmount,
+    pub(crate) token_out: TokenAccount,
+    pub(crate) amount_out: TokenAmount,
+    pub(crate) swap_method: SwapMethod,
+    pub(crate) pool_ids: Vec<u32>,
 }
 
 pub struct PortfolioState {
@@ -355,7 +355,10 @@ impl PortfolioState {
             total_cost
         } else if total_holding > 0 {
             // BigDecimal multiplication/division: no overflow, full precision.
-            // Truncate to integer (floor) since yoctoNEAR is an integer unit.
+            // Down = truncate toward zero. For cost basis (always non-negative) this
+            // is equivalent to Floor. The result is conservative: slightly underestimates
+            // the cost of the sold portion, which slightly overestimates realized P&L.
+            // The error is sub-yoctoNEAR and self-corrects on final sell (early return above).
             let result = (total_cost.as_bigdecimal() * BigDecimal::from(sell_amount))
                 / BigDecimal::from(total_holding);
             YoctoValue::from_yocto(result.with_scale_round(0, bigdecimal::RoundingMode::Down))
@@ -380,7 +383,10 @@ impl PortfolioState {
             + sell_amount;
         let cost_of_sold = self.average_cost_of_sold(token, sell_amount, total_holding);
 
-        // P&L = proceeds - cost (using BigDecimal for precision)
+        // P&L = proceeds - cost (using BigDecimal for precision).
+        // Down = truncate toward zero: positive P&L is slightly underestimated,
+        // negative P&L is slightly underestimated in magnitude (loss looks smaller).
+        // Both effects are sub-yoctoNEAR and negligible.
         let pnl_bd = (sell_proceeds_yocto.as_bigdecimal() - cost_of_sold.as_bigdecimal())
             .with_scale_round(0, bigdecimal::RoundingMode::Down);
         let pnl = to_i128_or_warn(&pnl_bd, "realized_pnl");

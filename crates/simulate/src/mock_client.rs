@@ -20,6 +20,11 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Simulated NEAR blockchain client for backtesting.
+///
+/// **Lock ordering**: When acquiring multiple locks, always lock `sim_day`
+/// before `portfolio` to avoid deadlocks. This order must be consistent
+/// across all call sites.
 pub struct SimulationClient {
     portfolio: Arc<Mutex<PortfolioState>>,
     initial_native: u128,
