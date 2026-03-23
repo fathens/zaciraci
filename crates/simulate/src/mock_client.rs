@@ -72,9 +72,11 @@ impl SimulationClient {
         swap_actions: &[SwapAction],
         amount_in: u128,
     ) -> Option<u128> {
+        let log = DEFAULT.new(o!("function" => "calculate_swap_output_via_pools"));
         let sim_day = *self.sim_day.lock().await;
         let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
             .await
+            .inspect_err(|e| warn!(log, "failed to read pool data from DB"; "error" => %e))
             .ok()?;
         estimate_swap_via_pools(&pools, swap_actions, amount_in)
     }
