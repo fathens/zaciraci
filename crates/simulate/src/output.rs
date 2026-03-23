@@ -1,6 +1,7 @@
 use crate::cli::Cli;
 use crate::portfolio_state::{
-    PortfolioState, SwapEvent, SwapMethod, pnl_to_near, to_f64_or_warn, to_u128_or_warn,
+    PortfolioState, SwapEvent, SwapMethod, TradeAction, pnl_to_near, to_f64_or_warn,
+    to_u128_or_warn,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -130,7 +131,7 @@ impl SimulationResult {
             .iter()
             .map(|t| TradeEntry {
                 timestamp: t.timestamp.to_rfc3339(),
-                action: t.action.clone(),
+                action: t.action.to_string(),
                 token: t.token.to_string(),
                 amount: to_u128_or_warn(t.amount.smallest_units(), "trade_amount"),
                 price: t.price_near,
@@ -203,12 +204,12 @@ impl SimulationResult {
         let trade_count = state
             .trades
             .iter()
-            .filter(|t| t.action != "liquidation")
+            .filter(|t| t.action != TradeAction::Liquidation)
             .count();
         let liquidation_count = state
             .trades
             .iter()
-            .filter(|t| t.action == "liquidation")
+            .filter(|t| t.action == TradeAction::Liquidation)
             .count();
 
         let performance = calculate_performance(PerformanceInput {

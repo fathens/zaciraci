@@ -514,7 +514,8 @@ async fn liquidate_all_records_liquidation_trades() {
 
     assert!(!state.trades.is_empty(), "should have liquidation trades");
     assert_eq!(
-        state.trades[0].action, "liquidation",
+        state.trades[0].action,
+        TradeAction::Liquidation,
         "action should be liquidation"
     );
 }
@@ -585,7 +586,7 @@ async fn liquidate_all_partial_missing_rate() {
         1,
         "only token_a should have liquidation trade"
     );
-    assert_eq!(state.trades[0].action, "liquidation");
+    assert_eq!(state.trades[0].action, TradeAction::Liquidation);
 }
 
 // ===========================================================================

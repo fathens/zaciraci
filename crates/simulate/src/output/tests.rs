@@ -1,7 +1,7 @@
 use super::*;
 use crate::cli::Cli;
 use crate::portfolio_state::{
-    PortfolioSnapshot, PortfolioState, SwapEvent, SwapMethod, TradeRecord,
+    PortfolioSnapshot, PortfolioState, SwapEvent, SwapMethod, TradeAction, TradeRecord,
 };
 use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
@@ -288,7 +288,7 @@ fn from_state_maps_trades_correctly() {
     let token: TokenAccount = "usdt.tether-token.near".parse().unwrap();
     state.trades.push(TradeRecord {
         timestamp: ts,
-        action: "buy".to_string(),
+        action: TradeAction::Buy,
         token: token.clone(),
         amount: TokenAmount::from_smallest_units(BigDecimal::from(1_000_000), 6),
         price_near: 0.5,
@@ -296,7 +296,7 @@ fn from_state_maps_trades_correctly() {
     });
     state.trades.push(TradeRecord {
         timestamp: ts,
-        action: "sell".to_string(),
+        action: TradeAction::Sell,
         token: token.clone(),
         amount: TokenAmount::from_smallest_units(BigDecimal::from(500_000), 6),
         price_near: 0.25,
@@ -467,7 +467,7 @@ fn from_state_maps_realized_pnl_on_trade() {
     let token: TokenAccount = "token.near".parse().unwrap();
     state.trades.push(TradeRecord {
         timestamp: ts,
-        action: "sell".to_string(),
+        action: TradeAction::Sell,
         token,
         amount: TokenAmount::from_smallest_units(BigDecimal::from(1_000_000), 24),
         price_near: 1.0,

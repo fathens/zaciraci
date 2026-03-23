@@ -94,10 +94,29 @@ pub struct PortfolioSnapshot {
     pub realized_pnl_near: f64,
 }
 
+/// Type of trade action recorded during simulation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TradeAction {
+    Buy,
+    Sell,
+    Liquidation,
+}
+
+impl std::fmt::Display for TradeAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Buy => write!(f, "buy"),
+            Self::Sell => write!(f, "sell"),
+            Self::Liquidation => write!(f, "liquidation"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeRecord {
     pub timestamp: DateTime<Utc>,
-    pub action: String,
+    pub action: TradeAction,
     pub token: TokenAccount,
     pub amount: TokenAmount,
     pub price_near: f64,
@@ -483,7 +502,7 @@ impl PortfolioState {
 
             self.trades.push(TradeRecord {
                 timestamp: sim_day,
-                action: "liquidation".to_string(),
+                action: TradeAction::Liquidation,
                 token: token.clone(),
                 amount,
                 price_near: yocto_to_near(sell_yocto),
