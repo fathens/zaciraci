@@ -63,7 +63,10 @@ impl SwapStats {
             .iter()
             .filter(|e| e.swap_method == SwapMethod::PoolBased)
             .count();
-        let fallback_swaps = total_swaps - pool_based_swaps;
+        let fallback_swaps = events
+            .iter()
+            .filter(|e| e.swap_method == SwapMethod::DbRate)
+            .count();
         let fallback_rate = if total_swaps > 0 {
             fallback_swaps as f64 / total_swaps as f64
         } else {
@@ -81,7 +84,7 @@ impl SwapStats {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TradeEntry {
     pub timestamp: String,
-    pub action: String,
+    pub action: TradeAction,
     pub token: String,
     pub amount: u128,
     pub price: f64,
@@ -131,7 +134,7 @@ impl SimulationResult {
             .iter()
             .map(|t| TradeEntry {
                 timestamp: t.timestamp.to_rfc3339(),
-                action: t.action.to_string(),
+                action: t.action.clone(),
                 token: t.token.to_string(),
                 amount: to_u128_or_warn(t.amount.smallest_units(), "trade_amount"),
                 price: t.price_near,

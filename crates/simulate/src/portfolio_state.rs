@@ -422,13 +422,14 @@ impl PortfolioState {
             total_cost
         } else if total_holding > 0 {
             // BigDecimal multiplication/division: no overflow, full precision.
-            // Down = truncate toward zero. For cost basis (always non-negative) this
-            // is equivalent to Floor. The result is conservative: slightly underestimates
-            // the cost of the sold portion, which slightly overestimates realized P&L.
-            // The error is sub-yoctoNEAR and self-corrects on final sell (early return above).
+            // Floor = round toward negative infinity. For cost basis (always non-negative)
+            // this slightly underestimates the cost of the sold portion, which slightly
+            // overestimates realized P&L. The error is sub-yoctoNEAR and self-corrects
+            // on final sell (early return above). Uses Floor for consistency with
+            // record_sell_pnl's rounding.
             let result = (total_cost.as_bigdecimal() * BigDecimal::from(sell_amount))
                 / BigDecimal::from(total_holding);
-            YoctoValue::from_yocto(result.with_scale_round(0, bigdecimal::RoundingMode::Down))
+            YoctoValue::from_yocto(result.with_scale_round(0, bigdecimal::RoundingMode::Floor))
         } else {
             YoctoValue::zero()
         }

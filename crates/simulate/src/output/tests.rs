@@ -305,11 +305,11 @@ fn from_state_maps_trades_correctly() {
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
     assert_eq!(result.trades.len(), 2);
-    assert_eq!(result.trades[0].action, "buy");
+    assert_eq!(result.trades[0].action, TradeAction::Buy);
     assert_eq!(result.trades[0].token, "usdt.tether-token.near");
     assert_eq!(result.trades[0].amount, 1_000_000);
     assert!((result.trades[0].price - 0.5).abs() < 1e-10);
-    assert_eq!(result.trades[1].action, "sell");
+    assert_eq!(result.trades[1].action, TradeAction::Sell);
     assert_eq!(result.trades[1].amount, 500_000);
 }
 
