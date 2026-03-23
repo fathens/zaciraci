@@ -159,6 +159,14 @@ impl PortfolioState {
         let from_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_from));
         let to_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_to));
 
+        // Pre-compute cost basis transfer for direct token-to-token swaps.
+        // Must be done before record_sell_pnl modifies cost_basis.
+        let transferred_cost = if from_token != wnear && to_token != wnear {
+            self.average_cost_of_sold(from_token, actual_from, from_balance)
+        } else {
+            0
+        };
+
         // Deduct from source
         if from_token == wnear {
             self.cash_balance = self.cash_balance.saturating_sub(&from_yocto);
@@ -210,12 +218,16 @@ impl PortfolioState {
                     .or_insert_with(YoctoValue::zero);
                 let current_basis = mem::replace(basis, YoctoValue::zero());
                 *basis = current_basis + from_yocto;
+            } else if transferred_cost > 0 {
+                // Direct token-to-token swap: transfer proportional cost basis
+                // from the sold token to the acquired token.
+                let basis = self
+                    .cost_basis
+                    .entry(to_token.clone())
+                    .or_insert_with(YoctoValue::zero);
+                let current_basis = mem::replace(basis, YoctoValue::zero());
+                *basis = current_basis + YoctoValue::from_yocto(BigDecimal::from(transferred_cost));
             }
-            // TODO: For direct token-to-token swaps (not via WNEAR), the acquired
-            // token's cost basis is not tracked. This means selling it later will
-            // record the entire proceeds as profit. Currently not an issue because
-            // REF Finance swaps are effectively 2-leg (token->WNEAR, WNEAR->token),
-            // but should be addressed if direct token-to-token routes are added.
         }
     }
 

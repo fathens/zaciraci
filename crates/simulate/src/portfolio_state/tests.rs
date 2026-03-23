@@ -230,17 +230,73 @@ fn swap_token_to_token_non_wnear() {
     assert!(!state.holdings.contains_key(&token_a()));
     assert!(!state.cost_basis.contains_key(&token_a()));
 
-    // TOKEN_B acquired, but no cost_basis tracked (non-WNEAR source)
+    // TOKEN_B acquired with cost basis transferred from TOKEN_A
+    assert_eq!(
+        state.holdings[&token_b()].smallest_units(),
+        &BigDecimal::from(token_b_amount)
+    );
+    assert_eq!(state.cost_basis[&token_b()], yocto(NEAR_50));
+
+    // Cash unchanged (no WNEAR involved)
+    assert_eq!(state.cash_balance, yocto(NEAR_100));
+
+    // Realized P&L for token-to-token: sell_proceeds = cost_of_sold → P&L = 0
+    assert_eq!(state.realized_pnl, 0);
+}
+
+#[test]
+fn swap_token_to_token_partial_cost_basis_transfer() {
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+
+    // Set up: hold TOKEN_A with 50 NEAR cost basis
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    state.cost_basis.insert(token_a(), yocto(NEAR_50));
+
+    // Sell half of TOKEN_A for TOKEN_B
+    let half_near_50 = NEAR_50 / 2;
+    let token_b_amount = 250_000u128;
+    state.execute_simulated_swap(&token_a(), half_near_50, &token_b(), token_b_amount);
+
+    // TOKEN_A: half remains, half cost basis remains
+    assert_eq!(
+        state.holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(half_near_50)
+    );
+    assert_eq!(state.cost_basis[&token_a()], yocto(half_near_50));
+
+    // TOKEN_B: acquired with transferred cost basis (half of 50 NEAR = 25 NEAR)
+    assert_eq!(
+        state.holdings[&token_b()].smallest_units(),
+        &BigDecimal::from(token_b_amount)
+    );
+    assert_eq!(state.cost_basis[&token_b()], yocto(half_near_50));
+
+    // P&L = 0 (cost-neutral swap)
+    assert_eq!(state.realized_pnl, 0);
+}
+
+#[test]
+fn swap_token_to_token_no_cost_basis() {
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+
+    // Set up: hold TOKEN_A but with no cost basis (e.g., airdropped tokens)
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    // No cost_basis entry for TOKEN_A
+
+    let token_b_amount = 500_000u128;
+    state.execute_simulated_swap(&token_a(), NEAR_50, &token_b(), token_b_amount);
+
+    // TOKEN_A fully sold
+    assert!(!state.holdings.contains_key(&token_a()));
+
+    // TOKEN_B acquired with zero cost basis (nothing to transfer)
     assert_eq!(
         state.holdings[&token_b()].smallest_units(),
         &BigDecimal::from(token_b_amount)
     );
     assert!(!state.cost_basis.contains_key(&token_b()));
 
-    // Cash unchanged (no WNEAR involved)
-    assert_eq!(state.cash_balance, yocto(NEAR_100));
-
-    // Realized P&L for token-to-token: sell_proceeds = cost_of_sold → P&L = 0
+    // P&L = 0 (no cost basis → cost_of_sold = 0, sell_proceeds = 0)
     assert_eq!(state.realized_pnl, 0);
 }
 
