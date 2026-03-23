@@ -39,9 +39,40 @@ impl SimulationClient {
 }
 
 impl SimulationClient {
-    /// Calculate swap output amount using DB rates at the current simulation date.
-    /// Converts token_in -> NEAR -> token_out using date-based exchange rates.
-    async fn calculate_swap_output(
+    /// Calculate swap output by walking SwapAction hops through pool estimate_return.
+    /// Falls back to DB rate conversion if pool data is unavailable.
+    async fn calculate_swap_output_via_pools(
+        &self,
+        swap_actions: &[SwapAction],
+        amount_in: u128,
+    ) -> Option<u128> {
+        let sim_day = *self.sim_day.lock().await;
+        let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
+            .await
+            .ok()?;
+
+        let mut current_amount = amount_in;
+        for action in swap_actions {
+            let pool = pools.get(action.pool_id).ok()?;
+            let in_idx = pool
+                .tokens()
+                .position(|t| t.as_account_id() == &action.token_in)?;
+            let out_idx = pool
+                .tokens()
+                .position(|t| t.as_account_id() == &action.token_out)?;
+            current_amount = pool
+                .estimate_return(
+                    dex::TokenIn::from(in_idx),
+                    current_amount,
+                    dex::TokenOut::from(out_idx),
+                )
+                .ok()?;
+        }
+        Some(current_amount)
+    }
+
+    /// Fallback: calculate swap output using DB rates (no fee/slippage).
+    async fn calculate_swap_output_via_rates(
         &self,
         token_in: &str,
         amount_in: u128,
@@ -56,7 +87,6 @@ impl SimulationClient {
 
         // token_in -> NEAR value
         let near_value = if token_in == wnear_str {
-            // wrap.near is already NEAR
             YoctoValue::from_yocto(BigDecimal::from(amount_in)).to_near()
         } else {
             let token_in_out: TokenOutAccount = match token_in.parse() {
@@ -83,7 +113,6 @@ impl SimulationClient {
 
         // NEAR value -> token_out amount
         if token_out == wnear_str {
-            // Convert NearValue to yoctoNEAR
             near_value.to_yocto().as_bigdecimal().to_u128().unwrap_or(0)
         } else {
             let token_out_account: TokenOutAccount = match token_out.parse() {
@@ -159,10 +188,23 @@ impl SendTx for SimulationClient {
                     let token_out = last.token_out.to_string();
 
                     if amount_in > 0 {
-                        // Calculate output amount using DB rates via NEAR conversion
-                        let amount_out = self
-                            .calculate_swap_output(&token_in, amount_in, &token_out)
-                            .await;
+                        // Try pool-based estimate_return first (fee + slippage aware)
+                        let amount_out = match self
+                            .calculate_swap_output_via_pools(&swap_actions, amount_in)
+                            .await
+                        {
+                            Some(out) => out,
+                            None => {
+                                // Fallback to DB rate conversion (no fee/slippage)
+                                warn!(log, "pool data unavailable, falling back to DB rate";
+                                    "token_in" => &token_in, "token_out" => &token_out
+                                );
+                                self.calculate_swap_output_via_rates(
+                                    &token_in, amount_in, &token_out,
+                                )
+                                .await
+                            }
+                        };
 
                         if amount_out > 0 {
                             let token_in_account: TokenAccount = token_in.parse()?;
