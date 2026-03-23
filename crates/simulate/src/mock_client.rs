@@ -82,25 +82,22 @@ impl SimulationClient {
     /// Fallback: calculate swap output using DB rates (no fee/slippage).
     async fn calculate_swap_output_via_rates(
         &self,
-        token_in: &str,
+        token_in: &TokenAccount,
         amount_in: u128,
-        token_out: &str,
+        token_out: &TokenAccount,
     ) -> u128 {
-        use common::types::{TokenAmount, TokenOutAccount, YoctoValue};
+        use common::types::{TokenAmount, YoctoValue};
         use num_traits::ToPrimitive;
 
-        let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+        let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         let sim_day = *self.sim_day.lock().await;
 
         // token_in -> NEAR value
-        let near_value = if token_in == wnear_str {
+        let near_value = if token_in == wnear {
             YoctoValue::from_yocto(BigDecimal::from(amount_in)).to_near()
         } else {
-            let token_in_out: TokenOutAccount = match token_in.parse() {
-                Ok(t) => t,
-                Err(_) => return 0,
-            };
+            let token_in_out = token_in.to_out();
 
             let rate =
                 match portfolio_state::get_rate_at_date(&token_in_out, &wnear_in, sim_day).await {
@@ -108,30 +105,20 @@ impl SimulationClient {
                     None => return 0,
                 };
 
-            let token_in_account: TokenAccount = match token_in.parse() {
-                Ok(t) => t,
-                Err(_) => return 0,
-            };
-            let decimals_in =
-                trade::token_cache::get_cached_decimals(&token_in_account).unwrap_or(24);
+            let decimals_in = trade::token_cache::get_cached_decimals(token_in).unwrap_or(24);
             let token_amount =
                 TokenAmount::from_smallest_units(BigDecimal::from(amount_in), decimals_in);
             &token_amount / &rate
         };
 
         // NEAR value -> token_out amount
-        if token_out == wnear_str {
+        if token_out == wnear {
             near_value.to_yocto().as_bigdecimal().to_u128().unwrap_or(0)
         } else {
-            let token_out_account: TokenOutAccount = match token_out.parse() {
-                Ok(t) => t,
-                Err(_) => return 0,
-            };
+            let token_out_out = token_out.to_out();
 
             let rate =
-                match portfolio_state::get_rate_at_date(&token_out_account, &wnear_in, sim_day)
-                    .await
-                {
+                match portfolio_state::get_rate_at_date(&token_out_out, &wnear_in, sim_day).await {
                     Some(r) => r,
                     None => return 0,
                 };
@@ -191,9 +178,9 @@ impl SendTx for SimulationClient {
                     let first = &swap_actions[0];
                     let last = &swap_actions[swap_actions.len() - 1];
 
-                    let token_in = first.token_in.to_string();
+                    let token_in_account = TokenAccount::from(first.token_in.clone());
+                    let token_out_account = TokenAccount::from(last.token_out.clone());
                     let amount_in = first.amount_in.map(|a| a.0).unwrap_or(0);
-                    let token_out = last.token_out.to_string();
 
                     if amount_in > 0 {
                         // Try pool-based estimate_return first (fee + slippage aware)
@@ -205,18 +192,18 @@ impl SendTx for SimulationClient {
                             None => {
                                 // Fallback to DB rate conversion (no fee/slippage)
                                 warn!(log, "pool data unavailable, falling back to DB rate";
-                                    "token_in" => &token_in, "token_out" => &token_out
+                                    "token_in" => %token_in_account, "token_out" => %token_out_account
                                 );
                                 self.calculate_swap_output_via_rates(
-                                    &token_in, amount_in, &token_out,
+                                    &token_in_account,
+                                    amount_in,
+                                    &token_out_account,
                                 )
                                 .await
                             }
                         };
 
                         if amount_out > 0 {
-                            let token_in_account: TokenAccount = token_in.parse()?;
-                            let token_out_account: TokenAccount = token_out.parse()?;
                             let mut state = self.portfolio.lock().await;
                             state.execute_simulated_swap(
                                 &token_in_account,
@@ -226,9 +213,9 @@ impl SendTx for SimulationClient {
                             );
 
                             trace!(log, "simulated swap";
-                                "token_in" => &token_in_account.to_string(),
+                                "token_in" => %token_in_account,
                                 "amount_in" => amount_in,
-                                "token_out" => &token_out_account.to_string(),
+                                "token_out" => %token_out_account,
                                 "amount_out" => amount_out
                             );
 
@@ -237,7 +224,7 @@ impl SendTx for SimulationClient {
                             });
                         } else {
                             warn!(log, "swap output is zero, skipping";
-                                "token_in" => &token_in, "token_out" => &token_out
+                                "token_in" => %token_in_account, "token_out" => %token_out_account
                             );
                         }
                     }
