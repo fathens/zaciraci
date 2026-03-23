@@ -472,6 +472,28 @@ mod prediction_tests {
         );
     }
 
+    #[test]
+    fn test_prediction_at_horizon_empty_predictions() {
+        let base = create_test_timestamp();
+        let result = make_prediction_result(base, &[]);
+        assert!(
+            result.prediction_at_horizon(24).is_none(),
+            "Empty predictions should return None"
+        );
+    }
+
+    #[test]
+    fn test_prediction_data_conversion_empty_predictions() {
+        let base = create_test_timestamp();
+        let result = make_prediction_result(base, &[]);
+        let current_price = TokenPrice::from_near_per_token(BigDecimal::from(100));
+        let prediction_data = PredictionData::from_token_prediction(&result, current_price);
+        assert!(
+            prediction_data.is_none(),
+            "Empty predictions should make from_token_prediction return None"
+        );
+    }
+
     #[tokio::test]
     async fn test_prediction_provider_error_handling() {
         let provider = MockPredictionProvider::new();
