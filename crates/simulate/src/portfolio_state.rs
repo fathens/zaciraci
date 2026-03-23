@@ -131,7 +131,7 @@ impl PortfolioState {
         from_amount: u128,
         to_token: &TokenAccount,
         to_amount: u128,
-    ) {
+    ) -> Option<(u128, u128)> {
         let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
 
         // Get the available balance for the source token (computed once, reused
@@ -149,11 +149,11 @@ impl PortfolioState {
         // to maintain consistent input/output ratio.
         let actual_from = from_amount.min(from_balance);
         if actual_from == 0 {
-            return;
+            return None;
         }
         let actual_to = Self::scale_output(to_amount, actual_from, from_amount);
         if actual_to == 0 {
-            return;
+            return None;
         }
 
         let from_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_from));
@@ -231,6 +231,8 @@ impl PortfolioState {
                 *basis = current_basis + YoctoValue::from_yocto(BigDecimal::from(transferred_cost));
             }
         }
+
+        Some((actual_from, actual_to))
     }
 
     /// Scale output amount proportionally when actual input is less than requested.

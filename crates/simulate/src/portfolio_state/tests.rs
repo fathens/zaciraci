@@ -134,7 +134,8 @@ fn swap_wnear_to_token_updates_state() {
     let wnear = wnear();
 
     // Buy 50 NEAR worth of TOKEN_A (1:1 rate, 24 decimals)
-    state.execute_simulated_swap(&wnear, NEAR_50, &token_a(), NEAR_50);
+    let result = state.execute_simulated_swap(&wnear, NEAR_50, &token_a(), NEAR_50);
+    assert!(result.is_some());
 
     assert_eq!(state.cash_balance, yocto(NEAR_50));
     assert_eq!(
@@ -156,7 +157,7 @@ fn swap_token_to_wnear_updates_state_and_pnl() {
 
     // Sell all TOKEN_A for 120 NEAR (profit)
     let sell_proceeds = 120_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(&token_a(), NEAR_100, &wnear, sell_proceeds);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_100, &wnear, sell_proceeds);
 
     // TOKEN_A should be fully removed
     assert!(!state.holdings.contains_key(&token_a()));
@@ -178,7 +179,7 @@ fn swap_partial_sell_adjusts_cost_basis() {
     state.cost_basis.insert(token_a(), yocto(NEAR_100));
 
     // Sell half
-    state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
 
     assert_eq!(
         state.holdings[&token_a()].smallest_units(),
@@ -196,11 +197,11 @@ fn swap_wnear_to_token_multiple_buys_accumulate_cost() {
 
     // Buy 1: 30 NEAR
     let buy1 = 30_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(&wnear, buy1, &token_a(), buy1);
+    let _ = state.execute_simulated_swap(&wnear, buy1, &token_a(), buy1);
 
     // Buy 2: 20 NEAR
     let buy2 = 20_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(&wnear, buy2, &token_a(), buy2);
+    let _ = state.execute_simulated_swap(&wnear, buy2, &token_a(), buy2);
 
     assert_eq!(state.cash_balance, yocto(NEAR_50));
     assert_eq!(
@@ -224,7 +225,7 @@ fn swap_token_to_token_non_wnear() {
 
     // Swap TOKEN_A -> TOKEN_B (neither is WNEAR)
     let token_b_amount = 500_000u128; // 0.5 TOKEN_B (6 decimals)
-    state.execute_simulated_swap(&token_a(), NEAR_50, &token_b(), token_b_amount);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_50, &token_b(), token_b_amount);
 
     // TOKEN_A fully sold
     assert!(!state.holdings.contains_key(&token_a()));
@@ -255,7 +256,7 @@ fn swap_token_to_token_partial_cost_basis_transfer() {
     // Sell half of TOKEN_A for TOKEN_B
     let half_near_50 = NEAR_50 / 2;
     let token_b_amount = 250_000u128;
-    state.execute_simulated_swap(&token_a(), half_near_50, &token_b(), token_b_amount);
+    let _ = state.execute_simulated_swap(&token_a(), half_near_50, &token_b(), token_b_amount);
 
     // TOKEN_A: half remains, half cost basis remains
     assert_eq!(
@@ -284,7 +285,7 @@ fn swap_token_to_token_no_cost_basis() {
     // No cost_basis entry for TOKEN_A
 
     let token_b_amount = 500_000u128;
-    state.execute_simulated_swap(&token_a(), NEAR_50, &token_b(), token_b_amount);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_50, &token_b(), token_b_amount);
 
     // TOKEN_A fully sold
     assert!(!state.holdings.contains_key(&token_a()));
@@ -306,7 +307,8 @@ fn swap_from_token_with_no_holdings() {
 
     // Try selling TOKEN_A that we don't hold
     let wnear = wnear();
-    state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
+    let result = state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
+    assert!(result.is_none(), "swap should be skipped when no holdings");
 
     // Entire swap is skipped: no TOKEN_A deducted, no WNEAR added
     assert!(!state.holdings.contains_key(&token_a()));
@@ -325,7 +327,13 @@ fn swap_sell_more_than_holdings_scales_output() {
     state.cost_basis.insert(token_a(), yocto(ten_near));
 
     // Try to sell 50 NEAR worth (more than holdings) for 50 NEAR proceeds
-    state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
+    let result = state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
+    let (actual_in, actual_out) = result.unwrap();
+    assert_eq!(actual_in, ten_near, "clamped to available balance");
+    assert_eq!(
+        actual_out, ten_near,
+        "output scaled proportionally: 50 * 10/50 = 10"
+    );
 
     // actual_deduct = min(50, 10) = 10, to_amount scaled to 10/50 * 50 = 10
     assert!(!state.holdings.contains_key(&token_a()));
@@ -346,7 +354,9 @@ fn swap_wnear_more_than_cash_scales_output() {
     // Try to buy TOKEN_A with 50 NEAR (more than cash balance)
     // If 50 NEAR → 500 TOKEN_A, then 10 NEAR → 100 TOKEN_A
     let token_a_amount = 500_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(&wnear(), NEAR_50, &token_a(), token_a_amount);
+    let result = state.execute_simulated_swap(&wnear(), NEAR_50, &token_a(), token_a_amount);
+    let (actual_in, _) = result.unwrap();
+    assert_eq!(actual_in, ten_near, "clamped to available cash");
 
     assert_eq!(state.cash_balance, YoctoValue::zero(), "all cash spent");
     // Scaled: 500 * 10/50 = 100
@@ -374,7 +384,7 @@ fn swap_sell_with_loss() {
 
     // Sell all for only 80 NEAR (loss of 20 NEAR)
     let eighty_near = 80_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(&token_a(), NEAR_100, &wnear, eighty_near);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_100, &wnear, eighty_near);
 
     assert!(!state.holdings.contains_key(&token_a()));
     assert_eq!(state.cash_balance, yocto(eighty_near));
@@ -777,7 +787,11 @@ fn swap_skipped_when_scaled_output_is_zero() {
 
     // to_amount = 1, from_amount = NEAR_100, actual_from = 1 (min(NEAR_100, NEAR_100))
     // But we want actual_to = 0: set to_amount = 0
-    state.execute_simulated_swap(&wnear, NEAR_50, &token_a(), 0);
+    let result = state.execute_simulated_swap(&wnear, NEAR_50, &token_a(), 0);
+    assert!(
+        result.is_none(),
+        "swap should be skipped when to_amount is 0"
+    );
 
     // Nothing should change: to_amount = 0 → amount_out check in mock_client prevents this,
     // but execute_simulated_swap should also guard

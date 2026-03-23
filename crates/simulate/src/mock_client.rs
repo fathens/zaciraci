@@ -227,46 +227,48 @@ impl SendTx for SimulationClient {
                         if amount_out > 0 {
                             let sim_day = *self.sim_day.lock().await;
                             let mut state = self.portfolio.lock().await;
-                            state.execute_simulated_swap(
+                            let actual = state.execute_simulated_swap(
                                 &token_in_account,
                                 amount_in,
                                 &token_out_account,
                                 amount_out,
                             );
 
-                            let decimals_in =
-                                trade::token_cache::get_cached_decimals(&token_in_account)
-                                    .unwrap_or(DEFAULT_DECIMALS);
-                            let decimals_out =
-                                trade::token_cache::get_cached_decimals(&token_out_account)
-                                    .unwrap_or(DEFAULT_DECIMALS);
-                            state.swap_events.push(SwapEvent {
-                                timestamp: sim_day,
-                                token_in: token_in_account.clone(),
-                                amount_in: TokenAmount::from_smallest_units(
-                                    BigDecimal::from(amount_in),
-                                    decimals_in,
-                                ),
-                                token_out: token_out_account.clone(),
-                                amount_out: TokenAmount::from_smallest_units(
-                                    BigDecimal::from(amount_out),
-                                    decimals_out,
-                                ),
-                                swap_method,
-                                pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
-                            });
+                            if let Some((actual_in, actual_out)) = actual {
+                                let decimals_in =
+                                    trade::token_cache::get_cached_decimals(&token_in_account)
+                                        .unwrap_or(DEFAULT_DECIMALS);
+                                let decimals_out =
+                                    trade::token_cache::get_cached_decimals(&token_out_account)
+                                        .unwrap_or(DEFAULT_DECIMALS);
+                                state.swap_events.push(SwapEvent {
+                                    timestamp: sim_day,
+                                    token_in: token_in_account.clone(),
+                                    amount_in: TokenAmount::from_smallest_units(
+                                        BigDecimal::from(actual_in),
+                                        decimals_in,
+                                    ),
+                                    token_out: token_out_account.clone(),
+                                    amount_out: TokenAmount::from_smallest_units(
+                                        BigDecimal::from(actual_out),
+                                        decimals_out,
+                                    ),
+                                    swap_method,
+                                    pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
+                                });
 
-                            trace!(log, "simulated swap";
-                                "token_in" => %token_in_account,
-                                "amount_in" => amount_in,
-                                "token_out" => %token_out_account,
-                                "amount_out" => amount_out,
-                                "swap_method" => ?swap_method
-                            );
+                                trace!(log, "simulated swap";
+                                    "token_in" => %token_in_account,
+                                    "amount_in" => actual_in,
+                                    "token_out" => %token_out_account,
+                                    "amount_out" => actual_out,
+                                    "swap_method" => ?swap_method
+                                );
 
-                            return Ok(MockSentTx {
-                                output_amount: amount_out,
-                            });
+                                return Ok(MockSentTx {
+                                    output_amount: actual_out,
+                                });
+                            }
                         } else {
                             warn!(log, "swap output is zero, skipping";
                                 "token_in" => %token_in_account, "token_out" => %token_out_account
