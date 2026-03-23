@@ -425,7 +425,7 @@ where
 
     // 総ポートフォリオ価値を計算
     let total_portfolio_value =
-        crate::swap::calculate_total_portfolio_value(client, wallet, &current_balances).await?;
+        crate::swap::calculate_total_portfolio_value(&current_balances).await?;
 
     // 各トークンの差分（wrap.near換算）を計算
     let mut sell_operations: Vec<SellOperation> = Vec::new();

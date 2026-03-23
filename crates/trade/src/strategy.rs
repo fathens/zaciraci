@@ -225,9 +225,14 @@ where
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
     // ポートフォリオ保有量を記録
-    if let Err(e) =
-        super::snapshot::record_portfolio_holdings(client, wallet, &period_id, &token_accounts)
-            .await
+    if let Err(e) = super::snapshot::record_portfolio_holdings(
+        client,
+        wallet,
+        &period_id,
+        &token_accounts,
+        current_time,
+    )
+    .await
     {
         warn!(log, "failed to record portfolio holdings"; "error" => ?e);
     }
@@ -746,8 +751,7 @@ where
         };
 
         // 実際のポートフォリオ総価値を計算
-        let total_value_near =
-            swap::calculate_total_portfolio_value(client, wallet, &current_balances).await?;
+        let total_value_near = swap::calculate_total_portfolio_value(&current_balances).await?;
 
         // wrap.near の残高を cash_balance として使用
         let cash_balance_near = current_balances

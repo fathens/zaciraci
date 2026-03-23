@@ -21,14 +21,14 @@ pub async fn insert_evaluated_record(
     quote_token: &str,
     predicted_price: i64,
     actual_price: i64,
-    prediction_time: NaiveDateTime,
+    data_cutoff_time: NaiveDateTime,
     target_time: NaiveDateTime,
 ) -> Result<DbPredictionRecord> {
     let new_record = NewPredictionRecord {
         token: token.to_string(),
         quote_token: quote_token.to_string(),
         predicted_price: BigDecimal::from(predicted_price),
-        prediction_time,
+        data_cutoff_time,
         target_time,
     };
 
@@ -83,14 +83,14 @@ pub async fn insert_unevaluated_record(
     token: &str,
     quote_token: &str,
     predicted_price: i64,
-    prediction_time: NaiveDateTime,
+    data_cutoff_time: NaiveDateTime,
     target_time: NaiveDateTime,
 ) -> Result<()> {
     let new_record = NewPredictionRecord {
         token: token.to_string(),
         quote_token: quote_token.to_string(),
         predicted_price: BigDecimal::from(predicted_price),
-        prediction_time,
+        data_cutoff_time,
         target_time,
     };
 

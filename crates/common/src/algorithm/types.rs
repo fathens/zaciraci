@@ -94,7 +94,7 @@ pub struct PredictionData {
 pub struct TokenPredictionResult {
     pub token: TokenOutAccount,
     pub quote_token: TokenInAccount,
-    pub prediction_time: DateTime<Utc>,
+    pub data_cutoff_time: DateTime<Utc>,
     pub predictions: Vec<PredictedPrice>,
 }
 

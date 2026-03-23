@@ -2,10 +2,13 @@ use crate::cli::Cli;
 use crate::mock_client::SimulationClient;
 use crate::mock_wallet::SimulationWallet;
 use crate::output::SimulationResult;
-use crate::portfolio_state::{DbRateProvider, PortfolioState};
+use crate::portfolio_state::{DbRateProvider, PortfolioState, to_u128_or_warn};
 use anyhow::Result;
+use bigdecimal::BigDecimal;
 use chrono::{NaiveTime, TimeZone, Utc};
+use common::types::YoctoValue;
 use logging::*;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -33,14 +36,15 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 
     // Convert initial capital NEAR -> yoctoNEAR (via BigDecimal for precision)
     let initial_capital_yocto = {
-        use bigdecimal::BigDecimal;
-        use num_traits::ToPrimitive;
-        use std::str::FromStr;
         let capital = BigDecimal::from_str(&cli.initial_capital.to_string())
             .unwrap_or_else(|_| BigDecimal::from(cli.initial_capital as i64));
         let yocto_per_near = BigDecimal::from(10u128.pow(24));
-        (&capital * &yocto_per_near).to_u128().unwrap_or(0)
+        YoctoValue::from_yocto(&capital * &yocto_per_near)
     };
+
+    // initial_native as u128 for SimulationClient (get_native_amount)
+    let initial_native_u128 =
+        to_u128_or_warn(initial_capital_yocto.as_bigdecimal(), "initial_capital");
 
     // Initialize portfolio state
     let portfolio = Arc::new(Mutex::new(PortfolioState::new(initial_capital_yocto)));
@@ -51,7 +55,7 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     // Create mock client and wallet
     let sim_client = SimulationClient::new(
         Arc::clone(&portfolio),
-        initial_capital_yocto,
+        initial_native_u128,
         Arc::clone(&sim_day_shared),
     );
     let sim_wallet = SimulationWallet::new();

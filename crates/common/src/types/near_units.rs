@@ -545,6 +545,18 @@ impl YoctoValue {
         YoctoAmount(self.0.clone())
     }
 
+    /// 飽和減算（結果が負にならない）
+    ///
+    /// `self >= other` なら `self - other` を返し、
+    /// そうでなければゼロを返す。
+    pub fn saturating_sub(&self, other: &YoctoValue) -> YoctoValue {
+        if self.0 >= other.0 {
+            YoctoValue(&self.0 - &other.0)
+        } else {
+            YoctoValue::zero()
+        }
+    }
+
     /// 金額がゼロかどうか
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()

@@ -147,7 +147,7 @@ impl PredictionService {
         Ok(TokenPredictionResult {
             token: history.token.clone(),
             quote_token: history.quote_token.clone(),
-            prediction_time: Utc::now(),
+            data_cutoff_time: last_data_timestamp,
             predictions,
         })
     }

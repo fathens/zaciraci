@@ -3528,6 +3528,7 @@ dependencies = [
  "chrono",
  "clap",
  "common 1.3.2",
+ "dex",
  "logging",
  "near-crypto",
  "near-primitives",

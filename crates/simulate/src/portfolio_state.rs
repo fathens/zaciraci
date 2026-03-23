@@ -1,13 +1,27 @@
 use anyhow::Result;
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use chrono::{DateTime, Utc};
-use common::types::{ExchangeRate, TokenOutAccount};
+use common::types::{ExchangeRate, TokenAccount, TokenAmount, TokenOutAccount, YoctoValue};
 use logging::*;
 use persistence::token_rate::TokenRate;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use std::mem;
 
-/// Abstraction for token rate and decimals lookups.
+/// 非負の BigDecimal を u128 に変換する。
+///
+/// 変換できない場合（負値、小数部のみ、u128 範囲超過）は warn ログを出力し 0 を返す。
+/// 呼び出し元は 0 が返った場合に処理をスキップするガードを持つ前提で設計されている。
+pub(crate) fn to_u128_or_warn(value: &BigDecimal, context: &str) -> u128 {
+    value.to_u128().unwrap_or_else(|| {
+        let log = DEFAULT.new(o!("function" => "to_u128_or_warn"));
+        warn!(log, "BigDecimal value exceeds u128 range, defaulting to 0";
+            "context" => context, "value" => %value);
+        0
+    })
+}
+
+/// Abstraction for token rate lookups.
 /// Allows injecting mock implementations for testing.
 pub trait RateProvider: Send + Sync {
     fn get_rate(
@@ -15,12 +29,9 @@ pub trait RateProvider: Send + Sync {
         token: &TokenOutAccount,
         sim_day: DateTime<Utc>,
     ) -> impl std::future::Future<Output = Option<ExchangeRate>> + Send;
-
-    fn get_decimals(&self, token_id: &str) -> impl std::future::Future<Output = u8> + Send;
 }
 
-/// Production RateProvider that queries the database via TokenRate
-/// and retrieves decimals via trade::token_cache.
+/// Production RateProvider that queries the database via TokenRate.
 pub struct DbRateProvider;
 
 impl RateProvider for DbRateProvider {
@@ -32,22 +43,14 @@ impl RateProvider for DbRateProvider {
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         get_rate_at_date(token, &wnear_in, sim_day).await
     }
-
-    async fn get_decimals(&self, token_id: &str) -> u8 {
-        let token_account: common::types::TokenAccount = match token_id.parse() {
-            Ok(t) => t,
-            Err(_) => return 24,
-        };
-        trade::token_cache::get_cached_decimals(&token_account).unwrap_or(24)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioSnapshot {
     pub timestamp: DateTime<Utc>,
     pub total_value_near: f64,
-    pub holdings: BTreeMap<String, u128>,
-    pub cash_balance: u128,
+    pub holdings: BTreeMap<TokenAccount, TokenAmount>,
+    pub cash_balance: YoctoValue,
     pub realized_pnl_near: f64,
 }
 
@@ -55,38 +58,38 @@ pub struct PortfolioSnapshot {
 pub struct TradeRecord {
     pub timestamp: DateTime<Utc>,
     pub action: String,
-    pub token: String,
-    pub amount: u128,
+    pub token: TokenAccount,
+    pub amount: TokenAmount,
     pub price_near: f64,
     pub realized_pnl_near: Option<f64>,
 }
 
+/// Default token decimals for NEAR ecosystem tokens.
+/// Most native tokens use 24 decimals; used when the actual value is unknown.
+pub(crate) const DEFAULT_DECIMALS: u8 = 24;
+
 pub struct PortfolioState {
-    /// wrap.near balance in yocto
-    pub cash_balance: u128,
-    /// token_id -> amount in smallest units
-    pub holdings: BTreeMap<String, u128>,
-    /// token_id -> decimals (used by mock_client tests)
-    #[allow(dead_code)]
-    pub decimals: HashMap<String, u8>,
+    /// wrap.near balance in yoctoNEAR
+    pub cash_balance: YoctoValue,
+    /// token -> amount (with decimals)
+    pub holdings: BTreeMap<TokenAccount, TokenAmount>,
     /// daily snapshots
     pub snapshots: Vec<PortfolioSnapshot>,
     /// trade history
     pub trades: Vec<TradeRecord>,
-    /// token_id -> total acquisition cost in yoctoNEAR
-    pub cost_basis: BTreeMap<String, u128>,
+    /// token -> total acquisition cost in yoctoNEAR
+    pub cost_basis: BTreeMap<TokenAccount, YoctoValue>,
     /// cumulative realized P&L in yoctoNEAR (signed)
     pub realized_pnl: i128,
-    /// token_id -> cumulative realized P&L in yoctoNEAR (signed)
-    pub realized_pnl_by_token: BTreeMap<String, i128>,
+    /// token -> cumulative realized P&L in yoctoNEAR (signed)
+    pub realized_pnl_by_token: BTreeMap<TokenAccount, i128>,
 }
 
 impl PortfolioState {
-    pub fn new(initial_capital_yocto: u128) -> Self {
+    pub fn new(initial_capital: YoctoValue) -> Self {
         Self {
-            cash_balance: initial_capital_yocto,
+            cash_balance: initial_capital,
             holdings: BTreeMap::new(),
-            decimals: HashMap::new(),
             snapshots: Vec::new(),
             trades: Vec::new(),
             cost_basis: BTreeMap::new(),
@@ -100,51 +103,89 @@ impl PortfolioState {
     /// Called by SimulationClient::exec_contract when a swap is detected.
     pub fn execute_simulated_swap(
         &mut self,
-        from_token: &str,
+        from_token: &TokenAccount,
         from_amount: u128,
-        to_token: &str,
+        to_token: &TokenAccount,
         to_amount: u128,
     ) {
-        let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+        let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+
+        // Get the available balance for the source token (computed once, reused
+        // for both clamping and P&L cost-basis lookup).
+        let from_balance = if from_token == wnear {
+            to_u128_or_warn(self.cash_balance.as_bigdecimal(), "cash_balance")
+        } else {
+            self.holdings
+                .get(from_token)
+                .map(|a| to_u128_or_warn(a.smallest_units(), "holdings"))
+                .unwrap_or(0)
+        };
+
+        // Clamp from_amount to available balance and proportionally scale to_amount
+        // to maintain consistent input/output ratio.
+        let actual_from = from_amount.min(from_balance);
+        if actual_from == 0 {
+            return;
+        }
+        let actual_to = Self::scale_output(to_amount, actual_from, from_amount);
+        if actual_to == 0 {
+            return;
+        }
+
+        let from_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_from));
+        let to_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_to));
 
         // Deduct from source
-        if from_token == wnear_str {
-            self.cash_balance = self.cash_balance.saturating_sub(from_amount);
+        if from_token == wnear {
+            self.cash_balance = self.cash_balance.saturating_sub(&from_yocto);
         } else {
-            let current = self.holdings.get(from_token).copied().unwrap_or(0);
-            let actual_deduct = from_amount.min(current);
-            if actual_deduct == 0 {
-                // Cannot sell a token we don't hold — skip the entire swap
-                return;
+            // Subtract from holdings
+            if let Some(holding) = self.holdings.get_mut(from_token) {
+                let new_units = (holding.smallest_units() - BigDecimal::from(actual_from))
+                    .max(BigDecimal::zero());
+                *holding = TokenAmount::from_smallest_units(new_units, holding.decimals());
             }
 
-            *self.holdings.entry(from_token.to_string()).or_insert(0) -= actual_deduct;
-
             // Determine sell proceeds for P&L calculation.
-            // If to_token is WNEAR, to_amount is the NEAR proceeds.
-            // For token-to-token swaps, use cost basis as proceeds (0 P&L).
-            let sell_proceeds_yocto = if to_token == wnear_str {
-                to_amount
+            let sell_proceeds_yocto = if to_token == wnear {
+                actual_to
             } else {
-                self.average_cost_of_sold(from_token, actual_deduct, current)
+                self.average_cost_of_sold(from_token, actual_from, from_balance)
             };
 
-            self.record_sell_pnl(from_token, actual_deduct, sell_proceeds_yocto);
+            self.record_sell_pnl(from_token, actual_from, sell_proceeds_yocto);
 
             // Clean up holdings if position is fully closed
-            if self.holdings.get(from_token).copied().unwrap_or(0) == 0 {
+            if self
+                .holdings
+                .get(from_token)
+                .map(|a| a.is_zero())
+                .unwrap_or(true)
+            {
                 self.holdings.remove(from_token);
             }
         }
 
         // Add to destination
-        if to_token == wnear_str {
-            self.cash_balance += to_amount;
+        if to_token == wnear {
+            let balance = mem::replace(&mut self.cash_balance, YoctoValue::zero());
+            self.cash_balance = balance + to_yocto;
         } else {
-            *self.holdings.entry(to_token.to_string()).or_insert(0) += to_amount;
+            let entry = self.holdings.entry(to_token.clone()).or_insert_with(|| {
+                // Use decimals from existing holdings or default to 24
+                TokenAmount::zero(DEFAULT_DECIMALS)
+            });
+            let new_units = entry.smallest_units() + BigDecimal::from(actual_to);
+            *entry = TokenAmount::from_smallest_units(new_units, entry.decimals());
+
             // Track cost basis: the NEAR value of what we spent
-            if from_token == wnear_str {
-                *self.cost_basis.entry(to_token.to_string()).or_insert(0) += from_amount;
+            if from_token == wnear {
+                let basis = self
+                    .cost_basis
+                    .entry(to_token.clone())
+                    .or_insert_with(YoctoValue::zero);
+                let current_basis = mem::replace(basis, YoctoValue::zero());
+                *basis = current_basis + from_yocto;
             }
             // TODO: For direct token-to-token swaps (not via WNEAR), the acquired
             // token's cost basis is not tracked. This means selling it later will
@@ -152,6 +193,27 @@ impl PortfolioState {
             // REF Finance swaps are effectively 2-leg (token->WNEAR, WNEAR->token),
             // but should be addressed if direct token-to-token routes are added.
         }
+    }
+
+    /// Scale output amount proportionally when actual input is less than requested.
+    ///
+    /// Computes `to_amount * actual / requested` using BigDecimal for precision.
+    /// The result is truncated (floor) to the nearest integer, which means the
+    /// output is always rounded in the conservative direction (less output).
+    ///
+    /// # Preconditions
+    /// - `requested > 0` (guaranteed by callers which return early when `actual == 0`,
+    ///   and `actual <= requested` by construction via `min()`).
+    fn scale_output(to_amount: u128, actual: u128, requested: u128) -> u128 {
+        debug_assert!(requested > 0, "scale_output called with requested == 0");
+        if actual == requested {
+            return to_amount;
+        }
+        let to_bd = BigDecimal::from(to_amount);
+        let actual_bd = BigDecimal::from(actual);
+        let requested_bd = BigDecimal::from(requested);
+        let scaled = (to_bd * actual_bd) / requested_bd;
+        to_u128_or_warn(&scaled, "scale_output")
     }
 
     /// Record a daily portfolio snapshot
@@ -168,7 +230,7 @@ impl PortfolioState {
             timestamp: sim_day,
             total_value_near: total_value,
             holdings: self.holdings.clone(),
-            cash_balance: self.cash_balance,
+            cash_balance: self.cash_balance.clone(),
             realized_pnl_near: self.realized_pnl as f64 / 1e24,
         });
 
@@ -184,27 +246,19 @@ impl PortfolioState {
         let yocto_per_near: f64 = 1e24;
 
         // Cash portion (wrap.near)
-        let mut total = self.cash_balance as f64 / yocto_per_near;
+        let mut total = self.cash_balance.as_bigdecimal().to_f64().unwrap_or(0.0) / yocto_per_near;
 
         // Holdings
-        for (token_id, amount) in &self.holdings {
-            if *amount == 0 {
+        for (token_account, token_amount) in &self.holdings {
+            if token_amount.is_zero() {
                 continue;
             }
 
-            let token_out: TokenOutAccount = match token_id.parse() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
+            let token_out: TokenOutAccount = token_account.to_out();
 
             match rate_provider.get_rate(&token_out, sim_day).await {
                 Some(rate) => {
-                    let decimals = rate_provider.get_decimals(token_id).await;
-                    let token_amount = common::types::TokenAmount::from_smallest_units(
-                        BigDecimal::from(*amount),
-                        decimals,
-                    );
-                    let near_value = &token_amount / &rate;
+                    let near_value = token_amount / &rate;
                     let near_f64: f64 = near_value.as_bigdecimal().to_f64().unwrap_or(0.0);
                     total += near_f64;
                 }
@@ -220,8 +274,17 @@ impl PortfolioState {
     /// Compute the cost of the sold portion using average cost basis method.
     ///
     /// `total_holding` is the holding amount *before* the sell (including `sell_amount`).
-    fn average_cost_of_sold(&self, token_id: &str, sell_amount: u128, total_holding: u128) -> u128 {
-        let total_cost = self.cost_basis.get(token_id).copied().unwrap_or(0);
+    fn average_cost_of_sold(
+        &self,
+        token: &TokenAccount,
+        sell_amount: u128,
+        total_holding: u128,
+    ) -> u128 {
+        let total_cost = self
+            .cost_basis
+            .get(token)
+            .and_then(|v| v.as_bigdecimal().to_u128())
+            .unwrap_or(0);
         if sell_amount == total_holding {
             total_cost
         } else if total_holding > 0 {
@@ -238,32 +301,39 @@ impl PortfolioState {
     /// Returns the realized P&L in NEAR (f64).
     fn record_sell_pnl(
         &mut self,
-        token_id: &str,
+        token: &TokenAccount,
         sell_amount: u128,
         sell_proceeds_yocto: u128,
     ) -> f64 {
-        let total_holding = self.holdings.get(token_id).copied().unwrap_or(0) + sell_amount;
-        let cost_of_sold = self.average_cost_of_sold(token_id, sell_amount, total_holding);
+        let total_holding = self
+            .holdings
+            .get(token)
+            .map(|a| to_u128_or_warn(a.smallest_units(), "holdings"))
+            .unwrap_or(0)
+            + sell_amount;
+        let cost_of_sold = self.average_cost_of_sold(token, sell_amount, total_holding);
 
         // Safety: i128::MAX (~1.7e38 yoctoNEAR = ~1.7e14 NEAR) far exceeds realistic values.
         let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
 
         // Update cost basis (subtract the sold portion)
-        if let Some(basis) = self.cost_basis.get_mut(token_id) {
-            *basis = basis.saturating_sub(cost_of_sold);
+        if let Some(basis) = self.cost_basis.get_mut(token) {
+            let cost_yocto = YoctoValue::from_yocto(BigDecimal::from(cost_of_sold));
+            *basis = basis.saturating_sub(&cost_yocto);
         }
 
         // Accumulate realized P&L
         self.realized_pnl += pnl;
-        *self
-            .realized_pnl_by_token
-            .entry(token_id.to_string())
-            .or_insert(0) += pnl;
+        *self.realized_pnl_by_token.entry(token.clone()).or_insert(0) += pnl;
 
         // Clean up cost_basis if position is fully closed
-        let remaining = self.holdings.get(token_id).copied().unwrap_or(0);
-        if remaining == 0 {
-            self.cost_basis.remove(token_id);
+        let remaining = self
+            .holdings
+            .get(token)
+            .map(|a| a.is_zero())
+            .unwrap_or(true);
+        if remaining {
+            self.cost_basis.remove(token);
         }
 
         // Note: i128 -> f64 loses precision beyond 2^53 yoctoNEAR (~0.009 NEAR); acceptable for metrics.
@@ -278,38 +348,41 @@ impl PortfolioState {
     ) -> Result<()> {
         let log = DEFAULT.new(o!("function" => "liquidate_all"));
 
-        let tokens: Vec<(String, u128)> = self
+        let tokens: Vec<(TokenAccount, TokenAmount)> = self
             .holdings
             .iter()
-            .filter(|&(_, &amount)| amount > 0)
-            .map(|(k, &v)| (k.clone(), v))
+            .filter(|&(_, amount)| !amount.is_zero())
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        for (token_id, amount) in tokens {
+        for (token, amount) in tokens {
+            let amount_raw = to_u128_or_warn(amount.smallest_units(), "liquidation_amount");
             let sell_yocto = self
-                .token_amount_to_yocto(&token_id, amount, sim_day, rate_provider)
+                .token_amount_to_yocto(&token, &amount, sim_day, rate_provider)
                 .await;
 
             if sell_yocto == 0 {
-                warn!(log, "no rate for liquidation, skipping"; "token" => &token_id);
+                warn!(log, "no rate for liquidation, skipping"; "token" => %token);
                 continue;
             }
 
-            self.holdings.remove(&token_id);
-            self.cash_balance += sell_yocto;
+            self.holdings.remove(&token);
+            let sell_yocto_value = YoctoValue::from_yocto(BigDecimal::from(sell_yocto));
+            let balance = mem::replace(&mut self.cash_balance, YoctoValue::zero());
+            self.cash_balance = balance + sell_yocto_value;
 
-            let pnl_near = self.record_sell_pnl(&token_id, amount, sell_yocto);
+            let pnl_near = self.record_sell_pnl(&token, amount_raw, sell_yocto);
 
             self.trades.push(TradeRecord {
                 timestamp: sim_day,
                 action: "liquidation".to_string(),
-                token: token_id.clone(),
+                token: token.clone(),
                 amount,
                 price_near: sell_yocto as f64 / 1e24,
                 realized_pnl_near: Some(pnl_near),
             });
 
-            trace!(log, "liquidated"; "token" => &token_id, "amount" => amount, "proceeds" => sell_yocto as f64 / 1e24);
+            trace!(log, "liquidated"; "token" => %token, "amount" => amount_raw, "proceeds" => sell_yocto as f64 / 1e24);
         }
 
         Ok(())
@@ -318,30 +391,22 @@ impl PortfolioState {
     /// Convert token amount to yoctoNEAR using rates from provider
     async fn token_amount_to_yocto(
         &self,
-        token_id: &str,
-        amount: u128,
+        token: &TokenAccount,
+        amount: &TokenAmount,
         sim_day: DateTime<Utc>,
         rate_provider: &(impl RateProvider + ?Sized),
     ) -> u128 {
-        let token_out: TokenOutAccount = match token_id.parse() {
-            Ok(t) => t,
-            Err(_) => return 0,
-        };
+        let token_out = token.to_out();
 
         match rate_provider.get_rate(&token_out, sim_day).await {
             Some(rate) => {
                 if rate.is_zero() {
                     return 0;
                 }
-                let decimals = rate_provider.get_decimals(token_id).await;
-                let token_amount = common::types::TokenAmount::from_smallest_units(
-                    BigDecimal::from(amount),
-                    decimals,
-                );
-                let near_value = &token_amount / &rate;
+                let near_value = amount / &rate;
                 // NearValue -> yoctoNEAR
                 let yocto = near_value.to_yocto();
-                yocto.as_bigdecimal().to_u128().unwrap_or(0)
+                to_u128_or_warn(yocto.as_bigdecimal(), "token_to_yocto")
             }
             None => 0,
         }

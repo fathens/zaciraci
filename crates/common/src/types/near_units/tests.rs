@@ -399,6 +399,29 @@ fn test_near_amount_zero_division() {
 }
 
 #[test]
+fn test_yocto_value_saturating_sub_normal() {
+    let a = YoctoValue::from_yocto(BigDecimal::from(100));
+    let b = YoctoValue::from_yocto(BigDecimal::from(30));
+    let result = a.saturating_sub(&b);
+    assert_eq!(result, YoctoValue::from_yocto(BigDecimal::from(70)));
+}
+
+#[test]
+fn test_yocto_value_saturating_sub_underflow() {
+    let a = YoctoValue::from_yocto(BigDecimal::from(10));
+    let b = YoctoValue::from_yocto(BigDecimal::from(50));
+    let result = a.saturating_sub(&b);
+    assert_eq!(result, YoctoValue::zero());
+}
+
+#[test]
+fn test_yocto_value_saturating_sub_equal() {
+    let a = YoctoValue::from_yocto(BigDecimal::from(42));
+    let result = a.saturating_sub(&a);
+    assert_eq!(result, YoctoValue::zero());
+}
+
+#[test]
 fn test_yocto_value_zero_division() {
     let v1 = YoctoValue::from_yocto(BigDecimal::from(100));
     let v2 = YoctoValue::zero();

@@ -1,7 +1,9 @@
 use super::*;
 use crate::cli::Cli;
 use crate::portfolio_state::{PortfolioSnapshot, PortfolioState, TradeRecord};
+use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
+use common::types::{TokenAccount, TokenAmount, YoctoValue};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -10,9 +12,13 @@ fn make_snapshot(total_value_near: f64) -> PortfolioSnapshot {
         timestamp: Utc::now(),
         total_value_near,
         holdings: BTreeMap::new(),
-        cash_balance: 0,
+        cash_balance: YoctoValue::zero(),
         realized_pnl_near: 0.0,
     }
+}
+
+fn yocto(v: u128) -> YoctoValue {
+    YoctoValue::from_yocto(BigDecimal::from(v))
 }
 
 // --- calculate_sharpe_ratio ---
@@ -229,25 +235,28 @@ fn make_cli(start: &str, end: &str) -> Cli {
     }
 }
 
+const NEAR_100_YOCTO: u128 = 100_000_000_000_000_000_000_000_000;
+
 #[test]
 fn from_state_maps_trades_correctly() {
     let cli = make_cli("2025-01-01", "2025-01-31");
     let ts = Utc.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap();
 
-    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
+    let token: TokenAccount = "usdt.tether-token.near".parse().unwrap();
     state.trades.push(TradeRecord {
         timestamp: ts,
         action: "buy".to_string(),
-        token: "usdt.tether-token.near".to_string(),
-        amount: 1_000_000,
+        token: token.clone(),
+        amount: TokenAmount::from_smallest_units(BigDecimal::from(1_000_000), 6),
         price_near: 0.5,
         realized_pnl_near: None,
     });
     state.trades.push(TradeRecord {
         timestamp: ts,
         action: "sell".to_string(),
-        token: "usdt.tether-token.near".to_string(),
-        amount: 500_000,
+        token: token.clone(),
+        amount: TokenAmount::from_smallest_units(BigDecimal::from(500_000), 6),
         price_near: 0.25,
         realized_pnl_near: Some(0.1),
     });
@@ -268,15 +277,19 @@ fn from_state_maps_snapshots_to_portfolio_values() {
     let ts = Utc.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap();
 
     let cash_yocto = 50_000_000_000_000_000_000_000_000u128; // 50 NEAR
+    let token: TokenAccount = "token.near".parse().unwrap();
     let mut holdings = BTreeMap::new();
-    holdings.insert("token.near".to_string(), 999u128);
+    holdings.insert(
+        token.clone(),
+        TokenAmount::from_smallest_units(BigDecimal::from(999u64), 24),
+    );
 
-    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
     state.snapshots.push(PortfolioSnapshot {
         timestamp: ts,
         total_value_near: 105.0,
         holdings: holdings.clone(),
-        cash_balance: cash_yocto,
+        cash_balance: yocto(cash_yocto),
         realized_pnl_near: 0.0,
     });
 
@@ -300,7 +313,7 @@ fn from_state_config_reflects_cli_params() {
         output: PathBuf::from("out.json"),
         sweep: None,
     };
-    let state = PortfolioState::new(200_000_000_000_000_000_000_000_000);
+    let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
     assert_eq!(result.config.start_date, "2025-03-01");
@@ -315,7 +328,7 @@ fn from_state_config_reflects_cli_params() {
 #[test]
 fn from_state_empty_state() {
     let cli = make_cli("2025-01-01", "2025-01-31");
-    let state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    let state = PortfolioState::new(yocto(NEAR_100_YOCTO));
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
     assert!(result.trades.is_empty());
@@ -332,19 +345,19 @@ fn portfolio_value_entry_daily_pnl() {
     let ts1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
     let ts2 = Utc.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap();
 
-    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
     state.snapshots.push(PortfolioSnapshot {
         timestamp: ts1,
         total_value_near: 105.0,
         holdings: BTreeMap::new(),
-        cash_balance: 0,
+        cash_balance: YoctoValue::zero(),
         realized_pnl_near: 0.0,
     });
     state.snapshots.push(PortfolioSnapshot {
         timestamp: ts2,
         total_value_near: 110.0,
         holdings: BTreeMap::new(),
-        cash_balance: 0,
+        cash_balance: YoctoValue::zero(),
         realized_pnl_near: 2.5,
     });
 
@@ -400,12 +413,13 @@ fn from_state_maps_realized_pnl_on_trade() {
     let cli = make_cli("2025-01-01", "2025-01-31");
     let ts = Utc.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap();
 
-    let mut state = PortfolioState::new(100_000_000_000_000_000_000_000_000);
+    let mut state = PortfolioState::new(yocto(NEAR_100_YOCTO));
+    let token: TokenAccount = "token.near".parse().unwrap();
     state.trades.push(TradeRecord {
         timestamp: ts,
         action: "sell".to_string(),
-        token: "token.near".to_string(),
-        amount: 1_000_000,
+        token,
+        amount: TokenAmount::from_smallest_units(BigDecimal::from(1_000_000), 24),
         price_near: 1.0,
         realized_pnl_near: Some(0.5),
     });

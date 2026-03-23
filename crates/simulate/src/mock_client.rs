@@ -1,8 +1,10 @@
-use crate::portfolio_state::{self, PortfolioState};
+use crate::portfolio_state::{self, DEFAULT_DECIMALS, PortfolioState, to_u128_or_warn};
+use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
 use chrono::{DateTime, Utc};
+use common::types::TokenAccount;
 use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
@@ -36,32 +38,79 @@ impl SimulationClient {
     }
 }
 
-impl SimulationClient {
-    /// Calculate swap output amount using DB rates at the current simulation date.
-    /// Converts token_in -> NEAR -> token_out using date-based exchange rates.
-    async fn calculate_swap_output(
-        &self,
-        token_in: &str,
-        amount_in: u128,
-        token_out: &str,
-    ) -> u128 {
-        use bigdecimal::BigDecimal;
-        use common::types::{TokenAmount, TokenOutAccount, YoctoValue};
-        use num_traits::ToPrimitive;
+/// Estimate swap output by walking SwapAction hops through pool `estimate_return`.
+///
+/// This is a pure calculation (no I/O). Each hop's output feeds into the next
+/// hop's input, so `SwapAction::amount_in` fields are intentionally ignored —
+/// only the `amount_in` argument is used as the initial input for the first hop.
+///
+/// Returns `None` if any pool is missing from the list or a token is not found
+/// in the pool's token list.
+fn estimate_swap_via_pools(
+    pools: &dex::PoolInfoList,
+    swap_actions: &[SwapAction],
+    amount_in: u128,
+) -> Option<u128> {
+    debug_assert!(
+        swap_actions
+            .windows(2)
+            .all(|w| w[0].token_out == w[1].token_in),
+        "swap action chain is not connected"
+    );
+    let mut current_amount = amount_in;
+    for action in swap_actions {
+        let pool = pools.get(action.pool_id).ok()?;
+        let in_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_in)?;
+        let out_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_out)?;
+        current_amount = pool
+            .estimate_return(
+                dex::TokenIn::from(in_idx),
+                current_amount,
+                dex::TokenOut::from(out_idx),
+            )
+            .ok()?;
+    }
+    Some(current_amount)
+}
 
-        let wnear_str = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+impl SimulationClient {
+    /// Calculate swap output by walking SwapAction hops through pool estimate_return.
+    /// Falls back to DB rate conversion if pool data is unavailable.
+    async fn calculate_swap_output_via_pools(
+        &self,
+        swap_actions: &[SwapAction],
+        amount_in: u128,
+    ) -> Option<u128> {
+        let log = DEFAULT.new(o!("function" => "calculate_swap_output_via_pools"));
+        let sim_day = *self.sim_day.lock().await;
+        let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
+            .await
+            .inspect_err(|e| warn!(log, "failed to read pool data from DB"; "error" => %e))
+            .ok()?;
+        estimate_swap_via_pools(&pools, swap_actions, amount_in)
+    }
+
+    /// Fallback: calculate swap output using DB rates (no fee/slippage).
+    async fn calculate_swap_output_via_rates(
+        &self,
+        token_in: &TokenAccount,
+        amount_in: u128,
+        token_out: &TokenAccount,
+    ) -> u128 {
+        use common::types::{TokenAmount, YoctoValue};
+        let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         let sim_day = *self.sim_day.lock().await;
 
         // token_in -> NEAR value
-        let near_value = if token_in == wnear_str {
-            // wrap.near is already NEAR
+        let near_value = if token_in == wnear {
             YoctoValue::from_yocto(BigDecimal::from(amount_in)).to_near()
         } else {
-            let token_in_out: TokenOutAccount = match token_in.parse() {
-                Ok(t) => t,
-                Err(_) => return 0,
-            };
+            let token_in_out = token_in.to_out();
 
             let rate =
                 match portfolio_state::get_rate_at_date(&token_in_out, &wnear_in, sim_day).await {
@@ -69,37 +118,30 @@ impl SimulationClient {
                     None => return 0,
                 };
 
-            let token_in_account: common::types::TokenAccount = match token_in.parse() {
-                Ok(t) => t,
-                Err(_) => return 0,
-            };
             let decimals_in =
-                trade::token_cache::get_cached_decimals(&token_in_account).unwrap_or(24);
+                trade::token_cache::get_cached_decimals(token_in).unwrap_or(DEFAULT_DECIMALS);
             let token_amount =
                 TokenAmount::from_smallest_units(BigDecimal::from(amount_in), decimals_in);
             &token_amount / &rate
         };
 
         // NEAR value -> token_out amount
-        if token_out == wnear_str {
-            // Convert NearValue to yoctoNEAR
-            near_value.to_yocto().as_bigdecimal().to_u128().unwrap_or(0)
+        if token_out == wnear {
+            to_u128_or_warn(
+                near_value.to_yocto().as_bigdecimal(),
+                "swap_rate_near_to_yocto",
+            )
         } else {
-            let token_out_account: TokenOutAccount = match token_out.parse() {
-                Ok(t) => t,
-                Err(_) => return 0,
-            };
+            let token_out_out = token_out.to_out();
 
             let rate =
-                match portfolio_state::get_rate_at_date(&token_out_account, &wnear_in, sim_day)
-                    .await
-                {
+                match portfolio_state::get_rate_at_date(&token_out_out, &wnear_in, sim_day).await {
                     Some(r) => r,
                     None => return 0,
                 };
 
             let token_amount = &near_value * &rate;
-            token_amount.smallest_units().to_u128().unwrap_or(0)
+            to_u128_or_warn(token_amount.smallest_units(), "swap_rate_token_amount")
         }
     }
 }
@@ -153,26 +195,44 @@ impl SendTx for SimulationClient {
                     let first = &swap_actions[0];
                     let last = &swap_actions[swap_actions.len() - 1];
 
-                    let token_in = first.token_in.to_string();
+                    let token_in_account = TokenAccount::from(first.token_in.clone());
+                    let token_out_account = TokenAccount::from(last.token_out.clone());
                     let amount_in = first.amount_in.map(|a| a.0).unwrap_or(0);
-                    let token_out = last.token_out.to_string();
 
                     if amount_in > 0 {
-                        // Calculate output amount using DB rates via NEAR conversion
-                        let amount_out = self
-                            .calculate_swap_output(&token_in, amount_in, &token_out)
-                            .await;
+                        // Try pool-based estimate_return first (fee + slippage aware)
+                        let amount_out = match self
+                            .calculate_swap_output_via_pools(&swap_actions, amount_in)
+                            .await
+                        {
+                            Some(out) => out,
+                            None => {
+                                // Fallback to DB rate conversion (no fee/slippage)
+                                warn!(log, "pool data unavailable, falling back to DB rate";
+                                    "token_in" => %token_in_account, "token_out" => %token_out_account
+                                );
+                                self.calculate_swap_output_via_rates(
+                                    &token_in_account,
+                                    amount_in,
+                                    &token_out_account,
+                                )
+                                .await
+                            }
+                        };
 
                         if amount_out > 0 {
                             let mut state = self.portfolio.lock().await;
                             state.execute_simulated_swap(
-                                &token_in, amount_in, &token_out, amount_out,
+                                &token_in_account,
+                                amount_in,
+                                &token_out_account,
+                                amount_out,
                             );
 
                             trace!(log, "simulated swap";
-                                "token_in" => &token_in,
+                                "token_in" => %token_in_account,
                                 "amount_in" => amount_in,
-                                "token_out" => &token_out,
+                                "token_out" => %token_out_account,
                                 "amount_out" => amount_out
                             );
 
@@ -181,7 +241,7 @@ impl SendTx for SimulationClient {
                             });
                         } else {
                             warn!(log, "swap output is zero, skipping";
-                                "token_in" => &token_in, "token_out" => &token_out
+                                "token_in" => %token_in_account, "token_out" => %token_out_account
                             );
                         }
                     }
@@ -221,14 +281,14 @@ impl ViewContract for SimulationClient {
                 let wnear_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
                 deposits.insert(
                     wnear_token,
-                    serde_json::Value::String(state.cash_balance.to_string()),
+                    serde_json::Value::String(state.cash_balance.as_bigdecimal().to_string()),
                 );
 
                 // token holdings
-                for (token_id, amount) in &state.holdings {
+                for (token_account, amount) in &state.holdings {
                     deposits.insert(
-                        token_id.clone(),
-                        serde_json::Value::String(amount.to_string()),
+                        token_account.to_string(),
+                        serde_json::Value::String(amount.smallest_units().to_string()),
                     );
                 }
 
@@ -236,17 +296,15 @@ impl ViewContract for SimulationClient {
             }
             "ft_metadata" => {
                 // Look up decimals for the specific token (receiver)
-                // Try global cache first, fall back to portfolio state decimals
-                let receiver_str = receiver.to_string();
-                let receiver_token = common::types::TokenAccount::from(receiver.clone());
+                let receiver_token = TokenAccount::from(receiver.clone());
                 let decimals = trade::token_cache::get_cached_decimals(&receiver_token)
                     .or_else(|| {
-                        self.portfolio
-                            .try_lock()
-                            .ok()
-                            .and_then(|state| state.decimals.get(&receiver_str).copied())
+                        // Fall back to holdings decimals
+                        self.portfolio.try_lock().ok().and_then(|state| {
+                            state.holdings.get(&receiver_token).map(|a| a.decimals())
+                        })
                     })
-                    .unwrap_or(24);
+                    .unwrap_or(DEFAULT_DECIMALS);
                 let metadata = json!({
                     "spec": "ft-1.0.0",
                     "name": "SimToken",
