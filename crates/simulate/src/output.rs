@@ -1,5 +1,5 @@
 use crate::cli::Cli;
-use crate::portfolio_state::{PortfolioState, SwapMethod, to_u128_or_warn};
+use crate::portfolio_state::{PortfolioState, SwapMethod, pnl_to_near, to_u128_or_warn};
 use anyhow::Result;
 use bigdecimal::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -256,9 +256,7 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
             max_drawdown: 0.0,
             win_rate: 0.0,
             final_balance_near: initial_capital,
-            // Note: i128 -> f64 loses precision beyond 2^53 yoctoNEAR (~0.009 NEAR);
-            // acceptable for display metrics.
-            total_realized_pnl_near: realized_pnl as f64 / 1e24,
+            total_realized_pnl_near: pnl_to_near(realized_pnl),
             trade_count,
             liquidation_count,
             swap_stats,
