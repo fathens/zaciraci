@@ -160,7 +160,9 @@ impl PortfolioState {
         let to_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_to));
 
         // Pre-compute cost basis transfer for direct token-to-token swaps.
-        // Must be done before record_sell_pnl modifies cost_basis.
+        // IMPORTANT: Must be done before record_sell_pnl modifies cost_basis.
+        // This value is also reused as sell_proceeds_yocto for non-WNEAR destinations,
+        // avoiding a duplicate call to average_cost_of_sold.
         let transferred_cost = if from_token != wnear && to_token != wnear {
             self.average_cost_of_sold(from_token, actual_from, from_balance)
         } else {
@@ -182,7 +184,7 @@ impl PortfolioState {
             let sell_proceeds_yocto = if to_token == wnear {
                 actual_to
             } else {
-                self.average_cost_of_sold(from_token, actual_from, from_balance)
+                transferred_cost
             };
 
             self.record_sell_pnl(from_token, actual_from, sell_proceeds_yocto);
