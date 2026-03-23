@@ -1,6 +1,6 @@
 use crate::cli::Cli;
 use crate::portfolio_state::{
-    PortfolioState, SwapMethod, pnl_to_near, to_f64_or_warn, to_u128_or_warn,
+    PortfolioState, SwapEvent, SwapMethod, pnl_to_near, to_f64_or_warn, to_u128_or_warn,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,28 @@ pub struct SwapStats {
     pub pool_based_swaps: usize,
     pub fallback_swaps: usize,
     pub fallback_rate: f64,
+}
+
+impl SwapStats {
+    pub fn from_events(events: &[SwapEvent]) -> Self {
+        let total_swaps = events.len();
+        let pool_based_swaps = events
+            .iter()
+            .filter(|e| e.swap_method == SwapMethod::PoolBased)
+            .count();
+        let fallback_swaps = total_swaps - pool_based_swaps;
+        let fallback_rate = if total_swaps > 0 {
+            fallback_swaps as f64 / total_swaps as f64
+        } else {
+            0.0
+        };
+        Self {
+            total_swaps,
+            pool_based_swaps,
+            fallback_swaps,
+            fallback_rate,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -176,18 +198,7 @@ impl SimulationResult {
             })
             .collect();
 
-        let total_swaps = state.swap_events.len();
-        let pool_based_swaps = state
-            .swap_events
-            .iter()
-            .filter(|e| e.swap_method == SwapMethod::PoolBased)
-            .count();
-        let fallback_swaps = total_swaps - pool_based_swaps;
-        let fallback_rate = if total_swaps > 0 {
-            fallback_swaps as f64 / total_swaps as f64
-        } else {
-            0.0
-        };
+        let swap_stats = SwapStats::from_events(&state.swap_events);
 
         let trade_count = state
             .trades
@@ -207,12 +218,7 @@ impl SimulationResult {
             trade_count,
             liquidation_count,
             rebalance_interval_days: cli.rebalance_interval_days,
-            swap_stats: SwapStats {
-                total_swaps,
-                pool_based_swaps,
-                fallback_swaps,
-                fallback_rate,
-            },
+            swap_stats,
         });
 
         Ok(Self {

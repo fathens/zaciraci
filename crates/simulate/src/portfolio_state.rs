@@ -117,7 +117,7 @@ pub(crate) struct SwapResult {
 
 /// Method used for swap output calculation during simulation.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) enum SwapMethod {
+pub enum SwapMethod {
     /// Pool-based estimate_return (fee + slippage aware)
     PoolBased,
     /// Fallback to DB rate conversion (no fee/slippage)
