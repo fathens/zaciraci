@@ -388,6 +388,162 @@ async fn exec_contract_swap_none_amount_in_is_noop() {
 }
 
 // ---------------------------------------------------------------------------
+// estimate_swap_via_pools (pool-based swap calculation)
+// ---------------------------------------------------------------------------
+
+fn make_simple_pool(
+    id: u32,
+    token_a: &str,
+    token_b: &str,
+    amount_a: u128,
+    amount_b: u128,
+    total_fee: u32,
+) -> std::sync::Arc<dex::PoolInfo> {
+    use dex::{PoolInfo, PoolInfoBared};
+
+    std::sync::Arc::new(PoolInfo::new(
+        id,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![token_a.parse().unwrap(), token_b.parse().unwrap()],
+            amounts: vec![U128(amount_a), U128(amount_b)],
+            total_fee,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        chrono::Utc::now().naive_utc(),
+    ))
+}
+
+#[test]
+fn estimate_swap_single_hop_with_fee() {
+    // Pool: wNEAR/USDT, 1000 NEAR liquidity, 5000 USDT liquidity, 0.3% fee
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000, // 1000 NEAR (24 decimals)
+        5_000_000_000,                         // 5000 USDT (6 decimals)
+        30,                                    // 0.3% fee
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)), // 1 NEAR
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000);
+
+    // With xy=k and 0.3% fee, output should be less than 5 USDT (no-fee rate)
+    let output = result.unwrap();
+    assert!(output > 0, "output should be positive");
+    assert!(
+        output < 5_000_000,
+        "output should be less than 5 USDT (no-fee rate): got {output}"
+    );
+    // Rough check: 1 NEAR out of 1000 NEAR pool → ~0.1% of pool
+    // Expected ~4.985 USDT (price impact + fee)
+    assert!(
+        output > 4_900_000,
+        "output should be close to ~4.98 USDT: got {output}"
+    );
+}
+
+#[test]
+fn estimate_swap_multi_hop() {
+    // Hop 1: wNEAR → tokenA (pool 1)
+    // Hop 2: tokenA → tokenB (pool 2)
+    let pool1 = make_simple_pool(
+        1,
+        "wrap.near",
+        "token-a.near",
+        1_000_000_000_000_000_000_000_000_000,  // 1000 NEAR
+        10_000_000_000_000_000_000_000_000_000, // 10000 tokenA (24 decimals)
+        30,
+    );
+    let pool2 = make_simple_pool(
+        2,
+        "token-a.near",
+        "token-b.near",
+        5_000_000_000_000_000_000_000_000_000, // 5000 tokenA
+        2_000_000_000,                         // 2000 tokenB (6 decimals)
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool1, pool2]);
+
+    let actions = vec![
+        SwapAction {
+            pool_id: 1,
+            token_in: "wrap.near".parse().unwrap(),
+            amount_in: Some(U128(1_000_000_000_000_000_000_000_000)), // 1 NEAR
+            token_out: "token-a.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+        SwapAction {
+            pool_id: 2,
+            token_in: "token-a.near".parse().unwrap(),
+            amount_in: None, // uses output of previous hop
+            token_out: "token-b.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+    ];
+
+    let result = estimate_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000);
+    let output = result.unwrap();
+    // Should produce some tokenB, with fees deducted at each hop
+    assert!(output > 0, "multi-hop output should be positive");
+}
+
+#[test]
+fn estimate_swap_missing_pool_returns_none() {
+    // Empty pool list → pool_id=1 not found
+    let pools = dex::PoolInfoList::new(vec![]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_swap_via_pools(&pools, &actions, 1_000_000);
+    assert!(result.is_none(), "should return None when pool not found");
+}
+
+#[test]
+fn estimate_swap_token_not_in_pool_returns_none() {
+    // Pool has wNEAR/USDT but we try to swap wNEAR → tokenX
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000)),
+        token_out: "unknown-token.near".parse().unwrap(), // not in pool
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_swap_via_pools(&pools, &actions, 1_000_000);
+    assert!(
+        result.is_none(),
+        "should return None when token not in pool"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // MockSentTx
 // ---------------------------------------------------------------------------
 

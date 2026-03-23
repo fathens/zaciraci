@@ -38,6 +38,32 @@ impl SimulationClient {
     }
 }
 
+/// Walk SwapAction hops through pool estimate_return (pure calculation, no I/O).
+fn estimate_swap_via_pools(
+    pools: &dex::PoolInfoList,
+    swap_actions: &[SwapAction],
+    amount_in: u128,
+) -> Option<u128> {
+    let mut current_amount = amount_in;
+    for action in swap_actions {
+        let pool = pools.get(action.pool_id).ok()?;
+        let in_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_in)?;
+        let out_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_out)?;
+        current_amount = pool
+            .estimate_return(
+                dex::TokenIn::from(in_idx),
+                current_amount,
+                dex::TokenOut::from(out_idx),
+            )
+            .ok()?;
+    }
+    Some(current_amount)
+}
+
 impl SimulationClient {
     /// Calculate swap output by walking SwapAction hops through pool estimate_return.
     /// Falls back to DB rate conversion if pool data is unavailable.
@@ -50,25 +76,7 @@ impl SimulationClient {
         let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
             .await
             .ok()?;
-
-        let mut current_amount = amount_in;
-        for action in swap_actions {
-            let pool = pools.get(action.pool_id).ok()?;
-            let in_idx = pool
-                .tokens()
-                .position(|t| t.as_account_id() == &action.token_in)?;
-            let out_idx = pool
-                .tokens()
-                .position(|t| t.as_account_id() == &action.token_out)?;
-            current_amount = pool
-                .estimate_return(
-                    dex::TokenIn::from(in_idx),
-                    current_amount,
-                    dex::TokenOut::from(out_idx),
-                )
-                .ok()?;
-        }
-        Some(current_amount)
+        estimate_swap_via_pools(&pools, swap_actions, amount_in)
     }
 
     /// Fallback: calculate swap output using DB rates (no fee/slippage).
