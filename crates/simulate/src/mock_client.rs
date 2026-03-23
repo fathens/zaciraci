@@ -326,6 +326,8 @@ impl ViewContract for SimulationClient {
     {
         let result = match method_name {
             "get_deposits" => {
+                // Only portfolio is needed here (no sim_day dependency), so a
+                // single lock is fine — no lock-ordering concern.
                 let state = self.portfolio.lock().await;
                 let mut deposits = serde_json::Map::new();
 
