@@ -170,6 +170,110 @@ impl GasInfo for SimulationClient {
     }
 }
 
+impl SimulationClient {
+    /// Handle a simulated swap operation, returning the output amount.
+    ///
+    /// Parses swap actions, calculates output (pool-based or DB-rate fallback),
+    /// executes the swap on the portfolio, and records a `SwapEvent`.
+    /// Returns 0 when the swap is skipped (missing actions, zero amount, etc.).
+    async fn handle_swap(&self, args_value: serde_json::Value) -> anyhow::Result<u128> {
+        let log = DEFAULT.new(o!("function" => "SimulationClient::handle_swap"));
+
+        let Some(actions_array) = args_value.get("actions") else {
+            return Ok(0);
+        };
+        let swap_actions: Vec<SwapAction> = serde_json::from_value(actions_array.clone())?;
+        if swap_actions.is_empty() {
+            return Ok(0);
+        }
+
+        let first = &swap_actions[0];
+        let last = &swap_actions[swap_actions.len() - 1];
+        let token_in_account = TokenAccount::from(first.token_in.clone());
+        let token_out_account = TokenAccount::from(last.token_out.clone());
+        let amount_in = first.amount_in.map(|a| a.0).unwrap_or(0);
+        if amount_in == 0 {
+            return Ok(0);
+        }
+
+        // Try pool-based estimate_return first (fee + slippage aware)
+        let (amount_out, swap_method) = match self
+            .calculate_swap_output_via_pools(&swap_actions, amount_in)
+            .await
+        {
+            Some(out) => (out, SwapMethod::PoolBased),
+            None => {
+                // Fallback to DB rate conversion (no fee/slippage)
+                warn!(log, "pool data unavailable, falling back to DB rate";
+                    "token_in" => %token_in_account, "token_out" => %token_out_account
+                );
+                let out = self
+                    .calculate_swap_output_via_rates(
+                        &token_in_account,
+                        amount_in,
+                        &token_out_account,
+                    )
+                    .await;
+                (out, SwapMethod::DbRate)
+            }
+        };
+
+        if amount_out == 0 {
+            warn!(log, "swap output is zero, skipping";
+                "token_in" => %token_in_account, "token_out" => %token_out_account
+            );
+            return Ok(0);
+        }
+
+        // Lock order: sim_day before portfolio (must be
+        // consistent across all call sites to avoid deadlock).
+        let sim_day = *self.sim_day.lock().await;
+        let mut state = self.portfolio.lock().await;
+        let actual = state.execute_simulated_swap(
+            &token_in_account,
+            amount_in,
+            &token_out_account,
+            amount_out,
+        );
+
+        let Some(SwapResult {
+            actual_in,
+            actual_out,
+        }) = actual
+        else {
+            trace!(log, "swap skipped (insufficient balance or zero output)";
+                "token_in" => %token_in_account, "token_out" => %token_out_account
+            );
+            return Ok(0);
+        };
+
+        let decimals_in = decimals_for(&token_in_account);
+        let decimals_out = decimals_for(&token_out_account);
+        state.swap_events.push(SwapEvent {
+            timestamp: sim_day,
+            token_in: token_in_account.clone(),
+            amount_in: TokenAmount::from_smallest_units(BigDecimal::from(actual_in), decimals_in),
+            token_out: token_out_account.clone(),
+            amount_out: TokenAmount::from_smallest_units(
+                BigDecimal::from(actual_out),
+                decimals_out,
+            ),
+            swap_method,
+            pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
+        });
+
+        trace!(log, "simulated swap";
+            "token_in" => %token_in_account,
+            "amount_in" => actual_in,
+            "token_out" => %token_out_account,
+            "amount_out" => actual_out,
+            "swap_method" => ?swap_method
+        );
+
+        Ok(actual_out)
+    }
+}
+
 impl SendTx for SimulationClient {
     type Output = MockSentTx;
 
@@ -193,104 +297,10 @@ impl SendTx for SimulationClient {
     where
         T: Sized + serde::Serialize,
     {
-        let log = DEFAULT.new(o!("function" => "SimulationClient::exec_contract"));
-
         if method_name == "swap" {
-            // Parse swap actions from args
             let args_value = serde_json::to_value(&args)?;
-            if let Some(actions_array) = args_value.get("actions") {
-                let swap_actions: Vec<SwapAction> = serde_json::from_value(actions_array.clone())?;
-
-                if !swap_actions.is_empty() {
-                    let first = &swap_actions[0];
-                    let last = &swap_actions[swap_actions.len() - 1];
-
-                    let token_in_account = TokenAccount::from(first.token_in.clone());
-                    let token_out_account = TokenAccount::from(last.token_out.clone());
-                    let amount_in = first.amount_in.map(|a| a.0).unwrap_or(0);
-
-                    if amount_in > 0 {
-                        // Try pool-based estimate_return first (fee + slippage aware)
-                        let (amount_out, swap_method) = match self
-                            .calculate_swap_output_via_pools(&swap_actions, amount_in)
-                            .await
-                        {
-                            Some(out) => (out, SwapMethod::PoolBased),
-                            None => {
-                                // Fallback to DB rate conversion (no fee/slippage)
-                                warn!(log, "pool data unavailable, falling back to DB rate";
-                                    "token_in" => %token_in_account, "token_out" => %token_out_account
-                                );
-                                let out = self
-                                    .calculate_swap_output_via_rates(
-                                        &token_in_account,
-                                        amount_in,
-                                        &token_out_account,
-                                    )
-                                    .await;
-                                (out, SwapMethod::DbRate)
-                            }
-                        };
-
-                        if amount_out > 0 {
-                            // Lock order: sim_day before portfolio (must be
-                            // consistent across all call sites to avoid deadlock).
-                            let sim_day = *self.sim_day.lock().await;
-                            let mut state = self.portfolio.lock().await;
-                            let actual = state.execute_simulated_swap(
-                                &token_in_account,
-                                amount_in,
-                                &token_out_account,
-                                amount_out,
-                            );
-
-                            if let Some(SwapResult {
-                                actual_in,
-                                actual_out,
-                            }) = actual
-                            {
-                                let decimals_in = decimals_for(&token_in_account);
-                                let decimals_out = decimals_for(&token_out_account);
-                                state.swap_events.push(SwapEvent {
-                                    timestamp: sim_day,
-                                    token_in: token_in_account.clone(),
-                                    amount_in: TokenAmount::from_smallest_units(
-                                        BigDecimal::from(actual_in),
-                                        decimals_in,
-                                    ),
-                                    token_out: token_out_account.clone(),
-                                    amount_out: TokenAmount::from_smallest_units(
-                                        BigDecimal::from(actual_out),
-                                        decimals_out,
-                                    ),
-                                    swap_method,
-                                    pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
-                                });
-
-                                trace!(log, "simulated swap";
-                                    "token_in" => %token_in_account,
-                                    "amount_in" => actual_in,
-                                    "token_out" => %token_out_account,
-                                    "amount_out" => actual_out,
-                                    "swap_method" => ?swap_method
-                                );
-
-                                return Ok(MockSentTx {
-                                    output_amount: actual_out,
-                                });
-                            } else {
-                                trace!(log, "swap skipped (insufficient balance or zero output)";
-                                    "token_in" => %token_in_account, "token_out" => %token_out_account
-                                );
-                            }
-                        } else {
-                            warn!(log, "swap output is zero, skipping";
-                                "token_in" => %token_in_account, "token_out" => %token_out_account
-                            );
-                        }
-                    }
-                }
-            }
+            let output_amount = self.handle_swap(args_value).await?;
+            return Ok(MockSentTx { output_amount });
         }
 
         Ok(MockSentTx { output_amount: 0 })
