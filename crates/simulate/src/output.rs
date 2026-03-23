@@ -308,9 +308,7 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         max_drawdown,
         win_rate,
         final_balance_near: final_value,
-        // Note: i128 -> f64 loses precision beyond 2^53 yoctoNEAR (~0.009 NEAR);
-        // acceptable for display metrics.
-        total_realized_pnl_near: realized_pnl as f64 / 1e24,
+        total_realized_pnl_near: pnl_to_near(realized_pnl),
         trade_count,
         liquidation_count,
         swap_stats,

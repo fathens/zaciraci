@@ -53,6 +53,14 @@ pub(crate) fn pnl_to_near(pnl_yocto: i128) -> f64 {
     pnl_yocto as f64 / 1e24
 }
 
+/// Convert yoctoNEAR (u128) to NEAR (f64) for display metrics.
+///
+/// u128 → f64 loses precision beyond 2^53 yoctoNEAR (~9 nanoNEAR);
+/// acceptable for display metrics where sub-nanoNEAR accuracy is irrelevant.
+pub(crate) fn yocto_to_near(yocto: u128) -> f64 {
+    yocto as f64 / 1e24
+}
+
 /// Abstraction for token rate lookups.
 /// Allows injecting mock implementations for testing.
 pub trait RateProvider: Send + Sync {
@@ -474,11 +482,11 @@ impl PortfolioState {
                 action: "liquidation".to_string(),
                 token: token.clone(),
                 amount,
-                price_near: sell_yocto as f64 / 1e24,
+                price_near: yocto_to_near(sell_yocto),
                 realized_pnl_near: Some(pnl_near),
             });
 
-            trace!(log, "liquidated"; "token" => %token, "amount" => amount_raw, "proceeds" => sell_yocto as f64 / 1e24);
+            trace!(log, "liquidated"; "token" => %token, "amount" => amount_raw, "proceeds" => yocto_to_near(sell_yocto));
         }
 
         Ok(())
