@@ -1,7 +1,8 @@
 use crate::cli::Cli;
-use crate::portfolio_state::{PortfolioState, SwapMethod, pnl_to_near, to_u128_or_warn};
+use crate::portfolio_state::{
+    PortfolioState, SwapMethod, pnl_to_near, to_f64_or_warn, to_u128_or_warn,
+};
 use anyhow::Result;
-use bigdecimal::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -140,7 +141,10 @@ impl SimulationResult {
                     timestamp: s.timestamp.to_rfc3339(),
                     total_value: s.total_value_near,
                     holdings: holdings_map,
-                    cash_balance: s.cash_balance.as_bigdecimal().to_f64().unwrap_or(0.0) / 1e24,
+                    cash_balance: to_f64_or_warn(
+                        s.cash_balance.as_bigdecimal(),
+                        "snapshot_cash_balance",
+                    ) / 1e24,
                     daily_pnl_near,
                     daily_pnl_pct,
                     cumulative_realized_pnl_near: s.realized_pnl_near,

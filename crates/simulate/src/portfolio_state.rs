@@ -33,6 +33,18 @@ pub(crate) fn to_i128_or_warn(value: &BigDecimal, context: &str) -> i128 {
     })
 }
 
+/// BigDecimal を f64 に変換する。
+///
+/// 変換できない場合（Infinity、NaN 等）は warn ログを出力し 0.0 を返す。
+pub(crate) fn to_f64_or_warn(value: &BigDecimal, context: &str) -> f64 {
+    value.to_f64().unwrap_or_else(|| {
+        let log = DEFAULT.new(o!("function" => "to_f64_or_warn"));
+        warn!(log, "BigDecimal value cannot be converted to f64, defaulting to 0.0";
+            "context" => context, "value" => %value);
+        0.0
+    })
+}
+
 /// Convert yoctoNEAR (i128) to NEAR (f64) for display metrics.
 ///
 /// i128 → f64 loses precision beyond 2^53 yoctoNEAR (~9 nanoNEAR);
@@ -316,7 +328,8 @@ impl PortfolioState {
         let yocto_per_near: f64 = 1e24;
 
         // Cash portion (wrap.near)
-        let mut total = self.cash_balance.as_bigdecimal().to_f64().unwrap_or(0.0) / yocto_per_near;
+        let mut total =
+            to_f64_or_warn(self.cash_balance.as_bigdecimal(), "cash_balance") / yocto_per_near;
 
         // Holdings
         for (token_account, token_amount) in &self.holdings {
@@ -329,7 +342,8 @@ impl PortfolioState {
             match rate_provider.get_rate(&token_out, sim_day).await {
                 Some(rate) => {
                     let near_value = token_amount / &rate;
-                    let near_f64: f64 = near_value.as_bigdecimal().to_f64().unwrap_or(0.0);
+                    let near_f64: f64 =
+                        to_f64_or_warn(near_value.as_bigdecimal(), "token_near_value");
                     total += near_f64;
                 }
                 None => {
