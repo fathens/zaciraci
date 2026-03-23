@@ -1,5 +1,5 @@
 use crate::cli::Cli;
-use crate::portfolio_state::PortfolioState;
+use crate::portfolio_state::{PortfolioState, to_u128_or_warn};
 use anyhow::Result;
 use bigdecimal::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -85,7 +85,7 @@ impl SimulationResult {
                 timestamp: t.timestamp.to_rfc3339(),
                 action: t.action.clone(),
                 token: t.token.to_string(),
-                amount: t.amount.smallest_units().to_u128().unwrap_or(0),
+                amount: to_u128_or_warn(t.amount.smallest_units(), "trade_amount"),
                 price: t.price_near,
                 realized_pnl: t.realized_pnl_near,
             })
@@ -105,7 +105,12 @@ impl SimulationResult {
                 let holdings_map: BTreeMap<String, u128> = s
                     .holdings
                     .iter()
-                    .map(|(k, v)| (k.to_string(), v.smallest_units().to_u128().unwrap_or(0)))
+                    .map(|(k, v)| {
+                        (
+                            k.to_string(),
+                            to_u128_or_warn(v.smallest_units(), "snapshot_holdings"),
+                        )
+                    })
                     .collect();
                 values.push(PortfolioValueEntry {
                     timestamp: s.timestamp.to_rfc3339(),

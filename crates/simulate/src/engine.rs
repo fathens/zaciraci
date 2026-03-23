@@ -2,7 +2,7 @@ use crate::cli::Cli;
 use crate::mock_client::SimulationClient;
 use crate::mock_wallet::SimulationWallet;
 use crate::output::SimulationResult;
-use crate::portfolio_state::{DbRateProvider, PortfolioState};
+use crate::portfolio_state::{DbRateProvider, PortfolioState, to_u128_or_warn};
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::{NaiveTime, TimeZone, Utc};
@@ -43,10 +43,8 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     };
 
     // initial_native as u128 for SimulationClient (get_native_amount)
-    let initial_native_u128 = {
-        use num_traits::ToPrimitive;
-        initial_capital_yocto.as_bigdecimal().to_u128().unwrap_or(0)
-    };
+    let initial_native_u128 =
+        to_u128_or_warn(initial_capital_yocto.as_bigdecimal(), "initial_capital");
 
     // Initialize portfolio state
     let portfolio = Arc::new(Mutex::new(PortfolioState::new(initial_capital_yocto)));

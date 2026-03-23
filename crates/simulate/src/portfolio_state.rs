@@ -7,6 +7,16 @@ use persistence::token_rate::TokenRate;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Convert BigDecimal to u128, logging a warning and returning 0 if the value is out of range.
+pub(crate) fn to_u128_or_warn(value: &BigDecimal, context: &str) -> u128 {
+    value.to_u128().unwrap_or_else(|| {
+        let log = DEFAULT.new(o!("function" => "to_u128_or_warn"));
+        warn!(log, "BigDecimal value exceeds u128 range, defaulting to 0";
+            "context" => context, "value" => %value);
+        0
+    })
+}
+
 /// Abstraction for token rate lookups.
 /// Allows injecting mock implementations for testing.
 pub trait RateProvider: Send + Sync {
@@ -100,7 +110,7 @@ impl PortfolioState {
         // If from_amount exceeds available balance, we clamp and scale output
         // to maintain consistent input/output ratio.
         let (actual_from, actual_to) = if from_token == wnear {
-            let available = self.cash_balance.as_bigdecimal().to_u128().unwrap_or(0);
+            let available = to_u128_or_warn(self.cash_balance.as_bigdecimal(), "cash_balance");
             let actual = from_amount.min(available);
             if actual == 0 {
                 return;
@@ -111,7 +121,7 @@ impl PortfolioState {
             let current = self
                 .holdings
                 .get(from_token)
-                .map(|a| a.smallest_units().to_u128().unwrap_or(0))
+                .map(|a| to_u128_or_warn(a.smallest_units(), "holdings"))
                 .unwrap_or(0);
             let actual = from_amount.min(current);
             if actual == 0 {
@@ -131,7 +141,7 @@ impl PortfolioState {
             let current = self
                 .holdings
                 .get(from_token)
-                .map(|a| a.smallest_units().to_u128().unwrap_or(0))
+                .map(|a| to_u128_or_warn(a.smallest_units(), "holdings"))
                 .unwrap_or(0);
 
             // Subtract from holdings
@@ -197,7 +207,7 @@ impl PortfolioState {
         let actual_bd = BigDecimal::from(actual);
         let requested_bd = BigDecimal::from(requested);
         let scaled = (to_bd * actual_bd) / requested_bd;
-        scaled.to_u128().unwrap_or(0)
+        to_u128_or_warn(&scaled, "scale_output")
     }
 
     /// Record a daily portfolio snapshot
@@ -292,7 +302,7 @@ impl PortfolioState {
         let total_holding = self
             .holdings
             .get(token)
-            .map(|a| a.smallest_units().to_u128().unwrap_or(0))
+            .map(|a| to_u128_or_warn(a.smallest_units(), "holdings"))
             .unwrap_or(0)
             + sell_amount;
         let cost_of_sold = self.average_cost_of_sold(token, sell_amount, total_holding);
@@ -340,7 +350,7 @@ impl PortfolioState {
             .collect();
 
         for (token, amount) in tokens {
-            let amount_raw = amount.smallest_units().to_u128().unwrap_or(0);
+            let amount_raw = to_u128_or_warn(amount.smallest_units(), "liquidation_amount");
             let sell_yocto = self
                 .token_amount_to_yocto(&token, &amount, sim_day, rate_provider)
                 .await;
@@ -389,7 +399,7 @@ impl PortfolioState {
                 let near_value = amount / &rate;
                 // NearValue -> yoctoNEAR
                 let yocto = near_value.to_yocto();
-                yocto.as_bigdecimal().to_u128().unwrap_or(0)
+                to_u128_or_warn(yocto.as_bigdecimal(), "token_to_yocto")
             }
             None => 0,
         }

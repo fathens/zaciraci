@@ -1,4 +1,4 @@
-use crate::portfolio_state::{self, DEFAULT_DECIMALS, PortfolioState};
+use crate::portfolio_state::{self, DEFAULT_DECIMALS, PortfolioState, to_u128_or_warn};
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
@@ -89,8 +89,6 @@ impl SimulationClient {
         token_out: &TokenAccount,
     ) -> u128 {
         use common::types::{TokenAmount, YoctoValue};
-        use num_traits::ToPrimitive;
-
         let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
         let sim_day = *self.sim_day.lock().await;
@@ -116,7 +114,10 @@ impl SimulationClient {
 
         // NEAR value -> token_out amount
         if token_out == wnear {
-            near_value.to_yocto().as_bigdecimal().to_u128().unwrap_or(0)
+            to_u128_or_warn(
+                near_value.to_yocto().as_bigdecimal(),
+                "swap_rate_near_to_yocto",
+            )
         } else {
             let token_out_out = token_out.to_out();
 
@@ -127,7 +128,7 @@ impl SimulationClient {
                 };
 
             let token_amount = &near_value * &rate;
-            token_amount.smallest_units().to_u128().unwrap_or(0)
+            to_u128_or_warn(token_amount.smallest_units(), "swap_rate_token_amount")
         }
     }
 }
