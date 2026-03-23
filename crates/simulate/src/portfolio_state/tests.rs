@@ -115,6 +115,7 @@ fn new_sets_initial_capital() {
     assert!(state.holdings.is_empty());
     assert!(state.snapshots.is_empty());
     assert!(state.trades.is_empty());
+    assert!(state.swap_events.is_empty());
 }
 
 #[test]

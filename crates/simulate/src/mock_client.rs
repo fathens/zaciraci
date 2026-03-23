@@ -1,10 +1,12 @@
-use crate::portfolio_state::{self, DEFAULT_DECIMALS, PortfolioState, to_u128_or_warn};
+use crate::portfolio_state::{
+    self, DEFAULT_DECIMALS, PortfolioState, SwapEvent, SwapMethod, to_u128_or_warn,
+};
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
 use chrono::{DateTime, Utc};
-use common::types::TokenAccount;
+use common::types::{TokenAccount, TokenAmount};
 use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
@@ -201,26 +203,29 @@ impl SendTx for SimulationClient {
 
                     if amount_in > 0 {
                         // Try pool-based estimate_return first (fee + slippage aware)
-                        let amount_out = match self
+                        let (amount_out, swap_method) = match self
                             .calculate_swap_output_via_pools(&swap_actions, amount_in)
                             .await
                         {
-                            Some(out) => out,
+                            Some(out) => (out, SwapMethod::PoolBased),
                             None => {
                                 // Fallback to DB rate conversion (no fee/slippage)
                                 warn!(log, "pool data unavailable, falling back to DB rate";
                                     "token_in" => %token_in_account, "token_out" => %token_out_account
                                 );
-                                self.calculate_swap_output_via_rates(
-                                    &token_in_account,
-                                    amount_in,
-                                    &token_out_account,
-                                )
-                                .await
+                                let out = self
+                                    .calculate_swap_output_via_rates(
+                                        &token_in_account,
+                                        amount_in,
+                                        &token_out_account,
+                                    )
+                                    .await;
+                                (out, SwapMethod::DbRate)
                             }
                         };
 
                         if amount_out > 0 {
+                            let sim_day = *self.sim_day.lock().await;
                             let mut state = self.portfolio.lock().await;
                             state.execute_simulated_swap(
                                 &token_in_account,
@@ -229,11 +234,34 @@ impl SendTx for SimulationClient {
                                 amount_out,
                             );
 
+                            let decimals_in =
+                                trade::token_cache::get_cached_decimals(&token_in_account)
+                                    .unwrap_or(DEFAULT_DECIMALS);
+                            let decimals_out =
+                                trade::token_cache::get_cached_decimals(&token_out_account)
+                                    .unwrap_or(DEFAULT_DECIMALS);
+                            state.swap_events.push(SwapEvent {
+                                timestamp: sim_day,
+                                token_in: token_in_account.clone(),
+                                amount_in: TokenAmount::from_smallest_units(
+                                    BigDecimal::from(amount_in),
+                                    decimals_in,
+                                ),
+                                token_out: token_out_account.clone(),
+                                amount_out: TokenAmount::from_smallest_units(
+                                    BigDecimal::from(amount_out),
+                                    decimals_out,
+                                ),
+                                swap_method,
+                                pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
+                            });
+
                             trace!(log, "simulated swap";
                                 "token_in" => %token_in_account,
                                 "amount_in" => amount_in,
                                 "token_out" => %token_out_account,
-                                "amount_out" => amount_out
+                                "amount_out" => amount_out,
+                                "swap_method" => ?swap_method
                             );
 
                             return Ok(MockSentTx {

@@ -68,6 +68,27 @@ pub struct TradeRecord {
 /// Most native tokens use 24 decimals; used when the actual value is unknown.
 pub(crate) const DEFAULT_DECIMALS: u8 = 24;
 
+/// Method used for swap output calculation during simulation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SwapMethod {
+    /// Pool-based estimate_return (fee + slippage aware)
+    PoolBased,
+    /// Fallback to DB rate conversion (no fee/slippage)
+    DbRate,
+}
+
+/// Record of a single swap operation during simulation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwapEvent {
+    pub timestamp: DateTime<Utc>,
+    pub token_in: TokenAccount,
+    pub amount_in: TokenAmount,
+    pub token_out: TokenAccount,
+    pub amount_out: TokenAmount,
+    pub swap_method: SwapMethod,
+    pub pool_ids: Vec<u32>,
+}
+
 pub struct PortfolioState {
     /// wrap.near balance in yoctoNEAR
     pub cash_balance: YoctoValue,
@@ -83,6 +104,8 @@ pub struct PortfolioState {
     pub realized_pnl: i128,
     /// token -> cumulative realized P&L in yoctoNEAR (signed)
     pub realized_pnl_by_token: BTreeMap<TokenAccount, i128>,
+    /// swap event history
+    pub swap_events: Vec<SwapEvent>,
 }
 
 impl PortfolioState {
@@ -95,6 +118,7 @@ impl PortfolioState {
             cost_basis: BTreeMap::new(),
             realized_pnl: 0,
             realized_pnl_by_token: BTreeMap::new(),
+            swap_events: Vec::new(),
         }
     }
 
