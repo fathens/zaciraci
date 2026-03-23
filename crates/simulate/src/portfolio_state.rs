@@ -426,9 +426,10 @@ impl PortfolioState {
             *basis = basis.saturating_sub(&cost_of_sold);
         }
 
-        // Accumulate realized P&L
-        self.realized_pnl += pnl;
-        *self.realized_pnl_by_token.entry(token.clone()).or_insert(0) += pnl;
+        // Accumulate realized P&L (saturating to prevent silent wraparound in release builds)
+        self.realized_pnl = self.realized_pnl.saturating_add(pnl);
+        let token_pnl = self.realized_pnl_by_token.entry(token.clone()).or_insert(0);
+        *token_pnl = token_pnl.saturating_add(pnl);
 
         // Clean up cost_basis if position is fully closed
         let remaining = self
