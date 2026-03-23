@@ -2,7 +2,7 @@ use crate::cli::Cli;
 use crate::mock_client::SimulationClient;
 use crate::mock_wallet::SimulationWallet;
 use crate::output::SimulationResult;
-use crate::portfolio_state::{DbRateProvider, PortfolioState, to_u128_or_warn};
+use crate::portfolio_state::{DbRateProvider, PortfolioState};
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::{NaiveTime, TimeZone, Utc};
@@ -42,12 +42,10 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
         YoctoValue::from_yocto(&capital * &yocto_per_near)
     };
 
-    // initial_native as u128 for SimulationClient (get_native_amount)
-    let initial_native_u128 =
-        to_u128_or_warn(initial_capital_yocto.as_bigdecimal(), "initial_capital");
-
     // Initialize portfolio state
-    let portfolio = Arc::new(Mutex::new(PortfolioState::new(initial_capital_yocto)));
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(
+        initial_capital_yocto.clone(),
+    )));
 
     // Shared simulation date (updated each iteration, read by SimulationClient)
     let sim_day_shared = Arc::new(Mutex::new(Utc::now()));
@@ -55,7 +53,7 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     // Create mock client and wallet
     let sim_client = SimulationClient::new(
         Arc::clone(&portfolio),
-        initial_native_u128,
+        initial_capital_yocto,
         Arc::clone(&sim_day_shared),
     );
     let sim_wallet = SimulationWallet::new();

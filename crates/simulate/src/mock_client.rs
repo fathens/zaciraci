@@ -6,7 +6,7 @@ use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
 use chrono::{DateTime, Utc};
-use common::types::{TokenAccount, TokenAmount};
+use common::types::{TokenAccount, TokenAmount, YoctoValue};
 use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
@@ -27,7 +27,7 @@ use tokio::sync::Mutex;
 /// across all call sites.
 pub struct SimulationClient {
     portfolio: Arc<Mutex<PortfolioState>>,
-    initial_native: u128,
+    initial_native: YoctoValue,
     sim_day: Arc<Mutex<DateTime<Utc>>>,
 }
 
@@ -43,7 +43,7 @@ fn decimals_for(token: &TokenAccount) -> u8 {
 impl SimulationClient {
     pub fn new(
         portfolio: Arc<Mutex<PortfolioState>>,
-        initial_native: u128,
+        initial_native: YoctoValue,
         sim_day: Arc<Mutex<DateTime<Utc>>>,
     ) -> Self {
         Self {
@@ -265,7 +265,10 @@ impl SimulationClient {
 
 impl AccountInfo for SimulationClient {
     async fn get_native_amount(&self, _account: &AccountId) -> anyhow::Result<NearToken> {
-        Ok(NearToken::from_yoctonear(self.initial_native))
+        Ok(NearToken::from_yoctonear(to_u128_or_warn(
+            self.initial_native.as_bigdecimal(),
+            "initial_native",
+        )))
     }
 }
 
