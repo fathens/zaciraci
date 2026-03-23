@@ -166,7 +166,7 @@ impl PortfolioState {
         let transferred_cost = if from_token != wnear && to_token != wnear {
             self.average_cost_of_sold(from_token, actual_from, from_balance)
         } else {
-            0
+            YoctoValue::zero()
         };
 
         // Deduct from source
@@ -182,12 +182,12 @@ impl PortfolioState {
 
             // Determine sell proceeds for P&L calculation.
             let sell_proceeds_yocto = if to_token == wnear {
-                actual_to
+                YoctoValue::from_yocto(BigDecimal::from(actual_to))
             } else {
-                transferred_cost
+                transferred_cost.clone()
             };
 
-            self.record_sell_pnl(from_token, actual_from, sell_proceeds_yocto);
+            self.record_sell_pnl(from_token, actual_from, &sell_proceeds_yocto);
 
             // Clean up holdings if position is fully closed
             if self
@@ -220,7 +220,7 @@ impl PortfolioState {
                     .or_insert_with(YoctoValue::zero);
                 let current_basis = mem::replace(basis, YoctoValue::zero());
                 *basis = current_basis + from_yocto;
-            } else if transferred_cost > 0 {
+            } else if !transferred_cost.is_zero() {
                 // Direct token-to-token swap: transfer proportional cost basis
                 // from the sold token to the acquired token.
                 let basis = self
@@ -228,7 +228,7 @@ impl PortfolioState {
                     .entry(to_token.clone())
                     .or_insert_with(YoctoValue::zero);
                 let current_basis = mem::replace(basis, YoctoValue::zero());
-                *basis = current_basis + YoctoValue::from_yocto(BigDecimal::from(transferred_cost));
+                *basis = current_basis + transferred_cost;
             }
         }
 
@@ -314,26 +314,31 @@ impl PortfolioState {
     /// Compute the cost of the sold portion using average cost basis method.
     ///
     /// `total_holding` is the holding amount *before* the sell (including `sell_amount`).
+    /// Uses `BigDecimal` internally to avoid overflow and precision loss from integer
+    /// division that the previous `u128`-based implementation suffered from.
     fn average_cost_of_sold(
         &self,
         token: &TokenAccount,
         sell_amount: u128,
         total_holding: u128,
-    ) -> u128 {
+    ) -> YoctoValue {
         let total_cost = self
             .cost_basis
             .get(token)
-            .and_then(|v| v.as_bigdecimal().to_u128())
-            .unwrap_or(0);
-        if sell_amount == total_holding {
+            .cloned()
+            .unwrap_or_else(YoctoValue::zero);
+        if total_cost.is_zero() || sell_amount == 0 {
+            YoctoValue::zero()
+        } else if sell_amount == total_holding {
             total_cost
         } else if total_holding > 0 {
-            total_cost
-                .checked_mul(sell_amount)
-                .map(|v| v / total_holding)
-                .unwrap_or_else(|| (total_cost / total_holding) * sell_amount)
+            // BigDecimal multiplication/division: no overflow, full precision.
+            // Truncate to integer (floor) since yoctoNEAR is an integer unit.
+            let result = total_cost.as_bigdecimal() * BigDecimal::from(sell_amount)
+                / BigDecimal::from(total_holding);
+            YoctoValue::from_yocto(result.with_scale_round(0, bigdecimal::RoundingMode::Down))
         } else {
-            0
+            YoctoValue::zero()
         }
     }
 
@@ -343,7 +348,7 @@ impl PortfolioState {
         &mut self,
         token: &TokenAccount,
         sell_amount: u128,
-        sell_proceeds_yocto: u128,
+        sell_proceeds_yocto: &YoctoValue,
     ) -> f64 {
         let total_holding = self
             .holdings
@@ -353,13 +358,14 @@ impl PortfolioState {
             + sell_amount;
         let cost_of_sold = self.average_cost_of_sold(token, sell_amount, total_holding);
 
+        // P&L = proceeds - cost (using BigDecimal for precision)
+        let pnl_bd = sell_proceeds_yocto.as_bigdecimal() - cost_of_sold.as_bigdecimal();
         // Safety: i128::MAX (~1.7e38 yoctoNEAR = ~1.7e14 NEAR) far exceeds realistic values.
-        let pnl = sell_proceeds_yocto as i128 - cost_of_sold as i128;
+        let pnl = pnl_bd.to_i128().unwrap_or(0);
 
         // Update cost basis (subtract the sold portion)
         if let Some(basis) = self.cost_basis.get_mut(token) {
-            let cost_yocto = YoctoValue::from_yocto(BigDecimal::from(cost_of_sold));
-            *basis = basis.saturating_sub(&cost_yocto);
+            *basis = basis.saturating_sub(&cost_of_sold);
         }
 
         // Accumulate realized P&L
@@ -408,10 +414,11 @@ impl PortfolioState {
 
             self.holdings.remove(&token);
             let sell_yocto_value = YoctoValue::from_yocto(BigDecimal::from(sell_yocto));
+
+            let pnl_near = self.record_sell_pnl(&token, amount_raw, &sell_yocto_value);
+
             let balance = mem::replace(&mut self.cash_balance, YoctoValue::zero());
             self.cash_balance = balance + sell_yocto_value;
-
-            let pnl_near = self.record_sell_pnl(&token, amount_raw, sell_yocto);
 
             self.trades.push(TradeRecord {
                 timestamp: sim_day,

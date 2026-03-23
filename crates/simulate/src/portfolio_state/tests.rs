@@ -798,3 +798,51 @@ fn swap_skipped_when_scaled_output_is_zero() {
     assert_eq!(state.cash_balance, yocto(NEAR_100));
     assert!(state.holdings.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// average_cost_of_sold precision (BigDecimal eliminates overflow-fallback error)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cost_basis_transfer_precision_with_large_values() {
+    // Scenario: total_cost = 10e24, total_holding = 3e24, sell_amount = 1e24
+    // Exact: 10e24 * 1e24 / 3e24 = 3_333_333_333_333_333_333_333_333 (truncated)
+    //
+    // Old u128 implementation: checked_mul(10e24, 1e24) overflows u128,
+    // fallback = (10e24 / 3e24) * 1e24 = 3 * 1e24 = 3e24 (error ~0.33 NEAR).
+    // New BigDecimal implementation: exact result, no overflow.
+    let ten_near = 10_000_000_000_000_000_000_000_000u128;
+    let three_near = 3_000_000_000_000_000_000_000_000u128;
+    let one_near = 1_000_000_000_000_000_000_000_000u128;
+
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+    state
+        .holdings
+        .insert(token_a(), token_amount_24d(three_near));
+    state.cost_basis.insert(token_a(), yocto(ten_near));
+
+    // Sell 1/3 of holdings → TOKEN_B
+    let token_b_amount = 500_000u128;
+    let _ = state.execute_simulated_swap(&token_a(), one_near, &token_b(), token_b_amount);
+
+    // Expected transferred cost: 10e24 / 3 = 3_333_333_333_333_333_333_333_333 (truncated)
+    let expected_cost = BigDecimal::from(ten_near) / BigDecimal::from(3u64);
+    let expected_yocto =
+        YoctoValue::from_yocto(expected_cost.with_scale_round(0, bigdecimal::RoundingMode::Down));
+
+    assert_eq!(
+        state.cost_basis[&token_b()],
+        expected_yocto,
+        "cost basis should be precise, not rounded to 3e24"
+    );
+
+    // Remaining cost basis for TOKEN_A: 10e24 - expected_cost
+    let remaining = state.cost_basis.get(&token_a()).cloned().unwrap();
+    let total_accounted = remaining.as_bigdecimal() + expected_yocto.as_bigdecimal();
+    // Total accounted should equal original cost (within 1 yocto truncation tolerance)
+    let diff = (total_accounted - BigDecimal::from(ten_near)).abs();
+    assert!(
+        diff <= 1u64,
+        "cost basis conservation violated: diff = {diff}"
+    );
+}
