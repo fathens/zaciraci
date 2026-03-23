@@ -751,8 +751,7 @@ where
         };
 
         // 実際のポートフォリオ総価値を計算
-        let total_value_near =
-            swap::calculate_total_portfolio_value(client, wallet, &current_balances).await?;
+        let total_value_near = swap::calculate_total_portfolio_value(&current_balances).await?;
 
         // wrap.near の残高を cash_balance として使用
         let cash_balance_near = current_balances

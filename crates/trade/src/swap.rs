@@ -46,67 +46,14 @@ where
 }
 
 /// ポートフォリオの総価値を計算（NEAR単位）
-pub async fn calculate_total_portfolio_value<C, W>(
-    _client: &C,
-    _wallet: &W,
+pub async fn calculate_total_portfolio_value(
     current_balances: &BTreeMap<TokenAccount, TokenAmount>,
-) -> Result<NearValue>
-where
-    C: blockchain::jsonrpc::AccountInfo
-        + blockchain::jsonrpc::SendTx
-        + blockchain::jsonrpc::ViewContract
-        + blockchain::jsonrpc::GasInfo,
-    W: blockchain::wallet::Wallet,
-{
-    use common::types::ExchangeRate;
-
-    let log = DEFAULT.new(o!("function" => "calculate_total_portfolio_value"));
-    let mut total_value = NearValue::zero();
-
-    let wnear_token = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
-
-    for (token, amount) in current_balances {
-        if amount.is_zero() {
-            continue;
-        }
-
-        // wrap.nearの場合はそのまま価値とする（decimals=24）
-        if token == wnear_token {
-            // wrap.near: 1 NEAR = 1 wNEAR (固定レート)
-            let rate = ExchangeRate::wnear();
-            let value = amount / &rate;
-            total_value = total_value + value;
-        } else {
-            // 他のトークンの場合は、wrap.nearとの交換レートを使用して価値を計算
-            use common::types::TokenOutAccount;
-            use persistence::token_rate::TokenRate;
-
-            let base_token: TokenOutAccount = token.clone().into();
-            let quote_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-
-            // 最新のレートを取得
-            match TokenRate::get_latest(&base_token, &quote_token).await {
-                Ok(Some(rate)) => {
-                    let spot = rate.to_spot_rate();
-                    if spot.is_effectively_zero() {
-                        warn!(log, "Rate is effectively zero for token"; "token" => %token);
-                    } else {
-                        let token_value = amount / &spot;
-                        total_value = total_value + token_value;
-                    }
-                }
-                Ok(None) => {
-                    warn!(log, "No price data found for token"; "token" => %token);
-                }
-                Err(e) => {
-                    warn!(log, "Failed to get price for token"; "token" => %token, "error" => %e);
-                }
-            }
-        }
-    }
-
-    trace!(log, "calculated total portfolio value"; "total_value" => %total_value);
-    Ok(total_value)
+) -> Result<NearValue> {
+    crate::valuation::calculate_portfolio_value(
+        current_balances,
+        &crate::valuation::LatestRateProvider,
+    )
+    .await
 }
 
 /// 2つのトークン間で直接スワップを実行（シンプルなパス探索を使用）
