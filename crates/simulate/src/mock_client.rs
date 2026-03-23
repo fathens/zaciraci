@@ -26,6 +26,10 @@ pub struct SimulationClient {
     sim_day: Arc<Mutex<DateTime<Utc>>>,
 }
 
+fn decimals_for(token: &TokenAccount) -> u8 {
+    trade::token_cache::get_cached_decimals(token).unwrap_or(DEFAULT_DECIMALS)
+}
+
 impl SimulationClient {
     pub fn new(
         portfolio: Arc<Mutex<PortfolioState>>,
@@ -120,8 +124,7 @@ impl SimulationClient {
                     None => return 0,
                 };
 
-            let decimals_in =
-                trade::token_cache::get_cached_decimals(token_in).unwrap_or(DEFAULT_DECIMALS);
+            let decimals_in = decimals_for(token_in);
             let token_amount =
                 TokenAmount::from_smallest_units(BigDecimal::from(amount_in), decimals_in);
             &token_amount / &rate
@@ -235,12 +238,8 @@ impl SendTx for SimulationClient {
                             );
 
                             if let Some((actual_in, actual_out)) = actual {
-                                let decimals_in =
-                                    trade::token_cache::get_cached_decimals(&token_in_account)
-                                        .unwrap_or(DEFAULT_DECIMALS);
-                                let decimals_out =
-                                    trade::token_cache::get_cached_decimals(&token_out_account)
-                                        .unwrap_or(DEFAULT_DECIMALS);
+                                let decimals_in = decimals_for(&token_in_account);
+                                let decimals_out = decimals_for(&token_out_account);
                                 state.swap_events.push(SwapEvent {
                                     timestamp: sim_day,
                                     token_in: token_in_account.clone(),
