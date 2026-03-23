@@ -61,6 +61,17 @@ pub(crate) fn yocto_to_near(yocto: u128) -> f64 {
     yocto as f64 / 1e24
 }
 
+/// Add two `i128` values, saturating on overflow and logging a warning.
+fn checked_add_or_saturate(a: i128, b: i128, context: &str) -> i128 {
+    a.checked_add(b).unwrap_or_else(|| {
+        let log = DEFAULT.new(o!("function" => "checked_add_or_saturate"));
+        let saturated = if b > 0 { i128::MAX } else { i128::MIN };
+        warn!(log, "i128 overflow in P&L accumulation, saturating";
+            "context" => context, "a" => %a, "b" => %b, "saturated_to" => %saturated);
+        saturated
+    })
+}
+
 /// Abstraction for token rate lookups.
 /// Allows injecting mock implementations for testing.
 pub trait RateProvider: Send + Sync {
@@ -448,10 +459,11 @@ impl PortfolioState {
             *basis = basis.saturating_sub(&cost_of_sold);
         }
 
-        // Accumulate realized P&L (saturating to prevent silent wraparound in release builds)
-        self.realized_pnl = self.realized_pnl.saturating_add(pnl);
+        // Accumulate realized P&L (checked to detect overflow, which would indicate
+        // an unrealistic scenario — i128::MAX ≈ 1.7e14 NEAR).
+        self.realized_pnl = checked_add_or_saturate(self.realized_pnl, pnl, "realized_pnl");
         let token_pnl = self.realized_pnl_by_token.entry(token.clone()).or_insert(0);
-        *token_pnl = token_pnl.saturating_add(pnl);
+        *token_pnl = checked_add_or_saturate(*token_pnl, pnl, "realized_pnl_by_token");
 
         // Clean up cost_basis if position is fully closed
         let remaining = self
