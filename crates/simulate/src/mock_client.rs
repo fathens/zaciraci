@@ -167,12 +167,12 @@ impl SimulationClient {
             return Ok(0);
         };
         let swap_actions: Vec<SwapAction> = serde_json::from_value(actions_array.clone())?;
-        if swap_actions.is_empty() {
+        let Some(first) = swap_actions.first() else {
             return Ok(0);
-        }
-
-        let first = &swap_actions[0];
-        let last = swap_actions.last().expect("checked non-empty above");
+        };
+        let Some(last) = swap_actions.last() else {
+            return Ok(0);
+        };
         let token_in_account = TokenAccount::from(first.token_in.clone());
         let token_out_account = TokenAccount::from(last.token_out.clone());
         let amount_in = first.amount_in.map(u128::from).unwrap_or(0);
