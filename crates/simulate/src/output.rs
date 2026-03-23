@@ -263,7 +263,23 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         };
     }
 
-    let final_value = snapshots.last().unwrap().total_value_near;
+    // Safety: snapshots.is_empty() is checked above, but use defensive pattern
+    // to avoid panics if the guard is ever moved or removed.
+    let Some(last) = snapshots.last() else {
+        return PerformanceMetrics {
+            total_return: 0.0,
+            sharpe_ratio: 0.0,
+            sortino_ratio: 0.0,
+            max_drawdown: 0.0,
+            win_rate: 0.0,
+            final_balance_near: initial_capital,
+            total_realized_pnl_near: realized_pnl as f64 / 1e24,
+            trade_count,
+            liquidation_count,
+            swap_stats,
+        };
+    };
+    let final_value = last.total_value_near;
     let total_return = if initial_capital > 0.0 {
         (final_value - initial_capital) / initial_capital
     } else {
