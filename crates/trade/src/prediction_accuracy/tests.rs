@@ -291,20 +291,7 @@ fn test_new_prediction_record_target_time_with_past_data_cutoff() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token.clone(), (price, data_cutoff_time));
 
-    let records: Vec<NewPredictionRecord> = predictions
-        .iter()
-        .map(|(token, (price, data_cutoff_time))| {
-            let target_time =
-                *data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
-            NewPredictionRecord {
-                token: token.to_string(),
-                quote_token: quote_token.to_string(),
-                predicted_price: price.as_bigdecimal().clone(),
-                data_cutoff_time: *data_cutoff_time,
-                target_time,
-            }
-        })
-        .collect();
+    let records = build_prediction_records(&predictions, &quote_token);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
@@ -333,20 +320,7 @@ fn test_new_prediction_record_target_time_far_in_past() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token, (price, data_cutoff_time));
 
-    let records: Vec<NewPredictionRecord> = predictions
-        .iter()
-        .map(|(token, (price, data_cutoff_time))| {
-            let target_time =
-                *data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
-            NewPredictionRecord {
-                token: token.to_string(),
-                quote_token: quote_token.to_string(),
-                predicted_price: price.as_bigdecimal().clone(),
-                data_cutoff_time: *data_cutoff_time,
-                target_time,
-            }
-        })
-        .collect();
+    let records = build_prediction_records(&predictions, &quote_token);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];

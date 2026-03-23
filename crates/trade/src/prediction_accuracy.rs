@@ -107,16 +107,12 @@ fn calculate_composite_confidence(
     }
 }
 
-/// 予測結果を prediction_records テーブルに記録する。
-///
-/// DB 操作: INSERT INTO prediction_records (トークン数分)
-pub async fn record_predictions(
+/// BTreeMap から NewPredictionRecord の Vec を生成する（DB 非依存）。
+fn build_prediction_records(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
-) -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "record_predictions"));
-
-    let records: Vec<NewPredictionRecord> = predictions
+) -> Vec<NewPredictionRecord> {
+    predictions
         .iter()
         .map(|(token, (price, data_cutoff_time))| {
             let target_time =
@@ -129,7 +125,19 @@ pub async fn record_predictions(
                 target_time,
             }
         })
-        .collect();
+        .collect()
+}
+
+/// 予測結果を prediction_records テーブルに記録する。
+///
+/// DB 操作: INSERT INTO prediction_records (トークン数分)
+pub async fn record_predictions(
+    predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
+    quote_token: &TokenInAccount,
+) -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "record_predictions"));
+
+    let records = build_prediction_records(predictions, quote_token);
 
     info!(log, "recording predictions"; "count" => records.len());
     PredictionRecord::batch_insert(&records).await?;
