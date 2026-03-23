@@ -154,28 +154,7 @@ impl SimulationClient {
             to_u128_or_warn(token_amount.smallest_units(), "swap_rate_token_amount")
         }
     }
-}
 
-impl AccountInfo for SimulationClient {
-    async fn get_native_amount(&self, _account: &AccountId) -> anyhow::Result<NearToken> {
-        Ok(NearToken::from_yoctonear(self.initial_native))
-    }
-}
-
-impl GasInfo for SimulationClient {
-    async fn get_gas_price(&self, _block: Option<BlockId>) -> anyhow::Result<GasPrice> {
-        Ok(GasPrice::from_balance(NearToken::from_yoctonear(
-            100_000_000,
-        )))
-    }
-}
-
-impl SimulationClient {
-    /// Handle a simulated swap operation, returning the output amount.
-    ///
-    /// Parses swap actions, calculates output (pool-based or DB-rate fallback),
-    /// executes the swap on the portfolio, and records a `SwapEvent`.
-    /// Returns 0 when the swap is skipped (missing actions, zero amount, etc.).
     async fn handle_swap(&self, args_value: serde_json::Value) -> anyhow::Result<u128> {
         let log = DEFAULT.new(o!("function" => "SimulationClient::handle_swap"));
 
@@ -194,10 +173,10 @@ impl SimulationClient {
         }
 
         let first = &swap_actions[0];
-        let last = &swap_actions[swap_actions.len() - 1];
+        let last = swap_actions.last().expect("checked non-empty above");
         let token_in_account = TokenAccount::from(first.token_in.clone());
         let token_out_account = TokenAccount::from(last.token_out.clone());
-        let amount_in = first.amount_in.map(|a| a.0).unwrap_or(0);
+        let amount_in = first.amount_in.map(u128::from).unwrap_or(0);
         if amount_in == 0 {
             return Ok(0);
         }
@@ -277,6 +256,20 @@ impl SimulationClient {
         );
 
         Ok(actual_out)
+    }
+}
+
+impl AccountInfo for SimulationClient {
+    async fn get_native_amount(&self, _account: &AccountId) -> anyhow::Result<NearToken> {
+        Ok(NearToken::from_yoctonear(self.initial_native))
+    }
+}
+
+impl GasInfo for SimulationClient {
+    async fn get_gas_price(&self, _block: Option<BlockId>) -> anyhow::Result<GasPrice> {
+        Ok(GasPrice::from_balance(NearToken::from_yoctonear(
+            100_000_000,
+        )))
     }
 }
 
