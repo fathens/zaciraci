@@ -21,6 +21,18 @@ pub(crate) fn to_u128_or_warn(value: &BigDecimal, context: &str) -> u128 {
     })
 }
 
+/// BigDecimal を i128 に変換する。
+///
+/// 変換できない場合（小数部が残る、i128 範囲超過）は warn ログを出力し 0 を返す。
+pub(crate) fn to_i128_or_warn(value: &BigDecimal, context: &str) -> i128 {
+    value.to_i128().unwrap_or_else(|| {
+        let log = DEFAULT.new(o!("function" => "to_i128_or_warn"));
+        warn!(log, "BigDecimal value cannot be converted to i128, defaulting to 0";
+            "context" => context, "value" => %value);
+        0
+    })
+}
+
 /// Abstraction for token rate lookups.
 /// Allows injecting mock implementations for testing.
 pub trait RateProvider: Send + Sync {
@@ -67,6 +79,12 @@ pub struct TradeRecord {
 /// Default token decimals for NEAR ecosystem tokens.
 /// Most native tokens use 24 decimals; used when the actual value is unknown.
 pub(crate) const DEFAULT_DECIMALS: u8 = 24;
+
+/// Actual amounts of a successful simulated swap after balance clamping.
+pub struct SwapResult {
+    pub actual_in: u128,
+    pub actual_out: u128,
+}
 
 /// Method used for swap output calculation during simulation.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,7 +149,7 @@ impl PortfolioState {
         from_amount: u128,
         to_token: &TokenAccount,
         to_amount: u128,
-    ) -> Option<(u128, u128)> {
+    ) -> Option<SwapResult> {
         let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
 
         // Get the available balance for the source token (computed once, reused
@@ -232,7 +250,10 @@ impl PortfolioState {
             }
         }
 
-        Some((actual_from, actual_to))
+        Some(SwapResult {
+            actual_in: actual_from,
+            actual_out: actual_to,
+        })
     }
 
     /// Scale output amount proportionally when actual input is less than requested.
@@ -334,7 +355,7 @@ impl PortfolioState {
         } else if total_holding > 0 {
             // BigDecimal multiplication/division: no overflow, full precision.
             // Truncate to integer (floor) since yoctoNEAR is an integer unit.
-            let result = total_cost.as_bigdecimal() * BigDecimal::from(sell_amount)
+            let result = (total_cost.as_bigdecimal() * BigDecimal::from(sell_amount))
                 / BigDecimal::from(total_holding);
             YoctoValue::from_yocto(result.with_scale_round(0, bigdecimal::RoundingMode::Down))
         } else {
@@ -360,8 +381,7 @@ impl PortfolioState {
 
         // P&L = proceeds - cost (using BigDecimal for precision)
         let pnl_bd = sell_proceeds_yocto.as_bigdecimal() - cost_of_sold.as_bigdecimal();
-        // Safety: i128::MAX (~1.7e38 yoctoNEAR = ~1.7e14 NEAR) far exceeds realistic values.
-        let pnl = pnl_bd.to_i128().unwrap_or(0);
+        let pnl = to_i128_or_warn(&pnl_bd, "realized_pnl");
 
         // Update cost basis (subtract the sold portion)
         if let Some(basis) = self.cost_basis.get_mut(token) {

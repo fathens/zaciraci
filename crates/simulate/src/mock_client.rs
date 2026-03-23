@@ -1,5 +1,5 @@
 use crate::portfolio_state::{
-    self, DEFAULT_DECIMALS, PortfolioState, SwapEvent, SwapMethod, to_u128_or_warn,
+    self, DEFAULT_DECIMALS, PortfolioState, SwapEvent, SwapMethod, SwapResult, to_u128_or_warn,
 };
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
@@ -228,6 +228,8 @@ impl SendTx for SimulationClient {
                         };
 
                         if amount_out > 0 {
+                            // Lock order: sim_day before portfolio (must be
+                            // consistent across all call sites to avoid deadlock).
                             let sim_day = *self.sim_day.lock().await;
                             let mut state = self.portfolio.lock().await;
                             let actual = state.execute_simulated_swap(
@@ -237,7 +239,11 @@ impl SendTx for SimulationClient {
                                 amount_out,
                             );
 
-                            if let Some((actual_in, actual_out)) = actual {
+                            if let Some(SwapResult {
+                                actual_in,
+                                actual_out,
+                            }) = actual
+                            {
                                 let decimals_in = decimals_for(&token_in_account);
                                 let decimals_out = decimals_for(&token_out_account);
                                 state.swap_events.push(SwapEvent {
@@ -267,6 +273,10 @@ impl SendTx for SimulationClient {
                                 return Ok(MockSentTx {
                                     output_amount: actual_out,
                                 });
+                            } else {
+                                trace!(log, "swap skipped (insufficient balance or zero output)";
+                                    "token_in" => %token_in_account, "token_out" => %token_out_account
+                                );
                             }
                         } else {
                             warn!(log, "swap output is zero, skipping";

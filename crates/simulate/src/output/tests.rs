@@ -168,7 +168,15 @@ fn max_drawdown_multiple_drawdowns() {
 
 #[test]
 fn performance_empty_snapshots() {
-    let perf = calculate_performance(100.0, &[], 0, 0, 0, 1, SwapStats::default());
+    let perf = calculate_performance(PerformanceInput {
+        initial_capital: 100.0,
+        snapshots: &[],
+        realized_pnl: 0,
+        trade_count: 0,
+        liquidation_count: 0,
+        rebalance_interval_days: 1,
+        swap_stats: SwapStats::default(),
+    });
     assert_eq!(perf.total_return, 0.0);
     assert_eq!(perf.sharpe_ratio, 0.0);
     assert_eq!(perf.sortino_ratio, 0.0);
@@ -179,7 +187,15 @@ fn performance_empty_snapshots() {
 #[test]
 fn performance_single_snapshot() {
     let snapshots = vec![make_snapshot(110.0)];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
+    let perf = calculate_performance(PerformanceInput {
+        initial_capital: 100.0,
+        snapshots: &snapshots,
+        realized_pnl: 0,
+        trade_count: 0,
+        liquidation_count: 0,
+        rebalance_interval_days: 1,
+        swap_stats: SwapStats::default(),
+    });
     assert!(
         (perf.total_return - 0.1).abs() < 1e-10,
         "expected 10% return"
@@ -189,7 +205,15 @@ fn performance_single_snapshot() {
 #[test]
 fn performance_zero_initial_capital() {
     let snapshots = vec![make_snapshot(100.0)];
-    let perf = calculate_performance(0.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
+    let perf = calculate_performance(PerformanceInput {
+        initial_capital: 0.0,
+        snapshots: &snapshots,
+        realized_pnl: 0,
+        trade_count: 0,
+        liquidation_count: 0,
+        rebalance_interval_days: 1,
+        swap_stats: SwapStats::default(),
+    });
     assert_eq!(perf.total_return, 0.0);
 }
 
@@ -203,7 +227,15 @@ fn performance_win_rate() {
         make_snapshot(110.0), // down
         make_snapshot(120.0), // up
     ];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
+    let perf = calculate_performance(PerformanceInput {
+        initial_capital: 100.0,
+        snapshots: &snapshots,
+        realized_pnl: 0,
+        trade_count: 0,
+        liquidation_count: 0,
+        rebalance_interval_days: 1,
+        swap_stats: SwapStats::default(),
+    });
     assert!(
         (perf.win_rate - 0.6).abs() < 1e-10,
         "expected 60% win rate, got {}",
@@ -214,7 +246,15 @@ fn performance_win_rate() {
 #[test]
 fn performance_total_return_loss() {
     let snapshots = vec![make_snapshot(80.0)];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
+    let perf = calculate_performance(PerformanceInput {
+        initial_capital: 100.0,
+        snapshots: &snapshots,
+        realized_pnl: 0,
+        trade_count: 0,
+        liquidation_count: 0,
+        rebalance_interval_days: 1,
+        swap_stats: SwapStats::default(),
+    });
     assert!(
         (perf.total_return - (-0.2)).abs() < 1e-10,
         "expected -20% return"
@@ -395,15 +435,15 @@ fn portfolio_value_entry_daily_pnl() {
 fn performance_includes_new_fields() {
     let snapshots = vec![make_snapshot(110.0)];
     let realized_pnl: i128 = 5_000_000_000_000_000_000_000_000; // 5 NEAR
-    let perf = calculate_performance(
-        100.0,
-        &snapshots,
+    let perf = calculate_performance(PerformanceInput {
+        initial_capital: 100.0,
+        snapshots: &snapshots,
         realized_pnl,
-        10,
-        3,
-        1,
-        SwapStats::default(),
-    );
+        trade_count: 10,
+        liquidation_count: 3,
+        rebalance_interval_days: 1,
+        swap_stats: SwapStats::default(),
+    });
     assert!(
         (perf.final_balance_near - 110.0).abs() < 1e-10,
         "final balance: {}",

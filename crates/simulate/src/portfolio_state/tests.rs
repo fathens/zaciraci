@@ -328,10 +328,10 @@ fn swap_sell_more_than_holdings_scales_output() {
 
     // Try to sell 50 NEAR worth (more than holdings) for 50 NEAR proceeds
     let result = state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
-    let (actual_in, actual_out) = result.unwrap();
-    assert_eq!(actual_in, ten_near, "clamped to available balance");
+    let swap = result.unwrap();
+    assert_eq!(swap.actual_in, ten_near, "clamped to available balance");
     assert_eq!(
-        actual_out, ten_near,
+        swap.actual_out, ten_near,
         "output scaled proportionally: 50 * 10/50 = 10"
     );
 
@@ -355,8 +355,8 @@ fn swap_wnear_more_than_cash_scales_output() {
     // If 50 NEAR → 500 TOKEN_A, then 10 NEAR → 100 TOKEN_A
     let token_a_amount = 500_000_000_000_000_000_000_000_000u128;
     let result = state.execute_simulated_swap(&wnear(), NEAR_50, &token_a(), token_a_amount);
-    let (actual_in, _) = result.unwrap();
-    assert_eq!(actual_in, ten_near, "clamped to available cash");
+    let swap = result.unwrap();
+    assert_eq!(swap.actual_in, ten_near, "clamped to available cash");
 
     assert_eq!(state.cash_balance, YoctoValue::zero(), "all cash spent");
     // Scaled: 500 * 10/50 = 100

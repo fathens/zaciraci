@@ -196,20 +196,20 @@ impl SimulationResult {
             .filter(|t| t.action == "liquidation")
             .count();
 
-        let performance = calculate_performance(
-            cli.initial_capital,
-            &state.snapshots,
-            state.realized_pnl,
+        let performance = calculate_performance(PerformanceInput {
+            initial_capital: cli.initial_capital,
+            snapshots: &state.snapshots,
+            realized_pnl: state.realized_pnl,
             trade_count,
             liquidation_count,
-            cli.rebalance_interval_days,
-            SwapStats {
+            rebalance_interval_days: cli.rebalance_interval_days,
+            swap_stats: SwapStats {
                 total_swaps,
                 pool_based_swaps,
                 fallback_swaps,
                 fallback_rate,
             },
-        );
+        });
 
         Ok(Self {
             config,
@@ -227,15 +227,27 @@ impl SimulationResult {
     }
 }
 
-fn calculate_performance(
+struct PerformanceInput<'a> {
     initial_capital: f64,
-    snapshots: &[crate::portfolio_state::PortfolioSnapshot],
+    snapshots: &'a [crate::portfolio_state::PortfolioSnapshot],
     realized_pnl: i128,
     trade_count: usize,
     liquidation_count: usize,
     rebalance_interval_days: i64,
     swap_stats: SwapStats,
-) -> PerformanceMetrics {
+}
+
+fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
+    let PerformanceInput {
+        initial_capital,
+        snapshots,
+        realized_pnl,
+        trade_count,
+        liquidation_count,
+        rebalance_interval_days,
+        swap_stats,
+    } = input;
+
     if snapshots.is_empty() {
         return PerformanceMetrics {
             total_return: 0.0,
