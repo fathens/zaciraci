@@ -926,3 +926,108 @@ fn cost_basis_transfer_precision_with_large_values() {
         "cost basis conservation violated: diff = {diff}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// checked_add_or_saturate boundary tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn checked_add_or_saturate_normal() {
+    assert_eq!(checked_add_or_saturate(10, 20, "test"), 30);
+    assert_eq!(checked_add_or_saturate(-10, -20, "test"), -30);
+    assert_eq!(checked_add_or_saturate(10, -20, "test"), -10);
+}
+
+#[test]
+fn checked_add_or_saturate_positive_overflow_saturates_to_max() {
+    let result = checked_add_or_saturate(i128::MAX, 1, "test");
+    assert_eq!(
+        result,
+        i128::MAX,
+        "positive overflow should saturate to MAX"
+    );
+}
+
+#[test]
+fn checked_add_or_saturate_negative_overflow_saturates_to_min() {
+    let result = checked_add_or_saturate(i128::MIN, -1, "test");
+    assert_eq!(
+        result,
+        i128::MIN,
+        "negative overflow should saturate to MIN"
+    );
+}
+
+#[test]
+fn checked_add_or_saturate_no_overflow_at_boundary() {
+    // MAX + 0 and MIN + 0 should not overflow
+    assert_eq!(checked_add_or_saturate(i128::MAX, 0, "test"), i128::MAX);
+    assert_eq!(checked_add_or_saturate(i128::MIN, 0, "test"), i128::MIN);
+    // MAX + (-1) and MIN + 1 should not overflow (opposite signs)
+    assert_eq!(
+        checked_add_or_saturate(i128::MAX, -1, "test"),
+        i128::MAX - 1
+    );
+    assert_eq!(checked_add_or_saturate(i128::MIN, 1, "test"), i128::MIN + 1);
+}
+
+// ---------------------------------------------------------------------------
+// Cost basis conservation: multiple partial sells never exceed original total
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cost_basis_conservation_across_multiple_partial_sells() {
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+
+    // Buy 100 NEAR of TOKEN_A
+    let wnear = wnear();
+    let _ = state.execute_simulated_swap(&wnear, NEAR_100, &token_a(), NEAR_100);
+
+    let original_cost = state.cost_basis[&token_a()].clone();
+
+    // Sell in 7 unequal portions (deliberately awkward fractions)
+    let portions = [
+        NEAR_100 / 7,
+        NEAR_100 / 11,
+        NEAR_100 / 13,
+        NEAR_100 / 17,
+        NEAR_100 / 19,
+        NEAR_100 / 23,
+    ];
+    let mut total_transferred = YoctoValue::zero();
+    for portion in portions {
+        let before_cost = state
+            .cost_basis
+            .get(&token_a())
+            .cloned()
+            .unwrap_or_else(YoctoValue::zero);
+        let _ = state.execute_simulated_swap(&token_a(), portion, &wnear, portion);
+        let after_cost = state
+            .cost_basis
+            .get(&token_a())
+            .cloned()
+            .unwrap_or_else(YoctoValue::zero);
+        let deducted = before_cost.saturating_sub(&after_cost);
+        let balance = mem::replace(&mut total_transferred, YoctoValue::zero());
+        total_transferred = balance + deducted;
+    }
+
+    // Remaining cost basis + total transferred should not exceed original
+    let remaining_cost = state
+        .cost_basis
+        .get(&token_a())
+        .cloned()
+        .unwrap_or_else(YoctoValue::zero);
+    let total_accounted = remaining_cost.as_bigdecimal() + total_transferred.as_bigdecimal();
+    assert!(
+        total_accounted <= *original_cost.as_bigdecimal(),
+        "total accounted cost ({total_accounted}) must not exceed original ({original_cost})"
+    );
+    // And the difference should be at most the number of partial sells (rounding errors)
+    let diff = (original_cost.as_bigdecimal() - &total_accounted).abs();
+    assert!(
+        diff <= portions.len() as u64,
+        "conservation error {diff} exceeds tolerance of {} yocto",
+        portions.len()
+    );
+}
