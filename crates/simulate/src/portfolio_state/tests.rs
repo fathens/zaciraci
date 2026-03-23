@@ -258,7 +258,7 @@ fn swap_from_token_with_no_holdings() {
 }
 
 #[test]
-fn swap_sell_more_than_holdings() {
+fn swap_sell_more_than_holdings_scales_output() {
     let mut state = PortfolioState::new(YoctoValue::zero());
     let wnear = wnear();
 
@@ -267,13 +267,43 @@ fn swap_sell_more_than_holdings() {
     state.holdings.insert(token_a(), token_amount_24d(ten_near));
     state.cost_basis.insert(token_a(), yocto(ten_near));
 
-    // Try to sell 50 NEAR worth (more than holdings)
+    // Try to sell 50 NEAR worth (more than holdings) for 50 NEAR proceeds
     state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
 
-    // Only actual_deduct = min(50, 10) = 10 is deducted
+    // actual_deduct = min(50, 10) = 10, to_amount scaled to 10/50 * 50 = 10
     assert!(!state.holdings.contains_key(&token_a()));
     assert!(!state.cost_basis.contains_key(&token_a()));
-    assert_eq!(state.cash_balance, yocto(NEAR_50));
+    assert_eq!(
+        state.cash_balance,
+        yocto(ten_near),
+        "to_amount should be proportionally scaled: 50 * 10/50 = 10 NEAR"
+    );
+}
+
+#[test]
+fn swap_wnear_more_than_cash_scales_output() {
+    // Cash = 10 NEAR, try to spend 50 NEAR
+    let ten_near = 10_000_000_000_000_000_000_000_000u128;
+    let mut state = PortfolioState::new(yocto(ten_near));
+
+    // Try to buy TOKEN_A with 50 NEAR (more than cash balance)
+    // If 50 NEAR → 500 TOKEN_A, then 10 NEAR → 100 TOKEN_A
+    let token_a_amount = 500_000_000_000_000_000_000_000_000u128;
+    state.execute_simulated_swap(&wnear(), NEAR_50, &token_a(), token_a_amount);
+
+    assert_eq!(state.cash_balance, YoctoValue::zero(), "all cash spent");
+    // Scaled: 500 * 10/50 = 100
+    let expected_token_a = 100_000_000_000_000_000_000_000_000u128;
+    assert_eq!(
+        state.holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(expected_token_a),
+        "to_amount should be proportionally scaled"
+    );
+    assert_eq!(
+        state.cost_basis[&token_a()],
+        yocto(ten_near),
+        "cost basis should reflect actual amount spent"
+    );
 }
 
 #[test]

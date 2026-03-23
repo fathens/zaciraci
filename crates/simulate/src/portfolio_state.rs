@@ -91,8 +91,34 @@ impl PortfolioState {
         to_amount: u128,
     ) {
         let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
-        let from_yocto = YoctoValue::from_yocto(BigDecimal::from(from_amount));
-        let to_yocto = YoctoValue::from_yocto(BigDecimal::from(to_amount));
+
+        // Determine actual deduction and proportionally scale to_amount.
+        // If from_amount exceeds available balance, we clamp and scale output
+        // to maintain consistent input/output ratio.
+        let (actual_from, actual_to) = if from_token == wnear {
+            let available = self.cash_balance.as_bigdecimal().to_u128().unwrap_or(0);
+            let actual = from_amount.min(available);
+            if actual == 0 {
+                return;
+            }
+            let scaled_to = Self::scale_output(to_amount, actual, from_amount);
+            (actual, scaled_to)
+        } else {
+            let current = self
+                .holdings
+                .get(from_token)
+                .map(|a| a.smallest_units().to_u128().unwrap_or(0))
+                .unwrap_or(0);
+            let actual = from_amount.min(current);
+            if actual == 0 {
+                return;
+            }
+            let scaled_to = Self::scale_output(to_amount, actual, from_amount);
+            (actual, scaled_to)
+        };
+
+        let from_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_from));
+        let to_yocto = YoctoValue::from_yocto(BigDecimal::from(actual_to));
 
         // Deduct from source
         if from_token == wnear {
@@ -103,26 +129,21 @@ impl PortfolioState {
                 .get(from_token)
                 .map(|a| a.smallest_units().to_u128().unwrap_or(0))
                 .unwrap_or(0);
-            let actual_deduct = from_amount.min(current);
-            if actual_deduct == 0 {
-                // Cannot sell a token we don't hold — skip the entire swap
-                return;
-            }
 
             // Subtract from holdings
             if let Some(holding) = self.holdings.get_mut(from_token) {
-                let new_units = holding.smallest_units() - BigDecimal::from(actual_deduct);
+                let new_units = holding.smallest_units() - BigDecimal::from(actual_from);
                 *holding = TokenAmount::from_smallest_units(new_units, holding.decimals());
             }
 
             // Determine sell proceeds for P&L calculation.
             let sell_proceeds_yocto = if to_token == wnear {
-                to_amount
+                actual_to
             } else {
-                self.average_cost_of_sold(from_token, actual_deduct, current)
+                self.average_cost_of_sold(from_token, actual_from, current)
             };
 
-            self.record_sell_pnl(from_token, actual_deduct, sell_proceeds_yocto);
+            self.record_sell_pnl(from_token, actual_from, sell_proceeds_yocto);
 
             // Clean up holdings if position is fully closed
             if self
@@ -143,7 +164,7 @@ impl PortfolioState {
                 // Use decimals from existing holdings or default to 24
                 TokenAmount::zero(24)
             });
-            let new_units = entry.smallest_units() + BigDecimal::from(to_amount);
+            let new_units = entry.smallest_units() + BigDecimal::from(actual_to);
             *entry = TokenAmount::from_smallest_units(new_units, entry.decimals());
 
             // Track cost basis: the NEAR value of what we spent
@@ -160,6 +181,19 @@ impl PortfolioState {
             // REF Finance swaps are effectively 2-leg (token->WNEAR, WNEAR->token),
             // but should be addressed if direct token-to-token routes are added.
         }
+    }
+
+    /// Scale output amount proportionally when actual input is less than requested.
+    /// Uses BigDecimal for precision: `to_amount * actual / requested`.
+    fn scale_output(to_amount: u128, actual: u128, requested: u128) -> u128 {
+        if actual == requested {
+            return to_amount;
+        }
+        let to_bd = BigDecimal::from(to_amount);
+        let actual_bd = BigDecimal::from(actual);
+        let requested_bd = BigDecimal::from(requested);
+        let scaled = (to_bd * actual_bd) / requested_bd;
+        scaled.to_u128().unwrap_or(0)
     }
 
     /// Record a daily portfolio snapshot
