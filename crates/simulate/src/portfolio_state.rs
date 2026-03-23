@@ -116,6 +116,9 @@ pub(crate) struct SwapResult {
 }
 
 /// Method used for swap output calculation during simulation.
+///
+/// `pub` because it is used in public output types (`SwapEventEntry`, `SwapStats`)
+/// defined in the `output` module.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SwapMethod {
     /// Pool-based estimate_return (fee + slippage aware)

@@ -352,7 +352,11 @@ impl ViewContract for SimulationClient {
                 let receiver_token = TokenAccount::from(receiver.clone());
                 let decimals = trade::token_cache::get_cached_decimals(&receiver_token)
                     .or_else(|| {
-                        // Fall back to holdings decimals
+                        // Fall back to holdings decimals.
+                        // Uses try_lock (not lock) to avoid violating the sim_day→portfolio
+                        // lock ordering documented on SimulationClient. view_contract is
+                        // called without holding sim_day, so a blocking lock could deadlock
+                        // if another task holds portfolio and waits for sim_day.
                         self.portfolio.try_lock().ok().and_then(|state| {
                             state.holdings.get(&receiver_token).map(|a| a.decimals())
                         })
