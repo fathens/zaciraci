@@ -6,6 +6,7 @@ use logging::*;
 use persistence::token_rate::TokenRate;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::mem;
 
 /// Convert BigDecimal to u128, logging a warning and returning 0 if the value is out of range.
 pub(crate) fn to_u128_or_warn(value: &BigDecimal, context: &str) -> u128 {
@@ -160,7 +161,8 @@ impl PortfolioState {
 
         // Add to destination
         if to_token == wnear {
-            self.cash_balance = self.cash_balance.clone() + to_yocto;
+            let balance = mem::replace(&mut self.cash_balance, YoctoValue::zero());
+            self.cash_balance = balance + to_yocto;
         } else {
             let entry = self.holdings.entry(to_token.clone()).or_insert_with(|| {
                 // Use decimals from existing holdings or default to 24
@@ -175,7 +177,8 @@ impl PortfolioState {
                     .cost_basis
                     .entry(to_token.clone())
                     .or_insert_with(YoctoValue::zero);
-                *basis = basis.clone() + from_yocto;
+                let current_basis = mem::replace(basis, YoctoValue::zero());
+                *basis = current_basis + from_yocto;
             }
             // TODO: For direct token-to-token swaps (not via WNEAR), the acquired
             // token's cost basis is not tracked. This means selling it later will
@@ -358,7 +361,8 @@ impl PortfolioState {
 
             self.holdings.remove(&token);
             let sell_yocto_value = YoctoValue::from_yocto(BigDecimal::from(sell_yocto));
-            self.cash_balance = self.cash_balance.clone() + sell_yocto_value;
+            let balance = mem::replace(&mut self.cash_balance, YoctoValue::zero());
+            self.cash_balance = balance + sell_yocto_value;
 
             let pnl_near = self.record_sell_pnl(&token, amount_raw, sell_yocto);
 
