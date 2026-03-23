@@ -168,7 +168,7 @@ fn max_drawdown_multiple_drawdowns() {
 
 #[test]
 fn performance_empty_snapshots() {
-    let perf = calculate_performance(100.0, &[], 0, 0, 0, 1);
+    let perf = calculate_performance(100.0, &[], 0, 0, 0, 1, SwapStats::default());
     assert_eq!(perf.total_return, 0.0);
     assert_eq!(perf.sharpe_ratio, 0.0);
     assert_eq!(perf.sortino_ratio, 0.0);
@@ -179,7 +179,7 @@ fn performance_empty_snapshots() {
 #[test]
 fn performance_single_snapshot() {
     let snapshots = vec![make_snapshot(110.0)];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
     assert!(
         (perf.total_return - 0.1).abs() < 1e-10,
         "expected 10% return"
@@ -189,7 +189,7 @@ fn performance_single_snapshot() {
 #[test]
 fn performance_zero_initial_capital() {
     let snapshots = vec![make_snapshot(100.0)];
-    let perf = calculate_performance(0.0, &snapshots, 0, 0, 0, 1);
+    let perf = calculate_performance(0.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
     assert_eq!(perf.total_return, 0.0);
 }
 
@@ -203,7 +203,7 @@ fn performance_win_rate() {
         make_snapshot(110.0), // down
         make_snapshot(120.0), // up
     ];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
     assert!(
         (perf.win_rate - 0.6).abs() < 1e-10,
         "expected 60% win rate, got {}",
@@ -214,7 +214,7 @@ fn performance_win_rate() {
 #[test]
 fn performance_total_return_loss() {
     let snapshots = vec![make_snapshot(80.0)];
-    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1);
+    let perf = calculate_performance(100.0, &snapshots, 0, 0, 0, 1, SwapStats::default());
     assert!(
         (perf.total_return - (-0.2)).abs() < 1e-10,
         "expected -20% return"
@@ -395,7 +395,15 @@ fn portfolio_value_entry_daily_pnl() {
 fn performance_includes_new_fields() {
     let snapshots = vec![make_snapshot(110.0)];
     let realized_pnl: i128 = 5_000_000_000_000_000_000_000_000; // 5 NEAR
-    let perf = calculate_performance(100.0, &snapshots, realized_pnl, 10, 3, 1);
+    let perf = calculate_performance(
+        100.0,
+        &snapshots,
+        realized_pnl,
+        10,
+        3,
+        1,
+        SwapStats::default(),
+    );
     assert!(
         (perf.final_balance_near - 110.0).abs() < 1e-10,
         "final balance: {}",
@@ -453,10 +461,10 @@ fn from_state_no_swap_events() {
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
     assert!(result.swap_events.is_empty());
-    assert_eq!(result.performance.total_swaps, 0);
-    assert_eq!(result.performance.pool_based_swaps, 0);
-    assert_eq!(result.performance.fallback_swaps, 0);
-    assert!((result.performance.fallback_rate - 0.0).abs() < 1e-10);
+    assert_eq!(result.performance.swap_stats.total_swaps, 0);
+    assert_eq!(result.performance.swap_stats.pool_based_swaps, 0);
+    assert_eq!(result.performance.swap_stats.fallback_swaps, 0);
+    assert!((result.performance.swap_stats.fallback_rate - 0.0).abs() < 1e-10);
 }
 
 #[test]
@@ -471,10 +479,10 @@ fn from_state_all_pool_based_swaps() {
         .push(make_swap_event(SwapMethod::PoolBased, vec![2, 3]));
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
-    assert_eq!(result.performance.total_swaps, 2);
-    assert_eq!(result.performance.pool_based_swaps, 2);
-    assert_eq!(result.performance.fallback_swaps, 0);
-    assert!((result.performance.fallback_rate - 0.0).abs() < 1e-10);
+    assert_eq!(result.performance.swap_stats.total_swaps, 2);
+    assert_eq!(result.performance.swap_stats.pool_based_swaps, 2);
+    assert_eq!(result.performance.swap_stats.fallback_swaps, 0);
+    assert!((result.performance.swap_stats.fallback_rate - 0.0).abs() < 1e-10);
 }
 
 #[test]
@@ -495,10 +503,10 @@ fn from_state_mixed_swap_methods() {
         .push(make_swap_event(SwapMethod::DbRate, vec![]));
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
-    assert_eq!(result.performance.total_swaps, 4);
-    assert_eq!(result.performance.pool_based_swaps, 2);
-    assert_eq!(result.performance.fallback_swaps, 2);
-    assert!((result.performance.fallback_rate - 0.5).abs() < 1e-10);
+    assert_eq!(result.performance.swap_stats.total_swaps, 4);
+    assert_eq!(result.performance.swap_stats.pool_based_swaps, 2);
+    assert_eq!(result.performance.swap_stats.fallback_swaps, 2);
+    assert!((result.performance.swap_stats.fallback_rate - 0.5).abs() < 1e-10);
 }
 
 #[test]
@@ -516,10 +524,10 @@ fn from_state_all_fallback_swaps() {
         .push(make_swap_event(SwapMethod::DbRate, vec![]));
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
-    assert_eq!(result.performance.total_swaps, 3);
-    assert_eq!(result.performance.pool_based_swaps, 0);
-    assert_eq!(result.performance.fallback_swaps, 3);
-    assert!((result.performance.fallback_rate - 1.0).abs() < 1e-10);
+    assert_eq!(result.performance.swap_stats.total_swaps, 3);
+    assert_eq!(result.performance.swap_stats.pool_based_swaps, 0);
+    assert_eq!(result.performance.swap_stats.fallback_swaps, 3);
+    assert!((result.performance.swap_stats.fallback_rate - 1.0).abs() < 1e-10);
 }
 
 #[test]

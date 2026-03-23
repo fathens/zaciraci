@@ -42,6 +42,12 @@ pub struct PerformanceMetrics {
     pub total_realized_pnl_near: f64,
     pub trade_count: usize,
     pub liquidation_count: usize,
+    #[serde(flatten)]
+    pub swap_stats: SwapStats,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SwapStats {
     pub total_swaps: usize,
     pub pool_based_swaps: usize,
     pub fallback_swaps: usize,
@@ -190,18 +196,20 @@ impl SimulationResult {
             .filter(|t| t.action == "liquidation")
             .count();
 
-        let mut performance = calculate_performance(
+        let performance = calculate_performance(
             cli.initial_capital,
             &state.snapshots,
             state.realized_pnl,
             trade_count,
             liquidation_count,
             cli.rebalance_interval_days,
+            SwapStats {
+                total_swaps,
+                pool_based_swaps,
+                fallback_swaps,
+                fallback_rate,
+            },
         );
-        performance.total_swaps = total_swaps;
-        performance.pool_based_swaps = pool_based_swaps;
-        performance.fallback_swaps = fallback_swaps;
-        performance.fallback_rate = fallback_rate;
 
         Ok(Self {
             config,
@@ -226,6 +234,7 @@ fn calculate_performance(
     trade_count: usize,
     liquidation_count: usize,
     rebalance_interval_days: i64,
+    swap_stats: SwapStats,
 ) -> PerformanceMetrics {
     if snapshots.is_empty() {
         return PerformanceMetrics {
@@ -238,10 +247,7 @@ fn calculate_performance(
             total_realized_pnl_near: realized_pnl as f64 / 1e24,
             trade_count,
             liquidation_count,
-            total_swaps: 0,
-            pool_based_swaps: 0,
-            fallback_swaps: 0,
-            fallback_rate: 0.0,
+            swap_stats,
         };
     }
 
@@ -290,10 +296,7 @@ fn calculate_performance(
         total_realized_pnl_near: realized_pnl as f64 / 1e24,
         trade_count,
         liquidation_count,
-        total_swaps: 0,
-        pool_based_swaps: 0,
-        fallback_swaps: 0,
-        fallback_rate: 0.0,
+        swap_stats,
     }
 }
 
