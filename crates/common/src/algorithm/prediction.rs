@@ -47,6 +47,21 @@ pub trait PredictionProvider: Send + Sync {
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>>;
 }
 
+impl TokenPredictionResult {
+    /// 指定した時間軸に最も近い予測ポイントを取得（±1h の許容範囲）
+    pub fn prediction_at_horizon(&self, horizon_hours: usize) -> Option<&PredictedPrice> {
+        if horizon_hours == 0 {
+            return None;
+        }
+        let target = self.data_cutoff_time + chrono::Duration::hours(horizon_hours as i64);
+        let tolerance = chrono::Duration::hours(1);
+        self.predictions
+            .iter()
+            .filter(|p| (p.timestamp - target).abs() <= tolerance)
+            .min_by_key(|p| (p.timestamp - target).abs())
+    }
+}
+
 /// PredictionDataへの変換（momentum.rsから移動）
 impl crate::algorithm::types::PredictionData {
     /// TokenPredictionResultから変換
@@ -54,13 +69,8 @@ impl crate::algorithm::types::PredictionData {
         prediction: &TokenPredictionResult,
         current_price: TokenPrice,
     ) -> Option<Self> {
-        use chrono::Duration;
-
-        // 24時間後の予測価格を取得
-        let predicted_24h = prediction.predictions.iter().find(|p| {
-            let diff = p.timestamp - prediction.data_cutoff_time;
-            diff >= Duration::hours(23) && diff <= Duration::hours(25)
-        })?;
+        // PredictionData は 24h 後の予測を格納する型のため、ホライゾン = 24 固定
+        let predicted_24h = prediction.prediction_at_horizon(24)?;
 
         Some(Self {
             token: prediction.token.clone(),

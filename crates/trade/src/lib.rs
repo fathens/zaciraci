@@ -138,7 +138,7 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
     > = BTreeMap::new();
     let mut empty_predictions = 0u32;
     for (token, result) in predictions {
-        match result.predictions.first() {
+        match result.prediction_at_horizon(prediction_accuracy::PREDICTION_HORIZON_HOURS) {
             Some(p) => {
                 prediction_entries.insert(
                     token,
