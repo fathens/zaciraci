@@ -47,16 +47,18 @@ pub(crate) fn to_f64_or_warn(value: &BigDecimal, context: &str) -> f64 {
 
 /// Convert yoctoNEAR (i128) to NEAR (f64) for display metrics.
 ///
-/// i128 → f64 loses precision beyond 2^53 yoctoNEAR (~9 nanoNEAR);
-/// acceptable for display metrics where sub-nanoNEAR accuracy is irrelevant.
+/// Integer → f64 has a relative precision of ~2⁻⁵³. The absolute error
+/// depends on the magnitude of the value (e.g., ~0.0001 NEAR at 1e6 NEAR).
+/// Acceptable for display metrics where sub-yoctoNEAR accuracy is irrelevant.
 pub(crate) fn pnl_to_near(pnl_yocto: i128) -> f64 {
     pnl_yocto as f64 / 1e24
 }
 
 /// Convert yoctoNEAR (u128) to NEAR (f64) for display metrics.
 ///
-/// u128 → f64 loses precision beyond 2^53 yoctoNEAR (~9 nanoNEAR);
-/// acceptable for display metrics where sub-nanoNEAR accuracy is irrelevant.
+/// Integer → f64 has a relative precision of ~2⁻⁵³. The absolute error
+/// depends on the magnitude of the value (e.g., ~0.0001 NEAR at 1e6 NEAR).
+/// Acceptable for display metrics where sub-yoctoNEAR accuracy is irrelevant.
 pub(crate) fn yocto_to_near(yocto: u128) -> f64 {
     yocto as f64 / 1e24
 }
