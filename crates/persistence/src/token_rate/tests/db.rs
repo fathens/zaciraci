@@ -276,19 +276,19 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // 各トークンのボラティリティ値を検証
     // btcの分散が最も大きい
     assert!(
-        results[0].variance > results[1].variance,
+        results[0].coefficient_of_variation > results[1].coefficient_of_variation,
         "BTC variance should be greater than ETH variance"
     );
 
     // ethの分散は中程度
     assert!(
-        results[1].variance > results[2].variance,
+        results[1].coefficient_of_variation > results[2].coefficient_of_variation,
         "ETH variance should be greater than NEAR variance"
     );
 
     // nearの分散が最も小さい
     assert!(
-        results[2].variance > 0,
+        results[2].coefficient_of_variation > 0,
         "NEAR variance should be greater than 0"
     );
 
@@ -356,9 +356,9 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // 分散値が0より大きいことを確認
     assert!(
-        btc_result.variance > 0,
+        btc_result.coefficient_of_variation > 0,
         "BTC variance should be greater than 0, got {}",
-        btc_result.variance
+        btc_result.coefficient_of_variation
     );
 
     // クリーンアップ
@@ -445,7 +445,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // 範囲内のデータだけが考慮されていることを確認（最大値1500、最小値1000）
     assert!(
-        boundary_results[0].variance > 0,
+        boundary_results[0].coefficient_of_variation > 0,
         "Variance should be greater than 0"
     );
 
@@ -497,8 +497,8 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     );
 
     // 両方のトークンが同じボラティリティ（50%）を持つことを確認
-    let eth_volatility = same_volatility_results[0].variance.clone();
-    let btc_volatility = same_volatility_results[1].variance.clone();
+    let eth_volatility = same_volatility_results[0].coefficient_of_variation.clone();
+    let btc_volatility = same_volatility_results[1].coefficient_of_variation.clone();
 
     assert!(eth_volatility > 0, "ETH variance should be greater than 0");
     assert!(btc_volatility > 0, "BTC variance should be greater than 0");
@@ -558,7 +558,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
         "Only btc.token should remain"
     );
     assert!(
-        btc_result.variance > 0,
+        btc_result.coefficient_of_variation > 0,
         "BTC variance should be greater than 0"
     );
 
@@ -639,7 +639,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // quote1のデータだけが考慮されていることを確認（最大値150、最小値100）
     assert!(
-        quote_filter_results[0].variance > 0,
+        quote_filter_results[0].coefficient_of_variation > 0,
         "Variance should be greater than 0"
     );
 
@@ -703,7 +703,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // base2のみが結果に含まれることを確認（最大値15、最小値5）
     assert!(
-        mixed_rates_results[0].variance > 0,
+        mixed_rates_results[0].coefficient_of_variation > 0,
         "Variance should be greater than 0"
     );
 
@@ -762,7 +762,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // rate_difference = MAX(rate) - MIN(rate) = 1500 - 1000 = 500
     assert!(
-        normal_results[0].variance > 0,
+        normal_results[0].coefficient_of_variation > 0,
         "Variance should be greater than 0"
     );
 
@@ -801,7 +801,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - 10 = 90
     assert!(
-        positive_results[0].variance > 0,
+        positive_results[0].coefficient_of_variation > 0,
         "Variance should be greater than 0"
     );
 
@@ -840,7 +840,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // rate_difference = MAX(rate) - MIN(rate) = 100 - 100 = 0
     assert_eq!(
-        same_value_results[0].variance,
+        same_value_results[0].coefficient_of_variation,
         BigDecimal::from(0),
         "Variance should be 0"
     );

@@ -95,13 +95,13 @@ struct VolatilityResult {
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub base_token: String,
     #[diesel(sql_type = diesel::sql_types::Numeric)]
-    pub variance: BigDecimal,
+    pub coefficient_of_variation: BigDecimal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TokenVolatility {
     pub base: TokenAccount,
-    pub variance: BigDecimal,
+    pub coefficient_of_variation: BigDecimal,
 }
 
 // アプリケーションロジック用モデル
@@ -389,14 +389,14 @@ impl TokenRate {
         let conn = connection_pool::get().await?;
 
         // SQLクエリを実装してボラティリティを計算
-        // 全トークンを variance 降順で取得（フィルタリングはアプリケーション側）
+        // 全トークンを coefficient_of_variation 降順で取得（フィルタリングはアプリケーション側）
         let volatility_results: Vec<VolatilityResult> = conn
             .interact(move |conn| {
                 diesel::sql_query(
                     "
                 SELECT
                     base_token,
-                    stddev_pop(rate) / NULLIF(avg(rate), 0) as variance
+                    stddev_pop(rate) / NULLIF(avg(rate), 0) as coefficient_of_variation
                 FROM token_rates
                 WHERE
                     quote_token = $1 AND
@@ -405,7 +405,7 @@ impl TokenRate {
                 GROUP BY base_token
                 HAVING
                     MIN(rate) > 0 AND COUNT(*) >= 3
-                ORDER BY variance DESC
+                ORDER BY coefficient_of_variation DESC
                 ",
                 )
                 .bind::<diesel::sql_types::Text, _>(&quote_str)
@@ -421,7 +421,7 @@ impl TokenRate {
             .filter_map(|result| match TokenAccount::from_str(&result.base_token) {
                 Ok(token) => Some(TokenVolatility {
                     base: token,
-                    variance: result.variance,
+                    coefficient_of_variation: result.coefficient_of_variation,
                 }),
                 Err(e) => {
                     error!(log, "Failed to parse token: {}, {e}", result.base_token);

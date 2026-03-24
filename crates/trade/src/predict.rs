@@ -51,7 +51,7 @@ impl PredictionService {
             .into_iter()
             .map(|vol_token| TopTokenInfo {
                 token: vol_token.base.into(),
-                volatility: vol_token.variance,
+                volatility: vol_token.coefficient_of_variation,
             })
             .collect();
 
