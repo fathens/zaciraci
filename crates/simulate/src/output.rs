@@ -1,7 +1,9 @@
 use crate::cli::Cli;
-use crate::portfolio_state::{PortfolioState, to_u128_or_warn};
+use crate::portfolio_state::{
+    PortfolioState, SwapEvent, SwapMethod, TradeAction, pnl_to_near, to_f64_or_warn,
+    to_u128_or_warn,
+};
 use anyhow::Result;
-use bigdecimal::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -11,6 +13,7 @@ pub struct SimulationResult {
     pub config: SimulationConfig,
     pub performance: PerformanceMetrics,
     pub trades: Vec<TradeEntry>,
+    pub swap_events: Vec<SwapEventEntry>,
     pub portfolio_values: Vec<PortfolioValueEntry>,
 }
 
@@ -41,16 +44,64 @@ pub struct PerformanceMetrics {
     pub total_realized_pnl_near: f64,
     pub trade_count: usize,
     pub liquidation_count: usize,
+    #[serde(flatten)]
+    pub swap_stats: SwapStats,
+}
+
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SwapStats {
+    pub total_swaps: usize,
+    pub pool_based_swaps: usize,
+    pub fallback_swaps: usize,
+    pub fallback_rate: f64,
+}
+
+impl SwapStats {
+    pub fn from_events(events: &[SwapEvent]) -> Self {
+        let total_swaps = events.len();
+        let pool_based_swaps = events
+            .iter()
+            .filter(|e| e.swap_method == SwapMethod::PoolBased)
+            .count();
+        let fallback_swaps = events
+            .iter()
+            .filter(|e| e.swap_method == SwapMethod::DbRate)
+            .count();
+        let fallback_rate = if total_swaps > 0 {
+            fallback_swaps as f64 / total_swaps as f64
+        } else {
+            0.0
+        };
+        Self {
+            total_swaps,
+            pool_based_swaps,
+            fallback_swaps,
+            fallback_rate,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TradeEntry {
     pub timestamp: String,
-    pub action: String,
+    pub action: TradeAction,
     pub token: String,
     pub amount: u128,
     pub price: f64,
     pub realized_pnl: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SwapEventEntry {
+    pub timestamp: String,
+    pub token_in: String,
+    pub amount_in: String,
+    pub amount_in_raw: u128,
+    pub token_out: String,
+    pub amount_out: String,
+    pub amount_out_raw: u128,
+    pub swap_method: SwapMethod,
+    pub pool_ids: Vec<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,7 +167,10 @@ impl SimulationResult {
                     timestamp: s.timestamp.to_rfc3339(),
                     total_value: s.total_value_near,
                     holdings: holdings_map,
-                    cash_balance: s.cash_balance.as_bigdecimal().to_f64().unwrap_or(0.0) / 1e24,
+                    cash_balance: to_f64_or_warn(
+                        s.cash_balance.as_bigdecimal(),
+                        "snapshot_cash_balance",
+                    ) / 1e24,
                     daily_pnl_near,
                     daily_pnl_pct,
                     cumulative_realized_pnl_near: s.realized_pnl_near,
@@ -126,30 +180,56 @@ impl SimulationResult {
             values
         };
 
+        let swap_events: Vec<SwapEventEntry> = state
+            .swap_events
+            .iter()
+            .map(|e| SwapEventEntry {
+                timestamp: e.timestamp.to_rfc3339(),
+                token_in: e.token_in.to_string(),
+                amount_in: e.amount_in.to_string(),
+                amount_in_raw: to_u128_or_warn(
+                    e.amount_in.smallest_units(),
+                    "swap_event_amount_in",
+                ),
+                token_out: e.token_out.to_string(),
+                amount_out: e.amount_out.to_string(),
+                amount_out_raw: to_u128_or_warn(
+                    e.amount_out.smallest_units(),
+                    "swap_event_amount_out",
+                ),
+                swap_method: e.swap_method,
+                pool_ids: e.pool_ids.clone(),
+            })
+            .collect();
+
+        let swap_stats = SwapStats::from_events(&state.swap_events);
+
         let trade_count = state
             .trades
             .iter()
-            .filter(|t| t.action != "liquidation")
+            .filter(|t| t.action != TradeAction::Liquidation)
             .count();
         let liquidation_count = state
             .trades
             .iter()
-            .filter(|t| t.action == "liquidation")
+            .filter(|t| t.action == TradeAction::Liquidation)
             .count();
 
-        let performance = calculate_performance(
-            cli.initial_capital,
-            &state.snapshots,
-            state.realized_pnl,
+        let performance = calculate_performance(PerformanceInput {
+            initial_capital: cli.initial_capital,
+            snapshots: &state.snapshots,
+            realized_pnl: state.realized_pnl,
             trade_count,
             liquidation_count,
-            cli.rebalance_interval_days,
-        );
+            rebalance_interval_days: cli.rebalance_interval_days,
+            swap_stats,
+        });
 
         Ok(Self {
             config,
             performance,
             trades,
+            swap_events,
             portfolio_values,
         })
     }
@@ -161,15 +241,28 @@ impl SimulationResult {
     }
 }
 
-fn calculate_performance(
+struct PerformanceInput<'a> {
     initial_capital: f64,
-    snapshots: &[crate::portfolio_state::PortfolioSnapshot],
+    snapshots: &'a [crate::portfolio_state::PortfolioSnapshot],
     realized_pnl: i128,
     trade_count: usize,
     liquidation_count: usize,
     rebalance_interval_days: i64,
-) -> PerformanceMetrics {
-    if snapshots.is_empty() {
+    swap_stats: SwapStats,
+}
+
+fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
+    let PerformanceInput {
+        initial_capital,
+        snapshots,
+        realized_pnl,
+        trade_count,
+        liquidation_count,
+        rebalance_interval_days,
+        swap_stats,
+    } = input;
+
+    let Some(last) = snapshots.last() else {
         return PerformanceMetrics {
             total_return: 0.0,
             sharpe_ratio: 0.0,
@@ -177,13 +270,13 @@ fn calculate_performance(
             max_drawdown: 0.0,
             win_rate: 0.0,
             final_balance_near: initial_capital,
-            total_realized_pnl_near: realized_pnl as f64 / 1e24,
+            total_realized_pnl_near: pnl_to_near(realized_pnl),
             trade_count,
             liquidation_count,
+            swap_stats,
         };
-    }
-
-    let final_value = snapshots.last().unwrap().total_value_near;
+    };
+    let final_value = last.total_value_near;
     let total_return = if initial_capital > 0.0 {
         (final_value - initial_capital) / initial_capital
     } else {
@@ -225,9 +318,10 @@ fn calculate_performance(
         max_drawdown,
         win_rate,
         final_balance_near: final_value,
-        total_realized_pnl_near: realized_pnl as f64 / 1e24,
+        total_realized_pnl_near: pnl_to_near(realized_pnl),
         trade_count,
         liquidation_count,
+        swap_stats,
     }
 }
 

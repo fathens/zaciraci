@@ -1,10 +1,12 @@
-use crate::portfolio_state::{self, DEFAULT_DECIMALS, PortfolioState, to_u128_or_warn};
+use crate::portfolio_state::{
+    self, DEFAULT_DECIMALS, PortfolioState, SwapEvent, SwapMethod, SwapResult, to_u128_or_warn,
+};
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
 use chrono::{DateTime, Utc};
-use common::types::TokenAccount;
+use common::types::{TokenAccount, TokenAmount, YoctoValue};
 use logging::*;
 use near_crypto::InMemorySigner;
 use near_primitives::action::Action;
@@ -18,16 +20,30 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Simulated NEAR blockchain client for backtesting.
+///
+/// **Lock ordering**: When acquiring multiple locks, always lock `sim_day`
+/// before `portfolio` to avoid deadlocks. This order must be consistent
+/// across all call sites.
 pub struct SimulationClient {
     portfolio: Arc<Mutex<PortfolioState>>,
-    initial_native: u128,
+    initial_native: YoctoValue,
     sim_day: Arc<Mutex<DateTime<Utc>>>,
+}
+
+fn decimals_for(token: &TokenAccount) -> u8 {
+    trade::token_cache::get_cached_decimals(token).unwrap_or_else(|| {
+        let log = DEFAULT.new(o!("function" => "decimals_for"));
+        warn!(log, "token decimals not cached, using default";
+            "token" => %token, "default" => DEFAULT_DECIMALS);
+        DEFAULT_DECIMALS
+    })
 }
 
 impl SimulationClient {
     pub fn new(
         portfolio: Arc<Mutex<PortfolioState>>,
-        initial_native: u128,
+        initial_native: YoctoValue,
         sim_day: Arc<Mutex<DateTime<Utc>>>,
     ) -> Self {
         Self {
@@ -84,9 +100,9 @@ impl SimulationClient {
         &self,
         swap_actions: &[SwapAction],
         amount_in: u128,
+        sim_day: DateTime<Utc>,
     ) -> Option<u128> {
         let log = DEFAULT.new(o!("function" => "calculate_swap_output_via_pools"));
-        let sim_day = *self.sim_day.lock().await;
         let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
             .await
             .inspect_err(|e| warn!(log, "failed to read pool data from DB"; "error" => %e))
@@ -100,11 +116,11 @@ impl SimulationClient {
         token_in: &TokenAccount,
         amount_in: u128,
         token_out: &TokenAccount,
+        sim_day: DateTime<Utc>,
     ) -> u128 {
         use common::types::{TokenAmount, YoctoValue};
         let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
         let wnear_in = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
-        let sim_day = *self.sim_day.lock().await;
 
         // token_in -> NEAR value
         let near_value = if token_in == wnear {
@@ -118,8 +134,7 @@ impl SimulationClient {
                     None => return 0,
                 };
 
-            let decimals_in =
-                trade::token_cache::get_cached_decimals(token_in).unwrap_or(DEFAULT_DECIMALS);
+            let decimals_in = decimals_for(token_in);
             let token_amount =
                 TokenAmount::from_smallest_units(BigDecimal::from(amount_in), decimals_in);
             &token_amount / &rate
@@ -144,11 +159,121 @@ impl SimulationClient {
             to_u128_or_warn(token_amount.smallest_units(), "swap_rate_token_amount")
         }
     }
+
+    async fn handle_swap(&self, args_value: serde_json::Value) -> anyhow::Result<u128> {
+        let log = DEFAULT.new(o!("function" => "SimulationClient::handle_swap"));
+
+        // Acquire sim_day once upfront. All sub-methods receive it by value,
+        // ensuring a consistent timestamp throughout the swap and avoiding
+        // repeated lock acquisitions.
+        let sim_day = *self.sim_day.lock().await;
+
+        let Some(actions_array) = args_value.get("actions") else {
+            return Ok(0);
+        };
+        let swap_actions: Vec<SwapAction> = match serde_json::from_value(actions_array.clone()) {
+            Ok(actions) => actions,
+            Err(e) => {
+                warn!(log, "failed to parse swap actions, skipping"; "error" => %e);
+                return Ok(0);
+            }
+        };
+        let Some(first) = swap_actions.first() else {
+            return Ok(0);
+        };
+        // Safety: last() is always Some when first() is Some (non-empty slice).
+        let last = swap_actions.last().expect("non-empty after first() check");
+        let token_in_account = TokenAccount::from(first.token_in.clone());
+        let token_out_account = TokenAccount::from(last.token_out.clone());
+        let amount_in = first.amount_in.map(u128::from).unwrap_or(0);
+        if amount_in == 0 {
+            return Ok(0);
+        }
+
+        // Try pool-based estimate_return first (fee + slippage aware)
+        let (amount_out, swap_method) = match self
+            .calculate_swap_output_via_pools(&swap_actions, amount_in, sim_day)
+            .await
+        {
+            Some(out) => (out, SwapMethod::PoolBased),
+            None => {
+                // Fallback to DB rate conversion (no fee/slippage)
+                warn!(log, "pool data unavailable, falling back to DB rate";
+                    "token_in" => %token_in_account, "token_out" => %token_out_account
+                );
+                let out = self
+                    .calculate_swap_output_via_rates(
+                        &token_in_account,
+                        amount_in,
+                        &token_out_account,
+                        sim_day,
+                    )
+                    .await;
+                (out, SwapMethod::DbRate)
+            }
+        };
+
+        if amount_out == 0 {
+            warn!(log, "swap output is zero, skipping";
+                "token_in" => %token_in_account, "token_out" => %token_out_account
+            );
+            return Ok(0);
+        }
+
+        // sim_day was acquired at the top of handle_swap. Only portfolio
+        // needs locking here.
+        let mut state = self.portfolio.lock().await;
+        let actual = state.execute_simulated_swap(
+            &token_in_account,
+            amount_in,
+            &token_out_account,
+            amount_out,
+        );
+
+        let Some(SwapResult {
+            actual_in,
+            actual_out,
+        }) = actual
+        else {
+            trace!(log, "swap skipped (insufficient balance or zero output)";
+                "token_in" => %token_in_account, "token_out" => %token_out_account
+            );
+            return Ok(0);
+        };
+
+        let decimals_in = decimals_for(&token_in_account);
+        let decimals_out = decimals_for(&token_out_account);
+        state.swap_events.push(SwapEvent {
+            timestamp: sim_day,
+            token_in: token_in_account.clone(),
+            amount_in: TokenAmount::from_smallest_units(BigDecimal::from(actual_in), decimals_in),
+            token_out: token_out_account.clone(),
+            amount_out: TokenAmount::from_smallest_units(
+                BigDecimal::from(actual_out),
+                decimals_out,
+            ),
+            swap_method,
+            pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
+        });
+
+        trace!(log, "simulated swap";
+            "token_in" => %token_in_account,
+            "amount_in" => actual_in,
+            "token_out" => %token_out_account,
+            "amount_out" => actual_out,
+            "swap_method" => ?swap_method
+        );
+
+        Ok(actual_out)
+    }
 }
 
 impl AccountInfo for SimulationClient {
     async fn get_native_amount(&self, _account: &AccountId) -> anyhow::Result<NearToken> {
-        Ok(NearToken::from_yoctonear(self.initial_native))
+        Ok(NearToken::from_yoctonear(to_u128_or_warn(
+            self.initial_native.as_bigdecimal(),
+            "initial_native",
+        )))
     }
 }
 
@@ -183,70 +308,10 @@ impl SendTx for SimulationClient {
     where
         T: Sized + serde::Serialize,
     {
-        let log = DEFAULT.new(o!("function" => "SimulationClient::exec_contract"));
-
         if method_name == "swap" {
-            // Parse swap actions from args
             let args_value = serde_json::to_value(&args)?;
-            if let Some(actions_array) = args_value.get("actions") {
-                let swap_actions: Vec<SwapAction> = serde_json::from_value(actions_array.clone())?;
-
-                if !swap_actions.is_empty() {
-                    let first = &swap_actions[0];
-                    let last = &swap_actions[swap_actions.len() - 1];
-
-                    let token_in_account = TokenAccount::from(first.token_in.clone());
-                    let token_out_account = TokenAccount::from(last.token_out.clone());
-                    let amount_in = first.amount_in.map(|a| a.0).unwrap_or(0);
-
-                    if amount_in > 0 {
-                        // Try pool-based estimate_return first (fee + slippage aware)
-                        let amount_out = match self
-                            .calculate_swap_output_via_pools(&swap_actions, amount_in)
-                            .await
-                        {
-                            Some(out) => out,
-                            None => {
-                                // Fallback to DB rate conversion (no fee/slippage)
-                                warn!(log, "pool data unavailable, falling back to DB rate";
-                                    "token_in" => %token_in_account, "token_out" => %token_out_account
-                                );
-                                self.calculate_swap_output_via_rates(
-                                    &token_in_account,
-                                    amount_in,
-                                    &token_out_account,
-                                )
-                                .await
-                            }
-                        };
-
-                        if amount_out > 0 {
-                            let mut state = self.portfolio.lock().await;
-                            state.execute_simulated_swap(
-                                &token_in_account,
-                                amount_in,
-                                &token_out_account,
-                                amount_out,
-                            );
-
-                            trace!(log, "simulated swap";
-                                "token_in" => %token_in_account,
-                                "amount_in" => amount_in,
-                                "token_out" => %token_out_account,
-                                "amount_out" => amount_out
-                            );
-
-                            return Ok(MockSentTx {
-                                output_amount: amount_out,
-                            });
-                        } else {
-                            warn!(log, "swap output is zero, skipping";
-                                "token_in" => %token_in_account, "token_out" => %token_out_account
-                            );
-                        }
-                    }
-                }
-            }
+            let output_amount = self.handle_swap(args_value).await?;
+            return Ok(MockSentTx { output_amount });
         }
 
         Ok(MockSentTx { output_amount: 0 })
@@ -274,6 +339,8 @@ impl ViewContract for SimulationClient {
     {
         let result = match method_name {
             "get_deposits" => {
+                // Only portfolio is needed here (no sim_day dependency), so a
+                // single lock is fine — no lock-ordering concern.
                 let state = self.portfolio.lock().await;
                 let mut deposits = serde_json::Map::new();
 
@@ -299,10 +366,22 @@ impl ViewContract for SimulationClient {
                 let receiver_token = TokenAccount::from(receiver.clone());
                 let decimals = trade::token_cache::get_cached_decimals(&receiver_token)
                     .or_else(|| {
-                        // Fall back to holdings decimals
-                        self.portfolio.try_lock().ok().and_then(|state| {
-                            state.holdings.get(&receiver_token).map(|a| a.decimals())
-                        })
+                        // Fall back to holdings decimals.
+                        // Uses try_lock (not lock) to avoid violating the sim_day→portfolio
+                        // lock ordering documented on SimulationClient.
+                        match self.portfolio.try_lock() {
+                            Ok(state) => state.holdings.get(&receiver_token).map(|a| a.decimals()),
+                            Err(_) => {
+                                // When try_lock fails, use decimals_for() (token_cache lookup)
+                                // instead of DEFAULT_DECIMALS. This avoids 10^18 magnitude
+                                // errors when DEFAULT_DECIMALS(24) is applied to 6-decimal
+                                // tokens like USDT.
+                                let log = DEFAULT.new(o!("function" => "ft_metadata"));
+                                warn!(log, "portfolio try_lock failed, falling back to token_cache";
+                                    "token" => %receiver_token);
+                                Some(decimals_for(&receiver_token))
+                            }
+                        }
                     })
                     .unwrap_or(DEFAULT_DECIMALS);
                 let metadata = json!({

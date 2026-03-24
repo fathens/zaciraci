@@ -23,7 +23,11 @@ fn make_client_with_holdings(cash: u128, holdings: Vec<(&str, u128, u8)>) -> Sim
         );
     }
     let portfolio = Arc::new(Mutex::new(state));
-    SimulationClient::new(portfolio, cash, default_sim_day())
+    SimulationClient::new(
+        portfolio,
+        YoctoValue::from_yocto(BigDecimal::from(cash)),
+        default_sim_day(),
+    )
 }
 
 fn make_client(cash: u128) -> SimulationClient {
@@ -31,7 +35,7 @@ fn make_client(cash: u128) -> SimulationClient {
 }
 
 fn make_client_with_portfolio(portfolio: Arc<Mutex<PortfolioState>>) -> SimulationClient {
-    SimulationClient::new(portfolio, 0, default_sim_day())
+    SimulationClient::new(portfolio, YoctoValue::zero(), default_sim_day())
 }
 
 fn test_signer() -> InMemorySigner {
