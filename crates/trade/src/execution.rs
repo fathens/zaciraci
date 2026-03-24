@@ -885,6 +885,16 @@ pub(crate) struct EvaluationPeriodResult {
     pub is_new_period: bool,
     pub existing_tokens: Vec<TokenAccount>,
     pub liquidated_balance: Option<YoctoAmount>,
+    /// 清算に失敗したトークン（次回清算時に自動リトライされる）
+    pub failed_liquidations: Vec<TokenAccount>,
+}
+
+/// 全ポジション清算の結果
+pub(crate) struct LiquidationResult {
+    /// 清算後の wrap.near 残高
+    pub wrap_near_balance: YoctoAmount,
+    /// スワップに失敗したトークン
+    pub failed_tokens: Vec<TokenAccount>,
 }
 
 pub(crate) async fn manage_evaluation_period<C, W>(
@@ -926,8 +936,13 @@ where
                 );
 
                 // 全トークンをwrap.nearに売却
-                let final_balance = liquidate_all_positions(client, wallet, cfg).await?;
-                info!(log, "liquidated all positions"; "final_balance" => %final_balance);
+                let liquidation = liquidate_all_positions(client, wallet, cfg).await?;
+                let final_balance = liquidation.wrap_near_balance;
+                let failed_liquidations = liquidation.failed_tokens;
+                info!(log, "liquidated all positions";
+                    "final_balance" => %final_balance,
+                    "failed_count" => failed_liquidations.len()
+                );
 
                 // 評価期間のパフォーマンスを計算してログ出力
                 let initial_value = period_initial_value.to_value();
@@ -1002,6 +1017,7 @@ where
                         is_new_period: false,
                         existing_tokens: vec![],
                         liquidated_balance: Some(post_harvest_balance),
+                        failed_liquidations: failed_liquidations.clone(),
                     });
                 }
 
@@ -1019,6 +1035,7 @@ where
                     is_new_period: true,
                     existing_tokens: vec![],
                     liquidated_balance: Some(post_harvest_balance),
+                    failed_liquidations,
                 })
             } else {
                 // 評価期間中: トランザクション記録で判定
@@ -1070,6 +1087,7 @@ where
                     is_new_period,
                     existing_tokens: selected_tokens,
                     liquidated_balance: None,
+                    failed_liquidations: vec![],
                 })
             }
         }
@@ -1090,6 +1108,7 @@ where
                 is_new_period: true,
                 existing_tokens: vec![],
                 liquidated_balance: None,
+                failed_liquidations: vec![],
             })
         }
     }
@@ -1117,12 +1136,12 @@ pub(crate) fn filter_tokens_to_liquidate(
 
 /// 全保有トークンをwrap.nearに売却
 ///
-/// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
+/// 戻り値: 売却後の wrap.near 残高と清算失敗トークンのリスト
 pub(crate) async fn liquidate_all_positions<C, W>(
     client: &C,
     wallet: &W,
     cfg: &impl ConfigAccess,
-) -> Result<YoctoAmount>
+) -> Result<LiquidationResult>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
     <C as SendTx>::Output: Display + SentTx,
@@ -1148,7 +1167,10 @@ where
         }
         None => {
             debug!(log, "no evaluation period found, nothing to liquidate");
-            return Ok(YoctoAmount::zero());
+            return Ok(LiquidationResult {
+                wrap_near_balance: YoctoAmount::zero(),
+                failed_tokens: vec![],
+            });
         }
     };
 
@@ -1164,10 +1186,15 @@ where
         // wrap.nearの残高を返す
         let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
         let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
-        return Ok(YoctoAmount::from_u128(balance));
+        return Ok(LiquidationResult {
+            wrap_near_balance: YoctoAmount::from_u128(balance),
+            failed_tokens: vec![],
+        });
     }
 
     info!(log, "liquidating positions"; "token_count" => tokens_to_liquidate.len());
+
+    let mut failed_tokens: Vec<TokenAccount> = Vec::new();
 
     // トレードレコーダーを作成
     let recorder = TradeRecorder::new(period_id);
@@ -1209,7 +1236,12 @@ where
                 trace!(log, "successfully liquidated token"; "token" => %token);
             }
             Err(e) => {
-                error!(log, "failed to liquidate token"; "token" => %token, "error" => ?e);
+                error!(log, "failed to liquidate token";
+                    "token" => %token,
+                    "balance" => balance,
+                    "error" => %e
+                );
+                failed_tokens.push(token.clone());
                 // エラーが発生しても他のトークンの売却は継続
             }
         }
@@ -1222,8 +1254,20 @@ where
     let final_balance =
         YoctoAmount::from_u128(deposits.get(wrap_near).map(|u| u.0).unwrap_or_default());
 
-    info!(log, "liquidation complete"; "final_wrap_near_balance" => %final_balance);
-    Ok(final_balance)
+    if !failed_tokens.is_empty() {
+        warn!(log, "liquidation completed with failures";
+            "final_wrap_near_balance" => %final_balance,
+            "failed_count" => failed_tokens.len(),
+            "failed_tokens" => ?failed_tokens
+        );
+    } else {
+        info!(log, "liquidation complete"; "final_wrap_near_balance" => %final_balance);
+    }
+
+    Ok(LiquidationResult {
+        wrap_near_balance: final_balance,
+        failed_tokens,
+    })
 }
 
 /// 評価期間終了時に wrap.near を NEAR に戻して HARVEST_ACCOUNT_ID に送金

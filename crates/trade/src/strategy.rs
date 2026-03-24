@@ -133,6 +133,14 @@ where
     // Step 3: PredictionServiceの初期化
     let prediction_service = PredictionService::new(cfg);
 
+    // 清算失敗トークンがあればログ出力
+    if !result.failed_liquidations.is_empty() {
+        warn!(log, "some tokens failed to liquidate, will be retried next period";
+            "failed_count" => result.failed_liquidations.len(),
+            "failed_tokens" => ?result.failed_liquidations
+        );
+    }
+
     // result を分解（existing_tokens は into_iter で消費するため先に取り出す）
     let period_id = result.period_id;
     let is_new_period = result.is_new_period;
