@@ -73,25 +73,25 @@ where
 
     // Step 1: 評価期間のチェックと管理（清算が必要な場合は先に実行）
     // 初回起動時は available_funds=0 で呼び出し、後で prepare_funds() で資金準備
-    let (period_id, is_new_period, existing_tokens, liquidated_balance) =
+    let result =
         manage_evaluation_period(client, wallet, current_time, YoctoAmount::zero(), cfg).await?;
     info!(log, "evaluation period status";
-        "period_id" => %period_id,
-        "is_new_period" => is_new_period,
-        "existing_tokens_count" => existing_tokens.len(),
-        "liquidated_balance" => ?liquidated_balance,
+        "period_id" => %result.period_id,
+        "is_new_period" => result.is_new_period,
+        "existing_tokens_count" => result.existing_tokens.len(),
+        "liquidated_balance" => ?result.liquidated_balance,
         "trade_enabled" => trade_enabled
     );
 
     // period_id が空の場合は清算のみで終了（manage_evaluation_period で停止された）
-    if period_id.is_empty() {
+    if result.period_id.is_empty() {
         info!(log, "trade stopped after liquidation (TRADE_ENABLED=false)");
         return Ok(());
     }
 
     // 取引が無効化されている場合
     if !trade_enabled {
-        if is_new_period {
+        if result.is_new_period {
             info!(log, "trade disabled, skipping new period");
             return Ok(());
         } else {
@@ -103,8 +103,8 @@ where
     }
 
     // Step 2: 資金準備（新規期間で清算がなかった場合のみ）
-    let available_funds: YoctoAmount = if is_new_period {
-        if let Some(balance) = liquidated_balance {
+    let available_funds: YoctoAmount = if result.is_new_period {
+        if let Some(balance) = result.liquidated_balance {
             // 清算が行われた場合: 清算後の残高をそのまま使用
             debug!(log, "Using liquidated balance for new period"; "available_funds" => %balance);
             if balance.is_zero() {
@@ -132,6 +132,11 @@ where
 
     // Step 3: PredictionServiceの初期化
     let prediction_service = PredictionService::new(cfg);
+
+    // result を分解（existing_tokens は into_iter で消費するため先に取り出す）
+    let period_id = result.period_id;
+    let is_new_period = result.is_new_period;
+    let existing_tokens = result.existing_tokens;
 
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {

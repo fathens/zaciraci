@@ -879,15 +879,21 @@ where
 
 /// 評価期間のチェックと管理
 ///
-/// 戻り値: (period_id, is_new_period, selected_tokens, liquidated_balance)
-/// - liquidated_balance: 清算が行われた場合の最終残高
+/// 評価期間管理の結果
+pub(crate) struct EvaluationPeriodResult {
+    pub period_id: String,
+    pub is_new_period: bool,
+    pub existing_tokens: Vec<TokenAccount>,
+    pub liquidated_balance: Option<YoctoAmount>,
+}
+
 pub(crate) async fn manage_evaluation_period<C, W>(
     client: &C,
     wallet: &W,
     current_time: DateTime<Utc>,
     available_funds: YoctoAmount,
     cfg: &impl ConfigAccess,
-) -> Result<(String, bool, Vec<TokenAccount>, Option<YoctoAmount>)>
+) -> Result<EvaluationPeriodResult>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
     <C as SendTx>::Output: Display + SentTx,
@@ -991,7 +997,12 @@ where
                     }
 
                     // 空の period_id を返して停止を通知
-                    return Ok((String::new(), false, vec![], Some(post_harvest_balance)));
+                    return Ok(EvaluationPeriodResult {
+                        period_id: String::new(),
+                        is_new_period: false,
+                        existing_tokens: vec![],
+                        liquidated_balance: Some(post_harvest_balance),
+                    });
                 }
 
                 // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
@@ -1003,12 +1014,12 @@ where
                     "initial_value" => %created_period.initial_value
                 );
 
-                Ok((
-                    created_period.period_id,
-                    true,
-                    vec![],
-                    Some(post_harvest_balance),
-                ))
+                Ok(EvaluationPeriodResult {
+                    period_id: created_period.period_id,
+                    is_new_period: true,
+                    existing_tokens: vec![],
+                    liquidated_balance: Some(post_harvest_balance),
+                })
             } else {
                 // 評価期間中: トランザクション記録で判定
                 debug!(log, "checking evaluation period status";
@@ -1054,7 +1065,12 @@ where
                     );
                 }
 
-                Ok((period_id, is_new_period, selected_tokens, None))
+                Ok(EvaluationPeriodResult {
+                    period_id,
+                    is_new_period,
+                    existing_tokens: selected_tokens,
+                    liquidated_balance: None,
+                })
             }
         }
         None => {
@@ -1069,7 +1085,12 @@ where
                 "initial_value" => %created_period.initial_value
             );
 
-            Ok((created_period.period_id, true, vec![], None))
+            Ok(EvaluationPeriodResult {
+                period_id: created_period.period_id,
+                is_new_period: true,
+                existing_tokens: vec![],
+                liquidated_balance: None,
+            })
         }
     }
 }
