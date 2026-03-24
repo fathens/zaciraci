@@ -324,8 +324,11 @@ impl PortfolioState {
     /// Scale output amount proportionally when actual input is less than requested.
     ///
     /// Computes `to_amount * actual / requested` using BigDecimal for precision.
-    /// The result is truncated (floor) to the nearest integer, which means the
-    /// output is always rounded in the conservative direction (less output).
+    ///
+    /// Uses `RoundingMode::Down` (toward zero) rather than `Floor` (toward −∞)
+    /// because the result is always non-negative and the intent is to never
+    /// overestimate the output amount. (`Down` and `Floor` are equivalent for
+    /// non-negative values, but `Down` makes the intent explicit.)
     ///
     /// # Preconditions
     /// - `requested > 0` (guaranteed by callers which return early when `actual == 0`,
@@ -422,11 +425,11 @@ impl PortfolioState {
             total_cost
         } else if total_holding > 0 {
             // BigDecimal multiplication/division: no overflow, full precision.
-            // Floor = round toward negative infinity. For cost basis (always non-negative)
-            // this slightly underestimates the cost of the sold portion, which slightly
-            // overestimates realized P&L. The error is sub-yoctoNEAR and self-corrects
-            // on final sell (early return above). Uses Floor for consistency with
-            // record_sell_pnl's rounding.
+            // Floor (toward −∞) for consistency with record_sell_pnl's rounding.
+            // For non-negative cost basis this is equivalent to truncation, which
+            // slightly underestimates the cost of the sold portion and slightly
+            // overestimates realized P&L. The error is sub-yoctoNEAR and
+            // self-corrects on final sell (early return above).
             let result = (total_cost.as_bigdecimal() * BigDecimal::from(sell_amount))
                 / BigDecimal::from(total_holding);
             YoctoValue::from_yocto(result.with_scale_round(0, bigdecimal::RoundingMode::Floor))
@@ -514,6 +517,9 @@ impl PortfolioState {
             self.holdings.remove(&token);
             let sell_yocto_value = YoctoValue::from_yocto(BigDecimal::from(sell_yocto));
 
+            // Record P&L before updating cash_balance: if record_sell_pnl
+            // panics, cash_balance has not yet been credited, avoiding a
+            // state where proceeds are double-counted.
             let pnl_near = self.record_sell_pnl(&token, amount_raw, &sell_yocto_value);
 
             let balance = mem::replace(&mut self.cash_balance, YoctoValue::zero());
