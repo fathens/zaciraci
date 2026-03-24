@@ -166,6 +166,10 @@ fn test_mape_to_confidence_equal_thresholds() {
 
 // --- calculate_direction_accuracy_for_records ---
 
+fn test_logger() -> slog::Logger {
+    DEFAULT.new(o!("test" => true))
+}
+
 fn make_time(offset_hours: i64) -> NaiveDateTime {
     let base = chrono::DateTime::from_timestamp(1_700_000_000, 0)
         .unwrap()
@@ -195,26 +199,29 @@ fn make_record(
 
 #[test]
 fn test_direction_accuracy_empty_input() {
-    let (correct, total) = calculate_direction_accuracy_for_records(&[]);
+    let log = test_logger();
+    let (correct, total) = calculate_direction_accuracy_for_records(&[], &log);
     assert_eq!(correct, 0);
     assert_eq!(total, 0);
 }
 
 #[test]
 fn test_direction_accuracy_single_record() {
+    let log = test_logger();
     let records = vec![make_record(make_time(0), 100, Some(105))];
-    let (correct, total) = calculate_direction_accuracy_for_records(&records);
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
     assert_eq!(correct, 0);
     assert_eq!(total, 0);
 }
 
 #[test]
 fn test_direction_accuracy_with_none_actual() {
+    let log = test_logger();
     let t1 = make_time(1);
     let t2 = make_time(0);
     // pair[0].actual_price = None → skip
     let records = vec![make_record(t1, 110, None), make_record(t2, 100, Some(100))];
-    let (correct, total) = calculate_direction_accuracy_for_records(&records);
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
     assert_eq!(total, 0);
     assert_eq!(correct, 0);
 }
@@ -236,10 +243,48 @@ fn test_direction_accuracy_normal_cases() {
         make_record(t1, 100, Some(100)),
     ];
 
-    let (correct, total) = calculate_direction_accuracy_for_records(&records);
+    let log = test_logger();
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
     // pair (t3, t2): prev_actual=110, predicted=120(上昇), actual=115(上昇) → correct
     // pair (t2, t1): prev_actual=100, predicted=90(下落), actual=110(上昇) → incorrect
     assert_eq!(total, 2);
+    assert_eq!(correct, 1);
+}
+
+#[test]
+fn test_direction_accuracy_skips_large_gap() {
+    let log = test_logger();
+    // t1 と t2 の間に 48h のギャップ（max_gap = 36h を超える）
+    let t1 = make_time(0);
+    let t2 = make_time(48);
+
+    let records = vec![
+        make_record(t2, 120, Some(115)),
+        make_record(t1, 100, Some(100)),
+    ];
+
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
+    // ギャップが 48h > 36h (max_gap) なのでスキップ
+    assert_eq!(total, 0);
+    assert_eq!(correct, 0);
+}
+
+#[test]
+fn test_direction_accuracy_allows_within_gap() {
+    let log = test_logger();
+    // t1 と t2 の間に 30h のギャップ（max_gap = 36h 以内）
+    let t1 = make_time(0);
+    let t2 = make_time(30);
+
+    let records = vec![
+        make_record(t2, 120, Some(115)),
+        make_record(t1, 100, Some(100)),
+    ];
+
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
+    // ギャップが 30h ≤ 36h (max_gap) なのでカウントされる
+    // prev_actual=100, predicted=120(上昇), actual=115(上昇) → correct
+    assert_eq!(total, 1);
     assert_eq!(correct, 1);
 }
 

@@ -256,16 +256,35 @@ pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Res
 
 /// ソート済みレコード（target_time DESC）の隣接ペアから方向正解率を計算する。
 /// DB アクセスなしで計算（N+1 クエリ排除）。
-fn calculate_direction_accuracy_for_records(records: &[DbPredictionRecord]) -> (usize, usize) {
+///
+/// 隣接レコード間の時間ギャップが `PREDICTION_HORIZON_HOURS` の 1.5 倍を超えるペアは
+/// スキップする。予測は `data_cutoff_time` 基準の 24h 先を想定しており、ギャップが
+/// 大きいと `prev_actual` が予測の基準時点から乖離し、方向比較の統計的意味が薄れるため。
+fn calculate_direction_accuracy_for_records(
+    records: &[DbPredictionRecord],
+    log: &slog::Logger,
+) -> (usize, usize) {
     debug_assert!(
         records
             .windows(2)
             .all(|w| w[0].target_time >= w[1].target_time),
         "records must be sorted by target_time DESC"
     );
+    let max_gap = chrono::TimeDelta::hours((PREDICTION_HORIZON_HOURS as i64 * 3) / 2);
     let mut correct = 0usize;
     let mut total = 0usize;
     for pair in records.windows(2) {
+        let gap = pair[0].target_time - pair[1].target_time;
+        if gap > max_gap {
+            warn!(log, "skipping direction accuracy pair due to large time gap";
+                "token" => &pair[0].token,
+                "newer_target_time" => %pair[0].target_time,
+                "older_target_time" => %pair[1].target_time,
+                "gap_hours" => gap.num_hours(),
+                "max_gap_hours" => max_gap.num_hours(),
+            );
+            continue;
+        }
         let (Some(actual), Some(prev_actual)) = (&pair[0].actual_price, &pair[1].actual_price)
         else {
             continue;
@@ -354,7 +373,7 @@ pub(crate) async fn calculate_per_token_confidence(
         // の NaN ガードで confidence = 0.0（安全側）になる。
         let avg_mape = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
 
-        let direction_data = records.map(|rs| calculate_direction_accuracy_for_records(rs));
+        let direction_data = records.map(|rs| calculate_direction_accuracy_for_records(rs, &log));
         let hit_rate = direction_data.and_then(|(correct, total)| {
             if total >= min_samples {
                 Some(correct as f64 / total as f64)
