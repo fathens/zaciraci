@@ -15,7 +15,7 @@
 - **設定項目**: `TRADE_CRON_SCHEDULE`
 - **デフォルト値**: 毎日午前0時（1日1回）
 - **説明**: 運用期間中の定期的なトレード実行のスケジュール
-- **現在の実装**: backend/src/trade.rs で cron 設定（デフォルト: "0 0 0 * * *"）
+- **現在の実装**: crates/trade/src.rs で cron 設定（デフォルト: "0 0 0 * * *"）
 - **設定例**:
   - `"0 0 0 * * *"`: 毎日午前0時（デフォルト）
   - `"0 0 */12 * * *"`: 12時間ごと
@@ -144,9 +144,9 @@ flowchart LR
 - そのため、ハーベスト分は自動的に次回の投入額から除外される
 
 **資金管理の実装箇所**:
-- 評価期間管理: `backend/src/trade/stats.rs` の `manage_evaluation_period()` 関数
-- ハーベスト判定: `backend/src/trade/harvest.rs` の `check_and_harvest()` 関数
-- データベース記録: `backend/src/persistence/evaluation_period.rs`
+- 評価期間管理: `crates/trade/src/stats.rs` の `manage_evaluation_period()` 関数
+- ハーベスト判定: `crates/trade/src/harvest.rs` の `check_and_harvest()` 関数
+- データベース記録: `crates/persistence/src/evaluation_period.rs`
 
 ### 処理フローチャート
 

@@ -243,29 +243,6 @@ floor = PREDICTION_ALPHA_FLOOR (0.5)
 
 | ファイル | 内容 |
 |---------|------|
-| `backend/src/trade/prediction_accuracy.rs` | `mape_to_confidence()`, 閾値定数 |
-| `backend/src/trade/strategy.rs` | MAPE → confidence 変換、PortfolioData への設定 |
-| `common/src/algorithm/portfolio.rs` | `PREDICTION_ALPHA_FLOOR`, alpha 計算 |
-
-## Web API
-
-### GET /stats/prediction_mape
-
-直近の rolling MAPE を取得する。
-
-**クエリパラメータ:**
-
-| パラメータ | デフォルト | 説明 |
-|-----------|-----------|------|
-| `window` | 10 | 直近レコード数 |
-| `min_samples` | 3 | 最小サンプル数（未満の場合 `rolling_mape = null`） |
-
-**レスポンス:**
-
-```json
-{
-  "rolling_mape": 8.45,
-  "sample_count": 10,
-  "window": 10
-}
-```
+| `crates/trade/src/prediction_accuracy.rs` | `mape_to_confidence()`, 閾値定数 |
+| `crates/trade/src/strategy.rs` | MAPE → confidence 変換、PortfolioData への設定 |
+| `crates/common/src/algorithm/portfolio.rs` | `PREDICTION_ALPHA_FLOOR`, alpha 計算 |
