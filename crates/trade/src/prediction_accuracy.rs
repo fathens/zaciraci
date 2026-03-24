@@ -12,8 +12,7 @@ use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-/// 予測の時間軸（何時間先の価格を予測するか）
-pub(crate) const PREDICTION_HORIZON_HOURS: usize = 24;
+pub(crate) use common::algorithm::prediction::PREDICTION_HORIZON_HOURS;
 
 /// 古い prediction_records を削除する。
 ///
