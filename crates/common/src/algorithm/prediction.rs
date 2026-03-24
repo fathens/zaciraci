@@ -47,6 +47,9 @@ pub trait PredictionProvider: Send + Sync {
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>>;
 }
 
+/// 予測の時間軸（何時間先の価格を予測するか）
+pub const PREDICTION_HORIZON_HOURS: usize = 24;
+
 impl TokenPredictionResult {
     /// 指定した時間軸に最も近い予測ポイントを取得（±1h の許容範囲）
     pub fn prediction_at_horizon(&self, horizon_hours: usize) -> Option<&PredictedPrice> {
@@ -69,8 +72,8 @@ impl crate::algorithm::types::PredictionData {
         prediction: &TokenPredictionResult,
         current_price: TokenPrice,
     ) -> Option<Self> {
-        // PredictionData は 24h 後の予測を格納する型のため、ホライゾン = 24 固定
-        let predicted_24h = prediction.prediction_at_horizon(24)?;
+        // PredictionData は 24h 後の予測を格納する型のため、ホライゾン定数を使用
+        let predicted_24h = prediction.prediction_at_horizon(PREDICTION_HORIZON_HOURS)?;
 
         Some(Self {
             token: prediction.token.clone(),

@@ -6,3 +6,4 @@ mod add_position;
 mod liquidation;
 mod matching;
 mod rebalance;
+mod slippage_policy;

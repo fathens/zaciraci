@@ -6,6 +6,8 @@
 mod matching;
 
 use crate::Result;
+use crate::slippage::{ExpectedReturn, SlippagePolicy};
+use crate::swap::SwapParams;
 use crate::{recorder::TradeRecorder, swap};
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
@@ -19,7 +21,7 @@ use matching::{BuyOperation, SellOperation, match_rebalance_operations};
 use near_sdk::NearToken;
 use num_bigint::ToBigInt;
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 
 /// TokenAmount を u128 に変換する。
@@ -58,6 +60,17 @@ struct PhaseCounters {
 
 /// harvest reserve のデフォルト値（1 NEAR in yoctoNEAR）
 const DEFAULT_HARVEST_RESERVE: u128 = 10u128.pow(24);
+
+/// 購入トークンの expected_return から SlippagePolicy を構築する
+fn buy_policy(
+    token: &TokenOutAccount,
+    expected_returns: &BTreeMap<TokenOutAccount, f64>,
+) -> SlippagePolicy {
+    expected_returns
+        .get(token)
+        .map(|&r| SlippagePolicy::FromExpectedReturn(ExpectedReturn::new(r)))
+        .unwrap_or(SlippagePolicy::Unprotected)
+}
 
 /// 実行サマリー
 pub struct ExecutionSummary {
@@ -168,6 +181,7 @@ pub(crate) async fn execute_trading_actions<C, W>(
     actions: &[TradingAction],
     period_id: String,
     cfg: &impl ConfigAccess,
+    expected_returns: &BTreeMap<TokenOutAccount, f64>,
 ) -> Result<ExecutionSummary>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
@@ -192,18 +206,13 @@ where
     let add_position_amounts = precompute_add_position_amounts(client, wallet, actions).await?;
 
     for (idx, action) in actions.iter().enumerate() {
-        let swap_amount_override = add_position_amounts.get(&idx).copied();
-        match execute_single_action(
-            client,
-            wallet,
-            action,
-            &recorder,
-            swap_amount_override,
-            &period_id,
-            cfg,
-        )
-        .await
-        {
+        let ctx = ActionContext {
+            recorder: &recorder,
+            swap_amount_override: add_position_amounts.get(&idx).copied(),
+            evaluation_period_id: &period_id,
+            expected_returns,
+        };
+        match execute_single_action(client, wallet, action, &ctx, cfg).await {
             Ok(_) => {
                 info!(log, "action executed successfully"; "action" => ?action);
                 summary.success_count += 1;
@@ -218,14 +227,20 @@ where
     Ok(summary)
 }
 
+/// execute_single_action のコンテキスト
+struct ActionContext<'a> {
+    recorder: &'a TradeRecorder,
+    swap_amount_override: Option<u128>,
+    evaluation_period_id: &'a str,
+    expected_returns: &'a BTreeMap<TokenOutAccount, f64>,
+}
+
 /// 単一の取引アクションを実行
 async fn execute_single_action<C, W>(
     client: &C,
     wallet: &W,
     action: &TradingAction,
-    recorder: &TradeRecorder,
-    swap_amount_override: Option<u128>,
-    evaluation_period_id: &str,
+    ctx: &ActionContext<'_>,
     cfg: &impl ConfigAccess,
 ) -> Result<()>
 where
@@ -237,6 +252,8 @@ where
     W: blockchain::wallet::Wallet,
 {
     let log = DEFAULT.new(o!("function" => "execute_single_action"));
+    let recorder = ctx.recorder;
+    let expected_returns = ctx.expected_returns;
 
     match action {
         TradingAction::Hold => {
@@ -260,24 +277,31 @@ where
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &from_token,
-                    &wrap_near_out,
-                    None,
-                    recorder,
+                    &SwapParams {
+                        from_token: &from_token,
+                        to_token: &wrap_near_out,
+                        swap_amount: None,
+                        recorder,
+                        policy: &SlippagePolicy::Unprotected,
+                    },
                     cfg,
                 )
                 .await?;
             }
 
-            // Step 2: wrap.near → target
+            // Step 2: wrap.near → target（購入フェーズ: スリッページ保護あり）
             if target.inner() != wrap_near {
+                let target_policy = buy_policy(target, expected_returns);
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &wrap_near_in,
-                    target,
-                    None,
-                    recorder,
+                    &SwapParams {
+                        from_token: &wrap_near_in,
+                        to_token: target,
+                        swap_amount: None,
+                        recorder,
+                        policy: &target_policy,
+                    },
                     cfg,
                 )
                 .await?;
@@ -292,7 +316,20 @@ where
             debug!(log, "executing switch"; "from" => %from, "to" => %to);
 
             let from_token = from.as_in();
-            swap::execute_direct_swap(client, wallet, &from_token, to, None, recorder, cfg).await?;
+            let to_policy = buy_policy(to, expected_returns);
+            swap::execute_direct_swap(
+                client,
+                wallet,
+                &SwapParams {
+                    from_token: &from_token,
+                    to_token: to,
+                    swap_amount: None,
+                    recorder,
+                    policy: &to_policy,
+                },
+                cfg,
+            )
+            .await?;
 
             debug!(log, "switch completed"; "from" => %from, "to" => %to);
             Ok(())
@@ -302,9 +339,10 @@ where
                 client,
                 wallet,
                 target_weights,
-                evaluation_period_id,
+                ctx.evaluation_period_id,
                 recorder,
                 cfg,
+                expected_returns,
             )
             .await
         }
@@ -315,7 +353,7 @@ where
             // wrap.near → token へのswap
             let wrap_near = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
             if token.inner() != wrap_near {
-                let swap_amount = swap_amount_override.ok_or_else(|| {
+                let swap_amount = ctx.swap_amount_override.ok_or_else(|| {
                     anyhow::anyhow!("No pre-computed swap amount for AddPosition: {}", token)
                 })?;
 
@@ -332,13 +370,17 @@ where
                 }
 
                 let wrap_near_in: TokenInAccount = wrap_near.to_in();
+                let token_policy = buy_policy(token, expected_returns);
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &wrap_near_in,
-                    token,
-                    Some(swap_amount),
-                    recorder,
+                    &SwapParams {
+                        from_token: &wrap_near_in,
+                        to_token: token,
+                        swap_amount: Some(swap_amount),
+                        recorder,
+                        policy: &token_policy,
+                    },
                     cfg,
                 )
                 .await?;
@@ -360,10 +402,13 @@ where
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &from_token,
-                    &wrap_near_out,
-                    None,
-                    recorder,
+                    &SwapParams {
+                        from_token: &from_token,
+                        to_token: &wrap_near_out,
+                        swap_amount: None,
+                        recorder,
+                        policy: &SlippagePolicy::Unprotected,
+                    },
                     cfg,
                 )
                 .await?;
@@ -392,6 +437,7 @@ async fn execute_rebalance<C, W>(
     evaluation_period_id: &str,
     recorder: &TradeRecorder,
     cfg: &impl ConfigAccess,
+    expected_returns: &BTreeMap<TokenOutAccount, f64>,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -593,10 +639,13 @@ where
         match swap::execute_direct_swap(
             client,
             wallet,
-            &from_token,
-            &to_token,
-            Some(token_amount_u128),
-            recorder,
+            &SwapParams {
+                from_token: &from_token,
+                to_token: &to_token,
+                swap_amount: Some(token_amount_u128),
+                recorder,
+                policy: &SlippagePolicy::Unprotected,
+            },
             cfg,
         )
         .await
@@ -656,10 +705,13 @@ where
         match swap::execute_direct_swap(
             client,
             wallet,
-            &from_token,
-            &wrap_near_out,
-            Some(token_amount_u128),
-            recorder,
+            &SwapParams {
+                from_token: &from_token,
+                to_token: &wrap_near_out,
+                swap_amount: Some(token_amount_u128),
+                recorder,
+                policy: &SlippagePolicy::Unprotected,
+            },
             cfg,
         )
         .await
@@ -759,13 +811,17 @@ where
                     "original_value" => %buy.near_value,
                     "wrap_near_amount" => wrap_near_amount_u128);
                 let to_token: TokenOutAccount = buy.token.clone().into();
+                let buy_token_policy = buy_policy(&to_token, expected_returns);
                 match swap::execute_direct_swap(
                     client,
                     wallet,
-                    &wrap_near_in,
-                    &to_token,
-                    Some(wrap_near_amount_u128),
-                    recorder,
+                    &SwapParams {
+                        from_token: &wrap_near_in,
+                        to_token: &to_token,
+                        swap_amount: Some(wrap_near_amount_u128),
+                        recorder,
+                        policy: &buy_token_policy,
+                    },
                     cfg,
                 )
                 .await
@@ -823,15 +879,31 @@ where
 
 /// 評価期間のチェックと管理
 ///
-/// 戻り値: (period_id, is_new_period, selected_tokens, liquidated_balance)
-/// - liquidated_balance: 清算が行われた場合の最終残高
+/// 評価期間管理の結果
+pub(crate) struct EvaluationPeriodResult {
+    pub period_id: String,
+    pub is_new_period: bool,
+    pub existing_tokens: Vec<TokenAccount>,
+    pub liquidated_balance: Option<YoctoAmount>,
+    /// 清算に失敗したトークン（次回清算時に自動リトライされる）
+    pub failed_liquidations: Vec<TokenAccount>,
+}
+
+/// 全ポジション清算の結果
+pub(crate) struct LiquidationResult {
+    /// 清算後の wrap.near 残高
+    pub wrap_near_balance: YoctoAmount,
+    /// スワップに失敗したトークン
+    pub failed_tokens: Vec<TokenAccount>,
+}
+
 pub(crate) async fn manage_evaluation_period<C, W>(
     client: &C,
     wallet: &W,
     current_time: DateTime<Utc>,
     available_funds: YoctoAmount,
     cfg: &impl ConfigAccess,
-) -> Result<(String, bool, Vec<TokenAccount>, Option<YoctoAmount>)>
+) -> Result<EvaluationPeriodResult>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
     <C as SendTx>::Output: Display + SentTx,
@@ -864,8 +936,13 @@ where
                 );
 
                 // 全トークンをwrap.nearに売却
-                let final_balance = liquidate_all_positions(client, wallet, cfg).await?;
-                info!(log, "liquidated all positions"; "final_balance" => %final_balance);
+                let liquidation = liquidate_all_positions(client, wallet, cfg).await?;
+                let final_balance = liquidation.wrap_near_balance;
+                let failed_liquidations = liquidation.failed_tokens;
+                info!(log, "liquidated all positions";
+                    "final_balance" => %final_balance,
+                    "failed_count" => failed_liquidations.len()
+                );
 
                 // 評価期間のパフォーマンスを計算してログ出力
                 let initial_value = period_initial_value.to_value();
@@ -935,7 +1012,13 @@ where
                     }
 
                     // 空の period_id を返して停止を通知
-                    return Ok((String::new(), false, vec![], Some(post_harvest_balance)));
+                    return Ok(EvaluationPeriodResult {
+                        period_id: String::new(),
+                        is_new_period: false,
+                        existing_tokens: vec![],
+                        liquidated_balance: Some(post_harvest_balance),
+                        failed_liquidations: failed_liquidations.clone(),
+                    });
                 }
 
                 // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
@@ -947,12 +1030,13 @@ where
                     "initial_value" => %created_period.initial_value
                 );
 
-                Ok((
-                    created_period.period_id,
-                    true,
-                    vec![],
-                    Some(post_harvest_balance),
-                ))
+                Ok(EvaluationPeriodResult {
+                    period_id: created_period.period_id,
+                    is_new_period: true,
+                    existing_tokens: vec![],
+                    liquidated_balance: Some(post_harvest_balance),
+                    failed_liquidations,
+                })
             } else {
                 // 評価期間中: トランザクション記録で判定
                 debug!(log, "checking evaluation period status";
@@ -998,7 +1082,13 @@ where
                     );
                 }
 
-                Ok((period_id, is_new_period, selected_tokens, None))
+                Ok(EvaluationPeriodResult {
+                    period_id,
+                    is_new_period,
+                    existing_tokens: selected_tokens,
+                    liquidated_balance: None,
+                    failed_liquidations: vec![],
+                })
             }
         }
         None => {
@@ -1013,7 +1103,13 @@ where
                 "initial_value" => %created_period.initial_value
             );
 
-            Ok((created_period.period_id, true, vec![], None))
+            Ok(EvaluationPeriodResult {
+                period_id: created_period.period_id,
+                is_new_period: true,
+                existing_tokens: vec![],
+                liquidated_balance: None,
+                failed_liquidations: vec![],
+            })
         }
     }
 }
@@ -1040,12 +1136,12 @@ pub(crate) fn filter_tokens_to_liquidate(
 
 /// 全保有トークンをwrap.nearに売却
 ///
-/// 戻り値: 売却後のwrap.near総額 (yoctoNEAR)
+/// 戻り値: 売却後の wrap.near 残高と清算失敗トークンのリスト
 pub(crate) async fn liquidate_all_positions<C, W>(
     client: &C,
     wallet: &W,
     cfg: &impl ConfigAccess,
-) -> Result<YoctoAmount>
+) -> Result<LiquidationResult>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
     <C as SendTx>::Output: Display + SentTx,
@@ -1071,7 +1167,10 @@ where
         }
         None => {
             debug!(log, "no evaluation period found, nothing to liquidate");
-            return Ok(YoctoAmount::zero());
+            return Ok(LiquidationResult {
+                wrap_near_balance: YoctoAmount::zero(),
+                failed_tokens: vec![],
+            });
         }
     };
 
@@ -1087,10 +1186,15 @@ where
         // wrap.nearの残高を返す
         let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
         let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
-        return Ok(YoctoAmount::from_u128(balance));
+        return Ok(LiquidationResult {
+            wrap_near_balance: YoctoAmount::from_u128(balance),
+            failed_tokens: vec![],
+        });
     }
 
     info!(log, "liquidating positions"; "token_count" => tokens_to_liquidate.len());
+
+    let mut failed_tokens: Vec<TokenAccount> = Vec::new();
 
     // トレードレコーダーを作成
     let recorder = TradeRecorder::new(period_id);
@@ -1117,10 +1221,13 @@ where
         match swap::execute_direct_swap(
             client,
             wallet,
-            &from_token,
-            &wrap_near_out,
-            None,
-            &recorder,
+            &SwapParams {
+                from_token: &from_token,
+                to_token: &wrap_near_out,
+                swap_amount: None,
+                recorder: &recorder,
+                policy: &SlippagePolicy::Unprotected,
+            },
             cfg,
         )
         .await
@@ -1129,7 +1236,12 @@ where
                 trace!(log, "successfully liquidated token"; "token" => %token);
             }
             Err(e) => {
-                error!(log, "failed to liquidate token"; "token" => %token, "error" => ?e);
+                error!(log, "failed to liquidate token";
+                    "token" => %token,
+                    "balance" => balance,
+                    "error" => %e
+                );
+                failed_tokens.push(token.clone());
                 // エラーが発生しても他のトークンの売却は継続
             }
         }
@@ -1142,8 +1254,20 @@ where
     let final_balance =
         YoctoAmount::from_u128(deposits.get(wrap_near).map(|u| u.0).unwrap_or_default());
 
-    info!(log, "liquidation complete"; "final_wrap_near_balance" => %final_balance);
-    Ok(final_balance)
+    if !failed_tokens.is_empty() {
+        warn!(log, "liquidation completed with failures";
+            "final_wrap_near_balance" => %final_balance,
+            "failed_count" => failed_tokens.len(),
+            "failed_tokens" => ?failed_tokens
+        );
+    } else {
+        info!(log, "liquidation complete"; "final_wrap_near_balance" => %final_balance);
+    }
+
+    Ok(LiquidationResult {
+        wrap_near_balance: final_balance,
+        failed_tokens,
+    })
 }
 
 /// 評価期間終了時に wrap.near を NEAR に戻して HARVEST_ACCOUNT_ID に送金

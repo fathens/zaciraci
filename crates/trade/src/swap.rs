@@ -1,5 +1,6 @@
 use crate::Result;
 use crate::recorder::TradeRecorder;
+use crate::slippage::{self, SlippagePolicy};
 use bigdecimal::BigDecimal;
 use blockchain::jsonrpc::SentTx;
 use common::types::{NearValue, TokenAccount, TokenAmount};
@@ -56,14 +57,24 @@ pub async fn calculate_total_portfolio_value(
     .await
 }
 
+/// execute_direct_swap のパラメータ
+pub struct SwapParams<'a> {
+    pub from_token: &'a common::types::TokenInAccount,
+    pub to_token: &'a common::types::TokenOutAccount,
+    pub swap_amount: Option<u128>,
+    pub recorder: &'a TradeRecorder,
+    pub policy: &'a SlippagePolicy,
+}
+
 /// 2つのトークン間で直接スワップを実行（シンプルなパス探索を使用）
+///
+/// `params.policy` でスリッページ保護の方針を指定する:
+/// - `FromExpectedReturn`: 予測リターンに基づく min_out を設定
+/// - `Unprotected`: min_out = 0（清算・売却フェーズ用）
 pub async fn execute_direct_swap<C, W>(
     client: &C,
     wallet: &W,
-    from_token: &common::types::TokenInAccount,
-    to_token: &common::types::TokenOutAccount,
-    swap_amount: Option<u128>,
-    recorder: &TradeRecorder,
+    params: &SwapParams<'_>,
     cfg: &impl common::config::ConfigAccess,
 ) -> Result<()>
 where
@@ -74,6 +85,10 @@ where
     <C as blockchain::jsonrpc::SendTx>::Output: std::fmt::Display + blockchain::jsonrpc::SentTx,
     W: blockchain::wallet::Wallet,
 {
+    let from_token = params.from_token;
+    let to_token = params.to_token;
+    let policy = params.policy;
+
     let log = DEFAULT.new(o!(
         "function" => "execute_direct_swap",
         "from" => format!("{}", from_token),
@@ -87,7 +102,7 @@ where
 
     // from_tokenの残高を取得
     // wrap.nearの場合のみ balances::start を使用（refill/harvest処理が必要な場合があるため）
-    let swap_amount_token = swap_amount.map(NearToken::from_yoctonear);
+    let swap_amount_token = params.swap_amount.map(NearToken::from_yoctonear);
     let balance = if from_token_account == *blockchain::ref_finance::token_account::WNEAR_TOKEN {
         blockchain::ref_finance::balances::start(
             client,
@@ -114,7 +129,10 @@ where
 
     // swap_amountが指定されていない場合は残高の全額、指定されている場合は指定金額を使用
     let balance_yocto = balance.as_yoctonear();
-    let swap_amount = swap_amount.unwrap_or(balance_yocto).min(balance_yocto);
+    let swap_amount = params
+        .swap_amount
+        .unwrap_or(balance_yocto)
+        .min(balance_yocto);
 
     // プールデータを読み込み
     let pools = persistence::pool_info::read_from_db(None).await?;
@@ -139,15 +157,19 @@ where
         return Err(anyhow::anyhow!("Failed to deposit storage"));
     }
 
-    // スワップ引数を準備
-    // NOTE: min_out: 0 は意図的な設計。スリッページ保護を設けない理由:
-    // 1. REF Finance のプールは十分な流動性があり、大きなスリッページは稀
-    // 2. 価格変動により取引が失敗するリスクより、確実に約定させることを優先
-    // 3. リバランスは次回クーロン実行で再試行されるため、一時的な不利な約定は許容範囲
-    // 将来的に大規模取引や流動性の低いプールを扱う場合は、見直しを検討する。
+    // AMM 理論出力を事前計算し、スリッページポリシーに基づいて min_out を算出
+    let estimated_output = path.calc_value(swap_amount)?;
+    let min_out = slippage::calculate_min_out(estimated_output, policy)?;
+
+    debug!(log, "slippage protection";
+        "policy" => %policy,
+        "estimated_output" => estimated_output,
+        "min_out" => min_out,
+    );
+
     let arg = blockchain::ref_finance::swap::SwapArg {
         initial_in: swap_amount,
-        min_out: 0,
+        min_out,
     };
 
     // スワップを実行
@@ -198,7 +220,8 @@ where
         TokenAmount::from_smallest_units(BigDecimal::from(swap_amount), from_decimals);
     let to_amount = TokenAmount::from_smallest_units(BigDecimal::from(out), to_decimals);
 
-    recorder
+    params
+        .recorder
         .record_trade(
             sent_tx.to_string(),
             from_token,
