@@ -6,6 +6,8 @@
 mod matching;
 
 use crate::Result;
+use crate::slippage::SlippagePolicy;
+use crate::swap::SwapParams;
 use crate::{recorder::TradeRecorder, swap};
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
@@ -260,10 +262,13 @@ where
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &from_token,
-                    &wrap_near_out,
-                    None,
-                    recorder,
+                    &SwapParams {
+                        from_token: &from_token,
+                        to_token: &wrap_near_out,
+                        swap_amount: None,
+                        recorder,
+                        policy: &SlippagePolicy::Unprotected,
+                    },
                     cfg,
                 )
                 .await?;
@@ -274,10 +279,13 @@ where
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &wrap_near_in,
-                    target,
-                    None,
-                    recorder,
+                    &SwapParams {
+                        from_token: &wrap_near_in,
+                        to_token: target,
+                        swap_amount: None,
+                        recorder,
+                        policy: &SlippagePolicy::Unprotected,
+                    },
                     cfg,
                 )
                 .await?;
@@ -292,7 +300,19 @@ where
             debug!(log, "executing switch"; "from" => %from, "to" => %to);
 
             let from_token = from.as_in();
-            swap::execute_direct_swap(client, wallet, &from_token, to, None, recorder, cfg).await?;
+            swap::execute_direct_swap(
+                client,
+                wallet,
+                &SwapParams {
+                    from_token: &from_token,
+                    to_token: to,
+                    swap_amount: None,
+                    recorder,
+                    policy: &SlippagePolicy::Unprotected,
+                },
+                cfg,
+            )
+            .await?;
 
             debug!(log, "switch completed"; "from" => %from, "to" => %to);
             Ok(())
@@ -335,10 +355,13 @@ where
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &wrap_near_in,
-                    token,
-                    Some(swap_amount),
-                    recorder,
+                    &SwapParams {
+                        from_token: &wrap_near_in,
+                        to_token: token,
+                        swap_amount: Some(swap_amount),
+                        recorder,
+                        policy: &SlippagePolicy::Unprotected,
+                    },
                     cfg,
                 )
                 .await?;
@@ -360,10 +383,13 @@ where
                 swap::execute_direct_swap(
                     client,
                     wallet,
-                    &from_token,
-                    &wrap_near_out,
-                    None,
-                    recorder,
+                    &SwapParams {
+                        from_token: &from_token,
+                        to_token: &wrap_near_out,
+                        swap_amount: None,
+                        recorder,
+                        policy: &SlippagePolicy::Unprotected,
+                    },
                     cfg,
                 )
                 .await?;
@@ -593,10 +619,13 @@ where
         match swap::execute_direct_swap(
             client,
             wallet,
-            &from_token,
-            &to_token,
-            Some(token_amount_u128),
-            recorder,
+            &SwapParams {
+                from_token: &from_token,
+                to_token: &to_token,
+                swap_amount: Some(token_amount_u128),
+                recorder,
+                policy: &SlippagePolicy::Unprotected,
+            },
             cfg,
         )
         .await
@@ -656,10 +685,13 @@ where
         match swap::execute_direct_swap(
             client,
             wallet,
-            &from_token,
-            &wrap_near_out,
-            Some(token_amount_u128),
-            recorder,
+            &SwapParams {
+                from_token: &from_token,
+                to_token: &wrap_near_out,
+                swap_amount: Some(token_amount_u128),
+                recorder,
+                policy: &SlippagePolicy::Unprotected,
+            },
             cfg,
         )
         .await
@@ -762,10 +794,13 @@ where
                 match swap::execute_direct_swap(
                     client,
                     wallet,
-                    &wrap_near_in,
-                    &to_token,
-                    Some(wrap_near_amount_u128),
-                    recorder,
+                    &SwapParams {
+                        from_token: &wrap_near_in,
+                        to_token: &to_token,
+                        swap_amount: Some(wrap_near_amount_u128),
+                        recorder,
+                        policy: &SlippagePolicy::Unprotected,
+                    },
                     cfg,
                 )
                 .await
@@ -1117,10 +1152,13 @@ where
         match swap::execute_direct_swap(
             client,
             wallet,
-            &from_token,
-            &wrap_near_out,
-            None,
-            &recorder,
+            &SwapParams {
+                from_token: &from_token,
+                to_token: &wrap_near_out,
+                swap_amount: None,
+                recorder: &recorder,
+                policy: &SlippagePolicy::Unprotected,
+            },
             cfg,
         )
         .await
