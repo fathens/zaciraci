@@ -6,7 +6,7 @@
 mod matching;
 
 use crate::Result;
-use crate::slippage::SlippagePolicy;
+use crate::slippage::{ExpectedReturn, SlippagePolicy};
 use crate::swap::SwapParams;
 use crate::{recorder::TradeRecorder, swap};
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
@@ -21,7 +21,7 @@ use matching::{BuyOperation, SellOperation, match_rebalance_operations};
 use near_sdk::NearToken;
 use num_bigint::ToBigInt;
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 
 /// TokenAmount を u128 に変換する。
@@ -60,6 +60,17 @@ struct PhaseCounters {
 
 /// harvest reserve のデフォルト値（1 NEAR in yoctoNEAR）
 const DEFAULT_HARVEST_RESERVE: u128 = 10u128.pow(24);
+
+/// 購入トークンの expected_return から SlippagePolicy を構築する
+fn buy_policy(
+    token: &TokenOutAccount,
+    expected_returns: &BTreeMap<TokenOutAccount, f64>,
+) -> SlippagePolicy {
+    expected_returns
+        .get(token)
+        .map(|&r| SlippagePolicy::FromExpectedReturn(ExpectedReturn::new(r)))
+        .unwrap_or(SlippagePolicy::Unprotected)
+}
 
 /// 実行サマリー
 pub struct ExecutionSummary {
@@ -170,6 +181,7 @@ pub(crate) async fn execute_trading_actions<C, W>(
     actions: &[TradingAction],
     period_id: String,
     cfg: &impl ConfigAccess,
+    expected_returns: &BTreeMap<TokenOutAccount, f64>,
 ) -> Result<ExecutionSummary>
 where
     C: AccountInfo + SendTx + ViewContract + GasInfo,
@@ -194,18 +206,13 @@ where
     let add_position_amounts = precompute_add_position_amounts(client, wallet, actions).await?;
 
     for (idx, action) in actions.iter().enumerate() {
-        let swap_amount_override = add_position_amounts.get(&idx).copied();
-        match execute_single_action(
-            client,
-            wallet,
-            action,
-            &recorder,
-            swap_amount_override,
-            &period_id,
-            cfg,
-        )
-        .await
-        {
+        let ctx = ActionContext {
+            recorder: &recorder,
+            swap_amount_override: add_position_amounts.get(&idx).copied(),
+            evaluation_period_id: &period_id,
+            expected_returns,
+        };
+        match execute_single_action(client, wallet, action, &ctx, cfg).await {
             Ok(_) => {
                 info!(log, "action executed successfully"; "action" => ?action);
                 summary.success_count += 1;
@@ -220,14 +227,20 @@ where
     Ok(summary)
 }
 
+/// execute_single_action のコンテキスト
+struct ActionContext<'a> {
+    recorder: &'a TradeRecorder,
+    swap_amount_override: Option<u128>,
+    evaluation_period_id: &'a str,
+    expected_returns: &'a BTreeMap<TokenOutAccount, f64>,
+}
+
 /// 単一の取引アクションを実行
 async fn execute_single_action<C, W>(
     client: &C,
     wallet: &W,
     action: &TradingAction,
-    recorder: &TradeRecorder,
-    swap_amount_override: Option<u128>,
-    evaluation_period_id: &str,
+    ctx: &ActionContext<'_>,
     cfg: &impl ConfigAccess,
 ) -> Result<()>
 where
@@ -239,6 +252,8 @@ where
     W: blockchain::wallet::Wallet,
 {
     let log = DEFAULT.new(o!("function" => "execute_single_action"));
+    let recorder = ctx.recorder;
+    let expected_returns = ctx.expected_returns;
 
     match action {
         TradingAction::Hold => {
@@ -274,8 +289,9 @@ where
                 .await?;
             }
 
-            // Step 2: wrap.near → target
+            // Step 2: wrap.near → target（購入フェーズ: スリッページ保護あり）
             if target.inner() != wrap_near {
+                let target_policy = buy_policy(target, expected_returns);
                 swap::execute_direct_swap(
                     client,
                     wallet,
@@ -284,7 +300,7 @@ where
                         to_token: target,
                         swap_amount: None,
                         recorder,
-                        policy: &SlippagePolicy::Unprotected,
+                        policy: &target_policy,
                     },
                     cfg,
                 )
@@ -300,6 +316,7 @@ where
             debug!(log, "executing switch"; "from" => %from, "to" => %to);
 
             let from_token = from.as_in();
+            let to_policy = buy_policy(to, expected_returns);
             swap::execute_direct_swap(
                 client,
                 wallet,
@@ -308,7 +325,7 @@ where
                     to_token: to,
                     swap_amount: None,
                     recorder,
-                    policy: &SlippagePolicy::Unprotected,
+                    policy: &to_policy,
                 },
                 cfg,
             )
@@ -322,9 +339,10 @@ where
                 client,
                 wallet,
                 target_weights,
-                evaluation_period_id,
+                ctx.evaluation_period_id,
                 recorder,
                 cfg,
+                expected_returns,
             )
             .await
         }
@@ -335,7 +353,7 @@ where
             // wrap.near → token へのswap
             let wrap_near = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
             if token.inner() != wrap_near {
-                let swap_amount = swap_amount_override.ok_or_else(|| {
+                let swap_amount = ctx.swap_amount_override.ok_or_else(|| {
                     anyhow::anyhow!("No pre-computed swap amount for AddPosition: {}", token)
                 })?;
 
@@ -352,6 +370,7 @@ where
                 }
 
                 let wrap_near_in: TokenInAccount = wrap_near.to_in();
+                let token_policy = buy_policy(token, expected_returns);
                 swap::execute_direct_swap(
                     client,
                     wallet,
@@ -360,7 +379,7 @@ where
                         to_token: token,
                         swap_amount: Some(swap_amount),
                         recorder,
-                        policy: &SlippagePolicy::Unprotected,
+                        policy: &token_policy,
                     },
                     cfg,
                 )
@@ -418,6 +437,7 @@ async fn execute_rebalance<C, W>(
     evaluation_period_id: &str,
     recorder: &TradeRecorder,
     cfg: &impl ConfigAccess,
+    expected_returns: &BTreeMap<TokenOutAccount, f64>,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -791,6 +811,7 @@ where
                     "original_value" => %buy.near_value,
                     "wrap_near_amount" => wrap_near_amount_u128);
                 let to_token: TokenOutAccount = buy.token.clone().into();
+                let buy_token_policy = buy_policy(&to_token, expected_returns);
                 match swap::execute_direct_swap(
                     client,
                     wallet,
@@ -799,7 +820,7 @@ where
                         to_token: &to_token,
                         swap_amount: Some(wrap_near_amount_u128),
                         recorder,
-                        policy: &SlippagePolicy::Unprotected,
+                        policy: &buy_token_policy,
                     },
                     cfg,
                 )
