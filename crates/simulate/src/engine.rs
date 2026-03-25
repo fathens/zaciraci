@@ -29,6 +29,13 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     // Apply CLI parameters to config
     apply_config(cli);
 
+    // Generate predictions if requested
+    if cli.generate_predictions {
+        let cfg = common::config::ConfigResolver;
+        info!(log, "generating predictions for simulation period");
+        crate::prediction::generate_predictions_for_range(start_date, end_date, &cfg).await?;
+    }
+
     // Initialize token decimals cache from DB
     if let Err(e) = trade::token_cache::load_from_db().await {
         warn!(log, "failed to load token decimals cache"; "error" => ?e);
