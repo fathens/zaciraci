@@ -1,6 +1,7 @@
 use super::*;
 use chrono::NaiveDate;
 use common::config::ConfigResolver;
+use logging::*;
 
 fn make_date(year: i32, month: u32, day: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, day).expect("valid test date")
@@ -38,7 +39,8 @@ async fn single_day_range_executes_one_iteration() {
     match result {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("single day test failed (expected if no token data): {e}");
+            let log = DEFAULT.new(o!("test" => "single_day_range_executes_one_iteration"));
+            warn!(log, "single day test failed (expected if no token data)"; "error" => %e);
         }
     }
 }

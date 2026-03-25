@@ -48,9 +48,9 @@ pub async fn generate_predictions_for_range(
 
     // 2. 各日について予測生成・評価
     let mut current_date = start_date;
-    let mut success_count = 0u32;
-    let mut fail_count = 0u32;
-    let mut total_evaluated = 0u32;
+    let mut success_count = 0usize;
+    let mut fail_count = 0usize;
+    let mut total_evaluated = 0usize;
     let mut total_generated = 0usize;
 
     while current_date <= end_date {
@@ -60,7 +60,7 @@ pub async fn generate_predictions_for_range(
         // 初回 (as_of = start_date): 主にシミュレーション範囲外の未評価レコードを処理。
         // 範囲内レコードはステップ1で削除済みのため、対象は少ない場合がある。
         match trade::prediction_accuracy::evaluate_predictions_as_of(sim_day, cfg).await {
-            Ok(count) => total_evaluated += count,
+            Ok(count) => total_evaluated += count as usize,
             Err(e) => {
                 warn!(log, "prediction evaluation failed"; "date" => %current_date, "error" => ?e);
             }
@@ -89,7 +89,7 @@ pub async fn generate_predictions_for_range(
         .from_utc_datetime(&(end_date + chrono::TimeDelta::days(1)).and_time(NaiveTime::MIN))
         + buffer;
     match trade::prediction_accuracy::evaluate_predictions_as_of(final_eval_day, cfg).await {
-        Ok(count) => total_evaluated += count,
+        Ok(count) => total_evaluated += count as usize,
         Err(e) => {
             warn!(log, "final prediction evaluation failed"; "error" => ?e);
         }
