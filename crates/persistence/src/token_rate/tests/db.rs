@@ -41,8 +41,8 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("usdt.token")?.into();
 
     // 2. 複数レコードを作成（異なるレートで）
-    let earliest = chrono::Utc::now().naive_utc() - chrono::Duration::hours(2);
-    let middle = chrono::Utc::now().naive_utc() - chrono::Duration::hours(1);
+    let earliest = chrono::Utc::now().naive_utc() - chrono::TimeDelta::hours(2);
+    let middle = chrono::Utc::now().naive_utc() - chrono::TimeDelta::hours(1);
     let latest = chrono::Utc::now().naive_utc();
 
     let rates = vec![
@@ -57,8 +57,8 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
 
     // 4. get_rates_in_time_range で履歴を取得（時系列順で返る）
     let time_range = TimeRange {
-        start: earliest - chrono::Duration::minutes(1),
-        end: latest + chrono::Duration::minutes(1),
+        start: earliest - chrono::TimeDelta::minutes(1),
+        end: latest + chrono::TimeDelta::minutes(1),
     };
     let mut history = TokenRate::get_rates_in_time_range(&time_range, &base, &quote).await?;
     // 新しい順に並び替え（get_history は降順、get_rates_in_time_range は昇順）
@@ -170,8 +170,8 @@ async fn test_token_rate_different_pairs() -> Result<()> {
 
     // 6. get_rates_in_time_range でも特定のペアだけが取得されることを確認
     let time_range = TimeRange {
-        start: now - chrono::Duration::minutes(1),
-        end: now + chrono::Duration::minutes(1),
+        start: now - chrono::TimeDelta::minutes(1),
+        end: now + chrono::TimeDelta::minutes(1),
     };
 
     let history1 = TokenRate::get_rates_in_time_range(&time_range, &base1, &quote1).await?;
@@ -211,9 +211,9 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // 2. タイムスタンプを設定
     let now = chrono::Utc::now().naive_utc();
-    let thirty_min_ago = now - chrono::Duration::minutes(30);
-    let one_hour_ago = now - chrono::Duration::hours(1);
-    let two_hours_ago = now - chrono::Duration::hours(2);
+    let thirty_min_ago = now - chrono::TimeDelta::minutes(30);
+    let one_hour_ago = now - chrono::TimeDelta::hours(1);
+    let two_hours_ago = now - chrono::TimeDelta::hours(2);
 
     // 3. 複数のレコードを挿入（異なるボラティリティを持つデータ）
     // COUNT(*) >= 3 が必要なため各トークン3件以上
@@ -238,8 +238,8 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 
     // 5. 時間範囲を設定
     let time_range = TimeRange {
-        start: two_hours_ago - chrono::Duration::minutes(5), // 少し余裕を持たせる
-        end: now + chrono::Duration::minutes(5),             // 少し余裕を持たせる
+        start: two_hours_ago - chrono::TimeDelta::minutes(5), // 少し余裕を持たせる
+        end: now + chrono::TimeDelta::minutes(5),             // 少し余裕を持たせる
     };
 
     // 6. get_by_volatility_in_time_rangeでボラティリティを取得
@@ -302,33 +302,33 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
             base1.clone(),
             quote.clone(),
             0,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ), // MIN(rate) = 0 なので除外
         make_token_rate(
             base1.clone(),
             quote.clone(),
             100,
-            two_hours_ago + chrono::Duration::minutes(2),
+            two_hours_ago + chrono::TimeDelta::minutes(2),
         ),
         make_token_rate(
             base1.clone(),
             quote.clone(),
             150,
-            one_hour_ago + chrono::Duration::minutes(1),
+            one_hour_ago + chrono::TimeDelta::minutes(1),
         ),
         // base2: 全て正の値のため含まれる（COUNT(*) >= 3 必要）
         make_token_rate(
             base2.clone(),
             quote.clone(),
             50,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ),
         make_token_rate(base2.clone(), quote.clone(), 55, one_hour_ago),
         make_token_rate(
             base2.clone(),
             quote.clone(),
             60,
-            one_hour_ago + chrono::Duration::minutes(30),
+            one_hour_ago + chrono::TimeDelta::minutes(30),
         ),
     ];
 
@@ -393,10 +393,10 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 
     // 2. タイムスタンプを設定
     let now = chrono::Utc::now().naive_utc();
-    let one_hour_ago = now - chrono::Duration::hours(1);
-    let two_hours_ago = now - chrono::Duration::hours(2);
-    let just_before_range = two_hours_ago + chrono::Duration::seconds(1); // 範囲開始直後
-    let just_after_range = now - chrono::Duration::seconds(1); // 範囲終了直前
+    let one_hour_ago = now - chrono::TimeDelta::hours(1);
+    let two_hours_ago = now - chrono::TimeDelta::hours(2);
+    let just_before_range = two_hours_ago + chrono::TimeDelta::seconds(1); // 範囲開始直後
+    let just_after_range = now - chrono::TimeDelta::seconds(1); // 範囲終了直前
 
     // 3. 時間範囲を設定
     let time_range = TimeRange {
@@ -417,13 +417,13 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             800,
-            two_hours_ago - chrono::Duration::seconds(1),
+            two_hours_ago - chrono::TimeDelta::seconds(1),
         ), // 範囲開始直前
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             2000,
-            now + chrono::Duration::seconds(1),
+            now + chrono::TimeDelta::seconds(1),
         ), // 範囲終了直後
     ];
 
@@ -459,28 +459,28 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             100,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ),
         make_token_rate(base1.clone(), quote1.clone(), 125, one_hour_ago),
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             150,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
         // base2 (btc) - CV同等
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             200,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ),
         make_token_rate(base2.clone(), quote1.clone(), 250, one_hour_ago),
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             300,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
     ];
 
@@ -514,28 +514,28 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             -10,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ),
         make_token_rate(base1.clone(), quote1.clone(), -5, one_hour_ago),
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             0,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
         // base2: 全て正の値 -> MIN(rate) = 5 > 0 が true なので含まれる
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             5,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ),
         make_token_rate(base2.clone(), quote1.clone(), 8, one_hour_ago),
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             10,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
     ];
 
@@ -595,28 +595,28 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             100,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ),
         make_token_rate(base1.clone(), quote1.clone(), 125, one_hour_ago),
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             150,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
         // quote2用のデータ（フィルタリングされるはず）
         make_token_rate(
             base1.clone(),
             quote2.clone(),
             200,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ),
         make_token_rate(base1.clone(), quote2.clone(), 300, one_hour_ago),
         make_token_rate(
             base1.clone(),
             quote2.clone(),
             400,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
     ];
 
@@ -653,38 +653,38 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             -10,
-            two_hours_ago + chrono::Duration::minutes(10),
+            two_hours_ago + chrono::TimeDelta::minutes(10),
         ), // 確実に範囲内
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             0,
-            two_hours_ago + chrono::Duration::minutes(20),
+            two_hours_ago + chrono::TimeDelta::minutes(20),
         ), // MIN(rate) = -10 なので除外
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             10,
-            two_hours_ago + chrono::Duration::minutes(30),
+            two_hours_ago + chrono::TimeDelta::minutes(30),
         ), // 確実に範囲内
         // base2: 全て正の値 -> MIN(rate) = 5 > 0 なので含まれる（COUNT(*) >= 3 必要）
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             5,
-            two_hours_ago + chrono::Duration::minutes(40),
+            two_hours_ago + chrono::TimeDelta::minutes(40),
         ), // 確実に範囲内
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             10,
-            two_hours_ago + chrono::Duration::minutes(50),
+            two_hours_ago + chrono::TimeDelta::minutes(50),
         ), // 確実に範囲内
         make_token_rate(
             base2.clone(),
             quote1.clone(),
             15,
-            two_hours_ago + chrono::Duration::minutes(60),
+            two_hours_ago + chrono::TimeDelta::minutes(60),
         ), // 確実に範囲内
     ];
 
@@ -722,8 +722,8 @@ async fn test_rate_difference_calculation() -> Result<()> {
 
     // 2. タイムスタンプを設定
     let now = chrono::Utc::now().naive_utc();
-    let one_hour_ago = now - chrono::Duration::hours(1);
-    let two_hours_ago = now - chrono::Duration::hours(2);
+    let one_hour_ago = now - chrono::TimeDelta::hours(1);
+    let two_hours_ago = now - chrono::TimeDelta::hours(2);
 
     // 3. 時間範囲を設定
     let time_range = TimeRange {
@@ -737,14 +737,14 @@ async fn test_rate_difference_calculation() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             1000,
-            two_hours_ago + chrono::Duration::minutes(30),
+            two_hours_ago + chrono::TimeDelta::minutes(30),
         ),
         make_token_rate(base1.clone(), quote1.clone(), 1200, one_hour_ago),
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             1500,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
     ];
 
@@ -776,14 +776,14 @@ async fn test_rate_difference_calculation() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             10,
-            two_hours_ago + chrono::Duration::minutes(1),
+            two_hours_ago + chrono::TimeDelta::minutes(1),
         ), // MIN(rate) = 10 > 0 なので含まれる
         make_token_rate(base1.clone(), quote1.clone(), 50, one_hour_ago),
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             100,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
     ];
 
@@ -814,14 +814,14 @@ async fn test_rate_difference_calculation() -> Result<()> {
             base1.clone(),
             quote1.clone(),
             100,
-            two_hours_ago + chrono::Duration::minutes(30),
+            two_hours_ago + chrono::TimeDelta::minutes(30),
         ),
         make_token_rate(base1.clone(), quote1.clone(), 100, one_hour_ago),
         make_token_rate(
             base1.clone(),
             quote1.clone(),
             100,
-            now - chrono::Duration::minutes(30),
+            now - chrono::TimeDelta::minutes(30),
         ),
     ];
 
@@ -861,10 +861,10 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     // 2. 異なる時期のレコードを作成
     let now = chrono::Utc::now().naive_utc();
-    let days_400_ago = now - chrono::Duration::days(400);
-    let days_200_ago = now - chrono::Duration::days(200);
-    let days_100_ago = now - chrono::Duration::days(100);
-    let days_10_ago = now - chrono::Duration::days(10);
+    let days_400_ago = now - chrono::TimeDelta::days(400);
+    let days_200_ago = now - chrono::TimeDelta::days(200);
+    let days_100_ago = now - chrono::TimeDelta::days(100);
+    let days_10_ago = now - chrono::TimeDelta::days(10);
 
     let old_rates = vec![
         // 400日前のレコード（削除されるはず - 90日超）
@@ -889,8 +889,8 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     // 4. 残っているレコード数を確認
     let wide_range = TimeRange {
-        start: days_400_ago - chrono::Duration::days(1),
-        end: now + chrono::Duration::days(1),
+        start: days_400_ago - chrono::TimeDelta::days(1),
+        end: now + chrono::TimeDelta::days(1),
     };
     let mut history1 = TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote).await?;
     let history2 = TokenRate::get_rates_in_time_range(&wide_range, &base2, &quote).await?;
@@ -934,7 +934,7 @@ async fn test_cleanup_old_records() -> Result<()> {
     };
 
     assert!(
-        timestamp_diff < chrono::Duration::seconds(1),
+        timestamp_diff < chrono::TimeDelta::seconds(1),
         "Oldest retained record timestamp should be close to 10 days ago. \
          Expected: {}, Actual: {}, Diff: {:?}",
         days_10_ago,
@@ -957,25 +957,25 @@ async fn test_cleanup_old_records() -> Result<()> {
             base1.clone(),
             quote.clone(),
             1000,
-            now - chrono::Duration::days(100),
+            now - chrono::TimeDelta::days(100),
         ),
         make_token_rate(
             base1.clone(),
             quote.clone(),
             1100,
-            now - chrono::Duration::days(50),
+            now - chrono::TimeDelta::days(50),
         ),
         make_token_rate(
             base1.clone(),
             quote.clone(),
             1200,
-            now - chrono::Duration::days(20),
+            now - chrono::TimeDelta::days(20),
         ),
         make_token_rate(
             base1.clone(),
             quote.clone(),
             1300,
-            now - chrono::Duration::days(5),
+            now - chrono::TimeDelta::days(5),
         ),
     ];
 
@@ -1007,11 +1007,11 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     // 残っているレコードが20日前と5日前のものであることを確認
     assert!(
-        recent_history[0].timestamp >= now - chrono::Duration::days(6),
+        recent_history[0].timestamp >= now - chrono::TimeDelta::days(6),
         "Most recent should be ~5 days old"
     );
     assert!(
-        recent_history[1].timestamp >= now - chrono::Duration::days(21),
+        recent_history[1].timestamp >= now - chrono::TimeDelta::days(21),
         "Second should be ~20 days old"
     );
 
@@ -1030,7 +1030,7 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let one_hour_ago = now - chrono::Duration::hours(1);
+    let one_hour_ago = now - chrono::TimeDelta::hours(1);
 
     // 各トークンに2件ずつデータを挿入
     let rates = vec![
@@ -1045,8 +1045,8 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
     TokenRate::batch_insert(&rates, &cfg).await?;
 
     let time_range = TimeRange {
-        start: one_hour_ago - chrono::Duration::minutes(1),
-        end: now + chrono::Duration::minutes(1),
+        start: one_hour_ago - chrono::TimeDelta::minutes(1),
+        end: now + chrono::TimeDelta::minutes(1),
     };
 
     // 2トークンのみ取得
@@ -1077,7 +1077,7 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
     let now = chrono::Utc::now().naive_utc();
 
     let time_range = TimeRange {
-        start: now - chrono::Duration::hours(1),
+        start: now - chrono::TimeDelta::hours(1),
         end: now,
     };
 
@@ -1103,7 +1103,7 @@ async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
     let now = chrono::Utc::now().naive_utc();
 
     let time_range = TimeRange {
-        start: now - chrono::Duration::hours(1),
+        start: now - chrono::TimeDelta::hours(1),
         end: now,
     };
 
@@ -1196,9 +1196,9 @@ async fn test_get_spot_rates_at_time_latest_before() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let t1 = now - chrono::Duration::hours(3);
-    let t2 = now - chrono::Duration::hours(2);
-    let t3 = now - chrono::Duration::hours(1);
+    let t1 = now - chrono::TimeDelta::hours(3);
+    let t2 = now - chrono::TimeDelta::hours(2);
+    let t3 = now - chrono::TimeDelta::hours(1);
 
     // token1: t1=100, t2=200, t3=300
     // token2: t1=400, t3=600
@@ -1239,7 +1239,7 @@ async fn test_get_spot_rates_at_time_empty() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let future = now + chrono::Duration::hours(1);
+    let future = now + chrono::TimeDelta::hours(1);
 
     // レートを now に挿入
     let rates = vec![make_token_rate(base.clone(), quote.clone(), 100, future)];
@@ -1272,8 +1272,8 @@ async fn test_get_spot_rates_at_time_swap_path_fallback() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let t1 = now - chrono::Duration::hours(2);
-    let t2 = now - chrono::Duration::hours(1);
+    let t1 = now - chrono::TimeDelta::hours(2);
+    let t2 = now - chrono::TimeDelta::hours(1);
 
     let swap_path = SwapPath {
         pools: vec![SwapPoolInfo {
@@ -1336,8 +1336,8 @@ async fn test_get_spot_rates_at_time_own_swap_path_preferred() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let t1 = now - chrono::Duration::hours(2);
-    let t2 = now - chrono::Duration::hours(1);
+    let t1 = now - chrono::TimeDelta::hours(2);
+    let t2 = now - chrono::TimeDelta::hours(1);
 
     // 大きいプール → 小さい補正
     let old_path = SwapPath {
@@ -1405,8 +1405,8 @@ async fn test_get_spot_rates_at_time_no_swap_path_anywhere() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let t1 = now - chrono::Duration::hours(2);
-    let t2 = now - chrono::Duration::hours(1);
+    let t1 = now - chrono::TimeDelta::hours(2);
+    let t2 = now - chrono::TimeDelta::hours(1);
 
     // 両方とも swap_path なし
     let rates = vec![
@@ -1443,8 +1443,8 @@ async fn test_get_spot_rates_at_time_mixed_swap_path() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let t1 = now - chrono::Duration::hours(2);
-    let t2 = now - chrono::Duration::hours(1);
+    let t1 = now - chrono::TimeDelta::hours(2);
+    let t2 = now - chrono::TimeDelta::hours(1);
 
     let path = SwapPath {
         pools: vec![SwapPoolInfo {
@@ -1557,8 +1557,8 @@ async fn test_get_spot_rates_at_time_quote_isolation() -> Result<()> {
     let quote_b: TokenInAccount = TokenAccount::from_str("usdt.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let t1 = now - chrono::Duration::hours(2);
-    let t2 = now - chrono::Duration::hours(1);
+    let t1 = now - chrono::TimeDelta::hours(2);
+    let t2 = now - chrono::TimeDelta::hours(1);
 
     // quote_a: t1=100 のみ、quote_b: t2=999（より新しい）
     let rates = vec![
@@ -1659,8 +1659,8 @@ async fn test_get_all_latest_rates_returns_latest() -> Result<()> {
     let now = chrono::Utc::now().naive_utc();
 
     // 同一 base_token に対し異なる timestamp で複数レコード挿入
-    let old = now - chrono::Duration::hours(2);
-    let recent = now - chrono::Duration::hours(1);
+    let old = now - chrono::TimeDelta::hours(2);
+    let recent = now - chrono::TimeDelta::hours(1);
 
     let rates = vec![
         make_token_rate(base.clone(), quote.clone(), 100, old),
@@ -1697,7 +1697,7 @@ async fn test_get_all_latest_rates_quote_isolation() -> Result<()> {
             base.clone(),
             quote_b.clone(),
             999,
-            now - chrono::Duration::seconds(1),
+            now - chrono::TimeDelta::seconds(1),
         ),
     ];
     let cfg = ConfigResolver;
@@ -1742,7 +1742,7 @@ async fn test_get_all_latest_rates_swap_path_fallback() -> Result<()> {
         base: base.clone(),
         quote: quote.clone(),
         exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 24),
-        timestamp: now - chrono::Duration::hours(2),
+        timestamp: now - chrono::TimeDelta::hours(2),
         rate_calc_near: 10,
         swap_path: Some(swap_path),
     };
@@ -1752,7 +1752,7 @@ async fn test_get_all_latest_rates_swap_path_fallback() -> Result<()> {
         base: base.clone(),
         quote: quote.clone(),
         exchange_rate: ExchangeRate::from_raw_rate(BigDecimal::from(5_100_000), 24),
-        timestamp: now - chrono::Duration::hours(1),
+        timestamp: now - chrono::TimeDelta::hours(1),
         rate_calc_near: 10,
         swap_path: None,
     };
@@ -1799,9 +1799,9 @@ async fn test_get_all_latest_rates_multi_token_mixed() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
 
     let now = chrono::Utc::now().naive_utc();
-    let t1 = now - chrono::Duration::hours(3);
-    let t2 = now - chrono::Duration::hours(2);
-    let t3 = now - chrono::Duration::hours(1);
+    let t1 = now - chrono::TimeDelta::hours(3);
+    let t2 = now - chrono::TimeDelta::hours(2);
+    let t3 = now - chrono::TimeDelta::hours(1);
 
     let path_a = SwapPath {
         pools: vec![SwapPoolInfo {

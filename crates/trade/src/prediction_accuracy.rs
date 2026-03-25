@@ -22,7 +22,7 @@ pub(crate) use common::algorithm::prediction::PREDICTION_HORIZON_HOURS;
 /// 削除対象:
 /// - 評価済みレコード: evaluated_at から PREDICTION_RECORD_RETENTION_DAYS 日以上経過
 /// - 未評価レコード: target_time から PREDICTION_UNEVALUATED_RETENTION_DAYS 日以上経過
-pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usize)> {
+pub(crate) async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usize)> {
     let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
 
     let retention_days = cfg.prediction_record_retention_days();
@@ -115,7 +115,7 @@ fn build_prediction_records(
         .iter()
         .map(|(token, (price, data_cutoff_time))| {
             let target_time =
-                *data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+                *data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
             NewPredictionRecord {
                 token: token.to_string(),
                 quote_token: quote_token.to_string(),
@@ -130,7 +130,7 @@ fn build_prediction_records(
 /// 予測結果を prediction_records テーブルに記録する。
 ///
 /// DB 操作: INSERT INTO prediction_records (トークン数分)
-pub async fn record_predictions(
+pub(crate) async fn record_predictions(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
 ) -> Result<()> {
@@ -146,17 +146,45 @@ pub async fn record_predictions(
 
 /// 過去の予測を実績と比較して精度を評価する（ハウスキーピング）。
 ///
-/// 呼び出し元: start() の冒頭
+/// 呼び出し元: run_predictions() の冒頭
 /// タイミング: トレード戦略実行前
 ///
 /// 戻り値: 評価したレコード数
 pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32> {
-    let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
+    let count = evaluate_predictions_as_of(chrono::Utc::now(), cfg).await?;
+
+    // 古いレコードを削除（エラーは警告のみで続行）
+    if let Err(e) = cleanup_old_records(cfg).await {
+        let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
+        warn!(log, "failed to cleanup old records"; "error" => %e);
+    }
+
+    Ok(count)
+}
+
+/// 指定時刻基準で未評価の予測を実績と比較して評価する。
+/// cleanup_old_records は呼ばない（呼び出し元が必要に応じて行う）。
+///
+/// `as_of` にはシミュレーション日時など過去の時点を指定する。
+/// 未来日時を渡した場合、target_time 未到来の予測も評価対象になるが、
+/// 実績データが存在しないためスキップされる。
+///
+/// 戻り値: 評価したレコード数
+pub async fn evaluate_predictions_as_of(
+    as_of: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+) -> Result<u32> {
+    let log = DEFAULT.new(o!("function" => "evaluate_predictions_as_of"));
+
+    if as_of > chrono::Utc::now() {
+        debug!(log, "as_of is in the future; predictions without actual data will be skipped";
+            "as_of" => %as_of);
+    }
 
     let tolerance_minutes = cfg.prediction_eval_tolerance_minutes();
 
     // 未評価 & target_time 経過済みのレコードを取得
-    let pending = PredictionRecord::get_pending_evaluations().await?;
+    let pending = PredictionRecord::get_pending_evaluations_as_of(as_of.naive_utc()).await?;
 
     if pending.is_empty() {
         debug!(log, "no pending predictions to evaluate");
@@ -244,11 +272,6 @@ pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Res
 
     if evaluated_count > 0 {
         info!(log, "evaluation complete"; "evaluated" => evaluated_count);
-    }
-
-    // 古いレコードを削除（エラーは警告のみで続行）
-    if let Err(e) = cleanup_old_records(cfg).await {
-        warn!(log, "failed to cleanup old records"; "error" => %e);
     }
 
     Ok(evaluated_count)
@@ -409,8 +432,8 @@ async fn get_actual_price_at(
     tolerance_minutes: i64,
 ) -> Result<Option<TokenPrice>> {
     let range = TimeRange {
-        start: target_time - chrono::Duration::minutes(tolerance_minutes),
-        end: target_time + chrono::Duration::minutes(tolerance_minutes),
+        start: target_time - chrono::TimeDelta::minutes(tolerance_minutes),
+        end: target_time + chrono::TimeDelta::minutes(tolerance_minutes),
     };
     let rates = TokenRate::get_rates_in_time_range(&range, token, quote_token).await?;
 

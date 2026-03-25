@@ -42,7 +42,7 @@ pub async fn insert_evaluated_record(
         0.0
     };
     let absolute_error = (&predicted - &actual).abs();
-    let evaluated_at = target_time + chrono::Duration::hours(1);
+    let evaluated_at = target_time + chrono::TimeDelta::hours(1);
 
     let conn = connection_pool::get().await?;
     let result = conn

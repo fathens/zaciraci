@@ -6,6 +6,7 @@ mod mock_client;
 mod mock_wallet;
 mod output;
 mod portfolio_state;
+mod prediction;
 mod sweep;
 
 use clap::Parser;

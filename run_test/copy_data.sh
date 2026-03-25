@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FROM_FILE=""
 START_DATE=""
 END_DATE=""
-TABLES="token_rates,pool_info"
+TABLES="token_rates,pool_info,prediction_records"
 KEEP_RESULTS=false
 
 # --- ヘルプ ---
@@ -22,16 +22,16 @@ run_test DB にシミュレーション用データを投入します。
   (なし)                    run_local の Docker コンテナからコピー（デフォルト）
   --from-file <path>        pg_dump で作成したダンプファイルからリストア
 
-フィルタ（run_local モードのみ、token_rates のみに適用）:
+フィルタ（run_local モードのみ、token_rates と prediction_records に適用）:
   --start-date YYYY-MM-DD   token_rates の開始日
   --end-date   YYYY-MM-DD   token_rates の終了日
 
 テーブル:
-  --tables TABLE,...         コピーするテーブル（デフォルト: token_rates,pool_info）
+  --tables TABLE,...         コピーするテーブル（デフォルト: token_rates,pool_info,prediction_records）
 
 シミュレーション結果:
   --keep-results             過去のシミュレーション結果テーブルを保持する
-                             (trade_transactions, evaluation_periods, prediction_records)
+                             (trade_transactions, evaluation_periods, portfolio_holdings)
 
 ダンプファイルの作成例:
   # リモートサーバーから
@@ -81,6 +81,15 @@ validate_date() {
   local label="$1" value="$2"
   if [[ ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     echo "エラー: $label の日付フォーマットが不正です: $value (YYYY-MM-DD)" >&2
+    exit 1
+  fi
+  # セマンティック検証（2024-99-99 のような無効日付を拒否）
+  if date -j -f '%Y-%m-%d' "$value" '+%Y-%m-%d' > /dev/null 2>&1; then
+    : # macOS: 有効な日付
+  elif date -d "$value" '+%Y-%m-%d' > /dev/null 2>&1; then
+    : # GNU/Linux: 有効な日付
+  else
+    echo "エラー: $label の日付が無効です: $value" >&2
     exit 1
   fi
 }
@@ -199,12 +208,20 @@ fi
 echo "OK"
 
 # --- シミュレーション結果テーブルのクリア ---
-RESULT_TABLES="trade_transactions evaluation_periods prediction_records"
+RESULT_TABLES="trade_transactions evaluation_periods portfolio_holdings"
 
 if [[ "$KEEP_RESULTS" == false ]]; then
   echo ""
   echo "=== シミュレーション結果テーブルのクリア ==="
   for rt in $RESULT_TABLES; do
+    # セキュリティ: テーブル名が SQL に直接埋め込まれるため、ホワイトリストで制限する
+    case "$rt" in
+      trade_transactions|evaluation_periods|portfolio_holdings) ;;
+      *)
+        echo "WARNING: 不明な結果テーブル '$rt' をスキップします" >&2
+        continue
+        ;;
+    esac
     count=$(row_count "$rt")
     dst_psql -c "TRUNCATE $rt RESTART IDENTITY CASCADE" > /dev/null
     echo "  $rt: $count 行削除"
@@ -215,6 +232,15 @@ fi
 IFS=',' read -ra TABLE_LIST <<< "$TABLES"
 
 for table in "${TABLE_LIST[@]}"; do
+  # セキュリティ: テーブル名が SQL に直接埋め込まれるため、ホワイトリストで制限する
+  case "$table" in
+    token_rates|pool_info|prediction_records) ;;
+    *)
+      echo "WARNING: 不明なテーブル '$table' をスキップします（許可: token_rates, pool_info, prediction_records）"
+      continue
+      ;;
+  esac
+
   echo ""
   echo "=== $table のコピー ==="
 
@@ -237,27 +263,42 @@ for table in "${TABLE_LIST[@]}"; do
     start_progress "リストア中"
     cat "$FROM_FILE" | pipe_with_progress | dst_psql > /dev/null
     stop_progress
-  elif [[ "$table" == "token_rates" && ( -n "$START_DATE" || -n "$END_DATE" ) ]]; then
-    # 日付フィルタ付き COPY
-    where_parts=""
-    if [[ -n "$START_DATE" ]]; then
-      where_parts="timestamp >= '$START_DATE'"
-    fi
-    if [[ -n "$END_DATE" ]]; then
-      if [[ -n "$where_parts" ]]; then
-        where_parts="$where_parts AND "
+  elif [[ -n "$START_DATE" || -n "$END_DATE" ]]; then
+    # テーブルごとのタイムスタンプカラム
+    ts_col=""
+    case "$table" in
+      token_rates)        ts_col="timestamp" ;;
+      prediction_records) ts_col="created_at" ;;
+    esac
+
+    if [[ -n "$ts_col" ]]; then
+      # 日付フィルタ付き COPY
+      where_parts=""
+      if [[ -n "$START_DATE" ]]; then
+        where_parts="$ts_col >= '$START_DATE'"
       fi
-      where_parts="${where_parts}timestamp < '$END_DATE'"
+      if [[ -n "$END_DATE" ]]; then
+        if [[ -n "$where_parts" ]]; then
+          where_parts="$where_parts AND "
+        fi
+        where_parts="${where_parts}$ts_col < '$END_DATE'"
+      fi
+      where="WHERE $where_parts"
+
+      filtered_count=$(src_psql -t -A -c "SELECT COUNT(*) FROM $table $where")
+      echo "  フィルタ適用: $where ($filtered_count 行)"
+
+      start_progress "コピー中"
+      src_psql -c "COPY (SELECT * FROM $table $where) TO STDOUT" \
+        | pipe_with_progress | dst_psql -c "COPY $table FROM STDIN" > /dev/null
+      stop_progress
+    else
+      # タイムスタンプカラムなし → 全件コピー
+      start_progress "コピー中"
+      src_copy_out "$table" \
+        | pipe_with_progress | dst_psql -c "COPY $table FROM STDIN" > /dev/null
+      stop_progress
     fi
-    where="WHERE $where_parts"
-
-    filtered_count=$(src_psql -t -A -c "SELECT COUNT(*) FROM $table $where")
-    echo "  フィルタ適用: $where ($filtered_count 行)"
-
-    start_progress "コピー中"
-    src_psql -c "COPY (SELECT * FROM $table $where) TO STDOUT" \
-      | pipe_with_progress | dst_psql -c "COPY $table FROM STDIN" > /dev/null
-    stop_progress
   else
     # COPY パイプ（全件コピー）
     start_progress "コピー中"

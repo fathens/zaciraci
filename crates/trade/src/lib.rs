@@ -92,7 +92,7 @@ async fn run_trade(cfg: ConfigResolver) {
     .await;
 }
 
-/// 全対象トークンの価格予測を実行して prediction_records に保存する
+/// 全対象トークンの価格予測を実行して prediction_records に保存する（本番 cron 用）
 async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "run_predictions"));
 
@@ -108,15 +108,31 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
         }
     }
 
-    // 2. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
+    // 2. 予測サイクル実行
+    let count = run_prediction_cycle(chrono::Utc::now(), cfg).await?;
+    info!(log, "predictions recorded"; "count" => count);
+    Ok(())
+}
+
+/// 指定日時を起点に、対象トークンの予測を実行して prediction_records に保存する。
+///
+/// 内部で `Utc::now()` は使用しない。渡された `as_of` のみを時刻の基準とする。
+///
+/// 戻り値: 保存した予測の件数
+pub async fn run_prediction_cycle(
+    as_of: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+) -> Result<usize> {
+    let log = DEFAULT.new(o!("function" => "run_prediction_cycle"));
+
+    // 1. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
     let prediction_service = predict::PredictionService::new(cfg);
-    let now = chrono::Utc::now();
     let target_tokens =
-        strategy::select_prediction_target_tokens(&prediction_service, now, cfg).await?;
+        strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg).await?;
 
     info!(log, "prediction targets selected"; "count" => target_tokens.len());
 
-    // 3. バッチ予測実行
+    // 2. バッチ予測実行
     let quote_token = get_quote_token();
     let price_history_days = i64::from(cfg.trade_price_history_days());
     let token_out_list: Vec<TokenOutAccount> =
@@ -128,12 +144,12 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
             &quote_token,
             price_history_days,
             prediction_accuracy::PREDICTION_HORIZON_HOURS,
-            now,
+            as_of,
             cfg,
         )
         .await?;
 
-    // 4. 予測価格を抽出して DB に保存
+    // 3. 予測価格を抽出して DB に保存
     let mut prediction_entries: BTreeMap<
         TokenOutAccount,
         (common::types::TokenPrice, chrono::NaiveDateTime),
@@ -156,8 +172,7 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
 
     prediction_accuracy::record_predictions(&prediction_entries, &quote_token).await?;
 
-    info!(log, "predictions recorded"; "count" => prediction_entries.len());
-    Ok(())
+    Ok(prediction_entries.len())
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str, cfg: &impl ConfigAccess)

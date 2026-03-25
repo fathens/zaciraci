@@ -42,7 +42,7 @@ impl FailureRecord {
             .min(max_backoff_minutes);
 
         let elapsed = now.signed_duration_since(self.last_failure);
-        elapsed >= chrono::Duration::minutes(backoff_minutes as i64)
+        elapsed >= chrono::TimeDelta::minutes(backoff_minutes as i64)
     }
 }
 

@@ -174,7 +174,7 @@ fn make_time(offset_hours: i64) -> NaiveDateTime {
     let base = chrono::DateTime::from_timestamp(1_700_000_000, 0)
         .unwrap()
         .naive_utc();
-    base + chrono::Duration::hours(offset_hours)
+    base + chrono::TimeDelta::hours(offset_hours)
 }
 
 fn make_record(
@@ -187,12 +187,12 @@ fn make_record(
         token: "token.near".to_string(),
         quote_token: "wrap.near".to_string(),
         predicted_price: BigDecimal::from(predicted),
-        data_cutoff_time: target_time - chrono::Duration::hours(24),
+        data_cutoff_time: target_time - chrono::TimeDelta::hours(24),
         target_time,
         actual_price: actual.map(BigDecimal::from),
         mape: None,
         absolute_error: None,
-        evaluated_at: Some(target_time + chrono::Duration::hours(1)),
+        evaluated_at: Some(target_time + chrono::TimeDelta::hours(1)),
         created_at: target_time,
     }
 }
@@ -325,9 +325,9 @@ fn test_mape_to_confidence_poor_less_than_excellent() {
 fn test_new_prediction_record_target_time_with_past_data_cutoff() {
     let now = chrono::Utc::now().naive_utc();
     // 6時間前のデータカットオフ（データ取得遅延シナリオ）
-    let data_cutoff_time = now - chrono::Duration::hours(6);
+    let data_cutoff_time = now - chrono::TimeDelta::hours(6);
     let expected_target_time =
-        data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+        data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
 
     let token: TokenOutAccount = "token.near".parse().unwrap();
     let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
@@ -344,7 +344,7 @@ fn test_new_prediction_record_target_time_with_past_data_cutoff() {
     assert_eq!(record.target_time, expected_target_time);
     // target_time は現在時刻より過去（6h前 + 24h = 18h後 → 未来だが、Utc::now() + 24h より6h早い）
     assert!(
-        record.target_time < now + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64),
+        record.target_time < now + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64),
         "target_time should be earlier than now + 24h when data_cutoff_time is in the past"
     );
 }
@@ -354,9 +354,9 @@ fn test_new_prediction_record_target_time_with_past_data_cutoff() {
 fn test_new_prediction_record_target_time_far_in_past() {
     let now = chrono::Utc::now().naive_utc();
     // 3日前のデータカットオフ
-    let data_cutoff_time = now - chrono::Duration::days(3);
+    let data_cutoff_time = now - chrono::TimeDelta::days(3);
     let expected_target_time =
-        data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+        data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
 
     let token: TokenOutAccount = "token.near".parse().unwrap();
     let quote_token: TokenInAccount = "wrap.near".parse().unwrap();

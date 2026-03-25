@@ -56,7 +56,7 @@ async fn test_insert_and_get_by_period() -> Result<()> {
     for i in 0..3 {
         let record = NewPortfolioHolding {
             evaluation_period_id: period_id.clone(),
-            timestamp: now - chrono::Duration::seconds(i),
+            timestamp: now - chrono::TimeDelta::seconds(i),
             token_holdings: holdings_json.clone(),
         };
         PortfolioHolding::insert_async(record).await?;
@@ -95,7 +95,7 @@ async fn test_get_latest_for_period() -> Result<()> {
 
     let older = NewPortfolioHolding {
         evaluation_period_id: period_id.clone(),
-        timestamp: now - chrono::Duration::seconds(10),
+        timestamp: now - chrono::TimeDelta::seconds(10),
         token_holdings: holdings_json.clone(),
     };
     PortfolioHolding::insert_async(older).await?;
@@ -131,7 +131,7 @@ async fn test_cleanup_old_records() -> Result<()> {
     // Insert an old record (10 days ago)
     let old_record = NewPortfolioHolding {
         evaluation_period_id: period_id.clone(),
-        timestamp: now - chrono::Duration::days(10),
+        timestamp: now - chrono::TimeDelta::days(10),
         token_holdings: holdings_json.clone(),
     };
     PortfolioHolding::insert_async(old_record).await?;
@@ -151,7 +151,7 @@ async fn test_cleanup_old_records() -> Result<()> {
     // Only the recent record should remain for this period
     let remaining = PortfolioHolding::get_by_period_async(period_id.clone()).await?;
     assert_eq!(remaining.len(), 1);
-    assert!(remaining[0].timestamp > now - chrono::Duration::days(5));
+    assert!(remaining[0].timestamp > now - chrono::TimeDelta::days(5));
 
     cleanup_holdings_for_period(&period_id).await;
     Ok(())

@@ -29,6 +29,13 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     // Apply CLI parameters to config
     apply_config(cli);
 
+    // Generate predictions if requested
+    if cli.generate_predictions {
+        let cfg = common::config::ConfigResolver;
+        info!(log, "generating predictions for simulation period");
+        crate::prediction::generate_predictions_for_range(start_date, end_date, &cfg).await?;
+    }
+
     // Initialize token decimals cache from DB
     if let Err(e) = trade::token_cache::load_from_db().await {
         warn!(log, "failed to load token decimals cache"; "error" => ?e);
@@ -93,7 +100,7 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
             }
         }
 
-        current_date += chrono::Duration::days(cli.rebalance_interval_days);
+        current_date += chrono::TimeDelta::days(cli.rebalance_interval_days);
         day_count += 1;
     }
 
@@ -157,6 +164,7 @@ mod tests {
             rebalance_interval_days: 1,
             output: PathBuf::from("test.json"),
             sweep: None,
+            generate_predictions: false,
         }
     }
 
@@ -183,6 +191,7 @@ mod tests {
             rebalance_interval_days: 3,
             output: PathBuf::from("test.json"),
             sweep: None,
+            generate_predictions: false,
         };
 
         apply_config(&cli);

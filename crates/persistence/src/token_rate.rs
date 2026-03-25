@@ -220,7 +220,7 @@ impl TokenRate {
 
         // 保持期間より古いレコードを削除
         let cutoff_date =
-            chrono::Utc::now().naive_utc() - chrono::Duration::days(retention_days as i64);
+            chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(retention_days as i64);
 
         let deleted_count = conn
             .interact(move |conn| {

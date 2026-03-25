@@ -1,7 +1,7 @@
 use super::*;
 use crate::Result;
 use bigdecimal::BigDecimal;
-use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
+use chrono::{NaiveDateTime, TimeDelta, Utc};
 use common::config::ConfigResolver;
 use common::prediction::ChronosPredictionResponse;
 use common::types::{ExchangeRate, TokenPrice};
@@ -79,7 +79,7 @@ impl TestFixture {
                     token.clone(),
                     self.quote_token.clone(),
                     &format!("{:.4}", price),
-                    now - chrono::Duration::hours(hour),
+                    now - chrono::TimeDelta::hours(hour),
                 );
                 rates.push(rate);
             }
@@ -94,7 +94,7 @@ impl TestFixture {
         let mut rates = Vec::new();
 
         for (i, price) in prices.iter().enumerate() {
-            let timestamp = now - chrono::Duration::hours((prices.len() - i - 1) as i64);
+            let timestamp = now - chrono::TimeDelta::hours((prices.len() - i - 1) as i64);
             let rate = make_token_rate(
                 token.clone(),
                 self.quote_token.clone(),
@@ -152,7 +152,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
     fixture.setup_volatility_data().await?;
 
     let service = PredictionService::new(&CFG);
-    let start_date = Utc::now() - Duration::days(1);
+    let start_date = Utc::now() - TimeDelta::days(1);
     let end_date = Utc::now();
 
     let result = service
@@ -198,7 +198,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         .await?;
 
     let service = PredictionService::new(&CFG);
-    let start_date = Utc::now() - Duration::hours(10);
+    let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
 
     let result = service
@@ -266,10 +266,10 @@ async fn test_convert_prediction_result() {
     let last_data_timestamp = now; // 最後のデータタイムスタンプ
     let chronos_response = ChronosPredictionResponse {
         forecast: [
-            (now + Duration::hours(1), "1.2".parse().unwrap()),
-            (now + Duration::hours(2), "1.3".parse().unwrap()),
-            (now + Duration::hours(3), "1.4".parse().unwrap()),
-            (now + Duration::hours(4), "1.5".parse().unwrap()),
+            (now + TimeDelta::hours(1), "1.2".parse().unwrap()),
+            (now + TimeDelta::hours(2), "1.3".parse().unwrap()),
+            (now + TimeDelta::hours(3), "1.4".parse().unwrap()),
+            (now + TimeDelta::hours(4), "1.5".parse().unwrap()),
         ]
         .into_iter()
         .collect(),
@@ -281,19 +281,81 @@ async fn test_convert_prediction_result() {
         model_count: 3,
     };
 
-    let predictions = service.convert_prediction_result(&chronos_response, 3, last_data_timestamp);
+    let predictions = service.convert_prediction_result(&chronos_response, last_data_timestamp);
 
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
-    assert_eq!(preds.len(), 3);
+    assert_eq!(preds.len(), 4);
     assert_eq!(preds[0].price, price("1.2"));
     assert_eq!(preds[1].price, price("1.3"));
     assert_eq!(preds[2].price, price("1.4"));
+    assert_eq!(preds[3].price, price("1.5"));
 
     // タイムスタンプが正しく設定されていることを確認
-    assert_eq!(preds[0].timestamp, now + Duration::hours(1));
-    assert_eq!(preds[1].timestamp, now + Duration::hours(2));
-    assert_eq!(preds[2].timestamp, now + Duration::hours(3));
+    assert_eq!(preds[0].timestamp, now + TimeDelta::hours(1));
+    assert_eq!(preds[1].timestamp, now + TimeDelta::hours(2));
+    assert_eq!(preds[2].timestamp, now + TimeDelta::hours(3));
+    assert_eq!(preds[3].timestamp, now + TimeDelta::hours(4));
+}
+
+/// 15分間隔の予測データで24時間先のポイントが `prediction_at_horizon(24)` で取得できることを確認。
+///
+/// `.take(horizon)` バグの回帰防止テスト: 15分間隔データでは96ポイント生成されるが、
+/// 以前は `.take(24)` で24ポイント（6時間分）に切り詰められ、24h先のポイントが失われていた。
+#[tokio::test]
+#[serial]
+async fn test_convert_prediction_result_15min_interval_has_24h_point() {
+    use common::algorithm::prediction::{PREDICTION_HORIZON_HOURS, TokenPredictionResult};
+
+    let service = PredictionService::new(&CFG);
+    let now = Utc::now();
+    let last_data_timestamp = now;
+
+    // 15分間隔で96ポイント（24時間分）の予測データを生成
+    let forecast: std::collections::BTreeMap<_, _> = (1..=96)
+        .map(|i| {
+            let ts = now + TimeDelta::minutes(15 * i);
+            let price_val: BigDecimal = BigDecimal::from_str(&format!("1.{i:03}")).unwrap();
+            (ts, price_val)
+        })
+        .collect();
+
+    let chronos_response = ChronosPredictionResponse {
+        forecast,
+        lower_bound: None,
+        upper_bound: None,
+        model_name: "chronos-t5-large".to_string(),
+        strategy_name: "ensemble".to_string(),
+        processing_time_secs: 2.0,
+        model_count: 3,
+    };
+
+    let predictions = service
+        .convert_prediction_result(&chronos_response, last_data_timestamp)
+        .unwrap();
+
+    // TokenPredictionResult を構築して prediction_at_horizon で24h先を取得
+    let result = TokenPredictionResult {
+        token: "test.token.near".parse::<TokenAccount>().unwrap().into(),
+        quote_token: "wrap.near".parse::<TokenAccount>().unwrap().into(),
+        data_cutoff_time: last_data_timestamp,
+        predictions,
+    };
+
+    let horizon_pred = result.prediction_at_horizon(PREDICTION_HORIZON_HOURS);
+    assert!(
+        horizon_pred.is_some(),
+        "prediction_at_horizon(24) should find a point at 24h ahead with 15min interval data"
+    );
+
+    // 取得されたポイントが data_cutoff_time + 24h ±1h 以内であることを確認
+    let pred = horizon_pred.unwrap();
+    let target = last_data_timestamp + TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
+    let diff = (pred.timestamp - target).abs();
+    assert!(
+        diff <= TimeDelta::hours(1),
+        "prediction timestamp should be within ±1h of target: diff={diff:?}"
+    );
 }
 
 #[tokio::test]
@@ -301,7 +363,7 @@ async fn test_convert_prediction_result() {
 async fn test_error_handling_comprehensive() -> Result<()> {
     let service = PredictionService::new(&CFG);
 
-    let start_date = Utc::now() - Duration::days(7);
+    let start_date = Utc::now() - TimeDelta::days(7);
     let end_date = Utc::now();
 
     let invalid_tokens = vec![
@@ -424,7 +486,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
                 base_token.clone(),
                 fixture.quote_token.clone(),
                 &format!("{:.3}", price),
-                now - chrono::Duration::hours(hour),
+                now - chrono::TimeDelta::hours(hour),
             );
             all_rates.push(rate);
         }
@@ -434,7 +496,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
     let service = PredictionService::new(&CFG);
 
-    let start_date = Utc::now() - Duration::hours(10);
+    let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
 
     let mut successful_retrievals = 0;
@@ -775,6 +837,70 @@ fn test_confidence_none_when_forecast_invalid() {
     );
 }
 
+/// lower > upper（不正な信頼区間）の場合は None を返す
+#[test]
+fn test_confidence_none_when_lower_exceeds_upper() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let lower = BigDecimal::from_str("110.0").unwrap();
+    let upper = BigDecimal::from_str("90.0").unwrap();
+    let time_1h = TimeDelta::hours(1);
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower),
+        Some(&upper),
+        time_1h,
+    );
+    assert!(
+        result.is_none(),
+        "Should return None when lower > upper (invalid interval)"
+    );
+}
+
+/// lower == upper（zero-width interval）の場合は confidence = 1.0 を返す
+///
+/// interval_width = 0 → relative_width = 0 → cv = 0 → cv < MIN_CV → confidence = 1.0
+#[test]
+fn test_confidence_max_when_zero_width_interval() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let bound = BigDecimal::from_str("100.0").unwrap();
+    let time_1h = TimeDelta::hours(1);
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&bound),
+        Some(&bound),
+        time_1h,
+    );
+    assert!(result.is_some(), "Zero-width interval should return Some");
+    let confidence = result.unwrap();
+    assert_eq!(
+        confidence,
+        BigDecimal::from_str("1").unwrap(),
+        "Zero-width interval should yield maximum confidence (1.0)"
+    );
+}
+
+/// time_ahead が負（予測時刻がデータ最終時刻より前）の場合は None を返す
+#[test]
+fn test_confidence_none_when_time_ahead_negative() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let lower = BigDecimal::from_str("90.0").unwrap();
+    let upper = BigDecimal::from_str("110.0").unwrap();
+    let negative_time = TimeDelta::minutes(-30);
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower),
+        Some(&upper),
+        negative_time,
+    );
+    assert!(
+        result.is_none(),
+        "Should return None when time_ahead is negative"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
@@ -883,7 +1009,7 @@ async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
 
     // バッチ履歴取得の機能を直接テスト
     let range = TimeRange {
-        start: (Utc::now() - Duration::hours(10)).naive_utc(),
+        start: (Utc::now() - TimeDelta::hours(10)).naive_utc(),
         end: Utc::now().naive_utc(),
     };
 
@@ -996,7 +1122,7 @@ fn test_spot_rate_correction_with_fallback() {
         base.clone(),
         quote.clone(),
         "1.0",
-        now - chrono::Duration::hours(1),
+        now - chrono::TimeDelta::hours(1),
         None,
     );
 

@@ -361,7 +361,7 @@ async fn select_volatility_tokens_inner(
     let log = DEFAULT.new(o!("function" => "select_volatility_tokens"));
 
     let price_history_days = i64::from(cfg.trade_price_history_days());
-    let start_date = end_date - chrono::Duration::days(price_history_days);
+    let start_date = end_date - chrono::TimeDelta::days(price_history_days);
 
     let quote_token: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
 
@@ -487,7 +487,7 @@ where
     let concurrency = cfg.trade_prediction_concurrency() as usize;
 
     // 3. 価格履歴の期間を計算
-    let start_date = end_date - chrono::Duration::days(price_history_days);
+    let start_date = end_date - chrono::TimeDelta::days(price_history_days);
 
     // 4. 各トークンの価格履歴・予測価格を並行取得
     let history_futures: Vec<_> = token_out_list

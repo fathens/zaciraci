@@ -62,14 +62,20 @@ impl PredictionRecord {
 
     /// 未評価 & target_time 経過済みのレコード取得
     pub async fn get_pending_evaluations() -> Result<Vec<DbPredictionRecord>> {
+        Self::get_pending_evaluations_as_of(chrono::Utc::now().naive_utc()).await
+    }
+
+    /// 指定時刻以前に target_time が到来した未評価レコードを取得する。
+    pub async fn get_pending_evaluations_as_of(
+        as_of: NaiveDateTime,
+    ) -> Result<Vec<DbPredictionRecord>> {
         let conn = connection_pool::get().await?;
-        let now = chrono::Utc::now().naive_utc();
 
         let results = conn
             .interact(move |conn| {
                 prediction_records::table
                     .filter(prediction_records::evaluated_at.is_null())
-                    .filter(prediction_records::target_time.le(now))
+                    .filter(prediction_records::target_time.le(as_of))
                     .order_by(prediction_records::target_time.asc())
                     .load::<DbPredictionRecord>(conn)
             })
@@ -77,6 +83,33 @@ impl PredictionRecord {
             .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
         Ok(results)
+    }
+
+    /// 指定された target_time 範囲の予測レコードを削除する。
+    /// シミュレーション用の予測再生成時に使用。
+    pub async fn delete_by_target_time_range(
+        start: NaiveDateTime,
+        end: NaiveDateTime,
+    ) -> Result<usize> {
+        if start > end {
+            anyhow::bail!("invalid range: start ({}) > end ({})", start, end);
+        }
+
+        let conn = connection_pool::get().await?;
+
+        let deleted = conn
+            .interact(move |conn| {
+                diesel::delete(
+                    prediction_records::table
+                        .filter(prediction_records::target_time.ge(start))
+                        .filter(prediction_records::target_time.le(end)),
+                )
+                .execute(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(deleted)
     }
 
     /// 評価結果で更新
@@ -219,8 +252,8 @@ impl PredictionRecord {
         let conn = connection_pool::get().await?;
         let now = chrono::Utc::now().naive_utc();
 
-        let evaluated_cutoff = now - chrono::Duration::days(retention_days);
-        let unevaluated_cutoff = now - chrono::Duration::days(unevaluated_retention_days);
+        let evaluated_cutoff = now - chrono::TimeDelta::days(retention_days);
+        let unevaluated_cutoff = now - chrono::TimeDelta::days(unevaluated_retention_days);
 
         let (evaluated_deleted, unevaluated_deleted) = conn
             .interact(move |conn| {
