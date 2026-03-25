@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use anyhow::Result;
 use chrono::{NaiveDate, NaiveTime, TimeZone, Utc};
 use common::algorithm::prediction::PREDICTION_HORIZON_HOURS;
