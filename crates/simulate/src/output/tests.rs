@@ -274,6 +274,7 @@ fn make_cli(start: &str, end: &str) -> Cli {
         rebalance_interval_days: 1,
         output: PathBuf::from("test.json"),
         sweep: None,
+        generate_predictions: false,
     }
 }
 
@@ -354,6 +355,7 @@ fn from_state_config_reflects_cli_params() {
         rebalance_interval_days: 3,
         output: PathBuf::from("out.json"),
         sweep: None,
+        generate_predictions: false,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 

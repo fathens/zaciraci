@@ -39,6 +39,10 @@ pub struct Cli {
     /// Sweep config file (JSON) for parameter sweep mode
     #[arg(long)]
     pub sweep: Option<PathBuf>,
+
+    /// Generate and evaluate predictions for the simulation period before running
+    #[arg(long)]
+    pub generate_predictions: bool,
 }
 
 impl Cli {
@@ -68,6 +72,7 @@ mod tests {
             rebalance_interval_days: 1,
             output: PathBuf::from("test.json"),
             sweep: None,
+            generate_predictions: false,
         }
     }
 

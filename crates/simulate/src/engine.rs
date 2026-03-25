@@ -157,6 +157,7 @@ mod tests {
             rebalance_interval_days: 1,
             output: PathBuf::from("test.json"),
             sweep: None,
+            generate_predictions: false,
         }
     }
 
@@ -183,6 +184,7 @@ mod tests {
             rebalance_interval_days: 3,
             output: PathBuf::from("test.json"),
             sweep: None,
+            generate_predictions: false,
         };
 
         apply_config(&cli);
