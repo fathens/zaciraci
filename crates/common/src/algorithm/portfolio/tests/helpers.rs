@@ -65,14 +65,14 @@ pub fn create_sample_predictions() -> BTreeMap<TokenOutAccount, TokenPrice> {
 }
 
 pub fn create_sample_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
-    let base_time = Utc::now() - Duration::days(30);
+    let base_time = Utc::now() - TimeDelta::days(30);
     let mut history = BTreeMap::new();
 
     // TOKEN_A: 上昇トレンド
     let mut token_a_prices = Vec::new();
     for i in 0..30 {
         token_a_prices.push(PricePoint {
-            timestamp: base_time + Duration::days(i),
+            timestamp: base_time + TimeDelta::days(i),
             price: price(90.0 + i as f64 * 0.5),
             volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
         });
@@ -89,7 +89,7 @@ pub fn create_sample_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> 
     for i in 0..30 {
         let volatility = ((i as f64 * 0.2).sin() * 10.0) + 50.0;
         token_b_prices.push(PricePoint {
-            timestamp: base_time + Duration::days(i),
+            timestamp: base_time + TimeDelta::days(i),
             price: price(volatility),
             volume: Some(BigDecimal::from_f64(800.0).unwrap()),
         });
@@ -105,7 +105,7 @@ pub fn create_sample_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> 
     let mut token_c_prices = Vec::new();
     for i in 0..30 {
         token_c_prices.push(PricePoint {
-            timestamp: base_time + Duration::days(i),
+            timestamp: base_time + TimeDelta::days(i),
             price: price(195.0 + (i as f64 * 0.2)),
             volume: Some(BigDecimal::from_f64(1200.0).unwrap()),
         });
@@ -181,7 +181,7 @@ pub fn create_low_volatility_portfolio_data() -> super::PortfolioData {
 }
 
 pub fn create_high_volatility_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{TimeDelta, TimeZone, Utc};
 
     let mut histories = BTreeMap::new();
     let tokens = ["token_a", "token_b", "token_c"];
@@ -192,7 +192,8 @@ pub fn create_high_volatility_price_history() -> BTreeMap<TokenOutAccount, Price
 
         // 30日間の高ボラティリティ価格データ
         for i in 0..30 {
-            let timestamp = Utc.with_ymd_and_hms(2025, 8, 10, 0, 0, 0).unwrap() + Duration::days(i);
+            let timestamp =
+                Utc.with_ymd_and_hms(2025, 8, 10, 0, 0, 0).unwrap() + TimeDelta::days(i);
 
             // ±15%の大きな変動を生成
             let volatility_factor = 1.0 + (i as f64 * 0.7).sin() * 0.15;
@@ -218,7 +219,7 @@ pub fn create_high_volatility_price_history() -> BTreeMap<TokenOutAccount, Price
 }
 
 pub fn create_low_volatility_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{TimeDelta, TimeZone, Utc};
 
     let mut histories = BTreeMap::new();
     let tokens = ["token_a", "token_b", "token_c"];
@@ -229,7 +230,8 @@ pub fn create_low_volatility_price_history() -> BTreeMap<TokenOutAccount, PriceH
 
         // 30日間の低ボラティリティ価格データ
         for i in 0..30 {
-            let timestamp = Utc.with_ymd_and_hms(2025, 8, 10, 0, 0, 0).unwrap() + Duration::days(i);
+            let timestamp =
+                Utc.with_ymd_and_hms(2025, 8, 10, 0, 0, 0).unwrap() + TimeDelta::days(i);
 
             // ±2%の小さな変動を生成
             let volatility_factor = 1.0 + (i as f64 * 0.3).sin() * 0.02;
@@ -303,7 +305,7 @@ pub fn create_high_return_tokens() -> Vec<TokenData> {
 }
 
 pub fn create_realistic_price_history() -> BTreeMap<TokenOutAccount, PriceHistory> {
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{TimeDelta, TimeZone, Utc};
 
     let mut histories = BTreeMap::new();
     let token_configs = [
@@ -318,7 +320,8 @@ pub fn create_realistic_price_history() -> BTreeMap<TokenOutAccount, PriceHistor
 
         // 30日間の価格履歴
         for i in 0..30 {
-            let timestamp = Utc.with_ymd_and_hms(2025, 8, 10, 0, 0, 0).unwrap() + Duration::days(i);
+            let timestamp =
+                Utc.with_ymd_and_hms(2025, 8, 10, 0, 0, 0).unwrap() + TimeDelta::days(i);
 
             // トレンド成長 + ランダムノイズ
             let growth_factor = 1.0 + daily_growth + (i as f64 * 0.5).sin() * 0.005;

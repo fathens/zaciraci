@@ -1,5 +1,5 @@
 use crate::types::{TokenAccount, TokenPrice};
-use chrono::{Duration, NaiveDateTime};
+use chrono::{NaiveDateTime, TimeDelta};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -8,7 +8,7 @@ pub struct DescribesRequest {
     pub base_token: String,
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
-    pub period: Duration,
+    pub period: TimeDelta,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

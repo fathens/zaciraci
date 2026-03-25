@@ -31,7 +31,7 @@ pub async fn generate_predictions_for_range(
 
     // 1. 削除範囲を計算（horizon ベース）
     let start_naive = start_date.and_time(NaiveTime::MIN);
-    let buffer = chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+    let buffer = chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
     let end_naive = end_date.and_time(NaiveTime::MIN) + buffer;
 
     let deleted = PredictionRecord::delete_by_target_time_range(start_naive, end_naive).await?;
@@ -70,12 +70,12 @@ pub async fn generate_predictions_for_range(
             }
         }
 
-        current_date += chrono::Duration::days(1);
+        current_date += chrono::TimeDelta::days(1);
     }
 
     // 3. 最終日の予測を評価
     let final_eval_day =
-        Utc.from_utc_datetime(&(end_date + chrono::Duration::days(1)).and_time(NaiveTime::MIN));
+        Utc.from_utc_datetime(&(end_date + chrono::TimeDelta::days(1)).and_time(NaiveTime::MIN));
     match trade::prediction_accuracy::evaluate_predictions_as_of(final_eval_day, cfg).await {
         Ok(count) => total_evaluated += count,
         Err(e) => {

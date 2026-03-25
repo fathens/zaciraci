@@ -102,7 +102,7 @@ impl PortfolioHolding {
     pub async fn cleanup_old_records(retention_days: u16) -> Result<usize> {
         let conn = connection_pool::get().await?;
         let cutoff =
-            chrono::Utc::now().naive_utc() - chrono::Duration::days(i64::from(retention_days));
+            chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(i64::from(retention_days));
 
         let deleted = conn
             .interact(move |conn| {

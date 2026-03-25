@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Duration, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use common::algorithm::prediction::TopTokenInfo;
 use common::algorithm::types::{PredictedPrice, PriceHistory, PricePoint, TokenPredictionResult};
 use common::api::chronos::ChronosPredictor;
@@ -117,7 +117,7 @@ impl PredictionService {
 
         // 最後のデータタイムスタンプを保持（時間経過の基準点）
         let last_data_timestamp = *data.keys().last().expect("checked non-empty above");
-        let forecast_until = last_data_timestamp + Duration::hours(prediction_horizon as i64);
+        let forecast_until = last_data_timestamp + TimeDelta::hours(prediction_horizon as i64);
 
         info!(log, "Starting prediction";
             "forecast_until" => %forecast_until
@@ -160,7 +160,7 @@ impl PredictionService {
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         let log = DEFAULT.new(o!("function" => "predict_multiple_tokens"));
 
-        let start_date = end_date - Duration::days(history_days);
+        let start_date = end_date - TimeDelta::days(history_days);
         let range = TimeRange {
             start: start_date.naive_utc(),
             end: end_date.naive_utc(),

@@ -2,7 +2,7 @@ use super::*;
 use crate::types::{TokenInAccount, TokenOutAccount, TokenPrice};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, FromPrimitive};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::HashMap;
 
 /// テスト用のモックPredictionProvider実装
@@ -99,7 +99,7 @@ impl PredictionProvider for MockPredictionProvider {
         let mut predictions = Vec::new();
 
         for i in 1..=prediction_horizon {
-            let timestamp = data_cutoff_time + Duration::hours(i as i64);
+            let timestamp = data_cutoff_time + TimeDelta::hours(i as i64);
             // price 形式で予測を作成（NEAR/token）
             let price_value = BigDecimal::from_f64(last_price * (1.0 + (i as f64 * 0.01))).unwrap();
             predictions.push(PredictedPrice {
@@ -129,7 +129,7 @@ impl PredictionProvider for MockPredictionProvider {
 
         for token in tokens {
             let end_date = Utc::now();
-            let start_date = end_date - Duration::days(history_days);
+            let start_date = end_date - TimeDelta::days(history_days);
 
             if let Ok(history) = self
                 .get_price_history(&token, quote_token, start_date, end_date)
@@ -157,7 +157,7 @@ mod prediction_tests {
     async fn test_mock_prediction_provider_get_top_tokens() {
         let provider = MockPredictionProvider::new();
         let start_date = create_test_timestamp();
-        let end_date = start_date + Duration::days(30);
+        let end_date = start_date + TimeDelta::days(30);
         let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
 
         let all_tokens = provider
@@ -175,13 +175,13 @@ mod prediction_tests {
     #[tokio::test]
     async fn test_mock_prediction_provider_with_price_history() {
         let timestamp1 = create_test_timestamp();
-        let timestamp2 = timestamp1 + Duration::hours(1);
+        let timestamp2 = timestamp1 + TimeDelta::hours(1);
 
         let provider = MockPredictionProvider::new()
             .with_price_history("test_token", vec![(timestamp1, 100.0), (timestamp2, 105.0)]);
 
         let start_date = timestamp1;
-        let end_date = timestamp2 + Duration::hours(1);
+        let end_date = timestamp2 + TimeDelta::hours(1);
         let token: TokenOutAccount = "test_token".parse().unwrap();
         let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
 
@@ -206,7 +206,7 @@ mod prediction_tests {
     #[tokio::test]
     async fn test_prediction_data_conversion() {
         let data_cutoff_time = create_test_timestamp();
-        let predicted_timestamp = data_cutoff_time + Duration::hours(24);
+        let predicted_timestamp = data_cutoff_time + TimeDelta::hours(24);
 
         // 予測価格を price 形式（NEAR/token）で作成
         let predicted_price_value = BigDecimal::from_f64(110.0).unwrap();
@@ -272,7 +272,7 @@ mod prediction_tests {
     #[tokio::test]
     async fn test_prediction_data_conversion_missing_24h_prediction() {
         let data_cutoff_time = create_test_timestamp();
-        let predicted_timestamp = data_cutoff_time + Duration::hours(1); // 24時間後ではない
+        let predicted_timestamp = data_cutoff_time + TimeDelta::hours(1); // 24時間後ではない
 
         let token: TokenOutAccount = "test_token".parse().unwrap();
         let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
@@ -299,8 +299,8 @@ mod prediction_tests {
     #[tokio::test]
     async fn test_prediction_data_conversion_with_past_data_cutoff_time() {
         // 3日前のデータカットオフ時刻
-        let data_cutoff_time = Utc::now() - Duration::days(3);
-        let predicted_timestamp = data_cutoff_time + Duration::hours(24);
+        let data_cutoff_time = Utc::now() - TimeDelta::days(3);
+        let predicted_timestamp = data_cutoff_time + TimeDelta::hours(24);
 
         let token: TokenOutAccount = "test_token".parse().unwrap();
         let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
@@ -310,7 +310,7 @@ mod prediction_tests {
             data_cutoff_time,
             predictions: vec![
                 PredictedPrice {
-                    timestamp: data_cutoff_time + Duration::hours(1),
+                    timestamp: data_cutoff_time + TimeDelta::hours(1),
                     price: TokenPrice::from_near_per_token(BigDecimal::from_f64(101.0).unwrap()),
                     confidence: Some("0.9".parse::<BigDecimal>().unwrap()),
                 },
@@ -343,7 +343,7 @@ mod prediction_tests {
     /// MockPredictionProvider が data_cutoff_time に最終データのタイムスタンプを使用すること
     #[tokio::test]
     async fn test_mock_provider_uses_last_data_timestamp_for_cutoff() {
-        let past_timestamp = Utc::now() - Duration::hours(6);
+        let past_timestamp = Utc::now() - TimeDelta::hours(6);
         let provider = MockPredictionProvider::new()
             .with_price_history("token1", vec![(past_timestamp, 100.0)]);
 
@@ -361,7 +361,7 @@ mod prediction_tests {
         );
         // predictions のタイムスタンプが data_cutoff_time 基準であること
         let first_prediction = result.predictions.first().unwrap();
-        let expected_first_ts = past_timestamp + Duration::hours(1);
+        let expected_first_ts = past_timestamp + TimeDelta::hours(1);
         assert_eq!(
             first_prediction.timestamp, expected_first_ts,
             "First prediction timestamp should be data_cutoff_time + 1h"
@@ -379,7 +379,7 @@ mod prediction_tests {
         let predictions = hour_offsets
             .iter()
             .map(|&h| PredictedPrice {
-                timestamp: data_cutoff_time + Duration::hours(h),
+                timestamp: data_cutoff_time + TimeDelta::hours(h),
                 price: TokenPrice::from_near_per_token(
                     BigDecimal::from_f64(100.0 + h as f64).unwrap(),
                 ),
@@ -399,7 +399,7 @@ mod prediction_tests {
         let base = create_test_timestamp();
         let result = make_prediction_result(base, &[1, 2, 12, 24]);
         let p = result.prediction_at_horizon(24).unwrap();
-        assert_eq!(p.timestamp, base + Duration::hours(24));
+        assert_eq!(p.timestamp, base + TimeDelta::hours(24));
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod prediction_tests {
         // 23h のポイントのみ → 24h ±1h の範囲内なのでマッチする
         let result = make_prediction_result(base, &[23]);
         let p = result.prediction_at_horizon(24).unwrap();
-        assert_eq!(p.timestamp, base + Duration::hours(23));
+        assert_eq!(p.timestamp, base + TimeDelta::hours(23));
     }
 
     #[test]
@@ -425,7 +425,7 @@ mod prediction_tests {
         // 25h のポイントのみ → 24h ±1h の範囲内なのでマッチする
         let result = make_prediction_result(base, &[25]);
         let p = result.prediction_at_horizon(24).unwrap();
-        assert_eq!(p.timestamp, base + Duration::hours(25));
+        assert_eq!(p.timestamp, base + TimeDelta::hours(25));
     }
 
     #[test]
@@ -454,7 +454,7 @@ mod prediction_tests {
         let p = result.prediction_at_horizon(24).unwrap();
         assert_eq!(
             p.timestamp,
-            base + Duration::hours(24),
+            base + TimeDelta::hours(24),
             "Should select the closest point to target (24h), not the first match (23h)"
         );
     }
@@ -467,7 +467,8 @@ mod prediction_tests {
         let p = result.prediction_at_horizon(24).unwrap();
         // 両方同距離なので最初のマッチ（23h）を返す
         assert!(
-            p.timestamp == base + Duration::hours(23) || p.timestamp == base + Duration::hours(25),
+            p.timestamp == base + TimeDelta::hours(23)
+                || p.timestamp == base + TimeDelta::hours(25),
             "Should return one of the equidistant points"
         );
     }

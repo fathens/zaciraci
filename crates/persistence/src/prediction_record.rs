@@ -252,8 +252,8 @@ impl PredictionRecord {
         let conn = connection_pool::get().await?;
         let now = chrono::Utc::now().naive_utc();
 
-        let evaluated_cutoff = now - chrono::Duration::days(retention_days);
-        let unevaluated_cutoff = now - chrono::Duration::days(unevaluated_retention_days);
+        let evaluated_cutoff = now - chrono::TimeDelta::days(retention_days);
+        let unevaluated_cutoff = now - chrono::TimeDelta::days(unevaluated_retention_days);
 
         let (evaluated_deleted, unevaluated_deleted) = conn
             .interact(move |conn| {

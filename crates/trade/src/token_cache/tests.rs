@@ -382,7 +382,7 @@ async fn test_negative_cache_retries_after_backoff_expires() {
             FailureRecord {
                 failure_count: 1,
                 // 30分前の失敗 → base=15分の backoff(2^1=30分) で期限ギリギリ
-                last_failure: Utc::now() - chrono::Duration::minutes(31),
+                last_failure: Utc::now() - chrono::TimeDelta::minutes(31),
             },
         );
     }
@@ -414,7 +414,7 @@ async fn test_negative_cache_increments_failure_count() {
             FailureRecord {
                 failure_count: 2,
                 // 十分古い → リトライ対象
-                last_failure: Utc::now() - chrono::Duration::hours(24),
+                last_failure: Utc::now() - chrono::TimeDelta::hours(24),
             },
         );
     }
@@ -473,8 +473,8 @@ async fn test_failure_record_should_retry_backoff_progression() {
 
     // failure_count=1 → backoff = 15 * 2^1 = 30分
     assert!(!record.should_retry(now, base, max)); // 0分経過
-    assert!(!record.should_retry(now + chrono::Duration::minutes(29), base, max)); // 29分経過
-    assert!(record.should_retry(now + chrono::Duration::minutes(30), base, max)); // 30分経過
+    assert!(!record.should_retry(now + chrono::TimeDelta::minutes(29), base, max)); // 29分経過
+    assert!(record.should_retry(now + chrono::TimeDelta::minutes(30), base, max)); // 30分経過
 
     let record3 = FailureRecord {
         failure_count: 3,
@@ -482,8 +482,8 @@ async fn test_failure_record_should_retry_backoff_progression() {
     };
 
     // failure_count=3 → backoff = 15 * 2^3 = 120分
-    assert!(!record3.should_retry(now + chrono::Duration::minutes(119), base, max));
-    assert!(record3.should_retry(now + chrono::Duration::minutes(120), base, max));
+    assert!(!record3.should_retry(now + chrono::TimeDelta::minutes(119), base, max));
+    assert!(record3.should_retry(now + chrono::TimeDelta::minutes(120), base, max));
 
     let record_high = FailureRecord {
         failure_count: 20,
@@ -491,6 +491,6 @@ async fn test_failure_record_should_retry_backoff_progression() {
     };
 
     // failure_count=20 → exponent capped at 8, 15 * 256 = 3840 → max_backoff=1440
-    assert!(!record_high.should_retry(now + chrono::Duration::minutes(1439), base, max));
-    assert!(record_high.should_retry(now + chrono::Duration::minutes(1440), base, max));
+    assert!(!record_high.should_retry(now + chrono::TimeDelta::minutes(1439), base, max));
+    assert!(record_high.should_retry(now + chrono::TimeDelta::minutes(1440), base, max));
 }

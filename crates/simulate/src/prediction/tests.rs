@@ -60,7 +60,7 @@ async fn deletes_existing_predictions_in_range() {
     // 削除後、範囲内のレコードは generate_predictions_for_range が
     // 新たに生成したものだけになっているはず
     let end_naive =
-        end.and_time(NaiveTime::MIN) + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+        end.and_time(NaiveTime::MIN) + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
     let pending = PredictionRecord::get_pending_evaluations_as_of(end_naive).await;
     assert!(
         pending.is_ok(),

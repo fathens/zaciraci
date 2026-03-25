@@ -558,10 +558,10 @@ fn test_deserialize_decimals_float_fractional() {
 /// タイムスタンプ未ソートの価格データでも正しいボラティリティを計算することを検証
 #[test]
 fn test_calculate_volatility_from_history_unsorted_prices() {
-    use chrono::{Duration, Utc};
+    use chrono::{TimeDelta, Utc};
     use common::algorithm::types::{PriceHistory, PricePoint};
 
-    let base_time = Utc::now() - Duration::days(5);
+    let base_time = Utc::now() - TimeDelta::days(5);
 
     // ソート済みの価格データ
     let sorted_prices = vec![
@@ -571,22 +571,22 @@ fn test_calculate_volatility_from_history_unsorted_prices() {
             volume: None,
         },
         PricePoint {
-            timestamp: base_time + Duration::days(1),
+            timestamp: base_time + TimeDelta::days(1),
             price: price_from_int(110),
             volume: None,
         },
         PricePoint {
-            timestamp: base_time + Duration::days(2),
+            timestamp: base_time + TimeDelta::days(2),
             price: price_from_int(105),
             volume: None,
         },
         PricePoint {
-            timestamp: base_time + Duration::days(3),
+            timestamp: base_time + TimeDelta::days(3),
             price: price_from_int(115),
             volume: None,
         },
         PricePoint {
-            timestamp: base_time + Duration::days(4),
+            timestamp: base_time + TimeDelta::days(4),
             price: price_from_int(108),
             volume: None,
         },

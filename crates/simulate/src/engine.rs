@@ -100,7 +100,7 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
             }
         }
 
-        current_date += chrono::Duration::days(cli.rebalance_interval_days);
+        current_date += chrono::TimeDelta::days(cli.rebalance_interval_days);
         day_count += 1;
     }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::Result;
 use bigdecimal::BigDecimal;
-use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
+use chrono::{NaiveDateTime, TimeDelta, Utc};
 use common::config::ConfigResolver;
 use common::prediction::ChronosPredictionResponse;
 use common::types::{ExchangeRate, TokenPrice};
@@ -79,7 +79,7 @@ impl TestFixture {
                     token.clone(),
                     self.quote_token.clone(),
                     &format!("{:.4}", price),
-                    now - chrono::Duration::hours(hour),
+                    now - chrono::TimeDelta::hours(hour),
                 );
                 rates.push(rate);
             }
@@ -94,7 +94,7 @@ impl TestFixture {
         let mut rates = Vec::new();
 
         for (i, price) in prices.iter().enumerate() {
-            let timestamp = now - chrono::Duration::hours((prices.len() - i - 1) as i64);
+            let timestamp = now - chrono::TimeDelta::hours((prices.len() - i - 1) as i64);
             let rate = make_token_rate(
                 token.clone(),
                 self.quote_token.clone(),
@@ -152,7 +152,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
     fixture.setup_volatility_data().await?;
 
     let service = PredictionService::new(&CFG);
-    let start_date = Utc::now() - Duration::days(1);
+    let start_date = Utc::now() - TimeDelta::days(1);
     let end_date = Utc::now();
 
     let result = service
@@ -198,7 +198,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         .await?;
 
     let service = PredictionService::new(&CFG);
-    let start_date = Utc::now() - Duration::hours(10);
+    let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
 
     let result = service
@@ -266,10 +266,10 @@ async fn test_convert_prediction_result() {
     let last_data_timestamp = now; // 最後のデータタイムスタンプ
     let chronos_response = ChronosPredictionResponse {
         forecast: [
-            (now + Duration::hours(1), "1.2".parse().unwrap()),
-            (now + Duration::hours(2), "1.3".parse().unwrap()),
-            (now + Duration::hours(3), "1.4".parse().unwrap()),
-            (now + Duration::hours(4), "1.5".parse().unwrap()),
+            (now + TimeDelta::hours(1), "1.2".parse().unwrap()),
+            (now + TimeDelta::hours(2), "1.3".parse().unwrap()),
+            (now + TimeDelta::hours(3), "1.4".parse().unwrap()),
+            (now + TimeDelta::hours(4), "1.5".parse().unwrap()),
         ]
         .into_iter()
         .collect(),
@@ -292,10 +292,10 @@ async fn test_convert_prediction_result() {
     assert_eq!(preds[3].price, price("1.5"));
 
     // タイムスタンプが正しく設定されていることを確認
-    assert_eq!(preds[0].timestamp, now + Duration::hours(1));
-    assert_eq!(preds[1].timestamp, now + Duration::hours(2));
-    assert_eq!(preds[2].timestamp, now + Duration::hours(3));
-    assert_eq!(preds[3].timestamp, now + Duration::hours(4));
+    assert_eq!(preds[0].timestamp, now + TimeDelta::hours(1));
+    assert_eq!(preds[1].timestamp, now + TimeDelta::hours(2));
+    assert_eq!(preds[2].timestamp, now + TimeDelta::hours(3));
+    assert_eq!(preds[3].timestamp, now + TimeDelta::hours(4));
 }
 
 /// 15分間隔の予測データで24時間先のポイントが `prediction_at_horizon(24)` で取得できることを確認。
@@ -314,7 +314,7 @@ async fn test_convert_prediction_result_15min_interval_has_24h_point() {
     // 15分間隔で96ポイント（24時間分）の予測データを生成
     let forecast: std::collections::BTreeMap<_, _> = (1..=96)
         .map(|i| {
-            let ts = now + Duration::minutes(15 * i);
+            let ts = now + TimeDelta::minutes(15 * i);
             let price_val: BigDecimal = BigDecimal::from_str(&format!("1.{i:03}")).unwrap();
             (ts, price_val)
         })
@@ -350,10 +350,10 @@ async fn test_convert_prediction_result_15min_interval_has_24h_point() {
 
     // 取得されたポイントが data_cutoff_time + 24h ±1h 以内であることを確認
     let pred = horizon_pred.unwrap();
-    let target = last_data_timestamp + Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+    let target = last_data_timestamp + TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
     let diff = (pred.timestamp - target).abs();
     assert!(
-        diff <= Duration::hours(1),
+        diff <= TimeDelta::hours(1),
         "prediction timestamp should be within ±1h of target: diff={diff:?}"
     );
 }
@@ -363,7 +363,7 @@ async fn test_convert_prediction_result_15min_interval_has_24h_point() {
 async fn test_error_handling_comprehensive() -> Result<()> {
     let service = PredictionService::new(&CFG);
 
-    let start_date = Utc::now() - Duration::days(7);
+    let start_date = Utc::now() - TimeDelta::days(7);
     let end_date = Utc::now();
 
     let invalid_tokens = vec![
@@ -486,7 +486,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
                 base_token.clone(),
                 fixture.quote_token.clone(),
                 &format!("{:.3}", price),
-                now - chrono::Duration::hours(hour),
+                now - chrono::TimeDelta::hours(hour),
             );
             all_rates.push(rate);
         }
@@ -496,7 +496,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
     let service = PredictionService::new(&CFG);
 
-    let start_date = Utc::now() - Duration::hours(10);
+    let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
 
     let mut successful_retrievals = 0;
@@ -945,7 +945,7 @@ async fn test_predict_multiple_tokens_batch_history_fetch() -> Result<()> {
 
     // バッチ履歴取得の機能を直接テスト
     let range = TimeRange {
-        start: (Utc::now() - Duration::hours(10)).naive_utc(),
+        start: (Utc::now() - TimeDelta::hours(10)).naive_utc(),
         end: Utc::now().naive_utc(),
     };
 
@@ -1058,7 +1058,7 @@ fn test_spot_rate_correction_with_fallback() {
         base.clone(),
         quote.clone(),
         "1.0",
-        now - chrono::Duration::hours(1),
+        now - chrono::TimeDelta::hours(1),
         None,
     );
 

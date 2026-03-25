@@ -35,15 +35,15 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
 
     // t1: target_time = base, data_cutoff_time = base - 24h
     let t1_target = base;
-    let t1_prediction = base - chrono::Duration::hours(24);
+    let t1_prediction = base - chrono::TimeDelta::hours(24);
 
     // t2: target_time = base + 1h
-    let t2_target = base + chrono::Duration::hours(1);
-    let t2_prediction = base - chrono::Duration::hours(23);
+    let t2_target = base + chrono::TimeDelta::hours(1);
+    let t2_prediction = base - chrono::TimeDelta::hours(23);
 
     // t3: target_time = base + 2h
-    let t3_target = base + chrono::Duration::hours(2);
-    let t3_prediction = base - chrono::Duration::hours(22);
+    let t3_target = base + chrono::TimeDelta::hours(2);
+    let t3_prediction = base - chrono::TimeDelta::hours(22);
 
     // 挿入（evaluated_at はヘルパー内で target_time + 1h に設定されるが、
     // ここでは手動で上書きして逆順にする）
@@ -59,9 +59,9 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
     let r1_id = r1.id;
     let r2_id = r2.id;
     let r3_id = r3.id;
-    let eval_r1 = base + chrono::Duration::hours(10);
-    let eval_r2 = base + chrono::Duration::hours(5);
-    let eval_r3 = base + chrono::Duration::hours(3);
+    let eval_r1 = base + chrono::TimeDelta::hours(10);
+    let eval_r2 = base + chrono::TimeDelta::hours(5);
+    let eval_r3 = base + chrono::TimeDelta::hours(3);
     conn.interact(move |conn| {
         diesel::update(prediction_records::table.filter(prediction_records::id.eq(r1_id)))
             .set(prediction_records::evaluated_at.eq(eval_r1))
@@ -114,8 +114,8 @@ async fn test_limit_returns_most_recent_by_target_time() -> Result<()> {
 
     // 5件のレコードを挿入
     for i in 0i64..5 {
-        let target = base + chrono::Duration::hours(i);
-        let prediction = target - chrono::Duration::hours(24);
+        let target = base + chrono::TimeDelta::hours(i);
+        let prediction = target - chrono::TimeDelta::hours(24);
         insert_evaluated_record(token, quote, 100 + i, 105 + i, prediction, target).await?;
     }
 
@@ -127,9 +127,9 @@ async fn test_limit_returns_most_recent_by_target_time() -> Result<()> {
 
     // target_time DESC で最新 3 件: base+4h, base+3h, base+2h
     let expected_targets = [
-        base + chrono::Duration::hours(4),
-        base + chrono::Duration::hours(3),
-        base + chrono::Duration::hours(2),
+        base + chrono::TimeDelta::hours(4),
+        base + chrono::TimeDelta::hours(3),
+        base + chrono::TimeDelta::hours(2),
     ];
 
     for (i, expected) in expected_targets.iter().enumerate() {
@@ -156,8 +156,8 @@ async fn test_token_filter() -> Result<()> {
     let token_b = "token_filter_b.near";
 
     for i in 0..3 {
-        let target = base + chrono::Duration::hours(i);
-        let prediction = target - chrono::Duration::hours(24);
+        let target = base + chrono::TimeDelta::hours(i);
+        let prediction = target - chrono::TimeDelta::hours(24);
         insert_evaluated_record(token_a, quote, 100, 105, prediction, target).await?;
         insert_evaluated_record(token_b, quote, 200, 210, prediction, target).await?;
     }
@@ -198,7 +198,7 @@ async fn test_empty_token_list_returns_empty() -> Result<()> {
 
     // レコードを1件挿入しておく
     let target = base;
-    let prediction = base - chrono::Duration::hours(24);
+    let prediction = base - chrono::TimeDelta::hours(24);
     insert_evaluated_record(token, quote, 100, 105, prediction, target).await?;
 
     // 空トークンリストで呼び出し
@@ -224,16 +224,16 @@ async fn test_excludes_unevaluated_records() -> Result<()> {
 
     // 評価済みレコード 2 件
     let target1 = base;
-    let prediction1 = base - chrono::Duration::hours(24);
+    let prediction1 = base - chrono::TimeDelta::hours(24);
     insert_evaluated_record(token, quote, 100, 105, prediction1, target1).await?;
 
-    let target2 = base + chrono::Duration::hours(1);
-    let prediction2 = base - chrono::Duration::hours(23);
+    let target2 = base + chrono::TimeDelta::hours(1);
+    let prediction2 = base - chrono::TimeDelta::hours(23);
     insert_evaluated_record(token, quote, 110, 108, prediction2, target2).await?;
 
     // 未評価レコード 1 件（evaluated_at = NULL）
-    let target3 = base + chrono::Duration::hours(2);
-    let prediction3 = base - chrono::Duration::hours(22);
+    let target3 = base + chrono::TimeDelta::hours(2);
+    let prediction3 = base - chrono::TimeDelta::hours(22);
     insert_unevaluated_record(token, quote, 120, prediction3, target3).await?;
 
     let token_out = TokenAccount::from_str(token)?.into();
@@ -267,13 +267,13 @@ async fn test_fresh_predictions_filters_by_target_time() -> Result<()> {
     let quote = "wrap.near";
 
     // target_time が as_of より前（除外されるべき）
-    let past_prediction = base - chrono::Duration::hours(48);
-    let past_target = base - chrono::Duration::hours(24);
+    let past_prediction = base - chrono::TimeDelta::hours(48);
+    let past_target = base - chrono::TimeDelta::hours(24);
     insert_unevaluated_record(token, quote, 100, past_prediction, past_target).await?;
 
     // target_time が as_of より後（含まれるべき）
-    let future_prediction = base - chrono::Duration::hours(12);
-    let future_target = base + chrono::Duration::hours(12);
+    let future_prediction = base - chrono::TimeDelta::hours(12);
+    let future_target = base + chrono::TimeDelta::hours(12);
     insert_unevaluated_record(token, quote, 200, future_prediction, future_target).await?;
 
     let as_of = base;
@@ -296,13 +296,13 @@ async fn test_fresh_predictions_returns_latest_per_token() -> Result<()> {
     let quote = "wrap.near";
 
     // 同一トークン、同一 target_time だが data_cutoff_time が異なる
-    let target = base + chrono::Duration::hours(24);
-    let older_prediction = base - chrono::Duration::hours(2);
+    let target = base + chrono::TimeDelta::hours(24);
+    let older_prediction = base - chrono::TimeDelta::hours(2);
     let newer_prediction = base;
     insert_unevaluated_record(token, quote, 100, older_prediction, target).await?;
     insert_unevaluated_record(token, quote, 200, newer_prediction, target).await?;
 
-    let as_of = base - chrono::Duration::hours(1);
+    let as_of = base - chrono::TimeDelta::hours(1);
     let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
 
     assert_eq!(
@@ -330,7 +330,7 @@ async fn test_fresh_predictions_separates_tokens() -> Result<()> {
     let token_b = "token_b.near";
     let quote = "wrap.near";
 
-    let target = base + chrono::Duration::hours(24);
+    let target = base + chrono::TimeDelta::hours(24);
     let data_cutoff_time = base;
 
     insert_unevaluated_record(token_a, quote, 100, data_cutoff_time, target).await?;
@@ -356,7 +356,7 @@ async fn test_fresh_predictions_empty_tokens() -> Result<()> {
     clean_table().await?;
 
     let base = base_time();
-    let target = base + chrono::Duration::hours(24);
+    let target = base + chrono::TimeDelta::hours(24);
     insert_unevaluated_record("token_a.near", "wrap.near", 100, base, target).await?;
 
     let results = PredictionRecord::get_latest_fresh_predictions(&[], base).await?;
@@ -380,7 +380,7 @@ async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
     let quote = "wrap.near";
 
     // target_time == as_of（ちょうど境界、gt なので除外されるべき）
-    let data_cutoff_time = base - chrono::Duration::hours(24);
+    let data_cutoff_time = base - chrono::TimeDelta::hours(24);
     insert_unevaluated_record(token, quote, 100, data_cutoff_time, base).await?;
 
     let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], base).await?;
@@ -407,11 +407,11 @@ async fn test_fresh_predictions_prefers_latest_target_time() -> Result<()> {
     let data_cutoff_time = base;
 
     // 近い未来の target_time（+12h）
-    let near_target = base + chrono::Duration::hours(12);
+    let near_target = base + chrono::TimeDelta::hours(12);
     insert_unevaluated_record(token, quote, 100, data_cutoff_time, near_target).await?;
 
     // 遠い未来の target_time（+36h）
-    let far_target = base + chrono::Duration::hours(36);
+    let far_target = base + chrono::TimeDelta::hours(36);
     insert_unevaluated_record(token, quote, 200, data_cutoff_time, far_target).await?;
 
     let as_of = base;

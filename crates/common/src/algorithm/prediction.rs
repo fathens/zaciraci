@@ -56,8 +56,8 @@ impl TokenPredictionResult {
         if horizon_hours == 0 {
             return None;
         }
-        let target = self.data_cutoff_time + chrono::Duration::hours(horizon_hours as i64);
-        let tolerance = chrono::Duration::hours(1);
+        let target = self.data_cutoff_time + chrono::TimeDelta::hours(horizon_hours as i64);
+        let tolerance = chrono::TimeDelta::hours(1);
         self.predictions
             .iter()
             .filter(|p| (p.timestamp - target).abs() <= tolerance)

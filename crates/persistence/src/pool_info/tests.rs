@@ -355,14 +355,14 @@ async fn test_cleanup_old_records() -> Result<()> {
     for i in 0..15 {
         let mut pool_info = test_pool_info.clone();
         pool_info.id = pool_id_1;
-        pool_info.timestamp = base_time + chrono::Duration::seconds(i);
+        pool_info.timestamp = base_time + chrono::TimeDelta::seconds(i);
         pool_infos.push(to_new_db(&pool_info)?);
     }
 
     for i in 0..5 {
         let mut pool_info = test_pool_info.clone();
         pool_info.id = pool_id_2;
-        pool_info.timestamp = base_time + chrono::Duration::seconds(i);
+        pool_info.timestamp = base_time + chrono::TimeDelta::seconds(i);
         pool_infos.push(to_new_db(&pool_info)?);
     }
 
@@ -435,7 +435,7 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     assert_eq!(
         latest_timestamp,
-        Some(base_time + chrono::Duration::seconds(14)),
+        Some(base_time + chrono::TimeDelta::seconds(14)),
         "最新のタイムスタンプは14秒後であるべきです"
     );
 
@@ -454,7 +454,7 @@ async fn test_cleanup_old_records() -> Result<()> {
 
     assert_eq!(
         oldest_timestamp,
-        Some(base_time + chrono::Duration::seconds(5)),
+        Some(base_time + chrono::TimeDelta::seconds(5)),
         "最古のタイムスタンプは5秒後であるべきです（0-4秒が削除される）"
     );
 

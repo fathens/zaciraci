@@ -115,7 +115,7 @@ fn build_prediction_records(
         .iter()
         .map(|(token, (price, data_cutoff_time))| {
             let target_time =
-                *data_cutoff_time + chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+                *data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
             NewPredictionRecord {
                 token: token.to_string(),
                 quote_token: quote_token.to_string(),
@@ -427,8 +427,8 @@ async fn get_actual_price_at(
     tolerance_minutes: i64,
 ) -> Result<Option<TokenPrice>> {
     let range = TimeRange {
-        start: target_time - chrono::Duration::minutes(tolerance_minutes),
-        end: target_time + chrono::Duration::minutes(tolerance_minutes),
+        start: target_time - chrono::TimeDelta::minutes(tolerance_minutes),
+        end: target_time + chrono::TimeDelta::minutes(tolerance_minutes),
     };
     let rates = TokenRate::get_rates_in_time_range(&range, token, quote_token).await?;
 

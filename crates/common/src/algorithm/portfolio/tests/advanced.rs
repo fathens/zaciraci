@@ -596,17 +596,17 @@ fn test_calculate_daily_returns_zero_price_no_nan() {
         quote_token: token_in("wrap.near"),
         prices: vec![
             PricePoint {
-                timestamp: Utc::now() - Duration::days(3),
+                timestamp: Utc::now() - TimeDelta::days(3),
                 price: price(1.0),
                 volume: None,
             },
             PricePoint {
-                timestamp: Utc::now() - Duration::days(2),
+                timestamp: Utc::now() - TimeDelta::days(2),
                 price: price(0.0), // ゼロ価格
                 volume: None,
             },
             PricePoint {
-                timestamp: Utc::now() - Duration::days(1),
+                timestamp: Utc::now() - TimeDelta::days(1),
                 price: price(2.0),
                 volume: None,
             },
@@ -1009,12 +1009,12 @@ fn test_calculate_returns_from_prices_basic() {
     // 既知の価格系列から正しいリターンが計算されること
     let prices = vec![
         PricePoint {
-            timestamp: Utc::now() - Duration::days(2),
+            timestamp: Utc::now() - TimeDelta::days(2),
             price: price(100.0),
             volume: None,
         },
         PricePoint {
-            timestamp: Utc::now() - Duration::days(1),
+            timestamp: Utc::now() - TimeDelta::days(1),
             price: price(110.0),
             volume: None,
         },
@@ -1042,12 +1042,12 @@ fn test_calculate_returns_from_prices_unsorted_input() {
             volume: None,
         },
         PricePoint {
-            timestamp: now - Duration::days(2), // 最古（1番目に来るべき）
+            timestamp: now - TimeDelta::days(2), // 最古（1番目に来るべき）
             price: price(100.0),
             volume: None,
         },
         PricePoint {
-            timestamp: now - Duration::days(1), // 中間（2番目に来るべき）
+            timestamp: now - TimeDelta::days(1), // 中間（2番目に来るべき）
             price: price(110.0),
             volume: None,
         },
@@ -1093,7 +1093,7 @@ fn test_calculate_daily_returns_duplicate_tokens() {
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
-                    timestamp: now - Duration::days(1),
+                    timestamp: now - TimeDelta::days(1),
                     price: price(100.0),
                     volume: None,
                 },
@@ -1110,7 +1110,7 @@ fn test_calculate_daily_returns_duplicate_tokens() {
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
-                    timestamp: now - Duration::days(1),
+                    timestamp: now - TimeDelta::days(1),
                     price: price(200.0),
                     volume: None,
                 },
@@ -1126,7 +1126,7 @@ fn test_calculate_daily_returns_duplicate_tokens() {
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
-                    timestamp: now - Duration::days(1),
+                    timestamp: now - TimeDelta::days(1),
                     price: price(50.0),
                     volume: None,
                 },
@@ -1643,7 +1643,7 @@ fn test_price_to_f64_conversion_accuracy() {
 /// スコアリングで入力順序が入れ替わるケースをカバーする。
 #[tokio::test]
 async fn test_price_history_alignment_with_selected_tokens() {
-    let base_time = Utc::now() - Duration::days(30);
+    let base_time = Utc::now() - TimeDelta::days(30);
 
     // token-z: 低スコア（中流動性、中市場規模）→ 入力では先頭
     // token-a: 高スコア（高流動性、高市場規模）→ 入力では末尾
@@ -1676,7 +1676,7 @@ async fn test_price_history_alignment_with_selected_tokens() {
     // token-z: ランダムに大きく変動（高ボラティリティ）
     let token_z_prices: Vec<PricePoint> = (0..30)
         .map(|i| PricePoint {
-            timestamp: base_time + Duration::days(i),
+            timestamp: base_time + TimeDelta::days(i),
             price: price(50.0 + (i as f64 * 0.7).sin() * 15.0),
             volume: Some(BigDecimal::from_f64(500.0).unwrap()),
         })
@@ -1685,7 +1685,7 @@ async fn test_price_history_alignment_with_selected_tokens() {
     // token-a: 安定した上昇トレンド（低ボラティリティ）
     let token_a_prices: Vec<PricePoint> = (0..30)
         .map(|i| PricePoint {
-            timestamp: base_time + Duration::days(i),
+            timestamp: base_time + TimeDelta::days(i),
             price: price(100.0 + i as f64 * 0.3),
             volume: Some(BigDecimal::from_f64(2000.0).unwrap()),
         })
