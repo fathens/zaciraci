@@ -69,14 +69,33 @@ The formula correctly models fees and price impact.
 - Estimated total: ~5.35 NEAR across 535 trades (~0.01 NEAR/trade)
 - As % of typical 100 NEAR capital: 5.35%
 
-### 4. DbRate Fallback (HIGH impact - confirmed)
+### 4. DbRate Fallback (MEDIUM impact - quantified)
 - Simulation falls back to fee-less DB rate conversion when pool data unavailable
 - **Confirmed**: Existing simulation run (2026-03-15 to 2026-03-25) shows **100% fallback rate** (19/19 swaps)
 - Root cause: `pool_info` table retention is 10 snapshots per pool, and production only
   stores the latest snapshots (all from 2026-03-25). Historical pool data is not retained.
 - `read_from_db(Some(sim_day))` queries `timestamp < sim_day`, finding no data for past dates
-- **This means all simulation swaps use fee-less rate conversion**, systematically
-  overestimating returns by the pool fee amount (typically 0.30%)
+- **This means all simulation swaps use rate-based conversion**
+- Quantified divergence (DbRate vs actual blockchain output, 6 trades on 3/24):
+
+| Token | DbRate diff |
+|-------|-------------|
+| apys.token.a11bd.near | -0.08% |
+| blackdragon.tkn.near | -0.08% |
+| ftv2.nekotoken.near | -0.52% |
+| itlx.intellex_xyz.near | -0.04% |
+| rin.tkn.near | -0.37% |
+| score.aidols.near | -0.34% |
+| **Mean** | **-0.24%** |
+| **Median** | **-0.08%** |
+| **Max abs** | **0.52%** |
+
+- DbRate consistently **underestimates** output (negative diff) because token_rates
+  are calculated with a fixed reference amount (10 NEAR) while actual trades use
+  smaller amounts (~2 NEAR). AMM gives better rates for smaller amounts (less price impact).
+- The divergence is smaller than initially feared: rates already include AMM fees
+  since they are derived from `estimate_return`. The remaining difference is the
+  AMM non-linearity between the reference amount and actual trade amount.
 
 ### 5. Transaction Failures (NOT measurable)
 - Failed transactions are not recorded in trade_transactions
