@@ -22,7 +22,7 @@ pub(crate) use common::algorithm::prediction::PREDICTION_HORIZON_HOURS;
 /// 削除対象:
 /// - 評価済みレコード: evaluated_at から PREDICTION_RECORD_RETENTION_DAYS 日以上経過
 /// - 未評価レコード: target_time から PREDICTION_UNEVALUATED_RETENTION_DAYS 日以上経過
-pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usize)> {
+pub(crate) async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<(usize, usize)> {
     let log = DEFAULT.new(o!("function" => "cleanup_old_records"));
 
     let retention_days = cfg.prediction_record_retention_days();
@@ -130,7 +130,7 @@ fn build_prediction_records(
 /// 予測結果を prediction_records テーブルに記録する。
 ///
 /// DB 操作: INSERT INTO prediction_records (トークン数分)
-pub async fn record_predictions(
+pub(crate) async fn record_predictions(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
 ) -> Result<()> {

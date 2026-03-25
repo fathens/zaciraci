@@ -332,7 +332,7 @@ impl PredictionService {
         const MAX_CV: f64 = 0.15;
         let confidence = 1.0 - ((cv - MIN_CV) / (MAX_CV - MIN_CV)).clamp(0.0, 1.0);
 
-        Some(BigDecimal::try_from(confidence).unwrap_or_else(|_| BigDecimal::from(0)))
+        Some(BigDecimal::try_from(confidence).expect("confidence is clamped to [0.0, 1.0]"))
     }
 
     /// 価格予測を実行（リトライ付き）

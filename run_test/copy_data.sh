@@ -215,6 +215,15 @@ fi
 IFS=',' read -ra TABLE_LIST <<< "$TABLES"
 
 for table in "${TABLE_LIST[@]}"; do
+  # セキュリティ: テーブル名が SQL に直接埋め込まれるため、ホワイトリストで制限する
+  case "$table" in
+    token_rates|pool_info|prediction_records) ;;
+    *)
+      echo "WARNING: 不明なテーブル '$table' をスキップします（許可: token_rates, pool_info, prediction_records）"
+      continue
+      ;;
+  esac
+
   echo ""
   echo "=== $table のコピー ==="
 

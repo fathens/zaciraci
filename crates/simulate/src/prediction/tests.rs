@@ -3,7 +3,7 @@ use chrono::NaiveDate;
 use common::config::ConfigResolver;
 
 fn make_date(year: i32, month: u32, day: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    NaiveDate::from_ymd_opt(year, month, day).expect("valid test date")
 }
 
 /// start_date > end_date の場合は早期エラーを返す（DB不要）
@@ -38,7 +38,7 @@ async fn single_day_range_executes_one_iteration() {
     match result {
         Ok(()) => {}
         Err(e) => {
-            println!("single day test failed (expected if no token data): {e}");
+            eprintln!("single day test failed (expected if no token data): {e}");
         }
     }
 }

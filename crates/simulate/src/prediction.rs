@@ -29,7 +29,14 @@ pub async fn generate_predictions_for_range(
         );
     }
 
-    // 1. 削除範囲を計算（horizon ベース）
+    // 1. 削除範囲を計算（target_time ベース）
+    //
+    // 削除対象: target_time ∈ [start_date 00:00, end_date 00:00 + horizon]
+    // - target_time < start_date のレコードは削除されない（シミュレーション範囲外の過去予測を保護）
+    // - 削除後のステップ2初回評価 (as_of = start_date) では target_time <= start_date のレコードを
+    //   評価するが、target_time = start_date ちょうどのレコードは削除済みのため空振りしうる。
+    //   これは意図的な動作: 初回評価は主にシミュレーション範囲外（target_time < start_date）の
+    //   未評価レコードを処理する。
     let start_naive = start_date.and_time(NaiveTime::MIN);
     let buffer = chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
     let end_naive = end_date.and_time(NaiveTime::MIN) + buffer;
@@ -49,7 +56,9 @@ pub async fn generate_predictions_for_range(
     while current_date <= end_date {
         let sim_day = Utc.from_utc_datetime(&current_date.and_time(NaiveTime::MIN));
 
-        // 前日の予測を評価（初回はシミュレーション範囲外の未評価レコードも対象になる）
+        // 前日の予測を評価
+        // 初回 (as_of = start_date): 主にシミュレーション範囲外の未評価レコードを処理。
+        // 範囲内レコードはステップ1で削除済みのため、対象は少ない場合がある。
         match trade::prediction_accuracy::evaluate_predictions_as_of(sim_day, cfg).await {
             Ok(count) => total_evaluated += count,
             Err(e) => {
@@ -74,8 +83,11 @@ pub async fn generate_predictions_for_range(
     }
 
     // 3. 最終日の予測を評価
-    let final_eval_day =
-        Utc.from_utc_datetime(&(end_date + chrono::TimeDelta::days(1)).and_time(NaiveTime::MIN));
+    // end_date に生成された予測の target_time は最大 end_date + horizon なので、
+    // 評価基準日を end_date + 1日 + buffer にして取りこぼしを防ぐ。
+    let final_eval_day = Utc
+        .from_utc_datetime(&(end_date + chrono::TimeDelta::days(1)).and_time(NaiveTime::MIN))
+        + buffer;
     match trade::prediction_accuracy::evaluate_predictions_as_of(final_eval_day, cfg).await {
         Ok(count) => total_evaluated += count,
         Err(e) => {
