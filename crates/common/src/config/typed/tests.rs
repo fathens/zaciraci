@@ -130,10 +130,10 @@ fn test_harvest_reserve_amount_default() {
 
 #[test]
 #[serial]
-fn test_pool_info_retention_count_default() {
-    let _env = EnvGuard::remove("POOL_INFO_RETENTION_COUNT");
-    crate::config::store::remove("POOL_INFO_RETENTION_COUNT");
-    assert_eq!(typed().pool_info_retention_count(), 10);
+fn test_pool_info_retention_days_default() {
+    let _env = EnvGuard::remove("POOL_INFO_RETENTION_DAYS");
+    crate::config::store::remove("POOL_INFO_RETENTION_DAYS");
+    assert_eq!(typed().pool_info_retention_days(), 30);
 }
 
 #[test]

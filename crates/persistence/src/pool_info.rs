@@ -107,43 +107,36 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
     }
 
     // 古いレコードをクリーンアップ
-    let retention_count = cfg.pool_info_retention_count();
+    let retention_days = cfg.pool_info_retention_days();
 
-    trace!(log, "cleaning up old records"; "retention_count" => retention_count);
-    cleanup_old_records(retention_count).await?;
+    trace!(log, "cleaning up old records"; "retention_days" => retention_days);
+    cleanup_old_records(retention_days).await?;
 
     trace!(log, "finish");
     Ok(())
 }
 
-/// 古いレコードを削除し、pool_id ごとに指定数だけ保持する
-pub async fn cleanup_old_records(retention_count: u32) -> Result<()> {
+/// 指定日数より古いレコードを削除
+pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
     use diesel::prelude::*;
-    use diesel::sql_types::BigInt;
+    use diesel::sql_types::Timestamp;
 
     let log = DEFAULT.new(o!(
         "function" => "pool_info::cleanup_old_records",
-        "retention_count" => retention_count,
+        "retention_days" => retention_days,
     ));
     trace!(log, "start");
 
-    let retention_count_i64 = retention_count as i64;
+    let cutoff_date =
+        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(retention_days as i64);
+
     let conn = connection_pool::get().await?;
 
     let deleted_count = conn
         .interact(move |conn| {
-            diesel::sql_query(
-                "DELETE FROM pool_info WHERE id IN (
-                    SELECT id FROM (
-                        SELECT id,
-                               ROW_NUMBER() OVER (PARTITION BY pool_id ORDER BY timestamp DESC) as rn
-                        FROM pool_info
-                    ) t
-                    WHERE t.rn > $1
-                )"
-            )
-            .bind::<BigInt, _>(retention_count_i64)
-            .execute(conn)
+            diesel::sql_query("DELETE FROM pool_info WHERE timestamp < $1")
+                .bind::<Timestamp, _>(cutoff_date)
+                .execute(conn)
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;

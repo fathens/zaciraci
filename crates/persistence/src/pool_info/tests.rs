@@ -327,9 +327,10 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
     Ok(())
 }
 
+/// 日数ベースの cleanup: 指定日数より古いレコードが削除されることを検証
 #[tokio::test]
 #[serial(pool_info)]
-async fn test_cleanup_old_records() -> Result<()> {
+async fn test_cleanup_old_records_by_days() -> Result<()> {
     use chrono::NaiveDateTime;
     use diesel::Connection;
     use diesel::prelude::*;
@@ -345,25 +346,27 @@ async fn test_cleanup_old_records() -> Result<()> {
         Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
     };
 
-    let base_time = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+    let now = chrono::Utc::now().naive_utc();
     let pool_id_1: u32 = 100;
     let pool_id_2: u32 = 200;
 
     let test_pool_info = create_test_pool_info();
     let mut pool_infos = Vec::new();
 
-    for i in 0..15 {
-        let mut pool_info = test_pool_info.clone();
-        pool_info.id = pool_id_1;
-        pool_info.timestamp = base_time + chrono::TimeDelta::seconds(i);
-        pool_infos.push(to_new_db(&pool_info)?);
+    // pool_id_1: 40日前、20日前、10日前、1日前のレコード
+    for days_ago in [40, 20, 10, 1] {
+        let mut pi = test_pool_info.clone();
+        pi.id = pool_id_1;
+        pi.timestamp = now - chrono::TimeDelta::days(days_ago);
+        pool_infos.push(to_new_db(&pi)?);
     }
 
-    for i in 0..5 {
-        let mut pool_info = test_pool_info.clone();
-        pool_info.id = pool_id_2;
-        pool_info.timestamp = base_time + chrono::TimeDelta::seconds(i);
-        pool_infos.push(to_new_db(&pool_info)?);
+    // pool_id_2: 50日前、5日前のレコード
+    for days_ago in [50, 5] {
+        let mut pi = test_pool_info.clone();
+        pi.id = pool_id_2;
+        pi.timestamp = now - chrono::TimeDelta::days(days_ago);
+        pool_infos.push(to_new_db(&pi)?);
     }
 
     match conn
@@ -382,8 +385,10 @@ async fn test_cleanup_old_records() -> Result<()> {
     };
     drop(conn);
 
-    cleanup_old_records(10).await?;
+    // 30日以上古いレコードを削除
+    cleanup_old_records(30).await?;
 
+    // pool_id_1: 40日前が削除され、20日前・10日前・1日前の3件が残る
     let count_pool_1 = {
         let conn = connection_pool::get().await?;
         conn.interact(move |conn| {
@@ -398,10 +403,11 @@ async fn test_cleanup_old_records() -> Result<()> {
     };
 
     assert_eq!(
-        count_pool_1, 10,
-        "プールID 100 のレコード数は10件であるべきです"
+        count_pool_1, 3,
+        "pool_id 100: 40日前のレコードが削除され3件残るべき"
     );
 
+    // pool_id_2: 50日前が削除され、5日前の1件が残る
     let count_pool_2 = {
         let conn = connection_pool::get().await?;
         conn.interact(move |conn| {
@@ -416,29 +422,11 @@ async fn test_cleanup_old_records() -> Result<()> {
     };
 
     assert_eq!(
-        count_pool_2, 5,
-        "プールID 200 のレコード数は5件のままであるべきです"
+        count_pool_2, 1,
+        "pool_id 200: 50日前のレコードが削除され1件残るべき"
     );
 
-    let latest_timestamp = {
-        let conn = connection_pool::get().await?;
-        conn.interact(move |conn| {
-            use diesel::dsl::max;
-            pool_info::table
-                .filter(pool_info::pool_id.eq(pool_id_1 as i32))
-                .select(max(pool_info::timestamp))
-                .first::<Option<NaiveDateTime>>(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
-    };
-
-    assert_eq!(
-        latest_timestamp,
-        Some(base_time + chrono::TimeDelta::seconds(14)),
-        "最新のタイムスタンプは14秒後であるべきです"
-    );
-
+    // 最古のタイムスタンプが20日前であることを確認
     let oldest_timestamp = {
         let conn = connection_pool::get().await?;
         conn.interact(move |conn| {
@@ -452,10 +440,14 @@ async fn test_cleanup_old_records() -> Result<()> {
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
     };
 
-    assert_eq!(
-        oldest_timestamp,
-        Some(base_time + chrono::TimeDelta::seconds(5)),
-        "最古のタイムスタンプは5秒後であるべきです（0-4秒が削除される）"
+    let expected_oldest = now - chrono::TimeDelta::days(20);
+    let diff = (oldest_timestamp.unwrap() - expected_oldest)
+        .num_seconds()
+        .abs();
+    assert!(
+        diff < 2,
+        "最古のレコードは約20日前であるべき (差: {}秒)",
+        diff
     );
 
     Ok(())
