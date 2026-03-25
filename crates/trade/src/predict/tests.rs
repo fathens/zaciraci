@@ -281,19 +281,81 @@ async fn test_convert_prediction_result() {
         model_count: 3,
     };
 
-    let predictions = service.convert_prediction_result(&chronos_response, 3, last_data_timestamp);
+    let predictions = service.convert_prediction_result(&chronos_response, last_data_timestamp);
 
     assert!(predictions.is_ok());
     let preds = predictions.unwrap();
-    assert_eq!(preds.len(), 3);
+    assert_eq!(preds.len(), 4);
     assert_eq!(preds[0].price, price("1.2"));
     assert_eq!(preds[1].price, price("1.3"));
     assert_eq!(preds[2].price, price("1.4"));
+    assert_eq!(preds[3].price, price("1.5"));
 
     // タイムスタンプが正しく設定されていることを確認
     assert_eq!(preds[0].timestamp, now + Duration::hours(1));
     assert_eq!(preds[1].timestamp, now + Duration::hours(2));
     assert_eq!(preds[2].timestamp, now + Duration::hours(3));
+    assert_eq!(preds[3].timestamp, now + Duration::hours(4));
+}
+
+/// 15分間隔の予測データで24時間先のポイントが `prediction_at_horizon(24)` で取得できることを確認。
+///
+/// `.take(horizon)` バグの回帰防止テスト: 15分間隔データでは96ポイント生成されるが、
+/// 以前は `.take(24)` で24ポイント（6時間分）に切り詰められ、24h先のポイントが失われていた。
+#[tokio::test]
+#[serial]
+async fn test_convert_prediction_result_15min_interval_has_24h_point() {
+    use common::algorithm::prediction::{PREDICTION_HORIZON_HOURS, TokenPredictionResult};
+
+    let service = PredictionService::new(&CFG);
+    let now = Utc::now();
+    let last_data_timestamp = now;
+
+    // 15分間隔で96ポイント（24時間分）の予測データを生成
+    let forecast: std::collections::BTreeMap<_, _> = (1..=96)
+        .map(|i| {
+            let ts = now + Duration::minutes(15 * i);
+            let price_val: BigDecimal = BigDecimal::from_str(&format!("1.{i:03}")).unwrap();
+            (ts, price_val)
+        })
+        .collect();
+
+    let chronos_response = ChronosPredictionResponse {
+        forecast,
+        lower_bound: None,
+        upper_bound: None,
+        model_name: "chronos-t5-large".to_string(),
+        strategy_name: "ensemble".to_string(),
+        processing_time_secs: 2.0,
+        model_count: 3,
+    };
+
+    let predictions = service
+        .convert_prediction_result(&chronos_response, last_data_timestamp)
+        .unwrap();
+
+    // TokenPredictionResult を構築して prediction_at_horizon で24h先を取得
+    let result = TokenPredictionResult {
+        token: "test.token.near".parse::<TokenAccount>().unwrap().into(),
+        quote_token: "wrap.near".parse::<TokenAccount>().unwrap().into(),
+        data_cutoff_time: last_data_timestamp,
+        predictions,
+    };
+
+    let horizon_pred = result.prediction_at_horizon(PREDICTION_HORIZON_HOURS);
+    assert!(
+        horizon_pred.is_some(),
+        "prediction_at_horizon(24) should find a point at 24h ahead with 15min interval data"
+    );
+
+    // 取得されたポイントが data_cutoff_time + 24h ±1h 以内であることを確認
+    let pred = horizon_pred.unwrap();
+    let target = last_data_timestamp + Duration::hours(PREDICTION_HORIZON_HOURS as i64);
+    let diff = (pred.timestamp - target).abs();
+    assert!(
+        diff <= Duration::hours(1),
+        "prediction timestamp should be within ±1h of target: diff={diff:?}"
+    );
 }
 
 #[tokio::test]

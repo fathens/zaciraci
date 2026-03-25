@@ -138,11 +138,7 @@ impl PredictionService {
         );
 
         // 予測結果を変換（最後のデータタイムスタンプを渡す）
-        let predictions = self.convert_prediction_result(
-            &chronos_response,
-            prediction_horizon,
-            last_data_timestamp,
-        )?;
+        let predictions = self.convert_prediction_result(&chronos_response, last_data_timestamp)?;
 
         Ok(TokenPredictionResult {
             token: history.token.clone(),
@@ -252,13 +248,11 @@ impl PredictionService {
     fn convert_prediction_result(
         &self,
         chronos_response: &common::prediction::ChronosPredictionResponse,
-        horizon: usize,
         last_data_timestamp: DateTime<Utc>,
     ) -> Result<Vec<PredictedPrice>> {
         let predicted_prices: Vec<_> = chronos_response
             .forecast
             .iter()
-            .take(horizon)
             .map(|(forecast_ts, price_value)| {
                 // 予測までの時間経過を計算
                 let time_ahead = forecast_ts.signed_duration_since(last_data_timestamp);
