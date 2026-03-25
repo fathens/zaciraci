@@ -857,6 +857,30 @@ fn test_confidence_none_when_lower_exceeds_upper() {
     );
 }
 
+/// lower == upper（zero-width interval）の場合は confidence = 1.0 を返す
+///
+/// interval_width = 0 → relative_width = 0 → cv = 0 → cv < MIN_CV → confidence = 1.0
+#[test]
+fn test_confidence_max_when_zero_width_interval() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let bound = BigDecimal::from_str("100.0").unwrap();
+    let time_1h = TimeDelta::hours(1);
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&bound),
+        Some(&bound),
+        time_1h,
+    );
+    assert!(result.is_some(), "Zero-width interval should return Some");
+    let confidence = result.unwrap();
+    assert_eq!(
+        confidence,
+        BigDecimal::from_str("1").unwrap(),
+        "Zero-width interval should yield maximum confidence (1.0)"
+    );
+}
+
 /// time_ahead が負（予測時刻がデータ最終時刻より前）の場合は None を返す
 #[test]
 fn test_confidence_none_when_time_ahead_negative() {
