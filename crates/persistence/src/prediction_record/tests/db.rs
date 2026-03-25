@@ -393,6 +393,247 @@ async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
     Ok(())
 }
 
+// ── delete_by_target_time_range ──
+
+/// start > end の場合はエラーを返すこと
+#[tokio::test]
+#[serial]
+async fn test_delete_by_target_time_range_invalid_range() -> Result<()> {
+    let base = base_time();
+    let start = base + chrono::TimeDelta::hours(10);
+    let end = base;
+
+    let result = PredictionRecord::delete_by_target_time_range(start, end).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("invalid range"),
+        "expected 'invalid range' error, got: {err}"
+    );
+
+    Ok(())
+}
+
+/// 空テーブルでも正常に 0 件削除として返ること
+#[tokio::test]
+#[serial]
+async fn test_delete_by_target_time_range_empty_table() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let deleted =
+        PredictionRecord::delete_by_target_time_range(base, base + chrono::TimeDelta::hours(24))
+            .await?;
+
+    assert_eq!(deleted, 0);
+
+    Ok(())
+}
+
+/// start == end（1点）の場合、target_time がちょうどその時刻のレコードのみ削除されること
+#[tokio::test]
+#[serial]
+async fn test_delete_by_target_time_range_single_point() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_del_point.near";
+    let quote = "wrap.near";
+
+    // target_time = base のレコード（削除対象）
+    let prediction = base - chrono::TimeDelta::hours(24);
+    insert_unevaluated_record(token, quote, 100, prediction, base).await?;
+
+    // target_time = base + 1h のレコード（削除対象外）
+    let target2 = base + chrono::TimeDelta::hours(1);
+    insert_unevaluated_record(token, quote, 200, prediction, target2).await?;
+
+    let deleted = PredictionRecord::delete_by_target_time_range(base, base).await?;
+
+    assert_eq!(
+        deleted, 1,
+        "Should delete exactly 1 record at the exact point"
+    );
+
+    // 残りのレコードが target2 のものであることを確認
+    let remaining =
+        PredictionRecord::get_pending_evaluations_as_of(base + chrono::TimeDelta::hours(2)).await?;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].target_time, target2);
+
+    Ok(())
+}
+
+/// inclusive range: start と end ちょうどのレコードが削除に含まれること（ge + le）
+#[tokio::test]
+#[serial]
+async fn test_delete_by_target_time_range_inclusive_boundary() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_del_boundary.near";
+    let quote = "wrap.near";
+    let prediction = base - chrono::TimeDelta::hours(24);
+
+    let start = base;
+    let end = base + chrono::TimeDelta::hours(3);
+
+    // target_time = start - 1s（範囲外、保持されるべき）
+    let before = start - chrono::TimeDelta::seconds(1);
+    insert_unevaluated_record(token, quote, 10, prediction, before).await?;
+
+    // target_time = start ちょうど（範囲内、削除されるべき）
+    insert_unevaluated_record(token, quote, 100, prediction, start).await?;
+
+    // target_time = start + 1h（範囲内、削除されるべき）
+    let middle = start + chrono::TimeDelta::hours(1);
+    insert_unevaluated_record(token, quote, 150, prediction, middle).await?;
+
+    // target_time = end ちょうど（範囲内、削除されるべき）
+    insert_unevaluated_record(token, quote, 200, prediction, end).await?;
+
+    // target_time = end + 1s（範囲外、保持されるべき）
+    let after = end + chrono::TimeDelta::seconds(1);
+    insert_unevaluated_record(token, quote, 300, prediction, after).await?;
+
+    let deleted = PredictionRecord::delete_by_target_time_range(start, end).await?;
+
+    assert_eq!(
+        deleted, 3,
+        "Should delete records at start, middle, and end (inclusive)"
+    );
+
+    // 残りのレコードが範囲外の 2 件であることを確認
+    let remaining =
+        PredictionRecord::get_pending_evaluations_as_of(after + chrono::TimeDelta::hours(1))
+            .await?;
+    assert_eq!(remaining.len(), 2);
+
+    let prices: Vec<_> = remaining.iter().map(|r| &r.predicted_price).collect();
+    assert!(prices.contains(&&BigDecimal::from(10)));
+    assert!(prices.contains(&&BigDecimal::from(300)));
+
+    Ok(())
+}
+
+// ── get_pending_evaluations_as_of ──
+
+/// as_of == target_time のレコードが含まれること（le の確認）
+#[tokio::test]
+#[serial]
+async fn test_pending_evaluations_as_of_boundary_included() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_pending_boundary.near";
+    let quote = "wrap.near";
+    let prediction = base - chrono::TimeDelta::hours(24);
+
+    // target_time = base（as_of = base で le なので含まれるべき）
+    insert_unevaluated_record(token, quote, 100, prediction, base).await?;
+
+    let results = PredictionRecord::get_pending_evaluations_as_of(base).await?;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "Record with target_time == as_of should be included (le)"
+    );
+    assert_eq!(results[0].predicted_price, BigDecimal::from(100));
+
+    Ok(())
+}
+
+/// target_time > as_of のレコードは除外されること
+#[tokio::test]
+#[serial]
+async fn test_pending_evaluations_as_of_future_excluded() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_pending_future.near";
+    let quote = "wrap.near";
+    let prediction = base - chrono::TimeDelta::hours(24);
+
+    // target_time = base（含まれるべき）
+    insert_unevaluated_record(token, quote, 100, prediction, base).await?;
+
+    // target_time = base + 1h（除外されるべき）
+    let future_target = base + chrono::TimeDelta::hours(1);
+    insert_unevaluated_record(token, quote, 200, prediction, future_target).await?;
+
+    let results = PredictionRecord::get_pending_evaluations_as_of(base).await?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].predicted_price, BigDecimal::from(100));
+
+    Ok(())
+}
+
+/// evaluated_at が非 NULL のレコードは除外されること
+#[tokio::test]
+#[serial]
+async fn test_pending_evaluations_as_of_excludes_evaluated() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_pending_eval.near";
+    let quote = "wrap.near";
+    let prediction = base - chrono::TimeDelta::hours(24);
+
+    // 未評価レコード（含まれるべき）
+    insert_unevaluated_record(token, quote, 100, prediction, base).await?;
+
+    // 評価済みレコード（除外されるべき）
+    let target2 = base + chrono::TimeDelta::hours(1);
+    insert_evaluated_record(token, quote, 200, 210, prediction, target2).await?;
+
+    // as_of を十分先に設定して両方の target_time を包含
+    let as_of = base + chrono::TimeDelta::hours(2);
+    let results = PredictionRecord::get_pending_evaluations_as_of(as_of).await?;
+
+    assert_eq!(results.len(), 1, "Should return only unevaluated records");
+    assert_eq!(results[0].predicted_price, BigDecimal::from(100));
+    assert!(results[0].evaluated_at.is_none());
+
+    Ok(())
+}
+
+/// target_time ASC でソートされて返ること
+#[tokio::test]
+#[serial]
+async fn test_pending_evaluations_as_of_ordered_by_target_time_asc() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_pending_order.near";
+    let quote = "wrap.near";
+    let prediction = base - chrono::TimeDelta::hours(24);
+
+    // 逆順に挿入（target_time が新しい方を先に）
+    let t3 = base + chrono::TimeDelta::hours(2);
+    let t1 = base;
+    let t2 = base + chrono::TimeDelta::hours(1);
+
+    insert_unevaluated_record(token, quote, 300, prediction, t3).await?;
+    insert_unevaluated_record(token, quote, 100, prediction, t1).await?;
+    insert_unevaluated_record(token, quote, 200, prediction, t2).await?;
+
+    let as_of = base + chrono::TimeDelta::hours(3);
+    let results = PredictionRecord::get_pending_evaluations_as_of(as_of).await?;
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(
+        results[0].target_time, t1,
+        "First result should have earliest target_time"
+    );
+    assert_eq!(results[1].target_time, t2);
+    assert_eq!(results[2].target_time, t3);
+
+    Ok(())
+}
+
 /// target_time 優先: 同一トークン・同一 data_cutoff_time で異なる target_time がある場合、
 /// 最新の target_time を持つレコードが返ること
 #[tokio::test]
