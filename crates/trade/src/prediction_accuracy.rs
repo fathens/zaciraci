@@ -146,17 +146,36 @@ pub async fn record_predictions(
 
 /// 過去の予測を実績と比較して精度を評価する（ハウスキーピング）。
 ///
-/// 呼び出し元: start() の冒頭
+/// 呼び出し元: run_predictions() の冒頭
 /// タイミング: トレード戦略実行前
 ///
 /// 戻り値: 評価したレコード数
 pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Result<u32> {
-    let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
+    let count = evaluate_predictions_as_of(chrono::Utc::now(), cfg).await?;
+
+    // 古いレコードを削除（エラーは警告のみで続行）
+    if let Err(e) = cleanup_old_records(cfg).await {
+        let log = DEFAULT.new(o!("function" => "evaluate_pending_predictions"));
+        warn!(log, "failed to cleanup old records"; "error" => %e);
+    }
+
+    Ok(count)
+}
+
+/// 指定時刻基準で未評価の予測を実績と比較して評価する。
+/// cleanup_old_records は呼ばない（呼び出し元が必要に応じて行う）。
+///
+/// 戻り値: 評価したレコード数
+pub async fn evaluate_predictions_as_of(
+    as_of: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+) -> Result<u32> {
+    let log = DEFAULT.new(o!("function" => "evaluate_predictions_as_of"));
 
     let tolerance_minutes = cfg.prediction_eval_tolerance_minutes();
 
     // 未評価 & target_time 経過済みのレコードを取得
-    let pending = PredictionRecord::get_pending_evaluations().await?;
+    let pending = PredictionRecord::get_pending_evaluations_as_of(as_of.naive_utc()).await?;
 
     if pending.is_empty() {
         debug!(log, "no pending predictions to evaluate");
@@ -244,11 +263,6 @@ pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Res
 
     if evaluated_count > 0 {
         info!(log, "evaluation complete"; "evaluated" => evaluated_count);
-    }
-
-    // 古いレコードを削除（エラーは警告のみで続行）
-    if let Err(e) = cleanup_old_records(cfg).await {
-        warn!(log, "failed to cleanup old records"; "error" => %e);
     }
 
     Ok(evaluated_count)
