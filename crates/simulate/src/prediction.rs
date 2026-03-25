@@ -18,6 +18,14 @@ pub async fn generate_predictions_for_range(
 ) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "generate_predictions_for_range"));
 
+    if start_date > end_date {
+        anyhow::bail!(
+            "invalid date range: start_date ({}) > end_date ({})",
+            start_date,
+            end_date
+        );
+    }
+
     // 1. 削除範囲を計算（horizon ベース）
     let start_naive = start_date.and_time(NaiveTime::MIN);
     let buffer = chrono::Duration::hours(PREDICTION_HORIZON_HOURS as i64);
@@ -38,7 +46,7 @@ pub async fn generate_predictions_for_range(
     while current_date <= end_date {
         let sim_day = Utc.from_utc_datetime(&current_date.and_time(NaiveTime::MIN));
 
-        // 前日の予測を評価
+        // 前日の予測を評価（初回はシミュレーション範囲外の未評価レコードも対象になる）
         match trade::prediction_accuracy::evaluate_predictions_as_of(sim_day, cfg).await {
             Ok(count) => total_evaluated += count,
             Err(e) => {

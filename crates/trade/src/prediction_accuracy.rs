@@ -165,6 +165,10 @@ pub(crate) async fn evaluate_pending_predictions(cfg: &impl ConfigAccess) -> Res
 /// 指定時刻基準で未評価の予測を実績と比較して評価する。
 /// cleanup_old_records は呼ばない（呼び出し元が必要に応じて行う）。
 ///
+/// `as_of` にはシミュレーション日時など過去の時点を指定する。
+/// 未来日時を渡した場合、target_time 未到来の予測も評価対象になるが、
+/// 実績データが存在しないためスキップされる。
+///
 /// 戻り値: 評価したレコード数
 pub async fn evaluate_predictions_as_of(
     as_of: chrono::DateTime<chrono::Utc>,

@@ -91,6 +91,10 @@ impl PredictionRecord {
         start: NaiveDateTime,
         end: NaiveDateTime,
     ) -> Result<usize> {
+        if start > end {
+            anyhow::bail!("invalid range: start ({}) > end ({})", start, end);
+        }
+
         let conn = connection_pool::get().await?;
 
         let deleted = conn

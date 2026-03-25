@@ -116,11 +116,11 @@ async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
 
 /// 指定日時を起点に、対象トークンの予測を実行して prediction_records に保存する。
 ///
-/// 内部で `Utc::now()` は使用しない。渡された `end_date` のみを時刻の基準とする。
+/// 内部で `Utc::now()` は使用しない。渡された `as_of` のみを時刻の基準とする。
 ///
 /// 戻り値: 保存した予測の件数
 pub async fn run_prediction_cycle(
-    end_date: chrono::DateTime<chrono::Utc>,
+    as_of: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
 ) -> Result<usize> {
     let log = DEFAULT.new(o!("function" => "run_prediction_cycle"));
@@ -128,7 +128,7 @@ pub async fn run_prediction_cycle(
     // 1. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
     let prediction_service = predict::PredictionService::new(cfg);
     let target_tokens =
-        strategy::select_prediction_target_tokens(&prediction_service, end_date, cfg).await?;
+        strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg).await?;
 
     info!(log, "prediction targets selected"; "count" => target_tokens.len());
 
@@ -144,7 +144,7 @@ pub async fn run_prediction_cycle(
             &quote_token,
             price_history_days,
             prediction_accuracy::PREDICTION_HORIZON_HOURS,
-            end_date,
+            as_of,
             cfg,
         )
         .await?;
