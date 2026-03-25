@@ -314,6 +314,9 @@ impl PredictionService {
 
         let lower_f64 = lower.to_f64()?;
         let upper_f64 = upper.to_f64()?;
+        if lower_f64 > upper_f64 {
+            return None; // 不正な信頼区間
+        }
         let interval_width = upper_f64 - lower_f64;
 
         // 予測値に対する相対的な幅を計算
@@ -321,6 +324,9 @@ impl PredictionService {
 
         // 時間経過から CV を逆算（1時間を基準単位とする）
         let hours = time_ahead.num_minutes() as f64 / 60.0;
+        if hours <= 0.0 {
+            return None; // 予測時刻がデータ最終時刻以前
+        }
         let time_factor = hours.max(1.0).sqrt();
         // 80%信頼区間の場合: 2.56 = 2 × 1.28
         let cv = relative_width / (2.56 * time_factor);

@@ -837,6 +837,46 @@ fn test_confidence_none_when_forecast_invalid() {
     );
 }
 
+/// lower > upper（不正な信頼区間）の場合は None を返す
+#[test]
+fn test_confidence_none_when_lower_exceeds_upper() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let lower = BigDecimal::from_str("110.0").unwrap();
+    let upper = BigDecimal::from_str("90.0").unwrap();
+    let time_1h = TimeDelta::hours(1);
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower),
+        Some(&upper),
+        time_1h,
+    );
+    assert!(
+        result.is_none(),
+        "Should return None when lower > upper (invalid interval)"
+    );
+}
+
+/// time_ahead が負（予測時刻がデータ最終時刻より前）の場合は None を返す
+#[test]
+fn test_confidence_none_when_time_ahead_negative() {
+    let forecast = BigDecimal::from_str("100.0").unwrap();
+    let lower = BigDecimal::from_str("90.0").unwrap();
+    let upper = BigDecimal::from_str("110.0").unwrap();
+    let negative_time = TimeDelta::minutes(-30);
+
+    let result = PredictionService::calculate_confidence_from_interval(
+        &forecast,
+        Some(&lower),
+        Some(&upper),
+        negative_time,
+    );
+    assert!(
+        result.is_none(),
+        "Should return None when time_ahead is negative"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
