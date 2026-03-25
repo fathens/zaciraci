@@ -8,8 +8,10 @@ mod output;
 mod portfolio_state;
 mod prediction;
 mod sweep;
+mod verify;
 
 use clap::Parser;
+use cli::Command;
 use logging::*;
 
 #[tokio::main]
@@ -18,14 +20,21 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = cli::Cli::parse();
 
-    if let Some(sweep_path) = &cli.sweep {
+    match cli.command {
+        Command::Run(ref args) => run_simulation_command(args, &log).await,
+        Command::Verify(ref args) => verify::run_verify(args).await,
+    }
+}
+
+async fn run_simulation_command(args: &cli::RunArgs, log: &slog::Logger) -> anyhow::Result<()> {
+    if let Some(sweep_path) = &args.sweep {
         info!(log, "running parameter sweep mode");
-        sweep::run_sweep(&cli, sweep_path).await?;
+        sweep::run_sweep(args, sweep_path).await?;
     } else {
         info!(log, "running single simulation");
-        let result = engine::run_simulation(&cli).await?;
-        result.write_to_file(&cli.output)?;
-        info!(log, "results written"; "path" => cli.output.display().to_string());
+        let result = engine::run_simulation(args).await?;
+        result.write_to_file(&args.output)?;
+        info!(log, "results written"; "path" => args.output.display().to_string());
 
         // Print summary
         let perf = &result.performance;
@@ -33,8 +42,8 @@ async fn main() -> anyhow::Result<()> {
         let return_sign = if return_pct >= 0.0 { "+" } else { "" };
 
         println!("\n=== Simulation Results ===");
-        println!("Period: {} to {}", cli.start_date, cli.end_date);
-        println!("Initial capital: {:.4} NEAR", cli.initial_capital);
+        println!("Period: {} to {}", args.start_date, args.end_date);
+        println!("Initial capital: {:.4} NEAR", args.initial_capital);
         println!(
             "Final balance:   {:.4} NEAR ({}{:.2}%)",
             perf.final_balance_near, return_sign, return_pct

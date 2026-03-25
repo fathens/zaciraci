@@ -1,5 +1,5 @@
 use super::*;
-use crate::cli::Cli;
+use crate::cli::RunArgs;
 use crate::portfolio_state::{
     PortfolioSnapshot, PortfolioState, SwapEvent, SwapMethod, TradeAction, TradeRecord,
 };
@@ -263,8 +263,8 @@ fn performance_total_return_loss() {
 
 // --- SimulationResult::from_state ---
 
-fn make_cli(start: &str, end: &str) -> Cli {
-    Cli {
+fn make_cli(start: &str, end: &str) -> RunArgs {
+    RunArgs {
         start_date: start.to_string(),
         end_date: end.to_string(),
         initial_capital: 100.0,
@@ -345,7 +345,7 @@ fn from_state_maps_snapshots_to_portfolio_values() {
 
 #[test]
 fn from_state_config_reflects_cli_params() {
-    let cli = Cli {
+    let cli = RunArgs {
         start_date: "2025-03-01".to_string(),
         end_date: "2025-03-31".to_string(),
         initial_capital: 200.0,

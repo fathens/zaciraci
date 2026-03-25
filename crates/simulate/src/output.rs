@@ -1,4 +1,4 @@
-use crate::cli::Cli;
+use crate::cli::RunArgs;
 use crate::portfolio_state::{
     PortfolioState, SwapEvent, SwapMethod, TradeAction, pnl_to_near, to_f64_or_warn,
     to_u128_or_warn,
@@ -116,7 +116,7 @@ pub struct PortfolioValueEntry {
 }
 
 impl SimulationResult {
-    pub fn from_state(cli: &Cli, state: &PortfolioState) -> Result<Self> {
+    pub fn from_state(cli: &RunArgs, state: &PortfolioState) -> Result<Self> {
         let config = SimulationConfig {
             start_date: cli.start_date.clone(),
             end_date: cli.end_date.clone(),
