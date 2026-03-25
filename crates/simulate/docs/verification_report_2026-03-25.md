@@ -69,9 +69,14 @@ The formula correctly models fees and price impact.
 - Estimated total: ~5.35 NEAR across 535 trades (~0.01 NEAR/trade)
 - As % of typical 100 NEAR capital: 5.35%
 
-### 4. DbRate Fallback (UNKNOWN impact for production)
+### 4. DbRate Fallback (HIGH impact - confirmed)
 - Simulation falls back to fee-less DB rate conversion when pool data unavailable
-- Need simulation run data to measure fallback frequency
+- **Confirmed**: Existing simulation run (2026-03-15 to 2026-03-25) shows **100% fallback rate** (19/19 swaps)
+- Root cause: `pool_info` table retention is 10 snapshots per pool, and production only
+  stores the latest snapshots (all from 2026-03-25). Historical pool data is not retained.
+- `read_from_db(Some(sim_day))` queries `timestamp < sim_day`, finding no data for past dates
+- **This means all simulation swaps use fee-less rate conversion**, systematically
+  overestimating returns by the pool fee amount (typically 0.30%)
 
 ### 5. Transaction Failures (NOT measurable)
 - Failed transactions are not recorded in trade_transactions
@@ -79,10 +84,17 @@ The formula correctly models fees and price impact.
 
 ## Conclusion
 
-The simulation is reliable for strategic evaluation. The `estimate_return()` formula
-produces results that match actual blockchain execution with high fidelity. The primary
-sources of simulation-to-reality divergence are gas costs and rare pool state changes,
-not the core AMM calculation.
+The `estimate_return()` AMM formula is highly accurate (76% exact match with blockchain).
+However, the simulation currently **cannot use pool-based calculation at all** because
+historical pool data is not retained in production. All swaps fall back to DbRate
+(fee-less rate conversion), which systematically overestimates returns.
 
-**Recommendation**: No immediate fixes needed for Phase 2. Monitor the nearkat-type
-outliers as more actual_to_amount data accumulates.
+### Recommendations
+
+1. **HIGH priority**: Fix the DbRate fallback problem. Options:
+   - (a) Increase `pool_info_retention_count` to retain historical snapshots for simulation
+   - (b) Change simulation to use the nearest available pool snapshot instead of requiring
+     `timestamp < sim_day`
+   - (c) Pre-populate pool data for simulation period before running
+2. **LOW priority**: Gas fee model (cumulative ~5.35% on 100 NEAR over 535 trades)
+3. **Monitor**: nearkat-type outliers as more actual_to_amount data accumulates
