@@ -83,6 +83,15 @@ validate_date() {
     echo "エラー: $label の日付フォーマットが不正です: $value (YYYY-MM-DD)" >&2
     exit 1
   fi
+  # セマンティック検証（2024-99-99 のような無効日付を拒否）
+  if date -j -f '%Y-%m-%d' "$value" '+%Y-%m-%d' > /dev/null 2>&1; then
+    : # macOS: 有効な日付
+  elif date -d "$value" '+%Y-%m-%d' > /dev/null 2>&1; then
+    : # GNU/Linux: 有効な日付
+  else
+    echo "エラー: $label の日付が無効です: $value" >&2
+    exit 1
+  fi
 }
 
 if [[ -n "$START_DATE" ]]; then
@@ -205,6 +214,14 @@ if [[ "$KEEP_RESULTS" == false ]]; then
   echo ""
   echo "=== シミュレーション結果テーブルのクリア ==="
   for rt in $RESULT_TABLES; do
+    # セキュリティ: テーブル名が SQL に直接埋め込まれるため、ホワイトリストで制限する
+    case "$rt" in
+      trade_transactions|evaluation_periods|portfolio_holdings) ;;
+      *)
+        echo "WARNING: 不明な結果テーブル '$rt' をスキップします" >&2
+        continue
+        ;;
+    esac
     count=$(row_count "$rt")
     dst_psql -c "TRUNCATE $rt RESTART IDENTITY CASCADE" > /dev/null
     echo "  $rt: $count 行削除"
