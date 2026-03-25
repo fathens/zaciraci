@@ -318,6 +318,13 @@ impl PredictionService {
             return None; // 不正な信頼区間
         }
         let interval_width = upper_f64 - lower_f64;
+        if interval_width == 0.0 {
+            let log = logging::DEFAULT.new(logging::o!(
+                "function" => "calculate_confidence_from_interval"
+            ));
+            logging::debug!(log, "zero-width confidence interval (possible model degeneracy)";
+                "forecast" => %forecast, "lower" => %lower, "upper" => %upper);
+        }
 
         // 予測値に対する相対的な幅を計算
         let relative_width = interval_width / forecast_f64;

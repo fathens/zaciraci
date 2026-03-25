@@ -176,6 +176,11 @@ pub async fn evaluate_predictions_as_of(
 ) -> Result<u32> {
     let log = DEFAULT.new(o!("function" => "evaluate_predictions_as_of"));
 
+    if as_of > chrono::Utc::now() {
+        debug!(log, "as_of is in the future; predictions without actual data will be skipped";
+            "as_of" => %as_of);
+    }
+
     let tolerance_minutes = cfg.prediction_eval_tolerance_minutes();
 
     // 未評価 & target_time 経過済みのレコードを取得
