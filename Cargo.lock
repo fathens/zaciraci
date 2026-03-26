@@ -2565,6 +2565,7 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "common 1.3.2",
+ "cron",
  "deadpool-diesel",
  "dex",
  "diesel",

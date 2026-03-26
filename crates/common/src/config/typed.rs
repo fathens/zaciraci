@@ -507,6 +507,12 @@ define_typed_config! {
         default: 300
     }
 
+    /// Cron schedule for database maintenance (REINDEX)
+    fn db_maintenance_cron_schedule() -> String {
+        key: "DB_MAINTENANCE_CRON_SCHEDULE",
+        default: "0 0 4 * * 0"
+    }
+
     // ── wallet / logging: moved to StartupConfig ──
 
     // ── portfolio/liquidity ──
