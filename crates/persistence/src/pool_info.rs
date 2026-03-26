@@ -125,6 +125,15 @@ pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
         "function" => "pool_info::cleanup_old_records",
         "retention_days" => retention_days,
     ));
+
+    if retention_days == 0 {
+        warn!(
+            log,
+            "retention_days is 0, skipping cleanup to prevent deleting all records"
+        );
+        return Ok(());
+    }
+
     trace!(log, "start");
 
     let cutoff_date =

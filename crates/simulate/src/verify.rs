@@ -1,4 +1,5 @@
 use crate::cli::VerifyArgs;
+use crate::portfolio_state::to_f64_or_warn;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::NaiveTime;
@@ -40,7 +41,7 @@ fn divergence_pct(estimated: &BigDecimal, actual: &BigDecimal) -> Option<f64> {
     }
     let diff = actual - estimated;
     let pct = &diff / estimated * BigDecimal::from(100);
-    pct.to_string().parse::<f64>().ok()
+    Some(to_f64_or_warn(&pct, "divergence_pct"))
 }
 
 /// Compute the analysis from trade transactions
@@ -78,19 +79,18 @@ pub fn analyze(transactions: &[TradeTransaction]) -> SlippageAnalysis {
         let variance = errors.iter().map(|e| (e - mean).powi(2)).sum::<f64>() / errors.len() as f64;
         let std_dev = variance.sqrt();
 
-        let mut sorted = errors.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let median = if sorted.len().is_multiple_of(2) {
-            (sorted[sorted.len() / 2 - 1] + sorted[sorted.len() / 2]) / 2.0
+        errors.sort_by(f64::total_cmp);
+        let median = if errors.len().is_multiple_of(2) {
+            (errors[errors.len() / 2 - 1] + errors[errors.len() / 2]) / 2.0
         } else {
-            sorted[sorted.len() / 2]
+            errors[errors.len() / 2]
         };
 
         // p95: 95th percentile of absolute errors (worst 5%)
-        let mut abs_sorted: Vec<f64> = sorted.iter().map(|e| e.abs()).collect();
-        abs_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mut abs_sorted: Vec<f64> = errors.iter().map(|e| e.abs()).collect();
+        abs_sorted.sort_by(f64::total_cmp);
         let p95_idx = ((abs_sorted.len() as f64) * 0.95).ceil() as usize;
-        let p95 = abs_sorted[p95_idx.min(abs_sorted.len()) - 1];
+        let p95 = abs_sorted[p95_idx.min(abs_sorted.len()).saturating_sub(1)];
 
         let max_abs = abs_sorted.last().copied().unwrap_or(0.0);
 
@@ -212,8 +212,10 @@ pub async fn run_verify(args: &VerifyArgs) -> Result<()> {
         "start_date" => %start_date, "end_date" => %end_date
     );
 
-    let start_dt = start_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-    let end_dt = end_date.and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+    let start_dt =
+        start_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).expect("valid HMS constant"));
+    let end_dt =
+        end_date.and_time(NaiveTime::from_hms_opt(23, 59, 59).expect("valid HMS constant"));
 
     let transactions = TradeTransaction::find_by_date_range_async(start_dt, end_dt).await?;
 
