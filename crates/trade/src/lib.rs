@@ -6,10 +6,12 @@ pub mod market_data;
 pub mod predict;
 pub mod prediction_accuracy;
 pub mod recorder;
+pub mod slippage;
 pub mod snapshot;
 pub mod strategy;
 pub mod swap;
 pub mod token_cache;
+pub mod valuation;
 
 type Result<T> = anyhow::Result<T>;
 
@@ -22,8 +24,10 @@ use common::config::{ConfigAccess, ConfigResolver};
 use common::types::NearAmount;
 use common::types::TokenAmount;
 use common::types::TokenInAccount;
+use common::types::TokenOutAccount;
 use logging::*;
 use persistence::token_rate::TokenRate;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -71,6 +75,13 @@ async fn run_trade(cfg: ConfigResolver) {
     cronjob(
         schedule,
         || async {
+            // 予測フェーズ（失敗 → 今回のサイクルをスキップ）
+            if let Err(e) = run_predictions(&cfg).await {
+                let log = DEFAULT.new(o!("function" => "run_trade"));
+                error!(log, "prediction phase failed, skipping trade cycle"; "error" => %e);
+                return Ok(());
+            }
+
             let client = blockchain::jsonrpc::new_client();
             let wallet = blockchain::wallet::new_wallet();
             strategy::start(&client, &wallet, chrono::Utc::now(), &cfg).await
@@ -79,6 +90,89 @@ async fn run_trade(cfg: ConfigResolver) {
         &cfg,
     )
     .await;
+}
+
+/// 全対象トークンの価格予測を実行して prediction_records に保存する（本番 cron 用）
+async fn run_predictions(cfg: &impl ConfigAccess) -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "run_predictions"));
+
+    // 1. 過去予測の評価（ハウスキーピング）
+    match prediction_accuracy::evaluate_pending_predictions(cfg).await {
+        Ok(count) => {
+            if count > 0 {
+                info!(log, "evaluated pending predictions"; "count" => count);
+            }
+        }
+        Err(e) => {
+            warn!(log, "prediction evaluation failed, continuing"; "error" => %e);
+        }
+    }
+
+    // 2. 予測サイクル実行
+    let count = run_prediction_cycle(chrono::Utc::now(), cfg).await?;
+    info!(log, "predictions recorded"; "count" => count);
+    Ok(())
+}
+
+/// 指定日時を起点に、対象トークンの予測を実行して prediction_records に保存する。
+///
+/// 内部で `Utc::now()` は使用しない。渡された `as_of` のみを時刻の基準とする。
+///
+/// 戻り値: 保存した予測の件数
+pub async fn run_prediction_cycle(
+    as_of: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+) -> Result<usize> {
+    let log = DEFAULT.new(o!("function" => "run_prediction_cycle"));
+
+    // 1. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
+    let prediction_service = predict::PredictionService::new(cfg);
+    let target_tokens =
+        strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg).await?;
+
+    info!(log, "prediction targets selected"; "count" => target_tokens.len());
+
+    // 2. バッチ予測実行
+    let quote_token = get_quote_token();
+    let price_history_days = i64::from(cfg.trade_price_history_days());
+    let token_out_list: Vec<TokenOutAccount> =
+        target_tokens.into_iter().map(|t| t.into()).collect();
+
+    let predictions = prediction_service
+        .predict_multiple_tokens(
+            token_out_list,
+            &quote_token,
+            price_history_days,
+            prediction_accuracy::PREDICTION_HORIZON_HOURS,
+            as_of,
+            cfg,
+        )
+        .await?;
+
+    // 3. 予測価格を抽出して DB に保存
+    let mut prediction_entries: BTreeMap<
+        TokenOutAccount,
+        (common::types::TokenPrice, chrono::NaiveDateTime),
+    > = BTreeMap::new();
+    let mut empty_predictions = 0u32;
+    for (token, result) in predictions {
+        match result.prediction_at_horizon(prediction_accuracy::PREDICTION_HORIZON_HOURS) {
+            Some(p) => {
+                prediction_entries.insert(
+                    token,
+                    (p.price.clone(), result.data_cutoff_time.naive_utc()),
+                );
+            }
+            None => empty_predictions += 1,
+        }
+    }
+    if empty_predictions > 0 {
+        warn!(log, "tokens with empty prediction results"; "count" => empty_predictions);
+    }
+
+    prediction_accuracy::record_predictions(&prediction_entries, &quote_token).await?;
+
+    Ok(prediction_entries.len())
 }
 
 async fn cronjob<F, Fut>(schedule: cron::Schedule, func: F, name: &str, cfg: &impl ConfigAccess)

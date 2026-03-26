@@ -130,10 +130,10 @@ fn test_harvest_reserve_amount_default() {
 
 #[test]
 #[serial]
-fn test_pool_info_retention_count_default() {
-    let _env = EnvGuard::remove("POOL_INFO_RETENTION_COUNT");
-    crate::config::store::remove("POOL_INFO_RETENTION_COUNT");
-    assert_eq!(typed().pool_info_retention_count(), 10);
+fn test_pool_info_retention_days_default() {
+    let _env = EnvGuard::remove("POOL_INFO_RETENTION_DAYS");
+    crate::config::store::remove("POOL_INFO_RETENTION_DAYS");
+    assert_eq!(typed().pool_info_retention_days(), 30);
 }
 
 #[test]
@@ -317,6 +317,14 @@ fn test_trade_cron_schedule_default() {
     assert_eq!(typed().trade_cron_schedule(), "0 0 0 * * *");
 }
 
+#[test]
+#[serial]
+fn test_db_maintenance_cron_schedule_default() {
+    let _env = EnvGuard::remove("DB_MAINTENANCE_CRON_SCHEDULE");
+    crate::config::store::remove("DB_MAINTENANCE_CRON_SCHEDULE");
+    assert_eq!(typed().db_maintenance_cron_schedule(), "0 0 4 * * 7");
+}
+
 // ── Duration keys ──
 
 #[test]
@@ -387,16 +395,6 @@ fn test_mock_config_delegates_to_real() {
     // Just verify it doesn't panic
     let _ = mock.trade_enabled();
     let _ = mock.trade_top_tokens();
-}
-
-// ── trade_volatility_days ──
-
-#[test]
-#[serial]
-fn test_trade_volatility_days_default() {
-    let _env = EnvGuard::remove("TRADE_VOLATILITY_DAYS");
-    crate::config::store::remove("TRADE_VOLATILITY_DAYS");
-    assert_eq!(typed().trade_volatility_days(), 7);
 }
 
 // ── trade_price_history_days ──
@@ -548,7 +546,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 42);
+    assert_eq!(KEY_DEFINITIONS.len(), 43);
 }
 
 #[test]

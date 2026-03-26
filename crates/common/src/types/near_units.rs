@@ -20,6 +20,7 @@
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::iter::Sum;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::str::FromStr;
 
@@ -281,6 +282,11 @@ impl YoctoAmount {
     /// ブロックチェーンに送信する際に使用する。
     /// yoctoNEAR より小さい単位は存在しないため、整数部のみを取得する。
     pub fn to_u128(&self) -> u128 {
+        debug_assert!(
+            self.0 >= BigDecimal::zero(),
+            "YoctoAmount::to_u128 called on negative value: {}",
+            self.0
+        );
         self.0.to_u128().unwrap_or(0)
     }
 
@@ -539,6 +545,18 @@ impl YoctoValue {
         YoctoAmount(self.0.clone())
     }
 
+    /// 飽和減算（結果が負にならない）
+    ///
+    /// `self >= other` なら `self - other` を返し、
+    /// そうでなければゼロを返す。
+    pub fn saturating_sub(&self, other: &YoctoValue) -> YoctoValue {
+        if self.0 >= other.0 {
+            YoctoValue(&self.0 - &other.0)
+        } else {
+            YoctoValue::zero()
+        }
+    }
+
     /// 金額がゼロかどうか
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
@@ -729,6 +747,18 @@ impl Add<&NearValue> for NearValue {
     type Output = NearValue;
     fn add(self, other: &NearValue) -> NearValue {
         NearValue(self.0 + &other.0)
+    }
+}
+
+impl Sum for NearValue {
+    fn sum<I: Iterator<Item = NearValue>>(iter: I) -> NearValue {
+        iter.fold(NearValue::zero(), |acc, v| acc + v)
+    }
+}
+
+impl<'a> Sum<&'a NearValue> for NearValue {
+    fn sum<I: Iterator<Item = &'a NearValue>>(iter: I) -> NearValue {
+        iter.fold(NearValue::zero(), |acc, v| acc + v)
     }
 }
 

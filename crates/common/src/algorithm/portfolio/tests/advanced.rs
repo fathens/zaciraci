@@ -15,7 +15,7 @@ async fn test_enhanced_portfolio_performance() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     // 空のウォレット（初期状態）
@@ -122,7 +122,7 @@ async fn test_baseline_vs_enhanced_comparison() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     let wallet = WalletInfo {
@@ -596,17 +596,17 @@ fn test_calculate_daily_returns_zero_price_no_nan() {
         quote_token: token_in("wrap.near"),
         prices: vec![
             PricePoint {
-                timestamp: Utc::now() - Duration::days(3),
+                timestamp: Utc::now() - TimeDelta::days(3),
                 price: price(1.0),
                 volume: None,
             },
             PricePoint {
-                timestamp: Utc::now() - Duration::days(2),
+                timestamp: Utc::now() - TimeDelta::days(2),
                 price: price(0.0), // ゼロ価格
                 volume: None,
             },
             PricePoint {
-                timestamp: Utc::now() - Duration::days(1),
+                timestamp: Utc::now() - TimeDelta::days(1),
                 price: price(2.0),
                 volume: None,
             },
@@ -940,7 +940,7 @@ async fn test_issue7_metrics_computed_from_indicators() {
         tokens,
         predictions,
         historical_prices: history,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
@@ -1009,12 +1009,12 @@ fn test_calculate_returns_from_prices_basic() {
     // 既知の価格系列から正しいリターンが計算されること
     let prices = vec![
         PricePoint {
-            timestamp: Utc::now() - Duration::days(2),
+            timestamp: Utc::now() - TimeDelta::days(2),
             price: price(100.0),
             volume: None,
         },
         PricePoint {
-            timestamp: Utc::now() - Duration::days(1),
+            timestamp: Utc::now() - TimeDelta::days(1),
             price: price(110.0),
             volume: None,
         },
@@ -1042,12 +1042,12 @@ fn test_calculate_returns_from_prices_unsorted_input() {
             volume: None,
         },
         PricePoint {
-            timestamp: now - Duration::days(2), // 最古（1番目に来るべき）
+            timestamp: now - TimeDelta::days(2), // 最古（1番目に来るべき）
             price: price(100.0),
             volume: None,
         },
         PricePoint {
-            timestamp: now - Duration::days(1), // 中間（2番目に来るべき）
+            timestamp: now - TimeDelta::days(1), // 中間（2番目に来るべき）
             price: price(110.0),
             volume: None,
         },
@@ -1093,7 +1093,7 @@ fn test_calculate_daily_returns_duplicate_tokens() {
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
-                    timestamp: now - Duration::days(1),
+                    timestamp: now - TimeDelta::days(1),
                     price: price(100.0),
                     volume: None,
                 },
@@ -1110,7 +1110,7 @@ fn test_calculate_daily_returns_duplicate_tokens() {
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
-                    timestamp: now - Duration::days(1),
+                    timestamp: now - TimeDelta::days(1),
                     price: price(200.0),
                     volume: None,
                 },
@@ -1126,7 +1126,7 @@ fn test_calculate_daily_returns_duplicate_tokens() {
             quote_token: token_in("wrap.near"),
             prices: vec![
                 PricePoint {
-                    timestamp: now - Duration::days(1),
+                    timestamp: now - TimeDelta::days(1),
                     price: price(50.0),
                     volume: None,
                 },
@@ -1297,34 +1297,38 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
     let historical_prices = create_sample_price_history();
     let wallet = create_sample_wallet();
 
-    // confidence = 1.0（高精度予測）
+    // confidence = 1.0（高精度予測）- 全トークンに同じ値を設定
+    let confidences_high: BTreeMap<TokenOutAccount, f64> =
+        tokens.iter().map(|t| (t.symbol.clone(), 1.0)).collect();
     let pd_high = PortfolioData {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: historical_prices.clone(),
-        prediction_confidence: Some(1.0),
+        prediction_confidences: confidences_high,
     };
     let report_high = execute_portfolio_optimization(&wallet, pd_high, 0.05)
         .await
         .unwrap();
 
-    // confidence = 0.0（低精度予測 → RP 寄り）
+    // confidence = 0.0（低精度予測 → RP 寄り）- 全トークンに同じ値を設定
+    let confidences_low: BTreeMap<TokenOutAccount, f64> =
+        tokens.iter().map(|t| (t.symbol.clone(), 0.0)).collect();
     let pd_low = PortfolioData {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: historical_prices.clone(),
-        prediction_confidence: Some(0.0),
+        prediction_confidences: confidences_low,
     };
     let report_low = execute_portfolio_optimization(&wallet, pd_low, 0.05)
         .await
         .unwrap();
 
-    // None（データ不足 → 後方互換）
+    // 空（データ不足 → 後方互換）
     let pd_none = PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
     let report_none = execute_portfolio_optimization(&wallet, pd_none, 0.05)
         .await
@@ -1361,6 +1365,167 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
         // 重みに差異がある（alpha が異なるため）
         println!("Weight diff between high/low confidence: {diff:.6}");
     }
+}
+
+/// per-token alpha で異なる confidence 値を設定し、
+/// ブレンド比率がトークンごとに異なることを検証する
+#[tokio::test]
+async fn test_per_token_alpha_with_varying_confidence() {
+    let tokens = create_sample_tokens();
+    let predictions = create_sample_predictions();
+    let historical_prices = create_sample_price_history();
+    let wallet = create_sample_wallet();
+
+    // トークンごとに異なる confidence を設定
+    let mut confidences_varied: BTreeMap<TokenOutAccount, f64> = BTreeMap::new();
+    for (i, t) in tokens.iter().enumerate() {
+        let c = match i {
+            0 => 1.0, // 高 confidence → Sharpe 寄り
+            1 => 0.0, // 低 confidence → RP 寄り（FLOOR alpha）
+            _ => 0.5, // 中 confidence
+        };
+        confidences_varied.insert(t.symbol.clone(), c);
+    }
+
+    let pd_varied = PortfolioData {
+        tokens: tokens.clone(),
+        predictions: predictions.clone(),
+        historical_prices: historical_prices.clone(),
+        prediction_confidences: confidences_varied,
+    };
+    let report_varied = execute_portfolio_optimization(&wallet, pd_varied, 0.05)
+        .await
+        .unwrap();
+
+    // 全トークン同一 confidence（0.5）の場合と比較
+    let confidences_uniform: BTreeMap<TokenOutAccount, f64> =
+        tokens.iter().map(|t| (t.symbol.clone(), 0.5)).collect();
+    let pd_uniform = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        prediction_confidences: confidences_uniform,
+    };
+    let report_uniform = execute_portfolio_optimization(&wallet, pd_uniform, 0.05)
+        .await
+        .unwrap();
+
+    // 両方正常終了
+    assert!(report_varied.optimal_weights.sharpe_ratio.is_finite());
+    assert!(report_uniform.optimal_weights.sharpe_ratio.is_finite());
+
+    // 異なる confidence → 異なるウエイトが生成される（同一トークンが選択された場合）
+    let common_tokens: Vec<_> = report_varied
+        .optimal_weights
+        .weights
+        .keys()
+        .filter(|k| report_uniform.optimal_weights.weights.contains_key(*k))
+        .collect();
+
+    assert!(
+        common_tokens.len() >= 2,
+        "expected at least 2 common tokens, got {}",
+        common_tokens.len()
+    );
+    let diff: f64 = common_tokens
+        .iter()
+        .map(|t| {
+            let wv = report_varied.optimal_weights.weights[*t]
+                .to_f64()
+                .unwrap_or(0.0);
+            let wu = report_uniform.optimal_weights.weights[*t]
+                .to_f64()
+                .unwrap_or(0.0);
+            (wv - wu).abs()
+        })
+        .sum();
+
+    // 異なる alpha 設定では異なるウエイトが期待される
+    assert!(
+        diff > 1e-10,
+        "expected weight difference between varied/uniform confidence, got {diff:.6}"
+    );
+}
+
+/// unified_optimize で異なる alphas を渡した場合、
+/// 均一 alphas とは異なるウエイトが生成されることを検証する
+#[test]
+fn test_unified_optimize_heterogeneous_alphas() {
+    let returns = generate_synthetic_returns(5, 30, 4242);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.02, 0.06, 0.01, 0.04, 0.03];
+    let liquidity = vec![0.8; 5];
+
+    // 均一 alpha
+    let weights_uniform =
+        unified_optimize(&expected_returns, &cov, &liquidity, 0.5, 5, 0.05, &[0.8; 5]);
+
+    // 不均一 alpha: token0 は Sharpe 寄り、token2 は RP 寄り
+    let alphas_varied = vec![0.9, 0.5, 0.5, 0.9, 0.7];
+    let weights_varied = unified_optimize(
+        &expected_returns,
+        &cov,
+        &liquidity,
+        0.5,
+        5,
+        0.05,
+        &alphas_varied,
+    );
+
+    // 両方の和が 1.0
+    let sum_u: f64 = weights_uniform.iter().sum();
+    let sum_v: f64 = weights_varied.iter().sum();
+    assert!((sum_u - 1.0).abs() < 1e-6, "Uniform sum={sum_u}");
+    assert!((sum_v - 1.0).abs() < 1e-6, "Varied sum={sum_v}");
+
+    // 異なる alpha → 異なるウエイト
+    let diff: f64 = weights_uniform
+        .iter()
+        .zip(weights_varied.iter())
+        .map(|(u, v)| (u - v).abs())
+        .sum();
+    assert!(
+        diff > 1e-10,
+        "Heterogeneous alphas should produce different weights, diff={diff}"
+    );
+}
+
+/// コールドスタート alpha（confidence データなし）が PREDICTION_ALPHA_FLOOR になることを検証
+#[test]
+fn test_cold_start_alpha_uses_floor() {
+    let returns = generate_synthetic_returns(3, 30, 7777);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.03, 0.05, 0.02];
+    let liquidity = vec![0.8, 0.9, 0.7];
+
+    // confidence データなし（空の BTreeMap）→ FLOOR alpha
+    let weights_cold = unified_optimize(
+        &expected_returns,
+        &cov,
+        &liquidity,
+        0.5,
+        3,
+        0.05,
+        &[PREDICTION_ALPHA_FLOOR; 3],
+    );
+
+    // 全トークン FLOOR alpha → 正常に動作
+    let sum: f64 = weights_cold.iter().sum();
+    assert!((sum - 1.0).abs() < 1e-8, "Sum={sum}");
+
+    // FLOOR alpha（0.5）と高 alpha（0.9）で異なるウエイト
+    let weights_high =
+        unified_optimize(&expected_returns, &cov, &liquidity, 0.5, 3, 0.05, &[0.9; 3]);
+
+    let diff: f64 = weights_cold
+        .iter()
+        .zip(weights_high.iter())
+        .map(|(c, h)| (c - h).abs())
+        .sum();
+    assert!(
+        diff > 1e-10,
+        "FLOOR alpha should differ from high alpha, diff={diff}"
+    );
 }
 
 // ==================== 並行/並列処理の結果一貫性テスト ====================
@@ -1478,7 +1643,7 @@ fn test_price_to_f64_conversion_accuracy() {
 /// スコアリングで入力順序が入れ替わるケースをカバーする。
 #[tokio::test]
 async fn test_price_history_alignment_with_selected_tokens() {
-    let base_time = Utc::now() - Duration::days(30);
+    let base_time = Utc::now() - TimeDelta::days(30);
 
     // token-z: 低スコア（中流動性、中市場規模）→ 入力では先頭
     // token-a: 高スコア（高流動性、高市場規模）→ 入力では末尾
@@ -1511,7 +1676,7 @@ async fn test_price_history_alignment_with_selected_tokens() {
     // token-z: ランダムに大きく変動（高ボラティリティ）
     let token_z_prices: Vec<PricePoint> = (0..30)
         .map(|i| PricePoint {
-            timestamp: base_time + Duration::days(i),
+            timestamp: base_time + TimeDelta::days(i),
             price: price(50.0 + (i as f64 * 0.7).sin() * 15.0),
             volume: Some(BigDecimal::from_f64(500.0).unwrap()),
         })
@@ -1520,7 +1685,7 @@ async fn test_price_history_alignment_with_selected_tokens() {
     // token-a: 安定した上昇トレンド（低ボラティリティ）
     let token_a_prices: Vec<PricePoint> = (0..30)
         .map(|i| PricePoint {
-            timestamp: base_time + Duration::days(i),
+            timestamp: base_time + TimeDelta::days(i),
             price: price(100.0 + i as f64 * 0.3),
             volume: Some(BigDecimal::from_f64(2000.0).unwrap()),
         })
@@ -1557,11 +1722,13 @@ async fn test_price_history_alignment_with_selected_tokens() {
         cash_balance: NearValue::zero(),
     };
 
+    let confidences: BTreeMap<TokenOutAccount, f64> =
+        tokens.iter().map(|t| (t.symbol.clone(), 0.8)).collect();
     let portfolio_data = PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidence: Some(0.8),
+        prediction_confidences: confidences,
     };
 
     let result = execute_portfolio_optimization(&wallet, portfolio_data, 0.05).await;

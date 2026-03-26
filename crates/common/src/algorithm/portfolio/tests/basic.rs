@@ -322,7 +322,7 @@ fn test_execute_portfolio_optimization() {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -884,7 +884,7 @@ fn test_token_ordering_impact_on_portfolio_optimization() {
 #[test]
 fn test_daily_returns_ordering_consistency() {
     // 異なる順序でPriceHistoryを提供し、BTreeMapの影響を確認
-    let base_time = Utc::now() - Duration::days(5);
+    let base_time = Utc::now() - TimeDelta::days(5);
 
     // シナリオ1: TOKEN_A, TOKEN_B, TOKEN_C の順序
     let price_history_scenario1 = vec![
@@ -898,7 +898,7 @@ fn test_daily_returns_ordering_consistency() {
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
                 PricePoint {
-                    timestamp: base_time + Duration::days(1),
+                    timestamp: base_time + TimeDelta::days(1),
                     price: price(105.0),
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
@@ -914,7 +914,7 @@ fn test_daily_returns_ordering_consistency() {
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
                 PricePoint {
-                    timestamp: base_time + Duration::days(1),
+                    timestamp: base_time + TimeDelta::days(1),
                     price: price(48.0),
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
@@ -934,7 +934,7 @@ fn test_daily_returns_ordering_consistency() {
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
                 PricePoint {
-                    timestamp: base_time + Duration::days(1),
+                    timestamp: base_time + TimeDelta::days(1),
                     price: price(48.0),
                     volume: Some(BigDecimal::from_f64(800.0).unwrap()),
                 },
@@ -950,7 +950,7 @@ fn test_daily_returns_ordering_consistency() {
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
                 PricePoint {
-                    timestamp: base_time + Duration::days(1),
+                    timestamp: base_time + TimeDelta::days(1),
                     price: price(105.0),
                     volume: Some(BigDecimal::from_f64(1000.0).unwrap()),
                 },
@@ -1089,14 +1089,14 @@ fn test_demonstrate_ordering_performance_impact() {
     // トークン順序の変更が実際のパフォーマンスにどう影響するかを実証
 
     // シナリオ: 同じトークンを異なる順序で処理した場合の差を確認
-    let base_time = Utc::now() - Duration::days(10);
+    let base_time = Utc::now() - TimeDelta::days(10);
 
     // 高性能トークンを異なる位置に配置
     let create_price_history = |token_name: &str, start_price: f64, growth_rate: f64| {
         let mut prices = Vec::new();
         for i in 0..10 {
             prices.push(PricePoint {
-                timestamp: base_time + Duration::days(i),
+                timestamp: base_time + TimeDelta::days(i),
                 price: TokenPrice::from_near_per_token(
                     BigDecimal::from_f64(start_price * (1.0 + growth_rate).powi(i as i32)).unwrap(),
                 ),
@@ -1316,12 +1316,12 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
 
     // 価格履歴を正しく作成（全トークン分）
     let mut full_history = BTreeMap::new();
-    let base_time = Utc::now() - Duration::days(10);
+    let base_time = Utc::now() - TimeDelta::days(10);
 
     for (idx, token) in tokens.iter().enumerate() {
         let mut prices_vec = Vec::new();
         for i in 0..10 {
-            let time = base_time + Duration::days(i);
+            let time = base_time + TimeDelta::days(i);
             let current = token
                 .current_rate
                 .to_price()
@@ -1353,7 +1353,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: full_history,
-        prediction_confidence: None,
+        prediction_confidences: BTreeMap::new(),
     };
 
     // トークン選択ありで最適化を実行

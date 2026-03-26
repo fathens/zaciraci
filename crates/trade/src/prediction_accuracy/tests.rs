@@ -155,3 +155,248 @@ fn test_calculate_composite_confidence() {
     // composite = 0.0
     assert!((c5 - 0.0).abs() < 0.01);
 }
+
+#[test]
+fn test_mape_to_confidence_equal_thresholds() {
+    // poor == excellent のエッジケース: ゼロ除算を起こさないこと
+    assert_eq!(mape_to_confidence(2.0, 3.0, 3.0), 1.0); // mape < excellent
+    assert_eq!(mape_to_confidence(3.0, 3.0, 3.0), 1.0); // mape == excellent == poor
+    assert_eq!(mape_to_confidence(5.0, 3.0, 3.0), 0.0); // mape > poor
+}
+
+// --- calculate_direction_accuracy_for_records ---
+
+fn test_logger() -> slog::Logger {
+    DEFAULT.new(o!("test" => true))
+}
+
+fn make_time(offset_hours: i64) -> NaiveDateTime {
+    let base = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+        .unwrap()
+        .naive_utc();
+    base + chrono::TimeDelta::hours(offset_hours)
+}
+
+fn make_record(
+    target_time: NaiveDateTime,
+    predicted: i64,
+    actual: Option<i64>,
+) -> DbPredictionRecord {
+    DbPredictionRecord {
+        id: 0,
+        token: "token.near".to_string(),
+        quote_token: "wrap.near".to_string(),
+        predicted_price: BigDecimal::from(predicted),
+        data_cutoff_time: target_time - chrono::TimeDelta::hours(24),
+        target_time,
+        actual_price: actual.map(BigDecimal::from),
+        mape: None,
+        absolute_error: None,
+        evaluated_at: Some(target_time + chrono::TimeDelta::hours(1)),
+        created_at: target_time,
+    }
+}
+
+#[test]
+fn test_direction_accuracy_empty_input() {
+    let log = test_logger();
+    let (correct, total) = calculate_direction_accuracy_for_records(&[], &log);
+    assert_eq!(correct, 0);
+    assert_eq!(total, 0);
+}
+
+#[test]
+fn test_direction_accuracy_single_record() {
+    let log = test_logger();
+    let records = vec![make_record(make_time(0), 100, Some(105))];
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
+    assert_eq!(correct, 0);
+    assert_eq!(total, 0);
+}
+
+#[test]
+fn test_direction_accuracy_with_none_actual() {
+    let log = test_logger();
+    let t1 = make_time(1);
+    let t2 = make_time(0);
+    // pair[0].actual_price = None → skip
+    let records = vec![make_record(t1, 110, None), make_record(t2, 100, Some(100))];
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
+    assert_eq!(total, 0);
+    assert_eq!(correct, 0);
+}
+
+#[test]
+fn test_direction_accuracy_normal_cases() {
+    // target_time DESC: t3 > t2 > t1
+    let t1 = make_time(0);
+    let t2 = make_time(1);
+    let t3 = make_time(2);
+
+    let records = vec![
+        // pair[0]: predicted=120, actual=115 (上昇を正しく予測)
+        make_record(t3, 120, Some(115)),
+        // pair[1] (prev): actual=110
+        // pair[0]: predicted=90, actual=110 (下落を予測したが上昇 → 不正解)
+        make_record(t2, 90, Some(110)),
+        // pair[1] (prev): actual=100
+        make_record(t1, 100, Some(100)),
+    ];
+
+    let log = test_logger();
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
+    // pair (t3, t2): prev_actual=110, predicted=120(上昇), actual=115(上昇) → correct
+    // pair (t2, t1): prev_actual=100, predicted=90(下落), actual=110(上昇) → incorrect
+    assert_eq!(total, 2);
+    assert_eq!(correct, 1);
+}
+
+#[test]
+fn test_direction_accuracy_skips_large_gap() {
+    let log = test_logger();
+    // t1 と t2 の間に 48h のギャップ（max_gap = 36h を超える）
+    let t1 = make_time(0);
+    let t2 = make_time(48);
+
+    let records = vec![
+        make_record(t2, 120, Some(115)),
+        make_record(t1, 100, Some(100)),
+    ];
+
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
+    // ギャップが 48h > 36h (max_gap) なのでスキップ
+    assert_eq!(total, 0);
+    assert_eq!(correct, 0);
+}
+
+#[test]
+fn test_direction_accuracy_allows_within_gap() {
+    let log = test_logger();
+    // t1 と t2 の間に 30h のギャップ（max_gap = 36h 以内）
+    let t1 = make_time(0);
+    let t2 = make_time(30);
+
+    let records = vec![
+        make_record(t2, 120, Some(115)),
+        make_record(t1, 100, Some(100)),
+    ];
+
+    let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
+    // ギャップが 30h ≤ 36h (max_gap) なのでカウントされる
+    // prev_actual=100, predicted=120(上昇), actual=115(上昇) → correct
+    assert_eq!(total, 1);
+    assert_eq!(correct, 1);
+}
+
+// --- mape_to_confidence edge cases ---
+
+#[test]
+fn test_mape_to_confidence_nan_input() {
+    let c = mape_to_confidence(f64::NAN, 3.0, 15.0);
+    // NaN is non-finite and not sign-negative → 0.0 (worst confidence)
+    assert_eq!(c, 0.0, "NaN MAPE should produce 0.0 confidence");
+}
+
+#[test]
+fn test_mape_to_confidence_infinity_input() {
+    let c = mape_to_confidence(f64::INFINITY, 3.0, 15.0);
+    assert_eq!(c, 0.0, "INFINITY MAPE should produce 0.0 confidence");
+}
+
+#[test]
+fn test_mape_to_confidence_negative_infinity_input() {
+    let c = mape_to_confidence(f64::NEG_INFINITY, 3.0, 15.0);
+    // MAPE is non-negative by definition; NEG_INFINITY is anomalous → worst confidence
+    assert_eq!(c, 0.0, "NEG_INFINITY MAPE should produce 0.0 confidence");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "poor")]
+fn test_mape_to_confidence_poor_less_than_excellent() {
+    // poor < excellent violates the contract
+    mape_to_confidence(5.0, 15.0, 3.0);
+}
+
+// --- record_predictions: target_time 計算 ---
+
+/// data_cutoff_time が過去でも target_time = data_cutoff_time + 24h で計算されること
+#[test]
+fn test_new_prediction_record_target_time_with_past_data_cutoff() {
+    let now = chrono::Utc::now().naive_utc();
+    // 6時間前のデータカットオフ（データ取得遅延シナリオ）
+    let data_cutoff_time = now - chrono::TimeDelta::hours(6);
+    let expected_target_time =
+        data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
+
+    let token: TokenOutAccount = "token.near".parse().unwrap();
+    let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(100));
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token.clone(), (price, data_cutoff_time));
+
+    let records = build_prediction_records(&predictions, &quote_token);
+
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.data_cutoff_time, data_cutoff_time);
+    assert_eq!(record.target_time, expected_target_time);
+    // target_time は現在時刻より過去（6h前 + 24h = 18h後 → 未来だが、Utc::now() + 24h より6h早い）
+    assert!(
+        record.target_time < now + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64),
+        "target_time should be earlier than now + 24h when data_cutoff_time is in the past"
+    );
+}
+
+/// data_cutoff_time が大幅に過去（3日前）の場合、target_time も過去になること
+#[test]
+fn test_new_prediction_record_target_time_far_in_past() {
+    let now = chrono::Utc::now().naive_utc();
+    // 3日前のデータカットオフ
+    let data_cutoff_time = now - chrono::TimeDelta::days(3);
+    let expected_target_time =
+        data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
+
+    let token: TokenOutAccount = "token.near".parse().unwrap();
+    let quote_token: TokenInAccount = "wrap.near".parse().unwrap();
+    let price = TokenPrice::from_near_per_token(BigDecimal::from(100));
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token, (price, data_cutoff_time));
+
+    let records = build_prediction_records(&predictions, &quote_token);
+
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.target_time, expected_target_time);
+    // 3日前 + 24h = 2日前 → target_time は過去
+    assert!(
+        record.target_time < now,
+        "target_time should be in the past when data_cutoff_time is 3 days ago"
+    );
+}
+
+// --- ラウンドトリップテスト ---
+
+#[test]
+fn test_token_account_display_fromstr_roundtrip() {
+    let original = TokenAccount::from_str("token.near").unwrap();
+    let roundtrip: TokenAccount = original.to_string().parse().unwrap();
+    assert_eq!(original, roundtrip);
+}
+
+#[test]
+fn test_predicted_price_bigdecimal_roundtrip() {
+    // 極小値（NEARエコシステムのトークン価格で現実的な値）
+    let price = BigDecimal::from_str("0.000000001234567890123456789").unwrap();
+    let token_price = TokenPrice::from_near_per_token(price.clone());
+    assert_eq!(*token_price.as_bigdecimal(), price);
+}
+
+#[test]
+fn test_predicted_price_large_value_roundtrip() {
+    let price = BigDecimal::from_str("123456789.987654321").unwrap();
+    let token_price = TokenPrice::from_near_per_token(price.clone());
+    assert_eq!(*token_price.as_bigdecimal(), price);
+}

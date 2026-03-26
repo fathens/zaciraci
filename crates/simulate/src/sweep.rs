@@ -1,4 +1,4 @@
-use crate::cli::Cli;
+use crate::cli::RunArgs;
 use crate::engine::run_simulation;
 use anyhow::Result;
 use logging::*;
@@ -9,8 +9,6 @@ use std::path::Path;
 pub struct SweepConfig {
     #[serde(default = "default_top_tokens")]
     pub top_tokens: Vec<usize>,
-    #[serde(default = "default_volatility_days")]
-    pub volatility_days: Vec<i64>,
     #[serde(default = "default_price_history_days")]
     pub price_history_days: Vec<i64>,
     #[serde(default = "default_rebalance_threshold")]
@@ -21,9 +19,6 @@ pub struct SweepConfig {
 
 fn default_top_tokens() -> Vec<usize> {
     vec![10]
-}
-fn default_volatility_days() -> Vec<i64> {
-    vec![7]
 }
 fn default_price_history_days() -> Vec<i64> {
     vec![30]
@@ -54,13 +49,12 @@ pub struct SweepEntry {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SweepParameters {
     pub top_tokens: usize,
-    pub volatility_days: i64,
     pub price_history_days: i64,
     pub rebalance_threshold: f64,
     pub rebalance_interval_days: i64,
 }
 
-pub async fn run_sweep(base_cli: &Cli, sweep_config_path: &Path) -> Result<()> {
+pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "run_sweep"));
 
     let config_str = std::fs::read_to_string(sweep_config_path)?;
@@ -76,7 +70,6 @@ pub async fn run_sweep(base_cli: &Cli, sweep_config_path: &Path) -> Result<()> {
 
         let mut cli = base_cli.clone();
         cli.top_tokens = params.top_tokens;
-        cli.volatility_days = params.volatility_days;
         cli.price_history_days = params.price_history_days;
         cli.rebalance_threshold = params.rebalance_threshold;
         cli.rebalance_interval_days = params.rebalance_interval_days;
@@ -86,7 +79,6 @@ pub async fn run_sweep(base_cli: &Cli, sweep_config_path: &Path) -> Result<()> {
                 results.push(SweepEntry {
                     parameters: SweepParameters {
                         top_tokens: params.top_tokens,
-                        volatility_days: params.volatility_days,
                         price_history_days: params.price_history_days,
                         rebalance_threshold: params.rebalance_threshold,
                         rebalance_interval_days: params.rebalance_interval_days,
@@ -140,18 +132,15 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
     let mut combinations = Vec::new();
 
     for &top_tokens in &config.top_tokens {
-        for &volatility_days in &config.volatility_days {
-            for &price_history_days in &config.price_history_days {
-                for &rebalance_threshold in &config.rebalance_threshold {
-                    for &rebalance_interval_days in &config.rebalance_interval_days {
-                        combinations.push(SweepParameters {
-                            top_tokens,
-                            volatility_days,
-                            price_history_days,
-                            rebalance_threshold,
-                            rebalance_interval_days,
-                        });
-                    }
+        for &price_history_days in &config.price_history_days {
+            for &rebalance_threshold in &config.rebalance_threshold {
+                for &rebalance_interval_days in &config.rebalance_interval_days {
+                    combinations.push(SweepParameters {
+                        top_tokens,
+                        price_history_days,
+                        rebalance_threshold,
+                        rebalance_interval_days,
+                    });
                 }
             }
         }
@@ -162,9 +151,8 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
 
 fn print_summary_table(result: &SweepResult) {
     println!(
-        "\n{:<8} {:<8} {:<8} {:<10} {:<10} {:>10} {:>10} {:>10} {:>12} {:>10}",
+        "\n{:<8} {:<8} {:<10} {:<10} {:>10} {:>10} {:>10} {:>12} {:>10}",
         "TopTok",
-        "VolDays",
         "HistDays",
         "RebThresh",
         "RebIntv",
@@ -174,13 +162,12 @@ fn print_summary_table(result: &SweepResult) {
         "FinalBal",
         "RealPnL"
     );
-    println!("{}", "-".repeat(106));
+    println!("{}", "-".repeat(98));
 
     for entry in &result.results {
         println!(
-            "{:<8} {:<8} {:<8} {:<10.2} {:<10} {:>10.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
+            "{:<8} {:<8} {:<10.2} {:<10} {:>10.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
             entry.parameters.top_tokens,
-            entry.parameters.volatility_days,
             entry.parameters.price_history_days,
             entry.parameters.rebalance_threshold,
             entry.parameters.rebalance_interval_days,

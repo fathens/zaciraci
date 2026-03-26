@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Duration, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use common::algorithm::prediction::TopTokenInfo;
 use common::algorithm::types::{PredictedPrice, PriceHistory, PricePoint, TokenPredictionResult};
 use common::api::chronos::ChronosPredictor;
@@ -51,7 +51,7 @@ impl PredictionService {
             .into_iter()
             .map(|vol_token| TopTokenInfo {
                 token: vol_token.base.into(),
-                volatility: vol_token.variance,
+                volatility: vol_token.coefficient_of_variation,
             })
             .collect();
 
@@ -117,7 +117,7 @@ impl PredictionService {
 
         // 最後のデータタイムスタンプを保持（時間経過の基準点）
         let last_data_timestamp = *data.keys().last().expect("checked non-empty above");
-        let forecast_until = last_data_timestamp + Duration::hours(prediction_horizon as i64);
+        let forecast_until = last_data_timestamp + TimeDelta::hours(prediction_horizon as i64);
 
         info!(log, "Starting prediction";
             "forecast_until" => %forecast_until
@@ -138,16 +138,12 @@ impl PredictionService {
         );
 
         // 予測結果を変換（最後のデータタイムスタンプを渡す）
-        let predictions = self.convert_prediction_result(
-            &chronos_response,
-            prediction_horizon,
-            last_data_timestamp,
-        )?;
+        let predictions = self.convert_prediction_result(&chronos_response, last_data_timestamp)?;
 
         Ok(TokenPredictionResult {
             token: history.token.clone(),
             quote_token: history.quote_token.clone(),
-            prediction_time: Utc::now(),
+            data_cutoff_time: last_data_timestamp,
             predictions,
         })
     }
@@ -164,7 +160,7 @@ impl PredictionService {
     ) -> Result<HashMap<TokenOutAccount, TokenPredictionResult>> {
         let log = DEFAULT.new(o!("function" => "predict_multiple_tokens"));
 
-        let start_date = end_date - Duration::days(history_days);
+        let start_date = end_date - TimeDelta::days(history_days);
         let range = TimeRange {
             start: start_date.naive_utc(),
             end: end_date.naive_utc(),
@@ -252,13 +248,11 @@ impl PredictionService {
     fn convert_prediction_result(
         &self,
         chronos_response: &common::prediction::ChronosPredictionResponse,
-        horizon: usize,
         last_data_timestamp: DateTime<Utc>,
     ) -> Result<Vec<PredictedPrice>> {
         let predicted_prices: Vec<_> = chronos_response
             .forecast
             .iter()
-            .take(horizon)
             .map(|(forecast_ts, price_value)| {
                 // 予測までの時間経過を計算
                 let time_ahead = forecast_ts.signed_duration_since(last_data_timestamp);
@@ -320,13 +314,26 @@ impl PredictionService {
 
         let lower_f64 = lower.to_f64()?;
         let upper_f64 = upper.to_f64()?;
+        if lower_f64 > upper_f64 {
+            return None; // 不正な信頼区間
+        }
         let interval_width = upper_f64 - lower_f64;
+        if interval_width == 0.0 {
+            let log = logging::DEFAULT.new(logging::o!(
+                "function" => "calculate_confidence_from_interval"
+            ));
+            logging::debug!(log, "zero-width confidence interval (possible model degeneracy)";
+                "forecast" => %forecast, "lower" => %lower, "upper" => %upper);
+        }
 
         // 予測値に対する相対的な幅を計算
         let relative_width = interval_width / forecast_f64;
 
         // 時間経過から CV を逆算（1時間を基準単位とする）
         let hours = time_ahead.num_minutes() as f64 / 60.0;
+        if hours <= 0.0 {
+            return None; // 予測時刻がデータ最終時刻以前
+        }
         let time_factor = hours.max(1.0).sqrt();
         // 80%信頼区間の場合: 2.56 = 2 × 1.28
         let cv = relative_width / (2.56 * time_factor);
@@ -338,7 +345,7 @@ impl PredictionService {
         const MAX_CV: f64 = 0.15;
         let confidence = 1.0 - ((cv - MIN_CV) / (MAX_CV - MIN_CV)).clamp(0.0, 1.0);
 
-        Some(BigDecimal::try_from(confidence).unwrap_or_else(|_| BigDecimal::from(0)))
+        Some(BigDecimal::try_from(confidence).expect("confidence is clamped to [0.0, 1.0]"))
     }
 
     /// 価格予測を実行（リトライ付き）

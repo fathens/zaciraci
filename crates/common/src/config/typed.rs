@@ -366,16 +366,10 @@ define_typed_config! {
         default: 5
     }
 
-    /// Days of price history for predictions
+    /// Days of price history for predictions and volatility calculation
     fn trade_price_history_days() -> u32 {
         key: "TRADE_PRICE_HISTORY_DAYS",
         default: 30
-    }
-
-    /// Days of volatility data
-    fn trade_volatility_days() -> u32 {
-        key: "TRADE_VOLATILITY_DAYS",
-        default: 7
     }
 
     /// Whether to unwrap wrap.near on stop
@@ -412,6 +406,13 @@ define_typed_config! {
     fn trade_token_cache_max_backoff_minutes() -> u64 {
         key: "TRADE_TOKEN_CACHE_MAX_BACKOFF_MINUTES",
         default: 1440
+    }
+
+    /// Minimum per-token prediction confidence to include in portfolio.
+    /// Tokens below this threshold are excluded from trading.
+    fn trade_min_token_confidence() -> f64 {
+        key: "TRADE_MIN_TOKEN_CONFIDENCE",
+        default: 0.3
     }
 
     // ── arbitrage ──
@@ -482,10 +483,10 @@ define_typed_config! {
 
     // ── cron ──
 
-    /// Number of historical pool info records to keep
-    fn pool_info_retention_count() -> u32 {
-        key: "POOL_INFO_RETENTION_COUNT",
-        default: 10
+    /// Retention period for pool info records in days
+    fn pool_info_retention_days() -> u32 {
+        key: "POOL_INFO_RETENTION_DAYS",
+        default: 30
     }
 
     /// Retention period for token rate records in days
@@ -504,6 +505,12 @@ define_typed_config! {
     fn cron_log_threshold_seconds() -> u64 {
         key: "CRON_LOG_THRESHOLD_SECONDS",
         default: 300
+    }
+
+    /// Cron schedule for database maintenance (REINDEX)
+    fn db_maintenance_cron_schedule() -> String {
+        key: "DB_MAINTENANCE_CRON_SCHEDULE",
+        default: "0 0 4 * * 7"
     }
 
     // ── wallet / logging: moved to StartupConfig ──

@@ -3,7 +3,7 @@ use crate::schema::prediction_records;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
-use common::types::TokenAccount;
+use common::types::{TokenAccount, TokenOutAccount};
 use diesel::prelude::*;
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -12,11 +12,10 @@ use diesel::prelude::*;
 #[allow(dead_code)] // Diesel Queryable でDBスキーマと一致させるため必要
 pub struct DbPredictionRecord {
     pub id: i32,
-    pub evaluation_period_id: String,
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
-    pub prediction_time: NaiveDateTime,
+    pub data_cutoff_time: NaiveDateTime,
     pub target_time: NaiveDateTime,
     pub actual_price: Option<BigDecimal>,
     pub mape: Option<f64>,
@@ -28,15 +27,17 @@ pub struct DbPredictionRecord {
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
-    pub evaluation_period_id: String,
     pub token: String,
     pub quote_token: String,
     pub predicted_price: BigDecimal,
-    pub prediction_time: NaiveDateTime,
+    pub data_cutoff_time: NaiveDateTime,
     pub target_time: NaiveDateTime,
 }
 
 pub struct PredictionRecord;
+
+#[cfg(test)]
+mod tests;
 
 impl PredictionRecord {
     /// 予測バッチ挿入
@@ -61,14 +62,20 @@ impl PredictionRecord {
 
     /// 未評価 & target_time 経過済みのレコード取得
     pub async fn get_pending_evaluations() -> Result<Vec<DbPredictionRecord>> {
+        Self::get_pending_evaluations_as_of(chrono::Utc::now().naive_utc()).await
+    }
+
+    /// 指定時刻以前に target_time が到来した未評価レコードを取得する。
+    pub async fn get_pending_evaluations_as_of(
+        as_of: NaiveDateTime,
+    ) -> Result<Vec<DbPredictionRecord>> {
         let conn = connection_pool::get().await?;
-        let now = chrono::Utc::now().naive_utc();
 
         let results = conn
             .interact(move |conn| {
                 prediction_records::table
                     .filter(prediction_records::evaluated_at.is_null())
-                    .filter(prediction_records::target_time.le(now))
+                    .filter(prediction_records::target_time.le(as_of))
                     .order_by(prediction_records::target_time.asc())
                     .load::<DbPredictionRecord>(conn)
             })
@@ -76,6 +83,33 @@ impl PredictionRecord {
             .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
         Ok(results)
+    }
+
+    /// 指定された target_time 範囲の予測レコードを削除する。
+    /// シミュレーション用の予測再生成時に使用。
+    pub async fn delete_by_target_time_range(
+        start: NaiveDateTime,
+        end: NaiveDateTime,
+    ) -> Result<usize> {
+        if start > end {
+            anyhow::bail!("invalid range: start ({}) > end ({})", start, end);
+        }
+
+        let conn = connection_pool::get().await?;
+
+        let deleted = conn
+            .interact(move |conn| {
+                diesel::delete(
+                    prediction_records::table
+                        .filter(prediction_records::target_time.ge(start))
+                        .filter(prediction_records::target_time.le(end)),
+                )
+                .execute(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(deleted)
     }
 
     /// 評価結果で更新
@@ -122,6 +156,30 @@ impl PredictionRecord {
         Ok(results)
     }
 
+    /// 指定トークン群の直近評価済みレコードを一括取得
+    pub async fn get_recent_evaluated_for_tokens(
+        limit: i64,
+        tokens: &[TokenOutAccount],
+    ) -> Result<Vec<DbPredictionRecord>> {
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tokens: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let conn = connection_pool::get().await?;
+        let results = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::evaluated_at.is_not_null())
+                    .filter(prediction_records::token.eq_any(&tokens))
+                    .order_by(prediction_records::target_time.desc())
+                    .limit(limit)
+                    .load::<DbPredictionRecord>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+        Ok(results)
+    }
+
     /// 同一トークンの直前の評価済みレコードを取得
     pub async fn get_previous_evaluated(
         token: &TokenAccount,
@@ -146,6 +204,41 @@ impl PredictionRecord {
         Ok(result)
     }
 
+    /// 指定トークンの最新予測を取得（target_time が未来のもののみ）
+    ///
+    /// 各トークンについて `target_time > as_of` かつ
+    /// 最新の `target_time`（同一なら最新の `data_cutoff_time`）を持つレコードを1件返す。
+    pub async fn get_latest_fresh_predictions(
+        tokens: &[TokenOutAccount],
+        as_of: NaiveDateTime,
+    ) -> Result<Vec<DbPredictionRecord>> {
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tokens: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        let conn = connection_pool::get().await?;
+
+        let results = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::token.eq_any(&tokens))
+                    .filter(prediction_records::target_time.gt(as_of))
+                    .distinct_on(prediction_records::token)
+                    .order_by((
+                        prediction_records::token,
+                        prediction_records::target_time.desc(),
+                        prediction_records::data_cutoff_time.desc(),
+                        prediction_records::id.desc(),
+                    ))
+                    .load::<DbPredictionRecord>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(results)
+    }
+
     /// 古いレコードを削除
     ///
     /// - 評価済みレコード: evaluated_at から retention_days 日以上経過したもの
@@ -159,8 +252,8 @@ impl PredictionRecord {
         let conn = connection_pool::get().await?;
         let now = chrono::Utc::now().naive_utc();
 
-        let evaluated_cutoff = now - chrono::Duration::days(retention_days);
-        let unevaluated_cutoff = now - chrono::Duration::days(unevaluated_retention_days);
+        let evaluated_cutoff = now - chrono::TimeDelta::days(retention_days);
+        let unevaluated_cutoff = now - chrono::TimeDelta::days(unevaluated_retention_days);
 
         let (evaluated_deleted, unevaluated_deleted) = conn
             .interact(move |conn| {

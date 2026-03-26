@@ -1,15 +1,18 @@
-use crate::cli::Cli;
+use crate::cli::RunArgs;
 use crate::mock_client::SimulationClient;
 use crate::mock_wallet::SimulationWallet;
 use crate::output::SimulationResult;
 use crate::portfolio_state::{DbRateProvider, PortfolioState};
 use anyhow::Result;
+use bigdecimal::BigDecimal;
 use chrono::{NaiveTime, TimeZone, Utc};
+use common::types::YoctoValue;
 use logging::*;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
+pub async fn run_simulation(cli: &RunArgs) -> Result<SimulationResult> {
     let log = DEFAULT.new(o!("function" => "run_simulation"));
 
     let start_date = cli.parse_start_date()?;
@@ -26,6 +29,13 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
     // Apply CLI parameters to config
     apply_config(cli);
 
+    // Generate predictions if requested
+    if cli.generate_predictions {
+        let cfg = common::config::ConfigResolver;
+        info!(log, "generating predictions for simulation period");
+        crate::prediction::generate_predictions_for_range(start_date, end_date, &cfg).await?;
+    }
+
     // Initialize token decimals cache from DB
     if let Err(e) = trade::token_cache::load_from_db().await {
         warn!(log, "failed to load token decimals cache"; "error" => ?e);
@@ -33,17 +43,16 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 
     // Convert initial capital NEAR -> yoctoNEAR (via BigDecimal for precision)
     let initial_capital_yocto = {
-        use bigdecimal::BigDecimal;
-        use num_traits::ToPrimitive;
-        use std::str::FromStr;
         let capital = BigDecimal::from_str(&cli.initial_capital.to_string())
             .unwrap_or_else(|_| BigDecimal::from(cli.initial_capital as i64));
         let yocto_per_near = BigDecimal::from(10u128.pow(24));
-        (&capital * &yocto_per_near).to_u128().unwrap_or(0)
+        YoctoValue::from_yocto(&capital * &yocto_per_near)
     };
 
     // Initialize portfolio state
-    let portfolio = Arc::new(Mutex::new(PortfolioState::new(initial_capital_yocto)));
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(
+        initial_capital_yocto.clone(),
+    )));
 
     // Shared simulation date (updated each iteration, read by SimulationClient)
     let sim_day_shared = Arc::new(Mutex::new(Utc::now()));
@@ -91,7 +100,7 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
             }
         }
 
-        current_date += chrono::Duration::days(cli.rebalance_interval_days);
+        current_date += chrono::TimeDelta::days(cli.rebalance_interval_days);
         day_count += 1;
     }
 
@@ -124,9 +133,8 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 }
 
 /// Apply CLI parameters to the config system
-pub(crate) fn apply_config(cli: &Cli) {
+pub(crate) fn apply_config(cli: &RunArgs) {
     common::config::store::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
-    common::config::store::set("TRADE_VOLATILITY_DAYS", &cli.volatility_days.to_string());
     common::config::store::set(
         "TRADE_PRICE_HISTORY_DAYS",
         &cli.price_history_days.to_string(),
@@ -145,18 +153,18 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn make_cli(start: &str, end: &str) -> Cli {
-        Cli {
+    fn make_cli(start: &str, end: &str) -> RunArgs {
+        RunArgs {
             start_date: start.to_string(),
             end_date: end.to_string(),
             initial_capital: 100.0,
             top_tokens: 10,
-            volatility_days: 7,
             price_history_days: 30,
             rebalance_threshold: 0.1,
             rebalance_interval_days: 1,
             output: PathBuf::from("test.json"),
             sweep: None,
+            generate_predictions: false,
         }
     }
 
@@ -173,17 +181,17 @@ mod tests {
 
     #[test]
     fn apply_config_sets_expected_values() {
-        let cli = Cli {
+        let cli = RunArgs {
             start_date: "2025-01-01".to_string(),
             end_date: "2025-12-31".to_string(),
             initial_capital: 500.0,
             top_tokens: 20,
-            volatility_days: 14,
             price_history_days: 60,
             rebalance_threshold: 0.25,
             rebalance_interval_days: 3,
             output: PathBuf::from("test.json"),
             sweep: None,
+            generate_predictions: false,
         };
 
         apply_config(&cli);
@@ -191,10 +199,6 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_TOP_TOKENS").unwrap(),
             "20"
-        );
-        assert_eq!(
-            common::config::store::get("TRADE_VOLATILITY_DAYS").unwrap(),
-            "14"
         );
         assert_eq!(
             common::config::store::get("TRADE_PRICE_HISTORY_DAYS").unwrap(),

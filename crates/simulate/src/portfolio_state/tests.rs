@@ -8,19 +8,16 @@ use std::collections::HashMap;
 // MockRateProvider
 // ---------------------------------------------------------------------------
 
-/// Mock rate provider for unit tests. Returns pre-configured rates and decimals.
+/// Mock rate provider for unit tests. Returns pre-configured rates.
 struct MockRateProvider {
     /// token_id -> ExchangeRate
     rates: HashMap<String, ExchangeRate>,
-    /// token_id -> decimals
-    decimals_map: HashMap<String, u8>,
 }
 
 impl MockRateProvider {
     fn new() -> Self {
         Self {
             rates: HashMap::new(),
-            decimals_map: HashMap::new(),
         }
     }
 
@@ -30,7 +27,6 @@ impl MockRateProvider {
             token_id.to_string(),
             ExchangeRate::from_raw_rate(raw_rate, decimals),
         );
-        self.decimals_map.insert(token_id.to_string(), decimals);
         self
     }
 }
@@ -43,10 +39,6 @@ impl RateProvider for MockRateProvider {
     ) -> Option<ExchangeRate> {
         self.rates.get(&token.to_string()).cloned()
     }
-
-    async fn get_decimals(&self, token_id: &str) -> u8 {
-        self.decimals_map.get(token_id).copied().unwrap_or(24)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +47,10 @@ impl RateProvider for MockRateProvider {
 
 const NEAR_100: u128 = 100_000_000_000_000_000_000_000_000; // 100 NEAR in yocto
 const NEAR_50: u128 = 50_000_000_000_000_000_000_000_000; // 50 NEAR in yocto
+
+fn yocto(v: u128) -> YoctoValue {
+    YoctoValue::from_yocto(BigDecimal::from(v))
+}
 
 fn sim_day() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()
@@ -78,6 +74,26 @@ const TOKEN_A_DECIMALS: u8 = 24;
 const TOKEN_B: &str = "token-b.near";
 const TOKEN_B_DECIMALS: u8 = 6;
 
+fn token_a() -> TokenAccount {
+    TOKEN_A.parse().unwrap()
+}
+
+fn token_b() -> TokenAccount {
+    TOKEN_B.parse().unwrap()
+}
+
+fn token_amount_24d(raw: u128) -> TokenAmount {
+    TokenAmount::from_smallest_units(BigDecimal::from(raw), TOKEN_A_DECIMALS)
+}
+
+fn token_amount_6d(raw: u128) -> TokenAmount {
+    TokenAmount::from_smallest_units(BigDecimal::from(raw), TOKEN_B_DECIMALS)
+}
+
+fn wnear() -> TokenAccount {
+    blockchain::ref_finance::token_account::WNEAR_TOKEN.clone()
+}
+
 fn provider_with_a() -> MockRateProvider {
     MockRateProvider::new().with_token(TOKEN_A, rate_24d(), TOKEN_A_DECIMALS)
 }
@@ -94,18 +110,18 @@ fn provider_with_ab() -> MockRateProvider {
 
 #[test]
 fn new_sets_initial_capital() {
-    let state = PortfolioState::new(NEAR_100);
-    assert_eq!(state.cash_balance, NEAR_100);
+    let state = PortfolioState::new(yocto(NEAR_100));
+    assert_eq!(state.cash_balance, yocto(NEAR_100));
     assert!(state.holdings.is_empty());
-    assert!(state.decimals.is_empty());
     assert!(state.snapshots.is_empty());
     assert!(state.trades.is_empty());
+    assert!(state.swap_events.is_empty());
 }
 
 #[test]
 fn new_zero_capital() {
-    let state = PortfolioState::new(0);
-    assert_eq!(state.cash_balance, 0);
+    let state = PortfolioState::new(YoctoValue::zero());
+    assert_eq!(state.cash_balance, YoctoValue::zero());
 }
 
 // ---------------------------------------------------------------------------
@@ -114,35 +130,39 @@ fn new_zero_capital() {
 
 #[test]
 fn swap_wnear_to_token_updates_state() {
-    let mut state = PortfolioState::new(NEAR_100);
-    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+    let wnear = wnear();
 
     // Buy 50 NEAR worth of TOKEN_A (1:1 rate, 24 decimals)
-    state.execute_simulated_swap(&wnear, NEAR_50, TOKEN_A, NEAR_50);
+    let result = state.execute_simulated_swap(&wnear, NEAR_50, &token_a(), NEAR_50);
+    assert!(result.is_some());
 
-    assert_eq!(state.cash_balance, NEAR_50);
-    assert_eq!(state.holdings[TOKEN_A], NEAR_50);
-    assert_eq!(state.cost_basis[TOKEN_A], NEAR_50);
+    assert_eq!(state.cash_balance, yocto(NEAR_50));
+    assert_eq!(
+        state.holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(NEAR_50)
+    );
+    assert_eq!(state.cost_basis[&token_a()], yocto(NEAR_50));
     assert_eq!(state.realized_pnl, 0); // no sell, no P&L
 }
 
 #[test]
 fn swap_token_to_wnear_updates_state_and_pnl() {
-    let mut state = PortfolioState::new(0);
-    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    let wnear = wnear();
 
     // Set up: hold TOKEN_A with cost basis
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_100);
-    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_100);
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_100));
+    state.cost_basis.insert(token_a(), yocto(NEAR_100));
 
     // Sell all TOKEN_A for 120 NEAR (profit)
     let sell_proceeds = 120_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(TOKEN_A, NEAR_100, &wnear, sell_proceeds);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_100, &wnear, sell_proceeds);
 
     // TOKEN_A should be fully removed
-    assert!(!state.holdings.contains_key(TOKEN_A));
-    assert!(!state.cost_basis.contains_key(TOKEN_A));
-    assert_eq!(state.cash_balance, sell_proceeds);
+    assert!(!state.holdings.contains_key(&token_a()));
+    assert!(!state.cost_basis.contains_key(&token_a()));
+    assert_eq!(state.cash_balance, yocto(sell_proceeds));
 
     // Realized P&L: 120 - 100 = 20 NEAR in yocto
     let expected_pnl = sell_proceeds as i128 - NEAR_100 as i128;
@@ -151,38 +171,44 @@ fn swap_token_to_wnear_updates_state_and_pnl() {
 
 #[test]
 fn swap_partial_sell_adjusts_cost_basis() {
-    let mut state = PortfolioState::new(0);
-    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    let wnear = wnear();
 
     // Set up: hold 100 units with 100 NEAR cost basis
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_100);
-    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_100);
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_100));
+    state.cost_basis.insert(token_a(), yocto(NEAR_100));
 
     // Sell half
-    state.execute_simulated_swap(TOKEN_A, NEAR_50, &wnear, NEAR_50);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
 
-    assert_eq!(state.holdings[TOKEN_A], NEAR_50);
-    assert_eq!(state.cost_basis[TOKEN_A], NEAR_50);
+    assert_eq!(
+        state.holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(NEAR_50)
+    );
+    assert_eq!(state.cost_basis[&token_a()], yocto(NEAR_50));
     // Sold at cost → 0 P&L
     assert_eq!(state.realized_pnl, 0);
 }
 
 #[test]
 fn swap_wnear_to_token_multiple_buys_accumulate_cost() {
-    let mut state = PortfolioState::new(NEAR_100);
-    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+    let wnear = wnear();
 
     // Buy 1: 30 NEAR
     let buy1 = 30_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(&wnear, buy1, TOKEN_A, buy1);
+    let _ = state.execute_simulated_swap(&wnear, buy1, &token_a(), buy1);
 
     // Buy 2: 20 NEAR
     let buy2 = 20_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(&wnear, buy2, TOKEN_A, buy2);
+    let _ = state.execute_simulated_swap(&wnear, buy2, &token_a(), buy2);
 
-    assert_eq!(state.cash_balance, NEAR_50);
-    assert_eq!(state.holdings[TOKEN_A], buy1 + buy2);
-    assert_eq!(state.cost_basis[TOKEN_A], buy1 + buy2);
+    assert_eq!(state.cash_balance, yocto(NEAR_50));
+    assert_eq!(
+        state.holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(buy1 + buy2)
+    );
+    assert_eq!(state.cost_basis[&token_a()], yocto(buy1 + buy2));
 }
 
 // ---------------------------------------------------------------------------
@@ -191,85 +217,183 @@ fn swap_wnear_to_token_multiple_buys_accumulate_cost() {
 
 #[test]
 fn swap_token_to_token_non_wnear() {
-    let mut state = PortfolioState::new(NEAR_100);
+    let mut state = PortfolioState::new(yocto(NEAR_100));
 
     // Set up: hold TOKEN_A
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
-    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50);
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    state.cost_basis.insert(token_a(), yocto(NEAR_50));
 
     // Swap TOKEN_A -> TOKEN_B (neither is WNEAR)
     let token_b_amount = 500_000u128; // 0.5 TOKEN_B (6 decimals)
-    state.execute_simulated_swap(TOKEN_A, NEAR_50, TOKEN_B, token_b_amount);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_50, &token_b(), token_b_amount);
 
     // TOKEN_A fully sold
-    assert!(!state.holdings.contains_key(TOKEN_A));
-    assert!(!state.cost_basis.contains_key(TOKEN_A));
+    assert!(!state.holdings.contains_key(&token_a()));
+    assert!(!state.cost_basis.contains_key(&token_a()));
 
-    // TOKEN_B acquired, but no cost_basis tracked (non-WNEAR source)
-    assert_eq!(state.holdings[TOKEN_B], token_b_amount);
-    assert!(!state.cost_basis.contains_key(TOKEN_B));
+    // TOKEN_B acquired with cost basis transferred from TOKEN_A
+    assert_eq!(
+        state.holdings[&token_b()].smallest_units(),
+        &BigDecimal::from(token_b_amount)
+    );
+    assert_eq!(state.cost_basis[&token_b()], yocto(NEAR_50));
 
     // Cash unchanged (no WNEAR involved)
-    assert_eq!(state.cash_balance, NEAR_100);
+    assert_eq!(state.cash_balance, yocto(NEAR_100));
 
     // Realized P&L for token-to-token: sell_proceeds = cost_of_sold → P&L = 0
     assert_eq!(state.realized_pnl, 0);
 }
 
 #[test]
-fn swap_from_token_with_no_holdings() {
-    let mut state = PortfolioState::new(NEAR_100);
+fn swap_token_to_token_partial_cost_basis_transfer() {
+    let mut state = PortfolioState::new(yocto(NEAR_100));
 
-    // Try selling TOKEN_A that we don't hold
-    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
-    state.execute_simulated_swap(TOKEN_A, NEAR_50, &wnear, NEAR_50);
+    // Set up: hold TOKEN_A with 50 NEAR cost basis
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    state.cost_basis.insert(token_a(), yocto(NEAR_50));
 
-    // Entire swap is skipped: no TOKEN_A deducted, no WNEAR added
-    assert!(!state.holdings.contains_key(TOKEN_A));
-    assert_eq!(state.cash_balance, NEAR_100);
+    // Sell half of TOKEN_A for TOKEN_B
+    let half_near_50 = NEAR_50 / 2;
+    let token_b_amount = 250_000u128;
+    let _ = state.execute_simulated_swap(&token_a(), half_near_50, &token_b(), token_b_amount);
+
+    // TOKEN_A: half remains, half cost basis remains
+    assert_eq!(
+        state.holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(half_near_50)
+    );
+    assert_eq!(state.cost_basis[&token_a()], yocto(half_near_50));
+
+    // TOKEN_B: acquired with transferred cost basis (half of 50 NEAR = 25 NEAR)
+    assert_eq!(
+        state.holdings[&token_b()].smallest_units(),
+        &BigDecimal::from(token_b_amount)
+    );
+    assert_eq!(state.cost_basis[&token_b()], yocto(half_near_50));
+
+    // P&L = 0 (cost-neutral swap)
     assert_eq!(state.realized_pnl, 0);
 }
 
 #[test]
-fn swap_sell_more_than_holdings() {
-    let mut state = PortfolioState::new(0);
-    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+fn swap_token_to_token_no_cost_basis() {
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+
+    // Set up: hold TOKEN_A but with no cost basis (e.g., airdropped tokens)
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    // No cost_basis entry for TOKEN_A
+
+    let token_b_amount = 500_000u128;
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_50, &token_b(), token_b_amount);
+
+    // TOKEN_A fully sold
+    assert!(!state.holdings.contains_key(&token_a()));
+
+    // TOKEN_B acquired with zero cost basis (nothing to transfer)
+    assert_eq!(
+        state.holdings[&token_b()].smallest_units(),
+        &BigDecimal::from(token_b_amount)
+    );
+    assert!(!state.cost_basis.contains_key(&token_b()));
+
+    // P&L = 0 (no cost basis → cost_of_sold = 0, sell_proceeds = 0)
+    assert_eq!(state.realized_pnl, 0);
+}
+
+#[test]
+fn swap_from_token_with_no_holdings() {
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+
+    // Try selling TOKEN_A that we don't hold
+    let wnear = wnear();
+    let result = state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
+    assert!(result.is_none(), "swap should be skipped when no holdings");
+
+    // Entire swap is skipped: no TOKEN_A deducted, no WNEAR added
+    assert!(!state.holdings.contains_key(&token_a()));
+    assert_eq!(state.cash_balance, yocto(NEAR_100));
+    assert_eq!(state.realized_pnl, 0);
+}
+
+#[test]
+fn swap_sell_more_than_holdings_scales_output() {
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    let wnear = wnear();
 
     // Hold only 10 NEAR worth of TOKEN_A
     let ten_near = 10_000_000_000_000_000_000_000_000u128;
-    state.holdings.insert(TOKEN_A.to_string(), ten_near);
-    state.cost_basis.insert(TOKEN_A.to_string(), ten_near);
+    state.holdings.insert(token_a(), token_amount_24d(ten_near));
+    state.cost_basis.insert(token_a(), yocto(ten_near));
 
-    // Try to sell 50 NEAR worth (more than holdings)
-    state.execute_simulated_swap(TOKEN_A, NEAR_50, &wnear, NEAR_50);
+    // Try to sell 50 NEAR worth (more than holdings) for 50 NEAR proceeds
+    let result = state.execute_simulated_swap(&token_a(), NEAR_50, &wnear, NEAR_50);
+    let swap = result.unwrap();
+    assert_eq!(swap.actual_in, ten_near, "clamped to available balance");
+    assert_eq!(
+        swap.actual_out, ten_near,
+        "output scaled proportionally: 50 * 10/50 = 10"
+    );
 
-    // Only actual_deduct = min(50, 10) = 10 is deducted
-    assert!(!state.holdings.contains_key(TOKEN_A));
-    assert!(!state.cost_basis.contains_key(TOKEN_A));
-    assert_eq!(state.cash_balance, NEAR_50);
+    // actual_deduct = min(50, 10) = 10, to_amount scaled to 10/50 * 50 = 10
+    assert!(!state.holdings.contains_key(&token_a()));
+    assert!(!state.cost_basis.contains_key(&token_a()));
+    assert_eq!(
+        state.cash_balance,
+        yocto(ten_near),
+        "to_amount should be proportionally scaled: 50 * 10/50 = 10 NEAR"
+    );
+}
+
+#[test]
+fn swap_wnear_more_than_cash_scales_output() {
+    // Cash = 10 NEAR, try to spend 50 NEAR
+    let ten_near = 10_000_000_000_000_000_000_000_000u128;
+    let mut state = PortfolioState::new(yocto(ten_near));
+
+    // Try to buy TOKEN_A with 50 NEAR (more than cash balance)
+    // If 50 NEAR → 500 TOKEN_A, then 10 NEAR → 100 TOKEN_A
+    let token_a_amount = 500_000_000_000_000_000_000_000_000u128;
+    let result = state.execute_simulated_swap(&wnear(), NEAR_50, &token_a(), token_a_amount);
+    let swap = result.unwrap();
+    assert_eq!(swap.actual_in, ten_near, "clamped to available cash");
+
+    assert_eq!(state.cash_balance, YoctoValue::zero(), "all cash spent");
+    // Scaled: 500 * 10/50 = 100
+    let expected_token_a = 100_000_000_000_000_000_000_000_000u128;
+    assert_eq!(
+        state.holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(expected_token_a),
+        "to_amount should be proportionally scaled"
+    );
+    assert_eq!(
+        state.cost_basis[&token_a()],
+        yocto(ten_near),
+        "cost basis should reflect actual amount spent"
+    );
 }
 
 #[test]
 fn swap_sell_with_loss() {
-    let mut state = PortfolioState::new(0);
-    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    let wnear = wnear();
 
     // Hold TOKEN_A bought at 100 NEAR
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_100);
-    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_100);
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_100));
+    state.cost_basis.insert(token_a(), yocto(NEAR_100));
 
     // Sell all for only 80 NEAR (loss of 20 NEAR)
     let eighty_near = 80_000_000_000_000_000_000_000_000u128;
-    state.execute_simulated_swap(TOKEN_A, NEAR_100, &wnear, eighty_near);
+    let _ = state.execute_simulated_swap(&token_a(), NEAR_100, &wnear, eighty_near);
 
-    assert!(!state.holdings.contains_key(TOKEN_A));
-    assert_eq!(state.cash_balance, eighty_near);
+    assert!(!state.holdings.contains_key(&token_a()));
+    assert_eq!(state.cash_balance, yocto(eighty_near));
 
     // Realized P&L: 80 - 100 = -20 NEAR in yocto
     let expected_pnl = eighty_near as i128 - NEAR_100 as i128;
     assert!(expected_pnl < 0);
     assert_eq!(state.realized_pnl, expected_pnl);
-    assert_eq!(state.realized_pnl_by_token[TOKEN_A], expected_pnl);
+    assert_eq!(state.realized_pnl_by_token[&token_a()], expected_pnl);
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +402,7 @@ fn swap_sell_with_loss() {
 
 #[tokio::test]
 async fn total_value_near_cash_only() {
-    let state = PortfolioState::new(NEAR_100);
+    let state = PortfolioState::new(yocto(NEAR_100));
     let provider = MockRateProvider::new();
 
     let value = state
@@ -290,8 +414,8 @@ async fn total_value_near_cash_only() {
 
 #[tokio::test]
 async fn total_value_near_with_holdings() {
-    let mut state = PortfolioState::new(NEAR_50); // 50 NEAR cash
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    let mut state = PortfolioState::new(yocto(NEAR_50)); // 50 NEAR cash
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
     let provider = provider_with_a();
 
     let value = state
@@ -304,8 +428,8 @@ async fn total_value_near_with_holdings() {
 
 #[tokio::test]
 async fn total_value_near_missing_rate_skips_token() {
-    let mut state = PortfolioState::new(NEAR_50);
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    let mut state = PortfolioState::new(yocto(NEAR_50));
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
     let provider = MockRateProvider::new(); // empty: no rates
 
     let value = state
@@ -322,20 +446,20 @@ async fn total_value_near_missing_rate_skips_token() {
 
 #[tokio::test]
 async fn record_snapshot_appends_snapshot() {
-    let mut state = PortfolioState::new(NEAR_100);
+    let mut state = PortfolioState::new(yocto(NEAR_100));
     let provider = MockRateProvider::new();
 
     state.record_snapshot(sim_day(), &provider).await.unwrap();
 
     assert_eq!(state.snapshots.len(), 1);
-    assert_eq!(state.snapshots[0].cash_balance, NEAR_100);
+    assert_eq!(state.snapshots[0].cash_balance, yocto(NEAR_100));
     assert!(state.snapshots[0].holdings.is_empty());
 }
 
 #[tokio::test]
 async fn record_snapshot_captures_correct_value() {
-    let mut state = PortfolioState::new(NEAR_50);
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    let mut state = PortfolioState::new(yocto(NEAR_50));
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
     let provider = provider_with_a();
 
     state.record_snapshot(sim_day(), &provider).await.unwrap();
@@ -346,7 +470,10 @@ async fn record_snapshot_captures_correct_value() {
         "expected ~100.0, got {}",
         state.snapshots[0].total_value_near
     );
-    assert_eq!(state.snapshots[0].holdings[TOKEN_A], NEAR_50);
+    assert_eq!(
+        state.snapshots[0].holdings[&token_a()].smallest_units(),
+        &BigDecimal::from(NEAR_50)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -355,57 +482,61 @@ async fn record_snapshot_captures_correct_value() {
 
 #[tokio::test]
 async fn liquidate_all_sells_everything() {
-    let mut state = PortfolioState::new(0);
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
-    state.holdings.insert(TOKEN_B.to_string(), 1_000_000);
-    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50); // cost = 50 NEAR
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    state.holdings.insert(token_b(), token_amount_6d(1_000_000));
+    state.cost_basis.insert(token_a(), yocto(NEAR_50)); // cost = 50 NEAR
     state
         .cost_basis
-        .insert(TOKEN_B.to_string(), 1_000_000_000_000_000_000_000_000); // cost = 1 NEAR
+        .insert(token_b(), yocto(1_000_000_000_000_000_000_000_000)); // cost = 1 NEAR
 
     let provider = provider_with_ab();
     state.liquidate_all(sim_day(), &provider).await.unwrap();
 
     assert!(
-        state.holdings.is_empty() || state.holdings.values().all(|&v| v == 0),
+        state.holdings.is_empty() || state.holdings.values().all(|v| v.is_zero()),
         "all holdings should be sold"
     );
-    assert!(state.cash_balance > 0, "cash should increase");
+    assert!(
+        state.cash_balance > YoctoValue::zero(),
+        "cash should increase"
+    );
 }
 
 #[tokio::test]
 async fn liquidate_all_records_liquidation_trades() {
-    let mut state = PortfolioState::new(0);
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
-    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50);
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    state.cost_basis.insert(token_a(), yocto(NEAR_50));
     let provider = provider_with_a();
 
     state.liquidate_all(sim_day(), &provider).await.unwrap();
 
     assert!(!state.trades.is_empty(), "should have liquidation trades");
     assert_eq!(
-        state.trades[0].action, "liquidation",
+        state.trades[0].action,
+        TradeAction::Liquidation,
         "action should be liquidation"
     );
 }
 
 #[tokio::test]
 async fn liquidate_all_empty_portfolio_noop() {
-    let mut state = PortfolioState::new(NEAR_100);
+    let mut state = PortfolioState::new(yocto(NEAR_100));
     let provider = provider_with_a();
 
     state.liquidate_all(sim_day(), &provider).await.unwrap();
 
     assert!(state.trades.is_empty(), "no trades for empty portfolio");
-    assert_eq!(state.cash_balance, NEAR_100, "cash unchanged");
+    assert_eq!(state.cash_balance, yocto(NEAR_100), "cash unchanged");
 }
 
 #[tokio::test]
 async fn liquidate_all_computes_pnl() {
-    let mut state = PortfolioState::new(0);
-    state.holdings.insert(TOKEN_A.to_string(), NEAR_50);
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
     // Cost basis = 50 NEAR (bought at 1:1)
-    state.cost_basis.insert(TOKEN_A.to_string(), NEAR_50);
+    state.cost_basis.insert(token_a(), yocto(NEAR_50));
 
     let provider = provider_with_a();
     state.liquidate_all(sim_day(), &provider).await.unwrap();
@@ -422,6 +553,40 @@ async fn liquidate_all_computes_pnl() {
         "P&L should be near zero for same-rate trade, got {}",
         pnl
     );
+}
+
+#[tokio::test]
+async fn liquidate_all_partial_missing_rate() {
+    let mut state = PortfolioState::new(YoctoValue::zero());
+    // TOKEN_A has a rate, TOKEN_B does not
+    state.holdings.insert(token_a(), token_amount_24d(NEAR_50));
+    state.cost_basis.insert(token_a(), yocto(NEAR_50));
+    state.holdings.insert(token_b(), token_amount_6d(1_000_000));
+    state
+        .cost_basis
+        .insert(token_b(), yocto(1_000_000_000_000_000_000_000_000));
+
+    // Provider only has token_a rate — token_b should be skipped
+    let provider = provider_with_a();
+    state.liquidate_all(sim_day(), &provider).await.unwrap();
+
+    // TOKEN_A should be liquidated
+    assert!(
+        !state.holdings.contains_key(&token_a()) || state.holdings[&token_a()].is_zero(),
+        "token_a should be liquidated"
+    );
+    // TOKEN_B should remain (no rate available)
+    assert!(
+        state.holdings.contains_key(&token_b()),
+        "token_b should remain since no rate available"
+    );
+    // Should have exactly 1 liquidation trade (only token_a)
+    assert_eq!(
+        state.trades.len(),
+        1,
+        "only token_a should have liquidation trade"
+    );
+    assert_eq!(state.trades[0].action, TradeAction::Liquidation);
 }
 
 // ===========================================================================
@@ -452,6 +617,10 @@ fn integration_sim_day() -> DateTime<Utc> {
 
 const INT_TOKEN_A: &str = "test-token-a.testnet";
 const INT_TOKEN_A_DECIMALS: u8 = 6;
+
+fn int_token_a() -> TokenAccount {
+    INT_TOKEN_A.parse().unwrap()
+}
 
 /// Delete all records with timestamp < now() from token_rates
 async fn cleanup_token_rates() -> anyhow::Result<()> {
@@ -495,8 +664,11 @@ async fn setup_integration(tokens: &[(&str, BigDecimal, u8)]) -> anyhow::Result<
 async fn integration_calculate_total_value_with_db() -> anyhow::Result<()> {
     setup_integration(&[(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS)]).await?;
 
-    let mut state = PortfolioState::new(NEAR_50);
-    state.holdings.insert(INT_TOKEN_A.to_string(), 1_000_000); // 1 token = 1 NEAR
+    let mut state = PortfolioState::new(yocto(NEAR_50));
+    state.holdings.insert(
+        int_token_a(),
+        TokenAmount::from_smallest_units(BigDecimal::from(1_000_000), INT_TOKEN_A_DECIMALS),
+    ); // 1 token = 1 NEAR
 
     let provider = DbRateProvider;
     let value = state
@@ -515,8 +687,11 @@ async fn integration_calculate_total_value_with_db() -> anyhow::Result<()> {
 async fn integration_record_snapshot_with_db() -> anyhow::Result<()> {
     setup_integration(&[(INT_TOKEN_A, rate_6d(), INT_TOKEN_A_DECIMALS)]).await?;
 
-    let mut state = PortfolioState::new(NEAR_50);
-    state.holdings.insert(INT_TOKEN_A.to_string(), 1_000_000);
+    let mut state = PortfolioState::new(yocto(NEAR_50));
+    state.holdings.insert(
+        int_token_a(),
+        TokenAmount::from_smallest_units(BigDecimal::from(1_000_000), INT_TOKEN_A_DECIMALS),
+    );
 
     let provider = DbRateProvider;
     state
@@ -529,9 +704,330 @@ async fn integration_record_snapshot_with_db() -> anyhow::Result<()> {
         "expected ~51 NEAR, got {}",
         state.snapshots[0].total_value_near
     );
-    assert_eq!(state.snapshots[0].holdings[INT_TOKEN_A], 1_000_000);
-    assert_eq!(state.snapshots[0].cash_balance, NEAR_50);
+    assert_eq!(
+        state.snapshots[0].holdings[&int_token_a()].smallest_units(),
+        &BigDecimal::from(1_000_000)
+    );
+    assert_eq!(state.snapshots[0].cash_balance, yocto(NEAR_50));
 
     cleanup_token_rates().await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// scale_output unit tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scale_output_no_scaling_when_equal() {
+    // actual == requested → return to_amount unchanged
+    assert_eq!(PortfolioState::scale_output(1000, 500, 500), 1000);
+}
+
+#[test]
+fn scale_output_half_input() {
+    // actual = half of requested → output halved
+    assert_eq!(PortfolioState::scale_output(1000, 50, 100), 500);
+}
+
+#[test]
+fn scale_output_one_third() {
+    // actual = 1/3 of requested → output = 1000/3 = 333 (floor)
+    assert_eq!(PortfolioState::scale_output(1000, 1, 3), 333);
+}
+
+#[test]
+fn scale_output_actual_one() {
+    // minimal actual input
+    assert_eq!(PortfolioState::scale_output(1_000_000, 1, 1_000_000), 1);
+}
+
+#[test]
+fn scale_output_to_amount_zero() {
+    // zero output stays zero regardless of scaling
+    assert_eq!(PortfolioState::scale_output(0, 50, 100), 0);
+}
+
+#[test]
+fn scale_output_large_values() {
+    // large values near u128 range
+    let large = 10u128.pow(30);
+    let result = PortfolioState::scale_output(large, large / 2, large);
+    assert_eq!(result, large / 2);
+}
+
+// ---------------------------------------------------------------------------
+// to_u128_or_warn
+// ---------------------------------------------------------------------------
+
+#[test]
+fn to_u128_or_warn_normal_value() {
+    let v = BigDecimal::from(42u64);
+    assert_eq!(to_u128_or_warn(&v, "test"), 42);
+}
+
+#[test]
+fn to_u128_or_warn_zero() {
+    let v = BigDecimal::from(0u64);
+    assert_eq!(to_u128_or_warn(&v, "test"), 0);
+}
+
+#[test]
+fn to_u128_or_warn_negative_returns_zero() {
+    let v = BigDecimal::from(-100i64);
+    assert_eq!(
+        to_u128_or_warn(&v, "test"),
+        0,
+        "negative BigDecimal should return 0"
+    );
+}
+
+#[test]
+fn to_u128_or_warn_fractional_returns_zero() {
+    use std::str::FromStr;
+    let v = BigDecimal::from_str("0.5").unwrap();
+    assert_eq!(
+        to_u128_or_warn(&v, "test"),
+        0,
+        "fractional BigDecimal (0.5) should return 0 since to_u128 truncates"
+    );
+}
+
+#[test]
+fn to_u128_or_warn_large_integer() {
+    // u128::MAX = 340282366920938463463374607431768211455
+    let v = BigDecimal::from(u128::MAX);
+    assert_eq!(to_u128_or_warn(&v, "test"), u128::MAX);
+}
+
+#[test]
+fn to_u128_or_warn_exceeds_u128_returns_zero() {
+    let v = BigDecimal::from(u128::MAX) + BigDecimal::from(1u64);
+    assert_eq!(
+        to_u128_or_warn(&v, "test"),
+        0,
+        "value exceeding u128::MAX should return 0"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// execute_simulated_swap: actual_to == 0 guard
+// ---------------------------------------------------------------------------
+
+#[test]
+fn swap_skipped_when_scaled_output_is_zero() {
+    // scale_output(1, 1, very_large) → 0 → swap should be skipped entirely
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+    let wnear = wnear();
+
+    // to_amount = 1, from_amount = NEAR_100, actual_from = 1 (min(NEAR_100, NEAR_100))
+    // But we want actual_to = 0: set to_amount = 0
+    let result = state.execute_simulated_swap(&wnear, NEAR_50, &token_a(), 0);
+    assert!(
+        result.is_none(),
+        "swap should be skipped when to_amount is 0"
+    );
+
+    // Nothing should change: to_amount = 0 → amount_out check in mock_client prevents this,
+    // but execute_simulated_swap should also guard
+    assert_eq!(state.cash_balance, yocto(NEAR_100));
+    assert!(state.holdings.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// TradeAction Display/Serde consistency
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trade_action_display_matches_serde() {
+    // Ensure Display output matches serde serialization for all variants.
+    for action in [
+        TradeAction::Buy,
+        TradeAction::Sell,
+        TradeAction::Liquidation,
+    ] {
+        let display = action.to_string();
+        let serde_value = serde_json::to_value(&action).unwrap();
+        assert_eq!(
+            serde_value,
+            serde_json::Value::String(display.clone()),
+            "Display and serde mismatch for {action:?}: display={display}, serde={serde_value}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SwapMethod Serde consistency
+// ---------------------------------------------------------------------------
+
+#[test]
+fn swap_method_serde_roundtrip() {
+    // Ensure serde serialization produces expected snake_case strings
+    // and round-trips correctly for all variants.
+    for (method, expected_str) in [
+        (SwapMethod::PoolBased, "pool_based"),
+        (SwapMethod::DbRate, "db_rate"),
+    ] {
+        let serialized = serde_json::to_value(method).unwrap();
+        assert_eq!(
+            serialized,
+            serde_json::Value::String(expected_str.to_string()),
+            "serde mismatch for {method:?}: expected={expected_str}, got={serialized}"
+        );
+        let deserialized: SwapMethod = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, method, "round-trip failed for {method:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// average_cost_of_sold precision (BigDecimal eliminates overflow-fallback error)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cost_basis_transfer_precision_with_large_values() {
+    // Scenario: total_cost = 10e24, total_holding = 3e24, sell_amount = 1e24
+    // Exact: 10e24 * 1e24 / 3e24 = 3_333_333_333_333_333_333_333_333 (truncated)
+    //
+    // Old u128 implementation: checked_mul(10e24, 1e24) overflows u128,
+    // fallback = (10e24 / 3e24) * 1e24 = 3 * 1e24 = 3e24 (error ~0.33 NEAR).
+    // New BigDecimal implementation: exact result, no overflow.
+    let ten_near = 10_000_000_000_000_000_000_000_000u128;
+    let three_near = 3_000_000_000_000_000_000_000_000u128;
+    let one_near = 1_000_000_000_000_000_000_000_000u128;
+
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+    state
+        .holdings
+        .insert(token_a(), token_amount_24d(three_near));
+    state.cost_basis.insert(token_a(), yocto(ten_near));
+
+    // Sell 1/3 of holdings → TOKEN_B
+    let token_b_amount = 500_000u128;
+    let _ = state.execute_simulated_swap(&token_a(), one_near, &token_b(), token_b_amount);
+
+    // Expected transferred cost: 10e24 / 3 = 3_333_333_333_333_333_333_333_333 (truncated)
+    let expected_cost = BigDecimal::from(ten_near) / BigDecimal::from(3u64);
+    let expected_yocto =
+        YoctoValue::from_yocto(expected_cost.with_scale_round(0, bigdecimal::RoundingMode::Down));
+
+    assert_eq!(
+        state.cost_basis[&token_b()],
+        expected_yocto,
+        "cost basis should be precise, not rounded to 3e24"
+    );
+
+    // Remaining cost basis for TOKEN_A: 10e24 - expected_cost
+    let remaining = state.cost_basis.get(&token_a()).cloned().unwrap();
+    let total_accounted = remaining.as_bigdecimal() + expected_yocto.as_bigdecimal();
+    // Total accounted should equal original cost (within 1 yocto truncation tolerance)
+    let diff = (total_accounted - BigDecimal::from(ten_near)).abs();
+    assert!(
+        diff <= 1u64,
+        "cost basis conservation violated: diff = {diff}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// checked_add_or_saturate boundary tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn checked_add_or_saturate_normal() {
+    assert_eq!(checked_add_or_saturate(10, 20, "test"), 30);
+    assert_eq!(checked_add_or_saturate(-10, -20, "test"), -30);
+    assert_eq!(checked_add_or_saturate(10, -20, "test"), -10);
+}
+
+#[test]
+fn checked_add_or_saturate_positive_overflow_saturates_to_max() {
+    let result = checked_add_or_saturate(i128::MAX, 1, "test");
+    assert_eq!(
+        result,
+        i128::MAX,
+        "positive overflow should saturate to MAX"
+    );
+}
+
+#[test]
+fn checked_add_or_saturate_negative_overflow_saturates_to_min() {
+    let result = checked_add_or_saturate(i128::MIN, -1, "test");
+    assert_eq!(
+        result,
+        i128::MIN,
+        "negative overflow should saturate to MIN"
+    );
+}
+
+#[test]
+fn checked_add_or_saturate_no_overflow_at_boundary() {
+    // MAX + 0 and MIN + 0 should not overflow
+    assert_eq!(checked_add_or_saturate(i128::MAX, 0, "test"), i128::MAX);
+    assert_eq!(checked_add_or_saturate(i128::MIN, 0, "test"), i128::MIN);
+    // MAX + (-1) and MIN + 1 should not overflow (opposite signs)
+    assert_eq!(
+        checked_add_or_saturate(i128::MAX, -1, "test"),
+        i128::MAX - 1
+    );
+    assert_eq!(checked_add_or_saturate(i128::MIN, 1, "test"), i128::MIN + 1);
+}
+
+// ---------------------------------------------------------------------------
+// Cost basis conservation: multiple partial sells never exceed original total
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cost_basis_conservation_across_multiple_partial_sells() {
+    let mut state = PortfolioState::new(yocto(NEAR_100));
+
+    // Buy 100 NEAR of TOKEN_A
+    let wnear = wnear();
+    let _ = state.execute_simulated_swap(&wnear, NEAR_100, &token_a(), NEAR_100);
+
+    let original_cost = state.cost_basis[&token_a()].clone();
+
+    // Sell in 7 unequal portions (deliberately awkward fractions)
+    let portions = [
+        NEAR_100 / 7,
+        NEAR_100 / 11,
+        NEAR_100 / 13,
+        NEAR_100 / 17,
+        NEAR_100 / 19,
+        NEAR_100 / 23,
+    ];
+    let mut total_transferred = YoctoValue::zero();
+    for portion in portions {
+        let before_cost = state
+            .cost_basis
+            .get(&token_a())
+            .cloned()
+            .unwrap_or_else(YoctoValue::zero);
+        let _ = state.execute_simulated_swap(&token_a(), portion, &wnear, portion);
+        let after_cost = state
+            .cost_basis
+            .get(&token_a())
+            .cloned()
+            .unwrap_or_else(YoctoValue::zero);
+        let deducted = before_cost.saturating_sub(&after_cost);
+        let balance = mem::replace(&mut total_transferred, YoctoValue::zero());
+        total_transferred = balance + deducted;
+    }
+
+    // Remaining cost basis + total transferred should not exceed original
+    let remaining_cost = state
+        .cost_basis
+        .get(&token_a())
+        .cloned()
+        .unwrap_or_else(YoctoValue::zero);
+    let total_accounted = remaining_cost.as_bigdecimal() + total_transferred.as_bigdecimal();
+    assert!(
+        total_accounted <= *original_cost.as_bigdecimal(),
+        "total accounted cost ({total_accounted}) must not exceed original ({original_cost})"
+    );
+    // And the difference should be at most the number of partial sells (rounding errors)
+    let diff = (original_cost.as_bigdecimal() - &total_accounted).abs();
+    assert!(
+        diff <= portions.len() as u64,
+        "conservation error {diff} exceeds tolerance of {} yocto",
+        portions.len()
+    );
 }

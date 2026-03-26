@@ -19,6 +19,7 @@ pub async fn record_portfolio_holdings<C, W>(
     wallet: &W,
     period_id: &str,
     selected_tokens: &[TokenAccount],
+    current_time: chrono::DateTime<chrono::Utc>,
 ) -> Result<()>
 where
     C: blockchain::jsonrpc::AccountInfo
@@ -47,7 +48,7 @@ where
 
     let record = NewPortfolioHolding {
         evaluation_period_id: period_id.to_string(),
-        timestamp: chrono::Utc::now().naive_utc(),
+        timestamp: current_time.naive_utc(),
         token_holdings,
     };
 
