@@ -322,7 +322,7 @@ fn test_trade_cron_schedule_default() {
 fn test_db_maintenance_cron_schedule_default() {
     let _env = EnvGuard::remove("DB_MAINTENANCE_CRON_SCHEDULE");
     crate::config::store::remove("DB_MAINTENANCE_CRON_SCHEDULE");
-    assert_eq!(typed().db_maintenance_cron_schedule(), "0 0 4 * * 0");
+    assert_eq!(typed().db_maintenance_cron_schedule(), "0 0 4 * * 7");
 }
 
 // ── Duration keys ──

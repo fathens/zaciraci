@@ -19,10 +19,9 @@ pub async fn run(cfg: impl ConfigAccess + 'static) {
             s
         }
         Err(e) => {
-            let default = "0 0 4 * * 0";
             error!(log, "failed to parse db maintenance schedule, using default";
-                   "error" => ?e, "schedule" => &cron_conf, "default" => default);
-            default
+                   "error" => ?e, "schedule" => &cron_conf, "default" => DEFAULT_CRON_SCHEDULE);
+            DEFAULT_CRON_SCHEDULE
                 .parse()
                 .expect("hardcoded default cron schedule must be valid")
         }
@@ -61,9 +60,9 @@ pub async fn run(cfg: impl ConfigAccess + 'static) {
 
         // 実行前に DB 設定をリロード
         let instance_id = &common::config::startup::get().instance_id;
-        crate::config_store::reload_to_config(instance_id)
-            .await
-            .ok();
+        if let Err(e) = crate::config_store::reload_to_config(instance_id).await {
+            warn!(log, "config reload failed, using previous values"; "error" => %e);
+        }
 
         info!(log, "executing db maintenance");
 
@@ -76,17 +75,26 @@ pub async fn run(cfg: impl ConfigAccess + 'static) {
     }
 }
 
-/// 指定テーブルに REINDEX CONCURRENTLY を実行
-async fn reindex_table(table_name: &str) -> Result<()> {
-    use diesel::RunQueryDsl;
+/// REINDEX 対象テーブルのデフォルト cron スケジュール
+const DEFAULT_CRON_SCHEDULE: &str = "0 0 4 * * 7";
 
-    // SQL injection 防止: ホワイトリスト検証
+/// テーブル名がホワイトリストに含まれるか検証
+fn validate_reindex_target(table_name: &str) -> Result<()> {
     if !REINDEX_TARGETS.contains(&table_name) {
         return Err(anyhow::anyhow!(
             "table '{}' is not in the allowed reindex targets",
             table_name
         ));
     }
+    Ok(())
+}
+
+/// 指定テーブルに REINDEX CONCURRENTLY を実行
+async fn reindex_table(table_name: &str) -> Result<()> {
+    use diesel::RunQueryDsl;
+
+    // SQL injection 防止: ホワイトリスト検証
+    validate_reindex_target(table_name)?;
 
     let log = DEFAULT.new(o!(
         "function" => "maintenance::reindex_table",
@@ -105,3 +113,6 @@ async fn reindex_table(table_name: &str) -> Result<()> {
     info!(log, "reindex completed");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -146,7 +146,7 @@ pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
     trace!(log, "start");
 
     let cutoff_date =
-        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(effective_days as i64);
+        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(i64::from(effective_days));
 
     let conn = connection_pool::get().await?;
 
