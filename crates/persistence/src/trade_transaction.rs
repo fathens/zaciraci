@@ -164,6 +164,34 @@ impl TradeTransaction {
 
         result.context("Failed to count transactions by evaluation period")
     }
+
+    /// 指定期間内の全取引を取得
+    pub fn find_by_date_range(
+        start: NaiveDateTime,
+        end: NaiveDateTime,
+        conn: &mut PgConnection,
+    ) -> QueryResult<Vec<TradeTransaction>> {
+        trade_transactions::table
+            .filter(trade_transactions::timestamp.ge(start))
+            .filter(trade_transactions::timestamp.le(end))
+            .order(trade_transactions::timestamp.asc())
+            .get_results(conn)
+    }
+
+    /// 指定期間内の全取引を取得（非同期版）
+    pub async fn find_by_date_range_async(
+        start: NaiveDateTime,
+        end: NaiveDateTime,
+    ) -> Result<Vec<TradeTransaction>> {
+        let conn = connection_pool::get().await?;
+
+        let result = conn
+            .interact(move |conn| Self::find_by_date_range(start, end, conn))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to interact with database: {}", e))?;
+
+        result.context("Failed to find transactions by date range")
+    }
 }
 
 #[cfg(test)]

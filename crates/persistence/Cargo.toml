@@ -8,6 +8,8 @@ common = { path = "../common" }
 dex = { path = "../dex" }
 logging = { path = "../logging" }
 anyhow = { workspace = true }
+cron = "0.15"
+tokio = { workspace = true }
 chrono = { workspace = true }
 bigdecimal = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

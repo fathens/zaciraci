@@ -327,9 +327,10 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
     Ok(())
 }
 
+/// 日数ベースの cleanup: 指定日数より古いレコードが削除されることを検証
 #[tokio::test]
 #[serial(pool_info)]
-async fn test_cleanup_old_records() -> Result<()> {
+async fn test_cleanup_old_records_by_days() -> Result<()> {
     use chrono::NaiveDateTime;
     use diesel::Connection;
     use diesel::prelude::*;
@@ -345,25 +346,27 @@ async fn test_cleanup_old_records() -> Result<()> {
         Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
     };
 
-    let base_time = NaiveDateTime::parse_from_str("2023-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")?;
+    let now = chrono::Utc::now().naive_utc();
     let pool_id_1: u32 = 100;
     let pool_id_2: u32 = 200;
 
     let test_pool_info = create_test_pool_info();
     let mut pool_infos = Vec::new();
 
-    for i in 0..15 {
-        let mut pool_info = test_pool_info.clone();
-        pool_info.id = pool_id_1;
-        pool_info.timestamp = base_time + chrono::TimeDelta::seconds(i);
-        pool_infos.push(to_new_db(&pool_info)?);
+    // pool_id_1: 40日前、20日前、10日前、1日前のレコード
+    for days_ago in [40, 20, 10, 1] {
+        let mut pi = test_pool_info.clone();
+        pi.id = pool_id_1;
+        pi.timestamp = now - chrono::TimeDelta::days(days_ago);
+        pool_infos.push(to_new_db(&pi)?);
     }
 
-    for i in 0..5 {
-        let mut pool_info = test_pool_info.clone();
-        pool_info.id = pool_id_2;
-        pool_info.timestamp = base_time + chrono::TimeDelta::seconds(i);
-        pool_infos.push(to_new_db(&pool_info)?);
+    // pool_id_2: 50日前、5日前のレコード
+    for days_ago in [50, 5] {
+        let mut pi = test_pool_info.clone();
+        pi.id = pool_id_2;
+        pi.timestamp = now - chrono::TimeDelta::days(days_ago);
+        pool_infos.push(to_new_db(&pi)?);
     }
 
     match conn
@@ -382,8 +385,10 @@ async fn test_cleanup_old_records() -> Result<()> {
     };
     drop(conn);
 
-    cleanup_old_records(10).await?;
+    // 30日以上古いレコードを削除
+    cleanup_old_records(30).await?;
 
+    // pool_id_1: 40日前が削除され、20日前・10日前・1日前の3件が残る
     let count_pool_1 = {
         let conn = connection_pool::get().await?;
         conn.interact(move |conn| {
@@ -398,10 +403,11 @@ async fn test_cleanup_old_records() -> Result<()> {
     };
 
     assert_eq!(
-        count_pool_1, 10,
-        "プールID 100 のレコード数は10件であるべきです"
+        count_pool_1, 3,
+        "pool_id 100: 40日前のレコードが削除され3件残るべき"
     );
 
+    // pool_id_2: 50日前が削除され、5日前の1件が残る
     let count_pool_2 = {
         let conn = connection_pool::get().await?;
         conn.interact(move |conn| {
@@ -416,29 +422,11 @@ async fn test_cleanup_old_records() -> Result<()> {
     };
 
     assert_eq!(
-        count_pool_2, 5,
-        "プールID 200 のレコード数は5件のままであるべきです"
+        count_pool_2, 1,
+        "pool_id 200: 50日前のレコードが削除され1件残るべき"
     );
 
-    let latest_timestamp = {
-        let conn = connection_pool::get().await?;
-        conn.interact(move |conn| {
-            use diesel::dsl::max;
-            pool_info::table
-                .filter(pool_info::pool_id.eq(pool_id_1 as i32))
-                .select(max(pool_info::timestamp))
-                .first::<Option<NaiveDateTime>>(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
-    };
-
-    assert_eq!(
-        latest_timestamp,
-        Some(base_time + chrono::TimeDelta::seconds(14)),
-        "最新のタイムスタンプは14秒後であるべきです"
-    );
-
+    // 最古のタイムスタンプが20日前であることを確認
     let oldest_timestamp = {
         let conn = connection_pool::get().await?;
         conn.interact(move |conn| {
@@ -452,10 +440,173 @@ async fn test_cleanup_old_records() -> Result<()> {
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
     };
 
+    let expected_oldest = now - chrono::TimeDelta::days(20);
+    let diff = (oldest_timestamp.unwrap() - expected_oldest)
+        .num_seconds()
+        .abs();
+    assert!(
+        diff < 2,
+        "最古のレコードは約20日前であるべき (差: {}秒)",
+        diff
+    );
+
+    Ok(())
+}
+
+/// 境界値テスト: ちょうど retention_days 前のレコードは削除される（timestamp < cutoff）
+#[tokio::test]
+#[serial(pool_info)]
+async fn test_cleanup_old_records_boundary() -> Result<()> {
+    use diesel::Connection;
+    use diesel::prelude::*;
+
+    let conn = connection_pool::get().await?;
+
+    match conn
+        .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Failed to clear table: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
+    };
+
+    let now = chrono::Utc::now().naive_utc();
+    let pool_id: u32 = 300;
+
+    let test_pool_info = create_test_pool_info();
+    let mut pool_infos = Vec::new();
+
+    // ちょうど30日前（秒単位のズレを考慮して1秒前）→ 削除されるべき
+    let mut pi_exactly = test_pool_info.clone();
+    pi_exactly.id = pool_id;
+    pi_exactly.timestamp = now - chrono::TimeDelta::days(30) - chrono::TimeDelta::seconds(1);
+    pool_infos.push(to_new_db(&pi_exactly)?);
+
+    // 30日より少し新しい → 残るべき
+    let mut pi_just_inside = test_pool_info.clone();
+    pi_just_inside.id = pool_id;
+    pi_just_inside.timestamp = now - chrono::TimeDelta::days(30) + chrono::TimeDelta::minutes(1);
+    pool_infos.push(to_new_db(&pi_just_inside)?);
+
+    // 1日前 → 確実に残る
+    let mut pi_recent = test_pool_info.clone();
+    pi_recent.id = pool_id;
+    pi_recent.timestamp = now - chrono::TimeDelta::days(1);
+    pool_infos.push(to_new_db(&pi_recent)?);
+
+    match conn
+        .interact(move |conn| {
+            conn.transaction(|conn| {
+                diesel::insert_into(pool_info::table)
+                    .values(&pool_infos)
+                    .execute(conn)
+            })
+        })
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
+        Err(e) => return Err(anyhow!("DB error: {}", e)),
+    };
+    drop(conn);
+
+    cleanup_old_records(30).await?;
+
+    let count = {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
+            use diesel::dsl::count;
+            pool_info::table
+                .filter(pool_info::pool_id.eq(pool_id as i32))
+                .select(count(pool_info::id))
+                .first::<i64>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+    };
+
     assert_eq!(
-        oldest_timestamp,
-        Some(base_time + chrono::TimeDelta::seconds(5)),
-        "最古のタイムスタンプは5秒後であるべきです（0-4秒が削除される）"
+        count, 2,
+        "ちょうど30日前のレコードは削除され、30日未満の2件が残るべき"
+    );
+
+    Ok(())
+}
+
+/// retention_days が MIN_RETENTION_DAYS 未満の場合、最小値に引き上げられることを検証
+#[tokio::test]
+#[serial(pool_info)]
+async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
+    use diesel::Connection;
+    use diesel::prelude::*;
+
+    let conn = connection_pool::get().await?;
+
+    match conn
+        .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Failed to clear table: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
+    };
+
+    let now = chrono::Utc::now().naive_utc();
+    let pool_id: u32 = 400;
+
+    let test_pool_info = create_test_pool_info();
+    let mut pool_infos = Vec::new();
+
+    // 10日前 → MIN_RETENTION_DAYS(7) より古いが、retention_days=1 で呼んでも
+    // 実効値が7日に引き上げられるため削除されない
+    let mut pi_10days = test_pool_info.clone();
+    pi_10days.id = pool_id;
+    pi_10days.timestamp = now - chrono::TimeDelta::days(10);
+    pool_infos.push(to_new_db(&pi_10days)?);
+
+    // 3日前 → 確実に残る
+    let mut pi_3days = test_pool_info.clone();
+    pi_3days.id = pool_id;
+    pi_3days.timestamp = now - chrono::TimeDelta::days(3);
+    pool_infos.push(to_new_db(&pi_3days)?);
+
+    match conn
+        .interact(move |conn| {
+            conn.transaction(|conn| {
+                diesel::insert_into(pool_info::table)
+                    .values(&pool_infos)
+                    .execute(conn)
+            })
+        })
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
+        Err(e) => return Err(anyhow!("DB error: {}", e)),
+    };
+    drop(conn);
+
+    // retention_days=1 で呼び出すが、MIN_RETENTION_DAYS=7 に引き上げられる
+    // → 7日以上古いレコード（10日前）のみ削除、3日前は残る
+    cleanup_old_records(1).await?;
+
+    let count = {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
+            use diesel::dsl::count;
+            pool_info::table
+                .filter(pool_info::pool_id.eq(pool_id as i32))
+                .select(count(pool_info::id))
+                .first::<i64>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+    };
+
+    assert_eq!(
+        count, 1,
+        "retention_days=1 でも MIN_RETENTION_DAYS=7 が適用され、10日前のレコードのみ削除、3日前は残るべき"
     );
 
     Ok(())

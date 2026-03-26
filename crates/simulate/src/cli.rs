@@ -1,9 +1,23 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug)]
 #[command(name = "simulate", about = "Auto trade backtest simulation")]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Run backtest simulation
+    Run(RunArgs),
+    /// Verify simulation accuracy against real trades
+    Verify(VerifyArgs),
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct RunArgs {
     /// Simulation start date (YYYY-MM-DD)
     #[arg(long)]
     pub start_date: String,
@@ -45,15 +59,49 @@ pub struct Cli {
     pub generate_predictions: bool,
 }
 
-impl Cli {
+#[derive(Parser, Debug, Clone)]
+pub struct VerifyArgs {
+    /// Analysis start date (YYYY-MM-DD)
+    #[arg(long)]
+    pub start_date: String,
+
+    /// Analysis end date (YYYY-MM-DD)
+    #[arg(long)]
+    pub end_date: String,
+
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum OutputFormat {
+    Text,
+    Json,
+}
+
+fn parse_date(s: &str, label: &str) -> anyhow::Result<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|e| anyhow::anyhow!("Invalid {} '{}': {}", label, s, e))
+}
+
+impl RunArgs {
     pub fn parse_start_date(&self) -> anyhow::Result<chrono::NaiveDate> {
-        chrono::NaiveDate::parse_from_str(&self.start_date, "%Y-%m-%d")
-            .map_err(|e| anyhow::anyhow!("Invalid start-date '{}': {}", self.start_date, e))
+        parse_date(&self.start_date, "start-date")
     }
 
     pub fn parse_end_date(&self) -> anyhow::Result<chrono::NaiveDate> {
-        chrono::NaiveDate::parse_from_str(&self.end_date, "%Y-%m-%d")
-            .map_err(|e| anyhow::anyhow!("Invalid end-date '{}': {}", self.end_date, e))
+        parse_date(&self.end_date, "end-date")
+    }
+}
+
+impl VerifyArgs {
+    pub fn parse_start_date(&self) -> anyhow::Result<chrono::NaiveDate> {
+        parse_date(&self.start_date, "start-date")
+    }
+
+    pub fn parse_end_date(&self) -> anyhow::Result<chrono::NaiveDate> {
+        parse_date(&self.end_date, "end-date")
     }
 }
 
@@ -61,8 +109,8 @@ impl Cli {
 mod tests {
     use super::*;
 
-    fn make_cli(start: &str, end: &str) -> Cli {
-        Cli {
+    fn make_run_args(start: &str, end: &str) -> RunArgs {
+        RunArgs {
             start_date: start.to_string(),
             end_date: end.to_string(),
             initial_capital: 100.0,
@@ -78,35 +126,56 @@ mod tests {
 
     #[test]
     fn parse_valid_start_date() {
-        let cli = make_cli("2025-06-01", "2025-12-31");
-        let date = cli.parse_start_date().unwrap();
+        let args = make_run_args("2025-06-01", "2025-12-31");
+        let date = args.parse_start_date().unwrap();
         assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2025, 6, 1).unwrap());
     }
 
     #[test]
     fn parse_valid_end_date() {
-        let cli = make_cli("2025-06-01", "2025-12-31");
-        let date = cli.parse_end_date().unwrap();
+        let args = make_run_args("2025-06-01", "2025-12-31");
+        let date = args.parse_end_date().unwrap();
         assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
     }
 
     #[test]
     fn parse_invalid_start_date() {
-        let cli = make_cli("not-a-date", "2025-12-31");
-        let err = cli.parse_start_date().unwrap_err();
+        let args = make_run_args("not-a-date", "2025-12-31");
+        let err = args.parse_start_date().unwrap_err();
         assert!(err.to_string().contains("Invalid start-date"));
     }
 
     #[test]
     fn parse_invalid_end_date() {
-        let cli = make_cli("2025-06-01", "31-12-2025");
-        let err = cli.parse_end_date().unwrap_err();
+        let args = make_run_args("2025-06-01", "31-12-2025");
+        let err = args.parse_end_date().unwrap_err();
         assert!(err.to_string().contains("Invalid end-date"));
     }
 
     #[test]
     fn parse_empty_date() {
-        let cli = make_cli("", "2025-12-31");
-        assert!(cli.parse_start_date().is_err());
+        let args = make_run_args("", "2025-12-31");
+        assert!(args.parse_start_date().is_err());
+    }
+
+    fn make_verify_args(start: &str, end: &str) -> VerifyArgs {
+        VerifyArgs {
+            start_date: start.to_string(),
+            end_date: end.to_string(),
+            format: OutputFormat::Text,
+        }
+    }
+
+    #[test]
+    fn verify_parse_valid_dates() {
+        let args = make_verify_args("2025-01-01", "2025-06-30");
+        assert!(args.parse_start_date().is_ok());
+        assert!(args.parse_end_date().is_ok());
+    }
+
+    #[test]
+    fn verify_parse_invalid_date() {
+        let args = make_verify_args("bad", "2025-06-30");
+        assert!(args.parse_start_date().is_err());
     }
 }

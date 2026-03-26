@@ -1,4 +1,4 @@
-use crate::cli::Cli;
+use crate::cli::RunArgs;
 use crate::engine::run_simulation;
 use anyhow::Result;
 use logging::*;
@@ -54,7 +54,7 @@ pub struct SweepParameters {
     pub rebalance_interval_days: i64,
 }
 
-pub async fn run_sweep(base_cli: &Cli, sweep_config_path: &Path) -> Result<()> {
+pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "run_sweep"));
 
     let config_str = std::fs::read_to_string(sweep_config_path)?;

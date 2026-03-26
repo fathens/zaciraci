@@ -1,4 +1,4 @@
-use crate::cli::Cli;
+use crate::cli::RunArgs;
 use crate::mock_client::SimulationClient;
 use crate::mock_wallet::SimulationWallet;
 use crate::output::SimulationResult;
@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
+pub async fn run_simulation(cli: &RunArgs) -> Result<SimulationResult> {
     let log = DEFAULT.new(o!("function" => "run_simulation"));
 
     let start_date = cli.parse_start_date()?;
@@ -133,7 +133,7 @@ pub async fn run_simulation(cli: &Cli) -> Result<SimulationResult> {
 }
 
 /// Apply CLI parameters to the config system
-pub(crate) fn apply_config(cli: &Cli) {
+pub(crate) fn apply_config(cli: &RunArgs) {
     common::config::store::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
     common::config::store::set(
         "TRADE_PRICE_HISTORY_DAYS",
@@ -153,8 +153,8 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn make_cli(start: &str, end: &str) -> Cli {
-        Cli {
+    fn make_cli(start: &str, end: &str) -> RunArgs {
+        RunArgs {
             start_date: start.to_string(),
             end_date: end.to_string(),
             initial_capital: 100.0,
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn apply_config_sets_expected_values() {
-        let cli = Cli {
+        let cli = RunArgs {
             start_date: "2025-01-01".to_string(),
             end_date: "2025-12-31".to_string(),
             initial_capital: 500.0,
