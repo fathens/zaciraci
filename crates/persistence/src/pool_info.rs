@@ -116,6 +116,9 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
     Ok(())
 }
 
+/// Minimum retention period to prevent accidental mass deletion
+const MIN_RETENTION_DAYS: u32 = 7;
+
 /// 指定日数より古いレコードを削除
 pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
     use diesel::prelude::*;
@@ -134,10 +137,16 @@ pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
         return Ok(());
     }
 
+    let effective_days = retention_days.max(MIN_RETENTION_DAYS);
+    if effective_days != retention_days {
+        warn!(log, "retention_days below minimum, using minimum";
+            "requested" => retention_days, "effective" => effective_days);
+    }
+
     trace!(log, "start");
 
     let cutoff_date =
-        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(retention_days as i64);
+        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(effective_days as i64);
 
     let conn = connection_pool::get().await?;
 

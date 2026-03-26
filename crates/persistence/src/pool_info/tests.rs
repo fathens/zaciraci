@@ -533,3 +533,81 @@ async fn test_cleanup_old_records_boundary() -> Result<()> {
 
     Ok(())
 }
+
+/// retention_days が MIN_RETENTION_DAYS 未満の場合、最小値に引き上げられることを検証
+#[tokio::test]
+#[serial(pool_info)]
+async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
+    use diesel::Connection;
+    use diesel::prelude::*;
+
+    let conn = connection_pool::get().await?;
+
+    match conn
+        .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Failed to clear table: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to interact with DB: {}", e)),
+    };
+
+    let now = chrono::Utc::now().naive_utc();
+    let pool_id: u32 = 400;
+
+    let test_pool_info = create_test_pool_info();
+    let mut pool_infos = Vec::new();
+
+    // 10日前 → MIN_RETENTION_DAYS(7) より古いが、retention_days=1 で呼んでも
+    // 実効値が7日に引き上げられるため削除されない
+    let mut pi_10days = test_pool_info.clone();
+    pi_10days.id = pool_id;
+    pi_10days.timestamp = now - chrono::TimeDelta::days(10);
+    pool_infos.push(to_new_db(&pi_10days)?);
+
+    // 3日前 → 確実に残る
+    let mut pi_3days = test_pool_info.clone();
+    pi_3days.id = pool_id;
+    pi_3days.timestamp = now - chrono::TimeDelta::days(3);
+    pool_infos.push(to_new_db(&pi_3days)?);
+
+    match conn
+        .interact(move |conn| {
+            conn.transaction(|conn| {
+                diesel::insert_into(pool_info::table)
+                    .values(&pool_infos)
+                    .execute(conn)
+            })
+        })
+        .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(anyhow!("Insert error: {}", e)),
+        Err(e) => return Err(anyhow!("DB error: {}", e)),
+    };
+    drop(conn);
+
+    // retention_days=1 で呼び出すが、MIN_RETENTION_DAYS=7 に引き上げられる
+    // → 7日以上古いレコード（10日前）のみ削除、3日前は残る
+    cleanup_old_records(1).await?;
+
+    let count = {
+        let conn = connection_pool::get().await?;
+        conn.interact(move |conn| {
+            use diesel::dsl::count;
+            pool_info::table
+                .filter(pool_info::pool_id.eq(pool_id as i32))
+                .select(count(pool_info::id))
+                .first::<i64>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+    };
+
+    assert_eq!(
+        count, 1,
+        "retention_days=1 でも MIN_RETENTION_DAYS=7 が適用され、10日前のレコードのみ削除、3日前は残るべき"
+    );
+
+    Ok(())
+}
