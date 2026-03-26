@@ -224,3 +224,90 @@ async fn test_actual_to_amount_roundtrip() {
         std::panic::resume_unwind(e);
     }
 }
+
+#[tokio::test]
+async fn test_find_by_date_range() {
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().naive_utc();
+
+    // 3つのトランザクション: 2日前、現在、2日後
+    let tx_ids: Vec<String> = (0..3)
+        .map(|i| format!("test_tx_range_{}_{}", i, uuid::Uuid::new_v4()))
+        .collect();
+
+    let timestamps = [
+        now - chrono::TimeDelta::days(2),
+        now,
+        now + chrono::TimeDelta::days(2),
+    ];
+
+    for (tx_id, ts) in tx_ids.iter().zip(timestamps.iter()) {
+        let tx = TradeTransaction {
+            tx_id: tx_id.clone(),
+            trade_batch_id: batch_id.clone(),
+            from_token: "wrap.near".to_string(),
+            from_amount: TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000),
+            to_token: "akaia.tkn.near".to_string(),
+            to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
+            timestamp: *ts,
+            evaluation_period_id: None,
+            actual_to_amount: None,
+        };
+        tx.insert_async().await.unwrap();
+    }
+
+    let result = AssertUnwindSafe(async {
+        // 1日前〜1日後で検索 → 現在の1件のみ
+        let found = TradeTransaction::find_by_date_range_async(
+            now - chrono::TimeDelta::days(1),
+            now + chrono::TimeDelta::days(1),
+        )
+        .await
+        .unwrap();
+        let found_ids: Vec<&str> = found.iter().map(|t| t.tx_id.as_str()).collect();
+        assert!(
+            found_ids.contains(&tx_ids[1].as_str()),
+            "現在のトランザクションが含まれるべき"
+        );
+        assert!(
+            !found_ids.contains(&tx_ids[0].as_str()),
+            "2日前のトランザクションは含まれないべき"
+        );
+        assert!(
+            !found_ids.contains(&tx_ids[2].as_str()),
+            "2日後のトランザクションは含まれないべき"
+        );
+
+        // 全範囲で検索 → 3件すべて
+        let found_all = TradeTransaction::find_by_date_range_async(
+            now - chrono::TimeDelta::days(3),
+            now + chrono::TimeDelta::days(3),
+        )
+        .await
+        .unwrap();
+        let found_all_ids: Vec<&str> = found_all.iter().map(|t| t.tx_id.as_str()).collect();
+        for tx_id in &tx_ids {
+            assert!(
+                found_all_ids.contains(&tx_id.as_str()),
+                "全範囲検索で {} が含まれるべき",
+                tx_id
+            );
+        }
+
+        // タイムスタンプ昇順であることを確認
+        for w in found_all.windows(2) {
+            assert!(w[0].timestamp <= w[1].timestamp, "結果は昇順であるべき");
+        }
+    })
+    .catch_unwind()
+    .await;
+
+    // Cleanup
+    for tx_id in &tx_ids {
+        let _ = TradeTransaction::delete_by_tx_id_async(tx_id.clone()).await;
+    }
+
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
+    }
+}
