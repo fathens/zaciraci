@@ -1,4 +1,5 @@
 use super::*;
+use crate::cli::{OutputFormat, VerifyArgs};
 use bigdecimal::BigDecimal;
 use common::types::TokenSmallestUnits;
 
@@ -135,6 +136,19 @@ fn p95_single_trade() {
 }
 
 #[test]
+fn median_even_count() {
+    let txs = vec![
+        make_tx("a", "b", 100, Some(110)), // +10%
+        make_tx("a", "b", 100, Some(90)),  // -10%
+        make_tx("a", "b", 100, Some(105)), // +5%
+        make_tx("a", "b", 100, Some(97)),  // -3%
+    ];
+    let result = analyze(&txs);
+    // sorted: -10, -3, +5, +10 → median = (-3 + 5) / 2 = +1
+    assert!((result.median_error_pct - 1.0).abs() < 1e-10);
+}
+
+#[test]
 fn mixed_with_and_without_actual() {
     let txs = vec![
         make_tx("a", "b", 1000, Some(990)),  // has actual
@@ -145,4 +159,41 @@ fn mixed_with_and_without_actual() {
     assert_eq!(result.total_trades, 3);
     assert_eq!(result.trades_with_actual, 2);
     assert_eq!(result.trades_without_actual, 1);
+}
+
+// --- parse_date_range ---
+
+fn make_verify_args(start: &str, end: &str) -> VerifyArgs {
+    VerifyArgs {
+        start_date: start.to_string(),
+        end_date: end.to_string(),
+        format: OutputFormat::Text,
+    }
+}
+
+#[test]
+fn parse_date_range_valid() {
+    let args = make_verify_args("2025-01-01", "2025-06-30");
+    let (start, end) = parse_date_range(&args).unwrap();
+    assert!(start < end);
+}
+
+#[test]
+fn parse_date_range_start_equals_end() {
+    let args = make_verify_args("2025-03-01", "2025-03-01");
+    let err = parse_date_range(&args).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("start-date must be before end-date")
+    );
+}
+
+#[test]
+fn parse_date_range_start_after_end() {
+    let args = make_verify_args("2025-06-01", "2025-01-01");
+    let err = parse_date_range(&args).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("start-date must be before end-date")
+    );
 }

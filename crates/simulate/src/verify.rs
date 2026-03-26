@@ -187,9 +187,8 @@ fn print_text_report(analysis: &SlippageAnalysis, start: &str, end: &str) {
     println!("  Est. gas cost: ~{:.2} NEAR", gas_cost);
 }
 
-pub async fn run_verify(args: &VerifyArgs) -> Result<()> {
-    let log = DEFAULT.new(o!("function" => "run_verify"));
-
+/// Parse and validate date range from VerifyArgs
+fn parse_date_range(args: &VerifyArgs) -> Result<(chrono::NaiveDate, chrono::NaiveDate)> {
     let start_date = args.parse_start_date()?;
     let end_date = args.parse_end_date()?;
 
@@ -200,6 +199,14 @@ pub async fn run_verify(args: &VerifyArgs) -> Result<()> {
             end_date
         ));
     }
+
+    Ok((start_date, end_date))
+}
+
+pub async fn run_verify(args: &VerifyArgs) -> Result<()> {
+    let log = DEFAULT.new(o!("function" => "run_verify"));
+
+    let (start_date, end_date) = parse_date_range(args)?;
 
     info!(log, "verifying simulation accuracy";
         "start_date" => %start_date, "end_date" => %end_date
