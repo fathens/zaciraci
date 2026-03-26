@@ -22,7 +22,9 @@ pub async fn run(cfg: impl ConfigAccess + 'static) {
             let default = "0 0 4 * * 0";
             error!(log, "failed to parse db maintenance schedule, using default";
                    "error" => ?e, "schedule" => &cron_conf, "default" => default);
-            default.parse().unwrap()
+            default
+                .parse()
+                .expect("hardcoded default cron schedule must be valid")
         }
     };
 
