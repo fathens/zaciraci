@@ -23,6 +23,7 @@ pub struct SlippageAnalysis {
     pub total_trades: usize,
     pub trades_with_actual: usize,
     pub trades_without_actual: usize,
+    pub trades_skipped: usize,
     pub mean_error_pct: f64,
     pub median_error_pct: f64,
     pub std_dev_pct: f64,
@@ -51,6 +52,7 @@ pub fn analyze(transactions: &[TradeTransaction]) -> SlippageAnalysis {
     let mut errors: Vec<f64> = Vec::new();
     let mut pair_errors: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     let mut trades_without_actual = 0usize;
+    let mut trades_skipped = 0usize;
 
     for tx in transactions {
         let Some(ref actual) = tx.actual_to_amount else {
@@ -60,6 +62,7 @@ pub fn analyze(transactions: &[TradeTransaction]) -> SlippageAnalysis {
 
         let estimated = tx.to_amount.as_bigdecimal();
         let Some(pct) = divergence_pct(estimated, actual) else {
+            trades_skipped += 1;
             continue;
         };
 
@@ -70,32 +73,35 @@ pub fn analyze(transactions: &[TradeTransaction]) -> SlippageAnalysis {
 
     let trades_with_actual = errors.len();
 
-    let (mean_error_pct, median_error_pct, std_dev_pct, p95_error_pct, max_error_pct) = if errors
-        .is_empty()
-    {
-        (0.0, 0.0, 0.0, 0.0, 0.0)
-    } else {
-        let mean = errors.iter().sum::<f64>() / errors.len() as f64;
-        let variance = errors.iter().map(|e| (e - mean).powi(2)).sum::<f64>() / errors.len() as f64;
-        let std_dev = variance.sqrt();
-
-        errors.sort_by(f64::total_cmp);
-        let median = if errors.len().is_multiple_of(2) {
-            (errors[errors.len() / 2 - 1] + errors[errors.len() / 2]) / 2.0
+    let (mean_error_pct, median_error_pct, std_dev_pct, p95_error_pct, max_error_pct) =
+        if errors.is_empty() {
+            (0.0, 0.0, 0.0, 0.0, 0.0)
         } else {
-            errors[errors.len() / 2]
+            let mean = errors.iter().sum::<f64>() / errors.len() as f64;
+            let variance = if errors.len() > 1 {
+                errors.iter().map(|e| (e - mean).powi(2)).sum::<f64>() / (errors.len() - 1) as f64
+            } else {
+                0.0
+            };
+            let std_dev = variance.sqrt();
+
+            errors.sort_by(f64::total_cmp);
+            let median = if errors.len().is_multiple_of(2) {
+                (errors[errors.len() / 2 - 1] + errors[errors.len() / 2]) / 2.0
+            } else {
+                errors[errors.len() / 2]
+            };
+
+            // p95: 95th percentile of absolute errors (worst 5%)
+            let mut abs_sorted: Vec<f64> = errors.iter().map(|e| e.abs()).collect();
+            abs_sorted.sort_by(f64::total_cmp);
+            let p95_idx = ((abs_sorted.len() as f64) * 0.95).ceil() as usize;
+            let p95 = abs_sorted[p95_idx.min(abs_sorted.len()).saturating_sub(1)];
+
+            let max_abs = abs_sorted.last().copied().unwrap_or(0.0);
+
+            (mean, median, std_dev, p95, max_abs)
         };
-
-        // p95: 95th percentile of absolute errors (worst 5%)
-        let mut abs_sorted: Vec<f64> = errors.iter().map(|e| e.abs()).collect();
-        abs_sorted.sort_by(f64::total_cmp);
-        let p95_idx = ((abs_sorted.len() as f64) * 0.95).ceil() as usize;
-        let p95 = abs_sorted[p95_idx.min(abs_sorted.len()).saturating_sub(1)];
-
-        let max_abs = abs_sorted.last().copied().unwrap_or(0.0);
-
-        (mean, median, std_dev, p95, max_abs)
-    };
 
     let by_token_pair = pair_errors
         .into_iter()
@@ -118,6 +124,7 @@ pub fn analyze(transactions: &[TradeTransaction]) -> SlippageAnalysis {
         total_trades,
         trades_with_actual,
         trades_without_actual,
+        trades_skipped,
         mean_error_pct,
         median_error_pct,
         std_dev_pct,
@@ -144,6 +151,12 @@ fn print_text_report(analysis: &SlippageAnalysis, start: &str, end: &str) {
         "Trades without actual output: {}",
         analysis.trades_without_actual
     );
+    if analysis.trades_skipped > 0 {
+        println!(
+            "Trades skipped (zero estimated): {}",
+            analysis.trades_skipped
+        );
+    }
 
     if analysis.trades_with_actual == 0 {
         println!("\nNo trades with actual output data to analyze.");

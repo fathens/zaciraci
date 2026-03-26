@@ -31,6 +31,7 @@ fn empty_transactions() {
     assert_eq!(result.total_trades, 0);
     assert_eq!(result.trades_with_actual, 0);
     assert_eq!(result.trades_without_actual, 0);
+    assert_eq!(result.trades_skipped, 0);
     assert_eq!(result.mean_error_pct, 0.0);
 }
 
@@ -83,7 +84,9 @@ fn mixed_slippage() {
     // mean should be ~0%
     assert!(result.mean_error_pct.abs() < 1e-10);
     assert_eq!(result.trades_with_actual, 2);
-    assert!(result.std_dev_pct > 0.0);
+    // sample variance (Bessel's correction): sum((e-mean)^2) / (n-1) = 200/1 = 200
+    // std_dev = sqrt(200) ≈ 14.1421
+    assert!((result.std_dev_pct - 200.0_f64.sqrt()).abs() < 1e-10);
 }
 
 #[test]
@@ -110,9 +113,14 @@ fn zero_estimated_skipped() {
     let result = analyze(&txs);
     // zero estimated amount should be skipped (not cause division by zero)
     assert_eq!(result.trades_with_actual, 0);
+    assert_eq!(result.trades_skipped, 1);
     assert_eq!(result.trades_without_actual, 0);
-    // total_trades is still 1 but the trade doesn't contribute to stats
+    // total_trades = trades_with_actual + trades_without_actual + trades_skipped
     assert_eq!(result.total_trades, 1);
+    assert_eq!(
+        result.total_trades,
+        result.trades_with_actual + result.trades_without_actual + result.trades_skipped
+    );
 }
 
 #[test]
@@ -159,6 +167,15 @@ fn mixed_with_and_without_actual() {
     assert_eq!(result.total_trades, 3);
     assert_eq!(result.trades_with_actual, 2);
     assert_eq!(result.trades_without_actual, 1);
+}
+
+#[test]
+fn single_trade_std_dev_zero() {
+    let txs = vec![make_tx("a", "b", 1000, Some(1050))]; // +5%
+    let result = analyze(&txs);
+    assert_eq!(result.trades_with_actual, 1);
+    // n=1: sample variance is 0.0 (no Bessel's correction possible)
+    assert!((result.std_dev_pct).abs() < 1e-10);
 }
 
 // --- parse_date_range ---
