@@ -178,6 +178,7 @@ impl TradeTransaction {
             .get_results(conn)
     }
 
+    /// 指定期間内の全取引を取得（非同期版）
     pub async fn find_by_date_range_async(
         start: NaiveDateTime,
         end: NaiveDateTime,

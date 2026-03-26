@@ -1,10 +1,9 @@
 use crate::cli::VerifyArgs;
-use crate::portfolio_state::to_f64_or_warn;
 use anyhow::Result;
 use bigdecimal::BigDecimal;
 use chrono::NaiveTime;
 use logging::*;
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 use persistence::trade_transaction::TradeTransaction;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -42,7 +41,7 @@ fn divergence_pct(estimated: &BigDecimal, actual: &BigDecimal) -> Option<f64> {
     }
     let diff = actual - estimated;
     let pct = &diff / estimated * BigDecimal::from(100);
-    Some(to_f64_or_warn(&pct, "divergence_pct"))
+    pct.to_f64()
 }
 
 /// Compute the analysis from trade transactions
@@ -163,9 +162,9 @@ fn print_text_report(analysis: &SlippageAnalysis, start: &str, end: &str) {
         return;
     }
 
-    let bias = if analysis.mean_error_pct < 0.0 {
+    let bias = if analysis.mean_error_pct < -0.01 {
         "estimate overestimates"
-    } else if analysis.mean_error_pct > 0.0 {
+    } else if analysis.mean_error_pct > 0.01 {
         "estimate underestimates"
     } else {
         "no systematic bias"

@@ -120,7 +120,7 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
 const MIN_RETENTION_DAYS: u32 = 7;
 
 /// 指定日数より古いレコードを削除
-pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
+pub(crate) async fn cleanup_old_records(retention_days: u32) -> Result<()> {
     use diesel::prelude::*;
     use diesel::sql_types::Timestamp;
 
