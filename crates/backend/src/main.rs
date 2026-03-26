@@ -22,6 +22,7 @@ async fn main() {
 
     tokio::spawn(trade::run(cfg));
     tokio::spawn(arbitrage::run(cfg));
+    tokio::spawn(persistence::maintenance::run(cfg));
     tokio::spawn(web::serve(50051));
     tokio::signal::ctrl_c().await.ok();
 }
