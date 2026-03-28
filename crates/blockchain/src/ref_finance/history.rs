@@ -1,13 +1,12 @@
 use crate::ref_finance::history::statistics::Statistics;
-use once_cell::sync::Lazy;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 #[derive(Clone, Debug)]
 pub struct History {
     pub inputs: Statistics<u128>,
 }
 
-static HISTORY: Lazy<Arc<RwLock<History>>> = Lazy::new(|| {
+static HISTORY: LazyLock<Arc<RwLock<History>>> = LazyLock::new(|| {
     Arc::new(RwLock::new(History {
         inputs: Statistics::default(),
     }))

@@ -9,9 +9,9 @@ pub mod token_account;
 
 use logging::*;
 use near_sdk::AccountId;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
-pub static CONTRACT_ADDRESS: Lazy<AccountId> = Lazy::new(|| {
+pub static CONTRACT_ADDRESS: LazyLock<AccountId> = LazyLock::new(|| {
     let log = DEFAULT.new(o!("function" => "ref_finance::CONTRACT_ADDRESS"));
     let account_id = if common::config::startup::get().is_mainnet {
         "v2.ref-finance.near"

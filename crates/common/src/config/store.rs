@@ -1,14 +1,13 @@
 use crate::Result;
 use anyhow::anyhow;
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
-static CONFIG_STORE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+static CONFIG_STORE: LazyLock<Arc<Mutex<HashMap<String, String>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
-pub(crate) static DB_STORE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+pub(crate) static DB_STORE: LazyLock<Arc<Mutex<HashMap<String, String>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Resolve a configuration value through the priority chain:
 /// CONFIG_STORE > DB_STORE > env > Err

@@ -10,10 +10,10 @@ use common::types::TokenAccount;
 use logging::*;
 use near_sdk::{AccountId, NearToken};
 use num_traits::Zero;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-static DEFAULT_REQUIRED_BALANCE: Lazy<NearToken> = Lazy::new(|| NearToken::from_near(1));
+static DEFAULT_REQUIRED_BALANCE: LazyLock<NearToken> = LazyLock::new(|| NearToken::from_near(1));
 #[cfg(test)]
 const MINIMUM_NATIVE_BALANCE: NearToken = NearToken::from_near(1);
 
