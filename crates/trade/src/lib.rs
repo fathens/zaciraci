@@ -42,36 +42,37 @@ pub async fn run(cfg: ConfigResolver) {
     tokio::spawn(run_trade(cfg));
 }
 
-/// 環境変数から cron スケジュールを取得してパースする
-fn get_cron_schedule(env_var: &str, default: &str) -> cron::Schedule {
-    let log = DEFAULT.new(o!("function" => "get_cron_schedule", "env_var" => env_var.to_owned()));
-    let cron_conf = common::config::store::get(env_var).unwrap_or_else(|_| default.to_string());
+/// cron スケジュール文字列をパースし、失敗時は default にフォールバック
+fn parse_cron_schedule(cron_expr: &str, default: &str) -> cron::Schedule {
+    let log = DEFAULT.new(o!("function" => "parse_cron_schedule"));
 
-    match cron_conf.parse() {
+    match cron_expr.parse() {
         Ok(s) => {
-            info!(log, "cron schedule configured"; "schedule" => &cron_conf);
+            info!(log, "cron schedule configured"; "schedule" => cron_expr);
             s
         }
         Err(e) => {
             error!(log, "failed to parse cron schedule, using default";
-                   "error" => ?e, "schedule" => &cron_conf, "default" => default);
-            default.parse().unwrap()
+                   "error" => ?e, "schedule" => cron_expr, "default" => default);
+            default
+                .parse()
+                .expect("hardcoded default cron schedule must be valid")
         }
     }
 }
 
 async fn run_record_rates(cfg: ConfigResolver) {
-    const DEFAULT_CRON: &str = "0 */15 * * * *"; // デフォルト: 15分間隔
-    let schedule = get_cron_schedule("RECORD_RATES_CRON_SCHEDULE", DEFAULT_CRON);
+    const DEFAULT_CRON: &str = "0 */15 * * * *";
+    let schedule = parse_cron_schedule(&cfg.record_rates_cron_schedule(), DEFAULT_CRON);
     cronjob(schedule, || record_rates(&cfg), "record_rates", &cfg).await;
 }
 
 async fn run_trade(cfg: ConfigResolver) {
-    const DEFAULT_CRON: &str = "0 0 0 * * *"; // デフォルト: 毎日午前0時
+    const DEFAULT_CRON: &str = "0 0 0 * * *";
     let log = DEFAULT.new(o!("function" => "run_trade"));
     info!(log, "initializing auto trade cron job");
 
-    let schedule = get_cron_schedule("TRADE_CRON_SCHEDULE", DEFAULT_CRON);
+    let schedule = parse_cron_schedule(&cfg.trade_cron_schedule(), DEFAULT_CRON);
     cronjob(
         schedule,
         || async {
@@ -402,9 +403,8 @@ mod tests {
     use serial_test::serial;
 
     #[test]
-    fn test_get_cron_schedule_uses_default_when_env_not_set() {
-        // 存在しない環境変数名を使用
-        let schedule = get_cron_schedule("TEST_NONEXISTENT_CRON_VAR", "0 */15 * * * *");
+    fn test_parse_cron_schedule_valid() {
+        let schedule = parse_cron_schedule("0 */15 * * * *", "0 0 0 * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();
@@ -412,19 +412,8 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cron_schedule_uses_env_value() {
-        let _env_guard = common::config::store::EnvGuard::set("TEST_CRON_VALID", "0 */30 * * * *");
-        let schedule = get_cron_schedule("TEST_CRON_VALID", "0 */15 * * * *");
-        let mut upcoming = schedule.upcoming(TZ);
-        let first = upcoming.next().unwrap();
-        let second = upcoming.next().unwrap();
-        assert_eq!((second - first).num_minutes(), 30); // 環境変数の値が使われる
-    }
-
-    #[test]
-    fn test_get_cron_schedule_fallback_on_invalid_env() {
-        let _env_guard = common::config::store::EnvGuard::set("TEST_CRON_INVALID", "invalid cron");
-        let schedule = get_cron_schedule("TEST_CRON_INVALID", "0 */15 * * * *");
+    fn test_parse_cron_schedule_fallback_on_invalid() {
+        let schedule = parse_cron_schedule("invalid cron", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();

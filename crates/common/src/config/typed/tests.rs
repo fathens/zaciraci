@@ -325,6 +325,14 @@ fn test_trade_cron_schedule_default() {
 
 #[test]
 #[serial]
+fn test_record_rates_cron_schedule_default() {
+    let _env = EnvGuard::remove("RECORD_RATES_CRON_SCHEDULE");
+    crate::config::store::remove("RECORD_RATES_CRON_SCHEDULE");
+    assert_eq!(typed().record_rates_cron_schedule(), "0 */15 * * * *");
+}
+
+#[test]
+#[serial]
 fn test_db_maintenance_cron_schedule_default() {
     let _env = EnvGuard::remove("DB_MAINTENANCE_CRON_SCHEDULE");
     crate::config::store::remove("DB_MAINTENANCE_CRON_SCHEDULE");
@@ -552,7 +560,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 46);
+    assert_eq!(KEY_DEFINITIONS.len(), 47);
 }
 
 #[test]

@@ -354,6 +354,12 @@ define_typed_config! {
         default: "0 0 0 * * *"
     }
 
+    /// Cron schedule for rate recording
+    fn record_rates_cron_schedule() -> String {
+        key: "RECORD_RATES_CRON_SCHEDULE",
+        default: "0 */15 * * * *"
+    }
+
     /// Max retries for prediction fetch
     fn trade_prediction_max_retries() -> u32 {
         key: "TRADE_PREDICTION_MAX_RETRIES",
