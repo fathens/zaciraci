@@ -509,13 +509,8 @@ fn test_combinations_iterator() {
     assert_eq!(combos[9], vec![2, 3, 4]);
 
     // 全組み合わせが厳密な辞書式昇順であることを検証
-    for window in combos.windows(2) {
-        assert!(
-            window[0] < window[1],
-            "Not in lexicographic order: {:?} >= {:?}",
-            window[0],
-            window[1]
-        );
+    for [a, b] in combos.array_windows::<2>() {
+        assert!(a < b, "Not in lexicographic order: {:?} >= {:?}", a, b);
     }
 
     // 全要素がユニーク
@@ -532,12 +527,12 @@ fn test_combinations_iterator() {
     assert_eq!(combos4_2.len(), 6);
 
     // C(4, 2) も厳密な辞書式昇順であることを検証
-    for window in combos4_2.windows(2) {
+    for [a, b] in combos4_2.array_windows::<2>() {
         assert!(
-            window[0] < window[1],
+            a < b,
             "C(4,2) not in lexicographic order: {:?} >= {:?}",
-            window[0],
-            window[1]
+            a,
+            b
         );
     }
 

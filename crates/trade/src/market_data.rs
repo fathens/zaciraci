@@ -102,10 +102,10 @@ pub fn calculate_volatility_from_history(history: &PriceHistory) -> Result<BigDe
     sorted_prices.sort_by_key(|p| p.timestamp);
 
     let returns: Vec<BigDecimal> = sorted_prices
-        .windows(2)
-        .filter_map(|window| {
-            let prev_price = &window[0].price;
-            let curr_price = &window[1].price;
+        .array_windows::<2>()
+        .filter_map(|[prev, curr]| {
+            let prev_price = &prev.price;
+            let curr_price = &curr.price;
 
             if prev_price.is_zero() {
                 None

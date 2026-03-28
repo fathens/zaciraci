@@ -295,8 +295,8 @@ async fn test_find_by_date_range() {
         }
 
         // タイムスタンプ昇順であることを確認
-        for w in found_all.windows(2) {
-            assert!(w[0].timestamp <= w[1].timestamp, "結果は昇順であるべき");
+        for [a, b] in found_all.array_windows::<2>() {
+            assert!(a.timestamp <= b.timestamp, "結果は昇順であるべき");
         }
     })
     .catch_unwind()
