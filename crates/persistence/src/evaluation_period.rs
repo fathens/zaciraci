@@ -390,9 +390,28 @@ mod tests {
     #[tokio::test]
     #[serial(evaluation_period)]
     async fn test_cleanup_old_records_zero_days_skips() {
+        let now = chrono::Utc::now().naive_utc();
+        let id = format!("eval_test_zero_{}", uuid::Uuid::new_v4());
+
+        // 古いレコードを作成
+        insert_with_created_at(&id, now - chrono::TimeDelta::days(400))
+            .await
+            .unwrap();
+
         // retention_days=0 は何も削除しない
         let result = cleanup_old_records(0).await;
         assert!(result.is_ok());
+
+        // レコードが残っていることを確認
+        let record = EvaluationPeriod::get_by_period_id_async(id.clone())
+            .await
+            .unwrap();
+        assert!(
+            record.is_some(),
+            "record should remain when retention_days is 0"
+        );
+
+        let _ = EvaluationPeriod::delete_by_period_id_async(id).await;
     }
 
     #[tokio::test]
