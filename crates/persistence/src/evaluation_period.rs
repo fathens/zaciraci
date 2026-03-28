@@ -226,7 +226,7 @@ impl EvaluationPeriod {
 }
 
 /// Minimum retention period to prevent accidental mass deletion
-const MIN_RETENTION_DAYS: u32 = 7;
+const MIN_RETENTION_DAYS: u32 = 30;
 
 /// 指定日数より古いレコードを削除
 ///
@@ -401,13 +401,13 @@ mod tests {
         let now = chrono::Utc::now().naive_utc();
         let id = format!("eval_test_min_{}", uuid::Uuid::new_v4());
 
-        // 10日前のレコード
-        insert_with_created_at(&id, now - chrono::TimeDelta::days(10))
+        // 40日前のレコード
+        insert_with_created_at(&id, now - chrono::TimeDelta::days(40))
             .await
             .unwrap();
 
-        // retention_days=1 → effective=7 (MIN_RETENTION_DAYS)
-        // 10日前 > 7日前 なので削除される
+        // retention_days=1 → effective=30 (MIN_RETENTION_DAYS)
+        // 40日前 > 30日前 なので削除される
         cleanup_old_records(1).await.unwrap();
 
         let record = EvaluationPeriod::get_by_period_id_async(id.clone())
@@ -415,7 +415,7 @@ mod tests {
             .unwrap();
         assert!(
             record.is_none(),
-            "10-day-old record should be deleted with effective retention of 7 days"
+            "40-day-old record should be deleted with effective retention of 30 days"
         );
     }
 
