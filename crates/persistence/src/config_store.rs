@@ -271,7 +271,7 @@ pub async fn cleanup_old_history(retention_days: u32) -> Result<()> {
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-    trace!(log, "finish"; "deleted_count" => deleted_count);
+    info!(log, "finish"; "deleted_count" => deleted_count);
     Ok(())
 }
 
