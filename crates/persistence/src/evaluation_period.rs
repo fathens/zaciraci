@@ -5,6 +5,7 @@ use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use common::types::YoctoAmount;
 use diesel::prelude::*;
+use logging::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -224,10 +225,59 @@ impl EvaluationPeriod {
     }
 }
 
+/// Minimum retention period to prevent accidental mass deletion
+const MIN_RETENTION_DAYS: u32 = 7;
+
+/// 指定日数より古いレコードを削除
+///
+/// ON DELETE CASCADE により、関連する trade_transactions と portfolio_holdings も連鎖削除される。
+pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
+    use diesel::sql_types::Timestamp;
+
+    let log = DEFAULT.new(o!(
+        "function" => "evaluation_period::cleanup_old_records",
+        "retention_days" => retention_days,
+    ));
+
+    if retention_days == 0 {
+        warn!(
+            log,
+            "retention_days is 0, skipping cleanup to prevent deleting all records"
+        );
+        return Ok(());
+    }
+
+    let effective_days = retention_days.max(MIN_RETENTION_DAYS);
+    if effective_days != retention_days {
+        warn!(log, "retention_days below minimum, using minimum";
+            "requested" => retention_days, "effective" => effective_days);
+    }
+
+    trace!(log, "start");
+
+    let cutoff_date =
+        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(i64::from(effective_days));
+
+    let conn = connection_pool::get().await?;
+
+    let deleted_count = conn
+        .interact(move |conn| {
+            diesel::sql_query("DELETE FROM evaluation_periods WHERE created_at < $1")
+                .bind::<Timestamp, _>(cutoff_date)
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+    trace!(log, "finish"; "deleted_count" => deleted_count);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use futures::FutureExt;
+    use serial_test::serial;
     use std::panic::AssertUnwindSafe;
 
     #[tokio::test]
@@ -281,5 +331,152 @@ mod tests {
         if let Err(e) = result {
             std::panic::resume_unwind(e);
         }
+    }
+
+    /// 古い created_at を持つ evaluation_period を直接 INSERT するヘルパー
+    async fn insert_with_created_at(period_id: &str, created_at: NaiveDateTime) -> Result<()> {
+        use diesel::sql_types::{Numeric, Timestamp, Varchar};
+
+        let conn = connection_pool::get().await?;
+        let period_id = period_id.to_string();
+        conn.interact(move |conn| {
+            diesel::sql_query(
+                "INSERT INTO evaluation_periods (period_id, start_time, initial_value, created_at) \
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind::<Varchar, _>(&period_id)
+            .bind::<Timestamp, _>(created_at)
+            .bind::<Numeric, _>(BigDecimal::from(0))
+            .bind::<Timestamp, _>(created_at)
+            .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial(evaluation_period)]
+    async fn test_cleanup_old_records() {
+        let now = chrono::Utc::now().naive_utc();
+        let old_id = format!("eval_test_old_{}", uuid::Uuid::new_v4());
+        let recent_id = format!("eval_test_recent_{}", uuid::Uuid::new_v4());
+
+        // 400日前のレコードと10日前のレコードを作成
+        insert_with_created_at(&old_id, now - chrono::TimeDelta::days(400))
+            .await
+            .unwrap();
+        insert_with_created_at(&recent_id, now - chrono::TimeDelta::days(10))
+            .await
+            .unwrap();
+
+        // 365日より古いレコードを削除
+        cleanup_old_records(365).await.unwrap();
+
+        // 古いレコードは削除、新しいレコードは残る
+        let old = EvaluationPeriod::get_by_period_id_async(old_id)
+            .await
+            .unwrap();
+        assert!(old.is_none(), "400-day-old record should be deleted");
+
+        let recent = EvaluationPeriod::get_by_period_id_async(recent_id.clone())
+            .await
+            .unwrap();
+        assert!(recent.is_some(), "10-day-old record should remain");
+
+        let _ = EvaluationPeriod::delete_by_period_id_async(recent_id).await;
+    }
+
+    #[tokio::test]
+    #[serial(evaluation_period)]
+    async fn test_cleanup_old_records_zero_days_skips() {
+        // retention_days=0 は何も削除しない
+        let result = cleanup_old_records(0).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[serial(evaluation_period)]
+    async fn test_cleanup_old_records_minimum_retention() {
+        let now = chrono::Utc::now().naive_utc();
+        let id = format!("eval_test_min_{}", uuid::Uuid::new_v4());
+
+        // 10日前のレコード
+        insert_with_created_at(&id, now - chrono::TimeDelta::days(10))
+            .await
+            .unwrap();
+
+        // retention_days=1 → effective=7 (MIN_RETENTION_DAYS)
+        // 10日前 > 7日前 なので削除される
+        cleanup_old_records(1).await.unwrap();
+
+        let record = EvaluationPeriod::get_by_period_id_async(id.clone())
+            .await
+            .unwrap();
+        assert!(
+            record.is_none(),
+            "10-day-old record should be deleted with effective retention of 7 days"
+        );
+    }
+
+    #[tokio::test]
+    #[serial(evaluation_period)]
+    async fn test_cleanup_cascades_to_child_tables() {
+        use crate::portfolio_holding::{NewPortfolioHolding, PortfolioHolding};
+        use crate::trade_transaction::TradeTransaction;
+
+        let now = chrono::Utc::now().naive_utc();
+        let period_id = format!("eval_test_cascade_{}", uuid::Uuid::new_v4());
+        let old_time = now - chrono::TimeDelta::days(400);
+
+        // 古い evaluation_period を作成
+        insert_with_created_at(&period_id, old_time).await.unwrap();
+
+        // 子テーブルにレコードを追加
+        let holding = NewPortfolioHolding {
+            evaluation_period_id: period_id.clone(),
+            timestamp: old_time,
+            token_holdings: serde_json::json!([]),
+        };
+        PortfolioHolding::insert_async(holding).await.unwrap();
+
+        let tx_id = format!("test_tx_{}", uuid::Uuid::new_v4());
+        let tx = TradeTransaction {
+            tx_id: tx_id.clone(),
+            trade_batch_id: "test_batch".to_string(),
+            from_token: "wrap.near".to_string(),
+            from_amount: "1000".parse().unwrap(),
+            to_token: "usdt.tether-token.near".to_string(),
+            to_amount: "100".parse().unwrap(),
+            timestamp: old_time,
+            evaluation_period_id: Some(period_id.clone()),
+            actual_to_amount: None,
+        };
+        tx.insert_async().await.unwrap();
+
+        // cleanup で親を削除 → CASCADE で子も消える
+        cleanup_old_records(365).await.unwrap();
+
+        // 親が消えている
+        let parent = EvaluationPeriod::get_by_period_id_async(period_id.clone())
+            .await
+            .unwrap();
+        assert!(parent.is_none(), "parent should be deleted");
+
+        // portfolio_holdings も消えている
+        let holdings = PortfolioHolding::get_by_period_async(period_id)
+            .await
+            .unwrap();
+        assert!(
+            holdings.is_empty(),
+            "child portfolio_holdings should be cascade-deleted"
+        );
+
+        // trade_transaction も消えている
+        let tx = TradeTransaction::find_by_tx_id_async(tx_id).await.unwrap();
+        assert!(
+            tx.is_none(),
+            "child trade_transaction should be cascade-deleted"
+        );
     }
 }

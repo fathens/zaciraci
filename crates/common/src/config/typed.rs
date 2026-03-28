@@ -495,6 +495,13 @@ define_typed_config! {
         default: 90
     }
 
+    /// Retention period for evaluation period records in days
+    /// (ON DELETE CASCADE also removes related trade_transactions and portfolio_holdings)
+    fn evaluation_periods_retention_days() -> u32 {
+        key: "EVALUATION_PERIODS_RETENTION_DAYS",
+        default: 365
+    }
+
     /// Max sleep duration in cron loop in seconds
     fn cron_max_sleep_seconds() -> u64 {
         key: "CRON_MAX_SLEEP_SECONDS",

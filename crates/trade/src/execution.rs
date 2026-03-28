@@ -1030,6 +1030,15 @@ where
                     "initial_value" => %created_period.initial_value
                 );
 
+                // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
+                if let Err(e) = persistence::evaluation_period::cleanup_old_records(
+                    cfg.evaluation_periods_retention_days(),
+                )
+                .await
+                {
+                    warn!(log, "failed to cleanup old evaluation periods"; "error" => %e);
+                }
+
                 Ok(EvaluationPeriodResult {
                     period_id: created_period.period_id,
                     is_new_period: true,
@@ -1102,6 +1111,15 @@ where
                 "period_id" => %created_period.period_id,
                 "initial_value" => %created_period.initial_value
             );
+
+            // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
+            if let Err(e) = persistence::evaluation_period::cleanup_old_records(
+                cfg.evaluation_periods_retention_days(),
+            )
+            .await
+            {
+                warn!(log, "failed to cleanup old evaluation periods"; "error" => %e);
+            }
 
             Ok(EvaluationPeriodResult {
                 period_id: created_period.period_id,
