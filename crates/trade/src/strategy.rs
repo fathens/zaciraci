@@ -258,11 +258,6 @@ where
         warn!(log, "failed to record portfolio holdings"; "error" => ?e);
     }
 
-    // 古い保有量レコードのクリーンアップ
-    if let Err(e) = super::snapshot::cleanup_old_records(cfg).await {
-        warn!(log, "failed to cleanup old portfolio holdings"; "error" => ?e);
-    }
-
     // 注: ハーベスト判定は manage_evaluation_period 内で評価期間終了時（清算後・新period作成前）に
     // 自動実行される。旧 period の initial_value と清算額で正しく比較するため。
 

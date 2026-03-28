@@ -1,5 +1,4 @@
 use crate::Result;
-use common::config::ConfigAccess;
 use common::types::{TokenAccount, TokenAmount};
 use logging::*;
 use persistence::portfolio_holding::{NewPortfolioHolding, PortfolioHolding, TokenHolding};
@@ -77,13 +76,6 @@ pub async fn get_holdings_from_db(
 
     let holdings = record.parse_holdings()?;
     Ok(Some(holdings_to_balances(&holdings)))
-}
-
-/// 古い保有量レコードのクリーンアップ
-pub async fn cleanup_old_records(cfg: &impl ConfigAccess) -> Result<usize> {
-    let retention_days = cfg.portfolio_holdings_retention_days();
-
-    PortfolioHolding::cleanup_old_records(retention_days).await
 }
 
 /// BTreeMap<TokenAccount, TokenAmount> → Vec<TokenHolding> に変換（ゼロ残高は除外）

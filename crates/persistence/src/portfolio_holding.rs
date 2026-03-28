@@ -97,25 +97,6 @@ impl PortfolioHolding {
 
         Ok(result)
     }
-
-    /// 古いレコードを削除
-    pub async fn cleanup_old_records(retention_days: u16) -> Result<usize> {
-        let conn = connection_pool::get().await?;
-        let cutoff =
-            chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(i64::from(retention_days));
-
-        let deleted = conn
-            .interact(move |conn| {
-                diesel::delete(
-                    portfolio_holdings::table.filter(portfolio_holdings::timestamp.lt(cutoff)),
-                )
-                .execute(conn)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
-
-        Ok(deleted)
-    }
 }
 
 #[cfg(test)]

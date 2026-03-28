@@ -541,12 +541,6 @@ define_typed_config! {
         default: 0.3
     }
 
-    /// Retention days for portfolio holding snapshots
-    fn portfolio_holdings_retention_days() -> u16 {
-        key: "PORTFOLIO_HOLDINGS_RETENTION_DAYS",
-        default: 90
-    }
-
     // ── prediction ──
 
     /// Retention days for evaluated prediction records
