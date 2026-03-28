@@ -499,9 +499,9 @@ define_typed_config! {
     // ── rpc ──
 
     /// Max RPC retry attempts
-    fn rpc_max_attempts() -> u32 {
+    fn rpc_max_attempts() -> u16 {
         key: "RPC_MAX_ATTEMPTS",
-        default: 10
+        default: 128
     }
 
     // ── cron ──

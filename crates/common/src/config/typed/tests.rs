@@ -165,7 +165,7 @@ fn test_token_rates_retention_days_default() {
 fn test_rpc_max_attempts_default() {
     let _env = EnvGuard::remove("RPC_MAX_ATTEMPTS");
     crate::config::store::remove("RPC_MAX_ATTEMPTS");
-    assert_eq!(typed().rpc_max_attempts(), 10);
+    assert_eq!(typed().rpc_max_attempts(), 128);
 }
 
 // ── u64 keys ──
