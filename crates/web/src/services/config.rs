@@ -5,6 +5,7 @@ use crate::proto::{
     ListKeyDefinitionsRequest, ListKeyDefinitionsResponse, UpsertConfigRequest,
     UpsertConfigResponse,
 };
+use common::config::ConfigAccess;
 use tonic::{Request, Response, Status};
 
 impl From<common::config::ConfigValueType> for crate::proto::ConfigValueType {
@@ -98,6 +99,10 @@ impl ConfigService for ConfigServiceImpl {
         .await
         .map_err(|e| Status::internal(format!("Failed to upsert config: {e}")))?;
 
+        // 古い履歴レコードのクリーンアップ（エラーは無視）
+        let retention_days = common::config::typed().config_store_history_retention_days();
+        let _ = persistence::config_store::cleanup_old_history(retention_days).await;
+
         Ok(Response::new(UpsertConfigResponse {}))
     }
 
@@ -115,6 +120,10 @@ impl ConfigService for ConfigServiceImpl {
         persistence::config_store::delete(instance_id, &req.key)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
+
+        // 古い履歴レコードのクリーンアップ（エラーは無視）
+        let retention_days = common::config::typed().config_store_history_retention_days();
+        let _ = persistence::config_store::cleanup_old_history(retention_days).await;
 
         Ok(Response::new(DeleteConfigResponse {}))
     }

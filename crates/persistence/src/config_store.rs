@@ -4,6 +4,7 @@ use crate::schema::{config_store, config_store_history};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use logging::*;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -228,6 +229,52 @@ pub async fn reload_to_config(instance_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Minimum retention period to prevent accidental mass deletion
+const MIN_RETENTION_DAYS: u32 = 7;
+
+/// 指定日数より古い config_store_history レコードを削除
+pub async fn cleanup_old_history(retention_days: u32) -> Result<()> {
+    use diesel::sql_types::Timestamp;
+
+    let log = DEFAULT.new(o!(
+        "function" => "config_store::cleanup_old_history",
+        "retention_days" => retention_days,
+    ));
+
+    if retention_days == 0 {
+        warn!(
+            log,
+            "retention_days is 0, skipping cleanup to prevent deleting all records"
+        );
+        return Ok(());
+    }
+
+    let effective_days = retention_days.max(MIN_RETENTION_DAYS);
+    if effective_days != retention_days {
+        warn!(log, "retention_days below minimum, using minimum";
+            "requested" => retention_days, "effective" => effective_days);
+    }
+
+    trace!(log, "start");
+
+    let cutoff_date =
+        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(i64::from(effective_days));
+
+    let conn = connection_pool::get().await?;
+
+    let deleted_count = conn
+        .interact(move |conn| {
+            diesel::sql_query("DELETE FROM config_store_history WHERE changed_at < $1")
+                .bind::<Timestamp, _>(cutoff_date)
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    trace!(log, "finish"; "deleted_count" => deleted_count);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +417,56 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(last_history, Some("(deleted)".to_string()));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_cleanup_old_history() {
+        use diesel::sql_types::{Nullable, Text, Timestamp, Varchar};
+
+        // 古い履歴レコードを直接 INSERT
+        let conn = connection_pool::get().await.unwrap();
+        let old_time = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(400);
+        conn.interact(move |conn| {
+            diesel::sql_query(
+                "INSERT INTO config_store_history (instance_id, key, old_value, new_value, changed_at) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind::<Varchar, _>("*")
+            .bind::<Varchar, _>("TEST_CLEANUP_HISTORY_KEY")
+            .bind::<Nullable<Text>, _>(None::<String>)
+            .bind::<Text, _>("old_value")
+            .bind::<Timestamp, _>(old_time)
+            .execute(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        // cleanup (365日) で古いレコードが消える
+        cleanup_old_history(365).await.unwrap();
+
+        // 400日前のレコードが消えていることを確認
+        let conn = connection_pool::get().await.unwrap();
+        let count: i64 = conn
+            .interact(|conn| {
+                use diesel::dsl::count;
+                config_store_history::table
+                    .filter(config_store_history::key.eq("TEST_CLEANUP_HISTORY_KEY"))
+                    .select(count(config_store_history::id))
+                    .first::<i64>(conn)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(count, 0, "400-day-old history record should be deleted");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_cleanup_old_history_zero_days_skips() {
+        let result = cleanup_old_history(0).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

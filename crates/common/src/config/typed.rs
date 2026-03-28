@@ -502,6 +502,12 @@ define_typed_config! {
         default: 365
     }
 
+    /// Retention period for config store history records in days
+    fn config_store_history_retention_days() -> u32 {
+        key: "CONFIG_STORE_HISTORY_RETENTION_DAYS",
+        default: 365
+    }
+
     /// Max sleep duration in cron loop in seconds
     fn cron_max_sleep_seconds() -> u64 {
         key: "CRON_MAX_SLEEP_SECONDS",
