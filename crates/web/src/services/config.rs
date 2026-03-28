@@ -6,6 +6,7 @@ use crate::proto::{
     UpsertConfigResponse,
 };
 use common::config::ConfigAccess;
+use logging::{DEFAULT, o, warn};
 use tonic::{Request, Response, Status};
 
 impl From<common::config::ConfigValueType> for crate::proto::ConfigValueType {
@@ -99,9 +100,12 @@ impl ConfigService for ConfigServiceImpl {
         .await
         .map_err(|e| Status::internal(format!("Failed to upsert config: {e}")))?;
 
-        // 古い履歴レコードのクリーンアップ（エラーは無視）
+        // 古い履歴レコードのクリーンアップ
         let retention_days = common::config::typed().config_store_history_retention_days();
-        let _ = persistence::config_store::cleanup_old_history(retention_days).await;
+        if let Err(e) = persistence::config_store::cleanup_old_history(retention_days).await {
+            let log = DEFAULT.new(o!("function" => "ConfigService::upsert"));
+            warn!(log, "failed to cleanup old config history"; "error" => %e);
+        }
 
         Ok(Response::new(UpsertConfigResponse {}))
     }
@@ -121,9 +125,12 @@ impl ConfigService for ConfigServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
 
-        // 古い履歴レコードのクリーンアップ（エラーは無視）
+        // 古い履歴レコードのクリーンアップ
         let retention_days = common::config::typed().config_store_history_retention_days();
-        let _ = persistence::config_store::cleanup_old_history(retention_days).await;
+        if let Err(e) = persistence::config_store::cleanup_old_history(retention_days).await {
+            let log = DEFAULT.new(o!("function" => "ConfigService::delete"));
+            warn!(log, "failed to cleanup old config history"; "error" => %e);
+        }
 
         Ok(Response::new(DeleteConfigResponse {}))
     }
