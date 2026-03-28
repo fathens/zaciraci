@@ -9,7 +9,6 @@ dex = { path = "../dex" }
 logging = { path = "../logging" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
-once_cell = { workspace = true }
 async-once-cell = { workspace = true }
 chrono = { workspace = true }
 num-traits = { workspace = true }

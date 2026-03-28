@@ -21,12 +21,11 @@ use near_primitives::views::{
     TxExecutionStatus,
 };
 use near_sdk::{AccountId, NearToken};
-use once_cell::sync::Lazy;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 /// 全呼び出し元で共有される EndpointPool
 /// 障害エンドポイント情報を共有し、無駄なリトライを削減する
-static SHARED_ENDPOINT_POOL: Lazy<Arc<endpoint_pool::EndpointPool>> = Lazy::new(|| {
+static SHARED_ENDPOINT_POOL: LazyLock<Arc<endpoint_pool::EndpointPool>> = LazyLock::new(|| {
     Arc::new(endpoint_pool::EndpointPool::new(
         common::config::startup::get(),
     ))

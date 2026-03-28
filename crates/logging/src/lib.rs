@@ -1,7 +1,7 @@
 #![deny(warnings)]
 
-use once_cell::sync::Lazy;
 pub use slog::*;
+use std::sync::LazyLock;
 
 fn wrap<D>(drain: D) -> Fuse<slog_async::Async>
 where
@@ -14,7 +14,7 @@ where
         .fuse()
 }
 
-pub static DEFAULT: Lazy<Logger> = Lazy::new(|| {
+pub static DEFAULT: LazyLock<Logger> = LazyLock::new(|| {
     let mk_term = || {
         slog_term::FullFormat::new(slog_term::TermDecorator::new().build())
             .build()

@@ -3,11 +3,11 @@ use std::time::Duration;
 use crate::Result;
 use deadpool_diesel::postgres::Pool;
 use deadpool_diesel::{Manager, ManagerConfig, RecyclingMethod};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 pub type Client = deadpool_diesel::postgres::Connection;
 
-static POOL: Lazy<Pool> = Lazy::new(|| {
+static POOL: LazyLock<Pool> = LazyLock::new(|| {
     let startup = common::config::startup::get();
     let dsn = if startup.database_url.is_empty() {
         "postgres://postgres_test:postgres_test@localhost:5433/postgres_test".to_string()

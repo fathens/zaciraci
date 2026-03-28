@@ -1,4 +1,4 @@
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 // ── ConfigValueType enum ──
@@ -594,7 +594,7 @@ define_typed_config! {
     // ── persistence: database_url, pg_pool_size, instance_id moved to StartupConfig ──
 }
 
-static TYPED: Lazy<ConfigResolver> = Lazy::new(|| ConfigResolver);
+static TYPED: LazyLock<ConfigResolver> = LazyLock::new(|| ConfigResolver);
 
 /// Returns a reference to the global typed config resolver.
 ///

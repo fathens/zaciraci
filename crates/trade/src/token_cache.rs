@@ -10,13 +10,13 @@ use chrono::{DateTime, Utc};
 use common::config::ConfigAccess;
 use common::types::TokenAccount;
 use logging::*;
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use tokio::sync::RwLock;
 
 /// グローバル decimals キャッシュ: token_id → decimals
-static TOKEN_DECIMALS_CACHE: Lazy<RwLock<HashMap<TokenAccount, u8>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+static TOKEN_DECIMALS_CACHE: LazyLock<RwLock<HashMap<TokenAccount, u8>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// RPC 取得失敗の記録
 struct FailureRecord {
@@ -47,8 +47,8 @@ impl FailureRecord {
 }
 
 /// ネガティブキャッシュ: RPC 取得に失敗したトークンの記録
-static TOKEN_DECIMALS_FAILURES: Lazy<RwLock<HashMap<TokenAccount, FailureRecord>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+static TOKEN_DECIMALS_FAILURES: LazyLock<RwLock<HashMap<TokenAccount, FailureRecord>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// 起動時に DB から全トークンの decimals を一括ロード (1 SQL クエリ)
 pub async fn load_from_db() -> crate::Result<()> {

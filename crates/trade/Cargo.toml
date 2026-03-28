@@ -12,7 +12,6 @@ blockchain = { path = "../blockchain" }
 anyhow = { workspace = true }
 near-primitives = "0.34"
 tokio = { workspace = true }
-once_cell = { workspace = true }
 cron = "0.15"
 chrono = { workspace = true }
 bigdecimal = { workspace = true }
