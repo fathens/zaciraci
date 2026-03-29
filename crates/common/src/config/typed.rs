@@ -557,13 +557,13 @@ define_typed_config! {
     // ── prediction ──
 
     /// Retention days for evaluated prediction records
-    fn prediction_record_retention_days() -> i64 {
+    fn prediction_record_retention_days() -> u32 {
         key: "PREDICTION_RECORD_RETENTION_DAYS",
         default: 30
     }
 
     /// Retention days for unevaluated predictions
-    fn prediction_unevaluated_retention_days() -> i64 {
+    fn prediction_unevaluated_retention_days() -> u32 {
         key: "PREDICTION_UNEVALUATED_RETENTION_DAYS",
         default: 20
     }
