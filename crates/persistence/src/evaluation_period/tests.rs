@@ -191,7 +191,7 @@ async fn test_cleanup_cascades_to_child_tables() {
         to_token: "usdt.tether-token.near".to_string(),
         to_amount: "100".parse().unwrap(),
         timestamp: old_time,
-        evaluation_period_id: Some(period_id.clone()),
+        evaluation_period_id: period_id.clone(),
         actual_to_amount: None,
     };
     tx.insert_async().await.unwrap();

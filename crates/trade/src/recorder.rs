@@ -87,7 +87,7 @@ impl TradeRecorder {
             to_token: to_token.to_string(),
             to_amount: to_smallest,
             timestamp: chrono::Utc::now().naive_utc(),
-            evaluation_period_id: Some(self.evaluation_period_id.clone()),
+            evaluation_period_id: self.evaluation_period_id.clone(),
             actual_to_amount: actual_to_smallest,
         };
 
