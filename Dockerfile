@@ -1,4 +1,4 @@
-FROM rust:1.91.0-bookworm AS base
+FROM rust:1.94.1-bookworm AS base
 
 RUN cargo install sccache cargo-chef
 
