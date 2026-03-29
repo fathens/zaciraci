@@ -897,13 +897,13 @@ pub(crate) struct LiquidationResult {
     pub failed_tokens: Vec<TokenAccount>,
 }
 
-async fn try_cleanup_old_evaluation_periods(cfg: &impl ConfigAccess, log: &slog::Logger) {
-    if let Err(e) =
-        persistence::evaluation_period::cleanup_old_records(cfg.evaluation_periods_retention_days())
-            .await
-    {
-        warn!(log, "failed to cleanup old evaluation periods"; "error" => %e);
-    }
+fn spawn_cleanup_old_evaluation_periods(retention_days: u32) {
+    tokio::spawn(async move {
+        if let Err(e) = persistence::evaluation_period::cleanup_old_records(retention_days).await {
+            let log = DEFAULT.new(o!("function" => "cleanup_old_evaluation_periods"));
+            warn!(log, "failed to cleanup old evaluation periods"; "error" => %e);
+        }
+    });
 }
 
 pub(crate) async fn manage_evaluation_period<C, W>(
@@ -1040,7 +1040,7 @@ where
                 );
 
                 // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
-                try_cleanup_old_evaluation_periods(cfg, &log).await;
+                spawn_cleanup_old_evaluation_periods(cfg.evaluation_periods_retention_days());
 
                 Ok(EvaluationPeriodResult {
                     period_id: created_period.period_id,
@@ -1116,7 +1116,7 @@ where
             );
 
             // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
-            try_cleanup_old_evaluation_periods(cfg, &log).await;
+            spawn_cleanup_old_evaluation_periods(cfg.evaluation_periods_retention_days());
 
             Ok(EvaluationPeriodResult {
                 period_id: created_period.period_id,
