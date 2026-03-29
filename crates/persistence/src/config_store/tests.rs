@@ -146,41 +146,45 @@ async fn test_cleanup_old_history() {
     use diesel::sql_types::{Nullable, Text, Timestamp, Varchar};
 
     // 古い履歴レコードを直接 INSERT
-    let conn = connection_pool::get().await.unwrap();
-    let old_time = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(400);
-    conn.interact(move |conn| {
-        diesel::sql_query(
-            "INSERT INTO config_store_history (instance_id, key, old_value, new_value, changed_at) \
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind::<Varchar, _>("*")
-        .bind::<Varchar, _>("TEST_CLEANUP_HISTORY_KEY")
-        .bind::<Nullable<Text>, _>(None::<String>)
-        .bind::<Text, _>("old_value")
-        .bind::<Timestamp, _>(old_time)
-        .execute(conn)
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    {
+        let conn = connection_pool::get().await.unwrap();
+        let old_time = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(400);
+        conn.interact(move |conn| {
+            diesel::sql_query(
+                "INSERT INTO config_store_history (instance_id, key, old_value, new_value, changed_at) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind::<Varchar, _>("*")
+            .bind::<Varchar, _>("TEST_CLEANUP_HISTORY_KEY")
+            .bind::<Nullable<Text>, _>(None::<String>)
+            .bind::<Text, _>("old_value")
+            .bind::<Timestamp, _>(old_time)
+            .execute(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    }
 
     // cleanup (365日) で古いレコードが消える
     cleanup_old_history(365).await.unwrap();
 
     // 400日前のレコードが消えていることを確認
-    let conn = connection_pool::get().await.unwrap();
-    let count: i64 = conn
-        .interact(|conn| {
-            use diesel::dsl::count;
-            config_store_history::table
-                .filter(config_store_history::key.eq("TEST_CLEANUP_HISTORY_KEY"))
-                .select(count(config_store_history::id))
-                .first::<i64>(conn)
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(count, 0, "400-day-old history record should be deleted");
+    {
+        let conn = connection_pool::get().await.unwrap();
+        let count: i64 = conn
+            .interact(|conn| {
+                use diesel::dsl::count;
+                config_store_history::table
+                    .filter(config_store_history::key.eq("TEST_CLEANUP_HISTORY_KEY"))
+                    .select(count(config_store_history::id))
+                    .first::<i64>(conn)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(count, 0, "400-day-old history record should be deleted");
+    }
 }
 
 #[tokio::test]
@@ -189,57 +193,62 @@ async fn test_cleanup_old_history_zero_days_skips() {
     use diesel::sql_types::{Nullable, Text, Timestamp, Varchar};
 
     // 古い履歴レコードを作成
-    let conn = connection_pool::get().await.unwrap();
-    let old_time = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(400);
-    let test_key = "TEST_CLEANUP_ZERO_DAYS_KEY";
-    let test_key_owned = test_key.to_string();
-    conn.interact(move |conn| {
-        diesel::sql_query(
-            "INSERT INTO config_store_history (instance_id, key, old_value, new_value, changed_at) \
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind::<Varchar, _>("*")
-        .bind::<Varchar, _>(&test_key_owned)
-        .bind::<Nullable<Text>, _>(None::<String>)
-        .bind::<Text, _>("zero_days_value")
-        .bind::<Timestamp, _>(old_time)
-        .execute(conn)
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    {
+        let conn = connection_pool::get().await.unwrap();
+        let old_time = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(400);
+        let test_key_owned = "TEST_CLEANUP_ZERO_DAYS_KEY".to_string();
+        conn.interact(move |conn| {
+            diesel::sql_query(
+                "INSERT INTO config_store_history (instance_id, key, old_value, new_value, changed_at) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind::<Varchar, _>("*")
+            .bind::<Varchar, _>(&test_key_owned)
+            .bind::<Nullable<Text>, _>(None::<String>)
+            .bind::<Text, _>("zero_days_value")
+            .bind::<Timestamp, _>(old_time)
+            .execute(conn)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    }
 
     // retention_days=0 は何も削除しない
     let result = cleanup_old_history(0).await;
     assert!(result.is_ok());
 
     // レコードが残っていることを確認
-    let conn = connection_pool::get().await.unwrap();
-    let count: i64 = conn
-        .interact(|conn| {
-            use diesel::dsl::count;
-            config_store_history::table
-                .filter(config_store_history::key.eq("TEST_CLEANUP_ZERO_DAYS_KEY"))
-                .select(count(config_store_history::id))
-                .first::<i64>(conn)
+    {
+        let conn = connection_pool::get().await.unwrap();
+        let count: i64 = conn
+            .interact(|conn| {
+                use diesel::dsl::count;
+                config_store_history::table
+                    .filter(config_store_history::key.eq("TEST_CLEANUP_ZERO_DAYS_KEY"))
+                    .select(count(config_store_history::id))
+                    .first::<i64>(conn)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(count > 0, "record should remain when retention_days is 0");
+    }
+
+    // クリーンアップ
+    {
+        let conn = connection_pool::get().await.unwrap();
+        conn.interact(|conn| {
+            diesel::delete(
+                config_store_history::table
+                    .filter(config_store_history::key.eq("TEST_CLEANUP_ZERO_DAYS_KEY")),
+            )
+            .execute(conn)
         })
         .await
         .unwrap()
         .unwrap();
-    assert!(count > 0, "record should remain when retention_days is 0");
-
-    // クリーンアップ
-    let conn = connection_pool::get().await.unwrap();
-    conn.interact(|conn| {
-        diesel::delete(
-            config_store_history::table
-                .filter(config_store_history::key.eq("TEST_CLEANUP_ZERO_DAYS_KEY")),
-        )
-        .execute(conn)
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    }
 }
 
 #[tokio::test]
