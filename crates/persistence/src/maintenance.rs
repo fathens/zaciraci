@@ -5,7 +5,16 @@ use logging::*;
 use crate::Result;
 
 /// REINDEX CONCURRENTLY の対象テーブル
-const REINDEX_TARGETS: &[&str] = &["pool_info", "token_rates"];
+const REINDEX_TARGETS: &[&str] = &[
+    "config_store",
+    "config_store_history",
+    "evaluation_periods",
+    "pool_info",
+    "portfolio_holdings",
+    "prediction_records",
+    "token_rates",
+    "trade_transactions",
+];
 
 /// DB メンテナンスの定期実行エントリポイント
 pub async fn run(cfg: impl ConfigAccess + 'static) {

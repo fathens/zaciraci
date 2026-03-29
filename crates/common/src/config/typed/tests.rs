@@ -297,16 +297,6 @@ fn test_prediction_accuracy_min_samples_default() {
     assert_eq!(typed().prediction_accuracy_min_samples(), 5);
 }
 
-// ── u16 keys ──
-
-#[test]
-#[serial]
-fn test_portfolio_holdings_retention_days_default() {
-    let _env = EnvGuard::remove("PORTFOLIO_HOLDINGS_RETENTION_DAYS");
-    crate::config::store::remove("PORTFOLIO_HOLDINGS_RETENTION_DAYS");
-    assert_eq!(typed().portfolio_holdings_retention_days(), 90);
-}
-
 // ── String keys ──
 
 #[test]
@@ -546,7 +536,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 43);
+    assert_eq!(KEY_DEFINITIONS.len(), 44);
 }
 
 #[test]

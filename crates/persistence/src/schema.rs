@@ -95,7 +95,7 @@ diesel::table! {
         to_token -> Varchar,
         to_amount -> Numeric,
         timestamp -> Timestamp,
-        evaluation_period_id -> Nullable<Varchar>,
+        evaluation_period_id -> Varchar,
         actual_to_amount -> Nullable<Numeric>,
     }
 }

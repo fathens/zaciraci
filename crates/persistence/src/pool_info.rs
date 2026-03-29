@@ -106,11 +106,14 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
     }
 
-    // 古いレコードをクリーンアップ
+    // 古いレコードをバックグラウンドでクリーンアップ
     let retention_days = cfg.pool_info_retention_days();
-
-    trace!(log, "cleaning up old records"; "retention_days" => retention_days);
-    cleanup_old_records(retention_days).await?;
+    let log_clone = log.clone();
+    tokio::spawn(async move {
+        if let Err(e) = cleanup_old_records(retention_days).await {
+            warn!(log_clone, "failed to cleanup old pool_info records"; "error" => %e);
+        }
+    });
 
     trace!(log, "finish");
     Ok(())
@@ -122,7 +125,6 @@ const MIN_RETENTION_DAYS: u32 = 7;
 /// 指定日数より古いレコードを削除
 pub(crate) async fn cleanup_old_records(retention_days: u32) -> Result<()> {
     use diesel::prelude::*;
-    use diesel::sql_types::Timestamp;
 
     let log = DEFAULT.new(o!(
         "function" => "pool_info::cleanup_old_records",
@@ -152,8 +154,7 @@ pub(crate) async fn cleanup_old_records(retention_days: u32) -> Result<()> {
 
     let deleted_count = conn
         .interact(move |conn| {
-            diesel::sql_query("DELETE FROM pool_info WHERE timestamp < $1")
-                .bind::<Timestamp, _>(cutoff_date)
+            diesel::delete(pool_info::table.filter(pool_info::timestamp.lt(cutoff_date)))
                 .execute(conn)
         })
         .await

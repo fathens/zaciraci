@@ -5,6 +5,7 @@ use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use common::types::{TokenAccount, TokenOutAccount};
 use diesel::prelude::*;
+use logging::*;
 
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = prediction_records)]
@@ -239,6 +240,9 @@ impl PredictionRecord {
         Ok(results)
     }
 
+    /// Minimum retention period to prevent accidental mass deletion
+    const MIN_RETENTION_DAYS: u32 = 7;
+
     /// 古いレコードを削除
     ///
     /// - 評価済みレコード: evaluated_at から retention_days 日以上経過したもの
@@ -246,14 +250,42 @@ impl PredictionRecord {
     ///
     /// 戻り値: (評価済み削除数, 未評価削除数)
     pub async fn delete_old_records(
-        retention_days: i64,
-        unevaluated_retention_days: i64,
+        retention_days: u32,
+        unevaluated_retention_days: u32,
     ) -> Result<(usize, usize)> {
-        let conn = connection_pool::get().await?;
-        let now = chrono::Utc::now().naive_utc();
+        let log = DEFAULT.new(o!(
+            "function" => "prediction_record::delete_old_records",
+            "retention_days" => retention_days,
+            "unevaluated_retention_days" => unevaluated_retention_days,
+        ));
 
-        let evaluated_cutoff = now - chrono::TimeDelta::days(retention_days);
-        let unevaluated_cutoff = now - chrono::TimeDelta::days(unevaluated_retention_days);
+        if retention_days == 0 && unevaluated_retention_days == 0 {
+            warn!(
+                log,
+                "both retention_days are 0, skipping cleanup to prevent deleting all records"
+            );
+            return Ok((0, 0));
+        }
+
+        let effective_retention = retention_days.max(Self::MIN_RETENTION_DAYS);
+        if effective_retention != retention_days {
+            warn!(log, "retention_days below minimum, using minimum";
+                "requested" => retention_days, "effective" => effective_retention);
+        }
+
+        let effective_unevaluated = unevaluated_retention_days.max(Self::MIN_RETENTION_DAYS);
+        if effective_unevaluated != unevaluated_retention_days {
+            warn!(log, "unevaluated_retention_days below minimum, using minimum";
+                "requested" => unevaluated_retention_days, "effective" => effective_unevaluated);
+        }
+
+        trace!(log, "start");
+
+        let now = chrono::Utc::now().naive_utc();
+        let evaluated_cutoff = now - chrono::TimeDelta::days(i64::from(effective_retention));
+        let unevaluated_cutoff = now - chrono::TimeDelta::days(i64::from(effective_unevaluated));
+
+        let conn = connection_pool::get().await?;
 
         let (evaluated_deleted, unevaluated_deleted) = conn
             .interact(move |conn| {
@@ -278,6 +310,9 @@ impl PredictionRecord {
             .await
             .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
+        info!(log, "finish";
+            "evaluated_deleted" => evaluated_deleted,
+            "unevaluated_deleted" => unevaluated_deleted);
         Ok((evaluated_deleted, unevaluated_deleted))
     }
 }

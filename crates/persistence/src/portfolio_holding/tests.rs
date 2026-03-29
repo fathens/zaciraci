@@ -123,42 +123,6 @@ async fn test_get_latest_for_period() -> Result<()> {
 
 #[tokio::test]
 #[serial(portfolio_holding)]
-async fn test_cleanup_old_records() -> Result<()> {
-    let period_id = create_test_evaluation_period().await;
-    let holdings_json = create_test_holdings_json();
-    let now = chrono::Utc::now().naive_utc();
-
-    // Insert an old record (10 days ago)
-    let old_record = NewPortfolioHolding {
-        evaluation_period_id: period_id.clone(),
-        timestamp: now - chrono::TimeDelta::days(10),
-        token_holdings: holdings_json.clone(),
-    };
-    PortfolioHolding::insert_async(old_record).await?;
-
-    // Insert a recent record (now)
-    let new_record = NewPortfolioHolding {
-        evaluation_period_id: period_id.clone(),
-        timestamp: now,
-        token_holdings: holdings_json,
-    };
-    PortfolioHolding::insert_async(new_record).await?;
-
-    // Cleanup records older than 5 days
-    let deleted = PortfolioHolding::cleanup_old_records(5).await?;
-    assert!(deleted >= 1);
-
-    // Only the recent record should remain for this period
-    let remaining = PortfolioHolding::get_by_period_async(period_id.clone()).await?;
-    assert_eq!(remaining.len(), 1);
-    assert!(remaining[0].timestamp > now - chrono::TimeDelta::days(5));
-
-    cleanup_holdings_for_period(&period_id).await;
-    Ok(())
-}
-
-#[tokio::test]
-#[serial(portfolio_holding)]
 async fn test_insert_with_invalid_period_id() {
     let holdings_json = create_test_holdings_json();
     let now = chrono::Utc::now().naive_utc();

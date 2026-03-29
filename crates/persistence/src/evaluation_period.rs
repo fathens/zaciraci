@@ -5,6 +5,7 @@ use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use common::types::YoctoAmount;
 use diesel::prelude::*;
+use logging::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -224,62 +225,52 @@ impl EvaluationPeriod {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use futures::FutureExt;
-    use std::panic::AssertUnwindSafe;
+/// Minimum retention period to prevent accidental mass deletion
+const MIN_RETENTION_DAYS: u32 = 30;
 
-    #[tokio::test]
-    async fn test_create_and_get_evaluation_period() {
-        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
-        let tokens = vec!["token1.near".to_string(), "token2.near".to_string()];
+/// 指定日数より古いレコードを削除
+///
+/// ON DELETE CASCADE により、関連する trade_transactions と portfolio_holdings も連鎖削除される。
+pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
+    let log = DEFAULT.new(o!(
+        "function" => "evaluation_period::cleanup_old_records",
+        "retention_days" => retention_days,
+    ));
 
-        let new_period = NewEvaluationPeriod::new(initial_value, tokens);
-
-        assert!(new_period.period_id.starts_with("eval_"));
-        assert_eq!(new_period.selected_tokens.as_ref().unwrap().len(), 2);
-
-        // 実際のDBへの挿入テストは統合テストで行う
+    if retention_days == 0 {
+        warn!(
+            log,
+            "retention_days is 0, skipping cleanup to prevent deleting all records"
+        );
+        return Ok(());
     }
 
-    #[test]
-    fn test_new_evaluation_period_with_empty_tokens() {
-        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
-        let tokens = vec![];
-
-        let new_period = NewEvaluationPeriod::new(initial_value, tokens);
-
-        assert_eq!(new_period.selected_tokens, None);
+    let effective_days = retention_days.max(MIN_RETENTION_DAYS);
+    if effective_days != retention_days {
+        warn!(log, "retention_days below minimum, using minimum";
+            "requested" => retention_days, "effective" => effective_days);
     }
 
-    #[tokio::test]
-    async fn test_initial_value_db_roundtrip() {
-        // 大きな値で DB ラウンドトリップが正しく YoctoAmount に戻ることを確認
-        let initial_value = YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000);
-        let new_period = NewEvaluationPeriod::new(initial_value.clone(), vec![]);
+    trace!(log, "start");
 
-        let created = new_period.insert_async().await.unwrap();
-        let period_id = created.period_id.clone();
+    let cutoff_date =
+        chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(i64::from(effective_days));
 
-        let result = AssertUnwindSafe(async {
-            assert_eq!(created.initial_value, initial_value);
+    let conn = connection_pool::get().await?;
 
-            // DB から再取得しても一致
-            let fetched = EvaluationPeriod::get_by_period_id_async(period_id.clone())
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(fetched.initial_value, initial_value);
+    let deleted_count = conn
+        .interact(move |conn| {
+            diesel::delete(
+                evaluation_periods::table.filter(evaluation_periods::created_at.lt(cutoff_date)),
+            )
+            .execute(conn)
         })
-        .catch_unwind()
-        .await;
+        .await
+        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
-        // Cleanup（テスト本体がパニックしても常に実行）
-        let _ = EvaluationPeriod::delete_by_period_id_async(period_id).await;
-
-        if let Err(e) = result {
-            std::panic::resume_unwind(e);
-        }
-    }
+    info!(log, "finish"; "deleted_count" => deleted_count);
+    Ok(())
 }
+
+#[cfg(test)]
+mod tests;

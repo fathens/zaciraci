@@ -495,6 +495,19 @@ define_typed_config! {
         default: 90
     }
 
+    /// Retention period for evaluation period records in days
+    /// (ON DELETE CASCADE also removes related trade_transactions and portfolio_holdings)
+    fn evaluation_periods_retention_days() -> u32 {
+        key: "EVALUATION_PERIODS_RETENTION_DAYS",
+        default: 365
+    }
+
+    /// Retention period for config store history records in days
+    fn config_store_history_retention_days() -> u32 {
+        key: "CONFIG_STORE_HISTORY_RETENTION_DAYS",
+        default: 365
+    }
+
     /// Max sleep duration in cron loop in seconds
     fn cron_max_sleep_seconds() -> u64 {
         key: "CRON_MAX_SLEEP_SECONDS",
@@ -541,22 +554,16 @@ define_typed_config! {
         default: 0.3
     }
 
-    /// Retention days for portfolio holding snapshots
-    fn portfolio_holdings_retention_days() -> u16 {
-        key: "PORTFOLIO_HOLDINGS_RETENTION_DAYS",
-        default: 90
-    }
-
     // ── prediction ──
 
     /// Retention days for evaluated prediction records
-    fn prediction_record_retention_days() -> i64 {
+    fn prediction_record_retention_days() -> u32 {
         key: "PREDICTION_RECORD_RETENTION_DAYS",
         default: 30
     }
 
     /// Retention days for unevaluated predictions
-    fn prediction_unevaluated_retention_days() -> i64 {
+    fn prediction_unevaluated_retention_days() -> u32 {
         key: "PREDICTION_UNEVALUATED_RETENTION_DAYS",
         default: 20
     }

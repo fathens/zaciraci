@@ -5,6 +5,8 @@ use crate::proto::{
     ListKeyDefinitionsRequest, ListKeyDefinitionsResponse, UpsertConfigRequest,
     UpsertConfigResponse,
 };
+use common::config::ConfigAccess;
+use logging::{DEFAULT, o, warn};
 use tonic::{Request, Response, Status};
 
 impl From<common::config::ConfigValueType> for crate::proto::ConfigValueType {
@@ -34,6 +36,17 @@ impl ConfigServiceImpl {
             instance_id
         }
     }
+}
+
+/// 古い config_store_history レコードをバックグラウンドでクリーンアップ
+fn spawn_cleanup_old_config_history() {
+    tokio::spawn(async {
+        let retention_days = common::config::typed().config_store_history_retention_days();
+        if let Err(e) = persistence::config_store::cleanup_old_history(retention_days).await {
+            let log = DEFAULT.new(o!("function" => "cleanup_config_history"));
+            warn!(log, "failed to cleanup old config history"; "error" => %e);
+        }
+    });
 }
 
 #[tonic::async_trait]
@@ -98,6 +111,8 @@ impl ConfigService for ConfigServiceImpl {
         .await
         .map_err(|e| Status::internal(format!("Failed to upsert config: {e}")))?;
 
+        spawn_cleanup_old_config_history();
+
         Ok(Response::new(UpsertConfigResponse {}))
     }
 
@@ -115,6 +130,8 @@ impl ConfigService for ConfigServiceImpl {
         persistence::config_store::delete(instance_id, &req.key)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
+
+        spawn_cleanup_old_config_history();
 
         Ok(Response::new(DeleteConfigResponse {}))
     }

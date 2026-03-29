@@ -883,9 +883,12 @@ async fn test_cleanup_old_records() -> Result<()> {
         make_token_rate(base2.clone(), quote.clone(), 21000, now),
     ];
 
-    // 3. レコードを挿入（cleanup_old_recordsは自動で呼ばれ、デフォルトで365日より古いレコードが削除される）
+    // 3. レコードを挿入
     let cfg = ConfigResolver;
     TokenRate::batch_insert(&old_rates, &cfg).await?;
+
+    // 90日でクリーンアップ（batch_insert 内の spawn 完了を待たず明示的に実行）
+    TokenRate::cleanup_old_records(90).await?;
 
     // 4. 残っているレコード数を確認
     let wide_range = TimeRange {
@@ -979,9 +982,12 @@ async fn test_cleanup_old_records() -> Result<()> {
         ),
     ];
 
-    // まず全件挿入（デフォルトの90日クリーンアップで90日以内のレコードが残る）
+    // まず全件挿入
     let cfg = ConfigResolver;
     TokenRate::batch_insert(&recent_rates, &cfg).await?;
+
+    // 90日でクリーンアップ（batch_insert 内の spawn 完了を待たず明示的に実行）
+    TokenRate::cleanup_old_records(90).await?;
 
     // 90日以内のレコード（50日前、20日前、5日前）が残っていることを確認
     let all_history = TokenRate::get_rates_in_time_range(&wide_range, &base1, &quote).await?;

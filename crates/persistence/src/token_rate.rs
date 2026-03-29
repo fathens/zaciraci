@@ -195,43 +195,61 @@ impl TokenRate {
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
         }
 
-        // 古いレコードをクリーンアップ
+        // 古いレコードをバックグラウンドでクリーンアップ
         let retention_days = cfg.token_rates_retention_days();
-
-        trace!(log, "cleaning up old records"; "retention_days" => retention_days);
-        TokenRate::cleanup_old_records(retention_days).await?;
+        let log_clone = log.clone();
+        tokio::spawn(async move {
+            if let Err(e) = TokenRate::cleanup_old_records(retention_days).await {
+                warn!(log_clone, "failed to cleanup old token_rate records"; "error" => %e);
+            }
+        });
 
         info!(log, "finish");
         Ok(())
     }
 
-    // 指定日数より古いレコードを削除
+    /// Minimum retention period to prevent accidental mass deletion
+    const MIN_RETENTION_DAYS: u32 = 7;
+
+    /// 指定日数より古いレコードを削除
     pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
         use diesel::prelude::*;
-        use diesel::sql_types::Timestamp;
 
         let log = DEFAULT.new(o!(
-            "function" => "cleanup_old_records",
+            "function" => "token_rate::cleanup_old_records",
             "retention_days" => retention_days,
         ));
+
+        if retention_days == 0 {
+            warn!(
+                log,
+                "retention_days is 0, skipping cleanup to prevent deleting all records"
+            );
+            return Ok(());
+        }
+
+        let effective_days = retention_days.max(Self::MIN_RETENTION_DAYS);
+        if effective_days != retention_days {
+            warn!(log, "retention_days below minimum, using minimum";
+                "requested" => retention_days, "effective" => effective_days);
+        }
+
         trace!(log, "start");
+
+        let cutoff_date =
+            chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(i64::from(effective_days));
 
         let conn = connection_pool::get().await?;
 
-        // 保持期間より古いレコードを削除
-        let cutoff_date =
-            chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(retention_days as i64);
-
         let deleted_count = conn
             .interact(move |conn| {
-                diesel::sql_query("DELETE FROM token_rates WHERE timestamp < $1")
-                    .bind::<Timestamp, _>(cutoff_date)
+                diesel::delete(token_rates::table.filter(token_rates::timestamp.lt(cutoff_date)))
                     .execute(conn)
             })
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-        trace!(log, "finish"; "deleted_count" => deleted_count, "cutoff_date" => %cutoff_date);
+        trace!(log, "finish"; "deleted_count" => deleted_count);
         Ok(())
     }
 
