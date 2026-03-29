@@ -232,8 +232,6 @@ const MIN_RETENTION_DAYS: u32 = 30;
 ///
 /// ON DELETE CASCADE により、関連する trade_transactions と portfolio_holdings も連鎖削除される。
 pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
-    use diesel::sql_types::Timestamp;
-
     let log = DEFAULT.new(o!(
         "function" => "evaluation_period::cleanup_old_records",
         "retention_days" => retention_days,
@@ -262,9 +260,10 @@ pub async fn cleanup_old_records(retention_days: u32) -> Result<()> {
 
     let deleted_count = conn
         .interact(move |conn| {
-            diesel::sql_query("DELETE FROM evaluation_periods WHERE created_at < $1")
-                .bind::<Timestamp, _>(cutoff_date)
-                .execute(conn)
+            diesel::delete(
+                evaluation_periods::table.filter(evaluation_periods::created_at.lt(cutoff_date)),
+            )
+            .execute(conn)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;

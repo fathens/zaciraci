@@ -234,8 +234,6 @@ const MIN_RETENTION_DAYS: u32 = 7;
 
 /// 指定日数より古い config_store_history レコードを削除
 pub async fn cleanup_old_history(retention_days: u32) -> Result<()> {
-    use diesel::sql_types::Timestamp;
-
     let log = DEFAULT.new(o!(
         "function" => "config_store::cleanup_old_history",
         "retention_days" => retention_days,
@@ -264,9 +262,11 @@ pub async fn cleanup_old_history(retention_days: u32) -> Result<()> {
 
     let deleted_count = conn
         .interact(move |conn| {
-            diesel::sql_query("DELETE FROM config_store_history WHERE changed_at < $1")
-                .bind::<Timestamp, _>(cutoff_date)
-                .execute(conn)
+            diesel::delete(
+                config_store_history::table
+                    .filter(config_store_history::changed_at.lt(cutoff_date)),
+            )
+            .execute(conn)
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;

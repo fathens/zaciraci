@@ -122,7 +122,6 @@ const MIN_RETENTION_DAYS: u32 = 7;
 /// 指定日数より古いレコードを削除
 pub(crate) async fn cleanup_old_records(retention_days: u32) -> Result<()> {
     use diesel::prelude::*;
-    use diesel::sql_types::Timestamp;
 
     let log = DEFAULT.new(o!(
         "function" => "pool_info::cleanup_old_records",
@@ -152,8 +151,7 @@ pub(crate) async fn cleanup_old_records(retention_days: u32) -> Result<()> {
 
     let deleted_count = conn
         .interact(move |conn| {
-            diesel::sql_query("DELETE FROM pool_info WHERE timestamp < $1")
-                .bind::<Timestamp, _>(cutoff_date)
+            diesel::delete(pool_info::table.filter(pool_info::timestamp.lt(cutoff_date)))
                 .execute(conn)
         })
         .await
