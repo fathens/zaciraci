@@ -38,6 +38,17 @@ impl ConfigServiceImpl {
     }
 }
 
+/// 古い config_store_history レコードをバックグラウンドでクリーンアップ
+fn spawn_cleanup_old_config_history() {
+    tokio::spawn(async {
+        let retention_days = common::config::typed().config_store_history_retention_days();
+        if let Err(e) = persistence::config_store::cleanup_old_history(retention_days).await {
+            let log = DEFAULT.new(o!("function" => "cleanup_config_history"));
+            warn!(log, "failed to cleanup old config history"; "error" => %e);
+        }
+    });
+}
+
 #[tonic::async_trait]
 impl ConfigService for ConfigServiceImpl {
     async fn get_all(
@@ -100,12 +111,7 @@ impl ConfigService for ConfigServiceImpl {
         .await
         .map_err(|e| Status::internal(format!("Failed to upsert config: {e}")))?;
 
-        // 古い履歴レコードのクリーンアップ
-        let retention_days = common::config::typed().config_store_history_retention_days();
-        if let Err(e) = persistence::config_store::cleanup_old_history(retention_days).await {
-            let log = DEFAULT.new(o!("function" => "ConfigService::upsert"));
-            warn!(log, "failed to cleanup old config history"; "error" => %e);
-        }
+        spawn_cleanup_old_config_history();
 
         Ok(Response::new(UpsertConfigResponse {}))
     }
@@ -125,12 +131,7 @@ impl ConfigService for ConfigServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
 
-        // 古い履歴レコードのクリーンアップ
-        let retention_days = common::config::typed().config_store_history_retention_days();
-        if let Err(e) = persistence::config_store::cleanup_old_history(retention_days).await {
-            let log = DEFAULT.new(o!("function" => "ConfigService::delete"));
-            warn!(log, "failed to cleanup old config history"; "error" => %e);
-        }
+        spawn_cleanup_old_config_history();
 
         Ok(Response::new(DeleteConfigResponse {}))
     }

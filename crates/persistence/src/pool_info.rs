@@ -106,11 +106,14 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
     }
 
-    // 古いレコードをクリーンアップ
+    // 古いレコードをバックグラウンドでクリーンアップ
     let retention_days = cfg.pool_info_retention_days();
-
-    trace!(log, "cleaning up old records"; "retention_days" => retention_days);
-    cleanup_old_records(retention_days).await?;
+    let log_clone = log.clone();
+    tokio::spawn(async move {
+        if let Err(e) = cleanup_old_records(retention_days).await {
+            warn!(log_clone, "failed to cleanup old pool_info records"; "error" => %e);
+        }
+    });
 
     trace!(log, "finish");
     Ok(())

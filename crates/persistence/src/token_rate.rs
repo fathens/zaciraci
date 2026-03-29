@@ -195,11 +195,14 @@ impl TokenRate {
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
         }
 
-        // 古いレコードをクリーンアップ
+        // 古いレコードをバックグラウンドでクリーンアップ
         let retention_days = cfg.token_rates_retention_days();
-
-        trace!(log, "cleaning up old records"; "retention_days" => retention_days);
-        TokenRate::cleanup_old_records(retention_days).await?;
+        let log_clone = log.clone();
+        tokio::spawn(async move {
+            if let Err(e) = TokenRate::cleanup_old_records(retention_days).await {
+                warn!(log_clone, "failed to cleanup old token_rate records"; "error" => %e);
+            }
+        });
 
         info!(log, "finish");
         Ok(())
