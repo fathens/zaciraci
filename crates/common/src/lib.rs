@@ -1,7 +1,6 @@
 pub mod algorithm;
 pub mod api;
 pub mod config;
-pub mod memory;
 
 pub mod prediction;
 pub mod stats;

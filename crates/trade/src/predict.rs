@@ -168,18 +168,13 @@ impl PredictionService {
         };
 
         // 1. 全トークンの履歴を一括取得（1回のDBクエリ）
-        let rss_before_fetch = common::memory::get_rss_bytes();
         let histories_map = TokenRate::get_rates_for_multiple_tokens(&tokens, quote_token, &range)
             .await
             .context("Failed to batch fetch price histories")?;
 
-        let rss_after_fetch = common::memory::get_rss_bytes();
         info!(log, "Fetched price histories";
             "requested" => tokens.len(),
-            "fetched" => histories_map.len(),
-            "rss_before" => common::memory::format_bytes(rss_before_fetch),
-            "rss_after" => common::memory::format_bytes(rss_after_fetch),
-            "rss_delta" => common::memory::format_bytes(rss_after_fetch.saturating_sub(rss_before_fetch))
+            "fetched" => histories_map.len()
         );
 
         // 2. 設定から並行実行数を取得
@@ -226,8 +221,6 @@ impl PredictionService {
             .collect()
             .await;
 
-        let rss_after_predict = common::memory::get_rss_bytes();
-
         // 4. 結果を収集
         let all_predictions: HashMap<_, _> = results
             .into_iter()
@@ -244,11 +237,7 @@ impl PredictionService {
 
         info!(log, "Prediction completed";
             "successful" => all_predictions.len(),
-            "total" => tokens.len(),
-            "rss_before_fetch" => common::memory::format_bytes(rss_before_fetch),
-            "rss_after_fetch" => common::memory::format_bytes(rss_after_fetch),
-            "rss_after_predict" => common::memory::format_bytes(rss_after_predict),
-            "rss_current" => common::memory::format_bytes(common::memory::get_rss_bytes())
+            "total" => tokens.len()
         );
 
         Ok(all_predictions)

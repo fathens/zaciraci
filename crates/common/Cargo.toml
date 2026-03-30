@@ -15,7 +15,6 @@ async-trait = "0.1"
 nalgebra = { workspace = true }
 ndarray = { version = "0.15", features = ["serde"] }
 num-traits = { workspace = true }
-libc = { workspace = true }
 near-account-id = { workspace = true }
 predictor = { workspace = true }
 
