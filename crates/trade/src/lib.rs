@@ -139,7 +139,7 @@ pub async fn run_prediction_cycle(
         target_tokens.into_iter().map(|t| t.into()).collect();
 
     // 2. チャンクごとに予測実行（メモリピーク抑制）
-    let chunk_size = cfg.trade_prediction_chunk_size() as usize;
+    let chunk_size = (cfg.trade_prediction_chunk_size() as usize).max(1);
     let mut prediction_entries: BTreeMap<
         TokenOutAccount,
         (common::types::TokenPrice, chrono::NaiveDateTime),

@@ -22,7 +22,7 @@ impl PredictionService {
     pub fn new(cfg: &impl ConfigAccess) -> Self {
         let max_retries = cfg.trade_prediction_max_retries();
         let retry_delay_seconds = cfg.trade_prediction_retry_delay_seconds();
-        let max_model_threads = cfg.trade_prediction_model_threads() as usize;
+        let max_model_threads = (cfg.trade_prediction_model_threads() as usize).max(1);
         Self {
             predictor: ChronosPredictor::new(max_model_threads),
             max_retries,
