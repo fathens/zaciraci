@@ -151,7 +151,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
     let fixture = TestFixture::new();
     fixture.setup_volatility_data().await?;
 
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
     let start_date = Utc::now() - TimeDelta::days(1);
     let end_date = Utc::now();
 
@@ -197,7 +197,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         .setup_price_history(&test_token, &expected_prices)
         .await?;
 
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
     let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
 
@@ -361,7 +361,7 @@ async fn test_convert_prediction_result_15min_interval_has_24h_point() {
 #[tokio::test]
 #[serial]
 async fn test_error_handling_comprehensive() -> Result<()> {
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
 
     let start_date = Utc::now() - TimeDelta::days(7);
     let end_date = Utc::now();
@@ -494,7 +494,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
     TokenRate::batch_insert(&all_rates, &CFG).await?;
 
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
 
     let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
@@ -553,7 +553,7 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
         .setup_price_history(&existing_token, &prices)
         .await?;
 
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
 
     let tokens: Vec<TokenOutAccount> = vec![
         "existing.near".parse::<TokenAccount>().unwrap().into(),
@@ -573,7 +573,7 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
 async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
     let _guard = TokenRateCleanGuard::new().await;
 
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
 
     let tokens: Vec<TokenOutAccount> = vec![
@@ -618,7 +618,7 @@ async fn test_retry_configuration() {
 #[tokio::test]
 #[serial]
 async fn test_empty_token_list() -> Result<()> {
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
     let tokens: Vec<TokenOutAccount> = vec![];
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
 
@@ -924,7 +924,7 @@ async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
         fixture.setup_price_history(token, &prices).await?;
     }
 
-    let service = PredictionService::new(&CFG).unwrap();
+    let service = PredictionService::new(&CFG)?;
 
     // 並行処理で予測実行
     let start = std::time::Instant::now();

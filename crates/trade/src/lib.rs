@@ -179,7 +179,7 @@ pub async fn run_prediction_cycle(
                         (p.price.clone(), result.data_cutoff_time.naive_utc()),
                     );
                 }
-                None => empty_predictions += 1,
+                None => empty_predictions = empty_predictions.saturating_add(1),
             }
         }
         // predictions HashMap はここで drop — チャンクの価格履歴メモリを解放
@@ -187,6 +187,13 @@ pub async fn run_prediction_cycle(
 
     if empty_predictions > 0 {
         warn!(log, "tokens with empty prediction results"; "count" => empty_predictions);
+    }
+
+    if prediction_entries.is_empty() && !token_out_list.is_empty() {
+        return Err(anyhow::anyhow!(
+            "all prediction chunks failed: 0/{} tokens produced predictions",
+            token_out_list.len()
+        ));
     }
 
     // 3. 予測価格を DB に保存
