@@ -126,7 +126,7 @@ pub async fn run_prediction_cycle(
     let log = DEFAULT.new(o!("function" => "run_prediction_cycle"));
 
     // 1. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
-    let prediction_service = predict::PredictionService::new(cfg);
+    let prediction_service = predict::PredictionService::new(cfg)?;
     let target_tokens =
         strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg).await?;
 

@@ -1,8 +1,10 @@
-use crate::prediction::ChronosPredictionResponse;
+use anyhow::Context;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+use crate::prediction::ChronosPredictionResponse;
 
 /// Chronos 予測ライブラリのラッパー
 ///
@@ -15,12 +17,13 @@ pub struct ChronosPredictor {
 }
 
 impl ChronosPredictor {
-    pub fn new(max_model_threads: usize) -> Self {
-        Self {
+    pub fn new(max_model_threads: usize) -> anyhow::Result<Self> {
+        Ok(Self {
             predictor: Arc::new(
-                predictor::Predictor::new(max_model_threads).expect("Failed to create Predictor"),
+                predictor::Predictor::new(max_model_threads)
+                    .context("Failed to create Predictor")?,
             ),
-        }
+        })
     }
 
     /// 価格予測を実行
