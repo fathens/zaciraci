@@ -19,10 +19,11 @@ dependencies = [
 
 [[package]]
 name = "analyzer"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "num-complex",
  "rustfft",
  "statrs",
@@ -618,7 +619,8 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -1958,11 +1960,12 @@ dependencies = [
 
 [[package]]
 name = "models"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "augurs",
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "rayon",
  "scaler",
  "thiserror",
@@ -2344,11 +2347,12 @@ dependencies = [
 
 [[package]]
 name = "normalize"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "bigdecimal",
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "tracing",
 ]
 
@@ -2669,13 +2673,13 @@ dependencies = [
 
 [[package]]
 name = "predictor"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "analyzer",
  "bigdecimal",
  "chrono",
- "common 0.1.5",
- "libc",
+ "common 0.1.6",
  "models",
  "normalize",
  "rayon",
@@ -3181,9 +3185,10 @@ dependencies = [
 
 [[package]]
 name = "scaler"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
- "common 0.1.5",
+ "common 0.1.6",
 ]
 
 [[package]]
@@ -3284,11 +3289,12 @@ dependencies = [
 
 [[package]]
 name = "selector"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "analyzer",
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "tracing",
 ]
 
@@ -4237,10 +4243,11 @@ dependencies = [
 
 [[package]]
 name = "trainer"
-version = "0.1.5"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "models",
  "rayon",
  "selector",
