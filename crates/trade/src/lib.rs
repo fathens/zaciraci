@@ -154,7 +154,7 @@ pub async fn run_prediction_cycle(
 
         let predictions = match prediction_service
             .predict_multiple_tokens(
-                chunk.to_vec(),
+                chunk,
                 &quote_token,
                 price_history_days,
                 prediction_accuracy::PREDICTION_HORIZON_HOURS,

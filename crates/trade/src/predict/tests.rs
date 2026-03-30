@@ -562,7 +562,7 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
     ];
 
     let _result = service
-        .predict_multiple_tokens(tokens, &fixture.quote_token, 1, 24, Utc::now(), &CFG)
+        .predict_multiple_tokens(&tokens, &fixture.quote_token, 1, 24, Utc::now(), &CFG)
         .await;
 
     Ok(())
@@ -583,7 +583,7 @@ async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
     ];
 
     let result = service
-        .predict_multiple_tokens(tokens, &quote_token, 1, 24, Utc::now(), &CFG)
+        .predict_multiple_tokens(&tokens, &quote_token, 1, 24, Utc::now(), &CFG)
         .await;
 
     assert!(result.is_err(), "Should fail when all tokens fail");
@@ -623,7 +623,7 @@ async fn test_empty_token_list() -> Result<()> {
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
 
     let result = service
-        .predict_multiple_tokens(tokens, &quote_token, 1, 24, Utc::now(), &CFG)
+        .predict_multiple_tokens(&tokens, &quote_token, 1, 24, Utc::now(), &CFG)
         .await;
 
     assert!(result.is_err(), "Should fail with empty token list");
@@ -929,14 +929,7 @@ async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
     // 並行処理で予測実行
     let start = std::time::Instant::now();
     let result = service
-        .predict_multiple_tokens(
-            tokens.clone(),
-            &fixture.quote_token,
-            1,
-            24,
-            Utc::now(),
-            &CFG,
-        )
+        .predict_multiple_tokens(&tokens, &fixture.quote_token, 1, 24, Utc::now(), &CFG)
         .await;
     let duration = start.elapsed();
 
