@@ -132,7 +132,6 @@ pub async fn run_prediction_cycle(
 
     info!(log, "prediction targets selected"; "count" => target_tokens.len());
 
-    // 2. バッチ予測実行
     let quote_token = get_quote_token();
     let price_history_days = i64::from(cfg.trade_price_history_days());
     let token_out_list: Vec<TokenOutAccount> =

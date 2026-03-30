@@ -99,6 +99,14 @@ fn test_trade_prediction_chunk_size_default() {
 
 #[test]
 #[serial]
+fn test_trade_prediction_model_threads_default() {
+    let _env = EnvGuard::remove("TRADE_PREDICTION_MODEL_THREADS");
+    crate::config::store::remove("TRADE_PREDICTION_MODEL_THREADS");
+    assert_eq!(typed().trade_prediction_model_threads(), 3);
+}
+
+#[test]
+#[serial]
 fn test_trade_min_pool_liquidity_default() {
     let _env = EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
     crate::config::store::remove("TRADE_MIN_POOL_LIQUIDITY");
@@ -544,7 +552,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 45);
+    assert_eq!(KEY_DEFINITIONS.len(), 46);
 }
 
 #[test]
