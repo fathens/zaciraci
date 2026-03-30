@@ -388,7 +388,7 @@ define_typed_config! {
     /// Controls peak memory: each chunk loads chunk_size * ~2335 rows of price history.
     fn trade_prediction_chunk_size() -> u32 {
         key: "TRADE_PREDICTION_CHUNK_SIZE",
-        default: 50
+        default: 20
     }
 
     /// Number of threads for model training pool.

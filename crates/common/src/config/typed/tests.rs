@@ -94,7 +94,7 @@ fn test_trade_prediction_concurrency_default() {
 fn test_trade_prediction_chunk_size_default() {
     let _env = EnvGuard::remove("TRADE_PREDICTION_CHUNK_SIZE");
     crate::config::store::remove("TRADE_PREDICTION_CHUNK_SIZE");
-    assert_eq!(typed().trade_prediction_chunk_size(), 50);
+    assert_eq!(typed().trade_prediction_chunk_size(), 20);
 }
 
 #[test]
