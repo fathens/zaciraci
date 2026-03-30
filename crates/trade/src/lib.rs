@@ -138,38 +138,59 @@ pub async fn run_prediction_cycle(
     let token_out_list: Vec<TokenOutAccount> =
         target_tokens.into_iter().map(|t| t.into()).collect();
 
-    let predictions = prediction_service
-        .predict_multiple_tokens(
-            token_out_list,
-            &quote_token,
-            price_history_days,
-            prediction_accuracy::PREDICTION_HORIZON_HOURS,
-            as_of,
-            cfg,
-        )
-        .await?;
-
-    // 3. 予測価格を抽出して DB に保存
+    // 2. チャンクごとに予測実行（メモリピーク抑制）
+    let chunk_size = cfg.trade_prediction_chunk_size() as usize;
     let mut prediction_entries: BTreeMap<
         TokenOutAccount,
         (common::types::TokenPrice, chrono::NaiveDateTime),
     > = BTreeMap::new();
     let mut empty_predictions = 0u32;
-    for (token, result) in predictions {
-        match result.prediction_at_horizon(prediction_accuracy::PREDICTION_HORIZON_HOURS) {
-            Some(p) => {
-                prediction_entries.insert(
-                    token,
-                    (p.price.clone(), result.data_cutoff_time.naive_utc()),
-                );
+
+    for (chunk_idx, chunk) in token_out_list.chunks(chunk_size).enumerate() {
+        info!(log, "processing prediction chunk";
+            "chunk" => chunk_idx,
+            "size" => chunk.len(),
+            "total_tokens" => token_out_list.len()
+        );
+
+        let predictions = match prediction_service
+            .predict_multiple_tokens(
+                chunk.to_vec(),
+                &quote_token,
+                price_history_days,
+                prediction_accuracy::PREDICTION_HORIZON_HOURS,
+                as_of,
+                cfg,
+            )
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(log, "prediction chunk failed, skipping";
+                    "chunk" => chunk_idx, "error" => %e);
+                continue;
             }
-            None => empty_predictions += 1,
+        };
+
+        for (token, result) in predictions {
+            match result.prediction_at_horizon(prediction_accuracy::PREDICTION_HORIZON_HOURS) {
+                Some(p) => {
+                    prediction_entries.insert(
+                        token,
+                        (p.price.clone(), result.data_cutoff_time.naive_utc()),
+                    );
+                }
+                None => empty_predictions += 1,
+            }
         }
+        // predictions HashMap はここで drop — チャンクの価格履歴メモリを解放
     }
+
     if empty_predictions > 0 {
         warn!(log, "tokens with empty prediction results"; "count" => empty_predictions);
     }
 
+    // 3. 予測価格を DB に保存
     prediction_accuracy::record_predictions(&prediction_entries, &quote_token).await?;
 
     Ok(prediction_entries.len())
