@@ -2,19 +2,33 @@ use crate::prediction::ChronosPredictionResponse;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Chronos 予測ライブラリのラッパー
-pub struct ChronosPredictor;
+///
+/// 専用 rayon ThreadPool を持つ `predictor::Predictor` を内部で保持し、
+/// モデル訓練の並列度を制御する。`tokio::spawn_blocking` スレッドは
+/// rayon のワークスティーリングに参加しないため、同時モデル訓練数は
+/// `max_model_threads` で制御される（prediction concurrency に無関係）。
+pub struct ChronosPredictor {
+    predictor: Arc<predictor::Predictor>,
+}
 
 impl ChronosPredictor {
-    pub fn new() -> Self {
-        Self
+    pub fn new(max_model_threads: usize) -> Self {
+        Self {
+            predictor: Arc::new(
+                predictor::Predictor::new(max_model_threads).expect("Failed to create Predictor"),
+            ),
+        }
     }
 
     /// 価格予測を実行
     ///
     /// `data` は履歴データ（タイムスタンプ → 価格）、`forecast_until` は予測終了時刻。
-    /// 内部で同期関数 `predictor::predict()` を `spawn_blocking` でラップして呼び出す。
+    /// 内部で同期関数 `predictor.predict()` を `spawn_blocking` でラップして呼び出す。
+    /// モデル訓練は専用 ThreadPool 上で実行され、spawn_blocking スレッドは
+    /// rayon のワークスティーリングに参加しない。
     pub async fn predict_price(
         &self,
         data: BTreeMap<DateTime<Utc>, BigDecimal>,
@@ -39,7 +53,8 @@ impl ChronosPredictor {
                 .unwrap_or_else(|| TimeDelta::hours(1)),
         };
 
-        let result = tokio::task::spawn_blocking(move || predictor::predict(&input))
+        let predictor = self.predictor.clone();
+        let result = tokio::task::spawn_blocking(move || predictor.predict(&input))
             .await
             .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
             .map_err(|e| anyhow::anyhow!("predictor::predict failed: {}", e))?;
@@ -82,11 +97,5 @@ impl ChronosPredictor {
             processing_time_secs: result.processing_time_secs,
             model_count: result.model_count,
         })
-    }
-}
-
-impl Default for ChronosPredictor {
-    fn default() -> Self {
-        Self::new()
     }
 }

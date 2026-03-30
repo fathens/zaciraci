@@ -536,7 +536,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 44);
+    assert_eq!(KEY_DEFINITIONS.len(), 45);
 }
 
 #[test]
