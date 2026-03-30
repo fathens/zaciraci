@@ -91,6 +91,14 @@ fn test_trade_prediction_concurrency_default() {
 
 #[test]
 #[serial]
+fn test_trade_prediction_chunk_size_default() {
+    let _env = EnvGuard::remove("TRADE_PREDICTION_CHUNK_SIZE");
+    crate::config::store::remove("TRADE_PREDICTION_CHUNK_SIZE");
+    assert_eq!(typed().trade_prediction_chunk_size(), 50);
+}
+
+#[test]
+#[serial]
 fn test_trade_min_pool_liquidity_default() {
     let _env = EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
     crate::config::store::remove("TRADE_MIN_POOL_LIQUIDITY");

@@ -384,6 +384,13 @@ define_typed_config! {
         default: 4
     }
 
+    /// Number of tokens to process per prediction chunk.
+    /// Controls peak memory: each chunk loads chunk_size * ~2335 rows of price history.
+    fn trade_prediction_chunk_size() -> u32 {
+        key: "TRADE_PREDICTION_CHUNK_SIZE",
+        default: 50
+    }
+
     /// Number of threads for model training pool.
     /// Controls peak memory: each thread can hold one augurs model buffer (~200 MB).
     /// Independent of TRADE_PREDICTION_CONCURRENCY.
