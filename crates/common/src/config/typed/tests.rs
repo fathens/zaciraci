@@ -165,7 +165,7 @@ fn test_token_rates_retention_days_default() {
 fn test_rpc_max_attempts_default() {
     let _env = EnvGuard::remove("RPC_MAX_ATTEMPTS");
     crate::config::store::remove("RPC_MAX_ATTEMPTS");
-    assert_eq!(typed().rpc_max_attempts(), 10);
+    assert_eq!(typed().rpc_max_attempts(), 128);
 }
 
 // ── u64 keys ──
@@ -321,6 +321,14 @@ fn test_trade_cron_schedule_default() {
     let _env = EnvGuard::remove("TRADE_CRON_SCHEDULE");
     crate::config::store::remove("TRADE_CRON_SCHEDULE");
     assert_eq!(typed().trade_cron_schedule(), "0 0 0 * * *");
+}
+
+#[test]
+#[serial]
+fn test_record_rates_cron_schedule_default() {
+    let _env = EnvGuard::remove("RECORD_RATES_CRON_SCHEDULE");
+    crate::config::store::remove("RECORD_RATES_CRON_SCHEDULE");
+    assert_eq!(typed().record_rates_cron_schedule(), "0 */15 * * * *");
 }
 
 #[test]
@@ -552,7 +560,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 46);
+    assert_eq!(KEY_DEFINITIONS.len(), 47);
 }
 
 #[test]

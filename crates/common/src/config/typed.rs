@@ -354,6 +354,12 @@ define_typed_config! {
         default: "0 0 0 * * *"
     }
 
+    /// Cron schedule for rate recording
+    fn record_rates_cron_schedule() -> String {
+        key: "RECORD_RATES_CRON_SCHEDULE",
+        default: "0 */15 * * * *"
+    }
+
     /// Max retries for prediction fetch
     fn trade_prediction_max_retries() -> u32 {
         key: "TRADE_PREDICTION_MAX_RETRIES",
@@ -493,9 +499,9 @@ define_typed_config! {
     // ── rpc ──
 
     /// Max RPC retry attempts
-    fn rpc_max_attempts() -> u32 {
+    fn rpc_max_attempts() -> u16 {
         key: "RPC_MAX_ATTEMPTS",
-        default: 10
+        default: 128
     }
 
     // ── cron ──

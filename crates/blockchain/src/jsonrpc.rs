@@ -10,6 +10,7 @@ use crate::Result;
 use crate::jsonrpc::near_client::StandardNearClient;
 use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::types::gas_price::GasPrice;
+use common::config::ConfigAccess;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{MethodCallResult, methods};
 use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
@@ -32,9 +33,10 @@ static SHARED_ENDPOINT_POOL: LazyLock<Arc<endpoint_pool::EndpointPool>> = LazyLo
 });
 
 pub fn new_client() -> StandardNearClient<StandardRpcClient> {
+    let retry_limit = common::config::typed().rpc_max_attempts();
     StandardNearClient::new(&Arc::new(StandardRpcClient::new(
         Arc::clone(&SHARED_ENDPOINT_POOL),
-        128,
+        retry_limit,
         std::time::Duration::from_secs(60),
         0.1,
     )))
