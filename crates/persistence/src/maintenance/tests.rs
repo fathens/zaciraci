@@ -1,13 +1,14 @@
 use super::*;
 
 #[test]
-fn validate_reindex_target_allows_pool_info() {
-    assert!(validate_reindex_target("pool_info").is_ok());
-}
-
-#[test]
-fn validate_reindex_target_allows_token_rates() {
-    assert!(validate_reindex_target("token_rates").is_ok());
+fn validate_reindex_target_allows_all_tables() {
+    for table in REINDEX_TARGETS {
+        assert!(
+            validate_reindex_target(table).is_ok(),
+            "expected '{}' to be allowed",
+            table
+        );
+    }
 }
 
 #[test]

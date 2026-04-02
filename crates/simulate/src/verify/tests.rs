@@ -14,7 +14,7 @@ fn make_tx(from: &str, to: &str, estimated: u128, actual: Option<u128>) -> Trade
         timestamp: chrono::DateTime::from_timestamp(1700000000, 0)
             .unwrap()
             .naive_utc(),
-        evaluation_period_id: None,
+        evaluation_period_id: "eval_test".to_string(),
         actual_to_amount: actual.map(BigDecimal::from),
     }
 }

@@ -91,6 +91,22 @@ fn test_trade_prediction_concurrency_default() {
 
 #[test]
 #[serial]
+fn test_trade_prediction_chunk_size_default() {
+    let _env = EnvGuard::remove("TRADE_PREDICTION_CHUNK_SIZE");
+    crate::config::store::remove("TRADE_PREDICTION_CHUNK_SIZE");
+    assert_eq!(typed().trade_prediction_chunk_size(), 20);
+}
+
+#[test]
+#[serial]
+fn test_trade_prediction_model_threads_default() {
+    let _env = EnvGuard::remove("TRADE_PREDICTION_MODEL_THREADS");
+    crate::config::store::remove("TRADE_PREDICTION_MODEL_THREADS");
+    assert_eq!(typed().trade_prediction_model_threads(), 3);
+}
+
+#[test]
+#[serial]
 fn test_trade_min_pool_liquidity_default() {
     let _env = EnvGuard::remove("TRADE_MIN_POOL_LIQUIDITY");
     crate::config::store::remove("TRADE_MIN_POOL_LIQUIDITY");
@@ -149,7 +165,7 @@ fn test_token_rates_retention_days_default() {
 fn test_rpc_max_attempts_default() {
     let _env = EnvGuard::remove("RPC_MAX_ATTEMPTS");
     crate::config::store::remove("RPC_MAX_ATTEMPTS");
-    assert_eq!(typed().rpc_max_attempts(), 10);
+    assert_eq!(typed().rpc_max_attempts(), 128);
 }
 
 // ── u64 keys ──
@@ -297,16 +313,6 @@ fn test_prediction_accuracy_min_samples_default() {
     assert_eq!(typed().prediction_accuracy_min_samples(), 5);
 }
 
-// ── u16 keys ──
-
-#[test]
-#[serial]
-fn test_portfolio_holdings_retention_days_default() {
-    let _env = EnvGuard::remove("PORTFOLIO_HOLDINGS_RETENTION_DAYS");
-    crate::config::store::remove("PORTFOLIO_HOLDINGS_RETENTION_DAYS");
-    assert_eq!(typed().portfolio_holdings_retention_days(), 90);
-}
-
 // ── String keys ──
 
 #[test]
@@ -315,6 +321,14 @@ fn test_trade_cron_schedule_default() {
     let _env = EnvGuard::remove("TRADE_CRON_SCHEDULE");
     crate::config::store::remove("TRADE_CRON_SCHEDULE");
     assert_eq!(typed().trade_cron_schedule(), "0 0 0 * * *");
+}
+
+#[test]
+#[serial]
+fn test_record_rates_cron_schedule_default() {
+    let _env = EnvGuard::remove("RECORD_RATES_CRON_SCHEDULE");
+    crate::config::store::remove("RECORD_RATES_CRON_SCHEDULE");
+    assert_eq!(typed().record_rates_cron_schedule(), "0 */15 * * * *");
 }
 
 #[test]
@@ -546,7 +560,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 43);
+    assert_eq!(KEY_DEFINITIONS.len(), 47);
 }
 
 #[test]

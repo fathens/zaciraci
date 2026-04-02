@@ -289,30 +289,29 @@ fn calculate_direction_accuracy_for_records(
 ) -> (usize, usize) {
     debug_assert!(
         records
-            .windows(2)
-            .all(|w| w[0].target_time >= w[1].target_time),
+            .array_windows::<2>()
+            .all(|[newer, older]| newer.target_time >= older.target_time),
         "records must be sorted by target_time DESC"
     );
     let max_gap = chrono::TimeDelta::hours((PREDICTION_HORIZON_HOURS as i64 * 3) / 2);
     let mut correct = 0usize;
     let mut total = 0usize;
-    for pair in records.windows(2) {
-        let gap = pair[0].target_time - pair[1].target_time;
+    for [newer, older] in records.array_windows::<2>() {
+        let gap = newer.target_time - older.target_time;
         if gap > max_gap {
             warn!(log, "skipping direction accuracy pair due to large time gap";
-                "token" => &pair[0].token,
-                "newer_target_time" => %pair[0].target_time,
-                "older_target_time" => %pair[1].target_time,
+                "token" => &newer.token,
+                "newer_target_time" => %newer.target_time,
+                "older_target_time" => %older.target_time,
                 "gap_hours" => gap.num_hours(),
                 "max_gap_hours" => max_gap.num_hours(),
             );
             continue;
         }
-        let (Some(actual), Some(prev_actual)) = (&pair[0].actual_price, &pair[1].actual_price)
-        else {
+        let (Some(actual), Some(prev_actual)) = (&newer.actual_price, &older.actual_price) else {
             continue;
         };
-        if is_direction_correct(prev_actual, &pair[0].predicted_price, actual) {
+        if is_direction_correct(prev_actual, &newer.predicted_price, actual) {
             correct += 1;
         }
         total += 1;

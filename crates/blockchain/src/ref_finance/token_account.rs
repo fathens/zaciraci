@@ -1,7 +1,7 @@
 use common::types::TokenAccount;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
-pub static WNEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
+pub static WNEAR_TOKEN: LazyLock<TokenAccount> = LazyLock::new(|| {
     let id = if common::config::startup::get().is_mainnet {
         "wrap.near"
     } else {
@@ -11,7 +11,7 @@ pub static WNEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| {
 });
 
 /// ネイティブ NEAR を表す特別なトークン（mainnet/testnet で同じ）
-pub static NEAR_TOKEN: Lazy<TokenAccount> = Lazy::new(|| "near".parse().unwrap());
+pub static NEAR_TOKEN: LazyLock<TokenAccount> = LazyLock::new(|| "near".parse().unwrap());
 
 #[cfg(test)]
 mod tests {

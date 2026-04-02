@@ -1,6 +1,6 @@
-use once_cell::sync::Lazy;
 use serde::de::DeserializeOwned;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct RpcEndpoint {
@@ -56,7 +56,7 @@ impl StartupConfig {
     }
 }
 
-static STARTUP: Lazy<StartupConfig> = Lazy::new(StartupConfig::resolve);
+static STARTUP: LazyLock<StartupConfig> = LazyLock::new(StartupConfig::resolve);
 
 /// Returns a reference to the global startup configuration.
 ///

@@ -42,36 +42,37 @@ pub async fn run(cfg: ConfigResolver) {
     tokio::spawn(run_trade(cfg));
 }
 
-/// 環境変数から cron スケジュールを取得してパースする
-fn get_cron_schedule(env_var: &str, default: &str) -> cron::Schedule {
-    let log = DEFAULT.new(o!("function" => "get_cron_schedule", "env_var" => env_var.to_owned()));
-    let cron_conf = common::config::store::get(env_var).unwrap_or_else(|_| default.to_string());
+/// cron スケジュール文字列をパースし、失敗時は default にフォールバック
+fn parse_cron_schedule(cron_expr: &str, default: &str) -> cron::Schedule {
+    let log = DEFAULT.new(o!("function" => "parse_cron_schedule"));
 
-    match cron_conf.parse() {
+    match cron_expr.parse() {
         Ok(s) => {
-            info!(log, "cron schedule configured"; "schedule" => &cron_conf);
+            info!(log, "cron schedule configured"; "schedule" => cron_expr);
             s
         }
         Err(e) => {
             error!(log, "failed to parse cron schedule, using default";
-                   "error" => ?e, "schedule" => &cron_conf, "default" => default);
-            default.parse().unwrap()
+                   "error" => ?e, "schedule" => cron_expr, "default" => default);
+            default
+                .parse()
+                .expect("hardcoded default cron schedule must be valid")
         }
     }
 }
 
 async fn run_record_rates(cfg: ConfigResolver) {
-    const DEFAULT_CRON: &str = "0 */15 * * * *"; // デフォルト: 15分間隔
-    let schedule = get_cron_schedule("RECORD_RATES_CRON_SCHEDULE", DEFAULT_CRON);
+    const DEFAULT_CRON: &str = "0 */15 * * * *";
+    let schedule = parse_cron_schedule(&cfg.record_rates_cron_schedule(), DEFAULT_CRON);
     cronjob(schedule, || record_rates(&cfg), "record_rates", &cfg).await;
 }
 
 async fn run_trade(cfg: ConfigResolver) {
-    const DEFAULT_CRON: &str = "0 0 0 * * *"; // デフォルト: 毎日午前0時
+    const DEFAULT_CRON: &str = "0 0 0 * * *";
     let log = DEFAULT.new(o!("function" => "run_trade"));
     info!(log, "initializing auto trade cron job");
 
-    let schedule = get_cron_schedule("TRADE_CRON_SCHEDULE", DEFAULT_CRON);
+    let schedule = parse_cron_schedule(&cfg.trade_cron_schedule(), DEFAULT_CRON);
     cronjob(
         schedule,
         || async {
@@ -126,50 +127,77 @@ pub async fn run_prediction_cycle(
     let log = DEFAULT.new(o!("function" => "run_prediction_cycle"));
 
     // 1. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
-    let prediction_service = predict::PredictionService::new(cfg);
+    let prediction_service = predict::PredictionService::new(cfg)?;
     let target_tokens =
         strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg).await?;
 
     info!(log, "prediction targets selected"; "count" => target_tokens.len());
 
-    // 2. バッチ予測実行
     let quote_token = get_quote_token();
     let price_history_days = i64::from(cfg.trade_price_history_days());
     let token_out_list: Vec<TokenOutAccount> =
         target_tokens.into_iter().map(|t| t.into()).collect();
 
-    let predictions = prediction_service
-        .predict_multiple_tokens(
-            token_out_list,
-            &quote_token,
-            price_history_days,
-            prediction_accuracy::PREDICTION_HORIZON_HOURS,
-            as_of,
-            cfg,
-        )
-        .await?;
-
-    // 3. 予測価格を抽出して DB に保存
+    // 2. チャンクごとに予測実行（メモリピーク抑制）
+    let chunk_size = (cfg.trade_prediction_chunk_size() as usize).max(1);
     let mut prediction_entries: BTreeMap<
         TokenOutAccount,
         (common::types::TokenPrice, chrono::NaiveDateTime),
     > = BTreeMap::new();
     let mut empty_predictions = 0u32;
-    for (token, result) in predictions {
-        match result.prediction_at_horizon(prediction_accuracy::PREDICTION_HORIZON_HOURS) {
-            Some(p) => {
-                prediction_entries.insert(
-                    token,
-                    (p.price.clone(), result.data_cutoff_time.naive_utc()),
-                );
+
+    for (chunk_idx, chunk) in token_out_list.chunks(chunk_size).enumerate() {
+        info!(log, "processing prediction chunk";
+            "chunk" => chunk_idx,
+            "size" => chunk.len(),
+            "total_tokens" => token_out_list.len()
+        );
+
+        let predictions = match prediction_service
+            .predict_multiple_tokens(
+                chunk,
+                &quote_token,
+                price_history_days,
+                prediction_accuracy::PREDICTION_HORIZON_HOURS,
+                as_of,
+                cfg,
+            )
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(log, "prediction chunk failed, skipping";
+                    "chunk" => chunk_idx, "error" => %e);
+                continue;
             }
-            None => empty_predictions += 1,
+        };
+
+        for (token, result) in predictions {
+            match result.prediction_at_horizon(prediction_accuracy::PREDICTION_HORIZON_HOURS) {
+                Some(p) => {
+                    prediction_entries.insert(
+                        token,
+                        (p.price.clone(), result.data_cutoff_time.naive_utc()),
+                    );
+                }
+                None => empty_predictions = empty_predictions.saturating_add(1),
+            }
         }
+        // predictions HashMap はここで drop — チャンクの価格履歴メモリを解放
     }
+
     if empty_predictions > 0 {
         warn!(log, "tokens with empty prediction results"; "count" => empty_predictions);
     }
 
+    if prediction_entries.is_empty() && !token_out_list.is_empty() {
+        return Err(anyhow::anyhow!(
+            "all prediction chunks failed: 0/{} tokens produced predictions",
+            token_out_list.len()
+        ));
+    }
+
+    // 3. 予測価格を DB に保存
     prediction_accuracy::record_predictions(&prediction_entries, &quote_token).await?;
 
     Ok(prediction_entries.len())
@@ -375,9 +403,8 @@ mod tests {
     use serial_test::serial;
 
     #[test]
-    fn test_get_cron_schedule_uses_default_when_env_not_set() {
-        // 存在しない環境変数名を使用
-        let schedule = get_cron_schedule("TEST_NONEXISTENT_CRON_VAR", "0 */15 * * * *");
+    fn test_parse_cron_schedule_valid() {
+        let schedule = parse_cron_schedule("0 */15 * * * *", "0 0 0 * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();
@@ -385,19 +412,8 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cron_schedule_uses_env_value() {
-        let _env_guard = common::config::store::EnvGuard::set("TEST_CRON_VALID", "0 */30 * * * *");
-        let schedule = get_cron_schedule("TEST_CRON_VALID", "0 */15 * * * *");
-        let mut upcoming = schedule.upcoming(TZ);
-        let first = upcoming.next().unwrap();
-        let second = upcoming.next().unwrap();
-        assert_eq!((second - first).num_minutes(), 30); // 環境変数の値が使われる
-    }
-
-    #[test]
-    fn test_get_cron_schedule_fallback_on_invalid_env() {
-        let _env_guard = common::config::store::EnvGuard::set("TEST_CRON_INVALID", "invalid cron");
-        let schedule = get_cron_schedule("TEST_CRON_INVALID", "0 */15 * * * *");
+    fn test_parse_cron_schedule_fallback_on_invalid() {
+        let schedule = parse_cron_schedule("invalid cron", "0 */15 * * * *");
         let mut upcoming = schedule.upcoming(TZ);
         let first = upcoming.next().unwrap();
         let second = upcoming.next().unwrap();

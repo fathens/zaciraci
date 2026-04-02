@@ -69,8 +69,8 @@ fn estimate_swap_via_pools(
 ) -> Option<u128> {
     debug_assert!(
         swap_actions
-            .windows(2)
-            .all(|w| w[0].token_out == w[1].token_in),
+            .array_windows::<2>()
+            .all(|[a, b]| a.token_out == b.token_in),
         "swap action chain is not connected"
     );
     let mut current_amount = amount_in;

@@ -19,11 +19,11 @@ dependencies = [
 
 [[package]]
 name = "analyzer"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "num-complex",
  "rustfft",
  "statrs",
@@ -106,12 +106,12 @@ dependencies = [
 
 [[package]]
 name = "arbitrage"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "assertables",
  "blockchain",
- "common 1.4.0",
+ "common 1.4.1",
  "dex",
  "humantime",
  "logging",
@@ -290,11 +290,11 @@ dependencies = [
 
 [[package]]
 name = "backend"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "arbitrage",
  "blockchain",
- "common 1.4.0",
+ "common 1.4.1",
  "logging",
  "persistence",
  "slog",
@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "blockchain"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "assertables",
@@ -421,7 +421,7 @@ dependencies = [
  "bip39",
  "bs58 0.5.1",
  "chrono",
- "common 1.4.0",
+ "common 1.4.1",
  "dex",
  "ed25519-dalek",
  "futures-util",
@@ -435,7 +435,6 @@ dependencies = [
  "near-sdk",
  "num-integer",
  "num-traits",
- "once_cell",
  "petgraph 0.7.1",
  "proptest",
  "rand 0.9.2",
@@ -620,8 +619,8 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -635,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -646,7 +645,6 @@ dependencies = [
  "ndarray",
  "near-account-id",
  "num-traits",
- "once_cell",
  "predictor",
  "serde",
  "serde_json",
@@ -942,12 +940,12 @@ dependencies = [
 
 [[package]]
 name = "dex"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "bigdecimal",
  "chrono",
- "common 1.4.0",
+ "common 1.4.1",
  "near-sdk",
  "num-bigint 0.4.6",
  "serde",
@@ -1871,10 +1869,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "logging"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
- "common 1.4.0",
- "once_cell",
+ "common 1.4.1",
  "slog",
  "slog-async",
  "slog-envlogger",
@@ -1963,12 +1960,12 @@ dependencies = [
 
 [[package]]
 name = "models"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "augurs",
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "rayon",
  "scaler",
  "thiserror",
@@ -2350,12 +2347,12 @@ dependencies = [
 
 [[package]]
 name = "normalize"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "bigdecimal",
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "tracing",
 ]
 
@@ -2559,12 +2556,12 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "persistence"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "bigdecimal",
  "chrono",
- "common 1.4.0",
+ "common 1.4.1",
  "cron",
  "deadpool-diesel",
  "dex",
@@ -2572,7 +2569,6 @@ dependencies = [
  "futures",
  "logging",
  "near-sdk",
- "once_cell",
  "serde",
  "serde_json",
  "serial_test",
@@ -2677,15 +2673,16 @@ dependencies = [
 
 [[package]]
 name = "predictor"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "analyzer",
  "bigdecimal",
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "models",
  "normalize",
+ "rayon",
  "selector",
  "serde",
  "serde_json",
@@ -3188,10 +3185,10 @@ dependencies = [
 
 [[package]]
 name = "scaler"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
- "common 0.1.5",
+ "common 0.1.6",
 ]
 
 [[package]]
@@ -3292,12 +3289,12 @@ dependencies = [
 
 [[package]]
 name = "selector"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "analyzer",
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "tracing",
 ]
 
@@ -3521,14 +3518,14 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simulate"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "bigdecimal",
  "blockchain",
  "chrono",
  "clap",
- "common 1.4.0",
+ "common 1.4.1",
  "dex",
  "logging",
  "near-crypto",
@@ -4216,14 +4213,14 @@ dependencies = [
 
 [[package]]
 name = "trade"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "assertables",
  "bigdecimal",
  "blockchain",
  "chrono",
- "common 1.4.0",
+ "common 1.4.1",
  "cron",
  "dex",
  "diesel",
@@ -4234,7 +4231,6 @@ dependencies = [
  "near-sdk",
  "num-bigint 0.4.6",
  "num-traits",
- "once_cell",
  "persistence",
  "proptest",
  "serde",
@@ -4247,11 +4243,11 @@ dependencies = [
 
 [[package]]
 name = "trainer"
-version = "0.1.5"
-source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.5#7b47c894cc060ccf706f21752fb2421f9dd97f39"
+version = "0.1.6"
+source = "git+https://github.com/fathens/zcrc-chronos-rs?tag=0.1.6#05b1cf1162ffbfba3e35d39b1239c9242de03b46"
 dependencies = [
  "chrono",
- "common 0.1.5",
+ "common 0.1.6",
  "models",
  "rayon",
  "selector",
@@ -4486,11 +4482,11 @@ dependencies = [
 
 [[package]]
 name = "web"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "bigdecimal",
  "chrono",
- "common 1.4.0",
+ "common 1.4.1",
  "logging",
  "persistence",
  "prost",

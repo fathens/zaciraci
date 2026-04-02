@@ -131,7 +131,7 @@ where
     };
 
     // Step 3: PredictionServiceの初期化
-    let prediction_service = PredictionService::new(cfg);
+    let prediction_service = PredictionService::new(cfg)?;
 
     // 清算失敗トークンがあればログ出力
     if !result.failed_liquidations.is_empty() {
@@ -256,11 +256,6 @@ where
     .await
     {
         warn!(log, "failed to record portfolio holdings"; "error" => ?e);
-    }
-
-    // 古い保有量レコードのクリーンアップ
-    if let Err(e) = super::snapshot::cleanup_old_records(cfg).await {
-        warn!(log, "failed to cleanup old portfolio holdings"; "error" => ?e);
     }
 
     // 注: ハーベスト判定は manage_evaluation_period 内で評価期間終了時（清算後・新period作成前）に

@@ -4,8 +4,22 @@ use common::types::TokenSmallestUnits;
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 
+async fn create_test_evaluation_period() -> String {
+    use crate::evaluation_period::NewEvaluationPeriod;
+    let new_period = NewEvaluationPeriod::new(
+        common::types::YoctoAmount::from_u128(100_000_000_000_000_000_000_000_000),
+        vec![],
+    );
+    new_period.insert_async().await.unwrap().period_id
+}
+
+async fn delete_test_evaluation_period(period_id: String) {
+    let _ = crate::evaluation_period::EvaluationPeriod::delete_by_period_id_async(period_id).await;
+}
+
 #[tokio::test]
 async fn test_trade_transaction_crud() {
+    let period_id = create_test_evaluation_period().await;
     let batch_id = uuid::Uuid::new_v4().to_string();
     let tx_id = format!("test_tx_{}", uuid::Uuid::new_v4());
 
@@ -17,37 +31,43 @@ async fn test_trade_transaction_crud() {
         to_token: "akaia.tkn.near".to_string(),
         to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
-        evaluation_period_id: None,
+        evaluation_period_id: period_id.clone(),
         actual_to_amount: None,
     };
 
-    let result = transaction.insert_async().await.unwrap();
-    assert_eq!(result.tx_id, tx_id);
-    assert_eq!(result.trade_batch_id, batch_id);
+    let result = AssertUnwindSafe(async {
+        let inserted = transaction.insert_async().await.unwrap();
+        assert_eq!(inserted.tx_id, tx_id);
+        assert_eq!(inserted.trade_batch_id, batch_id);
 
-    let found = TradeTransaction::find_by_tx_id_async(tx_id.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(found.tx_id, tx_id);
-    // amount が DB ラウンドトリップで正しく復元されることを確認
-    assert_eq!(
-        found.from_amount,
-        TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000)
-    );
-    assert_eq!(
-        found.to_amount,
-        TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000)
-    );
+        let found = TradeTransaction::find_by_tx_id_async(tx_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.tx_id, tx_id);
+        assert_eq!(
+            found.from_amount,
+            TokenSmallestUnits::from_u128(1_000_000_000_000_000_000_000_000)
+        );
+        assert_eq!(
+            found.to_amount,
+            TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000)
+        );
 
-    let batch_transactions = TradeTransaction::find_by_batch_id_async(batch_id)
-        .await
-        .unwrap();
-    assert_eq!(batch_transactions.len(), 1);
+        let batch_transactions = TradeTransaction::find_by_batch_id_async(batch_id)
+            .await
+            .unwrap();
+        assert_eq!(batch_transactions.len(), 1);
+    })
+    .catch_unwind()
+    .await;
 
-    TradeTransaction::delete_by_tx_id_async(tx_id)
-        .await
-        .unwrap();
+    let _ = TradeTransaction::delete_by_tx_id_async(tx_id).await;
+    delete_test_evaluation_period(period_id).await;
+
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
+    }
 }
 
 #[tokio::test]
@@ -77,7 +97,7 @@ async fn test_count_by_evaluation_period() {
             to_token: "akaia.tkn.near".to_string(),
             to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
             timestamp: chrono::Utc::now().naive_utc(),
-            evaluation_period_id: Some(period_id.clone()),
+            evaluation_period_id: period_id.clone(),
             actual_to_amount: None,
         };
 
@@ -135,21 +155,21 @@ async fn test_transaction_with_evaluation_period_id() {
         to_token: "akaia.tkn.near".to_string(),
         to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
-        evaluation_period_id: Some(period_id.clone()),
+        evaluation_period_id: period_id.clone(),
         actual_to_amount: None,
     };
 
     let result = AssertUnwindSafe(async {
         let inserted = transaction.insert_async().await.unwrap();
         assert_eq!(inserted.tx_id, tx_id);
-        assert_eq!(inserted.evaluation_period_id, Some(period_id.clone()));
+        assert_eq!(inserted.evaluation_period_id, period_id);
 
         // 取得して確認
         let found = TradeTransaction::find_by_tx_id_async(tx_id.clone())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(found.evaluation_period_id, Some(period_id.clone()));
+        assert_eq!(found.evaluation_period_id, period_id);
     })
     .catch_unwind()
     .await;
@@ -165,6 +185,7 @@ async fn test_transaction_with_evaluation_period_id() {
 
 #[tokio::test]
 async fn test_actual_to_amount_roundtrip() {
+    let period_id = create_test_evaluation_period().await;
     let batch_id = uuid::Uuid::new_v4().to_string();
     let tx_id_with = format!("test_tx_actual_{}", uuid::Uuid::new_v4());
     let tx_id_without = format!("test_tx_no_actual_{}", uuid::Uuid::new_v4());
@@ -180,7 +201,7 @@ async fn test_actual_to_amount_roundtrip() {
         to_token: "akaia.tkn.near".to_string(),
         to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
-        evaluation_period_id: None,
+        evaluation_period_id: period_id.clone(),
         actual_to_amount: Some(actual_value.clone()),
     };
     tx_with.insert_async().await.unwrap();
@@ -194,13 +215,12 @@ async fn test_actual_to_amount_roundtrip() {
         to_token: "akaia.tkn.near".to_string(),
         to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
         timestamp: chrono::Utc::now().naive_utc(),
-        evaluation_period_id: None,
+        evaluation_period_id: period_id.clone(),
         actual_to_amount: None,
     };
     tx_without.insert_async().await.unwrap();
 
     let result = AssertUnwindSafe(async {
-        // 読み戻して検証
         let found_with = TradeTransaction::find_by_tx_id_async(tx_id_with.clone())
             .await
             .unwrap()
@@ -216,9 +236,9 @@ async fn test_actual_to_amount_roundtrip() {
     .catch_unwind()
     .await;
 
-    // Cleanup（テスト本体がパニックしても常に実行）
     let _ = TradeTransaction::delete_by_tx_id_async(tx_id_with).await;
     let _ = TradeTransaction::delete_by_tx_id_async(tx_id_without).await;
+    delete_test_evaluation_period(period_id).await;
 
     if let Err(e) = result {
         std::panic::resume_unwind(e);
@@ -227,6 +247,7 @@ async fn test_actual_to_amount_roundtrip() {
 
 #[tokio::test]
 async fn test_find_by_date_range() {
+    let period_id = create_test_evaluation_period().await;
     let batch_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().naive_utc();
 
@@ -250,7 +271,7 @@ async fn test_find_by_date_range() {
             to_token: "akaia.tkn.near".to_string(),
             to_amount: TokenSmallestUnits::from_u128(50_000_000_000_000_000_000_000),
             timestamp: *ts,
-            evaluation_period_id: None,
+            evaluation_period_id: period_id.clone(),
             actual_to_amount: None,
         };
         tx.insert_async().await.unwrap();
@@ -295,8 +316,8 @@ async fn test_find_by_date_range() {
         }
 
         // タイムスタンプ昇順であることを確認
-        for w in found_all.windows(2) {
-            assert!(w[0].timestamp <= w[1].timestamp, "結果は昇順であるべき");
+        for [a, b] in found_all.array_windows::<2>() {
+            assert!(a.timestamp <= b.timestamp, "結果は昇順であるべき");
         }
     })
     .catch_unwind()
@@ -306,6 +327,7 @@ async fn test_find_by_date_range() {
     for tx_id in &tx_ids {
         let _ = TradeTransaction::delete_by_tx_id_async(tx_id.clone()).await;
     }
+    delete_test_evaluation_period(period_id).await;
 
     if let Err(e) = result {
         std::panic::resume_unwind(e);

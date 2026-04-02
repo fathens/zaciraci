@@ -10,6 +10,7 @@ use crate::Result;
 use crate::jsonrpc::near_client::StandardNearClient;
 use crate::jsonrpc::rpc::StandardRpcClient;
 use crate::types::gas_price::GasPrice;
+use common::config::ConfigAccess;
 use near_crypto::InMemorySigner;
 use near_jsonrpc_client::{MethodCallResult, methods};
 use near_jsonrpc_primitives::types::transactions::RpcTransactionResponse;
@@ -21,21 +22,21 @@ use near_primitives::views::{
     TxExecutionStatus,
 };
 use near_sdk::{AccountId, NearToken};
-use once_cell::sync::Lazy;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 /// 全呼び出し元で共有される EndpointPool
 /// 障害エンドポイント情報を共有し、無駄なリトライを削減する
-static SHARED_ENDPOINT_POOL: Lazy<Arc<endpoint_pool::EndpointPool>> = Lazy::new(|| {
+static SHARED_ENDPOINT_POOL: LazyLock<Arc<endpoint_pool::EndpointPool>> = LazyLock::new(|| {
     Arc::new(endpoint_pool::EndpointPool::new(
         common::config::startup::get(),
     ))
 });
 
 pub fn new_client() -> StandardNearClient<StandardRpcClient> {
+    let retry_limit = common::config::typed().rpc_max_attempts();
     StandardNearClient::new(&Arc::new(StandardRpcClient::new(
         Arc::clone(&SHARED_ENDPOINT_POOL),
-        128,
+        retry_limit,
         std::time::Duration::from_secs(60),
         0.1,
     )))

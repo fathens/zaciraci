@@ -1,4 +1,4 @@
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 // ── ConfigValueType enum ──
@@ -354,6 +354,12 @@ define_typed_config! {
         default: "0 0 0 * * *"
     }
 
+    /// Cron schedule for rate recording
+    fn record_rates_cron_schedule() -> String {
+        key: "RECORD_RATES_CRON_SCHEDULE",
+        default: "0 */15 * * * *"
+    }
+
     /// Max retries for prediction fetch
     fn trade_prediction_max_retries() -> u32 {
         key: "TRADE_PREDICTION_MAX_RETRIES",
@@ -382,6 +388,23 @@ define_typed_config! {
     fn trade_prediction_concurrency() -> u32 {
         key: "TRADE_PREDICTION_CONCURRENCY",
         default: 4
+    }
+
+    /// Number of tokens to process per prediction chunk.
+    /// Controls peak memory: each chunk loads chunk_size * ~2335 rows of price history.
+    /// Recommended range: 5–50. Smaller values reduce peak memory but increase DB round-trips.
+    fn trade_prediction_chunk_size() -> u32 {
+        key: "TRADE_PREDICTION_CHUNK_SIZE",
+        default: 20
+    }
+
+    /// Number of threads for model training pool.
+    /// Controls peak memory: each thread can hold one augurs model buffer (~200 MB).
+    /// Independent of TRADE_PREDICTION_CONCURRENCY.
+    /// Recommended range: 1–8. Higher values increase peak memory proportionally.
+    fn trade_prediction_model_threads() -> u32 {
+        key: "TRADE_PREDICTION_MODEL_THREADS",
+        default: 3
     }
 
     /// Minimum pool liquidity in NEAR
@@ -476,9 +499,9 @@ define_typed_config! {
     // ── rpc ──
 
     /// Max RPC retry attempts
-    fn rpc_max_attempts() -> u32 {
+    fn rpc_max_attempts() -> u16 {
         key: "RPC_MAX_ATTEMPTS",
-        default: 10
+        default: 128
     }
 
     // ── cron ──
@@ -493,6 +516,19 @@ define_typed_config! {
     fn token_rates_retention_days() -> u32 {
         key: "TOKEN_RATES_RETENTION_DAYS",
         default: 90
+    }
+
+    /// Retention period for evaluation period records in days
+    /// (ON DELETE CASCADE also removes related trade_transactions and portfolio_holdings)
+    fn evaluation_periods_retention_days() -> u32 {
+        key: "EVALUATION_PERIODS_RETENTION_DAYS",
+        default: 365
+    }
+
+    /// Retention period for config store history records in days
+    fn config_store_history_retention_days() -> u32 {
+        key: "CONFIG_STORE_HISTORY_RETENTION_DAYS",
+        default: 365
     }
 
     /// Max sleep duration in cron loop in seconds
@@ -541,22 +577,16 @@ define_typed_config! {
         default: 0.3
     }
 
-    /// Retention days for portfolio holding snapshots
-    fn portfolio_holdings_retention_days() -> u16 {
-        key: "PORTFOLIO_HOLDINGS_RETENTION_DAYS",
-        default: 90
-    }
-
     // ── prediction ──
 
     /// Retention days for evaluated prediction records
-    fn prediction_record_retention_days() -> i64 {
+    fn prediction_record_retention_days() -> u32 {
         key: "PREDICTION_RECORD_RETENTION_DAYS",
         default: 30
     }
 
     /// Retention days for unevaluated predictions
-    fn prediction_unevaluated_retention_days() -> i64 {
+    fn prediction_unevaluated_retention_days() -> u32 {
         key: "PREDICTION_UNEVALUATED_RETENTION_DAYS",
         default: 20
     }
@@ -594,7 +624,7 @@ define_typed_config! {
     // ── persistence: database_url, pg_pool_size, instance_id moved to StartupConfig ──
 }
 
-static TYPED: Lazy<ConfigResolver> = Lazy::new(|| ConfigResolver);
+static TYPED: LazyLock<ConfigResolver> = LazyLock::new(|| ConfigResolver);
 
 /// Returns a reference to the global typed config resolver.
 ///
