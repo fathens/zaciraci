@@ -131,7 +131,7 @@ where
     };
 
     // Step 3: PredictionServiceの初期化
-    let prediction_service = PredictionService::new(cfg);
+    let prediction_service = PredictionService::new(cfg)?;
 
     // 清算失敗トークンがあればログ出力
     if !result.failed_liquidations.is_empty() {

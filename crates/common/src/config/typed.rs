@@ -384,6 +384,23 @@ define_typed_config! {
         default: 4
     }
 
+    /// Number of tokens to process per prediction chunk.
+    /// Controls peak memory: each chunk loads chunk_size * ~2335 rows of price history.
+    /// Recommended range: 5–50. Smaller values reduce peak memory but increase DB round-trips.
+    fn trade_prediction_chunk_size() -> u32 {
+        key: "TRADE_PREDICTION_CHUNK_SIZE",
+        default: 20
+    }
+
+    /// Number of threads for model training pool.
+    /// Controls peak memory: each thread can hold one augurs model buffer (~200 MB).
+    /// Independent of TRADE_PREDICTION_CONCURRENCY.
+    /// Recommended range: 1–8. Higher values increase peak memory proportionally.
+    fn trade_prediction_model_threads() -> u32 {
+        key: "TRADE_PREDICTION_MODEL_THREADS",
+        default: 3
+    }
+
     /// Minimum pool liquidity in NEAR
     fn trade_min_pool_liquidity() -> u32 {
         key: "TRADE_MIN_POOL_LIQUIDITY",

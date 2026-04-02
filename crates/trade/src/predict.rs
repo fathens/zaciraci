@@ -19,14 +19,15 @@ pub struct PredictionService {
 }
 
 impl PredictionService {
-    pub fn new(cfg: &impl ConfigAccess) -> Self {
+    pub fn new(cfg: &impl ConfigAccess) -> Result<Self> {
         let max_retries = cfg.trade_prediction_max_retries();
         let retry_delay_seconds = cfg.trade_prediction_retry_delay_seconds();
-        Self {
-            predictor: ChronosPredictor::new(),
+        let max_model_threads = (cfg.trade_prediction_model_threads() as usize).max(1);
+        Ok(Self {
+            predictor: ChronosPredictor::new(max_model_threads)?,
             max_retries,
             retry_delay_seconds,
-        }
+        })
     }
 
     /// ボラティリティ順に全トークンを取得
@@ -151,7 +152,7 @@ impl PredictionService {
     /// 複数トークンの価格予測を実行（バッチ履歴取得 + 予測の並行化）
     pub async fn predict_multiple_tokens(
         &self,
-        tokens: Vec<TokenOutAccount>,
+        tokens: &[TokenOutAccount],
         quote_token: &TokenInAccount,
         history_days: i64,
         prediction_horizon: usize,
@@ -167,7 +168,7 @@ impl PredictionService {
         };
 
         // 1. 全トークンの履歴を一括取得（1回のDBクエリ）
-        let histories_map = TokenRate::get_rates_for_multiple_tokens(&tokens, quote_token, &range)
+        let histories_map = TokenRate::get_rates_for_multiple_tokens(tokens, quote_token, &range)
             .await
             .context("Failed to batch fetch price histories")?;
 
@@ -180,7 +181,7 @@ impl PredictionService {
         let concurrency = cfg.trade_prediction_concurrency() as usize;
 
         // 3. 予測を並行実行
-        let results: Vec<_> = stream::iter(tokens.clone())
+        let results: Vec<_> = stream::iter(tokens.iter().cloned())
             .filter_map(|token| {
                 let rates = histories_map.get(&token).cloned();
                 async move { rates.map(|r| (token, r)) }

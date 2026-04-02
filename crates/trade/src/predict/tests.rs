@@ -151,7 +151,7 @@ async fn test_get_top_tokens_with_specific_volatility() -> Result<()> {
     let fixture = TestFixture::new();
     fixture.setup_volatility_data().await?;
 
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
     let start_date = Utc::now() - TimeDelta::days(1);
     let end_date = Utc::now();
 
@@ -197,7 +197,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
         .setup_price_history(&test_token, &expected_prices)
         .await?;
 
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
     let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
 
@@ -260,7 +260,7 @@ async fn test_get_price_history_data_integrity() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_convert_prediction_result() {
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG).unwrap();
 
     let now = Utc::now();
     let last_data_timestamp = now; // 最後のデータタイムスタンプ
@@ -307,7 +307,7 @@ async fn test_convert_prediction_result() {
 async fn test_convert_prediction_result_15min_interval_has_24h_point() {
     use common::algorithm::prediction::{PREDICTION_HORIZON_HOURS, TokenPredictionResult};
 
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG).unwrap();
     let now = Utc::now();
     let last_data_timestamp = now;
 
@@ -361,7 +361,7 @@ async fn test_convert_prediction_result_15min_interval_has_24h_point() {
 #[tokio::test]
 #[serial]
 async fn test_error_handling_comprehensive() -> Result<()> {
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
 
     let start_date = Utc::now() - TimeDelta::days(7);
     let end_date = Utc::now();
@@ -406,7 +406,7 @@ async fn test_error_handling_comprehensive() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_empty_price_history() {
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG).unwrap();
 
     let test_token: TokenOutAccount = "test.near".parse::<TokenAccount>().unwrap().into();
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
@@ -494,7 +494,7 @@ async fn test_batch_processing_database_operations() -> Result<()> {
 
     TokenRate::batch_insert(&all_rates, &CFG).await?;
 
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
 
     let start_date = Utc::now() - TimeDelta::hours(10);
     let end_date = Utc::now();
@@ -553,7 +553,7 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
         .setup_price_history(&existing_token, &prices)
         .await?;
 
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
 
     let tokens: Vec<TokenOutAccount> = vec![
         "existing.near".parse::<TokenAccount>().unwrap().into(),
@@ -562,7 +562,7 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
     ];
 
     let _result = service
-        .predict_multiple_tokens(tokens, &fixture.quote_token, 1, 24, Utc::now(), &CFG)
+        .predict_multiple_tokens(&tokens, &fixture.quote_token, 1, 24, Utc::now(), &CFG)
         .await;
 
     Ok(())
@@ -573,7 +573,7 @@ async fn test_predict_multiple_tokens_partial_success() -> Result<()> {
 async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
     let _guard = TokenRateCleanGuard::new().await;
 
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
 
     let tokens: Vec<TokenOutAccount> = vec![
@@ -583,7 +583,7 @@ async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
     ];
 
     let result = service
-        .predict_multiple_tokens(tokens, &quote_token, 1, 24, Utc::now(), &CFG)
+        .predict_multiple_tokens(&tokens, &quote_token, 1, 24, Utc::now(), &CFG)
         .await;
 
     assert!(result.is_err(), "Should fail when all tokens fail");
@@ -603,7 +603,7 @@ async fn test_predict_multiple_tokens_all_fail() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_retry_configuration() {
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG).unwrap();
 
     assert_eq!(
         service.max_retries, 2,
@@ -618,12 +618,12 @@ async fn test_retry_configuration() {
 #[tokio::test]
 #[serial]
 async fn test_empty_token_list() -> Result<()> {
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
     let tokens: Vec<TokenOutAccount> = vec![];
     let quote_token: TokenInAccount = "wrap.near".parse::<TokenAccount>().unwrap().into();
 
     let result = service
-        .predict_multiple_tokens(tokens, &quote_token, 1, 24, Utc::now(), &CFG)
+        .predict_multiple_tokens(&tokens, &quote_token, 1, 24, Utc::now(), &CFG)
         .await;
 
     assert!(result.is_err(), "Should fail with empty token list");
@@ -924,19 +924,12 @@ async fn test_predict_multiple_tokens_parallel_execution() -> Result<()> {
         fixture.setup_price_history(token, &prices).await?;
     }
 
-    let service = PredictionService::new(&CFG);
+    let service = PredictionService::new(&CFG)?;
 
     // 並行処理で予測実行
     let start = std::time::Instant::now();
     let result = service
-        .predict_multiple_tokens(
-            tokens.clone(),
-            &fixture.quote_token,
-            1,
-            24,
-            Utc::now(),
-            &CFG,
-        )
+        .predict_multiple_tokens(&tokens, &fixture.quote_token, 1, 24, Utc::now(), &CFG)
         .await;
     let duration = start.elapsed();
 
