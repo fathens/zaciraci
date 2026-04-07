@@ -9,6 +9,7 @@ persistence = { path = "../persistence" }
 logging = { path = "../logging" }
 grpc_auth = { path = "../grpc_auth" }
 
+anyhow = { workspace = true }
 jsonwebtoken = "9"
 reqwest = { workspace = true }
 serde = { workspace = true }

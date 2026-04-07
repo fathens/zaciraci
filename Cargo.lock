@@ -1373,6 +1373,7 @@ dependencies = [
 name = "google_auth"
 version = "1.4.1"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "chrono",
  "common 1.4.1",
