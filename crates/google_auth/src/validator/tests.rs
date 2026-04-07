@@ -67,8 +67,117 @@ struct TestClaims<'a> {
     email_verified: bool,
     iat: u64,
     exp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nbf: Option<u64>,
 }
 
+/// Test claim set without `iat`, used to verify the required-spec-claim check.
+#[derive(Serialize)]
+struct TestClaimsNoIat<'a> {
+    iss: &'a str,
+    aud: &'a str,
+    sub: &'a str,
+    email: &'a str,
+    email_verified: bool,
+    exp: u64,
+}
+
+/// Builder describing how to construct a JWT for tests.
+struct TokenBuilder<'a> {
+    kid: &'a str,
+    iss: &'a str,
+    aud: &'a str,
+    email: &'a str,
+    email_verified: bool,
+    /// Offset (positive = future, negative = past) applied to `now_secs()`
+    /// to compute `exp`.
+    exp_delta_secs: i64,
+    /// Offset applied to `now_secs()` to compute `iat`. Negative means
+    /// the token was issued that many seconds ago.
+    iat_offset_secs: i64,
+    /// Optional `nbf` offset relative to `now_secs()`. `None` omits the
+    /// claim entirely.
+    nbf_offset_secs: Option<i64>,
+}
+
+impl<'a> TokenBuilder<'a> {
+    fn new(email: &'a str) -> Self {
+        Self {
+            kid: TEST_KID,
+            iss: "https://accounts.google.com",
+            aud: TEST_CLIENT_ID,
+            email,
+            email_verified: true,
+            exp_delta_secs: 3600,
+            iat_offset_secs: 0,
+            nbf_offset_secs: None,
+        }
+    }
+
+    fn iss(mut self, iss: &'a str) -> Self {
+        self.iss = iss;
+        self
+    }
+
+    fn aud(mut self, aud: &'a str) -> Self {
+        self.aud = aud;
+        self
+    }
+
+    fn email_verified(mut self, verified: bool) -> Self {
+        self.email_verified = verified;
+        self
+    }
+
+    fn exp_delta(mut self, secs: i64) -> Self {
+        self.exp_delta_secs = secs;
+        self
+    }
+
+    fn iat_offset(mut self, secs: i64) -> Self {
+        self.iat_offset_secs = secs;
+        self
+    }
+
+    fn nbf_offset(mut self, secs: i64) -> Self {
+        self.nbf_offset_secs = Some(secs);
+        self
+    }
+
+    fn sign(self, keypair: &TestKeypair) -> String {
+        let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some(self.kid.to_string());
+
+        let now = now_secs();
+        let iat = apply_offset(now, self.iat_offset_secs);
+        let exp = apply_offset(now, self.exp_delta_secs);
+        let nbf = self.nbf_offset_secs.map(|secs| apply_offset(now, secs));
+
+        let claims = TestClaims {
+            iss: self.iss,
+            aud: self.aud,
+            sub: "1234567890",
+            email: self.email,
+            email_verified: self.email_verified,
+            iat,
+            exp,
+            nbf,
+        };
+        encode(&header, &claims, &keypair.encoding).expect("encode")
+    }
+}
+
+fn apply_offset(base: u64, offset: i64) -> u64 {
+    if offset >= 0 {
+        base + offset as u64
+    } else {
+        base.saturating_sub((-offset) as u64)
+    }
+}
+
+/// Backward-compatible helper used by the existing tests; constructs a token
+/// via `TokenBuilder` so the surface stays minimal while supporting the new
+/// fields.
 fn sign_token(
     keypair: &TestKeypair,
     kid: &str,
@@ -78,26 +187,13 @@ fn sign_token(
     email_verified: bool,
     exp_delta_secs: i64,
 ) -> String {
-    let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
-    header.kid = Some(kid.to_string());
-
-    let iat = now_secs();
-    let exp = if exp_delta_secs >= 0 {
-        iat + exp_delta_secs as u64
-    } else {
-        iat.saturating_sub((-exp_delta_secs) as u64)
-    };
-
-    let claims = TestClaims {
-        iss,
-        aud,
-        sub: "1234567890",
-        email,
-        email_verified,
-        iat,
-        exp,
-    };
-    encode(&header, &claims, &keypair.encoding).expect("encode")
+    let mut builder = TokenBuilder::new(email)
+        .iss(iss)
+        .aud(aud)
+        .email_verified(email_verified)
+        .exp_delta(exp_delta_secs);
+    builder.kid = kid;
+    builder.sign(keypair)
 }
 
 #[test]
@@ -265,5 +361,73 @@ fn validate_rejects_empty_client_id() {
 fn validate_rejects_rubbish_token() {
     let jwks = JwksCache::from_keys(HashMap::new());
     let err = validate_id_token("not-a-jwt", TEST_CLIENT_ID, &jwks).expect_err("rubbish");
+    assert_eq!(err.kind(), "invalid_token");
+}
+
+#[test]
+fn validate_rejects_future_nbf() {
+    let keypair = shared_keypair();
+    let jwks = build_jwks_with(TEST_KID, keypair.decoding.clone());
+
+    // nbf 10 minutes into the future, well beyond the 60s leeway.
+    let token = TokenBuilder::new("user@example.com")
+        .nbf_offset(600)
+        .sign(keypair);
+
+    let err = validate_id_token(&token, TEST_CLIENT_ID, &jwks).expect_err("future nbf");
+    assert_eq!(err.kind(), "invalid_token");
+}
+
+#[test]
+fn validate_rejects_token_too_old() {
+    let keypair = shared_keypair();
+    let jwks = build_jwks_with(TEST_KID, keypair.decoding.clone());
+
+    // iat 25 hours ago, but exp still in the future so jsonwebtoken's exp
+    // check passes and the manual max-age check is what kicks in.
+    let token = TokenBuilder::new("user@example.com")
+        .iat_offset(-(25 * 60 * 60))
+        .exp_delta(3600)
+        .sign(keypair);
+
+    let err = validate_id_token(&token, TEST_CLIENT_ID, &jwks).expect_err("too old");
+    assert_eq!(err.kind(), "invalid_token");
+}
+
+#[test]
+fn validate_accepts_token_within_age_limit() {
+    let keypair = shared_keypair();
+    let jwks = build_jwks_with(TEST_KID, keypair.decoding.clone());
+
+    // iat 23 hours ago, exp still in the future. Should pass max-age check.
+    let token = TokenBuilder::new("user@example.com")
+        .iat_offset(-(23 * 60 * 60))
+        .exp_delta(3600)
+        .sign(keypair);
+
+    let claims = validate_id_token(&token, TEST_CLIENT_ID, &jwks).expect("within age");
+    assert_eq!(claims.email, "user@example.com");
+}
+
+#[test]
+fn validate_rejects_missing_iat() {
+    let keypair = shared_keypair();
+    let jwks = build_jwks_with(TEST_KID, keypair.decoding.clone());
+
+    // Hand-craft a JWT whose payload omits `iat` entirely.
+    let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
+    header.kid = Some(TEST_KID.to_string());
+    let now = now_secs();
+    let claims = TestClaimsNoIat {
+        iss: "https://accounts.google.com",
+        aud: TEST_CLIENT_ID,
+        sub: "1234567890",
+        email: "user@example.com",
+        email_verified: true,
+        exp: now + 3600,
+    };
+    let token = encode(&header, &claims, &keypair.encoding).expect("encode");
+
+    let err = validate_id_token(&token, TEST_CLIENT_ID, &jwks).expect_err("missing iat");
     assert_eq!(err.kind(), "invalid_token");
 }

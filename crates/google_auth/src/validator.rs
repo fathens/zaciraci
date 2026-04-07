@@ -1,11 +1,21 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use grpc_auth::AuthError;
 use jsonwebtoken::{Validation, decode, decode_header};
 use serde::Deserialize;
 
 use crate::jwks::{JwksCache, accepted_algorithm};
 
-/// Clock skew tolerance (seconds) for `exp` and `nbf` validation.
+/// Clock skew tolerance (seconds) for `exp`, `nbf`, and `iat` validation.
 const LEEWAY_SECONDS: u64 = 60;
+
+/// Maximum acceptable token age based on `iat`.
+///
+/// Google ID tokens are normally issued with a 1 hour `exp`, so the natural
+/// upper bound is far below this. The 24 hour ceiling is a defence-in-depth
+/// safeguard against tokens whose `exp` claim is unusually large or whose
+/// `iat` is far in the past.
+const MAX_TOKEN_AGE_SECONDS: u64 = 24 * 60 * 60;
 
 /// Accepted issuer values for Google ID tokens.
 const ACCEPTED_ISSUERS: &[&str] = &["https://accounts.google.com", "accounts.google.com"];
@@ -14,13 +24,16 @@ const ACCEPTED_ISSUERS: &[&str] = &["https://accounts.google.com", "accounts.goo
 ///
 /// Google sends `email_verified` as a boolean in id_tokens, though some legacy
 /// flows send it as a string. We accept both via `deserialize_with`.
+///
+/// `iat` is required and used both as a spec claim (`required_spec_claims`)
+/// and for the manual max-age check below.
 #[derive(Debug, Deserialize)]
 pub struct Claims {
     pub email: String,
     #[serde(deserialize_with = "deserialize_bool_or_string")]
     pub email_verified: bool,
-    #[serde(default)]
     pub sub: String,
+    pub iat: u64,
 }
 
 fn deserialize_bool_or_string<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -55,6 +68,10 @@ where
 /// - `iss` is one of Google's accepted values
 /// - `aud` matches the configured client id
 /// - `exp` is in the future (60 second leeway)
+/// - `nbf`, when present, is not in the future (60 second leeway)
+/// - `iat` is present and not older than [`MAX_TOKEN_AGE_SECONDS`] +
+///   [`LEEWAY_SECONDS`] in the past (defence in depth against leaked tokens)
+/// - `sub` and `iat` are present (`required_spec_claims`)
 /// - `email_verified` is true
 ///
 /// Returns the validated claims. Does not check whether the email is in the
@@ -97,10 +114,27 @@ pub fn validate_id_token(
     validation.set_audience(&[client_id]);
     validation.set_issuer(ACCEPTED_ISSUERS);
     validation.validate_exp = true;
-    validation.set_required_spec_claims(&["exp", "aud", "iss"]);
+    validation.validate_nbf = true;
+    validation.set_required_spec_claims(&["exp", "aud", "iss", "sub", "iat"]);
 
     let token_data = decode::<Claims>(token, &key, &validation)
         .map_err(|e| AuthError::InvalidToken(format!("decode: {e}")))?;
+
+    // Defence-in-depth: enforce a hard upper bound on token age based on `iat`.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| AuthError::InvalidToken("system clock before unix epoch".to_string()))?
+        .as_secs();
+    let iat = token_data.claims.iat;
+    // Future iat beyond leeway (clock skew) is suspicious.
+    if iat > now + LEEWAY_SECONDS {
+        return Err(AuthError::InvalidToken("iat is in the future".to_string()));
+    }
+    // Past iat older than MAX_TOKEN_AGE + leeway is rejected.
+    let age = now.saturating_sub(iat);
+    if age > MAX_TOKEN_AGE_SECONDS + LEEWAY_SECONDS {
+        return Err(AuthError::InvalidToken("token too old".to_string()));
+    }
 
     if !token_data.claims.email_verified {
         return Err(AuthError::EmailNotVerified);
