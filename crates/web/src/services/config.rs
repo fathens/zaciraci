@@ -6,8 +6,26 @@ use crate::proto::{
     UpsertConfigResponse,
 };
 use common::config::ConfigAccess;
+use grpc_auth::AuthenticatedUser;
 use logging::{DEFAULT, o, warn};
 use tonic::{Request, Response, Status};
+
+/// Enforce that the caller is an authenticated user with writer privileges.
+///
+/// The auth interceptor injects an `AuthenticatedUser` into the request
+/// extensions on success. Missing extension implies the request reached the
+/// handler without passing the interceptor (e.g., when tests bypass it), so
+/// we treat it as unauthenticated.
+fn require_writer<T>(request: &Request<T>) -> Result<(), Status> {
+    let user = request
+        .extensions()
+        .get::<AuthenticatedUser>()
+        .ok_or_else(|| Status::unauthenticated("authentication required"))?;
+    if !user.can_write() {
+        return Err(Status::permission_denied("insufficient permissions"));
+    }
+    Ok(())
+}
 
 impl From<common::config::ConfigValueType> for crate::proto::ConfigValueType {
     fn from(vt: common::config::ConfigValueType) -> Self {
@@ -95,6 +113,8 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<UpsertConfigRequest>,
     ) -> Result<Response<UpsertConfigResponse>, Status> {
+        require_writer(&request)?;
+
         let req = request.get_ref();
         let instance_id = Self::resolve_instance_id(&req.instance_id);
 
@@ -120,6 +140,8 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<DeleteConfigRequest>,
     ) -> Result<Response<DeleteConfigResponse>, Status> {
+        require_writer(&request)?;
+
         let req = request.get_ref();
         let instance_id = Self::resolve_instance_id(&req.instance_id);
 

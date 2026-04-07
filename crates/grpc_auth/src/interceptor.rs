@@ -14,7 +14,6 @@ const BEARER_PREFIX: &str = "Bearer ";
 ///
 /// On success, the verified `AuthenticatedUser` is inserted into the
 /// request's `Extensions` so that downstream service handlers can read it.
-#[derive(Clone)]
 pub struct AuthInterceptor<A: Authenticator> {
     authenticator: Arc<A>,
 }
@@ -22,6 +21,15 @@ pub struct AuthInterceptor<A: Authenticator> {
 impl<A: Authenticator> AuthInterceptor<A> {
     pub fn new(authenticator: Arc<A>) -> Self {
         Self { authenticator }
+    }
+}
+
+// Manual Clone impl so that `A: Clone` is NOT required; only the Arc is cloned.
+impl<A: Authenticator> Clone for AuthInterceptor<A> {
+    fn clone(&self) -> Self {
+        Self {
+            authenticator: Arc::clone(&self.authenticator),
+        }
     }
 }
 

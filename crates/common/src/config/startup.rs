@@ -36,6 +36,10 @@ pub struct StartupConfig {
     pub root_mnemonic: String,
     pub root_hdpath: String,
     pub instance_id: String,
+    /// Google OAuth2 client id used as the `aud` claim when verifying
+    /// ID tokens. Empty when authentication is not configured; in that
+    /// case authenticated endpoints reject every request.
+    pub google_client_id: String,
 }
 
 impl StartupConfig {
@@ -52,6 +56,7 @@ impl StartupConfig {
             root_mnemonic: env_string("ROOT_MNEMONIC").unwrap_or_default(),
             root_hdpath: env_string("ROOT_HDPATH").unwrap_or_else(|| "m/44'/397'/0'".to_string()),
             instance_id: env_string("INSTANCE_ID").unwrap_or_else(|| "*".to_string()),
+            google_client_id: env_string("GOOGLE_CLIENT_ID").unwrap_or_default(),
         }
     }
 }

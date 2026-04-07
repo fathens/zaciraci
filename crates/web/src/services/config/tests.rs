@@ -1,5 +1,7 @@
 use super::*;
 use crate::proto::config_service_server::ConfigService;
+use common::types::Role;
+use grpc_auth::AuthenticatedUser;
 use serial_test::serial;
 use tonic::Request;
 
@@ -15,6 +17,19 @@ async fn cleanup(key: &str) {
     let _ = persistence::config_store::delete("*", key).await;
 }
 
+/// Wrap a request body in `tonic::Request` with a writer `AuthenticatedUser`
+/// injected into extensions. Mirrors what the auth interceptor does at
+/// runtime, so that tests bypassing the interceptor still satisfy the
+/// `require_writer` check in Upsert/Delete handlers.
+fn writer_request<T>(body: T) -> Request<T> {
+    let mut req = Request::new(body);
+    req.extensions_mut().insert(AuthenticatedUser::new(
+        "tester@example.com".to_string(),
+        Role::Writer,
+    ));
+    req
+}
+
 #[tokio::test]
 #[serial]
 async fn test_upsert_and_get_one() {
@@ -22,7 +37,7 @@ async fn test_upsert_and_get_one() {
     let key = test_key("UPSERT_GET");
 
     // Upsert
-    svc.upsert(Request::new(UpsertConfigRequest {
+    svc.upsert(writer_request(UpsertConfigRequest {
         instance_id: TEST_INSTANCE.to_string(),
         key: key.clone(),
         value: "test_value".to_string(),
@@ -51,7 +66,7 @@ async fn test_upsert_overwrites_existing() {
     let key = test_key("OVERWRITE");
 
     // Insert initial value
-    svc.upsert(Request::new(UpsertConfigRequest {
+    svc.upsert(writer_request(UpsertConfigRequest {
         instance_id: TEST_INSTANCE.to_string(),
         key: key.clone(),
         value: "initial".to_string(),
@@ -61,7 +76,7 @@ async fn test_upsert_overwrites_existing() {
     .unwrap();
 
     // Overwrite with new value
-    svc.upsert(Request::new(UpsertConfigRequest {
+    svc.upsert(writer_request(UpsertConfigRequest {
         instance_id: TEST_INSTANCE.to_string(),
         key: key.clone(),
         value: "updated".to_string(),
@@ -90,7 +105,7 @@ async fn test_upsert_and_get_all() {
     let key = test_key("GET_ALL");
 
     // Upsert
-    svc.upsert(Request::new(UpsertConfigRequest {
+    svc.upsert(writer_request(UpsertConfigRequest {
         instance_id: TEST_INSTANCE.to_string(),
         key: key.clone(),
         value: "all_value".to_string(),
@@ -121,7 +136,7 @@ async fn test_delete() {
     let key = test_key("DELETE");
 
     // Upsert then delete
-    svc.upsert(Request::new(UpsertConfigRequest {
+    svc.upsert(writer_request(UpsertConfigRequest {
         instance_id: TEST_INSTANCE.to_string(),
         key: key.clone(),
         value: "to_delete".to_string(),
@@ -130,7 +145,7 @@ async fn test_delete() {
     .await
     .unwrap();
 
-    svc.delete(Request::new(DeleteConfigRequest {
+    svc.delete(writer_request(DeleteConfigRequest {
         instance_id: TEST_INSTANCE.to_string(),
         key: key.clone(),
     }))
@@ -154,7 +169,7 @@ async fn test_delete_nonexistent_succeeds() {
     let svc = ConfigServiceImpl;
 
     let result = svc
-        .delete(Request::new(DeleteConfigRequest {
+        .delete(writer_request(DeleteConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: test_key("NEVER_EXISTED"),
         }))
@@ -192,7 +207,7 @@ async fn test_empty_key_rejected() {
     assert_eq!(result.unwrap_err().code(), tonic::Code::InvalidArgument);
 
     let result = svc
-        .upsert(Request::new(UpsertConfigRequest {
+        .upsert(writer_request(UpsertConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: String::new(),
             value: "v".to_string(),
@@ -203,7 +218,7 @@ async fn test_empty_key_rejected() {
     assert_eq!(result.unwrap_err().code(), tonic::Code::InvalidArgument);
 
     let result = svc
-        .delete(Request::new(DeleteConfigRequest {
+        .delete(writer_request(DeleteConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: String::new(),
         }))
@@ -219,7 +234,7 @@ async fn test_empty_instance_id_defaults_to_global() {
     let key = test_key("GLOBAL_DEFAULT");
 
     // Upsert with empty instance_id (should default to "*")
-    svc.upsert(Request::new(UpsertConfigRequest {
+    svc.upsert(writer_request(UpsertConfigRequest {
         instance_id: String::new(),
         key: key.clone(),
         value: "global_value".to_string(),
@@ -298,4 +313,65 @@ async fn test_list_key_definitions_description_trimmed() {
             def.key
         );
     }
+}
+
+#[tokio::test]
+#[serial]
+async fn test_upsert_rejects_missing_auth() {
+    let svc = ConfigServiceImpl;
+    // Plain Request::new carries no AuthenticatedUser extension.
+    let result = svc
+        .upsert(Request::new(UpsertConfigRequest {
+            instance_id: TEST_INSTANCE.to_string(),
+            key: test_key("NO_AUTH"),
+            value: "v".to_string(),
+            description: None,
+        }))
+        .await;
+    assert_eq!(
+        result.expect_err("missing auth").code(),
+        tonic::Code::Unauthenticated
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_upsert_rejects_reader_role() {
+    let svc = ConfigServiceImpl;
+    let mut req = Request::new(UpsertConfigRequest {
+        instance_id: TEST_INSTANCE.to_string(),
+        key: test_key("READER_BLOCKED"),
+        value: "v".to_string(),
+        description: None,
+    });
+    req.extensions_mut().insert(AuthenticatedUser::new(
+        "reader@example.com".to_string(),
+        Role::Reader,
+    ));
+
+    let result = svc.upsert(req).await;
+    assert_eq!(
+        result.expect_err("reader cannot write").code(),
+        tonic::Code::PermissionDenied
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_delete_rejects_reader_role() {
+    let svc = ConfigServiceImpl;
+    let mut req = Request::new(DeleteConfigRequest {
+        instance_id: TEST_INSTANCE.to_string(),
+        key: test_key("READER_BLOCKED_DEL"),
+    });
+    req.extensions_mut().insert(AuthenticatedUser::new(
+        "reader@example.com".to_string(),
+        Role::Reader,
+    ));
+
+    let result = svc.delete(req).await;
+    assert_eq!(
+        result.expect_err("reader cannot delete").code(),
+        tonic::Code::PermissionDenied
+    );
 }

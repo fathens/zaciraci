@@ -4683,6 +4683,8 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "common 1.4.1",
+ "google_auth",
+ "grpc_auth",
  "logging",
  "persistence",
  "prost",
