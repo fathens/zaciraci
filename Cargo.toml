@@ -5,6 +5,8 @@ members = [
     "crates/blockchain",
     "crates/common",
     "crates/dex",
+    "crates/google_auth",
+    "crates/grpc_auth",
     "crates/logging",
     "crates/persistence",
     "crates/simulate",

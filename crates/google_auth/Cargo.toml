@@ -1,0 +1,23 @@
+[package]
+name = "google_auth"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+persistence = { path = "../persistence" }
+logging = { path = "../logging" }
+grpc_auth = { path = "../grpc_auth" }
+
+jsonwebtoken = "9"
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+slog = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+serial_test = "3.2"
