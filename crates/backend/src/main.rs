@@ -23,6 +23,13 @@ async fn main() {
     tokio::spawn(trade::run(cfg));
     tokio::spawn(arbitrage::run(cfg));
     tokio::spawn(persistence::maintenance::run(cfg));
-    tokio::spawn(web::serve(50051));
+    {
+        let log = log.clone();
+        tokio::spawn(async move {
+            if let Err(e) = web::serve(50051).await {
+                error!(log, "web server exited"; "error" => %e);
+            }
+        });
+    }
     tokio::signal::ctrl_c().await.ok();
 }

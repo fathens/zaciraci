@@ -20,24 +20,20 @@ use services::health::HealthServiceImpl;
 use services::portfolio::PortfolioServiceImpl;
 use tonic::service::interceptor::InterceptedService;
 
-pub async fn serve(port: u16) {
+pub async fn serve(port: u16) -> anyhow::Result<()> {
     let log = DEFAULT.new(o!("module" => "web"));
 
     let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
 
     // Bootstrap the Google authenticator. JWKS is fetched eagerly with
     // fail-open semantics (empty cache on failure, logged) and a background
-    // refresh task is spawned. UserCache is loaded from the DB.
+    // refresh task is spawned. UserCache is loaded from the DB with bounded
+    // retries inside bootstrap to tolerate a briefly-unavailable database.
     let startup = common::config::startup::get();
-    let authenticator = match GoogleAuthenticator::bootstrap(startup.google_client_id.clone()).await
-    {
-        Ok(auth) => Arc::new(auth),
-        Err(e) => {
-            error!(log, "auth_bootstrap_failed"; "error" => %e);
-            panic!("failed to bootstrap authenticator: {e}");
-        }
-    };
-    let auth_interceptor = AuthInterceptor::new(authenticator);
+    let authenticator = GoogleAuthenticator::bootstrap(startup.google_client_id.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to bootstrap authenticator: {e}"))?;
+    let auth_interceptor = AuthInterceptor::new(Arc::new(authenticator));
 
     // Health is intentionally exempt from authentication so liveness probes
     // can work without credentials.
@@ -63,5 +59,7 @@ pub async fn serve(port: u16) {
         .add_service(portfolio_svc)
         .serve(addr)
         .await
-        .expect("gRPC server failed");
+        .map_err(|e| anyhow::anyhow!("gRPC server failed: {e}"))?;
+
+    Ok(())
 }

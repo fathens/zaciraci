@@ -4680,6 +4680,7 @@ dependencies = [
 name = "web"
 version = "1.4.1"
 dependencies = [
+ "anyhow",
  "bigdecimal",
  "chrono",
  "common 1.4.1",
