@@ -44,7 +44,12 @@ impl<A: Authenticator> Interceptor for AuthInterceptor<A> {
 
         match self.authenticator.authenticate(&token) {
             Ok(user) => {
-                info!(log, "auth_success"; "email" => &user.email, "role" => %user.role);
+                info!(
+                    log,
+                    "auth_success";
+                    "email" => user.masked_email(),
+                    "role" => %user.role,
+                );
                 req.extensions_mut().insert(user);
                 Ok(req)
             }
