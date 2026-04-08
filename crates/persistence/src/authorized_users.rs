@@ -30,7 +30,11 @@ fn to_role(role_str: &str) -> Result<Role> {
 /// Google email local parts are effectively case-insensitive, so we store
 /// and compare the lowercase/trimmed form to avoid lockouts when admins
 /// register a user with mixed-case input.
-fn normalize_email(email: &str) -> String {
+///
+/// Shared with `google_auth::user_cache` so the in-memory lookup key and
+/// the DB key cannot drift apart — a drift would silently turn authorized
+/// users into `UserNotRegistered` or, worse, match the wrong principal.
+pub fn normalize_email(email: &str) -> String {
     email.trim().to_ascii_lowercase()
 }
 

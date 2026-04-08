@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use common::types::Role;
 use logging::{DEFAULT, info, o};
+use persistence::authorized_users::normalize_email;
 
 /// In-memory cache of email → role mappings loaded from the
 /// `authorized_users` table.
@@ -86,15 +87,6 @@ impl UserCache {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.len()
     }
-}
-
-/// Normalize an email address for use as a cache key: trim surrounding
-/// whitespace and lowercase ASCII characters. Google email local parts are
-/// effectively case-insensitive and the domain part is always case-insensitive,
-/// so normalizing avoids lockouts when the DB entry and the ID token differ
-/// in case.
-pub(crate) fn normalize_email(email: &str) -> String {
-    email.trim().to_ascii_lowercase()
 }
 
 #[cfg(test)]
