@@ -17,9 +17,10 @@ pub struct UserCache {
 }
 
 impl UserCache {
-    /// Build an empty cache. Useful for tests and as a placeholder before
-    /// the first DB load.
-    pub fn empty() -> Arc<Self> {
+    /// Build an empty cache. Test-only helper; the runtime path uses
+    /// [`UserCache::load_from_db`] instead.
+    #[cfg(test)]
+    pub(crate) fn empty() -> Arc<Self> {
         Arc::new(Self {
             inner: RwLock::new(HashMap::new()),
         })
@@ -28,8 +29,10 @@ impl UserCache {
     /// Build a cache pre-populated with the given users.
     ///
     /// Email keys are normalized (trimmed and lowercased) so that lookups
-    /// are case-insensitive.
-    pub fn from_entries<I>(entries: I) -> Arc<Self>
+    /// are case-insensitive. Used internally by [`UserCache::load_from_db`]
+    /// and by tests that want deterministic cache contents; not exposed as
+    /// `pub` because runtime callers should always go through the DB path.
+    pub(crate) fn from_entries<I>(entries: I) -> Arc<Self>
     where
         I: IntoIterator<Item = (String, Role)>,
     {
