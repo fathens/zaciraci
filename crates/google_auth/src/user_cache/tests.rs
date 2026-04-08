@@ -22,9 +22,11 @@ fn from_entries_populates_cache() {
 }
 
 #[test]
-fn lookup_is_case_sensitive() {
+fn lookup_is_case_insensitive_and_trimmed() {
     let cache = UserCache::from_entries(vec![("Alice@Example.com".to_string(), Role::Reader)]);
+    // Entry and query are both normalized (trim + lowercase) before comparison.
     assert_eq!(cache.lookup("Alice@Example.com"), Some(Role::Reader));
-    // Case mismatch must not match — normalization is the caller's responsibility.
-    assert_eq!(cache.lookup("alice@example.com"), None);
+    assert_eq!(cache.lookup("alice@example.com"), Some(Role::Reader));
+    assert_eq!(cache.lookup("  ALICE@EXAMPLE.COM  "), Some(Role::Reader));
+    assert_eq!(cache.lookup("eve@example.com"), None);
 }

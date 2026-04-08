@@ -59,6 +59,25 @@ async fn test_delete() {
 
 #[tokio::test]
 #[serial]
+async fn test_upsert_normalizes_email_case() {
+    // Insert with mixed case + whitespace; DB should store the normalized form
+    // and lookups via the original or a differently-cased input should match.
+    let input = "  Case-Test@Example.COM  ";
+    let normalized = "case-test@example.com";
+    upsert(input, Role::Writer).await.unwrap();
+
+    let found = find_by_email("CASE-TEST@example.com").await.unwrap();
+    assert!(found.is_some());
+    let (stored_email, role) = found.unwrap();
+    assert_eq!(stored_email, normalized);
+    assert_eq!(role, Role::Writer);
+
+    delete(input).await.unwrap();
+    assert!(find_by_email(normalized).await.unwrap().is_none());
+}
+
+#[tokio::test]
+#[serial]
 async fn test_delete_nonexistent() {
     // Should not error
     delete("never-existed@example.com").await.unwrap();

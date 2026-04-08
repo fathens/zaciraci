@@ -25,8 +25,17 @@ fn to_role(role_str: &str) -> Result<Role> {
     Role::from_str(role_str).map_err(|_| anyhow!("invalid role value in database"))
 }
 
+/// Normalize an email before writing to or querying the DB.
+///
+/// Google email local parts are effectively case-insensitive, so we store
+/// and compare the lowercase/trimmed form to avoid lockouts when admins
+/// register a user with mixed-case input.
+fn normalize_email(email: &str) -> String {
+    email.trim().to_ascii_lowercase()
+}
+
 pub async fn find_by_email(email: &str) -> Result<Option<(String, Role)>> {
-    let email = email.to_string();
+    let email = normalize_email(email);
     let conn = connection_pool::get().await?;
 
     let result: Option<DbAuthorizedUser> = conn
@@ -63,20 +72,20 @@ pub async fn list_all() -> Result<Vec<(String, Role)>> {
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
     results
-        .iter()
+        .into_iter()
         .map(|user| {
             let role = to_role(&user.role)?;
-            Ok((user.email.clone(), role))
+            Ok((user.email, role))
         })
         .collect()
 }
 
 pub async fn upsert(email: &str, role: Role) -> Result<()> {
-    let new_user = NewAuthorizedUser {
-        email: email.to_string(),
-        role: role.to_string(),
-    };
     let role_str = role.to_string();
+    let new_user = NewAuthorizedUser {
+        email: normalize_email(email),
+        role: role_str.clone(),
+    };
     let conn = connection_pool::get().await?;
 
     conn.interact(move |conn| {
@@ -94,7 +103,7 @@ pub async fn upsert(email: &str, role: Role) -> Result<()> {
 }
 
 pub async fn delete(email: &str) -> Result<()> {
-    let email = email.to_string();
+    let email = normalize_email(email);
     let conn = connection_pool::get().await?;
 
     conn.interact(move |conn| {

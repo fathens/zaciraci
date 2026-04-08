@@ -25,11 +25,17 @@ impl UserCache {
     }
 
     /// Build a cache pre-populated with the given users.
+    ///
+    /// Email keys are normalized (trimmed and lowercased) so that lookups
+    /// are case-insensitive.
     pub fn from_entries<I>(entries: I) -> Arc<Self>
     where
         I: IntoIterator<Item = (String, Role)>,
     {
-        let map: HashMap<String, Role> = entries.into_iter().collect();
+        let map: HashMap<String, Role> = entries
+            .into_iter()
+            .map(|(email, role)| (normalize_email(&email), role))
+            .collect();
         Arc::new(Self {
             inner: RwLock::new(map),
         })
@@ -56,7 +62,10 @@ impl UserCache {
     pub async fn reload(&self) -> anyhow::Result<()> {
         let entries = persistence::authorized_users::list_all().await?;
         let count = entries.len();
-        let new_map: HashMap<String, Role> = entries.into_iter().collect();
+        let new_map: HashMap<String, Role> = entries
+            .into_iter()
+            .map(|(email, role)| (normalize_email(&email), role))
+            .collect();
         {
             let mut guard = self
                 .inner
@@ -70,13 +79,15 @@ impl UserCache {
     }
 
     /// Look up the role for a given email. Returns `None` if the user is
-    /// not in the cache.
+    /// not in the cache. Lookup is case-insensitive: the input is normalized
+    /// (trimmed and lowercased) before the map lookup.
     pub fn lookup(&self, email: &str) -> Option<Role> {
+        let normalized = normalize_email(email);
         let guard = self
             .inner
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.get(email).copied()
+        guard.get(&normalized).copied()
     }
 
     /// Returns true if the cache has no entries.
@@ -96,6 +107,15 @@ impl UserCache {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.len()
     }
+}
+
+/// Normalize an email address for use as a cache key: trim surrounding
+/// whitespace and lowercase ASCII characters. Google email local parts are
+/// effectively case-insensitive and the domain part is always case-insensitive,
+/// so normalizing avoids lockouts when the DB entry and the ID token differ
+/// in case.
+pub(crate) fn normalize_email(email: &str) -> String {
+    email.trim().to_ascii_lowercase()
 }
 
 #[cfg(test)]
