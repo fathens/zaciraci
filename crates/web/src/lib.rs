@@ -20,6 +20,22 @@ use services::health::HealthServiceImpl;
 use services::portfolio::PortfolioServiceImpl;
 use tonic::service::interceptor::InterceptedService;
 
+/// Start the gRPC / grpc-web server.
+///
+/// # Transport security
+///
+/// This server is intentionally started **without TLS**. The process is
+/// expected to run behind a TLS-terminating reverse proxy (e.g. the
+/// ingress layer defined in `run_local/docker-compose.yml` or the
+/// production deployment). Every authenticated request carries a Google
+/// ID token as a `Bearer` credential; if this process is ever exposed
+/// directly to an untrusted network, those tokens will travel in
+/// plaintext. Operators must ensure:
+///
+/// 1. The listening socket is only reachable via a TLS-terminating
+///    proxy, or is bound to a loopback / Unix-domain socket.
+/// 2. `GOOGLE_CLIENT_ID` is configured so the authenticator does not
+///    accept every token.
 pub async fn serve(port: u16) -> anyhow::Result<()> {
     let log = DEFAULT.new(o!("module" => "web"));
 

@@ -130,3 +130,83 @@ fn empty_token_returns_invalid_token() {
     let err = auth.authenticate("").expect_err("empty token");
     assert_eq!(err.kind(), "invalid_token");
 }
+
+// ---- End-to-end interceptor + authenticator integration tests ----
+//
+// These ensure that AuthInterceptor and GoogleAuthenticator compose the
+// way web::serve wires them: a signed ID token flows through the
+// interceptor, the interceptor calls authenticate(), and the resulting
+// AuthenticatedUser is inserted into the request extensions. A bad token
+// must produce a Status::unauthenticated whose message does not leak
+// internal detail.
+
+use grpc_auth::{AuthInterceptor, AuthenticatedUser as GrpcAuthenticatedUser};
+use tonic::metadata::MetadataValue;
+use tonic::service::Interceptor;
+use tonic::{Code, Request};
+
+fn build_request_with_bearer(token: &str) -> Request<()> {
+    let mut req = Request::new(());
+    let header = format!("Bearer {token}");
+    let value: MetadataValue<_> = header.parse().expect("valid metadata");
+    req.metadata_mut().insert("authorization", value);
+    req
+}
+
+#[test]
+fn interceptor_passes_through_valid_google_token() {
+    let jwks = build_jwks();
+    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Writer)]);
+    let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
+    let mut interceptor = AuthInterceptor::new(Arc::new(auth));
+
+    let token = sign("alice@example.com", true);
+    let req = interceptor
+        .call(build_request_with_bearer(&token))
+        .expect("should pass interceptor");
+
+    let user = req
+        .extensions()
+        .get::<GrpcAuthenticatedUser>()
+        .expect("AuthenticatedUser in extensions");
+    assert_eq!(user.email, "alice@example.com");
+    assert_eq!(user.role, Role::Writer);
+}
+
+#[test]
+fn interceptor_rejects_invalid_signature_without_detail() {
+    let jwks = build_jwks();
+    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Reader)]);
+    let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
+    let mut interceptor = AuthInterceptor::new(Arc::new(auth));
+
+    // Corrupt the signature by flipping the final character.
+    let mut token = sign("alice@example.com", true);
+    let last = token.pop().unwrap();
+    let replacement = if last == 'A' { 'B' } else { 'A' };
+    token.push(replacement);
+
+    let status = interceptor
+        .call(build_request_with_bearer(&token))
+        .expect_err("bad signature should be rejected");
+    assert_eq!(status.code(), Code::Unauthenticated);
+    // No internal detail (jsonwebtoken error message) must leak into the
+    // wire-level Status.
+    assert_eq!(status.message(), "authentication required");
+}
+
+#[test]
+fn interceptor_rejects_unregistered_user_without_enumeration() {
+    let jwks = build_jwks();
+    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Reader)]);
+    let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
+    let mut interceptor = AuthInterceptor::new(Arc::new(auth));
+
+    let token = sign("stranger@example.com", true);
+    let status = interceptor
+        .call(build_request_with_bearer(&token))
+        .expect_err("unregistered should be rejected");
+    assert_eq!(status.code(), Code::Unauthenticated);
+    // Must not reveal whether the user is known or the signature was bad.
+    assert_eq!(status.message(), "authentication required");
+}
