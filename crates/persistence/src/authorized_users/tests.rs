@@ -1,6 +1,37 @@
 use super::*;
 use serial_test::serial;
 
+/// Test-only helper to fetch a single authorized user by email.
+///
+/// This is not used by production code (the runtime path loads all
+/// authorized users in a single `list_all()` call into `UserCache`), but
+/// the CRUD tests below need a pointwise lookup to verify upsert / delete
+/// behaviour. Keeping it inside the `tests` module avoids exposing a
+/// dead/test-only API on the production `authorized_users` module.
+async fn find_by_email(email: &str) -> Result<Option<(String, Role)>> {
+    let email = normalize_email(email);
+    let conn = crate::connection_pool::get().await?;
+
+    let result: Option<DbAuthorizedUser> = conn
+        .interact(move |conn| {
+            authorized_users::table
+                .filter(authorized_users::email.eq(&email))
+                .select(DbAuthorizedUser::as_select())
+                .first(conn)
+                .optional()
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+    Ok(match result {
+        Some(user) => {
+            let role = to_role(&user.role)?;
+            Some((user.email, role))
+        }
+        None => None,
+    })
+}
+
 #[tokio::test]
 #[serial]
 async fn test_upsert_and_find_by_email() {

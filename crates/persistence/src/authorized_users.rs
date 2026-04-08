@@ -10,19 +10,19 @@ use std::str::FromStr;
 #[diesel(table_name = authorized_users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 struct DbAuthorizedUser {
-    pub email: String,
-    pub role: String,
+    email: String,
+    role: String,
 }
 
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = authorized_users)]
 struct NewAuthorizedUser {
-    pub email: String,
-    pub role: String,
+    email: String,
+    role: String,
 }
 
 fn to_role(role_str: &str) -> Result<Role> {
-    Role::from_str(role_str).map_err(|_| anyhow!("invalid role value in database"))
+    Role::from_str(role_str).map_err(|e| anyhow!("invalid role value in database: {e}"))
 }
 
 /// Normalize an email before writing to or querying the DB.
@@ -32,31 +32,6 @@ fn to_role(role_str: &str) -> Result<Role> {
 /// register a user with mixed-case input.
 fn normalize_email(email: &str) -> String {
     email.trim().to_ascii_lowercase()
-}
-
-#[cfg(test)]
-pub(crate) async fn find_by_email(email: &str) -> Result<Option<(String, Role)>> {
-    let email = normalize_email(email);
-    let conn = connection_pool::get().await?;
-
-    let result: Option<DbAuthorizedUser> = conn
-        .interact(move |conn| {
-            authorized_users::table
-                .filter(authorized_users::email.eq(&email))
-                .select(DbAuthorizedUser::as_select())
-                .first(conn)
-                .optional()
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-    match result {
-        Some(user) => {
-            let role = to_role(&user.role)?;
-            Ok(Some((user.email, role)))
-        }
-        None => Ok(None),
-    }
 }
 
 pub async fn list_all() -> Result<Vec<(String, Role)>> {
