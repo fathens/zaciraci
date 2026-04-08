@@ -21,6 +21,23 @@ const MAX_RETRY_BACKOFF: Duration = Duration::from_secs(600);
 /// Refresh when the cached entry has reached this fraction of its lifetime.
 const REFRESH_THRESHOLD_RATIO: f64 = 0.9;
 
+/// Total HTTP timeout applied to JWKS fetches. Without this the background
+/// refresh task could block indefinitely on a half-open connection, leaving
+/// the cache stale (or past its TTL) until the TCP stack gives up on its own.
+const JWKS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// TCP connect timeout for JWKS fetches.
+const JWKS_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Build the shared `reqwest::Client` used for all JWKS fetches.
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(JWKS_HTTP_TIMEOUT)
+        .connect_timeout(JWKS_HTTP_CONNECT_TIMEOUT)
+        .build()
+        .expect("reqwest client with static timeouts must build")
+}
+
 /// A single JSON Web Key entry from Google's JWKS endpoint.
 #[derive(Debug, Deserialize)]
 struct Jwk {
@@ -78,12 +95,17 @@ pub struct JwksCache {
 impl JwksCache {
     /// Build a new cache and attempt an initial fetch.
     ///
-    /// A fetch failure is logged but does not prevent construction. The cache
-    /// will then be empty until the background refresh task (or a subsequent
-    /// call) succeeds. This is the intended fail-open behaviour.
-    pub async fn new(url: impl Into<String>) -> Arc<Self> {
+    /// A fetch failure during construction is logged but does not prevent
+    /// the `JwksCache` from being built; the background refresh task (or a
+    /// subsequent call) will keep retrying. However, the end-to-end request
+    /// path is fail-closed: until the cache actually has keys, the validator
+    /// translates the empty snapshot into `AuthError::JwksUnavailable`
+    /// (`Status::unavailable`). A stale snapshot that has passed its TTL is
+    /// also wiped via `clear_if_expired`. So "construction never fails" must
+    /// not be read as "tokens are accepted without keys".
+    pub(crate) async fn new(url: impl Into<String>) -> Arc<Self> {
         let cache = Arc::new(Self {
-            http: reqwest::Client::new(),
+            http: build_http_client(),
             url: url.into(),
             inner: RwLock::new(CachedJwks::default()),
         });
@@ -109,7 +131,7 @@ impl JwksCache {
     pub(crate) fn from_keys(keys: HashMap<String, DecodingKey>) -> Arc<Self> {
         let now = Instant::now();
         Arc::new(Self {
-            http: reqwest::Client::new(),
+            http: build_http_client(),
             url: String::new(),
             inner: RwLock::new(CachedJwks {
                 keys,
@@ -119,23 +141,31 @@ impl JwksCache {
         })
     }
 
+    /// Acquire a read guard, recovering from poisoning by taking the inner
+    /// value. Any poisoned state is produced by a writer panic while swapping
+    /// the snapshot; the data itself is still a valid (possibly stale) cache.
+    fn read_guard(&self) -> std::sync::RwLockReadGuard<'_, CachedJwks> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Acquire a write guard, recovering from poisoning the same way.
+    fn write_guard(&self) -> std::sync::RwLockWriteGuard<'_, CachedJwks> {
+        self.inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Look up a decoding key by key ID. Returns `None` if the key is not
     /// currently in the cache (either never fetched, or key rotation).
     pub fn get(&self, kid: &str) -> Option<DecodingKey> {
-        let guard = self
-            .inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.keys.get(kid).cloned()
+        self.read_guard().keys.get(kid).cloned()
     }
 
     /// Returns true if the cache currently has no keys loaded.
     pub fn is_empty(&self) -> bool {
-        let guard = self
-            .inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.is_empty()
+        self.read_guard().is_empty()
     }
 
     /// Clear the cached keys if the current snapshot has passed its
@@ -145,10 +175,7 @@ impl JwksCache {
     /// requests (`JwksUnavailable`) than keep validating signatures with a
     /// potentially-revoked key.
     fn clear_if_expired(&self, now: Instant) -> bool {
-        let mut guard = self
-            .inner
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self.write_guard();
         let expired = match guard.expires_at {
             Some(expires) => now >= expires,
             None => false,
@@ -180,10 +207,7 @@ impl JwksCache {
 
         // Brief write lock: swap the snapshot then release.
         {
-            let mut guard = self
-                .inner
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = self.write_guard();
             *guard = new_snapshot;
         }
 
@@ -205,13 +229,7 @@ impl JwksCache {
             let log = DEFAULT.new(o!("module" => "google_auth::jwks::refresh"));
             let mut backoff = MIN_RETRY_BACKOFF;
             loop {
-                let needs_refresh = {
-                    let guard = this
-                        .inner
-                        .read()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    guard.needs_refresh(Instant::now())
-                };
+                let needs_refresh = this.read_guard().needs_refresh(Instant::now());
 
                 if !needs_refresh {
                     // Sleep until near the refresh threshold.
