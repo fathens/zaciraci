@@ -92,8 +92,8 @@ fn valid_token_injects_authenticated_user_into_extensions() {
         .extensions()
         .get::<AuthenticatedUser>()
         .expect("AuthenticatedUser should be inserted");
-    assert_eq!(user.email, "alice@example.com");
-    assert_eq!(user.role, Role::Writer);
+    assert_eq!(user.email(), "alice@example.com");
+    assert_eq!(user.role(), Role::Writer);
     assert!(user.can_write());
 }
 

@@ -84,8 +84,8 @@ fn authenticate_returns_registered_user() {
 
     let token = sign("alice@example.com", true);
     let user = auth.authenticate(&token).expect("should authenticate");
-    assert_eq!(user.email, "alice@example.com");
-    assert_eq!(user.role, Role::Writer);
+    assert_eq!(user.email(), "alice@example.com");
+    assert_eq!(user.role(), Role::Writer);
 }
 
 #[test]
@@ -169,8 +169,8 @@ fn interceptor_passes_through_valid_google_token() {
         .extensions()
         .get::<GrpcAuthenticatedUser>()
         .expect("AuthenticatedUser in extensions");
-    assert_eq!(user.email, "alice@example.com");
-    assert_eq!(user.role, Role::Writer);
+    assert_eq!(user.email(), "alice@example.com");
+    assert_eq!(user.role(), Role::Writer);
 }
 
 #[test]

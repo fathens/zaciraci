@@ -48,7 +48,7 @@ impl<A: Authenticator> Interceptor for AuthInterceptor<A> {
                     log,
                     "auth_success";
                     "email" => user.masked_email(),
-                    "role" => %user.role,
+                    "role" => %user.role(),
                 );
                 req.extensions_mut().insert(user);
                 Ok(req)

@@ -8,17 +8,33 @@ use common::types::Role;
 /// so that downstream service handlers can perform role-based checks.
 ///
 /// `Debug` is implemented manually to mask the email address (PII) in
-/// logs and panics. Use [`AuthenticatedUser::email`] explicitly when the
-/// full value is actually needed.
+/// logs and panics. The fields are private so the only way to read the
+/// raw email is via [`AuthenticatedUser::email`], which makes accidental
+/// PII leakage through `format!("{:?}", ...)` or `slog`'s `%` formatter
+/// structurally impossible.
 #[derive(Clone)]
 pub struct AuthenticatedUser {
-    pub email: String,
-    pub role: Role,
+    email: String,
+    role: Role,
 }
 
 impl AuthenticatedUser {
     pub fn new(email: String, role: Role) -> Self {
         Self { email, role }
+    }
+
+    /// Returns the verified email address.
+    ///
+    /// Prefer [`AuthenticatedUser::masked_email`] for log output. The raw
+    /// value should only be used when the email is part of an
+    /// authorization decision (e.g., DB lookups for the user's role).
+    pub fn email(&self) -> &str {
+        &self.email
+    }
+
+    /// Returns the user's role.
+    pub fn role(&self) -> Role {
+        self.role
     }
 
     /// Returns true if the user has writer privileges.
@@ -46,17 +62,16 @@ impl fmt::Debug for AuthenticatedUser {
 
 fn mask_email(email: &str) -> String {
     match email.split_once('@') {
-        Some((local, domain)) if !local.is_empty() => {
-            let first = local.chars().next().unwrap();
-            format!("{first}***@{domain}")
-        }
-        Some((_, domain)) => format!("*@{domain}"),
+        Some((local, domain)) => match local.chars().next() {
+            Some(first) => format!("{first}***@{domain}"),
+            None => format!("*@{domain}"),
+        },
         None => "***".to_string(),
     }
 }
 
 #[cfg(test)]
-mod authenticated_user_tests {
+mod tests {
     use super::*;
 
     #[test]
