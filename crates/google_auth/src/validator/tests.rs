@@ -383,10 +383,11 @@ fn validate_rejects_token_too_old() {
     let keypair = shared_keypair();
     let jwks = build_jwks_with(TEST_KID, keypair.decoding.clone());
 
-    // iat 25 hours ago, but exp still in the future so jsonwebtoken's exp
-    // check passes and the manual max-age check is what kicks in.
+    // iat 2 hours ago, but exp still in the future so jsonwebtoken's exp
+    // check passes and the manual max-age check is what kicks in. With
+    // MAX_TOKEN_AGE_SECONDS tightened to 1 hour, this must be rejected.
     let token = TokenBuilder::new("user@example.com")
-        .iat_offset(-(25 * 60 * 60))
+        .iat_offset(-(2 * 60 * 60))
         .exp_delta(3600)
         .sign(keypair);
 
@@ -399,9 +400,9 @@ fn validate_accepts_token_within_age_limit() {
     let keypair = shared_keypair();
     let jwks = build_jwks_with(TEST_KID, keypair.decoding.clone());
 
-    // iat 23 hours ago, exp still in the future. Should pass max-age check.
+    // iat 30 minutes ago, exp still in the future. Within the 1 hour limit.
     let token = TokenBuilder::new("user@example.com")
-        .iat_offset(-(23 * 60 * 60))
+        .iat_offset(-(30 * 60))
         .exp_delta(3600)
         .sign(keypair);
 

@@ -138,6 +138,29 @@ impl JwksCache {
         guard.is_empty()
     }
 
+    /// Clear the cached keys if the current snapshot has passed its
+    /// `expires_at`. Used as a fail-closed safeguard in the background
+    /// refresh task: if Google rotates or emergency-revokes a key and the
+    /// refresh keeps failing past the TTL, we would rather reject all
+    /// requests (`JwksUnavailable`) than keep validating signatures with a
+    /// potentially-revoked key.
+    fn clear_if_expired(&self, now: Instant) -> bool {
+        let mut guard = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let expired = match guard.expires_at {
+            Some(expires) => now >= expires,
+            None => false,
+        };
+        if expired && !guard.keys.is_empty() {
+            guard.keys.clear();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Fetch the JWKS once and swap the cache in place.
     async fn refresh_once(&self) -> Result<Duration, reqwest::Error> {
         let response = self.http.get(&self.url).send().await?.error_for_status()?;
@@ -204,6 +227,17 @@ impl JwksCache {
                         tokio::time::sleep(sleep_for).await;
                     }
                     Err(err) => {
+                        // If the current snapshot has fully expired, drop the
+                        // stale keys so requests fail closed
+                        // (JwksUnavailable) instead of being validated with
+                        // possibly-revoked material.
+                        if this.clear_if_expired(Instant::now()) {
+                            warn!(
+                                log,
+                                "jwks_expired_cleared";
+                                "reason" => "refresh failing past TTL",
+                            );
+                        }
                         warn!(log, "jwks_refresh_failed"; "error" => %err, "retry_in_secs" => backoff.as_secs());
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(MAX_RETRY_BACKOFF);

@@ -89,3 +89,39 @@ fn decode_keys_skips_missing_algorithm() {
 fn accepted_algorithm_is_rs256() {
     assert_eq!(ACCEPTED_ALGORITHM, Algorithm::RS256);
 }
+
+#[test]
+fn clear_if_expired_drops_stale_keys() {
+    let mut keys = HashMap::new();
+    keys.insert(
+        "kid-1".to_string(),
+        DecodingKey::from_rsa_components("AQAB", "AQAB").unwrap(),
+    );
+    let cache = JwksCache::from_keys(keys);
+    assert!(!cache.is_empty());
+
+    // Force the snapshot's expires_at to a point already in the past.
+    {
+        let mut guard = cache.inner.write().unwrap();
+        guard.expires_at = Some(Instant::now() - Duration::from_secs(1));
+    }
+
+    let cleared = cache.clear_if_expired(Instant::now());
+    assert!(cleared);
+    assert!(cache.is_empty());
+    // A second call is a no-op because the keys are already empty.
+    assert!(!cache.clear_if_expired(Instant::now()));
+}
+
+#[test]
+fn clear_if_expired_is_noop_when_not_expired() {
+    let mut keys = HashMap::new();
+    keys.insert(
+        "kid-1".to_string(),
+        DecodingKey::from_rsa_components("AQAB", "AQAB").unwrap(),
+    );
+    let cache = JwksCache::from_keys(keys);
+    // from_keys sets expires_at to now + DEFAULT_TTL, so not expired.
+    assert!(!cache.clear_if_expired(Instant::now()));
+    assert!(!cache.is_empty());
+}

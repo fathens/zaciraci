@@ -11,11 +11,11 @@ const LEEWAY_SECONDS: u64 = 60;
 
 /// Maximum acceptable token age based on `iat`.
 ///
-/// Google ID tokens are normally issued with a 1 hour `exp`, so the natural
-/// upper bound is far below this. The 24 hour ceiling is a defence-in-depth
-/// safeguard against tokens whose `exp` claim is unusually large or whose
-/// `iat` is far in the past.
-const MAX_TOKEN_AGE_SECONDS: u64 = 24 * 60 * 60;
+/// Google ID tokens are issued with a 1 hour `exp`, so legitimate tokens
+/// will never be older than 1 hour. Tightening the ceiling to match reduces
+/// the window in which a leaked token can be replayed before the `exp`
+/// check catches up.
+const MAX_TOKEN_AGE_SECONDS: u64 = 60 * 60;
 
 /// Accepted issuer values for Google ID tokens.
 const ACCEPTED_ISSUERS: &[&str] = &["https://accounts.google.com", "accounts.google.com"];
