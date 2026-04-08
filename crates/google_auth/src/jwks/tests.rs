@@ -63,7 +63,6 @@ fn needs_refresh_after_threshold() {
 fn decode_keys_skips_unsupported_algorithm() {
     let jwks = vec![Jwk {
         kid: "bad".to_string(),
-        _kty: "EC".to_string(),
         alg: Some("ES256".to_string()),
         n: "irrelevant".to_string(),
         e: "irrelevant".to_string(),
@@ -73,6 +72,20 @@ fn decode_keys_skips_unsupported_algorithm() {
 }
 
 #[test]
+fn decode_keys_skips_missing_algorithm() {
+    // Defence in depth: Google JWKS always returns alg; a missing alg is
+    // unusual and should not be trusted as implicitly RS256.
+    let jwks = vec![Jwk {
+        kid: "no-alg".to_string(),
+        alg: None,
+        n: "irrelevant".to_string(),
+        e: "irrelevant".to_string(),
+    }];
+    let keys = decode_keys(jwks);
+    assert!(keys.is_empty());
+}
+
+#[test]
 fn accepted_algorithm_is_rs256() {
-    assert_eq!(accepted_algorithm(), Algorithm::RS256);
+    assert_eq!(ACCEPTED_ALGORITHM, Algorithm::RS256);
 }

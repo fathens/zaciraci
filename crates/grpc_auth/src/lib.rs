@@ -8,4 +8,4 @@ pub mod interceptor;
 pub use authenticated_user::AuthenticatedUser;
 pub use authenticator::Authenticator;
 pub use error::AuthError;
-pub use interceptor::{AuthInterceptor, make_interceptor};
+pub use interceptor::AuthInterceptor;

@@ -55,29 +55,6 @@ impl UserCache {
         Ok(cache)
     }
 
-    /// Replace the cache contents by reloading from the database.
-    ///
-    /// Intended to be called after a successful user-management RPC.
-    /// Briefly holds the write lock only long enough to swap the map in.
-    pub async fn reload(&self) -> anyhow::Result<()> {
-        let entries = persistence::authorized_users::list_all().await?;
-        let count = entries.len();
-        let new_map: HashMap<String, Role> = entries
-            .into_iter()
-            .map(|(email, role)| (normalize_email(&email), role))
-            .collect();
-        {
-            let mut guard = self
-                .inner
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *guard = new_map;
-        }
-        let log = DEFAULT.new(o!("module" => "google_auth::user_cache"));
-        info!(log, "user_cache_reloaded"; "count" => count);
-        Ok(())
-    }
-
     /// Look up the role for a given email. Returns `None` if the user is
     /// not in the cache. Lookup is case-insensitive: the input is normalized
     /// (trimmed and lowercased) before the map lookup.
@@ -91,7 +68,8 @@ impl UserCache {
     }
 
     /// Returns true if the cache has no entries.
-    pub fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
         let guard = self
             .inner
             .read()
@@ -100,7 +78,8 @@ impl UserCache {
     }
 
     /// Returns the number of cached users.
-    pub fn len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
         let guard = self
             .inner
             .read()

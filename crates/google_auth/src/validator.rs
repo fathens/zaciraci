@@ -4,7 +4,7 @@ use grpc_auth::AuthError;
 use jsonwebtoken::{Validation, decode, decode_header};
 use serde::Deserialize;
 
-use crate::jwks::{JwksCache, accepted_algorithm};
+use crate::jwks::{ACCEPTED_ALGORITHM, JwksCache};
 
 /// Clock skew tolerance (seconds) for `exp`, `nbf`, and `iat` validation.
 const LEEWAY_SECONDS: u64 = 60;
@@ -90,7 +90,7 @@ pub fn validate_id_token(
     let header =
         decode_header(token).map_err(|e| AuthError::InvalidToken(format!("decode_header: {e}")))?;
 
-    if header.alg != accepted_algorithm() {
+    if header.alg != ACCEPTED_ALGORITHM {
         return Err(AuthError::InvalidToken(format!(
             "unsupported alg: {:?}",
             header.alg
@@ -109,7 +109,7 @@ pub fn validate_id_token(
         }
     })?;
 
-    let mut validation = Validation::new(accepted_algorithm());
+    let mut validation = Validation::new(ACCEPTED_ALGORITHM);
     validation.leeway = LEEWAY_SECONDS;
     validation.set_audience(&[client_id]);
     validation.set_issuer(ACCEPTED_ISSUERS);

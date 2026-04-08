@@ -34,7 +34,8 @@ fn normalize_email(email: &str) -> String {
     email.trim().to_ascii_lowercase()
 }
 
-pub async fn find_by_email(email: &str) -> Result<Option<(String, Role)>> {
+#[cfg(test)]
+pub(crate) async fn find_by_email(email: &str) -> Result<Option<(String, Role)>> {
     let email = normalize_email(email);
     let conn = connection_pool::get().await?;
 

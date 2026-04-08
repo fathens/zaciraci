@@ -61,11 +61,6 @@ impl<A: Authenticator> Interceptor for AuthInterceptor<A> {
     }
 }
 
-/// Convenience constructor for callers that want a plain interceptor handle.
-pub fn make_interceptor<A: Authenticator>(authenticator: Arc<A>) -> AuthInterceptor<A> {
-    AuthInterceptor::new(authenticator)
-}
-
 fn extract_bearer_token(req: &tonic::Request<()>) -> Result<String, AuthError> {
     let value = req
         .metadata()

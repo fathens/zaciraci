@@ -60,12 +60,6 @@ impl GoogleAuthenticator {
         let users = load_user_cache_with_retry().await?;
         Ok(Self::new(client_id, jwks, users))
     }
-
-    /// Access the user cache so callers can reload it after user-management
-    /// operations (e.g., inside an `AuthorizedUserService` RPC handler).
-    pub fn user_cache(&self) -> Arc<UserCache> {
-        Arc::clone(&self.users)
-    }
 }
 
 impl Authenticator for GoogleAuthenticator {

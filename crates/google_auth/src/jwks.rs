@@ -25,8 +25,6 @@ const REFRESH_THRESHOLD_RATIO: f64 = 0.9;
 #[derive(Debug, Deserialize)]
 struct Jwk {
     kid: String,
-    #[serde(rename = "kty")]
-    _kty: String,
     #[serde(default, rename = "alg")]
     alg: Option<String>,
     n: String,
@@ -107,8 +105,8 @@ impl JwksCache {
     /// Used by tests that need deterministic key material without performing
     /// HTTP I/O. The background refresh task is not spawned; callers that use
     /// this constructor are responsible for the cache lifecycle.
-    #[doc(hidden)]
-    pub fn from_keys(keys: HashMap<String, DecodingKey>) -> Arc<Self> {
+    #[cfg(test)]
+    pub(crate) fn from_keys(keys: HashMap<String, DecodingKey>) -> Arc<Self> {
         let now = Instant::now();
         Arc::new(Self {
             http: reqwest::Client::new(),
@@ -236,10 +234,17 @@ fn decode_keys(jwks: Vec<Jwk>) -> HashMap<String, DecodingKey> {
     let log = DEFAULT.new(o!("module" => "google_auth::jwks"));
     for jwk in jwks {
         // Only RS256 is used by Google for ID tokens. Skip anything else.
+        // An absent `alg` is also skipped: Google's JWKS always includes it,
+        // so a missing value is unusual and should not be trusted as
+        // implicitly RS256.
         match jwk.alg.as_deref() {
-            Some("RS256") | None => {}
+            Some("RS256") => {}
             Some(other) => {
                 warn!(log, "unsupported_jwk_alg"; "kid" => &jwk.kid, "alg" => other);
+                continue;
+            }
+            None => {
+                warn!(log, "jwk_missing_alg"; "kid" => &jwk.kid);
                 continue;
             }
         }
@@ -260,10 +265,8 @@ fn now_iso() -> String {
     now.to_rfc3339()
 }
 
-/// Algorithms accepted for ID token verification.
-pub fn accepted_algorithm() -> Algorithm {
-    Algorithm::RS256
-}
+/// Algorithm accepted for ID token verification.
+pub const ACCEPTED_ALGORITHM: Algorithm = Algorithm::RS256;
 
 #[cfg(test)]
 mod tests;
