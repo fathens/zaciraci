@@ -30,6 +30,19 @@ fn writer_request<T>(body: T) -> Request<T> {
     req
 }
 
+/// Wrap a request body in `tonic::Request` with a reader `AuthenticatedUser`
+/// injected into extensions. Used by GetAll/GetOne/ListKeyDefinitions tests
+/// since those handlers now enforce `require_reader` for symmetry with the
+/// rest of the read-only services.
+fn reader_request<T>(body: T) -> Request<T> {
+    let mut req = Request::new(body);
+    req.extensions_mut().insert(AuthenticatedUser::new(
+        Email::new("reader@example.com").unwrap(),
+        Role::Reader,
+    ));
+    req
+}
+
 #[tokio::test]
 #[serial]
 async fn test_upsert_and_get_one() {
@@ -48,7 +61,7 @@ async fn test_upsert_and_get_one() {
 
     // GetOne
     let response = svc
-        .get_one(Request::new(GetOneConfigRequest {
+        .get_one(reader_request(GetOneConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: key.clone(),
         }))
@@ -87,7 +100,7 @@ async fn test_upsert_overwrites_existing() {
 
     // Verify updated
     let response = svc
-        .get_one(Request::new(GetOneConfigRequest {
+        .get_one(reader_request(GetOneConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: key.clone(),
         }))
@@ -116,7 +129,7 @@ async fn test_upsert_and_get_all() {
 
     // GetAll
     let response = svc
-        .get_all(Request::new(GetAllConfigRequest {
+        .get_all(reader_request(GetAllConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
         }))
         .await
@@ -154,7 +167,7 @@ async fn test_delete() {
 
     // Verify deleted
     let response = svc
-        .get_one(Request::new(GetOneConfigRequest {
+        .get_one(reader_request(GetOneConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: key.clone(),
         }))
@@ -183,7 +196,7 @@ async fn test_get_one_not_found() {
     let svc = ConfigServiceImpl;
 
     let response = svc
-        .get_one(Request::new(GetOneConfigRequest {
+        .get_one(reader_request(GetOneConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: test_key("NONEXISTENT"),
         }))
@@ -198,7 +211,7 @@ async fn test_empty_key_rejected() {
     let svc = ConfigServiceImpl;
 
     let result = svc
-        .get_one(Request::new(GetOneConfigRequest {
+        .get_one(reader_request(GetOneConfigRequest {
             instance_id: TEST_INSTANCE.to_string(),
             key: String::new(),
         }))
@@ -245,7 +258,7 @@ async fn test_empty_instance_id_defaults_to_global() {
 
     // GetOne with explicit "*" should find it
     let response = svc
-        .get_one(Request::new(GetOneConfigRequest {
+        .get_one(reader_request(GetOneConfigRequest {
             instance_id: "*".to_string(),
             key: key.clone(),
         }))
@@ -264,7 +277,7 @@ async fn test_empty_instance_id_defaults_to_global() {
 async fn test_list_key_definitions_returns_entries() {
     let svc = ConfigServiceImpl;
     let response = svc
-        .list_key_definitions(Request::new(ListKeyDefinitionsRequest {}))
+        .list_key_definitions(reader_request(ListKeyDefinitionsRequest {}))
         .await
         .unwrap();
     let definitions = response.into_inner().definitions;
@@ -279,7 +292,7 @@ async fn test_list_key_definitions_returns_entries() {
 async fn test_list_key_definitions_fields_non_empty() {
     let svc = ConfigServiceImpl;
     let response = svc
-        .list_key_definitions(Request::new(ListKeyDefinitionsRequest {}))
+        .list_key_definitions(reader_request(ListKeyDefinitionsRequest {}))
         .await
         .unwrap();
     for def in &response.into_inner().definitions {
@@ -302,7 +315,7 @@ async fn test_list_key_definitions_fields_non_empty() {
 async fn test_list_key_definitions_description_trimmed() {
     let svc = ConfigServiceImpl;
     let response = svc
-        .list_key_definitions(Request::new(ListKeyDefinitionsRequest {}))
+        .list_key_definitions(reader_request(ListKeyDefinitionsRequest {}))
         .await
         .unwrap();
     for def in &response.into_inner().definitions {
@@ -373,5 +386,52 @@ async fn test_delete_rejects_reader_role() {
     assert_eq!(
         result.expect_err("reader cannot delete").code(),
         tonic::Code::PermissionDenied
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_get_all_rejects_missing_auth() {
+    // Read RPCs are gated by `require_reader` for defense-in-depth so a
+    // future refactor that exposes a handler without the interceptor
+    // cannot accidentally serve unauthenticated callers.
+    let svc = ConfigServiceImpl;
+    let result = svc
+        .get_all(Request::new(GetAllConfigRequest {
+            instance_id: TEST_INSTANCE.to_string(),
+        }))
+        .await;
+    assert_eq!(
+        result.expect_err("missing auth").code(),
+        tonic::Code::Unauthenticated
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_get_one_rejects_missing_auth() {
+    let svc = ConfigServiceImpl;
+    let result = svc
+        .get_one(Request::new(GetOneConfigRequest {
+            instance_id: TEST_INSTANCE.to_string(),
+            key: test_key("NO_AUTH_GET"),
+        }))
+        .await;
+    assert_eq!(
+        result.expect_err("missing auth").code(),
+        tonic::Code::Unauthenticated
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_list_key_definitions_rejects_missing_auth() {
+    let svc = ConfigServiceImpl;
+    let result = svc
+        .list_key_definitions(Request::new(ListKeyDefinitionsRequest {}))
+        .await;
+    assert_eq!(
+        result.expect_err("missing auth").code(),
+        tonic::Code::Unauthenticated
     );
 }

@@ -5,7 +5,7 @@ use crate::proto::{
     ListKeyDefinitionsRequest, ListKeyDefinitionsResponse, UpsertConfigRequest,
     UpsertConfigResponse,
 };
-use crate::services::auth::require_writer;
+use crate::services::auth::{require_reader, require_writer};
 use common::config::ConfigAccess;
 use logging::{DEFAULT, o, warn};
 use tonic::{Request, Response, Status};
@@ -56,6 +56,8 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<GetAllConfigRequest>,
     ) -> Result<Response<GetAllConfigResponse>, Status> {
+        require_reader(&request)?;
+
         let instance_id = Self::resolve_instance_id(&request.get_ref().instance_id);
 
         let configs = persistence::config_store::get_all_for_instance(instance_id)
@@ -78,6 +80,8 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<GetOneConfigRequest>,
     ) -> Result<Response<GetOneConfigResponse>, Status> {
+        require_reader(&request)?;
+
         let req = request.get_ref();
         let instance_id = Self::resolve_instance_id(&req.instance_id);
 
@@ -143,8 +147,10 @@ impl ConfigService for ConfigServiceImpl {
 
     async fn list_key_definitions(
         &self,
-        _request: Request<ListKeyDefinitionsRequest>,
+        request: Request<ListKeyDefinitionsRequest>,
     ) -> Result<Response<ListKeyDefinitionsResponse>, Status> {
+        require_reader(&request)?;
+
         let resolved = common::config::resolve_all_without_db();
         let definitions = resolved
             .into_iter()
