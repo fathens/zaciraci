@@ -6,7 +6,7 @@ use grpc_auth::{AuthError, AuthenticatedUser, Authenticator};
 use logging::{DEFAULT, o, warn};
 
 use crate::jwks::JwksCache;
-use crate::user_cache::UserCache;
+use crate::user_cache::{DEFAULT_REFRESH_INTERVAL, UserCache};
 use crate::validator;
 
 /// Number of attempts to load the user cache from the database at startup.
@@ -59,6 +59,7 @@ impl GoogleAuthenticator {
         let jwks = JwksCache::new_google().await;
         jwks.spawn_refresh_task();
         let users = load_user_cache_with_retry().await?;
+        users.spawn_refresh_task(DEFAULT_REFRESH_INTERVAL);
         Ok(Self::new(client_id, jwks, users))
     }
 }

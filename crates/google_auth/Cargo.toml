@@ -25,3 +25,4 @@ serial_test = "3.2"
 rsa = "0.9"
 base64 = "0.22"
 tonic = "0.14"
+diesel = { version = "2.2", features = ["postgres"] }
