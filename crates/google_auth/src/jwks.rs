@@ -48,6 +48,14 @@ const JWKS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 /// TCP connect timeout for JWKS fetches.
 const JWKS_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Hard cap on the JWKS response body size. Google's production JWKS is
+/// only a few KiB, so 1 MiB leaves several orders of magnitude of headroom
+/// while protecting against a hostile or compromised endpoint streaming an
+/// arbitrarily large body and triggering a memory DoS. The check is applied
+/// both via `Content-Length` (when present) and as a streaming guard while
+/// the body is read.
+const MAX_JWKS_BODY_BYTES: u64 = 1024 * 1024;
+
 /// Build the shared `reqwest::Client` used for all JWKS fetches.
 fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -211,14 +219,28 @@ impl JwksCache {
     }
 
     /// Fetch the JWKS once and swap the cache in place.
-    async fn refresh_once(&self) -> Result<Duration, reqwest::Error> {
+    async fn refresh_once(&self) -> anyhow::Result<Duration> {
         let response = self.http.get(&self.url).send().await?.error_for_status()?;
 
         let ttl = parse_max_age(response.headers().get(reqwest::header::CACHE_CONTROL))
             .unwrap_or(DEFAULT_TTL)
             .clamp(MIN_JWKS_TTL, MAX_JWKS_TTL);
 
-        let jwks: JwksResponse = response.json().await?;
+        // Reject early if the server advertises a Content-Length above the
+        // hard cap, before reading any body bytes.
+        if let Some(declared) = response.content_length()
+            && declared > MAX_JWKS_BODY_BYTES
+        {
+            return Err(anyhow::anyhow!(
+                "JWKS body Content-Length {} exceeds limit {}",
+                declared,
+                MAX_JWKS_BODY_BYTES
+            ));
+        }
+
+        let body = read_body_with_cap(response, MAX_JWKS_BODY_BYTES).await?;
+        let jwks: JwksResponse = serde_json::from_slice(&body)
+            .map_err(|e| anyhow::anyhow!("JWKS body parse failed: {e}"))?;
         let keys = decode_keys(jwks.keys);
 
         let now = Instant::now();
@@ -332,6 +354,28 @@ fn decode_keys(jwks: Vec<Jwk>) -> HashMap<String, DecodingKey> {
         }
     }
     map
+}
+
+/// Read a `reqwest::Response` body into memory, aborting if the streamed
+/// total exceeds `cap`. Used as a streaming guard to defend against a
+/// server that omits `Content-Length` (e.g., chunked transfer) but still
+/// tries to send an arbitrarily large body.
+async fn read_body_with_cap(mut response: reqwest::Response, cap: u64) -> anyhow::Result<Vec<u8>> {
+    let cap_usize = usize::try_from(cap).unwrap_or(usize::MAX);
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if (buf.len() as u64).saturating_add(chunk.len() as u64) > cap {
+            return Err(anyhow::anyhow!(
+                "JWKS body exceeded streaming size limit {} bytes",
+                cap
+            ));
+        }
+        if buf.capacity() < buf.len() + chunk.len() {
+            buf.reserve(chunk.len().min(cap_usize - buf.len()));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 fn now_iso() -> String {
