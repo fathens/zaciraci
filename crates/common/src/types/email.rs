@@ -114,9 +114,18 @@ pub enum ParseEmailError {
 }
 
 impl fmt::Display for Email {
-    /// `Display` is reserved to satisfy `Hash`/`Eq`-friendly debug surfaces
-    /// where the masked form is appropriate. Renders the masked form so a
-    /// stray `{}` interpolation cannot leak PII.
+    /// **Renders the masked form, not the canonical value.** This is a
+    /// deliberate, safety-first choice: any accidental `format!("{email}")`,
+    /// `{email}` interpolation, `slog`'s `%email` argument, or error-message
+    /// concatenation can never leak PII, because there is no code path that
+    /// turns an `Email` into its raw address via `Display`.
+    ///
+    /// Callers that need the canonical (normalized) raw value must call
+    /// [`Email::as_str`] explicitly — e.g., `db_query.bind(email.as_str())`
+    /// — or use the `From<Email> for String` conversion. Using `{}` inside
+    /// a SQL string, HTTP header value, or other external-system payload
+    /// will silently produce the masked form and should be treated as a
+    /// bug at code-review time.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.masked())
     }
