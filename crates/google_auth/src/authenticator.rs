@@ -77,7 +77,7 @@ impl Authenticator for GoogleAuthenticator {
         // `InvalidToken` so it is masked into the generic
         // `Status::unauthenticated` at the wire boundary.
         let email = Email::new(&claims.email)
-            .map_err(|_| AuthError::InvalidToken("email parse failed".to_string()))?;
+            .map_err(|err| AuthError::InvalidToken(format!("email parse failed: {err}")))?;
 
         let role = self
             .users
