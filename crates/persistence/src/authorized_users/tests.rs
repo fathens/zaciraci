@@ -87,14 +87,18 @@ async fn test_list_all_ordered_by_email() {
 
 #[tokio::test]
 #[serial]
-async fn test_list_all_rejects_invalid_role_in_db() {
-    // Sanity: a corrupt role string in the DB surfaces as an error from
-    // list_all (rather than silently mapping to a default).
-    // We can't actually insert an invalid role due to the CHECK constraint,
-    // so this test just documents that `to_role` is reachable from list_all.
-    // The real invariant is enforced by the DB's CHECK constraint.
-    let all = list_all().await.unwrap();
-    for (_, role) in all {
-        matches!(role, Role::Reader | Role::Writer);
-    }
+async fn test_check_constraint_rejects_invalid_role() {
+    // Defense-in-depth: the DB CHECK constraint must reject any role
+    // string outside the allowed set. If this constraint regresses,
+    // `list_all`'s `to_role` would start failing on previously-valid
+    // rows, so we need to know it is still in place.
+    let raw = "check-constraint-test@example.com";
+    let result = raw_insert(raw, "superadmin").await;
+    assert!(
+        result.is_err(),
+        "CHECK constraint should reject role='superadmin'"
+    );
+    // Cleanup in case some future change relaxes the constraint and the
+    // insert unexpectedly succeeded.
+    let _ = raw_delete(raw).await;
 }
