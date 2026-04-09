@@ -75,6 +75,13 @@ where
 ///
 /// Returns the validated claims. Does not check whether the email is in the
 /// user allowlist; that is the caller's responsibility.
+///
+/// # Replay protection
+///
+/// The validator does not track `jti` or maintain a nonce cache. A token
+/// passing all checks here remains accepted until the earlier of its `exp`
+/// or the [`MAX_TOKEN_AGE_SECONDS`] ceiling. See the "Threat model: token
+/// replay" section on `web::serve` for the rationale and follow-up plan.
 pub fn validate_id_token(
     token: &str,
     client_id: &str,

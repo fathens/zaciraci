@@ -37,6 +37,34 @@ use tonic::service::interceptor::InterceptedService;
 ///    proxy, or is bound to a loopback / Unix-domain socket.
 /// 2. `GOOGLE_CLIENT_ID` is configured so the authenticator does not
 ///    accept every token.
+///
+/// # Threat model: token replay
+///
+/// This server validates Google ID tokens (signature, `iss`, `aud`, `exp`,
+/// `nbf`, `iat` max-age) but does **not** maintain a `jti` blacklist or a
+/// nonce cache. A leaked token can therefore be replayed by anyone who
+/// intercepts it until the earlier of:
+///
+/// - the token's `exp` (Google issues 1h `exp` for ID tokens), or
+/// - the application's `iat`-based max-age (also 1h, applied as a
+///   defense-in-depth ceiling in `google_auth::validator`).
+///
+/// This trade-off is accepted for the current Slint-client deployment
+/// because:
+///
+/// - The transport is HTTPS-terminated upstream, so passive interception
+///   requires a compromised intermediary.
+/// - Token lifetimes are short (1 hour) and tokens are not stored
+///   long-term on the client.
+/// - The user population is small and explicitly enrolled in
+///   `authorized_users`, so the blast radius of a replay is bounded by
+///   the role of the leaked principal.
+///
+/// A future enhancement would add a `jti` TTL cache (e.g. via the `moka`
+/// crate) so that any presented `jti` is recorded and a second use within
+/// the cache window is rejected. This is left as a follow-up; it should
+/// be revisited if the threat model changes (mobile clients, public
+/// network deployments, or higher-privilege roles).
 pub async fn serve(port: u16) -> anyhow::Result<()> {
     let log = DEFAULT.new(o!("module" => "web"));
 
