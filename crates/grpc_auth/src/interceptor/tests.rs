@@ -121,3 +121,23 @@ fn extract_bearer_token_rejects_non_bearer_scheme() {
     let err = extract_bearer_token(&req).expect_err("should reject non-Bearer");
     assert_eq!(err.kind(), "invalid_token");
 }
+
+#[test]
+fn extract_bearer_token_is_case_insensitive_per_rfc7235() {
+    // RFC 7235 §2.1: auth scheme names are case-insensitive.
+    for prefix in ["bearer abc", "BEARER abc", "BeArEr abc"] {
+        let req = build_request(Some(prefix));
+        let token =
+            extract_bearer_token(&req).unwrap_or_else(|_| panic!("should extract from {prefix}"));
+        assert_eq!(token, "abc");
+    }
+}
+
+#[test]
+fn extract_bearer_token_rejects_bearer_without_space() {
+    // "Beareralice" looks like Bearer but has no separator; must not be
+    // accepted as a valid scheme.
+    let req = build_request(Some("Beareralice"));
+    let err = extract_bearer_token(&req).expect_err("should reject");
+    assert_eq!(err.kind(), "invalid_token");
+}

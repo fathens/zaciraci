@@ -8,7 +8,10 @@ use crate::authenticator::Authenticator;
 use crate::error::AuthError;
 
 const AUTH_HEADER: &str = "authorization";
-const BEARER_PREFIX: &str = "Bearer ";
+/// Length of the textual `Bearer` scheme name (excluding the trailing
+/// separator). RFC 7235 §2.1 says auth scheme names are case-insensitive,
+/// so we compare case-insensitively and strip by length.
+const BEARER_SCHEME: &str = "Bearer";
 
 /// A clonable, sync tonic interceptor that delegates to an `Authenticator`.
 ///
@@ -38,7 +41,7 @@ impl<A: Authenticator> Interceptor for AuthInterceptor<A> {
         let log = DEFAULT.new(o!("module" => "grpc_auth", "fn" => "auth_interceptor"));
 
         let token = extract_bearer_token(&req).map_err(|err| {
-            warn!(log, "auth_failure"; "reason" => err.kind());
+            warn!(log, "auth_failure"; "reason" => err.kind(), "detail" => %err);
             Status::from(err)
         })?;
 
@@ -54,7 +57,7 @@ impl<A: Authenticator> Interceptor for AuthInterceptor<A> {
                 Ok(req)
             }
             Err(err) => {
-                warn!(log, "auth_failure"; "reason" => err.kind());
+                warn!(log, "auth_failure"; "reason" => err.kind(), "detail" => %err);
                 Err(Status::from(err))
             }
         }
@@ -71,9 +74,18 @@ fn extract_bearer_token(req: &tonic::Request<()>) -> Result<String, AuthError> {
         .to_str()
         .map_err(|_| AuthError::InvalidToken("non-ascii authorization header".to_string()))?;
 
-    let token = value_str
-        .strip_prefix(BEARER_PREFIX)
-        .ok_or_else(|| AuthError::InvalidToken("missing Bearer prefix".to_string()))?;
+    // RFC 7235: scheme names are case-insensitive. Match "Bearer" in any
+    // case followed by exactly one space.
+    let scheme_len = BEARER_SCHEME.len();
+    if value_str.len() <= scheme_len
+        || !value_str
+            .get(..scheme_len)
+            .is_some_and(|s| s.eq_ignore_ascii_case(BEARER_SCHEME))
+        || !value_str[scheme_len..].starts_with(' ')
+    {
+        return Err(AuthError::InvalidToken("missing Bearer prefix".to_string()));
+    }
+    let token = value_str[scheme_len + 1..].trim_start();
 
     if token.is_empty() {
         return Err(AuthError::InvalidToken("empty bearer token".to_string()));

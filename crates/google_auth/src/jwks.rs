@@ -88,7 +88,10 @@ impl CachedJwks {
             (Some(fetched), Some(expires)) => {
                 let total = expires.saturating_duration_since(fetched);
                 let elapsed = now.saturating_duration_since(fetched);
-                elapsed.as_secs_f64() >= total.as_secs_f64() * REFRESH_THRESHOLD_RATIO
+                // Integer form of `elapsed >= total * 0.9`: avoids f64
+                // rounding drift and is cheaper. `saturating_mul` guards
+                // against the theoretical MAX_JWKS_TTL * 10 overflow.
+                elapsed.as_secs().saturating_mul(10) >= total.as_secs().saturating_mul(9)
             }
             _ => true,
         }
