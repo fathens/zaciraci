@@ -31,59 +31,24 @@ fn from_entries_populates_cache() {
 #[tokio::test]
 #[serial_test::serial]
 async fn reload_swaps_snapshot_from_db() {
-    // Seed the DB via raw SQL so test state is deterministic, reload,
-    // and verify the cache reflects the new rows. Then mutate the DB
-    // and call reload again to verify revocation semantics: the
-    // removed row disappears from the cache after reload, without
-    // requiring a process restart.
-    use diesel::RunQueryDsl;
-    use diesel::sql_query;
-    use diesel::sql_types::Text;
-
-    let conn = persistence::connection_pool::get().await.unwrap();
-
-    async fn upsert_raw(raw: &str, role: &str) {
-        let conn = persistence::connection_pool::get().await.unwrap();
-        let raw = raw.to_string();
-        let role = role.to_string();
-        conn.interact(move |conn| {
-            sql_query(
-                "INSERT INTO authorized_users (email, role) VALUES ($1, $2) \
-                 ON CONFLICT ((lower(email))) DO UPDATE SET role = EXCLUDED.role",
-            )
-            .bind::<Text, _>(raw)
-            .bind::<Text, _>(role)
-            .execute(conn)
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    }
-
-    async fn delete_raw(raw: &str) {
-        let conn = persistence::connection_pool::get().await.unwrap();
-        let raw = raw.to_string();
-        conn.interact(move |conn| {
-            sql_query("DELETE FROM authorized_users WHERE lower(email) = lower($1)")
-                .bind::<Text, _>(raw)
-                .execute(conn)
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    }
+    // Seed the DB via the persistence test helpers (no direct diesel
+    // dep here), reload, and verify the cache reflects the new rows.
+    // Then mutate the DB and call reload again to verify revocation
+    // semantics: the removed row disappears from the cache after
+    // reload, without requiring a process restart.
+    use persistence::authorized_users::test_helpers::{raw_delete, raw_upsert, wipe_by_email_like};
 
     // Wipe any leftover test users from prior runs.
-    conn.interact(|conn| {
-        sql_query("DELETE FROM authorized_users WHERE email LIKE 'reload-test-%@example.com'")
-            .execute(conn)
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    wipe_by_email_like("reload-test-%@example.com")
+        .await
+        .unwrap();
 
-    upsert_raw("reload-test-a@example.com", "reader").await;
-    upsert_raw("reload-test-b@example.com", "writer").await;
+    raw_upsert("reload-test-a@example.com", "reader")
+        .await
+        .unwrap();
+    raw_upsert("reload-test-b@example.com", "writer")
+        .await
+        .unwrap();
 
     let cache = UserCache::load_from_db().await.unwrap();
     assert_eq!(
@@ -97,8 +62,10 @@ async fn reload_swaps_snapshot_from_db() {
 
     // Remove one user and downgrade the other, then reload and verify
     // that the cache reflects both changes.
-    delete_raw("reload-test-a@example.com").await;
-    upsert_raw("reload-test-b@example.com", "reader").await;
+    raw_delete("reload-test-a@example.com").await.unwrap();
+    raw_upsert("reload-test-b@example.com", "reader")
+        .await
+        .unwrap();
     cache.reload().await.unwrap();
     assert_eq!(cache.lookup(&email("reload-test-a@example.com")), None);
     assert_eq!(
@@ -106,7 +73,7 @@ async fn reload_swaps_snapshot_from_db() {
         Some(Role::Reader)
     );
 
-    delete_raw("reload-test-b@example.com").await;
+    raw_delete("reload-test-b@example.com").await.unwrap();
 }
 
 #[test]

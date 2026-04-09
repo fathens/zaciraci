@@ -1378,7 +1378,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "common 1.4.1",
- "diesel",
  "grpc_auth",
  "jsonwebtoken",
  "logging",

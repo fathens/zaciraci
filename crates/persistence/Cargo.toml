@@ -21,6 +21,11 @@ slog = { workspace = true }
 
 [features]
 mock = []
+# Exposes raw fixture helpers (raw insert / delete / wipe) under
+# `authorized_users::test_helpers` so downstream crates can seed the
+# table from their own integration tests without taking a direct
+# dependency on diesel and the schema.
+test-helpers = []
 
 [dev-dependencies]
 futures = { workspace = true }

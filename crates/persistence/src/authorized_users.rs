@@ -76,5 +76,8 @@ pub async fn list_all() -> Result<Vec<(Email, Role)>> {
 // so that manually-inserted mixed-case rows remain reachable from the
 // application layer.
 
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod test_helpers;
+
 #[cfg(test)]
 mod tests;
