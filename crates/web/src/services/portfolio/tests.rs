@@ -1,7 +1,7 @@
 use super::*;
 use chrono::NaiveDateTime;
-use common::types::Role;
 use common::types::YoctoAmount;
+use common::types::{Email, Role};
 use grpc_auth::AuthenticatedUser;
 
 /// Wrap a proto body in `tonic::Request` with a reader-role
@@ -9,7 +9,7 @@ use grpc_auth::AuthenticatedUser;
 fn reader_request<T>(body: T) -> Request<T> {
     let mut req = Request::new(body);
     req.extensions_mut().insert(AuthenticatedUser::new(
-        "reader@example.com".to_string(),
+        Email::new("reader@example.com").unwrap(),
         Role::Reader,
     ));
     req

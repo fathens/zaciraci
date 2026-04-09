@@ -1,6 +1,6 @@
 use std::fmt;
 
-use common::types::Role;
+use common::types::{Email, Role};
 
 /// An authenticated principal extracted from a verified token.
 ///
@@ -14,12 +14,12 @@ use common::types::Role;
 /// structurally impossible.
 #[derive(Clone)]
 pub struct AuthenticatedUser {
-    email: String,
+    email: Email,
     role: Role,
 }
 
 impl AuthenticatedUser {
-    pub fn new(email: String, role: Role) -> Self {
+    pub fn new(email: Email, role: Role) -> Self {
         Self { email, role }
     }
 
@@ -28,7 +28,7 @@ impl AuthenticatedUser {
     /// Prefer [`AuthenticatedUser::masked_email`] for log output. The raw
     /// value should only be used when the email is part of an
     /// authorization decision (e.g., DB lookups for the user's role).
-    pub fn email(&self) -> &str {
+    pub fn email(&self) -> &Email {
         &self.email
     }
 
@@ -43,11 +43,8 @@ impl AuthenticatedUser {
     }
 
     /// Return the email with the local part masked, suitable for logging.
-    ///
-    /// Examples: `alice@example.com` → `a***@example.com`, `a@b` → `*@b`,
-    /// a value without `@` → `***`.
     pub fn masked_email(&self) -> String {
-        mask_email(&self.email)
+        self.email.masked()
     }
 }
 
@@ -60,41 +57,23 @@ impl fmt::Debug for AuthenticatedUser {
     }
 }
 
-fn mask_email(email: &str) -> String {
-    match email.split_once('@') {
-        Some((local, domain)) => match local.chars().next() {
-            Some(first) => format!("{first}***@{domain}"),
-            None => format!("*@{domain}"),
-        },
-        None => "***".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn email(s: &str) -> Email {
+        Email::new(s).expect("test email is valid")
+    }
+
     #[test]
     fn masks_local_part() {
-        let u = AuthenticatedUser::new("alice@example.com".to_string(), Role::Reader);
+        let u = AuthenticatedUser::new(email("alice@example.com"), Role::Reader);
         assert_eq!(u.masked_email(), "a***@example.com");
     }
 
     #[test]
-    fn masks_empty_local_part() {
-        let u = AuthenticatedUser::new("@example.com".to_string(), Role::Reader);
-        assert_eq!(u.masked_email(), "*@example.com");
-    }
-
-    #[test]
-    fn masks_missing_at_sign() {
-        let u = AuthenticatedUser::new("not-an-email".to_string(), Role::Reader);
-        assert_eq!(u.masked_email(), "***");
-    }
-
-    #[test]
     fn debug_does_not_leak_full_email() {
-        let u = AuthenticatedUser::new("alice@example.com".to_string(), Role::Writer);
+        let u = AuthenticatedUser::new(email("alice@example.com"), Role::Writer);
         let rendered = format!("{u:?}");
         assert!(!rendered.contains("alice@example.com"));
         assert!(rendered.contains("a***@example.com"));

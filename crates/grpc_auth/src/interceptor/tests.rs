@@ -1,6 +1,6 @@
 use super::*;
 use crate::authenticated_user::AuthenticatedUser;
-use common::types::Role;
+use common::types::{Email, Role};
 use tonic::Code;
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -29,7 +29,8 @@ fn always_ok(
     >,
 > {
     Arc::new(StubAuthenticator(move |_token: &str| {
-        Ok(AuthenticatedUser::new(email.to_string(), role))
+        let parsed = Email::new(email).expect("test email is valid");
+        Ok(AuthenticatedUser::new(parsed, role))
     }))
 }
 
@@ -92,7 +93,7 @@ fn valid_token_injects_authenticated_user_into_extensions() {
         .extensions()
         .get::<AuthenticatedUser>()
         .expect("AuthenticatedUser should be inserted");
-    assert_eq!(user.email(), "alice@example.com");
+    assert_eq!(user.email().as_str(), "alice@example.com");
     assert_eq!(user.role(), Role::Writer);
     assert!(user.can_write());
 }

@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use common::types::Role;
+use common::types::{Email, Role};
 use logging::{DEFAULT, info, o};
-use persistence::authorized_users::normalize_email;
 
 /// In-memory cache of email → role mappings loaded from the
 /// `authorized_users` table.
@@ -12,8 +11,11 @@ use persistence::authorized_users::normalize_email;
 /// reloaded when an explicit `reload` call is made (for instance after a
 /// user-management RPC modifies the table). The synchronous `lookup`
 /// method is called from the auth interceptor.
+///
+/// Keys are [`Email`] values whose normalization is enforced at construction,
+/// so the cache cannot drift apart from the DB or from validator-side input.
 pub struct UserCache {
-    inner: RwLock<HashMap<String, Role>>,
+    inner: RwLock<HashMap<Email, Role>>,
 }
 
 impl UserCache {
@@ -28,18 +30,14 @@ impl UserCache {
 
     /// Build a cache pre-populated with the given users.
     ///
-    /// Email keys are normalized (trimmed and lowercased) so that lookups
-    /// are case-insensitive. Used internally by [`UserCache::load_from_db`]
-    /// and by tests that want deterministic cache contents; not exposed as
-    /// `pub` because runtime callers should always go through the DB path.
+    /// Used internally by [`UserCache::load_from_db`] and by tests that want
+    /// deterministic cache contents; not exposed as `pub` because runtime
+    /// callers should always go through the DB path.
     pub(crate) fn from_entries<I>(entries: I) -> Arc<Self>
     where
-        I: IntoIterator<Item = (String, Role)>,
+        I: IntoIterator<Item = (Email, Role)>,
     {
-        let map: HashMap<String, Role> = entries
-            .into_iter()
-            .map(|(email, role)| (normalize_email(&email), role))
-            .collect();
+        let map: HashMap<Email, Role> = entries.into_iter().collect();
         Arc::new(Self {
             inner: RwLock::new(map),
         })
@@ -60,15 +58,13 @@ impl UserCache {
     }
 
     /// Look up the role for a given email. Returns `None` if the user is
-    /// not in the cache. Lookup is case-insensitive: the input is normalized
-    /// (trimmed and lowercased) before the map lookup.
-    pub fn lookup(&self, email: &str) -> Option<Role> {
-        let normalized = normalize_email(email);
+    /// not in the cache.
+    pub fn lookup(&self, email: &Email) -> Option<Role> {
         let guard = self
             .inner
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.get(&normalized).copied()
+        guard.get(email).copied()
     }
 
     /// Returns true if the cache has no entries.

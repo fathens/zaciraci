@@ -1,6 +1,6 @@
 use super::*;
 use crate::proto::config_service_server::ConfigService;
-use common::types::Role;
+use common::types::{Email, Role};
 use grpc_auth::AuthenticatedUser;
 use serial_test::serial;
 use tonic::Request;
@@ -24,7 +24,7 @@ async fn cleanup(key: &str) {
 fn writer_request<T>(body: T) -> Request<T> {
     let mut req = Request::new(body);
     req.extensions_mut().insert(AuthenticatedUser::new(
-        "tester@example.com".to_string(),
+        Email::new("tester@example.com").unwrap(),
         Role::Writer,
     ));
     req
@@ -345,7 +345,7 @@ async fn test_upsert_rejects_reader_role() {
         description: None,
     });
     req.extensions_mut().insert(AuthenticatedUser::new(
-        "reader@example.com".to_string(),
+        Email::new("reader@example.com").unwrap(),
         Role::Reader,
     ));
 
@@ -365,7 +365,7 @@ async fn test_delete_rejects_reader_role() {
         key: test_key("READER_BLOCKED_DEL"),
     });
     req.extensions_mut().insert(AuthenticatedUser::new(
-        "reader@example.com".to_string(),
+        Email::new("reader@example.com").unwrap(),
         Role::Reader,
     ));
 

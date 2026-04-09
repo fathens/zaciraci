@@ -1,8 +1,8 @@
 use crate::Result;
 use crate::connection_pool;
 use crate::schema::authorized_users;
-use anyhow::anyhow;
-use common::types::Role;
+use anyhow::{Context, anyhow};
+use common::types::{Email, Role};
 use diesel::prelude::*;
 use std::str::FromStr;
 
@@ -22,23 +22,18 @@ struct NewAuthorizedUser {
 }
 
 fn to_role(role_str: &str) -> Result<Role> {
-    Role::from_str(role_str).map_err(|e| anyhow!("invalid role value in database: {e}"))
+    Role::from_str(role_str)
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("invalid role value in database: {role_str}"))
 }
 
-/// Normalize an email before writing to or querying the DB.
-///
-/// Google email local parts are effectively case-insensitive, so we store
-/// and compare the lowercase/trimmed form to avoid lockouts when admins
-/// register a user with mixed-case input.
-///
-/// Shared with `google_auth::user_cache` so the in-memory lookup key and
-/// the DB key cannot drift apart — a drift would silently turn authorized
-/// users into `UserNotRegistered` or, worse, match the wrong principal.
-pub fn normalize_email(email: &str) -> String {
-    email.trim().to_ascii_lowercase()
+fn to_email(raw: &str) -> Result<Email> {
+    Email::new(raw)
+        .map_err(anyhow::Error::from)
+        .with_context(|| "invalid email value in database".to_string())
 }
 
-pub async fn list_all() -> Result<Vec<(String, Role)>> {
+pub async fn list_all() -> Result<Vec<(Email, Role)>> {
     let conn = connection_pool::get().await?;
 
     let results: Vec<DbAuthorizedUser> = conn
@@ -54,16 +49,17 @@ pub async fn list_all() -> Result<Vec<(String, Role)>> {
     results
         .into_iter()
         .map(|user| {
+            let email = to_email(&user.email)?;
             let role = to_role(&user.role)?;
-            Ok((user.email, role))
+            Ok((email, role))
         })
         .collect()
 }
 
-pub async fn upsert(email: &str, role: Role) -> Result<()> {
+pub async fn upsert(email: &Email, role: Role) -> Result<()> {
     let role_str = role.to_string();
     let new_user = NewAuthorizedUser {
-        email: normalize_email(email),
+        email: email.as_str().to_string(),
         role: role_str.clone(),
     };
     let conn = connection_pool::get().await?;
@@ -82,8 +78,8 @@ pub async fn upsert(email: &str, role: Role) -> Result<()> {
     Ok(())
 }
 
-pub async fn delete(email: &str) -> Result<()> {
-    let email = normalize_email(email);
+pub async fn delete(email: &Email) -> Result<()> {
+    let email = email.as_str().to_string();
     let conn = connection_pool::get().await?;
 
     conn.interact(move |conn| {

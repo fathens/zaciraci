@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use common::types::Email;
 use grpc_auth::{AuthError, AuthenticatedUser, Authenticator};
 use logging::{DEFAULT, o, warn};
 
@@ -66,12 +67,23 @@ impl Authenticator for GoogleAuthenticator {
     fn authenticate(&self, bearer_token: &str) -> Result<AuthenticatedUser, AuthError> {
         let claims = validator::validate_id_token(bearer_token, &self.client_id, &self.jwks)?;
 
+        // Parse the verified `email` claim into the canonical [`Email`]
+        // newtype. A malformed value here would be unusual (Google's ID
+        // tokens always carry a syntactically valid email when
+        // `email_verified == true`), but we still convert through
+        // `Email::new` so the same normalization rules apply on the
+        // request path and on the cache load path. The error is mapped to
+        // `InvalidToken` so it is masked into the generic
+        // `Status::unauthenticated` at the wire boundary.
+        let email = Email::new(&claims.email)
+            .map_err(|_| AuthError::InvalidToken("email parse failed".to_string()))?;
+
         let role = self
             .users
-            .lookup(&claims.email)
+            .lookup(&email)
             .ok_or(AuthError::UserNotRegistered)?;
 
-        Ok(AuthenticatedUser::new(claims.email, role))
+        Ok(AuthenticatedUser::new(email, role))
     }
 }
 
@@ -99,7 +111,10 @@ async fn load_user_cache_with_retry() -> anyhow::Result<Arc<UserCache>> {
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("user cache bootstrap failed")))
+    // The loop runs at least once (USER_CACHE_BOOTSTRAP_ATTEMPTS >= 1) and
+    // every iteration either returns or stores `Some(err)`, so reaching
+    // here implies `last_err` is `Some`.
+    Err(last_err.expect("loop invariant: at least one attempt recorded an error"))
 }
 
 #[cfg(test)]

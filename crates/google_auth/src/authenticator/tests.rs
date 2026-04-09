@@ -1,7 +1,7 @@
 use super::*;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use common::types::Role;
+use common::types::{Email, Role};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, encode};
 use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::rand_core::OsRng;
@@ -79,19 +79,25 @@ fn build_jwks() -> Arc<JwksCache> {
 #[test]
 fn authenticate_returns_registered_user() {
     let jwks = build_jwks();
-    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Writer)]);
+    let users = UserCache::from_entries(vec![(
+        Email::new("alice@example.com").unwrap(),
+        Role::Writer,
+    )]);
     let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
 
     let token = sign("alice@example.com", true);
     let user = auth.authenticate(&token).expect("should authenticate");
-    assert_eq!(user.email(), "alice@example.com");
+    assert_eq!(user.email().as_str(), "alice@example.com");
     assert_eq!(user.role(), Role::Writer);
 }
 
 #[test]
 fn authenticate_rejects_unregistered_email() {
     let jwks = build_jwks();
-    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Reader)]);
+    let users = UserCache::from_entries(vec![(
+        Email::new("alice@example.com").unwrap(),
+        Role::Reader,
+    )]);
     let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
 
     let token = sign("stranger@example.com", true);
@@ -102,7 +108,10 @@ fn authenticate_rejects_unregistered_email() {
 #[test]
 fn authenticate_rejects_unverified_email() {
     let jwks = build_jwks();
-    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Reader)]);
+    let users = UserCache::from_entries(vec![(
+        Email::new("alice@example.com").unwrap(),
+        Role::Reader,
+    )]);
     let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
 
     let token = sign("alice@example.com", false);
@@ -113,7 +122,10 @@ fn authenticate_rejects_unverified_email() {
 #[test]
 fn empty_client_id_rejects_every_token() {
     let jwks = build_jwks();
-    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Writer)]);
+    let users = UserCache::from_entries(vec![(
+        Email::new("alice@example.com").unwrap(),
+        Role::Writer,
+    )]);
     let auth = GoogleAuthenticator::new(String::new(), jwks, users);
 
     let token = sign("alice@example.com", true);
@@ -156,7 +168,10 @@ fn build_request_with_bearer(token: &str) -> Request<()> {
 #[test]
 fn interceptor_passes_through_valid_google_token() {
     let jwks = build_jwks();
-    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Writer)]);
+    let users = UserCache::from_entries(vec![(
+        Email::new("alice@example.com").unwrap(),
+        Role::Writer,
+    )]);
     let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
     let mut interceptor = AuthInterceptor::new(Arc::new(auth));
 
@@ -169,14 +184,17 @@ fn interceptor_passes_through_valid_google_token() {
         .extensions()
         .get::<GrpcAuthenticatedUser>()
         .expect("AuthenticatedUser in extensions");
-    assert_eq!(user.email(), "alice@example.com");
+    assert_eq!(user.email().as_str(), "alice@example.com");
     assert_eq!(user.role(), Role::Writer);
 }
 
 #[test]
 fn interceptor_rejects_invalid_signature_without_detail() {
     let jwks = build_jwks();
-    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Reader)]);
+    let users = UserCache::from_entries(vec![(
+        Email::new("alice@example.com").unwrap(),
+        Role::Reader,
+    )]);
     let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
     let mut interceptor = AuthInterceptor::new(Arc::new(auth));
 
@@ -198,7 +216,10 @@ fn interceptor_rejects_invalid_signature_without_detail() {
 #[test]
 fn interceptor_rejects_unregistered_user_without_enumeration() {
     let jwks = build_jwks();
-    let users = UserCache::from_entries(vec![("alice@example.com".to_string(), Role::Reader)]);
+    let users = UserCache::from_entries(vec![(
+        Email::new("alice@example.com").unwrap(),
+        Role::Reader,
+    )]);
     let auth = GoogleAuthenticator::new(TEST_CLIENT_ID.to_string(), jwks, users);
     let mut interceptor = AuthInterceptor::new(Arc::new(auth));
 
