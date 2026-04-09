@@ -133,12 +133,12 @@ pub fn validate_id_token(
         .as_secs();
     let iat = token_data.claims.iat;
     // Future iat beyond leeway (clock skew) is suspicious.
-    if iat > now + LEEWAY_SECONDS {
+    if iat > now.saturating_add(LEEWAY_SECONDS) {
         return Err(AuthError::InvalidToken("iat is in the future".to_string()));
     }
     // Past iat older than MAX_TOKEN_AGE + leeway is rejected.
     let age = now.saturating_sub(iat);
-    if age > MAX_TOKEN_AGE_SECONDS + LEEWAY_SECONDS {
+    if age > MAX_TOKEN_AGE_SECONDS.saturating_add(LEEWAY_SECONDS) {
         return Err(AuthError::InvalidToken("token too old".to_string()));
     }
 

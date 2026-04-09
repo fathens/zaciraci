@@ -106,7 +106,7 @@ async fn load_user_cache_with_retry() -> anyhow::Result<Arc<UserCache>> {
                 last_err = Some(err);
                 if attempt < USER_CACHE_BOOTSTRAP_ATTEMPTS {
                     tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(USER_CACHE_BOOTSTRAP_MAX_DELAY);
+                    delay = delay.saturating_mul(2).min(USER_CACHE_BOOTSTRAP_MAX_DELAY);
                 }
             }
         }

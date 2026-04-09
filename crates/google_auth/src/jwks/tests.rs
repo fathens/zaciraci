@@ -30,15 +30,37 @@ fn parse_max_age_none_header() {
 
 #[test]
 fn parse_max_age_zero_is_clamped_to_minimum_at_use_site() {
-    // `parse_max_age` itself returns the raw parsed value; the floor is
+    // `parse_max_age` itself returns the raw parsed value; the clamp is
     // applied at the call site in `refresh_once`. This test documents the
     // contract: a hostile `max-age=0` parses successfully, and the
-    // surrounding code is responsible for the `.max(MIN_JWKS_TTL)` clamp.
+    // surrounding code is responsible for the `.clamp(MIN_JWKS_TTL, MAX_JWKS_TTL)`.
     let value = HeaderValue::from_static("max-age=0");
     let parsed = parse_max_age(Some(&value));
     assert_eq!(parsed, Some(Duration::from_secs(0)));
-    let clamped = parsed.unwrap_or(DEFAULT_TTL).max(MIN_JWKS_TTL);
+    let clamped = parsed
+        .unwrap_or(DEFAULT_TTL)
+        .clamp(MIN_JWKS_TTL, MAX_JWKS_TTL);
     assert_eq!(clamped, MIN_JWKS_TTL);
+}
+
+#[test]
+fn parse_max_age_u64_max_is_clamped_to_maximum_at_use_site() {
+    // Without the upper bound clamp, a hostile `max-age=u64::MAX` would
+    // produce `Duration::from_secs(u64::MAX)`. `Instant + ttl` and
+    // `ttl.mul_f64(...)` would then panic in the refresh task. The clamp
+    // at the `refresh_once` call site must cap this at `MAX_JWKS_TTL`.
+    let header = format!("max-age={}", u64::MAX);
+    let value = HeaderValue::from_str(&header).unwrap();
+    let parsed = parse_max_age(Some(&value));
+    assert_eq!(parsed, Some(Duration::from_secs(u64::MAX)));
+    let clamped = parsed
+        .unwrap_or(DEFAULT_TTL)
+        .clamp(MIN_JWKS_TTL, MAX_JWKS_TTL);
+    assert_eq!(clamped, MAX_JWKS_TTL);
+    // Downstream arithmetic must not panic.
+    let now = Instant::now();
+    let _expires = now + clamped;
+    let _sleep = clamped.mul_f64(REFRESH_THRESHOLD_RATIO);
 }
 
 #[test]

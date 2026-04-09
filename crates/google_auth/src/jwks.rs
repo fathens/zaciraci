@@ -19,6 +19,14 @@ const DEFAULT_TTL: Duration = Duration::from_secs(3600);
 /// well above this floor.
 const MIN_JWKS_TTL: Duration = Duration::from_secs(60);
 
+/// Upper bound applied to a parsed `max-age` directive. Without this ceiling a
+/// hostile or buggy Cache-Control header (`max-age=18446744073709551615`) could
+/// produce a `Duration::from_secs(u64::MAX)` that overflows `Instant + ttl` or
+/// `ttl.mul_f64(...)` and panics the background refresh task, eventually
+/// fail-closing the entire request path via `clear_if_expired`. 24h is already
+/// far above any realistic JWKS lifetime (Google publishes ~1h).
+const MAX_JWKS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Lower bound applied to the post-refresh sleep so even a clamped TTL never
 /// shrinks the loop period below this value.
 const MIN_REFRESH_SLEEP: Duration = Duration::from_secs(30);
@@ -205,7 +213,7 @@ impl JwksCache {
 
         let ttl = parse_max_age(response.headers().get(reqwest::header::CACHE_CONTROL))
             .unwrap_or(DEFAULT_TTL)
-            .max(MIN_JWKS_TTL);
+            .clamp(MIN_JWKS_TTL, MAX_JWKS_TTL);
 
         let jwks: JwksResponse = response.json().await?;
         let keys = decode_keys(jwks.keys);
@@ -269,7 +277,7 @@ impl JwksCache {
                         }
                         warn!(log, "jwks_refresh_failed"; "error" => %err, "retry_in_secs" => backoff.as_secs());
                         tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(MAX_RETRY_BACKOFF);
+                        backoff = backoff.saturating_mul(2).min(MAX_RETRY_BACKOFF);
                     }
                 }
             }
