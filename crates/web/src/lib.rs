@@ -9,6 +9,7 @@ pub mod proto {
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use google_auth::GoogleAuthenticator;
 use grpc_auth::AuthInterceptor;
 use logging::*;
@@ -48,7 +49,7 @@ pub async fn serve(port: u16) -> anyhow::Result<()> {
     let startup = common::config::startup::get();
     let authenticator = GoogleAuthenticator::bootstrap(startup.google_client_id.clone())
         .await
-        .map_err(|e| anyhow::anyhow!("failed to bootstrap authenticator: {e}"))?;
+        .context("failed to bootstrap authenticator")?;
     let auth_interceptor = AuthInterceptor::new(Arc::new(authenticator));
 
     // Health is intentionally exempt from authentication so liveness probes
@@ -75,7 +76,7 @@ pub async fn serve(port: u16) -> anyhow::Result<()> {
         .add_service(portfolio_svc)
         .serve(addr)
         .await
-        .map_err(|e| anyhow::anyhow!("gRPC server failed: {e}"))?;
+        .context("gRPC server failed")?;
 
     Ok(())
 }
