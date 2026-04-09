@@ -32,6 +32,8 @@
 
 ただし、JSONB カラムではドメイン型は全て Serde（`Serialize`/`Deserialize`）を実装しているため、`serde_json::to_value()` / `from_value()` 経由で直接使用できる。
 
+例外として、認証/認可など「DB 行を読み取った時点で正規化済みのドメイン型でなければ後続処理が安全に書けない」モジュールでは、persistence 層の公開関数がドメイン型（例: `Email`, `Role`）に変換した値を返してよい（例: `persistence::authorized_users::list_all`）。これは defense-in-depth として境界で異常値を弾く目的であり、原則ではなく明示的なオプトインとして扱う。
+
 #### モジュール構成
 **モダンなRustコードスタイル**: `mod.rs`ファイルの使用を避け、ディレクトリ同名のファイルを使用する
 
