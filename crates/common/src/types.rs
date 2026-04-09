@@ -1,3 +1,4 @@
+pub mod email;
 pub mod near_units;
 pub mod role;
 pub mod time_range;
@@ -5,6 +6,7 @@ pub mod token_account;
 pub mod token_smallest_units;
 pub mod token_types;
 
+pub use self::email::{Email, ParseEmailError};
 pub use self::near_units::{NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
 pub use self::role::{ParseRoleError, Role};
 pub use self::time_range::TimeRange;

@@ -1,0 +1,99 @@
+use super::*;
+
+#[test]
+fn normalizes_case_and_trims() {
+    let e = Email::new("  Alice@Example.COM  ").unwrap();
+    assert_eq!(e.as_str(), "alice@example.com");
+}
+
+#[test]
+fn rejects_empty() {
+    assert_eq!(Email::new("").unwrap_err(), ParseEmailError::Empty);
+    assert_eq!(Email::new("   ").unwrap_err(), ParseEmailError::Empty);
+}
+
+#[test]
+fn rejects_missing_at() {
+    assert_eq!(
+        Email::new("not-an-email").unwrap_err(),
+        ParseEmailError::MissingAtSign
+    );
+}
+
+#[test]
+fn rejects_empty_parts() {
+    assert_eq!(
+        Email::new("@example.com").unwrap_err(),
+        ParseEmailError::EmptyPart
+    );
+    assert_eq!(
+        Email::new("alice@").unwrap_err(),
+        ParseEmailError::EmptyPart
+    );
+}
+
+#[test]
+fn rejects_multiple_at_signs() {
+    assert_eq!(
+        Email::new("a@b@c").unwrap_err(),
+        ParseEmailError::MultipleAtSigns
+    );
+}
+
+#[test]
+fn rejects_internal_whitespace_or_control() {
+    assert_eq!(
+        Email::new("ali ce@example.com").unwrap_err(),
+        ParseEmailError::InvalidCharacter
+    );
+    assert_eq!(
+        Email::new("alice\n@example.com").unwrap_err(),
+        ParseEmailError::InvalidCharacter
+    );
+}
+
+#[test]
+fn masked_form_hides_local_part() {
+    let e = Email::new("alice@example.com").unwrap();
+    assert_eq!(e.masked(), "a***@example.com");
+}
+
+#[test]
+fn display_renders_masked_form() {
+    let e = Email::new("alice@example.com").unwrap();
+    assert_eq!(format!("{e}"), "a***@example.com");
+}
+
+#[test]
+fn from_into_string_returns_normalized() {
+    let e = Email::new("Bob@Example.com").unwrap();
+    let s: String = e.into();
+    assert_eq!(s, "bob@example.com");
+}
+
+#[test]
+fn fromstr_matches_new() {
+    let parsed: Email = "Carol@x.io".parse().unwrap();
+    assert_eq!(parsed.as_str(), "carol@x.io");
+}
+
+#[test]
+fn deserialize_normalizes() {
+    let json = "\"Dave@Example.COM\"";
+    let e: Email = serde_json::from_str(json).unwrap();
+    assert_eq!(e.as_str(), "dave@example.com");
+}
+
+#[test]
+fn deserialize_rejects_invalid() {
+    let json = "\"not-an-email\"";
+    let result: Result<Email, _> = serde_json::from_str(json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn equality_is_after_normalization() {
+    let a = Email::new("Alice@Example.com").unwrap();
+    let b = Email::new("alice@example.com").unwrap();
+    assert_eq!(a, b);
+}
