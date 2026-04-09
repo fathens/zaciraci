@@ -2,6 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -37,16 +38,9 @@ impl FromStr for Role {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
+#[error("invalid role value")]
 pub struct ParseRoleError;
-
-impl fmt::Display for ParseRoleError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid role value")
-    }
-}
-
-impl std::error::Error for ParseRoleError {}
 
 #[cfg(test)]
 mod tests;
