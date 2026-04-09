@@ -1,6 +1,19 @@
 use super::*;
 use chrono::NaiveDateTime;
+use common::types::Role;
 use common::types::YoctoAmount;
+use grpc_auth::AuthenticatedUser;
+
+/// Wrap a proto body in `tonic::Request` with a reader-role
+/// `AuthenticatedUser` in extensions so `require_reader` succeeds.
+fn reader_request<T>(body: T) -> Request<T> {
+    let mut req = Request::new(body);
+    req.extensions_mut().insert(AuthenticatedUser::new(
+        "reader@example.com".to_string(),
+        Role::Reader,
+    ));
+    req
+}
 
 fn make_evaluation_period(
     id: i32,
@@ -81,10 +94,34 @@ fn test_evaluation_period_to_proto_tokens_with_none() {
 }
 
 #[tokio::test]
+async fn test_get_portfolio_holdings_rejects_missing_auth() {
+    let svc = PortfolioServiceImpl;
+    // Plain Request::new carries no AuthenticatedUser extension.
+    let result = svc
+        .get_portfolio_holdings(Request::new(GetPortfolioHoldingsRequest {
+            period_id: "eval_anything".to_string(),
+        }))
+        .await;
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
+}
+
+#[tokio::test]
+async fn test_get_evaluation_periods_rejects_missing_auth() {
+    let svc = PortfolioServiceImpl;
+    let result = svc
+        .get_evaluation_periods(Request::new(GetEvaluationPeriodsRequest {
+            page: 0,
+            page_size: 10,
+        }))
+        .await;
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
+}
+
+#[tokio::test]
 async fn test_get_portfolio_holdings_empty_period_id() {
     let svc = PortfolioServiceImpl;
     let result = svc
-        .get_portfolio_holdings(Request::new(GetPortfolioHoldingsRequest {
+        .get_portfolio_holdings(reader_request(GetPortfolioHoldingsRequest {
             period_id: String::new(),
         }))
         .await;
@@ -97,7 +134,7 @@ async fn test_get_portfolio_holdings_empty_period_id() {
 async fn test_get_evaluation_periods_returns_list() {
     let svc = PortfolioServiceImpl;
     let result = svc
-        .get_evaluation_periods(Request::new(GetEvaluationPeriodsRequest {
+        .get_evaluation_periods(reader_request(GetEvaluationPeriodsRequest {
             page: 0,
             page_size: 10,
         }))
@@ -112,7 +149,7 @@ async fn test_get_evaluation_periods_returns_list() {
 async fn test_get_portfolio_holdings_not_found() {
     let svc = PortfolioServiceImpl;
     let result = svc
-        .get_portfolio_holdings(Request::new(GetPortfolioHoldingsRequest {
+        .get_portfolio_holdings(reader_request(GetPortfolioHoldingsRequest {
             period_id: "eval_nonexistent_00000000".to_string(),
         }))
         .await;

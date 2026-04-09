@@ -3,6 +3,7 @@ use crate::proto::{
     GetEvaluationPeriodsRequest, GetEvaluationPeriodsResponse, GetPortfolioHoldingsRequest,
     GetPortfolioHoldingsResponse,
 };
+use crate::services::auth::require_reader;
 use common::types::near_units::YoctoValue;
 use common::types::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use common::types::token_types::ExchangeRate;
@@ -135,6 +136,7 @@ impl PortfolioService for PortfolioServiceImpl {
         &self,
         request: Request<GetEvaluationPeriodsRequest>,
     ) -> Result<Response<GetEvaluationPeriodsResponse>, Status> {
+        require_reader(&request)?;
         let req = request.get_ref();
         let page = i64::from(req.page.max(0));
         let page_size = i64::from(req.page_size.clamp(1, 200));
@@ -160,6 +162,7 @@ impl PortfolioService for PortfolioServiceImpl {
         &self,
         request: Request<GetPortfolioHoldingsRequest>,
     ) -> Result<Response<GetPortfolioHoldingsResponse>, Status> {
+        require_reader(&request)?;
         let period_id = &request.get_ref().period_id;
 
         if period_id.is_empty() {
