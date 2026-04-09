@@ -14,13 +14,6 @@ struct DbAuthorizedUser {
     role: String,
 }
 
-#[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = authorized_users)]
-struct NewAuthorizedUser {
-    email: String,
-    role: String,
-}
-
 fn to_role(role_str: &str) -> Result<Role> {
     Role::from_str(role_str)
         .map_err(anyhow::Error::from)
@@ -56,41 +49,16 @@ pub async fn list_all() -> Result<Vec<(Email, Role)>> {
         .collect()
 }
 
-pub async fn upsert(email: &Email, role: Role) -> Result<()> {
-    let role_str = role.to_string();
-    let new_user = NewAuthorizedUser {
-        email: email.as_str().to_string(),
-        role: role_str.clone(),
-    };
-    let conn = connection_pool::get().await?;
-
-    conn.interact(move |conn| {
-        diesel::insert_into(authorized_users::table)
-            .values(&new_user)
-            .on_conflict(authorized_users::email)
-            .do_update()
-            .set(authorized_users::role.eq(&role_str))
-            .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-    Ok(())
-}
-
-pub async fn delete(email: &Email) -> Result<()> {
-    let email = email.as_str().to_string();
-    let conn = connection_pool::get().await?;
-
-    conn.interact(move |conn| {
-        diesel::delete(authorized_users::table.filter(authorized_users::email.eq(&email)))
-            .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
-    Ok(())
-}
+// NOTE: Write-path functions (upsert/delete) were intentionally omitted
+// from this module. The runtime only needs `list_all()` for UserCache
+// bootstrap; authorized user management is expected to be operator-driven
+// (direct SQL) until a management RPC lands. Write helpers — along with
+// their tests — should be reintroduced as `pub(crate)` at that time and
+// must target the `LOWER(email)` functional UNIQUE index via:
+//   INSERT ... ON CONFLICT ((lower(email))) DO UPDATE ...
+//   DELETE ... WHERE lower(email) = lower($1)
+// so that manually-inserted mixed-case rows remain reachable from the
+// application layer.
 
 #[cfg(test)]
 mod tests;
