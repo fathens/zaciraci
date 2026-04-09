@@ -1,4 +1,5 @@
 use serde::de::DeserializeOwned;
+use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
@@ -24,7 +25,12 @@ fn default_max_retries() -> u32 {
 /// These values are fixed after process start and never change.
 /// Unlike `ConfigAccess` (which goes through CONFIG_STORE > DB_STORE > env > defaults),
 /// `StartupConfig` only reads environment variables with hardcoded defaults.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually so secret fields
+/// (`database_url`, `root_mnemonic`, `google_client_id`) are replaced
+/// with `"[redacted]"` when logged. The raw strings should only be read
+/// via the explicit typed accessors — never via `{:?}`.
+#[derive(Clone)]
 pub struct StartupConfig {
     pub is_mainnet: bool,
     pub database_url: String,
@@ -40,6 +46,34 @@ pub struct StartupConfig {
     /// ID tokens. Empty when authentication is not configured; in that
     /// case authenticated endpoints reject every request.
     pub google_client_id: String,
+}
+
+impl fmt::Debug for StartupConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        /// Report whether a secret-bearing field is configured without
+        /// revealing its value. Empty → `"[unset]"` so a misconfiguration
+        /// is still visible in logs; non-empty → `"[redacted]"`.
+        fn presence(s: &str) -> &'static str {
+            if s.is_empty() {
+                "[unset]"
+            } else {
+                "[redacted]"
+            }
+        }
+        f.debug_struct("StartupConfig")
+            .field("is_mainnet", &self.is_mainnet)
+            .field("database_url", &presence(&self.database_url))
+            .field("pg_pool_size", &self.pg_pool_size)
+            .field("rust_log_format", &self.rust_log_format)
+            .field("rpc_endpoints", &self.rpc_endpoints)
+            .field("rpc_failure_reset_seconds", &self.rpc_failure_reset_seconds)
+            .field("root_account_id", &self.root_account_id)
+            .field("root_mnemonic", &presence(&self.root_mnemonic))
+            .field("root_hdpath", &self.root_hdpath)
+            .field("instance_id", &self.instance_id)
+            .field("google_client_id", &presence(&self.google_client_id))
+            .finish()
+    }
 }
 
 impl StartupConfig {
@@ -113,5 +147,50 @@ mod tests {
         let s1 = get();
         let s2 = get();
         assert!(std::ptr::eq(s1, s2));
+    }
+
+    #[test]
+    fn debug_redacts_secret_fields() {
+        let config = StartupConfig {
+            is_mainnet: true,
+            database_url: "postgres://user:supersecret@host/db".to_string(),
+            pg_pool_size: 4,
+            rust_log_format: "json".to_string(),
+            rpc_endpoints: vec![],
+            rpc_failure_reset_seconds: 60,
+            root_account_id: "alice.near".to_string(),
+            root_mnemonic: "word1 word2 word3 ... word12".to_string(),
+            root_hdpath: "m/44'/397'/0'".to_string(),
+            instance_id: "primary".to_string(),
+            google_client_id: "123-abc.apps.googleusercontent.com".to_string(),
+        };
+        let formatted = format!("{config:?}");
+        assert!(!formatted.contains("supersecret"));
+        assert!(!formatted.contains("word1 word2 word3"));
+        assert!(!formatted.contains("123-abc.apps.googleusercontent.com"));
+        assert!(formatted.contains("[redacted]"));
+        // Non-secret fields remain readable.
+        assert!(formatted.contains("alice.near"));
+        assert!(formatted.contains("primary"));
+    }
+
+    #[test]
+    fn debug_shows_unset_for_empty_secret_fields() {
+        let config = StartupConfig {
+            is_mainnet: false,
+            database_url: String::new(),
+            pg_pool_size: 1,
+            rust_log_format: "plain".to_string(),
+            rpc_endpoints: vec![],
+            rpc_failure_reset_seconds: 0,
+            root_account_id: String::new(),
+            root_mnemonic: String::new(),
+            root_hdpath: String::new(),
+            instance_id: "*".to_string(),
+            google_client_id: String::new(),
+        };
+        let formatted = format!("{config:?}");
+        assert!(formatted.contains("[unset]"));
+        assert!(!formatted.contains("[redacted]"));
     }
 }
