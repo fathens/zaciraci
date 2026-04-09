@@ -29,6 +29,29 @@ fn parse_max_age_none_header() {
 }
 
 #[test]
+fn parse_max_age_zero_is_clamped_to_minimum_at_use_site() {
+    // `parse_max_age` itself returns the raw parsed value; the floor is
+    // applied at the call site in `refresh_once`. This test documents the
+    // contract: a hostile `max-age=0` parses successfully, and the
+    // surrounding code is responsible for the `.max(MIN_JWKS_TTL)` clamp.
+    let value = HeaderValue::from_static("max-age=0");
+    let parsed = parse_max_age(Some(&value));
+    assert_eq!(parsed, Some(Duration::from_secs(0)));
+    let clamped = parsed.unwrap_or(DEFAULT_TTL).max(MIN_JWKS_TTL);
+    assert_eq!(clamped, MIN_JWKS_TTL);
+}
+
+#[test]
+fn min_refresh_sleep_caps_short_ttls() {
+    // Even after the TTL clamp, the post-refresh sleep is additionally
+    // floored so a tiny clamped TTL cannot drive the loop into a tight
+    // cycle.
+    let ttl = MIN_JWKS_TTL;
+    let sleep_for = ttl.mul_f64(REFRESH_THRESHOLD_RATIO).max(MIN_REFRESH_SLEEP);
+    assert!(sleep_for >= MIN_REFRESH_SLEEP);
+}
+
+#[test]
 fn needs_refresh_when_empty() {
     let cached = CachedJwks::default();
     assert!(cached.needs_refresh(Instant::now()));

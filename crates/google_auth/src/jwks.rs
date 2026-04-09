@@ -12,6 +12,17 @@ pub const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 /// Default TTL if Cache-Control cannot be parsed.
 const DEFAULT_TTL: Duration = Duration::from_secs(3600);
 
+/// Lower bound applied to a parsed `max-age` directive. Without this floor a
+/// hostile or buggy Cache-Control header (`max-age=0`, or a single-digit TTL)
+/// would drive the background refresh task into a tight loop, hammering the
+/// JWKS endpoint and pegging CPU. Google's production headers always sit
+/// well above this floor.
+const MIN_JWKS_TTL: Duration = Duration::from_secs(60);
+
+/// Lower bound applied to the post-refresh sleep so even a clamped TTL never
+/// shrinks the loop period below this value.
+const MIN_REFRESH_SLEEP: Duration = Duration::from_secs(30);
+
 /// Minimum wait before retrying after a failed fetch.
 const MIN_RETRY_BACKOFF: Duration = Duration::from_secs(30);
 
@@ -193,7 +204,8 @@ impl JwksCache {
         let response = self.http.get(&self.url).send().await?.error_for_status()?;
 
         let ttl = parse_max_age(response.headers().get(reqwest::header::CACHE_CONTROL))
-            .unwrap_or(DEFAULT_TTL);
+            .unwrap_or(DEFAULT_TTL)
+            .max(MIN_JWKS_TTL);
 
         let jwks: JwksResponse = response.json().await?;
         let keys = decode_keys(jwks.keys);
@@ -240,8 +252,7 @@ impl JwksCache {
                 match this.refresh_once().await {
                     Ok(ttl) => {
                         backoff = MIN_RETRY_BACKOFF;
-                        let sleep_for =
-                            Duration::from_secs_f64(ttl.as_secs_f64() * REFRESH_THRESHOLD_RATIO);
+                        let sleep_for = ttl.mul_f64(REFRESH_THRESHOLD_RATIO).max(MIN_REFRESH_SLEEP);
                         tokio::time::sleep(sleep_for).await;
                     }
                     Err(err) => {
