@@ -29,11 +29,10 @@ const ACCEPTED_ISSUERS: &[&str] = &["https://accounts.google.com", "accounts.goo
 /// and for the manual max-age check below.
 #[derive(Debug, Deserialize)]
 pub struct Claims {
-    pub email: String,
+    pub(crate) email: String,
     #[serde(deserialize_with = "deserialize_bool_or_string")]
-    pub email_verified: bool,
-    pub sub: String,
-    pub iat: u64,
+    pub(crate) email_verified: bool,
+    pub(crate) iat: u64,
 }
 
 fn deserialize_bool_or_string<'de, D>(deserializer: D) -> Result<bool, D::Error>
