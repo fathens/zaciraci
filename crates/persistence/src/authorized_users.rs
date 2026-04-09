@@ -26,6 +26,14 @@ fn to_email(raw: &str) -> Result<Email> {
         .with_context(|| "invalid email value in database".to_string())
 }
 
+/// Hard upper bound on the number of authorized_users rows that
+/// `list_all` will load into memory. The runtime calls this function on
+/// startup and on every periodic refresh, so an unbounded `SELECT *`
+/// against a runaway-large table would risk an OOM-driven restart loop.
+/// The current operator workflow expects O(10) rows, so 10_000 is many
+/// orders of magnitude of headroom while still bounding the worst case.
+const LIST_ALL_HARD_LIMIT: i64 = 10_000;
+
 pub async fn list_all() -> Result<Vec<(Email, Role)>> {
     let conn = connection_pool::get().await?;
 
@@ -34,10 +42,18 @@ pub async fn list_all() -> Result<Vec<(Email, Role)>> {
             authorized_users::table
                 .select(DbAuthorizedUser::as_select())
                 .order_by(authorized_users::email.asc())
+                .limit(LIST_ALL_HARD_LIMIT + 1)
                 .load(conn)
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    if results.len() as i64 > LIST_ALL_HARD_LIMIT {
+        return Err(anyhow!(
+            "authorized_users row count exceeds hard limit ({}); refusing to load to avoid runaway memory use",
+            LIST_ALL_HARD_LIMIT
+        ));
+    }
 
     results
         .into_iter()
