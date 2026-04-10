@@ -95,3 +95,18 @@ fn lookup_is_case_insensitive_via_email_normalization() {
     );
     assert_eq!(cache.lookup(&email("eve@example.com")), None);
 }
+
+/// Regression guard for the `spawn_refresh_task` idempotency flag. The
+/// internal `refresh_spawned: OnceLock<()>` must transition exactly once,
+/// so that a second accidental call is recognised and short-circuited
+/// before any `tokio::spawn` happens.
+#[tokio::test]
+async fn spawn_refresh_task_is_idempotent() {
+    let cache = UserCache::empty();
+    assert!(cache.refresh_spawned.get().is_none());
+    cache.spawn_refresh_task(DEFAULT_REFRESH_INTERVAL);
+    assert!(cache.refresh_spawned.get().is_some());
+    // Second call must short-circuit (no panic, no second spawn).
+    cache.spawn_refresh_task(DEFAULT_REFRESH_INTERVAL);
+    assert!(cache.refresh_spawned.get().is_some());
+}

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use common::types::{Email, Role};
@@ -32,6 +32,10 @@ pub(crate) const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 /// so the cache cannot drift apart from the DB or from validator-side input.
 pub struct UserCache {
     inner: RwLock<HashMap<Email, Role>>,
+    /// Guard that ensures `spawn_refresh_task` actually spawns at most once
+    /// per cache instance. Without this, a second accidental call would fork
+    /// another loop and double the DB polling rate.
+    refresh_spawned: OnceLock<()>,
 }
 
 impl UserCache {
@@ -41,6 +45,7 @@ impl UserCache {
     pub(crate) fn empty() -> Arc<Self> {
         Arc::new(Self {
             inner: RwLock::new(HashMap::new()),
+            refresh_spawned: OnceLock::new(),
         })
     }
 
@@ -56,6 +61,7 @@ impl UserCache {
         let map: HashMap<Email, Role> = entries.into_iter().collect();
         Arc::new(Self {
             inner: RwLock::new(map),
+            refresh_spawned: OnceLock::new(),
         })
     }
 
@@ -101,6 +107,11 @@ impl UserCache {
     /// `authorized_users` become visible to the auth interceptor after
     /// at most one `interval`.
     pub fn spawn_refresh_task(self: &Arc<Self>, interval: Duration) {
+        if self.refresh_spawned.set(()).is_err() {
+            let log = DEFAULT.new(o!("module" => "google_auth::user_cache"));
+            warn!(log, "spawn_refresh_task_already_running_ignored");
+            return;
+        }
         let this = Arc::clone(self);
         tokio::spawn(async move {
             let log = DEFAULT.new(o!("module" => "google_auth::user_cache::refresh"));
