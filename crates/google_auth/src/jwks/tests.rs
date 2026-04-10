@@ -170,3 +170,20 @@ fn clear_if_expired_is_noop_when_not_expired() {
     assert!(!cache.clear_if_expired(Instant::now()));
     assert!(!cache.is_empty());
 }
+
+/// Regression guard for the `spawn_refresh_task` idempotency flag. The
+/// internal `refresh_spawned: OnceLock<()>` must transition exactly once,
+/// so that a second accidental call is recognised and short-circuited
+/// before any `tokio::spawn` happens.
+#[tokio::test]
+async fn spawn_refresh_task_is_idempotent() {
+    let cache = JwksCache::from_keys(HashMap::new());
+    // First call takes the slot.
+    assert!(cache.refresh_spawned.get().is_none());
+    cache.spawn_refresh_task();
+    assert!(cache.refresh_spawned.get().is_some());
+    // Second call must short-circuit (no panic, no second spawn). We can
+    // only verify the state didn't regress and that the call returns.
+    cache.spawn_refresh_task();
+    assert!(cache.refresh_spawned.get().is_some());
+}

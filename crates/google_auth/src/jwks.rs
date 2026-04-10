@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -120,6 +120,10 @@ pub struct JwksCache {
     http: reqwest::Client,
     url: String,
     inner: RwLock<CachedJwks>,
+    /// Guard that ensures `spawn_refresh_task` actually spawns at most once
+    /// per cache instance. Without this, a second accidental call would fork
+    /// another loop and hammer the JWKS endpoint at double the expected rate.
+    refresh_spawned: OnceLock<()>,
 }
 
 impl JwksCache {
@@ -138,6 +142,7 @@ impl JwksCache {
             http: build_http_client(),
             url: url.into(),
             inner: RwLock::new(CachedJwks::default()),
+            refresh_spawned: OnceLock::new(),
         });
 
         if let Err(err) = cache.refresh_once().await {
@@ -168,6 +173,7 @@ impl JwksCache {
                 fetched_at: Some(now),
                 expires_at: Some(now + DEFAULT_TTL),
             }),
+            refresh_spawned: OnceLock::new(),
         })
     }
 
@@ -269,6 +275,15 @@ impl JwksCache {
     /// - On failure, back off exponentially from `MIN_RETRY_BACKOFF` to
     ///   `MAX_RETRY_BACKOFF`, retaining the existing cached snapshot.
     pub fn spawn_refresh_task(self: &Arc<Self>) {
+        // Idempotency guard: refuse to spawn a second background loop on the
+        // same cache. A duplicate loop would double the JWKS request rate
+        // and waste connections. The caller that ends up losing the race
+        // simply gets a warn log and a no-op; the first task is unaffected.
+        if self.refresh_spawned.set(()).is_err() {
+            let log = DEFAULT.new(o!("module" => "google_auth::jwks"));
+            warn!(log, "spawn_refresh_task_already_running_ignored");
+            return;
+        }
         let this = Arc::clone(self);
         tokio::spawn(async move {
             let log = DEFAULT.new(o!("module" => "google_auth::jwks::refresh"));
