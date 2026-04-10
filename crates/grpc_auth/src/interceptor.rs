@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use logging::{DEFAULT, info, o, warn};
+use logging::{DEFAULT, debug, info, o};
 use tonic::Status;
 use tonic::service::Interceptor;
 
@@ -41,7 +41,12 @@ impl<A: Authenticator> Interceptor for AuthInterceptor<A> {
         let log = DEFAULT.new(o!("module" => "grpc_auth", "fn" => "auth_interceptor"));
 
         let token = extract_bearer_token(&req).map_err(|err| {
-            warn!(log, "auth_failure"; "reason" => err.kind(), "detail" => %err);
+            // Downgraded from warn → debug so the inner detail (which is
+            // allowed by `AuthError::InvalidToken`'s invariant to describe
+            // *why* parsing failed, never the token itself) never lands in
+            // production-default log streams. Failure rate monitoring should
+            // go through metrics on `reason`/`err.kind()`, not log scraping.
+            debug!(log, "auth_failure"; "reason" => err.kind(), "detail" => %err);
             Status::from(err)
         })?;
 
@@ -57,7 +62,12 @@ impl<A: Authenticator> Interceptor for AuthInterceptor<A> {
                 Ok(req)
             }
             Err(err) => {
-                warn!(log, "auth_failure"; "reason" => err.kind(), "detail" => %err);
+                // Downgraded from warn → debug so the inner detail (which is
+                // allowed by `AuthError::InvalidToken`'s invariant to describe
+                // *why* parsing failed, never the token itself) never lands in
+                // production-default log streams. Failure rate monitoring should
+                // go through metrics on `reason`/`err.kind()`, not log scraping.
+                debug!(log, "auth_failure"; "reason" => err.kind(), "detail" => %err);
                 Err(Status::from(err))
             }
         }

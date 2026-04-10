@@ -7,6 +7,17 @@ use tonic::Status;
 /// but the conversion to `tonic::Status` collapses them into a small
 /// set of opaque external messages to avoid information leakage
 /// (e.g., user enumeration via distinct error responses).
+///
+/// # Invariant: `InvalidToken` detail must not carry token material
+///
+/// The `InvalidToken(String)` variant's inner string is allowed to end up
+/// in server-side logs (see `AuthInterceptor::call` debug log). It MUST
+/// therefore never contain any raw token, signature, JWT segment, or
+/// `Bearer` header value. Constructors should describe the *reason*
+/// ("decode_header: ...", "missing Bearer prefix", "unknown kid", etc.),
+/// never the input. Future additions to this variant's construction
+/// sites must preserve this invariant — it is the primary guard against
+/// a token leak via log capture.
 #[derive(Debug, Error)]
 pub enum AuthError {
     #[error("missing authorization metadata")]
