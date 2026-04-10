@@ -100,7 +100,7 @@ fn extract_bearer_token(req: &tonic::Request<()>) -> Result<String, AuthError> {
     let token = value_str
         .get(scheme_len + 1..)
         .ok_or_else(|| AuthError::InvalidToken("missing Bearer prefix".to_string()))?
-        .trim_start();
+        .trim();
 
     if token.is_empty() {
         return Err(AuthError::InvalidToken("empty bearer token".to_string()));

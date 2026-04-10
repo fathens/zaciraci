@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey};
 use logging::{DEFAULT, info, o, warn};
 use serde::Deserialize;
@@ -272,7 +272,7 @@ impl JwksCache {
         }
 
         let log = DEFAULT.new(o!("module" => "google_auth::jwks"));
-        info!(log, "jwks_refreshed"; "ttl_secs" => ttl.as_secs(), "fetched_at" => %now_iso());
+        info!(log, "jwks_refreshed"; "ttl_secs" => ttl.as_secs(), "fetched_at" => %Utc::now().to_rfc3339());
         Ok(ttl)
     }
 
@@ -400,11 +400,6 @@ async fn read_body_with_cap(mut response: reqwest::Response, cap: u64) -> anyhow
         buf.extend_from_slice(&chunk);
     }
     Ok(buf)
-}
-
-fn now_iso() -> String {
-    let now: DateTime<Utc> = Utc::now();
-    now.to_rfc3339()
 }
 
 /// Algorithm accepted for ID token verification.
