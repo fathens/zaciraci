@@ -4,6 +4,7 @@ use crate::schema::authorized_users;
 use anyhow::{Context, anyhow};
 use common::types::{Email, Role};
 use diesel::prelude::*;
+use logging::*;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -55,14 +56,44 @@ pub async fn list_all() -> Result<Vec<(Email, Role)>> {
         ));
     }
 
-    results
-        .into_iter()
-        .map(|user| {
-            let email = to_email(&user.email)?;
-            let role = to_role(&user.role)?;
-            Ok((email, role))
-        })
-        .collect()
+    // Per-row tolerance: a single malformed row must not take out the whole
+    // refresh cycle, otherwise `UserCache::reload` would stop propagating
+    // revocations until an operator manually repairs the row. Skip bad rows
+    // with a warn log; the DB-level constraints (`LOWER(email)` UNIQUE index
+    // + `CHECK (email = LOWER(email))` + `CHECK (role IN ...)`) make this a
+    // genuine "should never happen" path, but the availability cost of
+    // failing closed on it is higher than the correctness cost of skipping.
+    let log = DEFAULT.new(o!("module" => "persistence::authorized_users"));
+    let mut out = Vec::with_capacity(results.len());
+    for user in results {
+        let email = match to_email(&user.email) {
+            Ok(e) => e,
+            Err(err) => {
+                warn!(
+                    log,
+                    "skipping_authorized_user_row_invalid_email";
+                    "error" => %err,
+                );
+                continue;
+            }
+        };
+        let role = match to_role(&user.role) {
+            Ok(r) => r,
+            Err(err) => {
+                warn!(
+                    log,
+                    "skipping_authorized_user_row_invalid_role";
+                    // `email` is the canonical masked Display impl, so this
+                    // does not leak PII.
+                    "email" => %email,
+                    "error" => %err,
+                );
+                continue;
+            }
+        };
+        out.push((email, role));
+    }
+    Ok(out)
 }
 
 // NOTE: Write-path functions (upsert/delete) were intentionally omitted

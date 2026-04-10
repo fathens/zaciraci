@@ -5,11 +5,10 @@ use serial_test::serial;
 
 /// Test-only helper to raw-insert an authorized user row.
 ///
-/// Uses `ON CONFLICT ((lower(email)))` so repeat test runs are idempotent
-/// even when the previous run left the table with a row under a different
-/// case. Bypasses `Email` normalization intentionally — tests need to be
-/// able to put mixed-case rows into the table to exercise `list_all`'s
-/// normalization at read time.
+/// Uses `ON CONFLICT ((lower(email)))` so repeat test runs are idempotent.
+/// Callers MUST pass an already-lowercased email; the migration's
+/// `CHECK (email = LOWER(email))` constraint rejects any other input, and
+/// that rejection is exercised by `test_check_constraint_rejects_mixed_case_email`.
 async fn raw_insert(raw_email: &str, role_str: &str) -> Result<()> {
     let email = raw_email.to_string();
     let role = role_str.to_string();
@@ -47,18 +46,34 @@ fn email(s: &str) -> Email {
 
 #[tokio::test]
 #[serial]
-async fn test_list_all_returns_normalized_emails() {
-    let raw = "List-All-Norm@Example.COM";
+async fn test_list_all_returns_email_domain_type() {
+    let raw = "list-all-norm@example.com";
     raw_insert(raw, "reader").await.unwrap();
 
     let all = list_all().await.unwrap();
-    let found = all
-        .iter()
-        .find(|(e, _)| e == &email("list-all-norm@example.com"));
+    let found = all.iter().find(|(e, _)| e == &email(raw));
     assert!(found.is_some());
     assert_eq!(found.unwrap().1, Role::Reader);
 
     raw_delete(raw).await.unwrap();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_check_constraint_rejects_mixed_case_email() {
+    // Defense-in-depth: the `CHECK (email = LOWER(email))` constraint must
+    // reject any direct SQL insert that carries a non-lowercase email, so
+    // that `list_all`'s per-row tolerance never has to paper over a row the
+    // application would reject at read time.
+    let raw = "Check-Case-Test@Example.COM";
+    let result = raw_insert(raw, "reader").await;
+    assert!(
+        result.is_err(),
+        "CHECK (email = LOWER(email)) should reject mixed-case email"
+    );
+    // Cleanup in case some future change relaxes the constraint and the
+    // insert unexpectedly succeeded.
+    let _ = raw_delete(raw).await;
 }
 
 #[tokio::test]

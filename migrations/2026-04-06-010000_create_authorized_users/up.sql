@@ -1,6 +1,12 @@
 CREATE TABLE authorized_users (
     id SERIAL PRIMARY KEY,
-    email VARCHAR NOT NULL,
+    email VARCHAR NOT NULL
+        -- Defense-in-depth: require email to already be lowercased at insert
+        -- time so direct SQL cannot create rows that the application's
+        -- `Email` newtype would reject at read time. Combined with the
+        -- `LOWER(email)` UNIQUE index below, this makes it impossible for the
+        -- table to hold two distinct-case rows for the same principal.
+        CHECK (email = LOWER(email)),
     role VARCHAR NOT NULL DEFAULT 'reader'
         CHECK (role IN ('reader', 'writer')),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
