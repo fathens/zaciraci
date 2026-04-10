@@ -50,7 +50,11 @@ pub async fn list_all() -> Result<Vec<(Email, Role)>> {
                 .load(conn)
         })
         .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        .map_err(|e| {
+            let log = DEFAULT.new(o!("module" => "persistence::authorized_users"));
+            warn!(log, "database_pool_interaction_failed"; "error" => ?e);
+            anyhow!("database pool interaction failed")
+        })??;
 
     if results.len() as i64 > LIST_ALL_HARD_LIMIT {
         return Err(anyhow!(

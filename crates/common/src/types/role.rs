@@ -40,7 +40,7 @@ impl FromStr for Role {
 
 #[derive(Debug, Clone, Error)]
 #[error("invalid role value: {0}")]
-pub struct ParseRoleError(pub String);
+pub struct ParseRoleError(String);
 
 #[cfg(test)]
 mod tests;

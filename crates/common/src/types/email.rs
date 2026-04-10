@@ -60,11 +60,12 @@ impl Email {
     /// part and exactly one `@`, this is total.
     pub fn masked(&self) -> String {
         // Safe: constructor guarantees one `@` with non-empty local part.
-        let (local, domain) = self.0.split_once('@').expect("Email invariant: contains @");
-        let first = local
-            .chars()
-            .next()
-            .expect("Email invariant: non-empty local");
+        let Some((local, domain)) = self.0.split_once('@') else {
+            unreachable!("Email invariant: contains @");
+        };
+        let Some(first) = local.chars().next() else {
+            unreachable!("Email invariant: non-empty local");
+        };
         format!("{first}***@{domain}")
     }
 }
