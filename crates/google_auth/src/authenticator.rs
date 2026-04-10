@@ -28,15 +28,28 @@ impl GoogleAuthenticator {
     /// Build an authenticator from its dependencies.
     ///
     /// `client_id` is the Google OAuth2 client id used for the `aud` check.
-    /// If empty, every `authenticate` call will return `AuthError::InvalidToken`;
-    /// a warning is emitted here to make the misconfiguration obvious in logs.
+    ///
+    /// # Behavior when `client_id` is empty
+    ///
+    /// An empty `client_id` is treated as **"authentication is not
+    /// configured"** and is a supported startup state, **not** a
+    /// misconfiguration to bail on. In that state this constructor emits a
+    /// warning and returns a usable authenticator whose `authenticate` always
+    /// fails (`validator::validate_id_token` rejects any token when the
+    /// configured `client_id` is empty — see the regression test
+    /// `validate_rejects_empty_client_id_even_with_valid_token`). The net
+    /// effect is that every authenticated gRPC endpoint returns
+    /// `Status::unauthenticated`, i.e. the server comes up in a **fail-closed
+    /// "auth disabled"** state. This is intentional: it lets operators boot
+    /// the process without credentials for diagnostic purposes while
+    /// guaranteeing no request is ever served unauthenticated.
     pub fn new(client_id: String, jwks: Arc<JwksCache>, users: Arc<UserCache>) -> Self {
         if client_id.is_empty() {
             let log = DEFAULT.new(o!("module" => "google_auth"));
             warn!(
                 log,
-                "google_client_id_not_configured";
-                "effect" => "authenticated endpoints will reject every request"
+                "auth_disabled_empty_google_client_id";
+                "effect" => "fail-closed: every authenticated request will be rejected"
             );
         }
         Self {

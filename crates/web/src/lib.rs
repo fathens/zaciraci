@@ -35,8 +35,11 @@ use tonic::service::interceptor::InterceptedService;
 ///
 /// 1. The listening socket is only reachable via a TLS-terminating
 ///    proxy, or is bound to a loopback / Unix-domain socket.
-/// 2. `GOOGLE_CLIENT_ID` is configured so the authenticator does not
-///    accept every token.
+/// 2. `GOOGLE_CLIENT_ID` is configured when the server should accept
+///    authenticated requests. Leaving it empty is a supported fail-closed
+///    "auth disabled" mode: the server still boots, but every
+///    authenticated endpoint returns `Status::unauthenticated`. See
+///    [`google_auth::GoogleAuthenticator::new`] for the full contract.
 ///
 /// # Threat model: token replay
 ///
@@ -70,10 +73,14 @@ pub async fn serve(port: u16) -> anyhow::Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
 
-    // Bootstrap the Google authenticator. JWKS is fetched eagerly with
-    // fail-open semantics (empty cache on failure, logged) and a background
-    // refresh task is spawned. UserCache is loaded from the DB with bounded
-    // retries inside bootstrap to tolerate a briefly-unavailable database.
+    // Bootstrap the Google authenticator. JWKS is fetched eagerly; a failed
+    // initial fetch leaves the cache empty and the background refresh task
+    // keeps trying — an empty cache causes `validate_id_token` to return
+    // `JwksUnavailable`, so the server is fail-closed until JWKS is known.
+    // UserCache is loaded from the DB with bounded retries inside bootstrap
+    // to tolerate a briefly-unavailable database. An empty `google_client_id`
+    // is a supported startup state (auth disabled, every request rejected —
+    // see `google_auth::GoogleAuthenticator::new`).
     let startup = common::config::startup::get();
     let authenticator = GoogleAuthenticator::bootstrap(startup.google_client_id.clone())
         .await

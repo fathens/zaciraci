@@ -87,9 +87,16 @@ pub fn validate_id_token(
     client_id: &str,
     jwks: &JwksCache,
 ) -> Result<Claims, AuthError> {
+    // Fail-closed "auth disabled" state: if the operator started the process
+    // without a `google_client_id`, reject every token unconditionally before
+    // any parsing work. This is the runtime half of the contract documented
+    // on `GoogleAuthenticator::new` — empty `client_id` is intentionally a
+    // supported startup mode that guarantees no request can authenticate.
+    // Do NOT change this to bail at construction time without updating the
+    // authenticator doc and the `web::serve` threat model notes.
     if client_id.is_empty() {
         return Err(AuthError::InvalidToken(
-            "client_id not configured".to_string(),
+            "auth disabled: client_id not configured".to_string(),
         ));
     }
 

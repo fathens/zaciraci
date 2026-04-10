@@ -357,6 +357,30 @@ fn validate_rejects_empty_client_id() {
     assert_eq!(err.kind(), "invalid_token");
 }
 
+/// Regression guard for the "auth disabled" fail-closed contract: even a
+/// fully-valid, correctly-signed ID token must be rejected when `client_id`
+/// is empty. This locks in the behaviour documented on
+/// `GoogleAuthenticator::new` so that any future refactor which accidentally
+/// makes an empty `client_id` accept tokens fails loudly in tests.
+#[test]
+fn validate_rejects_empty_client_id_even_with_valid_token() {
+    let keypair = shared_keypair();
+    let jwks = build_jwks_with(TEST_KID, keypair.decoding.clone());
+
+    let token = sign_token(
+        keypair,
+        TEST_KID,
+        "https://accounts.google.com",
+        TEST_CLIENT_ID,
+        "user@example.com",
+        true,
+        3600,
+    );
+
+    let err = validate_id_token(&token, "", &jwks).expect_err("empty client_id fail-closed");
+    assert_eq!(err.kind(), "invalid_token");
+}
+
 #[test]
 fn validate_rejects_rubbish_token() {
     let jwks = JwksCache::from_keys(HashMap::new());
