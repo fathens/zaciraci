@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -56,13 +56,22 @@ const JWKS_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// the body is read.
 const MAX_JWKS_BODY_BYTES: u64 = 1024 * 1024;
 
-/// Build the shared `reqwest::Client` used for all JWKS fetches.
-fn build_http_client() -> reqwest::Client {
+/// Shared `reqwest::Client` used for every JWKS fetch in the process.
+///
+/// `reqwest::Client` holds an internal connection pool, so building one per
+/// `JwksCache` would throw away that pool on every instance. Using a single
+/// lazily-built client lets keep-alive connections to Google's JWKS endpoint
+/// be reused across refresh cycles.
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .timeout(JWKS_HTTP_TIMEOUT)
         .connect_timeout(JWKS_HTTP_CONNECT_TIMEOUT)
         .build()
         .expect("reqwest client with static timeouts must build")
+});
+
+fn http_client() -> reqwest::Client {
+    HTTP_CLIENT.clone()
 }
 
 /// A single JSON Web Key entry from Google's JWKS endpoint.
@@ -139,7 +148,7 @@ impl JwksCache {
     /// not be read as "tokens are accepted without keys".
     pub(crate) async fn new(url: impl Into<String>) -> Arc<Self> {
         let cache = Arc::new(Self {
-            http: build_http_client(),
+            http: http_client(),
             url: url.into(),
             inner: RwLock::new(CachedJwks::default()),
             refresh_spawned: OnceLock::new(),
@@ -166,7 +175,7 @@ impl JwksCache {
     pub(crate) fn from_keys(keys: HashMap<String, DecodingKey>) -> Arc<Self> {
         let now = Instant::now();
         Arc::new(Self {
-            http: build_http_client(),
+            http: http_client(),
             url: String::new(),
             inner: RwLock::new(CachedJwks {
                 keys,
