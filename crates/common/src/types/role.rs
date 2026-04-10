@@ -33,14 +33,14 @@ impl FromStr for Role {
         match s {
             "reader" => Ok(Role::Reader),
             "writer" => Ok(Role::Writer),
-            _ => Err(ParseRoleError),
+            other => Err(ParseRoleError(other.to_string())),
         }
     }
 }
 
 #[derive(Debug, Clone, Error)]
-#[error("invalid role value")]
-pub struct ParseRoleError;
+#[error("invalid role value: {0}")]
+pub struct ParseRoleError(pub String);
 
 #[cfg(test)]
 mod tests;

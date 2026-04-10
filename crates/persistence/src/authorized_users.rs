@@ -16,9 +16,12 @@ struct DbAuthorizedUser {
 }
 
 fn to_role(role_str: &str) -> Result<Role> {
+    // `ParseRoleError` already carries the offending value in its Display
+    // impl, so the previous `with_context` wrapper would just duplicate the
+    // string. Keep the context layer for the `in database` framing only.
     Role::from_str(role_str)
         .map_err(anyhow::Error::from)
-        .with_context(|| format!("invalid role value in database: {role_str}"))
+        .context("invalid role value in database")
 }
 
 fn to_email(raw: &str) -> Result<Email> {

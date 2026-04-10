@@ -24,7 +24,7 @@ fn from_str_writer() {
 fn from_str_invalid() {
     let err = "admin".parse::<Role>();
     assert!(err.is_err());
-    assert_eq!(err.unwrap_err().to_string(), "invalid role value");
+    assert_eq!(err.unwrap_err().to_string(), "invalid role value: admin");
 }
 
 #[test]
