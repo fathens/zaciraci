@@ -104,8 +104,11 @@ impl Authenticator for GoogleAuthenticator {
 async fn load_user_cache_with_retry() -> anyhow::Result<Arc<UserCache>> {
     let log = DEFAULT.new(o!("module" => "google_auth::bootstrap"));
     let mut delay = USER_CACHE_BOOTSTRAP_INITIAL_DELAY;
-    let mut last_err: Option<anyhow::Error> = None;
-    for attempt in 1..=USER_CACHE_BOOTSTRAP_ATTEMPTS {
+    // Attempts 1..N-1 go through the retry loop. The final attempt is
+    // performed after the loop so the function can return its Result
+    // directly, eliminating the need for a `last_err: Option` + runtime
+    // `expect` on an otherwise-unreachable branch.
+    for attempt in 1..USER_CACHE_BOOTSTRAP_ATTEMPTS {
         match UserCache::load_from_db().await {
             Ok(cache) => return Ok(cache),
             Err(err) => {
@@ -117,18 +120,21 @@ async fn load_user_cache_with_retry() -> anyhow::Result<Arc<UserCache>> {
                     "retry_in_secs" => delay.as_secs(),
                     "error" => %err,
                 );
-                last_err = Some(err);
-                if attempt < USER_CACHE_BOOTSTRAP_ATTEMPTS {
-                    tokio::time::sleep(delay).await;
-                    delay = delay.saturating_mul(2).min(USER_CACHE_BOOTSTRAP_MAX_DELAY);
-                }
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2).min(USER_CACHE_BOOTSTRAP_MAX_DELAY);
             }
         }
     }
-    // The loop runs at least once (USER_CACHE_BOOTSTRAP_ATTEMPTS >= 1) and
-    // every iteration either returns or stores `Some(err)`, so reaching
-    // here implies `last_err` is `Some`.
-    Err(last_err.expect("loop invariant: at least one attempt recorded an error"))
+    // Final attempt: surface its result (Ok or the freshest Err) verbatim.
+    UserCache::load_from_db().await.inspect_err(|err| {
+        warn!(
+            log,
+            "user_cache_load_failed";
+            "attempt" => USER_CACHE_BOOTSTRAP_ATTEMPTS,
+            "max_attempts" => USER_CACHE_BOOTSTRAP_ATTEMPTS,
+            "error" => %err,
+        );
+    })
 }
 
 #[cfg(test)]
