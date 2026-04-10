@@ -85,17 +85,22 @@ fn extract_bearer_token(req: &tonic::Request<()>) -> Result<String, AuthError> {
         .map_err(|_| AuthError::InvalidToken("non-ascii authorization header".to_string()))?;
 
     // RFC 7235: scheme names are case-insensitive. Match "Bearer" in any
-    // case followed by exactly one space.
+    // case followed by exactly one space. Every slice is taken via
+    // `.get(..)` so even a future change that relaxes the char-boundary
+    // guarantees of `HeaderValue::to_str()` (currently visible ASCII only)
+    // cannot turn this parser into a panic site.
     let scheme_len = BEARER_SCHEME.len();
-    if value_str.len() <= scheme_len
-        || !value_str
-            .get(..scheme_len)
-            .is_some_and(|s| s.eq_ignore_ascii_case(BEARER_SCHEME))
-        || !value_str[scheme_len..].starts_with(' ')
+    let scheme = value_str.get(..scheme_len);
+    let after_scheme = value_str.get(scheme_len..);
+    if !scheme.is_some_and(|s| s.eq_ignore_ascii_case(BEARER_SCHEME))
+        || !after_scheme.is_some_and(|rest| rest.starts_with(' '))
     {
         return Err(AuthError::InvalidToken("missing Bearer prefix".to_string()));
     }
-    let token = value_str[scheme_len + 1..].trim_start();
+    let token = value_str
+        .get(scheme_len + 1..)
+        .ok_or_else(|| AuthError::InvalidToken("missing Bearer prefix".to_string()))?
+        .trim_start();
 
     if token.is_empty() {
         return Err(AuthError::InvalidToken("empty bearer token".to_string()));
