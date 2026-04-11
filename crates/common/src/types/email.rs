@@ -53,12 +53,28 @@ impl Email {
         &self.0
     }
 
-    /// Return the email with the local part masked, suitable for logging.
+    /// Return the email with the local part masked, suitable for logging
+    /// into an owned `String`.
     ///
     /// Examples: `alice@example.com` → `a***@example.com`,
     /// `a@b` → `a***@b`. Because construction guarantees a non-empty local
     /// part and exactly one `@`, this is total.
+    ///
+    /// Prefer `format!("{email}")` or slog's `%email` when you do not need
+    /// an owned `String`: [`fmt::Display`] writes the same masked output
+    /// directly to the formatter and avoids the allocation this method
+    /// performs.
     pub fn masked(&self) -> String {
+        let (first, domain) = self.masked_parts();
+        format!("{first}***@{domain}")
+    }
+
+    /// Split the canonical form into its masked-display components.
+    ///
+    /// Returns `(first local char, domain)`. Shared by [`Email::masked`]
+    /// and the [`fmt::Display`] impl so both produce identical output, and
+    /// so the `unreachable!` invariants live in exactly one place.
+    fn masked_parts(&self) -> (char, &str) {
         // Safe: constructor guarantees one `@` with non-empty local part.
         let Some((local, domain)) = self.0.split_once('@') else {
             unreachable!("Email invariant: contains @");
@@ -66,7 +82,7 @@ impl Email {
         let Some(first) = local.chars().next() else {
             unreachable!("Email invariant: non-empty local");
         };
-        format!("{first}***@{domain}")
+        (first, domain)
     }
 }
 
@@ -128,7 +144,8 @@ impl fmt::Display for Email {
     /// will silently produce the masked form and should be treated as a
     /// bug at code-review time.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.masked())
+        let (first, domain) = self.masked_parts();
+        write!(f, "{first}***@{domain}")
     }
 }
 

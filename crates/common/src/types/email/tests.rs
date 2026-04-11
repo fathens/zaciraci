@@ -65,6 +65,21 @@ fn display_renders_masked_form() {
 }
 
 #[test]
+fn display_matches_masked() {
+    // Guards against drift between the zero-allocation `Display` path and
+    // the owned-`String` `masked()` helper: they must stay byte-identical.
+    for input in [
+        "alice@example.com",
+        "a@b",
+        "Bob+filter@Example.COM",
+        "user.name@sub.domain.example",
+    ] {
+        let e = Email::new(input).unwrap();
+        assert_eq!(format!("{e}"), e.masked());
+    }
+}
+
+#[test]
 fn from_into_string_returns_normalized() {
     let e = Email::new("Bob@Example.com").unwrap();
     let s: String = e.into();
