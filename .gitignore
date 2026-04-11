@@ -2,6 +2,8 @@
 !.github/
 !.gitignore
 !.dockerignore
+!.claude/
+.claude/settings.local.json
 target/
 cobertura.xml
 config/config.local.toml
