@@ -107,7 +107,16 @@ impl CachedJwks {
                 let elapsed = now.saturating_duration_since(fetched);
                 // Integer form of `elapsed >= total * 0.9`: avoids f64
                 // rounding drift and is cheaper. `saturating_mul` guards
-                // against the theoretical MAX_JWKS_TTL * 10 overflow.
+                // against the theoretical MAX_JWKS_TTL * 10 overflow, but
+                // is not actually reachable in practice — MAX_JWKS_TTL is
+                // 24h (86_400s) and 86_400 * 10 = 864_000, which is ~21
+                // orders of magnitude below u64::MAX. The saturation is a
+                // defensive invariant, not a reachable case. Note also
+                // that `as_secs()` truncates sub-second precision; both
+                // inputs are `Duration`s derived from `Instant`, so the
+                // refresh trigger is accurate to within ±1s of the 90%
+                // threshold, which is negligible for a cadence measured
+                // in minutes to hours.
                 elapsed.as_secs().saturating_mul(10) >= total.as_secs().saturating_mul(9)
             }
             _ => true,

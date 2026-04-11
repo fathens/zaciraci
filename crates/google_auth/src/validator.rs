@@ -134,6 +134,16 @@ pub fn validate_id_token(
         .map_err(|e| AuthError::InvalidToken(format!("decode: {e}")))?;
 
     // Defence-in-depth: enforce a hard upper bound on token age based on `iat`.
+    //
+    // `jsonwebtoken::Validation::leeway` (set above) only relaxes the spec
+    // claim checks — `exp`, `nbf`, and the library's own "`iat` in the
+    // future" check — by `LEEWAY_SECONDS`. The age ceiling enforced below
+    // is *outside* the JWT spec, so the leeway configured on `Validation`
+    // does not apply to it automatically. We therefore explicitly add the
+    // same `LEEWAY_SECONDS` to both the future-`iat` guard and the
+    // too-old-`iat` guard so a valid token generated right at the edge of
+    // the allowed clock skew is not rejected here. This is deliberate and
+    // is NOT a double count of the `Validation` leeway.
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| AuthError::InvalidToken("system clock before unix epoch".to_string()))?
@@ -143,7 +153,10 @@ pub fn validate_id_token(
     if iat > now.saturating_add(LEEWAY_SECONDS) {
         return Err(AuthError::InvalidToken("iat is in the future".to_string()));
     }
-    // Past iat older than MAX_TOKEN_AGE + leeway is rejected.
+    // Past iat older than MAX_TOKEN_AGE + leeway is rejected. `saturating_sub`
+    // clamps `age` to 0 whenever `iat` is at most `LEEWAY_SECONDS` in the
+    // future (already permitted by the guard above); 0 is trivially inside
+    // the allowed window, which is the safe direction for an upper bound.
     let age = now.saturating_sub(iat);
     if age > MAX_TOKEN_AGE_SECONDS.saturating_add(LEEWAY_SECONDS) {
         return Err(AuthError::InvalidToken("token too old".to_string()));
