@@ -1,44 +1,6 @@
+use super::test_helpers::{raw_delete, raw_upsert};
 use super::*;
-use diesel::sql_query;
-use diesel::sql_types::Text;
 use serial_test::serial;
-
-/// Test-only helper to raw-insert an authorized user row.
-///
-/// Uses `ON CONFLICT ((lower(email)))` so repeat test runs are idempotent.
-/// Callers MUST pass an already-lowercased email; the migration's
-/// `CHECK (email = LOWER(email))` constraint rejects any other input, and
-/// that rejection is exercised by `test_check_constraint_rejects_mixed_case_email`.
-async fn raw_insert(raw_email: &str, role_str: &str) -> Result<()> {
-    let email = raw_email.to_string();
-    let role = role_str.to_string();
-    let conn = connection_pool::get().await?;
-    conn.interact(move |conn| {
-        sql_query(
-            "INSERT INTO authorized_users (email, role) VALUES ($1, $2) \
-             ON CONFLICT ((lower(email))) DO UPDATE SET email = EXCLUDED.email, role = EXCLUDED.role",
-        )
-        .bind::<Text, _>(email)
-        .bind::<Text, _>(role)
-        .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
-    Ok(())
-}
-
-async fn raw_delete(raw_email: &str) -> Result<()> {
-    let email = raw_email.to_string();
-    let conn = connection_pool::get().await?;
-    conn.interact(move |conn| {
-        sql_query("DELETE FROM authorized_users WHERE lower(email) = lower($1)")
-            .bind::<Text, _>(email)
-            .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
-    Ok(())
-}
 
 fn email(s: &str) -> Email {
     Email::new(s).expect("test email is valid")
@@ -48,7 +10,7 @@ fn email(s: &str) -> Email {
 #[serial]
 async fn test_list_all_returns_email_domain_type() {
     let raw = "list-all-norm@example.com";
-    raw_insert(raw, "reader").await.unwrap();
+    raw_upsert(raw, "reader").await.unwrap();
 
     let all = list_all().await.unwrap();
     let found = all.iter().find(|(e, _)| e == &email(raw));
@@ -66,7 +28,7 @@ async fn test_check_constraint_rejects_mixed_case_email() {
     // that `list_all`'s per-row tolerance never has to paper over a row the
     // application would reject at read time.
     let raw = "Check-Case-Test@Example.COM";
-    let result = raw_insert(raw, "reader").await;
+    let result = raw_upsert(raw, "reader").await;
     assert!(
         result.is_err(),
         "CHECK (email = LOWER(email)) should reject mixed-case email"
@@ -79,10 +41,10 @@ async fn test_check_constraint_rejects_mixed_case_email() {
 #[tokio::test]
 #[serial]
 async fn test_list_all_ordered_by_email() {
-    raw_insert("z-user-list@example.com", "reader")
+    raw_upsert("z-user-list@example.com", "reader")
         .await
         .unwrap();
-    raw_insert("a-user-list@example.com", "writer")
+    raw_upsert("a-user-list@example.com", "writer")
         .await
         .unwrap();
 
@@ -108,7 +70,7 @@ async fn test_check_constraint_rejects_invalid_role() {
     // `list_all`'s `to_role` would start failing on previously-valid
     // rows, so we need to know it is still in place.
     let raw = "check-constraint-test@example.com";
-    let result = raw_insert(raw, "superadmin").await;
+    let result = raw_upsert(raw, "superadmin").await;
     assert!(
         result.is_err(),
         "CHECK constraint should reject role='superadmin'"
