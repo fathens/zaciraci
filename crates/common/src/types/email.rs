@@ -19,10 +19,16 @@ use thiserror::Error;
 /// would otherwise let `Alice@x.com` and `alice@x.com` resolve to different
 /// principals.
 ///
-/// `Display` renders the **masked** form so that a stray `{}` interpolation
-/// in logs cannot leak PII. Use [`Email::as_str`] only when the authoritative
-/// value is required (e.g., DB query parameters).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+/// Both `Display` and `Debug` render the **masked** form so that a stray
+/// `{}` or `{:?}` interpolation in logs cannot leak PII. Use
+/// [`Email::as_str`] only when the authoritative value is required (e.g., DB
+/// query parameters).
+///
+/// **`Serialize`** emits the canonical raw value (not masked), because
+/// downstream consumers (DB writes, API responses) need the real address.
+/// Do **not** include an `Email` in `serde_json`-serialized log payloads;
+/// use `{}` (Display) or [`Email::masked`] for logging.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Email(String);
 
 impl Email {
@@ -146,6 +152,18 @@ impl fmt::Display for Email {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (first, domain) = self.masked_parts();
         write!(f, "{first}***@{domain}")
+    }
+}
+
+impl fmt::Debug for Email {
+    /// Mirrors [`Display`]: renders the masked form so that `{:?}` (including
+    /// pretty `{:#?}`) never leaks PII, even when an `Email` is a field inside
+    /// a `#[derive(Debug)]` struct or a key in `HashMap<Email, _>`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (first, domain) = self.masked_parts();
+        f.debug_tuple("Email")
+            .field(&format_args!("{first}***@{domain}"))
+            .finish()
     }
 }
 

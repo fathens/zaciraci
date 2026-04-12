@@ -112,3 +112,49 @@ fn equality_is_after_normalization() {
     let b = Email::new("alice@example.com").unwrap();
     assert_eq!(a, b);
 }
+
+#[test]
+fn debug_does_not_leak_full_email() {
+    let e = Email::new("alice@example.com").unwrap();
+    let debug = format!("{e:?}");
+    assert!(!debug.contains("alice@"), "Debug leaked raw email: {debug}");
+    assert!(debug.contains("a***@example.com"));
+}
+
+#[test]
+fn debug_pretty_form_masks() {
+    let e = Email::new("alice@example.com").unwrap();
+    let pretty = format!("{e:#?}");
+    assert!(
+        !pretty.contains("alice@"),
+        "Pretty debug leaked raw email: {pretty}"
+    );
+    assert!(pretty.contains("a***@example.com"));
+}
+
+#[test]
+fn debug_in_hashmap_masks_entries() {
+    use std::collections::HashMap;
+    let mut m: HashMap<Email, &str> = HashMap::new();
+    m.insert(Email::new("alice@example.com").unwrap(), "reader");
+    let s = format!("{m:?}");
+    assert!(!s.contains("alice@"), "HashMap debug leaked raw email: {s}");
+    assert!(s.contains("a***@example.com"));
+}
+
+#[test]
+fn debug_in_nested_struct_masks() {
+    #[derive(Debug)]
+    struct Wrapper {
+        #[expect(dead_code)]
+        email: Email,
+    }
+    let w = Wrapper {
+        email: Email::new("alice@example.com").unwrap(),
+    };
+    let s = format!("{w:?}");
+    assert!(
+        !s.contains("alice@"),
+        "derive(Debug) transitivity leaked: {s}"
+    );
+}
