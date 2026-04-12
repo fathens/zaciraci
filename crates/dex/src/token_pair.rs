@@ -2,7 +2,7 @@ use crate::errors::Error;
 use crate::pool_info::PoolInfo;
 use crate::token_index::{TokenIn, TokenOut};
 use anyhow::Result;
-use common::types::{TokenInAccount, TokenOutAccount};
+use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use std::sync::Arc;
 
 /// TokenPair の機能を抽象化するトレイト
@@ -94,15 +94,48 @@ impl TokenPair {
     }
 }
 
+/// ref-exchange のマルチホップスワップにおける最大ホップ数。
+/// ガス消費量は depth に比例するため、上限を設けて過大な path を拒否する。
+pub const MAX_HOPS: usize = 10;
+
 pub struct TokenPath(pub Vec<TokenPair>);
 
 impl TokenPath {
+    /// ホップ数を検証し、MAX_HOPS を超える場合は `Error::PathTooLong` を返す。
+    pub fn validate_length(&self) -> Result<()> {
+        let hops = self.0.len();
+        if hops > MAX_HOPS {
+            return Err(Error::PathTooLong {
+                hops,
+                max: MAX_HOPS,
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// パスに含まれるすべてのトークンアカウントを重複除去して返す。
+    pub fn all_tokens(&self) -> Vec<TokenAccount> {
+        let mut seen = Vec::new();
+        for pair in &self.0 {
+            let token_in = pair.token_in_id().0;
+            let token_out = pair.token_out_id().0;
+            if !seen.contains(&token_in) {
+                seen.push(token_in);
+            }
+            if !seen.contains(&token_out) {
+                seen.push(token_out);
+            }
+        }
+        seen
     }
 
     pub fn calc_value(&self, initial: u128) -> Result<u128> {

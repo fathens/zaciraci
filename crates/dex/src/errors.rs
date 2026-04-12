@@ -24,4 +24,6 @@ pub enum Error {
         (TokenInAccount, TokenOutAccount),
         (TokenInAccount, TokenOutAccount),
     ),
+    #[error("Path too long: {hops} hops exceeds maximum of {max}")]
+    PathTooLong { hops: usize, max: usize },
 }

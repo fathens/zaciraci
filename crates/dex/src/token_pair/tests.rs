@@ -202,3 +202,132 @@ fn test_get_pair_out_of_index_error() {
     let result = pool.get_pair(TokenIn::from(0), TokenOut::from(5));
     assert!(result.is_err());
 }
+
+// --- TokenPath::all_tokens ---
+
+#[test]
+fn test_all_tokens_single_hop() {
+    let pool = make_test_pool(1, 30, vec![1_000_000, 2_000_000]);
+    let pair = pool.get_pair(TokenIn::from(0), TokenOut::from(1)).unwrap();
+    let path = TokenPath(vec![pair]);
+    let tokens = path.all_tokens();
+    assert_eq!(tokens.len(), 2);
+    assert_eq!(tokens[0].as_str(), "token_0.near");
+    assert_eq!(tokens[1].as_str(), "token_1.near");
+}
+
+#[test]
+fn test_all_tokens_multi_hop_dedup() {
+    // pool1: token_0 -> token_1, pool2: token_1 -> token_2, pool3: token_2 -> token_3
+    // token_1 と token_2 は hop 間で重複するため、結果は 4 トークン
+    let pool1 = make_test_pool(1, 30, vec![1_000_000, 2_000_000]);
+    let pool2 = make_test_pool(2, 30, vec![2_000_000, 3_000_000]);
+    let pool3 = make_test_pool(3, 30, vec![3_000_000, 4_000_000]);
+    let pair1 = pool1.get_pair(TokenIn::from(0), TokenOut::from(1)).unwrap();
+    let pair2 = pool2.get_pair(TokenIn::from(0), TokenOut::from(1)).unwrap();
+    let pair3 = pool3.get_pair(TokenIn::from(0), TokenOut::from(1)).unwrap();
+    let path = TokenPath(vec![pair1, pair2, pair3]);
+
+    let tokens = path.all_tokens();
+    println!("tokens: {:?}", tokens);
+    // pool ごとにトークン名が独立なので重複はなく 6 トークン
+    // (make_test_pool が pool ごとに token_0.near, token_1.near を生成するため全て同名)
+    // 実際: pool1 token_0=token_0.near, token_1=token_1.near
+    //        pool2 token_0=token_0.near, token_1=token_1.near → 重複除去
+    //        pool3 token_0=token_0.near, token_1=token_1.near → 重複除去
+    // → 結果は 2 トークン (token_0.near, token_1.near)
+    assert_eq!(tokens.len(), 2);
+    assert_eq!(tokens[0].as_str(), "token_0.near");
+    assert_eq!(tokens[1].as_str(), "token_1.near");
+}
+
+#[test]
+fn test_all_tokens_empty_path() {
+    let path = TokenPath(vec![]);
+    let tokens = path.all_tokens();
+    assert!(tokens.is_empty());
+}
+
+fn make_named_pool(id: u32, token_names: &[&str], amounts: Vec<u128>) -> Arc<PoolInfo> {
+    let token_accounts: Vec<common::types::TokenAccount> = token_names
+        .iter()
+        .map(|name| name.parse().unwrap())
+        .collect();
+    Arc::new(PoolInfo::new(
+        id,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: token_accounts,
+            amounts: amounts.into_iter().map(U128).collect(),
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        chrono::Utc::now().naive_utc(),
+    ))
+}
+
+#[test]
+fn test_all_tokens_3hop_4tokens() {
+    // A -> B -> C -> D (3 hops, 4 distinct tokens)
+    let pool_ab = make_named_pool(1, &["a.near", "b.near"], vec![1_000_000, 1_000_000]);
+    let pool_bc = make_named_pool(2, &["b.near", "c.near"], vec![1_000_000, 1_000_000]);
+    let pool_cd = make_named_pool(3, &["c.near", "d.near"], vec![1_000_000, 1_000_000]);
+    let pair_ab = pool_ab
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .unwrap();
+    let pair_bc = pool_bc
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .unwrap();
+    let pair_cd = pool_cd
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .unwrap();
+    let path = TokenPath(vec![pair_ab, pair_bc, pair_cd]);
+
+    let tokens = path.all_tokens();
+    assert_eq!(tokens.len(), 4);
+    assert_eq!(tokens[0].as_str(), "a.near");
+    assert_eq!(tokens[1].as_str(), "b.near");
+    assert_eq!(tokens[2].as_str(), "c.near");
+    assert_eq!(tokens[3].as_str(), "d.near");
+}
+
+// --- TokenPath::validate_length ---
+
+#[test]
+fn test_validate_length_within_max() {
+    let pool = make_test_pool(1, 30, vec![1_000_000, 2_000_000]);
+    let pair = pool.get_pair(TokenIn::from(0), TokenOut::from(1)).unwrap();
+    let path = TokenPath(vec![pair]);
+    assert!(path.validate_length().is_ok());
+}
+
+#[test]
+fn test_validate_length_at_max() {
+    let pairs: Vec<TokenPair> = (0..MAX_HOPS as u32)
+        .map(|i| {
+            let pool = make_test_pool(i, 30, vec![1_000_000, 2_000_000]);
+            pool.get_pair(TokenIn::from(0), TokenOut::from(1)).unwrap()
+        })
+        .collect();
+    let path = TokenPath(pairs);
+    assert_eq!(path.len(), MAX_HOPS);
+    assert!(path.validate_length().is_ok());
+}
+
+#[test]
+fn test_validate_length_exceeds_max() {
+    let pairs: Vec<TokenPair> = (0..(MAX_HOPS as u32 + 1))
+        .map(|i| {
+            let pool = make_test_pool(i, 30, vec![1_000_000, 2_000_000]);
+            pool.get_pair(TokenIn::from(0), TokenOut::from(1)).unwrap()
+        })
+        .collect();
+    let path = TokenPath(pairs);
+    assert_eq!(path.len(), MAX_HOPS + 1);
+    let err = path.validate_length().unwrap_err();
+    let dex_err = err.downcast_ref::<crate::errors::Error>().unwrap();
+    assert!(
+        matches!(dex_err, crate::errors::Error::PathTooLong { hops, max } if *hops == MAX_HOPS + 1 && *max == MAX_HOPS)
+    );
+}
