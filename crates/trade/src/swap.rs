@@ -147,11 +147,12 @@ where
         .update_graph(&start)
         .map_err(|e| anyhow::anyhow!("Failed to update graph from {}: {}", from_token, e))?;
 
-    // パスに含まれるトークンのストレージデポジットを確認
-    let tokens = vec![from_token_account, to_token_account];
-
     // シンプルなパス探索（利益を考慮しない）
     let path = graph.get_path(&start, &goal)?;
+    path.validate_length()?;
+
+    // パスに含まれるすべてのトークン（中継トークン含む）のストレージデポジットを確認
+    let tokens = path.all_tokens();
     let res = blockchain::ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
     if res.is_none() {
         return Err(anyhow::anyhow!("Failed to deposit storage"));
