@@ -23,6 +23,12 @@ def _load_command() -> str:
     return tool_input.get("command", "") or ""
 
 
+def _strip_quoted_spans(command: str) -> str:
+    """Remove single- and double-quoted spans so we don't match text
+    inside commit messages."""
+    return re.sub(r"'[^']*'|\"[^\"]*\"", "", command)
+
+
 def _has_git_commit(command: str) -> bool:
     return bool(re.search(r"\bgit\b.*\bcommit\b", command))
 
@@ -35,7 +41,9 @@ def main() -> int:
     if not _has_git_commit(command):
         return 0
 
-    if "$(" in command:
+    stripped = _strip_quoted_spans(command)
+
+    if "$(" in stripped:
         sys.stderr.write(
             "❌ Using $() command substitution in git commit is forbidden.\n"
             "   Remediation: pass the message directly with -m option.\n"
@@ -43,7 +51,7 @@ def main() -> int:
         )
         return 2
 
-    if re.search(r"\|\s*git\b.*\bcommit\b", command):
+    if re.search(r"\|\s*git\b.*\bcommit\b", stripped):
         sys.stderr.write(
             "❌ Piping input to git commit is forbidden.\n"
             "   Remediation: pass the message directly with -m option.\n"
