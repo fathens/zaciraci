@@ -414,7 +414,7 @@ async fn read_body_with_cap(mut response: reqwest::Response, cap: u64) -> anyhow
             ));
         }
         if buf.capacity() < buf.len() + chunk.len() {
-            buf.reserve(chunk.len().min(cap_usize - buf.len()));
+            buf.reserve(chunk.len().min(cap_usize.saturating_sub(buf.len())));
         }
         buf.extend_from_slice(&chunk);
     }
