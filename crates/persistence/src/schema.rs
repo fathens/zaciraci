@@ -1,6 +1,16 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    authorized_users (id) {
+        id -> Int4,
+        email -> Varchar,
+        role -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     config_store (instance_id, key) {
         instance_id -> Varchar,
         key -> Varchar,
@@ -101,6 +111,7 @@ diesel::table! {
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
+    authorized_users,
     config_store,
     config_store_history,
     evaluation_periods,

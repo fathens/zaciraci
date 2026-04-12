@@ -5,6 +5,7 @@ use crate::proto::{
     ListKeyDefinitionsRequest, ListKeyDefinitionsResponse, UpsertConfigRequest,
     UpsertConfigResponse,
 };
+use crate::services::auth::{require_reader, require_writer};
 use common::config::ConfigAccess;
 use logging::{DEFAULT, o, warn};
 use tonic::{Request, Response, Status};
@@ -55,11 +56,17 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<GetAllConfigRequest>,
     ) -> Result<Response<GetAllConfigResponse>, Status> {
+        require_reader(&request)?;
+
         let instance_id = Self::resolve_instance_id(&request.get_ref().instance_id);
 
         let configs = persistence::config_store::get_all_for_instance(instance_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get config: {e}")))?;
+            .map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "get_all"));
+                warn!(log, "failed to get config"; "error" => %e);
+                Status::internal("internal error")
+            })?;
 
         let entries = configs
             .into_iter()
@@ -77,6 +84,8 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<GetOneConfigRequest>,
     ) -> Result<Response<GetOneConfigResponse>, Status> {
+        require_reader(&request)?;
+
         let req = request.get_ref();
         let instance_id = Self::resolve_instance_id(&req.instance_id);
 
@@ -86,7 +95,11 @@ impl ConfigService for ConfigServiceImpl {
 
         let value = persistence::config_store::get_one(instance_id, &req.key)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get config: {e}")))?;
+            .map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "get_one"));
+                warn!(log, "failed to get config"; "error" => %e);
+                Status::internal("internal error")
+            })?;
 
         Ok(Response::new(GetOneConfigResponse { value }))
     }
@@ -95,6 +108,8 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<UpsertConfigRequest>,
     ) -> Result<Response<UpsertConfigResponse>, Status> {
+        require_writer(&request)?;
+
         let req = request.get_ref();
         let instance_id = Self::resolve_instance_id(&req.instance_id);
 
@@ -109,7 +124,11 @@ impl ConfigService for ConfigServiceImpl {
             req.description.as_deref(),
         )
         .await
-        .map_err(|e| Status::internal(format!("Failed to upsert config: {e}")))?;
+        .map_err(|e| {
+            let log = DEFAULT.new(o!("function" => "upsert"));
+            warn!(log, "failed to upsert config"; "error" => %e);
+            Status::internal("internal error")
+        })?;
 
         spawn_cleanup_old_config_history();
 
@@ -120,6 +139,8 @@ impl ConfigService for ConfigServiceImpl {
         &self,
         request: Request<DeleteConfigRequest>,
     ) -> Result<Response<DeleteConfigResponse>, Status> {
+        require_writer(&request)?;
+
         let req = request.get_ref();
         let instance_id = Self::resolve_instance_id(&req.instance_id);
 
@@ -129,7 +150,11 @@ impl ConfigService for ConfigServiceImpl {
 
         persistence::config_store::delete(instance_id, &req.key)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
+            .map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "delete"));
+                warn!(log, "failed to delete config"; "error" => %e);
+                Status::internal("internal error")
+            })?;
 
         spawn_cleanup_old_config_history();
 
@@ -138,8 +163,10 @@ impl ConfigService for ConfigServiceImpl {
 
     async fn list_key_definitions(
         &self,
-        _request: Request<ListKeyDefinitionsRequest>,
+        request: Request<ListKeyDefinitionsRequest>,
     ) -> Result<Response<ListKeyDefinitionsResponse>, Status> {
+        require_reader(&request)?;
+
         let resolved = common::config::resolve_all_without_db();
         let definitions = resolved
             .into_iter()

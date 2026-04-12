@@ -46,6 +46,10 @@ services:
       - HARVEST_MIN_AMOUNT=${HARVEST_MIN_AMOUNT}
       - HARVEST_RESERVE_AMOUNT=${HARVEST_RESERVE_AMOUNT}
       - TRADE_ENABLED=${TRADE_ENABLED:-false}
+      # Google OAuth2 client id used for ID token `aud` validation.
+      # Leave unset to run without authenticated API access (Health still
+      # reachable; Config/Portfolio RPCs will reject every request).
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
     logging:
       driver: "json-file"
       options:

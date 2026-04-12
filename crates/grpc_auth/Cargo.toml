@@ -1,0 +1,12 @@
+[package]
+name = "grpc_auth"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+logging = { path = "../logging" }
+
+tonic = "0.14"
+thiserror = { workspace = true }
+slog = { workspace = true }
