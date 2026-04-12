@@ -37,8 +37,26 @@ const MIN_RETRY_BACKOFF: Duration = Duration::from_secs(30);
 /// Maximum wait before retrying after repeated failures.
 const MAX_RETRY_BACKOFF: Duration = Duration::from_secs(600);
 
-/// Refresh when the cached entry has reached this fraction of its lifetime.
-const REFRESH_THRESHOLD_RATIO: f64 = 0.9;
+/// Polling period for the background refresh task while the cached entry is
+/// still within its pre-threshold window. Distinct from `MIN_REFRESH_SLEEP`
+/// (post-refresh floor) — this governs how often we re-evaluate
+/// `needs_refresh` when no fetch is due yet.
+const REFRESH_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Refresh threshold expressed as the integer ratio REFRESH_NUM / REFRESH_DEN.
+/// `needs_refresh` and `spawn_refresh_task` both derive their sleep/trigger
+/// from these constants, so changing one automatically keeps the other in sync
+/// (no f64 drift, no dual-definition risk).
+const REFRESH_NUM: u32 = 9;
+const REFRESH_DEN: u32 = 10;
+
+/// Compile-time proof that the 90% refresh point of the shortest allowable TTL
+/// still exceeds the minimum refresh sleep. Without this, lowering MIN_JWKS_TTL
+/// could silently make the refresh loop fire *after* expiry.
+const _: () = assert!(
+    MIN_JWKS_TTL.as_secs() * REFRESH_NUM as u64 >= MIN_REFRESH_SLEEP.as_secs() * REFRESH_DEN as u64,
+    "MIN_JWKS_TTL * REFRESH_NUM / REFRESH_DEN must not shrink below MIN_REFRESH_SLEEP"
+);
 
 /// Total HTTP timeout applied to JWKS fetches. Without this the background
 /// refresh task could block indefinitely on a half-open connection, leaving
@@ -105,19 +123,12 @@ impl CachedJwks {
             (Some(fetched), Some(expires)) => {
                 let total = expires.saturating_duration_since(fetched);
                 let elapsed = now.saturating_duration_since(fetched);
-                // Integer form of `elapsed >= total * 0.9`: avoids f64
-                // rounding drift and is cheaper. `saturating_mul` guards
-                // against the theoretical MAX_JWKS_TTL * 10 overflow, but
-                // is not actually reachable in practice — MAX_JWKS_TTL is
-                // 24h (86_400s) and 86_400 * 10 = 864_000, which is ~21
-                // orders of magnitude below u64::MAX. The saturation is a
-                // defensive invariant, not a reachable case. Note also
-                // that `as_secs()` truncates sub-second precision; both
-                // inputs are `Duration`s derived from `Instant`, so the
-                // refresh trigger is accurate to within ±1s of the 90%
-                // threshold, which is negligible for a cadence measured
-                // in minutes to hours.
-                elapsed.as_secs().saturating_mul(10) >= total.as_secs().saturating_mul(9)
+                // Integer form of `elapsed / total >= REFRESH_NUM / REFRESH_DEN`
+                // without division or f64: cross-multiply so both sides are
+                // integer products. `saturating_mul` is defensive but never
+                // reachable (MAX_JWKS_TTL * 10 = 864_000 << u64::MAX).
+                elapsed.as_secs().saturating_mul(REFRESH_DEN as u64)
+                    >= total.as_secs().saturating_mul(REFRESH_NUM as u64)
             }
             _ => true,
         }
@@ -288,7 +299,7 @@ impl JwksCache {
     /// Spawn a background task that keeps the cache warm.
     ///
     /// Strategy:
-    /// - On success, sleep until `ttl * REFRESH_THRESHOLD_RATIO` has passed
+    /// - On success, sleep until `ttl * REFRESH_NUM / REFRESH_DEN` has passed
     ///   before the next refresh (pre-emptive refresh).
     /// - On failure, back off exponentially from `MIN_RETRY_BACKOFF` to
     ///   `MAX_RETRY_BACKOFF`, retaining the existing cached snapshot.
@@ -310,15 +321,14 @@ impl JwksCache {
                 let needs_refresh = this.read_guard().needs_refresh(Instant::now());
 
                 if !needs_refresh {
-                    // Sleep until near the refresh threshold.
-                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    tokio::time::sleep(REFRESH_CHECK_INTERVAL).await;
                     continue;
                 }
 
                 match this.refresh_once().await {
                     Ok(ttl) => {
                         backoff = MIN_RETRY_BACKOFF;
-                        let sleep_for = ttl.mul_f64(REFRESH_THRESHOLD_RATIO).max(MIN_REFRESH_SLEEP);
+                        let sleep_for = (ttl * REFRESH_NUM / REFRESH_DEN).max(MIN_REFRESH_SLEEP);
                         tokio::time::sleep(sleep_for).await;
                     }
                     Err(err) => {

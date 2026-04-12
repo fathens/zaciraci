@@ -60,7 +60,7 @@ fn parse_max_age_u64_max_is_clamped_to_maximum_at_use_site() {
     // Downstream arithmetic must not panic.
     let now = Instant::now();
     let _expires = now + clamped;
-    let _sleep = clamped.mul_f64(REFRESH_THRESHOLD_RATIO);
+    let _sleep = (clamped * REFRESH_NUM / REFRESH_DEN).max(MIN_REFRESH_SLEEP);
 }
 
 #[test]
@@ -69,7 +69,29 @@ fn min_refresh_sleep_caps_short_ttls() {
     // floored so a tiny clamped TTL cannot drive the loop into a tight
     // cycle.
     let ttl = MIN_JWKS_TTL;
-    let sleep_for = ttl.mul_f64(REFRESH_THRESHOLD_RATIO).max(MIN_REFRESH_SLEEP);
+    let sleep_for = (ttl * REFRESH_NUM / REFRESH_DEN).max(MIN_REFRESH_SLEEP);
+    assert!(sleep_for >= MIN_REFRESH_SLEEP);
+}
+
+#[test]
+fn needs_refresh_matches_integer_ratio_boundary() {
+    let base = Instant::now();
+    let cached = CachedJwks {
+        keys: HashMap::new(),
+        fetched_at: Some(base),
+        expires_at: Some(base + Duration::from_secs(100)),
+    };
+    // elapsed=89s → 89*10=890 < 100*9=900 → not yet
+    assert!(!cached.needs_refresh(base + Duration::from_secs(89)));
+    // elapsed=90s → 90*10=900 >= 900 → refresh
+    assert!(cached.needs_refresh(base + Duration::from_secs(90)));
+}
+
+#[test]
+fn refresh_sleep_formula_is_consistent_with_needs_refresh() {
+    let ttl = Duration::from_secs(3600);
+    let sleep_for = (ttl * REFRESH_NUM / REFRESH_DEN).max(MIN_REFRESH_SLEEP);
+    assert_eq!(sleep_for, Duration::from_secs(3240));
     assert!(sleep_for >= MIN_REFRESH_SLEEP);
 }
 
