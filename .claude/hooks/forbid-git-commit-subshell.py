@@ -23,10 +23,10 @@ def _load_command() -> str:
     return tool_input.get("command", "") or ""
 
 
-def _strip_quoted_spans(command: str) -> str:
-    """Remove single- and double-quoted spans so we don't match text
-    inside commit messages."""
-    return re.sub(r"'[^']*'|\"[^\"]*\"", "", command)
+def _strip_single_quoted_spans(command: str) -> str:
+    """Remove single-quoted spans only.  Double-quoted spans still allow
+    shell expansion ($(), variable substitution) so we must keep them."""
+    return re.sub(r"'[^']*'", "", command)
 
 
 def _has_git_commit(command: str) -> bool:
@@ -41,7 +41,7 @@ def main() -> int:
     if not _has_git_commit(command):
         return 0
 
-    stripped = _strip_quoted_spans(command)
+    stripped = _strip_single_quoted_spans(command)
 
     if "$(" in stripped:
         sys.stderr.write(
