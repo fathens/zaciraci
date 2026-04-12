@@ -193,6 +193,24 @@ fn clear_if_expired_is_noop_when_not_expired() {
     assert!(!cache.is_empty());
 }
 
+#[tokio::test]
+async fn refresh_once_rejects_non_https_url() {
+    // jwks/tests.rs is a child module of jwks.rs, so private fields are
+    // accessible for direct struct construction.
+    let cache = Arc::new(JwksCache {
+        http: http_client(),
+        url: "http://evil.invalid/".to_string(),
+        inner: RwLock::new(CachedJwks::default()),
+        refresh_spawned: OnceLock::new(),
+    });
+    let result = cache.refresh_once().await;
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("https"),
+        "error message should mention https: {err}"
+    );
+}
+
 /// Regression guard for the `spawn_refresh_task` idempotency flag. The
 /// internal `refresh_spawned: OnceLock<()>` must transition exactly once,
 /// so that a second accidental call is recognised and short-circuited

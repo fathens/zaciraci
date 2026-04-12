@@ -254,7 +254,21 @@ impl JwksCache {
     }
 
     /// Fetch the JWKS once and swap the cache in place.
+    ///
+    /// Defense in depth: the URL-taking constructor was removed, so `self.url`
+    /// is structurally constrained to `GOOGLE_JWKS_URL`. The HTTPS check below
+    /// is a second line of defense so that a future refactor reintroducing a
+    /// configurable URL cannot silently regress to an http:// fetch. Returning
+    /// an error (rather than panicking) keeps this path on the existing
+    /// fail-closed loop: `spawn_refresh_task` logs `jwks_refresh_failed`,
+    /// backs off, and `clear_if_expired` drops the cache after TTL so the
+    /// request path surfaces `JwksUnavailable`.
     async fn refresh_once(&self) -> anyhow::Result<Duration> {
+        if !self.url.starts_with("https://") {
+            return Err(anyhow::anyhow!(
+                "JWKS URL must use https scheme (fail-closed)"
+            ));
+        }
         let response = self.http.get(&self.url).send().await?.error_for_status()?;
 
         let ttl = parse_max_age(response.headers().get(reqwest::header::CACHE_CONTROL))
