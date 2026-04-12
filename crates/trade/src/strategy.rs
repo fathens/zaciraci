@@ -187,8 +187,17 @@ where
         .collect();
 
     debug!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
-    blockchain::ref_finance::storage::ensure_ref_storage_setup(client, wallet, &token_accounts)
-        .await?;
+    let mut keep = token_accounts.clone();
+    keep.push(blockchain::ref_finance::token_account::WNEAR_TOKEN.clone());
+    let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
+    blockchain::ref_finance::storage::ensure_ref_storage_setup(
+        client,
+        wallet,
+        &token_accounts,
+        &keep,
+        max_top_up,
+    )
+    .await?;
     debug!(log, "REF Finance storage setup completed");
 
     // Step 5: 投資額全額を REF Finance にデポジット (新規期間のみ)

@@ -153,10 +153,11 @@ where
 
     // パスに含まれるすべてのトークン（中継トークン含む）のストレージデポジットを確認
     let tokens = path.all_tokens();
-    let res = blockchain::ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
-    if res.is_none() {
-        return Err(anyhow::anyhow!("Failed to deposit storage"));
-    }
+    let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
+    blockchain::ref_finance::storage::ensure_ref_storage_setup(
+        client, wallet, &tokens, &tokens, max_top_up,
+    )
+    .await?;
 
     // AMM 理論出力を事前計算し、スリッページポリシーに基づいて min_out を算出
     let estimated_output = path.calc_value(swap_amount)?;

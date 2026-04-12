@@ -12,7 +12,6 @@ use dex::TokenPath;
 use dex::errors::Error;
 use logging::*;
 
-use anyhow::bail;
 use std::time::Duration;
 
 type Result<T> = anyhow::Result<T>;
@@ -92,10 +91,11 @@ where
     if let Some(previews) = previews {
         let (pre_path, tokens) = previews.into_with_path(&graph, &start).await?;
 
-        let res = ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
-        if res.is_none() {
-            bail!("no account to deposit");
-        }
+        let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
+        ref_finance::storage::ensure_ref_storage_setup(
+            client, wallet, &tokens, &tokens, max_top_up,
+        )
+        .await?;
 
         // スワップを順次実行（nonce衝突を回避）
         let mut success_count = 0;

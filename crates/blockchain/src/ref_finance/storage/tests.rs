@@ -324,7 +324,9 @@ async fn test_ensure_ref_storage_setup_already_registered() {
     let wallet = MockWallet::new();
     let tokens = vec![token];
 
-    let result = ensure_ref_storage_setup(&client, &wallet, &tokens).await;
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_ok());
 }
 
@@ -336,6 +338,8 @@ async fn test_ensure_ref_storage_setup_unregistered() {
     let wallet = MockWallet::new();
     let tokens = vec![token];
 
-    let result = ensure_ref_storage_setup(&client, &wallet, &tokens).await;
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_ok());
 }

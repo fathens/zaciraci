@@ -621,6 +621,15 @@ define_typed_config! {
         default: 15.0
     }
 
+    // ── ref-finance storage ──
+
+    /// Maximum auto top-up amount per cycle for REF Finance storage (in yoctoNEAR).
+    /// Default: 0.5 NEAR = 500_000_000_000_000_000_000_000
+    fn ref_storage_max_top_up_yoctonear() -> u128 {
+        key: "REF_STORAGE_MAX_TOP_UP_YOCTONEAR",
+        default: 500_000_000_000_000_000_000_000
+    }
+
     // ── persistence: database_url, pg_pool_size, instance_id moved to StartupConfig ──
 }
 
