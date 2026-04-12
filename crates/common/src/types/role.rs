@@ -26,6 +26,8 @@ impl fmt::Display for Role {
     }
 }
 
+// SYNC: accepted values must match the CHECK constraint in
+// migrations/2026-04-06-010000_create_authorized_users/up.sql
 impl FromStr for Role {
     type Err = ParseRoleError;
 

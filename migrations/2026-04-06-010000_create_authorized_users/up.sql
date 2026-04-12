@@ -7,6 +7,8 @@ CREATE TABLE authorized_users (
         -- `LOWER(email)` UNIQUE index below, this makes it impossible for the
         -- table to hold two distinct-case rows for the same principal.
         CHECK (email = LOWER(email)),
+    -- SYNC: allowed values must match Role::from_str in
+    -- crates/common/src/types/role.rs
     role VARCHAR NOT NULL DEFAULT 'reader'
         CHECK (role IN ('reader', 'writer')),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
