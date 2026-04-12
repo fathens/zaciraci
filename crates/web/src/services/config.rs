@@ -62,7 +62,11 @@ impl ConfigService for ConfigServiceImpl {
 
         let configs = persistence::config_store::get_all_for_instance(instance_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get config: {e}")))?;
+            .map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "get_all"));
+                warn!(log, "failed to get config"; "error" => %e);
+                Status::internal("internal error")
+            })?;
 
         let entries = configs
             .into_iter()
@@ -91,7 +95,11 @@ impl ConfigService for ConfigServiceImpl {
 
         let value = persistence::config_store::get_one(instance_id, &req.key)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get config: {e}")))?;
+            .map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "get_one"));
+                warn!(log, "failed to get config"; "error" => %e);
+                Status::internal("internal error")
+            })?;
 
         Ok(Response::new(GetOneConfigResponse { value }))
     }
@@ -116,7 +124,11 @@ impl ConfigService for ConfigServiceImpl {
             req.description.as_deref(),
         )
         .await
-        .map_err(|e| Status::internal(format!("Failed to upsert config: {e}")))?;
+        .map_err(|e| {
+            let log = DEFAULT.new(o!("function" => "upsert"));
+            warn!(log, "failed to upsert config"; "error" => %e);
+            Status::internal("internal error")
+        })?;
 
         spawn_cleanup_old_config_history();
 
@@ -138,7 +150,11 @@ impl ConfigService for ConfigServiceImpl {
 
         persistence::config_store::delete(instance_id, &req.key)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete config: {e}")))?;
+            .map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "delete"));
+                warn!(log, "failed to delete config"; "error" => %e);
+                Status::internal("internal error")
+            })?;
 
         spawn_cleanup_old_config_history();
 
