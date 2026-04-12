@@ -156,7 +156,12 @@ pub struct JwksCache {
 }
 
 impl JwksCache {
-    /// Build a new cache and attempt an initial fetch.
+    /// Build a cache targeting Google's production JWKS endpoint.
+    ///
+    /// **This is the only production constructor.** There is no generic
+    /// URL-taking constructor, because exposing one would make it trivially
+    /// possible to smuggle in a non-HTTPS endpoint and expose the JWKS fetch
+    /// to MITM. Tests bypass HTTP entirely via [`JwksCache::from_keys`].
     ///
     /// A fetch failure during construction is logged but does not prevent
     /// the `JwksCache` from being built; the background refresh task (or a
@@ -166,10 +171,10 @@ impl JwksCache {
     /// (`Status::unavailable`). A stale snapshot that has passed its TTL is
     /// also wiped via `clear_if_expired`. So "construction never fails" must
     /// not be read as "tokens are accepted without keys".
-    pub(crate) async fn new(url: impl Into<String>) -> Arc<Self> {
+    pub async fn new_google() -> Arc<Self> {
         let cache = Arc::new(Self {
             http: http_client(),
-            url: url.into(),
+            url: GOOGLE_JWKS_URL.to_string(),
             inner: RwLock::new(CachedJwks::default()),
             refresh_spawned: OnceLock::new(),
         });
@@ -179,11 +184,6 @@ impl JwksCache {
             warn!(log, "initial_jwks_fetch_failed"; "error" => %err);
         }
         cache
-    }
-
-    /// Build a cache targeting Google's production JWKS endpoint.
-    pub async fn new_google() -> Arc<Self> {
-        Self::new(GOOGLE_JWKS_URL).await
     }
 
     /// Construct a cache pre-populated with the given keys.
