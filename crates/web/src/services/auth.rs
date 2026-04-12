@@ -6,7 +6,7 @@
 //! the symmetry between reader- and writer-only RPCs is visible in the
 //! service source.
 
-use grpc_auth::AuthenticatedUser;
+use grpc_auth::{AuthError, AuthenticatedUser};
 use tonic::{Request, Status};
 
 /// Enforce that the caller is an authenticated user, returning a borrow of
@@ -29,7 +29,7 @@ pub(crate) fn require_reader<T>(request: &Request<T>) -> Result<&AuthenticatedUs
     request
         .extensions()
         .get::<AuthenticatedUser>()
-        .ok_or_else(|| Status::unauthenticated("authentication required"))
+        .ok_or_else(|| -> Status { AuthError::MissingToken.into() })
 }
 
 /// Enforce that the caller is an authenticated user with writer privileges,
@@ -43,9 +43,9 @@ pub(crate) fn require_writer<T>(request: &Request<T>) -> Result<&AuthenticatedUs
     let user = request
         .extensions()
         .get::<AuthenticatedUser>()
-        .ok_or_else(|| Status::unauthenticated("authentication required"))?;
+        .ok_or_else(|| -> Status { AuthError::MissingToken.into() })?;
     if !user.can_write() {
-        return Err(Status::permission_denied("insufficient permissions"));
+        return Err(AuthError::InsufficientRole.into());
     }
     Ok(user)
 }
