@@ -27,7 +27,7 @@ fn to_role(role_str: &str) -> Result<Role> {
 fn to_email(raw: &str) -> Result<Email> {
     Email::new(raw)
         .map_err(anyhow::Error::from)
-        .with_context(|| "invalid email value in database".to_string())
+        .context("invalid email value in database")
 }
 
 /// Hard upper bound on the number of authorized_users rows that
