@@ -305,7 +305,7 @@ where
     Ok(())
 }
 
-pub(super) mod planner;
+mod planner;
 
 #[cfg(test)]
 mod tests;
