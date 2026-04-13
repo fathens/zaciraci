@@ -220,6 +220,44 @@ fn plan_no_requested() {
     assert_eq!(p.top_up.as_yoctonear(), 0);
 }
 
+// --- 複合系 ---
+
+#[test]
+fn plan_unregister_plus_top_up() {
+    // 解除候補が 1 つだけで、解除しても不足が残り top-up も必要なケース
+    // total=100_000, available=100, min=1_000, deposits=[a(100), stale(0)]
+    // used = 99_900, usable = 98_900, per_token = ceil(98_900/2) = 49_450
+    // to_register = [new1, new2] → needed_raw = 49_450 * 2 = 98_900
+    // needed = 98_900 * 11 / 10 = 108_790
+    // shortage = 108_790 - 100 = 108_690
+    // unregister_needed = ceil(108_690 / 49_450) = 3 → 候補は 1 つだけなので 1 件解除
+    // recovered = 49_450 * 1 = 49_450
+    // remaining = 108_690 - 49_450 = 59_240 → top-up
+    let snap = snapshot_with_deposits(
+        100_000,
+        100, // ほぼ空き無し
+        1_000,
+        &[
+            ("a.near", 100),   // 残高ありなので解除不可
+            ("stale.near", 0), // 解除候補（1 つだけ）
+        ],
+    );
+    let result = plan(
+        &snap,
+        &[token("new1.near"), token("new2.near")],
+        &[token("wrap.near")],
+    );
+    let p = result.unwrap();
+
+    println!("plan: {:#?}", p);
+    // 解除候補が 1 つだけなので 1 件解除
+    assert_eq!(p.to_unregister, vec![token("stale.near")]);
+    // 2 トークン新規登録
+    assert_eq!(p.to_register.len(), 2);
+    // 解除だけでは足りず top-up も必要
+    assert!(p.top_up.as_yoctonear() > 0);
+}
+
 // --- エラー系 ---
 
 #[test]
