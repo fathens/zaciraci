@@ -249,6 +249,8 @@ where
     }
 
     // 4. unregister 後の実際の available で top-up 額を再計算
+    // unregister で available が needed 以上に増えた場合、saturating_sub により
+    // actual_top_up = 0 となる。これは「top-up 不要」という正しい動作。
     let new_balance = balance_of(client, account)
         .await?
         .ok_or_else(|| anyhow::anyhow!("storage balance disappeared after unregister"))?;

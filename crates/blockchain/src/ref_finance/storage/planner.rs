@@ -9,6 +9,9 @@ use thiserror::Error;
 use super::{StorageBalance, StorageBalanceBounds};
 
 /// storage 見積もりの安全マージン。per_token × 必要枠に掛ける係数 (1.1 = 10% 余裕)。
+///
+/// per_token は切り上げ除算による推定値であり、コントラクト内部の実コストとの乖離を
+/// 吸収するための 10% マージン。不足時は次サイクルで balance_of を再取得し再計算される。
 const SAFETY_MARGIN_NUMERATOR: u128 = 11;
 const SAFETY_MARGIN_DENOMINATOR: u128 = 10;
 
@@ -87,7 +90,10 @@ pub(super) fn plan(
         .ok_or(PlanError::ArithmeticOverflow)?;
 
     // usable = used - min_bound (min_bound はアカウント登録自体のコスト)
-    // used < min_bound の場合は per_token = 0 として扱う（全枠が min_bound 以内に収まっている）
+    // used < min_bound の場合は per_token = 0 として扱う（全枠が min_bound 以内に収まっている）。
+    // per_token = 0 → needed = 0 となり、register_tokens に必要な storage が推定不能になるが、
+    // 楽観的にゼロコスト扱いとする。storage 不足の場合はコントラクト側が register_tokens を
+    // 拒否するため資金損失にはならず、次サイクルで再計算される。
     let usable = used.saturating_sub(min_bound);
 
     // per_token = usable / deposits_len (切り上げ除算で過小評価を防ぐ)
@@ -135,6 +141,8 @@ pub(super) fn plan(
         .collect();
 
     // 必要な解除数 = shortage / per_token (切り上げ)
+    // u128 → usize 変換が溢れる場合は usize::MAX にサチュレーション。
+    // 結果は truncate で候補数に制限されるため、全候補解除となり安全側に倒れる。
     let unregister_needed = if per_token > 0 {
         usize::try_from(shortage.div_ceil(per_token)).unwrap_or(usize::MAX)
     } else {
