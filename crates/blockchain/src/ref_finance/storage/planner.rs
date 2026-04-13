@@ -42,6 +42,10 @@ pub(super) struct Plan {
     pub to_unregister: Vec<TokenAccount>,
     pub to_register: Vec<TokenAccount>,
     pub top_up: NearToken,
+    /// 新規トークン登録に必要な storage 総量（安全マージン適用済み）。
+    /// unregister 後に balance_of を再取得して `needed.saturating_sub(new_available)` で
+    /// 実際の top-up 額を再計算する際に使用する。
+    pub needed: u128,
 }
 
 #[derive(Error, Debug)]
@@ -113,6 +117,7 @@ pub(super) fn plan(
             to_unregister: vec![],
             to_register,
             top_up: NearToken::from_yoctonear(0),
+            needed,
         });
     }
 
@@ -152,6 +157,7 @@ pub(super) fn plan(
         to_unregister: unregister_candidates,
         to_register,
         top_up,
+        needed,
     })
 }
 
