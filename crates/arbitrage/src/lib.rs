@@ -92,10 +92,9 @@ where
         let (pre_path, tokens) = previews.into_with_path(&graph, &start).await?;
 
         let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
-        ref_finance::storage::ensure_ref_storage_setup(
-            client, wallet, &tokens, &tokens, max_top_up,
-        )
-        .await?;
+        let keep = vec![WNEAR_TOKEN.clone()];
+        ref_finance::storage::ensure_ref_storage_setup(client, wallet, &tokens, &keep, max_top_up)
+            .await?;
 
         // スワップを順次実行（nonce衝突を回避）
         let mut success_count = 0;
