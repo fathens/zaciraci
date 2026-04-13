@@ -90,6 +90,13 @@ pub async fn balance_of<C: ViewContract>(
 /// 4. top-up が上限を超える場合はエラー
 /// 5. 不足があれば storage_deposit で top-up
 /// 6. 未登録の必要トークンを register_tokens
+///
+/// # TOCTOU に関する注記
+/// ステップ 2 では unregister 前に deposits を再取得してゼロ残高を再検証するが、
+/// 再取得〜送信間には微小な時間窓が残る。REF Finance コントラクト側が
+/// 非ゼロ残高の unregister を拒否するため資金損失にはならない。
+/// 失敗した場合は warn ログを出して続行し、ステップ 3 で balance_of を再取得して
+/// top-up 額を実測値から再計算するため、最終的な整合性は保たれる。
 pub async fn ensure_ref_storage_setup<C, W>(
     client: &C,
     wallet: &W,
@@ -202,6 +209,8 @@ where
             );
         }
 
+        // REF Finance の unregister_tokens は 1 トランザクションあたりのガスリミットにより
+        // 大量トークンを一度に処理できないため、10 トークンずつ分割する。
         const CHUNK_SIZE: usize = 10;
         let total_chunks = verified.len().div_ceil(CHUNK_SIZE);
         let mut ok_count = 0usize;
