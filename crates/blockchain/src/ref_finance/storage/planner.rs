@@ -115,7 +115,7 @@ pub(super) fn plan(
     let needed = needed_raw
         .checked_mul(SAFETY_MARGIN_NUMERATOR)
         .ok_or(PlanError::ArithmeticOverflow)?
-        / SAFETY_MARGIN_DENOMINATOR;
+        .div_ceil(SAFETY_MARGIN_DENOMINATOR);
 
     if needed <= available {
         // 余裕あり: unregister も top-up も不要
