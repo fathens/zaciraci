@@ -90,6 +90,9 @@ where
 
     if let Some(previews) = previews {
         let (pre_path, tokens) = previews.into_with_path(&graph, &start).await?;
+        for (_, path) in &pre_path {
+            path.validate_length()?;
+        }
 
         let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
         // keep: 裁定取引は毎回異なるパスを使うため、基軸通貨の WNEAR のみ保持
