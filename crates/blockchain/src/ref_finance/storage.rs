@@ -102,7 +102,7 @@ pub async fn ensure_ref_storage_setup<C, W>(
     wallet: &W,
     needed_tokens: &[TokenAccount],
     keep: &[TokenAccount],
-    max_top_up_yoctonear: u128,
+    max_top_up: NearToken,
 ) -> Result<()>
 where
     C: SendTx + ViewContract,
@@ -125,11 +125,11 @@ where
             "account not registered, performing initial storage deposit"
         );
         let bounds = check_bounds(client).await?;
-        if bounds.min.0 > max_top_up_yoctonear {
+        if bounds.min.0 > max_top_up.as_yoctonear() {
             return Err(anyhow::anyhow!(
                 "initial storage deposit {} yocto exceeds cap {} yocto",
                 bounds.min.0,
-                max_top_up_yoctonear,
+                max_top_up.as_yoctonear(),
             ));
         }
         deposit(
@@ -268,7 +268,6 @@ where
     );
 
     // 5. top-up が上限を超える場合はエラー
-    let max_top_up = NearToken::from_yoctonear(max_top_up_yoctonear);
     if actual_top_up > max_top_up.as_yoctonear() {
         return Err(anyhow::anyhow!(
             "ref storage top-up {} yocto exceeds cap {} yocto",

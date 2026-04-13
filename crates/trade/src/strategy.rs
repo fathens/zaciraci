@@ -190,7 +190,7 @@ where
     // keep: ポートフォリオ運用中のトークンは次サイクルで使う可能性があるため解除しない
     let mut keep = token_accounts.clone();
     keep.push(blockchain::ref_finance::token_account::WNEAR_TOKEN.clone());
-    let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
+    let max_top_up = near_sdk::NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear());
     blockchain::ref_finance::storage::ensure_ref_storage_setup(
         client,
         wallet,

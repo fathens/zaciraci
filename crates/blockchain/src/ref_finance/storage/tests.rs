@@ -261,7 +261,7 @@ async fn test_ensure_ref_storage_setup_already_registered() {
     let tokens = vec![token];
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
     let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_ok());
 }
@@ -275,7 +275,7 @@ async fn test_ensure_ref_storage_setup_unregistered() {
     let tokens = vec![token];
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
     let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_ok());
 }
@@ -299,7 +299,7 @@ async fn test_ensure_ref_storage_setup_unregister_path() {
     let wallet = MockWallet::new();
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
     let result =
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
     assert!(result.is_ok());
@@ -322,7 +322,7 @@ async fn test_ensure_ref_storage_setup_top_up_path() {
     let wallet = MockWallet::new();
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
     let result =
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
     assert!(result.is_ok());
@@ -345,7 +345,7 @@ async fn test_ensure_ref_storage_setup_max_top_up_exceeded() {
     let wallet = MockWallet::new();
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 1u128; // 極端に低い上限
+    let max_top_up = NearToken::from_yoctonear(1); // 極端に低い上限
     let result =
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
     assert!(result.is_err());
@@ -378,7 +378,7 @@ async fn test_ensure_ref_storage_setup_chunk_splitting() {
     let wallet = MockWallet::new();
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
     let result =
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
     assert!(result.is_ok());
@@ -404,7 +404,7 @@ async fn test_ensure_ref_storage_setup_unregister_partial_failure() {
     let wallet = MockWallet::new();
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
     let result =
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
     // unregister 失敗後も register まで到達して正常完了
@@ -427,7 +427,7 @@ async fn test_ensure_ref_storage_setup_zero_cap() {
     let wallet = MockWallet::new();
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = 0u128;
+    let max_top_up = NearToken::from_yoctonear(0);
     let result =
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
     assert!(result.is_err());
@@ -450,7 +450,7 @@ async fn test_ensure_ref_storage_setup_initial_deposit_exceeds_cap() {
     let keep = vec![WNEAR_TOKEN.clone()];
     // bounds.min = 0.001 NEAR = 1_000_000_000_000_000_000_000
     // max_top_up = 1 yocto → bounds.min > max_top_up → エラー
-    let max_top_up = 1u128;
+    let max_top_up = NearToken::from_yoctonear(1);
     let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
