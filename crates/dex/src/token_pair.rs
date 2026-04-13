@@ -124,7 +124,7 @@ impl TokenPath {
 
     /// パスに含まれるすべてのトークンアカウントを重複除去して返す。
     pub fn all_tokens(&self) -> Vec<TokenAccount> {
-        let mut seen = Vec::new();
+        let mut seen = Vec::with_capacity(self.0.len() + 1);
         for pair in &self.0 {
             let token_in = pair.token_in_id().0;
             let token_out = pair.token_out_id().0;
