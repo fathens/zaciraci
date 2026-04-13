@@ -116,7 +116,9 @@ pub(super) fn plan(
         });
     }
 
-    let shortage = needed - available;
+    let shortage = needed
+        .checked_sub(available)
+        .ok_or(PlanError::ArithmeticOverflow)?;
 
     // ゼロ残高かつ keep に含まれない既存登録 → 解除候補
     let mut unregister_candidates: Vec<TokenAccount> = deposits
@@ -129,7 +131,7 @@ pub(super) fn plan(
 
     // 必要な解除数 = shortage / per_token (切り上げ)
     let unregister_needed = if per_token > 0 {
-        shortage.div_ceil(per_token) as usize
+        usize::try_from(shortage.div_ceil(per_token)).unwrap_or(usize::MAX)
     } else {
         0
     };
@@ -138,7 +140,9 @@ pub(super) fn plan(
     unregister_candidates.truncate(unregister_needed);
 
     // unregister で回収できる storage
-    let recovered = per_token * unregister_candidates.len() as u128;
+    let recovered = per_token
+        .checked_mul(unregister_candidates.len() as u128)
+        .ok_or(PlanError::ArithmeticOverflow)?;
 
     // まだ足りない分を top-up
     let remaining_shortage = shortage.saturating_sub(recovered);
