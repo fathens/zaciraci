@@ -125,6 +125,13 @@ where
             "account not registered, performing initial storage deposit"
         );
         let bounds = check_bounds(client).await?;
+        if bounds.min.0 > max_top_up_yoctonear {
+            return Err(anyhow::anyhow!(
+                "initial storage deposit {} yocto exceeds cap {} yocto",
+                bounds.min.0,
+                max_top_up_yoctonear,
+            ));
+        }
         deposit(
             client,
             wallet,
@@ -301,7 +308,7 @@ where
     Ok(())
 }
 
-pub(crate) mod planner;
+pub(super) mod planner;
 
 #[cfg(test)]
 mod tests;
