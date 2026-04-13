@@ -153,6 +153,7 @@ where
 
     // パスに含まれるすべてのトークン（中継トークン含む）のストレージデポジットを確認
     let tokens = path.all_tokens();
+    // keep: 単発スワップでは基軸通貨の WNEAR のみ保持
     let keep = vec![blockchain::ref_finance::token_account::WNEAR_TOKEN.clone()];
     let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
     blockchain::ref_finance::storage::ensure_ref_storage_setup(

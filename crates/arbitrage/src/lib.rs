@@ -92,6 +92,7 @@ where
         let (pre_path, tokens) = previews.into_with_path(&graph, &start).await?;
 
         let max_top_up = cfg.ref_storage_max_top_up_yoctonear();
+        // keep: 裁定取引は毎回異なるパスを使うため、基軸通貨の WNEAR のみ保持
         let keep = vec![WNEAR_TOKEN.clone()];
         ref_finance::storage::ensure_ref_storage_setup(client, wallet, &tokens, &keep, max_top_up)
             .await?;
