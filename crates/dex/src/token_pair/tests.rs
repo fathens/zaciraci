@@ -218,8 +218,9 @@ fn test_all_tokens_single_hop() {
 
 #[test]
 fn test_all_tokens_multi_hop_dedup() {
-    // pool1: token_0 -> token_1, pool2: token_1 -> token_2, pool3: token_2 -> token_3
-    // token_1 と token_2 は hop 間で重複するため、結果は 4 トークン
+    // make_test_pool は pool_id に関わらず token_0.near / token_1.near を生成するため、
+    // 複数 pool を連結しても all_tokens() の重複除去により 2 トークンに収束する。
+    // 異なるトークン名での重複除去は test_all_tokens_3hop_4tokens を参照。
     let pool1 = make_test_pool(1, 30, vec![1_000_000, 2_000_000]);
     let pool2 = make_test_pool(2, 30, vec![2_000_000, 3_000_000]);
     let pool3 = make_test_pool(3, 30, vec![3_000_000, 4_000_000]);
@@ -229,13 +230,6 @@ fn test_all_tokens_multi_hop_dedup() {
     let path = TokenPath(vec![pair1, pair2, pair3]);
 
     let tokens = path.all_tokens();
-    println!("tokens: {:?}", tokens);
-    // pool ごとにトークン名が独立なので重複はなく 6 トークン
-    // (make_test_pool が pool ごとに token_0.near, token_1.near を生成するため全て同名)
-    // 実際: pool1 token_0=token_0.near, token_1=token_1.near
-    //        pool2 token_0=token_0.near, token_1=token_1.near → 重複除去
-    //        pool3 token_0=token_0.near, token_1=token_1.near → 重複除去
-    // → 結果は 2 トークン (token_0.near, token_1.near)
     assert_eq!(tokens.len(), 2);
     assert_eq!(tokens[0].as_str(), "token_0.near");
     assert_eq!(tokens[1].as_str(), "token_1.near");
@@ -293,6 +287,13 @@ fn test_all_tokens_3hop_4tokens() {
 }
 
 // --- TokenPath::validate_length ---
+
+#[test]
+fn test_validate_length_empty_path() {
+    let path = TokenPath(vec![]);
+    assert!(path.is_empty());
+    assert!(path.validate_length().is_ok());
+}
 
 #[test]
 fn test_validate_length_within_max() {
