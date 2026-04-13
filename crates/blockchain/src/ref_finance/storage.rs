@@ -223,25 +223,22 @@ where
         let mut ok_count = 0usize;
         let mut fail_count = 0usize;
         for (i, chunk) in verified.chunks(CHUNK_SIZE).enumerate() {
-            match deposit::unregister_tokens(client, wallet, chunk).await {
-                Ok(sent) => match sent.wait_for_success().await {
-                    Ok(_) => {
-                        info!(log, "unregister chunk";
-                            "chunk_idx" => i,
-                            "chunk_total" => total_chunks,
-                            "size" => chunk.len(),
-                        );
-                        ok_count += chunk.len();
-                    }
-                    Err(e) => {
-                        warn!(log, "unregister chunk failed";
-                            "chunk_idx" => i,
-                            "tokens" => ?chunk,
-                            "error" => %e,
-                        );
-                        fail_count += chunk.len();
-                    }
-                },
+            let result = async {
+                deposit::unregister_tokens(client, wallet, chunk)
+                    .await?
+                    .wait_for_success()
+                    .await
+            }
+            .await;
+            match result {
+                Ok(_) => {
+                    info!(log, "unregister chunk";
+                        "chunk_idx" => i,
+                        "chunk_total" => total_chunks,
+                        "size" => chunk.len(),
+                    );
+                    ok_count += chunk.len();
+                }
                 Err(e) => {
                     warn!(log, "unregister chunk failed";
                         "chunk_idx" => i,
