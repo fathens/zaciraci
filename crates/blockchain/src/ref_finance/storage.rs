@@ -6,7 +6,6 @@ use common::types::TokenAccount;
 use logging::*;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
-use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -80,103 +79,6 @@ pub async fn balance_of<C: ViewContract>(
         trace!(log, "no balance");
     }
     Ok(balance)
-}
-
-// 現状の deposits を確認し、削除すべき token と追加すべき deposit を返す
-pub async fn check_deposits<C: ViewContract>(
-    client: &C,
-    account: &AccountId,
-    tokens: &[TokenAccount],
-) -> Result<Option<(Vec<TokenAccount>, u128)>> {
-    let log = DEFAULT.new(o!("function" => "storage::check_deposits"));
-
-    let bounds = check_bounds(client).await?;
-    let deposits = deposit::get_deposits(client, account).await?;
-    if deposits.is_empty() {
-        return Ok(None);
-    }
-    let maybe_balance = balance_of(client, account).await?;
-    if maybe_balance.is_none() {
-        return Ok(None);
-    }
-    let balance = maybe_balance.unwrap();
-
-    let total = balance.total.0;
-    let available = balance.available.0;
-    let used = total - available;
-    let per_token = (used - bounds.min.0) / deposits.len() as u128;
-
-    trace!(log, "checking deposits";
-        "total" => total,
-        "available" => available,
-        "used" => used,
-        "per_token" => per_token,
-    );
-
-    let mores: Vec<_> = tokens
-        .iter()
-        .filter(|&token| !deposits.contains_key(token))
-        .collect();
-    let more_needed = mores.len() as u128 * per_token;
-    debug!(log, "missing token deposits"; "more_needed" => more_needed);
-    if more_needed <= available {
-        return Ok(Some((vec![], 0)));
-    }
-
-    let shortage = more_needed - available;
-    let mut needing_count = (shortage / per_token) as usize;
-    if !shortage.is_multiple_of(per_token) {
-        needing_count += 1;
-    }
-    let mut noneeds: Vec<_> = deposits
-        .into_iter()
-        .filter(|(token, amount)| !tokens.contains(token) && amount.0.is_zero())
-        .map(|(token, _)| token)
-        .collect();
-
-    if needing_count < noneeds.len() {
-        noneeds.drain(needing_count..);
-    }
-    if needing_count <= noneeds.len() {
-        return Ok(Some((noneeds, 0)));
-    }
-
-    let more_posts = needing_count - noneeds.len();
-    let more = more_posts as u128 * per_token;
-
-    Ok(Some((noneeds, more)))
-}
-
-pub async fn check_and_deposit<C, W>(
-    client: &C,
-    wallet: &W,
-    tokens: &[TokenAccount],
-) -> Result<Option<()>>
-where
-    C: SendTx + ViewContract,
-    W: Wallet,
-{
-    let log = DEFAULT.new(o!("function" => "storage::check_and_deposit"));
-    let account = wallet.account_id();
-    let maybe_res = check_deposits(client, account, tokens).await?;
-    if maybe_res.is_none() {
-        return Ok(None);
-    }
-    let (deleting_tokens, more) = maybe_res.unwrap();
-    if !deleting_tokens.is_empty() {
-        deposit::unregister_tokens(client, wallet, &deleting_tokens)
-            .await?
-            .wait_for_success()
-            .await?;
-    }
-    if more > 0 {
-        info!(log, "needing more deposit"; "more" => more);
-        deposit(client, wallet, NearToken::from_yoctonear(more), false)
-            .await?
-            .wait_for_success()
-            .await?;
-    }
-    Ok(Some(()))
 }
 
 /// REF Finance のストレージセットアップを確認し、必要に応じて初期化・掃除・top-up を実行する
