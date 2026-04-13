@@ -272,3 +272,19 @@ fn plan_arithmetic_overflow_total_less_than_available() {
     let err = plan(&snap, &[token("b.near")], &[]).unwrap_err();
     assert!(matches!(err, PlanError::ArithmeticOverflow));
 }
+
+#[test]
+fn plan_arithmetic_overflow_safety_margin_multiplication() {
+    // needed_raw * SAFETY_MARGIN_NUMERATOR が u128::MAX を超える場合
+    // needed_raw = per_token * to_register.len() なので、per_token を大きくして再現
+    let big_per_token = u128::MAX / 11 + 1; // * 11 でオーバーフロー
+    let total = big_per_token + 1_000; // used = big_per_token, usable = big_per_token
+    let snap = snapshot_with_deposits(
+        total,
+        1_000,              // available = 1_000, used = total - 1_000
+        0,                  // min_bound = 0 → usable = used
+        &[("a.near", 100)], // deposits_len = 1 → per_token = usable
+    );
+    let err = plan(&snap, &[token("b.near")], &[]).unwrap_err();
+    assert!(matches!(err, PlanError::ArithmeticOverflow));
+}
