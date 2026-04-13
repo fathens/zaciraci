@@ -272,3 +272,80 @@ async fn test_ensure_ref_storage_setup_unregistered() {
     let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_ok());
 }
+
+// Test: ensure_ref_storage_setup - unregister stale tokens path
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_unregister_path() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let stale: TokenAccount = "stale.near".parse().unwrap();
+    let mut deposits = HashMap::new();
+    deposits.insert(token.clone(), U128(100));
+    deposits.insert(stale, U128(0)); // ゼロ残高 → unregister 候補
+
+    // available が十分あるので top-up は不要だが、unregister パスは通る
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(500_000_000_000_000_000_000),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::new();
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_ok());
+}
+
+// Test: ensure_ref_storage_setup - top-up path
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_top_up_path() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = HashMap::new();
+    deposits.insert(token.clone(), U128(100));
+
+    // available がほぼゼロ → 新トークン登録に top-up が必要
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::new();
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_ok());
+}
+
+// Test: ensure_ref_storage_setup - max_top_up exceeded error
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_max_top_up_exceeded() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = HashMap::new();
+    deposits.insert(token.clone(), U128(100));
+
+    // available がゼロで top-up が必要だが、上限を 1 yocto に制限
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::new();
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 1u128; // 極端に低い上限
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("exceeds cap"),
+        "expected 'exceeds cap' in error: {}",
+        err_msg
+    );
+}
