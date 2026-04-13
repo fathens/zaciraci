@@ -131,7 +131,9 @@ where
     }
 
     // 2. snapshot を取得して planner で計画を立てる
-    let balance = balance_of(client, account).await?.unwrap_or_default();
+    let balance = balance_of(client, account)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("storage balance disappeared after initial deposit"))?;
     let deposits = deposit::get_deposits(client, account).await?;
     let bounds = check_bounds(client).await?;
 
