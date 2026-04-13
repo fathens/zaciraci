@@ -8,8 +8,9 @@ use near_primitives::views::{
     CallResult, FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
 };
 use near_sdk::NearToken;
-use std::cell::Cell;
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 struct MockStorage(StorageBalanceBounds);
 
@@ -91,36 +92,34 @@ impl SentTx for MockSentTx {
 
 // Comprehensive MockClient for storage tests
 struct MockStorageClient {
-    storage_balance: std::cell::RefCell<Option<StorageBalance>>,
+    storage_balance: Mutex<Option<StorageBalance>>,
     storage_bounds: StorageBalanceBounds,
     deposits: HashMap<TokenAccount, U128>,
-    should_fail_deposit: Cell<bool>,
+    should_fail_deposit: AtomicBool,
 }
-
-unsafe impl Sync for MockStorageClient {}
 
 impl MockStorageClient {
     fn new_with_balance(balance: StorageBalance) -> Self {
         Self {
-            storage_balance: std::cell::RefCell::new(Some(balance)),
+            storage_balance: Mutex::new(Some(balance)),
             storage_bounds: StorageBalanceBounds {
                 min: U128(1_000_000_000_000_000_000_000), // 0.001 NEAR
                 max: None,
             },
             deposits: HashMap::new(),
-            should_fail_deposit: Cell::new(false),
+            should_fail_deposit: AtomicBool::new(false),
         }
     }
 
     fn new_unregistered() -> Self {
         Self {
-            storage_balance: std::cell::RefCell::new(None),
+            storage_balance: Mutex::new(None),
             storage_bounds: StorageBalanceBounds {
                 min: U128(1_000_000_000_000_000_000_000),
                 max: None,
             },
             deposits: HashMap::new(),
-            should_fail_deposit: Cell::new(false),
+            should_fail_deposit: AtomicBool::new(false),
         }
     }
 
@@ -141,7 +140,7 @@ impl ViewContract for MockStorageClient {
         T: ?Sized + serde::Serialize,
     {
         let result = match method_name {
-            "storage_balance_of" => serde_json::to_vec(&*self.storage_balance.borrow())?,
+            "storage_balance_of" => serde_json::to_vec(&*self.storage_balance.lock().unwrap())?,
             "storage_balance_bounds" => serde_json::to_vec(&self.storage_bounds)?,
             "get_deposits" => serde_json::to_vec(&self.deposits)?,
             _ => serde_json::to_vec(&serde_json::Value::Null)?,
@@ -176,10 +175,10 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
     where
         T: Sized + serde::Serialize,
     {
-        let should_fail = self.should_fail_deposit.get();
+        let should_fail = self.should_fail_deposit.load(Ordering::Relaxed);
         if method_name == "storage_deposit" && !should_fail {
             // Simulate successful storage deposit
-            *self.storage_balance.borrow_mut() = Some(StorageBalance {
+            *self.storage_balance.lock().unwrap() = Some(StorageBalance {
                 total: self.storage_bounds.min,
                 available: U128(0),
             });
