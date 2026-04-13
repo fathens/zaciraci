@@ -91,9 +91,16 @@ pub(super) fn plan(
 
     // usable = used - min_bound (min_bound はアカウント登録自体のコスト)
     // used < min_bound の場合は per_token = 0 として扱う（全枠が min_bound 以内に収まっている）。
-    // per_token = 0 → needed = 0 となり、register_tokens に必要な storage が推定不能になるが、
-    // 楽観的にゼロコスト扱いとする。storage 不足の場合はコントラクト側が register_tokens を
-    // 拒否するため資金損失にはならず、次サイクルで再計算される。
+    //
+    // Self-healing フロー:
+    //   per_token = 0 → needed = 0 → ensure 側で register_tokens を試行
+    //   → storage 不足ならコントラクトが拒否（資金損失なし）
+    //   → 呼び出し元に Err が返る
+    //   → 次サイクルでは deposits が増加し per_token > 0 に回復
+    //
+    // 初期登録直後の極初期状態（used ≈ min_bound）でのみ発生する過渡状態であり、
+    // 定常運用では現れない。楽観的なゼロコスト扱いを維持することで、
+    // self-healing ループが正しく機能する。
     let usable = used.saturating_sub(min_bound);
 
     // per_token = usable / deposits_len (切り上げ除算で過小評価を防ぐ)
