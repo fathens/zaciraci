@@ -96,6 +96,7 @@ struct MockStorageClient {
     storage_bounds: StorageBalanceBounds,
     deposits: HashMap<TokenAccount, U128>,
     should_fail_deposit: AtomicBool,
+    should_fail_unregister: AtomicBool,
 }
 
 impl MockStorageClient {
@@ -108,6 +109,7 @@ impl MockStorageClient {
             },
             deposits: HashMap::new(),
             should_fail_deposit: AtomicBool::new(false),
+            should_fail_unregister: AtomicBool::new(false),
         }
     }
 
@@ -120,6 +122,7 @@ impl MockStorageClient {
             },
             deposits: HashMap::new(),
             should_fail_deposit: AtomicBool::new(false),
+            should_fail_unregister: AtomicBool::new(false),
         }
     }
 
@@ -175,6 +178,10 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
     where
         T: Sized + serde::Serialize,
     {
+        if method_name == "unregister_tokens" {
+            let should_fail = self.should_fail_unregister.load(Ordering::Relaxed);
+            return Ok(MockSentTx { should_fail });
+        }
         let should_fail = self.should_fail_deposit.load(Ordering::Relaxed);
         if method_name == "storage_deposit" && !should_fail {
             // Simulate successful storage deposit
@@ -341,6 +348,110 @@ async fn test_ensure_ref_storage_setup_max_top_up_exceeded() {
     let max_top_up = 1u128; // 極端に低い上限
     let result =
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("exceeds cap"),
+        "expected 'exceeds cap' in error: {}",
+        err_msg
+    );
+}
+
+// Test: ensure_ref_storage_setup - unregister with >10 stale tokens (chunk splitting)
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_chunk_splitting() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = HashMap::new();
+    deposits.insert(token.clone(), U128(100));
+    // 15 個の stale トークン → 2 チャンク (10 + 5) に分割
+    for i in 0..15 {
+        let stale: TokenAccount = format!("stale{i}.near").parse().unwrap();
+        deposits.insert(stale, U128(0));
+    }
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(500_000_000_000_000_000_000),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::new();
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_ok());
+}
+
+// Test: ensure_ref_storage_setup - unregister partial failure continues to register
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_unregister_partial_failure() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = HashMap::new();
+    deposits.insert(token.clone(), U128(100));
+    let stale: TokenAccount = "stale.near".parse().unwrap();
+    deposits.insert(stale, U128(0));
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(500_000_000_000_000_000_000),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    // unregister は失敗するが、処理は続行して register まで到達する
+    client.should_fail_unregister.store(true, Ordering::Relaxed);
+    let wallet = MockWallet::new();
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 500_000_000_000_000_000_000_000u128;
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    // unregister 失敗後も register まで到達して正常完了
+    assert!(result.is_ok());
+}
+
+// Test: ensure_ref_storage_setup - max_top_up = 0 blocks any top-up
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_zero_cap() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = HashMap::new();
+    deposits.insert(token.clone(), U128(100));
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::new();
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = 0u128;
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("exceeds cap"),
+        "expected 'exceeds cap' in error: {}",
+        err_msg
+    );
+}
+
+// Test: ensure_ref_storage_setup - initial deposit exceeds cap (S1 guard)
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_initial_deposit_exceeds_cap() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let client = MockStorageClient::new_unregistered();
+    let wallet = MockWallet::new();
+    let tokens = vec![token];
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    // bounds.min = 0.001 NEAR = 1_000_000_000_000_000_000_000
+    // max_top_up = 1 yocto → bounds.min > max_top_up → エラー
+    let max_top_up = 1u128;
+    let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
