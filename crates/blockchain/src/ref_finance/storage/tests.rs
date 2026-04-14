@@ -95,7 +95,11 @@ impl SentTx for MockSentTx {
 struct MockStorageClient {
     storage_balance: Mutex<Option<StorageBalance>>,
     storage_bounds: StorageBalanceBounds,
-    deposits: BTreeMap<TokenAccount, U128>,
+    deposits: Mutex<BTreeMap<TokenAccount, U128>>,
+    // 未登録アカウントの初期 deposit 成功時に、実運用の「直後に deposits が観測される」
+    // 状態を再現するための seed。initial deposit 後に 1 度だけ適用される。
+    seed_deposits_on_initial: Mutex<Option<BTreeMap<TokenAccount, U128>>>,
+    balance_after_initial: Mutex<Option<StorageBalance>>,
     should_fail_deposit: AtomicBool,
     should_fail_unregister: AtomicBool,
     should_fail_balance_of: AtomicBool,
@@ -111,7 +115,9 @@ impl MockStorageClient {
                 min: U128(1_000_000_000_000_000_000_000), // 0.001 NEAR
                 max: None,
             },
-            deposits: BTreeMap::new(),
+            deposits: Mutex::new(BTreeMap::new()),
+            seed_deposits_on_initial: Mutex::new(None),
+            balance_after_initial: Mutex::new(None),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
             should_fail_balance_of: AtomicBool::new(false),
@@ -127,7 +133,9 @@ impl MockStorageClient {
                 min: U128(1_000_000_000_000_000_000_000),
                 max: None,
             },
-            deposits: BTreeMap::new(),
+            deposits: Mutex::new(BTreeMap::new()),
+            seed_deposits_on_initial: Mutex::new(None),
+            balance_after_initial: Mutex::new(None),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
             should_fail_balance_of: AtomicBool::new(false),
@@ -136,8 +144,25 @@ impl MockStorageClient {
         }
     }
 
-    fn with_deposits(mut self, deposits: BTreeMap<TokenAccount, U128>) -> Self {
-        self.deposits = deposits;
+    fn with_deposits(self, deposits: BTreeMap<TokenAccount, U128>) -> Self {
+        *self.deposits.lock().unwrap() = deposits;
+        self
+    }
+
+    /// 未登録状態から初期 deposit 直後の状態（既存 deposits が観測される）を再現する。
+    ///
+    /// 実運用では別プロセス/別呼び出しが既に register_tokens した結果が、初期 deposit の
+    /// 直後に観測される race 状況がありうる。この builder で seed を渡すと、
+    /// 最初の `storage_deposit` 成功時に `deposits` と `storage_balance` を指定値で上書きする。
+    /// 以降の `storage_deposit`（top-up）は legacy の挙動（total=min, available=0）に戻らず、
+    /// seed された balance のまま。
+    fn with_initial_seed(
+        self,
+        deposits: BTreeMap<TokenAccount, U128>,
+        balance: StorageBalance,
+    ) -> Self {
+        *self.seed_deposits_on_initial.lock().unwrap() = Some(deposits);
+        *self.balance_after_initial.lock().unwrap() = Some(balance);
         self
     }
 }
@@ -160,7 +185,7 @@ impl ViewContract for MockStorageClient {
         let result = match method_name {
             "storage_balance_of" => serde_json::to_vec(&*self.storage_balance.lock().unwrap())?,
             "storage_balance_bounds" => serde_json::to_vec(&self.storage_bounds)?,
-            "get_deposits" => serde_json::to_vec(&self.deposits)?,
+            "get_deposits" => serde_json::to_vec(&*self.deposits.lock().unwrap())?,
             _ => serde_json::to_vec(&serde_json::Value::Null)?,
         };
         Ok(CallResult {
@@ -201,11 +226,26 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
         let should_fail = self.should_fail_deposit.load(Ordering::Relaxed);
         if method_name == "storage_deposit" && !should_fail {
             self.storage_deposit_count.fetch_add(1, Ordering::Relaxed);
-            // Simulate successful storage deposit
-            *self.storage_balance.lock().unwrap() = Some(StorageBalance {
-                total: self.storage_bounds.min,
-                available: U128(0),
-            });
+
+            // 初期 deposit（未登録 → 登録直後）で seed が指定されていれば、
+            // 実運用の「初期 deposit 直後に deposits が観測される」状態を再現する。
+            let was_unregistered = self.storage_balance.lock().unwrap().is_none();
+            let seed_bal = self.balance_after_initial.lock().unwrap().take();
+            let seed_dep = self.seed_deposits_on_initial.lock().unwrap().take();
+
+            if was_unregistered && seed_bal.is_some() {
+                *self.storage_balance.lock().unwrap() = seed_bal;
+                if let Some(dep) = seed_dep {
+                    *self.deposits.lock().unwrap() = dep;
+                }
+            } else {
+                // 既存の簡易挙動: 初期 deposit/top-up を問わず total=bounds.min, available=0
+                // にリセット。本番と厳密には異なるが多くのテストがこの形を前提にしている。
+                *self.storage_balance.lock().unwrap() = Some(StorageBalance {
+                    total: self.storage_bounds.min,
+                    available: U128(0),
+                });
+            }
         }
         Ok(MockSentTx { should_fail })
     }
@@ -505,26 +545,48 @@ async fn test_ensure_ref_storage_setup_initial_deposit_exceeds_cap() {
 
 // Test: ensure_ref_storage_setup - cumulative cap (initial + top-up) exceeded
 //
-// 未登録アカウントで初期 deposit = bounds.min を支払った後、さらに top-up が
-// 必要になるケース。max_top_up を「bounds.min + 小額」に設定し、top-up 必要量が
-// 残り枠を超えると Err となることを確認する。
+// 未登録アカウントで初期 deposit = bounds.min を支払った直後、既存 deposits が
+// 観測される状態（実運用の race）を with_initial_seed で再現する。planner が
+// top-up 必要と判定し、remaining_cap = max_top_up - initial_deposit を超える
+// ため Err となることを検証する。これは storage.rs:337 の累積 cap 減算
+// `remaining_cap = max_top_up.saturating_sub(initial_deposit)` を実際に exercise
+// する唯一のテスト経路。
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_cumulative_cap_exceeded() {
-    // bounds.min = 1e21、max_top_up は bounds.min の 1 yocto 上に設定
-    let client = MockStorageClient::new_unregistered();
-    let wallet = MockWallet::new();
+    let existing: TokenAccount = "existing.near".parse().unwrap();
+    let mut seed_deposits = BTreeMap::new();
+    seed_deposits.insert(existing.clone(), U128(100));
+    // 初期 deposit 後の balance: total=2e21, available=0 → top-up 必須
+    // used=2e21, usable=1e21, per_token=1e21, needed=1.1e21 top-up 必要
+    let seed_balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+
+    let client =
+        MockStorageClient::new_unregistered().with_initial_seed(seed_deposits, seed_balance);
+    let wallet = MockWallet::with_account_id("test-cum-cap-exceeded.near");
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    // max_top_up = bounds.min + 1 → 初期 deposit 後、残り枠は 1 yocto のみ。
-    // しかし MockStorageClient は初期 deposit 後に available = 0 とするため
-    // 新トークン登録に数百 yocto 必要 → 1 yocto を超える top-up で Err。
-    let max_top_up = NearToken::from_yoctonear(1_000_000_000_000_000_000_001);
+    // bounds.min = 1e21。max_top_up = bounds.min + 100 → 初期 deposit 後 remaining_cap = 100 yocto。
+    // 新トークン登録の top-up 必要量 (≈1.1e21) が 100 yocto を大きく超えるため Err。
+    let max_top_up = NearToken::from_yoctonear(1_000_000_000_000_000_000_100);
     let new_token: TokenAccount = "new.near".parse().unwrap();
     let result = ensure_ref_storage_setup(&client, &wallet, &[new_token], &keep, max_top_up).await;
-    // unregistered のため planner は EmptyDeposits を返し、初期 deposit + register のみの
-    // パスを通る（top-up は発生せず）。したがって Ok。
-    // このテストはアカウントが登録済みかつ cap ギリギリのパスを別途検証する。
-    assert!(result.is_ok());
+    assert!(result.is_err(), "cumulative cap should be exceeded");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("exceeds remaining cap"),
+        "expected 'exceeds remaining cap' in error: {}",
+        err_msg
+    );
+    // initial_deposit が `remaining_cap = max_top_up - initial_deposit` の減算に反映されて
+    // いることをエラーメッセージから確認する。
+    assert!(
+        err_msg.contains("initial_deposit=1000000000000000000000"),
+        "error should report initial_deposit: {}",
+        err_msg
+    );
 }
 
 // Test: ensure_ref_storage_setup - cumulative cap boundary (exact)
@@ -577,24 +639,36 @@ async fn test_ensure_ref_storage_setup_cumulative_cap_boundary() {
 
 // Test: ensure_ref_storage_setup - initial deposit equals cap then top-up needed → Err
 //
-// 未登録アカウントで max_top_up = bounds.min ちょうどに設定。初期 deposit は通るが
-// MockStorageClient が初期 deposit 後 available = 0 とし、新トークン登録で
-// top-up が必要 → remaining_cap = 0 なので Err。
+// max_top_up = bounds.min ちょうどで remaining_cap = 0 を厳密検証する境界ケース。
+// 初期 deposit で cap を使い切った状態で top-up が必要になる場合、わずかでも
+// top-up が発生すれば Err となることを確認する。
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_initial_fills_cap_then_topup_needed() {
-    let client = MockStorageClient::new_unregistered();
-    let wallet = MockWallet::new();
+    let existing: TokenAccount = "existing.near".parse().unwrap();
+    let mut seed_deposits = BTreeMap::new();
+    seed_deposits.insert(existing.clone(), U128(100));
+    let seed_balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+
+    let client =
+        MockStorageClient::new_unregistered().with_initial_seed(seed_deposits, seed_balance);
+    let wallet = MockWallet::with_account_id("test-cum-cap-exact.near");
 
     let keep = vec![WNEAR_TOKEN.clone()];
-    // bounds.min = 1e21、max_top_up = bounds.min → 初期 deposit 後 remaining_cap = 0。
-    // ただし unregistered パスは EmptyDeposits 経由で planner をスキップし register のみ
-    // (top-up 発生なし) なので Ok で終わる。
-    // このケースは cumulative cap の実動検証ではなく「初期 deposit が cap 全量を食う」境界の
-    // 挙動確認を兼ねる。
+    // max_top_up = bounds.min ちょうど → 初期 deposit 後 remaining_cap = 0。
+    // planner が top-up > 0 を必要とするため、わずかでも超過 → Err。
     let max_top_up = NearToken::from_yoctonear(1_000_000_000_000_000_000_000);
     let new_token: TokenAccount = "new.near".parse().unwrap();
     let result = ensure_ref_storage_setup(&client, &wallet, &[new_token], &keep, max_top_up).await;
-    assert!(result.is_ok());
+    assert!(result.is_err(), "remaining_cap=0 should block any top-up");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("exceeds remaining cap"),
+        "expected 'exceeds remaining cap' in error: {}",
+        err_msg
+    );
 }
 
 // Test: ensure_ref_storage_setup - concurrent calls serialize initial deposit
