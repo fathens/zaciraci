@@ -123,6 +123,9 @@ impl TokenPath {
     }
 
     /// パスに含まれるすべてのトークンアカウントを重複除去して返す。
+    ///
+    /// 計算量は入力と一意トークン数を n として O(n²) だが、`MAX_HOPS` の制約下で
+    /// n ≤ MAX_HOPS + 1 となり実質定数時間で収まる。IndexSet 等の導入は行わない。
     pub fn all_tokens(&self) -> Vec<TokenAccount> {
         let mut seen = Vec::with_capacity(self.0.len() + 1);
         for pair in &self.0 {
