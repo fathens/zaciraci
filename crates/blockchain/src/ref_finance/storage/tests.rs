@@ -98,6 +98,7 @@ struct MockStorageClient {
     deposits: BTreeMap<TokenAccount, U128>,
     should_fail_deposit: AtomicBool,
     should_fail_unregister: AtomicBool,
+    should_fail_balance_of: AtomicBool,
     storage_deposit_count: AtomicUsize,
     unregister_count: AtomicUsize,
 }
@@ -113,6 +114,7 @@ impl MockStorageClient {
             deposits: BTreeMap::new(),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
+            should_fail_balance_of: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
             unregister_count: AtomicUsize::new(0),
         }
@@ -128,6 +130,7 @@ impl MockStorageClient {
             deposits: BTreeMap::new(),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
+            should_fail_balance_of: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
             unregister_count: AtomicUsize::new(0),
         }
@@ -149,6 +152,11 @@ impl ViewContract for MockStorageClient {
     where
         T: ?Sized + serde::Serialize,
     {
+        if method_name == "storage_balance_of"
+            && self.should_fail_balance_of.load(Ordering::Relaxed)
+        {
+            return Err(anyhow!("simulated balance_of RPC failure"));
+        }
         let result = match method_name {
             "storage_balance_of" => serde_json::to_vec(&*self.storage_balance.lock().unwrap())?,
             "storage_balance_bounds" => serde_json::to_vec(&self.storage_bounds)?,
@@ -694,4 +702,28 @@ async fn test_concurrent_different_accounts_parallel() {
     );
     assert!(r_a.is_ok());
     assert!(r_b.is_ok());
+}
+
+// Test: ensure_ref_storage_setup - balance_of RPC error propagates
+//
+// balance_of が失敗したら ensure_ref_storage_setup 全体が Err を返すことを確認。
+// 静默な default 値（None → 未登録扱い）で処理が進んでしまうと誤った initial
+// deposit を発行する危険があるため、エラーは必ず伝播する必要がある。
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_balance_of_error_propagates() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let client = MockStorageClient::new_unregistered();
+    client.should_fail_balance_of.store(true, Ordering::Relaxed);
+    let wallet = MockWallet::with_account_id("test-balance-err.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(&client, &wallet, &[token], &keep, max_top_up).await;
+    assert!(result.is_err(), "balance_of failure should propagate");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("balance_of"),
+        "error should mention balance_of: {}",
+        err_msg
+    );
 }
