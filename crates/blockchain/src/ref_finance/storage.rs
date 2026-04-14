@@ -119,29 +119,27 @@ where
 
     // 1. storage_balance_of でアカウント状態を確認、未登録ならアカウント初期登録
     let maybe_balance = balance_of(client, account).await?;
-    if maybe_balance.is_none() {
+    let did_initial_deposit = maybe_balance.is_none();
+    let mut initial_deposit = NearToken::from_yoctonear(0);
+    if did_initial_deposit {
         info!(
             log,
             "account not registered, performing initial storage deposit"
         );
         let bounds = check_bounds(client).await?;
-        if bounds.min.0 > max_top_up.as_yoctonear() {
+        initial_deposit = NearToken::from_yoctonear(bounds.min.0);
+        if initial_deposit > max_top_up {
             return Err(anyhow::anyhow!(
                 "initial storage deposit {} yocto exceeds cap {} yocto",
-                bounds.min.0,
+                initial_deposit.as_yoctonear(),
                 max_top_up.as_yoctonear(),
             ));
         }
-        deposit(
-            client,
-            wallet,
-            NearToken::from_yoctonear(bounds.min.0),
-            false,
-        )
-        .await?
-        .wait_for_success()
-        .await?;
-        info!(log, "initial storage deposit completed"; "amount" => bounds.min.0);
+        deposit(client, wallet, initial_deposit, false)
+            .await?
+            .wait_for_success()
+            .await?;
+        info!(log, "initial storage deposit completed"; "amount" => initial_deposit.as_yoctonear());
     }
 
     // 2. snapshot を取得して planner で計画を立てる
@@ -277,12 +275,20 @@ where
         "actual_top_up" => actual_top_up.as_yoctonear(),
     );
 
-    // 5. top-up が上限を超える場合はエラー
-    if actual_top_up > max_top_up {
+    // 5. 累積支出が上限を超える場合はエラー
+    //
+    // 初期 deposit を実行した場合、そのぶんを max_top_up から差し引いた残り枠で
+    // top-up の可否を判定する。これにより単一呼び出しでの総消費 NEAR が
+    // max_top_up を超えないことを保証する（初期 deposit と top-up の二重キャップ回避）。
+    let remaining_cap = max_top_up.saturating_sub(initial_deposit);
+    if actual_top_up > remaining_cap {
         return Err(anyhow::anyhow!(
-            "ref storage top-up {} yocto exceeds cap {} yocto",
+            "ref storage top-up {} yocto exceeds remaining cap {} yocto \
+             (max_top_up={}, initial_deposit={})",
             actual_top_up.as_yoctonear(),
+            remaining_cap.as_yoctonear(),
             max_top_up.as_yoctonear(),
+            initial_deposit.as_yoctonear(),
         ));
     }
 
