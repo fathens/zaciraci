@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
 use common::types::TokenAccount;
@@ -18,7 +18,7 @@ const SAFETY_MARGIN_DENOMINATOR: u128 = 10;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct StorageSnapshot {
     pub balance: StorageBalance,
-    pub deposits: HashMap<TokenAccount, U128>,
+    pub deposits: BTreeMap<TokenAccount, U128>,
     pub bounds: StorageBalanceBounds,
 }
 
@@ -30,7 +30,7 @@ impl StorageSnapshot {
                 total: U128(100_000_000_000_000_000_000_000), // 0.1 NEAR
                 available: U128(50_000_000_000_000_000_000_000), // 0.05 NEAR
             },
-            deposits: HashMap::new(),
+            deposits: BTreeMap::new(),
             bounds: StorageBalanceBounds {
                 min: U128(1_250_000_000_000_000_000_000), // 0.00125 NEAR
                 max: None,

@@ -152,7 +152,7 @@ fn plan_requested_not_unregistered() {
 #[test]
 fn plan_empty_deposits_error() {
     let snap = StorageSnapshot {
-        deposits: HashMap::new(),
+        deposits: BTreeMap::new(),
         ..StorageSnapshot::test_default()
     };
     let err = plan(&snap, &[token("a.near")], &[]).unwrap_err();

@@ -8,7 +8,7 @@ use near_primitives::views::{
     CallResult, FinalExecutionOutcomeView, FinalExecutionOutcomeViewEnum,
 };
 use near_sdk::NearToken;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -95,7 +95,7 @@ impl SentTx for MockSentTx {
 struct MockStorageClient {
     storage_balance: Mutex<Option<StorageBalance>>,
     storage_bounds: StorageBalanceBounds,
-    deposits: HashMap<TokenAccount, U128>,
+    deposits: BTreeMap<TokenAccount, U128>,
     should_fail_deposit: AtomicBool,
     should_fail_unregister: AtomicBool,
     storage_deposit_count: AtomicUsize,
@@ -110,7 +110,7 @@ impl MockStorageClient {
                 min: U128(1_000_000_000_000_000_000_000), // 0.001 NEAR
                 max: None,
             },
-            deposits: HashMap::new(),
+            deposits: BTreeMap::new(),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
@@ -125,7 +125,7 @@ impl MockStorageClient {
                 min: U128(1_000_000_000_000_000_000_000),
                 max: None,
             },
-            deposits: HashMap::new(),
+            deposits: BTreeMap::new(),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
@@ -133,7 +133,7 @@ impl MockStorageClient {
         }
     }
 
-    fn with_deposits(mut self, deposits: HashMap<TokenAccount, U128>) -> Self {
+    fn with_deposits(mut self, deposits: BTreeMap<TokenAccount, U128>) -> Self {
         self.deposits = deposits;
         self
     }
@@ -258,7 +258,7 @@ async fn test_storage_deposit() {
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_already_registered() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(0));
 
     let balance = StorageBalance {
@@ -294,7 +294,7 @@ async fn test_ensure_ref_storage_setup_unregistered() {
 async fn test_ensure_ref_storage_setup_unregister_path() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
     let stale: TokenAccount = "stale.near".parse().unwrap();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
     deposits.insert(stale, U128(0)); // ゼロ残高 → unregister 候補
 
@@ -318,7 +318,7 @@ async fn test_ensure_ref_storage_setup_unregister_path() {
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_top_up_path() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
 
     // available がほぼゼロ → 新トークン登録に top-up が必要
@@ -341,7 +341,7 @@ async fn test_ensure_ref_storage_setup_top_up_path() {
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_max_top_up_exceeded() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
 
     // available がゼロで top-up が必要だが、上限を 1 yocto に制限
@@ -370,7 +370,7 @@ async fn test_ensure_ref_storage_setup_max_top_up_exceeded() {
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_chunk_splitting() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
     // 15 個の stale トークン → 2 チャンク (10 + 5) に分割
     for i in 0..15 {
@@ -397,7 +397,7 @@ async fn test_ensure_ref_storage_setup_chunk_splitting() {
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_unregister_partial_failure() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
     let stale: TokenAccount = "stale.near".parse().unwrap();
     deposits.insert(stale, U128(0));
@@ -424,7 +424,7 @@ async fn test_ensure_ref_storage_setup_unregister_partial_failure() {
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_zero_cap() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
 
     let balance = StorageBalance {
@@ -501,7 +501,7 @@ async fn test_ensure_ref_storage_setup_cumulative_cap_exceeded() {
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_cumulative_cap_boundary() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
 
     // available = 0 → top-up が必須。needed ≈ per_token × 11/10。
@@ -533,7 +533,7 @@ async fn test_ensure_ref_storage_setup_cumulative_cap_boundary() {
         total: U128(2_000_000_000_000_000_000_000),
         available: U128(0),
     };
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(100));
     let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
     let ok_cap = NearToken::from_yoctonear(10_000_000_000_000_000_000_000_000);
@@ -608,7 +608,7 @@ async fn test_concurrent_ensure_no_double_topup() {
     use std::sync::Arc;
 
     let wnear: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(wnear.clone(), U128(100));
 
     let balance = StorageBalance {

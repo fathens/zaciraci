@@ -7,7 +7,7 @@ use logging::*;
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub mod wnear {
     use crate::Result;
@@ -126,10 +126,15 @@ pub async fn deposit<C: SendTx, W: Wallet>(
         .await
 }
 
+/// REF Finance に登録された account の deposit 一覧を取得する。
+///
+/// 戻り値は `BTreeMap` で決定的な iteration 順序を保証する。これにより
+/// storage planner の unregister 候補選択が実行毎に再現可能になり、
+/// ログ監査とテスト再現性が向上する。
 pub async fn get_deposits<C: ViewContract>(
     client: &C,
     account: &AccountId,
-) -> Result<HashMap<TokenAccount, U128>> {
+) -> Result<BTreeMap<TokenAccount, U128>> {
     let log = DEFAULT.new(o!(
         "function" => "get_deposits",
         "account" => format!("{}", account),
@@ -145,7 +150,7 @@ pub async fn get_deposits<C: ViewContract>(
         .view_contract(&CONTRACT_ADDRESS, METHOD_NAME, &args)
         .await?;
 
-    let deposits: HashMap<TokenAccount, U128> = serde_json::from_slice(&result.result)?;
+    let deposits: BTreeMap<TokenAccount, U128> = serde_json::from_slice(&result.result)?;
     trace!(log, "deposits"; "deposits" => ?deposits);
     Ok(deposits)
 }
