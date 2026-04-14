@@ -160,6 +160,16 @@ where
     let log = DEFAULT.new(o!("function" => "storage::ensure_ref_storage_setup"));
     let account = wallet.account_id();
 
+    // 呼び出し側の実装ミス（異常に多いトークンを 1 呼び出しで登録しようとする）を早期に検出。
+    // planner 側の `PlanError::TooManyTokens` と対で動くが、EmptyDeposits 分岐でも効く位置に
+    // 置くことで全経路で sanity guard が有効になる。
+    debug_assert!(
+        needed_tokens.len() <= planner::MAX_REGISTER_PER_CYCLE,
+        "needed_tokens ({}) exceeds MAX_REGISTER_PER_CYCLE ({})",
+        needed_tokens.len(),
+        planner::MAX_REGISTER_PER_CYCLE,
+    );
+
     // 同一アカウントでの並行実行を直列化（二重 deposit/top-up 防止）。
     // std::sync::Mutex guard は lock_for の内部で drop されるため await 跨ぎ問題は発生しない。
     let mutex = lock_for(account);

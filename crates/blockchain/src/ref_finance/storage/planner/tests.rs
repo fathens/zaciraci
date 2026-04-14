@@ -343,3 +343,40 @@ fn plan_arithmetic_overflow_safety_margin_multiplication() {
     let err = plan(&snap, &[token("b.near")], &[]).unwrap_err();
     assert!(matches!(err, PlanError::ArithmeticOverflow));
 }
+
+#[test]
+fn plan_too_many_tokens() {
+    // MAX_REGISTER_PER_CYCLE = 100 超過で TooManyTokens を返す。
+    let snap = snapshot_with_deposits(10_000, 5_000, 1_000, &[("anchor.near", 100)]);
+    let requested: Vec<TokenAccount> = (0..=MAX_REGISTER_PER_CYCLE)
+        .map(|i| token(&format!("new{i}.near")))
+        .collect();
+    assert_eq!(requested.len(), MAX_REGISTER_PER_CYCLE + 1);
+
+    let err = plan(&snap, &requested, &[]).unwrap_err();
+    match err {
+        PlanError::TooManyTokens { requested, max } => {
+            assert_eq!(requested, MAX_REGISTER_PER_CYCLE + 1);
+            assert_eq!(max, MAX_REGISTER_PER_CYCLE);
+        }
+        other => panic!("expected TooManyTokens, got {other:?}"),
+    }
+}
+
+#[test]
+fn plan_max_register_per_cycle_boundary_ok() {
+    // ちょうど上限値 (100) は通る（境界値テスト）。
+    let snap = snapshot_with_deposits(
+        u128::MAX / 2, // per_token を大きく保てる total
+        u128::MAX / 2, // available も十分
+        0,
+        &[("anchor.near", 100)],
+    );
+    let requested: Vec<TokenAccount> = (0..MAX_REGISTER_PER_CYCLE)
+        .map(|i| token(&format!("new{i}.near")))
+        .collect();
+    assert_eq!(requested.len(), MAX_REGISTER_PER_CYCLE);
+
+    let p = plan(&snap, &requested, &[]).unwrap();
+    assert_eq!(p.to_register.len(), MAX_REGISTER_PER_CYCLE);
+}

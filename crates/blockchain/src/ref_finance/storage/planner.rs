@@ -15,6 +15,19 @@ use super::{StorageBalance, StorageBalanceBounds};
 const SAFETY_MARGIN_NUMERATOR: u128 = 11;
 const SAFETY_MARGIN_DENOMINATOR: u128 = 10;
 
+/// 1 呼び出しで register できる新規トークン数の上限。
+///
+/// 値の根拠:
+///   `N × min_bound × 1.1 ≤ max_top_up` の理論上限は
+///   `max_top_up = 0.5 NEAR` / `min_bound = 1.25e21 yocto` で約 N=363。
+///   100 は 27.5% 利用にあたり、per_token_calc が floor を発動させる過渡状態でも
+///   cap に到達しない余裕を持たせた sanity guard。
+///   `storage.rs` 側の `CHUNK_SIZE = 10`（unregister チャンクサイズ）とも整合する。
+///
+/// 真の cap 保護は `storage.rs` 側の `remaining_cap` チェックが担う。本値はその前段で
+/// 明らかに過剰な同時登録量を `PlanError::TooManyTokens` として弾くためのもの。
+pub(super) const MAX_REGISTER_PER_CYCLE: usize = 100;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct StorageSnapshot {
     pub balance: StorageBalance,
@@ -56,6 +69,8 @@ pub(super) enum PlanError {
     EmptyDeposits,
     #[error("per_token arithmetic overflow")]
     ArithmeticOverflow,
+    #[error("too many tokens to register in one cycle: requested={requested} max={max}")]
+    TooManyTokens { requested: usize, max: usize },
 }
 
 /// storage 管理計画を立てる純関数。I/O を一切行わない。
@@ -125,6 +140,15 @@ pub(super) fn plan(
         .filter(|token| !deposits.contains_key(*token))
         .cloned()
         .collect();
+
+    // sanity guard: 同時登録トークン数が上限を超える場合は即エラー（累積 cap 保護の前段）。
+    // `needed_raw` 計算より前に判定することで `ArithmeticOverflow` より明確な診断を返す。
+    if to_register.len() > MAX_REGISTER_PER_CYCLE {
+        return Err(PlanError::TooManyTokens {
+            requested: to_register.len(),
+            max: MAX_REGISTER_PER_CYCLE,
+        });
+    }
 
     // 新規登録に必要な storage
     let needed_raw = per_token
