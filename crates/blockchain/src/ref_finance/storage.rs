@@ -21,6 +21,15 @@ pub fn keep_wnear_only() -> Vec<TokenAccount> {
     vec![WNEAR_TOKEN.clone()]
 }
 
+/// `ref_storage_max_top_up_yoctonear` を `NearToken` ドメイン型に変換して返す helper。
+///
+/// trade/arbitrage から `ensure_ref_storage_setup` を呼ぶ際に繰り返し書かれていた
+/// `NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear())` を一箇所に集約する。
+/// `common` crate に `near-sdk` 依存を追加しないため、ここ（blockchain crate）に置く。
+pub fn max_top_up_from_config(cfg: &dyn common::config::ConfigAccess) -> NearToken {
+    NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear())
+}
+
 /// ポートフォリオ運用中のトークン + 基軸通貨 WNEAR を保持対象とする keep list を作る。
 ///
 /// 次サイクルで再利用する予定のトークンを unregister してしまわないように使う。

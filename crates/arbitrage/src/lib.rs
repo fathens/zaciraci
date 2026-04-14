@@ -94,8 +94,7 @@ where
             path.validate_length()?;
         }
 
-        let max_top_up =
-            near_sdk::NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear());
+        let max_top_up = ref_finance::storage::max_top_up_from_config(cfg);
         // keep: 裁定取引は毎回異なるパスを使うため、基軸通貨の WNEAR のみ保持
         let keep = ref_finance::storage::keep_wnear_only();
         ref_finance::storage::ensure_ref_storage_setup(client, wallet, &tokens, &keep, max_top_up)

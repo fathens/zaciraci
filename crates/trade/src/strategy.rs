@@ -189,7 +189,7 @@ where
     debug!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
     // keep: ポートフォリオ運用中のトークンは次サイクルで使う可能性があるため解除しない
     let keep = blockchain::ref_finance::storage::keep_with_portfolio(&token_accounts);
-    let max_top_up = near_sdk::NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear());
+    let max_top_up = blockchain::ref_finance::storage::max_top_up_from_config(cfg);
     blockchain::ref_finance::storage::ensure_ref_storage_setup(
         client,
         wallet,

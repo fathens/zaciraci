@@ -155,7 +155,7 @@ where
     let tokens = path.all_tokens();
     // keep: 単発スワップでは基軸通貨の WNEAR のみ保持
     let keep = blockchain::ref_finance::storage::keep_wnear_only();
-    let max_top_up = near_sdk::NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear());
+    let max_top_up = blockchain::ref_finance::storage::max_top_up_from_config(cfg);
     blockchain::ref_finance::storage::ensure_ref_storage_setup(
         client, wallet, &tokens, &keep, max_top_up,
     )
