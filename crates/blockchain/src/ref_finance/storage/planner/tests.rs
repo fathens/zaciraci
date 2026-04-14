@@ -197,6 +197,22 @@ fn plan_used_less_than_min() {
 }
 
 #[test]
+fn plan_needed_raw_zero_no_margin_overflow() {
+    // requested が空なら to_register.len() == 0 → needed_raw = per_token * 0 = 0
+    // needed = 0 * 11 / 10 = 0 で overflow せず正常に 0 を返す境界ケース。
+    let snap = snapshot_with_deposits(
+        u128::MAX / 2, // per_token が大きくても
+        0,
+        0, // min=0 → usable = used = u128::MAX/2
+        &[("a.near", 100)],
+    );
+    let p = plan(&snap, &[], &[]).unwrap();
+    assert_eq!(p.needed.as_yoctonear(), 0);
+    assert!(p.to_register.is_empty());
+    assert!(p.to_unregister.is_empty());
+}
+
+#[test]
 fn plan_per_token_floor_applied() {
     // used <= min → usable = 0 → per_token_calc = 0 → floor 発動で per_token = min
     // needed = floor * to_register.len() * 11/10
