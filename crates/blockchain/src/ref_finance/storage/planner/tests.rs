@@ -48,7 +48,7 @@ fn plan_sufficient_available() {
     println!("plan: {:#?}", p);
     assert!(p.to_unregister.is_empty());
     assert_eq!(p.to_register, vec![token("c.near")]);
-    assert_eq!(p.top_up.as_yoctonear(), 0);
+    assert!(p.needed.as_yoctonear() <= 80_000);
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn plan_already_registered() {
 
     assert!(p.to_unregister.is_empty());
     assert!(p.to_register.is_empty());
-    assert_eq!(p.top_up.as_yoctonear(), 0);
+    assert_eq!(p.needed.as_yoctonear(), 0);
 }
 
 #[test]
@@ -85,8 +85,8 @@ fn plan_unregister_to_make_room() {
 }
 
 #[test]
-fn plan_top_up_needed() {
-    // 解除候補がないため top-up が必要
+fn plan_needed_exceeds_available() {
+    // 解除候補がないため追加 storage が必要（needed > available）
     let snap = snapshot_with_deposits(
         100_000,
         100, // ほぼ空き無し
@@ -99,7 +99,7 @@ fn plan_top_up_needed() {
     println!("plan: {:#?}", p);
     assert!(p.to_unregister.is_empty());
     assert_eq!(p.to_register, vec![token("new.near")]);
-    assert!(p.top_up.as_yoctonear() > 0);
+    assert!(p.needed.as_yoctonear() > 100);
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn plan_used_equals_min() {
     // per_token = 0 → needed = 0 → 枠は足りる扱い
     assert!(p.to_unregister.is_empty());
     assert_eq!(p.to_register, vec![token("b.near")]);
-    assert_eq!(p.top_up.as_yoctonear(), 0);
+    assert_eq!(p.needed.as_yoctonear(), 0);
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn plan_used_less_than_min() {
     let result = plan(&snap, &[token("b.near")], &[]);
     let p = result.unwrap();
 
-    assert_eq!(p.top_up.as_yoctonear(), 0);
+    assert_eq!(p.needed.as_yoctonear(), 0);
 }
 
 #[test]
@@ -205,34 +205,32 @@ fn plan_total_equals_available() {
     let result = plan(&snap, &[token("b.near")], &[]);
     let p = result.unwrap();
 
-    assert_eq!(p.top_up.as_yoctonear(), 0);
+    assert_eq!(p.needed.as_yoctonear(), 0);
 }
 
 #[test]
 fn plan_no_requested() {
-    // requested が空 → to_register 空、unregister も top-up も不要
+    // requested が空 → to_register 空、needed = 0
     let snap = snapshot_with_deposits(100_000, 100, 1_000, &[("stale.near", 0)]);
     let result = plan(&snap, &[], &[]);
     let p = result.unwrap();
 
     assert!(p.to_register.is_empty());
     assert!(p.to_unregister.is_empty());
-    assert_eq!(p.top_up.as_yoctonear(), 0);
+    assert_eq!(p.needed.as_yoctonear(), 0);
 }
 
 // --- 複合系 ---
 
 #[test]
-fn plan_unregister_plus_top_up() {
-    // 解除候補が 1 つだけで、解除しても不足が残り top-up も必要なケース
+fn plan_unregister_plus_needed() {
+    // 解除候補が 1 つだけで、解除しても不足が残り追加 storage が必要なケース
     // total=100_000, available=100, min=1_000, deposits=[a(100), stale(0)]
     // used = 99_900, usable = 98_900, per_token = ceil(98_900/2) = 49_450
     // to_register = [new1, new2] → needed_raw = 49_450 * 2 = 98_900
     // needed = 98_900 * 11 / 10 = 108_790
     // shortage = 108_790 - 100 = 108_690
     // unregister_needed = ceil(108_690 / 49_450) = 3 → 候補は 1 つだけなので 1 件解除
-    // recovered = 49_450 * 1 = 49_450
-    // remaining = 108_690 - 49_450 = 59_240 → top-up
     let snap = snapshot_with_deposits(
         100_000,
         100, // ほぼ空き無し
@@ -254,8 +252,8 @@ fn plan_unregister_plus_top_up() {
     assert_eq!(p.to_unregister, vec![token("stale.near")]);
     // 2 トークン新規登録
     assert_eq!(p.to_register.len(), 2);
-    // 解除だけでは足りず top-up も必要
-    assert!(p.top_up.as_yoctonear() > 0);
+    // needed は available より大きい
+    assert!(p.needed.as_yoctonear() > 100);
 }
 
 // --- エラー系 ---

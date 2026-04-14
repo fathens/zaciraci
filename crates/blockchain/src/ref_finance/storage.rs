@@ -186,8 +186,7 @@ where
     info!(log, "storage plan";
         "unregister" => p.to_unregister.len(),
         "register" => p.to_register.len(),
-        "needed" => p.needed,
-        "initial_top_up" => p.top_up.as_yoctonear(),
+        "needed" => p.needed.as_yoctonear(),
     );
 
     // 3. ゼロ残高の旧トークンを unregister（TOCTOU 再検証 + チャンク分割）
@@ -268,33 +267,34 @@ where
         .await?
         .ok_or_else(|| anyhow::anyhow!("storage balance disappeared after unregister"))?;
     let new_available = new_balance.available.0;
-    let actual_top_up = p.needed.saturating_sub(new_available);
+    let actual_top_up = p
+        .needed
+        .saturating_sub(NearToken::from_yoctonear(new_available));
 
     debug!(log, "top-up recalculated after unregister";
-        "needed" => p.needed,
+        "needed" => p.needed.as_yoctonear(),
         "new_available" => new_available,
-        "actual_top_up" => actual_top_up,
+        "actual_top_up" => actual_top_up.as_yoctonear(),
     );
 
     // 5. top-up が上限を超える場合はエラー
-    if actual_top_up > max_top_up.as_yoctonear() {
+    if actual_top_up > max_top_up {
         return Err(anyhow::anyhow!(
             "ref storage top-up {} yocto exceeds cap {} yocto",
-            actual_top_up,
+            actual_top_up.as_yoctonear(),
             max_top_up.as_yoctonear(),
         ));
     }
 
     // 6. top-up
-    if actual_top_up > 0 {
-        let top_up_amount = NearToken::from_yoctonear(actual_top_up);
+    if !actual_top_up.is_zero() {
         warn!(log, "ref storage top-up";
             "wallet" => %account,
-            "amount" => actual_top_up,
+            "amount" => actual_top_up.as_yoctonear(),
             "available_before" => new_available,
             "cap" => max_top_up.as_yoctonear(),
         );
-        deposit(client, wallet, top_up_amount, false)
+        deposit(client, wallet, actual_top_up, false)
             .await?
             .wait_for_success()
             .await?;

@@ -44,11 +44,10 @@ impl StorageSnapshot {
 pub(super) struct Plan {
     pub to_unregister: Vec<TokenAccount>,
     pub to_register: Vec<TokenAccount>,
-    pub top_up: NearToken,
     /// 新規トークン登録に必要な storage 総量（安全マージン適用済み）。
     /// unregister 後に balance_of を再取得して `needed.saturating_sub(new_available)` で
     /// 実際の top-up 額を再計算する際に使用する。
-    pub needed: u128,
+    pub needed: NearToken,
 }
 
 #[derive(Error, Debug)]
@@ -68,7 +67,7 @@ pub(super) enum PlanError {
 /// 返り値の `Plan`:
 /// - `to_unregister`: ゼロ残高かつ keep に含まれない既存登録を解除して枠を空ける
 /// - `to_register`: まだ登録されていない requested トークン
-/// - `top_up`: unregister だけでは足りない場合の追加 storage_deposit 額
+/// - `needed`: 新規登録に必要な storage 総量（安全マージン適用済み）
 pub(super) fn plan(
     snapshot: &StorageSnapshot,
     requested: &[TokenAccount],
@@ -119,22 +118,21 @@ pub(super) fn plan(
         .ok_or(PlanError::ArithmeticOverflow)?;
 
     // 安全マージン適用 (1.1x)
-    let needed = needed_raw
+    let needed_u128 = needed_raw
         .checked_mul(SAFETY_MARGIN_NUMERATOR)
         .ok_or(PlanError::ArithmeticOverflow)?
         .div_ceil(SAFETY_MARGIN_DENOMINATOR);
 
-    if needed <= available {
+    if needed_u128 <= available {
         // 余裕あり: unregister も top-up も不要
         return Ok(Plan {
             to_unregister: vec![],
             to_register,
-            top_up: NearToken::from_yoctonear(0),
-            needed,
+            needed: NearToken::from_yoctonear(needed_u128),
         });
     }
 
-    let shortage = needed
+    let shortage = needed_u128
         .checked_sub(available)
         .ok_or(PlanError::ArithmeticOverflow)?;
 
@@ -159,20 +157,10 @@ pub(super) fn plan(
     // 候補を必要数まで切り詰め
     unregister_candidates.truncate(unregister_needed);
 
-    // unregister で回収できる storage
-    let recovered = per_token
-        .checked_mul(unregister_candidates.len() as u128)
-        .ok_or(PlanError::ArithmeticOverflow)?;
-
-    // まだ足りない分を top-up
-    let remaining_shortage = shortage.saturating_sub(recovered);
-    let top_up = NearToken::from_yoctonear(remaining_shortage);
-
     Ok(Plan {
         to_unregister: unregister_candidates,
         to_register,
-        top_up,
-        needed,
+        needed: NearToken::from_yoctonear(needed_u128),
     })
 }
 
