@@ -1,5 +1,6 @@
 use crate::Result;
 use crate::jsonrpc::{SendTx, SentTx, ViewContract};
+use crate::ref_finance::token_account::WNEAR_TOKEN;
 use crate::ref_finance::{CONTRACT_ADDRESS, deposit};
 use crate::wallet::Wallet;
 use common::types::TokenAccount;
@@ -11,6 +12,26 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use tokio::sync::Mutex as AsyncMutex;
+
+/// 基軸通貨 WNEAR のみを保持対象とする keep list を作る。
+///
+/// 裁定取引や単発スワップなど、毎回トークン構成が変わるユースケースで、
+/// WNEAR 以外のゼロ残高トークンを unregister してよい場合に使う。
+pub fn keep_wnear_only() -> Vec<TokenAccount> {
+    vec![WNEAR_TOKEN.clone()]
+}
+
+/// ポートフォリオ運用中のトークン + 基軸通貨 WNEAR を保持対象とする keep list を作る。
+///
+/// 次サイクルで再利用する予定のトークンを unregister してしまわないように使う。
+/// WNEAR が `tokens` に含まれていなくても必ず追加される。
+pub fn keep_with_portfolio(tokens: &[TokenAccount]) -> Vec<TokenAccount> {
+    let mut keep = tokens.to_vec();
+    if !keep.contains(&WNEAR_TOKEN) {
+        keep.push(WNEAR_TOKEN.clone());
+    }
+    keep
+}
 
 /// 同一アカウントでの `ensure_ref_storage_setup` の重複実行を直列化するためのロックマップ。
 ///

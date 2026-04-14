@@ -188,8 +188,7 @@ where
 
     debug!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
     // keep: ポートフォリオ運用中のトークンは次サイクルで使う可能性があるため解除しない
-    let mut keep = token_accounts.clone();
-    keep.push(blockchain::ref_finance::token_account::WNEAR_TOKEN.clone());
+    let keep = blockchain::ref_finance::storage::keep_with_portfolio(&token_accounts);
     let max_top_up = near_sdk::NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear());
     blockchain::ref_finance::storage::ensure_ref_storage_setup(
         client,
