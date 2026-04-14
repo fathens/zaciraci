@@ -367,6 +367,9 @@ async fn test_ensure_ref_storage_setup_max_top_up_exceeded() {
 }
 
 // Test: ensure_ref_storage_setup - unregister with >10 stale tokens (chunk splitting)
+//
+// 15 stale + 多数の新規登録要求で unregister 候補を全て使い切る条件を作り、
+// chunk 分割（CHUNK_SIZE=10）で 2 chunk に分かれることを unregister_count で確認。
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_chunk_splitting() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
@@ -378,22 +381,38 @@ async fn test_ensure_ref_storage_setup_chunk_splitting() {
         deposits.insert(stale, U128(0));
     }
 
+    // available を極小にして shortage を大きくし、15 件全てを unregister 候補として使う
     let balance = StorageBalance {
-        total: U128(2_000_000_000_000_000_000_000),
-        available: U128(500_000_000_000_000_000_000),
+        total: U128(20_000_000_000_000_000_000_000),
+        available: U128(0),
     };
-    let new_token: TokenAccount = "new.near".parse().unwrap();
+    // 新規登録は多め（per_token * 20 の shortage を作る）
+    let new_tokens: Vec<TokenAccount> = (0..20)
+        .map(|i| format!("new{i}.near").parse().unwrap())
+        .collect();
     let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
     let wallet = MockWallet::new();
 
+    let mut requested = vec![token];
+    requested.extend(new_tokens);
+
     let keep = vec![WNEAR_TOKEN.clone()];
-    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
-    let result =
-        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(&client, &wallet, &requested, &keep, max_top_up).await;
     assert!(result.is_ok());
+    // 15 stale → chunk_size=10 → 2 chunks (10 + 5)
+    assert_eq!(
+        client.unregister_count.load(Ordering::Relaxed),
+        2,
+        "15 stale tokens should be split into 2 chunks (10 + 5)"
+    );
 }
 
 // Test: ensure_ref_storage_setup - unregister partial failure continues to register
+//
+// unregister の全チャンクが失敗しても、後続の top-up/register_tokens まで到達して
+// Ok を返すことを確認。MockStorageClient の unregister_count は呼び出し前に
+// fetch_add されるため、失敗チャンク数もカウントに含まれる。
 #[tokio::test]
 async fn test_ensure_ref_storage_setup_unregister_partial_failure() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
@@ -418,6 +437,12 @@ async fn test_ensure_ref_storage_setup_unregister_partial_failure() {
         ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
     // unregister 失敗後も register まで到達して正常完了
     assert!(result.is_ok());
+    // stale 1 つ → 1 チャンクの unregister が試行された
+    assert_eq!(
+        client.unregister_count.load(Ordering::Relaxed),
+        1,
+        "unregister should have been attempted once even on failure"
+    );
 }
 
 // Test: ensure_ref_storage_setup - max_top_up = 0 blocks any top-up
