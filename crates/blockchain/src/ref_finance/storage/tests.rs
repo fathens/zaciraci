@@ -10,7 +10,7 @@ use near_primitives::views::{
 use near_sdk::NearToken;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct MockStorage(StorageBalanceBounds);
 
@@ -48,12 +48,13 @@ struct MockWallet {
 
 impl MockWallet {
     fn new() -> Self {
-        let account_id: AccountId = "test.near".parse().unwrap();
-        let signer_result = InMemorySigner::from_seed(
-            account_id.clone(),
-            near_crypto::KeyType::ED25519,
-            "test.near",
-        );
+        Self::with_account_id("test.near")
+    }
+
+    fn with_account_id(account: &str) -> Self {
+        let account_id: AccountId = account.parse().unwrap();
+        let signer_result =
+            InMemorySigner::from_seed(account_id.clone(), near_crypto::KeyType::ED25519, account);
         let signer = match signer_result {
             near_crypto::Signer::InMemory(signer) => signer,
             _ => panic!("Expected InMemorySigner"),
@@ -97,6 +98,8 @@ struct MockStorageClient {
     deposits: HashMap<TokenAccount, U128>,
     should_fail_deposit: AtomicBool,
     should_fail_unregister: AtomicBool,
+    storage_deposit_count: AtomicUsize,
+    unregister_count: AtomicUsize,
 }
 
 impl MockStorageClient {
@@ -110,6 +113,8 @@ impl MockStorageClient {
             deposits: HashMap::new(),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
+            storage_deposit_count: AtomicUsize::new(0),
+            unregister_count: AtomicUsize::new(0),
         }
     }
 
@@ -123,6 +128,8 @@ impl MockStorageClient {
             deposits: HashMap::new(),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
+            storage_deposit_count: AtomicUsize::new(0),
+            unregister_count: AtomicUsize::new(0),
         }
     }
 
@@ -179,11 +186,13 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
         T: Sized + serde::Serialize,
     {
         if method_name == "unregister_tokens" {
+            self.unregister_count.fetch_add(1, Ordering::Relaxed);
             let should_fail = self.should_fail_unregister.load(Ordering::Relaxed);
             return Ok(MockSentTx { should_fail });
         }
         let should_fail = self.should_fail_deposit.load(Ordering::Relaxed);
         if method_name == "storage_deposit" && !should_fail {
+            self.storage_deposit_count.fetch_add(1, Ordering::Relaxed);
             // Simulate successful storage deposit
             *self.storage_balance.lock().unwrap() = Some(StorageBalance {
                 total: self.storage_bounds.min,
@@ -553,4 +562,115 @@ async fn test_ensure_ref_storage_setup_initial_fills_cap_then_topup_needed() {
     let new_token: TokenAccount = "new.near".parse().unwrap();
     let result = ensure_ref_storage_setup(&client, &wallet, &[new_token], &keep, max_top_up).await;
     assert!(result.is_ok());
+}
+
+// Test: ensure_ref_storage_setup - concurrent calls serialize initial deposit
+//
+// 同一 wallet で 4 並列起動 → 初期 deposit は 1 回しか実行されない。
+// 各テストでは static ロックマップ汚染を避けるため固有 account_id を使う。
+#[tokio::test]
+async fn test_concurrent_ensure_single_initial_deposit() {
+    use std::sync::Arc;
+
+    let client = Arc::new(MockStorageClient::new_unregistered());
+    let wallet = Arc::new(MockWallet::with_account_id("test-concurrent-initial.near"));
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let c = client.clone();
+        let w = wallet.clone();
+        let keep = vec![WNEAR_TOKEN.clone()];
+        let tokens = vec![WNEAR_TOKEN.clone()];
+        handles.push(tokio::spawn(async move {
+            ensure_ref_storage_setup(&*c, &*w, &tokens, &keep, max_top_up).await
+        }));
+    }
+
+    for h in handles {
+        let r = h.await.unwrap();
+        assert!(r.is_ok(), "spawn returned Err: {:?}", r);
+    }
+
+    // 初期 deposit は 1 回だけ。それ以降の呼び出しは既に登録済で register_tokens のみ。
+    assert_eq!(
+        client.storage_deposit_count.load(Ordering::Relaxed),
+        1,
+        "concurrent calls must not double-deposit initial registration"
+    );
+}
+
+// Test: ensure_ref_storage_setup - concurrent calls serialize top-up
+//
+// 登録済みアカウントで 4 並列起動、top-up 必要な状態 → top-up は最大 1 回。
+#[tokio::test]
+async fn test_concurrent_ensure_no_double_topup() {
+    use std::sync::Arc;
+
+    let wnear: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = HashMap::new();
+    deposits.insert(wnear.clone(), U128(100));
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+    let client = Arc::new(MockStorageClient::new_with_balance(balance).with_deposits(deposits));
+    let wallet = Arc::new(MockWallet::with_account_id("test-concurrent-topup.near"));
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let c = client.clone();
+        let w = wallet.clone();
+        let keep = vec![WNEAR_TOKEN.clone()];
+        let tokens = vec![wnear.clone(), new_token.clone()];
+        handles.push(tokio::spawn(async move {
+            ensure_ref_storage_setup(&*c, &*w, &tokens, &keep, max_top_up).await
+        }));
+    }
+
+    for h in handles {
+        let r = h.await.unwrap();
+        assert!(r.is_ok(), "spawn returned Err: {:?}", r);
+    }
+
+    // ロックにより直列化されるため、top-up は最大でも 1 回。2 回目以降は register のみ。
+    let count = client.storage_deposit_count.load(Ordering::Relaxed);
+    assert!(
+        count <= 1,
+        "concurrent calls must not double top-up; actual count = {}",
+        count
+    );
+}
+
+// Test: ensure_ref_storage_setup - different accounts can run concurrently
+//
+// 別アカウント → 別ロックなので並行実行される。両方とも成功することを確認。
+#[tokio::test]
+async fn test_concurrent_different_accounts_parallel() {
+    use std::sync::Arc;
+
+    let client_a = Arc::new(MockStorageClient::new_unregistered());
+    let client_b = Arc::new(MockStorageClient::new_unregistered());
+    let wallet_a = Arc::new(MockWallet::with_account_id(
+        "test-concurrent-parallel-a.near",
+    ));
+    let wallet_b = Arc::new(MockWallet::with_account_id(
+        "test-concurrent-parallel-b.near",
+    ));
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+
+    let keep_a = vec![WNEAR_TOKEN.clone()];
+    let keep_b = vec![WNEAR_TOKEN.clone()];
+    let tokens_a = vec![WNEAR_TOKEN.clone()];
+    let tokens_b = vec![WNEAR_TOKEN.clone()];
+
+    let (r_a, r_b) = tokio::join!(
+        ensure_ref_storage_setup(&*client_a, &*wallet_a, &tokens_a, &keep_a, max_top_up),
+        ensure_ref_storage_setup(&*client_b, &*wallet_b, &tokens_b, &keep_b, max_top_up),
+    );
+    assert!(r_a.is_ok());
+    assert!(r_b.is_ok());
 }

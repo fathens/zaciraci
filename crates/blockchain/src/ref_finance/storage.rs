@@ -8,6 +8,34 @@ use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use tokio::sync::Mutex as AsyncMutex;
+
+/// 同一アカウントでの `ensure_ref_storage_setup` の重複実行を直列化するためのロックマップ。
+///
+/// backend では `trade::run` と `arbitrage::run` が同一ウォレットで並行起動されるため、
+/// snapshot → unregister → top-up → register の一連が atomic でないと二重 initial deposit
+/// や二重 top-up が発生する。account 単位で tokio::sync::Mutex を引き当て、
+/// `ensure_ref_storage_setup` 全体を逐次化する。
+///
+/// 外側 `StdMutex` はマップ更新のみ保護（await を跨がない短命ロック）、内側
+/// `tokio::sync::Mutex` がアカウント単位の await 跨ぎロック。異なる account 間は並行可。
+static REF_STORAGE_LOCKS: LazyLock<StdMutex<HashMap<AccountId, Arc<AsyncMutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+/// `account` 用の非同期ロックを取得する。
+///
+/// `StdMutex` ガードは本関数のスコープ内で drop されるため、呼び出し元が返り値の
+/// `Arc<AsyncMutex<()>>` を await するとき `clippy::await_holding_lock` には触れない。
+fn lock_for(account: &AccountId) -> Arc<AsyncMutex<()>> {
+    let mut map = REF_STORAGE_LOCKS
+        .lock()
+        .expect("REF_STORAGE_LOCKS poisoned");
+    map.entry(account.clone())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct StorageBalanceBounds {
@@ -110,6 +138,11 @@ where
 {
     let log = DEFAULT.new(o!("function" => "storage::ensure_ref_storage_setup"));
     let account = wallet.account_id();
+
+    // 同一アカウントでの並行実行を直列化（二重 deposit/top-up 防止）。
+    // std::sync::Mutex guard は lock_for の内部で drop されるため await 跨ぎ問題は発生しない。
+    let mutex = lock_for(account);
+    let _guard = mutex.lock().await;
 
     info!(log, "ref storage ensure start";
         "account" => %account,
