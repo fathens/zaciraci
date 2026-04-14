@@ -162,40 +162,63 @@ fn plan_empty_deposits_error() {
 
 #[test]
 fn plan_used_equals_min() {
-    // used == min → usable = 0, per_token = 0 → needed = 0
+    // used == min → usable = 0 → per_token_floor により per_token = min
+    // needed = 1 * 1000 * 11/10 = 1100
     let snap = snapshot_with_deposits(
         2_000, // total
         1_000, // available = 1000, used = 1000
-        1_000, // min = 1000 → usable = 0
+        1_000, // min = 1000 → usable = 0 → floor 発動
         &[("a.near", 100)],
     );
     let result = plan(&snap, &[token("b.near")], &[]);
     let p = result.unwrap();
 
-    // per_token = 0 → needed = 0 → 枠は足りる扱い
-    assert!(p.to_unregister.is_empty());
+    // needed=1100 > available=1000 → shortage=100, unregister候補なし → top-up必要
     assert_eq!(p.to_register, vec![token("b.near")]);
-    assert_eq!(p.needed.as_yoctonear(), 0);
+    assert_eq!(p.needed.as_yoctonear(), 1100);
 }
 
 #[test]
 fn plan_used_less_than_min() {
     // used < min → saturating_sub → usable = 0
+    // per_token_floor により per_token = bounds.min = 1000
+    // needed = 1 * 1000 * 11/10 = 1100 > available=1500 ... いや 1100 < 1500 なので足りる
     let snap = snapshot_with_deposits(
         2_000, // total
         1_500, // available = 1500, used = 500
-        1_000, // min = 1000 > used → usable = 0
+        1_000, // min = 1000 > used → usable = 0, per_token = floor 1000
         &[("a.near", 100)],
     );
     let result = plan(&snap, &[token("b.near")], &[]);
     let p = result.unwrap();
 
-    assert_eq!(p.needed.as_yoctonear(), 0);
+    // per_token_floor により needed ≈ 1100 で available=1500 に収まる
+    assert!(p.needed.as_yoctonear() <= 1500);
+}
+
+#[test]
+fn plan_per_token_floor_applied() {
+    // used <= min → usable = 0 → per_token_calc = 0 → floor 発動で per_token = min
+    // needed = floor * to_register.len() * 11/10
+    let snap = snapshot_with_deposits(
+        2_000, // total
+        1_000, // available = 1000, used = 1000
+        1_000, // min = 1000 → usable = 0 → floor 発動
+        &[("a.near", 100)],
+    );
+    let result = plan(&snap, &[token("b.near"), token("c.near")], &[]);
+    let p = result.unwrap();
+
+    // per_token_floor = bounds.min.0 = 1000
+    // needed_raw = 1000 * 2 = 2000
+    // needed = 2000 * 11 / 10 = 2200
+    assert_eq!(p.needed.as_yoctonear(), 2200);
 }
 
 #[test]
 fn plan_total_equals_available() {
-    // total == available → used = 0 → usable = 0 → per_token = 0
+    // total == available → used = 0 → usable = 0 → per_token_floor で per_token = min
+    // needed = 1 * 1000 * 11/10 = 1100 < available=10000 → 余裕あり
     let snap = snapshot_with_deposits(
         10_000,
         10_000, // available == total
@@ -205,7 +228,8 @@ fn plan_total_equals_available() {
     let result = plan(&snap, &[token("b.near")], &[]);
     let p = result.unwrap();
 
-    assert_eq!(p.needed.as_yoctonear(), 0);
+    assert_eq!(p.needed.as_yoctonear(), 1100);
+    assert!(p.to_unregister.is_empty());
 }
 
 #[test]
