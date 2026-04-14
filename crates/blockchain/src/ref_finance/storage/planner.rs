@@ -108,11 +108,16 @@ pub(super) fn plan(
     // なる。このままだと needed = 0 で register_tokens を試行し、contract 側で storage
     // 不足として拒否されてガスを浪費する（次サイクルで自然回復するが stall の間は無駄）。
     //
-    // snapshot.bounds.min.0 を floor として適用することで、deposits_len が小さいうちは
-    // contract が要求する最小コストに合わせた安全な見積もりに切り上がる。定常運用
-    // （deposits 10+ 個）では per_token_calc >> bounds.min.0 なので floor は発動しない。
+    // `min_bound` は本来「アカウント登録 1 件分の最小コスト」であり per-token の下限として
+    // 意味論的には厳密ではないが、この過渡状態で契約要求の最小コストにまで持ち上げる
+    // 保守的下限として流用する。定常運用（deposits 10+ 個）では per_token_calc >>
+    // min_bound なので floor は発動せず、以後この流用は自然失効する。
+    //
+    // cap 到達リスク: `max_top_up=0.5 NEAR` / `min_bound=1.25e21 yocto` のとき
+    // `N × min_bound × 1.1 ≤ max_top_up` を満たす最大 N は約 363。
+    // MAX_REGISTER_PER_CYCLE 等の hard guard があれば実運用では余裕。
     let per_token_calc = usable.div_ceil(deposits_len.get() as u128);
-    let per_token = per_token_calc.max(snapshot.bounds.min.0);
+    let per_token = per_token_calc.max(min_bound);
 
     // 新規登録が必要なトークン
     let to_register: Vec<TokenAccount> = requested
