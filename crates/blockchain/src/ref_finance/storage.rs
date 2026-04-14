@@ -329,15 +329,17 @@ where
 
     // 4. unregister 後の実際の available で top-up 額を再計算
     //
-    // p.needed は planner が初期 snapshot から推定した値であり、unregister による
-    // available 変動は反映されていない。saturating_sub により:
-    // - 過大評価（needed が実際より大きい）→ top-up 多めに倒れる安全側
-    // - 過小評価（needed が実際より小さい）→ 後段の register_tokens が
-    //   コントラクト側で storage 不足として拒否されるためセーフティネットとなる
-    // いずれの場合も資金損失はなく、サイクルが失敗しても次サイクルで
-    // balance_of を再取得して再計算される。
+    // `p.needed` は planner が初期 snapshot から推定した値（`planner::Plan::needed` の
+    // doc 参照）で、unregister で `deposits_len` が減った影響は反映されていない。
+    // saturating_sub は `available` 増加のみ反映するため:
     //
-    // unregister で available が needed 以上に増えた場合、saturating_sub により
+    // - needed 過大評価（per_token が実際より大きく見積もられた）→ top-up 多め、安全側
+    // - needed 過小評価（unregister 後 per_token が上昇し実需が増えた）→ top-up 不足で
+    //   register_tokens がコントラクト拒否 → Err を上位へ。次サイクルで
+    //   `balance_of` を再取得した新しい snapshot から planner が再計算するため
+    //   self-healing する（資金損失なし）。
+    //
+    // unregister で `available` が `needed` 以上に増えた場合、saturating_sub により
     // actual_top_up = 0 となる。これは「top-up 不要」という正しい動作。
     let new_balance = balance_of(client, account)
         .await?

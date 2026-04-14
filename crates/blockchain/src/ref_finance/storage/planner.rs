@@ -57,9 +57,18 @@ impl StorageSnapshot {
 pub(super) struct Plan {
     pub to_unregister: Vec<TokenAccount>,
     pub to_register: Vec<TokenAccount>,
-    /// 新規トークン登録に必要な storage 総量（安全マージン適用済み）。
-    /// unregister 後に balance_of を再取得して `needed.saturating_sub(new_available)` で
-    /// 実際の top-up 額を再計算する際に使用する。
+    /// 新規トークン登録に必要な storage 総量の見積もり（安全マージン 1.1 倍を適用済み）。
+    ///
+    /// この値は `plan()` 実行時点の snapshot（unregister *前*）から算出された
+    /// `per_token × to_register.len() × 1.1` の stale な見積もり。unregister で
+    /// `deposits_len` が減少すると実際の per_token はわずかに上昇するが、それは
+    /// ここでは反映されない。
+    ///
+    /// 実際の top-up 額は `ensure_ref_storage_setup` 側（`storage.rs` ステップ 4）で
+    /// `balance_of` を再取得した `new_available` を用いて
+    /// `needed.saturating_sub(NearToken::from_yoctonear(new_available))` として補正される
+    /// ため、ここで stale なままでも最終的な整合性は保たれる。詳細は `storage.rs` の
+    /// ステップ 4 コメントを参照。
     pub needed: NearToken,
 }
 
