@@ -231,7 +231,11 @@ where
             return Ok(());
         }
         Err(e) => {
-            return Err(anyhow::anyhow!("storage planner error: {}", e));
+            // thiserror の自動 `From<PlanError> for anyhow::Error` を経由することで
+            // variant 情報と source chain を保持したまま伝播する。
+            // `EmptyDeposits` は上の arm で正常系として処理されるため、ここに到達するのは
+            // `ArithmeticOverflow` / `TooManyTokens` など真のエラーのみ。
+            return Err(e.into());
         }
     };
 
