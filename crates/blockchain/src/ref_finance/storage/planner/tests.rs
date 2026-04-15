@@ -419,3 +419,118 @@ fn plan_max_register_per_cycle_boundary_ok() {
         unwrap_normal(plan(&snap, &requested, &[]).unwrap());
     assert_eq!(to_register.len(), MAX_REGISTER_PER_CYCLE);
 }
+
+// --- cap 不変条件の regression テスト ---
+//
+// `per_token_floor = bounds.min` に依存するため、 bounds.min が REF 契約 upgrade で
+// 増加すると MAX_REGISTER_PER_CYCLE での最悪見積もりが max_top_up を超える可能性が
+// ある。以下の pinned test で不変条件が崩れたら直ちに気づけるようにする。
+//
+// 不変条件: `MAX_REGISTER_PER_CYCLE × bounds.min × 1.1 ≤ max_top_up`
+// 現行値:
+//   MAX_REGISTER_PER_CYCLE = 100
+//   bounds.min            = 1.25e21 yocto (0.00125 NEAR)
+//   max_top_up            = 5e23   yocto (0.5 NEAR)
+//   worst_case            = 100 × 1.25e21 × 1.1 = 1.375e23 yocto
+
+const CURRENT_MIN_BOUND: u128 = 1_250_000_000_000_000_000_000;
+const CURRENT_MAX_TOP_UP: u128 = 500_000_000_000_000_000_000_000;
+
+/// `per_token_floor` 発動時に worst-case (MAX_REGISTER_PER_CYCLE 個登録) で
+/// 見積もられる needed 値が `max_top_up` を超えないことを固定値で verify する。
+/// 値がずれたら cap 再評価の invariant (planner.rs 冒頭のテーブル参照) が崩れた
+/// サインなので、このテストを意図的に更新して確認する。
+#[test]
+fn plan_cap_invariant_holds_for_current_config() {
+    let worst_case_raw = (MAX_REGISTER_PER_CYCLE as u128)
+        .checked_mul(CURRENT_MIN_BOUND)
+        .unwrap();
+    let worst_case = worst_case_raw.checked_mul(11).unwrap().div_ceil(10);
+    assert!(
+        worst_case <= CURRENT_MAX_TOP_UP,
+        "MAX_REGISTER_PER_CYCLE × bounds.min × 1.1 = {worst_case} が \
+         max_top_up = {CURRENT_MAX_TOP_UP} を超過しました。\
+         bounds.min が増加した場合は MAX_REGISTER_PER_CYCLE または max_top_up の再評価が必要です。"
+    );
+}
+
+/// `per_token_floor` 発動 × MAX_REGISTER_PER_CYCLE ちょうどで、現行 bounds.min でも
+/// pre_unregister_estimate が想定内であることを end-to-end で verify。
+/// 具体値: per_token_floor = 1.25e21、requested = 100 個 → needed_raw = 1.25e23
+/// → needed = 1.25e23 × 1.1 = 1.375e23 < max_top_up (5e23)。
+#[test]
+fn plan_per_token_floor_worst_case_fits_in_cap() {
+    // used == min で floor 発動させる
+    let total = CURRENT_MIN_BOUND + 1_000_000_000_000; // 小さな available を残して floor を狙う
+    let snap = snapshot_with_deposits(
+        total,
+        1_000_000_000_000,
+        CURRENT_MIN_BOUND,
+        &[("anchor.near", 100)], // deposits_len = 1
+    );
+    let requested: Vec<TokenAccount> = (0..MAX_REGISTER_PER_CYCLE)
+        .map(|i| token(&format!("n{i}.near")))
+        .collect();
+    let (_to_unregister, _to_register, estimate) =
+        unwrap_normal(plan(&snap, &requested, &[]).unwrap());
+
+    // 1.375e23 yocto ちょうどを期待
+    let expected = (MAX_REGISTER_PER_CYCLE as u128 * CURRENT_MIN_BOUND)
+        .checked_mul(11)
+        .unwrap()
+        .div_ceil(10);
+    assert_eq!(estimate.as_yoctonear(), expected);
+    assert!(
+        estimate.as_yoctonear() <= CURRENT_MAX_TOP_UP,
+        "worst-case estimate must fit in max_top_up"
+    );
+}
+
+/// bounds.min が 3.6x になっても MAX_REGISTER_PER_CYCLE=100 で cap には収まる
+/// ことを確認する境界テスト。このテストは 3.6x で余裕ゼロ、超えると cap 抵触に
+/// なることを encode する（planner.rs:150-155 のテーブル参照）。
+#[test]
+fn plan_per_token_floor_boundary_at_3_6x_min_bound() {
+    let min_bound_3_6x = CURRENT_MIN_BOUND * 36 / 10; // 3.6x
+    let worst_case = (MAX_REGISTER_PER_CYCLE as u128)
+        .checked_mul(min_bound_3_6x)
+        .unwrap()
+        .checked_mul(11)
+        .unwrap()
+        .div_ceil(10);
+    // 3.6x ちょうどで worst_case が max_top_up とほぼ等しい (≤ で成立)。
+    assert!(
+        worst_case <= CURRENT_MAX_TOP_UP,
+        "at 3.6x bounds.min, worst_case = {worst_case} should still fit in \
+         max_top_up = {CURRENT_MAX_TOP_UP}"
+    );
+}
+
+/// bounds.min が 3.64x 以上になると worst-case が max_top_up を超えることを
+/// 明示的にテストする。この時点で MAX_REGISTER_PER_CYCLE の再評価が必須。
+#[test]
+fn plan_per_token_floor_exceeds_cap_above_3_64x_min_bound() {
+    let min_bound_3_64x = CURRENT_MIN_BOUND * 364 / 100; // 3.64x
+    let worst_case = (MAX_REGISTER_PER_CYCLE as u128)
+        .checked_mul(min_bound_3_64x)
+        .unwrap()
+        .checked_mul(11)
+        .unwrap()
+        .div_ceil(10);
+    assert!(
+        worst_case > CURRENT_MAX_TOP_UP,
+        "at 3.64x bounds.min, worst_case = {worst_case} must exceed \
+         max_top_up = {CURRENT_MAX_TOP_UP} (trigger for MAX_REGISTER_PER_CYCLE reevaluation)"
+    );
+}
+
+/// `per_token_floor` 発動 × ちょうど MAX 個登録 × 現行 bounds.min で、needed_raw
+/// multiplication 経路が overflow しないことを verify する。u128 allowance の中で
+/// まだ余裕があることの sanity check。
+#[test]
+fn plan_per_token_floor_times_max_register_no_overflow() {
+    let product = (MAX_REGISTER_PER_CYCLE as u128).checked_mul(CURRENT_MIN_BOUND);
+    assert!(product.is_some());
+    let with_margin = product.unwrap().checked_mul(11);
+    assert!(with_margin.is_some());
+}

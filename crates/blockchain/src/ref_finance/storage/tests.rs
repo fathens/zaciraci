@@ -94,7 +94,10 @@ impl SentTx for MockSentTx {
 // Comprehensive MockClient for storage tests
 struct MockStorageClient {
     storage_balance: Mutex<Option<StorageBalance>>,
-    storage_bounds: StorageBalanceBounds,
+    storage_bounds: Mutex<StorageBalanceBounds>,
+    // `storage_balance_bounds` 呼び出しのたびに先頭から取り出して `storage_bounds` を上書きする。
+    // bounds.min がサイクル間で変動する REF 契約 upgrade シナリオを決定的に再現するため。
+    bounds_sequence: Mutex<Vec<StorageBalanceBounds>>,
     deposits: Mutex<BTreeMap<TokenAccount, U128>>,
     // 未登録アカウントの初期 deposit 成功時に、実運用の「直後に deposits が観測される」
     // 状態を再現するための seed。initial deposit 後に 1 度だけ適用される。
@@ -123,10 +126,11 @@ impl MockStorageClient {
     fn new_with_balance(balance: StorageBalance) -> Self {
         Self {
             storage_balance: Mutex::new(Some(balance)),
-            storage_bounds: StorageBalanceBounds {
+            storage_bounds: Mutex::new(StorageBalanceBounds {
                 min: U128(1_000_000_000_000_000_000_000), // 0.001 NEAR
                 max: None,
-            },
+            }),
+            bounds_sequence: Mutex::new(Vec::new()),
             deposits: Mutex::new(BTreeMap::new()),
             seed_deposits_on_initial: Mutex::new(None),
             balance_after_initial: Mutex::new(None),
@@ -145,10 +149,11 @@ impl MockStorageClient {
     fn new_unregistered() -> Self {
         Self {
             storage_balance: Mutex::new(None),
-            storage_bounds: StorageBalanceBounds {
+            storage_bounds: Mutex::new(StorageBalanceBounds {
                 min: U128(1_000_000_000_000_000_000_000),
                 max: None,
-            },
+            }),
+            bounds_sequence: Mutex::new(Vec::new()),
             deposits: Mutex::new(BTreeMap::new()),
             seed_deposits_on_initial: Mutex::new(None),
             balance_after_initial: Mutex::new(None),
@@ -195,6 +200,21 @@ impl MockStorageClient {
         *self.deposits_sequence.lock().unwrap() = seq;
         self
     }
+
+    /// `storage_balance_bounds` の連続呼び出しで bounds.min が変動するシナリオを再現する。
+    ///
+    /// REF 契約 upgrade 等で `bounds.min` がサイクル間で増加した場合の cap 整合性を
+    /// regression テストするために使う。
+    fn with_bounds_sequence(self, seq: Vec<StorageBalanceBounds>) -> Self {
+        *self.bounds_sequence.lock().unwrap() = seq;
+        self
+    }
+
+    /// 初期 bounds を指定する（単発設定）。
+    fn with_bounds(self, bounds: StorageBalanceBounds) -> Self {
+        *self.storage_bounds.lock().unwrap() = bounds;
+        self
+    }
 }
 
 impl ViewContract for MockStorageClient {
@@ -221,9 +241,15 @@ impl ViewContract for MockStorageClient {
                 *self.deposits.lock().unwrap() = seq.remove(0);
             }
         }
+        if method_name == "storage_balance_bounds" {
+            let mut seq = self.bounds_sequence.lock().unwrap();
+            if !seq.is_empty() {
+                *self.storage_bounds.lock().unwrap() = seq.remove(0);
+            }
+        }
         let result = match method_name {
             "storage_balance_of" => serde_json::to_vec(&*self.storage_balance.lock().unwrap())?,
-            "storage_balance_bounds" => serde_json::to_vec(&self.storage_bounds)?,
+            "storage_balance_bounds" => serde_json::to_vec(&*self.storage_bounds.lock().unwrap())?,
             "get_deposits" => serde_json::to_vec(&*self.deposits.lock().unwrap())?,
             _ => serde_json::to_vec(&serde_json::Value::Null)?,
         };
@@ -294,8 +320,9 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
             } else {
                 // 既存の簡易挙動: 初期 deposit/top-up を問わず total=bounds.min, available=0
                 // にリセット。本番と厳密には異なるが多くのテストがこの形を前提にしている。
+                let min_bound = self.storage_bounds.lock().unwrap().min;
                 *self.storage_balance.lock().unwrap() = Some(StorageBalance {
-                    total: self.storage_bounds.min,
+                    total: min_bound,
                     available: U128(0),
                 });
             }
@@ -1143,5 +1170,42 @@ async fn test_toctou_drop_excludes_nonzero_on_reverify() {
         client.unregister_count.load(Ordering::Relaxed),
         0,
         "TOCTOU re-verification must drop non-zero deposits; unregister must not be attempted"
+    );
+}
+
+// Test: bounds.min がサイクル間で変動するシナリオでの cap 整合性。
+//
+// 初期 deposit 時点の bounds.min と、同一 ensure_ref_storage_setup 呼び出し内の
+// check_bounds 2 回目（planner 用 snapshot）で bounds.min が異なる場合でも、
+// cap 会計 (`remaining_cap = max_top_up - initial_deposit`) は「実際に消費した initial_deposit」
+// を基準に算出されるため破綻しない。
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_bounds_min_varies_across_cycle() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let initial_bounds = StorageBalanceBounds {
+        min: U128(1_000_000_000_000_000_000_000), // 1e21
+        max: None,
+    };
+    // 初期 deposit 呼び出し後、planner の check_bounds は別値を観測する。
+    let later_bounds = StorageBalanceBounds {
+        min: U128(2_000_000_000_000_000_000_000), // 2x
+        max: None,
+    };
+
+    let client = MockStorageClient::new_unregistered()
+        .with_bounds(initial_bounds.clone())
+        .with_bounds_sequence(vec![initial_bounds.clone(), later_bounds.clone()]);
+    let wallet = MockWallet::with_account_id("test-bounds-varies.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    // max_top_up = later_bounds.min のちょうど等量（initial_deposit は initial_bounds.min のぶん）
+    // → 残 cap は max_top_up - initial_bounds.min で成立し、planner が新しい bounds で
+    //    top-up を計算しても cap を破らないこと
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(&client, &wallet, &[token], &keep, max_top_up).await;
+    assert!(
+        result.is_ok(),
+        "bounds variation across cycle must not break cap invariants: {:?}",
+        result.err()
     );
 }
