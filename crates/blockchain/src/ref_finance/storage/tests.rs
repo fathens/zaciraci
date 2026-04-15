@@ -108,6 +108,11 @@ struct MockStorageClient {
     should_fail_register: AtomicBool,
     should_fail_balance_of: AtomicBool,
     storage_deposit_count: AtomicUsize,
+    // 累積 top-up 額（yocto）。各 `storage_deposit` 呼び出しで attached_deposit を加算する。
+    // 初期 deposit も top-up もすべて加算され、G2 の複数サイクル累積 cap アサーション
+    // (`cumulative_top_up <= max_top_up × cycles`) を検証するために使う。
+    // u128 は AtomicU128 が stable にないため Mutex で保護する。
+    total_storage_deposit_yocto: Mutex<u128>,
     unregister_count: AtomicUsize,
     // register_tokens 呼び出し時の attached_deposit を記録する。cap-bypass の安全前提
     // （attached_deposit = 1 yocto）が壊れた場合にテストで検出できるよう、常に
@@ -143,6 +148,7 @@ impl MockStorageClient {
             should_fail_register: AtomicBool::new(false),
             should_fail_balance_of: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
+            total_storage_deposit_yocto: Mutex::new(0),
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
             deposits_sequence: Mutex::new(Vec::new()),
@@ -167,6 +173,7 @@ impl MockStorageClient {
             should_fail_register: AtomicBool::new(false),
             should_fail_balance_of: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
+            total_storage_deposit_yocto: Mutex::new(0),
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
             deposits_sequence: Mutex::new(Vec::new()),
@@ -220,6 +227,12 @@ impl MockStorageClient {
     fn with_bounds(self, bounds: StorageBalanceBounds) -> Self {
         *self.storage_bounds.lock().unwrap() = bounds;
         self
+    }
+
+    /// `should_fail_register` を後からトグルするための setter。
+    /// サイクル間で register_tokens の成否を切り替えるテストで使う。
+    fn set_should_fail_register(&self, fail: bool) {
+        self.should_fail_register.store(fail, Ordering::Relaxed);
     }
 
     /// `storage_balance_of` の連続呼び出しで `available` 等が変化するシナリオを再現する。
@@ -322,6 +335,7 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
         let should_fail = self.should_fail_deposit.load(Ordering::Relaxed);
         if method_name == "storage_deposit" && !should_fail {
             self.storage_deposit_count.fetch_add(1, Ordering::Relaxed);
+            *self.total_storage_deposit_yocto.lock().unwrap() += _deposit.as_yoctonear();
 
             // 初期 deposit（未登録 → 登録直後）で seed が指定されていれば、
             // 実運用の「初期 deposit 直後に deposits が観測される」状態を再現する。
@@ -1318,5 +1332,159 @@ async fn test_ensure_ref_storage_setup_unregister_frees_enough_to_skip_topup() {
     assert!(
         client.register_deposit_captured.lock().unwrap().is_some(),
         "register_tokens must still run for the new token"
+    );
+}
+
+/// register_tokens 失敗後に次サイクルで self-healing することを pin する。
+///
+/// シナリオ:
+///   - cycle 1: deposits がタイトで top-up が必要。top-up は成功するが
+///              register_tokens が契約拒否される想定 (`should_fail_register=true`)。
+///              `ensure_ref_storage_setup` は Err を返す。
+///   - cycle 2: `should_fail_register=false` に切り替え、balance_sequence で十分な
+///              available を持つ新しい balance を注入。planner は top-up 不要と判断し、
+///              register_tokens のみ実行して Ok を返す。
+///
+/// 累積 cap アサーション (3 点):
+///   (1) `cumulative_top_up_yoctonear <= max_top_up × 2`
+///       2 サイクル分の単独 cap を超えないこと。cycle 1 で top-up 発動、cycle 2 は
+///       self-healing で top-up 不要、という想定下で総支出がタイトに抑えられることを pin。
+///   (2) `final_account_storage_total <= max_top_up + bounds.min`
+///       storage.total が 1 サイクル cap ＋ 初期登録分を越えて肥大化しないこと。
+///   (3) `final_snapshot_total >= initial_snapshot_total`
+///       いずれのサイクルでも refund で残高が減っていないこと（単調非減少）。
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_register_fail_self_heal_across_cycles() {
+    let anchor: TokenAccount = "anchor.near".parse().unwrap();
+    let stale: TokenAccount = "stale.near".parse().unwrap();
+    let t1: TokenAccount = "new.near".parse().unwrap();
+
+    let mut deposits = BTreeMap::new();
+    deposits.insert(anchor, U128(1_000));
+    deposits.insert(stale, U128(0));
+
+    // cycle 1: タイトな available → top-up が必要
+    let cycle1_initial = StorageBalance {
+        total: U128(12_000),
+        available: U128(10),
+    };
+    // cycle 1 unregister 後: available 増加するが shortage は残る
+    let cycle1_post_unregister = StorageBalance {
+        total: U128(12_000),
+        available: U128(2_000),
+    };
+    // cycle 2: self-healing 後の balance。cycle 1 top-up ぶん + 追加余裕で
+    // planner が top-up 不要と判断するだけの available を確保する。
+    let cycle2_balance = StorageBalance {
+        total: U128(1_000_000),
+        available: U128(500_000),
+    };
+
+    let client = MockStorageClient::new_with_balance(cycle1_initial.clone())
+        .with_deposits(deposits)
+        .with_bounds(StorageBalanceBounds {
+            min: U128(1_000),
+            max: None,
+        })
+        .with_balance_sequence(vec![
+            Some(cycle1_initial.clone()), // cycle1 call 1: 登録確認
+            Some(cycle1_initial.clone()), // cycle1 call 2: snapshot
+            Some(cycle1_post_unregister), // cycle1 call 3: post-unregister
+            Some(cycle2_balance.clone()), // cycle2 call 1: 登録確認
+            Some(cycle2_balance.clone()), // cycle2 call 2: snapshot
+            Some(cycle2_balance.clone()), // cycle2 call 3: post-unregister (unregister なし)
+        ]);
+    let wallet = MockWallet::with_account_id("test-register-fail-self-heal.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    // 現行 default 0.5 NEAR と同等（十分大きく、単独サイクルでは cap に触れないこと）
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+
+    let initial_total = cycle1_initial.total.0;
+
+    // --- cycle 1: register_tokens 失敗 ---
+    client.set_should_fail_register(true);
+    let r1 = ensure_ref_storage_setup(
+        &client,
+        &wallet,
+        std::slice::from_ref(&t1),
+        &keep,
+        max_top_up,
+    )
+    .await;
+    assert!(
+        r1.is_err(),
+        "cycle 1 must fail at register_tokens (should_fail_register=true)"
+    );
+
+    let after_cycle1_top_up = *client.total_storage_deposit_yocto.lock().unwrap();
+    // planner 計算の pin:
+    //   used = 11_990, usable = 10_990, per_token = ceil(10_990/2) = 5_495
+    //   needed_raw = 5_495 * 1 = 5_495, needed_u128 = ceil(5_495 * 11 / 10) = 6_045
+    //   post_unregister_available = 2_000 → actual_top_up = 6_045 - 2_000 = 4_045
+    // silent な planner/top-up ロジック変更を検出するため具体値で pin する。
+    assert_eq!(
+        after_cycle1_top_up, 4_045,
+        "cycle 1 top-up must equal planner-computed 4045 yocto"
+    );
+
+    // --- cycle 2: self-healing で成功（top-up 不要） ---
+    client.set_should_fail_register(false);
+    let r2 = ensure_ref_storage_setup(
+        &client,
+        &wallet,
+        std::slice::from_ref(&t1),
+        &keep,
+        max_top_up,
+    )
+    .await;
+    assert!(
+        r2.is_ok(),
+        "cycle 2 must self-heal and succeed: {:?}",
+        r2.err()
+    );
+
+    let cumulative_top_up = *client.total_storage_deposit_yocto.lock().unwrap();
+
+    // (1) 2 サイクル累積 cap アサーション
+    let cap_bound = max_top_up
+        .as_yoctonear()
+        .checked_mul(2)
+        .expect("max_top_up * 2 should not overflow in test");
+    assert!(
+        cumulative_top_up <= cap_bound,
+        "cumulative top-up {cumulative_top_up} yocto exceeds 2 × max_top_up = {cap_bound} yocto"
+    );
+    // cycle 2 は self-healing で top-up 不発であるべし → cumulative == cycle1 top-up
+    assert_eq!(
+        cumulative_top_up, after_cycle1_top_up,
+        "cycle 2 must not re-execute top-up after self-heal"
+    );
+
+    // (2) account.storage.total が cap + bounds.min を越えないこと
+    let final_balance = client
+        .storage_balance
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("storage_balance must remain Some after 2 cycles");
+    let bounds_min = client.storage_bounds.lock().unwrap().min.0;
+    let storage_bound = max_top_up
+        .as_yoctonear()
+        .checked_add(bounds_min)
+        .expect("max_top_up + bounds.min should not overflow in test");
+    assert!(
+        final_balance.total.0 <= storage_bound,
+        "final storage.total {} exceeds max_top_up + bounds.min = {}",
+        final_balance.total.0,
+        storage_bound
+    );
+
+    // (3) snapshot.total の単調非減少（refund が起きていないこと）
+    assert!(
+        final_balance.total.0 >= initial_total,
+        "final storage.total {} must not drop below initial {} (no refund)",
+        final_balance.total.0,
+        initial_total
     );
 }
