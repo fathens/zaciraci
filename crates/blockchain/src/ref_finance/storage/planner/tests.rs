@@ -48,7 +48,7 @@ fn plan_sufficient_available() {
     println!("plan: {:#?}", p);
     assert!(p.to_unregister.is_empty());
     assert_eq!(p.to_register, vec![token("c.near")]);
-    assert!(p.estimated_needed.as_yoctonear() <= 80_000);
+    assert!(p.pre_unregister_estimate.as_yoctonear() <= 80_000);
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn plan_already_registered() {
 
     assert!(p.to_unregister.is_empty());
     assert!(p.to_register.is_empty());
-    assert_eq!(p.estimated_needed.as_yoctonear(), 0);
+    assert_eq!(p.pre_unregister_estimate.as_yoctonear(), 0);
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn plan_needed_exceeds_available() {
     println!("plan: {:#?}", p);
     assert!(p.to_unregister.is_empty());
     assert_eq!(p.to_register, vec![token("new.near")]);
-    assert!(p.estimated_needed.as_yoctonear() > 100);
+    assert!(p.pre_unregister_estimate.as_yoctonear() > 100);
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn plan_used_equals_min() {
 
     // needed=1100 > available=1000 → shortage=100, unregister候補なし → top-up必要
     assert_eq!(p.to_register, vec![token("b.near")]);
-    assert_eq!(p.estimated_needed.as_yoctonear(), 1100);
+    assert_eq!(p.pre_unregister_estimate.as_yoctonear(), 1100);
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn plan_used_less_than_min() {
     let p = result.unwrap().unwrap();
 
     // per_token_floor により needed ≈ 1100 で available=1500 に収まる
-    assert!(p.estimated_needed.as_yoctonear() <= 1500);
+    assert!(p.pre_unregister_estimate.as_yoctonear() <= 1500);
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn plan_needed_raw_zero_no_margin_overflow() {
         &[("a.near", 100)],
     );
     let p = plan(&snap, &[], &[]).unwrap().unwrap();
-    assert_eq!(p.estimated_needed.as_yoctonear(), 0);
+    assert_eq!(p.pre_unregister_estimate.as_yoctonear(), 0);
     assert!(p.to_register.is_empty());
     assert!(p.to_unregister.is_empty());
 }
@@ -229,7 +229,7 @@ fn plan_per_token_floor_applied() {
     // per_token_floor = bounds.min.0 = 1000
     // needed_raw = 1000 * 2 = 2000
     // needed = 2000 * 11 / 10 = 2200
-    assert_eq!(p.estimated_needed.as_yoctonear(), 2200);
+    assert_eq!(p.pre_unregister_estimate.as_yoctonear(), 2200);
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn plan_total_equals_available() {
     let result = plan(&snap, &[token("b.near")], &[]);
     let p = result.unwrap().unwrap();
 
-    assert_eq!(p.estimated_needed.as_yoctonear(), 1100);
+    assert_eq!(p.pre_unregister_estimate.as_yoctonear(), 1100);
     assert!(p.to_unregister.is_empty());
 }
 
@@ -258,7 +258,7 @@ fn plan_no_requested() {
 
     assert!(p.to_register.is_empty());
     assert!(p.to_unregister.is_empty());
-    assert_eq!(p.estimated_needed.as_yoctonear(), 0);
+    assert_eq!(p.pre_unregister_estimate.as_yoctonear(), 0);
 }
 
 // --- 複合系 ---
@@ -294,7 +294,7 @@ fn plan_unregister_plus_needed() {
     // 2 トークン新規登録
     assert_eq!(p.to_register.len(), 2);
     // needed は available より大きい
-    assert!(p.estimated_needed.as_yoctonear() > 100);
+    assert!(p.pre_unregister_estimate.as_yoctonear() > 100);
 }
 
 // --- エラー系 ---

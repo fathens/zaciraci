@@ -59,17 +59,17 @@ pub(super) struct Plan {
     pub to_register: Vec<TokenAccount>,
     /// 新規トークン登録に必要な storage 総量の見積もり（安全マージン 1.1 倍を適用済み）。
     ///
-    /// この値は `plan()` 実行時点の snapshot（unregister *前*）から算出された
-    /// `per_token × to_register.len() × 1.1` の stale な見積もり。unregister で
-    /// `deposits_len` が減少すると実際の per_token はわずかに上昇するが、それは
-    /// ここでは反映されない。
+    /// 命名の意図: この値は `plan()` 実行時点の snapshot（すなわち unregister を実行する
+    /// *前*）から算出された `per_token × to_register.len() × 1.1` の stale 見積もりである
+    /// ことをフィールド名で示している。unregister で `deposits_len` が減少すると実際の
+    /// per_token はわずかに上昇するが、それはここには反映されない。
     ///
     /// 実際の top-up 額は `ensure_ref_storage_setup` 側（`storage.rs` ステップ 4）で
-    /// `balance_of` を再取得した `new_available` を用いて
-    /// `estimated_needed.saturating_sub(NearToken::from_yoctonear(new_available))` として
-    /// 補正されるため、ここで stale なままでも最終的な整合性は保たれる。詳細は
+    /// `balance_of` を再取得した `post_unregister_available` を用いて
+    /// `pre_unregister_estimate.saturating_sub(NearToken::from_yoctonear(post_unregister_available))`
+    /// として補正されるため、ここで stale なままでも最終的な整合性は保たれる。詳細は
     /// `storage.rs` のステップ 4 コメントを参照。
-    pub estimated_needed: NearToken,
+    pub pre_unregister_estimate: NearToken,
 }
 
 #[derive(Error, Debug)]
@@ -94,7 +94,7 @@ pub(super) enum PlanError {
 /// - `Ok(Some(Plan))`: 通常計画
 ///   - `to_unregister`: ゼロ残高かつ keep に含まれない既存登録を解除して枠を空ける
 ///   - `to_register`: まだ登録されていない requested トークン
-///   - `estimated_needed`: 新規登録に必要な storage 総量（安全マージン適用済み、stale 見積もり）
+///   - `pre_unregister_estimate`: 新規登録に必要な storage 総量（安全マージン適用済み、stale 見積もり）
 pub(super) fn plan(
     snapshot: &StorageSnapshot,
     requested: &[TokenAccount],
@@ -188,7 +188,7 @@ pub(super) fn plan(
         return Ok(Some(Plan {
             to_unregister: vec![],
             to_register,
-            estimated_needed: NearToken::from_yoctonear(needed_u128),
+            pre_unregister_estimate: NearToken::from_yoctonear(needed_u128),
         }));
     }
 
@@ -220,7 +220,7 @@ pub(super) fn plan(
     Ok(Some(Plan {
         to_unregister: unregister_candidates,
         to_register,
-        estimated_needed: NearToken::from_yoctonear(needed_u128),
+        pre_unregister_estimate: NearToken::from_yoctonear(needed_u128),
     }))
 }
 

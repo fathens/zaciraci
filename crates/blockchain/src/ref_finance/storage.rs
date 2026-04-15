@@ -279,7 +279,7 @@ where
     info!(log, "storage plan";
         "unregister" => p.to_unregister.len(),
         "register" => p.to_register.len(),
-        "needed" => p.estimated_needed.as_yoctonear(),
+        "needed" => p.pre_unregister_estimate.as_yoctonear(),
     );
 
     // 3. ゼロ残高の旧トークンを unregister（TOCTOU 再検証 + チャンク分割）
@@ -346,8 +346,8 @@ where
 
     // 4. unregister 後の実際の available で top-up 額を再計算
     //
-    // `p.estimated_needed` は planner が初期 snapshot から推定した値
-    // （`planner::Plan::estimated_needed` の doc 参照）で、unregister で `deposits_len`
+    // `p.pre_unregister_estimate` は planner が初期 snapshot から推定した値
+    // （`planner::Plan::pre_unregister_estimate` の doc 参照）で、unregister で `deposits_len`
     // が減った影響は反映されていない。saturating_sub は `available` 増加のみ反映するため:
     //
     // - 過大評価（per_token が実際より大きく見積もられた）→ top-up 多め、安全側
@@ -356,19 +356,19 @@ where
     //   `balance_of` を再取得した新しい snapshot から planner が再計算するため
     //   self-healing する（資金損失なし）。
     //
-    // unregister で `available` が `estimated_needed` 以上に増えた場合、saturating_sub
+    // unregister で `available` が `pre_unregister_estimate` 以上に増えた場合、saturating_sub
     // により actual_top_up = 0 となる。これは「top-up 不要」という正しい動作。
-    let new_balance = balance_of(client, account)
+    let post_unregister_balance = balance_of(client, account)
         .await?
         .ok_or_else(|| anyhow::anyhow!("storage balance disappeared after unregister"))?;
-    let new_available = new_balance.available.0;
+    let post_unregister_available = post_unregister_balance.available.0;
     let actual_top_up = p
-        .estimated_needed
-        .saturating_sub(NearToken::from_yoctonear(new_available));
+        .pre_unregister_estimate
+        .saturating_sub(NearToken::from_yoctonear(post_unregister_available));
 
     debug!(log, "top-up recalculated after unregister";
-        "needed" => p.estimated_needed.as_yoctonear(),
-        "new_available" => new_available,
+        "needed" => p.pre_unregister_estimate.as_yoctonear(),
+        "post_unregister_available" => post_unregister_available,
         "actual_top_up" => actual_top_up.as_yoctonear(),
     );
 
@@ -394,7 +394,7 @@ where
         warn!(log, "ref storage top-up";
             "wallet" => %account,
             "amount" => actual_top_up.as_yoctonear(),
-            "available_before" => new_available,
+            "available_before" => post_unregister_available,
             "cap" => max_top_up.as_yoctonear(),
         );
         deposit(client, wallet, actual_top_up, false)
