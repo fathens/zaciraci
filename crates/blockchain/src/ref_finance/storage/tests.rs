@@ -110,6 +110,10 @@ struct MockStorageClient {
     // （attached_deposit = 1 yocto）が壊れた場合にテストで検出できるよう、常に
     // 最後の呼び出し時点の値を保存する。
     register_deposit_captured: Mutex<Option<NearToken>>,
+    // `get_deposits` 呼び出しのたびに先頭から取り出して `deposits` に適用する。
+    // TOCTOU 再検証パス（初回 snapshot → unregister 直前再取得）で状態が変化する
+    // ケースを決定的に再現するために使う。
+    deposits_sequence: Mutex<Vec<BTreeMap<TokenAccount, U128>>>,
 }
 
 impl MockStorageClient {
@@ -130,6 +134,7 @@ impl MockStorageClient {
             storage_deposit_count: AtomicUsize::new(0),
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
+            deposits_sequence: Mutex::new(Vec::new()),
         }
     }
 
@@ -150,6 +155,7 @@ impl MockStorageClient {
             storage_deposit_count: AtomicUsize::new(0),
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
+            deposits_sequence: Mutex::new(Vec::new()),
         }
     }
 
@@ -174,6 +180,16 @@ impl MockStorageClient {
         *self.balance_after_initial.lock().unwrap() = Some(balance);
         self
     }
+
+    /// `get_deposits` の連続呼び出しで異なる状態を返すよう設定する。
+    ///
+    /// TOCTOU（初期 plan 取得 → 直前再検証）で deposits が変化するケースを再現する。
+    /// 1 呼び出しごとに先頭から取り出して `deposits` を上書きし、sequence が尽きたら
+    /// 以降は最後の値を使い続ける。
+    fn with_deposits_sequence(self, seq: Vec<BTreeMap<TokenAccount, U128>>) -> Self {
+        *self.deposits_sequence.lock().unwrap() = seq;
+        self
+    }
 }
 
 impl ViewContract for MockStorageClient {
@@ -190,6 +206,15 @@ impl ViewContract for MockStorageClient {
             && self.should_fail_balance_of.load(Ordering::Relaxed)
         {
             return Err(anyhow!("simulated balance_of RPC failure"));
+        }
+        // `get_deposits` の呼び出し順に応じて、設定済みの sequence から次の状態を
+        // 取り出して `deposits` に適用する（TOCTOU テスト用）。sequence が空なら
+        // 現在の `deposits` をそのまま返す。
+        if method_name == "get_deposits" {
+            let mut seq = self.deposits_sequence.lock().unwrap();
+            if !seq.is_empty() {
+                *self.deposits.lock().unwrap() = seq.remove(0);
+            }
         }
         let result = match method_name {
             "storage_balance_of" => serde_json::to_vec(&*self.storage_balance.lock().unwrap())?,
@@ -1003,4 +1028,50 @@ async fn test_max_register_per_cycle_boundary_len_100() {
     assert!(result2.is_err(), "len == MAX + 1 must fail");
     let err_msg = result2.unwrap_err().to_string();
     assert!(err_msg.contains("MAX_REGISTER_PER_CYCLE"));
+}
+
+// Test: TOCTOU drop — planner が unregister 候補に挙げた token が、直前再検証時に
+// 非ゼロ残高になっていた場合、実際の unregister 呼び出しから除外される
+//
+// 1 回目の get_deposits（planner 用 snapshot）で `stale.near` は残高 0 → unregister 候補。
+// 2 回目（storage.rs:282 の TOCTOU 再検証）で `stale.near` は残高 100 → 除外。
+// 候補が 0 件になるため unregister_tokens は一度も呼ばれない。
+#[tokio::test]
+async fn test_toctou_drop_excludes_nonzero_on_reverify() {
+    let anchor: TokenAccount = WNEAR_TOKEN.clone();
+    let stale: TokenAccount = "stale.near".parse().unwrap();
+
+    // 初期 snapshot: anchor=100, stale=0 (unregister 候補)
+    let mut initial = BTreeMap::new();
+    initial.insert(anchor.clone(), U128(100));
+    initial.insert(stale.clone(), U128(0));
+
+    // TOCTOU 再検証時: stale は非ゼロになっている → drop されるべき
+    let mut after_toctou = BTreeMap::new();
+    after_toctou.insert(anchor.clone(), U128(100));
+    after_toctou.insert(stale.clone(), U128(100));
+
+    // available がほぼ 0 → unregister を誘発する計画になる
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance)
+        .with_deposits(initial.clone())
+        .with_deposits_sequence(vec![initial, after_toctou]);
+    let wallet = MockWallet::with_account_id("test-toctou-drop.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[anchor, new_token], &keep, max_top_up).await;
+    assert!(result.is_ok());
+
+    // TOCTOU drop で unregister 候補は 0 件になり、unregister_tokens は呼ばれない
+    assert_eq!(
+        client.unregister_count.load(Ordering::Relaxed),
+        0,
+        "TOCTOU re-verification must drop non-zero deposits; unregister must not be attempted"
+    );
 }
