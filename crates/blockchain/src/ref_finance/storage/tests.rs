@@ -110,6 +110,9 @@ struct MockStorageClient {
     // （attached_deposit = 1 yocto）が壊れた場合にテストで検出できるよう、常に
     // 最後の呼び出し時点の値を保存する。
     register_deposit_captured: Mutex<Option<NearToken>>,
+    // 最初の `storage_deposit` 呼び出しで渡された `registration_only` フラグを捕捉する。
+    // 初期登録時に `registration_only=true` となることを保証するためのテスト用フック。
+    initial_deposit_registration_only: Mutex<Option<bool>>,
     // `get_deposits` 呼び出しのたびに先頭から取り出して `deposits` に適用する。
     // TOCTOU 再検証パス（初回 snapshot → unregister 直前再取得）で状態が変化する
     // ケースを決定的に再現するために使う。
@@ -135,6 +138,7 @@ impl MockStorageClient {
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
             deposits_sequence: Mutex::new(Vec::new()),
+            initial_deposit_registration_only: Mutex::new(None),
         }
     }
 
@@ -156,6 +160,7 @@ impl MockStorageClient {
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
             deposits_sequence: Mutex::new(Vec::new()),
+            initial_deposit_registration_only: Mutex::new(None),
         }
     }
 
@@ -269,6 +274,15 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
             // 初期 deposit（未登録 → 登録直後）で seed が指定されていれば、
             // 実運用の「初期 deposit 直後に deposits が観測される」状態を再現する。
             let was_unregistered = self.storage_balance.lock().unwrap().is_none();
+            if was_unregistered {
+                // 初期 deposit 呼び出し時点の `registration_only` を捕捉。
+                // serde_json::to_value 経由で汎用的に取り出す。
+                if let Ok(v) = serde_json::to_value(&_args)
+                    && let Some(flag) = v.get("registration_only").and_then(|f| f.as_bool())
+                {
+                    *self.initial_deposit_registration_only.lock().unwrap() = Some(flag);
+                }
+            }
             let seed_bal = self.balance_after_initial.lock().unwrap().take();
             let seed_dep = self.seed_deposits_on_initial.lock().unwrap().take();
 
@@ -374,6 +388,29 @@ async fn test_ensure_ref_storage_setup_unregistered() {
     let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
     let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
     assert!(result.is_ok());
+}
+
+// 初期 storage_deposit が `registration_only=true` で呼ばれることを保証する。
+// `false` にすると超過分が account.storage_balance へ吸収され cap の意味論が壊れる
+// (contract_spec.md §2.2 参照)。
+#[tokio::test]
+async fn test_initial_storage_deposit_uses_registration_only() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let client = MockStorageClient::new_unregistered();
+    let wallet = MockWallet::new();
+    let tokens = vec![token];
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
+    assert!(result.is_ok());
+
+    let flag = *client.initial_deposit_registration_only.lock().unwrap();
+    assert_eq!(
+        flag,
+        Some(true),
+        "initial storage_deposit must be sent with registration_only=true"
+    );
 }
 
 // Test: ensure_ref_storage_setup - unregister stale tokens path
