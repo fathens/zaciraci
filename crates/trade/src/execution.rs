@@ -19,6 +19,7 @@ use common::types::*;
 use logging::*;
 use matching::{BuyOperation, SellOperation, match_rebalance_operations};
 use near_sdk::NearToken;
+use near_sdk::json_types::U128;
 use num_bigint::ToBigInt;
 use persistence::evaluation_period::{EvaluationPeriod, NewEvaluationPeriod};
 use std::collections::{BTreeMap, HashMap};
@@ -1133,7 +1134,7 @@ where
 ///
 /// wrap.nearとゼロ残高のトークンを除外し、清算すべきトークンのリストを返す
 pub(crate) fn filter_tokens_to_liquidate(
-    deposits: &std::collections::BTreeMap<TokenAccount, near_sdk::json_types::U128>,
+    deposits: &BTreeMap<TokenAccount, U128>,
     wrap_near_token: &TokenAccount,
 ) -> Vec<TokenAccount> {
     deposits

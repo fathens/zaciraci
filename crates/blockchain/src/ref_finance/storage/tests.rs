@@ -548,7 +548,7 @@ async fn test_ensure_ref_storage_setup_initial_deposit_exceeds_cap() {
 // 未登録アカウントで初期 deposit = bounds.min を支払った直後、既存 deposits が
 // 観測される状態（実運用の race）を with_initial_seed で再現する。planner が
 // top-up 必要と判定し、remaining_cap = max_top_up - initial_deposit を超える
-// ため Err となることを検証する。これは storage.rs:337 の累積 cap 減算
+// ため Err となることを検証する。これは storage.rs 内の累積 cap 減算
 // `remaining_cap = max_top_up.saturating_sub(initial_deposit)` を実際に exercise
 // する唯一のテスト経路。
 #[tokio::test]
