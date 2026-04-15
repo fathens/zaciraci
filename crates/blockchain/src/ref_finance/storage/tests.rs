@@ -102,9 +102,14 @@ struct MockStorageClient {
     balance_after_initial: Mutex<Option<StorageBalance>>,
     should_fail_deposit: AtomicBool,
     should_fail_unregister: AtomicBool,
+    should_fail_register: AtomicBool,
     should_fail_balance_of: AtomicBool,
     storage_deposit_count: AtomicUsize,
     unregister_count: AtomicUsize,
+    // register_tokens 呼び出し時の attached_deposit を記録する。cap-bypass の安全前提
+    // （attached_deposit = 1 yocto）が壊れた場合にテストで検出できるよう、常に
+    // 最後の呼び出し時点の値を保存する。
+    register_deposit_captured: Mutex<Option<NearToken>>,
 }
 
 impl MockStorageClient {
@@ -120,9 +125,11 @@ impl MockStorageClient {
             balance_after_initial: Mutex::new(None),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
+            should_fail_register: AtomicBool::new(false),
             should_fail_balance_of: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
             unregister_count: AtomicUsize::new(0),
+            register_deposit_captured: Mutex::new(None),
         }
     }
 
@@ -138,9 +145,11 @@ impl MockStorageClient {
             balance_after_initial: Mutex::new(None),
             should_fail_deposit: AtomicBool::new(false),
             should_fail_unregister: AtomicBool::new(false),
+            should_fail_register: AtomicBool::new(false),
             should_fail_balance_of: AtomicBool::new(false),
             storage_deposit_count: AtomicUsize::new(0),
             unregister_count: AtomicUsize::new(0),
+            register_deposit_captured: Mutex::new(None),
         }
     }
 
@@ -221,6 +230,11 @@ impl crate::jsonrpc::SendTx for MockStorageClient {
         if method_name == "unregister_tokens" {
             self.unregister_count.fetch_add(1, Ordering::Relaxed);
             let should_fail = self.should_fail_unregister.load(Ordering::Relaxed);
+            return Ok(MockSentTx { should_fail });
+        }
+        if method_name == "register_tokens" {
+            *self.register_deposit_captured.lock().unwrap() = Some(_deposit);
+            let should_fail = self.should_fail_register.load(Ordering::Relaxed);
             return Ok(MockSentTx { should_fail });
         }
         let should_fail = self.should_fail_deposit.load(Ordering::Relaxed);
@@ -800,4 +814,193 @@ async fn test_ensure_ref_storage_setup_balance_of_error_propagates() {
         "error should mention balance_of: {}",
         err_msg
     );
+}
+
+// Test: register 失敗後に Err が伝播し、balance が over-commit されないこと
+//
+// top-up は通過するが最後の register_tokens で contract が拒否されるケース。
+// self-healing の前提（次サイクルで再計算して回復）が成立するには、失敗時に Err が
+// 上位に伝播する必要がある。
+#[tokio::test]
+async fn test_ensure_register_fails_after_successful_topup() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = BTreeMap::new();
+    deposits.insert(token.clone(), U128(100));
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0), // top-up が必須
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    client.should_fail_register.store(true, Ordering::Relaxed);
+    let wallet = MockWallet::with_account_id("test-register-fail.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+
+    assert!(
+        result.is_err(),
+        "register_tokens failure should propagate as Err"
+    );
+}
+
+// Test: None 分岐（初期 deposit 直後）で register_tokens の attached_deposit が 1 yocto であること
+//
+// cap-bypass の安全性前提（register_tokens は 1 yocto のみで storage 資金を動かさない）を
+// テストで自動検知する。NEP-145 の assert_one_yocto が変更された時に検出されるべき。
+#[tokio::test]
+async fn test_register_tokens_attached_deposit_is_1_yocto_none_path() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let client = MockStorageClient::new_unregistered();
+    let wallet = MockWallet::with_account_id("test-reg-deposit-none.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(&client, &wallet, &[token], &keep, max_top_up).await;
+    assert!(result.is_ok());
+
+    let captured = *client.register_deposit_captured.lock().unwrap();
+    assert_eq!(
+        captured,
+        Some(NearToken::from_yoctonear(1)),
+        "register_tokens via None arm must attach exactly 1 yocto (NEP-145)"
+    );
+}
+
+// Test: Some 分岐（通常計画）でも register_tokens の attached_deposit が 1 yocto であること
+#[tokio::test]
+async fn test_register_tokens_attached_deposit_is_1_yocto_some_path() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = BTreeMap::new();
+    deposits.insert(token.clone(), U128(100));
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(500_000_000_000_000_000_000),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::with_account_id("test-reg-deposit-some.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_ok());
+
+    let captured = *client.register_deposit_captured.lock().unwrap();
+    assert_eq!(
+        captured,
+        Some(NearToken::from_yoctonear(1)),
+        "register_tokens via Some arm must attach exactly 1 yocto (NEP-145)"
+    );
+}
+
+// Test: cumulative cap の等値境界 — actual_top_up == remaining_cap で Ok
+//
+// planner と storage.rs の cap 判定が strict `>` であることを固定化する。
+// `>=` へ誤変更すると cap を使い切るちょうどのケースで失敗する回帰を検知できる。
+//
+// 計算: deposits_len=1, used=total-available=2e21, min_bound=1e21
+//   usable = 2e21 - 1e21 = 1e21, per_token = 1e21
+//   needed_raw = 1e21 * 1 = 1e21, needed = 1e21 * 11/10 = 1.1e21
+//   available=0 → actual_top_up = 1.1e21
+#[tokio::test]
+async fn test_cap_boundary_exact_match() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = BTreeMap::new();
+    deposits.insert(token.clone(), U128(100));
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::with_account_id("test-cap-eq.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    // max_top_up == actual_top_up (1.1e21) となるように設定
+    let max_top_up = NearToken::from_yoctonear(1_100_000_000_000_000_000_000);
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(
+        result.is_ok(),
+        "actual_top_up == remaining_cap must succeed (strict > boundary)"
+    );
+}
+
+// Test: cumulative cap の対称境界 — actual_top_up = remaining_cap + 1 で Err
+#[tokio::test]
+async fn test_cap_boundary_exceed_by_one() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = BTreeMap::new();
+    deposits.insert(token.clone(), U128(100));
+
+    let balance = StorageBalance {
+        total: U128(2_000_000_000_000_000_000_000),
+        available: U128(0),
+    };
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+    let client = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet = MockWallet::with_account_id("test-cap-over.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    // actual_top_up = 1.1e21 に対し、max_top_up = 1.1e21 - 1 で Err
+    let max_top_up = NearToken::from_yoctonear(1_099_999_999_999_999_999_999);
+    let result =
+        ensure_ref_storage_setup(&client, &wallet, &[token, new_token], &keep, max_top_up).await;
+    assert!(result.is_err(), "exceeding remaining_cap by 1 must fail");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("exceeds remaining cap"));
+}
+
+// Test: MAX_REGISTER_PER_CYCLE の境界 — len == MAX で Ok、len == MAX+1 で Err
+//
+// W1（debug_assert → runtime Err 格上げ）後、strict `>` が維持されていることを verify。
+#[tokio::test]
+async fn test_max_register_per_cycle_boundary_len_100() {
+    use crate::ref_finance::storage::planner::MAX_REGISTER_PER_CYCLE;
+
+    // len == MAX: 既存トークン 1 + 新規 99 = 100 なら通る
+    let anchor: TokenAccount = WNEAR_TOKEN.clone();
+    let mut deposits = BTreeMap::new();
+    deposits.insert(anchor.clone(), U128(100));
+    let balance = StorageBalance {
+        total: U128(500_000_000_000_000_000_000_000_000), // per_token を小さく保つため大きめ
+        available: U128(500_000_000_000_000_000_000_000_000),
+    };
+    let client =
+        MockStorageClient::new_with_balance(balance.clone()).with_deposits(deposits.clone());
+    let wallet = MockWallet::with_account_id("test-max-boundary-ok.near");
+
+    let mut requested = vec![anchor.clone()];
+    for i in 0..(MAX_REGISTER_PER_CYCLE - 1) {
+        requested.push(format!("t{i}.near").parse().unwrap());
+    }
+    assert_eq!(requested.len(), MAX_REGISTER_PER_CYCLE);
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(&client, &wallet, &requested, &keep, max_top_up).await;
+    assert!(
+        result.is_ok(),
+        "len == MAX must succeed (strict > boundary)"
+    );
+
+    // len == MAX + 1: Err
+    let client2 = MockStorageClient::new_with_balance(balance).with_deposits(deposits);
+    let wallet2 = MockWallet::with_account_id("test-max-boundary-err.near");
+    let mut requested2 = requested.clone();
+    requested2.push("extra.near".parse().unwrap());
+    assert_eq!(requested2.len(), MAX_REGISTER_PER_CYCLE + 1);
+
+    let result2 =
+        ensure_ref_storage_setup(&client2, &wallet2, &requested2, &keep, max_top_up).await;
+    assert!(result2.is_err(), "len == MAX + 1 must fail");
+    let err_msg = result2.unwrap_err().to_string();
+    assert!(err_msg.contains("MAX_REGISTER_PER_CYCLE"));
 }
