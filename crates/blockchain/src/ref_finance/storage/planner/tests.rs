@@ -297,6 +297,49 @@ fn plan_no_requested() {
     assert_eq!(estimate.as_yoctonear(), 0);
 }
 
+#[test]
+fn plan_needed_equals_available_takes_early_return() {
+    // 境界条件 `needed_u128 == available` で早期 return 経路を pin する。
+    // cap の strict `>` 境界と対称に、`<=` 境界の挙動を regression から守る。
+    //
+    // 計算:
+    //   total=2_000, available=1_100, min=1_000, deposits=[("a.near",100)]
+    //   used = total - available = 900
+    //   usable = used.saturating_sub(min) = 0 → per_token_calc = 0 → floor で per_token = 1_000
+    //   to_register = ["b.near"], needed_raw = 1_000 * 1 = 1_000
+    //   needed_u128 = 1_000 * 11 / 10 = 1_100 == available → early return
+    let snap = snapshot_with_deposits(2_000, 1_100, 1_000, &[("a.near", 100)]);
+    let (to_unregister, to_register, estimate) =
+        unwrap_normal(plan(&snap, &[token("b.near")], &[]).unwrap());
+
+    assert!(
+        to_unregister.is_empty(),
+        "needed == available boundary: early return should skip unregister"
+    );
+    assert_eq!(to_register, vec![token("b.near")]);
+    assert_eq!(estimate.as_yoctonear(), 1_100);
+}
+
+#[test]
+fn plan_needed_exceeds_available_by_one() {
+    // 境界条件 `needed_u128 == available + 1` で shortage=1 の unregister 経路を pin する。
+    // `plan_needed_equals_available_takes_early_return` と対称の境界テスト。
+    //
+    // 計算:
+    //   total=2_000, available=1_099, min=1_000
+    //   deposits=[("a.near",100), ("stale.near", 0)] (stale は解除候補)
+    //   used = 901, usable = 0, per_token = 1_000
+    //   needed = 1_100, shortage = 1_100 - 1_099 = 1
+    //   unregister_needed = ceil(1 / 1_000) = 1 → stale.near を truncate(1)
+    let snap = snapshot_with_deposits(2_000, 1_099, 1_000, &[("a.near", 100), ("stale.near", 0)]);
+    let (to_unregister, to_register, estimate) =
+        unwrap_normal(plan(&snap, &[token("b.near")], &[]).unwrap());
+
+    assert_eq!(to_unregister, vec![token("stale.near")]);
+    assert_eq!(to_register, vec![token("b.near")]);
+    assert_eq!(estimate.as_yoctonear(), 1_100);
+}
+
 // --- 複合系 ---
 
 #[test]
