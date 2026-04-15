@@ -251,14 +251,13 @@ pub(super) fn plan(
         .map(|(token, _)| token.clone())
         .collect();
 
-    // 必要な解除数 = shortage / per_token (切り上げ)
-    // u128 → usize 変換が溢れる場合は usize::MAX にサチュレーション。
-    // 結果は truncate で候補数に制限されるため、全候補解除となり安全側に倒れる。
-    let unregister_needed = if per_token > 0 {
-        usize::try_from(shortage.div_ceil(per_token)).unwrap_or(usize::MAX)
-    } else {
-        0
-    };
+    // Required unregister count = ceil(shortage / per_token).
+    // `per_token > 0` is guaranteed by the L230 early-return: if per_token == 0 then
+    // needed_raw = per_token * to_register.len() = 0 so needed_u128 = 0 ≤ available
+    // and we would have returned already. Hence we can divide without the zero guard.
+    // `usize::try_from` saturates to `usize::MAX` if the u128 quotient overflows;
+    // the subsequent `truncate` then caps it at the candidate count (fail-safe).
+    let unregister_needed = usize::try_from(shortage.div_ceil(per_token)).unwrap_or(usize::MAX);
 
     // 候補を必要数まで切り詰め
     unregister_candidates.truncate(unregister_needed);
