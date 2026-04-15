@@ -222,6 +222,8 @@ where
         );
         let bounds = check_bounds(client).await?;
         let amount = NearToken::from_yoctonear(bounds.min.0);
+        // NOTE: この strict `>` が `remaining_cap = max_top_up.checked_sub(initial_deposit)`
+        // (ステップ 5) の不変条件 `initial_deposit ≤ max_top_up` の根拠。緩和時は併せて検討。
         if amount > max_top_up {
             return Err(anyhow::anyhow!(
                 "initial storage deposit {} yocto exceeds cap {} yocto",
@@ -469,7 +471,18 @@ where
     // 初期 deposit を実行した場合、そのぶんを max_top_up から差し引いた残り枠で
     // top-up の可否を判定する。これにより単一呼び出しでの総消費 NEAR が
     // max_top_up を超えないことを保証する（初期 deposit と top-up の二重キャップ回避）。
-    let remaining_cap = max_top_up.saturating_sub(initial_deposit);
+    //
+    // 不変条件 `initial_deposit ≤ max_top_up` は step 1 の initial-deposit cap guard
+    // (`amount > max_top_up → Err` の strict `>`) で保証される:
+    //   - アカウント既登録時: `initial_deposit = 0 ≤ max_top_up`
+    //   - アカウント未登録時: cap guard を通過するので `amount ≤ max_top_up`
+    // この不変条件は `checked_sub.expect` で明示する。
+    // saturating_sub は将来 step 1 が緩和された場合に silent 0-cap を許すため不採用。
+    // 他 2 箇所の `saturating_sub` (storage.rs の post_unregister_available との差分、
+    // planner.rs の `used.saturating_sub(min_bound)`) は意図的な saturate で別物。
+    let remaining_cap = max_top_up
+        .checked_sub(initial_deposit)
+        .expect("initial_deposit ≤ max_top_up: enforced by initial-deposit cap guard in step 1");
     if actual_top_up > remaining_cap {
         return Err(anyhow::anyhow!(
             "ref storage top-up {} yocto exceeds remaining cap {} yocto \
