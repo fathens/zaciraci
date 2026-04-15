@@ -120,6 +120,10 @@ struct MockStorageClient {
     // TOCTOU 再検証パス（初回 snapshot → unregister 直前再取得）で状態が変化する
     // ケースを決定的に再現するために使う。
     deposits_sequence: Mutex<Vec<BTreeMap<TokenAccount, U128>>>,
+    // `storage_balance_of` 呼び出しのたびに先頭から取り出して `storage_balance` を上書きする。
+    // unregister や top-up で `available` が変化するサイクルを決定的に再現する。
+    // sequence が尽きたら以降は最後の `storage_balance` を使い続ける。
+    balance_sequence: Mutex<Vec<Option<StorageBalance>>>,
 }
 
 impl MockStorageClient {
@@ -142,6 +146,7 @@ impl MockStorageClient {
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
             deposits_sequence: Mutex::new(Vec::new()),
+            balance_sequence: Mutex::new(Vec::new()),
             initial_deposit_registration_only: Mutex::new(None),
         }
     }
@@ -165,6 +170,7 @@ impl MockStorageClient {
             unregister_count: AtomicUsize::new(0),
             register_deposit_captured: Mutex::new(None),
             deposits_sequence: Mutex::new(Vec::new()),
+            balance_sequence: Mutex::new(Vec::new()),
             initial_deposit_registration_only: Mutex::new(None),
         }
     }
@@ -215,6 +221,17 @@ impl MockStorageClient {
         *self.storage_bounds.lock().unwrap() = bounds;
         self
     }
+
+    /// `storage_balance_of` の連続呼び出しで `available` 等が変化するシナリオを再現する。
+    ///
+    /// 典型的には「初回 snapshot で available が少ない → unregister 後に available が
+    /// 増えて top-up 不要」というケースを決定的にテストするために使う。
+    /// 1 呼び出しごとに先頭から取り出して `storage_balance` を上書きし、sequence が
+    /// 尽きたら以降は最後の値を使い続ける。
+    fn with_balance_sequence(self, seq: Vec<Option<StorageBalance>>) -> Self {
+        *self.balance_sequence.lock().unwrap() = seq;
+        self
+    }
 }
 
 impl ViewContract for MockStorageClient {
@@ -231,6 +248,15 @@ impl ViewContract for MockStorageClient {
             && self.should_fail_balance_of.load(Ordering::Relaxed)
         {
             return Err(anyhow!("simulated balance_of RPC failure"));
+        }
+        // `storage_balance_of` の呼び出し順に応じて、設定済みの sequence から次の状態を
+        // 取り出して `storage_balance` に適用する（unregister で available 増加などの
+        // 状態遷移を決定的に再現するため）。sequence が空なら現在の balance をそのまま返す。
+        if method_name == "storage_balance_of" {
+            let mut seq = self.balance_sequence.lock().unwrap();
+            if !seq.is_empty() {
+                *self.storage_balance.lock().unwrap() = seq.remove(0);
+            }
         }
         // `get_deposits` の呼び出し順に応じて、設定済みの sequence から次の状態を
         // 取り出して `deposits` に適用する（TOCTOU テスト用）。sequence が空なら
@@ -1207,5 +1233,90 @@ async fn test_ensure_ref_storage_setup_bounds_min_varies_across_cycle() {
         result.is_ok(),
         "bounds variation across cycle must not break cap invariants: {:?}",
         result.err()
+    );
+}
+
+/// unregister で `available` が `pre_unregister_estimate` 以上に増えた場合、
+/// `handle_normal_plan` は `actual_top_up.saturating_sub(...) == 0` により top-up を
+/// スキップする経路を pin する。
+///
+/// シナリオ:
+///   - snapshot: total=100_000, available=100, bounds.min=1_000
+///   - deposits: anchor.near=9_900, stale1.near=0, stale2.near=0
+///   - requested: ["new.near"], keep: [wrap.near]
+/// planner 計算:
+///   - used = 99_900, usable = 98_900, per_token = ceil(98_900/3) = 32_967
+///   - needed_raw = 32_967, needed_u128 = ceil(32_967*11/10) = 36_264
+///   - shortage = 36_264 - 100 = 36_164, unregister_needed = ceil(36_164/32_967) = 2
+///   - to_unregister = [stale1.near, stale2.near], pre_unregister_estimate = 36_264
+/// ensure_ref_storage_setup 実行:
+///   - balance_of 1 回目: {total:100_000, available:100}
+///   - TOCTOU 再検証 → unregister 1 chunk
+///   - balance_of 2 回目: {total:100_000, available:50_000}（十分大きい）
+///   - actual_top_up = saturating_sub(36_264, 50_000) = 0 → top-up スキップ
+///   - register_tokens("new.near") 実行
+#[tokio::test]
+async fn test_ensure_ref_storage_setup_unregister_frees_enough_to_skip_topup() {
+    let anchor: TokenAccount = "anchor.near".parse().unwrap();
+    let stale1: TokenAccount = "stale1.near".parse().unwrap();
+    let stale2: TokenAccount = "stale2.near".parse().unwrap();
+    let new_token: TokenAccount = "new.near".parse().unwrap();
+
+    let mut deposits = BTreeMap::new();
+    deposits.insert(anchor, U128(9_900));
+    deposits.insert(stale1, U128(0));
+    deposits.insert(stale2, U128(0));
+
+    let initial_balance = StorageBalance {
+        total: U128(100_000),
+        available: U128(100),
+    };
+    let post_unregister_balance = StorageBalance {
+        total: U128(100_000),
+        available: U128(50_000), // pre_unregister_estimate=36_264 より大きい
+    };
+
+    let client = MockStorageClient::new_with_balance(initial_balance.clone())
+        .with_deposits(deposits)
+        .with_bounds(StorageBalanceBounds {
+            min: U128(1_000),
+            max: None,
+        })
+        .with_balance_sequence(vec![
+            Some(initial_balance.clone()), // 1: 登録確認
+            Some(initial_balance),         // 2: snapshot 取得
+            Some(post_unregister_balance), // 3: unregister 後の再取得
+        ]);
+    let wallet = MockWallet::with_account_id("test-unregister-skip-topup.near");
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(
+        &client,
+        &wallet,
+        std::slice::from_ref(&new_token),
+        &keep,
+        max_top_up,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "unregister-then-skip-topup path must succeed: {:?}",
+        result.err()
+    );
+
+    assert_eq!(
+        client.unregister_count.load(Ordering::Relaxed),
+        1,
+        "exactly 1 unregister chunk expected (2 stale tokens fit in CHUNK_SIZE=10)"
+    );
+    assert_eq!(
+        client.storage_deposit_count.load(Ordering::Relaxed),
+        0,
+        "top-up must be skipped when post-unregister available already covers pre_unregister_estimate"
+    );
+    assert!(
+        client.register_deposit_captured.lock().unwrap().is_some(),
+        "register_tokens must still run for the new token"
     );
 }
