@@ -182,8 +182,13 @@ where
     // planner 側の `PlanError::TooManyTokens` と対で動くが、planner をスキップする `None` 分岐
     // （deposits 空）でも効く位置に置くことで全経路で sanity guard が有効になる。
     //
-    // strict `>` で判定することで planner.rs:155 と同演算子を維持する（ちょうど上限値は許容）。
+    // strict `>` で判定することで planner 側の同演算子を維持する（ちょうど上限値は許容）。
     // release build でも多層防御が完結するよう、`debug_assert!` ではなく runtime Err を返す。
+    //
+    // **非対称性**: ここでは raw `needed_tokens.len()`（filter 前）を見る。
+    // [`planner::plan`] は filtered `to_register.len()`（= raw − 既登録分）を見る。
+    // raw を先に弾くことで、planner が呼ばれない `None` 経路も含めて境界を保証する。
+    // 詳細は [`planner::MAX_REGISTER_PER_CYCLE`] の doc を参照。
     if needed_tokens.len() > planner::MAX_REGISTER_PER_CYCLE {
         return Err(anyhow::anyhow!(
             "needed_tokens ({}) exceeds MAX_REGISTER_PER_CYCLE ({})",

@@ -165,6 +165,16 @@ pub(super) fn plan(
 
     // sanity guard: 同時登録トークン数が上限を超える場合は即エラー（累積 cap 保護の前段）。
     // `needed_raw` 計算より前に判定することで `ArithmeticOverflow` より明確な診断を返す。
+    //
+    // **非対称性メモ**: ここでは `to_register.len()`（= requested − 既登録分）を見る。
+    // 一方 `storage.rs` 先頭の同名チェックは `needed_tokens.len()`（= raw requested 数）
+    // を見る。両者の違いは:
+    //   - planner 側（本箇所、filtered count）は「実際に register_tokens で投入する token 数」
+    //     の意味論的境界を表す。未登録分のみを見るため、再実行でも超過しない。
+    //   - storage 側（raw count）は planner をスキップする `None` 経路（deposits 空）も
+    //     含めて全呼び出しで効くサニティガード。filter 前でも明らかに過剰な requested
+    //     を入口で弾くためのもの。
+    // どちらが先に発火するかはパスに依存するが、ガード総量として冗長 (defence-in-depth)。
     if to_register.len() > MAX_REGISTER_PER_CYCLE {
         return Err(PlanError::TooManyTokens {
             requested: to_register.len(),
