@@ -235,7 +235,8 @@ where
         bounds,
     };
 
-    // deposits が空（初回登録直後等）の場合は planner をスキップして直接 register
+    // deposits が空（初回登録直後等）の場合は planner が `None` を返すため、
+    // ここでは early return して planner をスキップし直接 register する。
     //
     // このパスは cap（`remaining_cap = max_top_up - initial_deposit`）の減算検証を
     // 通らずに `register_tokens` を呼ぶ。安全性は以下の前提に依存する:
@@ -246,26 +247,20 @@ where
     //   cap 検証を追加する必要がある。
     // - `needed_tokens.len() <= MAX_REGISTER_PER_CYCLE` は関数先頭の debug_assert で
     //   sanity check 済み。
-    let p = match planner::plan(&snapshot, needed_tokens, keep) {
-        Ok(p) => p,
-        Err(planner::PlanError::EmptyDeposits) => {
-            debug!(log, "no existing deposits, registering tokens directly");
-            if !needed_tokens.is_empty() {
-                deposit::register_tokens(client, wallet, needed_tokens)
-                    .await?
-                    .wait_for_success()
-                    .await?;
-                info!(log, "tokens registered"; "count" => needed_tokens.len());
-            }
-            return Ok(());
+    //
+    // 実装上の不変条件: この後のステップ 4-6 で扱う `actual_top_up` / `remaining_cap` /
+    // top-up 実行は、以下の `p` スコープ内でのみ使用可能とすることで、cap 検証を
+    // 迂回する新経路を構造的に生み出せないよう保っている。
+    let Some(p) = planner::plan(&snapshot, needed_tokens, keep)? else {
+        debug!(log, "no existing deposits, registering tokens directly");
+        if !needed_tokens.is_empty() {
+            deposit::register_tokens(client, wallet, needed_tokens)
+                .await?
+                .wait_for_success()
+                .await?;
+            info!(log, "tokens registered"; "count" => needed_tokens.len());
         }
-        Err(e) => {
-            // thiserror の自動 `From<PlanError> for anyhow::Error` を経由することで
-            // variant 情報と source chain を保持したまま伝播する。
-            // `EmptyDeposits` は上の arm で正常系として処理されるため、ここに到達するのは
-            // `ArithmeticOverflow` / `TooManyTokens` など真のエラーのみ。
-            return Err(e.into());
-        }
+        return Ok(());
     };
 
     info!(log, "storage plan";

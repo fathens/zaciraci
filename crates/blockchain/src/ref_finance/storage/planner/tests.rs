@@ -43,7 +43,7 @@ fn plan_sufficient_available() {
         &[("a.near", 100), ("b.near", 200)],
     );
     let result = plan(&snap, &[token("c.near")], &[token("wrap.near")]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     println!("plan: {:#?}", p);
     assert!(p.to_unregister.is_empty());
@@ -56,7 +56,7 @@ fn plan_already_registered() {
     // requested が既に deposits にある → to_register は空
     let snap = snapshot_with_deposits(100_000, 80_000, 1_000, &[("a.near", 100), ("b.near", 200)]);
     let result = plan(&snap, &[token("a.near")], &[token("wrap.near")]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     assert!(p.to_unregister.is_empty());
     assert!(p.to_register.is_empty());
@@ -77,7 +77,7 @@ fn plan_unregister_to_make_room() {
         ],
     );
     let result = plan(&snap, &[token("new.near")], &[token("wrap.near")]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     println!("plan: {:#?}", p);
     assert!(!p.to_unregister.is_empty());
@@ -94,7 +94,7 @@ fn plan_needed_exceeds_available() {
         &[("a.near", 100), ("b.near", 200)],
     );
     let result = plan(&snap, &[token("new.near")], &[token("wrap.near")]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     println!("plan: {:#?}", p);
     assert!(p.to_unregister.is_empty());
@@ -115,7 +115,7 @@ fn plan_keep_is_preserved() {
         ],
     );
     let result = plan(&snap, &[token("new.near")], &[token("wrap.near")]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     // wrap.near は to_unregister に含まれない
     assert!(!p.to_unregister.contains(&token("wrap.near")));
@@ -138,7 +138,7 @@ fn plan_requested_not_unregistered() {
         &[token("target.near"), token("new.near")],
         &[token("wrap.near")],
     );
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     // target.near は解除されず、to_register にも入らない（既に登録済み）
     assert!(!p.to_unregister.contains(&token("target.near")));
@@ -150,14 +150,15 @@ fn plan_requested_not_unregistered() {
 // --- 境界値 ---
 
 #[test]
-fn plan_empty_deposits_error() {
+fn plan_empty_deposits_returns_none() {
     let snap = StorageSnapshot {
         deposits: BTreeMap::new(),
         ..StorageSnapshot::test_default()
     };
-    let err = plan(&snap, &[token("a.near")], &[]).unwrap_err();
-    println!("error: {}", err);
-    assert!(matches!(err, PlanError::EmptyDeposits));
+    let result = plan(&snap, &[token("a.near")], &[]);
+    // 初期登録直後の正常系。呼び出し側は `None` を見て register_tokens
+    // 直接パスを選択する（storage.rs の `None` arm 参照）。
+    assert!(matches!(result, Ok(None)));
 }
 
 #[test]
@@ -171,7 +172,7 @@ fn plan_used_equals_min() {
         &[("a.near", 100)],
     );
     let result = plan(&snap, &[token("b.near")], &[]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     // needed=1100 > available=1000 → shortage=100, unregister候補なし → top-up必要
     assert_eq!(p.to_register, vec![token("b.near")]);
@@ -190,7 +191,7 @@ fn plan_used_less_than_min() {
         &[("a.near", 100)],
     );
     let result = plan(&snap, &[token("b.near")], &[]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     // per_token_floor により needed ≈ 1100 で available=1500 に収まる
     assert!(p.estimated_needed.as_yoctonear() <= 1500);
@@ -206,7 +207,7 @@ fn plan_needed_raw_zero_no_margin_overflow() {
         0, // min=0 → usable = used = u128::MAX/2
         &[("a.near", 100)],
     );
-    let p = plan(&snap, &[], &[]).unwrap();
+    let p = plan(&snap, &[], &[]).unwrap().unwrap();
     assert_eq!(p.estimated_needed.as_yoctonear(), 0);
     assert!(p.to_register.is_empty());
     assert!(p.to_unregister.is_empty());
@@ -223,7 +224,7 @@ fn plan_per_token_floor_applied() {
         &[("a.near", 100)],
     );
     let result = plan(&snap, &[token("b.near"), token("c.near")], &[]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     // per_token_floor = bounds.min.0 = 1000
     // needed_raw = 1000 * 2 = 2000
@@ -242,7 +243,7 @@ fn plan_total_equals_available() {
         &[("a.near", 100)],
     );
     let result = plan(&snap, &[token("b.near")], &[]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     assert_eq!(p.estimated_needed.as_yoctonear(), 1100);
     assert!(p.to_unregister.is_empty());
@@ -253,7 +254,7 @@ fn plan_no_requested() {
     // requested が空 → to_register 空、needed = 0
     let snap = snapshot_with_deposits(100_000, 100, 1_000, &[("stale.near", 0)]);
     let result = plan(&snap, &[], &[]);
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     assert!(p.to_register.is_empty());
     assert!(p.to_unregister.is_empty());
@@ -285,7 +286,7 @@ fn plan_unregister_plus_needed() {
         &[token("new1.near"), token("new2.near")],
         &[token("wrap.near")],
     );
-    let p = result.unwrap();
+    let p = result.unwrap().unwrap();
 
     println!("plan: {:#?}", p);
     // 解除候補が 1 つだけなので 1 件解除
@@ -377,6 +378,6 @@ fn plan_max_register_per_cycle_boundary_ok() {
         .collect();
     assert_eq!(requested.len(), MAX_REGISTER_PER_CYCLE);
 
-    let p = plan(&snap, &requested, &[]).unwrap();
+    let p = plan(&snap, &requested, &[]).unwrap().unwrap();
     assert_eq!(p.to_register.len(), MAX_REGISTER_PER_CYCLE);
 }

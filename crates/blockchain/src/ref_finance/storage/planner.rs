@@ -74,8 +74,6 @@ pub(super) struct Plan {
 
 #[derive(Error, Debug)]
 pub(super) enum PlanError {
-    #[error("no deposits registered")]
-    EmptyDeposits,
     #[error("per_token arithmetic overflow")]
     ArithmeticOverflow,
     #[error("too many tokens to register in one cycle: requested={requested} max={max}")]
@@ -88,20 +86,27 @@ pub(super) enum PlanError {
 /// - `requested`: 今回必要なトークン（register したい）
 /// - `keep`: 解除してはいけないトークン（wnear + 次期候補等）
 ///
-/// 返り値の `Plan`:
-/// - `to_unregister`: ゼロ残高かつ keep に含まれない既存登録を解除して枠を空ける
-/// - `to_register`: まだ登録されていない requested トークン
-/// - `estimated_needed`: 新規登録に必要な storage 総量（安全マージン適用済み、stale 見積もり）
+/// 返り値:
+/// - `Ok(None)`: deposits が空（初期登録直後等）で per_token を算出できない。
+///   呼び出し側は cap 検証を通らない `register_tokens` 直接呼び出しパスを選択する。
+///   cap-bypass の安全性前提については呼び出し側
+///   ([`super::ensure_ref_storage_setup`] の `None` arm) を参照。
+/// - `Ok(Some(Plan))`: 通常計画
+///   - `to_unregister`: ゼロ残高かつ keep に含まれない既存登録を解除して枠を空ける
+///   - `to_register`: まだ登録されていない requested トークン
+///   - `estimated_needed`: 新規登録に必要な storage 総量（安全マージン適用済み、stale 見積もり）
 pub(super) fn plan(
     snapshot: &StorageSnapshot,
     requested: &[TokenAccount],
     keep: &[TokenAccount],
-) -> Result<Plan, PlanError> {
+) -> Result<Option<Plan>, PlanError> {
     let deposits = &snapshot.deposits;
 
     // deposits が空の場合は per_token を算出できない
     // (初回登録時は ensure 側で initial deposit → register_tokens の別パスを通る)
-    let deposits_len = NonZeroUsize::new(deposits.len()).ok_or(PlanError::EmptyDeposits)?;
+    let Some(deposits_len) = NonZeroUsize::new(deposits.len()) else {
+        return Ok(None);
+    };
 
     let total = snapshot.balance.total.0;
     let available = snapshot.balance.available.0;
@@ -172,11 +177,11 @@ pub(super) fn plan(
 
     if needed_u128 <= available {
         // 余裕あり: unregister も top-up も不要
-        return Ok(Plan {
+        return Ok(Some(Plan {
             to_unregister: vec![],
             to_register,
             estimated_needed: NearToken::from_yoctonear(needed_u128),
-        });
+        }));
     }
 
     let shortage = needed_u128
@@ -204,11 +209,11 @@ pub(super) fn plan(
     // 候補を必要数まで切り詰め
     unregister_candidates.truncate(unregister_needed);
 
-    Ok(Plan {
+    Ok(Some(Plan {
         to_unregister: unregister_candidates,
         to_register,
         estimated_needed: NearToken::from_yoctonear(needed_u128),
-    })
+    }))
 }
 
 #[cfg(test)]
