@@ -167,6 +167,26 @@ pub async fn balance_of<C: ViewContract>(
 /// 非ゼロ残高の unregister を拒否するため資金損失にはならない。
 /// 失敗した場合は warn ログを出して続行し、ステップ 3 で balance_of を再取得して
 /// top-up 額を実測値から再計算するため、最終的な整合性は保たれる。
+///
+/// # Deployment Contract
+///
+/// This function serializes per-account calls via `REF_STORAGE_LOCKS`
+/// (process-local `tokio::sync::Mutex`). Running multiple processes / containers
+/// against the same `ROOT_ACCOUNT_ID` is forbidden (single-process invariant).
+/// See `README.md#Deployment` for orchestrator-specific guards.
+///
+/// If the invariant is violated, the initial deposit may execute twice and the
+/// per-call `max_top_up` cap degenerates to `max_top_up × concurrent_processes`.
+/// Cross-process lock work is tracked in follow-up Issue #1 (pg_advisory_lock).
+///
+/// # Retry Contract
+///
+/// On `Err`, the caller MUST implement a retry ceiling / back-off. A
+/// `register_tokens` rejection is recovered on the next cycle via a fresh
+/// `balance_of` read; uncapped retry, however, accumulates up to
+/// `max_top_up × retry_count` yoctoNEAR outside of the single-cycle cap
+/// accounting. Caller-side back-off is tracked in follow-up Issue #2 and the
+/// monitoring of cumulative top-up in follow-up Issue #3.
 pub async fn ensure_ref_storage_setup<C, W>(
     client: &C,
     wallet: &W,
