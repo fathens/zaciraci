@@ -184,6 +184,12 @@ pub async fn withdraw<C: SendTx, W: Wallet>(
         .await
 }
 
+/// REF Finance に `token_ids` を登録する。
+///
+/// NOTE: `attached_deposit=1 yocto` は NEP-145 の `assert_one_yocto` 標準に基づく
+/// external invariant。この値を変更する場合、`storage.rs` の cap 迂回経路
+/// （`ensure_ref_storage_setup` の `None` arm）で `register_tokens` を cap 検証なしに
+/// 呼ぶ前提が壊れるため、呼び出し側の cap 再計算ロジックの追加が必須。
 pub async fn register_tokens<C: SendTx, W: Wallet>(
     client: &C,
     wallet: &W,

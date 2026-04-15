@@ -142,9 +142,17 @@ pub(super) fn plan(
     // 保守的下限として流用する。定常運用（deposits 10+ 個）では per_token_calc >>
     // min_bound なので floor は発動せず、以後この流用は自然失効する。
     //
-    // cap 到達リスク: `max_top_up=0.5 NEAR` / `min_bound=1.25e21 yocto` のとき
-    // `N × min_bound × 1.1 ≤ max_top_up` を満たす最大 N は約 363。
-    // MAX_REGISTER_PER_CYCLE 等の hard guard があれば実運用では余裕。
+    // cap 整合チェック式: `N × bounds.min × 1.1 ≤ max_top_up`
+    //   現行設定 (`max_top_up=0.5 NEAR`, `bounds.min=1.25e21`):
+    //     理論上限 `N_max ≈ 363`。`MAX_REGISTER_PER_CYCLE=100` で安全マージン約 3.6x。
+    //   `bounds.min` が 3.6x 以上増加した場合（REF 契約 upgrade 等）、
+    //     `MAX_REGISTER_PER_CYCLE` と `max_top_up` の再評価が必要。
+    //   倍率と N_max の対応:
+    //     | bounds.min 倍率 | N_max | MAX=100 運用可否       |
+    //     | 1x (現行)       |  363  | ✓ 3.63x 余裕           |
+    //     | 3x              |  121  | ⚠ 1.21x 余裕薄い       |
+    //     | 3.6x            |  100  | ⚠ 余裕ゼロ             |
+    //     | 4x              |   90  | ✗ 要再評価             |
     let per_token_calc = usable.div_ceil(deposits_len.get() as u128);
     let per_token = per_token_calc.max(min_bound);
 
