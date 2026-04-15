@@ -577,3 +577,146 @@ fn plan_per_token_floor_times_max_register_no_overflow() {
     let with_margin = product.unwrap().checked_mul(11);
     assert!(with_margin.is_some());
 }
+
+// SAFETY_MARGIN / per_token_floor / cap 整合の不変条件を proptest で検証する。
+//
+// 既存 pinned test は具体値での regression guard として機能するが、proptest は入力空間全体で
+// 不変条件を確認することで、`SAFETY_MARGIN_*` や `per_token` floor の計算ロジックを触る
+// 改修時に想定外ケースが漏れないよう自動検出する。proptest 依存は既に `Cargo.toml` に
+// 含まれており、本モジュールで新規に導入しない。
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `plan()` の出力に対する 3 つの不変条件を検証する:
+        ///
+        /// - INV-1 (SAFETY_MARGIN 上限): `Ok(Plan::Normal)` 時
+        ///     `pre_unregister_estimate ≤ (per_token × N × 11).div_ceil(10)`
+        ///     planner も test も同じ順序で計算するため等号で一致する。
+        /// - INV-6 (per_token floor 下限): `to_register.len() > 0` 時
+        ///     `pre_unregister_estimate ≥ (N × min_bound × 11) / 10`（切り捨て下限）。
+        ///     `per_token ≥ min_bound` が planner の `.max(min_bound)` で保証されるため従う。
+        /// - INV-cap (cap 整合): floor 活性化 (`per_token_calc ≤ min_bound`) かつ
+        ///     `(N × min_bound × 11).div_ceil(10) ≤ max_top_up_budget` 成立時
+        ///     `pre_unregister_estimate ≤ max_top_up_budget`。floor 非活性時は
+        ///     `per_token > min_bound` により budget を越える可能性があり、
+        ///     `ensure_ref_storage_setup` step 5 の `remaining_cap` チェックで弾く設計と整合。
+        ///
+        /// `max_top_up_budget` は input として生成し、cap 条件を満たす case のみ INV-cap を
+        /// 検査する（満たさない場合は `prop_assume!` でスキップせず、INV-cap 検査を無効化）。
+        #[test]
+        fn plan_invariants(
+            deposits_len in 1usize..=20usize,
+            min_bound in 1u128..=10_000_000_000_000_000_000_000u128, // 1..=1e22
+            extra_used in 0u128..=500_000_000_000_000_000_000_000u128, // 0..=0.5 NEAR
+            available in 0u128..=500_000_000_000_000_000_000_000u128, // 0..=0.5 NEAR
+            requested_count in 0usize..=(MAX_REGISTER_PER_CYCLE + 10),
+            max_top_up_budget in 1u128..=10_000_000_000_000_000_000_000_000u128, // 1..=1e25
+        ) {
+            // snapshot を組み立てる。
+            //   used = min_bound + extra_used（min_bound 以上の used を保証）
+            //   total = used + available
+            let used = min_bound.saturating_add(extra_used);
+            let total = used.saturating_add(available);
+
+            let deposits: BTreeMap<TokenAccount, U128> = (0..deposits_len)
+                .map(|i| (token(&format!("d{i}.near")), U128(0)))
+                .collect();
+
+            let snap = StorageSnapshot {
+                balance: StorageBalance {
+                    total: U128(total),
+                    available: U128(available),
+                },
+                deposits,
+                bounds: StorageBalanceBounds {
+                    min: U128(min_bound),
+                    max: None,
+                },
+            };
+
+            // requested は deposits と衝突しない新規トークン列にして、filter 前後で個数が
+            // 変わらないようにする（= `to_register.len() == requested.len()`）。
+            let requested: Vec<TokenAccount> = (0..requested_count)
+                .map(|i| token(&format!("r{i}.near")))
+                .collect();
+
+            match plan(&snap, &requested, &[]) {
+                Ok(Plan::Normal { to_register, pre_unregister_estimate, .. }) => {
+                    let needed = pre_unregister_estimate.as_yoctonear();
+                    let n = to_register.len() as u128;
+
+                    // 期待する per_token を再計算（planner 内部の計算と一致させる）
+                    let usable = used.saturating_sub(min_bound);
+                    let per_token_calc = usable.div_ceil(deposits_len as u128);
+                    let per_token = per_token_calc.max(min_bound);
+
+                    // INV-1: SAFETY_MARGIN 上限
+                    //   planner は `per_token * N * 11` を `checked_mul` で計算し
+                    //   `div_ceil(10)` している。同じ計算順序なので結果は等号で一致する。
+                    //   planner が `Ok` を返した時点で overflow なしが保証されているため、
+                    //   test 側は `saturating_mul` で算式を一致させる（実際には overflow しない）。
+                    let upper = per_token
+                        .saturating_mul(n)
+                        .saturating_mul(11)
+                        .div_ceil(10);
+                    prop_assert!(
+                        needed <= upper,
+                        "INV-1 violated: needed={needed} > upper={upper} \
+                         (per_token={per_token}, n={n})"
+                    );
+
+                    // INV-6: per_token floor 下限
+                    //   to_register.len() > 0 のとき、per_token >= min_bound なので
+                    //   needed >= min_bound × N × 11 / 10（div_ceil の ε なし厳密下限）。
+                    if n > 0 {
+                        let lower = min_bound
+                            .saturating_mul(n)
+                            .saturating_mul(11)
+                            / 10;
+                        prop_assert!(
+                            needed >= lower,
+                            "INV-6 violated: needed={needed} < lower={lower} \
+                             (min_bound={min_bound}, n={n})"
+                        );
+                    }
+
+                    // INV-cap: floor 活性化 (`per_token_calc <= min_bound`) かつ
+                    //   `N × min_bound × 11/10 ≤ max_top_up_budget` のとき
+                    //   pre_estimate ≤ max_top_up_budget が保証される。
+                    //   floor 非活性時は per_token > min_bound となり、needed が budget を
+                    //   越える可能性があるため検査しない（ensure_ref_storage_setup 側の
+                    //   step 5 cap check で弾く）。
+                    let floor_active = per_token_calc <= min_bound;
+                    if floor_active && n > 0 {
+                        let cap_condition = min_bound
+                            .checked_mul(n)
+                            .and_then(|v| v.checked_mul(11))
+                            .map(|v| v.div_ceil(10));
+                        if let Some(cap_needed) = cap_condition
+                            && cap_needed <= max_top_up_budget
+                        {
+                            prop_assert!(
+                                needed <= max_top_up_budget,
+                                "INV-cap violated: needed={needed} > budget={max_top_up_budget} \
+                                 (floor active, cap_needed={cap_needed})"
+                            );
+                        }
+                    }
+                }
+                Ok(Plan::InitialRegister { to_register }) => {
+                    // deposits が空なら InitialRegister。今回は deposits_len >= 1 なので到達しない想定。
+                    prop_assert!(to_register.len() <= MAX_REGISTER_PER_CYCLE);
+                }
+                Err(PlanError::TooManyTokens { requested, max }) => {
+                    prop_assert!(requested > max);
+                    prop_assert_eq!(max, MAX_REGISTER_PER_CYCLE);
+                }
+                Err(PlanError::ArithmeticOverflow) => {
+                    // u128 算術 overflow は許容。入力範囲の上限で発生しうる。
+                }
+            }
+        }
+    }
+}
