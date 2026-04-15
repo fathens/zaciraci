@@ -213,28 +213,29 @@ where
 
     // 1. storage_balance_of でアカウント状態を確認、未登録ならアカウント初期登録
     let maybe_balance = balance_of(client, account).await?;
-    let did_initial_deposit = maybe_balance.is_none();
-    let mut initial_deposit = NearToken::from_yoctonear(0);
-    if did_initial_deposit {
+    let initial_deposit = if maybe_balance.is_some() {
+        NearToken::from_yoctonear(0)
+    } else {
         info!(
             log,
             "account not registered, performing initial storage deposit"
         );
         let bounds = check_bounds(client).await?;
-        initial_deposit = NearToken::from_yoctonear(bounds.min.0);
-        if initial_deposit > max_top_up {
+        let amount = NearToken::from_yoctonear(bounds.min.0);
+        if amount > max_top_up {
             return Err(anyhow::anyhow!(
                 "initial storage deposit {} yocto exceeds cap {} yocto",
-                initial_deposit.as_yoctonear(),
+                amount.as_yoctonear(),
                 max_top_up.as_yoctonear(),
             ));
         }
-        deposit(client, wallet, initial_deposit, false)
+        deposit(client, wallet, amount, false)
             .await?
             .wait_for_success()
             .await?;
-        info!(log, "initial storage deposit completed"; "amount" => initial_deposit.as_yoctonear());
-    }
+        info!(log, "initial storage deposit completed"; "amount" => amount.as_yoctonear());
+        amount
+    };
 
     // 2. snapshot を取得して planner で計画を立てる
     let balance = balance_of(client, account)
