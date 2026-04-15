@@ -68,9 +68,12 @@ static REF_STORAGE_LOCKS: LazyLock<StdMutex<HashMap<AccountId, Arc<AsyncMutex<()
 /// `StdMutex` ガードは本関数のスコープ内で drop されるため、呼び出し元が返り値の
 /// `Arc<AsyncMutex<()>>` を await するとき `clippy::await_holding_lock` には触れない。
 fn lock_for(account: &AccountId) -> Arc<AsyncMutex<()>> {
+    // `REF_STORAGE_LOCKS` の臨界区間は `HashMap::entry` の挿入/取得のみで、途中で panic
+    // しても HashMap の不変条件は壊れない。ロック全アカウント共有のため poison が全体停止に
+    // 直結するリスクを避け、`into_inner` で内部 HashMap をそのまま取り出して続行する。
     let mut map = REF_STORAGE_LOCKS
         .lock()
-        .expect("REF_STORAGE_LOCKS poisoned");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     map.entry(account.clone())
         .or_insert_with(|| Arc::new(AsyncMutex::new(())))
         .clone()
