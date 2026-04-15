@@ -265,48 +265,103 @@ where
         bounds,
     };
 
-    // deposits が空（初回登録直後等）の場合は planner が `None` を返すため、
-    // ここでは early return して planner をスキップし直接 register する。
+    // planner の返す `Plan` variant で処理分岐する。
     //
-    // このパスは cap（`remaining_cap = max_top_up - initial_deposit`）の減算検証を
-    // 通らずに `register_tokens` を呼ぶ。安全性は以下の前提に依存する:
-    // - 初期 deposit の cap ガードはステップ 1 の `initial_deposit > max_top_up` で完結しており、
-    //   このパスに到達する時点で `initial_deposit <= max_top_up` が保証されている。
-    // - `register_tokens` は attached deposit 1 yocto のみで storage 資金を動かさない。
-    //   将来 `register_tokens` が attached deposit を増やす変更を入れる場合は、ここでも
-    //   cap 検証を追加する必要がある。
-    // - `needed_tokens.len() <= MAX_REGISTER_PER_CYCLE` は関数先頭の debug_assert で
-    //   sanity check 済み。
-    //
-    // 実装上の不変条件: この後のステップ 4-6 で扱う `actual_top_up` / `remaining_cap` /
-    // top-up 実行は、以下の `p` スコープ内でのみ使用可能とすることで、cap 検証を
-    // 迂回する新経路を構造的に生み出せないよう保っている。
-    let Some(p) = planner::plan(&snapshot, needed_tokens, keep)? else {
-        debug!(log, "no existing deposits, registering tokens directly");
-        if !needed_tokens.is_empty() {
-            deposit::register_tokens(client, wallet, needed_tokens)
-                .await?
-                .wait_for_success()
-                .await?;
-            info!(log, "tokens registered"; "count" => needed_tokens.len());
+    // `Plan::InitialRegister` は deposits 空で cap 検証を通らずに register_tokens を
+    // 直接発行するパス。`register_tokens` の attached_deposit=1 yocto 前提により
+    // storage 資金は動かず、`actual_top_up = 0` が型レベルで閉じ込められる。
+    // `Plan::Normal` は unregister → cap 再評価 → top-up → register を通る標準パスで、
+    // `remaining_cap` を計算する private helper に閉じ込めて cap-bypass の新経路が
+    // 生まれないよう構造的に防御する。
+    match planner::plan(&snapshot, needed_tokens, keep)? {
+        planner::Plan::InitialRegister { to_register } => {
+            handle_initial_register(client, wallet, &log, &to_register).await
         }
-        return Ok(());
-    };
+        planner::Plan::Normal {
+            to_unregister,
+            to_register,
+            pre_unregister_estimate,
+        } => {
+            handle_normal_plan(
+                client,
+                wallet,
+                &log,
+                account,
+                keep,
+                max_top_up,
+                initial_deposit,
+                to_unregister,
+                to_register,
+                pre_unregister_estimate,
+            )
+            .await
+        }
+    }
+}
 
+/// `Plan::InitialRegister` を処理する。
+///
+/// deposits が空の初期登録ケース専用の経路。cap 検証は行わないため、このスコープ内で
+/// `max_top_up` / `remaining_cap` / `actual_top_up` といった top-up 関連のシンボルには
+/// 触れない。cap-bypass の安全前提（`register_tokens` が attached_deposit=1 yocto の
+/// みで storage 資金を動かさない、初期 deposit の cap ガードは呼び出し元で完結済み）
+/// が壊れないよう、責務をこの関数に閉じ込める。
+async fn handle_initial_register<C, W>(
+    client: &C,
+    wallet: &W,
+    log: &slog::Logger,
+    to_register: &[TokenAccount],
+) -> Result<()>
+where
+    C: SendTx + ViewContract,
+    W: Wallet,
+{
+    debug!(log, "no existing deposits, registering tokens directly");
+    if !to_register.is_empty() {
+        deposit::register_tokens(client, wallet, to_register)
+            .await?
+            .wait_for_success()
+            .await?;
+        info!(log, "tokens registered"; "count" => to_register.len());
+    }
+    Ok(())
+}
+
+/// `Plan::Normal` を処理する。unregister → cap 再評価 → top-up → register。
+///
+/// cap 検証（ステップ 4-5）を必ず通してから `register_tokens` を発行する不変条件を
+/// 関数境界で担保する。`pre_unregister_estimate` / `post_unregister_available` /
+/// `actual_top_up` / `remaining_cap` はこの関数のローカルに閉じ込められる。
+#[allow(clippy::too_many_arguments)]
+async fn handle_normal_plan<C, W>(
+    client: &C,
+    wallet: &W,
+    log: &slog::Logger,
+    account: &AccountId,
+    keep: &[TokenAccount],
+    max_top_up: NearToken,
+    initial_deposit: NearToken,
+    to_unregister: Vec<TokenAccount>,
+    to_register: Vec<TokenAccount>,
+    pre_unregister_estimate: NearToken,
+) -> Result<()>
+where
+    C: SendTx + ViewContract,
+    W: Wallet,
+{
     info!(log, "storage plan";
-        "unregister" => p.to_unregister.len(),
-        "register" => p.to_register.len(),
-        "needed" => p.pre_unregister_estimate.as_yoctonear(),
+        "unregister" => to_unregister.len(),
+        "register" => to_register.len(),
+        "needed" => pre_unregister_estimate.as_yoctonear(),
     );
 
     // 3. ゼロ残高の旧トークンを unregister（TOCTOU 再検証 + チャンク分割）
-    if !p.to_unregister.is_empty() {
-        info!(log, "unregister stale tokens"; "count" => p.to_unregister.len());
+    if !to_unregister.is_empty() {
+        info!(log, "unregister stale tokens"; "count" => to_unregister.len());
 
         // TOCTOU ガード: 直前に再取得して amount == 0 && ∉ keep を再確認
         let fresh_deposits = deposit::get_deposits(client, account).await?;
-        let verified: Vec<TokenAccount> = p
-            .to_unregister
+        let verified: Vec<TokenAccount> = to_unregister
             .iter()
             .filter(|token| {
                 fresh_deposits
@@ -317,7 +372,7 @@ where
             .cloned()
             .collect();
 
-        let dropped = p.to_unregister.len() - verified.len();
+        let dropped = to_unregister.len() - verified.len();
         if dropped > 0 {
             debug!(log, "unregister revalidated";
                 "candidates" => verified.len(),
@@ -363,9 +418,10 @@ where
 
     // 4. unregister 後の実際の available で top-up 額を再計算
     //
-    // `p.pre_unregister_estimate` は planner が初期 snapshot から推定した値
-    // （`planner::Plan::pre_unregister_estimate` の doc 参照）で、unregister で `deposits_len`
-    // が減った影響は反映されていない。saturating_sub は `available` 増加のみ反映するため:
+    // `pre_unregister_estimate` は planner が初期 snapshot から推定した値
+    // （`planner::Plan::Normal::pre_unregister_estimate` の doc 参照）で、unregister で
+    // `deposits_len` が減った影響は反映されていない。saturating_sub は `available` 増加
+    // のみ反映するため:
     //
     // - 過大評価（per_token が実際より大きく見積もられた）→ top-up 多め、安全側
     // - 過小評価（unregister 後 per_token が上昇し実需が増えた）→ top-up 不足で
@@ -379,12 +435,11 @@ where
         .await?
         .ok_or_else(|| anyhow::anyhow!("storage balance disappeared after unregister"))?;
     let post_unregister_available = post_unregister_balance.available.0;
-    let actual_top_up = p
-        .pre_unregister_estimate
+    let actual_top_up = pre_unregister_estimate
         .saturating_sub(NearToken::from_yoctonear(post_unregister_available));
 
     debug!(log, "top-up recalculated after unregister";
-        "needed" => p.pre_unregister_estimate.as_yoctonear(),
+        "needed" => pre_unregister_estimate.as_yoctonear(),
         "post_unregister_available" => post_unregister_available,
         "actual_top_up" => actual_top_up.as_yoctonear(),
     );
@@ -421,13 +476,13 @@ where
     }
 
     // 7. register_tokens
-    if !p.to_register.is_empty() {
-        info!(log, "registering tokens"; "count" => p.to_register.len());
-        deposit::register_tokens(client, wallet, &p.to_register)
+    if !to_register.is_empty() {
+        info!(log, "registering tokens"; "count" => to_register.len());
+        deposit::register_tokens(client, wallet, &to_register)
             .await?
             .wait_for_success()
             .await?;
-        info!(log, "tokens registered"; "count" => p.to_register.len());
+        info!(log, "tokens registered"; "count" => to_register.len());
     }
 
     Ok(())

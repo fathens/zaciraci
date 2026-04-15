@@ -52,24 +52,54 @@ impl StorageSnapshot {
     }
 }
 
+/// storage 管理計画の型。`plan()` の戻り値は必ずこの enum のいずれかの variant になる。
+///
+/// variant ごとに異なる処理経路と cap 検証契約を持つ:
+/// - [`Plan::InitialRegister`]: deposits が空。`ensure_ref_storage_setup` は
+///   cap 検証を通らずに `register_tokens` を直接呼ぶ。安全性は
+///   `register_tokens` の attached_deposit = 1 yocto のみに依存し、cap の代数的
+///   不変条件（`initial_deposit + actual_top_up ≤ max_top_up`）は `actual_top_up = 0`
+///   で型レベルに閉じ込められている。
+/// - [`Plan::Normal`]: deposits がある通常運用。unregister → cap 再評価 → top-up →
+///   register の順で処理される。`Normal::to_register` を `register_tokens` に渡す
+///   前に `storage.rs` ステップ 4-5 の cap 検証を必ず通す必要がある（順序不変条件）。
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Plan {
-    pub to_unregister: Vec<TokenAccount>,
-    pub to_register: Vec<TokenAccount>,
-    /// 新規トークン登録に必要な storage 総量の見積もり（安全マージン 1.1 倍を適用済み）。
+pub(super) enum Plan {
+    /// 初回登録ケース: deposits が空 (`is_empty()`)。
     ///
-    /// 命名の意図: この値は `plan()` 実行時点の snapshot（すなわち unregister を実行する
-    /// *前*）から算出された `per_token × to_register.len() × 1.1` の stale 見積もりである
-    /// ことをフィールド名で示している。unregister で `deposits_len` が減少すると実際の
-    /// per_token はわずかに上昇するが、それはここには反映されない。
-    ///
-    /// 実際の top-up 額は `ensure_ref_storage_setup` 側（`storage.rs` ステップ 4）で
-    /// `balance_of` を再取得した `post_unregister_available` を用いて
-    /// `pre_unregister_estimate.saturating_sub(NearToken::from_yoctonear(post_unregister_available))`
-    /// として補正されるため、ここで stale なままでも最終的な整合性は保たれる。詳細は
-    /// `storage.rs` のステップ 4 コメントを参照。
-    pub pre_unregister_estimate: NearToken,
+    /// 呼び出し側は cap 検証と top-up 計算をスキップし、`register_tokens` を直接
+    /// 発行する。このパスで storage 資金が動かないことは
+    /// `register_tokens` の仕様（attached_deposit = 1 yocto）に依存する。
+    InitialRegister {
+        /// 登録すべきトークン。deposits が空なので requested の全量と等しい。
+        to_register: Vec<TokenAccount>,
+    },
+    /// 通常運用ケース: deposits がある。
+    Normal {
+        /// ゼロ残高かつ keep に含まれない既存登録で、解除してよいトークン。
+        to_unregister: Vec<TokenAccount>,
+        /// まだ登録されていない requested トークン。
+        ///
+        /// **不変条件**: このフィールドを使って `register_tokens` を呼ぶ前に
+        /// `storage.rs` ステップ 4-5 の cap 検証
+        /// (`actual_top_up > remaining_cap` → `Err`) を必ず通す必要がある。
+        /// 順序を破ると `max_top_up` cap 超過を許すことになる。
+        to_register: Vec<TokenAccount>,
+        /// 新規トークン登録に必要な storage 総量の見積もり（安全マージン 1.1 倍を適用済み）。
+        ///
+        /// 命名の意図: この値は `plan()` 実行時点の snapshot（すなわち unregister を実行する
+        /// *前*）から算出された `per_token × to_register.len() × 1.1` の stale 見積もりである
+        /// ことをフィールド名で示している。unregister で `deposits_len` が減少すると実際の
+        /// per_token はわずかに上昇するが、それはここには反映されない。
+        ///
+        /// 実際の top-up 額は `ensure_ref_storage_setup` 側（`storage.rs` ステップ 4）で
+        /// `balance_of` を再取得した `post_unregister_available` を用いて
+        /// `pre_unregister_estimate.saturating_sub(NearToken::from_yoctonear(post_unregister_available))`
+        /// として補正されるため、ここで stale なままでも最終的な整合性は保たれる。詳細は
+        /// `storage.rs` のステップ 4 コメントを参照。
+        pre_unregister_estimate: NearToken,
+    },
 }
 
 #[derive(Error, Debug)]
@@ -86,26 +116,30 @@ pub(super) enum PlanError {
 /// - `requested`: 今回必要なトークン（register したい）
 /// - `keep`: 解除してはいけないトークン（wnear + 次期候補等）
 ///
-/// 返り値:
-/// - `Ok(None)`: deposits が空（初期登録直後等）で per_token を算出できない。
-///   呼び出し側は cap 検証を通らない `register_tokens` 直接呼び出しパスを選択する。
-///   cap-bypass の安全性前提については呼び出し側
-///   ([`super::ensure_ref_storage_setup`] の `None` arm) を参照。
-/// - `Ok(Some(Plan))`: 通常計画
-///   - `to_unregister`: ゼロ残高かつ keep に含まれない既存登録を解除して枠を空ける
-///   - `to_register`: まだ登録されていない requested トークン
-///   - `pre_unregister_estimate`: 新規登録に必要な storage 総量（安全マージン適用済み、stale 見積もり）
+/// 返り値は [`Plan`] の variant で表される。詳細な契約は各 variant の doc を参照。
+/// - deposits が空 → [`Plan::InitialRegister`]
+/// - deposits がある → [`Plan::Normal`]
 pub(super) fn plan(
     snapshot: &StorageSnapshot,
     requested: &[TokenAccount],
     keep: &[TokenAccount],
-) -> Result<Option<Plan>, PlanError> {
+) -> Result<Plan, PlanError> {
     let deposits = &snapshot.deposits;
 
-    // deposits が空の場合は per_token を算出できない
-    // (初回登録時は ensure 側で initial deposit → register_tokens の別パスを通る)
+    // deposits が空の場合は per_token を算出できない。
+    // 呼び出し側は cap 検証をスキップして register_tokens 直接発行する。
     let Some(deposits_len) = NonZeroUsize::new(deposits.len()) else {
-        return Ok(None);
+        // deposits 空 → 未登録 token と requested が 1:1 で一致するため、filter は no-op。
+        // それでも MAX_REGISTER_PER_CYCLE ガードは通すことで planner 経路間の対称性を保つ。
+        if requested.len() > MAX_REGISTER_PER_CYCLE {
+            return Err(PlanError::TooManyTokens {
+                requested: requested.len(),
+                max: MAX_REGISTER_PER_CYCLE,
+            });
+        }
+        return Ok(Plan::InitialRegister {
+            to_register: requested.to_vec(),
+        });
     };
 
     let total = snapshot.balance.total.0;
@@ -195,11 +229,11 @@ pub(super) fn plan(
 
     if needed_u128 <= available {
         // 余裕あり: unregister も top-up も不要
-        return Ok(Some(Plan {
+        return Ok(Plan::Normal {
             to_unregister: vec![],
             to_register,
             pre_unregister_estimate: NearToken::from_yoctonear(needed_u128),
-        }));
+        });
     }
 
     // needed_u128 > available は直前の L186 early-return で保証される local invariant。
@@ -229,11 +263,11 @@ pub(super) fn plan(
     // 候補を必要数まで切り詰め
     unregister_candidates.truncate(unregister_needed);
 
-    Ok(Some(Plan {
+    Ok(Plan::Normal {
         to_unregister: unregister_candidates,
         to_register,
         pre_unregister_estimate: NearToken::from_yoctonear(needed_u128),
-    }))
+    })
 }
 
 #[cfg(test)]

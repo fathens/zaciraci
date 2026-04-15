@@ -1020,6 +1020,39 @@ async fn test_cap_boundary_exceed_by_one() {
     assert!(err_msg.contains("exceeds remaining cap"));
 }
 
+// Test: `Plan::InitialRegister` 経路でも MAX_REGISTER_PER_CYCLE ガードが発火することを
+// 回帰的に確認する。deposits 空で planner を経由しないパスでも storage.rs 先頭の raw
+// サニティガード (`needed_tokens.len() > MAX_REGISTER_PER_CYCLE`) が働く不変条件。
+#[tokio::test]
+async fn test_initial_register_path_rejects_over_max_register_per_cycle() {
+    use crate::ref_finance::storage::planner::MAX_REGISTER_PER_CYCLE;
+
+    let client = MockStorageClient::new_unregistered();
+    let wallet = MockWallet::with_account_id("test-initial-max-err.near");
+
+    let requested: Vec<TokenAccount> = (0..=MAX_REGISTER_PER_CYCLE)
+        .map(|i| format!("t{i}.near").parse().unwrap())
+        .collect();
+    assert_eq!(requested.len(), MAX_REGISTER_PER_CYCLE + 1);
+
+    let keep = vec![WNEAR_TOKEN.clone()];
+    let max_top_up = NearToken::from_yoctonear(500_000_000_000_000_000_000_000);
+    let result = ensure_ref_storage_setup(&client, &wallet, &requested, &keep, max_top_up).await;
+
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("MAX_REGISTER_PER_CYCLE"),
+        "expected MAX_REGISTER_PER_CYCLE rejection on initial-register path, got: {err_msg}"
+    );
+    // storage_deposit はまだ呼ばれていない（ガード通過前の失敗）
+    assert_eq!(
+        client.storage_deposit_count.load(Ordering::Relaxed),
+        0,
+        "guard must fire before initial deposit"
+    );
+}
+
 // Test: MAX_REGISTER_PER_CYCLE の境界 — len == MAX で Ok、len == MAX+1 で Err
 //
 // W1（debug_assert → runtime Err 格上げ）後、strict `>` が維持されていることを verify。
