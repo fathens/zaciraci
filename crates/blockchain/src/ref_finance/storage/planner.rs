@@ -66,10 +66,10 @@ pub(super) struct Plan {
     ///
     /// 実際の top-up 額は `ensure_ref_storage_setup` 側（`storage.rs` ステップ 4）で
     /// `balance_of` を再取得した `new_available` を用いて
-    /// `needed.saturating_sub(NearToken::from_yoctonear(new_available))` として補正される
-    /// ため、ここで stale なままでも最終的な整合性は保たれる。詳細は `storage.rs` の
-    /// ステップ 4 コメントを参照。
-    pub needed: NearToken,
+    /// `estimated_needed.saturating_sub(NearToken::from_yoctonear(new_available))` として
+    /// 補正されるため、ここで stale なままでも最終的な整合性は保たれる。詳細は
+    /// `storage.rs` のステップ 4 コメントを参照。
+    pub estimated_needed: NearToken,
 }
 
 #[derive(Error, Debug)]
@@ -91,7 +91,7 @@ pub(super) enum PlanError {
 /// 返り値の `Plan`:
 /// - `to_unregister`: ゼロ残高かつ keep に含まれない既存登録を解除して枠を空ける
 /// - `to_register`: まだ登録されていない requested トークン
-/// - `needed`: 新規登録に必要な storage 総量（安全マージン適用済み）
+/// - `estimated_needed`: 新規登録に必要な storage 総量（安全マージン適用済み、stale 見積もり）
 pub(super) fn plan(
     snapshot: &StorageSnapshot,
     requested: &[TokenAccount],
@@ -175,7 +175,7 @@ pub(super) fn plan(
         return Ok(Plan {
             to_unregister: vec![],
             to_register,
-            needed: NearToken::from_yoctonear(needed_u128),
+            estimated_needed: NearToken::from_yoctonear(needed_u128),
         });
     }
 
@@ -207,7 +207,7 @@ pub(super) fn plan(
     Ok(Plan {
         to_unregister: unregister_candidates,
         to_register,
-        needed: NearToken::from_yoctonear(needed_u128),
+        estimated_needed: NearToken::from_yoctonear(needed_u128),
     })
 }
 

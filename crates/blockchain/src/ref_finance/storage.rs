@@ -271,7 +271,7 @@ where
     info!(log, "storage plan";
         "unregister" => p.to_unregister.len(),
         "register" => p.to_register.len(),
-        "needed" => p.needed.as_yoctonear(),
+        "needed" => p.estimated_needed.as_yoctonear(),
     );
 
     // 3. ゼロ残高の旧トークンを unregister（TOCTOU 再検証 + チャンク分割）
@@ -338,28 +338,28 @@ where
 
     // 4. unregister 後の実際の available で top-up 額を再計算
     //
-    // `p.needed` は planner が初期 snapshot から推定した値（`planner::Plan::needed` の
-    // doc 参照）で、unregister で `deposits_len` が減った影響は反映されていない。
-    // saturating_sub は `available` 増加のみ反映するため:
+    // `p.estimated_needed` は planner が初期 snapshot から推定した値
+    // （`planner::Plan::estimated_needed` の doc 参照）で、unregister で `deposits_len`
+    // が減った影響は反映されていない。saturating_sub は `available` 増加のみ反映するため:
     //
-    // - needed 過大評価（per_token が実際より大きく見積もられた）→ top-up 多め、安全側
-    // - needed 過小評価（unregister 後 per_token が上昇し実需が増えた）→ top-up 不足で
+    // - 過大評価（per_token が実際より大きく見積もられた）→ top-up 多め、安全側
+    // - 過小評価（unregister 後 per_token が上昇し実需が増えた）→ top-up 不足で
     //   register_tokens がコントラクト拒否 → Err を上位へ。次サイクルで
     //   `balance_of` を再取得した新しい snapshot から planner が再計算するため
     //   self-healing する（資金損失なし）。
     //
-    // unregister で `available` が `needed` 以上に増えた場合、saturating_sub により
-    // actual_top_up = 0 となる。これは「top-up 不要」という正しい動作。
+    // unregister で `available` が `estimated_needed` 以上に増えた場合、saturating_sub
+    // により actual_top_up = 0 となる。これは「top-up 不要」という正しい動作。
     let new_balance = balance_of(client, account)
         .await?
         .ok_or_else(|| anyhow::anyhow!("storage balance disappeared after unregister"))?;
     let new_available = new_balance.available.0;
     let actual_top_up = p
-        .needed
+        .estimated_needed
         .saturating_sub(NearToken::from_yoctonear(new_available));
 
     debug!(log, "top-up recalculated after unregister";
-        "needed" => p.needed.as_yoctonear(),
+        "needed" => p.estimated_needed.as_yoctonear(),
         "new_available" => new_available,
         "actual_top_up" => actual_top_up.as_yoctonear(),
     );
