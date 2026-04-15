@@ -286,13 +286,15 @@ where
                 client,
                 wallet,
                 &log,
-                account,
-                keep,
-                max_top_up,
-                initial_deposit,
-                to_unregister,
-                to_register,
-                pre_unregister_estimate,
+                NormalPlanArgs {
+                    account,
+                    keep,
+                    max_top_up,
+                    initial_deposit,
+                    to_unregister,
+                    to_register,
+                    pre_unregister_estimate,
+                },
             )
             .await
         }
@@ -327,28 +329,46 @@ where
     Ok(())
 }
 
-/// `Plan::Normal` を処理する。unregister → cap 再評価 → top-up → register。
+/// `handle_normal_plan` の非ジェネリック入力を束ねる private struct。
 ///
-/// cap 検証（ステップ 4-5）を必ず通してから `register_tokens` を発行する不変条件を
-/// 関数境界で担保する。`pre_unregister_estimate` / `post_unregister_available` /
-/// `actual_top_up` / `remaining_cap` はこの関数のローカルに閉じ込められる。
-#[allow(clippy::too_many_arguments)]
-async fn handle_normal_plan<C, W>(
-    client: &C,
-    wallet: &W,
-    log: &slog::Logger,
-    account: &AccountId,
-    keep: &[TokenAccount],
+/// field 順は意味論グルーピング: (1) 呼び出しコンテキスト refs, (2) cap context,
+/// (3) planner 出力 payload。named field 構築により位置 swap を型レベルで不能化。
+#[derive(Debug)]
+struct NormalPlanArgs<'a> {
+    account: &'a AccountId,
+    keep: &'a [TokenAccount],
     max_top_up: NearToken,
     initial_deposit: NearToken,
     to_unregister: Vec<TokenAccount>,
     to_register: Vec<TokenAccount>,
     pre_unregister_estimate: NearToken,
+}
+
+/// `Plan::Normal` を処理する。unregister → cap 再評価 → top-up → register。
+///
+/// cap 検証（ステップ 4-5）を必ず通してから `register_tokens` を発行する不変条件を
+/// 関数境界で担保する。`pre_unregister_estimate` / `post_unregister_available` /
+/// `actual_top_up` / `remaining_cap` はこの関数のローカルに閉じ込められる。
+async fn handle_normal_plan<C, W>(
+    client: &C,
+    wallet: &W,
+    log: &slog::Logger,
+    args: NormalPlanArgs<'_>,
 ) -> Result<()>
 where
     C: SendTx + ViewContract,
     W: Wallet,
 {
+    let NormalPlanArgs {
+        account,
+        keep,
+        max_top_up,
+        initial_deposit,
+        to_unregister,
+        to_register,
+        pre_unregister_estimate,
+    } = args;
+
     info!(log, "storage plan";
         "unregister" => to_unregister.len(),
         "register" => to_register.len(),
