@@ -44,6 +44,15 @@ pub fn keep_with_portfolio(tokens: &[TokenAccount]) -> Vec<TokenAccount> {
 
 /// 同一アカウントでの `ensure_ref_storage_setup` の重複実行を直列化するためのロックマップ。
 ///
+/// **CRITICAL: single-process invariant** — このロックは **同一プロセス内** のみ直列化する。
+/// 同じ `ROOT_ACCOUNT_ID` を握る backend を複数プロセス/コンテナで並行起動した場合、
+/// 二重 initial deposit や二重 top-up の race に対する保護は失われる。backend は
+/// singleton として運用することが前提。詳細は `crates/backend/src/main.rs` の該当 doc を参照。
+///
+/// クロスプロセスの排他が必要になった場合は `persistence::pg_advisory_lock` 等を介した
+/// follow-up で対応する（本モジュールに `trait CrossProcessLock` を導入し backend で DI する
+/// 設計を想定）。
+///
 /// backend では `trade::run` と `arbitrage::run` が同一ウォレットで並行起動されるため、
 /// snapshot → unregister → top-up → register の一連が atomic でないと二重 initial deposit
 /// や二重 top-up が発生する。account 単位で tokio::sync::Mutex を引き当て、
