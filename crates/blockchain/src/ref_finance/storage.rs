@@ -170,14 +170,18 @@ where
     let account = wallet.account_id();
 
     // 呼び出し側の実装ミス（異常に多いトークンを 1 呼び出しで登録しようとする）を早期に検出。
-    // planner 側の `PlanError::TooManyTokens` と対で動くが、EmptyDeposits 分岐でも効く位置に
-    // 置くことで全経路で sanity guard が有効になる。
-    debug_assert!(
-        needed_tokens.len() <= planner::MAX_REGISTER_PER_CYCLE,
-        "needed_tokens ({}) exceeds MAX_REGISTER_PER_CYCLE ({})",
-        needed_tokens.len(),
-        planner::MAX_REGISTER_PER_CYCLE,
-    );
+    // planner 側の `PlanError::TooManyTokens` と対で動くが、planner をスキップする `None` 分岐
+    // （deposits 空）でも効く位置に置くことで全経路で sanity guard が有効になる。
+    //
+    // strict `>` で判定することで planner.rs:155 と同演算子を維持する（ちょうど上限値は許容）。
+    // release build でも多層防御が完結するよう、`debug_assert!` ではなく runtime Err を返す。
+    if needed_tokens.len() > planner::MAX_REGISTER_PER_CYCLE {
+        return Err(anyhow::anyhow!(
+            "needed_tokens ({}) exceeds MAX_REGISTER_PER_CYCLE ({})",
+            needed_tokens.len(),
+            planner::MAX_REGISTER_PER_CYCLE,
+        ));
+    }
 
     // 同一アカウントでの並行実行を直列化（二重 deposit/top-up 防止）。
     // std::sync::Mutex guard は lock_for の内部で drop されるため await 跨ぎ問題は発生しない。
