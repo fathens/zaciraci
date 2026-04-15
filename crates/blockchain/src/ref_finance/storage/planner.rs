@@ -192,9 +192,11 @@ pub(super) fn plan(
         }));
     }
 
+    // needed_u128 > available は直前の L186 early-return で保証される local invariant。
+    // 到達時点で shortage > 0 が確定しているため panic ブランチは意味論的に dead。
     let shortage = needed_u128
         .checked_sub(available)
-        .ok_or(PlanError::ArithmeticOverflow)?;
+        .expect("needed_u128 > available ensured by early-return branch above");
 
     // ゼロ残高かつ keep に含まれない既存登録 → 解除候補
     let mut unregister_candidates: Vec<TokenAccount> = deposits
