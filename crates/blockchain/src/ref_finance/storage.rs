@@ -506,6 +506,21 @@ where
 
     // 4. unregister 後の実際の available で top-up 額を再計算
     //
+    // **責務分離**: `pre_unregister_estimate` は planner が **snapshot 時点** の
+    // `StorageSnapshot`（unregister 前）だけを入力として算出した評価値。unregister 実行
+    // 後の `post_unregister_balance.available` を基にした `actual_top_up` の再計算は
+    // この storage.rs 側で行う。planner 側には I/O や時間依存を持ち込まないことで、
+    // [`planner::plan`] を純関数に保ち、テスト容易性と可読性を維持する。
+    //
+    // この分業の結果、pre_unregister_estimate と actual_top_up の差分（= unregister で
+    // 実際に解放された枠の反映）はこのブロック内の saturating_sub で閉じ、planner からは
+    // 観測不能になる。
+    //
+    // TODO: 将来この補正ロジックが 3 行以上になったり条件分岐を伴うようになった場合は、
+    // `planner::recompute_top_up(pre_estimate, post_available) -> NearToken` のような
+    // 純関数に切り出して planner 側でテストを書き、storage.rs からはその結果を呼ぶだけに
+    // する構成へ移行する（現状は 1 行なのでインライン保持で十分）。
+    //
     // `pre_unregister_estimate` は planner が初期 snapshot から推定した値
     // （`planner::Plan::Normal::pre_unregister_estimate` の doc 参照）で、unregister で
     // `deposits_len` が減った影響は反映されていない。saturating_sub は `available` 増加
