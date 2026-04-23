@@ -205,7 +205,9 @@ pub(super) fn plan(
     //
     //   follow-up: mainnet dry-run で per_token 実測値を取得し、本テーブルの floor 前提
     //   が本番と整合しているか確認する（Issue #4）。
-    let per_token_calc = usable.div_ceil(deposits_len.get() as u128);
+    let per_token_calc = usable.div_ceil(
+        u128::try_from(deposits_len.get()).expect("usize fits in u128 on all supported platforms"),
+    );
     let per_token = per_token_calc.max(min_bound);
 
     // 新規登録が必要なトークン
@@ -236,7 +238,10 @@ pub(super) fn plan(
 
     // 新規登録に必要な storage
     let needed_raw = per_token
-        .checked_mul(to_register.len() as u128)
+        .checked_mul(
+            u128::try_from(to_register.len())
+                .expect("usize fits in u128 on all supported platforms"),
+        )
         .ok_or(PlanError::ArithmeticOverflow)?;
 
     // 安全マージン適用 (1.1x)
