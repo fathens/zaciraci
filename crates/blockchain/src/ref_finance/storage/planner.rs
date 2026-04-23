@@ -187,6 +187,24 @@ pub(super) fn plan(
     //     | 3x              |  121  | ⚠ 1.21x 余裕薄い       |
     //     | 3.6x            |  100  | ⚠ 余裕ゼロ             |
     //     | 4x              |   90  | ✗ 要再評価             |
+    //
+    // **N_max は per_token が floor（= min_bound）に張り付くケースでの上限**。
+    //   上記表は `per_token = bounds.min` を前提に導出しており、初期登録直後のように
+    //   `per_token_calc = usable / deposits_len` が小さくなり `per_token = min_bound`
+    //   の floor が発動する過渡状態での最大容量を示す。
+    //
+    //   定常運用では `per_token` が floor を超えて上昇しうる（`deposits_len` が増えるに
+    //   つれ `usable / deposits_len` が縮むが、本番のストレージレイアウトでは 1 token
+    //   あたりの実コストが min_bound を超えることがある）。その場合の実効 N_max は
+    //   `⌊max_top_up / (per_token × 1.1)⌋` で表の値より小さくなる。
+    //
+    //   ただし実効 N_max 超過は `storage.rs` step 5 の `remaining_cap` check
+    //   (`actual_top_up > remaining_cap → Err`) で安全停止するため、**資金損失は発生しない**。
+    //   register_tokens は発行されず、次サイクルで新しい `balance_of` から再計算される
+    //   self-healing ループに合流する。
+    //
+    //   follow-up: mainnet dry-run で per_token 実測値を取得し、本テーブルの floor 前提
+    //   が本番と整合しているか確認する（Issue #4）。
     let per_token_calc = usable.div_ceil(deposits_len.get() as u128);
     let per_token = per_token_calc.max(min_bound);
 
