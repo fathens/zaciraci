@@ -26,8 +26,47 @@ pub fn keep_wnear_only() -> Vec<TokenAccount> {
 /// trade/arbitrage から `ensure_ref_storage_setup` を呼ぶ際に繰り返し書かれていた
 /// `NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear())` を一箇所に集約する。
 /// `common` crate に `near-sdk` 依存を追加しないため、ここ（blockchain crate）に置く。
+///
+/// # Absolute ceiling enforcement (defense-in-depth)
+///
+/// The resolved configured value is clipped to
+/// [`common::config::REF_STORAGE_MAX_TOP_UP_ABSOLUTE_CEILING`] before it is
+/// returned. This protects against cap bypass via `DB_STORE` write privilege
+/// compromise: even if an attacker injects an extreme
+/// `REF_STORAGE_MAX_TOP_UP_YOCTONEAR`, the effective cap passed into
+/// `ensure_ref_storage_setup` cannot exceed the hard-coded ceiling.
+///
+/// When the clip engages (configured > ceiling) a `warn!` record is emitted
+/// with both values so that any attempted bypass leaves an audit trail — silent
+/// clips are forbidden. On the first resolution per process an `info!` record
+/// captures the effective value so that operators can verify the startup-time
+/// cap.
 pub fn max_top_up_from_config(cfg: &dyn common::config::ConfigAccess) -> NearToken {
-    NearToken::from_yoctonear(cfg.ref_storage_max_top_up_yoctonear())
+    let log = DEFAULT.new(o!("function" => "storage::max_top_up_from_config"));
+    let configured = cfg.ref_storage_max_top_up_yoctonear();
+    let ceiling = common::config::REF_STORAGE_MAX_TOP_UP_ABSOLUTE_CEILING;
+    let effective = configured.min(ceiling);
+
+    if configured > ceiling {
+        warn!(log, "ref storage max top-up clipped to absolute ceiling";
+            "configured" => configured,
+            "ceiling" => ceiling,
+            "effective" => effective,
+        );
+    }
+
+    // 起動パス（process 内初回呼び出し）で effective 値を info ログに残す。
+    // Once で一度だけ emit するため、毎サイクル出る warn と違い運用ノイズにならない。
+    static STARTUP_LOG: std::sync::Once = std::sync::Once::new();
+    STARTUP_LOG.call_once(|| {
+        info!(log, "ref storage max top-up effective";
+            "configured" => configured,
+            "ceiling" => ceiling,
+            "effective" => effective,
+        );
+    });
+
+    NearToken::from_yoctonear(effective)
 }
 
 /// ポートフォリオ運用中のトークン + 基軸通貨 WNEAR を保持対象とする keep list を作る。
