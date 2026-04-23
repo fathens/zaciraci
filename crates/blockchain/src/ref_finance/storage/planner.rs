@@ -63,6 +63,29 @@ impl StorageSnapshot {
 /// - [`Plan::Normal`]: deposits がある通常運用。unregister → cap 再評価 → top-up →
 ///   register の順で処理される。`Normal::to_register` を `register_tokens` に渡す
 ///   前に `storage.rs` ステップ 4-5 の cap 検証を必ず通す必要がある（順序不変条件）。
+///
+/// # External contract invariant (NEP-145)
+///
+/// 本モジュールの cap-bypass 経路（[`Plan::InitialRegister`]）および通常経路の
+/// `actual_top_up` 会計は、REF Finance exchange contract の `register_tokens` が
+/// NEP-145 の `assert_one_yocto()` 要件を満たす（= `attached_deposit = 1 yoctoNEAR`
+/// のみで追加 storage 資金を動かさない）ことに依存する **external invariant** である。
+///
+/// 参照: <https://github.com/near/NEPs/blob/master/neps/nep-0145.md>
+///
+/// ## なぜ自動検知できないか
+///
+/// NEP-145 は標準仕様だが、REF 側の contract upgrade で `register_tokens` の
+/// 実装が変わる（例: `attached_deposit` 要件を緩和して任意の storage 追加を許す、
+/// あるいは storage 算出式を変える）可能性は排除できない。この crate からは
+/// contract 側の実装変更を自動検知できないため、運用側で **契約 WASM hash 変化を
+/// 監視 + mainnet deploy 前の contract audit review を deploy gate に組み込む**
+/// ことで補償する。
+///
+/// 詳細な監視手順と deploy gate 運用は `README.md` の
+/// 「REF 契約 hash 監視」セクションを参照。契約 hash 変化を検知した場合、
+/// [`MAX_REGISTER_PER_CYCLE`] と [`Plan::InitialRegister`] の cap-bypass 前提を
+/// 再評価すること。
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Plan {

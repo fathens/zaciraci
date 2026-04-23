@@ -55,16 +55,43 @@ follow-up Issue #1 (P0) で対応予定。それまでは以下の orchestrator 
 ### REF 契約 hash 監視
 
 `Plan::InitialRegister` 経路の安全性（`actual_top_up = 0` を型レベルで保証）は、
-REF exchange コントラクトの `register_tokens` が `attached_deposit = 1 yocto` 仕様を
-維持することに依存する。契約 upgrade を見逃さないため:
+REF exchange コントラクトの `register_tokens` が **NEP-145 の `assert_one_yocto()`
+要件**（`attached_deposit = 1 yoctoNEAR` のみで storage 資金を動かさない）を維持する
+ことに依存する external invariant である。この前提は標準仕様に根ざしてはいるが、
+REF 側の contract upgrade で実装が変わる可能性は排除できないため、以下の監視と
+deploy gate で補償する。
+
+参照: [NEP-145 Storage Management](https://github.com/near/NEPs/blob/master/neps/nep-0145.md)
+
+#### 監視（週次 + 検知トリガー）
 
 - 週次で REF exchange (`v2.ref-finance.near`) の WASM hash を取得して記録する。
   手順は NEAR RPC の `query { request_type: "view_code", account_id: "v2.ref-finance.near" }`
   で WASM バイナリを取得し sha256 を計算する（`near-cli-rs` の
   `near contract download-wasm v2.ref-finance.near ...` 等でも可）。
-- hash 変化を検知したら `MAX_REGISTER_PER_CYCLE` と `per_token_floor`（= `bounds.min`）の
-  再評価を行い、必要に応じ `crates/blockchain/src/ref_finance/storage/planner.rs` 冒頭の
-  倍率テーブルを更新する。
+- hash 変化を検知したら、以下を全件確認するまで `run_local` / 本番 deploy を停止:
+  1. `register_tokens` の `assert_one_yocto()` が維持されているか（NEP-145 準拠）。
+  2. `storage_balance_bounds.min` が変化していないか（`per_token_floor` 前提）。
+  3. `storage_deposit` の `registration_only=true` 時の refund セマンティクスが
+     `contract_spec.md` §2.2 と整合しているか。
+- 確認結果に応じ、`crates/blockchain/src/ref_finance/storage/planner.rs` 冒頭の
+  `MAX_REGISTER_PER_CYCLE` と倍率テーブル、および `contract_spec.md` を更新する。
+
+#### Deploy gate（mainnet 投入前の必須チェック）
+
+新しい REF contract hash が記録された直後に mainnet へ config 変更や新 wallet を
+投入する場合、**contract audit review をリリースゲートに組み込む**こと:
+
+1. 最新 hash に対する監視項目（上記 1-3）を明示的に review し、変更点が
+   cap-bypass 前提・NEP-145 前提に影響しないことをコミットログ or PR で記録する。
+2. 不確実性が残る場合は「Mainnet dry-run」節の手順（小さな `max_top_up` で 1 サイクル）
+   を必ず実施してから本番値に戻す。
+3. review / dry-run 両方のログを残さないうちに mainnet に `max_top_up` を戻す変更は
+   リリース不可（deploy gate 違反）。
+
+この運用は crate 内コード（`planner.rs` の `Plan` enum doc）で参照されているため、
+ゲートを外した状態で `ensure_ref_storage_setup` を動かすと cap-bypass 前提が
+unverified となり、最悪の場合 cap 会計そのものが破綻する。
 
 ### 運用時の曝露想定（参考値）
 
