@@ -1488,3 +1488,61 @@ async fn test_ensure_ref_storage_setup_register_fail_self_heal_across_cycles() {
         initial_total
     );
 }
+
+// Test: ensure_ref_storage_setup - step 1 cap guard rejects bounds.min > max_top_up.
+//
+// 未登録アカウントの初期 storage_deposit cap guard (ensure_ref_storage_setup step 1:
+// `if amount > max_top_up { return Err(...) }`) の regression test。
+// grep-based 検知は source-level 削除を拾えるが semantic break (> → >=,
+// `return Err` → `saturating_sub` 等) を拾えないため、意味論レベルの integration
+// test として以下を固定する:
+//
+// - `bounds.min > max_top_up` のとき `Err` を返す（panic ではなく Result 経路）。
+// - cap guard が発火した場合、初期 storage_deposit は送信されず、yoctoNEAR の
+//   支出はゼロである（リソース消費の副作用なし）。
+//
+// fixture は `with_bounds` で `bounds.min` を明示設定する。`new_unregistered` の
+// デフォルト bounds.min（0.001 NEAR）を将来変更しても本テストが追従するように、
+// このテスト内で値を完全にコントロールする。また `max_top_up` は G1 で導入した
+// hard ceiling（5 NEAR）未満に抑え、ceiling clip と cap guard 本体の責務を
+// 混同しないようにする。
+#[tokio::test]
+async fn test_initial_deposit_cap_guard_rejects_bounds_min_over_max_top_up() {
+    let token: TokenAccount = WNEAR_TOKEN.clone();
+    // 3 NEAR。hard ceiling (5 NEAR) 未満に保って ceiling clip と無関係にする。
+    let bounds_min_yocto: u128 = 3_000_000_000_000_000_000_000_000;
+    let client = MockStorageClient::new_unregistered().with_bounds(StorageBalanceBounds {
+        min: U128(bounds_min_yocto),
+        max: None,
+    });
+    let wallet = MockWallet::with_account_id("test-initial-cap-guard.near");
+    let tokens = vec![token];
+    let keep = vec![WNEAR_TOKEN.clone()];
+
+    // max_top_up = bounds.min - 1 yocto → step 1 guard (strict `>`) が発火する。
+    let max_top_up = NearToken::from_yoctonear(bounds_min_yocto - 1);
+
+    let result = ensure_ref_storage_setup(&client, &wallet, &tokens, &keep, max_top_up).await;
+    assert!(
+        result.is_err(),
+        "bounds.min > max_top_up must produce Err via step 1 cap guard"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("exceeds cap"),
+        "expected 'exceeds cap' (step 1 guard) in error message: {}",
+        err_msg
+    );
+
+    // cap guard が発火した場合、初期 deposit は発行されずリソース消費もゼロ。
+    assert_eq!(
+        client.storage_deposit_count.load(Ordering::Relaxed),
+        0,
+        "initial storage_deposit must not be sent when cap guard fires"
+    );
+    assert_eq!(
+        *client.total_storage_deposit_yocto.lock().unwrap(),
+        0,
+        "no yoctoNEAR should be spent when cap guard fires"
+    );
+}
