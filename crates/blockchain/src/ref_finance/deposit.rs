@@ -9,6 +9,50 @@ use near_sdk::{AccountId, NearToken};
 use serde_json::json;
 use std::collections::BTreeMap;
 
+/// NEP-145 `storage_deposit` の `registration_only` フラグを表す自己説明的な enum。
+///
+/// ## 背景
+///
+/// REF Finance の `storage_deposit` は NEP-145 に準拠し、`registration_only`
+/// ブール引数で 2 つの動作を切り替える:
+///
+/// - `true`: アカウント登録のみ行い、必要な `bounds.min` 分を受領して超過分を
+///   refund する。`ensure_ref_storage_setup` step 1 の初回登録経路で使用。
+/// - `false`: 指定額を account の storage balance に加算する（未登録なら同時に
+///   register する）。step 6 の top-up 経路で使用。
+///
+/// ## なぜ enum なのか
+///
+/// step 1 の cap guard (`amount > max_top_up → Err`) は `registration_only=true`
+/// 前提で成立しており、`false` に切り替えると超過分が `storage_balance` に
+/// 吸収されて cap 会計が壊れる（contract_spec.md §2.2）。NEP-145 のプロトコル
+/// 用語をそのまま型に落とし込むことで、呼び出し側が二つの分岐を取り違えるリスクを
+/// 型レベルで抑止する（make illegal states unrepresentable 原則）。
+///
+/// `Plan::InitialRegister` / `Plan::Normal` variant や `NormalPlanArgs` 構造体と
+/// 同じ方向の防御であり、`bool` を残すと分岐モデルに一貫性の穴が残る。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepositMode {
+    /// NEP-145 `registration_only = true`。
+    /// アカウント登録のみを行い、`bounds.min` ちょうどを消費して余剰は refund される。
+    /// 初回登録経路（`ensure_ref_storage_setup` step 1）で使用する。
+    RegistrationOnly,
+    /// NEP-145 `registration_only = false`。
+    /// 指定額をアカウントの storage balance に加算する（未登録なら同時に register）。
+    /// top-up 経路（`ensure_ref_storage_setup` step 6）で使用する。
+    DepositWithRegistration,
+}
+
+impl DepositMode {
+    /// NEP-145 `registration_only` ブールへシリアライズする。
+    ///
+    /// JSON 引数組み立て専用のヘルパ。呼び出し側コードでは `DepositMode` のまま
+    /// 受け渡し、この関数は `storage::deposit` の JSON 組み立て箇所でのみ使う。
+    pub const fn registration_only(self) -> bool {
+        matches!(self, Self::RegistrationOnly)
+    }
+}
+
 pub mod wnear {
     use crate::Result;
     use crate::jsonrpc::{SendTx, ViewContract};

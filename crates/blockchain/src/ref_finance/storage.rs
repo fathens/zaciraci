@@ -147,16 +147,17 @@ pub async fn deposit<C: SendTx, W: Wallet>(
     client: &C,
     wallet: &W,
     value: NearToken,
-    registration_only: bool,
+    mode: deposit::DepositMode,
 ) -> Result<C::Output> {
     let log = DEFAULT.new(o!("function" => "storage::deposit"));
     const METHOD_NAME: &str = "storage_deposit";
     let args = json!({
-        "registration_only": registration_only,
+        "registration_only": mode.registration_only(),
     });
     let signer = wallet.signer();
     info!(log, "depositing";
         "value" => value.as_yoctonear(),
+        "mode" => ?mode,
         "signer" => ?signer.account_id,
     );
 
@@ -290,18 +291,24 @@ where
                 max_top_up.as_yoctonear(),
             ));
         }
-        // `registration_only=true` で送金することで、REF Finance 側は必要量（= `bounds.min`）
-        // ぴったりで登録し、超過分（= 0）のみを refund する。既に登録済みのアカウントだった
-        // 場合は contract 仕様により全額 refund される（contract_spec.md §2.2 参照）ため、
-        // stale view RPC での二重 deposit が起きても storage_balance が過剰に増えない。
+        // `DepositMode::RegistrationOnly` で送金することで、REF Finance 側は必要量
+        // （= `bounds.min`）ぴったりで登録し、超過分（= 0）のみを refund する。既に
+        // 登録済みのアカウントだった場合は contract 仕様により全額 refund される
+        // （contract_spec.md §2.2 参照）ため、stale view RPC での二重 deposit が起きても
+        // storage_balance が過剰に増えない。
         //
-        // 本コードは `amount == bounds.min` を前提に `registration_only=true` を選んでいる。
-        // 将来、初期登録時に min_bound 以上を確保したくなった場合は、`false` に戻すか、
-        // refund ぶんを cap 会計から差し引く必要がある。
-        deposit(client, wallet, amount, true)
-            .await?
-            .wait_for_success()
-            .await?;
+        // 本コードは `amount == bounds.min` を前提に `RegistrationOnly` を選んでいる。
+        // 将来、初期登録時に min_bound 以上を確保したくなった場合は
+        // `DepositWithRegistration` に戻すか、refund ぶんを cap 会計から差し引く必要がある。
+        deposit(
+            client,
+            wallet,
+            amount,
+            deposit::DepositMode::RegistrationOnly,
+        )
+        .await?
+        .wait_for_success()
+        .await?;
         info!(log, "initial storage deposit completed"; "amount" => amount.as_yoctonear());
         amount
     };
@@ -561,10 +568,15 @@ where
             "available_before" => post_unregister_available,
             "cap" => max_top_up.as_yoctonear(),
         );
-        deposit(client, wallet, actual_top_up, false)
-            .await?
-            .wait_for_success()
-            .await?;
+        deposit(
+            client,
+            wallet,
+            actual_top_up,
+            deposit::DepositMode::DepositWithRegistration,
+        )
+        .await?
+        .wait_for_success()
+        .await?;
     }
 
     // 7. register_tokens

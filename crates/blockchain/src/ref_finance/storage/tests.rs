@@ -418,7 +418,13 @@ async fn test_storage_deposit() {
     let wallet = MockWallet::new();
     let deposit_amount = NearToken::from_yoctonear(1_000_000_000_000_000_000_000);
 
-    let result = deposit(&client, &wallet, deposit_amount, false).await;
+    let result = deposit(
+        &client,
+        &wallet,
+        deposit_amount,
+        crate::ref_finance::deposit::DepositMode::DepositWithRegistration,
+    )
+    .await;
     assert!(result.is_ok());
 }
 
