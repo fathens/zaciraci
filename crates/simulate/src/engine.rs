@@ -77,13 +77,37 @@ pub async fn run_simulation(cli: &RunArgs) -> Result<SimulationResult> {
     let mut day_count = 0u32;
 
     while current_date <= end_date {
-        let sim_day = Utc
-            .from_utc_datetime(&current_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()));
+        // Locate sim_day at the moment a fresh prediction first becomes visible
+        // on this date. Production's daily cron fires at midnight but the trade
+        // cycle only succeeds once the day's prediction lands in the DB
+        // (typically 00:00–00:42 UTC); pinning sim_day to midnight would
+        // emulate a state production never traded from. Using the actual
+        // earliest-fresh-prediction timestamp keeps simulate's clock in lock
+        // step with the data production actually saw at runtime, including the
+        // late-prediction days where production had to wait.
+        let day_start = current_date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let day_end = (current_date + chrono::TimeDelta::days(1))
+            .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let earliest = persistence::prediction_record::PredictionRecord::earliest_fresh_visible_in(
+            day_start, day_end,
+        )
+        .await?;
+
+        let sim_day = match earliest {
+            Some(t) => Utc.from_utc_datetime(&t),
+            None => {
+                info!(log, "skipping day: no fresh predictions available";
+                    "date" => %current_date, "day" => day_count);
+                current_date += chrono::TimeDelta::days(cli.rebalance_interval_days);
+                day_count += 1;
+                continue;
+            }
+        };
 
         // Update shared simulation date so SimulationClient uses correct rates
         *sim_day_shared.lock().await = sim_day;
 
-        info!(log, "simulation day"; "date" => %current_date, "day" => day_count);
+        info!(log, "simulation day"; "date" => %current_date, "day" => day_count, "sim_day" => %sim_day);
 
         // Execute the full trading cycle via trade::strategy::start
         let cfg = common::config::ConfigResolver;

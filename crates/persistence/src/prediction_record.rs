@@ -252,6 +252,43 @@ impl PredictionRecord {
         Ok(results)
     }
 
+    /// 指定区間 [`since`, `until`) の中で「fresh prediction が初めて visible になった瞬間」を返す。
+    ///
+    /// "fresh" の定義は [`get_latest_fresh_predictions`] と同じ:
+    /// `created_at <= t` かつ `target_time > t` を満たすレコードが少なくとも 1 件存在する瞬間 `t`。
+    ///
+    /// 探索範囲を区間内のレコードの `created_at` に限定して `MIN(created_at)` を返す。
+    /// 区間内に 1 件もそういうレコードが無ければ `None`。
+    ///
+    /// シミュレーションでは「production の cron が起動したものの予測が未着で失敗 →
+    /// 予測が DB に着いた瞬間にトレード可能になる」というタイミングを再現するために使う。
+    /// `since = date midnight`, `until = (date+1) midnight` を渡すと「その日の最初の
+    /// fresh prediction 時刻」が得られる。
+    pub async fn earliest_fresh_visible_in(
+        since: NaiveDateTime,
+        until: NaiveDateTime,
+    ) -> Result<Option<NaiveDateTime>> {
+        if since >= until {
+            return Ok(None);
+        }
+
+        let conn = connection_pool::get().await?;
+
+        let result: Option<NaiveDateTime> = conn
+            .interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::created_at.ge(since))
+                    .filter(prediction_records::created_at.lt(until))
+                    .filter(prediction_records::target_time.gt(prediction_records::created_at))
+                    .select(diesel::dsl::min(prediction_records::created_at))
+                    .first::<Option<NaiveDateTime>>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+        Ok(result)
+    }
+
     /// Minimum retention period to prevent accidental mass deletion
     const MIN_RETENTION_DAYS: u32 = 7;
 
