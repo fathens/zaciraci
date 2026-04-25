@@ -207,8 +207,19 @@ impl PredictionRecord {
 
     /// 指定トークンの最新予測を取得（target_time が未来のもののみ）
     ///
-    /// 各トークンについて `target_time > as_of` かつ
-    /// 最新の `target_time`（同一なら最新の `data_cutoff_time`）を持つレコードを1件返す。
+    /// 各トークンについて、以下の条件をすべて満たすレコードを 1 件返す:
+    /// - `created_at <= as_of` (= `as_of` 時点で既に DB に存在していた)
+    /// - `target_time > as_of` (= `as_of` から見て未来予測)
+    ///
+    /// 最新性は `target_time` 降順、同一なら `data_cutoff_time` 降順で決まる。
+    ///
+    /// # `created_at <= as_of` フィルタの根拠
+    ///
+    /// production では `as_of = NOW` であり、未来に作成されるレコードは存在しないため、
+    /// このフィルタは no-op として作用する。一方シミュレーション (`as_of` = 過去のシム
+    /// 日付) では、フィルタなしだと `as_of` 以後に生成された予測が選択され、因果性違反
+    /// (data leakage) が発生する。`created_at` で時点を切ることで、production と
+    /// バックテストで同一の意味論を保証する。
     pub async fn get_latest_fresh_predictions(
         tokens: &[TokenOutAccount],
         as_of: NaiveDateTime,
@@ -224,6 +235,7 @@ impl PredictionRecord {
             .interact(move |conn| {
                 prediction_records::table
                     .filter(prediction_records::token.eq_any(&tokens))
+                    .filter(prediction_records::created_at.le(as_of))
                     .filter(prediction_records::target_time.gt(as_of))
                     .distinct_on(prediction_records::token)
                     .order_by((

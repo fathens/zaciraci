@@ -79,12 +79,43 @@ pub async fn insert_evaluated_record(
 }
 
 /// テスト用ヘルパー: 未評価の NewPredictionRecord を挿入
+///
+/// `created_at` はデフォルトで `data_cutoff_time` に揃える。production では
+/// `data_cutoff_time <= created_at <= target_time` の時間関係が常に成り立つため、
+/// この単純化はテスト内での因果性を壊さない。`as_of`(= sim 時刻) を境にした
+/// `created_at <= as_of` フィルタの単位テストにも、この既定値で十分。
 pub async fn insert_unevaluated_record(
     token: &str,
     quote_token: &str,
     predicted_price: i64,
     data_cutoff_time: NaiveDateTime,
     target_time: NaiveDateTime,
+) -> Result<()> {
+    insert_unevaluated_record_at(
+        token,
+        quote_token,
+        predicted_price,
+        data_cutoff_time,
+        target_time,
+        data_cutoff_time,
+    )
+    .await
+}
+
+/// テスト用ヘルパー: `created_at` を明示的に指定して未評価レコードを挿入
+///
+/// `prediction_records.created_at` カラムは DB 既定 (`CURRENT_TIMESTAMP`) で
+/// 自動設定されるため、過去の `as_of` を使うテストでは挿入直後に UPDATE して
+/// 時点を揃える。data leakage シナリオ
+/// (`created_at` が `as_of` より新しい予測を引かないこと) を直接検証する場合は
+/// このヘルパーを使う。
+pub async fn insert_unevaluated_record_at(
+    token: &str,
+    quote_token: &str,
+    predicted_price: i64,
+    data_cutoff_time: NaiveDateTime,
+    target_time: NaiveDateTime,
+    created_at: NaiveDateTime,
 ) -> Result<()> {
     let new_record = NewPredictionRecord {
         token: token.to_string(),
@@ -98,6 +129,15 @@ pub async fn insert_unevaluated_record(
     conn.interact(move |conn| {
         diesel::insert_into(prediction_records::table)
             .values(&new_record)
+            .execute(conn)?;
+
+        let id: i32 = prediction_records::table
+            .order_by(prediction_records::id.desc())
+            .select(prediction_records::id)
+            .first(conn)?;
+
+        diesel::update(prediction_records::table.filter(prediction_records::id.eq(id)))
+            .set(prediction_records::created_at.eq(created_at))
             .execute(conn)
     })
     .await
