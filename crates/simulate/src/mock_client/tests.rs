@@ -81,6 +81,47 @@ async fn view_contract_get_deposits_returns_cash_and_holdings() {
 }
 
 #[tokio::test]
+async fn view_contract_get_deposits_truncates_fractional_yocto() {
+    // Reproduces the case where `--initial-capital 12.6` made
+    // `cash_balance.as_bigdecimal()` carry scale=1, producing a string like
+    // "12600000000000000000000000.0" that fails U128 deserialization.
+    let near_to_yocto = BigDecimal::from(10u128.pow(24));
+    let fractional_capital = "12.6".parse::<BigDecimal>().unwrap() * &near_to_yocto;
+    assert!(
+        fractional_capital.fractional_digit_count() > 0,
+        "test setup must produce a non-integer-scaled BigDecimal",
+    );
+
+    let cash_value = YoctoValue::from_yocto(fractional_capital);
+    let mut state = PortfolioState::new(cash_value.clone());
+    // Token holdings can also accumulate scale via BigDecimal arithmetic;
+    // simulate that here.
+    let token_account: TokenAccount = "usdt.tether-token.near".parse().unwrap();
+    let fractional_amount = "1234567.89".parse::<BigDecimal>().unwrap();
+    state.holdings.insert(
+        token_account,
+        TokenAmount::from_smallest_units(fractional_amount, 6),
+    );
+
+    let portfolio = Arc::new(Mutex::new(state));
+    let client = SimulationClient::new(portfolio, cash_value, default_sim_day());
+
+    let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
+    let result = client
+        .view_contract(&receiver, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+
+    // Round-trip through `U128` to mirror what the production parser does.
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    assert_eq!(deposits[&wnear].0, 12_600_000_000_000_000_000_000_000u128);
+    assert_eq!(deposits["usdt.tether-token.near"].0, 1_234_567u128);
+}
+
+#[tokio::test]
 async fn view_contract_ft_metadata_returns_decimals() {
     let client = make_client(0);
 

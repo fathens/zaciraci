@@ -1,7 +1,7 @@
 use crate::portfolio_state::{
     self, DEFAULT_DECIMALS, PortfolioState, SwapEvent, SwapMethod, SwapResult, to_u128_or_warn,
 };
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, RoundingMode};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
@@ -29,6 +29,14 @@ pub struct SimulationClient {
     portfolio: Arc<Mutex<PortfolioState>>,
     initial_native: YoctoValue,
     sim_day: Arc<Mutex<DateTime<Utc>>>,
+}
+
+/// On-chain `U128` values are always integer strings. Yocto cannot be
+/// fractional, so any non-zero scale on a simulate-side `BigDecimal` is an
+/// arithmetic artifact that must be truncated before mimicking the chain
+/// response — otherwise downstream `U128` deserialization fails on the dot.
+fn yocto_bigdecimal_to_u128_string(value: &BigDecimal) -> String {
+    value.with_scale_round(0, RoundingMode::Down).to_string()
 }
 
 fn decimals_for(token: &TokenAccount) -> u8 {
@@ -348,14 +356,18 @@ impl ViewContract for SimulationClient {
                 let wnear_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
                 deposits.insert(
                     wnear_token,
-                    serde_json::Value::String(state.cash_balance.as_bigdecimal().to_string()),
+                    serde_json::Value::String(yocto_bigdecimal_to_u128_string(
+                        state.cash_balance.as_bigdecimal(),
+                    )),
                 );
 
                 // token holdings
                 for (token_account, amount) in &state.holdings {
                     deposits.insert(
                         token_account.to_string(),
-                        serde_json::Value::String(amount.smallest_units().to_string()),
+                        serde_json::Value::String(yocto_bigdecimal_to_u128_string(
+                            amount.smallest_units(),
+                        )),
                     );
                 }
 
