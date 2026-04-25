@@ -261,6 +261,12 @@ impl SimulationClient {
             return Ok(0);
         }
 
+        // Resolve decimals before mutating state so the new holding entry's
+        // decimals match the rate provider's view (both read from the same
+        // cache populated by `token_cache::load_from_db`).
+        let decimals_in = decimals_for(&token_in_account);
+        let decimals_out = decimals_for(&token_out_account);
+
         // sim_day was acquired at the top of handle_swap. Only portfolio
         // needs locking here.
         let mut state = self.portfolio.lock().await;
@@ -269,6 +275,7 @@ impl SimulationClient {
             amount_in,
             &token_out_account,
             amount_out,
+            decimals_out,
         );
 
         let Some(SwapResult {
@@ -281,9 +288,6 @@ impl SimulationClient {
             );
             return Ok(0);
         };
-
-        let decimals_in = decimals_for(&token_in_account);
-        let decimals_out = decimals_for(&token_out_account);
         state.swap_events.push(SwapEvent {
             timestamp: sim_day,
             token_in: token_in_account.clone(),
