@@ -312,6 +312,59 @@ async fn view_contract_storage_balance_of_returns_some() {
     assert!(info.get("total").is_some());
 }
 
+/// `storage_balance_of.total` must scale with `registered.len()` so that the
+/// production storage planner derives a sane `per_token` and the cap-check
+/// does not erroneously reject `register_tokens`. Until this scaled, a fresh
+/// simulation with one registered token (wnear) computed `per_token ≈ 0.1
+/// NEAR` and rejected 10-token registration as exceeding the 0.5 NEAR cap.
+#[tokio::test]
+async fn view_contract_storage_balance_of_scales_with_registered_count() {
+    let cash = 12_600_000_000_000_000_000_000_000u128; // 12.6 NEAR
+    let client = make_client_with_holdings(cash, vec![]).await;
+
+    let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
+    let info_one: serde_json::Value = serde_json::from_slice(
+        &client
+            .view_contract(
+                &receiver,
+                "storage_balance_of",
+                &serde_json::json!({"account_id": "sim.near"}),
+            )
+            .await
+            .unwrap()
+            .result,
+    )
+    .unwrap();
+    // Account header (1 slot) + wnear (1 slot) = 2 slots × bounds.min.
+    let total_one: U128 = serde_json::from_value(info_one["total"].clone()).unwrap();
+    assert_eq!(total_one.0, STORAGE_BOUND_MIN_YOCTO * 2);
+
+    // Register 10 more tokens (matching production storage planner ceiling).
+    let extra: Vec<TokenAccount> = (0..10)
+        .map(|i| {
+            format!("token{i}.test.near")
+                .parse::<TokenAccount>()
+                .unwrap()
+        })
+        .collect();
+    client.pre_register(extra).await;
+
+    let info_eleven: serde_json::Value = serde_json::from_slice(
+        &client
+            .view_contract(
+                &receiver,
+                "storage_balance_of",
+                &serde_json::json!({"account_id": "sim.near"}),
+            )
+            .await
+            .unwrap()
+            .result,
+    )
+    .unwrap();
+    let total_eleven: U128 = serde_json::from_value(info_eleven["total"].clone()).unwrap();
+    assert_eq!(total_eleven.0, STORAGE_BOUND_MIN_YOCTO * 12);
+}
+
 #[tokio::test]
 async fn view_contract_unknown_method_returns_empty() {
     let client = make_client(0).await;

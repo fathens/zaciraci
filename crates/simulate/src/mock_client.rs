@@ -38,6 +38,13 @@ pub struct SimulationClient {
     registered: Arc<Mutex<BTreeSet<TokenAccount>>>,
 }
 
+/// REF Finance `storage_balance_bounds.min` value used as the per-token
+/// storage unit (matches the testnet/mainnet contract). Both the bounds
+/// view and the `storage_balance_of.total` derivation depend on this
+/// constant — share a single literal so the storage planner's per-token
+/// assumption stays internally consistent.
+const STORAGE_BOUND_MIN_YOCTO: u128 = 1_250_000_000_000_000_000_000;
+
 /// On-chain `U128` values are always integer strings. Yocto cannot be
 /// fractional, so any non-zero scale on a simulate-side `BigDecimal` is an
 /// arithmetic artifact that must be truncated before mimicking the chain
@@ -483,16 +490,27 @@ impl ViewContract for SimulationClient {
                 serde_json::to_vec(&supply)?
             }
             "storage_balance_of" => {
+                // The on-chain `storage_balance_of.total` scales with the number
+                // of registered tokens (each adds at least `bounds.min` worth of
+                // storage cost; the account header itself also costs `bounds.min`).
+                // A static total ignores the registered count and inflates
+                // `per_token` in the storage planner, which then mis-estimates
+                // top-up at cap-check time and blocks `register_tokens`. Mirror
+                // production's accounting by deriving total from `registered.len()`.
+                let registered = self.registered.lock().await;
+                let account_slots =
+                    u128::try_from(registered.len().saturating_add(1)).unwrap_or(u128::MAX);
+                let total = STORAGE_BOUND_MIN_YOCTO.saturating_mul(account_slots);
                 let account_info = json!({
-                    "total": U128(100_000_000_000_000_000_000_000u128),
+                    "total": U128(total),
                     "available": U128(0),
                 });
                 serde_json::to_vec(&account_info)?
             }
             "storage_balance_bounds" => {
                 let bounds = json!({
-                    "min": U128(1_250_000_000_000_000_000_000u128),
-                    "max": U128(1_250_000_000_000_000_000_000u128),
+                    "min": U128(STORAGE_BOUND_MIN_YOCTO),
+                    "max": U128(STORAGE_BOUND_MIN_YOCTO),
                 });
                 serde_json::to_vec(&bounds)?
             }
