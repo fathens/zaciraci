@@ -13,25 +13,35 @@ fn default_sim_day() -> Arc<Mutex<DateTime<Utc>>> {
     ))
 }
 
-fn make_client_with_holdings(cash: u128, holdings: Vec<(&str, u128, u8)>) -> SimulationClient {
+async fn make_client_with_holdings(
+    cash: u128,
+    holdings: Vec<(&str, u128, u8)>,
+) -> SimulationClient {
     let mut state = PortfolioState::new(YoctoValue::from_yocto(BigDecimal::from(cash)));
+    let mut registered: Vec<TokenAccount> = Vec::new();
+    if cash > 0 {
+        registered.push(blockchain::ref_finance::token_account::WNEAR_TOKEN.clone());
+    }
     for (token, amount, decimals) in holdings {
         let token_account: TokenAccount = token.parse().unwrap();
+        registered.push(token_account.clone());
         state.holdings.insert(
             token_account,
             TokenAmount::from_smallest_units(BigDecimal::from(amount), decimals),
         );
     }
     let portfolio = Arc::new(Mutex::new(state));
-    SimulationClient::new(
+    let client = SimulationClient::new(
         portfolio,
         YoctoValue::from_yocto(BigDecimal::from(cash)),
         default_sim_day(),
-    )
+    );
+    client.pre_register(registered).await;
+    client
 }
 
-fn make_client(cash: u128) -> SimulationClient {
-    make_client_with_holdings(cash, vec![])
+async fn make_client(cash: u128) -> SimulationClient {
+    make_client_with_holdings(cash, vec![]).await
 }
 
 fn make_client_with_portfolio(portfolio: Arc<Mutex<PortfolioState>>) -> SimulationClient {
@@ -55,7 +65,8 @@ fn wnear_str() -> String {
 #[tokio::test]
 async fn view_contract_get_deposits_returns_cash_and_holdings() {
     let cash = 50_000_000_000_000_000_000_000_000u128; // 50 NEAR
-    let client = make_client_with_holdings(cash, vec![("usdt.tether-token.near", 1_000_000, 6)]);
+    let client =
+        make_client_with_holdings(cash, vec![("usdt.tether-token.near", 1_000_000, 6)]).await;
 
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
     let result = client
@@ -99,12 +110,18 @@ async fn view_contract_get_deposits_truncates_fractional_yocto() {
     let token_account: TokenAccount = "usdt.tether-token.near".parse().unwrap();
     let fractional_amount = "1234567.89".parse::<BigDecimal>().unwrap();
     state.holdings.insert(
-        token_account,
+        token_account.clone(),
         TokenAmount::from_smallest_units(fractional_amount, 6),
     );
 
     let portfolio = Arc::new(Mutex::new(state));
     let client = SimulationClient::new(portfolio, cash_value, default_sim_day());
+    client
+        .pre_register([
+            blockchain::ref_finance::token_account::WNEAR_TOKEN.clone(),
+            token_account,
+        ])
+        .await;
 
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
     let result = client
@@ -122,8 +139,114 @@ async fn view_contract_get_deposits_truncates_fractional_yocto() {
 }
 
 #[tokio::test]
+async fn get_deposits_is_empty_until_register_tokens() {
+    // Reproduces the bug where the mock unconditionally listed wnear in
+    // `get_deposits`, forcing the production storage planner onto the
+    // `Normal` path with cap-checked top-up. With an empty initial deposit
+    // set, the planner takes `Plan::InitialRegister` instead, which matches
+    // production for a fresh account.
+    let cash = 100_000_000_000_000_000_000_000_000u128;
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(YoctoValue::from_yocto(
+        BigDecimal::from(cash),
+    ))));
+    let client = SimulationClient::new(
+        Arc::clone(&portfolio),
+        YoctoValue::from_yocto(BigDecimal::from(cash)),
+        default_sim_day(),
+    );
+
+    let ref_contract: AccountId = "v2.ref-finance.near".parse().unwrap();
+
+    // Day 1: nothing registered yet — deposits must be empty.
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, serde_json::Value> =
+        serde_json::from_slice(&result.result).unwrap();
+    assert!(
+        deposits.is_empty(),
+        "fresh account must report empty deposits, got: {deposits:?}",
+    );
+
+    // Strategy registers tokens — they should appear with amount=0.
+    let signer = test_signer();
+    let tokens = ["a.token.near", "b.token.near"];
+    let args = serde_json::json!({ "token_ids": tokens });
+    client
+        .exec_contract(
+            &signer,
+            &ref_contract,
+            "register_tokens",
+            &args,
+            NearToken::from_yoctonear(1),
+        )
+        .await
+        .unwrap();
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+    assert_eq!(deposits.len(), 2);
+    assert_eq!(deposits["a.token.near"].0, 0);
+    assert_eq!(deposits["b.token.near"].0, 0);
+
+    // ft_transfer_call to REF deposits wnear → wnear becomes registered with
+    // the cash balance as its amount.
+    let wnear_account: AccountId = blockchain::ref_finance::token_account::WNEAR_TOKEN
+        .as_account_id()
+        .clone();
+    let deposit_args = serde_json::json!({
+        "receiver_id": ref_contract,
+        "amount": U128(cash),
+        "msg": "",
+    });
+    client
+        .exec_contract(
+            &signer,
+            &wnear_account,
+            "ft_transfer_call",
+            &deposit_args,
+            NearToken::from_yoctonear(1),
+        )
+        .await
+        .unwrap();
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+    let wnear_key = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    assert_eq!(deposits[&wnear_key].0, cash);
+
+    // unregister_tokens removes them.
+    let unreg_args = serde_json::json!({ "token_ids": ["a.token.near"] });
+    client
+        .exec_contract(
+            &signer,
+            &ref_contract,
+            "unregister_tokens",
+            &unreg_args,
+            NearToken::from_yoctonear(1),
+        )
+        .await
+        .unwrap();
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+    assert!(!deposits.contains_key("a.token.near"));
+    assert!(deposits.contains_key("b.token.near"));
+}
+
+#[tokio::test]
 async fn view_contract_ft_metadata_returns_decimals() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -139,7 +262,7 @@ async fn view_contract_ft_metadata_returns_decimals() {
 
 #[tokio::test]
 async fn view_contract_ft_metadata_returns_stored_decimals() {
-    let client = make_client_with_holdings(0, vec![("usdt.tether-token.near", 1_000_000, 6)]);
+    let client = make_client_with_holdings(0, vec![("usdt.tether-token.near", 1_000_000, 6)]).await;
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -154,7 +277,7 @@ async fn view_contract_ft_metadata_returns_stored_decimals() {
 
 #[tokio::test]
 async fn view_contract_ft_balance_of_returns_large_value() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -172,7 +295,7 @@ async fn view_contract_ft_balance_of_returns_large_value() {
 
 #[tokio::test]
 async fn view_contract_storage_balance_of_returns_some() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
     let result = client
@@ -191,7 +314,7 @@ async fn view_contract_storage_balance_of_returns_some() {
 
 #[tokio::test]
 async fn view_contract_unknown_method_returns_empty() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "some.near".parse().unwrap();
     let result = client
@@ -206,7 +329,7 @@ async fn view_contract_unknown_method_returns_empty() {
 #[tokio::test]
 async fn get_native_amount_returns_initial_capital() {
     let initial = 100_000_000_000_000_000_000_000_000u128; // 100 NEAR
-    let client = make_client(initial);
+    let client = make_client(initial).await;
 
     let account: AccountId = "sim.near".parse().unwrap();
     let amount = client.get_native_amount(&account).await.unwrap();
@@ -219,7 +342,7 @@ async fn get_native_amount_returns_initial_capital() {
 
 #[tokio::test]
 async fn get_gas_price_returns_fixed_value() {
-    let client = make_client(0);
+    let client = make_client(0).await;
     let gas_price = client.get_gas_price(None).await.unwrap();
     // Should return the fixed 100_000_000 yoctoNEAR gas price
     assert!(gas_price.to_balance() > 0);
@@ -231,7 +354,7 @@ async fn get_gas_price_returns_fixed_value() {
 
 #[tokio::test]
 async fn transfer_native_token_returns_ok() {
-    let client = make_client(0);
+    let client = make_client(0).await;
     let signer = test_signer();
     let receiver: AccountId = "receiver.near".parse().unwrap();
     let result = client
@@ -242,7 +365,7 @@ async fn transfer_native_token_returns_ok() {
 
 #[tokio::test]
 async fn send_tx_returns_ok() {
-    let client = make_client(0);
+    let client = make_client(0).await;
     let signer = test_signer();
     let receiver: AccountId = "receiver.near".parse().unwrap();
     let result = client.send_tx(&signer, &receiver, vec![]).await;

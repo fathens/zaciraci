@@ -17,6 +17,7 @@ use near_primitives::views::{
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -29,6 +30,12 @@ pub struct SimulationClient {
     portfolio: Arc<Mutex<PortfolioState>>,
     initial_native: YoctoValue,
     sim_day: Arc<Mutex<DateTime<Utc>>>,
+    /// Tokens currently registered in the simulated REF Finance account,
+    /// mirroring the on-chain `get_deposits` key set. Empty initially so
+    /// the first `ensure_ref_storage_setup` takes the `InitialRegister`
+    /// path (which bypasses the storage cap), matching production behavior
+    /// on a fresh account.
+    registered: Arc<Mutex<BTreeSet<TokenAccount>>>,
 }
 
 /// On-chain `U128` values are always integer strings. Yocto cannot be
@@ -58,8 +65,27 @@ impl SimulationClient {
             portfolio,
             initial_native,
             sim_day,
+            registered: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
+
+    /// Pre-populate the registered token set. Used by tests that bootstrap a
+    /// portfolio with holdings (which logically implies the tokens are already
+    /// deposited in REF Finance). Production simulate code reaches the same
+    /// state organically via `register_tokens` / `ft_transfer_call`.
+    #[cfg(test)]
+    pub(crate) async fn pre_register(&self, tokens: impl IntoIterator<Item = TokenAccount>) {
+        self.registered.lock().await.extend(tokens);
+    }
+}
+
+fn parse_token_ids(args_value: &serde_json::Value) -> Vec<TokenAccount> {
+    let Some(ids) = args_value.get("token_ids").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(|v| v.as_str()?.parse().ok())
+        .collect()
 }
 
 /// Estimate swap output by walking SwapAction hops through pool `estimate_return`.
@@ -308,7 +334,7 @@ impl SendTx for SimulationClient {
     async fn exec_contract<T>(
         &self,
         _signer: &InMemorySigner,
-        _receiver: &AccountId,
+        receiver: &AccountId,
         method_name: &str,
         args: T,
         _deposit: NearToken,
@@ -320,6 +346,48 @@ impl SendTx for SimulationClient {
             let args_value = serde_json::to_value(&args)?;
             let output_amount = self.handle_swap(args_value).await?;
             return Ok(MockSentTx { output_amount });
+        }
+
+        // The mock has to model the on-chain "registered tokens" set so that
+        // the production storage planner sees a faithful `get_deposits` shape.
+        // Without this, a fresh simulation would either spuriously hit the
+        // `Normal` cap-checked path (and reject 10-token registration) or
+        // skip registration entirely, both of which diverge from production.
+        let ref_contract = &*blockchain::ref_finance::CONTRACT_ADDRESS;
+        match method_name {
+            "register_tokens" if receiver == ref_contract => {
+                let args_value = serde_json::to_value(&args)?;
+                let tokens = parse_token_ids(&args_value);
+                self.registered.lock().await.extend(tokens);
+            }
+            "unregister_tokens" if receiver == ref_contract => {
+                let args_value = serde_json::to_value(&args)?;
+                let tokens = parse_token_ids(&args_value);
+                let mut set = self.registered.lock().await;
+                for token in &tokens {
+                    set.remove(token);
+                }
+            }
+            "ft_transfer_call" => {
+                // Depositing a token to REF (`receiver_id == REF`) implicitly
+                // registers it on the user's REF account — production never
+                // calls `register_tokens` for wnear before the initial deposit.
+                let args_value = serde_json::to_value(&args)?;
+                let target = args_value
+                    .get("receiver_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<AccountId>().ok());
+                if target.as_ref() == Some(ref_contract) {
+                    let token = TokenAccount::from(receiver.clone());
+                    self.registered.lock().await.insert(token);
+                }
+            }
+            "storage_deposit" if receiver == ref_contract => {
+                // No-op: account-level storage deposit doesn't add tokens to
+                // `get_deposits`; the mock's `storage_balance_of` already
+                // returns a registered account state.
+            }
+            _ => {}
         }
 
         Ok(MockSentTx { output_amount: 0 })
@@ -347,28 +415,28 @@ impl ViewContract for SimulationClient {
     {
         let result = match method_name {
             "get_deposits" => {
-                // Only portfolio is needed here (no sim_day dependency), so a
-                // single lock is fine — no lock-ordering concern.
+                // Production `get_deposits` returns exactly the tokens the
+                // account is registered for, with their current balance
+                // (zero entries are kept until `unregister_tokens`). The mock
+                // mirrors that: only `registered` tokens appear, with cash
+                // balance for wnear and `holdings` for everything else.
+                let registered = self.registered.lock().await;
                 let state = self.portfolio.lock().await;
                 let mut deposits = serde_json::Map::new();
 
-                // cash balance as wrap.near
-                let wnear_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
-                deposits.insert(
-                    wnear_token,
-                    serde_json::Value::String(yocto_bigdecimal_to_u128_string(
-                        state.cash_balance.as_bigdecimal(),
-                    )),
-                );
-
-                // token holdings
-                for (token_account, amount) in &state.holdings {
-                    deposits.insert(
-                        token_account.to_string(),
-                        serde_json::Value::String(yocto_bigdecimal_to_u128_string(
-                            amount.smallest_units(),
-                        )),
-                    );
+                let wnear_account = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+                for token in registered.iter() {
+                    let amount = if token == wnear_account {
+                        yocto_bigdecimal_to_u128_string(state.cash_balance.as_bigdecimal())
+                    } else {
+                        match state.holdings.get(token) {
+                            Some(holding) => {
+                                yocto_bigdecimal_to_u128_string(holding.smallest_units())
+                            }
+                            None => "0".to_string(),
+                        }
+                    };
+                    deposits.insert(token.to_string(), serde_json::Value::String(amount));
                 }
 
                 serde_json::to_vec(&deposits)?
