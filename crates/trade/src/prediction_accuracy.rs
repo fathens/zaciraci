@@ -517,6 +517,86 @@ fn compute_median(sorted: &[f64]) -> f64 {
     }
 }
 
+/// 各トークンの予測誤差分散を return スケールで計算する。
+///
+/// 各レコードの `(mape / 100.0)²` を集計し、トークンごとに **平均**を返す。
+/// これは relative error の mean of squared errors であり、return スケール (return²)
+/// で共分散行列の対角と単位整合する。
+///
+/// 注意: サンプル分散 `Var()` ではなく `mean()` を使う。前者は return⁴ になり共分散
+/// の対角と単位不整合となる。
+///
+/// 戻り値:
+///   - エントリあり: pred_err_variance > 0（return スケールの分散）
+///   - エントリなし: `min_samples` 未満で計算不能
+///   - Err: DB アクセス失敗
+pub(crate) async fn calculate_per_token_pred_err_variance(
+    tokens: &[TokenOutAccount],
+    cfg: &impl ConfigAccess,
+) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
+    let log = DEFAULT.new(o!("function" => "calculate_per_token_pred_err_variance"));
+    let window = cfg.prediction_accuracy_window().max(1);
+    let min_samples = cfg.prediction_accuracy_min_samples();
+
+    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
+    let raw_limit = window.saturating_mul(token_count);
+    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
+    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
+        warn!(log, "prediction query limit capped";
+            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
+            "tokens" => tokens.len(), "window" => window);
+    }
+    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
+        .await
+        .map_err(|e| {
+            warn!(log, "failed to get prediction records"; "error" => %e);
+            e
+        })?;
+
+    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
+    for r in all_records {
+        by_token.entry(r.token.clone()).or_default().push(r);
+    }
+    for entries in by_token.values_mut() {
+        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
+        entries.truncate(window as usize);
+    }
+
+    let mut result = BTreeMap::new();
+    for token in tokens {
+        let token_str = token.to_string();
+        let Some(records) = by_token.get(&token_str) else {
+            continue;
+        };
+
+        let squared: Vec<f64> = records
+            .iter()
+            .filter_map(|r| {
+                let mape = r.mape?;
+                if !mape.is_finite() {
+                    return None;
+                }
+                let ratio = mape / 100.0;
+                Some(ratio * ratio)
+            })
+            .collect();
+
+        if squared.len() < min_samples {
+            continue;
+        }
+
+        let mean = squared.iter().sum::<f64>() / squared.len() as f64;
+        debug!(log, "token prediction error variance";
+            "token" => %token_str,
+            "samples" => squared.len(),
+            "variance" => format!("{:.6}", mean)
+        );
+        result.insert(token.clone(), mean);
+    }
+
+    Ok(result)
+}
+
 /// バイアス中央値を用いて予測価格を補正する（3 層 defense-in-depth）。
 ///
 /// - L1（入力ガード）: bias を `[-0.5, 0.5]` にクランプし、モデル破綻時の暴走を防ぐ

@@ -791,11 +791,43 @@ where
         .filter(|(k, _)| remaining_symbols.contains(k))
         .collect();
 
+    // 予測誤差分散ベース対角合成（フラグ on のとき）
+    let pred_err_diagonal = if cfg.portfolio_pred_err_diagonal_enabled() {
+        let token_out_for_var: Vec<TokenOutAccount> =
+            token_data.iter().map(|t| t.symbol.clone()).collect();
+        match super::prediction_accuracy::calculate_per_token_pred_err_variance(
+            &token_out_for_var,
+            cfg,
+        )
+        .await
+        {
+            Ok(variances) => {
+                let mode = match cfg.portfolio_pred_err_diagonal_mode().as_str() {
+                    "max" => common::algorithm::portfolio::PredErrDiagonalMode::Max,
+                    _ => common::algorithm::portfolio::PredErrDiagonalMode::Additive,
+                };
+                Some(common::algorithm::portfolio::PredErrDiagonal {
+                    k: cfg.portfolio_pred_err_diagonal_k(),
+                    variances,
+                    mode,
+                })
+            }
+            Err(e) => {
+                warn!(log, "pred_err_variance calculation failed, holding"; "error" => %e);
+                return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+            }
+        }
+    } else {
+        None
+    };
+
     let portfolio_data = PortfolioData {
         tokens: token_data,
         predictions,
         historical_prices,
         prediction_confidences: filtered_confidences,
+        pred_err_diagonal,
+        cost_deductions: BTreeMap::new(),
     };
 
     // 既存ポジションの取得と WalletInfo の構築

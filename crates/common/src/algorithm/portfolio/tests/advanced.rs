@@ -15,7 +15,7 @@ async fn test_enhanced_portfolio_performance() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     };
 
     // 空のウォレット（初期状態）
@@ -122,7 +122,7 @@ async fn test_baseline_vs_enhanced_comparison() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     };
 
     let wallet = WalletInfo {
@@ -686,6 +686,91 @@ fn test_calculate_covariance_two_elements_valid() {
     assert!((cov - 0.005).abs() < 1e-10, "Expected 0.005, got {}", cov);
 }
 
+// --- apply_prediction_error_diagonal ---
+
+fn diag_2x2(d00: f64, d11: f64) -> ndarray::Array2<f64> {
+    let mut m = ndarray::Array2::<f64>::zeros((2, 2));
+    m[[0, 0]] = d00;
+    m[[1, 1]] = d11;
+    m
+}
+
+#[test]
+fn test_apply_prediction_error_diagonal_additive_increases_diagonal() {
+    let cov = diag_2x2(0.01, 0.02);
+    let tokens = vec![token_out("aa"), token_out("bb")];
+    let mut variances = BTreeMap::new();
+    variances.insert(token_out("aa"), 0.005);
+    variances.insert(token_out("bb"), 0.0);
+
+    let result = apply_prediction_error_diagonal(
+        cov,
+        &tokens,
+        &variances,
+        1.0,
+        PredErrDiagonalMode::Additive,
+    );
+    // additive: 0.01 + 1.0 * 0.005 = 0.015
+    assert!((result[[0, 0]] - 0.015).abs() < 1e-10);
+    // 0.02 + 1.0 * 0.0 = 0.02
+    assert!((result[[1, 1]] - 0.02).abs() < 1e-10);
+}
+
+#[test]
+fn test_apply_prediction_error_diagonal_max_picks_larger() {
+    let cov = diag_2x2(0.01, 0.02);
+    let tokens = vec![token_out("aa"), token_out("bb")];
+    let mut variances = BTreeMap::new();
+    variances.insert(token_out("aa"), 0.05); // 大 → 採用
+    variances.insert(token_out("bb"), 0.001); // 小 → 据え置き
+
+    let result =
+        apply_prediction_error_diagonal(cov, &tokens, &variances, 1.0, PredErrDiagonalMode::Max);
+    // max(0.01, 1.0 * 0.05) = 0.05
+    assert!((result[[0, 0]] - 0.05).abs() < 1e-10);
+    // max(0.02, 1.0 * 0.001) = 0.02 (据え置き)
+    assert!((result[[1, 1]] - 0.02).abs() < 1e-10);
+}
+
+#[test]
+fn test_apply_prediction_error_diagonal_missing_entry_keeps_diagonal() {
+    let cov = diag_2x2(0.01, 0.02);
+    let tokens = vec![token_out("aa"), token_out("bb")];
+    let mut variances = BTreeMap::new();
+    variances.insert(token_out("aa"), 0.005);
+    // bb は欠損
+
+    let result = apply_prediction_error_diagonal(
+        cov,
+        &tokens,
+        &variances,
+        2.0,
+        PredErrDiagonalMode::Additive,
+    );
+    assert!((result[[0, 0]] - (0.01 + 2.0 * 0.005)).abs() < 1e-10);
+    assert!((result[[1, 1]] - 0.02).abs() < 1e-10); // 据え置き
+}
+
+#[test]
+fn test_apply_prediction_error_diagonal_skips_non_finite() {
+    let cov = diag_2x2(0.01, 0.02);
+    let tokens = vec![token_out("aa"), token_out("bb")];
+    let mut variances = BTreeMap::new();
+    variances.insert(token_out("aa"), f64::NAN);
+    variances.insert(token_out("bb"), f64::INFINITY);
+
+    let result = apply_prediction_error_diagonal(
+        cov,
+        &tokens,
+        &variances,
+        1.0,
+        PredErrDiagonalMode::Additive,
+    );
+    // どちらも skip → 据え置き
+    assert!((result[[0, 0]] - 0.01).abs() < 1e-10);
+    assert!((result[[1, 1]] - 0.02).abs() < 1e-10);
+}
+
 #[test]
 fn test_validate_weights_all_valid() {
     let weights = vec![0.3, 0.5, 0.2];
@@ -940,7 +1025,7 @@ async fn test_issue7_metrics_computed_from_indicators() {
         tokens,
         predictions,
         historical_prices: history,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     };
 
     let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
@@ -1305,6 +1390,7 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
         predictions: predictions.clone(),
         historical_prices: historical_prices.clone(),
         prediction_confidences: confidences_high,
+        ..Default::default()
     };
     let report_high = execute_portfolio_optimization(&wallet, pd_high, 0.05)
         .await
@@ -1318,6 +1404,7 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
         predictions: predictions.clone(),
         historical_prices: historical_prices.clone(),
         prediction_confidences: confidences_low,
+        ..Default::default()
     };
     let report_low = execute_portfolio_optimization(&wallet, pd_low, 0.05)
         .await
@@ -1328,7 +1415,7 @@ async fn test_portfolio_optimization_varies_with_prediction_confidence() {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     };
     let report_none = execute_portfolio_optimization(&wallet, pd_none, 0.05)
         .await
@@ -1392,6 +1479,7 @@ async fn test_per_token_alpha_with_varying_confidence() {
         predictions: predictions.clone(),
         historical_prices: historical_prices.clone(),
         prediction_confidences: confidences_varied,
+        ..Default::default()
     };
     let report_varied = execute_portfolio_optimization(&wallet, pd_varied, 0.05)
         .await
@@ -1405,6 +1493,7 @@ async fn test_per_token_alpha_with_varying_confidence() {
         predictions,
         historical_prices,
         prediction_confidences: confidences_uniform,
+        ..Default::default()
     };
     let report_uniform = execute_portfolio_optimization(&wallet, pd_uniform, 0.05)
         .await
@@ -1729,6 +1818,7 @@ async fn test_price_history_alignment_with_selected_tokens() {
         predictions,
         historical_prices,
         prediction_confidences: confidences,
+        ..Default::default()
     };
 
     let result = execute_portfolio_optimization(&wallet, portfolio_data, 0.05).await;

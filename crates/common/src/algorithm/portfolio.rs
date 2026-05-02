@@ -11,8 +11,29 @@ use super::types::*;
 
 // ==================== ポートフォリオ固有の型定義 ====================
 
-/// ポートフォリオデータ
+/// 共分散対角の合成モード
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PredErrDiagonalMode {
+    /// `cov[i,i] + k × pred_err_var`（独立ノイズ加算、金融工学的に標準）
+    #[default]
+    Additive,
+    /// `max(cov[i,i], k × pred_err_var)`（pred_err が price_var を超えた時のみ採用）
+    Max,
+}
+
+/// 予測誤差分散ベース対角合成の設定（k と variances をペアで管理）
 #[derive(Debug, Clone)]
+pub struct PredErrDiagonal {
+    /// スケール係数 k
+    pub k: f64,
+    /// 銘柄ごとの予測誤差分散（return スケール、(mape/100)² の平均）
+    pub variances: BTreeMap<TokenOutAccount, f64>,
+    /// 合成モード
+    pub mode: PredErrDiagonalMode,
+}
+
+/// ポートフォリオデータ
+#[derive(Debug, Clone, Default)]
 pub struct PortfolioData {
     pub tokens: Vec<TokenData>,
     /// 予測価格（TokenPrice: NEAR/token）
@@ -22,6 +43,10 @@ pub struct PortfolioData {
     /// - エントリあり: confidence に応じた Sharpe/RP ブレンド
     /// - エントリなし: データ不足 → max(alpha_vol * 0.5, PREDICTION_ALPHA_FLOOR) にフォールバック
     pub prediction_confidences: BTreeMap<TokenOutAccount, f64>,
+    /// 予測誤差分散ベースの共分散対角合成（None で無効）
+    pub pred_err_diagonal: Option<PredErrDiagonal>,
+    /// 銘柄ごとの取引コスト控除比率（empty で無効、改良 D で使用）
+    pub cost_deductions: BTreeMap<TokenOutAccount, f64>,
 }
 
 /// ポートフォリオ実行レポート
@@ -46,7 +71,8 @@ const MAX_POSITION_SIZE: f64 = 0.6;
 const MIN_POSITION_SIZE: f64 = 0.05;
 
 /// 最大保有トークン数（集中投資）
-const MAX_HOLDINGS: usize = 6;
+pub const MAX_HOLDINGS: usize = 6;
+const _: () = assert!(MAX_HOLDINGS > 0, "MAX_HOLDINGS must be > 0");
 
 /// PSD 保証のための最小固有値閾値
 const MIN_EIGENVALUE_THRESHOLD: f64 = 1e-6;
@@ -305,6 +331,47 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
             covariance[[i, j]] = reconstructed[(i, j)];
         }
     }
+}
+
+/// 共分散行列の対角を予測誤差分散で書き換える。
+///
+/// Markowitz の risk 評価に「予測精度差」を反映するため、銘柄ごとの
+/// 予測誤差分散 (`pred_err_var`) を Σ の対角に合成する純関数。
+///
+/// - `Additive`: `cov[i,i] + k * pred_err_var_i`（独立ノイズ加算、金融工学的に標準）
+/// - `Max`: `max(cov[i,i], k * pred_err_var_i)`（pred_err が price_var を超えた時のみ採用）
+///
+/// `tokens` の順序は `cov` の行/列インデックスと一致している必要がある。
+/// `pred_err_var` にエントリがない銘柄は対角を据え置く。
+/// 書き換え後に `ensure_positive_semi_definite` を再呼び出しして PSD を保証する。
+pub fn apply_prediction_error_diagonal(
+    mut cov: Array2<f64>,
+    tokens: &[TokenOutAccount],
+    pred_err_var: &BTreeMap<TokenOutAccount, f64>,
+    k: f64,
+    mode: PredErrDiagonalMode,
+) -> Array2<f64> {
+    debug_assert_eq!(
+        cov.nrows(),
+        tokens.len(),
+        "covariance matrix size must match tokens length"
+    );
+    for (i, token) in tokens.iter().enumerate() {
+        let Some(&pev) = pred_err_var.get(token) else {
+            continue;
+        };
+        if !pev.is_finite() {
+            continue;
+        }
+        let scaled = k * pev;
+        let current = cov[[i, i]];
+        cov[[i, i]] = match mode {
+            PredErrDiagonalMode::Additive => current + scaled,
+            PredErrDiagonalMode::Max => current.max(scaled),
+        };
+    }
+    ensure_positive_semi_definite(&mut cov);
+    cov
 }
 
 /// 2つの系列間の共分散を計算
@@ -1601,6 +1668,20 @@ pub async fn execute_portfolio_optimization(
     // 日次リターンと共分散行列を計算
     let daily_returns = calculate_daily_returns(&selected_price_histories);
     let covariance = calculate_covariance_matrix(&daily_returns);
+
+    // 予測誤差分散による対角合成（フラグ on のとき）
+    let selected_token_symbols: Vec<TokenOutAccount> =
+        selected_tokens.iter().map(|t| t.symbol.clone()).collect();
+    let covariance = match &portfolio_data.pred_err_diagonal {
+        Some(ped) => apply_prediction_error_diagonal(
+            covariance,
+            &selected_token_symbols,
+            &ped.variances,
+            ped.k,
+            ped.mode,
+        ),
+        None => covariance,
+    };
 
     // 動的リスク調整: ボラティリティに基づくポジションサイズ制御
     let avg_volatility = calculate_market_volatility(&daily_returns);

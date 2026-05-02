@@ -1094,7 +1094,7 @@ async fn test_execute_portfolio_optimization_hold_on_empty_filter() {
         tokens,
         predictions: BTreeMap::new(),
         historical_prices: BTreeMap::new(),
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     };
 
     let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)

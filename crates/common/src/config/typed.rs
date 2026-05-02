@@ -567,6 +567,28 @@ define_typed_config! {
         default: 0.1
     }
 
+    /// Inflate covariance diagonal with prediction error variance per token.
+    /// When enabled, the optimizer's risk evaluation incorporates per-token
+    /// prediction accuracy (high MAPE → higher diagonal → smaller weight).
+    fn portfolio_pred_err_diagonal_enabled() -> bool {
+        key: "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED",
+        default: false
+    }
+
+    /// Scale factor `k` applied to prediction error variance in the diagonal
+    /// inflation rule (additive: `cov[i,i] + k * pred_err_var`,
+    /// max: `max(cov[i,i], k * pred_err_var)`).
+    fn portfolio_pred_err_diagonal_k() -> f64 {
+        key: "PORTFOLIO_PRED_ERR_DIAGONAL_K",
+        default: 1.0
+    }
+
+    /// Diagonal composition mode for prediction error variance: "additive" or "max".
+    fn portfolio_pred_err_diagonal_mode() -> String {
+        key: "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
+        default: "additive"
+    }
+
     /// Weight for volume-based liquidity score
     fn liquidity_volume_weight() -> f64 {
         key: "LIQUIDITY_VOLUME_WEIGHT",
