@@ -1594,3 +1594,118 @@ fn test_market_volatility_and_dynamic_position_size() {
         "最高ボラ → MAX_POSITION_SIZE * 0.7"
     );
 }
+
+// ==================== retain_tokens テスト ====================
+
+fn pd_with_three_tokens() -> PortfolioData {
+    use super::PredErrDiagonal;
+    use super::PredErrDiagonalMode;
+    use std::collections::BTreeMap;
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token_out("token-a"), price(0.011));
+    predictions.insert(token_out("token-b"), price(0.022));
+    predictions.insert(token_out("token-c"), price(0.0055));
+
+    let historical_prices = create_sample_price_history();
+
+    let mut prediction_confidences = BTreeMap::new();
+    prediction_confidences.insert(token_out("token-a"), 0.7);
+    prediction_confidences.insert(token_out("token-b"), 0.5);
+    prediction_confidences.insert(token_out("token-c"), 0.3);
+
+    let mut variances = BTreeMap::new();
+    variances.insert(token_out("token-a"), 0.0009);
+    variances.insert(token_out("token-b"), 0.0016);
+    variances.insert(token_out("token-c"), 0.0004);
+
+    let mut cost_deductions = BTreeMap::new();
+    cost_deductions.insert(token_out("token-a"), 0.005);
+    cost_deductions.insert(token_out("token-b"), 0.006);
+    cost_deductions.insert(token_out("token-c"), 0.003);
+
+    PortfolioData {
+        tokens: create_sample_tokens(),
+        predictions,
+        historical_prices,
+        prediction_confidences,
+        pred_err_diagonal: Some(PredErrDiagonal {
+            k: 1.0,
+            variances,
+            mode: PredErrDiagonalMode::Additive,
+        }),
+        cost_deductions,
+    }
+}
+
+#[test]
+fn retain_tokens_drops_all_indexed_fields() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-a"));
+
+    pd.retain_tokens(&keep);
+
+    assert_eq!(pd.tokens.len(), 1);
+    assert_eq!(pd.tokens[0].symbol, token_out("token-a"));
+    assert_eq!(pd.predictions.len(), 1);
+    assert!(pd.predictions.contains_key(&token_out("token-a")));
+    assert_eq!(pd.historical_prices.len(), 1);
+    assert!(pd.historical_prices.contains_key(&token_out("token-a")));
+    assert_eq!(pd.prediction_confidences.len(), 1);
+    assert!(
+        pd.prediction_confidences
+            .contains_key(&token_out("token-a"))
+    );
+    let ped = pd.pred_err_diagonal.as_ref().expect("diagonal preserved");
+    assert_eq!(ped.variances.len(), 1);
+    assert!(ped.variances.contains_key(&token_out("token-a")));
+    assert_eq!(pd.cost_deductions.len(), 1);
+    assert!(pd.cost_deductions.contains_key(&token_out("token-a")));
+}
+
+#[test]
+fn retain_tokens_handles_pred_err_diagonal_variants() {
+    use std::collections::HashSet;
+
+    // None variant: should not panic, other fields still filtered
+    let mut pd = pd_with_three_tokens();
+    pd.pred_err_diagonal = None;
+
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-b"));
+
+    pd.retain_tokens(&keep);
+
+    assert_eq!(pd.tokens.len(), 1);
+    assert!(pd.pred_err_diagonal.is_none());
+    assert_eq!(pd.cost_deductions.len(), 1);
+
+    // Some variant: variances filtered
+    let mut pd = pd_with_three_tokens();
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-c"));
+    pd.retain_tokens(&keep);
+    let ped = pd.pred_err_diagonal.as_ref().unwrap();
+    assert_eq!(ped.variances.len(), 1);
+    assert!(ped.variances.contains_key(&token_out("token-c")));
+}
+
+#[test]
+fn retain_tokens_with_empty_set_clears_all() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+
+    pd.retain_tokens(&HashSet::new());
+
+    assert!(pd.tokens.is_empty());
+    assert!(pd.predictions.is_empty());
+    assert!(pd.historical_prices.is_empty());
+    assert!(pd.prediction_confidences.is_empty());
+    assert!(pd.pred_err_diagonal.as_ref().unwrap().variances.is_empty());
+    assert!(pd.cost_deductions.is_empty());
+}

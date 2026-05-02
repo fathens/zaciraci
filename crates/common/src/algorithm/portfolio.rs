@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use nalgebra::DMatrix;
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::types::*;
 
@@ -47,6 +47,28 @@ pub struct PortfolioData {
     pub pred_err_diagonal: Option<PredErrDiagonal>,
     /// 銘柄ごとの取引コスト控除比率（empty で無効、改良 D で使用）
     pub cost_deductions: BTreeMap<TokenOutAccount, f64>,
+}
+
+impl PortfolioData {
+    /// 指定 token のみを残し、token-indexed な全フィールドを同期 filter する。
+    ///
+    /// `tokens` 単独 retain では `predictions` 等の map に古いキーが残り、
+    /// 後段の `apply_prediction_error_diagonal` 等が
+    /// `tokens.len()` と整合しない要素を参照してインデックス out-of-bounds や
+    /// 数値不整合を起こすリスクがある。本メソッドは不変条件
+    /// 「token-indexed な全フィールドが `retain` の集合に閉じている」
+    /// を 1 箇所で保証する（defense-in-depth）。
+    pub fn retain_tokens(&mut self, retain: &HashSet<TokenOutAccount>) {
+        self.tokens.retain(|t| retain.contains(&t.symbol));
+        self.predictions.retain(|k, _| retain.contains(k));
+        self.historical_prices.retain(|k, _| retain.contains(k));
+        self.prediction_confidences
+            .retain(|k, _| retain.contains(k));
+        if let Some(ped) = self.pred_err_diagonal.as_mut() {
+            ped.variances.retain(|k, _| retain.contains(k));
+        }
+        self.cost_deductions.retain(|k, _| retain.contains(k));
+    }
 }
 
 /// ポートフォリオ実行レポート
