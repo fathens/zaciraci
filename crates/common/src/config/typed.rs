@@ -438,6 +438,14 @@ define_typed_config! {
         default: 0.3
     }
 
+    /// Apply per-token bias correction to predicted prices before computing expected returns.
+    /// When enabled, the median historical bias `(predicted - actual) / actual` is used to
+    /// adjust the current prediction via `corrected = predicted / (1 + bias_clamped)`.
+    fn trade_bias_correction_enabled() -> bool {
+        key: "TRADE_BIAS_CORRECTION_ENABLED",
+        default: false
+    }
+
     // ── arbitrage ──
 
     /// Whether arbitrage engine is enabled

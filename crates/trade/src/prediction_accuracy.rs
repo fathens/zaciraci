@@ -6,7 +6,7 @@ use common::types::TimeRange;
 use common::types::TokenPrice;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use logging::*;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{FromPrimitive, ToPrimitive, Zero};
 use persistence::prediction_record::{DbPredictionRecord, NewPredictionRecord, PredictionRecord};
 use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
@@ -418,6 +418,133 @@ pub(crate) async fn calculate_per_token_confidence(
     }
 
     Ok(result)
+}
+
+/// 各トークンの過去予測の系統的バイアス中央値を計算する。
+///
+/// 各レコードの `(predicted - actual) / actual` を集計し、トークンごとに中央値を返す。
+/// 中央値は外れ値に頑健で、強気/弱気バイアスの推定に適する。
+///
+/// 戻り値:
+///   - エントリあり: bias > 0 が過大予測、bias < 0 が過小予測
+///   - エントリなし: `min_samples` 未満で計算不能（コールドスタート扱い）
+///   - Err: DB アクセス失敗
+pub(crate) async fn calculate_per_token_bias(
+    tokens: &[TokenOutAccount],
+    cfg: &impl ConfigAccess,
+) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
+    let log = DEFAULT.new(o!("function" => "calculate_per_token_bias"));
+    let window = cfg.prediction_accuracy_window().max(1);
+    let min_samples = cfg.prediction_accuracy_min_samples();
+
+    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
+    let raw_limit = window.saturating_mul(token_count);
+    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
+    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
+        warn!(log, "prediction query limit capped";
+            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
+            "tokens" => tokens.len(), "window" => window);
+    }
+    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
+        .await
+        .map_err(|e| {
+            warn!(log, "failed to get prediction records"; "error" => %e);
+            e
+        })?;
+
+    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
+    for r in all_records {
+        by_token.entry(r.token.clone()).or_default().push(r);
+    }
+    for entries in by_token.values_mut() {
+        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
+        entries.truncate(window as usize);
+    }
+
+    let mut result = BTreeMap::new();
+    for token in tokens {
+        let token_str = token.to_string();
+        let Some(records) = by_token.get(&token_str) else {
+            continue;
+        };
+
+        let mut bias_values: Vec<f64> = records
+            .iter()
+            .filter_map(|r| {
+                let actual = r.actual_price.as_ref()?;
+                if actual.is_zero() {
+                    return None;
+                }
+                let actual_f = actual.to_f64()?;
+                let predicted_f = r.predicted_price.to_f64()?;
+                let bias = (predicted_f - actual_f) / actual_f;
+                if bias.is_finite() { Some(bias) } else { None }
+            })
+            .collect();
+
+        if bias_values.len() < min_samples {
+            continue;
+        }
+
+        bias_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median = compute_median(&bias_values);
+
+        debug!(log, "token prediction bias";
+            "token" => %token_str,
+            "samples" => bias_values.len(),
+            "bias" => format!("{:.4}", median)
+        );
+        result.insert(token.clone(), median);
+    }
+
+    Ok(result)
+}
+
+/// ソート済みスライスの中央値を計算する。
+///
+/// 偶数長は中央 2 要素の平均、奇数長は中央要素を返す。
+/// 空入力は debug ビルドで panic。
+fn compute_median(sorted: &[f64]) -> f64 {
+    debug_assert!(
+        !sorted.is_empty(),
+        "compute_median requires non-empty input"
+    );
+    let n = sorted.len();
+    if n.is_multiple_of(2) {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    } else {
+        sorted[n / 2]
+    }
+}
+
+/// バイアス中央値を用いて予測価格を補正する（3 層 defense-in-depth）。
+///
+/// - L1（入力ガード）: bias を `[-0.5, 0.5]` にクランプし、モデル破綻時の暴走を防ぐ
+/// - L2（数式安全）: `corrected = predicted / (1 + bias_clamped)` で正値保証 + ゼロ除算回避
+/// - L3（型ガード）: 数学的に破綻するケース（factor <= 0、結果がゼロ）は `None` を返し、
+///   呼び出し側でトークン除外して Sell trigger 発火を構造的に防ぐ
+///
+/// 補正方向: bias > 0（過大予測）→ 価格下方修正、bias < 0（過小予測）→ 価格上方修正
+pub(crate) fn correct_prediction(predicted: &TokenPrice, bias: f64) -> Option<TokenPrice> {
+    if !bias.is_finite() {
+        return None;
+    }
+    let bias_clamped = bias.clamp(-0.5, 0.5);
+    let factor = 1.0 + bias_clamped;
+    if factor <= 0.0 {
+        return None;
+    }
+    let factor_bd = BigDecimal::from_f64(factor)?;
+    if factor_bd.is_zero() {
+        return None;
+    }
+    let corrected_bd = predicted.as_bigdecimal() / &factor_bd;
+    // TokenPrice の不変条件（非負）を信頼: factor > 0 かつ predicted >= 0 → corrected >= 0
+    // ゼロのみ除外で十分
+    if corrected_bd.is_zero() {
+        return None;
+    }
+    Some(TokenPrice::from_near_per_token(corrected_bd))
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。

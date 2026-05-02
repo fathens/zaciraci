@@ -683,6 +683,60 @@ where
         }
     };
 
+    // バイアス補正（フラグ on のとき適用、3 層 defense-in-depth）
+    if cfg.trade_bias_correction_enabled() {
+        let biases = match super::prediction_accuracy::calculate_per_token_bias(
+            &token_out_for_confidence,
+            cfg,
+        )
+        .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(log, "bias calculation failed, holding"; "error" => %e);
+                return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+            }
+        };
+
+        // 補正に失敗した（factor<=0、ゼロ等）銘柄は最適化対象から除外し、
+        // weight=0 経由の Sell trigger 発火を構造的に防ぐ
+        let mut bias_excluded: Vec<TokenOutAccount> = Vec::new();
+        for (token, bias) in &biases {
+            let Some(predicted) = predictions.get(token) else {
+                continue;
+            };
+            match super::prediction_accuracy::correct_prediction(predicted, *bias) {
+                Some(corrected) => {
+                    info!(log, "bias correction applied";
+                        "token" => %token,
+                        "bias" => format!("{:.4}", bias),
+                        "before" => %predicted,
+                        "after" => %corrected);
+                    predictions.insert(token.clone(), corrected);
+                }
+                None => {
+                    info!(log, "bias correction failed, excluding token";
+                        "token" => %token, "bias" => format!("{:.4}", bias));
+                    bias_excluded.push(token.clone());
+                }
+            }
+        }
+        if !bias_excluded.is_empty() {
+            let bias_excluded_set: HashSet<&TokenOutAccount> = bias_excluded.iter().collect();
+            predictions.retain(|k, _| !bias_excluded_set.contains(k));
+            token_data.retain(|t| !bias_excluded_set.contains(&t.symbol));
+            historical_prices.retain(|k, _| !bias_excluded_set.contains(k));
+            info!(log, "tokens excluded by bias correction failure";
+                "count" => bias_excluded.len());
+        }
+
+        // 全銘柄が補正失敗した場合は Hold
+        if token_data.is_empty() {
+            warn!(log, "all tokens excluded by bias correction, holding");
+            return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+        }
+    }
+
     // 低 confidence トークンを除外（予測は既に実行済み → MAPE は更新される）
     let min_confidence = cfg.trade_min_token_confidence();
     let original_count = token_data.len();

@@ -400,3 +400,119 @@ fn test_predicted_price_large_value_roundtrip() {
     let token_price = TokenPrice::from_near_per_token(price.clone());
     assert_eq!(*token_price.as_bigdecimal(), price);
 }
+
+// --- compute_median ---
+
+#[test]
+fn test_compute_median_odd_length() {
+    let values = [-0.05, 0.0, 0.05, 0.10, 0.20];
+    assert_eq!(compute_median(&values), 0.05);
+}
+
+#[test]
+fn test_compute_median_even_length() {
+    let values = [-0.10, -0.05, 0.05, 0.10];
+    let m = compute_median(&values);
+    assert!((m - 0.0).abs() < 1e-12, "expected 0.0, got {m}");
+}
+
+#[test]
+fn test_compute_median_single_element() {
+    assert_eq!(compute_median(&[0.42]), 0.42);
+}
+
+#[test]
+fn test_compute_median_two_elements() {
+    let m = compute_median(&[0.1, 0.3]);
+    assert!((m - 0.2).abs() < 1e-12, "expected 0.2, got {m}");
+}
+
+#[test]
+fn test_compute_median_outlier_robustness() {
+    // 中央値は外れ値に頑健: 一つの極端値があっても結果は中央近傍
+    let values = [-0.01, 0.0, 0.01, 0.02, 100.0];
+    assert_eq!(compute_median(&values), 0.01);
+}
+
+#[test]
+#[should_panic(expected = "compute_median requires non-empty input")]
+fn test_compute_median_empty_panics_in_debug() {
+    let _ = compute_median(&[]);
+}
+
+// --- correct_prediction ---
+
+fn predicted_one() -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from(1))
+}
+
+#[test]
+fn test_correct_prediction_zero_bias_is_noop() {
+    // bias=0 → factor=1 → corrected = predicted
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, 0.0).expect("should succeed");
+    assert_eq!(*corrected.as_bigdecimal(), *predicted.as_bigdecimal());
+}
+
+#[test]
+fn test_correct_prediction_positive_bias_lowers_price() {
+    // bias=+0.10 (過大予測) → factor≈1.10 → corrected ≈ predicted / 1.10 ≈ 0.9090...
+    // f64 → BigDecimal の変換は f64 の binary 表現精度に依存（~1e-15）
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, 0.10).expect("should succeed");
+    let expected = BigDecimal::from_str("0.909090909090909").unwrap();
+    let diff = (corrected.as_bigdecimal() - &expected).abs();
+    let tol = BigDecimal::from_str("1e-14").unwrap();
+    assert!(diff < tol, "expected ~0.909..., got {corrected}");
+    // 価格は元より小さい（過大予測補正）
+    assert!(corrected.as_bigdecimal() < predicted.as_bigdecimal());
+}
+
+#[test]
+fn test_correct_prediction_negative_bias_raises_price() {
+    // bias=-0.10 (過小予測) → factor=0.90 → corrected = predicted / 0.90 ≈ 1.1111
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, -0.10).expect("should succeed");
+    // > 1.0 になる（過小予測なので価格を上方修正）
+    assert!(corrected.as_bigdecimal() > &BigDecimal::from(1));
+}
+
+#[test]
+fn test_correct_prediction_clamp_high_bias() {
+    // bias=2.0 → clamped to 0.5 → factor=1.5 → corrected = predicted / 1.5
+    let predicted = predicted_one();
+    let corrected_clamped = correct_prediction(&predicted, 2.0).expect("should succeed");
+    let corrected_at_clamp = correct_prediction(&predicted, 0.5).expect("should succeed");
+    assert_eq!(
+        *corrected_clamped.as_bigdecimal(),
+        *corrected_at_clamp.as_bigdecimal(),
+        "bias=2.0 should clamp to 0.5"
+    );
+}
+
+#[test]
+fn test_correct_prediction_clamp_low_bias() {
+    // bias=-2.0 → clamped to -0.5 → factor=0.5 → corrected = predicted / 0.5 = 2.0
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, -2.0).expect("should succeed");
+    assert_eq!(*corrected.as_bigdecimal(), BigDecimal::from(2));
+}
+
+#[test]
+fn test_correct_prediction_nan_returns_none() {
+    let predicted = predicted_one();
+    assert!(correct_prediction(&predicted, f64::NAN).is_none());
+}
+
+#[test]
+fn test_correct_prediction_infinity_returns_none() {
+    let predicted = predicted_one();
+    assert!(correct_prediction(&predicted, f64::INFINITY).is_none());
+    assert!(correct_prediction(&predicted, f64::NEG_INFINITY).is_none());
+}
+
+#[test]
+fn test_correct_prediction_zero_predicted_returns_none() {
+    let predicted = TokenPrice::from_near_per_token(BigDecimal::from(0));
+    assert!(correct_prediction(&predicted, 0.0).is_none());
+}
