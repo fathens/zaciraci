@@ -1716,7 +1716,25 @@ pub async fn execute_portfolio_optimization(
         .collect();
 
     // 期待リターンを計算
-    let expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
+    let raw_expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
+
+    // 取引コスト控除（cost_deductions が空のときは raw を素通し）
+    let expected_returns: Vec<f64> = if portfolio_data.cost_deductions.is_empty() {
+        raw_expected_returns
+    } else {
+        selected_tokens
+            .iter()
+            .zip(raw_expected_returns.iter())
+            .map(|(t, &r)| {
+                let deduction = portfolio_data
+                    .cost_deductions
+                    .get(&t.symbol)
+                    .copied()
+                    .unwrap_or(0.0);
+                r - deduction
+            })
+            .collect()
+    };
 
     // 選択されたトークンの価格履歴を selected_tokens の順序に合わせて構築
     let selected_price_histories: Vec<PriceHistory> = selected_tokens
