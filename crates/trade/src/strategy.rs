@@ -807,7 +807,7 @@ where
             };
             match super::prediction_accuracy::correct_prediction(predicted, *bias) {
                 Some(corrected) => {
-                    info!(log, "bias correction applied";
+                    debug!(log, "bias correction applied";
                         "token" => %token,
                         "bias" => format!("{:.4}", bias),
                         "before" => %predicted,
@@ -815,7 +815,7 @@ where
                     predictions.insert(token.clone(), corrected);
                 }
                 None => {
-                    info!(log, "bias correction failed, excluding token";
+                    debug!(log, "bias correction failed, excluding token";
                         "token" => %token, "bias" => format!("{:.4}", bias));
                     bias_excluded.push(token.clone());
                 }
@@ -826,7 +826,7 @@ where
             predictions.retain(|k, _| !bias_excluded_set.contains(k));
             token_data.retain(|t| !bias_excluded_set.contains(&t.symbol));
             historical_prices.retain(|k, _| !bias_excluded_set.contains(k));
-            info!(log, "tokens excluded by bias correction failure";
+            debug!(log, "tokens excluded by bias correction failure";
                 "count" => bias_excluded.len());
         }
 
