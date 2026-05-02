@@ -58,12 +58,14 @@ pub struct RunArgs {
     #[arg(long)]
     pub generate_predictions: bool,
 
-    /// Enable per-token bias correction (improvement C)
-    #[arg(long)]
+    /// Enable per-token bias correction (improvement C). Defaults to true to
+    /// match the production config; pass `--bias-correction false` to disable.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
     pub bias_correction: bool,
 
-    /// Enable prediction-error variance diagonal inflation (improvement 3)
-    #[arg(long)]
+    /// Enable prediction-error variance diagonal inflation (improvement 3).
+    /// Defaults to true; pass `--pred-err-diagonal false` to disable.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
     pub pred_err_diagonal: bool,
 
     /// Scale factor `k` for the diagonal inflation rule (default 1.0)
@@ -71,11 +73,12 @@ pub struct RunArgs {
     pub pred_err_diagonal_k: f64,
 
     /// Diagonal composition mode: "additive" or "max"
-    #[arg(long, default_value = "additive")]
+    #[arg(long, default_value = "max")]
     pub pred_err_diagonal_mode: String,
 
-    /// Enable cost-aware iterative optimization (improvement D)
-    #[arg(long)]
+    /// Enable cost-aware iterative optimization (improvement D). Defaults to
+    /// true; pass `--cost-aware-return false` to disable.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
     pub cost_aware_return: bool,
 
     /// Maximum iterations for cost-aware optimization (default 3)
@@ -145,11 +148,11 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
-            bias_correction: false,
-            pred_err_diagonal: false,
+            bias_correction: true,
+            pred_err_diagonal: true,
             pred_err_diagonal_k: 1.0,
-            pred_err_diagonal_mode: "additive".to_string(),
-            cost_aware_return: false,
+            pred_err_diagonal_mode: "max".to_string(),
+            cost_aware_return: true,
             cost_iterations_max: 3,
         }
     }

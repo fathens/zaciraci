@@ -443,7 +443,7 @@ define_typed_config! {
     /// adjust the current prediction via `corrected = predicted / (1 + bias_clamped)`.
     fn trade_bias_correction_enabled() -> bool {
         key: "TRADE_BIAS_CORRECTION_ENABLED",
-        default: false
+        default: true
     }
 
     // ── arbitrage ──
@@ -572,7 +572,7 @@ define_typed_config! {
     /// prediction accuracy (high MAPE → higher diagonal → smaller weight).
     fn portfolio_pred_err_diagonal_enabled() -> bool {
         key: "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED",
-        default: false
+        default: true
     }
 
     /// Scale factor `k` applied to prediction error variance in the diagonal
@@ -586,14 +586,14 @@ define_typed_config! {
     /// Diagonal composition mode for prediction error variance: "additive" or "max".
     fn portfolio_pred_err_diagonal_mode() -> String {
         key: "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
-        default: "additive"
+        default: "max"
     }
 
     /// Deduct AMM fee + price impact + gas + storage + slippage from expected return
     /// before optimization, and run iterative optimization to converge weight↔cost.
     fn trade_cost_aware_return_enabled() -> bool {
         key: "TRADE_COST_AWARE_RETURN_ENABLED",
-        default: false
+        default: true
     }
 
     /// Maximum iterations for the cost-aware optimization loop.

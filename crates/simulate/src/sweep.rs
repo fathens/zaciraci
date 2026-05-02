@@ -42,19 +42,19 @@ fn default_rebalance_interval_days() -> Vec<i64> {
     vec![1]
 }
 fn default_bias_correction() -> Vec<bool> {
-    vec![false]
+    vec![true]
 }
 fn default_pred_err_diagonal() -> Vec<bool> {
-    vec![false]
+    vec![true]
 }
 fn default_pred_err_diagonal_k() -> Vec<f64> {
     vec![1.0]
 }
 fn default_pred_err_diagonal_mode() -> Vec<String> {
-    vec!["additive".to_string()]
+    vec!["max".to_string()]
 }
 fn default_cost_aware_return() -> Vec<bool> {
-    vec![false]
+    vec![true]
 }
 fn default_cost_iterations_max() -> Vec<u32> {
     vec![3]

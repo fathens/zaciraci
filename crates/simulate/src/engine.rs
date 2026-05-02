@@ -215,11 +215,11 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
-            bias_correction: false,
-            pred_err_diagonal: false,
+            bias_correction: true,
+            pred_err_diagonal: true,
             pred_err_diagonal_k: 1.0,
-            pred_err_diagonal_mode: "additive".to_string(),
-            cost_aware_return: false,
+            pred_err_diagonal_mode: "max".to_string(),
+            cost_aware_return: true,
             cost_iterations_max: 3,
         }
     }
