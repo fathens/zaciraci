@@ -42,9 +42,16 @@ impl TradeCostBreakdown {
     ///
     /// `assumed_position`: スワップする入力金額の見積もり（yoctoNEAR）
     ///
-    /// `assumed_position` が 0 の場合は `f64::INFINITY` を返し、呼び出し側で
-    /// 該当トークンを最適化対象から除外することで Sell trigger 等のサイレント
-    /// 副作用を構造的に防ぐ。
+    /// `assumed_position` が 0 の場合は `f64::INFINITY` を返す。この値は
+    /// 呼び出し元で `is_finite()` フィルタや
+    /// `PortfolioData::retain_tokens` 経由で除外されてから Markowitz の
+    /// `expected_return` から減算される前提。
+    ///
+    /// 共分散ソルバ (`common::algorithm::portfolio::box_maximize_sharpe`) に
+    /// 直接渡すと、Cholesky 後段で `0 × INFINITY = NaN` 連鎖が生じる。NaN は
+    /// `<` `>` のすべての比較で false になるため、`sum_p.abs() < 1e-15` 等の
+    /// ガード（`portfolio.rs:739` 等）はすべて防御失効し、サイレント Hold
+    /// （rebalance_needed=false）が再生される。
     pub fn to_return_deduction(&self, assumed_position: &YoctoValue) -> f64 {
         if assumed_position.as_bigdecimal().is_zero() {
             return f64::INFINITY;
