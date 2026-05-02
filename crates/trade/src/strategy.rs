@@ -59,13 +59,18 @@ use num_traits::FromPrimitive;
 /// 取引コスト見積もりに必要な静的入力
 ///
 /// 反復最適化の各反復で path / spot_rate は変わらないため、ループ前に 1 回だけ
-/// 収集する。失敗時は呼び出し側で `Hold` にフォールバックする。
+/// 収集する。wnear が pools に存在しない等の致命的失敗は `Err` で全体を停止し、
+/// 個別 token の path 不在は `failed_tokens` に蓄積して呼び出し側で除外する
+/// （`crates/trade/src/swap.rs:execute_direct_swap` と同じ
+/// `update_graph` + per-token `match` パターン）。
 struct PortfolioCostInputs {
     gas_price: GasPrice,
     storage_min: YoctoValue,
     existing_deposits: HashSet<TokenAccount>,
     paths: BTreeMap<TokenOutAccount, TokenPath>,
     rates: BTreeMap<TokenOutAccount, ExchangeRate>,
+    /// `swap_path` が失敗した token（呼び出し側で `retain_tokens` 経由で除外）
+    failed_tokens: Vec<TokenOutAccount>,
 }
 
 impl PortfolioCostInputs {
@@ -73,6 +78,8 @@ impl PortfolioCostInputs {
     where
         C: ViewContract + GasInfo,
     {
+        let log = DEFAULT.new(o!("function" => "PortfolioCostInputs::collect"));
+
         let gas_price = client.get_gas_price(None).await?;
         let bounds = blockchain::ref_finance::storage::check_bounds(client).await?;
         let storage_min = YoctoValue::from_yocto_u128(bounds.min.0);
@@ -85,13 +92,31 @@ impl PortfolioCostInputs {
             .clone()
             .to_in();
 
+        // wnear から到達可能な goal をキャッシュに展開（必須）。
+        // ここで失敗するのは pools に wnear が存在しない致命的状況のみで、
+        // その場合は呼び出し側で Hold に倒す。
+        graph.update_graph(&wnear_in)?;
+
         let mut paths = BTreeMap::new();
         let mut rates = BTreeMap::new();
+        let mut failed_tokens = Vec::new();
         for t in tokens {
-            let path =
-                blockchain::ref_finance::path::swap_path(&graph, &wnear_in, &t.symbol).await?;
-            paths.insert(t.symbol.clone(), path);
-            rates.insert(t.symbol.clone(), t.current_rate.clone());
+            match blockchain::ref_finance::path::swap_path(&graph, &wnear_in, &t.symbol).await {
+                Ok(path) => {
+                    paths.insert(t.symbol.clone(), path);
+                    rates.insert(t.symbol.clone(), t.current_rate.clone());
+                }
+                Err(e) => {
+                    debug!(log, "swap path unavailable for token";
+                        "token" => %t.symbol, "error" => %e);
+                    failed_tokens.push(t.symbol.clone());
+                }
+            }
+        }
+        if !failed_tokens.is_empty() {
+            warn!(log, "tokens excluded from cost estimation: no swap path";
+                "count" => failed_tokens.len(),
+                "total" => tokens.len());
         }
 
         Ok(Self {
@@ -100,8 +125,22 @@ impl PortfolioCostInputs {
             existing_deposits,
             paths,
             rates,
+            failed_tokens,
         })
     }
+}
+
+/// `compute_cost_deductions` の結果
+///
+/// path 不在 token は `PortfolioCostInputs::collect` 段階で除外済みなので、
+/// ここに現れるのは `estimate_trade_cost` が `Err` を返した token のみ。
+/// 呼び出し側は `estimation_failures` の token を `retain_tokens` で除外し、
+/// 全 token 失敗なら Hold する。`f64::INFINITY` 注入は `box_maximize_sharpe` の
+/// Cholesky 後段で NaN 連鎖を起こすため使用しない（`cost.rs:to_return_deduction`
+/// の docstring 参照）。
+struct CostDeductionResult {
+    deductions: BTreeMap<TokenOutAccount, f64>,
+    estimation_failures: Vec<TokenOutAccount>,
 }
 
 /// 重みから銘柄ごとの cost_deduction 比率を計算する。
@@ -113,8 +152,9 @@ fn compute_cost_deductions(
     tokens: &[TokenData],
     inputs: &PortfolioCostInputs,
     total_value_yocto: &BigDecimal,
-) -> BTreeMap<TokenOutAccount, f64> {
-    let mut result = BTreeMap::new();
+) -> CostDeductionResult {
+    let mut deductions = BTreeMap::new();
+    let mut estimation_failures = Vec::new();
     for (i, t) in tokens.iter().enumerate() {
         let w = weights[i].max(0.0);
         let w_bd = BigDecimal::from_f64(w).unwrap_or_default();
@@ -127,6 +167,9 @@ fn compute_cost_deductions(
         } else {
             1
         };
+        // path / rate は collect 段階で同じキーで insert されているため、
+        // ここで揃って欠けるのは「retain_tokens 後に残った token」のみ
+        // = 想定外。揃わない場合は当該 token をスキップ（防御）。
         let Some(path) = inputs.paths.get(&t.symbol) else {
             continue;
         };
@@ -142,15 +185,17 @@ fn compute_cost_deductions(
             new_token_count,
         ) {
             Ok(b) => {
-                result.insert(t.symbol.clone(), b.to_return_deduction(&assumed_in));
+                deductions.insert(t.symbol.clone(), b.to_return_deduction(&assumed_in));
             }
             Err(_) => {
-                // コスト計算失敗時は控除なし（保守的でないが反復を進める）
-                result.insert(t.symbol.clone(), 0.0);
+                estimation_failures.push(t.symbol.clone());
             }
         }
     }
-    result
+    CostDeductionResult {
+        deductions,
+        estimation_failures,
+    }
 }
 
 pub async fn start<C, W>(
@@ -1018,28 +1063,72 @@ where
                 }
             };
 
+        // path 不在 token を最適化対象から除外（A2: upstream filter）。
+        // INFINITY 注入は `box_maximize_sharpe` の Cholesky 後段で NaN 連鎖を
+        // 起こすため使えない（cost.rs:to_return_deduction の docstring 参照）。
+        let mut portfolio_data = portfolio_data;
+        if !cost_inputs.failed_tokens.is_empty() {
+            let unreachable: HashSet<TokenOutAccount> =
+                cost_inputs.failed_tokens.iter().cloned().collect();
+            let reachable: HashSet<TokenOutAccount> = portfolio_data
+                .tokens
+                .iter()
+                .filter(|t| !unreachable.contains(&t.symbol))
+                .map(|t| t.symbol.clone())
+                .collect();
+            warn!(log, "excluding tokens with no swap path";
+                "count" => unreachable.len(),
+                "remaining" => reachable.len());
+            portfolio_data.retain_tokens(&reachable);
+        }
+        if portfolio_data.tokens.is_empty() {
+            warn!(log, "no tokens with valid swap paths, holding");
+            return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+        }
+
         let total_value_yocto_bd =
             wallet_info.total_value.as_bigdecimal() * BigDecimal::from(10u128.pow(24));
-        let n = portfolio_data.tokens.len();
         let max_iter = cfg.portfolio_cost_iterations_max() as usize;
         let damping = cfg.portfolio_cost_iteration_damping().clamp(0.0, 1.0);
-        let mut weights = vec![1.0 / n as f64; n];
-        let token_symbols: Vec<TokenOutAccount> = portfolio_data
-            .tokens
-            .iter()
-            .map(|t| t.symbol.clone())
-            .collect();
+        let mut weights =
+            vec![1.0 / portfolio_data.tokens.len() as f64; portfolio_data.tokens.len()];
 
         let mut last_report = None;
         for iter in 0..max_iter.max(1) {
-            let cost_deductions = compute_cost_deductions(
+            let cost_result = compute_cost_deductions(
                 &weights,
                 &portfolio_data.tokens,
                 &cost_inputs,
                 &total_value_yocto_bd,
             );
+            // estimate_trade_cost が Err を返した token を除外して再開。
+            // INFINITY や 0.0 を埋めるとそれぞれ NaN 連鎖 / 過小コスト推定を
+            // 招くため、不確実な token は最適化対象から外す。
+            if !cost_result.estimation_failures.is_empty() {
+                let failed: HashSet<TokenOutAccount> =
+                    cost_result.estimation_failures.iter().cloned().collect();
+                let reachable: HashSet<TokenOutAccount> = portfolio_data
+                    .tokens
+                    .iter()
+                    .filter(|t| !failed.contains(&t.symbol))
+                    .map(|t| t.symbol.clone())
+                    .collect();
+                warn!(log, "excluding tokens with cost estimation failure";
+                    "count" => failed.len(),
+                    "remaining" => reachable.len(),
+                    "iter" => iter);
+                portfolio_data.retain_tokens(&reachable);
+                if portfolio_data.tokens.is_empty() {
+                    warn!(log, "no tokens with cost estimation, holding");
+                    return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+                }
+                let n = portfolio_data.tokens.len();
+                weights = vec![1.0 / n as f64; n];
+                continue;
+            }
+
             let mut pd_iter = portfolio_data.clone();
-            pd_iter.cost_deductions = cost_deductions;
+            pd_iter.cost_deductions = cost_result.deductions;
 
             let report = execute_portfolio_optimization(
                 &wallet_info,
@@ -1049,13 +1138,14 @@ where
             .await?;
 
             // 候補 weight を tokens の順序で取り出す
-            let candidate: Vec<f64> = token_symbols
+            let candidate: Vec<f64> = portfolio_data
+                .tokens
                 .iter()
-                .map(|sym| {
+                .map(|t| {
                     report
                         .optimal_weights
                         .weights
-                        .get(sym)
+                        .get(&t.symbol)
                         .and_then(|bd| bd.to_f64())
                         .unwrap_or(0.0)
                 })
