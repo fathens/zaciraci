@@ -57,6 +57,30 @@ pub struct RunArgs {
     /// Generate and evaluate predictions for the simulation period before running
     #[arg(long)]
     pub generate_predictions: bool,
+
+    /// Enable per-token bias correction (improvement C)
+    #[arg(long)]
+    pub bias_correction: bool,
+
+    /// Enable prediction-error variance diagonal inflation (improvement 3)
+    #[arg(long)]
+    pub pred_err_diagonal: bool,
+
+    /// Scale factor `k` for the diagonal inflation rule (default 1.0)
+    #[arg(long, default_value = "1.0")]
+    pub pred_err_diagonal_k: f64,
+
+    /// Diagonal composition mode: "additive" or "max"
+    #[arg(long, default_value = "additive")]
+    pub pred_err_diagonal_mode: String,
+
+    /// Enable cost-aware iterative optimization (improvement D)
+    #[arg(long)]
+    pub cost_aware_return: bool,
+
+    /// Maximum iterations for cost-aware optimization (default 3)
+    #[arg(long, default_value = "3")]
+    pub cost_iterations_max: u32,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -121,6 +145,12 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
+            bias_correction: false,
+            pred_err_diagonal: false,
+            pred_err_diagonal_k: 1.0,
+            pred_err_diagonal_mode: "additive".to_string(),
+            cost_aware_return: false,
+            cost_iterations_max: 3,
         }
     }
 

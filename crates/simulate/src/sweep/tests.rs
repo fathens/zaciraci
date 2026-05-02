@@ -9,6 +9,12 @@ fn combinations_single_values() {
         price_history_days: vec![30],
         rebalance_threshold: vec![0.1],
         rebalance_interval_days: vec![1],
+        bias_correction: vec![false],
+        pred_err_diagonal: vec![false],
+        pred_err_diagonal_k: vec![1.0],
+        pred_err_diagonal_mode: vec!["additive".to_string()],
+        cost_aware_return: vec![false],
+        cost_iterations_max: vec![3],
     };
     let combos = generate_combinations(&config);
     assert_eq!(combos.len(), 1);
@@ -25,6 +31,12 @@ fn combinations_cartesian_product() {
         price_history_days: vec![30],
         rebalance_threshold: vec![0.05, 0.1, 0.2],
         rebalance_interval_days: vec![1],
+        bias_correction: vec![false],
+        pred_err_diagonal: vec![false],
+        pred_err_diagonal_k: vec![1.0],
+        pred_err_diagonal_mode: vec!["additive".to_string()],
+        cost_aware_return: vec![false],
+        cost_iterations_max: vec![3],
     };
     let combos = generate_combinations(&config);
     // 2 * 1 * 3 * 1 = 6
@@ -38,6 +50,12 @@ fn combinations_empty_dimension() {
         price_history_days: vec![30],
         rebalance_threshold: vec![0.1],
         rebalance_interval_days: vec![1],
+        bias_correction: vec![false],
+        pred_err_diagonal: vec![false],
+        pred_err_diagonal_k: vec![1.0],
+        pred_err_diagonal_mode: vec!["additive".to_string()],
+        cost_aware_return: vec![false],
+        cost_iterations_max: vec![3],
     };
     let combos = generate_combinations(&config);
     assert_eq!(combos.len(), 0);
@@ -50,6 +68,12 @@ fn combinations_preserves_all_values() {
         price_history_days: vec![30],
         rebalance_threshold: vec![0.1],
         rebalance_interval_days: vec![1],
+        bias_correction: vec![false],
+        pred_err_diagonal: vec![false],
+        pred_err_diagonal_k: vec![1.0],
+        pred_err_diagonal_mode: vec!["additive".to_string()],
+        cost_aware_return: vec![false],
+        cost_iterations_max: vec![3],
     };
     let combos = generate_combinations(&config);
     assert_eq!(combos.len(), 2);

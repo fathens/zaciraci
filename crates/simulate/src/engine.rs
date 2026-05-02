@@ -170,6 +170,32 @@ pub(crate) fn apply_config(cli: &RunArgs) {
     common::config::store::set("TRADE_INITIAL_INVESTMENT", &cli.initial_capital.to_string());
     // Enable trading (mock client prevents real transactions)
     common::config::store::set("TRADE_ENABLED", "true");
+
+    // Improvement flags (default off; CLI flips them per A/B run)
+    common::config::store::set(
+        "TRADE_BIAS_CORRECTION_ENABLED",
+        &cli.bias_correction.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED",
+        &cli.pred_err_diagonal.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_K",
+        &cli.pred_err_diagonal_k.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
+        &cli.pred_err_diagonal_mode,
+    );
+    common::config::store::set(
+        "TRADE_COST_AWARE_RETURN_ENABLED",
+        &cli.cost_aware_return.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_COST_ITERATIONS_MAX",
+        &cli.cost_iterations_max.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -189,6 +215,12 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
+            bias_correction: false,
+            pred_err_diagonal: false,
+            pred_err_diagonal_k: 1.0,
+            pred_err_diagonal_mode: "additive".to_string(),
+            cost_aware_return: false,
+            cost_iterations_max: 3,
         }
     }
 
@@ -216,6 +248,12 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
+            bias_correction: true,
+            pred_err_diagonal: true,
+            pred_err_diagonal_k: 2.0,
+            pred_err_diagonal_mode: "max".to_string(),
+            cost_aware_return: true,
+            cost_iterations_max: 5,
         };
 
         apply_config(&cli);
@@ -237,5 +275,29 @@ mod tests {
             "500"
         );
         assert_eq!(common::config::store::get("TRADE_ENABLED").unwrap(), "true");
+        assert_eq!(
+            common::config::store::get("TRADE_BIAS_CORRECTION_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_PRED_ERR_DIAGONAL_K").unwrap(),
+            "2"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_PRED_ERR_DIAGONAL_MODE").unwrap(),
+            "max"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_COST_AWARE_RETURN_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_COST_ITERATIONS_MAX").unwrap(),
+            "5"
+        );
     }
 }
