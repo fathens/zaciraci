@@ -333,6 +333,65 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
     }
 }
 
+/// 取引コストに依存する反復最適化。
+///
+/// 各反復で:
+/// 1. 現在の重みから `cost_fn` で控除比率を計算
+/// 2. `initial_returns - cost_deductions` を `optimize_fn` に渡して候補重みを得る
+/// 3. ダンピング: `weights_{k+1} = (1-α) × weights_k + α × candidate`
+/// 4. 最大重み変化が `tolerance` 未満で収束、または `max_iterations` で打ち切り
+///
+/// 未収束時は最終の重みを返す（panic ではなく実用解を採用）。
+/// `damping` は `[0.0, 1.0]` にクランプされる（不正値での発散を防ぐ）。
+pub fn iterative_cost_aware_optimize<O, C>(
+    initial_returns: &[f64],
+    initial_weights: Vec<f64>,
+    optimize_fn: O,
+    cost_fn: C,
+    max_iterations: usize,
+    damping: f64,
+    tolerance: f64,
+) -> Vec<f64>
+where
+    O: Fn(&[f64]) -> Vec<f64>,
+    C: Fn(&[f64]) -> Vec<f64>,
+{
+    let n = initial_returns.len();
+    debug_assert_eq!(
+        initial_weights.len(),
+        n,
+        "initial_weights length must match returns length"
+    );
+    let damp = damping.clamp(0.0, 1.0);
+    let mut weights = initial_weights;
+    for _ in 0..max_iterations {
+        let costs = cost_fn(&weights);
+        debug_assert_eq!(costs.len(), n, "cost_fn must return one cost per token");
+        let adjusted: Vec<f64> = initial_returns
+            .iter()
+            .zip(costs.iter())
+            .map(|(&r, &c)| r - c)
+            .collect();
+        let candidate = optimize_fn(&adjusted);
+        debug_assert_eq!(candidate.len(), n, "optimize_fn must return n weights");
+        let new_weights: Vec<f64> = weights
+            .iter()
+            .zip(candidate.iter())
+            .map(|(&w, &c)| (1.0 - damp) * w + damp * c)
+            .collect();
+        let max_diff = new_weights
+            .iter()
+            .zip(weights.iter())
+            .map(|(&new, &old)| (new - old).abs())
+            .fold(0.0f64, f64::max);
+        weights = new_weights;
+        if max_diff < tolerance {
+            break;
+        }
+    }
+    weights
+}
+
 /// 共分散行列の対角を予測誤差分散で書き換える。
 ///
 /// Markowitz の risk 評価に「予測精度差」を反映するため、銘柄ごとの

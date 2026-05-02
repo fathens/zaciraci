@@ -771,6 +771,86 @@ fn test_apply_prediction_error_diagonal_skips_non_finite() {
     assert!((result[[1, 1]] - 0.02).abs() < 1e-10);
 }
 
+// --- iterative_cost_aware_optimize ---
+
+#[test]
+fn test_iterative_cost_aware_zero_cost_returns_optimize_fn_output() {
+    // cost_fn が常にゼロ → adjusted_returns = initial_returns
+    // optimize_fn は adjusted を返すだけ → 1 反復で initial と一致するように
+    let initial_returns = vec![0.1, 0.2, 0.3];
+    let initial_weights = vec![1.0 / 3.0; 3];
+    let result = iterative_cost_aware_optimize(
+        &initial_returns,
+        initial_weights,
+        |adj| adj.to_vec(), // identity
+        |_| vec![0.0; 3],
+        3,
+        1.0, // ダンピングなし
+        1e-9,
+    );
+    assert_eq!(result, initial_returns);
+}
+
+#[test]
+fn test_iterative_cost_aware_damping_reduces_step() {
+    // damping=0.5 で 1 反復: weights = 0.5 * old + 0.5 * candidate
+    let initial_returns = vec![0.0; 3];
+    let initial_weights = vec![0.0; 3];
+    let candidate = vec![1.0, 1.0, 1.0];
+    let result = iterative_cost_aware_optimize(
+        &initial_returns,
+        initial_weights,
+        move |_| candidate.clone(),
+        |_| vec![0.0; 3],
+        1, // 1 反復
+        0.5,
+        0.0, // 収束判定無効化
+    );
+    for v in &result {
+        assert!((v - 0.5).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn test_iterative_cost_aware_converges_when_diff_below_tolerance() {
+    // optimize_fn が常に同じ値を返す → 1 反復で diff=0 → 収束
+    let initial_returns = vec![0.1; 3];
+    let initial_weights = vec![1.0 / 3.0; 3];
+    // counter で呼び出し回数を測定
+    let count = std::cell::RefCell::new(0);
+    let _ = iterative_cost_aware_optimize(
+        &initial_returns,
+        initial_weights.clone(),
+        |_| {
+            *count.borrow_mut() += 1;
+            initial_weights.clone()
+        },
+        |_| vec![0.0; 3],
+        100, // max
+        1.0,
+        1e-9,
+    );
+    // 1 反復で収束（new = old）して打ち切り
+    assert_eq!(*count.borrow(), 1);
+}
+
+#[test]
+fn test_iterative_cost_aware_clamps_damping_out_of_range() {
+    // damping=2.0 はクランプして 1.0 として扱われる → ダンピングなしと同等
+    let initial_returns = vec![0.0; 2];
+    let result = iterative_cost_aware_optimize(
+        &initial_returns,
+        vec![0.0, 0.0],
+        |_| vec![1.0, 1.0],
+        |_| vec![0.0, 0.0],
+        1,
+        2.0, // out of range
+        0.0,
+    );
+    // damping=1.0 で重みは candidate と一致
+    assert_eq!(result, vec![1.0, 1.0]);
+}
+
 #[test]
 fn test_validate_weights_all_valid() {
     let weights = vec![0.3, 0.5, 0.2];
