@@ -52,6 +52,106 @@ use super::market_data::{
     calculate_enhanced_liquidity_score, calculate_volatility_from_history,
     estimate_market_cap_async,
 };
+use blockchain::types::gas_price::GasPrice;
+use dex::TokenPath;
+use num_traits::FromPrimitive;
+
+/// 取引コスト見積もりに必要な静的入力
+///
+/// 反復最適化の各反復で path / spot_rate は変わらないため、ループ前に 1 回だけ
+/// 収集する。失敗時は呼び出し側で `Hold` にフォールバックする。
+struct PortfolioCostInputs {
+    gas_price: GasPrice,
+    storage_min: YoctoValue,
+    existing_deposits: HashSet<TokenAccount>,
+    paths: BTreeMap<TokenOutAccount, TokenPath>,
+    rates: BTreeMap<TokenOutAccount, ExchangeRate>,
+}
+
+impl PortfolioCostInputs {
+    async fn collect<C>(client: &C, account: &AccountId, tokens: &[TokenData]) -> Result<Self>
+    where
+        C: ViewContract + GasInfo,
+    {
+        let gas_price = client.get_gas_price(None).await?;
+        let bounds = blockchain::ref_finance::storage::check_bounds(client).await?;
+        let storage_min = YoctoValue::from_yocto_u128(bounds.min.0);
+        let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
+        let existing_deposits: HashSet<TokenAccount> = deposits.into_keys().collect();
+
+        let pools = persistence::pool_info::read_from_db(None).await?;
+        let graph = blockchain::ref_finance::path::graph::TokenGraph::new(pools);
+        let wnear_in: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN
+            .clone()
+            .to_in();
+
+        let mut paths = BTreeMap::new();
+        let mut rates = BTreeMap::new();
+        for t in tokens {
+            let path =
+                blockchain::ref_finance::path::swap_path(&graph, &wnear_in, &t.symbol).await?;
+            paths.insert(t.symbol.clone(), path);
+            rates.insert(t.symbol.clone(), t.current_rate.clone());
+        }
+
+        Ok(Self {
+            gas_price,
+            storage_min,
+            existing_deposits,
+            paths,
+            rates,
+        })
+    }
+}
+
+/// 重みから銘柄ごとの cost_deduction 比率を計算する。
+///
+/// `total_value_yocto` は wallet 全体の価値（yoctoNEAR 単位）、
+/// `assumed_in[i] = total_value_yocto × weights[i]` で銘柄ごとの取引額を概算。
+fn compute_cost_deductions(
+    weights: &[f64],
+    tokens: &[TokenData],
+    inputs: &PortfolioCostInputs,
+    total_value_yocto: &BigDecimal,
+) -> BTreeMap<TokenOutAccount, f64> {
+    let mut result = BTreeMap::new();
+    for (i, t) in tokens.iter().enumerate() {
+        let w = weights[i].max(0.0);
+        let w_bd = BigDecimal::from_f64(w).unwrap_or_default();
+        let assumed_in_bd = total_value_yocto * w_bd;
+        let assumed_in = YoctoValue::from_yocto(assumed_in_bd);
+
+        let token_account: TokenAccount = t.symbol.clone().into();
+        let new_token_count = if inputs.existing_deposits.contains(&token_account) {
+            0
+        } else {
+            1
+        };
+        let Some(path) = inputs.paths.get(&t.symbol) else {
+            continue;
+        };
+        let Some(rate) = inputs.rates.get(&t.symbol) else {
+            continue;
+        };
+        match crate::cost::estimate_trade_cost(
+            path,
+            &assumed_in,
+            rate,
+            inputs.gas_price,
+            &inputs.storage_min,
+            new_token_count,
+        ) {
+            Ok(b) => {
+                result.insert(t.symbol.clone(), b.to_return_deduction(&assumed_in));
+            }
+            Err(_) => {
+                // コスト計算失敗時は控除なし（保守的でないが反復を進める）
+                result.insert(t.symbol.clone(), 0.0);
+            }
+        }
+    }
+    result
+}
 
 pub async fn start<C, W>(
     client: &C,
@@ -900,12 +1000,93 @@ where
     };
 
     // ポートフォリオ最適化の実行
-    let execution_report = execute_portfolio_optimization(
-        &wallet_info,
-        portfolio_data,
-        cfg.portfolio_rebalance_threshold(),
-    )
-    .await?;
+    let execution_report = if cfg.trade_cost_aware_return_enabled() {
+        // 反復コスト考慮最適化: total_value=0 なら早期 Hold
+        if wallet_info.total_value.as_bigdecimal() <= &BigDecimal::from(0) {
+            warn!(log, "total value is zero, holding");
+            return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+        }
+
+        let cost_inputs =
+            match PortfolioCostInputs::collect(client, wallet.account_id(), &portfolio_data.tokens)
+                .await
+            {
+                Ok(inputs) => inputs,
+                Err(e) => {
+                    warn!(log, "cost inputs collection failed, holding"; "error" => %e);
+                    return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+                }
+            };
+
+        let total_value_yocto_bd =
+            wallet_info.total_value.as_bigdecimal() * BigDecimal::from(10u128.pow(24));
+        let n = portfolio_data.tokens.len();
+        let max_iter = cfg.portfolio_cost_iterations_max() as usize;
+        let damping = cfg.portfolio_cost_iteration_damping().clamp(0.0, 1.0);
+        let mut weights = vec![1.0 / n as f64; n];
+        let token_symbols: Vec<TokenOutAccount> = portfolio_data
+            .tokens
+            .iter()
+            .map(|t| t.symbol.clone())
+            .collect();
+
+        let mut last_report = None;
+        for iter in 0..max_iter.max(1) {
+            let cost_deductions = compute_cost_deductions(
+                &weights,
+                &portfolio_data.tokens,
+                &cost_inputs,
+                &total_value_yocto_bd,
+            );
+            let mut pd_iter = portfolio_data.clone();
+            pd_iter.cost_deductions = cost_deductions;
+
+            let report = execute_portfolio_optimization(
+                &wallet_info,
+                pd_iter,
+                cfg.portfolio_rebalance_threshold(),
+            )
+            .await?;
+
+            // 候補 weight を tokens の順序で取り出す
+            let candidate: Vec<f64> = token_symbols
+                .iter()
+                .map(|sym| {
+                    report
+                        .optimal_weights
+                        .weights
+                        .get(sym)
+                        .and_then(|bd| bd.to_f64())
+                        .unwrap_or(0.0)
+                })
+                .collect();
+            let new_weights: Vec<f64> = weights
+                .iter()
+                .zip(candidate.iter())
+                .map(|(&w, &c)| (1.0 - damping) * w + damping * c)
+                .collect();
+            let max_diff = new_weights
+                .iter()
+                .zip(weights.iter())
+                .map(|(&new, &old)| (new - old).abs())
+                .fold(0.0f64, f64::max);
+            debug!(log, "cost-aware iteration";
+                "iter" => iter, "max_diff" => format!("{:.6}", max_diff));
+            weights = new_weights;
+            last_report = Some(report);
+            if max_diff < 1e-3 {
+                break;
+            }
+        }
+        last_report.expect("at least one iteration ran")
+    } else {
+        execute_portfolio_optimization(
+            &wallet_info,
+            portfolio_data,
+            cfg.portfolio_rebalance_threshold(),
+        )
+        .await?
+    };
 
     info!(log, "portfolio optimization completed";
         "actions" => execution_report.actions.len(),
