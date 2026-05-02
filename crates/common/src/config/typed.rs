@@ -589,6 +589,27 @@ define_typed_config! {
         default: "additive"
     }
 
+    /// Deduct AMM fee + price impact + gas + storage + slippage from expected return
+    /// before optimization, and run iterative optimization to converge weight↔cost.
+    fn trade_cost_aware_return_enabled() -> bool {
+        key: "TRADE_COST_AWARE_RETURN_ENABLED",
+        default: false
+    }
+
+    /// Maximum iterations for the cost-aware optimization loop.
+    /// On non-convergence, the last iterate is used.
+    fn portfolio_cost_iterations_max() -> u32 {
+        key: "PORTFOLIO_COST_ITERATIONS_MAX",
+        default: 3
+    }
+
+    /// Damping factor α for the iterative cost-aware optimization
+    /// (`next = (1 - α) × prev + α × new`). Lower values dampen oscillation.
+    fn portfolio_cost_iteration_damping() -> f64 {
+        key: "PORTFOLIO_COST_ITERATION_DAMPING",
+        default: 0.5
+    }
+
     /// Weight for volume-based liquidity score
     fn liquidity_volume_weight() -> f64 {
         key: "LIQUIDITY_VOLUME_WEIGHT",

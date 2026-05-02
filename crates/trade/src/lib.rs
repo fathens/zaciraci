@@ -1,5 +1,6 @@
 #![deny(warnings)]
 
+pub mod cost;
 pub mod execution;
 pub mod harvest;
 pub mod market_data;
