@@ -21,6 +21,48 @@ pub enum PredErrDiagonalMode {
     Max,
 }
 
+impl PredErrDiagonalMode {
+    /// 設定値文字列としての安定表現（`FromStr` の逆）。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Additive => "additive",
+            Self::Max => "max",
+        }
+    }
+}
+
+/// `PredErrDiagonalMode` 用のパースエラー（typo を silent に縮退させない）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsePredErrDiagonalModeError {
+    input: String,
+}
+
+impl std::fmt::Display for ParsePredErrDiagonalModeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid PredErrDiagonalMode: {:?} (expected one of \"additive\", \"max\")",
+            self.input
+        )
+    }
+}
+
+impl std::error::Error for ParsePredErrDiagonalModeError {}
+
+impl std::str::FromStr for PredErrDiagonalMode {
+    type Err = ParsePredErrDiagonalModeError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "additive" => Ok(Self::Additive),
+            "max" => Ok(Self::Max),
+            _ => Err(ParsePredErrDiagonalModeError {
+                input: s.to_string(),
+            }),
+        }
+    }
+}
+
 /// 予測誤差分散ベース対角合成の設定（k と variances をペアで管理）
 #[derive(Debug, Clone)]
 pub struct PredErrDiagonal {
@@ -422,6 +464,22 @@ pub fn damp_and_diff(
 /// `tokens` の順序は `cov` の行/列インデックスと一致している必要がある。
 /// `pred_err_var` にエントリがない銘柄は対角を据え置く。
 /// 書き換え後に `ensure_positive_semi_definite` を再呼び出しして PSD を保証する。
+///
+/// # 数学的契約（重要）
+///
+/// **本関数は対角 (`cov[i,i]`) のみを inflate し、off-diagonal
+/// (`cov[i,j]` for `i != j`) には触れない**。これは意図的な近似だが
+/// 副作用として「implied correlation `cov[i,j]/sqrt(cov[i,i]*cov[j,j])`
+/// が圧縮され、Markowitz の diversification benefit が削がれる」。
+///
+/// `k * pred_err_var` が元の `cov[i,i]` と同オーダー以上になる設定
+/// (例: `k=1.0`, `mape=20%` → `pev=0.04` ≫ daily price var ~10⁻⁴)
+/// では銘柄間相関が事実上無視されるため、本 PR では default を
+/// `Additive` + `k=0.1`（影響を 1/10 に抑制）にしている。
+///
+/// 相関構造を保ったまま inflate したい場合は、別途
+/// `D = diag(sqrt(new_diag/old_diag))` を構築して
+/// `new_cov = D · old_cov · D` で再正規化する必要がある（Phase 2、別 PR）。
 pub fn apply_prediction_error_diagonal(
     mut cov: Array2<f64>,
     tokens: &[TokenOutAccount],

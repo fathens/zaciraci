@@ -166,6 +166,39 @@ impl ConfigResolve for anyhow::Result<String> {
     }
 }
 
+/// `PredErrDiagonalMode` の typed config 解決。
+///
+/// 値が config に存在しない場合は `default` を返す。値が存在するが
+/// `FromStr` で parse 失敗した場合は **panic** する（typo を silent に
+/// 縮退させない fail-fast 設計、F007 対応）。
+///
+/// `error!` ログ + fallback は理想的だが `common` クレートは `logging`
+/// に循環依存できないため、起動時 panic を採用する。これは設定読み出し
+/// 直後（実質的に startup）に発火し、稼働中のトレード判断には影響しない。
+impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
+    type Default = Self;
+    const VALUE_TYPE: ConfigValueType = ConfigValueType::String;
+    fn resolve(key: &str, default: Self) -> Self {
+        match crate::config::store::get(key) {
+            Ok(s) => s.parse().unwrap_or_else(|e| {
+                panic!("invalid config value for {key}: {e}");
+            }),
+            Err(_) => default,
+        }
+    }
+    fn resolve_without_db(key: &str, default: Self) -> Self {
+        match crate::config::store::get_excluding_db(key) {
+            Ok(s) => s.parse().unwrap_or_else(|e| {
+                panic!("invalid config value for {key}: {e}");
+            }),
+            Err(_) => default,
+        }
+    }
+    fn display_string(value: Self) -> std::string::String {
+        value.as_str().to_string()
+    }
+}
+
 // ── MockStore trait: maps types to Clone-able mock storage ──
 
 pub trait MockStore: Sized {
@@ -205,6 +238,13 @@ impl_mock_store_copy!(u16, u32, u64, u128, usize, i64, f64);
 impl MockStore for Duration {
     type Storage = Duration;
     fn from_storage(s: &Duration) -> Self {
+        *s
+    }
+}
+
+impl MockStore for crate::algorithm::portfolio::PredErrDiagonalMode {
+    type Storage = Self;
+    fn from_storage(s: &Self) -> Self {
         *s
     }
 }
@@ -578,15 +618,27 @@ define_typed_config! {
     /// Scale factor `k` applied to prediction error variance in the diagonal
     /// inflation rule (additive: `cov[i,i] + k * pred_err_var`,
     /// max: `max(cov[i,i], k * pred_err_var)`).
+    ///
+    /// Default is `0.1` — `pred_err_var` is on the same return scale as
+    /// `cov[i,i]` but typical MAPE 20% gives `pev = 0.04` which is ~100x
+    /// the daily price variance (~10⁻⁴). `k=0.1` keeps the inflation in
+    /// a comparable order of magnitude. See `apply_prediction_error_diagonal`
+    /// docstring for the correlation-distortion caveat.
     fn portfolio_pred_err_diagonal_k() -> f64 {
         key: "PORTFOLIO_PRED_ERR_DIAGONAL_K",
-        default: 1.0
+        default: 0.1
     }
 
-    /// Diagonal composition mode for prediction error variance: "additive" or "max".
-    fn portfolio_pred_err_diagonal_mode() -> String {
+    /// Diagonal composition mode for prediction error variance.
+    ///
+    /// Accepts `"additive"` or `"max"` (case-insensitive). Invalid values
+    /// trigger a startup `panic!` rather than silent fallback (F007:
+    /// preventing typo-induced silent regression to a different mode).
+    /// Default is `Additive` — see `apply_prediction_error_diagonal`
+    /// docstring for the financial reasoning.
+    fn portfolio_pred_err_diagonal_mode() -> crate::algorithm::portfolio::PredErrDiagonalMode {
         key: "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
-        default: "max"
+        default: crate::algorithm::portfolio::PredErrDiagonalMode::Additive
     }
 
     /// Deduct AMM fee + price impact + gas + storage + slippage from expected return

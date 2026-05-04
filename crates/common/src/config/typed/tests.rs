@@ -722,3 +722,60 @@ fn test_resolve_all_without_db_harvest_account_id_unset() {
     assert_eq!(info.value_type, ConfigValueType::String);
     assert_eq!(info.resolved_value, "(未設定)");
 }
+
+// ── PredErrDiagonalMode (typed enum config) ──
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_mode_default_is_additive() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+
+    let _env = EnvGuard::remove("PORTFOLIO_PRED_ERR_DIAGONAL_MODE");
+    crate::config::store::remove("PORTFOLIO_PRED_ERR_DIAGONAL_MODE");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_mode(),
+        PredErrDiagonalMode::Additive,
+        "F008 Phase 1: default should be Additive (correlation-preserving)"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_mode_override_max() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_MODE", "max");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_mode(),
+        PredErrDiagonalMode::Max
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_mode_override_additive_case_insensitive() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_MODE", "ADDITIVE");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_mode(),
+        PredErrDiagonalMode::Additive
+    );
+}
+
+#[test]
+#[serial]
+#[should_panic(expected = "invalid config value for PORTFOLIO_PRED_ERR_DIAGONAL_MODE")]
+fn test_portfolio_pred_err_diagonal_mode_typo_panics() {
+    // F007: typo は silent fallback ではなく startup panic で検出する
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_MODE", "addative");
+    let _ = typed().portfolio_pred_err_diagonal_mode();
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_default_is_point_one() {
+    let _env = EnvGuard::remove("PORTFOLIO_PRED_ERR_DIAGONAL_K");
+    crate::config::store::remove("PORTFOLIO_PRED_ERR_DIAGONAL_K");
+    assert_eq!(typed().portfolio_pred_err_diagonal_k(), 0.1);
+}

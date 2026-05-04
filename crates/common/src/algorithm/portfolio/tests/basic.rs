@@ -1795,3 +1795,60 @@ fn retain_excluding_is_inverse_of_retain_tokens() {
     assert_eq!(pd1.predictions.len(), pd2.predictions.len());
     assert_eq!(pd1.cost_deductions.len(), pd2.cost_deductions.len());
 }
+
+#[test]
+fn pred_err_diagonal_mode_from_str_known_values() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        PredErrDiagonalMode::from_str("additive").unwrap(),
+        PredErrDiagonalMode::Additive
+    );
+    assert_eq!(
+        PredErrDiagonalMode::from_str("max").unwrap(),
+        PredErrDiagonalMode::Max
+    );
+}
+
+#[test]
+fn pred_err_diagonal_mode_from_str_is_case_insensitive_and_trims() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        PredErrDiagonalMode::from_str("  ADDITIVE\n").unwrap(),
+        PredErrDiagonalMode::Additive
+    );
+    assert_eq!(
+        PredErrDiagonalMode::from_str("Max").unwrap(),
+        PredErrDiagonalMode::Max
+    );
+}
+
+#[test]
+fn pred_err_diagonal_mode_from_str_rejects_typos() {
+    use std::str::FromStr;
+
+    let err = PredErrDiagonalMode::from_str("addative").unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("addative"), "actual: {msg}");
+    assert!(msg.contains("additive"), "actual: {msg}");
+}
+
+#[test]
+fn pred_err_diagonal_mode_as_str_round_trips() {
+    use std::str::FromStr;
+
+    for mode in [PredErrDiagonalMode::Additive, PredErrDiagonalMode::Max] {
+        let s = mode.as_str();
+        assert_eq!(PredErrDiagonalMode::from_str(s).unwrap(), mode);
+    }
+}
+
+#[test]
+fn pred_err_diagonal_mode_default_is_additive() {
+    // F008 Phase 1: 安全側のデフォルト（相関構造を最も歪めない方）。
+    assert_eq!(
+        PredErrDiagonalMode::default(),
+        PredErrDiagonalMode::Additive
+    );
+}

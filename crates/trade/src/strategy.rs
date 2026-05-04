@@ -803,10 +803,9 @@ where
         .await
         {
             Ok(variances) => {
-                let mode = match cfg.portfolio_pred_err_diagonal_mode().as_str() {
-                    "max" => common::algorithm::portfolio::PredErrDiagonalMode::Max,
-                    _ => common::algorithm::portfolio::PredErrDiagonalMode::Additive,
-                };
+                // typed config returns the enum directly — typo'd values
+                // would have panicked at startup in `ConfigResolve`.
+                let mode = cfg.portfolio_pred_err_diagonal_mode();
                 Some(common::algorithm::portfolio::PredErrDiagonal {
                     k: cfg.portfolio_pred_err_diagonal_k(),
                     variances,
