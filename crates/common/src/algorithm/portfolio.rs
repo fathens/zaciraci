@@ -156,7 +156,7 @@ const MAX_POSITION_SIZE: f64 = 0.6;
 const MIN_POSITION_SIZE: f64 = 0.05;
 
 /// 最大保有トークン数（集中投資）
-pub const MAX_HOLDINGS: usize = 6;
+pub(crate) const MAX_HOLDINGS: usize = 6;
 const _: () = assert!(MAX_HOLDINGS > 0, "MAX_HOLDINGS must be > 0");
 
 /// PSD 保証のための最小固有値閾値
@@ -480,7 +480,7 @@ pub fn damp_and_diff(
 /// 相関構造を保ったまま inflate したい場合は、別途
 /// `D = diag(sqrt(new_diag/old_diag))` を構築して
 /// `new_cov = D · old_cov · D` で再正規化する必要がある（Phase 2、別 PR）。
-pub fn apply_prediction_error_diagonal(
+pub(crate) fn apply_prediction_error_diagonal(
     mut cov: Array2<f64>,
     tokens: &[TokenOutAccount],
     pred_err_var: &BTreeMap<TokenOutAccount, f64>,
