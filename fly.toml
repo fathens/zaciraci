@@ -1,3 +1,6 @@
+# CRITICAL: this app is single-instance by design.
+# `fly scale count 1` must be kept, and `fly machine clone` is forbidden.
+# See README.md#Deployment for the invariants that break under multi-machine.
 app = "zaciraci"
 primary_region = "nrt"
 
@@ -12,6 +15,10 @@ primary_region = "nrt"
   RUST_BACKTRACE = "1"
   PG_POOL_SIZE = "10"
 
+# CRITICAL: keep this service single-instance. `ensure_ref_storage_setup`
+# relies on a process-local lock (REF_STORAGE_LOCKS); running multiple
+# machines with the same ROOT_ACCOUNT_ID breaks the initial-deposit and
+# top-up cap invariants. See README.md#Deployment and follow-up Issue #1.
 [[services]]
   internal_port = 50051
   protocol = "tcp"

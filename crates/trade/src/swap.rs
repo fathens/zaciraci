@@ -147,15 +147,19 @@ where
         .update_graph(&start)
         .map_err(|e| anyhow::anyhow!("Failed to update graph from {}: {}", from_token, e))?;
 
-    // パスに含まれるトークンのストレージデポジットを確認
-    let tokens = vec![from_token_account, to_token_account];
-
     // シンプルなパス探索（利益を考慮しない）
     let path = graph.get_path(&start, &goal)?;
-    let res = blockchain::ref_finance::storage::check_and_deposit(client, wallet, &tokens).await?;
-    if res.is_none() {
-        return Err(anyhow::anyhow!("Failed to deposit storage"));
-    }
+    path.validate_length()?;
+
+    // パスに含まれるすべてのトークン（中継トークン含む）のストレージデポジットを確認
+    let tokens = path.all_tokens();
+    // keep: 単発スワップでは基軸通貨の WNEAR のみ保持
+    let keep = blockchain::ref_finance::storage::keep_wnear_only();
+    let max_top_up = blockchain::ref_finance::storage::max_top_up_from_config(cfg);
+    blockchain::ref_finance::storage::ensure_ref_storage_setup(
+        client, wallet, &tokens, &keep, max_top_up,
+    )
+    .await?;
 
     // AMM 理論出力を事前計算し、スリッページポリシーに基づいて min_out を算出
     let estimated_output = path.calc_value(swap_amount)?;

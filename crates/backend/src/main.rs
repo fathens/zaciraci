@@ -1,3 +1,14 @@
+//! Backend binary orchestrator.
+//!
+//! **CRITICAL: single-process invariant** — この backend は `ROOT_ACCOUNT_ID` ごとに
+//! **単一プロセス/コンテナ**で起動する前提。REF Finance の storage 管理
+//! (`ensure_ref_storage_setup`) は同一プロセス内の `static REF_STORAGE_LOCKS` に依存して
+//! 並行実行を直列化しており、同一ウォレットを握る別プロセスが同時起動すると二重 initial
+//! deposit や二重 top-up の race で `max_top_up` cap を超えた NEAR 流出が起こりうる。
+//! deployment は rolling restart 等で必ず「旧プロセス停止 → 新プロセス起動」の順を守ること。
+//!
+//! 詳細は `crates/blockchain/src/ref_finance/storage.rs` の `REF_STORAGE_LOCKS` doc を参照。
+
 #![deny(warnings)]
 
 use common::config::ConfigResolver;

@@ -11,7 +11,7 @@ use near_sdk::NearToken;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
-struct MockClient(HashMap<TokenAccount, U128>);
+struct MockClient(BTreeMap<TokenAccount, U128>);
 
 impl ViewContract for MockClient {
     async fn view_contract<T>(&self, _: &AccountId, _: &str, _: &T) -> Result<CallResult>
@@ -91,7 +91,7 @@ impl SentTx for MockSentTx {
 // Comprehensive MockClient for deposit tests
 struct MockDepositClient {
     wnear_balance: Cell<u128>,
-    deposits: HashMap<TokenAccount, U128>,
+    deposits: BTreeMap<TokenAccount, U128>,
     last_method: Arc<Mutex<Option<String>>>,
     should_fail: Cell<bool>,
 }
@@ -102,13 +102,13 @@ impl MockDepositClient {
     fn new(wnear_balance: u128) -> Self {
         Self {
             wnear_balance: Cell::new(wnear_balance),
-            deposits: HashMap::new(),
+            deposits: BTreeMap::new(),
             last_method: Arc::new(Mutex::new(None)),
             should_fail: Cell::new(false),
         }
     }
 
-    fn with_deposits(mut self, deposits: HashMap<TokenAccount, U128>) -> Self {
+    fn with_deposits(mut self, deposits: BTreeMap<TokenAccount, U128>) -> Self {
         self.deposits = deposits;
         self
     }
@@ -234,7 +234,7 @@ async fn test_deposit_ft_transfer_call() {
 #[tokio::test]
 async fn test_withdraw() {
     let token: TokenAccount = WNEAR_TOKEN.clone();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(1_000_000_000_000_000_000_000_000));
 
     let client = MockDepositClient::new(0).with_deposits(deposits);
@@ -266,7 +266,7 @@ async fn test_register_tokens() {
 #[tokio::test]
 async fn test_unregister_tokens() {
     let token: TokenAccount = "usdt.near".parse().unwrap();
-    let mut deposits = HashMap::new();
+    let mut deposits = BTreeMap::new();
     deposits.insert(token.clone(), U128(0)); // 残高ゼロで登録解除可能
 
     let client = MockDepositClient::new(0).with_deposits(deposits);

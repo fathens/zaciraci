@@ -621,8 +621,47 @@ define_typed_config! {
         default: 15.0
     }
 
+    // ── ref-finance storage ──
+
+    /// Maximum auto top-up amount per cycle for REF Finance storage (in yoctoNEAR).
+    /// Default: 0.5 NEAR = 500_000_000_000_000_000_000_000
+    ///
+    /// **Absolute ceiling**: regardless of the configured value (env, TOML, DB_STORE,
+    /// CONFIG_STORE), the effective top-up per cycle is capped at
+    /// [`REF_STORAGE_MAX_TOP_UP_ABSOLUTE_CEILING`] (= 5 NEAR). This exists to
+    /// defend against cap bypass via DB write privilege compromise; see the
+    /// constant's doc for the threat model.
+    fn ref_storage_max_top_up_yoctonear() -> u128 {
+        key: "REF_STORAGE_MAX_TOP_UP_YOCTONEAR",
+        default: 500_000_000_000_000_000_000_000
+    }
+
     // ── persistence: database_url, pg_pool_size, instance_id moved to StartupConfig ──
 }
+
+/// Hard-coded absolute ceiling for REF Finance storage auto top-up per cycle.
+///
+/// Value: 5 NEAR = 10× the default (0.5 NEAR).
+///
+/// # Why a hard-coded ceiling
+///
+/// The configured `REF_STORAGE_MAX_TOP_UP_YOCTONEAR` is resolved through the
+/// priority chain `CONFIG_STORE > DB_STORE > env > defaults`. `DB_STORE` is
+/// populated from the `config_store` table — if DB write privilege is
+/// compromised, an attacker can inject an extreme value and effectively
+/// disable the cap enforced by `ensure_ref_storage_setup` step 5.
+///
+/// This constant is applied in code (not in config) so it cannot be overridden
+/// through any of the config sources. Raising the ceiling requires a code
+/// change + redeploy.
+///
+/// # Where the clip happens
+///
+/// `blockchain::ref_finance::storage::max_top_up_from_config` applies
+/// `configured.min(CEILING)` on every resolution. When the clip engages
+/// (configured > CEILING) a `warn!` record is emitted — silent clips are
+/// forbidden so that attempted bypasses leave an audit trail.
+pub const REF_STORAGE_MAX_TOP_UP_ABSOLUTE_CEILING: u128 = 5_000_000_000_000_000_000_000_000;
 
 static TYPED: LazyLock<ConfigResolver> = LazyLock::new(|| ConfigResolver);
 

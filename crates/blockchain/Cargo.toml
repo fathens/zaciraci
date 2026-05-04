@@ -22,6 +22,7 @@ near-primitives = "0.34"
 near-crypto = "0.34"
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
 petgraph = "0.7"
 slipped10 = "0.4"
 bip39 = { version = "2.1", features = ["rand"] }

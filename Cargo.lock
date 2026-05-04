@@ -450,6 +450,7 @@ dependencies = [
  "serial_test",
  "slipped10",
  "slog",
+ "thiserror",
  "tokio",
 ]
 
