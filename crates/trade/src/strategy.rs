@@ -934,8 +934,7 @@ where
             return Ok((vec![TradingAction::Hold], BTreeMap::new()));
         }
 
-        let total_value_yocto_bd =
-            wallet_info.total_value.as_bigdecimal() * BigDecimal::from(10u128.pow(24));
+        let total_value_yocto = wallet_info.total_value.to_yocto();
         let max_iter = cfg.portfolio_cost_iterations_max() as usize;
         let damping = cfg.portfolio_cost_iteration_damping().clamp(0.0, 1.0);
 
@@ -943,7 +942,7 @@ where
             &wallet_info,
             portfolio_data,
             &cost_inputs,
-            &total_value_yocto_bd,
+            total_value_yocto.as_bigdecimal(),
             max_iter,
             damping,
             cfg.portfolio_rebalance_threshold(),
