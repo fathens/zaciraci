@@ -355,6 +355,41 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
     }
 }
 
+/// 反復最適化 1 ステップ用のダンピング + 重み変化量計算ヘルパ。
+///
+/// `weights_{k+1} = (1 - α) × current + α × candidate` をベクトル化して計算し、
+/// 同時に `max_i |weights_{k+1,i} - current_i|` を返す（収束判定用）。
+///
+/// `damping` は内部で `[0.0, 1.0]` にクランプされる（不正値での発散を防ぐ pure 不変条件）。
+/// 収束判定 (`tolerance`) や反復制御は呼び出し側に委ねる。
+///
+/// # Panics
+///
+/// `current_weights.len() != candidate_weights.len()` の場合、debug ビルドで panic する。
+pub fn damp_and_diff(
+    current_weights: &[f64],
+    candidate_weights: &[f64],
+    damping: f64,
+) -> (Vec<f64>, f64) {
+    debug_assert_eq!(
+        current_weights.len(),
+        candidate_weights.len(),
+        "current_weights and candidate_weights must have the same length"
+    );
+    let damp = damping.clamp(0.0, 1.0);
+    let new_weights: Vec<f64> = current_weights
+        .iter()
+        .zip(candidate_weights.iter())
+        .map(|(&w, &c)| (1.0 - damp) * w + damp * c)
+        .collect();
+    let max_diff = new_weights
+        .iter()
+        .zip(current_weights.iter())
+        .map(|(&new, &old)| (new - old).abs())
+        .fold(0.0f64, f64::max);
+    (new_weights, max_diff)
+}
+
 /// 共分散行列の対角を予測誤差分散で書き換える。
 ///
 /// Markowitz の risk 評価に「予測精度差」を反映するため、銘柄ごとの

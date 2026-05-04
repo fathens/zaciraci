@@ -1945,3 +1945,82 @@ fn test_portfolio_daily_returns_same_length() {
     assert!((portfolio_daily_returns[1] - 0.092).abs() < 1e-10);
     assert!((portfolio_daily_returns[2] - 0.138).abs() < 1e-10);
 }
+
+// --- damp_and_diff ---
+
+#[test]
+fn test_damp_and_diff_full_replacement() {
+    // damping=1.0 で candidate がそのまま返り、diff = |candidate - current|
+    let current = vec![0.0, 0.5, 1.0];
+    let candidate = vec![1.0, 0.5, 0.0];
+    let (new_weights, max_diff) = damp_and_diff(&current, &candidate, 1.0);
+    assert_eq!(new_weights, candidate);
+    assert!((max_diff - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn test_damp_and_diff_no_movement() {
+    // damping=0.0 で current が維持され、diff = 0
+    let current = vec![0.1, 0.4, 0.5];
+    let candidate = vec![1.0, 1.0, 1.0];
+    let (new_weights, max_diff) = damp_and_diff(&current, &candidate, 0.0);
+    assert_eq!(new_weights, current);
+    assert_eq!(max_diff, 0.0);
+}
+
+#[test]
+fn test_damp_and_diff_half_step() {
+    // damping=0.5 で線形補間: new = 0.5 * current + 0.5 * candidate
+    let current = vec![0.0, 0.0];
+    let candidate = vec![1.0, 1.0];
+    let (new_weights, max_diff) = damp_and_diff(&current, &candidate, 0.5);
+    for v in &new_weights {
+        assert!((v - 0.5).abs() < 1e-12);
+    }
+    assert!((max_diff - 0.5).abs() < 1e-12);
+}
+
+#[test]
+fn test_damp_and_diff_max_diff_picks_largest() {
+    // max_diff は要素ごとの絶対差の最大値
+    let current = vec![0.0, 0.0, 0.0];
+    let candidate = vec![0.1, 0.5, 0.2];
+    let (_, max_diff) = damp_and_diff(&current, &candidate, 1.0);
+    assert!((max_diff - 0.5).abs() < 1e-12);
+}
+
+#[test]
+fn test_damp_and_diff_clamps_damping_above_one() {
+    // damping=2.0 はクランプして 1.0 として扱われる → candidate と一致
+    let current = vec![0.0, 0.0];
+    let candidate = vec![1.0, 1.0];
+    let (new_weights, _) = damp_and_diff(&current, &candidate, 2.0);
+    assert_eq!(new_weights, candidate);
+}
+
+#[test]
+fn test_damp_and_diff_clamps_damping_below_zero() {
+    // damping=-1.0 はクランプして 0.0 として扱われる → current 維持
+    let current = vec![0.3, 0.7];
+    let candidate = vec![1.0, 0.0];
+    let (new_weights, max_diff) = damp_and_diff(&current, &candidate, -1.0);
+    assert_eq!(new_weights, current);
+    assert_eq!(max_diff, 0.0);
+}
+
+#[test]
+fn test_damp_and_diff_empty_slices() {
+    // 空入力でも panic せず空ベクトル / max_diff=0 を返す
+    let (new_weights, max_diff) = damp_and_diff(&[], &[], 0.5);
+    assert!(new_weights.is_empty());
+    assert_eq!(max_diff, 0.0);
+}
+
+#[test]
+#[should_panic(expected = "current_weights and candidate_weights must have the same length")]
+fn test_damp_and_diff_length_mismatch_panics() {
+    // debug ビルドで長さ不一致を検出（不変条件違反）
+    let current = vec![0.0, 0.0, 0.0];
+    let candidate = vec![1.0, 1.0];
+    let _ = damp_and_diff(&current, &candidate, 0.5);
+}
