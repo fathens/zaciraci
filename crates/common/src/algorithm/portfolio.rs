@@ -69,6 +69,27 @@ impl PortfolioData {
         }
         self.cost_deductions.retain(|k, _| retain.contains(k));
     }
+
+    /// 指定 token を除外し、token-indexed な全フィールドを同期 filter する。
+    ///
+    /// `retain_tokens` の反転 API。「除外集合」を直接渡せるため、呼び出し側で
+    /// `tokens.iter().filter(!exclude.contains).collect::<HashSet>()` の
+    /// 反転パターンを書く必要がない（footgun 解消）。除外条件で考えるロジック
+    /// （cost 推定失敗、path 不在等）の自然な書き方になる。
+    ///
+    /// 実装は `retain_tokens` と等価で、token-indexed な全フィールドが
+    /// `exclude` の補集合に閉じることを 1 箇所で保証する。
+    pub fn retain_excluding(&mut self, exclude: &HashSet<TokenOutAccount>) {
+        self.tokens.retain(|t| !exclude.contains(&t.symbol));
+        self.predictions.retain(|k, _| !exclude.contains(k));
+        self.historical_prices.retain(|k, _| !exclude.contains(k));
+        self.prediction_confidences
+            .retain(|k, _| !exclude.contains(k));
+        if let Some(ped) = self.pred_err_diagonal.as_mut() {
+            ped.variances.retain(|k, _| !exclude.contains(k));
+        }
+        self.cost_deductions.retain(|k, _| !exclude.contains(k));
+    }
 }
 
 /// ポートフォリオ実行レポート

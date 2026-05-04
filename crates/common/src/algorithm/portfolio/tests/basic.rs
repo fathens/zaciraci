@@ -1709,3 +1709,89 @@ fn retain_tokens_with_empty_set_clears_all() {
     assert!(pd.pred_err_diagonal.as_ref().unwrap().variances.is_empty());
     assert!(pd.cost_deductions.is_empty());
 }
+
+// ==================== retain_excluding テスト ====================
+
+#[test]
+fn retain_excluding_drops_indicated_tokens_only() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+
+    let mut exclude = HashSet::new();
+    exclude.insert(token_out("token-b"));
+    exclude.insert(token_out("token-c"));
+
+    pd.retain_excluding(&exclude);
+
+    // token-a だけ残る
+    assert_eq!(pd.tokens.len(), 1);
+    assert_eq!(pd.tokens[0].symbol, token_out("token-a"));
+    assert_eq!(pd.predictions.len(), 1);
+    assert!(pd.predictions.contains_key(&token_out("token-a")));
+    assert_eq!(pd.historical_prices.len(), 1);
+    assert!(pd.historical_prices.contains_key(&token_out("token-a")));
+    assert_eq!(pd.prediction_confidences.len(), 1);
+    let ped = pd.pred_err_diagonal.as_ref().expect("diagonal preserved");
+    assert_eq!(ped.variances.len(), 1);
+    assert!(ped.variances.contains_key(&token_out("token-a")));
+    assert_eq!(pd.cost_deductions.len(), 1);
+}
+
+#[test]
+fn retain_excluding_with_empty_set_keeps_all() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+    let original_token_count = pd.tokens.len();
+    let original_predictions_count = pd.predictions.len();
+
+    pd.retain_excluding(&HashSet::new());
+
+    // 何も除外しなければ完全に維持される
+    assert_eq!(pd.tokens.len(), original_token_count);
+    assert_eq!(pd.predictions.len(), original_predictions_count);
+    assert_eq!(pd.cost_deductions.len(), 3);
+}
+
+#[test]
+fn retain_excluding_handles_none_pred_err_diagonal() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+    pd.pred_err_diagonal = None;
+
+    let mut exclude = HashSet::new();
+    exclude.insert(token_out("token-a"));
+
+    pd.retain_excluding(&exclude);
+
+    // None でも panic せず、他フィールドは正しく filter される
+    assert_eq!(pd.tokens.len(), 2);
+    assert!(pd.pred_err_diagonal.is_none());
+    assert!(!pd.predictions.contains_key(&token_out("token-a")));
+}
+
+#[test]
+fn retain_excluding_is_inverse_of_retain_tokens() {
+    use std::collections::HashSet;
+
+    // 同じ集合が「残るもの」になる呼び出しは結果が一致するはず
+    let mut pd1 = pd_with_three_tokens();
+    let mut pd2 = pd_with_three_tokens();
+
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-a"));
+
+    let mut exclude = HashSet::new();
+    exclude.insert(token_out("token-b"));
+    exclude.insert(token_out("token-c"));
+
+    pd1.retain_tokens(&keep);
+    pd2.retain_excluding(&exclude);
+
+    assert_eq!(pd1.tokens.len(), pd2.tokens.len());
+    assert_eq!(pd1.tokens[0].symbol, pd2.tokens[0].symbol);
+    assert_eq!(pd1.predictions.len(), pd2.predictions.len());
+    assert_eq!(pd1.cost_deductions.len(), pd2.cost_deductions.len());
+}

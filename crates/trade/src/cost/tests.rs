@@ -4,16 +4,6 @@ use std::str::FromStr;
 const ONE_NEAR_YOCTO: u128 = 1_000_000_000_000_000_000_000_000;
 
 #[test]
-fn test_to_return_deduction_zero_position_returns_infinity() {
-    let breakdown = TradeCostBreakdown {
-        variable_ratio: 0.005,
-        fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
-    };
-    let zero = YoctoValue::zero();
-    assert_eq!(breakdown.to_return_deduction(&zero), f64::INFINITY);
-}
-
-#[test]
 fn test_to_cost_deduction_zero_position_returns_zero_position_error() {
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.005,
@@ -79,7 +69,7 @@ fn test_cost_deduction_accepts_zero_and_positive() {
 }
 
 #[test]
-fn test_to_return_deduction_combines_variable_and_fixed() {
+fn test_to_cost_deduction_combines_variable_and_fixed() {
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.01,
         // 固定費 0.001 NEAR
@@ -87,7 +77,10 @@ fn test_to_return_deduction_combines_variable_and_fixed() {
     };
     // assumed = 1 NEAR → fixed_ratio = 0.001 / 1.0 = 0.001
     let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
-    let deduction = breakdown.to_return_deduction(&assumed);
+    let deduction = breakdown
+        .to_cost_deduction(&assumed)
+        .expect("zero position is the only failure path here")
+        .as_f64();
     assert!(
         (deduction - 0.011).abs() < 1e-6,
         "expected 0.011, got {deduction}"
@@ -95,15 +88,21 @@ fn test_to_return_deduction_combines_variable_and_fixed() {
 }
 
 #[test]
-fn test_to_return_deduction_larger_position_reduces_fixed_ratio() {
+fn test_to_cost_deduction_larger_position_reduces_fixed_ratio() {
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.005,
         fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
     };
     let small = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
     let large = YoctoValue::from_yocto_u128(100 * ONE_NEAR_YOCTO);
-    let small_d = breakdown.to_return_deduction(&small);
-    let large_d = breakdown.to_return_deduction(&large);
+    let small_d = breakdown
+        .to_cost_deduction(&small)
+        .expect("non-zero position")
+        .as_f64();
+    let large_d = breakdown
+        .to_cost_deduction(&large)
+        .expect("non-zero position")
+        .as_f64();
     assert!(
         large_d < small_d,
         "larger position should yield smaller deduction"
@@ -111,13 +110,16 @@ fn test_to_return_deduction_larger_position_reduces_fixed_ratio() {
 }
 
 #[test]
-fn test_to_return_deduction_only_variable_when_fixed_zero() {
+fn test_to_cost_deduction_only_variable_when_fixed_zero() {
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.01,
         fixed_cost: YoctoValue::zero(),
     };
     let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
-    let deduction = breakdown.to_return_deduction(&assumed);
+    let deduction = breakdown
+        .to_cost_deduction(&assumed)
+        .expect("non-zero position")
+        .as_f64();
     assert!(
         (deduction - 0.01).abs() < 1e-9,
         "expected 0.01, got {deduction}"

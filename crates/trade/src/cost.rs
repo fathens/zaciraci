@@ -142,19 +142,6 @@ impl TradeCostBreakdown {
         let total = self.variable_ratio + ratio;
         CostDeduction::new(total).ok_or(CostError::NonFiniteRatio)
     }
-
-    /// 旧 API: 失敗時に `f64::INFINITY` を返す legacy 形。
-    ///
-    /// **警告**: この戻り値を Markowitz 最適化に直接渡してはならない（NaN cascade）。
-    /// 後続コミット（G5）で全呼び出し元を `to_cost_deduction` に切り替え、
-    /// このメソッドは削除する。残しているのは段階的リファクタの一時的な
-    /// コンパイル維持目的のみ。
-    pub fn to_return_deduction(&self, assumed_position: &YoctoValue) -> f64 {
-        match self.to_cost_deduction(assumed_position) {
-            Ok(deduction) => deduction.as_f64(),
-            Err(_) => f64::INFINITY,
-        }
-    }
 }
 
 /// 与えられたパスでの取引コスト見積もり
