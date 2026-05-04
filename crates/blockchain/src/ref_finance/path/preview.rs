@@ -14,10 +14,13 @@ const BY_STEP_GAS: NearGas = NearGas::from_ggas(2600);
 
 /// 指定 depth の swap で消費するガス料金を yoctoNEAR で見積もる。
 ///
-/// `Preview::cost` と同じ計算式（`(HEAD + BY_STEP * depth) * gas_price`）で、
-/// 外部クレート（trade 等）からもコスト推定できるよう公開する Single Source of Truth。
+/// `(HEAD + BY_STEP * depth) * gas_price` を saturating 算術で計算する Single Source of Truth。
+/// `Preview::cost` も内部でこの関数を呼び出すため、公開 API と private cost が同じ計算式となる。
+/// 外部クレート（trade 等）からもコスト推定できるよう公開する。
 pub fn estimate_swap_gas_cost_yocto(gas_price: GasPrice, depth: usize) -> YoctoValue {
-    let gas = HEAD_GAS.as_gas() + BY_STEP_GAS.as_gas() * (depth as u64);
+    let gas = HEAD_GAS
+        .as_gas()
+        .saturating_add(BY_STEP_GAS.as_gas().saturating_mul(depth as u64));
     let yocto = (gas as u128).saturating_mul(gas_price.to_balance());
     YoctoValue::from_yocto_u128(yocto)
 }
@@ -55,8 +58,11 @@ where
     }
 
     fn cost(gas_price: GasPrice, depth: usize) -> u128 {
-        let gas = HEAD_GAS.as_gas() + BY_STEP_GAS.as_gas() * (depth as u64);
-        (gas as u128).saturating_mul(gas_price.to_balance())
+        use num_traits::ToPrimitive;
+        estimate_swap_gas_cost_yocto(gas_price, depth)
+            .as_bigdecimal()
+            .to_u128()
+            .unwrap_or(0)
     }
 
     fn gain(gas_price: GasPrice, depth: usize, input_value: M, output_value: u128) -> u128 {
@@ -136,18 +142,6 @@ mod tests {
             Preview::<MilliNear>::cost(MIN_GAS_PRICE, 2),
             HEAD + 2 * BY_STEP
         );
-    }
-
-    #[test]
-    fn test_estimate_swap_gas_cost_yocto_matches_preview_cost() {
-        use num_traits::ToPrimitive;
-        // 公開 API と private cost が同じ計算式（Single Source of Truth）であることを保証
-        for depth in 0..=3 {
-            let exported = estimate_swap_gas_cost_yocto(MIN_GAS_PRICE, depth);
-            let exported_u128 = exported.as_bigdecimal().to_u128().unwrap();
-            let internal = Preview::<MilliNear>::cost(MIN_GAS_PRICE, depth);
-            assert_eq!(exported_u128, internal, "mismatch at depth={depth}");
-        }
     }
 
     #[test]
