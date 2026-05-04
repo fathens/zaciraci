@@ -9,13 +9,81 @@ use blockchain::ref_finance::path::preview::estimate_swap_gas_cost_yocto;
 use blockchain::types::gas_price::GasPrice;
 use common::types::{ExchangeRate, NearValue, TokenAmount, YoctoValue};
 use dex::TokenPath;
+use std::fmt;
 
 /// 期待リターンから事前控除するスリッページマージン
 ///
 /// `slippage::MIN_SLIPPAGE_BUDGET` (実行時 min_out 用) と意味論的に独立。
 /// こちらは「事前 cost 推定」目的で、DB データ鮮度・他トレーダー・ブロック間
 /// 価格変動による期待外れを保守的に吸収する。
+///
+/// # 警告: `f64::INFINITY` を直接 Markowitz に渡してはならない
+///
+/// `box_maximize_sharpe` の Cholesky 後段で `0 × INFINITY = NaN` 連鎖が生じ、
+/// `<` `>` のすべての比較で false になる NaN によりガード（`portfolio.rs:739`
+/// 等の `sum_p.abs() < 1e-15`）はすべて防御失効する。`CostDeduction::new` で
+/// 不変条件 `is_finite() && >= 0.0` を満たす値だけを構築・受け渡しすること。
 pub const EXPECTED_SLIPPAGE_DEDUCTION: f64 = 0.005;
+
+/// Markowitz に渡せる「正常値」を保証するコスト控除比率（return スケール）
+///
+/// `CostDeduction::new` で `is_finite() && >= 0.0` 不変条件を満たした値のみ構築可能。
+/// 上限は業務判定（optimizer 側）に委ねるため設けない。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CostDeduction(f64);
+
+impl CostDeduction {
+    /// `is_finite() && value >= 0.0` を満たす場合のみ `Some` を返す。
+    ///
+    /// NaN / Infinity / 負値は `None`。これにより `CostDeduction` が
+    /// optimizer に渡る時点で NaN cascade の入口を型で塞ぐ。
+    pub fn new(value: f64) -> Option<Self> {
+        if value.is_finite() && value >= 0.0 {
+            Some(Self(value))
+        } else {
+            None
+        }
+    }
+
+    /// 内部値を取り出す。
+    pub fn as_f64(self) -> f64 {
+        self.0
+    }
+}
+
+impl From<CostDeduction> for f64 {
+    fn from(c: CostDeduction) -> Self {
+        c.0
+    }
+}
+
+/// `to_cost_deduction` の失敗バリアント
+///
+/// 失敗した token は呼び出し側で `estimation_failures` 経路に合流させ、
+/// `retain_tokens` で portfolio から除外することを期待する。
+/// `f64::INFINITY` を返して silent に Markowitz に流入させてはならない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostError {
+    /// `assumed_position` が 0 — コスト比率を取引額で割れず計算不能
+    ZeroPosition,
+    /// derive した比率が `f64::INFINITY` または `f64::NAN`（BigDecimal→f64 変換異常）
+    NonFiniteRatio,
+}
+
+impl fmt::Display for CostError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CostError::ZeroPosition => {
+                write!(f, "cost deduction is undefined when assumed_position is 0")
+            }
+            CostError::NonFiniteRatio => {
+                write!(f, "derived cost ratio is non-finite (NaN/Infinity)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CostError {}
 
 /// 取引コストの内訳
 ///
@@ -42,27 +110,50 @@ impl TradeCostBreakdown {
     ///
     /// `assumed_position`: スワップする入力金額の見積もり（yoctoNEAR）
     ///
-    /// `assumed_position` が 0 の場合は `f64::INFINITY` を返す。この値は
-    /// 呼び出し元で `is_finite()` フィルタや
-    /// `PortfolioData::retain_tokens` 経由で除外されてから Markowitz の
-    /// `expected_return` から減算される前提。
+    /// # 不変条件
     ///
-    /// 共分散ソルバ (`common::algorithm::portfolio::box_maximize_sharpe`) に
-    /// 直接渡すと、Cholesky 後段で `0 × INFINITY = NaN` 連鎖が生じる。NaN は
-    /// `<` `>` のすべての比較で false になるため、`sum_p.abs() < 1e-15` 等の
-    /// ガード（`portfolio.rs:739` 等）はすべて防御失効し、サイレント Hold
-    /// （rebalance_needed=false）が再生される。
-    pub fn to_return_deduction(&self, assumed_position: &YoctoValue) -> f64 {
+    /// - 戻り値の `CostDeduction` は `is_finite() && >= 0.0` を必ず満たす。
+    /// - `assumed_position` が 0 の場合は `Err(CostError::ZeroPosition)`。
+    /// - BigDecimal→f64 変換が NaN/Infinity になった場合は
+    ///   `Err(CostError::NonFiniteRatio)`。
+    ///
+    /// # 設計上の注意
+    ///
+    /// `f64::INFINITY` を返して silent に Markowitz `box_maximize_sharpe` に
+    /// 流入させてはならない。Cholesky 後段で `0 × INFINITY = NaN` 連鎖が生じ、
+    /// `sum_p.abs() < 1e-15` 等のガード（`common::algorithm::portfolio.rs:739`）
+    /// が NaN 比較で防御失効する。失敗 token は `retain_tokens` 経由で
+    /// portfolio から除外されるべき。
+    pub fn to_cost_deduction(
+        &self,
+        assumed_position: &YoctoValue,
+    ) -> std::result::Result<CostDeduction, CostError> {
         if assumed_position.as_bigdecimal().is_zero() {
-            return f64::INFINITY;
+            return Err(CostError::ZeroPosition);
         }
         // NEAR スケールで f64 変換 (~10⁻³ オーダー → f64 仮数部範囲内)
         let fixed_near = self.fixed_cost.to_near();
         let position_near = assumed_position.to_near();
-        let ratio = (fixed_near.as_bigdecimal() / position_near.as_bigdecimal())
-            .to_f64()
-            .unwrap_or(0.0);
-        self.variable_ratio + ratio
+        let ratio_bd = fixed_near.as_bigdecimal() / position_near.as_bigdecimal();
+        let ratio = ratio_bd.to_f64().ok_or(CostError::NonFiniteRatio)?;
+        if !ratio.is_finite() || !self.variable_ratio.is_finite() {
+            return Err(CostError::NonFiniteRatio);
+        }
+        let total = self.variable_ratio + ratio;
+        CostDeduction::new(total).ok_or(CostError::NonFiniteRatio)
+    }
+
+    /// 旧 API: 失敗時に `f64::INFINITY` を返す legacy 形。
+    ///
+    /// **警告**: この戻り値を Markowitz 最適化に直接渡してはならない（NaN cascade）。
+    /// 後続コミット（G5）で全呼び出し元を `to_cost_deduction` に切り替え、
+    /// このメソッドは削除する。残しているのは段階的リファクタの一時的な
+    /// コンパイル維持目的のみ。
+    pub fn to_return_deduction(&self, assumed_position: &YoctoValue) -> f64 {
+        match self.to_cost_deduction(assumed_position) {
+            Ok(deduction) => deduction.as_f64(),
+            Err(_) => f64::INFINITY,
+        }
     }
 }
 
@@ -74,6 +165,9 @@ impl TradeCostBreakdown {
 ///
 /// `assumed_in` が 0 の場合は price impact が計測できないため、variable_ratio は
 /// `EXPECTED_SLIPPAGE_DEDUCTION` のみ。
+///
+/// `storage_min_per_token` および gas yocto 値が `u128` に収まらない場合は
+/// `Err` で fail-fast する（silent fallback で `u128::MAX`/`0` を返す挙動は廃止）。
 pub fn estimate_trade_cost(
     path: &TokenPath,
     assumed_in: &YoctoValue,
@@ -87,13 +181,17 @@ pub fn estimate_trade_cost(
     let variable_ratio = compute_variable_ratio(path, assumed_in, spot_rate)?;
 
     let gas_yocto = estimate_swap_gas_cost_yocto(gas_price, depth);
-    let storage_count = u128::try_from(new_token_count).unwrap_or(u128::MAX);
+    let storage_count = u128::try_from(new_token_count)
+        .map_err(|_| anyhow::anyhow!("new_token_count {new_token_count} exceeds u128"))?;
     let storage_per_token = storage_min_per_token
         .as_bigdecimal()
         .to_u128()
-        .unwrap_or(u128::MAX);
+        .ok_or_else(|| anyhow::anyhow!("storage_min_per_token does not fit in u128"))?;
     let storage_yocto = storage_per_token.saturating_mul(storage_count);
-    let gas_u128 = gas_yocto.as_bigdecimal().to_u128().unwrap_or(0);
+    let gas_u128 = gas_yocto
+        .as_bigdecimal()
+        .to_u128()
+        .ok_or_else(|| anyhow::anyhow!("gas yocto does not fit in u128"))?;
     let fixed_yocto = gas_u128.saturating_add(storage_yocto);
 
     Ok(TradeCostBreakdown {

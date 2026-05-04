@@ -14,6 +14,71 @@ fn test_to_return_deduction_zero_position_returns_infinity() {
 }
 
 #[test]
+fn test_to_cost_deduction_zero_position_returns_zero_position_error() {
+    let breakdown = TradeCostBreakdown {
+        variable_ratio: 0.005,
+        fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
+    };
+    let zero = YoctoValue::zero();
+    assert_eq!(
+        breakdown.to_cost_deduction(&zero),
+        Err(CostError::ZeroPosition)
+    );
+}
+
+#[test]
+fn test_to_cost_deduction_finite_value_invariant() {
+    let breakdown = TradeCostBreakdown {
+        variable_ratio: 0.01,
+        fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
+    };
+    let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
+    let deduction = breakdown
+        .to_cost_deduction(&assumed)
+        .expect("zero position is the only failure path here");
+    let value = deduction.as_f64();
+    assert!(value.is_finite() && value >= 0.0);
+    assert!((value - 0.011).abs() < 1e-6, "expected 0.011, got {value}");
+}
+
+#[test]
+fn test_to_cost_deduction_rejects_non_finite_variable_ratio() {
+    let breakdown = TradeCostBreakdown {
+        variable_ratio: f64::NAN,
+        fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
+    };
+    let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
+    assert_eq!(
+        breakdown.to_cost_deduction(&assumed),
+        Err(CostError::NonFiniteRatio)
+    );
+}
+
+#[test]
+fn test_cost_deduction_rejects_non_finite() {
+    assert!(CostDeduction::new(f64::NAN).is_none());
+    assert!(CostDeduction::new(f64::INFINITY).is_none());
+    assert!(CostDeduction::new(f64::NEG_INFINITY).is_none());
+}
+
+#[test]
+fn test_cost_deduction_rejects_negative() {
+    assert!(CostDeduction::new(-0.001).is_none());
+}
+
+#[test]
+fn test_cost_deduction_accepts_zero_and_positive() {
+    assert_eq!(
+        CostDeduction::new(0.0).map(CostDeduction::as_f64),
+        Some(0.0)
+    );
+    assert_eq!(
+        CostDeduction::new(0.5).map(CostDeduction::as_f64),
+        Some(0.5)
+    );
+}
+
+#[test]
 fn test_to_return_deduction_combines_variable_and_fixed() {
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.01,
