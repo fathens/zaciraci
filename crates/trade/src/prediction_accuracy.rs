@@ -486,7 +486,9 @@ pub(crate) async fn calculate_per_token_bias(
             continue;
         }
 
-        bias_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // The filter_map above keeps only `is_finite` values, so NaN cannot
+        // appear here; `total_cmp` provides a zero-cost total order anyway.
+        bias_values.sort_by(|a, b| a.total_cmp(b));
         let median = compute_median(&bias_values);
 
         debug!(log, "token prediction bias";
