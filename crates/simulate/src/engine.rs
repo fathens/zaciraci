@@ -156,7 +156,39 @@ pub async fn run_simulation(cli: &RunArgs) -> Result<SimulationResult> {
     Ok(result)
 }
 
-/// Apply CLI parameters to the config system
+/// Apply CLI parameters to the config system.
+///
+/// # Boundary assumptions (read before reusing this function)
+///
+/// This function mutates **process-wide** config state via
+/// `common::config::store::set`, which is backed by a process-shared
+/// `OnceLock`. The simulate binary is designed to run in **isolation** with
+/// these assumptions:
+///
+/// 1. **Mock client only.** All trading paths must be routed through
+///    `SimulationClient` / `SimulationWallet`; setting `TRADE_ENABLED=true`
+///    here is safe *only* because no real RPC calls are issued. Mixing this
+///    with a production `near-jsonrpc-client` in the same process would
+///    enable live trades unintentionally.
+/// 2. **No coexistence with the production binary.** The `OnceLock`-backed
+///    overrides written here persist for the lifetime of the process and are
+///    visible to every consumer of `common::config::ConfigResolver`. Running
+///    simulate alongside production trading code (or running multiple
+///    simulations concurrently in the same process) would cross-contaminate
+///    config state.
+/// 3. **One-shot per process.** Sweep / parameter-grid runs that need
+///    different configs must be executed as separate child processes.
+///
+/// # TODO: lift these constraints
+///
+/// - **Mid-term:** introduce `common::config::store::with_scoped(...)` as an
+///   RAII guard that pushes overrides on entry and pops them on drop, so
+///   `apply_config` can be made scope-local.
+/// - **Long-term:** replace process-wide config reads with explicit
+///   dependency injection (e.g. a simulate-specific `ConfigSnapshot` passed
+///   into the engine, the trade strategy, and the prediction generator).
+///
+/// Until those land, treat `apply_config` as a hard process boundary.
 pub(crate) fn apply_config(cli: &RunArgs) {
     common::config::store::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
     common::config::store::set(
