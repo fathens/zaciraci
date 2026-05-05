@@ -605,9 +605,20 @@ pub(crate) async fn calculate_per_token_pred_err_variance(
     Ok(result)
 }
 
+/// バイアス補正の安全クランプ範囲（下限）。
+///
+/// `±50%` を超える bias はモデル推定誤差ではなく入力データ異常
+/// （価格急変、欠損、外れ値混入など）と判断し、安全側に丸める。
+/// 50% を超える補正は (1 + bias) が 0 や負値に近づき
+/// `correct_prediction` の数式が破綻するため、構造的に防止する目的も兼ねる。
+const BIAS_CLAMP_LOWER: f64 = -0.5;
+
+/// バイアス補正の安全クランプ範囲（上限）。詳細は [`BIAS_CLAMP_LOWER`] を参照。
+const BIAS_CLAMP_UPPER: f64 = 0.5;
+
 /// バイアス中央値を用いて予測価格を補正する（3 層 defense-in-depth）。
 ///
-/// - L1（入力ガード）: bias を `[-0.5, 0.5]` にクランプし、モデル破綻時の暴走を防ぐ
+/// - L1（入力ガード）: bias を `[BIAS_CLAMP_LOWER, BIAS_CLAMP_UPPER]` にクランプし、モデル破綻時の暴走を防ぐ
 /// - L2（数式安全）: `corrected = predicted / (1 + bias_clamped)` で正値保証 + ゼロ除算回避
 /// - L3（型ガード）: 数学的に破綻するケース（factor <= 0、結果がゼロ）は `None` を返し、
 ///   呼び出し側でトークン除外して Sell trigger 発火を構造的に防ぐ
@@ -617,7 +628,7 @@ pub(crate) fn correct_prediction(predicted: &TokenPrice, bias: f64) -> Option<To
     if !bias.is_finite() {
         return None;
     }
-    let bias_clamped = bias.clamp(-0.5, 0.5);
+    let bias_clamped = bias.clamp(BIAS_CLAMP_LOWER, BIAS_CLAMP_UPPER);
     let factor = 1.0 + bias_clamped;
     if factor <= 0.0 {
         return None;
