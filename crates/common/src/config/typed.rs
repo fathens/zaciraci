@@ -266,6 +266,16 @@ impl MockStore for anyhow::Result<String> {
 /// - `MockConfig` struct for test isolation (wraps real resolver, overrides per-field)
 /// - `KEY_DEFINITIONS` const with static metadata for all config keys
 /// - `resolve_all_without_db()` function for runtime key resolution excluding DB
+///
+/// ## Optional `clamp:` parameter
+///
+/// An entry may declare an optional `clamp: <fn>` parameter. The given
+/// function is applied to every resolved value before the accessor returns
+/// (defense-in-depth against extreme value injection via env / TOML /
+/// CONFIG_STORE / DB_STORE — F016). The clamp is applied in
+/// `ConfigResolver`, `MockConfig` (both the override path and the base
+/// delegation), and `resolve_all_without_db()` so the displayed value
+/// matches what callers actually receive. Clamping must be idempotent.
 macro_rules! define_typed_config {
     (
         $(
@@ -273,6 +283,7 @@ macro_rules! define_typed_config {
             fn $method:ident() -> $ty:ty {
                 key: $key:expr,
                 default: $default:expr
+                $(, clamp: $clamp:expr)?
             }
         )*
     ) => {
@@ -289,7 +300,9 @@ macro_rules! define_typed_config {
         impl ConfigAccess for ConfigResolver {
             $(
                 fn $method(&self) -> $ty {
-                    <$ty as ConfigResolve>::resolve($key, $default)
+                    let v = <$ty as ConfigResolve>::resolve($key, $default);
+                    $( let v = ($clamp)(v); )?
+                    v
                 }
             )*
         }
@@ -318,10 +331,12 @@ macro_rules! define_typed_config {
         impl ConfigAccess for MockConfig {
             $(
                 fn $method(&self) -> $ty {
-                    match &self.$method {
+                    let v = match &self.$method {
                         Some(v) => <$ty as MockStore>::from_storage(v),
                         None => self.base.$method(),
-                    }
+                    };
+                    $( let v = ($clamp)(v); )?
+                    v
                 }
             )*
         }
@@ -342,6 +357,7 @@ macro_rules! define_typed_config {
                 $(
                     {
                         let value = <$ty as ConfigResolve>::resolve_without_db($key, $default);
+                        $( let value = ($clamp)(value); )?
                         ResolvedKeyInfo {
                             key: $key.to_string(),
                             description: concat!($($doc, "\n",)*).trim().to_string(),
@@ -353,6 +369,66 @@ macro_rules! define_typed_config {
             ]
         }
     };
+}
+
+// ── Defense-in-depth clamp ranges (F016) ──
+//
+// These bounds defend the optimizer against extreme values injected via env,
+// TOML, CONFIG_STORE, or DB_STORE (e.g. via DB write-privilege compromise).
+// They are applied at the typed-config read boundary so every consumer sees
+// a sane value without having to remember to clamp at the call site.
+
+/// Lower bound for [`ConfigAccess::portfolio_cost_iterations_max`].
+///
+/// At least one iteration is always required so that the cost-aware
+/// optimization records an initial-state weight assignment even on
+/// misconfiguration.
+const PORTFOLIO_COST_ITERATIONS_MAX_LOWER: u32 = 1;
+
+/// Upper bound for [`ConfigAccess::portfolio_cost_iterations_max`].
+///
+/// Production normally converges in 3–5 iterations. The cap of 10 leaves
+/// headroom for slow-converging market regimes while preventing DoS via
+/// `u32::MAX` injection (each iteration runs the full Markowitz solve).
+const PORTFOLIO_COST_ITERATIONS_MAX_UPPER: u32 = 10;
+
+/// Lower bound for [`ConfigAccess::portfolio_pred_err_diagonal_k`].
+///
+/// Negative `k` would deflate (rather than inflate) the covariance diagonal
+/// and bias the optimizer toward poorly-predicted tokens. `0.0` effectively
+/// disables prediction-error inflation.
+const PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER: f64 = 0.0;
+
+/// Upper bound for [`ConfigAccess::portfolio_pred_err_diagonal_k`].
+///
+/// `k = 100` is already 1000× the production default `0.1`. Beyond this the
+/// diagonal dominates the off-diagonal covariance and the matrix becomes
+/// effectively diagonal, breaking the correlation structure the optimizer
+/// relies on.
+const PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER: f64 = 100.0;
+
+/// Idempotent clamp applied to `portfolio_cost_iterations_max` reads.
+fn clamp_portfolio_cost_iterations_max(v: u32) -> u32 {
+    v.clamp(
+        PORTFOLIO_COST_ITERATIONS_MAX_LOWER,
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+    )
+}
+
+/// Idempotent clamp applied to `portfolio_pred_err_diagonal_k` reads.
+///
+/// `f64::clamp` propagates `NaN`, so `NaN` is mapped to the lower bound
+/// (effectively disabling the inflation) instead of poisoning the optimizer.
+/// `±INFINITY` is handled correctly by `f64::clamp` itself.
+fn clamp_portfolio_pred_err_diagonal_k(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER
+    } else {
+        v.clamp(
+            PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+            PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER,
+        )
+    }
 }
 
 define_typed_config! {
@@ -624,9 +700,15 @@ define_typed_config! {
     /// the daily price variance (~10⁻⁴). `k=0.1` keeps the inflation in
     /// a comparable order of magnitude. See `apply_prediction_error_diagonal`
     /// docstring for the correlation-distortion caveat.
+    ///
+    /// **Defense-in-depth (F016)**: clamped to
+    /// `[PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER, PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER]`
+    /// (currently `[0.0, 100.0]`) at the read boundary; `NaN` is mapped to
+    /// the lower bound.
     fn portfolio_pred_err_diagonal_k() -> f64 {
         key: "PORTFOLIO_PRED_ERR_DIAGONAL_K",
-        default: 0.1
+        default: 0.1,
+        clamp: clamp_portfolio_pred_err_diagonal_k
     }
 
     /// Diagonal composition mode for prediction error variance.
@@ -650,9 +732,15 @@ define_typed_config! {
 
     /// Maximum iterations for the cost-aware optimization loop.
     /// On non-convergence, the last iterate is used.
+    ///
+    /// **Defense-in-depth (F016)**: clamped to
+    /// `[PORTFOLIO_COST_ITERATIONS_MAX_LOWER, PORTFOLIO_COST_ITERATIONS_MAX_UPPER]`
+    /// (currently `[1, 10]`) at the read boundary so that an injected
+    /// `u32::MAX` cannot stall the cron loop.
     fn portfolio_cost_iterations_max() -> u32 {
         key: "PORTFOLIO_COST_ITERATIONS_MAX",
-        default: 3
+        default: 3,
+        clamp: clamp_portfolio_cost_iterations_max
     }
 
     /// Damping factor α for the iterative cost-aware optimization

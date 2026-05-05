@@ -779,3 +779,149 @@ fn test_portfolio_pred_err_diagonal_k_default_is_point_one() {
     crate::config::store::remove("PORTFOLIO_PRED_ERR_DIAGONAL_K");
     assert_eq!(typed().portfolio_pred_err_diagonal_k(), 0.1);
 }
+
+// ── F016: defense-in-depth clamps ──
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_default_is_within_bounds() {
+    let _env = EnvGuard::remove("PORTFOLIO_COST_ITERATIONS_MAX");
+    crate::config::store::remove("PORTFOLIO_COST_ITERATIONS_MAX");
+    let v = typed().portfolio_cost_iterations_max();
+    assert!(
+        (PORTFOLIO_COST_ITERATIONS_MAX_LOWER..=PORTFOLIO_COST_ITERATIONS_MAX_UPPER).contains(&v),
+        "default {v} should already lie within [{}, {}]",
+        PORTFOLIO_COST_ITERATIONS_MAX_LOWER,
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_clamped_above_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATIONS_MAX", "4294967295"); // u32::MAX
+    assert_eq!(
+        typed().portfolio_cost_iterations_max(),
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+        "u32::MAX must be clamped to the upper bound to prevent DoS"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_clamped_below_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATIONS_MAX", "0");
+    assert_eq!(
+        typed().portfolio_cost_iterations_max(),
+        PORTFOLIO_COST_ITERATIONS_MAX_LOWER,
+        "0 must be clamped to the lower bound so optimization runs at least once"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_passthrough_in_range() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATIONS_MAX", "5");
+    assert_eq!(typed().portfolio_cost_iterations_max(), 5);
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamped_above_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "1000.0");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamped_below_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "-1.0");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamps_infinity_to_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "inf");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamps_neg_infinity_to_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "-inf");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_maps_nan_to_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "NaN");
+    let v = typed().portfolio_pred_err_diagonal_k();
+    assert_eq!(
+        v, PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+        "NaN must map to the lower bound (0.0) instead of poisoning the optimizer"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_passthrough_in_range() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "0.5");
+    let v = typed().portfolio_pred_err_diagonal_k();
+    assert!((v - 0.5).abs() < f64::EPSILON);
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_mock_override_is_clamped() {
+    // MockConfig should also apply the clamp on the override path so that
+    // the typed-config invariant holds regardless of which ConfigAccess
+    // implementation a test uses.
+    let mut mock = MockConfig::new();
+    mock.portfolio_cost_iterations_max = Some(u32::MAX);
+    assert_eq!(
+        mock.portfolio_cost_iterations_max(),
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_mock_override_is_clamped() {
+    let mut mock = MockConfig::new();
+    mock.portfolio_pred_err_diagonal_k = Some(f64::NAN);
+    assert_eq!(
+        mock.portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+    );
+}
+
+#[test]
+fn test_clamp_portfolio_cost_iterations_max_is_idempotent() {
+    let once = clamp_portfolio_cost_iterations_max(u32::MAX);
+    let twice = clamp_portfolio_cost_iterations_max(once);
+    assert_eq!(once, twice);
+}
+
+#[test]
+fn test_clamp_portfolio_pred_err_diagonal_k_is_idempotent() {
+    let once = clamp_portfolio_pred_err_diagonal_k(1e9);
+    let twice = clamp_portfolio_pred_err_diagonal_k(once);
+    assert_eq!(once, twice);
+    let nan_once = clamp_portfolio_pred_err_diagonal_k(f64::NAN);
+    let nan_twice = clamp_portfolio_pred_err_diagonal_k(nan_once);
+    assert_eq!(nan_once, nan_twice);
+}
