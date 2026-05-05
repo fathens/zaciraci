@@ -63,12 +63,23 @@ impl std::str::FromStr for PredErrDiagonalMode {
     }
 }
 
-/// 予測誤差分散ベース対角合成の設定（k と variances をペアで管理）
+/// 予測誤差ベース対角合成の設定（k と variances をペアで管理）
+///
+/// 名称は "PredErrDiagonal" / "variances" だが、`variances` の中身は
+/// **mean squared relative error (MSRE)** = `mean of (mape / 100)²` であり、
+/// 統計的なサンプル分散 `Var()` ではない。共分散行列の対角インフレに使う
+/// スケール一致 proxy として運用する（詳細は
+/// `trade::prediction_accuracy::calculate_per_token_pred_err_variance` の
+/// docstring を参照）。
+///
+/// API 利用上の注意: フィールド名 `variances` をサンプル分散として扱わないこと。
+/// rename + `MeanSquaredError` newtype 化は F009 Phase 2 で別 PR にて対応予定。
 #[derive(Debug, Clone)]
 pub struct PredErrDiagonal {
     /// スケール係数 k
     pub k: f64,
-    /// 銘柄ごとの予測誤差分散（return スケール、(mape/100)² の平均）
+    /// 銘柄ごとの **MSRE**（return² スケール、`mean of (mape / 100)²`）。
+    /// 統計的サンプル分散ではない（型注釈は本構造体の docstring 参照）。
     pub variances: BTreeMap<TokenOutAccount, f64>,
     /// 合成モード
     pub mode: PredErrDiagonalMode,

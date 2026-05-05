@@ -519,17 +519,23 @@ fn compute_median(sorted: &[f64]) -> f64 {
     }
 }
 
-/// 各トークンの予測誤差分散を return スケールで計算する。
+/// 各トークンの **mean squared relative error (MSRE)** を計算する。
 ///
 /// 各レコードの `(mape / 100.0)²` を集計し、トークンごとに **平均**を返す。
-/// これは relative error の mean of squared errors であり、return スケール (return²)
-/// で共分散行列の対角と単位整合する。
+/// 名前に "variance" を含むが、これは統計的なサンプル分散 `Var()` ではなく
+/// `mean of (mape / 100)²` = MSRE である。共分散行列の対角インフレ用に
+/// **スケール一致 proxy** として利用する（return² スケールで対角と単位整合）。
 ///
-/// 注意: サンプル分散 `Var()` ではなく `mean()` を使う。前者は return⁴ になり共分散
-/// の対角と単位不整合となる。
+/// 注意: サンプル分散 `Var()` を使うと return⁴ になり共分散の対角と単位不整合
+/// となるため、平均（MSRE）を採用している。
+///
+/// API 利用上の注意: 戻り値および `PredErrDiagonal::variances` フィールドは
+/// 名称こそ "variance" だが、中身は MSRE である。サンプル分散として扱わないこと。
+/// （関数名・フィールド名の rename と `MeanSquaredError` newtype 化は F009 Phase 2
+/// で別 PR にて対応予定。）
 ///
 /// 戻り値:
-///   - エントリあり: pred_err_variance > 0（return スケールの分散）
+///   - エントリあり: MSRE > 0（return² スケール）
 ///   - エントリなし: `min_samples` 未満で計算不能
 ///   - Err: DB アクセス失敗
 pub(crate) async fn calculate_per_token_pred_err_variance(
