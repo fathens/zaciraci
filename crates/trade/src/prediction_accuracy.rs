@@ -110,6 +110,7 @@ fn calculate_composite_confidence(
 fn build_prediction_records(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
+    created_at: NaiveDateTime,
 ) -> Vec<NewPredictionRecord> {
     predictions
         .iter()
@@ -122,6 +123,7 @@ fn build_prediction_records(
                 predicted_price: price.as_bigdecimal().clone(),
                 data_cutoff_time: *data_cutoff_time,
                 target_time,
+                created_at,
             }
         })
         .collect()
@@ -129,14 +131,19 @@ fn build_prediction_records(
 
 /// 予測結果を prediction_records テーブルに記録する。
 ///
+/// `created_at` は呼び出し側の「現在時刻」を明示的に渡す。production では
+/// `Utc::now()` 相当、シミュレーションでは sim_day を渡すことで、engine の
+/// fresh-prediction 判定が両経路で同じセマンティクスを持つ。
+///
 /// DB 操作: INSERT INTO prediction_records (トークン数分)
 pub(crate) async fn record_predictions(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
+    created_at: NaiveDateTime,
 ) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
-    let records = build_prediction_records(predictions, quote_token);
+    let records = build_prediction_records(predictions, quote_token, created_at);
 
     info!(log, "recording predictions"; "count" => records.len());
     PredictionRecord::batch_insert(&records).await?;

@@ -30,6 +30,7 @@ pub async fn insert_evaluated_record(
         predicted_price: BigDecimal::from(predicted_price),
         data_cutoff_time,
         target_time,
+        created_at: data_cutoff_time,
     };
 
     let actual = BigDecimal::from(actual_price);
@@ -104,11 +105,8 @@ pub async fn insert_unevaluated_record(
 
 /// テスト用ヘルパー: `created_at` を明示的に指定して未評価レコードを挿入
 ///
-/// `prediction_records.created_at` カラムは DB 既定 (`CURRENT_TIMESTAMP`) で
-/// 自動設定されるため、過去の `as_of` を使うテストでは挿入直後に UPDATE して
-/// 時点を揃える。data leakage シナリオ
-/// (`created_at` が `as_of` より新しい予測を引かないこと) を直接検証する場合は
-/// このヘルパーを使う。
+/// data leakage シナリオ (`created_at` が `as_of` より新しい予測を引かないこと)
+/// を直接検証する場合に使う。
 pub async fn insert_unevaluated_record_at(
     token: &str,
     quote_token: &str,
@@ -123,21 +121,13 @@ pub async fn insert_unevaluated_record_at(
         predicted_price: BigDecimal::from(predicted_price),
         data_cutoff_time,
         target_time,
+        created_at,
     };
 
     let conn = connection_pool::get().await?;
     conn.interact(move |conn| {
         diesel::insert_into(prediction_records::table)
             .values(&new_record)
-            .execute(conn)?;
-
-        let id: i32 = prediction_records::table
-            .order_by(prediction_records::id.desc())
-            .select(prediction_records::id)
-            .first(conn)?;
-
-        diesel::update(prediction_records::table.filter(prediction_records::id.eq(id)))
-            .set(prediction_records::created_at.eq(created_at))
             .execute(conn)
     })
     .await

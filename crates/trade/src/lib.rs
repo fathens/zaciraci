@@ -200,7 +200,11 @@ pub async fn run_prediction_cycle(
     }
 
     // 3. 予測価格を DB に保存
-    prediction_accuracy::record_predictions(&prediction_entries, &quote_token).await?;
+    // created_at は as_of (production: Utc::now(), simulate: sim_day) を渡し、
+    // engine の earliest_fresh_visible_in が「production cron tick = 着信時刻」
+    // として扱える状態を保つ。
+    prediction_accuracy::record_predictions(&prediction_entries, &quote_token, as_of.naive_utc())
+        .await?;
 
     Ok(prediction_entries.len())
 }

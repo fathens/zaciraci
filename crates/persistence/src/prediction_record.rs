@@ -25,6 +25,13 @@ pub struct DbPredictionRecord {
     pub created_at: NaiveDateTime,
 }
 
+/// 予測レコード挿入用の値型。
+///
+/// `created_at` は engine の "fresh prediction" 判定
+/// ([`PredictionRecord::earliest_fresh_visible_in`]) で domain time として
+/// 消費されるため、呼び出し側が明示的に与える。production では cron tick
+/// (`Utc::now()`)、シミュレーションでは `sim_day` を渡すことで、両方の経路で
+/// 「production 着信時刻 ≒ created_at」のセマンティクスが保たれる。
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
@@ -33,6 +40,7 @@ pub struct NewPredictionRecord {
     pub predicted_price: BigDecimal,
     pub data_cutoff_time: NaiveDateTime,
     pub target_time: NaiveDateTime,
+    pub created_at: NaiveDateTime,
 }
 
 pub struct PredictionRecord;

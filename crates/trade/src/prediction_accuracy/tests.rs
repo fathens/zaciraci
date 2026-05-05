@@ -336,7 +336,7 @@ fn test_new_prediction_record_target_time_with_past_data_cutoff() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token.clone(), (price, data_cutoff_time));
 
-    let records = build_prediction_records(&predictions, &quote_token);
+    let records = build_prediction_records(&predictions, &quote_token, now);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
@@ -365,7 +365,7 @@ fn test_new_prediction_record_target_time_far_in_past() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token, (price, data_cutoff_time));
 
-    let records = build_prediction_records(&predictions, &quote_token);
+    let records = build_prediction_records(&predictions, &quote_token, now);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];

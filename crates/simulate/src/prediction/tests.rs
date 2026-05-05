@@ -45,6 +45,7 @@ async fn deletes_existing_predictions_in_range() {
         predicted_price: bigdecimal::BigDecimal::from(100),
         data_cutoff_time: start_naive - chrono::TimeDelta::hours(24),
         target_time: mid_target,
+        created_at: start_naive - chrono::TimeDelta::hours(24),
     };
     PredictionRecord::batch_insert(&[record])
         .await
