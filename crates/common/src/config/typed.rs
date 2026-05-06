@@ -407,6 +407,32 @@ const PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER: f64 = 0.0;
 /// relies on.
 const PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER: f64 = 100.0;
 
+/// Lower bound for [`ConfigAccess::portfolio_cost_iteration_damping`].
+///
+/// `0.0` freezes the iterate at its initial state, which is a degenerate but
+/// not unsafe configuration; values below `0.0` would invert the update and
+/// push the iterate away from the candidate, breaking the convergence
+/// invariant of `damp_and_diff` (`next = (1 - α) × prev + α × candidate`).
+const PORTFOLIO_COST_ITERATION_DAMPING_LOWER: f64 = 0.0;
+
+/// Upper bound for [`ConfigAccess::portfolio_cost_iteration_damping`].
+///
+/// `1.0` corresponds to a full replacement step (no damping). Values above
+/// `1.0` overshoot the candidate and are equivalent to under-damping, which
+/// `damp_and_diff` already clamps internally; we reject them here so the
+/// effective value displayed by `resolve_all_without_db` matches what the
+/// optimizer actually uses.
+const PORTFOLIO_COST_ITERATION_DAMPING_UPPER: f64 = 1.0;
+
+/// Fallback value applied when [`ConfigAccess::portfolio_cost_iteration_damping`]
+/// resolves to `NaN`.
+///
+/// `0.5` matches the production default and is mid-range — neither freezing
+/// the iterate (`0.0`) nor disabling damping entirely (`1.0`). Mirrors the
+/// `pred_err_diagonal_k → lower` policy in spirit (NaN must not poison the
+/// optimizer) while preserving useful iteration behavior on misconfiguration.
+const PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK: f64 = 0.5;
+
 /// Idempotent clamp applied to `portfolio_cost_iterations_max` reads.
 fn clamp_portfolio_cost_iterations_max(v: u32) -> u32 {
     v.clamp(
@@ -427,6 +453,23 @@ fn clamp_portfolio_pred_err_diagonal_k(v: f64) -> f64 {
         v.clamp(
             PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
             PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER,
+        )
+    }
+}
+
+/// Idempotent clamp applied to `portfolio_cost_iteration_damping` reads.
+///
+/// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] so
+/// that an injected `NaN` does not propagate into `damp_and_diff` (which
+/// would otherwise return `Err`, aborting the cost-aware optimization).
+/// `±INFINITY` is handled correctly by `f64::clamp` itself.
+fn clamp_portfolio_cost_iteration_damping(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+            PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
         )
     }
 }
@@ -745,9 +788,16 @@ define_typed_config! {
 
     /// Damping factor α for the iterative cost-aware optimization
     /// (`next = (1 - α) × prev + α × new`). Lower values dampen oscillation.
+    ///
+    /// **Defense-in-depth (F003)**: clamped to
+    /// `[PORTFOLIO_COST_ITERATION_DAMPING_LOWER, PORTFOLIO_COST_ITERATION_DAMPING_UPPER]`
+    /// (currently `[0.0, 1.0]`) at the read boundary. `NaN` is mapped to
+    /// [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] (`0.5`) so an injected
+    /// non-finite value does not abort the optimization in `damp_and_diff`.
     fn portfolio_cost_iteration_damping() -> f64 {
         key: "PORTFOLIO_COST_ITERATION_DAMPING",
-        default: 0.5
+        default: 0.5,
+        clamp: clamp_portfolio_cost_iteration_damping
     }
 
     /// Weight for volume-based liquidity score

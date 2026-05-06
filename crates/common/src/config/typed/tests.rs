@@ -925,3 +925,107 @@ fn test_clamp_portfolio_pred_err_diagonal_k_is_idempotent() {
     let nan_twice = clamp_portfolio_pred_err_diagonal_k(nan_once);
     assert_eq!(nan_once, nan_twice);
 }
+
+// ── F003: portfolio_cost_iteration_damping clamp ──
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_default_is_within_bounds() {
+    let _env = EnvGuard::remove("PORTFOLIO_COST_ITERATION_DAMPING");
+    crate::config::store::remove("PORTFOLIO_COST_ITERATION_DAMPING");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert!(
+        (PORTFOLIO_COST_ITERATION_DAMPING_LOWER..=PORTFOLIO_COST_ITERATION_DAMPING_UPPER)
+            .contains(&v),
+        "default {v} should already lie within [{}, {}]",
+        PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamped_above_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "10.0");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamped_below_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "-1.0");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamps_infinity_to_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "inf");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamps_neg_infinity_to_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "-inf");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_maps_nan_to_fallback() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "NaN");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert_eq!(
+        v, PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK,
+        "NaN must map to the fallback (0.5) instead of poisoning damp_and_diff"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_passthrough_in_range() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "0.25");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert!((v - 0.25).abs() < f64::EPSILON);
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_mock_override_is_clamped() {
+    let mut mock = MockConfig::new();
+    mock.portfolio_cost_iteration_damping = Some(f64::NAN);
+    assert_eq!(
+        mock.portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK,
+    );
+
+    let mut mock = MockConfig::new();
+    mock.portfolio_cost_iteration_damping = Some(2.0);
+    assert_eq!(
+        mock.portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+fn test_clamp_portfolio_cost_iteration_damping_is_idempotent() {
+    let once = clamp_portfolio_cost_iteration_damping(2.0);
+    let twice = clamp_portfolio_cost_iteration_damping(once);
+    assert_eq!(once, twice);
+    let nan_once = clamp_portfolio_cost_iteration_damping(f64::NAN);
+    let nan_twice = clamp_portfolio_cost_iteration_damping(nan_once);
+    assert_eq!(nan_once, nan_twice);
+}
