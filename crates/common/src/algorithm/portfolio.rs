@@ -437,19 +437,42 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
 /// `damping` は内部で `[0.0, 1.0]` にクランプされる（不正値での発散を防ぐ pure 不変条件）。
 /// 収束判定 (`tolerance`) や反復制御は呼び出し側に委ねる。
 ///
+/// # Errors
+///
+/// `damping` または `current_weights` / `candidate_weights` のいずれかの要素が
+/// `is_finite() == false`（NaN / ±∞）の場合 `Err` を返す。upstream で発生した
+/// 数値破綻を黙って 0 にクランプすると後続反復で diff が縮退して誤収束するため、
+/// fail-loud で呼び出し側に通知する（F002 NaN cascade 対策）。
+///
 /// # Panics
 ///
-/// `current_weights.len() != candidate_weights.len()` の場合、debug ビルドで panic する。
+/// `current_weights.len() != candidate_weights.len()` の場合 panic する
+/// （長さ不一致は呼び出し側のプログラミングバグであり、release でも検出する）。
 pub fn damp_and_diff(
     current_weights: &[f64],
     candidate_weights: &[f64],
     damping: f64,
-) -> (Vec<f64>, f64) {
-    debug_assert_eq!(
+) -> Result<(Vec<f64>, f64)> {
+    assert_eq!(
         current_weights.len(),
         candidate_weights.len(),
         "current_weights and candidate_weights must have the same length"
     );
+    if !damping.is_finite() {
+        anyhow::bail!("damp_and_diff: damping must be finite, got {damping}");
+    }
+    if let Some(idx) = current_weights.iter().position(|w| !w.is_finite()) {
+        anyhow::bail!(
+            "damp_and_diff: current_weights[{idx}] is not finite ({})",
+            current_weights[idx]
+        );
+    }
+    if let Some(idx) = candidate_weights.iter().position(|w| !w.is_finite()) {
+        anyhow::bail!(
+            "damp_and_diff: candidate_weights[{idx}] is not finite ({})",
+            candidate_weights[idx]
+        );
+    }
     let damp = damping.clamp(0.0, 1.0);
     let new_weights: Vec<f64> = current_weights
         .iter()
@@ -461,7 +484,7 @@ pub fn damp_and_diff(
         .zip(current_weights.iter())
         .map(|(&new, &old)| (new - old).abs())
         .fold(0.0f64, f64::max);
-    (new_weights, max_diff)
+    Ok((new_weights, max_diff))
 }
 
 /// 共分散行列の対角を予測誤差分散で書き換える。

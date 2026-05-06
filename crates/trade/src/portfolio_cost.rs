@@ -150,11 +150,20 @@ fn compute_cost_deductions(
 ) -> CostDeductionResult {
     let mut deductions = BTreeMap::new();
     let mut estimation_failures = Vec::new();
-    for (i, t) in tokens.iter().enumerate() {
+    // `zip` で対応付けることで `weights[i]` のインデックスアクセスを排除し、
+    // 長さ不一致時の panic 経路を型レベルで除去する。
+    // ただし zip は silent truncation する性質があるため、長さ不一致は
+    // `damp_and_diff` の `assert_eq!` と方針を揃えて debug ビルドで検出する
+    // （現 caller は常に同じ n で再構築するので release で panic させる必要なし）。
+    debug_assert_eq!(
+        tokens.len(),
+        weights.len(),
+        "tokens and weights must have the same length"
+    );
+    for (t, &raw_w) in tokens.iter().zip(weights.iter()) {
         // NaN weight は入口で 0.0 にクランプ（CostDeduction::new の
         // is_finite 不変条件と整合）。.max(0.0) は f64::NaN.max(0.0) = 0.0
         // なので兼ねるが、明示的に is_finite チェックして意図を表す。
-        let raw_w = weights[i];
         let w = if raw_w.is_finite() {
             raw_w.max(0.0)
         } else {
@@ -337,7 +346,7 @@ pub(crate) async fn run_cost_aware_optimization(
                     .unwrap_or(0.0)
             })
             .collect();
-        let (new_weights, max_diff) = damp_and_diff(&state.weights, &candidate, damping);
+        let (new_weights, max_diff) = damp_and_diff(&state.weights, &candidate, damping)?;
         debug!(log, "cost-aware iteration";
             "iter" => iter, "max_diff" => format!("{:.6}", max_diff));
         state.weights = new_weights;
