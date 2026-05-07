@@ -455,25 +455,27 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
 ///
 /// # Errors
 ///
-/// `damping` または `current_weights` / `candidate_weights` のいずれかの要素が
-/// `is_finite() == false`（NaN / ±∞）の場合 `Err` を返す。upstream で発生した
-/// 数値破綻を黙って 0 にクランプすると後続反復で diff が縮退して誤収束するため、
-/// fail-loud で呼び出し側に通知する（F002 NaN cascade 対策）。
+/// 以下のいずれかの場合 `Err` を返す（fail-soft、cron tick crash loop 防止）:
 ///
-/// # Panics
-///
-/// `current_weights.len() != candidate_weights.len()` の場合 panic する
-/// （長さ不一致は呼び出し側のプログラミングバグであり、release でも検出する）。
+/// - `current_weights.len() != candidate_weights.len()`（呼び出し側のプログラミングバグ
+///   だが release panic で process abort → cron 再起動 → 同条件再発で永続 crash loop に
+///   陥るため、`bail!` に倒し caller `?` で Hold に合流させる）。
+/// - `damping` または `current_weights` / `candidate_weights` のいずれかの要素が
+///   `is_finite() == false`（NaN / ±∞）。upstream で発生した数値破綻を黙って 0 に
+///   クランプすると後続反復で diff が縮退して誤収束するため、fail-loud で呼び出し側に
+///   通知する（F002 NaN cascade 対策）。
 pub fn damp_and_diff(
     current_weights: &[f64],
     candidate_weights: &[f64],
     damping: f64,
 ) -> Result<(Vec<f64>, f64)> {
-    assert_eq!(
-        current_weights.len(),
-        candidate_weights.len(),
-        "current_weights and candidate_weights must have the same length"
-    );
+    if current_weights.len() != candidate_weights.len() {
+        anyhow::bail!(
+            "damp_and_diff: length mismatch (current={}, candidate={})",
+            current_weights.len(),
+            candidate_weights.len()
+        );
+    }
     if !damping.is_finite() {
         anyhow::bail!("damp_and_diff: damping must be finite, got {damping}");
     }

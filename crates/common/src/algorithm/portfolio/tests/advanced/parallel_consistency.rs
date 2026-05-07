@@ -400,12 +400,23 @@ fn test_damp_and_diff_empty_slices() {
 }
 
 #[test]
-#[should_panic(expected = "current_weights and candidate_weights must have the same length")]
-fn test_damp_and_diff_length_mismatch_panics() {
-    // 長さ不一致は release でも fail-loud（プログラミングバグ）
+fn test_damp_and_diff_length_mismatch_returns_err() {
+    // 長さ不一致は呼び出し側のプログラミングバグだが、release panic で
+    // process abort → cron 再起動 → 同条件再発で永続 crash loop に陥るため、
+    // bail! に倒し caller が ? で受けて Hold に合流できるようにする。
     let current = vec![0.0, 0.0, 0.0];
     let candidate = vec![1.0, 1.0];
-    let _ = damp_and_diff(&current, &candidate, 0.5);
+    let err = damp_and_diff(&current, &candidate, 0.5).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("length mismatch"),
+        "unexpected error message: {msg}"
+    );
+    assert!(msg.contains("current=3"), "expected current=3 in: {msg}");
+    assert!(
+        msg.contains("candidate=2"),
+        "expected candidate=2 in: {msg}"
+    );
 }
 
 #[test]

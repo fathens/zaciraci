@@ -179,8 +179,9 @@ fn compute_cost_deductions(
     // `zip` で対応付けることで `weights[i]` のインデックスアクセスを排除し、
     // 長さ不一致時の panic 経路を型レベルで除去する。
     // ただし zip は silent truncation する性質があるため、長さ不一致は
-    // `damp_and_diff` の `assert_eq!` と方針を揃えて debug ビルドで検出する
-    // （現 caller は常に同じ n で再構築するので release で panic させる必要なし）。
+    // debug ビルドで検出する（現 caller は常に同じ n で再構築するので
+    // release で panic させる必要なし。`damp_and_diff` 側は外部から長さ
+    // 不一致を渡される可能性に備え bail! で fail-soft する設計）。
     debug_assert_eq!(
         tokens.len(),
         weights.len(),
