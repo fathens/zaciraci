@@ -25,7 +25,7 @@
 use crate::Result;
 use crate::predict::PredictionService;
 use crate::swap;
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
 use blockchain::wallet::Wallet;
 use common::algorithm::{
@@ -926,7 +926,7 @@ where
     // ポートフォリオ最適化の実行
     let execution_report = if cfg.trade_cost_aware_return_enabled() {
         // 反復コスト考慮最適化: total_value=0 なら早期 Hold
-        if wallet_info.total_value.as_bigdecimal() <= &BigDecimal::from(0) {
+        if wallet_info.total_value.as_bigdecimal() <= &BigDecimal::zero() {
             warn!(log, "total value is zero, holding");
             return Ok((vec![TradingAction::Hold], BTreeMap::new()));
         }
