@@ -12,7 +12,13 @@ use super::types::*;
 // ==================== ポートフォリオ固有の型定義 ====================
 
 /// 共分散対角の合成モード
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+///
+/// `serde(rename_all = "lowercase")` は `as_str()` / `FromStr` と同じ表現
+/// (`"additive"` / `"max"`) を使う。3 経路 (serde / FromStr / as_str) の対称性は
+/// `tests/basic.rs::pred_err_diagonal_mode_string_round_trips_three_ways` で
+/// property-test されている。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PredErrDiagonalMode {
     /// `cov[i,i] + k × pred_err_var`（独立ノイズ加算、金融工学的に標準）
     #[default]
@@ -29,6 +35,13 @@ impl PredErrDiagonalMode {
             Self::Max => "max",
         }
     }
+
+    /// 期待バリアントの quoted リスト。エラーメッセージや panic 文字列で
+    /// 「期待値の列挙」を表現する箇所はすべてこの SSoT を参照すること
+    /// (`as_str` / `validate_string` / panic message での文字列 drift を防ぐ)。
+    pub const fn variants_doc() -> &'static str {
+        "\"additive\", \"max\""
+    }
 }
 
 /// `PredErrDiagonalMode` 用のパースエラー（typo を silent に縮退させない）。
@@ -38,8 +51,14 @@ impl PredErrDiagonalMode {
 /// メッセージ / log forwarding 等）で漏洩する経路を型レベルで根絶する。失敗値の
 /// 復元は upstream 側で `validate_string` などにより redact 済みの reason に変換
 /// すること。
+///
+/// `Display` の期待バリアントは [`PredErrDiagonalMode::variants_doc`] を参照
+/// するため、enum 拡張時の文字列 drift は SSoT 1 箇所で吸収される。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid PredErrDiagonalMode (value redacted; expected one of \"additive\", \"max\")")]
+#[error(
+    "invalid PredErrDiagonalMode (value redacted; expected one of {})",
+    PredErrDiagonalMode::variants_doc()
+)]
 pub struct ParsePredErrDiagonalModeError;
 
 impl std::str::FromStr for PredErrDiagonalMode {

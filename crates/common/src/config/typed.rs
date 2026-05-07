@@ -241,9 +241,15 @@ impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
     fn validate_string(s: &str) -> std::result::Result<(), std::string::String> {
         // 攻撃者制御の入力値を error message に含めない (log forwarding 経由漏洩防御):
         // 失敗時のメッセージは「期待されたバリアント名」のみで input value を含まない。
+        // 期待バリアントは PredErrDiagonalMode::variants_doc() を SSoT として参照する。
         s.parse::<crate::algorithm::portfolio::PredErrDiagonalMode>()
             .map(|_| ())
-            .map_err(|_| "expected one of \"additive\", \"max\"".to_string())
+            .map_err(|_| {
+                format!(
+                    "expected one of {}",
+                    crate::algorithm::portfolio::PredErrDiagonalMode::variants_doc()
+                )
+            })
     }
 }
 

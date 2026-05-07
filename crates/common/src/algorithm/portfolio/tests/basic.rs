@@ -1848,6 +1848,27 @@ fn pred_err_diagonal_mode_as_str_round_trips() {
 }
 
 #[test]
+fn pred_err_diagonal_mode_string_round_trips_three_ways() {
+    // serde / FromStr / as_str の 3 経路で同じ表現を扱うことを保証する。
+    // ここが drift すると CLI / sweep / config / persistence の 4 経路で
+    // 認識が食い違い debug が困難になる。
+    use std::str::FromStr;
+
+    for mode in [PredErrDiagonalMode::Additive, PredErrDiagonalMode::Max] {
+        let s = mode.as_str();
+        // FromStr が as_str() の出力を受理する
+        assert_eq!(PredErrDiagonalMode::from_str(s).unwrap(), mode);
+        // serde が as_str() の出力を quoted JSON 文字列としてデシリアライズできる
+        let json = format!("\"{s}\"");
+        let from_serde: PredErrDiagonalMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(from_serde, mode);
+        // serde シリアライズが as_str() と一致する
+        let serialized = serde_json::to_string(&mode).unwrap();
+        assert_eq!(serialized, json);
+    }
+}
+
+#[test]
 fn pred_err_diagonal_mode_default_is_additive() {
     // F008 Phase 1: 安全側のデフォルト（相関構造を最も歪めない方）。
     assert_eq!(
