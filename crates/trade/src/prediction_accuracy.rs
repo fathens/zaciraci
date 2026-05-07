@@ -108,11 +108,14 @@ fn calculate_composite_confidence(
 
 /// `build_prediction_records` で許容する skip 比率の上限。
 ///
-/// 1 cycle 内で `try_new` が `Err` で skip された予測の比率がこの閾値を超えた場合、
-/// caller は systematic な data leakage / 環境異常 (NTP step backward 等) と判断
-/// して **当該 cycle 全体を abort** する。Markowitz 最適化が成立する最小トークン数
-/// (~5 銘柄) のうち 50% 以上が脱落 = portfolio 機能停止と等価のため、fail-loud で
-/// alert を発火させる。
+/// 1 cycle 内で `try_new` が `Err` で skip された予測の比率がこの閾値以上に
+/// 達した場合、caller は systematic な data leakage / 環境異常 (NTP step
+/// backward 等) と判断して **当該 cycle 全体を abort** する。Markowitz
+/// 最適化が成立する最小トークン数 (~5 銘柄) のうち 50% 以上が脱落 =
+/// portfolio 機能停止と等価のため、fail-loud で alert を発火させる。
+///
+/// 比較は `>=` (50% ちょうどを含む)。`>` だと skip 率がぴったり 50% の
+/// ケースが abort されない境界穴が生じるため、境界を厳格化している。
 ///
 /// **config 化禁止**: `CONFIG_STORE` / `DB_STORE` 経由で `0.0` 等を流し込まれると
 /// systematic violation 検知が無効化される DoS 経路になるため、named const で
@@ -181,12 +184,12 @@ pub(crate) async fn record_predictions(
 
     if total > 0 {
         let skip_ratio = skipped as f64 / total as f64;
-        if skip_ratio > SYSTEMATIC_VIOLATION_THRESHOLD {
+        if skip_ratio >= SYSTEMATIC_VIOLATION_THRESHOLD {
             error!(log, "systematic prediction invariant violation; aborting cycle";
                 "skipped" => skipped, "total" => total, "ratio" => skip_ratio,
                 "threshold" => SYSTEMATIC_VIOLATION_THRESHOLD);
             return Err(anyhow::anyhow!(
-                "data quality breakdown: {} of {} predictions skipped (ratio {:.2} > {:.2})",
+                "data quality breakdown: {} of {} predictions skipped (ratio {:.2} >= {:.2})",
                 skipped,
                 total,
                 skip_ratio,
