@@ -12,7 +12,7 @@ fn combinations_single_values() {
         bias_correction: vec![false],
         pred_err_diagonal: vec![false],
         pred_err_diagonal_k: vec![1.0],
-        pred_err_diagonal_mode: vec!["additive".to_string()],
+        pred_err_diagonal_mode: vec![PredErrDiagonalMode::Additive],
         cost_aware_return: vec![false],
         cost_iterations_max: vec![3],
     };
@@ -34,7 +34,7 @@ fn combinations_cartesian_product() {
         bias_correction: vec![false],
         pred_err_diagonal: vec![false],
         pred_err_diagonal_k: vec![1.0],
-        pred_err_diagonal_mode: vec!["additive".to_string()],
+        pred_err_diagonal_mode: vec![PredErrDiagonalMode::Additive],
         cost_aware_return: vec![false],
         cost_iterations_max: vec![3],
     };
@@ -53,7 +53,7 @@ fn combinations_empty_dimension() {
         bias_correction: vec![false],
         pred_err_diagonal: vec![false],
         pred_err_diagonal_k: vec![1.0],
-        pred_err_diagonal_mode: vec!["additive".to_string()],
+        pred_err_diagonal_mode: vec![PredErrDiagonalMode::Additive],
         cost_aware_return: vec![false],
         cost_iterations_max: vec![3],
     };
@@ -71,7 +71,7 @@ fn combinations_preserves_all_values() {
         bias_correction: vec![false],
         pred_err_diagonal: vec![false],
         pred_err_diagonal_k: vec![1.0],
-        pred_err_diagonal_mode: vec!["additive".to_string()],
+        pred_err_diagonal_mode: vec![PredErrDiagonalMode::Additive],
         cost_aware_return: vec![false],
         cost_iterations_max: vec![3],
     };

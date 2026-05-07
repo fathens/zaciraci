@@ -1,6 +1,7 @@
 use crate::cli::RunArgs;
 use crate::engine::run_simulation;
 use anyhow::Result;
+use common::algorithm::portfolio::PredErrDiagonalMode;
 use itertools::iproduct;
 use logging::*;
 use serde::{Deserialize, Serialize};
@@ -23,7 +24,7 @@ pub struct SweepConfig {
     #[serde(default = "default_pred_err_diagonal_k")]
     pub pred_err_diagonal_k: Vec<f64>,
     #[serde(default = "default_pred_err_diagonal_mode")]
-    pub pred_err_diagonal_mode: Vec<String>,
+    pub pred_err_diagonal_mode: Vec<PredErrDiagonalMode>,
     #[serde(default = "default_cost_aware_return")]
     pub cost_aware_return: Vec<bool>,
     #[serde(default = "default_cost_iterations_max")]
@@ -51,8 +52,8 @@ fn default_pred_err_diagonal() -> Vec<bool> {
 fn default_pred_err_diagonal_k() -> Vec<f64> {
     vec![1.0]
 }
-fn default_pred_err_diagonal_mode() -> Vec<String> {
-    vec!["max".to_string()]
+fn default_pred_err_diagonal_mode() -> Vec<PredErrDiagonalMode> {
+    vec![PredErrDiagonalMode::Max]
 }
 fn default_cost_aware_return() -> Vec<bool> {
     vec![true]
@@ -86,7 +87,7 @@ pub struct SweepParameters {
     pub bias_correction: bool,
     pub pred_err_diagonal: bool,
     pub pred_err_diagonal_k: f64,
-    pub pred_err_diagonal_mode: String,
+    pub pred_err_diagonal_mode: PredErrDiagonalMode,
     pub cost_aware_return: bool,
     pub cost_iterations_max: u32,
 }
@@ -113,7 +114,7 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
         cli.bias_correction = params.bias_correction;
         cli.pred_err_diagonal = params.pred_err_diagonal;
         cli.pred_err_diagonal_k = params.pred_err_diagonal_k;
-        cli.pred_err_diagonal_mode = params.pred_err_diagonal_mode.parse()?;
+        cli.pred_err_diagonal_mode = params.pred_err_diagonal_mode;
         cli.cost_aware_return = params.cost_aware_return;
         cli.cost_iterations_max = params.cost_iterations_max;
 
@@ -188,7 +189,7 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
             &bias_correction,
             &pred_err_diagonal,
             &pred_err_diagonal_k,
-            pred_err_diagonal_mode,
+            &pred_err_diagonal_mode,
             &cost_aware_return,
             &cost_iterations_max,
         )| SweepParameters {
@@ -199,7 +200,7 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
             bias_correction,
             pred_err_diagonal,
             pred_err_diagonal_k,
-            pred_err_diagonal_mode: pred_err_diagonal_mode.clone(),
+            pred_err_diagonal_mode,
             cost_aware_return,
             cost_iterations_max,
         },
