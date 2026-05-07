@@ -218,7 +218,7 @@ pub(crate) fn apply_config(cli: &RunArgs) {
     );
     common::config::store::set(
         "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
-        &cli.pred_err_diagonal_mode,
+        cli.pred_err_diagonal_mode.as_str(),
     );
     common::config::store::set(
         "TRADE_COST_AWARE_RETURN_ENABLED",
@@ -233,6 +233,7 @@ pub(crate) fn apply_config(cli: &RunArgs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::algorithm::portfolio::PredErrDiagonalMode;
     use std::path::PathBuf;
 
     fn make_cli(start: &str, end: &str) -> RunArgs {
@@ -250,7 +251,7 @@ mod tests {
             bias_correction: true,
             pred_err_diagonal: true,
             pred_err_diagonal_k: 1.0,
-            pred_err_diagonal_mode: "max".to_string(),
+            pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 3,
         }
@@ -283,7 +284,7 @@ mod tests {
             bias_correction: true,
             pred_err_diagonal: true,
             pred_err_diagonal_k: 2.0,
-            pred_err_diagonal_mode: "max".to_string(),
+            pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 5,
         };

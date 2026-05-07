@@ -1,5 +1,12 @@
 use clap::{Parser, Subcommand};
+use common::algorithm::portfolio::{ParsePredErrDiagonalModeError, PredErrDiagonalMode};
 use std::path::PathBuf;
+
+fn parse_pred_err_diagonal_mode(
+    s: &str,
+) -> Result<PredErrDiagonalMode, ParsePredErrDiagonalModeError> {
+    s.parse()
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "simulate", about = "Auto trade backtest simulation")]
@@ -73,8 +80,8 @@ pub struct RunArgs {
     pub pred_err_diagonal_k: f64,
 
     /// Diagonal composition mode: "additive" or "max"
-    #[arg(long, default_value = "max")]
-    pub pred_err_diagonal_mode: String,
+    #[arg(long, default_value = "max", value_parser = parse_pred_err_diagonal_mode)]
+    pub pred_err_diagonal_mode: PredErrDiagonalMode,
 
     /// Enable cost-aware iterative optimization (improvement D). Defaults to
     /// true; pass `--cost-aware-return false` to disable.
@@ -151,7 +158,7 @@ mod tests {
             bias_correction: true,
             pred_err_diagonal: true,
             pred_err_diagonal_k: 1.0,
-            pred_err_diagonal_mode: "max".to_string(),
+            pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 3,
         }
@@ -204,6 +211,45 @@ mod tests {
         let args = make_verify_args("2025-01-01", "2025-06-30");
         assert!(args.parse_start_date().is_ok());
         assert!(args.parse_end_date().is_ok());
+    }
+
+    #[test]
+    fn cli_accepts_valid_pred_err_diagonal_mode() {
+        let cli = Cli::try_parse_from([
+            "simulate",
+            "run",
+            "--start-date",
+            "2025-01-01",
+            "--end-date",
+            "2025-01-02",
+            "--pred-err-diagonal-mode",
+            "additive",
+        ])
+        .unwrap();
+        let Command::Run(args) = cli.command else {
+            panic!("expected Run subcommand");
+        };
+        assert_eq!(args.pred_err_diagonal_mode, PredErrDiagonalMode::Additive);
+    }
+
+    #[test]
+    fn cli_rejects_pred_err_diagonal_mode_typo() {
+        let err = Cli::try_parse_from([
+            "simulate",
+            "run",
+            "--start-date",
+            "2025-01-01",
+            "--end-date",
+            "2025-01-02",
+            "--pred-err-diagonal-mode",
+            "addative",
+        ])
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid PredErrDiagonalMode") || msg.contains("addative"),
+            "expected typo error, got: {msg}"
+        );
     }
 
     #[test]

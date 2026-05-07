@@ -5,6 +5,7 @@ use crate::portfolio_state::{
 };
 use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
+use common::algorithm::portfolio::PredErrDiagonalMode;
 use common::types::{TokenAccount, TokenAmount, YoctoValue};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -278,7 +279,7 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         bias_correction: true,
         pred_err_diagonal: true,
         pred_err_diagonal_k: 1.0,
-        pred_err_diagonal_mode: "max".to_string(),
+        pred_err_diagonal_mode: PredErrDiagonalMode::Max,
         cost_aware_return: true,
         cost_iterations_max: 3,
     }
@@ -365,7 +366,7 @@ fn from_state_config_reflects_cli_params() {
         bias_correction: true,
         pred_err_diagonal: true,
         pred_err_diagonal_k: 1.0,
-        pred_err_diagonal_mode: "max".to_string(),
+        pred_err_diagonal_mode: PredErrDiagonalMode::Max,
         cost_aware_return: true,
         cost_iterations_max: 3,
     };

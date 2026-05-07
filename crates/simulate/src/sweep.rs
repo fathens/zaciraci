@@ -113,7 +113,7 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
         cli.bias_correction = params.bias_correction;
         cli.pred_err_diagonal = params.pred_err_diagonal;
         cli.pred_err_diagonal_k = params.pred_err_diagonal_k;
-        cli.pred_err_diagonal_mode = params.pred_err_diagonal_mode.clone();
+        cli.pred_err_diagonal_mode = params.pred_err_diagonal_mode.parse()?;
         cli.cost_aware_return = params.cost_aware_return;
         cli.cost_iterations_max = params.cost_iterations_max;
 
