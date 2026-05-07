@@ -5,6 +5,7 @@ use crate::types::gas_price::GasPrice;
 use common::types::{TokenAccount, YoctoValue};
 use common::types::{TokenInAccount, TokenOutAccount};
 use dex::{TokenPairLike, TokenPath};
+use logging::*;
 use near_gas::NearGas;
 
 /// swap の固定ガス（パス先頭の関数呼び出し）
@@ -12,16 +13,46 @@ const HEAD_GAS: NearGas = NearGas::from_ggas(2700);
 /// swap の per-hop ガス
 const BY_STEP_GAS: NearGas = NearGas::from_ggas(2600);
 
+/// `swap_gas_cost_yocto_u128` の sanity cap（= 1 NEAR）。
+///
+/// production の swap gas は `(HEAD + BY_STEP × depth) × gas_price ≈ 数百 microNEAR`
+/// オーダーで、1 NEAR は production baseline の約 1000× に相当する。`saturating_mul`
+/// による u128 オーバーフロー防御に加え、敵対 RPC が異常な `gas_price` を返した
+/// 場合の attack surface（cost-aware optimization で全 token に巨大 cost_deduction
+/// が適用され equal-weight rebalance を強制される攻撃経路）を構造的に縮小する。
+///
+/// この cap は SSoT [`swap_gas_cost_yocto_u128`] 内で適用されるため、`Preview::cost`
+/// （arbitrage 経路）と `estimate_swap_gas_cost_yocto`（trade 経路）の両方が同時に
+/// 防御される。STORAGE_MIN_SANE_CAP と対称的な「sanity cap」パターン。
+const GAS_YOCTO_SANE_CAP: u128 = 10u128.pow(24);
+
 /// 指定 depth の swap で消費するガス料金を yoctoNEAR を u128 で算出する SSoT。
 ///
-/// `(HEAD + BY_STEP * depth) * gas_price` を saturating 算術で計算する。
-/// 公開 API の [`estimate_swap_gas_cost_yocto`] と private な [`Preview::cost`] が
-/// 共にこの関数を経由するため、計算式は完全に一致する。
+/// `(HEAD + BY_STEP * depth) * gas_price` を saturating 算術で計算し、
+/// 結果を [`GAS_YOCTO_SANE_CAP`] にクランプする。公開 API の
+/// [`estimate_swap_gas_cost_yocto`] と private な [`Preview::cost`] が共に
+/// この関数を経由するため、計算式と cap 適用は完全に一致する。
+///
+/// cap が発動した場合は `warn!` を `std::sync::Once` で一度だけ emit し、
+/// 攻撃検知シグナルを残しつつホットパス連発を防ぐ。
 fn swap_gas_cost_yocto_u128(gas_price: GasPrice, depth: usize) -> u128 {
     let gas = HEAD_GAS
         .as_gas()
         .saturating_add(BY_STEP_GAS.as_gas().saturating_mul(depth as u64));
-    (gas as u128).saturating_mul(gas_price.to_balance())
+    let raw = (gas as u128).saturating_mul(gas_price.to_balance());
+    if raw > GAS_YOCTO_SANE_CAP {
+        static CAP_WARN: std::sync::Once = std::sync::Once::new();
+        CAP_WARN.call_once(|| {
+            let log = DEFAULT.new(o!("function" => "swap_gas_cost_yocto_u128"));
+            warn!(log, "gas yocto clamped to sane cap";
+                "raw" => raw,
+                "cap" => GAS_YOCTO_SANE_CAP,
+                "depth" => depth,
+                "gas_price_yocto" => gas_price.to_balance(),
+            );
+        });
+    }
+    raw.min(GAS_YOCTO_SANE_CAP)
 }
 
 /// 指定 depth の swap で消費するガス料金を yoctoNEAR で見積もる。
@@ -161,6 +192,35 @@ mod tests {
     fn test_swap_gas_cost_yocto_u128_zero_depth() {
         // depth=0 の場合は HEAD のみ。
         assert_eq!(swap_gas_cost_yocto_u128(MIN_GAS_PRICE, 0), HEAD);
+    }
+
+    #[test]
+    fn test_swap_gas_cost_yocto_u128_below_cap_passthrough() {
+        // production gas_price は ~10^8 yocto/gas、cap (10^24) には 7 桁の余裕がある。
+        // 通常の depth ではクランプは発動せず、入力どおりの値が返る。
+        let result = swap_gas_cost_yocto_u128(MIN_GAS_PRICE, 5);
+        assert!(result < GAS_YOCTO_SANE_CAP);
+        let expected = HEAD + 5 * BY_STEP;
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_swap_gas_cost_yocto_u128_above_cap_clamped() {
+        // 異常な gas_price（敵対 RPC を模した値）を渡すと cap でクランプされる。
+        // 1 NEAR / (HEAD + BY_STEP) ≈ 10^24 / 5300 ggas ≈ 1.9e14 が境界、
+        // それを超える gas_price では確実にクランプ発動。
+        let hostile = GasPrice::from_balance(NearToken::from_yoctonear(10u128.pow(20)));
+        let result = swap_gas_cost_yocto_u128(hostile, 1);
+        assert_eq!(result, GAS_YOCTO_SANE_CAP);
+    }
+
+    #[test]
+    fn test_swap_gas_cost_yocto_u128_at_u64_max_gas_price_clamped() {
+        // gas_price が u64::MAX に張り付いた場合（saturating_mul 経由の overflow path）
+        // も cap でクランプされ u128::MAX に発散しない。
+        let max_gas_price = GasPrice::from_balance(NearToken::from_yoctonear(u64::MAX as u128));
+        let result = swap_gas_cost_yocto_u128(max_gas_price, 5);
+        assert_eq!(result, GAS_YOCTO_SANE_CAP);
     }
 
     #[test]
