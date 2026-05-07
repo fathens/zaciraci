@@ -13,18 +13,24 @@ const HEAD_GAS: NearGas = NearGas::from_ggas(2700);
 /// swap の per-hop ガス
 const BY_STEP_GAS: NearGas = NearGas::from_ggas(2600);
 
-/// `swap_gas_cost_yocto_u128` の sanity cap（= 1 NEAR）。
+/// `swap_gas_cost_yocto_u128` の sanity cap（= 100 mNEAR = 10^23 yoctoNEAR）。
 ///
-/// production の swap gas は `(HEAD + BY_STEP × depth) × gas_price ≈ 数百 microNEAR`
-/// オーダーで、1 NEAR は production baseline の約 1000× に相当する。`saturating_mul`
-/// による u128 オーバーフロー防御に加え、敵対 RPC が異常な `gas_price` を返した
-/// 場合の attack surface（cost-aware optimization で全 token に巨大 cost_deduction
-/// が適用され equal-weight rebalance を強制される攻撃経路）を構造的に縮小する。
+/// production の swap gas は `(HEAD + BY_STEP × depth) × gas_price ≈ 270 μNEAR`
+/// オーダーで、100 mNEAR は production baseline の約 370× に相当する。
+/// `saturating_mul` による u128 オーバーフロー防御に加え、敵対 RPC が
+/// 異常な `gas_price` を返した場合の attack surface（cost-aware optimization
+/// で全 token に巨大 cost_deduction が適用され、特に小ポートフォリオの active
+/// set が全脱落して equal-weight rebalance を強制される攻撃経路）を構造的に
+/// 縮小する。`STORAGE_MIN_SANE_CAP` と対称的な「実運用の 10× オーダー」基準。
+///
+/// 元は 1 NEAR (10^24) だったが、それは baseline の ~3700× で過大に
+/// permissive だった。financial-correctness-reviewer + security-reviewer の
+/// 連名指摘に基づき、attack surface を 10× 縮小して 100 mNEAR に絞った。
 ///
 /// この cap は SSoT [`swap_gas_cost_yocto_u128`] 内で適用されるため、`Preview::cost`
 /// （arbitrage 経路）と `estimate_swap_gas_cost_yocto`（trade 経路）の両方が同時に
-/// 防御される。STORAGE_MIN_SANE_CAP と対称的な「sanity cap」パターン。
-const GAS_YOCTO_SANE_CAP: u128 = 10u128.pow(24);
+/// 防御される。
+const GAS_YOCTO_SANE_CAP: u128 = 10u128.pow(23);
 
 /// 指定 depth の swap で消費するガス料金を yoctoNEAR を u128 で算出する SSoT。
 ///
@@ -196,7 +202,8 @@ mod tests {
 
     #[test]
     fn test_swap_gas_cost_yocto_u128_below_cap_passthrough() {
-        // production gas_price は ~10^8 yocto/gas、cap (10^24) には 7 桁の余裕がある。
+        // production gas_price は ~10^8 yocto/gas、cap (10^23 = 100 mNEAR) には
+        // ~2 桁 (~64×) の余裕がある（depth=5 で raw ≈ 1.57e21）。
         // 通常の depth ではクランプは発動せず、入力どおりの値が返る。
         let result = swap_gas_cost_yocto_u128(MIN_GAS_PRICE, 5);
         assert!(result < GAS_YOCTO_SANE_CAP);
@@ -207,8 +214,8 @@ mod tests {
     #[test]
     fn test_swap_gas_cost_yocto_u128_above_cap_clamped() {
         // 異常な gas_price（敵対 RPC を模した値）を渡すと cap でクランプされる。
-        // 1 NEAR / (HEAD + BY_STEP) ≈ 10^24 / 5300 ggas ≈ 1.9e14 が境界、
-        // それを超える gas_price では確実にクランプ発動。
+        // 100 mNEAR / (HEAD + BY_STEP) ≈ 10^23 / 5.3e12 gas ≈ 1.9e10 yocto/gas
+        // が境界、それを超える gas_price では確実にクランプ発動。
         let hostile = GasPrice::from_balance(NearToken::from_yoctonear(10u128.pow(20)));
         let result = swap_gas_cost_yocto_u128(hostile, 1);
         assert_eq!(result, GAS_YOCTO_SANE_CAP);
