@@ -351,16 +351,23 @@ impl PredictionRecord {
     /// 各トークンについて、以下の条件をすべて満たすレコードを 1 件返す:
     /// - `created_at <= as_of` (= `as_of` 時点で既に DB に存在していた)
     /// - `target_time > as_of` (= `as_of` から見て未来予測)
+    /// - `created_at >= data_cutoff_time` (= 予測がカットオフ後に生成された)
     ///
     /// 最新性は `target_time` 降順、同一なら `data_cutoff_time` 降順で決まる。
     ///
-    /// # `created_at <= as_of` フィルタの根拠
+    /// # フィルタの根拠
     ///
-    /// production では `as_of = NOW` であり、未来に作成されるレコードは存在しないため、
-    /// このフィルタは no-op として作用する。一方シミュレーション (`as_of` = 過去のシム
-    /// 日付) では、フィルタなしだと `as_of` 以後に生成された予測が選択され、因果性違反
-    /// (data leakage) が発生する。`created_at` で時点を切ることで、production と
-    /// バックテストで同一の意味論を保証する。
+    /// `created_at <= as_of`: production では `as_of = NOW` であり、未来に作成される
+    /// レコードは存在しないため、このフィルタは no-op として作用する。一方シミュレーション
+    /// (`as_of` = 過去のシム日付) では、フィルタなしだと `as_of` 以後に生成された予測が
+    /// 選択され、因果性違反 (data leakage) が発生する。`created_at` で時点を切ることで、
+    /// production とバックテストで同一の意味論を保証する。
+    ///
+    /// `created_at >= data_cutoff_time`: Layer 4 の read-time defense-in-depth。Layer 3
+    /// の DB CHECK 制約 (`created_at_geq_data_cutoff`) が `NOT VALID` で導入された移行
+    /// 期間 (Migration A 後 / Migration B 前) や、何らかの bypass 経路で違反行が DB に
+    /// 残った場合に、read 時点で除外して optimizer が「データ取得時刻より古い予測」を
+    /// fresh と誤認する経路を塞ぐ。
     pub async fn get_latest_fresh_predictions(
         tokens: &[TokenOutAccount],
         as_of: NaiveDateTime,
@@ -378,6 +385,7 @@ impl PredictionRecord {
                     .filter(prediction_records::token.eq_any(&tokens))
                     .filter(prediction_records::created_at.le(as_of))
                     .filter(prediction_records::target_time.gt(as_of))
+                    .filter(prediction_records::created_at.ge(prediction_records::data_cutoff_time))
                     .distinct_on(prediction_records::token)
                     .order_by((
                         prediction_records::token,
@@ -397,6 +405,8 @@ impl PredictionRecord {
     ///
     /// "fresh" の定義は [`get_latest_fresh_predictions`] と同じ:
     /// `created_at <= t` かつ `target_time > t` を満たすレコードが少なくとも 1 件存在する瞬間 `t`。
+    /// 加えて Layer 4 defense-in-depth として `created_at >= data_cutoff_time` も要求する
+    /// (詳細は [`get_latest_fresh_predictions`] の docstring 参照)。
     ///
     /// 探索範囲を区間内のレコードの `created_at` に限定して `MIN(created_at)` を返す。
     /// 区間内に 1 件もそういうレコードが無ければ `None`。
@@ -421,6 +431,7 @@ impl PredictionRecord {
                     .filter(prediction_records::created_at.ge(since))
                     .filter(prediction_records::created_at.lt(until))
                     .filter(prediction_records::target_time.gt(prediction_records::created_at))
+                    .filter(prediction_records::created_at.ge(prediction_records::data_cutoff_time))
                     .select(diesel::dsl::min(prediction_records::created_at))
                     .first::<Option<NaiveDateTime>>(conn)
             })
