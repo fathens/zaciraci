@@ -10,7 +10,6 @@ use blockchain::types::gas_price::GasPrice;
 use common::types::{ExchangeRate, NearValue, TokenAmount, YoctoValue};
 use dex::TokenPath;
 use logging::*;
-use std::fmt;
 
 /// 期待リターンから事前控除するスリッページマージン
 ///
@@ -92,28 +91,15 @@ impl From<CostDeduction> for f64 {
 /// 失敗した token は呼び出し側で `estimation_failures` 経路に合流させ、
 /// `retain_tokens` で portfolio から除外することを期待する。
 /// `f64::INFINITY` を返して silent に Markowitz に流入させてはならない。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CostError {
     /// `assumed_position` が 0 — コスト比率を取引額で割れず計算不能
+    #[error("cost deduction is undefined when assumed_position is 0")]
     ZeroPosition,
     /// derive した比率が `f64::INFINITY` または `f64::NAN`（BigDecimal→f64 変換異常）
+    #[error("derived cost ratio is non-finite (NaN/Infinity)")]
     NonFiniteRatio,
 }
-
-impl fmt::Display for CostError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CostError::ZeroPosition => {
-                write!(f, "cost deduction is undefined when assumed_position is 0")
-            }
-            CostError::NonFiniteRatio => {
-                write!(f, "derived cost ratio is non-finite (NaN/Infinity)")
-            }
-        }
-    }
-}
-
-impl std::error::Error for CostError {}
 
 /// 取引コストの内訳
 ///

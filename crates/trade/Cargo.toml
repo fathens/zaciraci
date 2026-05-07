@@ -18,6 +18,7 @@ bigdecimal = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 slog = { workspace = true }
+thiserror = { workspace = true }
 near-sdk = { version = "5.24", features = ["non-contract-usage"] }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
