@@ -82,6 +82,12 @@ pub struct DbPredictionRecord {
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
+    // Layer 2 (visibility): pub(crate) フィールドで外部 crate からの
+    // 構造体リテラル bypass を構造的に防止し、try_new を唯一の構築経路に
+    // 強制する。**ただし persistence crate 内部 (本ファイルや同 crate の
+    // 別 module) からは依然 struct literal で構築可能なので、
+    // 内部 bypass 経路は Layers 3 (DB CHECK) / 4 (SQL filter) で
+    // カバーする多層防御設計**。
     pub(crate) token: String,
     pub(crate) quote_token: String,
     pub(crate) predicted_price: BigDecimal,
@@ -130,6 +136,9 @@ impl NewPredictionRecord {
     /// backward 等の環境起因 violation で crash loop 化させない)。
     ///
     /// 不変条件と防御階層の詳細は型レベルの docstring を参照。
+    // Layer 1 (smart constructor, runtime fail-soft): 不変条件違反を
+    // Result で通知し、caller は warn ログ + skip で fail-soft 処理する。
+    // NTP step backward 等の環境起因 violation で crash loop 化させない。
     pub fn try_new(
         token: String,
         quote_token: String,
@@ -368,6 +377,11 @@ impl PredictionRecord {
     /// 期間 (Migration A 後 / Migration B 前) や、何らかの bypass 経路で違反行が DB に
     /// 残った場合に、read 時点で除外して optimizer が「データ取得時刻より古い予測」を
     /// fresh と誤認する経路を塞ぐ。
+    // Layer 4 (read-time defense-in-depth): Layers 1-3 を bypass された
+    // 違反行 (migration NOT VALID 期間や DBA 直接 INSERT 等) が DB に残った
+    // 場合に、read 時点で除外して optimizer が誤った fresh 予測を学習しない
+    // ようにする。production の唯一の包括的防御は Layer 3 だが、本フィルタは
+    // 読み取り経路に追加された防御線。
     pub async fn get_latest_fresh_predictions(
         tokens: &[TokenOutAccount],
         as_of: NaiveDateTime,
@@ -415,6 +429,8 @@ impl PredictionRecord {
     /// 予測が DB に着いた瞬間にトレード可能になる」というタイミングを再現するために使う。
     /// `since = date midnight`, `until = (date+1) midnight` を渡すと「その日の最初の
     /// fresh prediction 時刻」が得られる。
+    // Layer 4 (read-time defense-in-depth): get_latest_fresh_predictions と
+    // 同じく、Layers 1-3 を bypass された違反行を read 時に除外する。
     pub async fn earliest_fresh_visible_in(
         since: NaiveDateTime,
         until: NaiveDateTime,

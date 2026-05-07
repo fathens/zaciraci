@@ -1,4 +1,5 @@
--- Phase 2 of the data-leakage 4-layer defense for prediction_records:
+-- Phase 2 of the data-leakage 4-layer defense for prediction_records
+-- (Layer 3: DB CHECK constraint becomes fully enforced via VALIDATE):
 -- quarantine existing violators, delete them from the live table, then
 -- VALIDATE the CHECK constraint added in the previous migration so it
 -- enforces the invariant on legacy rows as well.
@@ -57,5 +58,8 @@ DELETE FROM prediction_records
 WHERE NOT (created_at >= data_cutoff_time);
 
 -- All violators removed; safe to validate the constraint on existing rows.
+-- Layer 3 (DB CHECK NOT VALID → fully enforced): from this point on, every
+-- INSERT/UPDATE path (Diesel / raw SQL / psql / DBA / migration backfill)
+-- is rejected by Postgres if it violates `created_at >= data_cutoff_time`.
 ALTER TABLE prediction_records
     VALIDATE CONSTRAINT created_at_geq_data_cutoff;
