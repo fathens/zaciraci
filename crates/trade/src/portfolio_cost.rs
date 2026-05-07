@@ -406,3 +406,6 @@ pub(crate) async fn run_cost_aware_optimization(
 
     Ok(CostAwareOutcome::Optimized(state.report))
 }
+
+#[cfg(test)]
+mod tests;
