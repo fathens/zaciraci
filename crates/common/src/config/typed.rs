@@ -184,42 +184,47 @@ impl ConfigResolve for anyhow::Result<String> {
 /// 値が config に存在しない場合は `default` を返す。値が存在するが `FromStr`
 /// で parse 失敗した場合の挙動は **value source ごとに分岐** する:
 ///
-/// - `resolve` (CONFIG_STORE > DB_STORE > env > TOML 全経路): default fallback +
-///   `eprintln!` (input value は redact) で fail-soft にする。cron tick 毎に呼
-///   ばれる経路で panic すると persistent crash loop DoS (CRITICAL-2) になるため、
-///   `resolve` 内の panic は撤去済み。
+/// - `resolve` (CONFIG_STORE > DB_STORE > env > TOML 全経路): default fallback で
+///   fail-soft。cron tick 毎に呼ばれる経路で panic すると persistent crash loop
+///   DoS (CRITICAL-2) になるため、`resolve` 内の panic は撤去済み。
 /// - `resolve_without_db` (env > TOML のみ、startup 限定パス): 不正値は panic で
 ///   起動失敗にし sysadmin が即時気付ける運用にする (再起動 = 修正機会)。
 ///
-/// # 防御層 (Layer 0 + Layer 1)
+/// # 多層防御 (Layer 0 + Layer 1 + Layer 2)
 ///
-/// DB 経由の不正値は **Layer 0**: [`persistence::config_store::reload_to_config`]
-/// が [`Self::validate_string`] で事前検証して `DB_STORE` への流入を排除し、
-/// slog `error!` で構造化ログを残す。`common` クレートは `logging` に循環依存
-/// できないため、structured log 化は persistence 側で担う設計。
+/// **Layer 0**: [`persistence::config_store::reload_to_config`] が
+/// [`crate::config::validate_db_configs`] と [`Self::validate_string`] を使い、
+/// DB 由来の不正値を `DB_STORE` への流入前に排除して slog `error!` で構造化
+/// ログを残す。`common` クレートは `logging` に循環依存できないため、
+/// structured log 化は persistence 側で担う設計。
 ///
-/// **Layer 1** (本 impl): Layer 0 で排除しきれなかった env/TOML 由来の不正値を
-/// `resolve_without_db` で startup panic にする最後の砦。`resolve` 自体は cron
-/// tick で呼ばれる前提のため fail-soft (default fallback)。
+/// **Layer 1** (`resolve_without_db`): env/TOML 由来の不正値を startup panic で
+/// 起動失敗にする。`resolve` (DB含む) との非対称性は意図的: DB_STORE 不正値は
+/// cron tick で繰り返し発火し crash loop DoS 化するため fail-soft、env/TOML は
+/// startup 1 回のみで再起動 = 修正機会。
+///
+/// **Layer 2** (`resolve` の silent default fallback): Layer 0/1 の保険。本来到達
+/// 不能な経路として残しているが、以下 3 種の死角が残る:
+/// 1. **Layer 0 race**: `reload_to_config` が完了する前に `resolve` が呼ばれる
+///    起動時 race。実害はリロード完了後の次サイクルで自動収束するため軽微。
+/// 2. **`validate_db_configs` 登録漏れ**: 新しい enum 系 typed config を追加した
+///    ときに `validate_db_configs` への登録を忘れると DB 不正値が DB_STORE に流入
+///    する。新型追加時は同関数のテストで網羅性を確認すること。
+/// 3. **将来 admin/gRPC config write API 追加時の脆弱化**: 現時点 CONFIG_STORE は
+///    `#[doc(hidden)]` test-only API でのみ書き込まれる trusted source だが、将来
+///    admin API / gRPC endpoint で外部書き込みを許す場合は `validate_db_configs`
+///    を `validate_all_configs` に汎用化して CONFIG_STORE/env も同時検証する
+///    必要がある (follow-up: PR でない別 issue で追跡)。
 impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
     type Default = Self;
     const VALUE_TYPE: ConfigValueType = ConfigValueType::String;
     fn resolve(key: &str, default: Self) -> Self {
         match crate::config::store::get(key) {
-            Ok(s) => s.parse().unwrap_or_else(|e| {
-                // DB_STORE 経由の不正値は Layer 0 (persistence::config_store::reload_to_config)
-                // で `validate_string` 検証を経て排除されるため、ここに到達する経路は
-                // env/TOML 由来 (= startup-only) の不正値か、Layer 0 が適用される前の
-                // 起動時パスのみ。後者は `resolve_without_db` 側で panic させ、`resolve`
-                // 経路 (cron tick から呼ばれる) は default fallback で fail-soft にする
-                // (CRITICAL-2: cron tick 毎の crash loop DoS 防止)。
-                let _ = e;
-                eprintln!(
-                    "[CONFIG_ERROR] key={key} parse failed (value redacted); falling back to default {}",
-                    default.as_str()
-                );
-                default
-            }),
+            // 不正値は silent default fallback (Layer 2 の保険動作)。Layer 0 が
+            // DB_STORE 流入を排除し、Layer 1 が env/TOML startup panic を担うため、
+            // ここに到達する経路は本来存在しない。CONFIG_STORE 経由 (test override
+            // など) で到達した場合のみ silent fallback で吸収する。
+            Ok(s) => s.parse().unwrap_or(default),
             Err(_) => default,
         }
     }
@@ -230,6 +235,8 @@ impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
                 // 起動失敗 (panic) で気付かせるのが妥当。`resolve` (DB含む) との非対称性は
                 // 意図的: DB_STORE 不正値は cron tick で繰り返し発火し crash loop DoS 化
                 // するため fail-soft、env/TOML は startup 1 回のみで再起動 = 修正機会。
+                // `e` (= ParsePredErrDiagonalModeError) の Display は redact 済みの
+                // 固定文字列のため、attacker-controlled 値は panic message に含まれない。
                 panic!("invalid config value for {key}: {e}");
             }),
             Err(_) => default,
@@ -999,15 +1006,24 @@ define_typed_config! {
 /// `configs` は不正値を除外した状態に書き換える (caller の `load_db_config` 直前
 /// で呼ぶ前提)。戻り値は `(key, reason)` のリストで、log 出力用。`reason` は
 /// 攻撃者制御値を含まず、期待形式の説明のみ (log forwarding 経由漏洩防御)。
+///
+/// # 汎用化の余地 (follow-up)
+///
+/// 本関数は **DB 由来の値のみ**を対象とする。CONFIG_STORE / env / TOML 由来の
+/// 値の検証は `resolve_without_db` (env/TOML) の startup panic で部分的に
+/// カバーされるが、CONFIG_STORE は現時点で `#[doc(hidden)]` test-only API のみ
+/// で書き込まれる trusted source として許容している。将来 admin API / gRPC
+/// endpoint で外部書き込みを許す場合は本関数を `validate_all_configs` に
+/// 汎用化し、全ストアを同時検証すること (security CRITICAL の follow-up)。
 pub fn validate_db_configs(
     configs: &mut std::collections::HashMap<std::string::String, std::string::String>,
 ) -> Vec<(std::string::String, std::string::String)> {
     let mut invalid = Vec::new();
 
     // PORTFOLIO_PRED_ERR_DIAGONAL_MODE: enum 型の typo / 未対応バリアントを排除。
-    // ここを通さず DB_STORE に load すると、`PredErrDiagonalMode::resolve` が
-    // 呼ばれた cron tick で eprintln! + default fallback 経路が発火し、
-    // 構造化ログとして検知できなくなる。
+    // ここを通さず DB_STORE に load すると、`PredErrDiagonalMode::resolve` の
+    // silent default fallback (Layer 2) が cron tick 毎に発火し、運用上は
+    // observable な signal がないまま fallback 動作を続ける状態になる。
     const KEY_PRED_ERR_MODE: &str = "PORTFOLIO_PRED_ERR_DIAGONAL_MODE";
     if let Some(v) = configs.get(KEY_PRED_ERR_MODE)
         && let Err(reason) =
