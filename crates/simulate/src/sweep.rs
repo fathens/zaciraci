@@ -1,6 +1,7 @@
 use crate::cli::RunArgs;
 use crate::engine::run_simulation;
 use anyhow::Result;
+use itertools::iproduct;
 use logging::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -166,43 +167,44 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
 }
 
 fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
-    let mut combinations = Vec::new();
-
-    for &top_tokens in &config.top_tokens {
-        for &price_history_days in &config.price_history_days {
-            for &rebalance_threshold in &config.rebalance_threshold {
-                for &rebalance_interval_days in &config.rebalance_interval_days {
-                    for &bias_correction in &config.bias_correction {
-                        for &pred_err_diagonal in &config.pred_err_diagonal {
-                            for &pred_err_diagonal_k in &config.pred_err_diagonal_k {
-                                for pred_err_diagonal_mode in &config.pred_err_diagonal_mode {
-                                    for &cost_aware_return in &config.cost_aware_return {
-                                        for &cost_iterations_max in &config.cost_iterations_max {
-                                            combinations.push(SweepParameters {
-                                                top_tokens,
-                                                price_history_days,
-                                                rebalance_threshold,
-                                                rebalance_interval_days,
-                                                bias_correction,
-                                                pred_err_diagonal,
-                                                pred_err_diagonal_k,
-                                                pred_err_diagonal_mode: pred_err_diagonal_mode
-                                                    .clone(),
-                                                cost_aware_return,
-                                                cost_iterations_max,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    combinations
+    iproduct!(
+        &config.top_tokens,
+        &config.price_history_days,
+        &config.rebalance_threshold,
+        &config.rebalance_interval_days,
+        &config.bias_correction,
+        &config.pred_err_diagonal,
+        &config.pred_err_diagonal_k,
+        &config.pred_err_diagonal_mode,
+        &config.cost_aware_return,
+        &config.cost_iterations_max
+    )
+    .map(
+        |(
+            &top_tokens,
+            &price_history_days,
+            &rebalance_threshold,
+            &rebalance_interval_days,
+            &bias_correction,
+            &pred_err_diagonal,
+            &pred_err_diagonal_k,
+            pred_err_diagonal_mode,
+            &cost_aware_return,
+            &cost_iterations_max,
+        )| SweepParameters {
+            top_tokens,
+            price_history_days,
+            rebalance_threshold,
+            rebalance_interval_days,
+            bias_correction,
+            pred_err_diagonal,
+            pred_err_diagonal_k,
+            pred_err_diagonal_mode: pred_err_diagonal_mode.clone(),
+            cost_aware_return,
+            cost_iterations_max,
+        },
+    )
+    .collect()
 }
 
 fn print_summary_table(result: &SweepResult) {
