@@ -167,7 +167,7 @@ const MAX_POSITION_SIZE: f64 = 0.6;
 const MIN_POSITION_SIZE: f64 = 0.05;
 
 /// 最大保有トークン数（集中投資）
-pub(crate) const MAX_HOLDINGS: usize = 6;
+const MAX_HOLDINGS: usize = 6;
 const _: () = assert!(MAX_HOLDINGS > 0, "MAX_HOLDINGS must be > 0");
 
 /// PSD 保証のための最小固有値閾値

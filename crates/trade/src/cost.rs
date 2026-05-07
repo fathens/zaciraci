@@ -23,21 +23,21 @@ use std::fmt;
 /// `<` `>` のすべての比較で false になる NaN によりガード（`portfolio.rs:739`
 /// 等の `sum_p.abs() < 1e-15`）はすべて防御失効する。`CostDeduction::new` で
 /// 不変条件 `is_finite() && >= 0.0` を満たす値だけを構築・受け渡しすること。
-pub const EXPECTED_SLIPPAGE_DEDUCTION: f64 = 0.005;
+pub(crate) const EXPECTED_SLIPPAGE_DEDUCTION: f64 = 0.005;
 
 /// Markowitz に渡せる「正常値」を保証するコスト控除比率（return スケール）
 ///
 /// `CostDeduction::new` で `is_finite() && >= 0.0` 不変条件を満たした値のみ構築可能。
 /// 上限は業務判定（optimizer 側）に委ねるため設けない。
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CostDeduction(f64);
+pub(crate) struct CostDeduction(f64);
 
 impl CostDeduction {
     /// `is_finite() && value >= 0.0` を満たす場合のみ `Some` を返す。
     ///
     /// NaN / Infinity / 負値は `None`。これにより `CostDeduction` が
     /// optimizer に渡る時点で NaN cascade の入口を型で塞ぐ。
-    pub fn new(value: f64) -> Option<Self> {
+    pub(crate) fn new(value: f64) -> Option<Self> {
         if value.is_finite() && value >= 0.0 {
             Some(Self(value))
         } else {
@@ -46,7 +46,7 @@ impl CostDeduction {
     }
 
     /// 内部値を取り出す。
-    pub fn as_f64(self) -> f64 {
+    pub(crate) fn as_f64(self) -> f64 {
         self.0
     }
 }
@@ -63,7 +63,7 @@ impl From<CostDeduction> for f64 {
 /// `retain_tokens` で portfolio から除外することを期待する。
 /// `f64::INFINITY` を返して silent に Markowitz に流入させてはならない。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CostError {
+pub(crate) enum CostError {
     /// `assumed_position` が 0 — コスト比率を取引額で割れず計算不能
     ZeroPosition,
     /// derive した比率が `f64::INFINITY` または `f64::NAN`（BigDecimal→f64 変換異常）
@@ -90,22 +90,12 @@ impl std::error::Error for CostError {}
 /// - `variable_ratio`: AMM fee + price impact + slippage（取引額に比例しない比率部分）
 /// - `fixed_cost`: gas + storage（取引したら掛かる固定費、yoctoNEAR 単位）
 #[derive(Debug, Clone)]
-pub struct TradeCostBreakdown {
+pub(crate) struct TradeCostBreakdown {
     variable_ratio: f64,
     fixed_cost: YoctoValue,
 }
 
 impl TradeCostBreakdown {
-    /// 比率部分（AMM fee + price impact + slippage margin）
-    pub fn variable_ratio(&self) -> f64 {
-        self.variable_ratio
-    }
-
-    /// 固定費（gas + storage）
-    pub fn fixed_cost(&self) -> &YoctoValue {
-        &self.fixed_cost
-    }
-
     /// 期待リターン ratio から差し引く net deduction を計算する。
     ///
     /// `assumed_position`: スワップする入力金額の見積もり（yoctoNEAR）
@@ -124,7 +114,7 @@ impl TradeCostBreakdown {
     /// `sum_p.abs() < 1e-15` 等のガード（`common::algorithm::portfolio.rs:739`）
     /// が NaN 比較で防御失効する。失敗 token は `retain_tokens` 経由で
     /// portfolio から除外されるべき。
-    pub fn to_cost_deduction(
+    pub(crate) fn to_cost_deduction(
         &self,
         assumed_position: &YoctoValue,
     ) -> std::result::Result<CostDeduction, CostError> {
@@ -155,7 +145,7 @@ impl TradeCostBreakdown {
 ///
 /// `storage_min_per_token` および gas yocto 値が `u128` に収まらない場合は
 /// `Err` で fail-fast する（silent fallback で `u128::MAX`/`0` を返す挙動は廃止）。
-pub fn estimate_trade_cost(
+pub(crate) fn estimate_trade_cost(
     path: &TokenPath,
     assumed_in: &YoctoValue,
     spot_rate: &ExchangeRate,

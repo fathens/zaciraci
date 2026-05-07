@@ -1,10 +1,10 @@
 #![deny(warnings)]
 
-pub mod cost;
+pub(crate) mod cost;
 pub mod execution;
 pub mod harvest;
 pub mod market_data;
-pub mod portfolio_cost;
+pub(crate) mod portfolio_cost;
 pub mod predict;
 pub mod prediction_accuracy;
 pub mod recorder;
