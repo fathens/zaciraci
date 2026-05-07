@@ -9,6 +9,7 @@ use blockchain::ref_finance::path::preview::estimate_swap_gas_cost_yocto;
 use blockchain::types::gas_price::GasPrice;
 use common::types::{ExchangeRate, NearValue, TokenAmount, YoctoValue};
 use dex::TokenPath;
+use logging::*;
 use std::fmt;
 
 /// 期待リターンから事前控除するスリッページマージン
@@ -24,6 +25,25 @@ use std::fmt;
 /// 等の `sum_p.abs() < 1e-15`）はすべて防御失効する。`CostDeduction::new` で
 /// 不変条件 `is_finite() && >= 0.0` を満たす値だけを構築・受け渡しすること。
 pub(crate) const EXPECTED_SLIPPAGE_DEDUCTION: f64 = 0.005;
+
+/// `storage_min_per_token` の sanity cap（yoctoNEAR）
+///
+/// RPC 由来の `storage_min` が壊れたノード／敵対的応答で異常に巨大な値
+/// （例: `u128::MAX`）を返した場合、`storage_per_token × new_token_count`
+/// が overflow して `saturating_mul` で `u128::MAX` に張り付き、固定コストが
+/// 取引額をはるかに超える結果として全トークンが `to_cost_deduction` 失敗で
+/// portfolio から除外される DoS 経路になり得る。
+///
+/// 実運用上の `storage_min` は 10⁻⁴ NEAR ～ 1 NEAR オーダーなので、
+/// 10 NEAR を上限として min クランプし、境界で異常値を遮断する。
+const STORAGE_MIN_SANE_CAP: u128 = 10 * 10u128.pow(24);
+
+/// `new_token_count` の debug_assert 上限
+///
+/// `portfolio_cost::compute_cost_deductions` 経路では token 1 件あたり
+/// 0 または 1 しか渡されない。`MAX_HOLDINGS = 6` を踏まえても 16 は
+/// 十分なマージンであり、これを超える場合は呼び出し側のロジック異常を示す。
+const MAX_NEW_TOKEN_COUNT: usize = 16;
 
 /// Markowitz に渡せる「正常値」を保証するコスト控除比率（return スケール）
 ///
@@ -143,8 +163,10 @@ impl TradeCostBreakdown {
 /// `assumed_in` が 0 の場合は price impact が計測できないため、variable_ratio は
 /// `EXPECTED_SLIPPAGE_DEDUCTION` のみ。
 ///
-/// `storage_min_per_token` および gas yocto 値が `u128` に収まらない場合は
-/// `Err` で fail-fast する（silent fallback で `u128::MAX`/`0` を返す挙動は廃止）。
+/// `storage_min_per_token` は `STORAGE_MIN_SANE_CAP`（10 NEAR）で min クランプ
+/// するため、RPC が異常に巨大な値（例: `u128::MAX`）を返しても overflow による
+/// DoS 経路にならない。gas yocto 値が `u128` に収まらない場合は `Err` で
+/// fail-fast する。
 pub(crate) fn estimate_trade_cost(
     path: &TokenPath,
     assumed_in: &YoctoValue,
@@ -153,6 +175,19 @@ pub(crate) fn estimate_trade_cost(
     storage_min_per_token: &YoctoValue,
     new_token_count: usize,
 ) -> Result<TradeCostBreakdown> {
+    debug_assert!(
+        new_token_count <= MAX_NEW_TOKEN_COUNT,
+        "new_token_count {new_token_count} exceeds MAX_NEW_TOKEN_COUNT {MAX_NEW_TOKEN_COUNT}; caller logic anomaly"
+    );
+    // release ビルドでも有効な runtime check。caller 側のロジック異常で
+    // `cap × N` が膨れて `fixed_cost` が取引額を超え、全 token が
+    // `to_cost_deduction` 失敗で除外される DoS 経路を遮断する。
+    if new_token_count > MAX_NEW_TOKEN_COUNT {
+        anyhow::bail!(
+            "new_token_count {new_token_count} exceeds MAX_NEW_TOKEN_COUNT {MAX_NEW_TOKEN_COUNT}"
+        );
+    }
+
     let depth = path.len();
 
     let variable_ratio = compute_variable_ratio(path, assumed_in, spot_rate)?;
@@ -160,10 +195,7 @@ pub(crate) fn estimate_trade_cost(
     let gas_yocto = estimate_swap_gas_cost_yocto(gas_price, depth);
     let storage_count = u128::try_from(new_token_count)
         .map_err(|_| anyhow::anyhow!("new_token_count {new_token_count} exceeds u128"))?;
-    let storage_per_token = storage_min_per_token
-        .as_bigdecimal()
-        .to_u128()
-        .ok_or_else(|| anyhow::anyhow!("storage_min_per_token does not fit in u128"))?;
+    let storage_per_token = clamp_storage_min(storage_min_per_token);
     let storage_yocto = storage_per_token.saturating_mul(storage_count);
     let gas_u128 = gas_yocto
         .as_bigdecimal()
@@ -175,6 +207,35 @@ pub(crate) fn estimate_trade_cost(
         variable_ratio,
         fixed_cost: YoctoValue::from_yocto_u128(fixed_yocto),
     })
+}
+
+/// `storage_min_per_token` を `STORAGE_MIN_SANE_CAP` で min クランプして u128 化する。
+///
+/// RPC 由来の値が `u128` に収まらない or 上限を超える場合は `STORAGE_MIN_SANE_CAP`
+/// にクランプされる。これにより `saturating_mul(new_token_count)` が
+/// `u128::MAX` に張り付いて固定コストが取引額を超え、全トークンが
+/// `to_cost_deduction` 失敗で portfolio から除外される DoS 経路を遮断する。
+///
+/// # observability
+///
+/// クランプが発動した場合は `warn!` ログを出す。実運用では `storage_min` が
+/// 10 NEAR を超えること自体が異常（悪意ノード接続 / contract migration バグ /
+/// node 破損のシグナル）なので、サイレントに吸収せず痕跡を残す。
+fn clamp_storage_min(storage_min_per_token: &YoctoValue) -> u128 {
+    let raw = storage_min_per_token
+        .as_bigdecimal()
+        .to_u128()
+        .unwrap_or(u128::MAX);
+    if raw > STORAGE_MIN_SANE_CAP {
+        let log = DEFAULT.new(o!("function" => "clamp_storage_min"));
+        warn!(
+            log,
+            "storage_min clamped to sane cap";
+            "raw" => raw,
+            "cap" => STORAGE_MIN_SANE_CAP,
+        );
+    }
+    raw.min(STORAGE_MIN_SANE_CAP)
 }
 
 /// `assumed_in` を path に通したときの実効的な loss ratio

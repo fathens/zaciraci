@@ -156,3 +156,52 @@ fn test_compute_loss_ratio_full_loss() {
     let output = NearValue::zero();
     assert!((compute_loss_ratio(&input, &output) - 1.0).abs() < 1e-12);
 }
+
+#[test]
+fn test_clamp_storage_min_under_cap_passthrough() {
+    // 通常の運用値（0.1 NEAR）はクランプされずそのまま返る
+    let normal = YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000);
+    let clamped = clamp_storage_min(&normal);
+    assert_eq!(clamped, 100_000_000_000_000_000_000_000);
+    assert!(clamped < STORAGE_MIN_SANE_CAP);
+}
+
+#[test]
+fn test_clamp_storage_min_at_cap_returns_cap() {
+    let at_cap = YoctoValue::from_yocto_u128(STORAGE_MIN_SANE_CAP);
+    assert_eq!(clamp_storage_min(&at_cap), STORAGE_MIN_SANE_CAP);
+}
+
+#[test]
+fn test_clamp_storage_min_above_cap_clamped() {
+    // 100 NEAR — cap (10 NEAR) を超える
+    let above = YoctoValue::from_yocto_u128(100 * 10u128.pow(24));
+    assert_eq!(clamp_storage_min(&above), STORAGE_MIN_SANE_CAP);
+}
+
+#[test]
+fn test_clamp_storage_min_u128_max_clamped_to_cap() {
+    // RPC が u128::MAX を返す敵対的シナリオでも cap で吸収される
+    let hostile = YoctoValue::from_yocto_u128(u128::MAX);
+    assert_eq!(clamp_storage_min(&hostile), STORAGE_MIN_SANE_CAP);
+}
+
+#[test]
+fn test_clamp_storage_min_overflow_u128_clamped_to_cap() {
+    // BigDecimal が u128 に収まらない値（u128::MAX + 1）でも cap にクランプ
+    let huge = YoctoValue::from_yocto(BigDecimal::from(u128::MAX) + BigDecimal::from(1));
+    assert_eq!(clamp_storage_min(&huge), STORAGE_MIN_SANE_CAP);
+}
+
+#[test]
+fn test_clamp_storage_min_saturating_mul_safe_with_max_token_count() {
+    // クランプされた値 × 最大 token 数（MAX_NEW_TOKEN_COUNT = 16）が
+    // u128 範囲内に収まることを確認（overflow せず saturate もしない）。
+    let hostile = YoctoValue::from_yocto_u128(u128::MAX);
+    let clamped = clamp_storage_min(&hostile);
+    let mul = clamped.checked_mul(MAX_NEW_TOKEN_COUNT as u128);
+    assert!(
+        mul.is_some(),
+        "STORAGE_MIN_SANE_CAP × MAX_NEW_TOKEN_COUNT must not overflow u128"
+    );
+}
