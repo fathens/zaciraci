@@ -174,7 +174,12 @@ fn compute_cost_deductions(
         } else {
             0.0
         };
-        let w_bd = BigDecimal::from_f64(w).unwrap_or_default();
+        // 直前の `is_finite() && w >= 0.0` ガードにより、`w` は有限非負の
+        // f64 に正規化済み。`BigDecimal::from_f64` は NaN/Infinity でのみ
+        // None を返す仕様のため、ここでは必ず Some を返す。silent な 0
+        // 縮退で Markowitz に偽の取引額を流入させないよう fail-fast する。
+        let w_bd =
+            BigDecimal::from_f64(w).expect("finite non-negative f64 always converts to BigDecimal");
         let assumed_in_bd = total_value_yocto * w_bd;
         let assumed_in = YoctoValue::from_yocto(assumed_in_bd);
 
@@ -193,23 +198,22 @@ fn compute_cost_deductions(
         let Some(rate) = inputs.rates.get(&t.symbol) else {
             continue;
         };
-        match estimate_trade_cost(
+        // CostError は `std::error::Error` 実装済みなので Into 経由で
+        // anyhow::Error に橋渡しし、二重 nested match を平坦化する。
+        let result = estimate_trade_cost(
             path,
             &assumed_in,
             rate,
             inputs.gas_price,
             &inputs.storage_min,
             new_token_count,
-        ) {
-            Ok(b) => match b.to_cost_deduction(&assumed_in) {
-                Ok(deduction) => {
-                    let cd: CostDeduction = deduction;
-                    deductions.insert(t.symbol.clone(), cd.as_f64());
-                }
-                Err(_) => {
-                    estimation_failures.push(t.symbol.clone());
-                }
-            },
+        )
+        .and_then(|b| b.to_cost_deduction(&assumed_in).map_err(Into::into));
+        match result {
+            Ok(deduction) => {
+                let cd: CostDeduction = deduction;
+                deductions.insert(t.symbol.clone(), cd.as_f64());
+            }
             Err(_) => {
                 estimation_failures.push(t.symbol.clone());
             }
