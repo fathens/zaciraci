@@ -40,17 +40,34 @@ pub struct DbPredictionRecord {
 /// を渡すことで、両経路で「production 着信時刻 ≒ created_at」のセマンティクスが
 /// 保たれる。
 ///
-/// # Data leakage paths
+/// # Data leakage paths と防御階層
 ///
 /// `created_at` の設定を誤ると以下の data leakage が発生し、金融的に致命的:
 ///
-/// - `created_at` が **未来日付** (= `data_cutoff_time` より進みすぎている / 実際の
-///   生成時刻より未来) → バックテストで `as_of` 以後に作成された予測が "as_of 時点
-///   で既に visible" として選ばれ、optimizer が未来情報を学習してしまう経路
-///   (period 21 の simulate 乖離の原因と同型)。
+/// - `created_at` が **未来日付** (= `data_cutoff_time` より進みすぎている) →
+///   バックテストで `as_of` 以後に作成された予測が "as_of 時点で既に visible" と
+///   して選ばれ、optimizer が未来情報を学習してしまう経路。
 /// - `created_at` が **過去日付** (= `data_cutoff_time` 以前) → 「データ取得時刻
 ///   より古い予測」として扱われ、本来 `as_of` 時点では存在しなかった予測を fresh
 ///   と誤認する経路。
+///
+/// 防御は以下の 4 階層で行う:
+///
+/// - **Layer 1** (Rust smart constructor): [`NewPredictionRecord::try_new`] が
+///   `Result<Self, NewPredictionRecordError>` を返し、不変条件違反を runtime で
+///   fail-soft に通知する (caller side で warn ログ + skip)。NTP step backward
+///   等の環境起因 violation を crash loop 化させない。**正規 INSERT 経路の
+///   開発時 + 運用時防御**。
+/// - **Layer 2** (`pub(crate)` フィールド可視性): 外部 crate からの構造体リテラル
+///   bypass を構造的に防止し、`try_new` を唯一の構築経路に強制する。**コンパイル
+///   時防御**。
+/// - **Layer 3** (DB CHECK 制約 `NOT VALID`): PostgreSQL の `created_at_geq_data_cutoff`
+///   CHECK 制約が全 INSERT/UPDATE 経路 (Diesel / raw SQL / psql 直接 / DBA 操作 /
+///   migration backfill) を強制カバーする。**production の唯一の包括的防御線**。
+/// - **Layer 4** (SQL fresh-prediction filter): [`PredictionRecord::earliest_fresh_visible_in`] /
+///   [`PredictionRecord::get_latest_fresh_predictions`] が `created_at >= data_cutoff_time`
+///   と `target_time > created_at` を read 時に強制し、過去 DB 既存行 (migration 前
+///   レガシーデータ) に対する **read-time defense-in-depth**。
 ///
 /// 不変条件 `created_at >= data_cutoff_time` は production / simulation の両経路で
 /// 常に成立する (predict は cutoff 以後に走るため)。
@@ -62,53 +79,100 @@ pub struct DbPredictionRecord {
 /// stale data (24h 以上古いデータ) からの予測で `target_time < created_at` が
 /// 成立し得る (現行設計では SQL filter で除外する)。caller-side では horizon
 /// 正値のみを必須条件とし、SQL filter 側の判定に委ねる。
-///
-/// [`NewPredictionRecord::new`] は両不変条件を `debug_assert!` で検証し、違反を
-/// CI / 開発時に早期検出する (release では消える caller-trust ガード)。
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
-    pub token: String,
-    pub quote_token: String,
-    pub predicted_price: BigDecimal,
-    pub data_cutoff_time: NaiveDateTime,
-    pub target_time: NaiveDateTime,
-    pub created_at: NaiveDateTime,
+    pub(crate) token: String,
+    pub(crate) quote_token: String,
+    pub(crate) predicted_price: BigDecimal,
+    pub(crate) data_cutoff_time: NaiveDateTime,
+    pub(crate) target_time: NaiveDateTime,
+    pub(crate) created_at: NaiveDateTime,
+}
+
+/// [`NewPredictionRecord::try_new`] の構築失敗バリアント。
+///
+/// caller 側で `match` または `.ok()` でハンドルし、失敗 record は `error!` ログと
+/// skip で fail-soft に処理する運用想定 (data leakage 経路を crash loop 化させない)。
+///
+/// `Display` 出力は構造化されたフィールド値のみで、攻撃者制御の任意文字列を含まない
+/// ため log forwarding 経由の漏洩リスクなし。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum NewPredictionRecordError {
+    /// `created_at < data_cutoff_time` (= 「未来データを使った過去予測」) は data
+    /// leakage 経路。バックテストで未来情報を学習する原因となる。
+    #[error(
+        "created_at ({created_at}) must be >= data_cutoff_time ({data_cutoff_time}); \
+         data-leakage path (see NewPredictionRecord docstring)"
+    )]
+    CreatedAtBeforeCutoff {
+        created_at: NaiveDateTime,
+        data_cutoff_time: NaiveDateTime,
+    },
+    /// `target_time <= data_cutoff_time` (= prediction horizon ≤ 0) は壊れた
+    /// 予測レコード。
+    #[error(
+        "target_time ({target_time}) must be > data_cutoff_time ({data_cutoff_time}); \
+         prediction horizon must be positive"
+    )]
+    NonPositiveHorizon {
+        target_time: NaiveDateTime,
+        data_cutoff_time: NaiveDateTime,
+    },
 }
 
 impl NewPredictionRecord {
-    /// 予測レコード挿入用の値を構築する (推奨経路)。
+    /// 予測レコード挿入用の値を構築する (唯一の構築経路)。
     ///
-    /// `created_at >= data_cutoff_time` を `debug_assert!` で検証する。
-    /// この不変条件と data leakage 経路の詳細は型レベルの docstring を参照。
-    /// 構造体リテラルで構築すると assertion を回避できるため、
-    /// 新規呼び出しは必ずこのコンストラクタ経由にすること。
-    pub fn new(
+    /// `created_at >= data_cutoff_time` および `target_time > data_cutoff_time` を
+    /// runtime で検証し、違反時は [`NewPredictionRecordError`] を返す。caller は
+    /// `Err` を warn/error ログ + skip で処理し、process は継続させる (NTP step
+    /// backward 等の環境起因 violation で crash loop 化させない)。
+    ///
+    /// 不変条件と防御階層の詳細は型レベルの docstring を参照。
+    pub fn try_new(
         token: String,
         quote_token: String,
         predicted_price: BigDecimal,
         data_cutoff_time: NaiveDateTime,
         target_time: NaiveDateTime,
         created_at: NaiveDateTime,
-    ) -> Self {
-        debug_assert!(
-            created_at >= data_cutoff_time,
-            "created_at ({created_at}) must be >= data_cutoff_time ({data_cutoff_time}); \
-             violation indicates a data-leakage path (see NewPredictionRecord docstring)"
-        );
-        debug_assert!(
-            target_time > data_cutoff_time,
-            "target_time ({target_time}) must be > data_cutoff_time ({data_cutoff_time}); \
-             prediction horizon must be positive (horizon ≤ 0 indicates a broken record)"
-        );
-        Self {
+    ) -> Result<Self, NewPredictionRecordError> {
+        if created_at < data_cutoff_time {
+            return Err(NewPredictionRecordError::CreatedAtBeforeCutoff {
+                created_at,
+                data_cutoff_time,
+            });
+        }
+        if target_time <= data_cutoff_time {
+            return Err(NewPredictionRecordError::NonPositiveHorizon {
+                target_time,
+                data_cutoff_time,
+            });
+        }
+        Ok(Self {
             token,
             quote_token,
             predicted_price,
             data_cutoff_time,
             target_time,
             created_at,
-        }
+        })
+    }
+
+    /// 検証/テスト用に data_cutoff_time を公開する read-only accessor。
+    pub fn data_cutoff_time(&self) -> NaiveDateTime {
+        self.data_cutoff_time
+    }
+
+    /// 検証/テスト用に target_time を公開する read-only accessor。
+    pub fn target_time(&self) -> NaiveDateTime {
+        self.target_time
+    }
+
+    /// 検証/テスト用に created_at を公開する read-only accessor。
+    pub fn created_at(&self) -> NaiveDateTime {
+        self.created_at
     }
 }
 

@@ -24,14 +24,14 @@ pub async fn insert_evaluated_record(
     data_cutoff_time: NaiveDateTime,
     target_time: NaiveDateTime,
 ) -> Result<DbPredictionRecord> {
-    let new_record = NewPredictionRecord::new(
+    let new_record = NewPredictionRecord::try_new(
         token.to_string(),
         quote_token.to_string(),
         BigDecimal::from(predicted_price),
         data_cutoff_time,
         target_time,
         data_cutoff_time,
-    );
+    )?;
 
     let actual = BigDecimal::from(actual_price);
     let predicted = BigDecimal::from(predicted_price);
@@ -103,13 +103,23 @@ pub async fn insert_unevaluated_record(
     .await
 }
 
-/// テスト用ヘルパー: `NewPredictionRecord::new` の caller-side assertion を
-/// バイパスして「壊れた」レコードを直接 DB に書き込む。
+/// テスト用ヘルパー: `NewPredictionRecord::try_new` の caller-side assertion を
+/// バイパスして「壊れた」レコードを直接 DB に書き込む (テスト専用、persistence
+/// crate 内のみで利用可能)。
 ///
-/// SQL レイヤの fresh-prediction filter (`target_time > created_at` 前提)
-/// を直接検証するため、本来 caller-side で弾かれるはずのレコードをあえて
-/// DB に投入する必要があるテスト専用。新規 production caller は必ず
-/// [`NewPredictionRecord::new`] 経由で構築すること。
+/// SQL レイヤの fresh-prediction filter を直接検証するため、本来 caller-side で
+/// 弾かれるはずのレコードをあえて DB に投入する必要があるテスト専用。新規
+/// production caller は必ず [`NewPredictionRecord::try_new`] 経由で構築すること
+/// (`pub(crate)` フィールドにより外部 crate からは struct literal 不可)。
+///
+/// # 制約 (Layer 3 DB CHECK 制約との関係)
+///
+/// `prediction_records` テーブルには `created_at >= data_cutoff_time` の
+/// CHECK 制約 (`NOT VALID`) が migration で追加されている。本ヘルパーは
+/// 構造体リテラルで caller-side 検証を bypass できるが、**`created_at <
+/// data_cutoff_time` 系違反は DB レイヤ (Layer 3) で弾かれて INSERT が失敗する**。
+/// 本ヘルパーで挿入できる違反パターンは `target_time <= created_at`
+/// (= horizon 系違反) のみ。
 pub async fn insert_invariant_violating_record(
     token: &str,
     quote_token: &str,
@@ -118,9 +128,10 @@ pub async fn insert_invariant_violating_record(
     target_time: NaiveDateTime,
     created_at: NaiveDateTime,
 ) -> Result<()> {
-    // 不変条件 (target_time > created_at, created_at >= data_cutoff_time) を
-    // あえて違反する想定なので、struct literal で構築して new() の debug_assert
-    // をバイパスする。
+    // `target_time <= created_at` 系の違反をあえて作るため、struct literal で
+    // `try_new` の Layer 1 検証をバイパスする (pub(crate) フィールドなので persistence
+    // crate 内に閉じている)。`created_at < data_cutoff_time` 系は Layer 3 (DB CHECK)
+    // で別途弾かれる。
     let new_record = NewPredictionRecord {
         token: token.to_string(),
         quote_token: quote_token.to_string(),
@@ -154,14 +165,14 @@ pub async fn insert_unevaluated_record_at(
     target_time: NaiveDateTime,
     created_at: NaiveDateTime,
 ) -> Result<()> {
-    let new_record = NewPredictionRecord::new(
+    let new_record = NewPredictionRecord::try_new(
         token.to_string(),
         quote_token.to_string(),
         BigDecimal::from(predicted_price),
         data_cutoff_time,
         target_time,
         created_at,
-    );
+    )?;
 
     let conn = connection_pool::get().await?;
     conn.interact(move |conn| {

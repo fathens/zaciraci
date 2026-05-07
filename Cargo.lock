@@ -2698,6 +2698,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "slog",
+ "thiserror",
  "tokio",
  "uuid",
 ]

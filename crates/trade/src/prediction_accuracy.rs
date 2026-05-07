@@ -106,27 +106,55 @@ fn calculate_composite_confidence(
     }
 }
 
+/// `build_prediction_records` で許容する skip 比率の上限。
+///
+/// 1 cycle 内で `try_new` が `Err` で skip された予測の比率がこの閾値を超えた場合、
+/// caller は systematic な data leakage / 環境異常 (NTP step backward 等) と判断
+/// して **当該 cycle 全体を abort** する。Markowitz 最適化が成立する最小トークン数
+/// (~5 銘柄) のうち 50% 以上が脱落 = portfolio 機能停止と等価のため、fail-loud で
+/// alert を発火させる。
+///
+/// **config 化禁止**: `CONFIG_STORE` / `DB_STORE` 経由で `0.0` 等を流し込まれると
+/// systematic violation 検知が無効化される DoS 経路になるため、named const で
+/// hard-code する。
+const SYSTEMATIC_VIOLATION_THRESHOLD: f64 = 0.5;
+
 /// BTreeMap から NewPredictionRecord の Vec を生成する（DB 非依存）。
+///
+/// `try_new` の `Err` (data leakage 不変条件違反) は当該 token を skip し、
+/// `error!` ログで alert 発火可能化する (Layer 1 fail-soft 防御)。
+/// 戻り値は `(records, skipped_count)`。
 fn build_prediction_records(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
     created_at: NaiveDateTime,
-) -> Vec<NewPredictionRecord> {
-    predictions
-        .iter()
-        .map(|(token, (price, data_cutoff_time))| {
-            let target_time =
-                *data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
-            NewPredictionRecord::new(
-                token.to_string(),
-                quote_token.to_string(),
-                price.as_bigdecimal().clone(),
-                *data_cutoff_time,
-                target_time,
-                created_at,
-            )
-        })
-        .collect()
+) -> (Vec<NewPredictionRecord>, usize) {
+    let log = DEFAULT.new(o!("function" => "build_prediction_records"));
+    let mut records = Vec::with_capacity(predictions.len());
+    let mut skipped = 0usize;
+    for (token, (price, data_cutoff_time)) in predictions.iter() {
+        let target_time =
+            *data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
+        match NewPredictionRecord::try_new(
+            token.to_string(),
+            quote_token.to_string(),
+            price.as_bigdecimal().clone(),
+            *data_cutoff_time,
+            target_time,
+            created_at,
+        ) {
+            Ok(record) => records.push(record),
+            Err(e) => {
+                // data leakage 経路を fail-loud に通知 (info!/warn! ではなく error!)。
+                // skip された予測は当該 token サイクルを欠落させ optimizer の weights を
+                // 変動させるため、alert 監視レベルで記録する必要がある。
+                error!(log, "skipping prediction record due to invariant violation";
+                    "token" => %token, "error" => %e);
+                skipped += 1;
+            }
+        }
+    }
+    (records, skipped)
 }
 
 /// 予測結果を prediction_records テーブルに記録する。
@@ -135,7 +163,12 @@ fn build_prediction_records(
 /// `Utc::now()` 相当、シミュレーションでは sim_day を渡すことで、engine の
 /// fresh-prediction 判定が両経路で同じセマンティクスを持つ。
 ///
-/// DB 操作: INSERT INTO prediction_records (トークン数分)
+/// `NewPredictionRecord::try_new` が `Err` を返した token は skip するが、
+/// skip 比率が [`SYSTEMATIC_VIOLATION_THRESHOLD`] を超えた場合は systematic
+/// violation と判断して `Err` で当該 cycle を abort する (Markowitz 最適化が
+/// 縮退する閾値)。
+///
+/// DB 操作: INSERT INTO prediction_records (skip 後のトークン数分)
 pub(crate) async fn record_predictions(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
@@ -143,7 +176,28 @@ pub(crate) async fn record_predictions(
 ) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
-    let records = build_prediction_records(predictions, quote_token, created_at);
+    let total = predictions.len();
+    let (records, skipped) = build_prediction_records(predictions, quote_token, created_at);
+
+    if total > 0 {
+        let skip_ratio = skipped as f64 / total as f64;
+        if skip_ratio > SYSTEMATIC_VIOLATION_THRESHOLD {
+            error!(log, "systematic prediction invariant violation; aborting cycle";
+                "skipped" => skipped, "total" => total, "ratio" => skip_ratio,
+                "threshold" => SYSTEMATIC_VIOLATION_THRESHOLD);
+            return Err(anyhow::anyhow!(
+                "data quality breakdown: {} of {} predictions skipped (ratio {:.2} > {:.2})",
+                skipped,
+                total,
+                skip_ratio,
+                SYSTEMATIC_VIOLATION_THRESHOLD
+            ));
+        }
+        if skipped > 0 {
+            warn!(log, "some predictions skipped due to invariant violation";
+                "skipped" => skipped, "total" => total);
+        }
+    }
 
     info!(log, "recording predictions"; "count" => records.len());
     PredictionRecord::batch_insert(&records).await?;

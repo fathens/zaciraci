@@ -336,15 +336,16 @@ fn test_new_prediction_record_target_time_with_past_data_cutoff() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token.clone(), (price, data_cutoff_time));
 
-    let records = build_prediction_records(&predictions, &quote_token, now);
+    let (records, skipped) = build_prediction_records(&predictions, &quote_token, now);
+    assert_eq!(skipped, 0);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
-    assert_eq!(record.data_cutoff_time, data_cutoff_time);
-    assert_eq!(record.target_time, expected_target_time);
+    assert_eq!(record.data_cutoff_time(), data_cutoff_time);
+    assert_eq!(record.target_time(), expected_target_time);
     // target_time は現在時刻より過去（6h前 + 24h = 18h後 → 未来だが、Utc::now() + 24h より6h早い）
     assert!(
-        record.target_time < now + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64),
+        record.target_time() < now + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64),
         "target_time should be earlier than now + 24h when data_cutoff_time is in the past"
     );
 }
@@ -365,14 +366,15 @@ fn test_new_prediction_record_target_time_far_in_past() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token, (price, data_cutoff_time));
 
-    let records = build_prediction_records(&predictions, &quote_token, now);
+    let (records, skipped) = build_prediction_records(&predictions, &quote_token, now);
+    assert_eq!(skipped, 0);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
-    assert_eq!(record.target_time, expected_target_time);
+    assert_eq!(record.target_time(), expected_target_time);
     // 3日前 + 24h = 2日前 → target_time は過去
     assert!(
-        record.target_time < now,
+        record.target_time() < now,
         "target_time should be in the past when data_cutoff_time is 3 days ago"
     );
 }

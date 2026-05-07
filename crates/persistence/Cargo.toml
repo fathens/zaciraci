@@ -18,6 +18,7 @@ diesel = { version = "2.2", features = ["postgres", "numeric", "chrono", "serde_
 deadpool-diesel = { version = "0.6", features = ["postgres"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 slog = { workspace = true }
+thiserror = { workspace = true }
 
 [features]
 mock = []
