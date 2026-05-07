@@ -331,6 +331,50 @@ fn calculate_direction_accuracy_for_records(
 /// 1回の DB クエリで全トークンのレコードを取得し、Rust 側でグルーピング。
 const MAX_PREDICTION_QUERY_LIMIT: i64 = 10_000;
 
+/// 指定トークン群の最近評価済み prediction_records を取得し、トークンごとに
+/// グルーピングして返す（`target_time DESC` ソート + `window` 件にトリム済み）。
+///
+/// `window` は呼び出し側で `cfg.prediction_accuracy_window().max(1)` などにより
+/// 1 以上にクランプ済みである前提（`debug_assert!` で検証）。
+///
+/// `BTreeMap` のキーが `String` なのは、`DbPredictionRecord::token` が DB 由来の
+/// `String` のままであり、ここで `TokenOutAccount` へ再パースするとパース失敗の
+/// エラーパス（DB データ汚損時のサイレント脱落）が新たに生じるため。プライベート
+/// ヘルパで型は外部に漏れず、内部的な lookup も `token.to_string()` で完結する。
+async fn fetch_records_grouped_by_token(
+    tokens: &[TokenOutAccount],
+    window: i64,
+    log: &slog::Logger,
+) -> Result<BTreeMap<String, Vec<DbPredictionRecord>>> {
+    debug_assert!(window >= 1, "window must be clamped to >= 1");
+
+    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
+    let raw_limit = window.saturating_mul(token_count);
+    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
+    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
+        warn!(log, "prediction query limit capped";
+            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
+            "tokens" => tokens.len(), "window" => window);
+    }
+    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
+        .await
+        .map_err(|e| {
+            warn!(log, "failed to get prediction records"; "error" => %e);
+            e
+        })?;
+
+    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
+    for r in all_records {
+        by_token.entry(r.token.clone()).or_default().push(r);
+    }
+    for entries in by_token.values_mut() {
+        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
+        entries.truncate(window as usize);
+    }
+
+    Ok(by_token)
+}
+
 /// 各トークンの平均 MAPE と方向正解率から複合 confidence を算出。
 ///
 /// 戻り値: Result<BTreeMap<TokenOutAccount, f64>>
@@ -444,29 +488,7 @@ pub(crate) async fn calculate_per_token_bias(
     let window = cfg.prediction_accuracy_window().max(1);
     let min_samples = cfg.prediction_accuracy_min_samples();
 
-    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
-    let raw_limit = window.saturating_mul(token_count);
-    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
-    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
-        warn!(log, "prediction query limit capped";
-            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
-            "tokens" => tokens.len(), "window" => window);
-    }
-    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
-        .await
-        .map_err(|e| {
-            warn!(log, "failed to get prediction records"; "error" => %e);
-            e
-        })?;
-
-    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
-    for r in all_records {
-        by_token.entry(r.token.clone()).or_default().push(r);
-    }
-    for entries in by_token.values_mut() {
-        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
-        entries.truncate(window as usize);
-    }
+    let by_token = fetch_records_grouped_by_token(tokens, window, &log).await?;
 
     let mut result = BTreeMap::new();
     for token in tokens {
@@ -566,29 +588,7 @@ pub(crate) async fn calculate_per_token_pred_err_variance(
     let window = cfg.prediction_accuracy_window().max(1);
     let min_samples = cfg.prediction_accuracy_min_samples();
 
-    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
-    let raw_limit = window.saturating_mul(token_count);
-    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
-    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
-        warn!(log, "prediction query limit capped";
-            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
-            "tokens" => tokens.len(), "window" => window);
-    }
-    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
-        .await
-        .map_err(|e| {
-            warn!(log, "failed to get prediction records"; "error" => %e);
-            e
-        })?;
-
-    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
-    for r in all_records {
-        by_token.entry(r.token.clone()).or_default().push(r);
-    }
-    for entries in by_token.values_mut() {
-        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
-        entries.truncate(window as usize);
-    }
+    let by_token = fetch_records_grouped_by_token(tokens, window, &log).await?;
 
     let mut result = BTreeMap::new();
     for token in tokens {
