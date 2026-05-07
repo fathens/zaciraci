@@ -667,9 +667,22 @@ define_typed_config! {
     /// Apply per-token bias correction to predicted prices before computing expected returns.
     /// When enabled, the median historical bias `(predicted - actual) / actual` is used to
     /// adjust the current prediction via `corrected = predicted / (1 + bias_clamped)`.
+    ///
+    /// # Default change history
+    ///
+    /// 2026-04: introduced as `default: false`.
+    /// 2026-04 (commit 3da237e): flipped to `default: true` together with
+    ///   `PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED` / `TRADE_COST_AWARE_RETURN_ENABLED`.
+    /// 2026-05: flipped back to `default: false` because the cost-aware /
+    ///   pred-err-diagonal pipeline ships with two known numerical limitations
+    ///   (Entry-from-cash exit-token under-pricing, Additive `k=0.1` collapsing
+    ///   diversification on low-volatility regimes); operators can re-enable
+    ///   per environment via `CONFIG_STORE` / `DB_STORE` / env, but the
+    ///   workspace default stays off until follow-up PRs land Δw-based cost
+    ///   accounting and correlation-preserving rescaling.
     fn trade_bias_correction_enabled() -> bool {
         key: "TRADE_BIAS_CORRECTION_ENABLED",
-        default: true
+        default: false
     }
 
     // ── arbitrage ──
@@ -796,9 +809,15 @@ define_typed_config! {
     /// Inflate covariance diagonal with prediction error variance per token.
     /// When enabled, the optimizer's risk evaluation incorporates per-token
     /// prediction accuracy (high MAPE → higher diagonal → smaller weight).
+    ///
+    /// # Default change history
+    ///
+    /// See `trade_bias_correction_enabled` for the rationale; this flag was
+    /// flipped together with the bias-correction and cost-aware-return flags
+    /// in 2026-04 (commit 3da237e) and reverted to `false` in 2026-05.
     fn portfolio_pred_err_diagonal_enabled() -> bool {
         key: "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED",
-        default: true
+        default: false
     }
 
     /// Scale factor `k` applied to prediction error variance in the diagonal
@@ -835,9 +854,15 @@ define_typed_config! {
 
     /// Deduct AMM fee + price impact + gas + storage + slippage from expected return
     /// before optimization, and run iterative optimization to converge weight↔cost.
+    ///
+    /// # Default change history
+    ///
+    /// See `trade_bias_correction_enabled` for the rationale; this flag was
+    /// flipped together with the bias-correction and pred-err-diagonal flags
+    /// in 2026-04 (commit 3da237e) and reverted to `false` in 2026-05.
     fn trade_cost_aware_return_enabled() -> bool {
         key: "TRADE_COST_AWARE_RETURN_ENABLED",
-        default: true
+        default: false
     }
 
     /// Maximum iterations for the cost-aware optimization loop.

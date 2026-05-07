@@ -65,14 +65,15 @@ pub struct RunArgs {
     #[arg(long)]
     pub generate_predictions: bool,
 
-    /// Enable per-token bias correction (improvement C). Defaults to true to
-    /// match the production config; pass `--bias-correction false` to disable.
-    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
+    /// Enable per-token bias correction (improvement C). Defaults to false to
+    /// match the production config (commit reverted in 2026-05); pass
+    /// `--bias-correction true` for A/B comparison runs.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
     pub bias_correction: bool,
 
     /// Enable prediction-error variance diagonal inflation (improvement 3).
-    /// Defaults to true; pass `--pred-err-diagonal false` to disable.
-    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
+    /// Defaults to false; pass `--pred-err-diagonal true` for A/B comparison.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
     pub pred_err_diagonal: bool,
 
     /// Scale factor `k` for the diagonal inflation rule (default 1.0)
@@ -84,8 +85,9 @@ pub struct RunArgs {
     pub pred_err_diagonal_mode: PredErrDiagonalMode,
 
     /// Enable cost-aware iterative optimization (improvement D). Defaults to
-    /// true; pass `--cost-aware-return false` to disable.
-    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
+    /// false to match the production config; pass `--cost-aware-return true`
+    /// for A/B comparison runs.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
     pub cost_aware_return: bool,
 
     /// Maximum iterations for cost-aware optimization (default 3)
