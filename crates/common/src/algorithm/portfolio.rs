@@ -32,22 +32,15 @@ impl PredErrDiagonalMode {
 }
 
 /// `PredErrDiagonalMode` 用のパースエラー（typo を silent に縮退させない）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsePredErrDiagonalModeError {
-    input: String,
-}
-
-impl std::fmt::Display for ParsePredErrDiagonalModeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "invalid PredErrDiagonalMode: {:?} (expected one of \"additive\", \"max\")",
-            self.input
-        )
-    }
-}
-
-impl std::error::Error for ParsePredErrDiagonalModeError {}
+///
+/// **input フィールドを意図的に持たない** unit struct。`Display` 実装は固定文字列で、
+/// attacker-controlled な入力値が `Display` 経由（`anyhow::Context` chain / `panic!`
+/// メッセージ / log forwarding 等）で漏洩する経路を型レベルで根絶する。失敗値の
+/// 復元は upstream 側で `validate_string` などにより redact 済みの reason に変換
+/// すること。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid PredErrDiagonalMode (value redacted; expected one of \"additive\", \"max\")")]
+pub struct ParsePredErrDiagonalModeError;
 
 impl std::str::FromStr for PredErrDiagonalMode {
     type Err = ParsePredErrDiagonalModeError;
@@ -56,9 +49,7 @@ impl std::str::FromStr for PredErrDiagonalMode {
         match s.trim().to_ascii_lowercase().as_str() {
             "additive" => Ok(Self::Additive),
             "max" => Ok(Self::Max),
-            _ => Err(ParsePredErrDiagonalModeError {
-                input: s.to_string(),
-            }),
+            _ => Err(ParsePredErrDiagonalModeError),
         }
     }
 }

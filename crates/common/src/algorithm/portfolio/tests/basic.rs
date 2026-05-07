@@ -1830,8 +1830,11 @@ fn pred_err_diagonal_mode_from_str_rejects_typos() {
 
     let err = PredErrDiagonalMode::from_str("addative").unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("addative"), "actual: {msg}");
+    // attacker-controlled input は Display には含めない（型レベルで redact 済み）。
+    assert!(!msg.contains("addative"), "input must be redacted: {msg}");
+    assert!(msg.contains("redacted"), "actual: {msg}");
     assert!(msg.contains("additive"), "actual: {msg}");
+    assert!(msg.contains("max"), "actual: {msg}");
 }
 
 #[test]
