@@ -12,7 +12,18 @@
 -- a hypothetical down/up cycle: the same prediction_records.id could be
 -- archived multiple times if the constraint is dropped, violators reappear,
 -- then the constraint is re-validated.
-CREATE TABLE prediction_records_quarantine (
+--
+-- IF NOT EXISTS guards `diesel migration redo`: the down migration deliberately
+-- preserves the quarantine table for forensic retention (see down.sql comment),
+-- so a subsequent up replay must accept the existing table without DDL conflict.
+-- INSERT below remains safe under replay because the composite PK includes
+-- quarantined_at DEFAULT NOW(), so re-archiving the same id produces a new row
+-- rather than a unique-violation.
+--
+-- TODO(security follow-up): once migration/runtime DB role separation is in
+-- place, REVOKE INSERT/UPDATE/DELETE/TRUNCATE on this table from the runtime
+-- role so forensic data cannot be tampered with by application code paths.
+CREATE TABLE IF NOT EXISTS prediction_records_quarantine (
     id              INTEGER          NOT NULL,
     token           VARCHAR          NOT NULL,
     quote_token     VARCHAR          NOT NULL,
