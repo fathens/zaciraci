@@ -150,6 +150,40 @@ fn test_compute_loss_ratio_clamps_negative_to_zero() {
 }
 
 #[test]
+fn test_compute_loss_ratio_micro_negative_silent_zero() {
+    // |ε| < 1e-9 域は浮動小数点ノイズとして silent に 0 化（warn しない）
+    let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
+    let output = NearValue::from_near(BigDecimal::from_str("1.0000000001").unwrap());
+    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+}
+
+#[test]
+fn test_compute_loss_ratio_at_warn_threshold_silent_zero() {
+    // raw = -1e-3 ちょうどは「閾値超え」ではないため warn しない（境界条件）。
+    // 返り値は 0.0 にクランプされる。
+    let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
+    let output = NearValue::from_near(BigDecimal::from_str("1.001").unwrap());
+    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+}
+
+#[test]
+fn test_compute_loss_ratio_above_warn_threshold_clamps_to_zero() {
+    // raw < -1e-3 → warn ログを出すが返り値は 0.0 にクランプ（挙動互換）。
+    // smoke test として panic せず 0 を返すことを確認する。
+    let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
+    let output = NearValue::from_near(BigDecimal::from_str("1.01").unwrap());
+    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+}
+
+#[test]
+fn test_compute_loss_ratio_far_above_warn_threshold_clamps_to_zero() {
+    // raw が大きく負（-1e-2 級）でも 0 にクランプ。warn が出るが返り値は変わらない。
+    let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
+    let output = NearValue::from_near(BigDecimal::from_str("1.05").unwrap());
+    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+}
+
+#[test]
 fn test_compute_loss_ratio_full_loss() {
     // output = 0 → loss = 100%
     let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());

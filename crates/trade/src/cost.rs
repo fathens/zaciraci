@@ -45,6 +45,16 @@ const STORAGE_MIN_SANE_CAP: u128 = 10 * 10u128.pow(24);
 /// 十分なマージンであり、これを超える場合は呼び出し側のロジック異常を示す。
 const MAX_NEW_TOKEN_COUNT: usize = 16;
 
+/// `compute_loss_ratio` が負値を「警告に値する」とみなす絶対値閾値
+///
+/// `(input - output) / input < -LOSS_RATIO_NEGATIVE_WARN_THRESHOLD` の場合、
+/// 浮動小数点ノイズでは説明しきれない大きさの「output > input」が観測されており、
+/// `spot_rate` と AMM 状態の inconsistency シグナルとして `warn!` を残す。
+/// それ以外の負値（絶対値が閾値以下のもの — `1e-9` 級の f64 変換ノイズから
+/// `-1e-4` 級のグレーゾーンまで）は数値誤差／AMM 内部丸めとして silent に 0 へ
+/// クランプし、運用ノイズを増やさない。
+const LOSS_RATIO_NEGATIVE_WARN_THRESHOLD: f64 = 1e-3;
+
 /// Markowitz に渡せる「正常値」を保証するコスト控除比率（return スケール）
 ///
 /// `CostDeduction::new` で `is_finite() && >= 0.0` 不変条件を満たした値のみ構築可能。
@@ -268,16 +278,32 @@ fn compute_variable_ratio(
 /// `(input - output) / input` を非負クランプして f64 で返す
 ///
 /// 数値誤差で出力が入力をわずかに上回る（負の loss）ケースは 0.0 にクランプ。
+///
+/// # observability
+///
+/// 負値が `-LOSS_RATIO_NEGATIVE_WARN_THRESHOLD`（= -1e-3）を下回る場合は
+/// 浮動小数点ノイズでは説明できない規模の「output > input」が観測されており、
+/// `spot_rate` と AMM 状態の inconsistency シグナルとして `warn!` ログを残す。
+/// 返り値自体はサイレント時と同じく 0.0 にクランプする（caller への挙動互換）。
 fn compute_loss_ratio(input_near: &NearValue, output_near: &NearValue) -> f64 {
     let input_bd = input_near.as_bigdecimal();
     if input_bd <= &BigDecimal::zero() {
         return 0.0;
     }
     let output_bd = output_near.as_bigdecimal();
-    ((input_bd - output_bd) / input_bd)
-        .to_f64()
-        .unwrap_or(0.0)
-        .max(0.0)
+    let raw = ((input_bd - output_bd) / input_bd).to_f64().unwrap_or(0.0);
+    if raw < -LOSS_RATIO_NEGATIVE_WARN_THRESHOLD {
+        let log = DEFAULT.new(o!("function" => "compute_loss_ratio"));
+        warn!(
+            log,
+            "loss ratio significantly negative; spot_rate / AMM state inconsistency suspected";
+            "raw" => raw,
+            "threshold" => -LOSS_RATIO_NEGATIVE_WARN_THRESHOLD,
+            "input_near" => %input_bd,
+            "output_near" => %output_bd,
+        );
+    }
+    raw.max(0.0)
 }
 
 #[cfg(test)]
