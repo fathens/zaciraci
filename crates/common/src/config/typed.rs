@@ -62,6 +62,19 @@ pub(crate) trait ConfigResolve: Sized {
     fn resolve(key: &str, default: Self::Default) -> Self;
     fn resolve_without_db(key: &str, default: Self::Default) -> Self;
     fn display_string(value: Self) -> std::string::String;
+
+    /// 文字列値が当該型として有効か検証する (Layer 0 用)。
+    ///
+    /// `persistence::config_store::reload_to_config` が DB から読んだ値を
+    /// `DB_STORE` に流入させる前に呼び、`Err` ならその key は load 対象から
+    /// 除外して slog `error!` ログを残す。これにより `resolve` 経路で不正値
+    /// に到達するのを根本的に防ぎ、enum 等の panic 経路を構造的に塞ぐ。
+    ///
+    /// default 実装は `Ok(())` を返す (数値型は別途 clamp で防御済み)。
+    /// enum 系などで「parse 失敗 = silent 縮退させたくない」型は override する。
+    fn validate_string(_s: &str) -> std::result::Result<(), std::string::String> {
+        Ok(())
+    }
 }
 
 impl ConfigResolve for bool {
@@ -168,31 +181,44 @@ impl ConfigResolve for anyhow::Result<String> {
 
 /// `PredErrDiagonalMode` の typed config 解決。
 ///
-/// 値が config に存在しない場合は `default` を返す。値が存在するが
-/// `FromStr` で parse 失敗した場合は **panic** する（typo を silent に
-/// 縮退させない fail-fast 設計、F007 対応）。
+/// 値が config に存在しない場合は `default` を返す。値が存在するが `FromStr`
+/// で parse 失敗した場合の挙動は **value source ごとに分岐** する:
 ///
-/// `error!` ログ + fallback は理想的だが `common` クレートは `logging`
-/// に循環依存できないため、起動時 panic を採用する。これは設定読み出し
-/// 直後（実質的に startup）に発火し、稼働中のトレード判断には影響しない。
+/// - `resolve` (CONFIG_STORE > DB_STORE > env > TOML 全経路): default fallback +
+///   `eprintln!` (input value は redact) で fail-soft にする。cron tick 毎に呼
+///   ばれる経路で panic すると persistent crash loop DoS (CRITICAL-2) になるため、
+///   `resolve` 内の panic は撤去済み。
+/// - `resolve_without_db` (env > TOML のみ、startup 限定パス): 不正値は panic で
+///   起動失敗にし sysadmin が即時気付ける運用にする (再起動 = 修正機会)。
 ///
-/// # ⚠️ 運用上の警告: DB_STORE による上書きは禁止
+/// # 防御層 (Layer 0 + Layer 1)
 ///
-/// このキー (`PORTFOLIO_PRED_ERR_DIAGONAL_MODE`) は **startup 後に DB の
-/// `config_store` 経由で書き換えてはならない**。`resolve` は不正な値で
-/// `panic!` する設計のため、DB に typo / 未対応バリアントが書き込まれた
-/// 瞬間から trade ループの次回読み出しで **runtime panic** が発火し、
-/// プロセスがクラッシュする。
+/// DB 経由の不正値は **Layer 0**: [`persistence::config_store::reload_to_config`]
+/// が [`Self::validate_string`] で事前検証して `DB_STORE` への流入を排除し、
+/// slog `error!` で構造化ログを残す。`common` クレートは `logging` に循環依存
+/// できないため、structured log 化は persistence 側で担う設計。
 ///
-/// 値の変更が必要な場合は環境変数 / TOML を更新して再起動する運用に統一し、
-/// DB_STORE の対象キーには含めないこと。
+/// **Layer 1** (本 impl): Layer 0 で排除しきれなかった env/TOML 由来の不正値を
+/// `resolve_without_db` で startup panic にする最後の砦。`resolve` 自体は cron
+/// tick で呼ばれる前提のため fail-soft (default fallback)。
 impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
     type Default = Self;
     const VALUE_TYPE: ConfigValueType = ConfigValueType::String;
     fn resolve(key: &str, default: Self) -> Self {
         match crate::config::store::get(key) {
             Ok(s) => s.parse().unwrap_or_else(|e| {
-                panic!("invalid config value for {key}: {e}");
+                // DB_STORE 経由の不正値は Layer 0 (persistence::config_store::reload_to_config)
+                // で `validate_string` 検証を経て排除されるため、ここに到達する経路は
+                // env/TOML 由来 (= startup-only) の不正値か、Layer 0 が適用される前の
+                // 起動時パスのみ。後者は `resolve_without_db` 側で panic させ、`resolve`
+                // 経路 (cron tick から呼ばれる) は default fallback で fail-soft にする
+                // (CRITICAL-2: cron tick 毎の crash loop DoS 防止)。
+                let _ = e;
+                eprintln!(
+                    "[CONFIG_ERROR] key={key} parse failed (value redacted); falling back to default {}",
+                    default.as_str()
+                );
+                default
             }),
             Err(_) => default,
         }
@@ -200,6 +226,10 @@ impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
     fn resolve_without_db(key: &str, default: Self) -> Self {
         match crate::config::store::get_excluding_db(key) {
             Ok(s) => s.parse().unwrap_or_else(|e| {
+                // env/TOML 経由の不正値は startup-only パスで sysadmin 制御下にあるため
+                // 起動失敗 (panic) で気付かせるのが妥当。`resolve` (DB含む) との非対称性は
+                // 意図的: DB_STORE 不正値は cron tick で繰り返し発火し crash loop DoS 化
+                // するため fail-soft、env/TOML は startup 1 回のみで再起動 = 修正機会。
                 panic!("invalid config value for {key}: {e}");
             }),
             Err(_) => default,
@@ -207,6 +237,13 @@ impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
     }
     fn display_string(value: Self) -> std::string::String {
         value.as_str().to_string()
+    }
+    fn validate_string(s: &str) -> std::result::Result<(), std::string::String> {
+        // 攻撃者制御の入力値を error message に含めない (log forwarding 経由漏洩防御):
+        // 失敗時のメッセージは「期待されたバリアント名」のみで input value を含まない。
+        s.parse::<crate::algorithm::portfolio::PredErrDiagonalMode>()
+            .map(|_| ())
+            .map_err(|_| "expected one of \"additive\", \"max\"".to_string())
     }
 }
 
@@ -916,6 +953,42 @@ define_typed_config! {
     }
 
     // ── persistence: database_url, pg_pool_size, instance_id moved to StartupConfig ──
+}
+
+/// DB_STORE への load 前に DB 由来の typed config 値を検証する (Layer 0)。
+///
+/// `persistence::config_store::reload_to_config` から呼ばれ、enum 系 typed config
+/// などで `parse` 失敗する不正値を `DB_STORE` に流入させずに除外する。除外された
+/// 値は呼び出し側で slog `error!` ログとして出力されるため、運用検知が遅れない。
+///
+/// `common` クレートは `logging` に循環依存できないため、structured log 化は
+/// persistence 側に任せる設計 (本関数は何が無効だったかを `Vec<(key, reason)>`
+/// で返すだけ)。
+///
+/// `configs` は不正値を除外した状態に書き換える (caller の `load_db_config` 直前
+/// で呼ぶ前提)。戻り値は `(key, reason)` のリストで、log 出力用。`reason` は
+/// 攻撃者制御値を含まず、期待形式の説明のみ (log forwarding 経由漏洩防御)。
+pub fn validate_db_configs(
+    configs: &mut std::collections::HashMap<std::string::String, std::string::String>,
+) -> Vec<(std::string::String, std::string::String)> {
+    let mut invalid = Vec::new();
+
+    // PORTFOLIO_PRED_ERR_DIAGONAL_MODE: enum 型の typo / 未対応バリアントを排除。
+    // ここを通さず DB_STORE に load すると、`PredErrDiagonalMode::resolve` が
+    // 呼ばれた cron tick で eprintln! + default fallback 経路が発火し、
+    // 構造化ログとして検知できなくなる。
+    const KEY_PRED_ERR_MODE: &str = "PORTFOLIO_PRED_ERR_DIAGONAL_MODE";
+    if let Some(v) = configs.get(KEY_PRED_ERR_MODE)
+        && let Err(reason) =
+            <crate::algorithm::portfolio::PredErrDiagonalMode as ConfigResolve>::validate_string(v)
+    {
+        invalid.push((KEY_PRED_ERR_MODE.to_string(), reason));
+    }
+
+    for (k, _) in &invalid {
+        configs.remove(k);
+    }
+    invalid
 }
 
 /// Hard-coded absolute ceiling for REF Finance storage auto top-up per cycle.

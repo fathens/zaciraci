@@ -765,11 +765,57 @@ fn test_portfolio_pred_err_diagonal_mode_override_additive_case_insensitive() {
 
 #[test]
 #[serial]
-#[should_panic(expected = "invalid config value for PORTFOLIO_PRED_ERR_DIAGONAL_MODE")]
-fn test_portfolio_pred_err_diagonal_mode_typo_panics() {
-    // F007: typo は silent fallback ではなく startup panic で検出する
+fn test_portfolio_pred_err_diagonal_mode_typo_falls_back_to_default_in_resolve() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+    // CRITICAL-2 (cron crash loop DoS) 対策: `resolve` 経路 (cron tick 毎に
+    // 呼ばれる) は typo で panic させず default fallback する。startup-only
+    // パス (`resolve_without_db`) では panic を維持する非対称設計の確認。
     let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_MODE", "addative");
-    let _ = typed().portfolio_pred_err_diagonal_mode();
+    let v = typed().portfolio_pred_err_diagonal_mode();
+    assert_eq!(v, PredErrDiagonalMode::Additive);
+}
+
+#[test]
+fn test_validate_db_configs_rejects_typo_pred_err_diagonal_mode() {
+    // Layer 0: 不正な enum 値が DB_STORE に流入する前に排除されることを確認。
+    let mut configs = std::collections::HashMap::new();
+    configs.insert(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_MODE".to_string(),
+        "addative".to_string(),
+    );
+    configs.insert("PORTFOLIO_COST_ITERATIONS_MAX".to_string(), "5".to_string());
+
+    let invalid = crate::config::validate_db_configs(&mut configs);
+
+    assert_eq!(invalid.len(), 1);
+    assert_eq!(invalid[0].0, "PORTFOLIO_PRED_ERR_DIAGONAL_MODE");
+    // reason は input value を含まない (log forwarding 経由漏洩防御)。
+    assert!(!invalid[0].1.contains("addative"));
+    assert!(invalid[0].1.contains("additive"));
+    assert!(invalid[0].1.contains("max"));
+
+    // configs から不正値だけ remove されている。
+    assert!(!configs.contains_key("PORTFOLIO_PRED_ERR_DIAGONAL_MODE"));
+    assert!(configs.contains_key("PORTFOLIO_COST_ITERATIONS_MAX"));
+}
+
+#[test]
+fn test_validate_db_configs_accepts_valid_pred_err_diagonal_mode() {
+    let mut configs = std::collections::HashMap::new();
+    configs.insert(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_MODE".to_string(),
+        "max".to_string(),
+    );
+
+    let invalid = crate::config::validate_db_configs(&mut configs);
+
+    assert!(invalid.is_empty());
+    assert_eq!(
+        configs
+            .get("PORTFOLIO_PRED_ERR_DIAGONAL_MODE")
+            .map(|s| s.as_str()),
+        Some("max")
+    );
 }
 
 #[test]
