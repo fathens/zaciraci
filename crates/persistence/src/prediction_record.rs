@@ -27,11 +27,44 @@ pub struct DbPredictionRecord {
 
 /// 予測レコード挿入用の値型。
 ///
-/// `created_at` は engine の "fresh prediction" 判定
-/// ([`PredictionRecord::earliest_fresh_visible_in`]) で domain time として
-/// 消費されるため、呼び出し側が明示的に与える。production では cron tick
-/// (`Utc::now()`)、シミュレーションでは `sim_day` を渡すことで、両方の経路で
-/// 「production 着信時刻 ≒ created_at」のセマンティクスが保たれる。
+/// # Caller responsibility
+///
+/// `created_at` は **monotonic な現在時刻** (= 予測を生成した瞬間のドメイン時刻)
+/// でなければならない。`created_at` は engine の "fresh prediction" 判定
+/// ([`PredictionRecord::earliest_fresh_visible_in`] / [`PredictionRecord::get_latest_fresh_predictions`])
+/// で domain time として消費される。呼び出し側のコンテキスト別に:
+///
+/// - production: cron tick の `chrono::Utc::now().naive_utc()`
+/// - シミュレーション: 当該シム時刻 (`sim_day`)
+///
+/// を渡すことで、両経路で「production 着信時刻 ≒ created_at」のセマンティクスが
+/// 保たれる。
+///
+/// # Data leakage paths
+///
+/// `created_at` の設定を誤ると以下の data leakage が発生し、金融的に致命的:
+///
+/// - `created_at` が **未来日付** (= `data_cutoff_time` より進みすぎている / 実際の
+///   生成時刻より未来) → バックテストで `as_of` 以後に作成された予測が "as_of 時点
+///   で既に visible" として選ばれ、optimizer が未来情報を学習してしまう経路
+///   (period 21 の simulate 乖離の原因と同型)。
+/// - `created_at` が **過去日付** (= `data_cutoff_time` 以前) → 「データ取得時刻
+///   より古い予測」として扱われ、本来 `as_of` 時点では存在しなかった予測を fresh
+///   と誤認する経路。
+///
+/// 不変条件 `created_at >= data_cutoff_time` は production / simulation の両経路で
+/// 常に成立する (predict は cutoff 以後に走るため)。
+///
+/// もう一つの不変条件 `target_time > data_cutoff_time` (= prediction horizon > 0)
+/// は horizon 0 以下の壊れた予測を caller-side で弾くためのもの。SQL
+/// fresh-prediction filter ([`PredictionRecord::earliest_fresh_visible_in`]) は
+/// `target_time > created_at` というより厳格な条件を要求するが、production では
+/// stale data (24h 以上古いデータ) からの予測で `target_time < created_at` が
+/// 成立し得る (現行設計では SQL filter で除外する)。caller-side では horizon
+/// 正値のみを必須条件とし、SQL filter 側の判定に委ねる。
+///
+/// [`NewPredictionRecord::new`] は両不変条件を `debug_assert!` で検証し、違反を
+/// CI / 開発時に早期検出する (release では消える caller-trust ガード)。
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
@@ -41,6 +74,42 @@ pub struct NewPredictionRecord {
     pub data_cutoff_time: NaiveDateTime,
     pub target_time: NaiveDateTime,
     pub created_at: NaiveDateTime,
+}
+
+impl NewPredictionRecord {
+    /// 予測レコード挿入用の値を構築する (推奨経路)。
+    ///
+    /// `created_at >= data_cutoff_time` を `debug_assert!` で検証する。
+    /// この不変条件と data leakage 経路の詳細は型レベルの docstring を参照。
+    /// 構造体リテラルで構築すると assertion を回避できるため、
+    /// 新規呼び出しは必ずこのコンストラクタ経由にすること。
+    pub fn new(
+        token: String,
+        quote_token: String,
+        predicted_price: BigDecimal,
+        data_cutoff_time: NaiveDateTime,
+        target_time: NaiveDateTime,
+        created_at: NaiveDateTime,
+    ) -> Self {
+        debug_assert!(
+            created_at >= data_cutoff_time,
+            "created_at ({created_at}) must be >= data_cutoff_time ({data_cutoff_time}); \
+             violation indicates a data-leakage path (see NewPredictionRecord docstring)"
+        );
+        debug_assert!(
+            target_time > data_cutoff_time,
+            "target_time ({target_time}) must be > data_cutoff_time ({data_cutoff_time}); \
+             prediction horizon must be positive (horizon ≤ 0 indicates a broken record)"
+        );
+        Self {
+            token,
+            quote_token,
+            predicted_price,
+            data_cutoff_time,
+            target_time,
+            created_at,
+        }
+    }
 }
 
 pub struct PredictionRecord;

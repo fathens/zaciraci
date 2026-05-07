@@ -522,9 +522,11 @@ async fn test_earliest_fresh_visible_filters_stale_target() -> Result<()> {
     let day_end = base + chrono::TimeDelta::days(1);
 
     // 過去予測 (target_time が created_at と同時刻 → fresh ではない)
+    // `target_time > created_at` 不変条件を意図的に違反するため raw 挿入を使う。
+    // SQL filter が caller-side assertion の defense-in-depth として機能することを確認する。
     let stale_created = base + chrono::TimeDelta::minutes(5);
     let stale_target = stale_created;
-    insert_unevaluated_record_at(
+    insert_invariant_violating_record(
         token,
         quote,
         100,

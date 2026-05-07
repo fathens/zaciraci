@@ -39,14 +39,14 @@ async fn deletes_existing_predictions_in_range() {
 
     // テスト用レコードを事前挿入（範囲内の target_time）
     let mid_target = start_naive + chrono::TimeDelta::hours(12);
-    let record = persistence::prediction_record::NewPredictionRecord {
-        token: "test_del.near".to_string(),
-        quote_token: "wrap.near".to_string(),
-        predicted_price: bigdecimal::BigDecimal::from(100),
-        data_cutoff_time: start_naive - chrono::TimeDelta::hours(24),
-        target_time: mid_target,
-        created_at: start_naive - chrono::TimeDelta::hours(24),
-    };
+    let record = persistence::prediction_record::NewPredictionRecord::new(
+        "test_del.near".to_string(),
+        "wrap.near".to_string(),
+        bigdecimal::BigDecimal::from(100),
+        start_naive - chrono::TimeDelta::hours(24),
+        mid_target,
+        start_naive - chrono::TimeDelta::hours(24),
+    );
     PredictionRecord::batch_insert(&[record])
         .await
         .expect("insert test record");

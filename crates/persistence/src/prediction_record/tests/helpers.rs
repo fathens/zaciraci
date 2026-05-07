@@ -24,14 +24,14 @@ pub async fn insert_evaluated_record(
     data_cutoff_time: NaiveDateTime,
     target_time: NaiveDateTime,
 ) -> Result<DbPredictionRecord> {
-    let new_record = NewPredictionRecord {
-        token: token.to_string(),
-        quote_token: quote_token.to_string(),
-        predicted_price: BigDecimal::from(predicted_price),
+    let new_record = NewPredictionRecord::new(
+        token.to_string(),
+        quote_token.to_string(),
+        BigDecimal::from(predicted_price),
         data_cutoff_time,
         target_time,
-        created_at: data_cutoff_time,
-    };
+        data_cutoff_time,
+    );
 
     let actual = BigDecimal::from(actual_price);
     let predicted = BigDecimal::from(predicted_price);
@@ -103,6 +103,45 @@ pub async fn insert_unevaluated_record(
     .await
 }
 
+/// テスト用ヘルパー: `NewPredictionRecord::new` の caller-side assertion を
+/// バイパスして「壊れた」レコードを直接 DB に書き込む。
+///
+/// SQL レイヤの fresh-prediction filter (`target_time > created_at` 前提)
+/// を直接検証するため、本来 caller-side で弾かれるはずのレコードをあえて
+/// DB に投入する必要があるテスト専用。新規 production caller は必ず
+/// [`NewPredictionRecord::new`] 経由で構築すること。
+pub async fn insert_invariant_violating_record(
+    token: &str,
+    quote_token: &str,
+    predicted_price: i64,
+    data_cutoff_time: NaiveDateTime,
+    target_time: NaiveDateTime,
+    created_at: NaiveDateTime,
+) -> Result<()> {
+    // 不変条件 (target_time > created_at, created_at >= data_cutoff_time) を
+    // あえて違反する想定なので、struct literal で構築して new() の debug_assert
+    // をバイパスする。
+    let new_record = NewPredictionRecord {
+        token: token.to_string(),
+        quote_token: quote_token.to_string(),
+        predicted_price: BigDecimal::from(predicted_price),
+        data_cutoff_time,
+        target_time,
+        created_at,
+    };
+
+    let conn = connection_pool::get().await?;
+    conn.interact(move |conn| {
+        diesel::insert_into(prediction_records::table)
+            .values(&new_record)
+            .execute(conn)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+    Ok(())
+}
+
 /// テスト用ヘルパー: `created_at` を明示的に指定して未評価レコードを挿入
 ///
 /// data leakage シナリオ (`created_at` が `as_of` より新しい予測を引かないこと)
@@ -115,14 +154,14 @@ pub async fn insert_unevaluated_record_at(
     target_time: NaiveDateTime,
     created_at: NaiveDateTime,
 ) -> Result<()> {
-    let new_record = NewPredictionRecord {
-        token: token.to_string(),
-        quote_token: quote_token.to_string(),
-        predicted_price: BigDecimal::from(predicted_price),
+    let new_record = NewPredictionRecord::new(
+        token.to_string(),
+        quote_token.to_string(),
+        BigDecimal::from(predicted_price),
         data_cutoff_time,
         target_time,
         created_at,
-    };
+    );
 
     let conn = connection_pool::get().await?;
     conn.interact(move |conn| {

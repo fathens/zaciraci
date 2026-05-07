@@ -117,14 +117,14 @@ fn build_prediction_records(
         .map(|(token, (price, data_cutoff_time))| {
             let target_time =
                 *data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
-            NewPredictionRecord {
-                token: token.to_string(),
-                quote_token: quote_token.to_string(),
-                predicted_price: price.as_bigdecimal().clone(),
-                data_cutoff_time: *data_cutoff_time,
+            NewPredictionRecord::new(
+                token.to_string(),
+                quote_token.to_string(),
+                price.as_bigdecimal().clone(),
+                *data_cutoff_time,
                 target_time,
                 created_at,
-            }
+            )
         })
         .collect()
 }
