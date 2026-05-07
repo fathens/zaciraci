@@ -147,6 +147,27 @@ where
 /// `CostDeduction::new` の不変条件 (`is_finite() && >= 0.0`) を満たさない値は
 /// `estimation_failures` 経路に合流し、Markowitz には渡らない（NaN cascade 防止）。
 /// NaN な weight も入口で 0.0 にクランプして混入を排除する。
+///
+/// # コストモデル: Entry-from-cash
+///
+/// 取引額として **`target_w` 全体**（`total_value_yocto × weights[i]`）を
+/// 用いる。これは「現在 100% cash で保有しており、これから target portfolio を
+/// 一括構築する」という Entry-from-cash モデルに相当する。実運用では既に保有
+/// 中の銘柄について差分 `Δw = target_w - current_w` 分しか swap しないため、
+/// 本関数は in-place rebalance 時には実コストを過大評価する。
+///
+/// バイアスの方向は経路ごとに異なる:
+/// - **entry / increase 経路** (`current_w < target_w`): 実 entry 量は
+///   `Δw < target_w` だが本関数は `target_w` で計算するため、コストを
+///   過大評価する（保守的方向）。
+/// - **exit / decrease 経路** (`current_w > target_w`、特に全 exit で
+///   `target_w = 0`): `assumed_in = total_value × target_w = 0` となり
+///   SELL コストが一切計上されない経路がある。こちらは実コストを
+///   **過小評価**する（非保守的方向）。
+///
+/// したがって entry 経路では「回らない取引を打ってしまう」リスクは
+/// 抑えられているが、exit 経路ではその保証がない。Δw ベース再構成で
+/// 両方向のコストを正確に扱うのは別 PR の対象。
 fn compute_cost_deductions(
     weights: &[f64],
     tokens: &[TokenData],

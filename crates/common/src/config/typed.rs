@@ -175,6 +175,17 @@ impl ConfigResolve for anyhow::Result<String> {
 /// `error!` ログ + fallback は理想的だが `common` クレートは `logging`
 /// に循環依存できないため、起動時 panic を採用する。これは設定読み出し
 /// 直後（実質的に startup）に発火し、稼働中のトレード判断には影響しない。
+///
+/// # ⚠️ 運用上の警告: DB_STORE による上書きは禁止
+///
+/// このキー (`PORTFOLIO_PRED_ERR_DIAGONAL_MODE`) は **startup 後に DB の
+/// `config_store` 経由で書き換えてはならない**。`resolve` は不正な値で
+/// `panic!` する設計のため、DB に typo / 未対応バリアントが書き込まれた
+/// 瞬間から trade ループの次回読み出しで **runtime panic** が発火し、
+/// プロセスがクラッシュする。
+///
+/// 値の変更が必要な場合は環境変数 / TOML を更新して再起動する運用に統一し、
+/// DB_STORE の対象キーには含めないこと。
 impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
     type Default = Self;
     const VALUE_TYPE: ConfigValueType = ConfigValueType::String;

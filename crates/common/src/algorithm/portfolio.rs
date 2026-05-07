@@ -508,8 +508,23 @@ pub fn damp_and_diff(
 ///
 /// `k * pred_err_var` が元の `cov[i,i]` と同オーダー以上になる設定
 /// (例: `k=1.0`, `mape=20%` → `pev=0.04` ≫ daily price var ~10⁻⁴)
-/// では銘柄間相関が事実上無視されるため、本 PR では default を
-/// `Additive` + `k=0.1`（影響を 1/10 に抑制）にしている。
+/// では銘柄間相関が事実上無視される。本 PR の default は
+/// `Additive` + `k=0.1` だが、これでも `0.1 × 0.04 = 4×10⁻³` の
+/// 加算は daily price var ~10⁻⁴ に対して **実効 ~40× の対角インフレ**
+/// に相当し、`cov[i,j]/sqrt(cov[i,i]*cov[j,j])` で見た implied
+/// correlation は事実上 0 まで圧縮される。すなわち現行 default 下では
+/// Markowitz の diversification benefit はほぼ失われていると解釈すべき。
+///
+/// 上記の試算は `daily price var ~10⁻⁴`（年率 30% 相当、`HIGH_VOLATILITY_THRESHOLD`
+/// 付近）を仮定したもの。altcoin など高 volatility 銘柄（年率 80-150%）
+/// では daily var ~10⁻³ となり、対角インフレは `(10⁻³ + 4×10⁻³)/10⁻³ ≈ 5×`
+/// に緩和される。すなわち実効インフレ倍率は対象銘柄の volatility に強く
+/// 依存し、低 volatility 銘柄ほど相関破壊が激しい。
+///
+/// この影響を緩和するには (a) `k` をさらに下げて daily price var の
+/// オーダーまで揃える、または (b) 下記の correlation-preserving
+/// rescaling を実装する、のいずれかが必要。**default 変更も rescaling
+/// 実装も本 PR のスコープ外**で、別 PR にて対応する。
 ///
 /// 相関構造を保ったまま inflate したい場合は、別途
 /// `D = diag(sqrt(new_diag/old_diag))` を構築して

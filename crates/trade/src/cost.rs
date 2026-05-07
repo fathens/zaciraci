@@ -257,6 +257,14 @@ fn clamp_storage_min(storage_min_per_token: &YoctoValue) -> u128 {
 ///
 /// `(input_NEAR - output_NEAR_via_spot_rate) / input_NEAR` で AMM fee と price
 /// impact を一括計算し、`EXPECTED_SLIPPAGE_DEDUCTION` を加算して返す。
+///
+/// # モデル上の仮定
+///
+/// **Entry 片道のみを計上**する。rebalance で生じる exit 側の swap コストは
+/// この値には含まれない。これは「rebalance 周期 >> 予測 horizon」を仮定
+/// した近似であり、保有期間中に予測リターンで exit コストを十分回収できる
+/// 前提に立つ。短期回転の戦略では往復コストへの拡張が必要だが、現行の
+/// trade ループはこの前提下で運用されている。
 fn compute_variable_ratio(
     path: &TokenPath,
     assumed_in: &YoctoValue,
