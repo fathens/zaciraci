@@ -155,8 +155,13 @@ impl TradeCostBreakdown {
         let fixed_near = self.fixed_cost.to_near();
         let position_near = assumed_position.to_near();
         let ratio_bd = fixed_near.as_bigdecimal() / position_near.as_bigdecimal();
+        // `BigDecimal::to_f64` は値が大きすぎて f64 に収まらない場合に `None` を
+        // 返す。`?` で `None` 経路は `NonFiniteRatio` として伝播するため、以降の
+        // `ratio` は有限性が保証されており再検査は不要。
         let ratio = ratio_bd.to_f64().ok_or(CostError::NonFiniteRatio)?;
-        if !ratio.is_finite() || !self.variable_ratio.is_finite() {
+        // `variable_ratio` は self の別経路（`compute_variable_ratio`）から来る
+        // 独立なフィールドのため、`ratio` の有限性とは別ラインで検査する。
+        if !self.variable_ratio.is_finite() {
             return Err(CostError::NonFiniteRatio);
         }
         let total = self.variable_ratio + ratio;
