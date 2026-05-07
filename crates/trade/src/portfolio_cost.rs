@@ -198,10 +198,17 @@ fn compute_cost_deductions(
         };
         // 直前の `is_finite() && w >= 0.0` ガードにより、`w` は有限非負の
         // f64 に正規化済み。`BigDecimal::from_f64` は NaN/Infinity でのみ
-        // None を返す仕様のため、ここでは必ず Some を返す。silent な 0
-        // 縮退で Markowitz に偽の取引額を流入させないよう fail-fast する。
-        let w_bd =
-            BigDecimal::from_f64(w).expect("finite non-negative f64 always converts to BigDecimal");
+        // None を返す仕様のため、ここでは必ず Some を返す。`expect` ではなく
+        // `unreachable!` で「論理的に到達不能」であることを明示する
+        // (`expect` は呼出側の不変条件違反を表現するイディオムで、ここは
+        // ガード後の純粋関数 `BigDecimal::from_f64` の仕様に基づく不可達
+        // を表現する別の意図のため)。silent な 0 縮退で Markowitz に偽の
+        // 取引額を流入させないよう fail-fast する。
+        let Some(w_bd) = BigDecimal::from_f64(w) else {
+            unreachable!(
+                "BigDecimal::from_f64({w}) returned None despite is_finite() && w >= 0.0 guard"
+            );
+        };
         let assumed_in_bd = total_value_yocto * w_bd;
         let assumed_in = YoctoValue::from_yocto(assumed_in_bd);
 
