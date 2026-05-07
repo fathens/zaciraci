@@ -7,6 +7,8 @@ use common::types::{TokenInAccount, TokenOutAccount};
 use dex::{TokenPairLike, TokenPath};
 use logging::*;
 use near_gas::NearGas;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// swap の固定ガス（パス先頭の関数呼び出し）
 const HEAD_GAS: NearGas = NearGas::from_ggas(2700);
@@ -32,6 +34,14 @@ const BY_STEP_GAS: NearGas = NearGas::from_ggas(2600);
 /// 防御される。
 const GAS_YOCTO_SANE_CAP: u128 = 10u128.pow(23);
 
+/// cap clamp warn の最短再 emit 間隔（秒）。持続的攻撃下でも 60 秒に 1 回は
+/// signal が残るよう調整。
+const GAS_CAP_WARN_INTERVAL_SECS: u64 = 60;
+
+/// 直前に cap clamp warn を emit した Unix 秒 (epoch second)。
+/// `0` は未 emit を意味する。
+static GAS_CAP_LAST_WARN_UNIX: AtomicU64 = AtomicU64::new(0);
+
 /// 指定 depth の swap で消費するガス料金を yoctoNEAR を u128 で算出する SSoT。
 ///
 /// `(HEAD + BY_STEP * depth) * gas_price` を saturating 算術で計算し、
@@ -39,26 +49,50 @@ const GAS_YOCTO_SANE_CAP: u128 = 10u128.pow(23);
 /// [`estimate_swap_gas_cost_yocto`] と private な [`Preview::cost`] が共に
 /// この関数を経由するため、計算式と cap 適用は完全に一致する。
 ///
-/// cap が発動した場合は `warn!` を `std::sync::Once` で一度だけ emit し、
-/// 攻撃検知シグナルを残しつつホットパス連発を防ぐ。
+/// cap が発動した場合は `warn!` を [`GAS_CAP_WARN_INTERVAL_SECS`] 間隔で
+/// rate-limited に emit する。`std::sync::Once` 方式は 1 回しか発火しない
+/// ため持続的な敵対 RPC 応答が「ある日急に portfolio が equal-weight になった」
+/// 等の症状調査時に observable signal を残せない問題があった。
+/// `AtomicU64 + compare_exchange` で「前回 emit から N 秒経過」を判定する。
 fn swap_gas_cost_yocto_u128(gas_price: GasPrice, depth: usize) -> u128 {
     let gas = HEAD_GAS
         .as_gas()
         .saturating_add(BY_STEP_GAS.as_gas().saturating_mul(depth as u64));
     let raw = (gas as u128).saturating_mul(gas_price.to_balance());
     if raw > GAS_YOCTO_SANE_CAP {
-        static CAP_WARN: std::sync::Once = std::sync::Once::new();
-        CAP_WARN.call_once(|| {
-            let log = DEFAULT.new(o!("function" => "swap_gas_cost_yocto_u128"));
-            warn!(log, "gas yocto clamped to sane cap";
-                "raw" => raw,
-                "cap" => GAS_YOCTO_SANE_CAP,
-                "depth" => depth,
-                "gas_price_yocto" => gas_price.to_balance(),
-            );
-        });
+        emit_cap_warn_rate_limited(raw, depth, gas_price);
     }
     raw.min(GAS_YOCTO_SANE_CAP)
+}
+
+/// cap clamp 発動時の warn を [`GAS_CAP_WARN_INTERVAL_SECS`] 間隔で emit する。
+///
+/// `compare_exchange` で「前回 emit 時刻 → 今の時刻」への CAS が成功した
+/// thread だけが warn を emit する。並列 thread が同時に発火条件を満たした
+/// 場合でも 1 thread のみ通過し他は静かに退避する。
+fn emit_cap_warn_rate_limited(raw: u128, depth: usize, gas_price: GasPrice) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let last = GAS_CAP_LAST_WARN_UNIX.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < GAS_CAP_WARN_INTERVAL_SECS {
+        return;
+    }
+    if GAS_CAP_LAST_WARN_UNIX
+        .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let log = DEFAULT.new(o!("function" => "swap_gas_cost_yocto_u128"));
+    warn!(log, "gas yocto clamped to sane cap";
+        "raw" => raw,
+        "cap" => GAS_YOCTO_SANE_CAP,
+        "depth" => depth,
+        "gas_price_yocto" => gas_price.to_balance(),
+        "rate_limit_secs" => GAS_CAP_WARN_INTERVAL_SECS,
+    );
 }
 
 /// 指定 depth の swap で消費するガス料金を yoctoNEAR で見積もる。
