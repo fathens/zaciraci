@@ -121,7 +121,13 @@ impl PortfolioData {
     /// 数値不整合を起こすリスクがある。本メソッドは不変条件
     /// 「token-indexed な全フィールドが `retain` の集合に閉じている」
     /// を 1 箇所で保証する（defense-in-depth）。
-    pub fn retain_tokens(&mut self, retain: &HashSet<TokenOutAccount>) {
+    ///
+    /// production では `retain_excluding` のみ使用。本メソッドは
+    /// 「保持集合 ↔ 除外集合」の対称テスト
+    /// (`retain_excluding_is_inverse_of_retain_tokens`) で
+    /// 等価性を担保するために残す `#[cfg(test)]` 専用 API。
+    #[cfg(test)]
+    pub(crate) fn retain_tokens(&mut self, retain: &HashSet<TokenOutAccount>) {
         self.tokens.retain(|t| retain.contains(&t.symbol));
         self.predictions.retain(|k, _| retain.contains(k));
         self.historical_prices.retain(|k, _| retain.contains(k));
