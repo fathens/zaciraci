@@ -21,9 +21,25 @@
 -- quarantined_at DEFAULT NOW(), so re-archiving the same id produces a new row
 -- rather than a unique-violation.
 --
--- TODO(security follow-up): once migration/runtime DB role separation is in
--- place, REVOKE INSERT/UPDATE/DELETE/TRUNCATE on this table from the runtime
--- role so forensic data cannot be tampered with by application code paths.
+-- TODO(security follow-up, role-separation): once migration/runtime DB role
+-- separation is in place (separate `*_migration` and `*_runtime` PostgreSQL
+-- roles), add a follow-up migration that runs:
+--
+--     REVOKE INSERT, UPDATE, DELETE, TRUNCATE
+--     ON prediction_records_quarantine FROM <runtime_role>;
+--
+-- Forensic / audit-trail integrity rationale: this table archives violators
+-- of the data-leakage invariant (created_at >= data_cutoff_time). If the
+-- runtime role is ever compromised (RPC injection, dependency CVE, app-level
+-- SQLi), the attacker could DELETE / UPDATE rows here to erase evidence of
+-- look-ahead-bias incidents. Restricting writes to the migration role only
+-- removes that erasure path while still allowing forensic SELECT queries
+-- by the runtime role for postmortem.
+--
+-- Tracking: file a GitHub issue under the "security follow-up" label and
+-- replace this TODO with `TODO(#NNN, ...)` once the issue exists. The
+-- prerequisite (DB role separation) is owned separately; this REVOKE
+-- migration must be merged together with or after that work.
 CREATE TABLE IF NOT EXISTS prediction_records_quarantine (
     id              INTEGER          NOT NULL,
     token           VARCHAR          NOT NULL,
