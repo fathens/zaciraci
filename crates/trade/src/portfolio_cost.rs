@@ -26,10 +26,11 @@ use common::algorithm::portfolio::{
 };
 use common::algorithm::types::{TokenData, WalletInfo};
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount, YoctoValue};
-use dex::TokenPath;
+use dex::{PoolInfoList, TokenPath};
 use logging::*;
 use near_sdk::AccountId;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 /// 収束判定の重み変化量しきい値（max |Δw| < 1e-3 で収束扱い）
 const CONVERGENCE_TOLERANCE: f64 = 1e-3;
@@ -75,10 +76,15 @@ pub(crate) enum CostAwareOutcome {
 }
 
 /// `PortfolioCostInputs::collect`：path / rate / gas_price / 既存 deposit を収集
+///
+/// `pools` は呼び出し側 (`execute_portfolio_strategy`) で 1 サイクル中に
+/// 1 度だけ取得した snapshot を共有する。同一サイクル内で `pool_info` を
+/// 二重に読まない (TOCTOU 解消) ためにこの引数で注入する。
 pub(crate) async fn collect_cost_inputs<C>(
     client: &C,
     account: &AccountId,
     tokens: &[TokenData],
+    pools: &Arc<PoolInfoList>,
 ) -> Result<PortfolioCostInputs>
 where
     C: ViewContract + GasInfo,
@@ -91,8 +97,7 @@ where
     let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
     let existing_deposits: HashSet<TokenAccount> = deposits.into_keys().collect();
 
-    let pools = persistence::pool_info::read_from_db(None).await?;
-    let graph = blockchain::ref_finance::path::graph::TokenGraph::new(pools);
+    let graph = blockchain::ref_finance::path::graph::TokenGraph::new(Arc::clone(pools));
     let wnear_in: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN
         .clone()
         .to_in();

@@ -129,9 +129,13 @@ pub async fn run_prediction_cycle(
     let log = DEFAULT.new(o!("function" => "run_prediction_cycle"));
 
     // 1. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
+    // 予測サイクル内では pool_info を 1 度だけ snapshot し、
+    // ボラティリティ判定・流動性フィルタが同一プール状態を観測することを保証する。
     let prediction_service = predict::PredictionService::new(cfg)?;
+    let pool_snapshot = persistence::pool_info::read_from_db(None).await?;
     let target_tokens =
-        strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg).await?;
+        strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg, &pool_snapshot)
+            .await?;
 
     info!(log, "prediction targets selected"; "count" => target_tokens.len());
 

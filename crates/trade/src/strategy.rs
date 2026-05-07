@@ -147,10 +147,19 @@ where
     let is_new_period = result.is_new_period;
     let existing_tokens = result.existing_tokens;
 
+    // pool_info を 1 サイクルにつき 1 度だけ snapshot し、以降の処理は
+    // すべてこの Arc を共有することで TOCTOU を排除する
+    // （F008 / F025）。同じスナップショットを `select_top_volatility_tokens`
+    // と `execute_portfolio_strategy` に渡すことで、ボラティリティ判定と
+    // コスト見積りが同一プール状態を観測することを保証する。
+    let pool_snapshot = persistence::pool_info::read_from_db(None).await?;
+
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
         // 新規期間: 新しくトークンを選定
-        let tokens = select_top_volatility_tokens(&prediction_service, current_time, cfg).await?;
+        let tokens =
+            select_top_volatility_tokens(&prediction_service, current_time, cfg, &pool_snapshot)
+                .await?;
 
         // 選定したトークンをデータベースに保存
         if !tokens.is_empty() {
@@ -229,6 +238,7 @@ where
         period_id: &period_id,
         end_date: current_time,
         cfg,
+        pools: &pool_snapshot,
     };
     let (actions, expected_returns) =
         match execute_portfolio_strategy(&params, client, wallet).await {
@@ -331,13 +341,17 @@ where
 }
 
 /// トップボラティリティトークンの選定 (PredictionServiceを使用)
+///
+/// `pools` は呼び出し側で取得した pool_info snapshot を共有する。
+/// 同一サイクル内で `pool_info` を二重に読まない (TOCTOU 解消) ため。
 pub async fn select_top_volatility_tokens(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
+    pools: &Arc<dex::PoolInfoList>,
 ) -> Result<Vec<AccountId>> {
     let limit = cfg.trade_top_tokens() as usize;
-    select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit)).await
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit), pools).await
 }
 
 /// 全対象トークンの予測用リストを生成（流動性フィルタ適用、上限なし）
@@ -345,23 +359,30 @@ pub async fn select_top_volatility_tokens(
 /// `select_top_volatility_tokens()` と同じフィルタ（ボラティリティ＋流動性＋グラフ到達性）
 /// を適用するが、上位N個への切り詰めを行わず全対象を返す。
 /// 予測フェーズで全対象トークンの価格予測を実行するために使用。
+///
+/// `pools` は呼び出し側で取得した pool_info snapshot を共有する。
 pub(crate) async fn select_prediction_target_tokens(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
+    pools: &Arc<dex::PoolInfoList>,
 ) -> Result<Vec<AccountId>> {
-    select_volatility_tokens_inner(prediction_service, end_date, cfg, None).await
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, None, pools).await
 }
 
 /// ボラティリティトークン選定の共通ロジック
 ///
 /// ボラティリティ順にトークンを取得し、流動性フィルタ＋グラフ到達性フィルタを適用。
 /// `limit` が `Some(n)` なら上位N個に切り詰め、`None` なら全件返す。
+///
+/// `pools` は呼び出し側で 1 サイクル中に 1 度だけ取得した snapshot。
+/// 内部で再度 `pool_info::read_from_db` を呼ばず、TOCTOU を排除する。
 async fn select_volatility_tokens_inner(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
     limit: Option<usize>,
+    pools: &Arc<dex::PoolInfoList>,
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "select_volatility_tokens"));
 
@@ -387,7 +408,6 @@ async fn select_volatility_tokens_inner(
 
     debug!(log, "volatility tokens selected"; "count" => tokens.len(), "limit" => ?limit);
 
-    let pools = persistence::pool_info::read_from_db(None).await?;
     let min_liquidity = NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
     let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
     let wnear_in: TokenInAccount = wnear.to_in();
@@ -395,7 +415,7 @@ async fn select_volatility_tokens_inner(
 
     apply_liquidity_filter_and_select(
         tokens,
-        &pools,
+        pools,
         &latest_rates,
         &wnear,
         &wnear_in,
@@ -413,6 +433,10 @@ pub(crate) struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
     pub(crate) period_id: &'a str,
     pub(crate) end_date: chrono::DateTime<chrono::Utc>,
     pub(crate) cfg: &'a Cfg,
+    /// 1 サイクル中に 1 度だけ取得した pool_info snapshot。
+    /// `select_top_volatility_tokens` と `collect_cost_inputs` で同一 snapshot を
+    /// 共有することで TOCTOU を排除する（F008 / F025）。
+    pub(crate) pools: &'a Arc<dex::PoolInfoList>,
 }
 
 /// ポートフォリオ戦略の実行
@@ -907,14 +931,20 @@ where
             return Ok((vec![TradingAction::Hold], BTreeMap::new()));
         }
 
-        let cost_inputs =
-            match collect_cost_inputs(client, wallet.account_id(), &portfolio_data.tokens).await {
-                Ok(inputs) => inputs,
-                Err(e) => {
-                    warn!(log, "cost inputs collection failed, holding"; "error" => %e);
-                    return Ok((vec![TradingAction::Hold], BTreeMap::new()));
-                }
-            };
+        let cost_inputs = match collect_cost_inputs(
+            client,
+            wallet.account_id(),
+            &portfolio_data.tokens,
+            params.pools,
+        )
+        .await
+        {
+            Ok(inputs) => inputs,
+            Err(e) => {
+                warn!(log, "cost inputs collection failed, holding"; "error" => %e);
+                return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+            }
+        };
 
         // path 不在 token を最適化対象から除外（A2: upstream filter）。
         // INFINITY 注入は `box_maximize_sharpe` の Cholesky 後段で NaN 連鎖を
