@@ -474,6 +474,25 @@ fn clamp_portfolio_cost_iteration_damping(v: f64) -> f64 {
     }
 }
 
+/// Lower bound for [`ConfigAccess::prediction_accuracy_min_samples`].
+///
+/// `0` would let per-token statistics (`calculate_per_token_bias`,
+/// `calculate_per_token_pred_err_variance`) operate on an empty sample slice
+/// and divide by zero (NaN) or hit the `compute_median` empty-input guard.
+/// At least one sample is required for the aggregations to be defined.
+const PREDICTION_ACCURACY_MIN_SAMPLES_LOWER: usize = 1;
+
+/// Idempotent clamp applied to `prediction_accuracy_min_samples` reads.
+///
+/// `usize` cannot represent negative values or `NaN`, so the only failure
+/// mode is `0`, which is mapped up to
+/// [`PREDICTION_ACCURACY_MIN_SAMPLES_LOWER`]. This protects the per-token
+/// aggregation gates (`if samples.len() < min_samples { continue; }`) from
+/// degenerating into "always pass through with zero samples".
+fn clamp_min_samples(v: usize) -> usize {
+    v.max(PREDICTION_ACCURACY_MIN_SAMPLES_LOWER)
+}
+
 define_typed_config! {
     // ── trade ──
 
@@ -844,10 +863,18 @@ define_typed_config! {
         default: 20
     }
 
-    /// Min samples needed for accuracy evaluation
+    /// Min samples needed for accuracy evaluation.
+    ///
+    /// **Defense-in-depth (F004)**: clamped to
+    /// `[PREDICTION_ACCURACY_MIN_SAMPLES_LOWER, usize::MAX]` (currently
+    /// `[1, usize::MAX]`) at the read boundary. `0` is mapped up to `1` so
+    /// that the per-token aggregation gates (`if samples.len() < min_samples
+    /// { continue; }`) cannot pass through with an empty sample slice and
+    /// divide by zero (NaN) or hit the `compute_median` empty-input guard.
     fn prediction_accuracy_min_samples() -> usize {
         key: "PREDICTION_ACCURACY_MIN_SAMPLES",
-        default: 5
+        default: 5,
+        clamp: clamp_min_samples
     }
 
     /// MAPE threshold for excellent predictions

@@ -406,24 +406,24 @@ fn test_predicted_price_large_value_roundtrip() {
 #[test]
 fn test_compute_median_odd_length() {
     let values = [-0.05, 0.0, 0.05, 0.10, 0.20];
-    assert_eq!(compute_median(&values), 0.05);
+    assert_eq!(compute_median(&values), Some(0.05));
 }
 
 #[test]
 fn test_compute_median_even_length() {
     let values = [-0.10, -0.05, 0.05, 0.10];
-    let m = compute_median(&values);
+    let m = compute_median(&values).expect("non-empty");
     assert!((m - 0.0).abs() < 1e-12, "expected 0.0, got {m}");
 }
 
 #[test]
 fn test_compute_median_single_element() {
-    assert_eq!(compute_median(&[0.42]), 0.42);
+    assert_eq!(compute_median(&[0.42]), Some(0.42));
 }
 
 #[test]
 fn test_compute_median_two_elements() {
-    let m = compute_median(&[0.1, 0.3]);
+    let m = compute_median(&[0.1, 0.3]).expect("non-empty");
     assert!((m - 0.2).abs() < 1e-12, "expected 0.2, got {m}");
 }
 
@@ -431,13 +431,14 @@ fn test_compute_median_two_elements() {
 fn test_compute_median_outlier_robustness() {
     // 中央値は外れ値に頑健: 一つの極端値があっても結果は中央近傍
     let values = [-0.01, 0.0, 0.01, 0.02, 100.0];
-    assert_eq!(compute_median(&values), 0.01);
+    assert_eq!(compute_median(&values), Some(0.01));
 }
 
 #[test]
-#[should_panic(expected = "compute_median requires non-empty input")]
-fn test_compute_median_empty_panics_in_debug() {
-    let _ = compute_median(&[]);
+fn test_compute_median_empty_returns_none() {
+    // F004: defense-in-depth — release ビルドでも panic させずに None を返す。
+    // `min_samples` クランプで通常は到達しないが、想定外経路の安全弁。
+    assert_eq!(compute_median(&[]), None);
 }
 
 // --- correct_prediction ---

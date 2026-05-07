@@ -397,9 +397,9 @@ pub(crate) async fn calculate_per_token_confidence(
             continue;
         }
 
-        // NOTE: min_samples >= 1（デフォルト 5）であるため mape_values は非空。
-        // 仮に min_samples == 0 に設定された場合でもゼロ除算は NaN → mape_to_confidence
-        // の NaN ガードで confidence = 0.0（安全側）になる。
+        // NOTE: F004 の `clamp_min_samples` で `min_samples >= 1` が保証され、
+        // 直前の `mape_values.len() < min_samples` ガードを通過した時点で
+        // `mape_values` は非空。万一 0 に設定されてもクランプで 1 に丸められる。
         let avg_mape = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
 
         let direction_data = records.map(|rs| calculate_direction_accuracy_for_records(rs, &log));
@@ -496,7 +496,19 @@ pub(crate) async fn calculate_per_token_bias(
         // The filter_map above keeps only `is_finite` values, so NaN cannot
         // appear here; `total_cmp` provides a zero-cost total order anyway.
         bias_values.sort_by(|a, b| a.total_cmp(b));
-        let median = compute_median(&bias_values);
+        let Some(median) = compute_median(&bias_values) else {
+            // Logic-bug indicator: bias_values is non-empty (length passed
+            // the `< min_samples` gate, and `min_samples >= 1` after the
+            // typed-config clamp) so `compute_median` should always return
+            // `Some`. Skip the token instead of panicking; warn so the
+            // unexpected path is observable in production logs.
+            warn!(log, "compute_median returned None despite passing min_samples gate, excluding token";
+                "token" => %token_str,
+                "samples" => bias_values.len(),
+                "min_samples" => min_samples
+            );
+            continue;
+        };
 
         debug!(log, "token prediction bias";
             "token" => %token_str,
@@ -512,18 +524,19 @@ pub(crate) async fn calculate_per_token_bias(
 /// ソート済みスライスの中央値を計算する。
 ///
 /// 偶数長は中央 2 要素の平均、奇数長は中央要素を返す。
-/// 空入力は debug ビルドで panic。
-fn compute_median(sorted: &[f64]) -> f64 {
-    debug_assert!(
-        !sorted.is_empty(),
-        "compute_median requires non-empty input"
-    );
+/// 空入力には `None` を返す（F004: defense-in-depth — `min_samples` クランプで
+/// 通常はここに到達しないが、想定外経路で空 slice が渡されても release で
+/// panic させない安全弁として）。
+fn compute_median(sorted: &[f64]) -> Option<f64> {
     let n = sorted.len();
-    if n.is_multiple_of(2) {
+    if n == 0 {
+        return None;
+    }
+    Some(if n.is_multiple_of(2) {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     } else {
         sorted[n / 2]
-    }
+    })
 }
 
 /// 各トークンの **mean squared relative error (MSRE)** を計算する。

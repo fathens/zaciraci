@@ -1029,3 +1029,61 @@ fn test_clamp_portfolio_cost_iteration_damping_is_idempotent() {
     let nan_twice = clamp_portfolio_cost_iteration_damping(nan_once);
     assert_eq!(nan_once, nan_twice);
 }
+
+// ── F004: prediction_accuracy_min_samples clamp ──
+
+#[test]
+#[serial]
+fn test_prediction_accuracy_min_samples_default_is_above_lower() {
+    let _env = EnvGuard::remove("PREDICTION_ACCURACY_MIN_SAMPLES");
+    crate::config::store::remove("PREDICTION_ACCURACY_MIN_SAMPLES");
+    let v = typed().prediction_accuracy_min_samples();
+    assert!(
+        v >= PREDICTION_ACCURACY_MIN_SAMPLES_LOWER,
+        "default {v} must be >= {PREDICTION_ACCURACY_MIN_SAMPLES_LOWER}"
+    );
+}
+
+#[test]
+#[serial]
+fn test_prediction_accuracy_min_samples_zero_clamped_to_lower() {
+    let _guard = ConfigGuard::new("PREDICTION_ACCURACY_MIN_SAMPLES", "0");
+    assert_eq!(
+        typed().prediction_accuracy_min_samples(),
+        PREDICTION_ACCURACY_MIN_SAMPLES_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_prediction_accuracy_min_samples_passthrough_above_lower() {
+    let _guard = ConfigGuard::new("PREDICTION_ACCURACY_MIN_SAMPLES", "7");
+    assert_eq!(typed().prediction_accuracy_min_samples(), 7);
+}
+
+#[test]
+fn test_prediction_accuracy_min_samples_mock_override_is_clamped() {
+    let mut mock = MockConfig::new();
+    mock.prediction_accuracy_min_samples = Some(0);
+    assert_eq!(
+        mock.prediction_accuracy_min_samples(),
+        PREDICTION_ACCURACY_MIN_SAMPLES_LOWER,
+    );
+
+    let mut mock = MockConfig::new();
+    mock.prediction_accuracy_min_samples = Some(12);
+    assert_eq!(mock.prediction_accuracy_min_samples(), 12);
+}
+
+#[test]
+fn test_clamp_min_samples_is_idempotent() {
+    for v in [0usize, 1, 5, 1000] {
+        let once = clamp_min_samples(v);
+        let twice = clamp_min_samples(once);
+        assert_eq!(
+            once, twice,
+            "clamp_min_samples must be idempotent (input={v})"
+        );
+        assert!(once >= PREDICTION_ACCURACY_MIN_SAMPLES_LOWER);
+    }
+}
