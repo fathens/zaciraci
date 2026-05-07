@@ -84,6 +84,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    prediction_records_quarantine (id, quarantined_at) {
+        id -> Int4,
+        token -> Varchar,
+        quote_token -> Varchar,
+        predicted_price -> Numeric,
+        data_cutoff_time -> Timestamp,
+        target_time -> Timestamp,
+        actual_price -> Nullable<Numeric>,
+        mape -> Nullable<Float8>,
+        absolute_error -> Nullable<Numeric>,
+        evaluated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        quarantined_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     token_rates (id) {
         id -> Int4,
         base_token -> Varchar,
@@ -118,6 +135,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     pool_info,
     portfolio_holdings,
     prediction_records,
+    prediction_records_quarantine,
     token_rates,
     trade_transactions,
 );
