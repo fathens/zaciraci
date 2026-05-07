@@ -1050,6 +1050,20 @@ fn test_portfolio_cost_iteration_damping_passthrough_in_range() {
 
 #[test]
 #[serial]
+fn test_portfolio_cost_iteration_damping_zero_clamped_to_lower() {
+    // Defense-in-depth: damping=0.0 freezes damp_and_diff (next = 1·prev + 0·candidate)
+    // and run_cost_aware_optimization breaks at iter 1 via max_diff < CONVERGENCE_TOLERANCE,
+    // silently disabling cost-aware return. The lower bound is 0.1 to block this.
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "0.0");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert_eq!(
+        v, PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+        "damping=0.0 must be clamped up to LOWER (={PORTFOLIO_COST_ITERATION_DAMPING_LOWER}) to prevent silent cost-aware no-op"
+    );
+}
+
+#[test]
+#[serial]
 fn test_portfolio_cost_iteration_damping_mock_override_is_clamped() {
     let mut mock = MockConfig::new();
     mock.portfolio_cost_iteration_damping = Some(f64::NAN);

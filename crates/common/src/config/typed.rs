@@ -470,11 +470,25 @@ const PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER: f64 = 100.0;
 
 /// Lower bound for [`ConfigAccess::portfolio_cost_iteration_damping`].
 ///
-/// `0.0` freezes the iterate at its initial state, which is a degenerate but
-/// not unsafe configuration; values below `0.0` would invert the update and
-/// push the iterate away from the candidate, breaking the convergence
-/// invariant of `damp_and_diff` (`next = (1 - α) × prev + α × candidate`).
-const PORTFOLIO_COST_ITERATION_DAMPING_LOWER: f64 = 0.0;
+/// `0.1` keeps `damp_and_diff` (`next = (1 - α) × prev + α × candidate`)
+/// progressing meaningfully toward the candidate at every iteration. Below this:
+///
+/// - `α = 0.0` freezes the iterate at the initial uniform `1/n` weights,
+///   which makes `run_cost_aware_optimization` break out at iteration 1 via
+///   `max_diff < CONVERGENCE_TOLERANCE` (= 1e-3) — `cost_deductions` are then
+///   never propagated into the optimizer, silently disabling cost-aware return.
+///   A DB-write attacker injecting `PORTFOLIO_COST_ITERATION_DAMPING = 0.0`
+///   would defeat the cost defense without any observable signal.
+/// - `α ∈ (0.0, 0.1)` produces a step weak enough that with the production
+///   `iterations_max = 10`, the iterate covers under ~40 % of the distance to
+///   the candidate (e.g. α = 0.05 ⇒ ~40 % cumulative progress) — a "degraded
+///   but not stopped" mode harder to detect than the full freeze and still
+///   meaningfully blunting the cost defense. `0.1` is the minimum that keeps
+///   the iteration behavior recognizably converging.
+///
+/// Values below `0.0` would invert the update and push the iterate away from
+/// the candidate, breaking the convergence invariant.
+pub const PORTFOLIO_COST_ITERATION_DAMPING_LOWER: f64 = 0.1;
 
 /// Upper bound for [`ConfigAccess::portfolio_cost_iteration_damping`].
 ///
@@ -483,7 +497,7 @@ const PORTFOLIO_COST_ITERATION_DAMPING_LOWER: f64 = 0.0;
 /// `damp_and_diff` already clamps internally; we reject them here so the
 /// effective value displayed by `resolve_all_without_db` matches what the
 /// optimizer actually uses.
-const PORTFOLIO_COST_ITERATION_DAMPING_UPPER: f64 = 1.0;
+pub const PORTFOLIO_COST_ITERATION_DAMPING_UPPER: f64 = 1.0;
 
 /// Fallback value applied when [`ConfigAccess::portfolio_cost_iteration_damping`]
 /// resolves to `NaN`.
@@ -896,9 +910,14 @@ define_typed_config! {
     ///
     /// **Defense-in-depth (F003)**: clamped to
     /// `[PORTFOLIO_COST_ITERATION_DAMPING_LOWER, PORTFOLIO_COST_ITERATION_DAMPING_UPPER]`
-    /// (currently `[0.0, 1.0]`) at the read boundary. `NaN` is mapped to
-    /// [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] (`0.5`) so an injected
-    /// non-finite value does not abort the optimization in `damp_and_diff`.
+    /// (currently `[0.1, 1.0]`) at the read boundary. The lower bound is `0.1`
+    /// rather than `0.0` to block the silent disable mode where `α = 0` (or
+    /// `α ∈ (0, 0.1)`) freezes — or barely advances — the iterate so that
+    /// `cost_deductions` never feed back into the optimizer; see
+    /// [`PORTFOLIO_COST_ITERATION_DAMPING_LOWER`] for the full attack mechanism.
+    /// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`]
+    /// (`0.5`) so an injected non-finite value does not abort the optimization
+    /// in `damp_and_diff`.
     fn portfolio_cost_iteration_damping() -> f64 {
         key: "PORTFOLIO_COST_ITERATION_DAMPING",
         default: 0.5,

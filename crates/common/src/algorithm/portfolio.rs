@@ -447,6 +447,12 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
 /// `damping` は内部で `[0.0, 1.0]` にクランプされる（不正値での発散を防ぐ pure 不変条件）。
 /// 収束判定 (`tolerance`) や反復制御は呼び出し側に委ねる。
 ///
+/// 呼び出し側 (`run_cost_aware_optimization`) では `damping ∈ [0.1, 1.0]` を仮定して
+/// よい (`PORTFOLIO_COST_ITERATION_DAMPING_LOWER` の typed-config clamp により保証)。
+/// `damping = 0.0` だと `next == current` で `max_diff = 0` となり、収束判定
+/// (`max_diff < CONVERGENCE_TOLERANCE`) で iter 1 即 break する silent disable
+/// 経路が生まれるため typed config 側で 0.0 を弾く。
+///
 /// # Errors
 ///
 /// `damping` または `current_weights` / `candidate_weights` のいずれかの要素が

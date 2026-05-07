@@ -966,12 +966,17 @@ where
         let total_value_yocto = wallet_info.total_value.to_yocto();
         let max_iter = cfg.portfolio_cost_iterations_max() as usize;
         // Defense-in-depth: `portfolio_cost_iteration_damping` is already clamped
-        // to `[0, 1]` (with `NaN → 0.5`) at the typed-config read boundary, and
-        // `damp_and_diff` clamps internally as well. This third clamp guards
-        // against future regressions where the typed-config layer might be
-        // bypassed (e.g. a direct `cfg.read("...")` call). Idempotent — no-op
-        // when both upstream guards are intact.
-        let damping = cfg.portfolio_cost_iteration_damping().clamp(0.0, 1.0);
+        // to `[LOWER, UPPER]` (with `NaN → 0.5`) at the typed-config read
+        // boundary, and `damp_and_diff` clamps internally as well. This third
+        // clamp guards against future regressions where the typed-config layer
+        // might be bypassed (e.g. a direct `cfg.read("...")` call). Idempotent —
+        // no-op when both upstream guards are intact. The bounds are imported
+        // from `common::config` so the three layers stay in sync if the values
+        // are tightened (e.g. raising `LOWER` to block silent disable modes).
+        let damping = cfg.portfolio_cost_iteration_damping().clamp(
+            common::config::PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+            common::config::PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+        );
 
         match run_cost_aware_optimization(
             &wallet_info,
