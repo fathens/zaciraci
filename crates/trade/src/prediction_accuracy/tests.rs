@@ -522,6 +522,84 @@ fn test_correct_prediction_zero_predicted_returns_none() {
 
 // --- mape_to_squared_return ---
 
+// --- group_records_by_token ---
+
+fn make_grouping_record(id: i32, token: &str, target_offset_hours: i64) -> DbPredictionRecord {
+    let base = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+        .unwrap()
+        .naive_utc();
+    DbPredictionRecord {
+        id,
+        token: token.to_string(),
+        quote_token: "wrap.near".to_string(),
+        predicted_price: BigDecimal::from(100),
+        data_cutoff_time: base,
+        target_time: base + chrono::TimeDelta::hours(target_offset_hours),
+        actual_price: Some(BigDecimal::from(100)),
+        mape: Some(1.0),
+        absolute_error: Some(BigDecimal::from(0)),
+        evaluated_at: Some(base + chrono::TimeDelta::hours(target_offset_hours + 1)),
+        created_at: base,
+    }
+}
+
+#[test]
+fn test_group_records_by_token_groups_by_token_string() {
+    let records = vec![
+        make_grouping_record(1, "a.near", 1),
+        make_grouping_record(2, "b.near", 1),
+        make_grouping_record(3, "a.near", 2),
+    ];
+    let by_token = group_records_by_token(records, 10);
+    assert_eq!(by_token.len(), 2);
+    assert_eq!(by_token.get("a.near").map(Vec::len), Some(2));
+    assert_eq!(by_token.get("b.near").map(Vec::len), Some(1));
+}
+
+#[test]
+fn test_group_records_by_token_sorts_target_time_desc() {
+    // 時刻順序が逆順に与えられても target_time DESC で並ぶこと
+    let records = vec![
+        make_grouping_record(1, "a.near", 1),
+        make_grouping_record(2, "a.near", 5),
+        make_grouping_record(3, "a.near", 3),
+    ];
+    let by_token = group_records_by_token(records, 10);
+    let entries = by_token.get("a.near").expect("a.near must be grouped");
+    assert_eq!(entries[0].id, 2, "id 2 (target+5h) should be first");
+    assert_eq!(entries[1].id, 3, "id 3 (target+3h) should be second");
+    assert_eq!(entries[2].id, 1, "id 1 (target+1h) should be third");
+}
+
+#[test]
+fn test_group_records_by_token_truncates_to_window() {
+    // window=2 で先頭 2 件 (target_time DESC) のみ残ること
+    let records = vec![
+        make_grouping_record(1, "a.near", 1),
+        make_grouping_record(2, "a.near", 5),
+        make_grouping_record(3, "a.near", 3),
+    ];
+    let by_token = group_records_by_token(records, 2);
+    let entries = by_token.get("a.near").expect("a.near must be grouped");
+    assert_eq!(entries.len(), 2, "must truncate to window");
+    assert_eq!(entries[0].id, 2);
+    assert_eq!(entries[1].id, 3);
+}
+
+#[test]
+fn test_group_records_by_token_window_zero_truncates_all() {
+    // window=0 で全エントリ truncate（caller の clamp に委ねる前提だが境界条件）
+    let records = vec![make_grouping_record(1, "a.near", 1)];
+    let by_token = group_records_by_token(records, 0);
+    assert_eq!(by_token.get("a.near").map(Vec::len), Some(0));
+}
+
+#[test]
+fn test_group_records_by_token_empty_input() {
+    let by_token = group_records_by_token(vec![], 10);
+    assert!(by_token.is_empty());
+}
+
 #[test]
 fn test_mape_to_squared_return_typical_values() {
     // 1% mape → (0.01)² = 1e-4

@@ -420,16 +420,28 @@ async fn fetch_records_grouped_by_token(
             e
         })?;
 
+    Ok(group_records_by_token(all_records, window as usize))
+}
+
+/// `all_records` を token 文字列でグルーピングし、各グループを `target_time DESC`
+/// で並び替えてから先頭 `window` 件に切り詰める純粋関数。
+///
+/// `fetch_records_grouped_by_token` から DB 呼び出し以外を切り出したもの。DB
+/// モックなしで単体テスト可能にし、`window` truncate と sort 安定性のロジックを
+/// 直接検証する。
+fn group_records_by_token(
+    all_records: Vec<DbPredictionRecord>,
+    window: usize,
+) -> BTreeMap<String, Vec<DbPredictionRecord>> {
     let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
     for r in all_records {
         by_token.entry(r.token.clone()).or_default().push(r);
     }
     for entries in by_token.values_mut() {
         entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
-        entries.truncate(window as usize);
+        entries.truncate(window);
     }
-
-    Ok(by_token)
+    by_token
 }
 
 /// 各トークンの平均 MAPE と方向正解率から複合 confidence を算出。
