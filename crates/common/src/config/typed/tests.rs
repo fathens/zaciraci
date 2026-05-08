@@ -843,6 +843,41 @@ fn test_validate_db_configs_rejects_typo_pred_err_diagonal_mode() {
     assert!(configs.contains_key("PORTFOLIO_COST_ITERATIONS_MAX"));
 }
 
+/// 網羅性テスト: 既知の enum 型 typed config キーは全て validate_db_configs で
+/// 検証されること。
+///
+/// 検出原理: 各 enum キーに対して **そのキーの enum で絶対に成立しない値**
+/// (token が `__definitely_invalid__`) を流し込み、`invalid` リストに含まれる
+/// ことを確認する。新規 enum 型 config を追加した場合は本リストにも追加し、
+/// `validate_db_configs` への登録を強制する。
+///
+/// 軽量代替: 完全なマクロベースの自動登録 (architecture S2) は中規模リファクタ
+/// のため follow-up とし、本 PR では「キーを追加し忘れたら CI で気づける」
+/// 最低限のリストとして機能させる。
+const KNOWN_ENUM_CONFIG_KEYS: &[&str] = &[
+    // 新規 enum 型 typed config を追加したら本リストに追加し、
+    // validate_db_configs にも検証ロジックを追加すること。
+    "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
+];
+
+#[test]
+fn test_validate_db_configs_handles_all_known_enum_keys() {
+    for key in KNOWN_ENUM_CONFIG_KEYS {
+        let mut configs = std::collections::HashMap::new();
+        configs.insert(key.to_string(), "__definitely_invalid__".to_string());
+        let invalid = crate::config::validate_db_configs(&mut configs);
+        assert!(
+            invalid.iter().any(|(k, _)| k == key),
+            "validate_db_configs missed enum key {key}; \
+             register validation in `validate_db_configs` (typed.rs)"
+        );
+        assert!(
+            !configs.contains_key(*key),
+            "invalid value for {key} must be removed from configs"
+        );
+    }
+}
+
 #[test]
 fn test_validate_db_configs_accepts_valid_pred_err_diagonal_mode() {
     let mut configs = std::collections::HashMap::new();
