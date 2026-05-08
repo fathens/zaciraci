@@ -115,8 +115,8 @@ pub async fn insert_unevaluated_record(
 /// # 制約 (Layer 3 DB CHECK 制約との関係)
 ///
 /// `prediction_records` テーブルには `created_at >= data_cutoff_time` の
-/// CHECK 制約 (`NOT VALID`) が migration で追加されている。本ヘルパーは
-/// 構造体リテラルで caller-side 検証を bypass できるが、**`created_at <
+/// validated CHECK 制約が migration で追加されている。本ヘルパーは構造体
+/// リテラルで caller-side 検証を bypass できるが、**`created_at <
 /// data_cutoff_time` 系違反は DB レイヤ (Layer 3) で弾かれて INSERT が失敗する**。
 /// 本ヘルパーで挿入できる違反パターンは `target_time <= created_at`
 /// (= horizon 系違反) のみ。

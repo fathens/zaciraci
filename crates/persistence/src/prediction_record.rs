@@ -61,13 +61,20 @@ pub struct DbPredictionRecord {
 /// - **Layer 2** (`pub(crate)` フィールド可視性): 外部 crate からの構造体リテラル
 ///   bypass を構造的に防止し、`try_new` を唯一の構築経路に強制する。**コンパイル
 ///   時防御**。
-/// - **Layer 3** (DB CHECK 制約 `NOT VALID`): PostgreSQL の `created_at_geq_data_cutoff`
+/// - **Layer 3** (DB CHECK 制約): PostgreSQL の `created_at_geq_data_cutoff`
 ///   CHECK 制約が全 INSERT/UPDATE 経路 (Diesel / raw SQL / psql 直接 / DBA 操作 /
 ///   migration backfill) を強制カバーする。**production の唯一の包括的防御線**。
+///   現行 migration (`2026-05-07-000000_add_prediction_invariant_check`) は
+///   validated CHECK として一括導入される (preflight.sql で違反行を triage 後、
+///   up.sql で `ADD CONSTRAINT ... CHECK`)。テーブル成長時には NOT VALID + 別
+///   migration で VALIDATE への再分割を follow-up で予定。
 /// - **Layer 4** (SQL fresh-prediction filter): [`PredictionRecord::earliest_fresh_visible_in`] /
 ///   [`PredictionRecord::get_latest_fresh_predictions`] が `created_at >= data_cutoff_time`
-///   と `target_time > created_at` を read 時に強制し、過去 DB 既存行 (migration 前
-///   レガシーデータ) に対する **read-time defense-in-depth**。
+///   と `target_time > created_at` を read 時に強制する **read-time defense-in-depth**。
+///   Layer 3 が現行で validated でも、(a) `down.sql` で CHECK を drop した直後の
+///   rollback 期間、(b) 将来テーブル成長で NOT VALID 経路を採用した場合の移行期間、
+///   (c) DBA による直接操作や raw SQL での意図しない bypass、(d) migration 前
+///   レガシーデータが残っている経路、で違反行が DB に混入する窓を本フィルタで補う。
 ///
 /// 不変条件 `created_at >= data_cutoff_time` は production / simulation の両経路で
 /// 常に成立する (predict は cutoff 以後に走るため)。
@@ -373,15 +380,18 @@ impl PredictionRecord {
     /// production とバックテストで同一の意味論を保証する。
     ///
     /// `created_at >= data_cutoff_time`: Layer 4 の read-time defense-in-depth。Layer 3
-    /// の DB CHECK 制約 (`created_at_geq_data_cutoff`) が `NOT VALID` で導入された移行
-    /// 期間 (Migration A 後 / Migration B 前) や、何らかの bypass 経路で違反行が DB に
-    /// 残った場合に、read 時点で除外して optimizer が「データ取得時刻より古い予測」を
-    /// fresh と誤認する経路を塞ぐ。
+    /// の DB CHECK 制約 (`created_at_geq_data_cutoff`) は現行 migration では validated
+    /// で一括導入されるが、`down.sql` で CHECK が drop された rollback 期間、将来
+    /// テーブル成長で NOT VALID + VALIDATE 再分割を採用した場合の移行期間、DBA 直接
+    /// 操作や raw SQL での bypass、migration 前レガシーデータ等で違反行が DB に残った
+    /// 場合に、read 時点で除外して optimizer が「データ取得時刻より古い予測」を fresh と
+    /// 誤認する経路を塞ぐ。
     // Layer 4 (read-time defense-in-depth): Layers 1-3 を bypass された
-    // 違反行 (migration NOT VALID 期間や DBA 直接 INSERT 等) が DB に残った
-    // 場合に、read 時点で除外して optimizer が誤った fresh 予測を学習しない
-    // ようにする。production の唯一の包括的防御は Layer 3 だが、本フィルタは
-    // 読み取り経路に追加された防御線。
+    // 違反行 (down.sql rollback 期間 / 将来の NOT VALID 再採用期間 / DBA
+    // 直接 INSERT / raw SQL bypass / migration 前レガシーデータ等) が DB に
+    // 残った場合に、read 時点で除外して optimizer が誤った fresh 予測を
+    // 学習しないようにする。production の唯一の包括的防御は Layer 3 だが、
+    // 本フィルタは読み取り経路に追加された防御線。
     pub async fn get_latest_fresh_predictions(
         tokens: &[TokenOutAccount],
         as_of: NaiveDateTime,
