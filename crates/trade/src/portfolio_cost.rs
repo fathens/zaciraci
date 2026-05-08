@@ -237,6 +237,22 @@ fn compute_cost_deductions(
         let assumed_in_bd = total_value_yocto * w_bd;
         let assumed_in = YoctoValue::from_yocto(assumed_in_bd);
 
+        // Entry-from-cash モデルの limitation observability:
+        // `target_w = 0` で全 exit する経路では `assumed_in = 0` となり SELL コスト
+        // が一切計上されない（estimate_trade_cost は ZeroPosition 経由で skip され、
+        // 結果として cost_deductions[token] が空 → optimizer はコストなしで全 exit
+        // を打つ判断になる）。Δw ベース再構成で正確に扱うのは別 PR スコープだが、
+        // 過小評価が発生したことを debug ログで残し、運用での発火頻度を観測できる
+        // ようにする。production の noise を増やさないよう warn ではなく debug。
+        if w == 0.0 {
+            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+            debug!(
+                log,
+                "entry-from-cash: assumed_in = 0 for target_w = 0; SELL cost omitted (Phase 2)";
+                "token" => %t.symbol,
+            );
+        }
+
         let token_account: TokenAccount = t.symbol.clone().into();
         let new_token_count = if inputs.existing_deposits.contains(&token_account) {
             0
