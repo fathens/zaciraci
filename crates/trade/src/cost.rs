@@ -284,13 +284,30 @@ fn compute_variable_ratio(
 /// 浮動小数点ノイズでは説明できない規模の「output > input」が観測されており、
 /// `spot_rate` と AMM 状態の inconsistency シグナルとして `warn!` ログを残す。
 /// 返り値自体はサイレント時と同じく 0.0 にクランプする（caller への挙動互換）。
+///
+/// # f64 変換失敗時のフォールバック
+///
+/// `BigDecimal::to_f64` は仕様上 `None` を返さないが、極端な scale を持つ
+/// BigDecimal で将来的に失敗する可能性に備え、`EXPECTED_SLIPPAGE_DEDUCTION`
+/// をフォールバック値として返す。silent な 0.0 縮退（実 AMM fee + price impact
+/// 0.3-2% を無視して「コストなし」と解釈）は cost-aware optimizer に「回らない
+/// 取引を打つ」リスクを生むため、保守側に倒す。負値 warn と対称に warn! ログを残す。
 fn compute_loss_ratio(input_near: &NearValue, output_near: &NearValue) -> f64 {
     let input_bd = input_near.as_bigdecimal();
     if input_bd <= &BigDecimal::zero() {
         return 0.0;
     }
     let output_bd = output_near.as_bigdecimal();
-    let raw = ((input_bd - output_bd) / input_bd).to_f64().unwrap_or(0.0);
+    let Some(raw) = ((input_bd - output_bd) / input_bd).to_f64() else {
+        let log = DEFAULT.new(o!("function" => "compute_loss_ratio"));
+        warn!(
+            log,
+            "BigDecimal -> f64 conversion failed; using EXPECTED_SLIPPAGE_DEDUCTION fallback";
+            "input_near" => %input_bd,
+            "output_near" => %output_bd,
+        );
+        return EXPECTED_SLIPPAGE_DEDUCTION;
+    };
     if raw < -LOSS_RATIO_NEGATIVE_WARN_THRESHOLD {
         let log = DEFAULT.new(o!("function" => "compute_loss_ratio"));
         warn!(
