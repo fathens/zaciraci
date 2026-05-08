@@ -35,6 +35,27 @@ use std::sync::Arc;
 /// 収束判定の重み変化量しきい値（max |Δw| < 1e-3 で収束扱い）
 const CONVERGENCE_TOLERANCE: f64 = 1e-3;
 
+/// `max_iter` を `damping` に応じてスケールし、反復上限を有効収束範囲に揃える。
+///
+/// `damp_and_diff` は `next = (1 - α) × prev + α × candidate` 型の指数収束で、
+/// target=0 elimination のような worst-case で `(1 - α)^N < CONVERGENCE_TOLERANCE`
+/// になるまでに必要な反復数は α が小さいほど大きい。例えば α=0.5 では N≈10、
+/// α=0.1 では N≈69 が必要。生の `max_iter = 10` だけで打ち切ると α=0.1 では
+/// 残留 ~35% で収束未到達のまま停止する。`⌈1/α⌉` 倍に拡張することで、
+/// 防御下限の damping (`PORTFOLIO_COST_ITERATION_DAMPING_LOWER = 0.1`) でも
+/// CONVERGENCE_TOLERANCE まで届く headroom を確保する。
+///
+/// damping は `[0.1, 1.0]` に clamp 済みのため、効果倍率は最大 10×。
+/// `max_iter` 上限 10 と合わせても合計 ≤ 100 反復で抑えられる。
+fn scale_max_iter_by_damping(max_iter: usize, damping: f64) -> usize {
+    let scale = if damping > 0.0 {
+        (1.0 / damping).ceil() as usize
+    } else {
+        1
+    };
+    max_iter.max(1).saturating_mul(scale.max(1))
+}
+
 /// 取引コスト見積もりに必要な静的入力
 ///
 /// 反復最適化の各反復で path / spot_rate は変わらないため、ループ前に 1 回だけ
@@ -371,8 +392,9 @@ pub(crate) async fn run_cost_aware_optimization(
         return Ok(CostAwareOutcome::Hold);
     };
 
-    // 後続反復: ダンピング + 収束判定。
-    let total_iters = max_iter.max(1);
+    // 後続反復: ダンピング + 収束判定。`scale_max_iter_by_damping` が damping
+    // に応じて反復上限を拡張し、防御下限 `damping=0.1` でも収束 headroom を確保する。
+    let total_iters = scale_max_iter_by_damping(max_iter, damping);
     for iter in 1..total_iters {
         let candidate: Vec<f64> = state
             .portfolio_data

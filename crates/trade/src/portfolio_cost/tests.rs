@@ -299,3 +299,54 @@ fn test_compute_cost_deductions_existing_deposit_lowers_fixed_cost() {
     );
     assert!(v_with_dep.is_finite() && v_with_dep >= 0.0);
 }
+
+// ---------------------------------------------------------------------------
+// (h) scale_max_iter_by_damping: damping に応じた反復上限スケーリング
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_scale_max_iter_by_damping_no_damping_returns_max_iter() {
+    // damping = 1.0 (full step) → 倍率 1 → max_iter そのまま
+    assert_eq!(scale_max_iter_by_damping(10, 1.0), 10);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_half_doubles() {
+    // damping = 0.5 → ⌈1/0.5⌉ = 2 → 反復上限を 2 倍
+    assert_eq!(scale_max_iter_by_damping(10, 0.5), 20);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_lower_bound_scales_to_ten_times() {
+    // damping = 0.1 (防御下限) → ⌈1/0.1⌉ = 10 → 反復上限を 10 倍
+    // (0.9)^100 ≈ 2.7e-5 < CONVERGENCE_TOLERANCE で確実に収束する headroom
+    assert_eq!(scale_max_iter_by_damping(10, 0.1), 100);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_zero_damping_returns_max_iter() {
+    // 想定外の damping = 0.0（NaN フォールバックや事前 clamp で起こらないが
+    // defense-in-depth として）。0 除算を避けて max_iter そのまま。
+    assert_eq!(scale_max_iter_by_damping(10, 0.0), 10);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_zero_max_iter_returns_one() {
+    // max_iter = 0（不正値）でも最低 1 反復は保証
+    assert_eq!(scale_max_iter_by_damping(0, 0.5), 2);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_within_clamped_range_caps_at_100() {
+    // production clamped 範囲 (max_iter ≤ 10, damping ≥ 0.1) で合計 100 反復以下
+    for max_iter in 1..=10 {
+        for damping_int in 1..=10 {
+            let damping = damping_int as f64 / 10.0;
+            let total = scale_max_iter_by_damping(max_iter, damping);
+            assert!(
+                total <= 100,
+                "max_iter={max_iter} damping={damping} total={total} exceeds 100"
+            );
+        }
+    }
+}
