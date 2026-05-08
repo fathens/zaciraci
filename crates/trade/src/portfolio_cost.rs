@@ -196,18 +196,22 @@ fn compute_cost_deductions(
         } else {
             0.0
         };
-        // 直前の `is_finite() && w >= 0.0` ガードにより、`w` は有限非負の
-        // f64 に正規化済み。`BigDecimal::from_f64` は NaN/Infinity でのみ
-        // None を返す仕様のため、ここでは必ず Some を返す。`expect` ではなく
-        // `unreachable!` で「論理的に到達不能」であることを明示する
-        // (`expect` は呼出側の不変条件違反を表現するイディオムで、ここは
-        // ガード後の純粋関数 `BigDecimal::from_f64` の仕様に基づく不可達
-        // を表現する別の意図のため)。silent な 0 縮退で Markowitz に偽の
-        // 取引額を流入させないよう fail-fast する。
+        // 直前の `is_finite() && w >= 0.0` ガードにより `BigDecimal::from_f64`
+        // は仕様上 None を返さないが、bigdecimal の future minor version で
+        // 挙動が変わる可能性に備えて fail-soft skip する。`damp_and_diff` の
+        // `bail!` 化と同様、cron tick での persistent crash loop DoS を防ぐ
+        // ため release panic は使わない。caller (`run_one_iteration`) は
+        // `estimation_failures` を `retain_excluding` で処理する経路を持つ。
         let Some(w_bd) = BigDecimal::from_f64(w) else {
-            unreachable!(
-                "BigDecimal::from_f64({w}) returned None despite is_finite() && w >= 0.0 guard"
+            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+            warn!(
+                log,
+                "BigDecimal::from_f64 returned None despite finite-non-negative guard; excluding token";
+                "token" => %t.symbol,
+                "weight" => w,
             );
+            estimation_failures.push(t.symbol.clone());
+            continue;
         };
         let assumed_in_bd = total_value_yocto * w_bd;
         let assumed_in = YoctoValue::from_yocto(assumed_in_bd);
