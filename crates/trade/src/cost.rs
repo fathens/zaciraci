@@ -179,13 +179,10 @@ pub(crate) fn estimate_trade_cost(
     storage_min_per_token: &YoctoValue,
     new_token_count: usize,
 ) -> Result<TradeCostBreakdown> {
-    debug_assert!(
-        new_token_count <= MAX_NEW_TOKEN_COUNT,
-        "new_token_count {new_token_count} exceeds MAX_NEW_TOKEN_COUNT {MAX_NEW_TOKEN_COUNT}; caller logic anomaly"
-    );
-    // release ビルドでも有効な runtime check。caller 側のロジック異常で
-    // `cap × N` が膨れて `fixed_cost` が取引額を超え、全 token が
-    // `to_cost_deduction` 失敗で除外される DoS 経路を遮断する。
+    // cron tick path で呼ばれるため `debug_assert!` は使わない（CONTRIBUTING.md
+    // の cron-path assert ban 趣旨）。caller 側のロジック異常で `cap × N` が
+    // 膨れて `fixed_cost` が取引額を超え、全 token が `to_cost_deduction` 失敗
+    // で除外される DoS 経路を runtime で遮断する。
     if new_token_count > MAX_NEW_TOKEN_COUNT {
         anyhow::bail!(
             "new_token_count {new_token_count} exceeds MAX_NEW_TOKEN_COUNT {MAX_NEW_TOKEN_COUNT}"
