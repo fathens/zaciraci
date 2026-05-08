@@ -519,3 +519,36 @@ fn test_correct_prediction_zero_predicted_returns_none() {
     let predicted = TokenPrice::from_near_per_token(BigDecimal::from(0));
     assert!(correct_prediction(&predicted, 0.0).is_none());
 }
+
+// --- mape_to_squared_return ---
+
+#[test]
+fn test_mape_to_squared_return_typical_values() {
+    // 1% mape → (0.01)² = 1e-4
+    let v = mape_to_squared_return(1.0).expect("typical positive mape");
+    assert!((v - 1e-4).abs() < 1e-12);
+    // 10% mape → (0.1)² = 1e-2
+    let v = mape_to_squared_return(10.0).expect("typical positive mape");
+    assert!((v - 1e-2).abs() < 1e-12);
+}
+
+#[test]
+fn test_mape_to_squared_return_zero_returns_zero() {
+    let v = mape_to_squared_return(0.0).expect("zero mape is non-negative");
+    assert_eq!(v, 0.0);
+}
+
+#[test]
+fn test_mape_to_squared_return_negative_rejected() {
+    // production 経路では mape = |diff| / actual * 100 で非負保証だが
+    // DB 直接書き込み等で負値混入時は MSRE 集計から除外する
+    assert!(mape_to_squared_return(-1.0).is_none());
+    assert!(mape_to_squared_return(-100.0).is_none());
+}
+
+#[test]
+fn test_mape_to_squared_return_non_finite_rejected() {
+    assert!(mape_to_squared_return(f64::NAN).is_none());
+    assert!(mape_to_squared_return(f64::INFINITY).is_none());
+    assert!(mape_to_squared_return(f64::NEG_INFINITY).is_none());
+}

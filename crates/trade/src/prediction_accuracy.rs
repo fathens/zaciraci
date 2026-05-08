@@ -618,6 +618,20 @@ fn compute_median(sorted: &[f64]) -> Option<f64> {
     })
 }
 
+/// `mape` (% スケール、非負) を return² スケールの寄与に変換する。
+///
+/// production 経路では `mape = |diff| / actual * 100` で非負保証だが、DB 直接
+/// 書き込み等で負値が混入すると `(negative/100)²` で正値化し「異常データを
+/// 通常 MSRE として処理」する経路ができる。defense-in-depth として境界で
+/// `is_finite() && mape >= 0.0` を要求し、それ以外は `None` で skip する。
+fn mape_to_squared_return(mape: f64) -> Option<f64> {
+    if !mape.is_finite() || mape < 0.0 {
+        return None;
+    }
+    let ratio = mape / 100.0;
+    Some(ratio * ratio)
+}
+
 /// 各トークンの **mean squared relative error (MSRE)** を計算する。
 ///
 /// 各レコードの `(mape / 100.0)²` を集計し、トークンごとに **平均**を返す。
@@ -634,9 +648,9 @@ fn compute_median(sorted: &[f64]) -> Option<f64> {
 /// で別 PR にて対応予定。）
 ///
 /// 戻り値:
-///   - エントリあり: MSRE > 0（return² スケール）
-///   - エントリなし: `min_samples` 未満で計算不能
-///   - Err: DB アクセス失敗
+/// - エントリあり: MSRE > 0（return² スケール）
+/// - エントリなし: `min_samples` 未満で計算不能
+/// - Err: DB アクセス失敗
 pub(crate) async fn calculate_per_token_pred_err_variance(
     tokens: &[TokenOutAccount],
     cfg: &impl ConfigAccess,
@@ -656,14 +670,7 @@ pub(crate) async fn calculate_per_token_pred_err_variance(
 
         let squared: Vec<f64> = records
             .iter()
-            .filter_map(|r| {
-                let mape = r.mape?;
-                if !mape.is_finite() {
-                    return None;
-                }
-                let ratio = mape / 100.0;
-                Some(ratio * ratio)
-            })
+            .filter_map(|r| mape_to_squared_return(r.mape?))
             .collect();
 
         if squared.len() < min_samples {
