@@ -58,9 +58,10 @@ pub struct DbPredictionRecord {
 ///   fail-soft に通知する (caller side で warn ログ + skip)。NTP step backward
 ///   等の環境起因 violation を crash loop 化させない。**正規 INSERT 経路の
 ///   開発時 + 運用時防御**。
-/// - **Layer 2** (`pub(crate)` フィールド可視性): 外部 crate からの構造体リテラル
-///   bypass を構造的に防止し、`try_new` を唯一の構築経路に強制する。**コンパイル
-///   時防御**。
+/// - **Layer 2** (フィールド可視性): フィールドを完全に private にし、
+///   `try_new` を唯一の構築経路に強制する。テスト専用の bypass は
+///   `#[cfg(test)] pub(crate) fn new_unchecked` でのみ可能で、release ビルドでは
+///   構築経路が完全消滅する。**コンパイル時防御**。
 /// - **Layer 3** (DB CHECK 制約): PostgreSQL の `created_at_geq_data_cutoff`
 ///   CHECK 制約が全 INSERT/UPDATE 経路 (Diesel / raw SQL / psql 直接 / DBA 操作 /
 ///   migration backfill) を強制カバーする。**production の唯一の包括的防御線**。
@@ -89,18 +90,18 @@ pub struct DbPredictionRecord {
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = prediction_records)]
 pub struct NewPredictionRecord {
-    // Layer 2 (visibility): pub(crate) フィールドで外部 crate からの
-    // 構造体リテラル bypass を構造的に防止し、try_new を唯一の構築経路に
-    // 強制する。**ただし persistence crate 内部 (本ファイルや同 crate の
-    // 別 module) からは依然 struct literal で構築可能なので、
-    // 内部 bypass 経路は Layers 3 (DB CHECK) / 4 (SQL filter) で
-    // カバーする多層防御設計**。
-    pub(crate) token: String,
-    pub(crate) quote_token: String,
-    pub(crate) predicted_price: BigDecimal,
-    pub(crate) data_cutoff_time: NaiveDateTime,
-    pub(crate) target_time: NaiveDateTime,
-    pub(crate) created_at: NaiveDateTime,
+    // Layer 2 (visibility): フィールドを完全 private にして、production / test
+    // のいずれの経路からも struct literal による構築を不能にする。
+    // production の唯一の構築経路は `try_new`、test の bypass 経路は
+    // `#[cfg(test)] pub(crate) fn new_unchecked` のみ。release ビルドでは
+    // unchecked factory が消えるため、`try_new` の Layer 1 検証を bypass する
+    // 経路が**コンパイル時に存在しなくなる**。
+    token: String,
+    quote_token: String,
+    predicted_price: BigDecimal,
+    data_cutoff_time: NaiveDateTime,
+    target_time: NaiveDateTime,
+    created_at: NaiveDateTime,
 }
 
 /// [`NewPredictionRecord::try_new`] の構築失敗バリアント。
@@ -189,6 +190,36 @@ impl NewPredictionRecord {
     /// 検証/テスト用に created_at を公開する read-only accessor。
     pub fn created_at(&self) -> NaiveDateTime {
         self.created_at
+    }
+
+    /// テスト専用の Layer 1 bypass 構築経路。
+    ///
+    /// SQL レイヤの fresh-prediction filter (Layer 4) を直接検証するため、本来
+    /// `try_new` で弾かれるはずのレコードをあえて DB に投入するテストでのみ使う。
+    /// `#[cfg(test)]` により release ビルドでは消滅し、production 経路は `try_new`
+    /// に一本化される。
+    ///
+    /// 不変条件 `created_at >= data_cutoff_time` 系違反は DB レイヤ (Layer 3 の
+    /// validated CHECK 制約) で弾かれて INSERT が失敗するため、本 factory で
+    /// 挿入できる違反パターンは `target_time <= created_at` (= horizon 系違反)
+    /// のみ。
+    #[cfg(test)]
+    pub(crate) fn new_unchecked(
+        token: String,
+        quote_token: String,
+        predicted_price: BigDecimal,
+        data_cutoff_time: NaiveDateTime,
+        target_time: NaiveDateTime,
+        created_at: NaiveDateTime,
+    ) -> Self {
+        Self {
+            token,
+            quote_token,
+            predicted_price,
+            data_cutoff_time,
+            target_time,
+            created_at,
+        }
     }
 }
 

@@ -110,13 +110,13 @@ pub async fn insert_unevaluated_record(
 /// SQL レイヤの fresh-prediction filter を直接検証するため、本来 caller-side で
 /// 弾かれるはずのレコードをあえて DB に投入する必要があるテスト専用。新規
 /// production caller は必ず [`NewPredictionRecord::try_new`] 経由で構築すること
-/// (`pub(crate)` フィールドにより外部 crate からは struct literal 不可)。
+/// (フィールドは完全 private、bypass は `#[cfg(test)] new_unchecked` のみ)。
 ///
 /// # 制約 (Layer 3 DB CHECK 制約との関係)
 ///
 /// `prediction_records` テーブルには `created_at >= data_cutoff_time` の
-/// validated CHECK 制約が migration で追加されている。本ヘルパーは構造体
-/// リテラルで caller-side 検証を bypass できるが、**`created_at <
+/// validated CHECK 制約が migration で追加されている。本ヘルパーは
+/// `new_unchecked` で caller-side 検証を bypass できるが、**`created_at <
 /// data_cutoff_time` 系違反は DB レイヤ (Layer 3) で弾かれて INSERT が失敗する**。
 /// 本ヘルパーで挿入できる違反パターンは `target_time <= created_at`
 /// (= horizon 系違反) のみ。
@@ -128,18 +128,18 @@ pub async fn insert_invariant_violating_record(
     target_time: NaiveDateTime,
     created_at: NaiveDateTime,
 ) -> Result<()> {
-    // `target_time <= created_at` 系の違反をあえて作るため、struct literal で
-    // `try_new` の Layer 1 検証をバイパスする (pub(crate) フィールドなので persistence
-    // crate 内に閉じている)。`created_at < data_cutoff_time` 系は Layer 3 (DB CHECK)
-    // で別途弾かれる。
-    let new_record = NewPredictionRecord {
-        token: token.to_string(),
-        quote_token: quote_token.to_string(),
-        predicted_price: BigDecimal::from(predicted_price),
+    // `target_time <= created_at` 系の違反をあえて作るため、`new_unchecked` で
+    // `try_new` の Layer 1 検証をバイパスする (`#[cfg(test)]` なので release では
+    // 消滅し persistence crate のテストに閉じる)。`created_at < data_cutoff_time`
+    // 系は Layer 3 (DB CHECK) で別途弾かれる。
+    let new_record = NewPredictionRecord::new_unchecked(
+        token.to_string(),
+        quote_token.to_string(),
+        BigDecimal::from(predicted_price),
         data_cutoff_time,
         target_time,
         created_at,
-    };
+    );
 
     let conn = connection_pool::get().await?;
     conn.interact(move |conn| {
