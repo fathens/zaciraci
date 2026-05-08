@@ -153,6 +153,68 @@ pub async fn insert_invariant_violating_record(
     Ok(())
 }
 
+/// テスト用ヘルパー: Layer 3 (DB CHECK) を一時的に剥がして data leakage 違反行を
+/// 強制的に持ち込む。
+///
+/// `created_at < data_cutoff_time` 系の違反は通常 Layer 3 の
+/// `created_at_geq_data_cutoff` CHECK 制約で reject されるため、
+/// `new_unchecked` でも INSERT できない。本ヘルパは Layer 4 (read-time SQL filter)
+/// が以下の運用シナリオで違反行を読み飛ばすことを検証するために用意する:
+///
+/// - `down.sql` で CHECK が drop された rollback 期間
+/// - 将来テーブル成長で `NOT VALID` + `VALIDATE` 二段移行を採用した場合の移行期間
+/// - DBA 直接 INSERT / raw SQL bypass / migration 前レガシーデータ
+///
+/// 動作:
+/// 1. `ALTER TABLE ... DROP CONSTRAINT created_at_geq_data_cutoff` で CHECK 剥がし
+/// 2. `new_unchecked` で違反行を INSERT
+/// 3. `ALTER TABLE ... ADD CONSTRAINT ... CHECK (...) NOT VALID` で再度 attach
+///    (`NOT VALID` は既存違反行を許容しつつ以後の INSERT/UPDATE には CHECK を
+///    効かせるため、以降のテストでも fail-loud な防御線が維持される)
+///
+/// 後始末は `clean_table()` で違反行を消したあとで残った CHECK が
+/// `VALIDATE CONSTRAINT` 不要のまま自然に維持される (NOT VALID でも
+/// PostgreSQL は新規 INSERT に対してチェックする)。
+pub async fn insert_data_leakage_violator(
+    token: &str,
+    quote_token: &str,
+    predicted_price: i64,
+    data_cutoff_time: NaiveDateTime,
+    target_time: NaiveDateTime,
+    created_at: NaiveDateTime,
+) -> Result<()> {
+    let new_record = NewPredictionRecord::new_unchecked(
+        token.to_string(),
+        quote_token.to_string(),
+        BigDecimal::from(predicted_price),
+        data_cutoff_time,
+        target_time,
+        created_at,
+    );
+
+    let conn = connection_pool::get().await?;
+    conn.interact(move |conn| {
+        diesel::sql_query(
+            "ALTER TABLE prediction_records DROP CONSTRAINT IF EXISTS created_at_geq_data_cutoff",
+        )
+        .execute(conn)?;
+        diesel::insert_into(prediction_records::table)
+            .values(&new_record)
+            .execute(conn)?;
+        diesel::sql_query(
+            "ALTER TABLE prediction_records \
+             ADD CONSTRAINT created_at_geq_data_cutoff \
+             CHECK (created_at >= data_cutoff_time) NOT VALID",
+        )
+        .execute(conn)?;
+        Ok::<_, diesel::result::Error>(())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+    Ok(())
+}
+
 /// テスト用ヘルパー: `created_at` を明示的に指定して未評価レコードを挿入
 ///
 /// data leakage シナリオ (`created_at` が `as_of` より新しい予測を引かないこと)
