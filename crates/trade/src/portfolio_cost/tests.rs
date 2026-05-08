@@ -301,6 +301,61 @@ fn test_compute_cost_deductions_existing_deposit_lowers_fixed_cost() {
 }
 
 // ---------------------------------------------------------------------------
+// (g.5) run_cost_aware_optimization integration: 病理パスのみ
+// ---------------------------------------------------------------------------
+
+use common::algorithm::portfolio::PortfolioData;
+use common::algorithm::types::WalletInfo;
+
+fn empty_wallet() -> WalletInfo {
+    WalletInfo {
+        holdings: BTreeMap::new(),
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::zero(),
+    }
+}
+
+#[tokio::test]
+async fn test_run_cost_aware_optimization_zero_tokens_returns_hold() {
+    // n = 0: 一度も最適化に入らず Hold で早期リターン。
+    // first iteration の `Some(state)` が成立しない経路の代わりに、
+    // tokens 配列が空のとき即 Hold する分岐を直接検証する。
+    let wallet = empty_wallet();
+    let pd = PortfolioData::default();
+    let inputs = make_inputs(&[], HashSet::new());
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+
+    let outcome = run_cost_aware_optimization(&wallet, pd, &inputs, &total, 10, 0.5, 0.05)
+        .await
+        .expect("Hold path returns Ok");
+
+    assert!(matches!(outcome, CostAwareOutcome::Hold));
+}
+
+#[tokio::test]
+async fn test_run_cost_aware_optimization_all_tokens_fail_cost_returns_hold() {
+    // 全 token が cost 推定で失敗する経路: total_value=0 で全 weight が
+    // assumed_in=0 経由 ZeroPosition → estimation_failures に合流 →
+    // retain_excluding で全除外 → first iteration が None → Hold。
+    let sym_a = token("hold-a");
+    let sym_b = token("hold-b");
+    let pd = PortfolioData {
+        tokens: vec![token_data(sym_a.clone()), token_data(sym_b.clone())],
+        ..Default::default()
+    };
+    let inputs = make_inputs(&[sym_a, sym_b], HashSet::new());
+    // total_value_yocto = 0 → assumed_in = 0 → ZeroPosition → 全 token 脱落
+    let total = BigDecimal::from(0);
+    let wallet = empty_wallet();
+
+    let outcome = run_cost_aware_optimization(&wallet, pd, &inputs, &total, 5, 0.5, 0.05)
+        .await
+        .expect("Hold path returns Ok");
+
+    assert!(matches!(outcome, CostAwareOutcome::Hold));
+}
+
+// ---------------------------------------------------------------------------
 // (h) scale_max_iter_by_damping: damping に応じた反復上限スケーリング
 // ---------------------------------------------------------------------------
 
