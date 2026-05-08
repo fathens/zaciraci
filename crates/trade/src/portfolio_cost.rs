@@ -35,6 +35,22 @@ use std::sync::Arc;
 /// 収束判定の重み変化量しきい値（max |Δw| < 1e-3 で収束扱い）
 const CONVERGENCE_TOLERANCE: f64 = 1e-3;
 
+/// damping に応じた反復上限スケーリングの hard cap。
+///
+/// `damping` の防御下限 (`PORTFOLIO_COST_ITERATION_DAMPING_LOWER = 0.1`) に
+/// 対応する `⌈1/0.1⌉ = 10` を hard-cap として固定し、typed config の clamp
+/// が bypass された経路（cfg(test) 直接構築・将来の API 変更）でも
+/// `f64 as usize` saturating cast による DoS surface
+/// （例: `damping = 1e-300` で `1.0/damping = 1e300 as usize → usize::MAX`、
+/// `usize::MAX × 10` 反復 ≈ 無限ループ等価で cron tick 完全停止）を
+/// 構造的に塞ぐ。
+const MAX_DAMPING_SCALE: u32 = 10;
+
+/// `max_iter * scale` の合計上限。production typed config (max_iter ≤ 10、
+/// damping ≥ 0.1) では `10 × 10 = 100` で頭打ち、bypass 経路でも本上限で
+/// 反復回数を構造的に制限する。
+const MAX_TOTAL_ITERATIONS: usize = 100;
+
 /// `max_iter` を `damping` に応じてスケールし、反復上限を有効収束範囲に揃える。
 ///
 /// `damp_and_diff` は `next = (1 - α) × prev + α × candidate` 型の指数収束で、
@@ -45,15 +61,30 @@ const CONVERGENCE_TOLERANCE: f64 = 1e-3;
 /// 防御下限の damping (`PORTFOLIO_COST_ITERATION_DAMPING_LOWER = 0.1`) でも
 /// CONVERGENCE_TOLERANCE まで届く headroom を確保する。
 ///
-/// damping は `[0.1, 1.0]` に clamp 済みのため、効果倍率は最大 10×。
-/// `max_iter` 上限 10 と合わせても合計 ≤ 100 反復で抑えられる。
+/// damping は production typed config で `[0.1, 1.0]` に clamp 済みのため
+/// 倍率は最大 10×、`max_iter` 上限 10 と合わせても合計 ≤ 100 反復。clamp
+/// が bypass された経路でも `MAX_DAMPING_SCALE` / `MAX_TOTAL_ITERATIONS`
+/// で hard-cap し、`f64 as usize` saturating cast の platform-dependent DoS
+/// surface を構造的に塞ぐ（fail-loud cap）。
 fn scale_max_iter_by_damping(max_iter: usize, damping: f64) -> usize {
     let scale = if damping > 0.0 {
-        (1.0 / damping).ceil() as usize
+        // f64 を MAX_DAMPING_SCALE (10) に clamp してから usize cast すること
+        // で、`damping = 1e-300` 等の clamp 漏れ経路でも cast 結果が確定上限
+        // 以下に収まる。`.min()` は片側 NaN なら NaN を返すが damping > 0.0
+        // ガードで NaN は排除済み、Infinity も `.min(10.0) = 10.0` で吸収。
+        let raw_scale = (1.0 / damping).ceil().min(MAX_DAMPING_SCALE as f64);
+        if raw_scale.is_finite() && raw_scale >= 1.0 {
+            raw_scale as usize
+        } else {
+            1
+        }
     } else {
         1
     };
-    max_iter.max(1).saturating_mul(scale.max(1))
+    max_iter
+        .max(1)
+        .saturating_mul(scale.max(1))
+        .min(MAX_TOTAL_ITERATIONS)
 }
 
 /// 取引コスト見積もりに必要な静的入力

@@ -405,3 +405,47 @@ fn test_scale_max_iter_by_damping_within_clamped_range_caps_at_100() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// (h.1) typed config bypass 経路での fail-loud hard-cap
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_scale_max_iter_by_damping_subnormal_damping_caps_at_max_total() {
+    // typed config の [0.1, 1.0] clamp が bypass された経路で
+    // `damping = 1e-300` が漏れ込んだ場合、`1.0 / damping = 1e300` を直接
+    // `as usize` すると platform-dependent に `usize::MAX` 等になる。
+    // hard-cap (MAX_DAMPING_SCALE * max_iter ≤ MAX_TOTAL_ITERATIONS) で
+    // 構造的に上限以下に収まることを pin する。
+    assert_eq!(scale_max_iter_by_damping(10, 1e-300), 100);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_below_clamp_lower_bound_caps() {
+    // damping = 0.01 (clamp 下限 0.1 より小さい異常値) でも
+    // 倍率は MAX_DAMPING_SCALE = 10 で止まり、`max_iter * 10` で頭打ち。
+    assert_eq!(scale_max_iter_by_damping(5, 0.01), 50);
+    assert_eq!(scale_max_iter_by_damping(10, 0.01), 100);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_oversize_max_iter_caps_at_max_total() {
+    // max_iter が typed config の clamp (≤ 10) を bypass した経路でも
+    // MAX_TOTAL_ITERATIONS = 100 で頭打ち。
+    assert_eq!(scale_max_iter_by_damping(1_000, 0.5), 100);
+    assert_eq!(scale_max_iter_by_damping(usize::MAX, 1.0), 100);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_nan_damping_returns_max_iter() {
+    // NaN は `damping > 0.0` ガードで else 経路 → scale = 1 → max_iter のみ。
+    // 旧実装で `(1.0 / NaN) as usize` が platform-dependent な結果を返す
+    // 経路を構造的に閉じる。
+    assert_eq!(scale_max_iter_by_damping(10, f64::NAN), 10);
+}
+
+#[test]
+fn test_scale_max_iter_by_damping_negative_damping_returns_max_iter() {
+    // 負の damping も `damping > 0.0` ガードで else 経路 → scale = 1。
+    assert_eq!(scale_max_iter_by_damping(10, -0.5), 10);
+}
