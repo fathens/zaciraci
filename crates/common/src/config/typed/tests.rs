@@ -39,6 +39,50 @@ fn test_trade_unwrap_on_stop_default() {
     assert!(!typed().trade_unwrap_on_stop());
 }
 
+// ── reverted flags (commit 3597acf): default false until follow-up PRs ──
+//
+// `TRADE_BIAS_CORRECTION_ENABLED` / `PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED` /
+// `TRADE_COST_AWARE_RETURN_ENABLED` were flipped from `default: true` back to
+// `default: false` because the cost-aware / pred-err-diagonal pipeline ships
+// with two known numerical limitations (Entry-from-cash exit-token under-
+// pricing, Additive `k=0.1` collapsing diversification on low-volatility
+// regimes). These tests pin the default to `false` so an accidental re-flip
+// is caught at CI time rather than silently re-enabling the partially-shipped
+// pipeline.
+
+#[test]
+#[serial]
+fn test_trade_bias_correction_enabled_default_false() {
+    let _env = EnvGuard::remove("TRADE_BIAS_CORRECTION_ENABLED");
+    crate::config::store::remove("TRADE_BIAS_CORRECTION_ENABLED");
+    assert!(
+        !typed().trade_bias_correction_enabled(),
+        "TRADE_BIAS_CORRECTION_ENABLED must default to false until the follow-up Δw-based cost accounting lands"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_enabled_default_false() {
+    let _env = EnvGuard::remove("PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED");
+    crate::config::store::remove("PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED");
+    assert!(
+        !typed().portfolio_pred_err_diagonal_enabled(),
+        "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED must default to false until correlation-preserving rescaling lands"
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_cost_aware_return_enabled_default_false() {
+    let _env = EnvGuard::remove("TRADE_COST_AWARE_RETURN_ENABLED");
+    crate::config::store::remove("TRADE_COST_AWARE_RETURN_ENABLED");
+    assert!(
+        !typed().trade_cost_aware_return_enabled(),
+        "TRADE_COST_AWARE_RETURN_ENABLED must default to false until Δw-based cost accounting lands"
+    );
+}
+
 // ── u32 keys ──
 
 #[test]
