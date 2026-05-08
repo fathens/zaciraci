@@ -273,7 +273,7 @@ fn compute_variable_ratio(
     let output_near = (&output_amount) / spot_rate;
     let input_near = assumed_in.to_near();
 
-    let amm_loss = compute_loss_ratio(&input_near, &output_near);
+    let amm_loss = compute_loss_ratio(&input_near, &output_near)?;
     Ok(amm_loss + EXPECTED_SLIPPAGE_DEDUCTION)
 }
 
@@ -288,29 +288,29 @@ fn compute_variable_ratio(
 /// `spot_rate` と AMM 状態の inconsistency シグナルとして `warn!` ログを残す。
 /// 返り値自体はサイレント時と同じく 0.0 にクランプする（caller への挙動互換）。
 ///
-/// # f64 変換失敗時のフォールバック
+/// # f64 変換失敗時の挙動
 ///
-/// `BigDecimal::to_f64` は仕様上 `None` を返さないが、極端な scale を持つ
-/// BigDecimal で将来的に失敗する可能性に備え、`EXPECTED_SLIPPAGE_DEDUCTION`
-/// をフォールバック値として返す。silent な 0.0 縮退（実 AMM fee + price impact
-/// 0.3-2% を無視して「コストなし」と解釈）は cost-aware optimizer に「回らない
-/// 取引を打つ」リスクを生むため、保守側に倒す。負値 warn と対称に warn! ログを残す。
-fn compute_loss_ratio(input_near: &NearValue, output_near: &NearValue) -> f64 {
+/// `BigDecimal::to_f64` は bigdecimal クレート仕様上ほぼ `None` を返さないが、
+/// 極端な scale を持つ BigDecimal で失敗する余地は残る。失敗時は `Err` を伝播し、
+/// caller (`compute_variable_ratio` → `to_cost_deduction` → `compute_cost_deductions`)
+/// で `estimation_failures` 経路に合流させて当該 token を portfolio から除外する。
+/// 旧実装は `EXPECTED_SLIPPAGE_DEDUCTION` を返していたが、caller 側で同定数を再加算する
+/// ため二重加算（実質 1.0%）になる semantic mistake と、敵対 RPC 経由で
+/// f64 変換失敗を induce した際に「実損失 5-50% を 0.5% と過小見積りする」DoS
+/// 経路の両方を抱えていた。`Result` 化で既存 4 層 fail-soft 経路に統合する。
+fn compute_loss_ratio(input_near: &NearValue, output_near: &NearValue) -> Result<f64> {
     let input_bd = input_near.as_bigdecimal();
     if input_bd <= &BigDecimal::zero() {
-        return 0.0;
+        return Ok(0.0);
     }
     let output_bd = output_near.as_bigdecimal();
-    let Some(raw) = ((input_bd - output_bd) / input_bd).to_f64() else {
-        let log = DEFAULT.new(o!("function" => "compute_loss_ratio"));
-        warn!(
-            log,
-            "BigDecimal -> f64 conversion failed; using EXPECTED_SLIPPAGE_DEDUCTION fallback";
-            "input_near" => %input_bd,
-            "output_near" => %output_bd,
-        );
-        return EXPECTED_SLIPPAGE_DEDUCTION;
-    };
+    let raw = ((input_bd - output_bd) / input_bd)
+        .to_f64()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "BigDecimal -> f64 conversion failed; input={input_bd}, output={output_bd}"
+            )
+        })?;
     if raw < -LOSS_RATIO_NEGATIVE_WARN_THRESHOLD {
         let log = DEFAULT.new(o!("function" => "compute_loss_ratio"));
         warn!(
@@ -322,7 +322,7 @@ fn compute_loss_ratio(input_near: &NearValue, output_near: &NearValue) -> f64 {
             "output_near" => %output_bd,
         );
     }
-    raw.max(0.0)
+    Ok(raw.max(0.0))
 }
 
 #[cfg(test)]

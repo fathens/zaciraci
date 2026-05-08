@@ -130,7 +130,7 @@ fn test_to_cost_deduction_only_variable_when_fixed_zero() {
 fn test_compute_loss_ratio_basic() {
     let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
     let output = NearValue::from_near(BigDecimal::from_str("0.99").unwrap());
-    let loss = compute_loss_ratio(&input, &output);
+    let loss = compute_loss_ratio(&input, &output).expect("finite f64 conversion");
     assert!((loss - 0.01).abs() < 1e-9, "expected ~0.01, got {loss}");
 }
 
@@ -138,41 +138,50 @@ fn test_compute_loss_ratio_basic() {
 fn test_compute_loss_ratio_zero_input_returns_zero() {
     let input = NearValue::zero();
     let output = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
-    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
-}
-
-#[test]
-fn test_compute_loss_ratio_clamps_negative_to_zero() {
-    // 数値誤差で output > input になっても 0 にクランプ
-    let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
-    let output = NearValue::from_near(BigDecimal::from_str("1.001").unwrap());
-    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+    assert_eq!(
+        compute_loss_ratio(&input, &output).expect("zero input is Ok(0)"),
+        0.0
+    );
 }
 
 #[test]
 fn test_compute_loss_ratio_micro_negative_silent_zero() {
-    // |ε| < 1e-9 域は浮動小数点ノイズとして silent に 0 化（warn しない）
+    // |raw| < LOSS_RATIO_NEGATIVE_WARN_THRESHOLD 域は浮動小数点ノイズとして
+    // silent に 0 化（warn しない）。1e-9 級。
     let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
     let output = NearValue::from_near(BigDecimal::from_str("1.0000000001").unwrap());
-    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+    assert_eq!(
+        compute_loss_ratio(&input, &output).expect("noise band returns Ok(0)"),
+        0.0
+    );
 }
 
 #[test]
-fn test_compute_loss_ratio_at_warn_threshold_silent_zero() {
-    // raw = -1e-3 ちょうどは「閾値超え」ではないため warn しない（境界条件）。
-    // 返り値は 0.0 にクランプされる。
+fn test_compute_loss_ratio_just_inside_warn_band_silent_zero() {
+    // raw が `-LOSS_RATIO_NEGATIVE_WARN_THRESHOLD` の絶対値直下（warn しない側）
+    // で 0.0 にクランプされること。閾値定数を直接参照して定数 drift 耐性を持たせる。
+    let near_threshold = LOSS_RATIO_NEGATIVE_WARN_THRESHOLD * 0.5;
+    let output_value = 1.0 + near_threshold;
     let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
-    let output = NearValue::from_near(BigDecimal::from_str("1.001").unwrap());
-    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+    let output = NearValue::from_near(BigDecimal::from_str(&format!("{output_value}")).unwrap());
+    assert_eq!(
+        compute_loss_ratio(&input, &output).expect("noise band returns Ok(0)"),
+        0.0
+    );
 }
 
 #[test]
 fn test_compute_loss_ratio_above_warn_threshold_clamps_to_zero() {
-    // raw < -1e-3 → warn ログを出すが返り値は 0.0 にクランプ（挙動互換）。
-    // smoke test として panic せず 0 を返すことを確認する。
+    // raw < -LOSS_RATIO_NEGATIVE_WARN_THRESHOLD → warn ログを出すが返り値は
+    // 0.0 にクランプ（挙動互換）。smoke test として panic せず 0 を返すこと。
+    let above_threshold = LOSS_RATIO_NEGATIVE_WARN_THRESHOLD * 10.0;
+    let output_value = 1.0 + above_threshold;
     let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
-    let output = NearValue::from_near(BigDecimal::from_str("1.01").unwrap());
-    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+    let output = NearValue::from_near(BigDecimal::from_str(&format!("{output_value}")).unwrap());
+    assert_eq!(
+        compute_loss_ratio(&input, &output).expect("clamps to Ok(0)"),
+        0.0
+    );
 }
 
 #[test]
@@ -180,7 +189,10 @@ fn test_compute_loss_ratio_far_above_warn_threshold_clamps_to_zero() {
     // raw が大きく負（-1e-2 級）でも 0 にクランプ。warn が出るが返り値は変わらない。
     let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
     let output = NearValue::from_near(BigDecimal::from_str("1.05").unwrap());
-    assert_eq!(compute_loss_ratio(&input, &output), 0.0);
+    assert_eq!(
+        compute_loss_ratio(&input, &output).expect("clamps to Ok(0)"),
+        0.0
+    );
 }
 
 #[test]
@@ -188,7 +200,8 @@ fn test_compute_loss_ratio_full_loss() {
     // output = 0 → loss = 100%
     let input = NearValue::from_near(BigDecimal::from_str("1.0").unwrap());
     let output = NearValue::zero();
-    assert!((compute_loss_ratio(&input, &output) - 1.0).abs() < 1e-12);
+    let loss = compute_loss_ratio(&input, &output).expect("finite f64 conversion");
+    assert!((loss - 1.0).abs() < 1e-12);
 }
 
 #[test]
