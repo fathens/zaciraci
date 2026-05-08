@@ -14,10 +14,14 @@
 //! - `existing_deposits` ヒットで storage 固定費が抑制される
 
 use super::*;
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, FromPrimitive};
 use blockchain::types::gas_price::GasPrice;
-use common::algorithm::types::TokenData;
-use common::types::{ExchangeRate, NearValue, TokenAccount, TokenOutAccount, YoctoValue};
+use chrono::{TimeDelta, Utc};
+use common::algorithm::portfolio::PortfolioData;
+use common::algorithm::types::{PriceHistory, PricePoint, TokenData, WalletInfo};
+use common::types::{
+    ExchangeRate, NearValue, TokenAccount, TokenInAccount, TokenOutAccount, TokenPrice, YoctoValue,
+};
 use dex::TokenPath;
 use near_sdk::NearToken;
 use std::collections::{BTreeMap, HashSet};
@@ -397,9 +401,6 @@ fn test_compute_cost_deductions_existing_deposit_lowers_fixed_cost() {
 // (g.5) run_cost_aware_optimization integration: 病理パスのみ
 // ---------------------------------------------------------------------------
 
-use common::algorithm::portfolio::PortfolioData;
-use common::algorithm::types::WalletInfo;
-
 fn empty_wallet() -> WalletInfo {
     WalletInfo {
         holdings: BTreeMap::new(),
@@ -423,6 +424,99 @@ async fn test_run_cost_aware_optimization_zero_tokens_returns_hold() {
         .expect("Hold path returns Ok");
 
     assert!(matches!(outcome, CostAwareOutcome::Hold));
+}
+
+/// `hard_filter_tokens` を通過する `TokenData`（market_cap >= 10000 NEAR、
+/// liquidity_score >= 0.5）。
+fn passing_token_data(symbol: TokenOutAccount) -> TokenData {
+    TokenData {
+        symbol,
+        current_rate: ExchangeRate::wnear(),
+        historical_volatility: 0.1,
+        liquidity_score: Some(0.8),
+        market_cap: Some(NearValue::from_near(BigDecimal::from(100_000))),
+    }
+}
+
+/// 30 日分の単調増加 PriceHistory（共分散・期待リターン計算で発散しない値域）。
+fn linear_price_history(symbol: &TokenOutAccount, base: f64) -> PriceHistory {
+    let base_time = Utc::now() - TimeDelta::days(30);
+    let prices: Vec<PricePoint> = (0..30)
+        .map(|i| PricePoint {
+            timestamp: base_time + TimeDelta::days(i),
+            price: TokenPrice::from_near_per_token(
+                BigDecimal::from_f64(base + (i as f64) * 0.01).expect("finite"),
+            ),
+            volume: Some(BigDecimal::from(1000)),
+        })
+        .collect();
+    PriceHistory {
+        token: symbol.clone(),
+        quote_token: TokenInAccount::from_str("wrap.near").expect("valid wnear"),
+        prices,
+    }
+}
+
+/// 「first iter で得られる optimal weights ≈ uniform」になるよう対称な
+/// 2-token portfolio を組み立てる。
+fn symmetric_two_token_portfolio() -> (PortfolioData, [TokenOutAccount; 2]) {
+    let a = token("sym-a");
+    let b = token("sym-b");
+    let tokens = vec![passing_token_data(a.clone()), passing_token_data(b.clone())];
+
+    let mut historical_prices = BTreeMap::new();
+    historical_prices.insert(a.clone(), linear_price_history(&a, 1.0));
+    historical_prices.insert(b.clone(), linear_price_history(&b, 1.0));
+
+    // 同一トレンドで上昇率も同じ → 期待リターンが対称
+    let mut predictions = BTreeMap::new();
+    let target = TokenPrice::from_near_per_token(BigDecimal::from_f64(1.5).expect("finite"));
+    predictions.insert(a.clone(), target.clone());
+    predictions.insert(b.clone(), target);
+
+    let pd = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        ..Default::default()
+    };
+    (pd, [a, b])
+}
+
+#[tokio::test]
+async fn test_run_cost_aware_optimization_converges_within_tolerance() {
+    // 早期 break (`max_diff < CONVERGENCE_TOLERANCE`) パスを pin する。
+    // 対称 2-token portfolio で first iter が ~uniform [0.5, 0.5] を返し、
+    // damping = 0.001 では max_diff = 0.001 × |Δw| ≤ 0.001 × 0.5 = 5e-4 < 1e-3
+    // → loop 開始直後に break。max_iter = 1 (scaled to 10) で hard-cap も pin。
+    //
+    // 検証ポイント:
+    //   - Optimized outcome を返す（Hold ではない）
+    //   - 反復が hard-cap 内 (≤ 100) で完了し DoS にならない
+    //   - 最終 weights が 0.0 ≤ w ≤ 1.0 で finite（NaN cascade 経路に流入していない）
+    let (pd, [a, b]) = symmetric_two_token_portfolio();
+    let inputs = make_inputs(&[a, b], HashSet::new());
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+    let wallet = empty_wallet();
+
+    // damping = 0.001 (clamp 漏れ想定値) で early break を強制
+    let outcome = run_cost_aware_optimization(&wallet, pd, &inputs, &total, 1, 0.001, 0.05)
+        .await
+        .expect("convergence path returns Ok");
+
+    let report = match outcome {
+        CostAwareOutcome::Optimized(r) => r,
+        CostAwareOutcome::Hold => panic!("symmetric portfolio must produce Optimized outcome"),
+    };
+
+    // 最終 weights が finite 範囲内
+    for (sym, w) in report.optimal_weights.weights.iter() {
+        let v = w.to_f64().unwrap_or(f64::NAN);
+        assert!(
+            v.is_finite() && (0.0..=1.0).contains(&v),
+            "weight for {sym} out of valid range: {v}"
+        );
+    }
 }
 
 #[tokio::test]
