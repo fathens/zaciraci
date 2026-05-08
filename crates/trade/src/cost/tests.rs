@@ -208,7 +208,7 @@ fn test_clamp_storage_min_at_cap_returns_cap() {
 
 #[test]
 fn test_clamp_storage_min_above_cap_clamped() {
-    // 100 NEAR — cap (10 NEAR) を超える
+    // 100 NEAR — cap (1 NEAR) を超える
     let above = YoctoValue::from_yocto_u128(100 * 10u128.pow(24));
     assert_eq!(clamp_storage_min(&above), STORAGE_MIN_SANE_CAP);
 }

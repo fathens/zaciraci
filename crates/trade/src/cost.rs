@@ -34,8 +34,11 @@ pub(crate) const EXPECTED_SLIPPAGE_DEDUCTION: f64 = 0.005;
 /// portfolio から除外される DoS 経路になり得る。
 ///
 /// 実運用上の `storage_min` は 10⁻⁴ NEAR ～ 1 NEAR オーダーなので、
-/// 10 NEAR を上限として min クランプし、境界で異常値を遮断する。
-const STORAGE_MIN_SANE_CAP: u128 = 10 * 10u128.pow(24);
+/// 1 NEAR を上限として min クランプし、境界で異常値を遮断する。
+/// 中ポートフォリオ（おおよそ 165–1515 NEAR レンジ）の hostile RPC 全 token
+/// 脱落 DoS 経路を保護する。`GAS_YOCTO_SANE_CAP`（100 mNEAR、production
+/// baseline の 370×）と「実運用 10× オーダー」基準で対称。
+const STORAGE_MIN_SANE_CAP: u128 = 10u128.pow(24);
 
 /// `new_token_count` の debug_assert 上限
 ///
@@ -164,7 +167,7 @@ impl TradeCostBreakdown {
 /// `assumed_in` が 0 の場合は price impact が計測できないため、variable_ratio は
 /// `EXPECTED_SLIPPAGE_DEDUCTION` のみ。
 ///
-/// `storage_min_per_token` は `STORAGE_MIN_SANE_CAP`（10 NEAR）で min クランプ
+/// `storage_min_per_token` は `STORAGE_MIN_SANE_CAP`（1 NEAR）で min クランプ
 /// するため、RPC が異常に巨大な値（例: `u128::MAX`）を返しても overflow による
 /// DoS 経路にならない。gas yocto 値が `u128` に収まらない場合は `Err` で
 /// fail-fast する。
@@ -220,7 +223,7 @@ pub(crate) fn estimate_trade_cost(
 /// # observability
 ///
 /// クランプが発動した場合は `warn!` ログを出す。実運用では `storage_min` が
-/// 10 NEAR を超えること自体が異常（悪意ノード接続 / contract migration バグ /
+/// 1 NEAR を超えること自体が異常（悪意ノード接続 / contract migration バグ /
 /// node 破損のシグナル）なので、サイレントに吸収せず痕跡を残す。
 fn clamp_storage_min(storage_min_per_token: &YoctoValue) -> u128 {
     let raw = storage_min_per_token
