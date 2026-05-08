@@ -223,6 +223,50 @@ async fn test_execute_portfolio_optimization_re_guards_cost_deductions_injection
     assert!(sum.is_finite(), "weight sum must be finite, got {sum}");
 }
 
+/// Max モード対角インフレ → ensure_positive_semi_definite 投影 → 下流 Sharpe
+/// 最適化が finite な weights を返すことの end-to-end 検証。
+///
+/// `Max` モードで k を大きくして対角を強くインフレさせた後、`PortfolioData`
+/// 経由で `execute_portfolio_optimization` を通したときに Cholesky 後段で
+/// NaN/Inf が出ない（PSD 投影が機能している）ことを確認する。
+#[tokio::test]
+async fn test_max_mode_psd_recovery_yields_finite_sharpe() {
+    let tokens = create_sample_tokens();
+    let predictions = create_sample_predictions();
+    let historical_prices = create_sample_price_history();
+    let wallet = create_sample_wallet();
+
+    // 異常に大きい variance で対角を強くインフレ → PSD 投影必須シナリオ
+    let mut variances = BTreeMap::new();
+    for t in &tokens {
+        variances.insert(t.symbol.clone(), 10.0);
+    }
+
+    let pd = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        pred_err_diagonal: Some(PredErrDiagonal {
+            k: 1.0,
+            variances,
+            mode: PredErrDiagonalMode::Max,
+        }),
+        ..Default::default()
+    };
+    let report = execute_portfolio_optimization(&wallet, pd, 0.05)
+        .await
+        .expect("Max mode + PSD recovery must complete");
+
+    assert!(report.optimal_weights.sharpe_ratio.is_finite());
+    let sum: f64 = report
+        .optimal_weights
+        .weights
+        .values()
+        .filter_map(|w| w.to_f64())
+        .sum();
+    assert!(sum.is_finite(), "weight sum must be finite, got {sum}");
+}
+
 #[test]
 fn test_apply_prediction_error_diagonal_skips_negative_variance() {
     // MSRE は非負（mean of squared error）。pub field bypass で混入した
