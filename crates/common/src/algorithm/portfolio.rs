@@ -5,14 +5,98 @@ use chrono::{DateTime, Utc};
 use nalgebra::DMatrix;
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::types::*;
 
 // ==================== ポートフォリオ固有の型定義 ====================
 
-/// ポートフォリオデータ
+/// 共分散対角の合成モード
+///
+/// `serde(rename_all = "lowercase")` は `as_str()` / `FromStr` と同じ表現
+/// (`"additive"` / `"max"`) を使う。3 経路 (serde / FromStr / as_str) の対称性は
+/// `tests/basic.rs::pred_err_diagonal_mode_string_round_trips_three_ways` で
+/// property-test されている。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PredErrDiagonalMode {
+    /// `cov[i,i] + k × pred_err_var`（独立ノイズ加算、金融工学的に標準）
+    #[default]
+    Additive,
+    /// `max(cov[i,i], k × pred_err_var)`（pred_err が price_var を超えた時のみ採用）
+    Max,
+}
+
+impl PredErrDiagonalMode {
+    /// 設定値文字列としての安定表現（`FromStr` の逆）。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Additive => "additive",
+            Self::Max => "max",
+        }
+    }
+
+    /// 期待バリアントの quoted リスト。エラーメッセージや panic 文字列で
+    /// 「期待値の列挙」を表現する箇所はすべてこの SSoT を参照すること
+    /// (`as_str` / `validate_string` / panic message での文字列 drift を防ぐ)。
+    pub const fn variants_doc() -> &'static str {
+        "\"additive\", \"max\""
+    }
+}
+
+/// `PredErrDiagonalMode` 用のパースエラー（typo を silent に縮退させない）。
+///
+/// **input フィールドを意図的に持たない** unit struct。`Display` 実装は固定文字列で、
+/// attacker-controlled な入力値が `Display` 経由（`anyhow::Context` chain / `panic!`
+/// メッセージ / log forwarding 等）で漏洩する経路を型レベルで根絶する。失敗値の
+/// 復元は upstream 側で `validate_string` などにより redact 済みの reason に変換
+/// すること。
+///
+/// `Display` の期待バリアントは [`PredErrDiagonalMode::variants_doc`] を参照
+/// するため、enum 拡張時の文字列 drift は SSoT 1 箇所で吸収される。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "invalid PredErrDiagonalMode (value redacted; expected one of {})",
+    PredErrDiagonalMode::variants_doc()
+)]
+pub struct ParsePredErrDiagonalModeError;
+
+impl std::str::FromStr for PredErrDiagonalMode {
+    type Err = ParsePredErrDiagonalModeError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "additive" => Ok(Self::Additive),
+            "max" => Ok(Self::Max),
+            _ => Err(ParsePredErrDiagonalModeError),
+        }
+    }
+}
+
+/// 予測誤差ベース対角合成の設定（k と variances をペアで管理）
+///
+/// 名称は "PredErrDiagonal" / "variances" だが、`variances` の中身は
+/// **mean squared relative error (MSRE)** = `mean of (mape / 100)²` であり、
+/// 統計的なサンプル分散 `Var()` ではない。共分散行列の対角インフレに使う
+/// スケール一致 proxy として運用する（詳細は
+/// `trade::prediction_accuracy::calculate_per_token_pred_err_variance` の
+/// docstring を参照）。
+///
+/// API 利用上の注意: フィールド名 `variances` をサンプル分散として扱わないこと。
+/// rename + `MeanSquaredError` newtype 化は F009 Phase 2 で別 PR にて対応予定。
 #[derive(Debug, Clone)]
+pub struct PredErrDiagonal {
+    /// スケール係数 k
+    pub k: f64,
+    /// 銘柄ごとの **MSRE**（return² スケール、`mean of (mape / 100)²`）。
+    /// 統計的サンプル分散ではない（型注釈は本構造体の docstring 参照）。
+    pub variances: BTreeMap<TokenOutAccount, f64>,
+    /// 合成モード
+    pub mode: PredErrDiagonalMode,
+}
+
+/// ポートフォリオデータ
+#[derive(Debug, Clone, Default)]
 pub struct PortfolioData {
     pub tokens: Vec<TokenData>,
     /// 予測価格（TokenPrice: NEAR/token）
@@ -22,6 +106,59 @@ pub struct PortfolioData {
     /// - エントリあり: confidence に応じた Sharpe/RP ブレンド
     /// - エントリなし: データ不足 → max(alpha_vol * 0.5, PREDICTION_ALPHA_FLOOR) にフォールバック
     pub prediction_confidences: BTreeMap<TokenOutAccount, f64>,
+    /// 予測誤差分散ベースの共分散対角合成（None で無効）
+    pub pred_err_diagonal: Option<PredErrDiagonal>,
+    /// 銘柄ごとの取引コスト控除比率（empty で無効、改良 D で使用）
+    pub cost_deductions: BTreeMap<TokenOutAccount, f64>,
+}
+
+impl PortfolioData {
+    /// 指定 token のみを残し、token-indexed な全フィールドを同期 filter する。
+    ///
+    /// `tokens` 単独 retain では `predictions` 等の map に古いキーが残り、
+    /// 後段の `apply_prediction_error_diagonal` 等が
+    /// `tokens.len()` と整合しない要素を参照してインデックス out-of-bounds や
+    /// 数値不整合を起こすリスクがある。本メソッドは不変条件
+    /// 「token-indexed な全フィールドが `retain` の集合に閉じている」
+    /// を 1 箇所で保証する（defense-in-depth）。
+    ///
+    /// production では `retain_excluding` のみ使用。本メソッドは
+    /// 「保持集合 ↔ 除外集合」の対称テスト
+    /// (`retain_excluding_is_inverse_of_retain_tokens`) で
+    /// 等価性を担保するために残す `#[cfg(test)]` 専用 API。
+    #[cfg(test)]
+    pub(crate) fn retain_tokens(&mut self, retain: &HashSet<TokenOutAccount>) {
+        self.tokens.retain(|t| retain.contains(&t.symbol));
+        self.predictions.retain(|k, _| retain.contains(k));
+        self.historical_prices.retain(|k, _| retain.contains(k));
+        self.prediction_confidences
+            .retain(|k, _| retain.contains(k));
+        if let Some(ped) = self.pred_err_diagonal.as_mut() {
+            ped.variances.retain(|k, _| retain.contains(k));
+        }
+        self.cost_deductions.retain(|k, _| retain.contains(k));
+    }
+
+    /// 指定 token を除外し、token-indexed な全フィールドを同期 filter する。
+    ///
+    /// `retain_tokens` の反転 API。「除外集合」を直接渡せるため、呼び出し側で
+    /// `tokens.iter().filter(!exclude.contains).collect::<HashSet>()` の
+    /// 反転パターンを書く必要がない（footgun 解消）。除外条件で考えるロジック
+    /// （cost 推定失敗、path 不在等）の自然な書き方になる。
+    ///
+    /// 実装は `retain_tokens` と等価で、token-indexed な全フィールドが
+    /// `exclude` の補集合に閉じることを 1 箇所で保証する。
+    pub fn retain_excluding(&mut self, exclude: &HashSet<TokenOutAccount>) {
+        self.tokens.retain(|t| !exclude.contains(&t.symbol));
+        self.predictions.retain(|k, _| !exclude.contains(k));
+        self.historical_prices.retain(|k, _| !exclude.contains(k));
+        self.prediction_confidences
+            .retain(|k, _| !exclude.contains(k));
+        if let Some(ped) = self.pred_err_diagonal.as_mut() {
+            ped.variances.retain(|k, _| !exclude.contains(k));
+        }
+        self.cost_deductions.retain(|k, _| !exclude.contains(k));
+    }
 }
 
 /// ポートフォリオ実行レポート
@@ -47,6 +184,7 @@ const MIN_POSITION_SIZE: f64 = 0.05;
 
 /// 最大保有トークン数（集中投資）
 const MAX_HOLDINGS: usize = 6;
+const _: () = assert!(MAX_HOLDINGS > 0, "MAX_HOLDINGS must be > 0");
 
 /// PSD 保証のための最小固有値閾値
 const MIN_EIGENVALUE_THRESHOLD: f64 = 1e-6;
@@ -305,6 +443,148 @@ fn ensure_positive_semi_definite(covariance: &mut Array2<f64>) {
             covariance[[i, j]] = reconstructed[(i, j)];
         }
     }
+}
+
+/// 反復最適化 1 ステップ用のダンピング + 重み変化量計算ヘルパ。
+///
+/// `weights_{k+1} = (1 - α) × current + α × candidate` をベクトル化して計算し、
+/// 同時に `max_i |weights_{k+1,i} - current_i|` を返す（収束判定用）。
+///
+/// `damping` は内部で `[0.0, 1.0]` にクランプされる（不正値での発散を防ぐ pure 不変条件）。
+/// 収束判定 (`tolerance`) や反復制御は呼び出し側に委ねる。
+///
+/// 呼び出し側 (`run_cost_aware_optimization`) では `damping ∈ [0.1, 1.0]` を仮定して
+/// よい (`PORTFOLIO_COST_ITERATION_DAMPING_LOWER` の typed-config clamp により保証)。
+/// `damping = 0.0` だと `next == current` で `max_diff = 0` となり、収束判定
+/// (`max_diff < CONVERGENCE_TOLERANCE`) で iter 1 即 break する silent disable
+/// 経路が生まれるため typed config 側で 0.0 を弾く。
+///
+/// # Errors
+///
+/// 以下のいずれかの場合 `Err` を返す（fail-soft、cron tick crash loop 防止）:
+///
+/// - `current_weights.len() != candidate_weights.len()`（呼び出し側のプログラミングバグ
+///   だが release panic で process abort → cron 再起動 → 同条件再発で永続 crash loop に
+///   陥るため、`bail!` に倒し caller `?` で Hold に合流させる）。
+/// - `damping` または `current_weights` / `candidate_weights` のいずれかの要素が
+///   `is_finite() == false`（NaN / ±∞）。upstream で発生した数値破綻を黙って 0 に
+///   クランプすると後続反復で diff が縮退して誤収束するため、fail-loud で呼び出し側に
+///   通知する（F002 NaN cascade 対策）。
+pub fn damp_and_diff(
+    current_weights: &[f64],
+    candidate_weights: &[f64],
+    damping: f64,
+) -> Result<(Vec<f64>, f64)> {
+    if current_weights.len() != candidate_weights.len() {
+        anyhow::bail!(
+            "damp_and_diff: length mismatch (current={}, candidate={})",
+            current_weights.len(),
+            candidate_weights.len()
+        );
+    }
+    if !damping.is_finite() {
+        anyhow::bail!("damp_and_diff: damping must be finite, got {damping}");
+    }
+    if let Some(idx) = current_weights.iter().position(|w| !w.is_finite()) {
+        anyhow::bail!(
+            "damp_and_diff: current_weights[{idx}] is not finite ({})",
+            current_weights[idx]
+        );
+    }
+    if let Some(idx) = candidate_weights.iter().position(|w| !w.is_finite()) {
+        anyhow::bail!(
+            "damp_and_diff: candidate_weights[{idx}] is not finite ({})",
+            candidate_weights[idx]
+        );
+    }
+    let damp = damping.clamp(0.0, 1.0);
+    let new_weights: Vec<f64> = current_weights
+        .iter()
+        .zip(candidate_weights.iter())
+        .map(|(&w, &c)| (1.0 - damp) * w + damp * c)
+        .collect();
+    let max_diff = new_weights
+        .iter()
+        .zip(current_weights.iter())
+        .map(|(&new, &old)| (new - old).abs())
+        .fold(0.0f64, f64::max);
+    Ok((new_weights, max_diff))
+}
+
+/// 共分散行列の対角を予測誤差分散で書き換える。
+///
+/// Markowitz の risk 評価に「予測精度差」を反映するため、銘柄ごとの
+/// 予測誤差分散 (`pred_err_var`) を Σ の対角に合成する純関数。
+///
+/// - `Additive`: `cov[i,i] + k * pred_err_var_i`（独立ノイズ加算、金融工学的に標準）
+/// - `Max`: `max(cov[i,i], k * pred_err_var_i)`（pred_err が price_var を超えた時のみ採用）
+///
+/// `tokens` の順序は `cov` の行/列インデックスと一致している必要がある。
+/// `pred_err_var` にエントリがない銘柄は対角を据え置く。
+/// 書き換え後に `ensure_positive_semi_definite` を再呼び出しして PSD を保証する。
+///
+/// # 数学的契約（重要）
+///
+/// **本関数は対角 (`cov[i,i]`) のみを inflate し、off-diagonal
+/// (`cov[i,j]` for `i != j`) には触れない**。これは意図的な近似だが
+/// 副作用として「implied correlation `cov[i,j]/sqrt(cov[i,i]*cov[j,j])`
+/// が圧縮され、Markowitz の diversification benefit が削がれる」。
+///
+/// `k * pred_err_var` が元の `cov[i,i]` と同オーダー以上になる設定
+/// (例: `k=1.0`, `mape=20%` → `pev=0.04` ≫ daily price var ~10⁻⁴)
+/// では銘柄間相関が事実上無視される。本 PR の default は
+/// `Additive` + `k=0.1` だが、これでも `0.1 × 0.04 = 4×10⁻³` の
+/// 加算は daily price var ~10⁻⁴ に対して **実効 ~40× の対角インフレ**
+/// に相当し、`cov[i,j]/sqrt(cov[i,i]*cov[j,j])` で見た implied
+/// correlation は事実上 0 まで圧縮される。すなわち現行 default 下では
+/// Markowitz の diversification benefit はほぼ失われていると解釈すべき。
+///
+/// 上記の試算は `daily price var ~10⁻⁴`（年率 30% 相当、`HIGH_VOLATILITY_THRESHOLD`
+/// 付近）を仮定したもの。altcoin など高 volatility 銘柄（年率 80-150%）
+/// では daily var ~10⁻³ となり、対角インフレは `(10⁻³ + 4×10⁻³)/10⁻³ ≈ 5×`
+/// に緩和される。すなわち実効インフレ倍率は対象銘柄の volatility に強く
+/// 依存し、低 volatility 銘柄ほど相関破壊が激しい。
+///
+/// この影響を緩和するには (a) `k` をさらに下げて daily price var の
+/// オーダーまで揃える、または (b) 下記の correlation-preserving
+/// rescaling を実装する、のいずれかが必要。**default 変更も rescaling
+/// 実装も本 PR のスコープ外**で、別 PR にて対応する。
+///
+/// 相関構造を保ったまま inflate したい場合は、別途
+/// `D = diag(sqrt(new_diag/old_diag))` を構築して
+/// `new_cov = D · old_cov · D` で再正規化する必要がある（Phase 2、別 PR）。
+pub(crate) fn apply_prediction_error_diagonal(
+    mut cov: Array2<f64>,
+    tokens: &[TokenOutAccount],
+    pred_err_var: &BTreeMap<TokenOutAccount, f64>,
+    k: f64,
+    mode: PredErrDiagonalMode,
+) -> Array2<f64> {
+    debug_assert_eq!(
+        cov.nrows(),
+        tokens.len(),
+        "covariance matrix size must match tokens length"
+    );
+    for (i, token) in tokens.iter().enumerate() {
+        let Some(&pev) = pred_err_var.get(token) else {
+            continue;
+        };
+        // Consumer-side re-guard: `variances` は pub フィールドのため struct
+        // literal 経由で MSRE の不変条件（非負・有限）を bypass された値が
+        // 混入し得る。負値は加算で variance を減らして Cholesky 後段の数値
+        // 不整合を起こす経路、非有限値は NaN cascade 経路を遮断する。
+        if !pev.is_finite() || pev < 0.0 {
+            continue;
+        }
+        let scaled = k * pev;
+        let current = cov[[i, i]];
+        cov[[i, i]] = match mode {
+            PredErrDiagonalMode::Additive => current + scaled,
+            PredErrDiagonalMode::Max => current.max(scaled),
+        };
+    }
+    ensure_positive_semi_definite(&mut cov);
+    cov
 }
 
 /// 2つの系列間の共分散を計算
@@ -1590,7 +1870,33 @@ pub async fn execute_portfolio_optimization(
         .collect();
 
     // 期待リターンを計算
-    let expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
+    let raw_expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
+
+    // 取引コスト控除（cost_deductions が空のときは raw を素通し）
+    //
+    // Consumer-side re-guard: `cost_deductions` は pub フィールドのため struct
+    // literal 経由で `CostDeduction::new` の不変条件 (`is_finite() && >= 0.0`)
+    // を bypass された値が混入し得る。非有限または負値は 0.0 にクランプし、
+    // `r - NaN = NaN` cascade で box_maximize_sharpe Cholesky 後段の NaN 比較
+    // ガード（`sum_p.abs() < 1e-15` 等）が無効化される経路を遮断する。
+    // follow-up: BTreeMap<_, CostDeduction> へ型 lift して入口で塞ぐ。
+    let expected_returns: Vec<f64> = if portfolio_data.cost_deductions.is_empty() {
+        raw_expected_returns
+    } else {
+        selected_tokens
+            .iter()
+            .zip(raw_expected_returns.iter())
+            .map(|(t, &r)| {
+                let deduction = portfolio_data
+                    .cost_deductions
+                    .get(&t.symbol)
+                    .copied()
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+                    .unwrap_or(0.0);
+                r - deduction
+            })
+            .collect()
+    };
 
     // 選択されたトークンの価格履歴を selected_tokens の順序に合わせて構築
     let selected_price_histories: Vec<PriceHistory> = selected_tokens
@@ -1601,6 +1907,20 @@ pub async fn execute_portfolio_optimization(
     // 日次リターンと共分散行列を計算
     let daily_returns = calculate_daily_returns(&selected_price_histories);
     let covariance = calculate_covariance_matrix(&daily_returns);
+
+    // 予測誤差分散による対角合成（フラグ on のとき）
+    let selected_token_symbols: Vec<TokenOutAccount> =
+        selected_tokens.iter().map(|t| t.symbol.clone()).collect();
+    let covariance = match &portfolio_data.pred_err_diagonal {
+        Some(ped) => apply_prediction_error_diagonal(
+            covariance,
+            &selected_token_symbols,
+            &ped.variances,
+            ped.k,
+            ped.mode,
+        ),
+        None => covariance,
+    };
 
     // 動的リスク調整: ボラティリティに基づくポジションサイズ制御
     let avg_volatility = calculate_market_volatility(&daily_returns);

@@ -6,7 +6,7 @@ use common::types::TimeRange;
 use common::types::TokenPrice;
 use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
 use logging::*;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{FromPrimitive, ToPrimitive, Zero};
 use persistence::prediction_record::{DbPredictionRecord, NewPredictionRecord, PredictionRecord};
 use persistence::token_rate::TokenRate;
 use std::collections::BTreeMap;
@@ -106,37 +106,101 @@ fn calculate_composite_confidence(
     }
 }
 
+/// `build_prediction_records` で許容する skip 比率の上限。
+///
+/// 1 cycle 内で `try_new` が `Err` で skip された予測の比率がこの閾値以上に
+/// 達した場合、caller は systematic な data leakage / 環境異常 (NTP step
+/// backward 等) と判断して **当該 cycle 全体を abort** する。Markowitz
+/// 最適化が成立する最小トークン数 (~5 銘柄) のうち 50% 以上が脱落 =
+/// portfolio 機能停止と等価のため、fail-loud で alert を発火させる。
+///
+/// 比較は `>=` (50% ちょうどを含む)。`>` だと skip 率がぴったり 50% の
+/// ケースが abort されない境界穴が生じるため、境界を厳格化している。
+///
+/// **config 化禁止**: `CONFIG_STORE` / `DB_STORE` 経由で `0.0` 等を流し込まれると
+/// systematic violation 検知が無効化される DoS 経路になるため、named const で
+/// hard-code する。
+const SYSTEMATIC_VIOLATION_THRESHOLD: f64 = 0.5;
+
 /// BTreeMap から NewPredictionRecord の Vec を生成する（DB 非依存）。
+///
+/// `try_new` の `Err` (data leakage 不変条件違反) は当該 token を skip し、
+/// `error!` ログで alert 発火可能化する (Layer 1 fail-soft 防御)。
+/// 戻り値は `(records, skipped_count)`。
 fn build_prediction_records(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
-) -> Vec<NewPredictionRecord> {
-    predictions
-        .iter()
-        .map(|(token, (price, data_cutoff_time))| {
-            let target_time =
-                *data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
-            NewPredictionRecord {
-                token: token.to_string(),
-                quote_token: quote_token.to_string(),
-                predicted_price: price.as_bigdecimal().clone(),
-                data_cutoff_time: *data_cutoff_time,
-                target_time,
+    created_at: NaiveDateTime,
+) -> (Vec<NewPredictionRecord>, usize) {
+    let log = DEFAULT.new(o!("function" => "build_prediction_records"));
+    let mut records = Vec::with_capacity(predictions.len());
+    let mut skipped = 0usize;
+    for (token, (price, data_cutoff_time)) in predictions.iter() {
+        let target_time =
+            *data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
+        match NewPredictionRecord::try_new(
+            token.to_string(),
+            quote_token.to_string(),
+            price.as_bigdecimal().clone(),
+            *data_cutoff_time,
+            target_time,
+            created_at,
+        ) {
+            Ok(record) => records.push(record),
+            Err(e) => {
+                // data leakage 経路を fail-loud に通知 (info!/warn! ではなく error!)。
+                // skip された予測は当該 token サイクルを欠落させ optimizer の weights を
+                // 変動させるため、alert 監視レベルで記録する必要がある。
+                error!(log, "skipping prediction record due to invariant violation";
+                    "token" => %token, "error" => %e);
+                skipped += 1;
             }
-        })
-        .collect()
+        }
+    }
+    (records, skipped)
 }
 
 /// 予測結果を prediction_records テーブルに記録する。
 ///
-/// DB 操作: INSERT INTO prediction_records (トークン数分)
+/// `created_at` は呼び出し側の「現在時刻」を明示的に渡す。production では
+/// `Utc::now()` 相当、シミュレーションでは sim_day を渡すことで、engine の
+/// fresh-prediction 判定が両経路で同じセマンティクスを持つ。
+///
+/// `NewPredictionRecord::try_new` が `Err` を返した token は skip するが、
+/// skip 比率が [`SYSTEMATIC_VIOLATION_THRESHOLD`] を超えた場合は systematic
+/// violation と判断して `Err` で当該 cycle を abort する (Markowitz 最適化が
+/// 縮退する閾値)。
+///
+/// DB 操作: INSERT INTO prediction_records (skip 後のトークン数分)
 pub(crate) async fn record_predictions(
     predictions: &BTreeMap<TokenOutAccount, (TokenPrice, NaiveDateTime)>,
     quote_token: &TokenInAccount,
+    created_at: NaiveDateTime,
 ) -> Result<()> {
     let log = DEFAULT.new(o!("function" => "record_predictions"));
 
-    let records = build_prediction_records(predictions, quote_token);
+    let total = predictions.len();
+    let (records, skipped) = build_prediction_records(predictions, quote_token, created_at);
+
+    if total > 0 {
+        let skip_ratio = skipped as f64 / total as f64;
+        if skip_ratio >= SYSTEMATIC_VIOLATION_THRESHOLD {
+            error!(log, "systematic prediction invariant violation; aborting cycle";
+                "skipped" => skipped, "total" => total, "ratio" => skip_ratio,
+                "threshold" => SYSTEMATIC_VIOLATION_THRESHOLD);
+            return Err(anyhow::anyhow!(
+                "data quality breakdown: {} of {} predictions skipped (ratio {:.2} >= {:.2})",
+                skipped,
+                total,
+                skip_ratio,
+                SYSTEMATIC_VIOLATION_THRESHOLD
+            ));
+        }
+        if skipped > 0 {
+            warn!(log, "some predictions skipped due to invariant violation";
+                "skipped" => skipped, "total" => total);
+        }
+    }
 
     info!(log, "recording predictions"; "count" => records.len());
     PredictionRecord::batch_insert(&records).await?;
@@ -324,6 +388,62 @@ fn calculate_direction_accuracy_for_records(
 /// 1回の DB クエリで全トークンのレコードを取得し、Rust 側でグルーピング。
 const MAX_PREDICTION_QUERY_LIMIT: i64 = 10_000;
 
+/// 指定トークン群の最近評価済み prediction_records を取得し、トークンごとに
+/// グルーピングして返す（`target_time DESC` ソート + `window` 件にトリム済み）。
+///
+/// `window` は呼び出し側で `cfg.prediction_accuracy_window().max(1)` などにより
+/// 1 以上にクランプ済みである前提（`debug_assert!` で検証）。
+///
+/// `BTreeMap` のキーが `String` なのは、`DbPredictionRecord::token` が DB 由来の
+/// `String` のままであり、ここで `TokenOutAccount` へ再パースするとパース失敗の
+/// エラーパス（DB データ汚損時のサイレント脱落）が新たに生じるため。プライベート
+/// ヘルパで型は外部に漏れず、内部的な lookup も `token.to_string()` で完結する。
+async fn fetch_records_grouped_by_token(
+    tokens: &[TokenOutAccount],
+    window: i64,
+    log: &slog::Logger,
+) -> Result<BTreeMap<String, Vec<DbPredictionRecord>>> {
+    debug_assert!(window >= 1, "window must be clamped to >= 1");
+
+    let token_count = i64::try_from(tokens.len()).unwrap_or(MAX_PREDICTION_QUERY_LIMIT);
+    let raw_limit = window.saturating_mul(token_count);
+    let limit = raw_limit.min(MAX_PREDICTION_QUERY_LIMIT);
+    if raw_limit > MAX_PREDICTION_QUERY_LIMIT {
+        warn!(log, "prediction query limit capped";
+            "requested" => raw_limit, "capped" => MAX_PREDICTION_QUERY_LIMIT,
+            "tokens" => tokens.len(), "window" => window);
+    }
+    let all_records = PredictionRecord::get_recent_evaluated_for_tokens(limit, tokens)
+        .await
+        .map_err(|e| {
+            warn!(log, "failed to get prediction records"; "error" => %e);
+            e
+        })?;
+
+    Ok(group_records_by_token(all_records, window as usize))
+}
+
+/// `all_records` を token 文字列でグルーピングし、各グループを `target_time DESC`
+/// で並び替えてから先頭 `window` 件に切り詰める純粋関数。
+///
+/// `fetch_records_grouped_by_token` から DB 呼び出し以外を切り出したもの。DB
+/// モックなしで単体テスト可能にし、`window` truncate と sort 安定性のロジックを
+/// 直接検証する。
+fn group_records_by_token(
+    all_records: Vec<DbPredictionRecord>,
+    window: usize,
+) -> BTreeMap<String, Vec<DbPredictionRecord>> {
+    let mut by_token: BTreeMap<String, Vec<DbPredictionRecord>> = BTreeMap::new();
+    for r in all_records {
+        by_token.entry(r.token.clone()).or_default().push(r);
+    }
+    for entries in by_token.values_mut() {
+        entries.sort_by(|a, b| b.target_time.cmp(&a.target_time));
+        entries.truncate(window);
+    }
+    by_token
+}
+
 /// 各トークンの平均 MAPE と方向正解率から複合 confidence を算出。
 ///
 /// 戻り値: Result<BTreeMap<TokenOutAccount, f64>>
@@ -390,9 +510,9 @@ pub(crate) async fn calculate_per_token_confidence(
             continue;
         }
 
-        // NOTE: min_samples >= 1（デフォルト 5）であるため mape_values は非空。
-        // 仮に min_samples == 0 に設定された場合でもゼロ除算は NaN → mape_to_confidence
-        // の NaN ガードで confidence = 0.0（安全側）になる。
+        // NOTE: F004 の `clamp_min_samples` で `min_samples >= 1` が保証され、
+        // 直前の `mape_values.len() < min_samples` ガードを通過した時点で
+        // `mape_values` は非空。万一 0 に設定されてもクランプで 1 に丸められる。
         let avg_mape = mape_values.iter().sum::<f64>() / mape_values.len() as f64;
 
         let direction_data = records.map(|rs| calculate_direction_accuracy_for_records(rs, &log));
@@ -418,6 +538,208 @@ pub(crate) async fn calculate_per_token_confidence(
     }
 
     Ok(result)
+}
+
+/// 各トークンの過去予測の系統的バイアス中央値を計算する。
+///
+/// 各レコードの `(predicted - actual) / actual` を集計し、トークンごとに中央値を返す。
+/// 中央値は外れ値に頑健で、強気/弱気バイアスの推定に適する。
+///
+/// 戻り値:
+///   - エントリあり: bias > 0 が過大予測、bias < 0 が過小予測
+///   - エントリなし: `min_samples` 未満で計算不能（コールドスタート扱い）
+///   - Err: DB アクセス失敗
+pub(crate) async fn calculate_per_token_bias(
+    tokens: &[TokenOutAccount],
+    cfg: &impl ConfigAccess,
+) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
+    let log = DEFAULT.new(o!("function" => "calculate_per_token_bias"));
+    let window = cfg.prediction_accuracy_window().max(1);
+    let min_samples = cfg.prediction_accuracy_min_samples();
+
+    let by_token = fetch_records_grouped_by_token(tokens, window, &log).await?;
+
+    let mut result = BTreeMap::new();
+    for token in tokens {
+        let token_str = token.to_string();
+        let Some(records) = by_token.get(&token_str) else {
+            continue;
+        };
+
+        let mut bias_values: Vec<f64> = records
+            .iter()
+            .filter_map(|r| {
+                let actual = r.actual_price.as_ref()?;
+                if actual.is_zero() {
+                    return None;
+                }
+                let actual_f = actual.to_f64()?;
+                let predicted_f = r.predicted_price.to_f64()?;
+                let bias = (predicted_f - actual_f) / actual_f;
+                if bias.is_finite() { Some(bias) } else { None }
+            })
+            .collect();
+
+        if bias_values.len() < min_samples {
+            continue;
+        }
+
+        // The filter_map above keeps only `is_finite` values, so NaN cannot
+        // appear here; `total_cmp` provides a zero-cost total order anyway.
+        bias_values.sort_by(|a, b| a.total_cmp(b));
+        let Some(median) = compute_median(&bias_values) else {
+            // Logic-bug indicator: bias_values is non-empty (length passed
+            // the `< min_samples` gate, and `min_samples >= 1` after the
+            // typed-config clamp) so `compute_median` should always return
+            // `Some`. Skip the token instead of panicking; warn so the
+            // unexpected path is observable in production logs.
+            warn!(log, "compute_median returned None despite passing min_samples gate, excluding token";
+                "token" => %token_str,
+                "samples" => bias_values.len(),
+                "min_samples" => min_samples
+            );
+            continue;
+        };
+
+        debug!(log, "token prediction bias";
+            "token" => %token_str,
+            "samples" => bias_values.len(),
+            "bias" => format!("{:.4}", median)
+        );
+        result.insert(token.clone(), median);
+    }
+
+    Ok(result)
+}
+
+/// ソート済みスライスの中央値を計算する。
+///
+/// 偶数長は中央 2 要素の平均、奇数長は中央要素を返す。
+/// 空入力には `None` を返す（F004: defense-in-depth — `min_samples` クランプで
+/// 通常はここに到達しないが、想定外経路で空 slice が渡されても release で
+/// panic させない安全弁として）。
+fn compute_median(sorted: &[f64]) -> Option<f64> {
+    let n = sorted.len();
+    if n == 0 {
+        return None;
+    }
+    Some(if n.is_multiple_of(2) {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    } else {
+        sorted[n / 2]
+    })
+}
+
+/// `mape` (% スケール、非負) を return² スケールの寄与に変換する。
+///
+/// production 経路では `mape = |diff| / actual * 100` で非負保証だが、DB 直接
+/// 書き込み等で負値が混入すると `(negative/100)²` で正値化し「異常データを
+/// 通常 MSRE として処理」する経路ができる。defense-in-depth として境界で
+/// `is_finite() && mape >= 0.0` を要求し、それ以外は `None` で skip する。
+fn mape_to_squared_return(mape: f64) -> Option<f64> {
+    if !mape.is_finite() || mape < 0.0 {
+        return None;
+    }
+    let ratio = mape / 100.0;
+    Some(ratio * ratio)
+}
+
+/// 各トークンの **mean squared relative error (MSRE)** を計算する。
+///
+/// 各レコードの `(mape / 100.0)²` を集計し、トークンごとに **平均**を返す。
+/// 名前に "variance" を含むが、これは統計的なサンプル分散 `Var()` ではなく
+/// `mean of (mape / 100)²` = MSRE である。共分散行列の対角インフレ用に
+/// **スケール一致 proxy** として利用する（return² スケールで対角と単位整合）。
+///
+/// 注意: サンプル分散 `Var()` を使うと return⁴ になり共分散の対角と単位不整合
+/// となるため、平均（MSRE）を採用している。
+///
+/// API 利用上の注意: 戻り値および `PredErrDiagonal::variances` フィールドは
+/// 名称こそ "variance" だが、中身は MSRE である。サンプル分散として扱わないこと。
+/// （関数名・フィールド名の rename と `MeanSquaredError` newtype 化は F009 Phase 2
+/// で別 PR にて対応予定。）
+///
+/// 戻り値:
+/// - エントリあり: MSRE > 0（return² スケール）
+/// - エントリなし: `min_samples` 未満で計算不能
+/// - Err: DB アクセス失敗
+pub(crate) async fn calculate_per_token_pred_err_variance(
+    tokens: &[TokenOutAccount],
+    cfg: &impl ConfigAccess,
+) -> crate::Result<BTreeMap<TokenOutAccount, f64>> {
+    let log = DEFAULT.new(o!("function" => "calculate_per_token_pred_err_variance"));
+    let window = cfg.prediction_accuracy_window().max(1);
+    let min_samples = cfg.prediction_accuracy_min_samples();
+
+    let by_token = fetch_records_grouped_by_token(tokens, window, &log).await?;
+
+    let mut result = BTreeMap::new();
+    for token in tokens {
+        let token_str = token.to_string();
+        let Some(records) = by_token.get(&token_str) else {
+            continue;
+        };
+
+        let squared: Vec<f64> = records
+            .iter()
+            .filter_map(|r| mape_to_squared_return(r.mape?))
+            .collect();
+
+        if squared.len() < min_samples {
+            continue;
+        }
+
+        let mean = squared.iter().sum::<f64>() / squared.len() as f64;
+        debug!(log, "token prediction error variance";
+            "token" => %token_str,
+            "samples" => squared.len(),
+            "variance" => format!("{:.6}", mean)
+        );
+        result.insert(token.clone(), mean);
+    }
+
+    Ok(result)
+}
+
+/// バイアス補正の安全クランプ範囲（下限）。
+///
+/// `±50%` を超える bias はモデル推定誤差ではなく入力データ異常
+/// （価格急変、欠損、外れ値混入など）と判断し、安全側に丸める。
+/// 50% を超える補正は (1 + bias) が 0 や負値に近づき
+/// `correct_prediction` の数式が破綻するため、構造的に防止する目的も兼ねる。
+const BIAS_CLAMP_LOWER: f64 = -0.5;
+
+/// バイアス補正の安全クランプ範囲（上限）。詳細は [`BIAS_CLAMP_LOWER`] を参照。
+const BIAS_CLAMP_UPPER: f64 = 0.5;
+
+/// バイアス中央値を用いて予測価格を補正する（3 層 defense-in-depth）。
+///
+/// - L1（入力ガード）: bias を `[BIAS_CLAMP_LOWER, BIAS_CLAMP_UPPER]` にクランプし、モデル破綻時の暴走を防ぐ
+/// - L2（数式安全）: `corrected = predicted / (1 + bias_clamped)` で正値保証 + ゼロ除算回避
+/// - L3（型ガード）: 数学的に破綻するケース（factor <= 0、結果がゼロ）は `None` を返し、
+///   呼び出し側でトークン除外して Sell trigger 発火を構造的に防ぐ
+///
+/// 補正方向: bias > 0（過大予測）→ 価格下方修正、bias < 0（過小予測）→ 価格上方修正
+pub(crate) fn correct_prediction(predicted: &TokenPrice, bias: f64) -> Option<TokenPrice> {
+    if !bias.is_finite() {
+        return None;
+    }
+    let bias_clamped = bias.clamp(BIAS_CLAMP_LOWER, BIAS_CLAMP_UPPER);
+    let factor = 1.0 + bias_clamped;
+    if factor <= 0.0 {
+        return None;
+    }
+    let factor_bd = BigDecimal::from_f64(factor)?;
+    if factor_bd.is_zero() {
+        return None;
+    }
+    let corrected_bd = predicted.as_bigdecimal() / &factor_bd;
+    // TokenPrice の不変条件（非負）を信頼: factor > 0 かつ predicted >= 0 → corrected >= 0
+    // ゼロのみ除外で十分
+    if corrected_bd.is_zero() {
+        return None;
+    }
+    Some(TokenPrice::from_near_per_token(corrected_bd))
 }
 
 /// target_time に最も近い実績価格を token_rates から取得し TokenPrice に変換する。

@@ -156,7 +156,39 @@ pub async fn run_simulation(cli: &RunArgs) -> Result<SimulationResult> {
     Ok(result)
 }
 
-/// Apply CLI parameters to the config system
+/// Apply CLI parameters to the config system.
+///
+/// # Boundary assumptions (read before reusing this function)
+///
+/// This function mutates **process-wide** config state via
+/// `common::config::store::set`, which is backed by a process-shared
+/// `OnceLock`. The simulate binary is designed to run in **isolation** with
+/// these assumptions:
+///
+/// 1. **Mock client only.** All trading paths must be routed through
+///    `SimulationClient` / `SimulationWallet`; setting `TRADE_ENABLED=true`
+///    here is safe *only* because no real RPC calls are issued. Mixing this
+///    with a production `near-jsonrpc-client` in the same process would
+///    enable live trades unintentionally.
+/// 2. **No coexistence with the production binary.** The `OnceLock`-backed
+///    overrides written here persist for the lifetime of the process and are
+///    visible to every consumer of `common::config::ConfigResolver`. Running
+///    simulate alongside production trading code (or running multiple
+///    simulations concurrently in the same process) would cross-contaminate
+///    config state.
+/// 3. **One-shot per process.** Sweep / parameter-grid runs that need
+///    different configs must be executed as separate child processes.
+///
+/// # TODO: lift these constraints
+///
+/// - **Mid-term:** introduce `common::config::store::with_scoped(...)` as an
+///   RAII guard that pushes overrides on entry and pops them on drop, so
+///   `apply_config` can be made scope-local.
+/// - **Long-term:** replace process-wide config reads with explicit
+///   dependency injection (e.g. a simulate-specific `ConfigSnapshot` passed
+///   into the engine, the trade strategy, and the prediction generator).
+///
+/// Until those land, treat `apply_config` as a hard process boundary.
 pub(crate) fn apply_config(cli: &RunArgs) {
     common::config::store::set("TRADE_TOP_TOKENS", &cli.top_tokens.to_string());
     common::config::store::set(
@@ -170,11 +202,38 @@ pub(crate) fn apply_config(cli: &RunArgs) {
     common::config::store::set("TRADE_INITIAL_INVESTMENT", &cli.initial_capital.to_string());
     // Enable trading (mock client prevents real transactions)
     common::config::store::set("TRADE_ENABLED", "true");
+
+    // Improvement flags (default off; CLI flips them per A/B run)
+    common::config::store::set(
+        "TRADE_BIAS_CORRECTION_ENABLED",
+        &cli.bias_correction.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED",
+        &cli.pred_err_diagonal.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_K",
+        &cli.pred_err_diagonal_k.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
+        cli.pred_err_diagonal_mode.as_str(),
+    );
+    common::config::store::set(
+        "TRADE_COST_AWARE_RETURN_ENABLED",
+        &cli.cost_aware_return.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_COST_ITERATIONS_MAX",
+        &cli.cost_iterations_max.to_string(),
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::algorithm::portfolio::PredErrDiagonalMode;
     use std::path::PathBuf;
 
     fn make_cli(start: &str, end: &str) -> RunArgs {
@@ -189,6 +248,12 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
+            bias_correction: true,
+            pred_err_diagonal: true,
+            pred_err_diagonal_k: 1.0,
+            pred_err_diagonal_mode: PredErrDiagonalMode::Max,
+            cost_aware_return: true,
+            cost_iterations_max: 3,
         }
     }
 
@@ -216,6 +281,12 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
+            bias_correction: true,
+            pred_err_diagonal: true,
+            pred_err_diagonal_k: 2.0,
+            pred_err_diagonal_mode: PredErrDiagonalMode::Max,
+            cost_aware_return: true,
+            cost_iterations_max: 5,
         };
 
         apply_config(&cli);
@@ -237,5 +308,29 @@ mod tests {
             "500"
         );
         assert_eq!(common::config::store::get("TRADE_ENABLED").unwrap(), "true");
+        assert_eq!(
+            common::config::store::get("TRADE_BIAS_CORRECTION_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_PRED_ERR_DIAGONAL_K").unwrap(),
+            "2"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_PRED_ERR_DIAGONAL_MODE").unwrap(),
+            "max"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_COST_AWARE_RETURN_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_COST_ITERATIONS_MAX").unwrap(),
+            "5"
+        );
     }
 }

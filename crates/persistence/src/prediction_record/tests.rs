@@ -10,4 +10,5 @@ pub use serial_test::serial;
 mod helpers;
 pub use helpers::*;
 
+mod constructor;
 mod db;

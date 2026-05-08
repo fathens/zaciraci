@@ -62,6 +62,19 @@ pub(crate) trait ConfigResolve: Sized {
     fn resolve(key: &str, default: Self::Default) -> Self;
     fn resolve_without_db(key: &str, default: Self::Default) -> Self;
     fn display_string(value: Self) -> std::string::String;
+
+    /// 文字列値が当該型として有効か検証する (Layer 0 用)。
+    ///
+    /// `persistence::config_store::reload_to_config` が DB から読んだ値を
+    /// `DB_STORE` に流入させる前に呼び、`Err` ならその key は load 対象から
+    /// 除外して slog `error!` ログを残す。これにより `resolve` 経路で不正値
+    /// に到達するのを根本的に防ぎ、enum 等の panic 経路を構造的に塞ぐ。
+    ///
+    /// default 実装は `Ok(())` を返す (数値型は別途 clamp で防御済み)。
+    /// enum 系などで「parse 失敗 = silent 縮退させたくない」型は override する。
+    fn validate_string(_s: &str) -> std::result::Result<(), std::string::String> {
+        Ok(())
+    }
 }
 
 impl ConfigResolve for bool {
@@ -166,6 +179,87 @@ impl ConfigResolve for anyhow::Result<String> {
     }
 }
 
+/// `PredErrDiagonalMode` の typed config 解決。
+///
+/// 値が config に存在しない場合は `default` を返す。値が存在するが `FromStr`
+/// で parse 失敗した場合の挙動は **value source ごとに分岐** する:
+///
+/// - `resolve` (CONFIG_STORE > DB_STORE > env > TOML 全経路): default fallback で
+///   fail-soft。cron tick 毎に呼ばれる経路で panic すると persistent crash loop
+///   DoS (CRITICAL-2) になるため、`resolve` 内の panic は撤去済み。
+/// - `resolve_without_db` (env > TOML のみ、startup 限定パス): 不正値は panic で
+///   起動失敗にし sysadmin が即時気付ける運用にする (再起動 = 修正機会)。
+///
+/// # 多層防御 (Layer 0 + Layer 1 + Layer 2)
+///
+/// **Layer 0**: [`persistence::config_store::reload_to_config`] が
+/// [`crate::config::validate_db_configs`] と [`Self::validate_string`] を使い、
+/// DB 由来の不正値を `DB_STORE` への流入前に排除して slog `error!` で構造化
+/// ログを残す。`common` クレートは `logging` に循環依存できないため、
+/// structured log 化は persistence 側で担う設計。
+///
+/// **Layer 1** (`resolve_without_db`): env/TOML 由来の不正値を startup panic で
+/// 起動失敗にする。`resolve` (DB含む) との非対称性は意図的: DB_STORE 不正値は
+/// cron tick で繰り返し発火し crash loop DoS 化するため fail-soft、env/TOML は
+/// startup 1 回のみで再起動 = 修正機会。
+///
+/// **Layer 2** (`resolve` の silent default fallback): Layer 0/1 の保険。本来到達
+/// 不能な経路として残しているが、以下 3 種の死角が残る:
+/// 1. **Layer 0 race**: `reload_to_config` が完了する前に `resolve` が呼ばれる
+///    起動時 race。実害はリロード完了後の次サイクルで自動収束するため軽微。
+/// 2. **`validate_db_configs` 登録漏れ**: 新しい enum 系 typed config を追加した
+///    ときに `validate_db_configs` への登録を忘れると DB 不正値が DB_STORE に流入
+///    する。新型追加時は同関数のテストで網羅性を確認すること。
+/// 3. **将来 admin/gRPC config write API 追加時の脆弱化**: 現時点 CONFIG_STORE は
+///    `#[doc(hidden)]` test-only API でのみ書き込まれる trusted source だが、将来
+///    admin API / gRPC endpoint で外部書き込みを許す場合は `validate_db_configs`
+///    を `validate_all_configs` に汎用化して CONFIG_STORE/env も同時検証する
+///    必要がある (follow-up: PR でない別 issue で追跡)。
+impl ConfigResolve for crate::algorithm::portfolio::PredErrDiagonalMode {
+    type Default = Self;
+    const VALUE_TYPE: ConfigValueType = ConfigValueType::String;
+    fn resolve(key: &str, default: Self) -> Self {
+        match crate::config::store::get(key) {
+            // 不正値は silent default fallback (Layer 2 の保険動作)。Layer 0 が
+            // DB_STORE 流入を排除し、Layer 1 が env/TOML startup panic を担うため、
+            // ここに到達する経路は本来存在しない。CONFIG_STORE 経由 (test override
+            // など) で到達した場合のみ silent fallback で吸収する。
+            Ok(s) => s.parse().unwrap_or(default),
+            Err(_) => default,
+        }
+    }
+    fn resolve_without_db(key: &str, default: Self) -> Self {
+        match crate::config::store::get_excluding_db(key) {
+            Ok(s) => s.parse().unwrap_or_else(|e| {
+                // env/TOML 経由の不正値は startup-only パスで sysadmin 制御下にあるため
+                // 起動失敗 (panic) で気付かせるのが妥当。`resolve` (DB含む) との非対称性は
+                // 意図的: DB_STORE 不正値は cron tick で繰り返し発火し crash loop DoS 化
+                // するため fail-soft、env/TOML は startup 1 回のみで再起動 = 修正機会。
+                // `e` (= ParsePredErrDiagonalModeError) の Display は redact 済みの
+                // 固定文字列のため、attacker-controlled 値は panic message に含まれない。
+                panic!("invalid config value for {key}: {e}");
+            }),
+            Err(_) => default,
+        }
+    }
+    fn display_string(value: Self) -> std::string::String {
+        value.as_str().to_string()
+    }
+    fn validate_string(s: &str) -> std::result::Result<(), std::string::String> {
+        // 攻撃者制御の入力値を error message に含めない (log forwarding 経由漏洩防御):
+        // 失敗時のメッセージは「期待されたバリアント名」のみで input value を含まない。
+        // 期待バリアントは PredErrDiagonalMode::variants_doc() を SSoT として参照する。
+        s.parse::<crate::algorithm::portfolio::PredErrDiagonalMode>()
+            .map(|_| ())
+            .map_err(|_| {
+                format!(
+                    "expected one of {}",
+                    crate::algorithm::portfolio::PredErrDiagonalMode::variants_doc()
+                )
+            })
+    }
+}
+
 // ── MockStore trait: maps types to Clone-able mock storage ──
 
 pub trait MockStore: Sized {
@@ -209,6 +303,13 @@ impl MockStore for Duration {
     }
 }
 
+impl MockStore for crate::algorithm::portfolio::PredErrDiagonalMode {
+    type Storage = Self;
+    fn from_storage(s: &Self) -> Self {
+        *s
+    }
+}
+
 /// For Result<String>, MockConfig stores just a String.
 /// Setting `mock.database_url = Some("postgres://...")` will return `Ok(...)`.
 impl MockStore for anyhow::Result<String> {
@@ -226,6 +327,16 @@ impl MockStore for anyhow::Result<String> {
 /// - `MockConfig` struct for test isolation (wraps real resolver, overrides per-field)
 /// - `KEY_DEFINITIONS` const with static metadata for all config keys
 /// - `resolve_all_without_db()` function for runtime key resolution excluding DB
+///
+/// ## Optional `clamp:` parameter
+///
+/// An entry may declare an optional `clamp: <fn>` parameter. The given
+/// function is applied to every resolved value before the accessor returns
+/// (defense-in-depth against extreme value injection via env / TOML /
+/// CONFIG_STORE / DB_STORE — F016). The clamp is applied in
+/// `ConfigResolver`, `MockConfig` (both the override path and the base
+/// delegation), and `resolve_all_without_db()` so the displayed value
+/// matches what callers actually receive. Clamping must be idempotent.
 macro_rules! define_typed_config {
     (
         $(
@@ -233,6 +344,7 @@ macro_rules! define_typed_config {
             fn $method:ident() -> $ty:ty {
                 key: $key:expr,
                 default: $default:expr
+                $(, clamp: $clamp:expr)?
             }
         )*
     ) => {
@@ -249,7 +361,9 @@ macro_rules! define_typed_config {
         impl ConfigAccess for ConfigResolver {
             $(
                 fn $method(&self) -> $ty {
-                    <$ty as ConfigResolve>::resolve($key, $default)
+                    let v = <$ty as ConfigResolve>::resolve($key, $default);
+                    $( let v = ($clamp)(v); )?
+                    v
                 }
             )*
         }
@@ -278,10 +392,12 @@ macro_rules! define_typed_config {
         impl ConfigAccess for MockConfig {
             $(
                 fn $method(&self) -> $ty {
-                    match &self.$method {
+                    let v = match &self.$method {
                         Some(v) => <$ty as MockStore>::from_storage(v),
                         None => self.base.$method(),
-                    }
+                    };
+                    $( let v = ($clamp)(v); )?
+                    v
                 }
             )*
         }
@@ -302,6 +418,7 @@ macro_rules! define_typed_config {
                 $(
                     {
                         let value = <$ty as ConfigResolve>::resolve_without_db($key, $default);
+                        $( let value = ($clamp)(value); )?
                         ResolvedKeyInfo {
                             key: $key.to_string(),
                             description: concat!($($doc, "\n",)*).trim().to_string(),
@@ -313,6 +430,142 @@ macro_rules! define_typed_config {
             ]
         }
     };
+}
+
+// ── Defense-in-depth clamp ranges (F016) ──
+//
+// These bounds defend the optimizer against extreme values injected via env,
+// TOML, CONFIG_STORE, or DB_STORE (e.g. via DB write-privilege compromise).
+// They are applied at the typed-config read boundary so every consumer sees
+// a sane value without having to remember to clamp at the call site.
+
+/// Lower bound for [`ConfigAccess::portfolio_cost_iterations_max`].
+///
+/// At least one iteration is always required so that the cost-aware
+/// optimization records an initial-state weight assignment even on
+/// misconfiguration.
+const PORTFOLIO_COST_ITERATIONS_MAX_LOWER: u32 = 1;
+
+/// Upper bound for [`ConfigAccess::portfolio_cost_iterations_max`].
+///
+/// Production normally converges in 3–5 iterations. The cap of 10 leaves
+/// headroom for slow-converging market regimes while preventing DoS via
+/// `u32::MAX` injection (each iteration runs the full Markowitz solve).
+const PORTFOLIO_COST_ITERATIONS_MAX_UPPER: u32 = 10;
+
+/// Lower bound for [`ConfigAccess::portfolio_pred_err_diagonal_k`].
+///
+/// Negative `k` would deflate (rather than inflate) the covariance diagonal
+/// and bias the optimizer toward poorly-predicted tokens. `0.0` effectively
+/// disables prediction-error inflation.
+const PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER: f64 = 0.0;
+
+/// Upper bound for [`ConfigAccess::portfolio_pred_err_diagonal_k`].
+///
+/// `k = 100` is already 1000× the production default `0.1`. Beyond this the
+/// diagonal dominates the off-diagonal covariance and the matrix becomes
+/// effectively diagonal, breaking the correlation structure the optimizer
+/// relies on.
+const PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER: f64 = 100.0;
+
+/// Lower bound for [`ConfigAccess::portfolio_cost_iteration_damping`].
+///
+/// `0.1` keeps `damp_and_diff` (`next = (1 - α) × prev + α × candidate`)
+/// progressing meaningfully toward the candidate at every iteration. Below this:
+///
+/// - `α = 0.0` freezes the iterate at the initial uniform `1/n` weights,
+///   which makes `run_cost_aware_optimization` break out at iteration 1 via
+///   `max_diff < CONVERGENCE_TOLERANCE` (= 1e-3) — `cost_deductions` are then
+///   never propagated into the optimizer, silently disabling cost-aware return.
+///   A DB-write attacker injecting `PORTFOLIO_COST_ITERATION_DAMPING = 0.0`
+///   would defeat the cost defense without any observable signal.
+/// - `α ∈ (0.0, 0.1)` produces a step weak enough that with the production
+///   `iterations_max = 10`, the iterate covers under ~40 % of the distance to
+///   the candidate (e.g. α = 0.05 ⇒ ~40 % cumulative progress) — a "degraded
+///   but not stopped" mode harder to detect than the full freeze and still
+///   meaningfully blunting the cost defense. `0.1` is the minimum that keeps
+///   the iteration behavior recognizably converging.
+///
+/// Values below `0.0` would invert the update and push the iterate away from
+/// the candidate, breaking the convergence invariant.
+pub const PORTFOLIO_COST_ITERATION_DAMPING_LOWER: f64 = 0.1;
+
+/// Upper bound for [`ConfigAccess::portfolio_cost_iteration_damping`].
+///
+/// `1.0` corresponds to a full replacement step (no damping). Values above
+/// `1.0` overshoot the candidate and are equivalent to under-damping, which
+/// `damp_and_diff` already clamps internally; we reject them here so the
+/// effective value displayed by `resolve_all_without_db` matches what the
+/// optimizer actually uses.
+pub const PORTFOLIO_COST_ITERATION_DAMPING_UPPER: f64 = 1.0;
+
+/// Fallback value applied when [`ConfigAccess::portfolio_cost_iteration_damping`]
+/// resolves to `NaN`.
+///
+/// `0.5` matches the production default and is mid-range — neither freezing
+/// the iterate (`0.0`) nor disabling damping entirely (`1.0`). Mirrors the
+/// `pred_err_diagonal_k → lower` policy in spirit (NaN must not poison the
+/// optimizer) while preserving useful iteration behavior on misconfiguration.
+const PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK: f64 = 0.5;
+
+/// Idempotent clamp applied to `portfolio_cost_iterations_max` reads.
+fn clamp_portfolio_cost_iterations_max(v: u32) -> u32 {
+    v.clamp(
+        PORTFOLIO_COST_ITERATIONS_MAX_LOWER,
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+    )
+}
+
+/// Idempotent clamp applied to `portfolio_pred_err_diagonal_k` reads.
+///
+/// `f64::clamp` propagates `NaN`, so `NaN` is mapped to the lower bound
+/// (effectively disabling the inflation) instead of poisoning the optimizer.
+/// `±INFINITY` is handled correctly by `f64::clamp` itself.
+fn clamp_portfolio_pred_err_diagonal_k(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER
+    } else {
+        v.clamp(
+            PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+            PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER,
+        )
+    }
+}
+
+/// Idempotent clamp applied to `portfolio_cost_iteration_damping` reads.
+///
+/// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] so
+/// that an injected `NaN` does not propagate into `damp_and_diff` (which
+/// would otherwise return `Err`, aborting the cost-aware optimization).
+/// `±INFINITY` is handled correctly by `f64::clamp` itself.
+fn clamp_portfolio_cost_iteration_damping(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+            PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+        )
+    }
+}
+
+/// Lower bound for [`ConfigAccess::prediction_accuracy_min_samples`].
+///
+/// `0` would let per-token statistics (`calculate_per_token_bias`,
+/// `calculate_per_token_pred_err_variance`) operate on an empty sample slice
+/// and divide by zero (NaN) or hit the `compute_median` empty-input guard.
+/// At least one sample is required for the aggregations to be defined.
+const PREDICTION_ACCURACY_MIN_SAMPLES_LOWER: usize = 1;
+
+/// Idempotent clamp applied to `prediction_accuracy_min_samples` reads.
+///
+/// `usize` cannot represent negative values or `NaN`, so the only failure
+/// mode is `0`, which is mapped up to
+/// [`PREDICTION_ACCURACY_MIN_SAMPLES_LOWER`]. This protects the per-token
+/// aggregation gates (`if samples.len() < min_samples { continue; }`) from
+/// degenerating into "always pass through with zero samples".
+fn clamp_min_samples(v: usize) -> usize {
+    v.max(PREDICTION_ACCURACY_MIN_SAMPLES_LOWER)
 }
 
 define_typed_config! {
@@ -438,6 +691,27 @@ define_typed_config! {
         default: 0.3
     }
 
+    /// Apply per-token bias correction to predicted prices before computing expected returns.
+    /// When enabled, the median historical bias `(predicted - actual) / actual` is used to
+    /// adjust the current prediction via `corrected = predicted / (1 + bias_clamped)`.
+    ///
+    /// # Default change history
+    ///
+    /// 2026-04: introduced as `default: false`.
+    /// 2026-04 (commit 3da237e): flipped to `default: true` together with
+    ///   `PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED` / `TRADE_COST_AWARE_RETURN_ENABLED`.
+    /// 2026-05: flipped back to `default: false` because the cost-aware /
+    ///   pred-err-diagonal pipeline ships with two known numerical limitations
+    ///   (Entry-from-cash exit-token under-pricing, Additive `k=0.1` collapsing
+    ///   diversification on low-volatility regimes); operators can re-enable
+    ///   per environment via `CONFIG_STORE` / `DB_STORE` / env, but the
+    ///   workspace default stays off until follow-up PRs land Δw-based cost
+    ///   accounting and correlation-preserving rescaling.
+    fn trade_bias_correction_enabled() -> bool {
+        key: "TRADE_BIAS_CORRECTION_ENABLED",
+        default: false
+    }
+
     // ── arbitrage ──
 
     /// Whether arbitrage engine is enabled
@@ -559,6 +833,97 @@ define_typed_config! {
         default: 0.1
     }
 
+    /// Inflate covariance diagonal with prediction error variance per token.
+    /// When enabled, the optimizer's risk evaluation incorporates per-token
+    /// prediction accuracy (high MAPE → higher diagonal → smaller weight).
+    ///
+    /// # Default change history
+    ///
+    /// See `trade_bias_correction_enabled` for the rationale; this flag was
+    /// flipped together with the bias-correction and cost-aware-return flags
+    /// in 2026-04 (commit 3da237e) and reverted to `false` in 2026-05.
+    fn portfolio_pred_err_diagonal_enabled() -> bool {
+        key: "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED",
+        default: false
+    }
+
+    /// Scale factor `k` applied to prediction error variance in the diagonal
+    /// inflation rule (additive: `cov[i,i] + k * pred_err_var`,
+    /// max: `max(cov[i,i], k * pred_err_var)`).
+    ///
+    /// Default is `0.1` — `pred_err_var` is on the same return scale as
+    /// `cov[i,i]` but typical MAPE 20% gives `pev = 0.04` which is ~100x
+    /// the daily price variance (~10⁻⁴). `k=0.1` keeps the inflation in
+    /// a comparable order of magnitude. See `apply_prediction_error_diagonal`
+    /// docstring for the correlation-distortion caveat.
+    ///
+    /// **Defense-in-depth (F016)**: clamped to
+    /// `[PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER, PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER]`
+    /// (currently `[0.0, 100.0]`) at the read boundary; `NaN` is mapped to
+    /// the lower bound.
+    fn portfolio_pred_err_diagonal_k() -> f64 {
+        key: "PORTFOLIO_PRED_ERR_DIAGONAL_K",
+        default: 0.1,
+        clamp: clamp_portfolio_pred_err_diagonal_k
+    }
+
+    /// Diagonal composition mode for prediction error variance.
+    ///
+    /// Accepts `"additive"` or `"max"` (case-insensitive). Invalid values
+    /// trigger a startup `panic!` rather than silent fallback (F007:
+    /// preventing typo-induced silent regression to a different mode).
+    /// Default is `Additive` — see `apply_prediction_error_diagonal`
+    /// docstring for the financial reasoning.
+    fn portfolio_pred_err_diagonal_mode() -> crate::algorithm::portfolio::PredErrDiagonalMode {
+        key: "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
+        default: crate::algorithm::portfolio::PredErrDiagonalMode::Additive
+    }
+
+    /// Deduct AMM fee + price impact + gas + storage + slippage from expected return
+    /// before optimization, and run iterative optimization to converge weight↔cost.
+    ///
+    /// # Default change history
+    ///
+    /// See `trade_bias_correction_enabled` for the rationale; this flag was
+    /// flipped together with the bias-correction and pred-err-diagonal flags
+    /// in 2026-04 (commit 3da237e) and reverted to `false` in 2026-05.
+    fn trade_cost_aware_return_enabled() -> bool {
+        key: "TRADE_COST_AWARE_RETURN_ENABLED",
+        default: false
+    }
+
+    /// Maximum iterations for the cost-aware optimization loop.
+    /// On non-convergence, the last iterate is used.
+    ///
+    /// **Defense-in-depth (F016)**: clamped to
+    /// `[PORTFOLIO_COST_ITERATIONS_MAX_LOWER, PORTFOLIO_COST_ITERATIONS_MAX_UPPER]`
+    /// (currently `[1, 10]`) at the read boundary so that an injected
+    /// `u32::MAX` cannot stall the cron loop.
+    fn portfolio_cost_iterations_max() -> u32 {
+        key: "PORTFOLIO_COST_ITERATIONS_MAX",
+        default: 3,
+        clamp: clamp_portfolio_cost_iterations_max
+    }
+
+    /// Damping factor α for the iterative cost-aware optimization
+    /// (`next = (1 - α) × prev + α × new`). Lower values dampen oscillation.
+    ///
+    /// **Defense-in-depth (F003)**: clamped to
+    /// `[PORTFOLIO_COST_ITERATION_DAMPING_LOWER, PORTFOLIO_COST_ITERATION_DAMPING_UPPER]`
+    /// (currently `[0.1, 1.0]`) at the read boundary. The lower bound is `0.1`
+    /// rather than `0.0` to block the silent disable mode where `α = 0` (or
+    /// `α ∈ (0, 0.1)`) freezes — or barely advances — the iterate so that
+    /// `cost_deductions` never feed back into the optimizer; see
+    /// [`PORTFOLIO_COST_ITERATION_DAMPING_LOWER`] for the full attack mechanism.
+    /// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`]
+    /// (`0.5`) so an injected non-finite value does not abort the optimization
+    /// in `damp_and_diff`.
+    fn portfolio_cost_iteration_damping() -> f64 {
+        key: "PORTFOLIO_COST_ITERATION_DAMPING",
+        default: 0.5,
+        clamp: clamp_portfolio_cost_iteration_damping
+    }
+
     /// Weight for volume-based liquidity score
     fn liquidity_volume_weight() -> f64 {
         key: "LIQUIDITY_VOLUME_WEIGHT",
@@ -603,10 +968,18 @@ define_typed_config! {
         default: 20
     }
 
-    /// Min samples needed for accuracy evaluation
+    /// Min samples needed for accuracy evaluation.
+    ///
+    /// **Defense-in-depth (F004)**: clamped to
+    /// `[PREDICTION_ACCURACY_MIN_SAMPLES_LOWER, usize::MAX]` (currently
+    /// `[1, usize::MAX]`) at the read boundary. `0` is mapped up to `1` so
+    /// that the per-token aggregation gates (`if samples.len() < min_samples
+    /// { continue; }`) cannot pass through with an empty sample slice and
+    /// divide by zero (NaN) or hit the `compute_median` empty-input guard.
     fn prediction_accuracy_min_samples() -> usize {
         key: "PREDICTION_ACCURACY_MIN_SAMPLES",
-        default: 5
+        default: 5,
+        clamp: clamp_min_samples
     }
 
     /// MAPE threshold for excellent predictions
@@ -637,6 +1010,51 @@ define_typed_config! {
     }
 
     // ── persistence: database_url, pg_pool_size, instance_id moved to StartupConfig ──
+}
+
+/// DB_STORE への load 前に DB 由来の typed config 値を検証する (Layer 0)。
+///
+/// `persistence::config_store::reload_to_config` から呼ばれ、enum 系 typed config
+/// などで `parse` 失敗する不正値を `DB_STORE` に流入させずに除外する。除外された
+/// 値は呼び出し側で slog `error!` ログとして出力されるため、運用検知が遅れない。
+///
+/// `common` クレートは `logging` に循環依存できないため、structured log 化は
+/// persistence 側に任せる設計 (本関数は何が無効だったかを `Vec<(key, reason)>`
+/// で返すだけ)。
+///
+/// `configs` は不正値を除外した状態に書き換える (caller の `load_db_config` 直前
+/// で呼ぶ前提)。戻り値は `(key, reason)` のリストで、log 出力用。`reason` は
+/// 攻撃者制御値を含まず、期待形式の説明のみ (log forwarding 経由漏洩防御)。
+///
+/// # 汎用化の余地 (follow-up)
+///
+/// 本関数は **DB 由来の値のみ**を対象とする。CONFIG_STORE / env / TOML 由来の
+/// 値の検証は `resolve_without_db` (env/TOML) の startup panic で部分的に
+/// カバーされるが、CONFIG_STORE は現時点で `#[doc(hidden)]` test-only API のみ
+/// で書き込まれる trusted source として許容している。将来 admin API / gRPC
+/// endpoint で外部書き込みを許す場合は本関数を `validate_all_configs` に
+/// 汎用化し、全ストアを同時検証すること (security CRITICAL の follow-up)。
+pub fn validate_db_configs(
+    configs: &mut std::collections::HashMap<std::string::String, std::string::String>,
+) -> Vec<(std::string::String, std::string::String)> {
+    let mut invalid = Vec::new();
+
+    // PORTFOLIO_PRED_ERR_DIAGONAL_MODE: enum 型の typo / 未対応バリアントを排除。
+    // ここを通さず DB_STORE に load すると、`PredErrDiagonalMode::resolve` の
+    // silent default fallback (Layer 2) が cron tick 毎に発火し、運用上は
+    // observable な signal がないまま fallback 動作を続ける状態になる。
+    const KEY_PRED_ERR_MODE: &str = "PORTFOLIO_PRED_ERR_DIAGONAL_MODE";
+    if let Some(v) = configs.get(KEY_PRED_ERR_MODE)
+        && let Err(reason) =
+            <crate::algorithm::portfolio::PredErrDiagonalMode as ConfigResolve>::validate_string(v)
+    {
+        invalid.push((KEY_PRED_ERR_MODE.to_string(), reason));
+    }
+
+    for (k, _) in &invalid {
+        configs.remove(k);
+    }
+    invalid
 }
 
 /// Hard-coded absolute ceiling for REF Finance storage auto top-up per cycle.

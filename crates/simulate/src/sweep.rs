@@ -1,6 +1,8 @@
 use crate::cli::RunArgs;
 use crate::engine::run_simulation;
 use anyhow::Result;
+use common::algorithm::portfolio::PredErrDiagonalMode;
+use itertools::iproduct;
 use logging::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -15,6 +17,18 @@ pub struct SweepConfig {
     pub rebalance_threshold: Vec<f64>,
     #[serde(default = "default_rebalance_interval_days")]
     pub rebalance_interval_days: Vec<i64>,
+    #[serde(default = "default_bias_correction")]
+    pub bias_correction: Vec<bool>,
+    #[serde(default = "default_pred_err_diagonal")]
+    pub pred_err_diagonal: Vec<bool>,
+    #[serde(default = "default_pred_err_diagonal_k")]
+    pub pred_err_diagonal_k: Vec<f64>,
+    #[serde(default = "default_pred_err_diagonal_mode")]
+    pub pred_err_diagonal_mode: Vec<PredErrDiagonalMode>,
+    #[serde(default = "default_cost_aware_return")]
+    pub cost_aware_return: Vec<bool>,
+    #[serde(default = "default_cost_iterations_max")]
+    pub cost_iterations_max: Vec<u32>,
 }
 
 fn default_top_tokens() -> Vec<usize> {
@@ -28,6 +42,24 @@ fn default_rebalance_threshold() -> Vec<f64> {
 }
 fn default_rebalance_interval_days() -> Vec<i64> {
     vec![1]
+}
+fn default_bias_correction() -> Vec<bool> {
+    vec![true]
+}
+fn default_pred_err_diagonal() -> Vec<bool> {
+    vec![true]
+}
+fn default_pred_err_diagonal_k() -> Vec<f64> {
+    vec![1.0]
+}
+fn default_pred_err_diagonal_mode() -> Vec<PredErrDiagonalMode> {
+    vec![PredErrDiagonalMode::Max]
+}
+fn default_cost_aware_return() -> Vec<bool> {
+    vec![true]
+}
+fn default_cost_iterations_max() -> Vec<u32> {
+    vec![3]
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,12 +78,18 @@ pub struct SweepEntry {
     pub realized_pnl_near: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SweepParameters {
     pub top_tokens: usize,
     pub price_history_days: i64,
     pub rebalance_threshold: f64,
     pub rebalance_interval_days: i64,
+    pub bias_correction: bool,
+    pub pred_err_diagonal: bool,
+    pub pred_err_diagonal_k: f64,
+    pub pred_err_diagonal_mode: PredErrDiagonalMode,
+    pub cost_aware_return: bool,
+    pub cost_iterations_max: u32,
 }
 
 pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<()> {
@@ -73,16 +111,17 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
         cli.price_history_days = params.price_history_days;
         cli.rebalance_threshold = params.rebalance_threshold;
         cli.rebalance_interval_days = params.rebalance_interval_days;
+        cli.bias_correction = params.bias_correction;
+        cli.pred_err_diagonal = params.pred_err_diagonal;
+        cli.pred_err_diagonal_k = params.pred_err_diagonal_k;
+        cli.pred_err_diagonal_mode = params.pred_err_diagonal_mode;
+        cli.cost_aware_return = params.cost_aware_return;
+        cli.cost_iterations_max = params.cost_iterations_max;
 
         match run_simulation(&cli).await {
             Ok(result) => {
                 results.push(SweepEntry {
-                    parameters: SweepParameters {
-                        top_tokens: params.top_tokens,
-                        price_history_days: params.price_history_days,
-                        rebalance_threshold: params.rebalance_threshold,
-                        rebalance_interval_days: params.rebalance_interval_days,
-                    },
+                    parameters: params.clone(),
                     total_return: result.performance.total_return,
                     sharpe_ratio: result.performance.sharpe_ratio,
                     sortino_ratio: result.performance.sortino_ratio,
@@ -129,24 +168,44 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
 }
 
 fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
-    let mut combinations = Vec::new();
-
-    for &top_tokens in &config.top_tokens {
-        for &price_history_days in &config.price_history_days {
-            for &rebalance_threshold in &config.rebalance_threshold {
-                for &rebalance_interval_days in &config.rebalance_interval_days {
-                    combinations.push(SweepParameters {
-                        top_tokens,
-                        price_history_days,
-                        rebalance_threshold,
-                        rebalance_interval_days,
-                    });
-                }
-            }
-        }
-    }
-
-    combinations
+    iproduct!(
+        &config.top_tokens,
+        &config.price_history_days,
+        &config.rebalance_threshold,
+        &config.rebalance_interval_days,
+        &config.bias_correction,
+        &config.pred_err_diagonal,
+        &config.pred_err_diagonal_k,
+        &config.pred_err_diagonal_mode,
+        &config.cost_aware_return,
+        &config.cost_iterations_max
+    )
+    .map(
+        |(
+            &top_tokens,
+            &price_history_days,
+            &rebalance_threshold,
+            &rebalance_interval_days,
+            &bias_correction,
+            &pred_err_diagonal,
+            &pred_err_diagonal_k,
+            &pred_err_diagonal_mode,
+            &cost_aware_return,
+            &cost_iterations_max,
+        )| SweepParameters {
+            top_tokens,
+            price_history_days,
+            rebalance_threshold,
+            rebalance_interval_days,
+            bias_correction,
+            pred_err_diagonal,
+            pred_err_diagonal_k,
+            pred_err_diagonal_mode,
+            cost_aware_return,
+            cost_iterations_max,
+        },
+    )
+    .collect()
 }
 
 fn print_summary_table(result: &SweepResult) {

@@ -527,6 +527,11 @@ impl YoctoValue {
         YoctoValue(yocto)
     }
 
+    /// u128 の yoctoNEAR 値から作成（blockchain クレートなど BigDecimal を持たない呼び出し元向け）
+    pub fn from_yocto_u128(yocto: u128) -> Self {
+        YoctoValue(BigDecimal::from(yocto))
+    }
+
     /// 内部の BigDecimal を取得（計算用）
     pub fn as_bigdecimal(&self) -> &BigDecimal {
         &self.0

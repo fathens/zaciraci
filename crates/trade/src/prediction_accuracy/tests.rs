@@ -336,15 +336,16 @@ fn test_new_prediction_record_target_time_with_past_data_cutoff() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token.clone(), (price, data_cutoff_time));
 
-    let records = build_prediction_records(&predictions, &quote_token);
+    let (records, skipped) = build_prediction_records(&predictions, &quote_token, now);
+    assert_eq!(skipped, 0);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
-    assert_eq!(record.data_cutoff_time, data_cutoff_time);
-    assert_eq!(record.target_time, expected_target_time);
+    assert_eq!(record.data_cutoff_time(), data_cutoff_time);
+    assert_eq!(record.target_time(), expected_target_time);
     // target_time は現在時刻より過去（6h前 + 24h = 18h後 → 未来だが、Utc::now() + 24h より6h早い）
     assert!(
-        record.target_time < now + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64),
+        record.target_time() < now + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64),
         "target_time should be earlier than now + 24h when data_cutoff_time is in the past"
     );
 }
@@ -365,14 +366,15 @@ fn test_new_prediction_record_target_time_far_in_past() {
     let mut predictions = BTreeMap::new();
     predictions.insert(token, (price, data_cutoff_time));
 
-    let records = build_prediction_records(&predictions, &quote_token);
+    let (records, skipped) = build_prediction_records(&predictions, &quote_token, now);
+    assert_eq!(skipped, 0);
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
-    assert_eq!(record.target_time, expected_target_time);
+    assert_eq!(record.target_time(), expected_target_time);
     // 3日前 + 24h = 2日前 → target_time は過去
     assert!(
-        record.target_time < now,
+        record.target_time() < now,
         "target_time should be in the past when data_cutoff_time is 3 days ago"
     );
 }
@@ -399,4 +401,232 @@ fn test_predicted_price_large_value_roundtrip() {
     let price = BigDecimal::from_str("123456789.987654321").unwrap();
     let token_price = TokenPrice::from_near_per_token(price.clone());
     assert_eq!(*token_price.as_bigdecimal(), price);
+}
+
+// --- compute_median ---
+
+#[test]
+fn test_compute_median_odd_length() {
+    let values = [-0.05, 0.0, 0.05, 0.10, 0.20];
+    assert_eq!(compute_median(&values), Some(0.05));
+}
+
+#[test]
+fn test_compute_median_even_length() {
+    let values = [-0.10, -0.05, 0.05, 0.10];
+    let m = compute_median(&values).expect("non-empty");
+    assert!((m - 0.0).abs() < 1e-12, "expected 0.0, got {m}");
+}
+
+#[test]
+fn test_compute_median_single_element() {
+    assert_eq!(compute_median(&[0.42]), Some(0.42));
+}
+
+#[test]
+fn test_compute_median_two_elements() {
+    let m = compute_median(&[0.1, 0.3]).expect("non-empty");
+    assert!((m - 0.2).abs() < 1e-12, "expected 0.2, got {m}");
+}
+
+#[test]
+fn test_compute_median_outlier_robustness() {
+    // 中央値は外れ値に頑健: 一つの極端値があっても結果は中央近傍
+    let values = [-0.01, 0.0, 0.01, 0.02, 100.0];
+    assert_eq!(compute_median(&values), Some(0.01));
+}
+
+#[test]
+fn test_compute_median_empty_returns_none() {
+    // F004: defense-in-depth — release ビルドでも panic させずに None を返す。
+    // `min_samples` クランプで通常は到達しないが、想定外経路の安全弁。
+    assert_eq!(compute_median(&[]), None);
+}
+
+// --- correct_prediction ---
+
+fn predicted_one() -> TokenPrice {
+    TokenPrice::from_near_per_token(BigDecimal::from(1))
+}
+
+#[test]
+fn test_correct_prediction_zero_bias_is_noop() {
+    // bias=0 → factor=1 → corrected = predicted
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, 0.0).expect("should succeed");
+    assert_eq!(*corrected.as_bigdecimal(), *predicted.as_bigdecimal());
+}
+
+#[test]
+fn test_correct_prediction_positive_bias_lowers_price() {
+    // bias=+0.10 (過大予測) → factor≈1.10 → corrected ≈ predicted / 1.10 ≈ 0.9090...
+    // f64 → BigDecimal の変換は f64 の binary 表現精度に依存（~1e-15）
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, 0.10).expect("should succeed");
+    let expected = BigDecimal::from_str("0.909090909090909").unwrap();
+    let diff = (corrected.as_bigdecimal() - &expected).abs();
+    let tol = BigDecimal::from_str("1e-14").unwrap();
+    assert!(diff < tol, "expected ~0.909..., got {corrected}");
+    // 価格は元より小さい（過大予測補正）
+    assert!(corrected.as_bigdecimal() < predicted.as_bigdecimal());
+}
+
+#[test]
+fn test_correct_prediction_negative_bias_raises_price() {
+    // bias=-0.10 (過小予測) → factor=0.90 → corrected = predicted / 0.90 ≈ 1.1111
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, -0.10).expect("should succeed");
+    // > 1.0 になる（過小予測なので価格を上方修正）
+    assert!(corrected.as_bigdecimal() > &BigDecimal::from(1));
+}
+
+#[test]
+fn test_correct_prediction_clamp_high_bias() {
+    // bias=2.0 → clamped to 0.5 → factor=1.5 → corrected = predicted / 1.5
+    let predicted = predicted_one();
+    let corrected_clamped = correct_prediction(&predicted, 2.0).expect("should succeed");
+    let corrected_at_clamp = correct_prediction(&predicted, 0.5).expect("should succeed");
+    assert_eq!(
+        *corrected_clamped.as_bigdecimal(),
+        *corrected_at_clamp.as_bigdecimal(),
+        "bias=2.0 should clamp to 0.5"
+    );
+}
+
+#[test]
+fn test_correct_prediction_clamp_low_bias() {
+    // bias=-2.0 → clamped to -0.5 → factor=0.5 → corrected = predicted / 0.5 = 2.0
+    let predicted = predicted_one();
+    let corrected = correct_prediction(&predicted, -2.0).expect("should succeed");
+    assert_eq!(*corrected.as_bigdecimal(), BigDecimal::from(2));
+}
+
+#[test]
+fn test_correct_prediction_nan_returns_none() {
+    let predicted = predicted_one();
+    assert!(correct_prediction(&predicted, f64::NAN).is_none());
+}
+
+#[test]
+fn test_correct_prediction_infinity_returns_none() {
+    let predicted = predicted_one();
+    assert!(correct_prediction(&predicted, f64::INFINITY).is_none());
+    assert!(correct_prediction(&predicted, f64::NEG_INFINITY).is_none());
+}
+
+#[test]
+fn test_correct_prediction_zero_predicted_returns_none() {
+    let predicted = TokenPrice::from_near_per_token(BigDecimal::from(0));
+    assert!(correct_prediction(&predicted, 0.0).is_none());
+}
+
+// --- mape_to_squared_return ---
+
+// --- group_records_by_token ---
+
+fn make_grouping_record(id: i32, token: &str, target_offset_hours: i64) -> DbPredictionRecord {
+    let base = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+        .unwrap()
+        .naive_utc();
+    DbPredictionRecord {
+        id,
+        token: token.to_string(),
+        quote_token: "wrap.near".to_string(),
+        predicted_price: BigDecimal::from(100),
+        data_cutoff_time: base,
+        target_time: base + chrono::TimeDelta::hours(target_offset_hours),
+        actual_price: Some(BigDecimal::from(100)),
+        mape: Some(1.0),
+        absolute_error: Some(BigDecimal::from(0)),
+        evaluated_at: Some(base + chrono::TimeDelta::hours(target_offset_hours + 1)),
+        created_at: base,
+    }
+}
+
+#[test]
+fn test_group_records_by_token_groups_by_token_string() {
+    let records = vec![
+        make_grouping_record(1, "a.near", 1),
+        make_grouping_record(2, "b.near", 1),
+        make_grouping_record(3, "a.near", 2),
+    ];
+    let by_token = group_records_by_token(records, 10);
+    assert_eq!(by_token.len(), 2);
+    assert_eq!(by_token.get("a.near").map(Vec::len), Some(2));
+    assert_eq!(by_token.get("b.near").map(Vec::len), Some(1));
+}
+
+#[test]
+fn test_group_records_by_token_sorts_target_time_desc() {
+    // 時刻順序が逆順に与えられても target_time DESC で並ぶこと
+    let records = vec![
+        make_grouping_record(1, "a.near", 1),
+        make_grouping_record(2, "a.near", 5),
+        make_grouping_record(3, "a.near", 3),
+    ];
+    let by_token = group_records_by_token(records, 10);
+    let entries = by_token.get("a.near").expect("a.near must be grouped");
+    assert_eq!(entries[0].id, 2, "id 2 (target+5h) should be first");
+    assert_eq!(entries[1].id, 3, "id 3 (target+3h) should be second");
+    assert_eq!(entries[2].id, 1, "id 1 (target+1h) should be third");
+}
+
+#[test]
+fn test_group_records_by_token_truncates_to_window() {
+    // window=2 で先頭 2 件 (target_time DESC) のみ残ること
+    let records = vec![
+        make_grouping_record(1, "a.near", 1),
+        make_grouping_record(2, "a.near", 5),
+        make_grouping_record(3, "a.near", 3),
+    ];
+    let by_token = group_records_by_token(records, 2);
+    let entries = by_token.get("a.near").expect("a.near must be grouped");
+    assert_eq!(entries.len(), 2, "must truncate to window");
+    assert_eq!(entries[0].id, 2);
+    assert_eq!(entries[1].id, 3);
+}
+
+#[test]
+fn test_group_records_by_token_window_zero_truncates_all() {
+    // window=0 で全エントリ truncate（caller の clamp に委ねる前提だが境界条件）
+    let records = vec![make_grouping_record(1, "a.near", 1)];
+    let by_token = group_records_by_token(records, 0);
+    assert_eq!(by_token.get("a.near").map(Vec::len), Some(0));
+}
+
+#[test]
+fn test_group_records_by_token_empty_input() {
+    let by_token = group_records_by_token(vec![], 10);
+    assert!(by_token.is_empty());
+}
+
+#[test]
+fn test_mape_to_squared_return_typical_values() {
+    // 1% mape → (0.01)² = 1e-4
+    let v = mape_to_squared_return(1.0).expect("typical positive mape");
+    assert!((v - 1e-4).abs() < 1e-12);
+    // 10% mape → (0.1)² = 1e-2
+    let v = mape_to_squared_return(10.0).expect("typical positive mape");
+    assert!((v - 1e-2).abs() < 1e-12);
+}
+
+#[test]
+fn test_mape_to_squared_return_zero_returns_zero() {
+    let v = mape_to_squared_return(0.0).expect("zero mape is non-negative");
+    assert_eq!(v, 0.0);
+}
+
+#[test]
+fn test_mape_to_squared_return_negative_rejected() {
+    // production 経路では mape = |diff| / actual * 100 で非負保証だが
+    // DB 直接書き込み等で負値混入時は MSRE 集計から除外する
+    assert!(mape_to_squared_return(-1.0).is_none());
+    assert!(mape_to_squared_return(-100.0).is_none());
+}
+
+#[test]
+fn test_mape_to_squared_return_non_finite_rejected() {
+    assert!(mape_to_squared_return(f64::NAN).is_none());
+    assert!(mape_to_squared_return(f64::INFINITY).is_none());
+    assert!(mape_to_squared_return(f64::NEG_INFINITY).is_none());
 }

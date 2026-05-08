@@ -1,0 +1,37 @@
+-- Layer 3 of the 4-layer data-leakage defense for prediction_records.
+--
+-- Adds a CHECK constraint enforcing `created_at >= data_cutoff_time` for
+-- ALL INSERT/UPDATE paths (Diesel / raw SQL / psql / DBA / migration
+-- backfill) and validates it against existing rows. Without this
+-- constraint, a DB-write-privileged attacker (or a bug bypassing the Rust
+-- caller-side `try_new` guard) can inject look-ahead bias by writing rows
+-- where `created_at < data_cutoff_time`, causing the optimizer to read
+-- predictions that were not yet visible at `as_of`.
+--
+-- This migration intentionally contains NO automatic clean-up of violator
+-- rows. The operator must run the companion `preflight.sql` first:
+--
+--     psql "$DATABASE_URL" -f preflight.sql
+--
+-- preflight.sql lists any rows that violate the invariant. If it returns 0
+-- rows, this migration succeeds immediately. If it returns rows, triage
+-- them manually (DELETE, dump-to-CSV-then-DELETE for forensic retention,
+-- or fix the underlying bug) before running the migration.
+--
+-- Postgres itself is the gate: a forgotten preflight step turns into a
+-- `check constraint "created_at_geq_data_cutoff" is violated by some row`
+-- error, blocking the deploy rather than silently moving or deleting
+-- historical predictions. That noisy failure is the intended behaviour —
+-- silently archiving violators on every migration risks erasing evidence
+-- of a real look-ahead-bias incident.
+--
+-- Lock note: `ADD CONSTRAINT ... CHECK` (without `NOT VALID`) acquires
+-- ACCESS EXCLUSIVE for the duration of the full-table scan. This is
+-- acceptable here because prediction_records is small (low thousands of
+-- rows; sub-millisecond scan). If the table grows large enough that the
+-- ACCESS EXCLUSIVE window becomes operationally relevant, split this into
+-- the canonical two-step pattern (`ADD ... NOT VALID` followed by a
+-- separate `VALIDATE CONSTRAINT` migration).
+ALTER TABLE prediction_records
+    ADD CONSTRAINT created_at_geq_data_cutoff
+    CHECK (created_at >= data_cutoff_time);

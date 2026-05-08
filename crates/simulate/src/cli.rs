@@ -1,5 +1,12 @@
 use clap::{Parser, Subcommand};
+use common::algorithm::portfolio::{ParsePredErrDiagonalModeError, PredErrDiagonalMode};
 use std::path::PathBuf;
+
+fn parse_pred_err_diagonal_mode(
+    s: &str,
+) -> Result<PredErrDiagonalMode, ParsePredErrDiagonalModeError> {
+    s.parse()
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "simulate", about = "Auto trade backtest simulation")]
@@ -57,6 +64,35 @@ pub struct RunArgs {
     /// Generate and evaluate predictions for the simulation period before running
     #[arg(long)]
     pub generate_predictions: bool,
+
+    /// Enable per-token bias correction (improvement C). Defaults to false to
+    /// match the production config (commit reverted in 2026-05); pass
+    /// `--bias-correction true` for A/B comparison runs.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub bias_correction: bool,
+
+    /// Enable prediction-error variance diagonal inflation (improvement 3).
+    /// Defaults to false; pass `--pred-err-diagonal true` for A/B comparison.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub pred_err_diagonal: bool,
+
+    /// Scale factor `k` for the diagonal inflation rule (default 1.0)
+    #[arg(long, default_value = "1.0")]
+    pub pred_err_diagonal_k: f64,
+
+    /// Diagonal composition mode: "additive" or "max"
+    #[arg(long, default_value = "max", value_parser = parse_pred_err_diagonal_mode)]
+    pub pred_err_diagonal_mode: PredErrDiagonalMode,
+
+    /// Enable cost-aware iterative optimization (improvement D). Defaults to
+    /// false to match the production config; pass `--cost-aware-return true`
+    /// for A/B comparison runs.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub cost_aware_return: bool,
+
+    /// Maximum iterations for cost-aware optimization (default 3)
+    #[arg(long, default_value = "3")]
+    pub cost_iterations_max: u32,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -121,6 +157,12 @@ mod tests {
             output: PathBuf::from("test.json"),
             sweep: None,
             generate_predictions: false,
+            bias_correction: true,
+            pred_err_diagonal: true,
+            pred_err_diagonal_k: 1.0,
+            pred_err_diagonal_mode: PredErrDiagonalMode::Max,
+            cost_aware_return: true,
+            cost_iterations_max: 3,
         }
     }
 
@@ -171,6 +213,45 @@ mod tests {
         let args = make_verify_args("2025-01-01", "2025-06-30");
         assert!(args.parse_start_date().is_ok());
         assert!(args.parse_end_date().is_ok());
+    }
+
+    #[test]
+    fn cli_accepts_valid_pred_err_diagonal_mode() {
+        let cli = Cli::try_parse_from([
+            "simulate",
+            "run",
+            "--start-date",
+            "2025-01-01",
+            "--end-date",
+            "2025-01-02",
+            "--pred-err-diagonal-mode",
+            "additive",
+        ])
+        .unwrap();
+        let Command::Run(args) = cli.command else {
+            panic!("expected Run subcommand");
+        };
+        assert_eq!(args.pred_err_diagonal_mode, PredErrDiagonalMode::Additive);
+    }
+
+    #[test]
+    fn cli_rejects_pred_err_diagonal_mode_typo() {
+        let err = Cli::try_parse_from([
+            "simulate",
+            "run",
+            "--start-date",
+            "2025-01-01",
+            "--end-date",
+            "2025-01-02",
+            "--pred-err-diagonal-mode",
+            "addative",
+        ])
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid PredErrDiagonalMode") || msg.contains("addative"),
+            "expected typo error, got: {msg}"
+        );
     }
 
     #[test]
