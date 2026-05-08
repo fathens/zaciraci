@@ -10,8 +10,10 @@ pub use super::*;
 
 mod algorithm_validation;
 mod confidence_alpha;
+mod damp_and_diff;
 mod nan_inf_defense;
 mod parallel_consistency;
 mod precision;
 mod returns_from_prices;
+mod safety;
 mod sharpe_equal_returns;
