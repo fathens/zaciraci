@@ -188,6 +188,99 @@ fn test_compute_cost_deductions_all_zero_weights_drop_all_tokens() {
 }
 
 // ---------------------------------------------------------------------------
+// (c.1) target_w=0 を含む mixed weight シナリオ
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compute_cost_deductions_mixed_weights_with_target_w_zero() {
+    // Phase 2 移行前の Entry-from-cash モデルが exit token (target_w=0) で
+    // 何が起きるかを pin する。`[0.6, 0.0, 0.4]` で:
+    //   - exit token (w=0): assumed_in = 0 → ZeroPosition → estimation_failures
+    //   - entry tokens (w>0): 正常経路で deductions に残る
+    // 後続反復で `retain_excluding(estimation_failures)` により exit token が
+    // portfolio から外され、結果として「全 exit する」判断に SELL コストが
+    // 計上されない既知の limitation を test として固定する。
+    // Phase 2 で Δw ベースに切り替わるとこのテストは「変更されるべき」シグナル。
+    let entry_a = token("entry-a");
+    let exit_b = token("exit-b");
+    let entry_c = token("entry-c");
+    let tokens = vec![
+        token_data(entry_a.clone()),
+        token_data(exit_b.clone()),
+        token_data(entry_c.clone()),
+    ];
+    let inputs = make_inputs(
+        &[entry_a.clone(), exit_b.clone(), entry_c.clone()],
+        HashSet::new(),
+    );
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+
+    let result = compute_cost_deductions(&[0.6, 0.0, 0.4], &tokens, &inputs, &total);
+
+    // exit token は estimation_failures のみに現れる
+    assert_eq!(
+        result.estimation_failures,
+        vec![exit_b.clone()],
+        "target_w=0 token must fall through to estimation_failures (Entry-from-cash limitation)"
+    );
+    assert!(
+        !result.deductions.contains_key(&exit_b),
+        "target_w=0 token must not appear in deductions"
+    );
+
+    // entry token はそれぞれ deductions に有限非負値で残る
+    for entry in [&entry_a, &entry_c] {
+        let v = *result
+            .deductions
+            .get(entry)
+            .unwrap_or_else(|| panic!("entry token {entry} must produce a deduction"));
+        assert!(
+            v.is_finite() && v >= 0.0,
+            "deduction for {entry} must be finite-non-negative: got {v}"
+        );
+    }
+    assert_eq!(
+        result.deductions.len(),
+        2,
+        "exactly the two entry tokens must contribute deductions"
+    );
+}
+
+#[test]
+fn test_compute_cost_deductions_mixed_weights_higher_target_w_higher_assumed_in() {
+    // mixed weight で「entry-from-cash モデルでは target_w に取引額が比例する」
+    // ことを確認。`[0.9, 0.1]` で entry_a の deduction の variable 部分が
+    // entry_b より大きい total コストを生む（fixed_cost は同条件で同値）。
+    // Δw ベース PR でこの単調性が崩れないか検知するためのアンカー。
+    let entry_a = token("big");
+    let entry_b = token("small");
+    let tokens = vec![token_data(entry_a.clone()), token_data(entry_b.clone())];
+    let inputs = make_inputs(&[entry_a.clone(), entry_b.clone()], HashSet::new());
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+
+    let result = compute_cost_deductions(&[0.9, 0.1], &tokens, &inputs, &total);
+
+    let v_big = *result
+        .deductions
+        .get(&entry_a)
+        .expect("big token deduction");
+    let v_small = *result
+        .deductions
+        .get(&entry_b)
+        .expect("small token deduction");
+
+    // fixed_cost が同条件 (deposits 共通) のため、deduction の差は variable 部分で
+    // 駆動される。assumed_in の比率は 9:1 でも fixed_cost の希釈で v_big < v_small。
+    // この監視点は Δw 導入で逆転する可能性があるので、現状の単調性を pin。
+    assert!(
+        v_big < v_small,
+        "with shared fixed_cost, larger assumed_in dilutes ratio: big={v_big} small={v_small}"
+    );
+    assert!(v_big.is_finite() && v_big >= 0.0);
+    assert!(v_small.is_finite() && v_small >= 0.0);
+}
+
+// ---------------------------------------------------------------------------
 // 空入力 / defense-in-depth スキップ
 // ---------------------------------------------------------------------------
 
