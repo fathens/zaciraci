@@ -33,6 +33,32 @@ done
 # マイグレーションの実行
 echo "=== マイグレーションを実行します ==="
 cd ..
+
+# Preflight gate: migrations の preflight.sql を順に実行し、違反行があれば
+# migration 適用前に exit 1 で停止する。Diesel は preflight.sql を拾わない
+# ため、forensic 保全（自動 cleanup を避け operator triage を強制する）と
+# 自動化（CI で違反検知を確実に走らせる）を両立する目的のゲート。違反ログは
+# /tmp/preflight-*.log として残し、CI artifact 等で回収できるようにする。
+shopt -s nullglob
+for preflight in migrations/*/preflight.sql; do
+  migration_name="$(basename "$(dirname "$preflight")")"
+  log="/tmp/preflight-${migration_name}.log"
+  echo "=== preflight: $migration_name ==="
+  if ! psql "$DATABASE_URL" --no-align --tuples-only -f "$preflight" > "$log" 2>&1; then
+    echo "preflight $migration_name failed: see $log"
+    cat "$log"
+    exit 1
+  fi
+  # 実出力行（空行除外）が残っていれば違反あり
+  if grep -q '[^[:space:]]' "$log"; then
+    echo "preflight $migration_name reported violators (see $log):"
+    cat "$log"
+    echo "Resolve violators per the migration's preflight.sql triage guidance, then re-run."
+    exit 1
+  fi
+done
+shopt -u nullglob
+
 diesel migration run
 cd run_test
 

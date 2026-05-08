@@ -726,6 +726,86 @@ async fn test_delete_by_target_time_range_inclusive_boundary() -> Result<()> {
     Ok(())
 }
 
+// ── Layer 3: DB CHECK constraint `created_at >= data_cutoff_time` ──
+
+/// Layer 3 (DB CHECK) 直接検証: `created_at < data_cutoff_time` 違反 INSERT が
+/// CheckViolation で reject されること。
+///
+/// `try_new` (Layer 1) と private field (Layer 2) は caller-side で弾くが、DB
+/// 直接書き込み (psql / DBA / migration backfill) でも data leakage を防ぐ
+/// 最終ガードが Layer 3 の `created_at_geq_data_cutoff` CHECK 制約。本テストは
+/// `new_unchecked` で Layer 1/2 をバイパスし、DB レイヤが想定通り違反を弾くことを
+/// run_test 環境で検証する。
+#[tokio::test]
+#[serial]
+async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer3.near";
+    let quote = "wrap.near";
+
+    // 違反パターン: created_at < data_cutoff_time (data leakage シナリオ)
+    let data_cutoff_time = base;
+    let target_time = base + chrono::TimeDelta::hours(24);
+    let created_at = base - chrono::TimeDelta::hours(1); // < data_cutoff_time
+
+    // new_unchecked で Layer 1/2 をバイパスし、Layer 3 (DB CHECK) のみを試験する
+    let new_record = NewPredictionRecord::new_unchecked(
+        token.to_string(),
+        quote.to_string(),
+        BigDecimal::from(100),
+        data_cutoff_time,
+        target_time,
+        created_at,
+    );
+
+    let conn = connection_pool::get().await?;
+    let result = conn
+        .interact(move |conn| {
+            diesel::insert_into(prediction_records::table)
+                .values(&new_record)
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))?;
+
+    let err = result.expect_err("Layer 3 CHECK must reject created_at < data_cutoff_time");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("created_at_geq_data_cutoff") || msg.contains("check"),
+        "expected CHECK violation referencing created_at_geq_data_cutoff, got: {msg}"
+    );
+
+    Ok(())
+}
+
+/// Layer 3 境界値: `created_at == data_cutoff_time` は許可されること (>=)。
+#[tokio::test]
+#[serial]
+async fn test_layer3_check_allows_created_at_equal_data_cutoff() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer3_eq.near";
+    let quote = "wrap.near";
+
+    // 境界条件: created_at == data_cutoff_time (>= で許可されるべき)
+    let data_cutoff_time = base;
+    let target_time = base + chrono::TimeDelta::hours(24);
+    insert_unevaluated_record_at(token, quote, 100, data_cutoff_time, target_time, base).await?;
+
+    // INSERT が成功して 1 件取得できること (as_of は created_at 以降を指定)
+    let results = PredictionRecord::get_latest_fresh_predictions(
+        &[tok(token)],
+        base + chrono::TimeDelta::hours(1),
+    )
+    .await?;
+    assert_eq!(results.len(), 1);
+
+    Ok(())
+}
+
 // ── get_pending_evaluations_as_of ──
 
 /// as_of == target_time のレコードが含まれること（le の確認）
